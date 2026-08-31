@@ -78,10 +78,13 @@
                                              milestone...); `w` above is this card's own display
                                              shape and has none of those fields. Panel-sized on
                                              purpose -- a wall board tap target, read across a room,
-                                             not a phone chip. -->
+                                             not a phone chip -- which means bigger than the PWA's own
+                                             sheet buttons (app.html's `py-2.5 px-4`), not smaller: the
+                                             `shellXl(b)` panel tier in chores_lanes.html sizes its own
+                                             claim button `text-sm px-4 py-3`, and this matches it. -->
                                         <button type="button" @click="window.dispatchEvent(new CustomEvent('lesson-player:open',
                                                 {detail: {window: w.raw, lesson: w.raw._lesson || null}}))"
-                                            class="text-sm font-bold py-2 px-4 rounded-lg bg-teal-600 text-white active:bg-teal-700 shrink-0">
+                                            class="text-sm font-bold py-3 px-4 rounded-lg bg-teal-600 text-white active:bg-teal-700 shrink-0">
                                             Start session
                                         </button>
                                     </div>

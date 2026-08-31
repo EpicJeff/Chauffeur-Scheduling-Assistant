@@ -216,13 +216,31 @@ def scenario_the_lesson_player_is_included_once_on_each_page_not_inside_the_card
 
 def scenario_the_wall_tap_is_panel_sized():
     """A board tile is read across a room, not held in a hand -- the wall's
-    Start tap has to be a bigger target than a phone chip, not the compact
-    px-2.5 py-1-scale rows the rest of this card already draws."""
+    Start tap has to be BIGGER than a phone chip, not merely present.
+
+    Fix round 1, finding 2: the first cut matched the brief's own worked
+    example (`py-2 px-4`) faithfully, and the brief's example was wrong --
+    py-2 is SMALLER than the PWA's own session-sheet buttons
+    (app.html's `py-2.5 px-4`), the opposite of panel-appropriate. This repo's
+    established panel-tier convention is the `shellXl(b)` branch in
+    components/chores_lanes.html's own claim button: `text-sm px-4 py-3`.
+
+    Anchored to the Start button's own class attribute via re.search, the
+    way scenario_the_pwa_reuses_its_existing_log_action_and_only_once
+    anchors to the done-listener body -- a whole-file substring check for
+    'py-2'/'px-4' would have stayed green by coincidence (both strings
+    appear elsewhere in the file regardless of what this button says)."""
+    import re
     src = _read('components/programs_card.html')
-    check('py-2' in src and 'px-4' in src,
-          "the panel-tier padding the brief specifies")
-    check('Start session' in src,
-          "labelled the same as the programs page's own button (Task 6)")
+    m = re.search(r"lesson-player:open'.*?class=\"([^\"]*)\">\s*Start session",
+                  src, re.S)
+    check(m, "the Start button is findable by its own markup, class attribute captured")
+    classes = m.group(1) if m else ''
+    check('py-3' in classes,
+          "panel padding has to beat the PWA's own py-2.5 -- py-3 is the "
+          "shellXl panel-tier convention, not py-2")
+    check('px-4' in classes, "the panel-tier horizontal padding")
+    check('text-sm' in classes, "the panel-tier text size")
 
 
 def scenario_the_pwa_reuses_its_existing_log_action_and_only_once():
