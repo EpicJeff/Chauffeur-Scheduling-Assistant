@@ -350,10 +350,27 @@ def generate_due(now=None) -> int:
     flipping a switch back on later gets tonight's sweep rather than
     waiting out a day a disabled sweep never actually ran.
 
-    Never raises. `generate_for` already promises that per slot; the loop
-    over `practice_windows` here carries no other risk beyond what
-    `due_practice_pushes` already runs unguarded from the same caller, and
-    main.py wraps this call the same way it wraps that one.
+    The scan itself reaches two days out, not one -- practice_windows(
+    tomorrow, tomorrow+2d), exactly the design's Generation pipeline
+    section -- so a slot due the evening after tomorrow is already
+    visible tonight AND again tomorrow night, before the evening it is
+    actually needed: a night this sweep fails or a program's page is
+    unreachable still leaves a second chance rather than a silently blank
+    session. The extra day is nearly free -- generate_for bails on a slot
+    that already has a lesson before any page fetch or model call, so a
+    slot re-seen on its second night costs one storage read and nothing
+    else.
+
+    Never raises -- literally, not merely by the convention every
+    function in this module follows. `generate_for` already promises that
+    per slot, but the settings reads, `practice_windows` and
+    `storage.get_programs` do not promise it of themselves, and three
+    scenarios in tests/test_program_lessons.py call this function
+    directly with no wrapper of their own -- unlike main.py's 30s loop,
+    which guards its call the same way it guards the two sweep blocks
+    beside it, but must not be the ONLY thing standing between a bad row
+    and a raw traceback out of a function whose own docstring promises
+    otherwise.
     """
     import datetime
     from services import storage, programs
@@ -361,22 +378,26 @@ def generate_due(now=None) -> int:
     marker = now.date().isoformat()
     if (storage.get_app_state('program_lessons_swept') or '') == marker:
         return 0
-    settings = storage.get_settings() or {}
-    if not settings.get('programs_enabled', True):
+    try:
+        settings = storage.get_settings() or {}
+        if not settings.get('programs_enabled', True):
+            return 0
+        if not settings.get('program_lessons_enabled', True):
+            return 0
+        storage.set_app_state('program_lessons_swept', marker)
+        tomorrow = now.date() + datetime.timedelta(days=1)
+        rows = {r['id']: r for r in storage.get_programs(state='active')}
+        wrote = 0
+        for w in programs.practice_windows(
+                tomorrow, tomorrow + datetime.timedelta(days=2)):
+            row = rows.get(w.get('program_id'))
+            if not row:
+                continue
+            phase = programs.progress(row).get('phase') or {}
+            unit = programs.unit_for(row, phase) or {}
+            if generate_for(row, w, unit, settings):
+                wrote += 1
+        return wrote
+    except Exception as e:
+        print(f"[lessons] sweep failed: {e}")
         return 0
-    if not settings.get('program_lessons_enabled', True):
-        return 0
-    storage.set_app_state('program_lessons_swept', marker)
-    tomorrow = now.date() + datetime.timedelta(days=1)
-    rows = {r['id']: r for r in storage.get_programs(state='active')}
-    wrote = 0
-    for w in programs.practice_windows(
-            tomorrow, tomorrow + datetime.timedelta(days=1)):
-        row = rows.get(w.get('program_id'))
-        if not row:
-            continue
-        phase = programs.progress(row).get('phase') or {}
-        unit = programs.unit_for(row, phase) or {}
-        if generate_for(row, w, unit, settings):
-            wrote += 1
-    return wrote

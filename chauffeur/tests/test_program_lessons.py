@@ -400,20 +400,25 @@ def scenario_existing_lesson_skips_before_spending_a_call():
 
 # --- the nightly sweep: tomorrow's lessons, written tonight -----------
 
-def _due_fixture(cid='pl-c1'):
-    """An active program with one evening claimed tomorrow, in the shape
-    approve()/_emit_commitments actually write (services/programs.py) --
-    not a hand-typed guess at it. Two things a first draft of this fixture
-    got wrong against that code: add_protected_commitment writes the dict
-    it is given straight into storage and returns data['id'], it does not
-    mint one, so the row needs an 'id' already on it; and the field is
-    'title' (what _emit_commitments writes), never 'label'."""
+def _due_fixture(cid='pl-c1', day_offset=1):
+    """An active program with one evening claimed `day_offset` days out (a
+    plain tomorrow by default), in the shape approve()/_emit_commitments
+    actually write (services/programs.py) -- not a hand-typed guess at it.
+    Two things a first draft of this fixture got wrong against that code:
+    add_protected_commitment writes the dict it is given straight into
+    storage and returns data['id'], it does not mint one, so the row
+    needs an 'id' already on it; and the field is 'title' (what
+    _emit_commitments writes), never 'label'. `day_offset` exists so the
+    far edge of generate_due's scan (two days out, not one) can be proven
+    reached by a window that lands NOWHERE nearer -- a single weekday
+    picked 2-3 calendar days apart never repeats inside that span, so the
+    commitment cannot accidentally also match a closer day."""
     import datetime
     from services import storage
     storage.programs_table.truncate()
     storage.program_lessons_table.truncate()
     storage.protected_commitments_table.truncate()
-    tomorrow = datetime.date.today() + datetime.timedelta(days=1)
+    target = datetime.date.today() + datetime.timedelta(days=day_offset)
     pid = storage.add_program({'member_id': 'kid', 'title': 'Play guitar',
                                'shape': {'sessions_per_week': 1, 'minutes': 20},
                                'phases': [{'name': 'Foundations',
@@ -422,7 +427,7 @@ def _due_fixture(cid='pl-c1'):
     storage.update_program(pid, {'state': 'active'})
     cid = storage.add_protected_commitment({
         'id': cid, 'member_id': 'kid', 'title': 'Practice', 'active': True,
-        'days_of_week': [tomorrow.weekday()],
+        'days_of_week': [target.weekday()],
         'time_start': '17:00', 'time_end': '17:20'})
     row = storage.get_program(pid)
     storage.update_program(pid, {'emissions': {**row['emissions'],
@@ -503,6 +508,30 @@ def scenario_sweep_respects_programs_enabled_too():
     check(wrote == 0, f"programs_enabled off means off too, got {wrote}")
 
 
+def scenario_generate_due_reaches_two_days_out():
+    """The scan is practice_windows(tomorrow, tomorrow+2d), matching the
+    design's Generation pipeline section, so a slot due the evening after
+    tomorrow already gets tonight's sweep rather than waiting for the one
+    right before it -- a skipped or failed night still leaves a second
+    chance. The fixture's window lands ONLY on the far edge (today+3,
+    i.e. tomorrow+2) and nowhere nearer, so a pass here proves the scan
+    actually reaches that far -- under the narrower single-day-of-slack
+    range this replaced, this exact fixture would have produced zero."""
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    storage.set_app_state('program_lessons_swept', '')
+    _due_fixture('pl-c4', day_offset=3)
+    orig = mp.call_pool_json
+    mp.call_pool_json = lambda *a, **k: {
+        'scenes': [{'type': 'say', 'text': 'Chords are shapes.'}],
+        '_model': 'gemma-4-31b-it'}
+    try:
+        wrote = pl.generate_due()
+    finally:
+        mp.call_pool_json = orig
+    check(wrote == 1, f"a window two days past tomorrow is still reached, got {wrote}")
+
+
 if __name__ == '__main__':
     scenario_scene_cap()
     scenario_text_cap_and_type_whitelist()
@@ -528,4 +557,5 @@ if __name__ == '__main__':
     scenario_generate_due_end_to_end()
     scenario_sweep_respects_the_switch()
     scenario_sweep_respects_programs_enabled_too()
+    scenario_generate_due_reaches_two_days_out()
     print("test_program_lessons OK")
