@@ -408,6 +408,11 @@ function lessonPlayer() {
         // countdown, but it is exactly as scene-local as either one).
         cardIdx: 0, cardFlipped: false, counterVal: 0, counterRunning: false,
         counterTimer: null,
+        // The current beat's cues and how many of them have already been
+        // said. A cursor rather than a set, which is safe because the
+        // sanitizer stores them sorted by `at`. Both reset on every scene
+        // entry and cleared in stopSound().
+        cues: [], cuesFired: 0,
         // Argyle's voice, silenced for THIS session only. Session-local
         // like every other flag here, and deliberately not a setting: a
         // quiet house tonight is not a household that never wants a voice,
@@ -873,6 +878,55 @@ function lessonPlayer() {
             } catch (e) { /* a voiceless device still runs the scene */ }
         },
 
+        // --- cues: what Argyle says while the drill runs ---------------
+        // A cue is owed by ELAPSED TIME, never delivered by a chain of
+        // setTimeouts. The difference matters on exactly the devices this
+        // runs on: a backgrounded tab, a locked phone, a wall board under
+        // load. A timeout chain in a throttled tab fires late and, worse,
+        // drifts away from the countdown ring beside it -- two clocks
+        // disagreeing about how far into a beat we are. This asks one
+        // question of the beat's own clock instead: what is owed by now?
+        //
+        // cuesDueAt is deliberately PURE -- no `this`, no clock of its
+        // own -- so it can be lifted out of this file and driven by a
+        // fake one under Node, which is how its firing order is actually
+        // verified (tests/test_lesson_player_runtime.py) rather than
+        // merely read. `fired` is a cursor, not a set, and that is safe
+        // because the sanitizer sorts cues by `at` before storing them.
+        cuesDueAt(cues, elapsed, fired) {
+            const list = Array.isArray(cues) ? cues : [];
+            const due = [];
+            let n = Math.max(0, fired | 0);
+            while (n < list.length && ((list[n] || {}).at || 0) <= elapsed) {
+                due.push(list[n]);
+                n++;
+            }
+            return due;
+        },
+        startCues(cues) {
+            this.cues = Array.isArray(cues) ? cues : [];
+            this.cuesFired = 0;
+            // A cue written for second 0 belongs to the moment the beat
+            // opens, not to its first tick a whole second later.
+            this.fireCuesTo(0);
+        },
+        fireCuesTo(elapsed) {
+            const due = this.cuesDueAt(this.cues, elapsed, this.cuesFired);
+            if (!due.length) return;
+            this.cuesFired += due.length;
+            due.forEach(c => this.runCue(c, elapsed));
+        },
+        // Said and forgotten. A cue leaves no trace of having fired
+        // anywhere outside this scene -- the same rule the checks and the
+        // rep counter already keep.
+        runCue(c, elapsed) {
+            if (!c) return;
+            if (c.say) this.say(c.say, c.speak_lang || this.scene().speak_lang,
+                                this.scene().tone);
+            if (c.count) this.say(String(Math.max(0, Math.round(elapsed))));
+            if (c.chime) this.playClick();
+        },
+
         // A tap, not a setting. A quiet house tonight is not a household
         // that never wants a voice, so this lives for the length of one
         // session and records nothing about the preference -- open the
@@ -932,6 +986,7 @@ function lessonPlayer() {
             // nowhere.
             this.cardIdx = 0; this.cardFlipped = false; this.counterVal = 0;
             this.counterRunning = false;
+            this.cues = []; this.cuesFired = 0;
             if (this.counterTimer) { clearInterval(this.counterTimer); this.counterTimer = null; }
             const s = this.scene();
             // The voice goes first, before any timer starts under it: a
@@ -940,6 +995,9 @@ function lessonPlayer() {
             // the same reason -- it punctuates them.
             if (s.speak) this.say(s.speak, s.speak_lang, s.tone);
             if (s.chime) this.playChime(s.chime);
+            // Armed BEFORE the timer starts, so a cue written for second
+            // 0 lands with the beat rather than a tick behind it.
+            if (s.type === 'do' && s.cues) this.startCues(s.cues);
             if (s.type === 'do' && s.seconds) this.startTimer(s.seconds);
             if (s.type === 'do' && s.metronome_bpm) this.startMetronome(s.metronome_bpm);
             if (s.type === 'show' && s.primitive) {
@@ -954,6 +1012,11 @@ function lessonPlayer() {
             this.timeLeft = secs;
             this.timer = setInterval(() => {
                 this.timeLeft = Math.max(0, this.timeLeft - 1);
+                // The countdown IS the beat's clock, so it is also the
+                // one that owes the cues -- one number, so the ring, the
+                // click and the voice can never disagree about how far in
+                // we are.
+                this.fireCuesTo(this.timerTotal - this.timeLeft);
                 if (this.timeLeft <= 0) { clearInterval(this.timer); this.timer = null; }
             }, 1000);
         },
@@ -998,6 +1061,9 @@ function lessonPlayer() {
             if (this.metroTimer) { clearInterval(this.metroTimer); this.metroTimer = null; }
             if (this.counterTimer) { clearInterval(this.counterTimer); this.counterTimer = null; }
             this.counterRunning = false;
+            // A cue belongs to one beat. Leaving the list armed would let
+            // the next scene's own timer fire the last one's lines.
+            this.cues = []; this.cuesFired = 0;
             // Speech is exactly as scene-local as the countdown and the
             // click beside it. Without this, advancing, closing or
             // finishing leaves a sentence still being read aloud into a

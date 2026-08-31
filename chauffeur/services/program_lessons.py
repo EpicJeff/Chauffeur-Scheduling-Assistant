@@ -54,6 +54,14 @@ CHIMES = ('success', 'fanfare')
 
 _NOTE_RE = re.compile(r'^[A-G][#b]?[0-8]$')
 
+# Cues: the lines Argyle says WHILE a drill runs, scheduled against that
+# beat's own clock. Eight is already more than any one beat can carry
+# without becoming a monologue over the top of the work, and the say cap
+# is well under a beat's own text because a cue arrives unprompted, over
+# whatever is happening, and has to be understood in one pass.
+MAX_CUES = 8
+MAX_CUE_SAY = 120
+
 # A BCP-47 tag only as far as this app can actually act on one: a language
 # and, optionally, a region. The player picks a voice by prefix, so the
 # region half is a preference the browser may ignore and the language half
@@ -316,6 +324,55 @@ def _voice_fields(raw: dict, origin: str) -> dict:
     return out
 
 
+def _clean_cues(raw, seconds, origin: str) -> list:
+    """The lines a beat says to itself while it runs.
+
+    A cue is scheduled against the beat's OWN clock, so a beat with no
+    `seconds` has no clock to schedule against and its cues go entirely --
+    the alternative is firing them at some moment nobody specified, which
+    is worse than a silent drill. The beat itself always survives; a cue
+    is an addition to a beat, never a condition of one.
+
+    `at` is clamped INTO the beat rather than dropped when it falls
+    outside it, because a model that writes 90 for a 60-second beat means
+    "at the end" far more often than it means nothing, and the clamp says
+    that unambiguously. Sorted here, once, so the player's own scheduler
+    can be a cursor over an ordered list rather than a search.
+
+    A screened `say` takes the WHOLE cue with it, not just its words: a
+    cue is one utterance, and the half of one that survives -- a bare
+    chime at 0:30 where a sentence was meant to be -- is noise with no
+    explanation attached. Same reason `sanitize_script` drops a `show`
+    outright when its primitive text is screened rather than degrading it
+    to the caption it just refused.
+    """
+    if not isinstance(raw, list) or not seconds:
+        return []
+    out = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        at = _to_int(item.get('at'))
+        if at is None:
+            continue
+        cue = {'at': max(0, min(int(seconds), at))}
+        say = _clean_text(item.get('say'), MAX_CUE_SAY)
+        if say:
+            if _screened(say, origin):
+                continue
+            cue['say'] = say
+        if item.get('count'):
+            cue['count'] = True
+        if item.get('chime'):
+            cue['chime'] = True
+        # A cue with nothing to say, count or sound is a scheduled
+        # silence: a timestamp and no event.
+        if len(cue) > 1:
+            out.append(cue)
+    out.sort(key=lambda c: c['at'])
+    return out[:MAX_CUES]
+
+
 def sanitize_script(scenes: list, origin: str) -> list:
     """Every script through one door. Clamps, whitelists, screens; returns
     what survives, which may be nothing — and nothing is a fine answer,
@@ -353,6 +410,9 @@ def sanitize_script(scenes: list, origin: str) -> list:
             bpm = _to_int(raw.get('metronome_bpm'))
             if bpm is not None:
                 scene['metronome_bpm'] = max(30, min(240, bpm))
+            cues = _clean_cues(raw.get('cues'), scene.get('seconds'), origin)
+            if cues:
+                scene['cues'] = cues
             scene.update(voice)
             out.append(scene)
         elif kind == 'check':
@@ -402,8 +462,13 @@ _SYSTEM = (
     "You write one practice-session lesson script for a family app. Reply "
     'with ONLY JSON: {"scenes": [...]}. Scene types: '
     '{"type":"say","text":""} a short teaching beat; '
-    '{"type":"do","text":"","seconds":60,"metronome_bpm":80} a '
-    "practice interlude (seconds and metronome_bpm optional); "
+    '{"type":"do","text":"","seconds":60,"metronome_bpm":80,'
+    '"cues":[{"at":30,"say":"Switch sides"}]} a '
+    "practice interlude (seconds and metronome_bpm optional; \"cues\" are "
+    "lines said out loud DURING the beat, each at its own second into it "
+    "-- up to 8, and only on a beat that has seconds. A cue carries "
+    "\"say\", or \"count\": true to say the seconds elapsed, or "
+    "\"chime\": true for a tick); "
     '{"type":"check","ask":""} a self-check with fixed answers; '
     '{"type":"show","primitive":{...},"caption":""} a visual. '
     'Primitives: {"kind":"timer","seconds":60}, '

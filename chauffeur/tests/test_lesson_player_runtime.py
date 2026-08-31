@@ -1637,6 +1637,140 @@ def scenario_the_chime_shares_the_players_one_audio_context():
     check("'fanfare'" in body, "with a two-note figure for the fanfare")
 
 
+# --- cues: what Argyle says mid-drill -----------------------------------
+
+
+def _cue_scheduler_under_node():
+    """The cue-due predicate, extracted and actually RUN.
+
+    Timing is the one thing reading a function cannot verify -- the
+    fretboard round taught this file that lesson about geometry and a
+    scheduler is the same class of thing. `cuesDueAt` is deliberately pure
+    (no `this`, no clock of its own) precisely so it can be lifted out and
+    driven by a fake one here.
+    """
+    import json
+    import os
+    import re
+    import shutil
+    import subprocess
+    import tempfile
+    node = shutil.which('node')
+    if not node:
+        print('  skip  node is not installed')
+        return None
+    src = _read('components/lesson_player.html')
+    m = re.search(r'\n        cuesDueAt\(cues, elapsed, fired\) \{(.*?)\n        \},',
+                  src, re.S)
+    check(m, "cuesDueAt(cues, elapsed, fired) is findable and pure")
+    body = m.group(1)
+    check('this.' not in body,
+          f"and it stays pure -- no player state inside it, got {body!r}")
+    harness = r'''
+const CUES = [{at: 0, say: 'Go'}, {at: 10, count: true},
+              {at: 30, say: 'Switch sides'}, {at: 30, chime: true},
+              {at: 55, say: 'Ten to go'}];
+const out = {};
+// A whole beat, second by second, exactly once each -- the order they
+// fire in and the second each one lands on.
+let fired = 0;
+const order = [];
+for (let t = 0; t <= 60; t++) {
+    const due = cuesDueAt(CUES, t, fired);
+    due.forEach(c => order.push([t, c.say || (c.count ? 'COUNT' : 'CHIME')]));
+    fired += due.length;
+}
+out.order = order;
+out.total = fired;
+// The same beat, but the clock jumps 0 -> 40 (a tab that was backgrounded,
+// a slow device): everything owed by 40 comes at once, nothing is skipped.
+let f2 = 0;
+const jump = cuesDueAt(CUES, 40, f2).map(c => c.at);
+out.jump = jump;
+// And re-entering a beat from zero owes everything again.
+out.replay = cuesDueAt(CUES, 60, 0).length;
+// Nothing is ever owed twice.
+out.afterAll = cuesDueAt(CUES, 60, CUES.length).length;
+console.log(JSON.stringify(out));
+'''
+    scratch = tempfile.mkdtemp(prefix='chauffeur_cues_')
+    path = os.path.join(scratch, 'run.mjs')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('function cuesDueAt(cues, elapsed, fired) {' + body + '\n}\n'
+                + harness)
+    proc = subprocess.run([node, path], capture_output=True, text=True,
+                          encoding='utf-8', errors='replace', timeout=60)
+    check(proc.returncode == 0, f"the scheduler threw:\n{proc.stderr[-1500:]}")
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def scenario_cues_fire_once_each_in_order():
+    got = _cue_scheduler_under_node()
+    if got is None:
+        return
+    check([row[0] for row in got['order']] == [0, 10, 30, 30, 55],
+          f"each cue lands on its own second, got {got['order']}")
+    check([row[1] for row in got['order']]
+          == ['Go', 'COUNT', 'Switch sides', 'CHIME', 'Ten to go'],
+          f"in the order the script wrote them, got {got['order']}")
+    check(got['total'] == 5, f"and exactly once each, got {got['total']}")
+    check(got['afterAll'] == 0, "a finished beat owes nothing more")
+
+
+def scenario_a_clock_that_jumps_still_owes_every_cue():
+    """A backgrounded tab, a locked phone, a slow board: the clock comes
+    back late. Cues are owed by elapsed time, never by a chain of
+    setTimeouts that a stalled tab silently swallows, so everything due
+    arrives together rather than being skipped."""
+    got = _cue_scheduler_under_node()
+    if got is None:
+        return
+    check(got['jump'] == [0, 10, 30, 30],
+          f"everything owed by 0:40 arrives at 0:40, got {got['jump']}")
+    check(got['replay'] == 5,
+          f"and re-entering the beat owes all of them again, got {got['replay']}")
+
+
+def scenario_the_cue_scheduler_rides_the_beats_own_timer():
+    """One clock. The countdown ring, the metronome and the cues cannot
+    disagree about how far into a beat we are if only one of them is
+    counting."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        startTimer\(secs\) \{(.*?)\n        \},', src, re.S)
+    check(m, "startTimer body is findable")
+    body = m.group(1) if m else ''
+    check('fireCuesTo' in body,
+          f"the timer's own tick is what fires cues, got {body!r}")
+    check('setTimeout' not in body,
+          "never a second, drifting chain of timeouts beside it")
+    m2 = re.search(r'\n        enterScene\(\) \{(.*?)\n        \},', src, re.S)
+    check('startCues' in (m2.group(1) if m2 else ''),
+          "and a do-beat arms its cues on entry")
+
+
+def scenario_cues_never_outlive_their_scene():
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        stopSound\(\) \{(.*?)\n        \},', src, re.S)
+    body = m.group(1) if m else ''
+    check('this.cues = []' in body and 'cuesFired' in body,
+          f"stopSound forgets the beat's cues, got {body!r}")
+
+
+def scenario_a_cue_stores_nothing():
+    src = _read('components/lesson_player.html')
+    import re
+    for fn in ('startCues', 'fireCuesTo', 'runCue'):
+        m = re.search(r'\n        ' + fn + r'\([^)]*\) \{(.*?)\n        \},',
+                      src, re.S)
+        check(m, f"{fn} exists")
+        body = m.group(1) if m else ''
+        for forbidden in ('fetch', 'localStorage', 'api'):
+            check(forbidden not in body,
+                  f"a cue is said and forgotten -- {fn} must not {forbidden}")
+
+
 if __name__ == '__main__':
     scenario_component_exists_and_renders_the_four_beats()
     scenario_checks_are_never_stored()
@@ -1717,4 +1851,9 @@ if __name__ == '__main__':
     scenario_a_preview_is_never_greeted()
     scenario_stopping_the_sound_stops_the_voice_too()
     scenario_the_chime_shares_the_players_one_audio_context()
+    scenario_cues_fire_once_each_in_order()
+    scenario_a_clock_that_jumps_still_owes_every_cue()
+    scenario_the_cue_scheduler_rides_the_beats_own_timer()
+    scenario_cues_never_outlive_their_scene()
+    scenario_a_cue_stores_nothing()
     print("test_lesson_player_runtime OK")

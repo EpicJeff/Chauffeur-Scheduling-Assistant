@@ -1419,6 +1419,87 @@ def scenario_a_model_echoing_the_voice_fields_stores_them_clean():
           f"got {scenes[1]}")
 
 
+# --- cues: the lines that land mid-beat ---------------------------------
+
+
+def scenario_cues_need_a_beat_with_a_clock_on_it():
+    """A cue is scheduled against the beat's OWN timer. A do-beat with no
+    seconds has no timer, so there is nothing to schedule against and the
+    cues go rather than firing at some invented moment."""
+    out = pl.sanitize_script([
+        {'type': 'do', 'text': 'Hold the plank.',
+         'cues': [{'at': 30, 'say': 'Halfway.'}]},
+    ], 'generated')
+    check(len(out) == 1 and 'cues' not in out[0],
+          f"no clock, no cues -- and the beat still plays, got {out}")
+
+
+def scenario_a_cue_is_clamped_inside_its_own_beat():
+    out = pl.sanitize_script([
+        {'type': 'do', 'text': 'Hold the plank.', 'seconds': 60,
+         'cues': [{'at': 5000, 'say': 'Done.'}, {'at': -20, 'say': 'Go.'}]},
+    ], 'generated')
+    ats = [c['at'] for c in out[0]['cues']]
+    check(ats == [0, 60], f"clamped to [0, seconds] and sorted, got {out[0]}")
+
+
+def scenario_cues_are_sorted_and_capped():
+    cues = [{'at': 60 - i, 'say': f'line {i}'} for i in range(20)]
+    out = pl.sanitize_script([
+        {'type': 'do', 'text': 'Practice.', 'seconds': 60, 'cues': cues},
+    ], 'generated')
+    kept = out[0]['cues']
+    check(len(kept) == pl.MAX_CUES, f"capped at {pl.MAX_CUES}, got {len(kept)}")
+    check(kept == sorted(kept, key=lambda c: c['at']),
+          f"and in the order they fire, got {kept}")
+
+
+def scenario_a_cue_says_something_or_it_is_not_a_cue():
+    out = pl.sanitize_script([
+        {'type': 'do', 'text': 'Practice.', 'seconds': 60,
+         'cues': [{'at': 10}, {'at': 20, 'count': True},
+                  {'at': 30, 'chime': True}, {'at': 40, 'say': 'Switch.'},
+                  'not a cue at all']},
+    ], 'generated')
+    kept = out[0]['cues']
+    check([c['at'] for c in kept] == [20, 30, 40],
+          f"an empty cue and a non-cue are both dropped, got {kept}")
+    check(kept[0].get('count') is True and kept[1].get('chime') is True,
+          f"the two wordless kinds survive as bools, got {kept}")
+
+
+def scenario_a_spoken_cue_runs_the_same_screens_as_everything_else():
+    """A cue is the most spoken thing in a lesson -- it arrives mid-drill,
+    unprompted, in the house voice. The screens matter most here."""
+    made_up = pl.sanitize_script([
+        {'type': 'do', 'text': 'Four changes.', 'seconds': 60,
+         'cues': [{'at': 30, 'say': 'Keep your wrist straight.'},
+                  {'at': 45, 'say': 'Halfway.'}]},
+    ], 'generated')
+    check([c['say'] for c in made_up[0]['cues']] == ['Halfway.'],
+          f"a screened cue goes and its beat stays, got {made_up[0]}")
+    body = pl.sanitize_script([
+        {'type': 'do', 'text': 'Four changes.', 'seconds': 60,
+         'cues': [{'at': 30, 'say': 'This one burns calories.'}]},
+    ], 'cited')
+    check('cues' not in body[0] or body[0]['cues'] == [],
+          f"and body language dies on every origin, got {body[0]}")
+
+
+def scenario_a_cue_line_is_shorter_than_a_beat_of_text():
+    out = pl.sanitize_script([
+        {'type': 'do', 'text': 'Practice.', 'seconds': 60,
+         'cues': [{'at': 10, 'say': 'x' * 900}]},
+    ], 'generated')
+    check(len(out[0]['cues'][0]['say']) == pl.MAX_CUE_SAY,
+          f"clamped to {pl.MAX_CUE_SAY}, got {out[0]['cues'][0]}")
+
+
+def scenario_the_schema_names_cues():
+    check('"cues"' in pl._SYSTEM, "the model is told cues exist")
+    check('"at"' in pl._SYSTEM, "and what schedules one")
+
+
 if __name__ == '__main__':
     scenario_scene_cap()
     scenario_text_cap_and_type_whitelist()
@@ -1482,4 +1563,11 @@ if __name__ == '__main__':
     scenario_generation_tells_the_model_who_is_practising()
     scenario_generation_tells_the_model_what_month_it_is()
     scenario_a_model_echoing_the_voice_fields_stores_them_clean()
+    scenario_cues_need_a_beat_with_a_clock_on_it()
+    scenario_a_cue_is_clamped_inside_its_own_beat()
+    scenario_cues_are_sorted_and_capped()
+    scenario_a_cue_says_something_or_it_is_not_a_cue()
+    scenario_a_spoken_cue_runs_the_same_screens_as_everything_else()
+    scenario_a_cue_line_is_shorter_than_a_beat_of_text()
+    scenario_the_schema_names_cues()
     print("test_program_lessons OK")
