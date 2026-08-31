@@ -521,6 +521,32 @@ def scenario_a_plan_with_no_ladder_is_untouched():
           f"and the window says nothing about one, got {w}")
 
 
+def scenario_a_window_says_whether_its_owner_practises_alone():
+    """The grown-up flag on a scene is only half an answer: a scene may
+    say "an adult should be here for this" and the person following it
+    may well BE the adult. The window carries the other half, from the
+    same `practices_alone` capability the programs list already reads --
+    never `own_account`, which is a different fact, and never a guess
+    from an age.
+
+    Default TRUE, deliberately: an adult has no stage and no capability
+    list, and an adult practises alone. A flag that defaulted the other
+    way would put a hand-off chip on every grown-up's own session."""
+    _reset()
+    today = datetime.date.today()
+    storage.update_member('kid', {'stage_override': 'sprout'})
+    _program(member_id='kid')
+    w = prog.practice_windows(today, today)[0]
+    check(w['owner_practices_alone'] is False,
+          f"a sprout's window says a grown-up is needed, got {w}")
+
+    _reset()
+    _program(member_id='mom')
+    w = prog.practice_windows(today, today)[0]
+    check(w['owner_practices_alone'] is True,
+          f"and an adult's own session says nothing of the kind, got {w}")
+
+
 if __name__ == '__main__':
     scenario_an_approved_window_has_a_date_a_time_and_the_session()
     scenario_only_a_live_program_holds_time()
@@ -546,4 +572,5 @@ if __name__ == '__main__':
     scenario_the_ladder_has_a_hand_on_it()
     scenario_a_window_says_which_lesson_and_where_to_read_it()
     scenario_a_plan_with_no_ladder_is_untouched()
+    scenario_a_window_says_whether_its_owner_practises_alone()
     print("test_practice_windows OK")

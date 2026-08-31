@@ -1793,35 +1793,36 @@ def scenario_a_cue_stores_nothing():
                   f"a cue is said and forgotten -- {fn} must not {forbidden}")
 
 
-# --- a card that can be heard -------------------------------------------
+# --- the grown-up flag --------------------------------------------------
 
 
-def scenario_a_card_offers_a_speaker_tap_only_when_it_has_a_voice():
+def scenario_a_grown_up_scene_asks_and_never_locks():
+    """A flag, not a gate. The knife is already on the counter by the
+    time this draws, and a player that refused to advance would leave a
+    child holding it with nothing on screen."""
     src = _read('components/lesson_player.html')
     import re
-    m = re.search(r'\s{8}cardCanSpeak\(\) \{(.*?)\s{8}\},', src, re.S)
-    check(m, "cardCanSpeak exists")
+    m = re.search(r'\s{8}needsGrownUp\(\) \{(.*?)\s{8}\},', src, re.S)
+    check(m, "needsGrownUp exists")
     body = m.group(1) if m else ''
-    check('phoneme' in body and 'speak' in body,
-          f"either a rendered letter sound or words to say, got {body!r}")
-    check(re.search(r'x-show="cardCanSpeak\(\)"', src),
-          "and the tap is bound straight to it, so a card with neither "
-          "draws no button at all")
+    check('grownup' in body, f"it reads the scene's own flag, got {body!r}")
+    check('owner_practices_alone' in body,
+          "and the window's answer about who is following it -- a scene "
+          "saying an adult should be here means nothing when the person "
+          "following it IS the adult")
+    check(re.search(r'x-show="needsGrownUp\(\)"', src),
+          "the chip is bound to it")
+    check('advance' not in body,
+          "and it never touches whether the lesson may go on")
 
 
-def scenario_a_letter_sound_plays_its_own_file_never_a_guess():
+def scenario_the_grown_up_chip_is_said_out_loud_once():
     src = _read('components/lesson_player.html')
     import re
-    m = re.search(r'\s{8}speakCard\(\) \{(.*?)\s{8}\},', src, re.S)
-    check(m, "speakCard exists")
+    m = re.search(r'\s{8}enterScene\(\) \{(.*?)\s{8}\},', src, re.S)
     body = m.group(1) if m else ''
-    check('static/phonics/' in body,
-          f"a phoneme plays the rendered file, got {body!r}")
-    check('this.say(' in body or 'sayLocal(' in body,
-          "and ordinary words go through the speech wrapper")
-    for forbidden in ('localStorage', "'POST'"):
-        check(forbidden not in body,
-              f"tapping a card records nothing -- no {forbidden}")
+    check('needsGrownUp()' in body,
+          f"the hand-off is spoken on entry, got {body!r}")
 
 
 # --- a card that can be heard -------------------------------------------
@@ -2533,6 +2534,8 @@ if __name__ == '__main__':
     scenario_a_cue_stores_nothing()
     scenario_a_card_offers_a_speaker_tap_only_when_it_has_a_voice()
     scenario_a_letter_sound_plays_its_own_file_never_a_guess()
+    scenario_a_grown_up_scene_asks_and_never_locks()
+    scenario_the_grown_up_chip_is_said_out_loud_once()
     scenario_a_card_offers_a_speaker_tap_only_when_it_has_a_voice()
     scenario_a_letter_sound_plays_its_own_file_never_a_guess()
     scenario_a_fade_only_ever_tightens()

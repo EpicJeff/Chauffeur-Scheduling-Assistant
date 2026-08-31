@@ -18,7 +18,7 @@ import re
 import time
 import uuid
 
-from services import storage
+from services import stages, storage
 
 # The states a program can be in. `paused` is a peer of `active`, not a flavour
 # of failure: if the only way out of a program is to fail it, people fail it.
@@ -724,6 +724,21 @@ def practice_windows(start: datetime.date, end: datetime.date,
                 'commitment_id': cid,
                 'member_id': row.get('member_id'),
                 'member_name': member.get('name') or '',
+                # Whether the person this window belongs to can be sent
+                # off to do it alone. Carried HERE rather than looked up
+                # by each surface, because a scene's own `grownup` flag
+                # is only half an answer -- the scene says "an adult
+                # should be here for this" and the person following it
+                # may well BE the adult, and only the window knows which.
+                #
+                # `practices_alone` and never `own_account`, the same
+                # distinction GET /api/programs already draws one door
+                # over: one is about having an email and a password, the
+                # other is about autonomy, and only the second decides
+                # this. Default True, because an adult has no stage and no
+                # capability list, and an adult practises alone.
+                'owner_practices_alone': bool(
+                    stages.capabilities(member).get('practices_alone', True)),
                 'title': row.get('title') or 'Practice',
                 'date': day.isoformat(),
                 'time_start': pc.get('time_start'),

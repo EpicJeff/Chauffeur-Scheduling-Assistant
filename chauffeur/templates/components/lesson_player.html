@@ -138,6 +138,19 @@
         <div class="uppercase tracking-widest text-teal-400 font-black"
              :class="panel ? 'text-sm' : 'text-[11px]'" x-show="kicker()" x-text="kicker()"></div>
 
+        <!-- Get a grown-up. Amber, the same semantic tint everything
+             else in this app uses for "this needs a person", and above
+             the beat rather than inside it so it reads before the knife
+             does. It is a hand-off, not a lock: the scene advances
+             exactly as it would without it, because a player that
+             refused would leave a child standing at a hot pan with a
+             blank screen. -->
+        <div x-show="needsGrownUp()"
+             class="rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold"
+             :class="panel ? 'px-6 py-2 text-xl' : 'px-4 py-1.5 text-xs'">
+            Get a grown-up for this part
+        </div>
+
         <!-- say: an animated text beat. Also where a `show` this player has
              no primitive for lands -- its caption reads exactly like a say,
              which is the sanitizer's own degrade rule mirrored client-side. -->
@@ -807,6 +820,21 @@ function lessonPlayer() {
         sayText() {
             const s = this.scene();
             return s.text || s.caption || (s.type === 'show' ? 'New material.' : '');
+        },
+
+        // Whether THIS scene, for THIS person, wants an adult standing
+        // there. Two halves, and both are needed: the script's own
+        // `grownup` flag says an adult should be present for a knife or
+        // an oven, and the window's `owner_practices_alone` says whether
+        // the person following it already IS one. A scene flagged for a
+        // grown-up on a grown-up's own session is noise.
+        //
+        // A FLAG, never a gate. The knife is already on the counter by
+        // the time this draws, and a player that refused to advance would
+        // leave a child holding it with nothing on screen.
+        needsGrownUp() {
+            return !!(this.scene().grownup
+                      && (this.w || {}).owner_practices_alone === false);
         },
 
         kicker() {
@@ -1496,7 +1524,16 @@ function lessonPlayer() {
             // cue that explains the drill is worth nothing said over the
             // drill's own countdown. The chime comes after the words for
             // the same reason -- it punctuates them.
-            if (s.speak) this.say(s.speak, s.speak_lang, s.tone);
+            // The hand-off goes FIRST, ahead of the scene's own line: if
+            // an adult is wanted here, that is the thing to have heard
+            // before anything else about the beat. Joined into ONE
+            // utterance rather than two calls, because say() cancels
+            // before it speaks -- a second call would cut the first off
+            // mid-sentence, and the sentence it would cut off is the one
+            // about the knife.
+            const lead = this.needsGrownUp() ? 'Get a grown-up for this part.' : '';
+            const line = [lead, s.speak].filter(Boolean).join(' ');
+            if (line) this.say(line, s.speak_lang, s.tone);
             if (s.chime) this.playChime(s.chime);
             // Armed BEFORE the timer starts, so a cue written for second
             // 0 lands with the beat rather than a tick behind it.
