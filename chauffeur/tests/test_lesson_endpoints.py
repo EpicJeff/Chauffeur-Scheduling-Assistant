@@ -105,6 +105,33 @@ def scenario_a_missing_program_reads_as_a_null_lesson():
     check(res == {'lesson': None}, f"got {res}")
 
 
+# --- unit_n magnitude (fix round 1): int() converts any FINITE magnitude
+# without complaint -- 10**30 and 1e300 are both ordinary valid JSON numbers
+# -- so a huge-but-finite unit_n is a different failure shape from the
+# non-numeric-string / literal-Infinity cases below (those raise inside
+# int() itself; this one does not). Unchecked, it would reach
+# storage._lesson_query's sqlite3 driver and raise THAT layer's own
+# unhandled OverflowError converting an out-of-range Python int to a SQLite
+# INTEGER. GET reads it the same way it reads a sibling's lesson or a
+# missing program: null, never a crash and never a 403/400 -- an
+# unreachable slot is an unreachable slot.
+
+def scenario_a_huge_finite_unit_n_reads_as_no_lesson_on_get():
+    pid = _reset()
+    import main
+    res = main.get_program_lesson_api(pid, phase_name='F', unit_n=10**30,
+                                      session_label='', request=None)
+    check(res == {'lesson': None}, f"got {res}")
+
+
+def scenario_a_huge_finite_float_unit_n_reads_as_no_lesson_on_get():
+    pid = _reset()
+    import main
+    res = main.get_program_lesson_api(pid, phase_name='F', unit_n=1e300,
+                                      session_label='', request=None)
+    check(res == {'lesson': None}, f"got {res}")
+
+
 def scenario_edit_sanitizes_and_marks_edited():
     pid = _reset()
     import main
@@ -190,6 +217,28 @@ def scenario_an_infinite_unit_n_is_a_400_not_a_crash():
     check(code == 400, f"an infinite unit_n must be a 400, got {code}")
 
 
+def scenario_a_huge_finite_unit_n_is_a_400_on_put():
+    """The failure shape the try/except above does NOT catch: int(10**30)
+    raises nothing at all, so only the explicit range check below it stands
+    between this and storage's own unhandled OverflowError."""
+    pid = _reset()
+    import main
+    code = _denied(main.put_program_lesson_api, pid, body={
+        'phase_name': 'F', 'unit_n': 10**30, 'session_label': '',
+        'scenes': [{'type': 'say', 'text': 'hi'}]}, request=None)
+    check(code == 400, f"a huge finite unit_n must be a 400, got {code}")
+
+
+def scenario_a_huge_finite_float_unit_n_is_a_400_on_put():
+    pid = _reset()
+    import main
+    code = _denied(main.put_program_lesson_api, pid, body={
+        'phase_name': 'F', 'unit_n': 1e300, 'session_label': '',
+        'scenes': [{'type': 'say', 'text': 'hi'}]}, request=None)
+    check(code == 400,
+          f"a huge finite float unit_n must be a 400, got {code}")
+
+
 def scenario_delete_clears_the_slot():
     pid = _reset()
     import main
@@ -198,6 +247,34 @@ def scenario_delete_clears_the_slot():
     check(storage.get_program_lesson(pid, {'phase_name': 'F', 'unit_n': 1,
                                            'session_label': ''}) is None,
           "gone; the sweep will write a fresh one")
+
+
+def scenario_a_huge_finite_unit_n_is_a_400_on_delete():
+    """DELETE's unit_n arrives as a plain function argument in every
+    existing scenario here (the direct-call idiom), so the FastAPI query
+    typing that would reject a non-numeric string never enters into it --
+    but magnitude is not shape, and nothing upstream of the handler bounds
+    it either."""
+    pid = _reset()
+    import main
+    code = _denied(main.delete_program_lesson_api, pid, phase_name='F',
+                   unit_n=10**30, session_label='', request=None)
+    check(code == 400, f"a huge finite unit_n must be a 400, got {code}")
+    check(storage.get_program_lesson(pid, {'phase_name': 'F', 'unit_n': 1,
+                                           'session_label': ''}) is not None,
+          "the refused delete must not have touched the real slot")
+
+
+def scenario_a_huge_finite_float_unit_n_is_a_400_on_delete():
+    pid = _reset()
+    import main
+    code = _denied(main.delete_program_lesson_api, pid, phase_name='F',
+                   unit_n=1e300, session_label='', request=None)
+    check(code == 400,
+          f"a huge finite float unit_n must be a 400, got {code}")
+    check(storage.get_program_lesson(pid, {'phase_name': 'F', 'unit_n': 1,
+                                           'session_label': ''}) is not None,
+          "the refused delete must not have touched the real slot")
 
 
 # --- Denial: ownership, not role, exactly as test_programs_endpoints.py's
@@ -262,12 +339,18 @@ if __name__ == '__main__':
     scenario_owner_reads_their_lesson()
     scenario_a_sibling_gets_null_not_the_lesson()
     scenario_a_missing_program_reads_as_a_null_lesson()
+    scenario_a_huge_finite_unit_n_reads_as_no_lesson_on_get()
+    scenario_a_huge_finite_float_unit_n_reads_as_no_lesson_on_get()
     scenario_edit_sanitizes_and_marks_edited()
     scenario_editing_a_cited_lesson_keeps_cited_screening()
     scenario_an_edit_that_sanitizes_to_nothing_is_a_soft_error()
     scenario_a_malformed_unit_n_is_a_400_not_a_crash()
     scenario_an_infinite_unit_n_is_a_400_not_a_crash()
+    scenario_a_huge_finite_unit_n_is_a_400_on_put()
+    scenario_a_huge_finite_float_unit_n_is_a_400_on_put()
     scenario_delete_clears_the_slot()
+    scenario_a_huge_finite_unit_n_is_a_400_on_delete()
+    scenario_a_huge_finite_float_unit_n_is_a_400_on_delete()
     scenario_a_child_cannot_edit_a_siblings_lesson()
     scenario_a_child_cannot_delete_a_siblings_lesson()
     scenario_a_parent_can_edit_a_childs_lesson()

@@ -5989,6 +5989,21 @@ def practice_windows_api(start_date: str = None, end_date: str = None,
 # THOSE modules already enforce; this layer only has to ask correctly and
 # gate who is asking, the same way the rest of the programs block does.
 
+# The upper bound on a slot's unit_n across all three verbs below. A NON-
+# numeric value is not the only bad shape: `int()` swallows any finite
+# magnitude without complaint (`int(1e300)` is a perfectly ordinary Python
+# int with 300-odd digits), so a huge-but-finite `unit_n` sails past both
+# FastAPI's own `int` query coercion (GET/DELETE) and the try/except below
+# (PUT) and reaches storage._lesson_query's sqlite3 driver, which raises its
+# OWN unhandled `OverflowError: Python int too large to convert to SQLite
+# INTEGER` trying to bind it as a parameter -- a second, different crash
+# than the one the try/except already guards against. No real slot is ever
+# anywhere near this large (`slot_of` feeds it the plan's own unit count),
+# so the bound is generous on purpose: wide enough to never clip a real
+# value, narrow enough that nothing past it can reach sqlite.
+_LESSON_UNIT_N_MAX = 2**31 - 1
+
+
 @app.get("/api/programs/{program_id}/lesson")
 def get_program_lesson_api(program_id: str, phase_name: str = '',
                            unit_n: int = 0, session_label: str = '',
@@ -6008,7 +6023,15 @@ def get_program_lesson_api(program_id: str, phase_name: str = '',
     id equals the owner; anyone `_program_list_scope` cannot resolve at all
     gets `_NOBODY`. Both of the last two read as null, not a refusal -- a
     sibling poking at this by hand learns nothing, not even that it exists.
+
+    An out-of-range `unit_n` (see `_LESSON_UNIT_N_MAX`) reads the same way:
+    a magnitude no real slot ever has names no real slot, so it is treated
+    exactly like one that does not exist yet rather than like a caller who
+    did something wrong -- this endpoint's own rule, not a 400/403 wearing
+    a read's clothes.
     """
+    if not (0 <= unit_n <= _LESSON_UNIT_N_MAX):
+        return {"lesson": None}
     row = storage.get_program(program_id)
     if not row:
         return {"lesson": None}
@@ -6050,6 +6073,16 @@ def put_program_lesson_api(program_id: str, body: dict = Body(default={}),
     except (TypeError, ValueError, OverflowError):
         raise HTTPException(status_code=400,
                             detail="unit_n must be a whole number")
+    # A magnitude, not merely a bad TYPE: `int()` converts any finite
+    # number without complaint, so a huge-but-finite unit_n (a plain JSON
+    # number, `1e300` or `10**30` alike) passes the try/except above clean
+    # and would otherwise reach storage._lesson_query's sqlite3 driver,
+    # which raises its own unhandled OverflowError binding it as a
+    # parameter. Same 400 shape as the non-numeric case just above -- the
+    # caller gets one consistent answer for "not a usable unit_n" rather
+    # than a 400 for one bad shape and a 500 for another.
+    if not (0 <= unit_n <= _LESSON_UNIT_N_MAX):
+        raise HTTPException(status_code=400, detail="unit_n is out of range")
     slot = {'phase_name': str(body.get('phase_name') or ''),
             'unit_n': unit_n,
             'session_label': str(body.get('session_label') or '')}
@@ -6080,6 +6113,12 @@ def delete_program_lesson_api(program_id: str, phase_name: str = '',
     if not row:
         raise HTTPException(status_code=404, detail="No such program")
     _program_permission_or_refuse(request, {}, row)
+    # Same magnitude guard as PUT, and for the same reason: FastAPI's own
+    # `int` query coercion has no upper bound, so a huge-but-finite unit_n
+    # sails past it and would otherwise reach storage._lesson_query's
+    # sqlite3 driver, which raises its own unhandled OverflowError.
+    if not (0 <= unit_n <= _LESSON_UNIT_N_MAX):
+        raise HTTPException(status_code=400, detail="unit_n is out of range")
     storage.delete_program_lesson(program_id, {
         'phase_name': phase_name, 'unit_n': unit_n,
         'session_label': session_label})
