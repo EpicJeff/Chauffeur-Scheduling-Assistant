@@ -3115,7 +3115,11 @@ def _lesson_query(program_id: str, slot: dict):
     # The slot IS the identity -- a second write to the same
     # (program_id, phase_name, unit_n, session_label) has to land on the
     # same row, which is what makes "one lesson per slot" true rather than
-    # aspirational.
+    # aspirational. slot=None is at least as realistic off an HTTP JSON
+    # body as {} -- an omitted key parses to a bare null -- so it is
+    # normalized here, the chokepoint get_program_lesson and
+    # delete_program_lesson both route every query through.
+    slot = slot or {}
     q = Query()
     return ((q.program_id == program_id)
             & (q.phase_name == str(slot.get('phase_name') or ''))
@@ -3130,6 +3134,12 @@ def upsert_program_lesson(program_id: str, slot: dict, data: dict) -> str:
     unless this write is itself a hand edit (`data['edited']` true): a hand
     edit may replace a hand edit, generation may not. Returns the row id, or
     '' when the write was refused."""
+    # Both arguments have to survive a bare None, not just an empty dict --
+    # slot is normalized again here, on top of _lesson_query's own guard,
+    # because this function reads slot directly a second time below (build
+    # of `row`) after _lesson_query has already returned.
+    slot = slot or {}
+    data = data or {}
     import uuid
     with db_lock:
         cond = _lesson_query(program_id, slot)

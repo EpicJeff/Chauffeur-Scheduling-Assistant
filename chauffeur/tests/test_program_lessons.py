@@ -214,6 +214,26 @@ def scenario_delete_clears_a_program():
           "the other program keeps its lesson")
 
 
+def scenario_none_slot_and_data_never_raise():
+    """slot=None and data=None are at least as realistic off an HTTP JSON
+    body -- an omitted key parses to a bare null -- as the {} this door
+    already handled correctly. Every public function has to degrade a null
+    exactly like it already degrades {}, never raise: the same bar Task 4's
+    scenario_hostile_non_list_scenes_never_raise holds sanitize_script to."""
+    from services import storage
+    _lreset()
+    check(storage.get_program_lesson('p1', None) is None,
+          "get on a null slot returns None, not a crash")
+    check(storage.delete_program_lesson('p1', None) is False,
+          "delete on a null slot returns a falsy result, not a crash")
+    check(storage.delete_program_lesson('p1', None) is False,
+          "and again: still falsy, still no crash")
+    wrote = storage.upsert_program_lesson('p1', None, None)
+    check(bool(wrote), f"upsert on null slot AND null data still writes, got {wrote!r}")
+    check(storage.get_program_lesson('p1', {}) is not None,
+          "a null slot and an empty slot land on the same row")
+
+
 if __name__ == '__main__':
     scenario_scene_cap()
     scenario_text_cap_and_type_whitelist()
@@ -229,4 +249,5 @@ if __name__ == '__main__':
     scenario_edited_is_never_regenerated_over()
     scenario_delete_one_lesson()
     scenario_delete_clears_a_program()
+    scenario_none_slot_and_data_never_raise()
     print("test_program_lessons OK")
