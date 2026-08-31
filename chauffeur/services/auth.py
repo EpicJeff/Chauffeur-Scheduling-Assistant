@@ -399,6 +399,12 @@ RULES = [
     # disclosure here at all -- the exposure is a speaker, and that is
     # what those three guards are for.
     ('POST', '/api/lessons/speak', WALL, None),
+    # The same speaker, later. A wait beat arms one call into a room for
+    # when the dough is up; identical screens and caps to the route above,
+    # queued in app_state rather than said now. WALL for the same reason:
+    # kitchen work is exactly the kind of session that happens in front of
+    # a board rather than a phone.
+    ('POST', '/api/lessons/wait', WALL, None),
     # WHEN the household's practice windows are, for the surfaces that draw a
     # day -- the wall's calendar card included, which is why this is WALL and
     # not SIGNED_IN. It carries a title, a name and an hour, which is the same

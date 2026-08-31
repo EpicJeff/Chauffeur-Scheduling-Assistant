@@ -818,6 +818,70 @@ def scenario_the_speak_route_stores_nothing():
               f"the speak route must not {forbidden} -- nothing spoken is kept")
 
 
+# --- the wait's one-shot call -------------------------------------------
+
+
+def scenario_the_wait_route_exists_and_is_wall_tier():
+    import main
+    from services import auth
+    paths = [getattr(r, 'path', None) for r in main.app.routes]
+    check('/api/lessons/wait' in paths, "the route is registered")
+    check(auth.resolve('POST', '/api/lessons/wait') == auth.WALL,
+          "and a panel may arm one")
+
+
+def scenario_the_wait_route_arms_a_call_and_the_loop_fires_it():
+    """The one exception to no-unprompted-speech, and it is an exception a
+    person asked for by name: the dough does not care that the player was
+    closed, so the call survives the session that armed it."""
+    import main
+    from services import storage, program_lessons as pl
+    storage.set_app_state('lesson_wait_announces', [])
+    main._lesson_spoke_at = 0.0
+    out = main.lesson_wait_api(body={'room': 'kitchen', 'minutes': 45,
+                                     'text': 'The dough is ready.'})
+    check((out or {}).get('status') == 'armed', f"armed, got {out}")
+    queued = storage.get_app_state('lesson_wait_announces') or []
+    check(len(queued) == 1 and queued[0]['room'] == 'kitchen',
+          f"one entry, in app_state and on no program row, got {queued}")
+    check(pl.due_wait_announces(now_ts=queued[0]['fire_ts'] - 1) == [],
+          "nothing owed before its time")
+    due = pl.due_wait_announces(now_ts=queued[0]['fire_ts'])
+    check([d['text'] for d in due] == ['The dough is ready.'],
+          f"and exactly one line when it arrives, got {due}")
+
+
+def scenario_the_wait_route_screens_and_bounds_like_the_speak_route():
+    import main
+    from services import storage
+    storage.set_app_state('lesson_wait_announces', [])
+    main._lesson_spoke_at = 0.0
+    check(_denied(main.lesson_wait_api,
+                  body={'room': 'kitchen', 'minutes': 10,
+                        'text': 'This one burns calories.'}) == 400,
+          "body language never gets armed either")
+    check(_denied(main.lesson_wait_api,
+                  body={'room': '', 'minutes': 10, 'text': 'Ready.'}) == 400,
+          "a call needs a room to land in")
+    check(_denied(main.lesson_wait_api,
+                  body={'room': 'kitchen', 'minutes': 'soon',
+                        'text': 'Ready.'}) == 400,
+          "and a real number of minutes")
+    check((storage.get_app_state('lesson_wait_announces') or []) == [],
+          "and none of the three armed anything")
+
+
+def scenario_a_wait_is_armed_on_no_program_row():
+    """Nothing about a lesson is ever written to the program. A wait is a
+    timer in app_state that happens to know a room and a sentence."""
+    import inspect
+    import main
+    src = inspect.getsource(main.lesson_wait_api)
+    for forbidden in ('upsert_program', 'add_program', 'program_lessons_table'):
+        check(forbidden not in src,
+              f"the wait route must not touch {forbidden}")
+
+
 if __name__ == '__main__':
     scenario_endpoints_exist()
     scenario_the_wall_route_exists_and_is_wall_tier()
@@ -866,4 +930,8 @@ if __name__ == '__main__':
     scenario_the_speak_route_screens_what_it_is_asked_to_say()
     scenario_the_speak_route_throttles()
     scenario_the_speak_route_stores_nothing()
+    scenario_the_wait_route_exists_and_is_wall_tier()
+    scenario_the_wait_route_arms_a_call_and_the_loop_fires_it()
+    scenario_the_wait_route_screens_and_bounds_like_the_speak_route()
+    scenario_a_wait_is_armed_on_no_program_row()
     print("test_lesson_endpoints OK")

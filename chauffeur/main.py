@@ -222,6 +222,24 @@ async def push_notification_loop():
             except Exception as pe:
                 print(f"Practice window push error: {pe}")
 
+            # A wait beat's call into a room, when its time is up. The one
+            # thing in the lesson arc that speaks without a session open,
+            # and only because somebody in that session asked for it by
+            # name: "tell me when the dough is ready". Cheap when idle
+            # (one app_state read), one-shot by construction
+            # (`due_wait_announces` pops what it returns), and it survives
+            # a restart because the queue is persisted rather than held in
+            # this process.
+            try:
+                from services import (announce as _wait_announce,
+                                      program_lessons as _wait_lessons)
+                for _w in await asyncio.to_thread(_wait_lessons.due_wait_announces):
+                    await asyncio.to_thread(_wait_announce.announce,
+                                            _w.get('room') or '',
+                                            _w.get('text') or '')
+            except Exception as we:
+                print(f"Lesson wait announce error: {we}")
+
             # Tomorrow's lessons are written by the 300s loop
             # (`poll_schedule`), not here. This loop's job is time-critical
             # — departure notifications and practice pushes fire off it —
@@ -6315,6 +6333,43 @@ def lesson_speak_api(body: dict = Body(default={})):
                             detail="One line at a time.")
     _lesson_spoke_at = now
     return _announce.announce(room, text)
+
+
+@app.post("/api/lessons/wait")
+def lesson_wait_api(body: dict = Body(default={})):
+    """Arm one call into a room for later — the wait beat's whole point.
+
+    The single exception to this arc's "Argyle never speaks unprompted",
+    and an exception a person asked for by name, out loud, in the session
+    that armed it: the dough does not care that the player was closed and
+    the tablet went to sleep. So the call outlives the session, which is
+    why it is queued in `app_state` (persisted, survives a restart) and on
+    no program row (a lesson records nothing about how it went, and an
+    armed timer is not a fact about anybody's plan).
+
+    Same door guards as `/api/lessons/speak` above and for the same
+    reasons — it ends in the same speaker. The one it does NOT share is
+    the rate limit: arming is not speaking, a script may legitimately set
+    two waits back to back, and the queue's own cap is what bounds this
+    one.
+    """
+    from services import program_lessons as _pl
+    room = str((body or {}).get('room') or '').strip()
+    text = _pl._clean_text((body or {}).get('text'), _pl.MAX_WAIT_ANNOUNCE + 1)
+    minutes = _pl._to_int((body or {}).get('minutes'))
+    if not room or not text or minutes is None:
+        raise HTTPException(status_code=400,
+                            detail="A room, a number of minutes, and something "
+                                   "to say when they are up.")
+    if len(text) > _pl.MAX_WAIT_ANNOUNCE:
+        raise HTTPException(status_code=400,
+                            detail=f"A call is at most {_pl.MAX_WAIT_ANNOUNCE} "
+                                   f"characters.")
+    if _pl._screened(text, 'generated'):
+        raise HTTPException(status_code=400,
+                            detail="That is not something this app says out loud.")
+    entry = _pl.arm_wait_announce(room, text, minutes)
+    return {'status': 'armed', 'fire_ts': entry['fire_ts']}
 
 
 # The magnitude bound `days` and `limit` share below, mirroring

@@ -62,6 +62,24 @@ _NOTE_RE = re.compile(r'^[A-G][#b]?[0-8]$')
 MAX_CUES = 8
 MAX_CUE_SAY = 120
 
+# A wait beat: the dough proofs, the glue sets, the paint dries. Three
+# hours is the ceiling because past that a household is not "in a
+# session" any more, they are doing something else and will come back
+# tomorrow -- and a timer promising to call a room in the middle of the
+# night is a promise this app should not make.
+MAX_WAIT_MINUTES = 180
+MAX_WAIT_ANNOUNCE = 120
+
+# How many armed calls the queue may hold at once, and how long past its
+# time an unfired one is still worth saying. The cap is a runaway guard,
+# not a product limit -- one household cannot plausibly have twenty
+# things proofing at once, and a panel looping on a bug can. The staleness
+# window is the answer to an app that was off overnight: a call about
+# dough somebody has already thrown out is not news, it is a confusing
+# voice in an empty kitchen.
+MAX_WAIT_QUEUE = 20
+WAIT_STALE_S = 24 * 3600
+
 # A BCP-47 tag only as far as this app can actually act on one: a language
 # and, optionally, a region. The player picks a voice by prefix, so the
 # region half is a preference the browser may ignore and the language half
@@ -420,6 +438,23 @@ def sanitize_script(scenes: list, origin: str) -> list:
             if not ask or _screened(ask, origin):
                 continue
             out.append({'type': 'check', 'ask': ask, **voice})
+        elif kind == 'wait':
+            # A beat whose whole content is that nothing happens for a
+            # while. It needs BOTH halves or it is not a wait: minutes
+            # with no words is a blank screen counting down, and words
+            # with no minutes is a `say` that thinks it is a timer.
+            text = _clean_text(raw.get('text'))
+            mins = _to_int(raw.get('minutes'))
+            if not text or mins is None or _screened(text, origin):
+                continue
+            scene = {'type': 'wait',
+                     'minutes': max(1, min(MAX_WAIT_MINUTES, mins)),
+                     'text': text}
+            announce = _clean_text(raw.get('announce'), MAX_WAIT_ANNOUNCE)
+            if announce and not _screened(announce, origin):
+                scene['announce'] = announce
+            scene.update(voice)
+            out.append(scene)
         elif kind == 'show':
             prim = raw.get('primitive')
             caption = _clean_text(raw.get('caption'), MAX_SHORT_TEXT)
@@ -448,6 +483,93 @@ def sanitize_script(scenes: list, origin: str) -> list:
     return out
 
 
+# --- the wait's one-shot call --------------------------------------------
+# The single exception to "Argyle never speaks unprompted", and it is an
+# exception a person asked for by name, out loud, in this session: the
+# dough does not care that the player was closed and the tablet went to
+# sleep. So the call outlives the session that armed it.
+#
+# It lives in `app_state` and on NO program row. That is the same rule the
+# rest of this module keeps -- a lesson records nothing about how it went
+# -- and it buys the one property this needs: app_state persists, so a
+# restart between the arming and the firing loses nothing, while a program
+# row would have turned an armed timer into a fact about somebody's plan.
+#
+# The queue holds a plain list of {fire_ts, room, text}. No id, no program,
+# no person: a fired entry is a sentence and a room, and there is nothing
+# in it to read as a record of anyone.
+
+WAIT_STATE_KEY = 'lesson_wait_announces'
+
+
+def arm_wait_announce(room: str, text: str, minutes: int, now_ts=None) -> dict:
+    """Queue one call into a room, `minutes` from now.
+
+    Pruned on every write rather than on a schedule of its own: the queue
+    is only ever touched by an arm or a fire, so there is no third moment
+    at which stale entries could be swept, and doing it here means the
+    list cannot grow across an app that never fires anything (every panel
+    unreachable, HA down for a week).
+    """
+    import time
+    from services import storage
+    now_ts = float(now_ts if now_ts is not None else time.time())
+    mins = max(1, min(MAX_WAIT_MINUTES, _to_int(minutes) or 0))
+    entry = {'fire_ts': now_ts + mins * 60,
+             'room': str(room or '')[:60],
+             'text': _clean_text(text, MAX_WAIT_ANNOUNCE)}
+    queue = storage.get_app_state(WAIT_STATE_KEY) or []
+    if not isinstance(queue, list):
+        queue = []
+    queue = [e for e in queue
+             if isinstance(e, dict)
+             and float(e.get('fire_ts') or 0) > now_ts - WAIT_STALE_S]
+    queue.append(entry)
+    # Newest wins when the cap bites: an overflowing queue is a bug
+    # somewhere upstream, and the sentence a person just asked for is more
+    # likely to matter than one from an hour ago that never fired.
+    storage.set_app_state(WAIT_STATE_KEY, queue[-MAX_WAIT_QUEUE:])
+    return entry
+
+
+def due_wait_announces(now_ts=None) -> list:
+    """Everything owed by now, POPPED. One shot: an entry this returns is
+    already gone from the queue, so a caller that crashes between reading
+    and speaking loses a sentence rather than repeating one forever.
+
+    A call more than a day past its time is dropped rather than said. An
+    app that was off overnight coming back to announce that dough somebody
+    has already thrown out is a confusing voice in an empty kitchen, and
+    the timer it belonged to is long past being useful.
+
+    Never raises -- it is called from the 30s loop, which has real work
+    behind it.
+    """
+    import time
+    from services import storage
+    now_ts = float(now_ts if now_ts is not None else time.time())
+    try:
+        queue = storage.get_app_state(WAIT_STATE_KEY) or []
+        if not isinstance(queue, list) or not queue:
+            return []
+        due, keep = [], []
+        for e in queue:
+            if not isinstance(e, dict):
+                continue
+            ts = float(e.get('fire_ts') or 0)
+            if ts > now_ts:
+                keep.append(e)
+            elif ts > now_ts - WAIT_STALE_S:
+                due.append(e)
+            # else: stale, dropped without a word
+        if len(keep) != len(queue):
+            storage.set_app_state(WAIT_STATE_KEY, keep)
+        return due
+    except Exception as e:
+        print(f"[lessons] wait queue read failed: {e}")
+        return []
+
+
 # --- generation ---------------------------------------------------------
 # A script has exactly one source, decided by the plan's own origin. A
 # cited plan may only speak from the unit's page, re-read HERE rather than
@@ -470,6 +592,10 @@ _SYSTEM = (
     "\"say\", or \"count\": true to say the seconds elapsed, or "
     "\"chime\": true for a tick); "
     '{"type":"check","ask":""} a self-check with fixed answers; '
+    '{"type":"wait","minutes":45,"text":"","announce":""} time in which '
+    "nothing happens (the dough rises, the glue sets) -- the app calls the "
+    "room with \"announce\" when it is up, so use this instead of making "
+    "somebody stand and watch a clock; "
     '{"type":"show","primitive":{...},"caption":""} a visual. '
     'Primitives: {"kind":"timer","seconds":60}, '
     '{"kind":"metronome","bpm":80}, '

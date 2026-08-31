@@ -182,6 +182,31 @@
             </div>
         </template>
 
+        <!-- wait: a beat whose content is that nothing happens. The
+             countdown is here so a person CAN watch it, and the line
+             underneath says they do not have to -- the call into the room
+             is armed on the server the moment this scene opens and
+             survives the player being closed, the tablet sleeping and the
+             app restarting. Honest about the other half of that bargain
+             too: a lesson keeps no place, so coming back means starting
+             from the top. Said on the surface rather than discovered. -->
+        <template x-if="scene().type === 'wait'">
+            <div class="w-full max-w-sm flex flex-col items-center gap-4">
+                <div class="font-bold text-gray-100" :class="panel ? 'text-3xl' : 'text-xl'"
+                     x-text="scene().text"></div>
+                <div class="font-black tabular-nums text-teal-300"
+                     :class="panel ? 'text-7xl' : 'text-5xl'"
+                     x-text="fmtClock(waitLeft)"></div>
+                <div class="text-gray-400" :class="panel ? 'text-lg' : 'text-xs'"
+                     x-show="scene().announce">
+                    <span x-show="room">You can close this — Argyle will call the
+                        <span x-text="room"></span> when it is up. Coming back
+                        starts the lesson again from the top.</span>
+                    <span x-show="!room">This screen will tell you when it is up.</span>
+                </div>
+            </div>
+        </template>
+
         <!-- show: primitive dispatch. Every kind
              services/program_lessons.py's PRIMITIVES dict validates now
              draws a real picture: timer/metronome (the ring and pulse
@@ -422,6 +447,9 @@ function lessonPlayer() {
         // Which room this SCREEN is in, on a wall panel. Empty everywhere
         // else and empty until somebody says -- see loadRoom()/askRoom().
         room: '',
+        // A wait beat's on-screen countdown. Cosmetic only -- the call
+        // into the room is armed on the server and outlives this.
+        waitLeft: 0, waitTimer: null,
         // The current beat's cues and how many of them have already been
         // said. A cursor rather than a set, which is safe because the
         // sanitizer stores them sorted by `at`. Both reset on every scene
@@ -1097,6 +1125,8 @@ function lessonPlayer() {
             this.cardIdx = 0; this.cardFlipped = false; this.counterVal = 0;
             this.counterRunning = false;
             this.cues = []; this.cuesFired = 0;
+            this.waitLeft = 0;
+            if (this.waitTimer) { clearInterval(this.waitTimer); this.waitTimer = null; }
             if (this.counterTimer) { clearInterval(this.counterTimer); this.counterTimer = null; }
             const s = this.scene();
             // The voice goes first, before any timer starts under it: a
@@ -1108,12 +1138,57 @@ function lessonPlayer() {
             // Armed BEFORE the timer starts, so a cue written for second
             // 0 lands with the beat rather than a tick behind it.
             if (s.type === 'do' && s.cues) this.startCues(s.cues);
+            if (s.type === 'wait') this.startWait(s);
             if (s.type === 'do' && s.seconds) this.startTimer(s.seconds);
             if (s.type === 'do' && s.metronome_bpm) this.startMetronome(s.metronome_bpm);
             if (s.type === 'show' && s.primitive) {
                 if (s.primitive.kind === 'timer' && s.primitive.seconds) this.startTimer(s.primitive.seconds);
                 if (s.primitive.kind === 'metronome' && s.primitive.bpm) this.startMetronome(s.primitive.bpm);
             }
+        },
+
+        // A wait beat: arm the call, then count down on screen for
+        // whoever wants to watch. The arming happens FIRST and on the
+        // server, so the promise this scene makes survives everything
+        // this screen can do next -- closing, sleeping, reloading. The
+        // on-screen countdown is the cosmetic half and dies with the
+        // scene, which is why stopSound() clears it and nothing cancels
+        // the armed call.
+        //
+        // A room is required to arm one: with no room there is nothing to
+        // call, and the scene says so rather than promising a voice that
+        // is not coming. The panel-only rule does not apply here the way
+        // it does to roomSay -- a phone standing in a kitchen while dough
+        // proofs is exactly as valid a caller -- but a room is still how
+        // the announce path finds a speaker, and only a panel has one
+        // bound today.
+        startWait(s) {
+            const mins = Math.max(1, s.minutes || 1);
+            this.waitLeft = mins * 60;
+            this.say(s.announce
+                ? `Timer set. I'll say when it's up.`
+                : `${mins} minutes.`, s.speak_lang, s.tone);
+            if (this.room && s.announce) {
+                try {
+                    fetch((window.chfBase || '') + 'api/lessons/wait', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({room: this.room, minutes: mins,
+                                              text: s.announce}),
+                    }).catch(() => {});
+                } catch (e) { /* the on-screen countdown still runs */ }
+            }
+            if (this.waitTimer) clearInterval(this.waitTimer);
+            this.waitTimer = setInterval(() => {
+                this.waitLeft = Math.max(0, this.waitLeft - 1);
+                if (this.waitLeft <= 0) {
+                    clearInterval(this.waitTimer); this.waitTimer = null;
+                    // Whoever DID stay and watch gets told here, locally,
+                    // rather than waiting on the room's own call.
+                    this.sayLocal(s.announce || 'Time.');
+                    this.playChime('success');
+                }
+            }, 1000);
         },
 
         startTimer(secs) {
@@ -1174,6 +1249,11 @@ function lessonPlayer() {
             // A cue belongs to one beat. Leaving the list armed would let
             // the next scene's own timer fire the last one's lines.
             this.cues = []; this.cuesFired = 0;
+            // The countdown on screen stops with the scene. The armed
+            // call does NOT -- it lives on the server precisely so that
+            // closing this player cannot take it back, which is the whole
+            // promise a wait beat makes.
+            if (this.waitTimer) { clearInterval(this.waitTimer); this.waitTimer = null; }
             // Speech is exactly as scene-local as the countdown and the
             // click beside it. Without this, advancing, closing or
             // finishing leaves a sentence still being read aloud into a

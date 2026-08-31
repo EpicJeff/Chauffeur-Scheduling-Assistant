@@ -1782,6 +1782,48 @@ def scenario_a_cue_stores_nothing():
                   f"a cue is said and forgotten -- {fn} must not {forbidden}")
 
 
+# --- wait beats ---------------------------------------------------------
+
+
+def scenario_a_wait_beat_renders_its_own_countdown():
+    src = _read('components/lesson_player.html')
+    check("scene().type === 'wait'" in src, "the player draws a wait beat")
+    check('waitLeft' in src, "with a countdown of its own")
+    import re
+    m = re.search(r'\n        startWait\(s\) \{(.*?)\n        \},', src, re.S)
+    check(m, "startWait exists")
+    body = m.group(1) if m else ''
+    check('api/lessons/wait' in body,
+          f"and arms the call before the waiting starts, got {body!r}")
+
+
+def scenario_a_wait_says_out_loud_that_it_will_call_you_back():
+    """The whole point of a wait beat is that you go away. A countdown
+    nobody is watching is a countdown that needed to say so."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        startWait\(s\) \{(.*?)\n        \},', src, re.S)
+    body = m.group(1) if m else ''
+    check('this.say(' in body, f"it says it, got {body!r}")
+
+
+def scenario_closing_a_wait_leaves_the_call_armed():
+    """Honest consequence of the no-persistence rule, stated on the
+    surface rather than hidden: the announce survives the player closing
+    because it lives in app_state, and reopening starts the lesson from
+    the top because a lesson keeps no place."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        stopSound\(\) \{(.*?)\n        \},', src, re.S)
+    body = m.group(1) if m else ''
+    check('waitTimer' in body,
+          "the on-screen countdown stops with the scene")
+    check('lessons/wait' not in body,
+          "but nothing cancels the call -- the room is still expecting it")
+    check('you can close this' in src.lower() or 'close this' in src.lower(),
+          "and the surface says so out loud")
+
+
 # --- the room voice -----------------------------------------------------
 
 
@@ -1933,6 +1975,9 @@ if __name__ == '__main__':
     scenario_the_cue_scheduler_rides_the_beats_own_timer()
     scenario_cues_never_outlive_their_scene()
     scenario_a_cue_stores_nothing()
+    scenario_a_wait_beat_renders_its_own_countdown()
+    scenario_a_wait_says_out_loud_that_it_will_call_you_back()
+    scenario_closing_a_wait_leaves_the_call_armed()
     scenario_only_session_level_lines_reach_the_room()
     scenario_the_room_voice_is_a_panel_only_fork()
     scenario_the_room_is_asked_once_and_remembered_on_the_device()

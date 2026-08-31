@@ -1181,6 +1181,104 @@ def scenario_sweep_report_names_over_the_pass_limit():
     check(len(over) == 1, f"named as over the pass limit, got {out['slots']}")
 
 
+# --- wait beats ---------------------------------------------------------
+
+
+def scenario_a_wait_is_minutes_and_words():
+    out = pl.sanitize_script([
+        {'type': 'wait', 'minutes': 45, 'text': 'Let the dough rise.',
+         'announce': 'The dough is ready.'},
+    ], 'generated')
+    check(len(out) == 1 and out[0]['type'] == 'wait', f"a wait survives, got {out}")
+    check(out[0]['minutes'] == 45 and out[0]['text'] == 'Let the dough rise.',
+          f"with its clock and its words, got {out[0]}")
+    check(out[0]['announce'] == 'The dough is ready.',
+          f"and what to call the room with, got {out[0]}")
+
+
+def scenario_a_wait_is_bounded_at_both_ends():
+    out = pl.sanitize_script([
+        {'type': 'wait', 'minutes': 99999, 'text': 'Forever.'},
+        {'type': 'wait', 'minutes': 0, 'text': 'Instantly.'},
+        {'type': 'wait', 'text': 'No clock at all.'},
+        {'type': 'wait', 'minutes': 20},
+    ], 'generated')
+    check([s['minutes'] for s in out] == [pl.MAX_WAIT_MINUTES, 1],
+          f"clamped, and a wait with no minutes is not a wait, got {out}")
+    check(len(out) == 2, f"nor is one with nothing to say, got {out}")
+
+
+def scenario_a_wait_announce_runs_the_screens():
+    out = pl.sanitize_script([
+        {'type': 'wait', 'minutes': 20, 'text': 'Rest the dough.',
+         'announce': 'This one burns calories.'},
+    ], 'generated')
+    check(len(out) == 1 and 'announce' not in out[0],
+          f"a screened call goes and the wait stays, got {out}")
+
+
+def scenario_a_wait_may_speak_like_any_other_scene():
+    out = pl.sanitize_script([
+        {'type': 'wait', 'minutes': 10, 'text': 'Rest it.',
+         'speak': 'Ten minutes. Go and do something else.', 'tone': 'calm'},
+    ], 'generated')
+    check(out[0].get('speak') and out[0].get('tone') == 'calm',
+          f"the voice fields ride a wait too, got {out[0]}")
+
+
+def scenario_due_wait_announces_fires_once_and_keeps_the_future():
+    """The one-shot. A wait's call into the room survives the player being
+    closed and the app being restarted -- it lives in app_state, not on
+    any program row -- so the predicate that pops it has to be exact:
+    everything owed by now, removed, and nothing else touched."""
+    from services import storage
+    storage.set_app_state('lesson_wait_announces', [
+        {'fire_ts': 100, 'room': 'kitchen', 'text': 'Dough is ready.'},
+        {'fire_ts': 300, 'room': 'kitchen', 'text': 'Second rise done.'},
+    ])
+    due = pl.due_wait_announces(now_ts=150)
+    check([d['text'] for d in due] == ['Dough is ready.'],
+          f"only what is owed, got {due}")
+    left = storage.get_app_state('lesson_wait_announces') or []
+    check([d['fire_ts'] for d in left] == [300],
+          f"popped, so it can never fire twice, got {left}")
+    check(pl.due_wait_announces(now_ts=150) == [],
+          "and asking again owes nothing")
+    check([d['text'] for d in pl.due_wait_announces(now_ts=400)]
+          == ['Second rise done.'], "the future still fires when it arrives")
+
+
+def scenario_a_stale_wait_is_dropped_rather_than_shouted():
+    """An app that was off overnight comes back to a call about dough
+    somebody threw out. Anything more than a day old is not news."""
+    from services import storage
+    storage.set_app_state('lesson_wait_announces', [
+        {'fire_ts': 10, 'room': 'kitchen', 'text': 'Yesterday.'},
+        {'fire_ts': 90000, 'room': 'kitchen', 'text': 'Just now.'},
+    ])
+    due = pl.due_wait_announces(now_ts=90100)
+    check([d['text'] for d in due] == ['Just now.'],
+          f"the stale one is dropped, not announced, got {due}")
+    check((storage.get_app_state('lesson_wait_announces') or []) == [],
+          "and both are gone from the queue")
+
+
+def scenario_the_wait_queue_never_grows_without_bound():
+    from services import storage
+    storage.set_app_state('lesson_wait_announces', [])
+    for i in range(pl.MAX_WAIT_QUEUE + 10):
+        pl.arm_wait_announce('kitchen', f'line {i}', 60, now_ts=1000)
+    q = storage.get_app_state('lesson_wait_announces') or []
+    check(len(q) == pl.MAX_WAIT_QUEUE,
+          f"capped at {pl.MAX_WAIT_QUEUE}, got {len(q)}")
+    check(q[-1]['text'] == f'line {pl.MAX_WAIT_QUEUE + 9}',
+          f"keeping the newest, got {q[-1]}")
+
+
+def scenario_the_schema_names_the_wait_beat():
+    check('"wait"' in pl._SYSTEM, "the model is told a beat may wait")
+
+
 # --- the voice fields ---------------------------------------------------
 # Every scene may now carry what Argyle SAYS, separate from what is shown.
 # The spoken words are the ones a kid obeys, so they run the identical
@@ -1570,4 +1668,12 @@ if __name__ == '__main__':
     scenario_a_spoken_cue_runs_the_same_screens_as_everything_else()
     scenario_a_cue_line_is_shorter_than_a_beat_of_text()
     scenario_the_schema_names_cues()
+    scenario_a_wait_is_minutes_and_words()
+    scenario_a_wait_is_bounded_at_both_ends()
+    scenario_a_wait_announce_runs_the_screens()
+    scenario_a_wait_may_speak_like_any_other_scene()
+    scenario_due_wait_announces_fires_once_and_keeps_the_future()
+    scenario_a_stale_wait_is_dropped_rather_than_shouted()
+    scenario_the_wait_queue_never_grows_without_bound()
+    scenario_the_schema_names_the_wait_beat()
     print("test_program_lessons OK")
