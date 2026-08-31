@@ -5982,6 +5982,110 @@ def practice_windows_api(start_date: str = None, end_date: str = None,
     return {"windows": _prog.practice_windows(start, end, member_id=member_id)}
 
 
+# --- Lesson player (P2): the hand path beside every generated one ----------
+# `program_lessons.py` (Task 4) holds the sanitizer and the slot key;
+# `storage.py` (Task 5) holds the CRUD. This is the only door either of them
+# has onto HTTP -- read, hand-edit, clear -- and every rule below is a rule
+# THOSE modules already enforce; this layer only has to ask correctly and
+# gate who is asking, the same way the rest of the programs block does.
+
+@app.get("/api/programs/{program_id}/lesson")
+def get_program_lesson_api(program_id: str, phase_name: str = '',
+                           unit_n: int = 0, session_label: str = '',
+                           request: Request = None):
+    """The lesson behind one practice window. Null is a fine answer -- the
+    player's fallback ladder plays the plain steps either way, so an
+    unresolved or non-owning caller learns nothing by the difference.
+
+    Read scope asks a narrower question than `list_programs_api`'s own use
+    of `_program_list_scope`: not "which member_id should the list be
+    filtered to" but "may this caller see THIS row" -- so it is called with
+    no filter (None) to learn the caller's own natural scope, and the
+    comparison against the row's owner happens here by hand. A parent, an
+    adult or the control-center stand-in (scope None) sees it regardless of
+    whose program it is, exactly as they see the whole household's
+    programs; a resolved child, helper or guest sees it only when their own
+    id equals the owner; anyone `_program_list_scope` cannot resolve at all
+    gets `_NOBODY`. Both of the last two read as null, not a refusal -- a
+    sibling poking at this by hand learns nothing, not even that it exists.
+    """
+    row = storage.get_program(program_id)
+    if not row:
+        return {"lesson": None}
+    scope = _program_list_scope(request, None)
+    if scope is _NOBODY or (scope is not None and scope != row.get('member_id')):
+        return {"lesson": None}
+    lesson = storage.get_program_lesson(program_id, {
+        'phase_name': phase_name, 'unit_n': unit_n,
+        'session_label': session_label})
+    return {"lesson": lesson}
+
+
+@app.put("/api/programs/{program_id}/lesson")
+def put_program_lesson_api(program_id: str, body: dict = Body(default={}),
+                           request: Request = None):
+    """A hand edit. Sanitized like every other door, using the slot's
+    EXISTING origin when there is one -- so a cited lesson keeps its cited
+    screening rules rather than quietly picking up (or losing) generated's
+    tighter physical-technique screen just because a person touched it --
+    and stored `edited: true` so generation bounces off it forever after
+    (`storage.upsert_program_lesson` enforces that refusal; this endpoint
+    only has to ask for it).
+    """
+    from services import program_lessons as _pl
+    row = storage.get_program(program_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="No such program")
+    _program_permission_or_refuse(request, body, row)
+    # Same shape as every other numeral this app takes off a raw JSON body
+    # (`packing_claim`'s `delta`, two screens over): a bad TYPE -- a string
+    # that is not a number, a list -- has to land as a 400, not fall through
+    # to storage's own `int(slot.get('unit_n') or 0)`, which was built
+    # assuming a slot it minted itself and raises a bare ValueError on
+    # anything it cannot parse. OverflowError too: `Infinity`/`NaN` are
+    # valid JSON tokens Python happily hands back as a float, and `int()`
+    # cannot swallow either one.
+    try:
+        unit_n = int(body.get('unit_n') or 0)
+    except (TypeError, ValueError, OverflowError):
+        raise HTTPException(status_code=400,
+                            detail="unit_n must be a whole number")
+    slot = {'phase_name': str(body.get('phase_name') or ''),
+            'unit_n': unit_n,
+            'session_label': str(body.get('session_label') or '')}
+    existing = storage.get_program_lesson(program_id, slot) or {}
+    origin = existing.get('origin') or 'generated'
+    scenes = _pl.sanitize_script(body.get('scenes') or [], origin)
+    if not scenes:
+        return {"status": "error",
+                "message": "Nothing survivable in that script."}
+    storage.upsert_program_lesson(program_id, slot, {
+        'origin': origin, 'source_url': existing.get('source_url') or '',
+        'scenes': scenes, 'edited': True,
+        'model': existing.get('model') or ''})
+    return {"status": "ok"}
+
+
+@app.delete("/api/programs/{program_id}/lesson")
+def delete_program_lesson_api(program_id: str, phase_name: str = '',
+                              unit_n: int = 0, session_label: str = '',
+                              request: Request = None):
+    """Clear one slot by hand -- a force-regenerate, or a reset -- without
+    touching the rest of the program's plan. The sweep writes a fresh lesson
+    next tick; tonight is never blocked on that, because the player's own
+    fallback ladder plays the plain steps the moment this slot comes back
+    empty.
+    """
+    row = storage.get_program(program_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="No such program")
+    _program_permission_or_refuse(request, {}, row)
+    storage.delete_program_lesson(program_id, {
+        'phase_name': phase_name, 'unit_n': unit_n,
+        'session_label': session_label})
+    return {"status": "ok"}
+
+
 @app.get("/api/programs/celebrations")
 def program_celebrations():
     """What a hallway is allowed to know about the household's programs.

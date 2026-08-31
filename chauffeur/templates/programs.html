@@ -342,6 +342,86 @@
                                                         </div>
                                                     </template>
                                                 </div>
+
+                                                <!-- The hand path (Task 8): everything generation
+                                                     will do to a slot's scenes, a person can do by
+                                                     tap. One disclosure per rotation label -- or a
+                                                     single unlabeled one when this phase has no
+                                                     rotation -- keyed to the SAME slot tonight's own
+                                                     Start-session tap uses (phase_name + the
+                                                     program's current unit + the label), so editing
+                                                     here and playing tonight can never drift onto two
+                                                     different lessons. Text only: hand-writing a
+                                                     primitive's params is P3a/P3b territory
+                                                     (lesson_player.html's own comments) and this form
+                                                     does not reach for it -- the player is the show,
+                                                     the editor is a form. -->
+                                                <div class="mt-2 space-y-1.5" x-show="onThisPhase(p, ph) && canAct(p) && !sec.archived">
+                                                    <template x-for="label in lessonSlotsFor(p, ph)" :key="label">
+                                                        <div class="bg-gray-950/60 border border-gray-800 rounded-lg p-2">
+                                                            <button type="button" @click="toggleLesson(p, ph, label)"
+                                                                class="w-full flex items-center justify-between text-[11px] font-bold text-gray-400">
+                                                                <span x-text="'Lesson' + (label ? ' · ' + label : '')"></span>
+                                                                <span x-text="lessonOpen[lessonKey(p, ph, label)] ? '▾ hide' : '▸ edit'"></span>
+                                                            </button>
+                                                            <div class="mt-2 space-y-2" x-show="lessonOpen[lessonKey(p, ph, label)]" x-cloak>
+                                                                <template x-if="!lessonLoaded[lessonKey(p, ph, label)]">
+                                                                    <div class="text-[11px] text-gray-500 italic">Loading…</div>
+                                                                </template>
+                                                                <template x-if="lessonLoaded[lessonKey(p, ph, label)]">
+                                                                    <div class="space-y-2">
+                                                                        <p class="text-[11px] text-gray-500 italic"
+                                                                            x-show="!(lessonDraft[lessonKey(p, ph, label)] || []).length">
+                                                                            No script yet — tonight plays the plain steps above.
+                                                                        </p>
+                                                                        <template x-for="(row, i) in (lessonDraft[lessonKey(p, ph, label)] || [])" :key="i">
+                                                                            <div class="flex items-center gap-1.5">
+                                                                                <span class="text-[9px] font-bold uppercase tracking-wide text-gray-500 w-10 shrink-0"
+                                                                                    x-text="row.type"></span>
+                                                                                <input x-show="row.type === 'say' || row.type === 'do'" x-model="row.text"
+                                                                                    type="text" placeholder="Says…"
+                                                                                    class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-[11px]">
+                                                                                <input x-show="row.type === 'check'" x-model="row.ask"
+                                                                                    type="text" placeholder="Asks…"
+                                                                                    class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-[11px]">
+                                                                                <input x-show="row.type === 'show'" x-model="row.caption"
+                                                                                    type="text" placeholder="Caption…"
+                                                                                    class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-[11px]">
+                                                                                <button type="button" @click="removeLessonRow(p, ph, label, i)"
+                                                                                    class="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 shrink-0">
+                                                                                    ✕
+                                                                                </button>
+                                                                            </div>
+                                                                        </template>
+                                                                        <div class="flex items-center gap-1.5 pt-1 flex-wrap">
+                                                                            <select x-model="lessonAddType[lessonKey(p, ph, label)]"
+                                                                                class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-[11px]">
+                                                                                <option value="say">Say</option>
+                                                                                <option value="do">Do</option>
+                                                                                <option value="check">Check</option>
+                                                                            </select>
+                                                                            <button type="button" @click="addLessonRow(p, ph, label)"
+                                                                                class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">
+                                                                                Add a beat
+                                                                            </button>
+                                                                            <span class="flex-1"></span>
+                                                                            <button type="button" @click="regenerateLesson(p, ph, label)"
+                                                                                class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">
+                                                                                Regenerate
+                                                                            </button>
+                                                                            <button type="button" @click="saveLesson(p, ph, label)"
+                                                                                :disabled="lessonSaving[lessonKey(p, ph, label)]"
+                                                                                class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50">
+                                                                                Save
+                                                                            </button>
+                                                                        </div>
+                                                                    </div>
+                                                                </template>
+                                                            </div>
+                                                        </div>
+                                                    </template>
+                                                </div>
+
                                                 <!-- The ladder. A phase used to be a bucket of
                                                      weeks with a flat list in it, which is not how
                                                      any curriculum is organised: real ones are
@@ -655,6 +735,12 @@
                 sessionOpen: {}, sessionMinutes: {},
                 whyOpen: {}, editOpen: {}, edits: {},
                 slotOpen: {}, slotDraft: {},
+                // The lesson editor (Task 8): everything generation will do
+                // to a slot's scenes, by hand. Keyed by lessonKey(), never by
+                // program id alone -- one program can hold several open
+                // disclosures at once, one per rotation label.
+                lessonOpen: {}, lessonDraft: {}, lessonLoaded: {},
+                lessonSaving: {}, lessonAddType: {},
 
                 readIdentity() {
                     try {
@@ -731,8 +817,33 @@
                         if (r.ok) {
                             const body = await r.json();
                             this.practiceToday = (body.windows || []).filter(w => !w.logged);
+                            // Task 8: the join `w._lesson` has always been read
+                            // for (open() only ever saw null until now). One
+                            // fetch per window, keyed to the same slot the
+                            // editor below reads and writes -- phase_name +
+                            // the owning program's own current_unit (already
+                            // on `this.programs`, loaded just before this) +
+                            // session_label.
+                            await Promise.all(this.practiceToday.map(w => this.loadWindowLesson(w)));
                         }
                     } catch (e) { /* the Start tap just stays absent today */ }
+                },
+
+                // Never throws -- same bargain as loadPracticeToday itself.
+                // A lesson that fails to load just leaves that window's tap
+                // on the player's own fallback ladder, which is the whole
+                // point of shipping the player before generation existed.
+                async loadWindowLesson(w) {
+                    const p = this.programs.find(x => x.id === w.program_id);
+                    const unitN = p ? (p.current_unit || 0) : 0;
+                    try {
+                        const qs = new URLSearchParams({ phase_name: w.phase_name || '',
+                                                         unit_n: unitN,
+                                                         session_label: w.session_label || '' });
+                        const r = await fetch(this.apiBase + `api/programs/${w.program_id}/lesson?${qs}`,
+                                              { headers: this.authHeaders() });
+                        if (r.ok) w._lesson = (await r.json()).lesson || null;
+                    } catch (e) { /* the player just falls back to plain steps */ }
                 },
 
                 todayWindowsFor(p) {
@@ -1222,6 +1333,133 @@
                         }
                         await this.load();
                     } catch (e) { showGlobalAlert("Couldn't drop that."); }
+                },
+
+                // --- Lesson editor (Task 8): the hand path beside every
+                // generated script. One slot key -- phase_name + the
+                // program's current unit + a session label -- shared with
+                // both the server (program_lessons.slot_of) and tonight's
+                // own `w._lesson` join above, so editing here can never
+                // land on a different lesson than the one Start session
+                // would open. Keyed by lessonKey() throughout, never by
+                // program id alone: a rotated phase holds one open
+                // disclosure per label.
+
+                lessonKey(p, ph, label) {
+                    return `${p.id}|${ph.name || ''}|${p.current_unit || 0}|${label || ''}`;
+                },
+
+                // The distinct lessons THIS phase can hold right now: one
+                // per rotation label, or a single unlabeled one when the
+                // phase is not rotated -- the same two shapes the read-only
+                // steps/rotation blocks above already branch on.
+                lessonSlotsFor(p, ph) {
+                    const rotation = ph.rotation || [];
+                    return rotation.length ? rotation.map(s => s.label || '') : [''];
+                },
+
+                async toggleLesson(p, ph, label) {
+                    const key = this.lessonKey(p, ph, label);
+                    if (this.lessonOpen[key]) { this.lessonOpen[key] = false; return; }
+                    this.lessonOpen[key] = true;
+                    if (!this.lessonLoaded[key]) await this.loadLesson(p, ph, label);
+                },
+
+                async loadLesson(p, ph, label) {
+                    const key = this.lessonKey(p, ph, label);
+                    try {
+                        const qs = new URLSearchParams({ phase_name: ph.name || '',
+                                                         unit_n: p.current_unit || 0,
+                                                         session_label: label || '' });
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/lesson?${qs}`,
+                                              { headers: this.authHeaders() });
+                        const body = r.ok ? await r.json() : {};
+                        // Each row keeps every field it loaded with (seconds,
+                        // metronome_bpm, a show's primitive) even though the
+                        // form below only exposes text/ask/caption -- so
+                        // saving back a row this form did not touch never
+                        // clobbers what generation or a citation put there.
+                        this.lessonDraft[key] = ((body.lesson || {}).scenes || [])
+                            .map(s => ({ ...s }));
+                        this.lessonAddType[key] = this.lessonAddType[key] || 'say';
+                        this.lessonLoaded[key] = true;
+                    } catch (e) { showGlobalAlert("Couldn't load that lesson."); }
+                },
+
+                addLessonRow(p, ph, label) {
+                    const key = this.lessonKey(p, ph, label);
+                    const draft = this.lessonDraft[key] || (this.lessonDraft[key] = []);
+                    if (draft.length >= 12) {
+                        showGlobalAlert('Twelve beats is the most a lesson holds.');
+                        return;
+                    }
+                    const type = this.lessonAddType[key] || 'say';
+                    draft.push(type === 'check' ? { type, ask: '' } : { type, text: '' });
+                },
+
+                removeLessonRow(p, ph, label, i) {
+                    (this.lessonDraft[this.lessonKey(p, ph, label)] || []).splice(i, 1);
+                },
+
+                // Refreshes tonight's own copy when this slot is what Start
+                // session would open, so a save or a clear shows up there
+                // without a full page reload.
+                _syncTonight(p, ph, label) {
+                    this.practiceToday
+                        .filter(w => w.program_id === p.id
+                            && (w.phase_name || '') === (ph.name || '')
+                            && (w.session_label || '') === (label || ''))
+                        .forEach(w => this.loadWindowLesson(w));
+                },
+
+                async saveLesson(p, ph, label) {
+                    const key = this.lessonKey(p, ph, label);
+                    const scenes = (this.lessonDraft[key] || []).map(s => ({ ...s }));
+                    this.lessonSaving[key] = true;
+                    try {
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/lesson`, {
+                            method: 'PUT', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null,
+                                                   phase_name: ph.name || '',
+                                                   unit_n: p.current_unit || 0,
+                                                   session_label: label || '', scenes })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            showGlobalAlert(d.detail || d.message || "Couldn't save that lesson.");
+                            return;
+                        }
+                        this.lessonLoaded[key] = false;
+                        await this.loadLesson(p, ph, label);
+                        this._syncTonight(p, ph, label);
+                    } catch (e) {
+                        showGlobalAlert("Couldn't save that lesson.");
+                    } finally {
+                        this.lessonSaving[key] = false;
+                    }
+                },
+
+                async regenerateLesson(p, ph, label) {
+                    const ok = await promptConfirm('Clear this lesson?',
+                        'The stored script goes away and the next sweep writes a fresh one. Tonight still plays -- the plain steps show until then.',
+                        'Clear it', 'Cancel');
+                    if (!ok) return;
+                    const key = this.lessonKey(p, ph, label);
+                    try {
+                        const qs = new URLSearchParams({ phase_name: ph.name || '',
+                                                         unit_n: p.current_unit || 0,
+                                                         session_label: label || '' });
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/lesson?${qs}`,
+                                              { method: 'DELETE', headers: this.authHeaders() });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            showGlobalAlert(d.detail || d.message || "Couldn't clear that lesson.");
+                            return;
+                        }
+                        this.lessonLoaded[key] = false;
+                        await this.loadLesson(p, ph, label);
+                        this._syncTonight(p, ph, label);
+                    } catch (e) { showGlobalAlert("Couldn't clear that lesson."); }
                 },
             }
         }
