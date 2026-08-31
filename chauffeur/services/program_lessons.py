@@ -421,7 +421,32 @@ _SYSTEM = (
     "text. No praise-fluff, no streaks, no scores. Never write about "
     "weight, calories, body composition, or dieting -- anywhere, card "
     "fronts and backs included; any scene that does is dropped before it "
-    "ever reaches a family, so writing one only wastes this call."
+    "ever reaches a family, so writing one only wastes this call. "
+    # The voice. Every scene may carry these; the assistant reads `speak`
+    # aloud while the scene is on screen, so it is what a person HEARS
+    # rather than a second copy of what they read.
+    'Any scene may also carry: "speak" (up to 200 characters said out '
+    "loud while that scene is showing -- write what a teacher would SAY, "
+    "not a repeat of the text on screen), "
+    '"speak_lang" (a language tag like "es" or "pt-BR", only when the '
+    'spoken words are not in the session language), "tone" ("coach" for '
+    'working, "calm" for winding down), "chime" ("success" or "fanfare", '
+    'a short sound), and "grownup": true on any scene where a child '
+    "needs an adult beside them. "
+    # PATTERNS: enforcement in this module is entirely subtractive -- the
+    # screens drop, they never require -- so the ceiling on how much a
+    # lesson teaches is whatever this paragraph asks for.
+    "PATTERNS, by what the session is: for anything MOVED or held, speak "
+    "the count and the switch-over out loud. For anything read or spoken, "
+    "say the word and let them answer before the next scene. For anything "
+    "problem-shaped, give the smallest nudge first and the answer last. "
+    "For lines to be learned by heart, say the other person's part and "
+    "let them reply. For cooking and anything with a wait in it, say what "
+    "happens while you wait. Put \"grownup\": true on knives, heat, power "
+    "tools and anything sharp or hot, so the scene asks for a grown-up. "
+    "For anything chemical -- fertiliser, "
+    "cleaner, weedkiller -- say follow the label and never a rate or an "
+    "amount of your own."
 )
 
 # How many chargeable failures a single slot is allowed before generation
@@ -434,7 +459,9 @@ MAX_SLOTS_PER_PASS = 6
 _CITED_PROMPT = (
     "Turn THIS material into tonight's {minutes}-minute session script. Use "
     "ONLY what the material says — do not add exercises or advice it does "
-    'not contain.\n\nSession: {label} in phase {phase} of "{title}".\n'
+    "not contain, and anything you have the script SAY out loud must be "
+    'the material\'s own words too.\n\nSession: {label} in phase {phase} '
+    'of "{title}".\n{context}\n'
     "Steps the plan already names: {steps}\n\nMATERIAL from {url}:\n{page}"
 )
 
@@ -443,10 +470,54 @@ _GENERATED_PROMPT = (
     '"{title}" '
     "(phase {phase}, session {label}). Build it AROUND these steps — they "
     "are the session, your script paces and explains them: {steps}\n"
+    "{context}\n"
     "Unit notes: {body}\nProgression rule: {progression}\n"
     "Structure the practice (warmup, the work, brief review). Do NOT "
     "prescribe how to hold or move any part of the body."
 )
+
+
+def _context_block(program: dict, now=None) -> str:
+    """Who is practising, and when — the two facts this app holds for free
+    and the prompts were spending nothing on.
+
+    WHO decides the script in every domain, which is the lesson
+    programs_curate learned one layer up when a plan written for a
+    nine-year-old came back addressed to a generic adult beginner. Its
+    `_who_line` is reused verbatim rather than re-derived here, so the
+    plan and the lesson inside it can never describe the same person two
+    different ways -- and it states an age ONLY when a birthdate is really
+    on file, because guessing the one fact that decides the plan is worse
+    than not knowing it.
+
+    Whether they practise ALONE is the other half, and it is a different
+    question from age: `practices_alone` is a per-child capability a
+    parent can pin either way (stages.py), so it is asked rather than
+    inferred. An adult has no stage and no capability list; an adult
+    practises alone, which is the same default `capabilities` returning {}
+    already implies.
+
+    WHEN is one word and it only matters to a handful of programs -- a
+    lawn in March and the same lawn in September are not the same evening
+    -- but those programs cannot get it from anywhere else, and a month
+    costs nothing to state.
+    """
+    import datetime
+    from services import stages, storage, programs_curate
+    member = None
+    try:
+        member = storage.get_member(program.get('member_id') or '')
+    except Exception:
+        member = None
+    caps = stages.capabilities(member) if member else {}
+    alone = caps.get('practices_alone', True)
+    who = programs_curate._who_line(member, '')
+    lines = [f"Who this is for: {who}."]
+    lines.append("They can run this session on their own." if alone else
+                 "They need a grown-up beside them for this session — write "
+                 "the script so an adult can follow along too.")
+    lines.append(f"It is {(now or datetime.datetime.now()).strftime('%B')}.")
+    return "\n".join(lines)
 
 
 def needs_lesson(program_id: str, slot: dict) -> bool:
@@ -557,7 +628,8 @@ def generate_for(program: dict, window: dict, unit: dict, settings: dict):
                   'label': window.get('session_label') or 'practice',
                   'steps': ' | '.join(window.get('steps') or []),
                   'body': window.get('unit_body') or '',
-                  'progression': window.get('progression') or ''}
+                  'progression': window.get('progression') or '',
+                  'context': _context_block(program)}
         source_url = ''
         url = (window.get('unit_url') or '') if origin == 'cited' else ''
         if origin == 'cited' and url:

@@ -1304,6 +1304,121 @@ def scenario_a_screened_spoken_line_never_takes_the_scene_with_it():
     check('speak' not in out[0], f"silently, got {out[0]}")
 
 
+# --- what the model is told it may say ----------------------------------
+
+
+def scenario_the_schema_names_every_voice_field():
+    """A model can only set what the schema tells it exists. Every field
+    the sanitizer now accepts has to be IN _SYSTEM, or the door is open
+    onto a room nobody knows about."""
+    for field in ('speak', 'speak_lang', 'tone', 'chime', 'grownup'):
+        check(f'"{field}"' in pl._SYSTEM,
+              f"the schema names {field}")
+    for value in ('coach', 'calm', 'success', 'fanfare'):
+        check(value in pl._SYSTEM, f"and the closed set names {value}")
+
+
+def scenario_the_prompt_carries_the_patterns_that_make_a_lesson_teach():
+    """Enforcement here is all subtractive -- the screens drop, they never
+    require -- so lesson quality is capped at whatever the prompt asks
+    for. The patterns paragraph is the ask."""
+    low = pl._SYSTEM.lower()
+    for marker in ('follow the label', 'grown-up', 'count'):
+        check(marker in low, f"the patterns paragraph says {marker!r}")
+
+
+def scenario_generation_tells_the_model_who_is_practising():
+    """The single biggest variable in every domain is the age of the
+    person following the plan -- programs_curate learned this one round
+    ago and a lesson script is the same document one layer down. Reuses
+    that module's own `_who_line` so the two can never drift."""
+    from services import storage, program_lessons as pl, programs_curate
+    import services.model_pools as mp
+    storage.program_lessons_table.truncate()
+    seen = {}
+
+    def fake_pool(tier, api_key, system, prompt, **kw):
+        seen['prompt'] = prompt
+        return {'scenes': [{'type': 'say', 'text': 'Chords are shapes.'}]}
+
+    kid = {'id': 'kid', 'name': 'Sam', 'role': 'child',
+           'stage_override': 'sprout'}
+    orig_pool, orig_member = mp.call_pool_json, storage.get_member
+    mp.call_pool_json = fake_pool
+    storage.get_member = lambda mid: kid if mid == 'kid' else None
+    try:
+        pl.generate_for(_program_row(), _window(), {'n': 1},
+                        {'llm_gemini_api_key': 'k'})
+    finally:
+        mp.call_pool_json, storage.get_member = orig_pool, orig_member
+    prompt = seen.get('prompt') or ''
+    check(programs_curate._who_line(kid) in prompt,
+          f"the who-line rides the prompt, got {prompt!r}")
+    check('on their own' in prompt.lower() or 'grown-up' in prompt.lower(),
+          f"and says whether they practise alone, got {prompt!r}")
+
+
+def scenario_generation_tells_the_model_what_month_it_is():
+    """A lawn program in March and the same program in September are not
+    the same session, and the month is a fact this app has for free."""
+    import datetime
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    storage.program_lessons_table.truncate()
+    seen = {}
+
+    def fake_pool(tier, api_key, system, prompt, **kw):
+        seen['prompt'] = prompt
+        return {'scenes': [{'type': 'say', 'text': 'Mow high.'}]}
+
+    orig = mp.call_pool_json
+    mp.call_pool_json = fake_pool
+    try:
+        pl.generate_for(_program_row(), _window(), {'n': 1},
+                        {'llm_gemini_api_key': 'k'})
+    finally:
+        mp.call_pool_json = orig
+    check(datetime.date.today().strftime('%B') in (seen.get('prompt') or ''),
+          f"the month is named, got {seen.get('prompt')!r}")
+
+
+def scenario_a_model_echoing_the_voice_fields_stores_them_clean():
+    """The round trip that matters: the prompt now invites five new
+    fields, so the stored script has to come back through the real
+    sanitizer with them intact -- and with a screened one gone."""
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    storage.program_lessons_table.truncate()
+
+    def fake_pool(tier, api_key, system, prompt, **kw):
+        return {'scenes': [
+            {'type': 'say', 'text': 'Sit tall.', 'speak': 'Sit tall.',
+             'tone': 'calm', 'speak_lang': 'en-US'},
+            {'type': 'do', 'text': 'Four changes.', 'seconds': 60,
+             'speak': 'Keep your wrist loose.'},
+        ], '_model': 'gemma-4-31b-it'}
+
+    orig = mp.call_pool_json
+    mp.call_pool_json = fake_pool
+    try:
+        pl.generate_for(_program_row(), _window(), {'n': 1},
+                        {'llm_gemini_api_key': 'k'})
+    finally:
+        mp.call_pool_json = orig
+    row = storage.get_program_lesson('p9', {'phase_name': 'Foundations',
+                                            'unit_n': 1,
+                                            'session_label': 'Technique'})
+    scenes = (row or {}).get('scenes') or []
+    check(len(scenes) == 2, f"both beats stored, got {scenes}")
+    check(scenes[0].get('speak') == 'Sit tall.'
+          and scenes[0].get('tone') == 'calm'
+          and scenes[0].get('speak_lang') == 'en-US',
+          f"the clean voice fields survive the round trip, got {scenes[0]}")
+    check('speak' not in scenes[1],
+          f"and a generated script still may not prescribe a body out loud, "
+          f"got {scenes[1]}")
+
+
 if __name__ == '__main__':
     scenario_scene_cap()
     scenario_text_cap_and_type_whitelist()
@@ -1362,4 +1477,9 @@ if __name__ == '__main__':
     scenario_the_grown_up_flag_normalises_to_a_bool()
     scenario_every_scene_type_may_speak()
     scenario_a_screened_spoken_line_never_takes_the_scene_with_it()
+    scenario_the_schema_names_every_voice_field()
+    scenario_the_prompt_carries_the_patterns_that_make_a_lesson_teach()
+    scenario_generation_tells_the_model_who_is_practising()
+    scenario_generation_tells_the_model_what_month_it_is()
+    scenario_a_model_echoing_the_voice_fields_stores_them_clean()
     print("test_program_lessons OK")
