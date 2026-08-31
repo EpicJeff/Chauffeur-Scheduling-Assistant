@@ -6,6 +6,18 @@
      itself never posts. It dispatches `lesson-player:done` and the page
      that opened it calls its own existing log action.
 
+     Preview mode: `lesson-player:open`'s detail may carry `preview: true`
+     (the lesson editor's own "Play this" tap, and the forced-sweep
+     report's "Play" tap -- both in programs.html -- open onto scenes
+     nobody has actually reached tonight yet). A preview plays exactly
+     like a real session -- same scenes, same primitives, same fallback
+     ladder -- except that it can never end in a write: the footer's
+     final-scene button closes instead of asking to log, and finish()
+     returns before either the ask or the `lesson-player:done` dispatch,
+     so neither this page's own listener nor app.html's can ever turn a
+     preview into a session. The header carries a small marker the whole
+     time so nobody watching mistakes it for the real thing.
+
      Fallback ladder, always: a window with no stored lesson plays its own
      plain steps as beats (`stepsToScenes`). The player must never block
      practice, which is what makes this shippable before any generation
@@ -53,7 +65,7 @@
 </style>
 
 <div x-data="lessonPlayer()" x-show="openFlag" x-cloak
-     @lesson-player:open.window="open($event.detail.window, $event.detail.lesson)"
+     @lesson-player:open.window="open($event.detail.window, $event.detail.lesson, $event.detail.preview)"
      class="panel-modal fixed inset-0 z-[90] bg-gray-950/95 flex flex-col select-none"
      :class="panel ? 'text-2xl' : 'text-base'">
 
@@ -65,6 +77,14 @@
                  x-text="(w || {}).title || 'Practice'"></div>
             <div class="text-gray-500 truncate" :class="panel ? 'text-base' : 'text-[11px]'"
                  x-show="(w || {}).session_label" x-text="(w || {}).session_label"></div>
+            <!-- The preview marker: the only visible difference while a
+                 preview plays out, so nobody watching mistakes a slot
+                 nobody has reached tonight for a real session. Same
+                 semantic-tint chip vocabulary docs/ui_design_guide.md
+                 names (`bg-teal-500/20 text-teal-300`), in the player's
+                 own voice rather than a technical "PREVIEW MODE" label. -->
+            <span x-show="preview" class="inline-block font-bold rounded bg-teal-500/20 text-teal-300 mt-0.5"
+                 :class="panel ? 'text-xs px-2 py-0.5' : 'text-[10px] px-1.5 py-0.5'">Just a look — nothing gets saved</span>
         </div>
         <button type="button" @click="close()"
                 class="shrink-0 rounded-full bg-gray-800 border border-gray-700 text-gray-300 leading-none grid place-items-center"
@@ -283,7 +303,7 @@
         <button type="button" @click="advance()" x-show="scene().type !== 'check'"
                 class="w-full rounded-xl bg-blue-600 text-white font-bold active:bg-blue-700"
                 :class="panel ? 'py-4 text-2xl' : 'py-3 text-sm'"
-                x-text="isLast() ? (panel ? 'Finish' : 'Log it?') : 'Continue'"></button>
+                x-text="isLast() ? (preview ? 'Close' : (panel ? 'Finish' : 'Log it?')) : 'Continue'"></button>
     </div>
 </div>
 
@@ -303,6 +323,13 @@ function lessonPlayer() {
         // the fallback ladder built the scenes from the window's own steps,
         // which is a different, equally honest thing to say.
         lesson: null, usingLesson: false,
+        // True only when opened via `lesson-player:open`'s `preview: true`
+        // (the editor's "Play this", the sweep report's "Play"). Read by
+        // the footer's label and by finish() -- see both below -- and by
+        // nothing else: every other behaviour (scene rendering, primitives,
+        // checks, the fallback ladder, stopSound on close) is identical in
+        // a preview and a real session.
+        preview: false,
         panel: new URLSearchParams(location.search).get('panel') === 'true',
         timer: null, timeLeft: 0, timerTotal: 0, audio: null, metroTimer: null,
         ringC: 2 * Math.PI * 44,
@@ -310,9 +337,10 @@ function lessonPlayer() {
         // never persisted, see bumpCounter()/toggleCardFlip() below.
         cardIdx: 0, cardFlipped: false, counterVal: 0,
 
-        open(w, lesson) {
+        open(w, lesson, preview) {
             this.w = w || {};
             this.lesson = lesson || null;
+            this.preview = !!preview;
             this.usingLesson = !!(lesson && (lesson.scenes || []).length);
             this.scenes = this.usingLesson
                 ? lesson.scenes : this.stepsToScenes(this.w);
@@ -698,6 +726,15 @@ function lessonPlayer() {
         // lie the "Log it?" label was, one dialog deeper.
         async finish() {
             this.stopSound();
+            // A preview never reaches the log ask or the done dispatch --
+            // it closes, full stop, before either one runs. Checked first,
+            // ahead of the panel branch below, so a preview opened with
+            // ?panel=true still just closes rather than asking a wall-board
+            // question nothing would ever answer. Nothing downstream --
+            // programs.html's onLessonDone, app.html's own listener -- can
+            // ever mistake a preview for a finished session, because the
+            // event that tells them one happened is never fired.
+            if (this.preview) { this.openFlag = false; return; }
             if (!this.panel) {
                 const ok = await promptConfirm('Log this session?',
                     'It records the practice and cannot be undone.',

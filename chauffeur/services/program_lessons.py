@@ -671,6 +671,14 @@ def sweep_report(now=None, start_offset: int = 0, days: int = 3,
         for row, w, unit in _windows_to_scan(now, start_offset, days):
             slot = slot_of(w, unit_n=int((unit or {}).get('n') or 0))
             entry = {'program': row.get('title') or 'Practice',
+                     # The report otherwise names the program only by
+                     # TITLE, which is not an id and is not guaranteed
+                     # unique -- a client wanting to preview what a row
+                     # actually wrote needs this to call the same scoped
+                     # GET /api/programs/{id}/lesson the hand editor
+                     # already uses, rather than guessing an id from a
+                     # string a household could give two programs at once.
+                     'program_id': row.get('id') or '',
                      'phase': w.get('phase_name') or '',
                      'session_label': w.get('session_label') or '',
                      'unit_n': slot['unit_n'],

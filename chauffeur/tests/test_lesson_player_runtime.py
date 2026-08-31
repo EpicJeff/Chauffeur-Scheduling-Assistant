@@ -655,6 +655,202 @@ def scenario_cards_container_is_panel_aware_like_its_siblings():
           "the old STATIC max-w-sm is gone, not merely joined by a conflicting bound class")
 
 
+def scenario_preview_flag_flows_from_open_to_state():
+    """lesson-player:open's detail may carry `preview: true` -- open() has
+    to take it as a third argument and store it on the component, or
+    neither the footer's label nor finish()'s own guard (both read
+    `this.preview`) would ever see it."""
+    import re
+    src = _read('components/lesson_player.html')
+    check('$event.detail.preview' in src,
+          "the window listener passes the detail's preview flag through")
+    m = re.search(r'open\(w, lesson, preview\)\s*\{(.*?)\n        \},', src, re.S)
+    check(m, "open() takes a third preview argument")
+    body = m.group(1) if m else ''
+    check('this.preview = !!preview' in body,
+          "and stores it on the component, coerced to a real boolean")
+
+
+def scenario_preview_footer_button_closes_instead_of_asking_to_log():
+    """In preview the final-scene button must not promise a log write --
+    it closes instead. The label expression already branched on `panel`
+    (wall vs phone); preview extends that same ternary rather than
+    growing a second, independent one, and it is checked FIRST so it wins
+    over the panel branch too (a preview opened with ?panel=true still
+    just closes, never "Finish"). Anchored to the same x-text attribute
+    scenario_the_wall_button_does_not_promise_a_write already pins."""
+    import re
+    src = _read('components/lesson_player.html')
+    m = re.search(r'x-text="isLast\(\) \? ([^"]*)"', src)
+    check(m, "the footer button's label expression is findable")
+    label = m.group(1) if m else ''
+    check("(preview ? 'Close' : (panel ? 'Finish' : 'Log it?'))" in label,
+          f"preview is checked first and closes rather than asking, got {label!r}")
+
+
+def scenario_preview_marker_shows_in_the_header():
+    """A preview must be visibly a preview while it plays -- a marker in
+    the header, scoped to the header block (bounded by its own close
+    button), not a bare substring anywhere in the file."""
+    import re
+    src = _read('components/lesson_player.html')
+    m = re.search(r'<!-- header:.*?@click="close\(\)"', src, re.S)
+    check(m, "the header block is findable, bounded by its own close button")
+    header = m.group(0) if m else ''
+    check('x-show="preview"' in header,
+          "an element in the header is gated on the preview flag")
+    check('streak' not in header.lower() and 'nothing gets saved' in header.lower(),
+          "and says so in the player's own reassuring voice, not a bare technical label")
+
+
+def scenario_preview_never_reaches_the_session_log_path():
+    """A preview must never write anything, proven end to end rather than
+    only at the button: finish() has to check `this.preview` and return
+    BEFORE either the promptConfirm ask or the lesson-player:done dispatch
+    -- both fire unconditionally for a real session, and neither has any
+    OTHER gate that tells a preview apart from the real thing. onLessonDone
+    (programs.html) and the done listener (app.html) both only ever act on
+    that dispatch, so a dispatch that can never fire in preview is what
+    keeps a preview from ever reaching either one -- proven here by the
+    guard's POSITION in the source, not merely that it exists somewhere in
+    the function."""
+    import re
+    src = _read('components/lesson_player.html')
+    m = re.search(r'async finish\(\)\s*\{(.*?)\n        \},', src, re.S)
+    check(m, "finish() is findable")
+    body = m.group(1) if m else ''
+    m2 = re.search(r'if\s*\(this\.preview\)\s*\{([^}]*)\}', body)
+    check(m2, "finish() carries a dedicated preview guard")
+    guard = m2.group(1) if m2 else ''
+    check('return' in guard, "and the guard returns immediately")
+    check('dispatchEvent' not in guard and 'promptConfirm' not in guard,
+          "the guard itself neither asks nor dispatches -- it only closes")
+    preview_pos = body.find('this.preview')
+    confirm_pos = body.find('promptConfirm')
+    dispatch_pos = body.find('dispatchEvent')
+    check(preview_pos != -1 and confirm_pos != -1 and dispatch_pos != -1,
+          "all three landmarks are present in finish()")
+    check(preview_pos < confirm_pos,
+          "the preview guard runs before the log ask can ever fire")
+    check(preview_pos < dispatch_pos,
+          "the preview guard runs before the done dispatch -- the one thing "
+          "onLessonDone/app.html's listener react to -- can ever fire")
+
+
+def scenario_the_lesson_editor_offers_a_play_tap():
+    """The hand path's own preview (Task 2): a 'Play this' tap beside the
+    existing edit/hide toggle for each rotation label, scoped to that
+    summary row alone (bounded by the disclosure's own expanded-content
+    div), not a bare substring anywhere on the page."""
+    import re
+    src = _read('programs.html')
+    m = re.search(
+        r'@click="toggleLesson\(p, ph, label\)".*?'
+        r'<div class="mt-2 space-y-2" x-show="lessonOpen\[lessonKey\(p, ph, label\)\]"',
+        src, re.S)
+    check(m, "the summary row is findable, bounded by the disclosure's own expanded content")
+    row = m.group(0) if m else ''
+    check('@click="playLesson(p, ph, label)"' in row,
+          "a Play tap sits beside the edit/hide toggle, in the same row")
+
+
+def scenario_play_lesson_reads_storage_fresh_never_the_unsaved_draft():
+    """'THAT slot's stored scenes' -- playLesson must not reuse lessonDraft
+    (which may hold an edit not yet saved) or route through loadLesson
+    (which would silently overwrite an in-progress edit the moment Play is
+    tapped). It does its own fetch of the same GET the editor's own
+    load/save already use, and opens in preview with an honest window
+    stand-in built from what the editor actually has on screen."""
+    import re
+    src = _read('programs.html')
+    m = re.search(r'async playLesson\(p, ph, label\)\s*\{(.*?)\n                \},', src, re.S)
+    check(m, "playLesson is findable")
+    body = m.group(1) if m else ''
+    check('fetch(' in body, "it does its own fetch")
+    check('lessonDraft' not in body, "never reusing the (possibly unsaved) draft")
+    check('loadLesson(' not in body,
+          "and never routes through loadLesson, which would overwrite an in-progress edit")
+    check('preview: true' in body, "and opens the player in preview")
+    check('this.slotSteps(ph, label)' in body,
+          "the window stand-in carries this slot's own steps -- the fallback "
+          "ladder's raw material when there is no stored script")
+    check('unit.title' in body,
+          "and the phase's CURRENT unit's real title, not a placeholder")
+
+
+def scenario_slot_steps_matches_the_rotation_vs_flat_branch_the_readonly_view_uses():
+    """The read-only steps/rotation blocks above already branch on
+    `(ph.rotation || []).length` for a labeled slot vs `ph.steps` for an
+    unlabeled one -- slotSteps has to resolve the identical two shapes, or
+    a rotated phase's preview would show the wrong session's steps."""
+    import re
+    src = _read('programs.html')
+    m = re.search(r'slotSteps\(ph, label\)\s*\{(.*?)\n                \},', src, re.S)
+    check(m, "slotSteps is findable")
+    body = m.group(1) if m else ''
+    check('(ph.rotation || [])' in body, "it resolves the rotation array for a labeled slot")
+    check("s.label || ''" in body, "matched on that exact label")
+    check('ph.steps || []' in body, "and falls back to the flat phase steps when there is no label")
+
+
+def scenario_sweep_report_play_tap_only_on_rows_that_wrote_something():
+    """After a forced run, each row that produced a lesson should be
+    playable; a skipped row -- including one skipped because it already
+    had a lesson, which is the editor's own Play to offer, not this
+    report's -- has nothing this tap promises to show. Scoped to the
+    sweep-report's own row template, bounded by its closing tag."""
+    import re
+    src = _read('programs.html')
+    m = re.search(
+        r'<template x-for="\(slot, idx\) in \(sweepReport \? sweepReport\.slots : \[\]\)"'
+        r'[\s\S]*?</template>', src)
+    check(m, "the sweep-report row template is findable")
+    block = m.group(0) if m else ''
+    check('playSweepSlot(slot)' in block, "the block offers a Play tap at all")
+    # The skipped row is a bare, childless div -- x-text sets its whole
+    # content -- verified unchanged, so nothing tappable could have been
+    # added to it; only its ORIGIN sibling could have gained the button.
+    check('<div x-show="!slot.origin" class="text-amber-400" x-text="slot.skipped"></div>' in block,
+          "the skipped row stays a bare label with nothing added to it")
+    origin_pos = block.find('x-show="slot.origin"')
+    skipped_pos = block.find('x-show="!slot.origin"')
+    play_pos = block.find('playSweepSlot(slot)')
+    check(-1 not in (origin_pos, skipped_pos, play_pos), "all three landmarks are present")
+    check(origin_pos < play_pos < skipped_pos,
+          "the Play tap sits inside the origin (wrote-something) row, before "
+          "the skipped row begins")
+
+
+def scenario_play_sweep_slot_fetches_by_program_id_and_previews():
+    """The report entry itself carries no scenes and names a program only
+    by TITLE -- not an id, and not guaranteed unique -- so playSweepSlot
+    has to fetch through the `program_id` sweep_report now names, exactly
+    the scoped GET the editor's own playLesson uses, and open in preview."""
+    import re
+    src = _read('programs.html')
+    m = re.search(r'async playSweepSlot\(slot\)\s*\{(.*?)\n                \},', src, re.S)
+    check(m, "playSweepSlot is findable")
+    body = m.group(1) if m else ''
+    check('slot.program_id' in body, "it fetches by the id sweep_report now names")
+    check('fetch(' in body, "through a real fetch")
+    check('preview: true' in body, "and opens the player in preview")
+
+
+def scenario_sweep_report_entries_carry_a_program_id_for_the_play_tap():
+    """The report otherwise names a program only by TITLE, so a client
+    wanting to preview what a row wrote could not resolve which program to
+    call GET /api/programs/{id}/lesson on. Checked by source, the same way
+    this file already checks a backend function it does not execute
+    (scenario_the_wall_reads_the_slot_key_off_the_window, above) rather
+    than re-running the whole sweep fixture machinery
+    test_program_lessons.py already owns end to end."""
+    import inspect
+    from services import program_lessons
+    src = inspect.getsource(program_lessons.sweep_report)
+    check("'program_id': row.get('id')" in src,
+          "each report entry carries the program's real id")
+
+
 if __name__ == '__main__':
     scenario_component_exists_and_renders_the_four_beats()
     scenario_checks_are_never_stored()
@@ -691,4 +887,14 @@ if __name__ == '__main__':
     scenario_fretboard_overflow_gets_a_visibly_approximate_marker()
     scenario_keyboard_signals_a_dropped_highlight_rather_than_hiding_it()
     scenario_cards_container_is_panel_aware_like_its_siblings()
+    scenario_preview_flag_flows_from_open_to_state()
+    scenario_preview_footer_button_closes_instead_of_asking_to_log()
+    scenario_preview_marker_shows_in_the_header()
+    scenario_preview_never_reaches_the_session_log_path()
+    scenario_the_lesson_editor_offers_a_play_tap()
+    scenario_play_lesson_reads_storage_fresh_never_the_unsaved_draft()
+    scenario_slot_steps_matches_the_rotation_vs_flat_branch_the_readonly_view_uses()
+    scenario_sweep_report_play_tap_only_on_rows_that_wrote_something()
+    scenario_play_sweep_slot_fetches_by_program_id_and_previews()
+    scenario_sweep_report_entries_carry_a_program_id_for_the_play_tap()
     print("test_lesson_player_runtime OK")

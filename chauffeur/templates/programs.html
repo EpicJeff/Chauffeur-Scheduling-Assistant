@@ -100,8 +100,18 @@
                                         <span x-text="slot.session_label || 'practice'"></span> —
                                         <span x-text="fmtDate(slot.date)"></span>
                                     </div>
-                                    <div x-show="slot.origin" class="text-teal-400"
-                                        x-text="`${slot.origin}, ${slot.scenes} scene(s)`"></div>
+                                    <!-- Only a row that actually WROTE a script this pass offers
+                                         Play -- a skipped row, including one skipped because it
+                                         already had a lesson, has nothing this specific tap
+                                         promises to show (the lesson editor's own "Play this" is
+                                         the hand path onto an already-stored script). -->
+                                    <div x-show="slot.origin" class="text-teal-400 flex items-center justify-between gap-2">
+                                        <span x-text="`${slot.origin}, ${slot.scenes} scene(s)`"></span>
+                                        <button type="button" @click="playSweepSlot(slot)"
+                                            class="shrink-0 text-[11px] font-bold px-2.5 py-1 rounded-lg bg-teal-700 text-white active:bg-teal-800">
+                                            ▶ Play
+                                        </button>
+                                    </div>
                                     <div x-show="!slot.origin" class="text-amber-400" x-text="slot.skipped"></div>
                                 </div>
                             </template>
@@ -403,11 +413,27 @@
                                                 <div class="mt-2 space-y-1.5" x-show="onThisPhase(p, ph) && canAct(p) && !sec.archived">
                                                     <template x-for="label in lessonSlotsFor(p, ph)" :key="label">
                                                         <div class="bg-gray-950/60 border border-gray-800 rounded-lg p-2">
-                                                            <button type="button" @click="toggleLesson(p, ph, label)"
-                                                                class="w-full flex items-center justify-between text-[11px] font-bold text-gray-400">
-                                                                <span x-text="'Lesson' + (label ? ' · ' + label : '')"></span>
-                                                                <span x-text="lessonOpen[lessonKey(p, ph, label)] ? '▾ hide' : '▸ edit'"></span>
-                                                            </button>
+                                                            <div class="flex items-center gap-2">
+                                                                <button type="button" @click="toggleLesson(p, ph, label)"
+                                                                    class="flex-1 min-w-0 flex items-center justify-between text-[11px] font-bold text-gray-400">
+                                                                    <span x-text="'Lesson' + (label ? ' · ' + label : '')"></span>
+                                                                    <span x-text="lessonOpen[lessonKey(p, ph, label)] ? '▾ hide' : '▸ edit'"></span>
+                                                                </button>
+                                                                <!-- The hand path's own preview: opens the player on
+                                                                     THIS slot's stored scenes, in preview, without
+                                                                     opening the disclosure first -- a fresh read
+                                                                     straight off storage (playLesson below), never
+                                                                     lessonDraft, which may hold an edit not yet
+                                                                     saved. A slot with no stored script previews the
+                                                                     plan's own steps instead (the same fallback
+                                                                     ladder tonight's own Start-session tap already
+                                                                     falls back to) rather than being hidden or
+                                                                     opening onto nothing. -->
+                                                                <button type="button" @click="playLesson(p, ph, label)"
+                                                                    class="shrink-0 text-[10px] font-bold px-2 py-1 rounded-lg bg-teal-700 text-white active:bg-teal-800">
+                                                                    ▶ Play
+                                                                </button>
+                                                            </div>
                                                             <div class="mt-2 space-y-2" x-show="lessonOpen[lessonKey(p, ph, label)]" x-cloak>
                                                                 <template x-if="!lessonLoaded[lessonKey(p, ph, label)]">
                                                                     <div class="text-[11px] text-gray-500 italic">Loading…</div>
@@ -1031,6 +1057,38 @@
                     }
                 },
 
+                // The report's own preview: exactly the slot a forced pass
+                // just wrote, which is where a person is looking right after
+                // running one. The report entry itself carries no scenes
+                // (only a count) and no more than a program TITLE -- not an
+                // id, and not guaranteed unique -- so this reads the same
+                // `program_id` sweep_report now names and fetches through
+                // the identical scoped GET the editor's own Play uses. Only
+                // ever called for a slot with `slot.origin` set (the
+                // template gates the button on that already), which is only
+                // ever set once generate_for has actually stored at least
+                // one scene -- so the fallback ladder below is a safety net
+                // for a race (the row edited or cleared between the sweep
+                // and this tap), never the expected path.
+                async playSweepSlot(slot) {
+                    try {
+                        const qs = new URLSearchParams({ phase_name: slot.phase || '',
+                                                         unit_n: slot.unit_n || 0,
+                                                         session_label: slot.session_label || '' });
+                        const r = await fetch(this.apiBase + `api/programs/${slot.program_id}/lesson?${qs}`,
+                                              { headers: this.authHeaders() });
+                        const body = r.ok ? await r.json() : {};
+                        window.dispatchEvent(new CustomEvent('lesson-player:open', {
+                            detail: {
+                                preview: true,
+                                window: { title: slot.program || '', session_label: slot.session_label || '',
+                                         phase_name: slot.phase || '', steps: [], unit_title: '', milestone: '' },
+                                lesson: body.lesson || null,
+                            }
+                        }));
+                    } catch (e) { showGlobalAlert("Couldn't load that lesson to preview."); }
+                },
+
                 async loadFootprint(id) {
                     try {
                         const r = await fetch(this.apiBase + `api/programs/${id}/footprint`);
@@ -1579,6 +1637,62 @@
                     if (!u) return '';
                     try { return new URL(u).hostname.replace(/^www\./, ''); }
                     catch (e) { return u.slice(0, 40); }
+                },
+
+                // The plan's own steps for this slot -- the same two shapes
+                // the read-only steps/rotation blocks above already branch
+                // on. Feeds the preview's window stand-in (playLesson,
+                // below) so a slot with no generated script still previews
+                // something real: the player's own fallback ladder turns
+                // these into `do` beats, exactly what tonight's Start tap
+                // would show for the identical slot today.
+                slotSteps(ph, label) {
+                    if (label) {
+                        const sess = (ph.rotation || []).find(s => (s.label || '') === label);
+                        return (sess && sess.steps) || [];
+                    }
+                    return ph.steps || [];
+                },
+
+                // The lesson editor's own preview (Task: "Play this"). A
+                // fresh read straight off storage -- never lessonDraft,
+                // which may hold an edit not yet saved -- so this always
+                // shows the STORED scenes the disclosure's own label
+                // promises, not a half-finished form above it. Works
+                // whether or not the disclosure has ever been opened: it
+                // does its own fetch rather than routing through
+                // loadLesson, which would otherwise stomp an in-progress
+                // edit the moment Play is tapped.
+                //
+                // The player wants a window-shaped object (title,
+                // session_label, phase_name, steps, unit_title, milestone)
+                // and the editor has no real practice window in hand -- only
+                // the program, the phase and the label -- so this builds the
+                // smallest honest stand-in from what IS on screen: the
+                // program's title, this slot's own steps, and the phase's
+                // CURRENT unit (ph.units, matched on p.current_unit exactly
+                // the way onThisRung and this slot's own lessonKey already
+                // do), so a lesson with no stored script still previews the
+                // plan's own steps rather than a bare, contentless check.
+                async playLesson(p, ph, label) {
+                    try {
+                        const qs = new URLSearchParams({ phase_name: ph.name || '',
+                                                         unit_n: p.current_unit || 0,
+                                                         session_label: label || '' });
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/lesson?${qs}`,
+                                              { headers: this.authHeaders() });
+                        const body = r.ok ? await r.json() : {};
+                        const unit = (ph.units || []).find(u => u.n === p.current_unit) || {};
+                        window.dispatchEvent(new CustomEvent('lesson-player:open', {
+                            detail: {
+                                preview: true,
+                                window: { title: p.title || '', session_label: label || '',
+                                         phase_name: ph.name || '', steps: this.slotSteps(ph, label),
+                                         unit_title: unit.title || '', milestone: ph.milestone || '' },
+                                lesson: body.lesson || null,
+                            }
+                        }));
+                    } catch (e) { showGlobalAlert("Couldn't load that lesson to preview."); }
                 },
 
                 addLessonRow(p, ph, label) {
