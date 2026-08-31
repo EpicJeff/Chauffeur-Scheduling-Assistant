@@ -276,7 +276,8 @@ def scenario_generated_origin_uses_pool_and_stores():
 
 
 def scenario_cited_needs_its_page_or_stays_silent():
-    """An outage is never papered over: fetch fails -> no script."""
+    """The unit HAS a url and the fetch fails: an outage, and an outage is
+    never papered over -- no script, ever, not even a generated one."""
     from services import storage, program_lessons as pl, web
     storage.program_lessons_table.truncate()
     w = {**_window(), 'unit_url': 'https://jg.example/s1'}
@@ -292,6 +293,43 @@ def scenario_cited_needs_its_page_or_stays_silent():
                                             'unit_n': 1,
                                             'session_label': 'Technique'}) is None,
           "and nothing stored")
+
+
+def scenario_cited_with_no_url_falls_through_to_generated():
+    """The unit has NO url at all -- not an outage, a different fact about
+    the world. programs_curate's own anti-hallucination guard
+    (_clean_units) legitimately emits exactly this shape whenever a unit's
+    claimed source was never actually read, and the design's book-spine
+    answer applies: structure generated from the plan's own steps, labelled
+    honestly, rather than a slot permanently silent for a reason that has
+    nothing to do with an outage. read_page must never even be called for
+    a page that was never claimed."""
+    from services import storage, program_lessons as pl, web
+    import services.model_pools as mp
+    storage.program_lessons_table.truncate()
+    calls = {'read_page': 0}
+    def spy_read_page(url):
+        calls['read_page'] += 1
+        return None
+    def fake_pool(tier, api_key, system, prompt, **kw):
+        return {'scenes': [{'type': 'say', 'text': 'Warm up first.'}],
+               '_model': 'gemma-4-31b-it'}
+    orig_read, orig_pool = web.read_page, mp.call_pool_json
+    web.read_page, mp.call_pool_json = spy_read_page, fake_pool
+    try:
+        # _window() already sets unit_url='' -- no override needed.
+        lid = pl.generate_for(_program_row(origin='cited'), _window(),
+                              {'n': 1}, {'llm_gemini_api_key': 'k'})
+    finally:
+        web.read_page, mp.call_pool_json = orig_read, orig_pool
+    check(lid, "a lesson was still stored -- structure, not silence")
+    check(calls['read_page'] == 0,
+          "no url means read_page is never called")
+    row = storage.get_program_lesson('p9', {'phase_name': 'Foundations',
+                                            'unit_n': 1,
+                                            'session_label': 'Technique'})
+    check(row['origin'] == 'generated' and row['source_url'] == '',
+          f"honestly labelled generated, no source claimed, got {row}")
 
 
 def scenario_cited_carries_its_source():
@@ -378,6 +416,7 @@ if __name__ == '__main__':
     scenario_none_slot_and_data_never_raise()
     scenario_generated_origin_uses_pool_and_stores()
     scenario_cited_needs_its_page_or_stays_silent()
+    scenario_cited_with_no_url_falls_through_to_generated()
     scenario_cited_carries_its_source()
     scenario_generation_survives_a_pool_error()
     scenario_existing_lesson_skips_before_spending_a_call()

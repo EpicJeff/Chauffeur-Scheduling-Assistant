@@ -107,7 +107,14 @@ def _fetchable(url: str) -> bool:
 
 
 def _fetch(url: str, max_chars: int = MAX_PAGE_CHARS) -> Optional[str]:
-    if not _fetchable(url):
+    # A non-string url (an int, a list -- anything urlparse cannot coerce)
+    # raises OUTSIDE the try block below, not inside it: _fetchable's own
+    # `except ValueError` never sees it, because urlparse hands back
+    # AttributeError for a non-str/bytes argument, not ValueError. Found by
+    # `_fetch(12345)` escaping as a raw AttributeError. Guarded here, at the
+    # front door, rather than only inside _fetchable, because every caller
+    # of this function -- research() included -- shares the exposure.
+    if not isinstance(url, str) or not _fetchable(url):
         return None
     try:
         import requests
@@ -137,6 +144,13 @@ def read_page(url: str) -> Optional[str]:
     means (for a cited lesson, program_lessons.py's own answer is: no
     script)."""
     try:
+        # Load-bearing, not redundant, even now that _fetch is hardened
+        # against a non-string url (the guard above _fetchable, in _fetch)
+        # -- that guard closes the ONE hole this try/except was covering
+        # today, but this function's contract is "None on any failure",
+        # and that promise should not quietly depend on every frame
+        # beneath it staying exception-safe forever. Keep this even if
+        # _fetch looks exception-proof at a glance.
         return _fetch(url)
     except Exception as e:
         logger.info(f"[web] read_page failed for {url}: {e}")

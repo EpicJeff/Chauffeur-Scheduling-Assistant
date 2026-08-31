@@ -215,7 +215,10 @@ _SYSTEM = (
     '{"kind":"counter","target":10}. '
     "At most 10 scenes. Structure: a short why, then the drill as do-beats, "
     "one check near the end. Every do-beat must be startable alone from its "
-    "text. No praise-fluff, no streaks, no scores."
+    "text. No praise-fluff, no streaks, no scores. Never write about "
+    "weight, calories, body composition, or dieting -- any scene that does "
+    "is dropped before it ever reaches a family, so writing one only "
+    "wastes this call."
 )
 
 _CITED_PROMPT = (
@@ -242,11 +245,25 @@ def generate_for(program: dict, window: dict, unit: dict, settings: dict):
     A cited plan speaks only from its page: the unit's url is re-read HERE,
     at generation time, rather than trusted from whatever curate happened
     to read months ago -- a citation is only as good as the read behind
-    it. A fetch failure therefore means no script at all, never a
-    generated stand-in, because an outage is never papered over. A
-    generated plan speaks only from the plan's own steps; keeping it from
-    prescribing how a body moves is the sanitizer's job, not this
-    function's -- generate_for only has to pass the right origin through.
+    it. A cited unit that HAS a url and fails to load gets no script at
+    all, ever: an outage is never papered over with a generated stand-in,
+    and that rule is absolute.
+
+    A cited unit with NO url at all is a different fact about the world,
+    not an outage, and it is not an edge case -- programs_curate's own
+    anti-hallucination guard (`_clean_units`) legitimately emits exactly
+    this shape whenever a unit's claimed source was never actually read,
+    which is the book-spine situation the design names outright:
+    "structure generated, sequence cited." Treating that the same as a
+    dead fetch would leave the slot permanently silent for a reason that
+    has nothing to do with an outage, so it falls through to the generated
+    path instead -- this one slot's origin becomes 'generated', its
+    source_url stays empty, and `read_page` is never called for a page
+    that was never claimed. A generated plan, whether the whole program is
+    one or a single cited slot fell through to it, speaks only from the
+    plan's own steps; keeping it from prescribing how a body moves is the
+    sanitizer's job, not this function's -- generate_for only has to pass
+    the right origin through.
 
     Storage already refuses to overwrite a hand edit. What it cannot know
     on its own is whether a slot has any lesson at all, edited or not --
@@ -279,14 +296,21 @@ def generate_for(program: dict, window: dict, unit: dict, settings: dict):
                   'body': window.get('unit_body') or '',
                   'progression': window.get('progression') or ''}
         source_url = ''
-        if origin == 'cited':
-            url = window.get('unit_url') or ''
-            page = web.read_page(url) if url else None
+        url = (window.get('unit_url') or '') if origin == 'cited' else ''
+        if origin == 'cited' and url:
+            page = web.read_page(url)
             if not page:
-                return None                   # no page, no script
+                return None                   # a url exists and would not
+                                               # load: an outage, never
+                                               # papered over
             source_url = url
             prompt = _CITED_PROMPT.format(url=url, page=page[:8000], **fields)
         else:
+            # Either this plan was never cited, or it was and THIS unit
+            # carries no url at all -- not a fetch that failed, a slot with
+            # nothing to fetch. Falls through to the same generated path a
+            # generated plan already uses; see the docstring above for why
+            # that is correct rather than a workaround.
             origin = 'generated'
             prompt = _GENERATED_PROMPT.format(**fields)
         res = model_pools.call_pool_json(
