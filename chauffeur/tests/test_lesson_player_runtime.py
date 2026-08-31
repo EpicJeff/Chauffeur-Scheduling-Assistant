@@ -1793,6 +1793,82 @@ def scenario_a_cue_stores_nothing():
                   f"a cue is said and forgotten -- {fn} must not {forbidden}")
 
 
+# --- the microphone -----------------------------------------------------
+
+
+def scenario_the_mic_is_asked_for_lazily_and_never_at_open():
+    """A lesson that opens by demanding a microphone is a lesson most
+    households refuse once and never trust again. Asked at the first
+    scene that actually listens, and only there."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        open\(w, lesson, preview\) \{(.*?)\n        \},', src, re.S)
+    check('getUserMedia' not in (m.group(1) if m else ''),
+          "open() never touches the microphone")
+    m2 = re.search(r'\n        async startListening\(s\) \{(.*?)\n        \},',
+                   src, re.S)
+    check(m2, "startListening exists")
+    body = m2.group(1) if m2 else ''
+    check('getUserMedia' in body, f"and it is where the ask happens, got {body!r}")
+
+
+def scenario_the_mic_is_released_on_every_way_out():
+    """Open only inside a listening scene. Advancing, closing and
+    finishing all pass through stopSound(), which is the one place that
+    can be relied on."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        stopSound\(\) \{(.*?)\n        \},', src, re.S)
+    body = m.group(1) if m else ''
+    check('releaseMic' in body, f"stopSound releases it, got {body!r}")
+    m2 = re.search(r'\n        releaseMic\(\) \{(.*?)\n        \},', src, re.S)
+    check(m2, "releaseMic exists")
+    rel = m2.group(1) if m2 else ''
+    check('.stop()' in rel, "it stops the track itself, not just the node")
+    check('micOn' in rel, "and the indicator goes with it")
+
+
+def scenario_nothing_heard_is_ever_recorded_or_sent():
+    """The rule the whole listening slice hangs on. Not a policy in a
+    docstring -- there is no recorder in the file and no request anywhere
+    near the audio path."""
+    src = _read('components/lesson_player.html')
+    check('MediaRecorder' not in src, "there is no recorder in this file")
+    import re
+    for fn in (r'async startListening\(s\)', r'listenTick\(\)', r'releaseMic\(\)'):
+        m = re.search(r'\n        ' + fn + r' \{(.*?)\n        \},', src, re.S)
+        check(m, f"{fn} is findable")
+        body = m.group(1) if m else ''
+        for forbidden in ('fetch(', 'localStorage', 'XMLHttpRequest', 'WebSocket'):
+            check(forbidden not in body,
+                  f"the audio path must never {forbidden}")
+
+
+def scenario_a_missing_or_refused_mic_degrades_to_a_tap():
+    """A wall panel plausibly has no microphone at all, and a household
+    may simply say no. Either way the scene still plays and still
+    advances -- it just becomes a tap, and says so."""
+    src = _read('components/lesson_player.html')
+    check('micDenied' in src, "the refusal is a state the markup can read")
+    check('Tap when you have' in src or 'tap when' in src.lower(),
+          "and the scene offers the tap instead")
+    import re
+    m = re.search(r'\n        async startListening\(s\) \{(.*?)\n        \},',
+                  src, re.S)
+    body = m.group(1) if m else ''
+    check('catch' in body and 'micDenied' in body,
+          f"a refusal is caught and named, never thrown at the scene, "
+          f"got {body!r}")
+
+
+def scenario_the_mic_indicator_is_always_visible_while_it_is_open():
+    src = _read('components/lesson_player.html')
+    check('micOn' in src, "there is an on-air flag")
+    import re
+    check(re.search(r'x-show="micOn"', src),
+          "and something on screen bound directly to it")
+
+
 # --- explain this -------------------------------------------------------
 
 
@@ -2141,6 +2217,11 @@ if __name__ == '__main__':
     scenario_the_cue_scheduler_rides_the_beats_own_timer()
     scenario_cues_never_outlive_their_scene()
     scenario_a_cue_stores_nothing()
+    scenario_the_mic_is_asked_for_lazily_and_never_at_open()
+    scenario_the_mic_is_released_on_every_way_out()
+    scenario_nothing_heard_is_ever_recorded_or_sent()
+    scenario_a_missing_or_refused_mic_degrades_to_a_tap()
+    scenario_the_mic_indicator_is_always_visible_while_it_is_open()
     scenario_explain_this_asks_and_never_writes()
     scenario_explain_this_is_hidden_in_a_preview()
     scenario_an_unanswerable_question_says_so()

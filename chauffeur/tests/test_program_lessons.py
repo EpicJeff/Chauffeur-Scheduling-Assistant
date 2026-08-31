@@ -1181,6 +1181,61 @@ def scenario_sweep_report_names_over_the_pass_limit():
     check(len(over) == 1, f"named as over the pass limit, got {out['slots']}")
 
 
+# --- listening ----------------------------------------------------------
+
+
+def scenario_a_listen_scene_names_one_of_three_modes():
+    out = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Say it back',
+         'primitive': {'kind': 'listen', 'mode': 'presence', 'seconds': 20}},
+        {'type': 'show', 'caption': 'Play a G',
+         'primitive': {'kind': 'listen', 'mode': 'pitch', 'target': 'G3',
+                       'seconds': 30}},
+        {'type': 'show', 'caption': 'Keep up',
+         'primitive': {'kind': 'listen', 'mode': 'tempo', 'bpm': 80,
+                       'seconds': 30}},
+        {'type': 'show', 'caption': 'Read my mind',
+         'primitive': {'kind': 'listen', 'mode': 'emotion', 'seconds': 30}},
+    ], 'generated')
+    check([s['type'] for s in out] == ['show', 'show', 'show', 'say'],
+          f"three modes draw, an invented one degrades to its caption, "
+          f"got {out}")
+    check(out[1]['primitive']['target'] == 'G3',
+          f"a pitch target survives as a note, got {out[1]}")
+    check(out[2]['primitive']['bpm'] == 80, f"and a tempo as bpm, got {out[2]}")
+
+
+def scenario_a_listen_scene_is_bounded_in_time():
+    out = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Long', 'primitive':
+            {'kind': 'listen', 'mode': 'presence', 'seconds': 99999}},
+        {'type': 'show', 'caption': 'Short', 'primitive':
+            {'kind': 'listen', 'mode': 'presence', 'seconds': 1}},
+        {'type': 'show', 'caption': 'None', 'primitive':
+            {'kind': 'listen', 'mode': 'presence'}},
+    ], 'generated')
+    check([s['primitive']['seconds'] for s in out]
+          == [pl.MAX_LISTEN_SECONDS, pl.MIN_LISTEN_SECONDS,
+              pl.DEFAULT_LISTEN_SECONDS],
+          f"clamped, and defaulted when absent, got {out}")
+
+
+def scenario_a_pitch_target_is_a_note_or_it_is_nothing():
+    """A microphone can say WHICH note it heard. It cannot say whether it
+    was any good, and a target it cannot parse is worse than no target."""
+    out = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Play it', 'primitive':
+            {'kind': 'listen', 'mode': 'pitch', 'target': 'nice and bright'}},
+    ], 'generated')
+    check(out[0]['type'] == 'show' and 'target' not in out[0]['primitive'],
+          f"the scene stands and listens without a target, got {out}")
+
+
+def scenario_the_schema_names_listening():
+    check('"listen"' in pl._SYSTEM, "the model is told it may listen")
+    check('presence' in pl._SYSTEM, "and what the modes are")
+
+
 # --- hint ladders -------------------------------------------------------
 
 
@@ -1817,6 +1872,10 @@ if __name__ == '__main__':
     scenario_a_spoken_cue_runs_the_same_screens_as_everything_else()
     scenario_a_cue_line_is_shorter_than_a_beat_of_text()
     scenario_the_schema_names_cues()
+    scenario_a_listen_scene_names_one_of_three_modes()
+    scenario_a_listen_scene_is_bounded_in_time()
+    scenario_a_pitch_target_is_a_note_or_it_is_nothing()
+    scenario_the_schema_names_listening()
     scenario_a_hint_ladder_is_steps_then_an_answer()
     scenario_a_hint_ladder_needs_an_answer_at_the_bottom()
     scenario_a_hint_ladder_is_capped()

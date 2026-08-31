@@ -93,6 +93,22 @@ MAX_OFFER_SCENES = 4
 # is to stop before the answer, not to walk somebody down a staircase.
 MAX_HINT_STEPS = 4
 
+# Listening. Three modes, and the split between them is what a microphone
+# can HONESTLY answer: presence knows somebody made a sound, pitch knows
+# which note, tempo knows whether the peaks line up with the click. None
+# of them knows whether it was any good, and none of them ever will -- a
+# quality judgment is the one thing this app refuses to make about a
+# person practising.
+#
+# The window is bounded at both ends for the same reason a do-beat is:
+# under five seconds nobody has finished a phrase, and past two minutes an
+# open microphone in a family's living room has stopped being a scene and
+# started being a fixture.
+LISTEN_MODES = ('presence', 'pitch', 'tempo')
+MIN_LISTEN_SECONDS = 5
+MAX_LISTEN_SECONDS = 120
+DEFAULT_LISTEN_SECONDS = 20
+
 # A BCP-47 tag only as far as this app can actually act on one: a language
 # and, optionally, a region. The player picks a voice by prefix, so the
 # region half is a preference the browser may ignore and the language half
@@ -172,6 +188,15 @@ def _valid_cards(p):
                     for x in pairs))
 
 
+def _valid_listen(p):
+    # The mode is the whole contract; everything else is optional and
+    # mode-shaped. A target that is not a note and a bpm out of range are
+    # dropped by _build_primitive rather than failing the primitive: a
+    # scene that listens without a target still listens, and refusing a
+    # whole beat over a decoration would cost more than it saves.
+    return p.get('mode') in LISTEN_MODES
+
+
 def _valid_hints(p):
     # BOTH halves or nothing. Rungs with no answer strand somebody at the
     # bottom of a ladder; an answer with no rungs is a `say` beat that
@@ -223,6 +248,7 @@ PRIMITIVES = {
     'cards': _valid_cards,
     'counter': _valid_counter,
     'hints': _valid_hints,
+    'listen': _valid_listen,
 }
 
 # A generated lesson may structure practice; it may not prescribe what a
@@ -300,6 +326,19 @@ def _build_primitive(prim):
                 'pairs': [{'front': _clean_text(x.get('front'), MAX_SHORT_TEXT),
                            'back': _clean_text(x.get('back'), MAX_SHORT_TEXT)}
                           for x in prim['pairs']]}
+    if kind == 'listen':
+        built = {'kind': 'listen', 'mode': prim['mode'],
+                 'seconds': max(MIN_LISTEN_SECONDS,
+                                min(MAX_LISTEN_SECONDS,
+                                    _to_int(prim.get('seconds'))
+                                    or DEFAULT_LISTEN_SECONDS))}
+        target = str(prim.get('target') or '')
+        if _NOTE_RE.match(target):
+            built['target'] = target
+        bpm = _to_int(prim.get('bpm'))
+        if bpm is not None and 30 <= bpm <= 240:
+            built['bpm'] = bpm
+        return built
     if kind == 'hints':
         return {'kind': 'hints',
                 'steps': [_clean_text(x) for x in prim['steps'][:MAX_HINT_STEPS]],
@@ -688,6 +727,11 @@ _SYSTEM = (
     "that are not played at all -- never a fret or a finger for those), "
     '{"kind":"cards","pairs":[{"front":"","back":""}]}, '
     '{"kind":"hints","steps":["widest nudge","narrower"],"answer":""} '
+    '{"kind":"listen","mode":"presence","seconds":20} '
+    "(listens through the microphone where there is one and becomes a "
+    "tap where there is not -- mode is presence, meaning they said or "
+    "played something, or pitch with a target note like G3, or tempo "
+    "with a bpm. It never judges whether it was any good), "
     "(a ladder for a problem: up to 4 rungs, each narrower than the "
     "last, and the answer only at the bottom -- never the answer "
     "straight away), "

@@ -306,6 +306,43 @@
                     </div>
                 </template>
 
+                <!-- listen: the microphone, and only while this scene is
+                     on screen. The on-air dot is bound directly to
+                     `micOn` so it cannot drift from the truth, and the
+                     scene degrades whole -- no microphone, a refusal, or
+                     a mode this player cannot hear yet all land on the
+                     same honest tap, which advances exactly as listening
+                     would have. Nothing heard is judged: it says it heard
+                     you, never whether it was any good. -->
+                <template x-if="scene().primitive.kind === 'listen'">
+                    <div class="w-full flex flex-col items-center gap-4"
+                         :class="panel ? 'max-w-2xl' : 'max-w-sm'">
+                        <div class="flex items-center gap-2" x-show="micOn">
+                            <span class="rounded-full bg-teal-400 lp-metro-dot"
+                                  :class="panel ? 'w-4 h-4' : 'w-3 h-3'"></span>
+                            <span class="text-teal-300 font-bold"
+                                  :class="panel ? 'text-lg' : 'text-xs'">Listening</span>
+                        </div>
+                        <div class="font-black text-gray-100"
+                             :class="panel ? 'text-5xl' : 'text-3xl'"
+                             x-show="micOn && !listenDone"
+                             x-text="fmtClock(listenLeft)"></div>
+                        <div class="font-bold text-teal-300"
+                             :class="panel ? 'text-3xl' : 'text-xl'"
+                             x-show="listenHeard" x-text="listenHeard"></div>
+                        <div class="w-full text-center space-y-3"
+                             x-show="micDenied || scene().primitive.mode !== 'presence'">
+                            <div class="text-gray-400" :class="panel ? 'text-lg' : 'text-xs'"
+                                 x-text="micDenied
+                                     ? 'No microphone here — do it out loud anyway.'
+                                     : 'Do it out loud — this screen is not listening for that yet.'"></div>
+                            <button type="button" @click.stop="advance()"
+                                    class="w-full rounded-xl bg-teal-700 text-white font-bold active:brightness-90"
+                                    :class="panel ? 'py-4 text-2xl' : 'py-2.5 text-sm'">Tap when you have</button>
+                        </div>
+                    </div>
+                </template>
+
                 <!-- hints: one rung at a time, widest nudge first, the
                      answer only at the bottom. The dots draw WHERE you
                      are, never how many you needed -- "3 of 4 hints used"
@@ -533,6 +570,16 @@ function lessonPlayer() {
         // die with the scene: nothing about having asked outlives the
         // beat it was asked about.
         helpText: '', helpBusy: false,
+        // The microphone, and only ever inside a listening scene.
+        // `micOn` drives a visible on-air dot; `micDenied` is a real
+        // state the markup reads, because a wall panel plausibly has no
+        // microphone at all and a household may simply say no -- either
+        // way the scene still plays, as a tap. `listenHeard` is what the
+        // scene shows about now, never a result: it is cleared on the way
+        // out and stored nowhere.
+        micOn: false, micDenied: false, micStream: null, micCtx: null,
+        micAnalyser: null, micBuf: null, listenTimer: null,
+        listenHeard: '', listenDone: false, listenLeft: 0,
         // The current beat's cues and how many of them have already been
         // said. A cursor rather than a set, which is safe because the
         // sanitizer stores them sorted by `at`. Both reset on every scene
@@ -625,7 +672,8 @@ function lessonPlayer() {
         // primitive.
         isRenderableShow(s) {
             return !!(s && s.primitive && ['timer', 'metronome', 'keyboard',
-                'fretboard', 'cards', 'counter', 'hints'].includes(s.primitive.kind));
+                'fretboard', 'cards', 'counter', 'hints',
+                'listen'].includes(s.primitive.kind));
         },
 
         // `say` always has non-empty text (sanitize_script drops an empty
@@ -1287,6 +1335,7 @@ function lessonPlayer() {
             this.cues = []; this.cuesFired = 0;
             this.waitLeft = 0; this.offerOpen = false;
             this.helpText = ''; this.helpBusy = false;
+            this.listenHeard = ''; this.listenDone = false; this.listenLeft = 0;
             if (this.waitTimer) { clearInterval(this.waitTimer); this.waitTimer = null; }
             if (this.counterTimer) { clearInterval(this.counterTimer); this.counterTimer = null; }
             const s = this.scene();
@@ -1300,12 +1349,103 @@ function lessonPlayer() {
             // 0 lands with the beat rather than a tick behind it.
             if (s.type === 'do' && s.cues) this.startCues(s.cues);
             if (s.type === 'wait') this.startWait(s);
+            if (s.type === 'show' && s.primitive
+                && s.primitive.kind === 'listen') this.startListening(s.primitive);
             if (s.type === 'do' && s.seconds) this.startTimer(s.seconds);
             if (s.type === 'do' && s.metronome_bpm) this.startMetronome(s.metronome_bpm);
             if (s.type === 'show' && s.primitive) {
                 if (s.primitive.kind === 'timer' && s.primitive.seconds) this.startTimer(s.primitive.seconds);
                 if (s.primitive.kind === 'metronome' && s.primitive.bpm) this.startMetronome(s.primitive.bpm);
             }
+        },
+
+        // --- listening -------------------------------------------------
+        // The microphone is asked for HERE, at the first scene that
+        // actually listens, and nowhere else. A lesson that opens by
+        // demanding a microphone is a lesson a household refuses once and
+        // never trusts again -- and most lessons never listen at all.
+        //
+        // Nothing heard is recorded or sent. Nothing in this file can
+        // record audio at all, and there is no request anywhere near the
+        // audio path: the
+        // analyser reads a float array in memory, a number comes out, the
+        // array is overwritten on the next tick. That is the whole
+        // pipeline, and it is the reason this can be offered at all.
+        //
+        // A refusal or a missing microphone is not an error. `micDenied`
+        // becomes true, the scene renders its tap variant with an honest
+        // note, and the lesson carries on -- a wall panel plausibly has
+        // no microphone, and saying no has to cost nothing.
+        async startListening(s) {
+            this.listenLeft = s.seconds || 20;
+            this.listenTimer = setInterval(() => {
+                this.listenLeft = Math.max(0, this.listenLeft - 1);
+                if (this.listenLeft <= 0) {
+                    clearInterval(this.listenTimer); this.listenTimer = null;
+                    this.releaseMic();
+                }
+            }, 1000);
+            try {
+                const md = navigator.mediaDevices;
+                if (!md || !md.getUserMedia) { this.micDenied = true; return; }
+                this.micStream = await md.getUserMedia({audio: true});
+                this.micCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const src = this.micCtx.createMediaStreamSource(this.micStream);
+                this.micAnalyser = this.micCtx.createAnalyser();
+                this.micAnalyser.fftSize = 2048;
+                src.connect(this.micAnalyser);
+                this.micBuf = new Float32Array(this.micAnalyser.fftSize);
+                this.micDenied = false;
+                this.micOn = true;
+                this.micTick = setInterval(() => this.listenTick(), 120);
+            } catch (e) {
+                this.micDenied = true;
+                this.releaseMic();
+            }
+        },
+        // One read of the live buffer, 8 times a second. `presence` is
+        // the only mode this answers today -- loud enough for long enough
+        // means somebody did the thing -- and pitch and tempo fall
+        // through to the same tap variant a missing microphone gets,
+        // rather than pretending to hear something they cannot yet.
+        listenTick() {
+            if (!this.micAnalyser || this.listenDone) return;
+            const p = (this.scene().primitive) || {};
+            this.micAnalyser.getFloatTimeDomainData(this.micBuf);
+            let sum = 0;
+            for (let i = 0; i < this.micBuf.length; i++) sum += this.micBuf[i] * this.micBuf[i];
+            const rms = Math.sqrt(sum / this.micBuf.length);
+            if (p.mode === 'presence' && rms > 0.02) {
+                this.listenHeard = 'Heard you.';
+                this.markHeard();
+            }
+        },
+        // What a listening scene is FOR: it heard the thing, so the scene
+        // is done. It is not a grade and it is not kept -- `listenDone`
+        // dies with the scene like every other flag here.
+        markHeard() {
+            if (this.listenDone) return;
+            this.listenDone = true;
+            this.playChime('success');
+            this.releaseMic();
+        },
+        // Stops the TRACK, not merely the graph node: a stream left live
+        // keeps the browser's own recording indicator lit, which is both
+        // the wrong signal and the right complaint.
+        releaseMic() {
+            if (this.micTick) { clearInterval(this.micTick); this.micTick = null; }
+            if (this.listenTimer) { clearInterval(this.listenTimer); this.listenTimer = null; }
+            try {
+                if (this.micStream) {
+                    (this.micStream.getTracks() || []).forEach(t => t.stop());
+                }
+            } catch (e) {}
+            this.micStream = null;
+            this.micAnalyser = null;
+            this.micBuf = null;
+            try { if (this.micCtx) this.micCtx.close(); } catch (e) {}
+            this.micCtx = null;
+            this.micOn = false;
         },
 
         // A wait beat: arm the call, then count down on screen for
@@ -1415,6 +1555,12 @@ function lessonPlayer() {
             // closing this player cannot take it back, which is the whole
             // promise a wait beat makes.
             if (this.waitTimer) { clearInterval(this.waitTimer); this.waitTimer = null; }
+            // The microphone is the most scene-local thing in this file
+            // and the one with real consequences for being left open, so
+            // it is released here -- the single path every exit takes
+            // (advance, close, finish) -- rather than trusted to a
+            // per-scene teardown somebody has to remember to write.
+            this.releaseMic();
             // Speech is exactly as scene-local as the countdown and the
             // click beside it. Without this, advancing, closing or
             // finishing leaves a sentence still being read aloud into a
