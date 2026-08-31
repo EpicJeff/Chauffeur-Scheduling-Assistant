@@ -5864,7 +5864,8 @@ def edit_program(program_id: str, body: dict = Body(default={}),
         try:
             curated = _cur.curate(updates.get('title') or row.get('title'),
                                   shape, member_name=member.get('name') or '',
-                                  member=member, starting_point=starting_point)
+                                  member=member, starting_point=starting_point,
+                                  exclude_books=bool(body.get('exclude_books')))
         except Exception as e:
             print(f"[programs] curate failed for {program_id}: {e!r}")
             return {"status": "error",

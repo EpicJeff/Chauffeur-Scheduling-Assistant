@@ -695,7 +695,8 @@ def _source_generated(why: str, answer: str = '', reason: str = 'no_plan') -> di
 
 
 def curate(title: str, shape: dict, member_name: str = '',
-           member: dict = None, starting_point: str = '') -> dict:
+           member: dict = None, starting_point: str = '',
+           exclude_books: bool = False) -> dict:
     """One research run, turned into cited phases -- or an honest fallback.
 
     Returns {'phases': [...], 'source': {...}}. Phase CONTENT comes from pages
@@ -707,6 +708,13 @@ def curate(title: str, shape: dict, member_name: str = '',
     changes a plan more than any other -- how old the person following it is
     -- reaches both tiers. `member_name` stays for callers that only ever had
     one, and for a member who has since been removed.
+
+    `exclude_books` asks the research question itself to steer past anything
+    that starts with a purchase, and does not stop there: a plan can still
+    come back leaning on a book even when the question asked it not to, so
+    the answer is checked too, with the same `book_spine_of` a family's own
+    "no books" tap uses, and a plan that still fails it is handed to the
+    generated tier instead of back to the family.
     """
     per_week = int((shape or {}).get('sessions_per_week') or 3)
     minutes = int((shape or {}).get('minutes') or 25)
@@ -714,7 +722,13 @@ def curate(title: str, shape: dict, member_name: str = '',
                              starting_point)
     question = (f"What is the best established, existing, step-by-step program "
                 f"a beginner should follow to {title}? Name the real program "
-                f"and its phases. Do not invent one.")
+                f"and its phases. Prefer pages that actually teach the "
+                f"material over pages that merely list or review books. "
+                f"Do not invent one.")
+    if exclude_books:
+        question += (" Only consider programs that can be followed without "
+                     "buying a book — free online curricula with the "
+                     "lessons on the page.")
     settings = storage.get_settings() or {}
     pages = int(settings.get('programs_research_pages', PAGES) or PAGES)
     api_key = settings.get('llm_gemini_api_key', '')
@@ -758,17 +772,23 @@ def curate(title: str, shape: dict, member_name: str = '',
         return _fallback(title, per_week, api_key, context, answer,
                          uncited=True)
 
-    return {'phases': shaped['phases'],
-            'source': {'plan_name': shaped['plan_name'],
-                       'url': shaped['url'] or items[0]['url'],
-                       'why_this_one': shaped['why_this_one'] or answer[:400],
-                       'facts': [{'claim': i['claim'], 'url': i['url']}
-                                 for i in items],
-                       'runners_up': shaped['runners_up'],
-                       'answer': answer,
-                       'origin': ORIGIN_CITED, 'reason': '',
-                       'hand_written': False,
-                       'book_spine': book_spine_of(shaped['phases'])}}
+    src = {'plan_name': shaped['plan_name'],
+           'url': shaped['url'] or items[0]['url'],
+           'why_this_one': shaped['why_this_one'] or answer[:400],
+           'facts': [{'claim': i['claim'], 'url': i['url']}
+                     for i in items],
+           'runners_up': shaped['runners_up'],
+           'answer': answer,
+           'origin': ORIGIN_CITED, 'reason': '',
+           'hand_written': False,
+           'book_spine': book_spine_of(shaped['phases'])}
+    if exclude_books and src['book_spine']:
+        # Asked for booklessness and the web still answered with a shelf:
+        # an app-made plan that says so beats a purchase order.
+        print(f"[programs] bookless ask for {title!r} still came back "
+              f"book-spined -- generating instead")
+        return _fallback(title, per_week, api_key, context, answer)
+    return {'phases': shaped['phases'], 'source': src}
 
 
 def _fallback(title: str, per_week: int, api_key: str, context: str,

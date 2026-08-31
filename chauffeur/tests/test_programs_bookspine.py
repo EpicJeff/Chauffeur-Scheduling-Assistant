@@ -56,10 +56,32 @@ def scenario_series_name_is_extracted():
           f"got {cur.book_spine_of(phases)!r}")
 
 
+def scenario_curate_prefers_pages_that_teach():
+    """The research question itself must rank teaching over listing --
+    checked at the source, because the question is the one lever curate
+    has over what comes back."""
+    import inspect
+    src = inspect.getsource(cur.curate)
+    check('teach' in src and 'list' in src,
+          "the question steers toward instructional pages")
+
+
+def scenario_exclude_books_reaches_the_question():
+    """With exclude_books, the question says no-purchase out loud, and a
+    plan that still comes back book-spined is sent to the generated tier
+    rather than handed over."""
+    import inspect
+    src = inspect.getsource(cur.curate)
+    check('exclude_books' in src, "curate takes the flag")
+    check('_fallback' in src, "and can route a stubborn book plan to generated")
+
+
 if __name__ == '__main__':
     scenario_a_book_only_plan_is_flagged()
     scenario_a_taught_plan_is_not_flagged()
     scenario_mixed_plan_is_not_flagged()
     scenario_units_with_urls_defeat_the_flag()
     scenario_series_name_is_extracted()
+    scenario_curate_prefers_pages_that_teach()
+    scenario_exclude_books_reaches_the_question()
     print("test_programs_bookspine OK")
