@@ -262,6 +262,130 @@ def scenario_the_pwa_reuses_its_existing_log_action_and_only_once():
           "and it calls the EXISTING log action, not a new one")
 
 
+def scenario_music_primitives_render():
+    """Task 11: keyboard and fretboard join metronome as real pictures, each
+    a named JS function taking the primitive's own validated params (keys /
+    dots) and returning markup built from them -- not a caption, and not a
+    hand-written block per key/fret."""
+    src = _read('components/lesson_player.html')
+    import re
+    check(re.search(r'keyboardSvg\(keys\)\s*\{', src), "keyboardSvg(keys) exists")
+    check(re.search(r'fretboardSvg\(dots\)\s*\{', src), "fretboardSvg(dots) exists")
+    check("kind === 'keyboard'" in src, "the show dispatch has a keyboard branch")
+    check("kind === 'fretboard'" in src, "the show dispatch has a fretboard branch")
+    check("kind === 'metronome'" in src, "metronome is still wired (Task 6)")
+    check('keyboardSvg(scene().primitive.keys)' in src,
+          "the keyboard branch feeds the renderer its own validated keys")
+    check('fretboardSvg(scene().primitive.dots)' in src,
+          "the fretboard branch feeds the renderer its own validated dots")
+    check('<svg' in src, "drawn, not described")
+
+
+def scenario_keyboard_and_fretboard_are_renderable_shows():
+    """Anchored to isRenderableShow's OWN body, not the whole file -- a bare
+    "'keyboard' in src" would pass by coincidence off the x-if condition
+    alone even if the allow-list itself were never updated."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'isRenderableShow\(s\)\s*\{([^}]*)\}', src, re.S)
+    check(m, "isRenderableShow exists")
+    body = m.group(1) if m else ''
+    for kind in ('keyboard', 'fretboard'):
+        check(f"'{kind}'" in body,
+              f"{kind} is in the renderable-show allow-list itself, not just somewhere in the file")
+
+
+def scenario_keyboard_geometry_is_computed_not_hand_drawn():
+    """The brief's own constraint: key-to-x arithmetic in JS, never a
+    per-key list. Scoped to keyboardSvg's own body (bounded by the next
+    function in source rather than a brace-count guess, since the body
+    itself contains object literals) -- one small geometry table applied
+    by a loop, and the octave comes from parsing the note name, not a
+    lookup keyed on the whole note string."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'keyboardSvg\(keys\)\s*\{(.*?)fretboardSvg\(dots\)', src, re.S)
+    check(m, "keyboardSvg body is findable, bounded by the next function")
+    body = m.group(1) if m else ''
+    check(body.count('GEOM') >= 2,
+          "one geometry table drives both white- and black-key placement, "
+          "not a literal rect per note name")
+    check('parseInt' in body,
+          "the octave comes from parsing the note name arithmetically, not a per-note lookup")
+
+
+def scenario_fretboard_window_starts_at_the_lowest_fretted_dot():
+    """The brief's own formula: window start = max(1, min(dot frets)) --
+    never below the first fret, and anchored to whichever dot is lowest on
+    the neck rather than a fixed position. Scoped to fretboardSvg's own
+    body, bounded by the next function in source."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'fretboardSvg\(dots\)\s*\{(.*?)cardFace\(', src, re.S)
+    check(m, "fretboardSvg body is findable, bounded by the next function")
+    body = m.group(1) if m else ''
+    check('Math.max(1' in body and 'Math.min(' in body,
+          "the window start is max(1, min(dot frets)), computed, not a fixed fret 1")
+
+
+def scenario_remaining_primitives_render():
+    """Task 12: cards and counter join keyboard/fretboard/timer/metronome
+    as real pictures -- every kind program_lessons.py's PRIMITIVES dict
+    validates now draws something."""
+    src = _read('components/lesson_player.html')
+    check("kind === 'cards'" in src, "the show dispatch has a cards branch")
+    check("kind === 'counter'" in src, "the show dispatch has a counter branch")
+    import re
+    m = re.search(r'isRenderableShow\(s\)\s*\{([^}]*)\}', src, re.S)
+    check(m, "isRenderableShow exists")
+    body = m.group(1) if m else ''
+    for kind in ('cards', 'counter'):
+        check(f"'{kind}'" in body, f"{kind} is in the renderable-show allow-list itself")
+    check('<svg' in src, "drawn, not described")
+
+
+def scenario_counter_taps_are_never_sent():
+    """A rep count is a within-scene convenience, not a record."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'bumpCounter\([^)]*\)\s*\{([^}]*)\}', src)
+    check(m, "bumpCounter exists")
+    body = m.group(1) if m else ''
+    for forbidden in ('fetch', 'localStorage', 'api', 'POST'):
+        check(forbidden not in body, f"counter taps never {forbidden}")
+
+
+def scenario_card_flips_are_never_sent():
+    """Same discipline as the counter, and explicit in the design brief: a
+    flip is scene-local, never a record of what a kid did or did not
+    know."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'toggleCardFlip\([^)]*\)\s*\{([^}]*)\}', src)
+    check(m, "toggleCardFlip exists")
+    body = m.group(1) if m else ''
+    for forbidden in ('fetch', 'localStorage', 'api', 'POST'):
+        check(forbidden not in body, f"a card flip never {forbidden}")
+
+
+def scenario_cards_and_counter_taps_never_bubble_into_advance():
+    """The scene area's own handler is `scene().type !== 'check' &&
+    advance()` -- a bare `show` scene does not skip it the way `check`
+    does, so every interactive tap INSIDE a cards/counter primitive (flip,
+    prev, next, bump) has to carry .stop or it both does its own thing AND
+    advances past the scene in the same motion -- the same bug class the
+    check buttons already guard against (see
+    scenario_check_taps_never_bubble_into_the_advance_handler above)."""
+    src = _read('components/lesson_player.html')
+    import re
+    for handler in ('toggleCardFlip', 'cardPrev', 'cardNext', 'bumpCounter'):
+        taps = re.findall(r'@click(\.stop)?="' + handler + r'\(\)"', src)
+        check(len(taps) >= 1, f"{handler} is wired to a tap")
+        check(all(t == '.stop' for t in taps),
+              f"every {handler} tap must carry .stop, or it can bubble into "
+              f"the scene area's own tap-to-advance handler")
+
+
 if __name__ == '__main__':
     scenario_component_exists_and_renders_the_four_beats()
     scenario_checks_are_never_stored()
@@ -279,4 +403,12 @@ if __name__ == '__main__':
     scenario_the_lesson_player_is_included_once_on_each_page_not_inside_the_card()
     scenario_the_wall_tap_is_panel_sized()
     scenario_the_pwa_reuses_its_existing_log_action_and_only_once()
+    scenario_music_primitives_render()
+    scenario_keyboard_and_fretboard_are_renderable_shows()
+    scenario_keyboard_geometry_is_computed_not_hand_drawn()
+    scenario_fretboard_window_starts_at_the_lowest_fretted_dot()
+    scenario_remaining_primitives_render()
+    scenario_counter_taps_are_never_sent()
+    scenario_card_flips_are_never_sent()
+    scenario_cards_and_counter_taps_never_bubble_into_advance()
     print("test_lesson_player_runtime OK")

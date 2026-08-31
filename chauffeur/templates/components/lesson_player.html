@@ -13,11 +13,15 @@
      with `lesson: null` until a later task starts writing scripts.
 
      Scene shapes come from services/program_lessons.py's `sanitize_script`:
-     say / do / check / show. This task renders say, do, check, and for
-     show renders the `timer` and `metronome` primitives -- any other show
-     kind (keyboard/fretboard/cards/counter land in later tasks) draws its
-     caption as a say beat, mirroring the sanitizer's own degrade rule for
-     a primitive this renderer has never heard of.
+     say / do / check / show. Every `show` primitive that module's
+     PRIMITIVES dict validates now draws a real picture: `timer` /
+     `metronome` (the countdown ring and the beat pulse), `keyboard` /
+     `fretboard` (SVG built from the note/dot params) and `cards` /
+     `counter` (tap-driven, scene-local). isRenderableShow() stays an
+     explicit allow-list rather than "any primitive with a kind" -- a
+     future 7th primitive shipped without a renderer still falls through
+     to its caption as a say beat, mirroring the sanitizer's own degrade
+     rule for a primitive this file has never heard of.
 
      One presentation, two sizes: `?panel=true` is read directly (the
      kiosk-shares-logic / TripLogic pattern -- see docs/ui_design_guide.md)
@@ -119,11 +123,88 @@
             </div>
         </template>
 
-        <!-- show: primitive dispatch. Only timer/metronome render a picture
-             in this task; a caption is drawn either way. -->
+        <!-- show: primitive dispatch. Every kind
+             services/program_lessons.py's PRIMITIVES dict validates now
+             draws a real picture: timer/metronome (the ring and pulse
+             below), keyboard/fretboard (SVG from note/dot arithmetic),
+             cards/counter (tap-driven, scene-local). The caption renders
+             first, the same top-to-bottom order the ring and pulse below
+             already use. isRenderableShow stays an explicit allow-list
+             rather than "any primitive" so a future 7th kind shipped
+             without a renderer still falls through to its caption, the
+             same call sanitize_script already makes server-side for a
+             broken primitive. -->
         <template x-if="scene().type === 'show' && isRenderableShow(scene())">
-            <div class="text-gray-400" :class="panel ? 'text-xl' : 'text-sm'"
-                 x-show="scene().caption" x-text="scene().caption"></div>
+            <div class="w-full flex flex-col items-center gap-4">
+                <div class="text-gray-400" :class="panel ? 'text-xl' : 'text-sm'"
+                     x-show="scene().caption" x-text="scene().caption"></div>
+
+                <!-- keyboard: SVG built purely from note-name arithmetic,
+                     see keyboardSvg() below -- highlighted keys only, no
+                     per-key hand-drawn rect. -->
+                <template x-if="scene().primitive.kind === 'keyboard'">
+                    <div class="w-full mx-auto" :class="panel ? 'max-w-2xl' : 'max-w-xs'"
+                         x-html="keyboardSvg(scene().primitive.keys)"></div>
+                </template>
+
+                <!-- fretboard: SVG built purely from dot-grid arithmetic,
+                     see fretboardSvg() below. -->
+                <template x-if="scene().primitive.kind === 'fretboard'">
+                    <div class="w-full mx-auto" :class="panel ? 'max-w-2xl' : 'max-w-sm'"
+                         x-html="fretboardSvg(scene().primitive.dots)"></div>
+                </template>
+
+                <!-- cards: one pair at a time, tap the card to flip. .stop
+                     on every tap here is the same load-bearing guard the
+                     check buttons use above -- this scene area's own
+                     handler is `scene().type !== 'check' && advance()`,
+                     which a bare `show` scene does NOT skip, so an
+                     unguarded flip/prev/next tap would both do its own
+                     thing AND advance past the scene in the same motion.
+                     Position and flip state live only in cardIdx/
+                     cardFlipped, reset unconditionally at the top of
+                     enterScene() -- never fetched, never stored. -->
+                <template x-if="scene().primitive.kind === 'cards'">
+                    <div class="w-full max-w-sm flex flex-col items-center gap-4">
+                        <div @click.stop="toggleCardFlip()"
+                             class="w-full aspect-[3/2] rounded-2xl bg-gray-800 border border-gray-700 flex items-center justify-center p-6 cursor-pointer active:bg-gray-700"
+                             :class="panel ? 'text-3xl' : 'text-xl'">
+                            <div class="font-bold text-white text-center" x-text="cardFace()"></div>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <template x-for="(p, i) in (scene().primitive.pairs || [])" :key="i">
+                                <span class="rounded-full"
+                                      :class="i === cardIdx ? 'bg-teal-400 w-5 h-1.5' : 'bg-gray-700 w-1.5 h-1.5'"></span>
+                            </template>
+                        </div>
+                        <div class="flex items-center gap-4">
+                            <button type="button" @click.stop="cardPrev()"
+                                    class="rounded-lg bg-gray-800 border border-gray-700 text-gray-300 font-bold active:bg-gray-700"
+                                    :class="panel ? 'px-6 py-3 text-xl' : 'px-4 py-2 text-sm'">Prev</button>
+                            <span class="text-gray-500" :class="panel ? 'text-lg' : 'text-xs'"
+                                  x-text="(cardIdx + 1) + ' / ' + (scene().primitive.pairs || []).length"></span>
+                            <button type="button" @click.stop="cardNext()"
+                                    class="rounded-lg bg-gray-800 border border-gray-700 text-gray-300 font-bold active:bg-gray-700"
+                                    :class="panel ? 'px-6 py-3 text-xl' : 'px-4 py-2 text-sm'">Next</button>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- counter: tap the number toward target, same .stop
+                     guard as cards and the same reason. bumpCounter()
+                     only ever touches its own in-memory counterVal. -->
+                <template x-if="scene().primitive.kind === 'counter'">
+                    <div class="w-full flex flex-col items-center gap-3">
+                        <div @click.stop="bumpCounter()"
+                             class="rounded-full bg-gray-800 border-2 border-teal-700 flex items-center justify-center cursor-pointer active:bg-gray-700"
+                             :class="panel ? 'w-48 h-48' : 'w-32 h-32'">
+                            <div class="font-black text-white" :class="panel ? 'text-6xl' : 'text-5xl'" x-text="counterVal"></div>
+                        </div>
+                        <div class="text-gray-500" :class="panel ? 'text-lg' : 'text-xs'"
+                             x-text="'of ' + (scene().primitive.target || 0)"></div>
+                    </div>
+                </template>
+            </div>
         </template>
 
         <!-- the countdown ring: a `do` with seconds, or a `show timer` -->
@@ -172,6 +253,9 @@ function lessonPlayer() {
         panel: new URLSearchParams(location.search).get('panel') === 'true',
         timer: null, timeLeft: 0, timerTotal: 0, audio: null, metroTimer: null,
         ringC: 2 * Math.PI * 44,
+        // cards/counter: scene-local only, reset every enterScene() --
+        // never persisted, see bumpCounter()/toggleCardFlip() below.
+        cardIdx: 0, cardFlipped: false, counterVal: 0,
 
         open(w, lesson) {
             this.w = w || {};
@@ -196,24 +280,29 @@ function lessonPlayer() {
         scene() { return this.scenes[this.idx] || {type: 'say', text: ''}; },
         isLast() { return this.idx >= this.scenes.length - 1; },
 
-        // A `show` whose kind this renderer draws. Anything else (a real
-        // lesson may cite keyboard/fretboard/cards/counter -- later tasks)
-        // falls through to the say-shaped caption below, same call
-        // sanitize_script already made server-side for a broken primitive.
+        // A `show` whose kind this renderer draws -- every kind
+        // services/program_lessons.py's PRIMITIVES dict validates, now
+        // that keyboard/fretboard/cards/counter join timer/metronome.
+        // Kept as an explicit allow-list rather than "any primitive with
+        // a kind" so a future 7th primitive shipped without a renderer
+        // still falls through to the say-shaped caption below, the same
+        // call sanitize_script already makes server-side for a broken
+        // primitive.
         isRenderableShow(s) {
-            return !!(s && s.primitive
-                && (s.primitive.kind === 'timer' || s.primitive.kind === 'metronome'));
+            return !!(s && s.primitive && ['timer', 'metronome', 'keyboard',
+                'fretboard', 'cards', 'counter'].includes(s.primitive.kind));
         },
 
         // `say` always has non-empty text (sanitize_script drops an empty
         // or screened say beat outright), but a `show` scene is explicitly
         // allowed an empty caption even when its primitive is valid -- and
-        // an unrenderable kind (keyboard/fretboard/cards/counter, Task
-        // 11/12 territory) lands here on that caption alone. A bare '' as
-        // the last resort used to mean a literally blank content area:
-        // no kicker, no ring, no metronome, no text. The third term is a
-        // real sentence so that shape can never happen once generation
-        // starts producing primitives this player does not draw yet.
+        // an unrenderable kind (every kind PRIMITIVES validates draws a
+        // picture as of Task 12, so this is only ever a future 7th
+        // primitive shipped ahead of its renderer) lands here on that
+        // caption alone. A bare '' as the last resort used to mean a
+        // literally blank content area: no kicker, no ring, no metronome,
+        // no text. The third term is a real sentence so that shape can
+        // never happen.
         sayText() {
             const s = this.scene();
             return s.text || s.caption || (s.type === 'show' ? 'New material.' : '');
@@ -242,6 +331,137 @@ function lessonPlayer() {
             return 0;
         },
 
+        // keyboard / fretboard: pure functions from a validated primitive's
+        // own params to an SVG string, bound via x-html (the same pattern
+        // components/pet_battle.html already uses for a pet's `.svg`
+        // field). Both use one small, fixed geometry table applied by a
+        // loop -- never a per-key or per-fret hand-written rect.
+
+        // 12 chromatic slots -> geometry, C..B. `w`: white-key index
+        // within the octave. `b`: the boundary (right edge of white key N)
+        // a black key sits on. Same table for every note; the note name
+        // only ever selects an index into it.
+        keyboardSvg(keys) {
+            const NAT = {C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11};
+            const GEOM = [{w: 0}, {b: 0}, {w: 1}, {b: 1}, {w: 2}, {w: 3},
+                          {b: 3}, {w: 4}, {b: 4}, {w: 5}, {b: 5}, {w: 6}];
+            const notes = (Array.isArray(keys) ? keys : []).map(k => {
+                const m = /^([A-G])([#b]?)(\d)$/.exec(k || '');
+                if (!m) return null;
+                const semi = ((NAT[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0)) + 12) % 12;
+                return {octave: parseInt(m[3], 10), semi};
+            }).filter(Boolean);
+            if (!notes.length) return '';
+            // The octave window CONTAINING the highlighted keys, capped at
+            // two -- a wider span clamps to the first two rather than
+            // stretching the keybed to fit every requested key.
+            const minO = Math.min(...notes.map(n => n.octave));
+            const maxO = Math.min(Math.max(...notes.map(n => n.octave)), minO + 1);
+            const on = new Set(notes.filter(n => n.octave <= maxO)
+                                     .map(n => n.octave + ':' + n.semi));
+            const W = 32, H = 120, BW = 20, BH = 74, accent = '#2dd4bf';
+            let whites = '', blacks = '';
+            for (let o = minO; o <= maxO; o++) {
+                const baseX = (o - minO) * 7 * W;
+                GEOM.forEach((g, p) => {
+                    const hi = on.has(o + ':' + p);
+                    if (g.w !== undefined) {
+                        whites += `<rect x="${baseX + g.w * W}" y="0" width="${W - 2}" height="${H}" rx="4" `
+                            + `fill="${hi ? accent : '#f1f5f9'}" stroke="#475569" stroke-width="1.5"></rect>`;
+                    } else {
+                        const x = baseX + (g.b + 1) * W - BW / 2;
+                        blacks += `<rect x="${x}" y="0" width="${BW}" height="${BH}" rx="3" `
+                            + `fill="${hi ? accent : '#1e293b'}" stroke="rgba(255,255,255,0.35)" stroke-width="1"></rect>`;
+                    }
+                });
+            }
+            const totalW = (maxO - minO + 1) * 7 * W;
+            return `<svg viewBox="0 0 ${totalW} ${H}" class="w-full h-auto" preserveAspectRatio="xMidYMid meet">`
+                + whites + blacks + `</svg>`;
+        },
+
+        // 6 horizontal strings (string 1 at top, standard tab convention),
+        // a 5-fret window starting at max(1, min(dot fret)), the starting
+        // fret labelled, dots placed by (string, fret) arithmetic with the
+        // finger number as white text inside. A dot whose fret falls
+        // outside the drawn window (an open string paired with fretted
+        // notes higher up, say) clamps to the nearest edge column rather
+        // than vanishing.
+        fretboardSvg(dots) {
+            const clean = (Array.isArray(dots) ? dots : []).map(d => ({
+                string: parseInt(d && d.string, 10),
+                fret: parseInt(d && d.fret, 10),
+                finger: parseInt(d && d.finger, 10),
+            })).filter(d => d.string >= 1 && d.string <= 6 && d.fret >= 0 && d.fret <= 24
+                          && d.finger >= 1 && d.finger <= 4);
+            if (!clean.length) return '';
+            const WIN = 5, FRET_W = 70, STR_GAP = 26, PAD = 28;
+            const start = Math.max(1, Math.min(...clean.map(d => d.fret)));
+            const w = PAD + WIN * FRET_W + 14, h = PAD + 5 * STR_GAP + 14;
+            const accent = '#0f766e';
+            let body = '';
+            for (let s = 0; s < 6; s++) {
+                const y = PAD + s * STR_GAP;
+                body += `<line x1="${PAD}" y1="${y}" x2="${w - 14}" y2="${y}" `
+                    + `stroke="rgba(255,255,255,0.35)" stroke-width="1.5"></line>`;
+            }
+            for (let f = 0; f <= WIN; f++) {
+                const x = PAD + f * FRET_W;
+                const isNut = start === 1 && f === 0;
+                body += `<line x1="${x}" y1="${PAD}" x2="${x}" y2="${h - 14}" `
+                    + `stroke="rgba(255,255,255,0.5)" stroke-width="${isNut ? 4 : 1.5}"></line>`;
+            }
+            // font-family set directly on the SVG text (not left to
+            // inherit) -- these two glyphs are numerals a session actually
+            // depends on reading correctly (the starting fret, the finger
+            // to use), so they get the app's own font stack explicitly
+            // rather than whatever an SVG's own font-matching falls back
+            // to when nothing local claims it.
+            const FONT = 'font-family="Inter,ui-sans-serif,system-ui,-apple-system,'
+                + '&quot;Segoe UI&quot;,Roboto,Arial,sans-serif"';
+            body += `<text x="${PAD - 10}" y="${PAD - 10}" text-anchor="end" ${FONT} `
+                + `font-size="14" font-weight="800" fill="#94a3b8">${start}fr</text>`;
+            clean.forEach(d => {
+                const col = Math.max(0, Math.min(WIN - 1, d.fret - start));
+                const x = PAD + (col + 0.5) * FRET_W;
+                const y = PAD + (d.string - 1) * STR_GAP;
+                body += `<circle cx="${x}" cy="${y}" r="12" fill="${accent}"></circle>`
+                    + `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" ${FONT} `
+                    + `font-size="13" font-weight="800" fill="#fff">${d.finger}</text>`;
+            });
+            return `<svg viewBox="0 0 ${w} ${h}" class="w-full h-auto" preserveAspectRatio="xMidYMid meet">${body}</svg>`;
+        },
+
+        // cards / counter: within-scene state only, reset unconditionally
+        // at the top of enterScene() below -- never fetched, never stored.
+        // Every tap that touches them carries .stop in the markup above so
+        // it can never bubble into the scene area's own tap-to-advance
+        // handler, the same guard the check buttons need and explain in
+        // full further up this file.
+        cardFace() {
+            const s = this.scene();
+            const pairs = (s.primitive && s.primitive.pairs) || [];
+            const pair = pairs[this.cardIdx];
+            return this.cardFlipped ? ((pair && pair.back) || '') : ((pair && pair.front) || '');
+        },
+        toggleCardFlip() { this.cardFlipped = !this.cardFlipped; },
+        cardPrev() {
+            if (this.cardIdx > 0) { this.cardIdx--; this.cardFlipped = false; }
+        },
+        cardNext() {
+            const s = this.scene();
+            const pairs = (s.primitive && s.primitive.pairs) || [];
+            if (this.cardIdx < pairs.length - 1) { this.cardIdx++; this.cardFlipped = false; }
+        },
+        // A rep count is a within-scene convenience, not a record: no
+        // fetch, no storage, just counterVal ticking toward the
+        // primitive's own target.
+        bumpCounter() {
+            const s = this.scene();
+            const target = (s.primitive && s.primitive.target) || 0;
+            if (this.counterVal < target) this.counterVal++;
+        },
+
         advance() {
             this.stopSound();
             if (this.idx < this.scenes.length - 1) { this.idx++; this.enterScene(); }
@@ -251,6 +471,11 @@ function lessonPlayer() {
         answerCheck() { this.advance(); },
 
         enterScene() {
+            // Cards/counter state is scene-local by design -- reset on
+            // EVERY entry, not only when the new scene happens to be
+            // cards/counter, so nothing stale can ever be visible even for
+            // a frame when hopping between two different scene types.
+            this.cardIdx = 0; this.cardFlipped = false; this.counterVal = 0;
             const s = this.scene();
             if (s.type === 'do' && s.seconds) this.startTimer(s.seconds);
             if (s.type === 'do' && s.metronome_bpm) this.startMetronome(s.metronome_bpm);
