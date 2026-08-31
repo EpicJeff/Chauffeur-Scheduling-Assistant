@@ -1181,6 +1181,83 @@ def scenario_sweep_report_names_over_the_pass_limit():
     check(len(over) == 1, f"named as over the pass limit, got {out['slots']}")
 
 
+# --- hint ladders -------------------------------------------------------
+
+
+def scenario_a_hint_ladder_is_steps_then_an_answer():
+    out = pl.sanitize_script([
+        {'type': 'show', 'caption': 'What is 7 x 8?',
+         'primitive': {'kind': 'hints',
+                       'steps': ['Start from 7 x 4.', 'Now double it.'],
+                       'answer': '56'}},
+    ], 'generated')
+    prim = out[0]['primitive']
+    check(prim['kind'] == 'hints', f"the primitive survives, got {out}")
+    check(prim['steps'] == ['Start from 7 x 4.', 'Now double it.'],
+          f"rungs in order, got {prim}")
+    check(prim['answer'] == '56', f"and the answer last, got {prim}")
+
+
+def scenario_a_hint_ladder_needs_an_answer_at_the_bottom():
+    out = pl.sanitize_script([
+        {'type': 'show', 'caption': 'No answer',
+         'primitive': {'kind': 'hints', 'steps': ['Try halving it.']}},
+        {'type': 'show', 'caption': 'No rungs',
+         'primitive': {'kind': 'hints', 'steps': [], 'answer': '56'}},
+    ], 'generated')
+    check(all(s['type'] == 'say' for s in out),
+          f"both degrade to their caption rather than drawing half a "
+          f"ladder, got {out}")
+
+
+def scenario_a_hint_ladder_is_capped():
+    """Too many rungs fails the whole primitive rather than being
+    truncated, exactly as too many card pairs or keyboard keys already
+    does -- a silently shortened ladder would end one rung above an answer
+    the model thought it had written. Free text inside it is clamped,
+    which is the other half of the same house rule."""
+    over = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Many',
+         'primitive': {'kind': 'hints',
+                       'steps': [f'hint {i}' for i in range(20)],
+                       'answer': '56'}},
+    ], 'generated')
+    check(over[0]['type'] == 'say' and over[0]['text'] == 'Many',
+          f"it degrades to its caption like every other broken primitive, "
+          f"got {over}")
+    out = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Long',
+         'primitive': {'kind': 'hints', 'steps': ['x' * 900],
+                       'answer': 'y' * 900}},
+    ], 'generated')
+    prim = out[0]['primitive']
+    check(len(prim['steps'][0]) == pl.MAX_TEXT
+          and len(prim['answer']) == pl.MAX_TEXT,
+          f"rung and answer both clamped, got {prim}")
+
+
+def scenario_hint_text_runs_the_same_screens_as_a_card_face():
+    """A rung is free text inside a primitive, which is exactly the hole
+    card faces once had -- the caption was screened and the payload was
+    not."""
+    body = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Sums',
+         'primitive': {'kind': 'hints', 'steps': ['This one burns calories.'],
+                       'answer': '56'}},
+    ], 'cited')
+    check(body == [], f"a screened rung takes the scene, got {body}")
+    ans = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Sums',
+         'primitive': {'kind': 'hints', 'steps': ['Halve it.'],
+                       'answer': 'Keep your wrist straight.'}},
+    ], 'generated')
+    check(ans == [], f"and so does a screened answer, got {ans}")
+
+
+def scenario_the_schema_names_the_hint_ladder():
+    check('"hints"' in pl._SYSTEM, "the model is told the ladder exists")
+
+
 # --- offers -------------------------------------------------------------
 
 
@@ -1740,6 +1817,11 @@ if __name__ == '__main__':
     scenario_a_spoken_cue_runs_the_same_screens_as_everything_else()
     scenario_a_cue_line_is_shorter_than_a_beat_of_text()
     scenario_the_schema_names_cues()
+    scenario_a_hint_ladder_is_steps_then_an_answer()
+    scenario_a_hint_ladder_needs_an_answer_at_the_bottom()
+    scenario_a_hint_ladder_is_capped()
+    scenario_hint_text_runs_the_same_screens_as_a_card_face()
+    scenario_the_schema_names_the_hint_ladder()
     scenario_a_check_may_offer_a_way_back_in()
     scenario_an_offer_may_not_contain_another_door()
     scenario_an_empty_offer_is_no_offer()

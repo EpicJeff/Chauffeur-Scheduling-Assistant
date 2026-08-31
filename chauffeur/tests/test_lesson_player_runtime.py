@@ -1793,6 +1793,53 @@ def scenario_a_cue_stores_nothing():
                   f"a cue is said and forgotten -- {fn} must not {forbidden}")
 
 
+# --- hint ladders -------------------------------------------------------
+
+
+def scenario_a_hint_ladder_reveals_one_rung_at_a_time():
+    src = _read('components/lesson_player.html')
+    check("primitive.kind === 'hints'" in src, "the player draws a ladder")
+    check('Another hint' in src, "with a tap for the next-narrower nudge")
+    check('hintIdx' in src, "and a position of its own")
+    import re
+    m = re.search(r'\n        nextHint\(\) \{(.*?)\n        \},', src, re.S)
+    check(m, "nextHint exists")
+    body = m.group(1) if m else ''
+    check('hintIdx' in body, f"it moves the rung, got {body!r}")
+    for forbidden in ('fetch', 'localStorage', 'api/'):
+        check(forbidden not in body,
+              f"how many hints somebody needed is never recorded -- no "
+              f"{forbidden}")
+
+
+def scenario_a_hint_ladder_shows_position_never_a_score():
+    """"3 of 4 hints used" is a completion percentage with the division
+    left undone, which is one of the six progress rules. The ladder draws
+    where you are, the way the unit ladder draws a rung."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r"primitive\.kind === 'hints'\"\>(.*?)</template>", src, re.S)
+    check(m, "the hints block is findable")
+    block = m.group(1) if m else ''
+    check('hintIdx + 1' not in block or '/' not in block.split('hintIdx + 1')[1][:80],
+          f"never an n-of-m count, got {block!r}")
+    check('used' not in block.lower(), "and never says how many were used")
+
+
+def scenario_the_answer_is_the_last_rung_not_a_shortcut():
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        hintRungs\(\) \{(.*?)\n        \},', src, re.S)
+    check(m, "hintRungs exists")
+    body = m.group(1) if m else ''
+    check('steps' in body and 'concat' in body and 'answer' in body,
+          f"the answer is appended AFTER the steps, so the rung index has "
+          f"no special case at the bottom and no shortcut past them, "
+          f"got {body!r}")
+    check('hintRungs()[this.hintIdx]' in src,
+          "and the text shown is just that position")
+
+
 # --- offers, and again slower -------------------------------------------
 
 
@@ -2046,6 +2093,9 @@ if __name__ == '__main__':
     scenario_the_cue_scheduler_rides_the_beats_own_timer()
     scenario_cues_never_outlive_their_scene()
     scenario_a_cue_stores_nothing()
+    scenario_a_hint_ladder_reveals_one_rung_at_a_time()
+    scenario_a_hint_ladder_shows_position_never_a_score()
+    scenario_the_answer_is_the_last_rung_not_a_shortcut()
     scenario_not_yet_offers_rather_than_taking_over()
     scenario_accepting_an_offer_splices_this_session_only()
     scenario_an_offer_can_never_offer_again()

@@ -306,6 +306,35 @@
                     </div>
                 </template>
 
+                <!-- hints: one rung at a time, widest nudge first, the
+                     answer only at the bottom. The dots draw WHERE you
+                     are, never how many you needed -- "3 of 4 hints used"
+                     is a completion percentage with the division left
+                     undone, which is one of the six progress rules, and
+                     nothing here counts, sends or remembers a tap. Same
+                     .stop guard as every other in-scene control. -->
+                <template x-if="scene().primitive.kind === 'hints'">
+                    <div class="w-full flex flex-col items-center gap-4"
+                         :class="panel ? 'max-w-2xl' : 'max-w-sm'">
+                        <div class="w-full rounded-2xl bg-gray-800 border border-gray-700 p-6 text-center">
+                            <div class="font-bold text-gray-100"
+                                 :class="panel ? 'text-3xl' : 'text-xl'"
+                                 x-text="hintText()"></div>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <template x-for="(h, i) in hintRungs()" :key="i">
+                                <span class="rounded-full"
+                                      :class="i <= hintIdx ? 'bg-teal-400 w-5 h-1.5' : 'bg-gray-700 w-1.5 h-1.5'"></span>
+                            </template>
+                        </div>
+                        <button type="button" @click.stop="nextHint()"
+                                x-show="hintIdx < hintRungs().length - 1"
+                                class="rounded-lg bg-gray-800 border border-gray-700 text-gray-300 font-bold active:bg-gray-700"
+                                :class="panel ? 'px-6 py-3 text-xl' : 'px-4 py-2 text-sm'"
+                                x-text="hintIdx >= (scene().primitive.steps || []).length - 1 ? 'Show the answer' : 'Another hint'"></button>
+                    </div>
+                </template>
+
                 <!-- counter: a PACED count, not a tap-per-rep -- nobody
                      can stop mid-exercise to tap a phone. One tap on the
                      dial starts it; it then advances itself on the
@@ -465,6 +494,11 @@ function lessonPlayer() {
         // never-survives-the-scene rule as `timer`/`metroTimer` above --
         // stopSound() clears it too (a rep count is not a metronome or a
         // countdown, but it is exactly as scene-local as either one).
+        // Which rung of a hint ladder is showing. Scene-local like the
+        // card position beside it, reset on every entry, and counted
+        // nowhere: how many hints somebody needed is exactly the record
+        // this app refuses to keep.
+        hintIdx: 0,
         cardIdx: 0, cardFlipped: false, counterVal: 0, counterRunning: false,
         counterTimer: null,
         // Which room this SCREEN is in, on a wall panel. Empty everywhere
@@ -568,7 +602,7 @@ function lessonPlayer() {
         // primitive.
         isRenderableShow(s) {
             return !!(s && s.primitive && ['timer', 'metronome', 'keyboard',
-                'fretboard', 'cards', 'counter'].includes(s.primitive.kind));
+                'fretboard', 'cards', 'counter', 'hints'].includes(s.primitive.kind));
         },
 
         // `say` always has non-empty text (sanitize_script drops an empty
@@ -825,6 +859,22 @@ function lessonPlayer() {
             return this.cardFlipped ? ((pair && pair.back) || '') : ((pair && pair.front) || '');
         },
         toggleCardFlip() { this.cardFlipped = !this.cardFlipped; },
+
+        // A hint ladder, as one list: the rungs the model wrote and then
+        // the answer, so `hintIdx` is a position in one array rather than
+        // a rung index plus a special case for the bottom. The answer is
+        // the LAST rung, never a shortcut past them.
+        hintRungs() {
+            const p = this.scene().primitive || {};
+            return (p.steps || []).concat(p.answer ? [p.answer] : []);
+        },
+        hintText() { return this.hintRungs()[this.hintIdx] || ''; },
+        // Moves down one. Records nothing: no fetch, no storage, and no
+        // number anywhere that could later read as how much help somebody
+        // needed.
+        nextHint() {
+            if (this.hintIdx < this.hintRungs().length - 1) this.hintIdx++;
+        },
         cardPrev() {
             if (this.cardIdx > 0) { this.cardIdx--; this.cardFlipped = false; }
         },
@@ -1208,6 +1258,7 @@ function lessonPlayer() {
             // the way IN, so a fresh open() -- which never calls
             // stopSound() first -- cannot inherit a running interval from
             // nowhere.
+            this.hintIdx = 0;
             this.cardIdx = 0; this.cardFlipped = false; this.counterVal = 0;
             this.counterRunning = false;
             this.cues = []; this.cuesFired = 0;

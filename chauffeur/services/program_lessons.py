@@ -87,6 +87,12 @@ WAIT_STALE_S = 24 * 3600
 MAX_OFFER_LABEL = 60
 MAX_OFFER_SCENES = 4
 
+# A hint ladder: rungs from the widest nudge to the narrowest, then the
+# answer. Four is the ceiling because a fifth rung is nearly always the
+# answer with a question mark on it -- and because the point of a ladder
+# is to stop before the answer, not to walk somebody down a staircase.
+MAX_HINT_STEPS = 4
+
 # A BCP-47 tag only as far as this app can actually act on one: a language
 # and, optionally, a region. The player picks a voice by prefix, so the
 # region half is a preference the browser may ignore and the language half
@@ -166,6 +172,19 @@ def _valid_cards(p):
                     for x in pairs))
 
 
+def _valid_hints(p):
+    # BOTH halves or nothing. Rungs with no answer strand somebody at the
+    # bottom of a ladder; an answer with no rungs is a `say` beat that
+    # thinks it is one. The scene degrades to its caption either way,
+    # which is the same answer every other broken primitive gets.
+    steps = p.get('steps')
+    if not (isinstance(steps, list) and 0 < len(steps) <= MAX_HINT_STEPS):
+        return False
+    if not all(_clean_text(s) for s in steps):
+        return False
+    return bool(_clean_text(p.get('answer')))
+
+
 def _valid_counter(p):
     # `target` is the whole contract. The design's primitives table once
     # promised a `label` too; nothing ever validated one and nothing ever
@@ -203,6 +222,7 @@ PRIMITIVES = {
     'fretboard': _valid_fretboard,
     'cards': _valid_cards,
     'counter': _valid_counter,
+    'hints': _valid_hints,
 }
 
 # A generated lesson may structure practice; it may not prescribe what a
@@ -280,6 +300,10 @@ def _build_primitive(prim):
                 'pairs': [{'front': _clean_text(x.get('front'), MAX_SHORT_TEXT),
                            'back': _clean_text(x.get('back'), MAX_SHORT_TEXT)}
                           for x in prim['pairs']]}
+    if kind == 'hints':
+        return {'kind': 'hints',
+                'steps': [_clean_text(x) for x in prim['steps'][:MAX_HINT_STEPS]],
+                'answer': _clean_text(prim.get('answer'))}
     # counter: seconds_per_rep always ends up in the rebuilt primitive,
     # model-supplied and clamped or defaulted to COUNTER_DEFAULT_SPR when
     # absent -- so the player never has to guess a pace for a script this
@@ -301,6 +325,11 @@ def _primitive_text(prim: dict) -> list:
     if prim.get('kind') == 'cards':
         return [f for pair in prim.get('pairs') or []
                 for f in (pair.get('front') or '', pair.get('back') or '')]
+    # A hint ladder is nothing BUT free text -- every rung, and the answer
+    # at the bottom of it. Exactly the hole card faces had before this
+    # function existed: a screened caption over an unscreened payload.
+    if prim.get('kind') == 'hints':
+        return list(prim.get('steps') or []) + [prim.get('answer') or '']
     return []
 
 
@@ -658,6 +687,10 @@ _SYSTEM = (
     '(string 1=high E .. string 6=low E; muted is optional, string numbers '
     "that are not played at all -- never a fret or a finger for those), "
     '{"kind":"cards","pairs":[{"front":"","back":""}]}, '
+    '{"kind":"hints","steps":["widest nudge","narrower"],"answer":""} '
+    "(a ladder for a problem: up to 4 rungs, each narrower than the "
+    "last, and the answer only at the bottom -- never the answer "
+    "straight away), "
     '{"kind":"counter","target":10,"seconds_per_rep":3} '
     "(seconds_per_rep is optional, 1-10, how long one rep takes so the "
     "count can pace itself hands-free -- default 3). "
