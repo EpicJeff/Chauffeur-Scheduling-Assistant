@@ -28,10 +28,14 @@
      say / do / check / show. Every `show` primitive that module's
      PRIMITIVES dict validates now draws a real picture: `timer` /
      `metronome` (the countdown ring and the beat pulse), `keyboard` /
-     `fretboard` (SVG built from the note/dot params) and `cards` /
-     `counter` (tap-driven, scene-local). isRenderableShow() stays an
-     explicit allow-list rather than "any primitive with a kind" -- a
-     future 7th primitive shipped without a renderer still falls through
+     `fretboard` (SVG built from the note/dot params -- the fretboard
+     drawn the way a book draws one: vertical strings, low E left, frets
+     running downward), `cards` (tap-driven, scene-local) and `counter`
+     (a paced, tap-STARTED count, scene-local -- a tap begins it, then it
+     advances itself on `seconds_per_rep`, with a tick and, where a voice
+     exists, a spoken number; see startCounterPace() below). isRenderableShow()
+     stays an explicit allow-list rather than "any primitive with a kind" --
+     a future 7th primitive shipped without a renderer still falls through
      to its caption as a say beat, mirroring the sanitizer's own degrade
      rule for a primitive this file has never heard of.
 
@@ -158,7 +162,8 @@
              services/program_lessons.py's PRIMITIVES dict validates now
              draws a real picture: timer/metronome (the ring and pulse
              below), keyboard/fretboard (SVG from note/dot arithmetic),
-             cards/counter (tap-driven, scene-local). The caption renders
+             cards (tap-driven, scene-local) and counter (a paced,
+             tap-started count, scene-local). The caption renders
              first, the same top-to-bottom order the ring and pulse below
              already use. isRenderableShow stays an explicit allow-list
              rather than "any primitive" so a future 7th kind shipped
@@ -179,10 +184,17 @@
                 </template>
 
                 <!-- fretboard: SVG built purely from dot-grid arithmetic,
-                     see fretboardSvg() below. -->
+                     see fretboardSvg() below. Vertical (book-convention)
+                     diagrams are narrower than they are tall, the opposite
+                     aspect ratio of keyboard/cards above -- reusing THEIR
+                     wide containers (max-w-2xl on panel) would stretch a
+                     ~240-viewBox-unit-wide diagram to 672px and its height
+                     along with it, well past a full screen. A narrower cap
+                     here is a direct consequence of the orientation fix,
+                     not a stray style choice. -->
                 <template x-if="scene().primitive.kind === 'fretboard'">
-                    <div class="w-full mx-auto" :class="panel ? 'max-w-2xl' : 'max-w-sm'"
-                         x-html="fretboardSvg(scene().primitive.dots)"></div>
+                    <div class="w-full mx-auto" :class="panel ? 'max-w-sm' : 'max-w-xs'"
+                         x-html="fretboardSvg(scene().primitive.dots, scene().primitive.muted)"></div>
                 </template>
 
                 <!-- cards: one pair at a time, tap the card to flip. .stop
@@ -222,18 +234,31 @@
                     </div>
                 </template>
 
-                <!-- counter: tap the number toward target, same .stop
-                     guard as cards and the same reason. bumpCounter()
-                     only ever touches its own in-memory counterVal. -->
+                <!-- counter: a PACED count, not a tap-per-rep -- nobody
+                     can stop mid-exercise to tap a phone. One tap on the
+                     dial starts it; it then advances itself on the
+                     primitive's own seconds_per_rep, with a tick and (where
+                     a voice exists) a spoken number, same .stop guard as
+                     cards and the same reason. A tap while it is running
+                     pauses it; a tap while paused (and not yet at target)
+                     resumes it; counterTap() is the one handler for all
+                     three, and it never touches anything but its own
+                     in-memory counterVal/counterRunning. Reaching target
+                     stops itself -- see tickCounter() -- so finishing never
+                     needs a tap either. -->
                 <template x-if="scene().primitive.kind === 'counter'">
                     <div class="w-full flex flex-col items-center gap-3">
-                        <div @click.stop="bumpCounter()"
-                             class="rounded-full bg-gray-800 border-2 border-teal-700 flex items-center justify-center cursor-pointer active:bg-gray-700"
-                             :class="panel ? 'w-48 h-48' : 'w-32 h-32'">
+                        <div @click.stop="counterTap()"
+                             class="rounded-full border-2 flex items-center justify-center cursor-pointer active:bg-gray-700"
+                             :class="[panel ? 'w-48 h-48' : 'w-32 h-32',
+                                      counterDone() ? 'bg-teal-900/40 border-teal-400' : 'bg-gray-800 border-teal-700']">
                             <div class="font-black text-white" :class="panel ? 'text-6xl' : 'text-5xl'" x-text="counterVal"></div>
                         </div>
                         <div class="text-gray-500" :class="panel ? 'text-lg' : 'text-xs'"
                              x-text="'of ' + (scene().primitive.target || 0)"></div>
+                        <div class="font-bold" :class="[panel ? 'text-base' : 'text-xs',
+                                                         counterDone() ? 'text-teal-400' : 'text-gray-400']"
+                             x-text="counterStatusText()"></div>
                     </div>
                 </template>
             </div>
@@ -321,6 +346,12 @@ function lessonPlayer() {
     // unpredictably is the wrong place to save a few characters.
     const FONT_ATTR = 'font-family="Inter,ui-sans-serif,system-ui,-apple-system,'
         + '&quot;Segoe UI&quot;,Roboto,Arial,sans-serif"';
+    // Mirrors program_lessons.COUNTER_DEFAULT_SPR -- applied here only as a
+    // last-resort fallback for a counter primitive stored before
+    // seconds_per_rep existed (sanitize_script now fills the field in on
+    // every scene it builds, but an old row in program_lessons was never
+    // re-sanitized, so the client still needs its own default).
+    const COUNTER_DEFAULT_SPR = 3;
 
     return {
         openFlag: false, w: null, scenes: [], idx: 0,
@@ -357,8 +388,13 @@ function lessonPlayer() {
         timer: null, timeLeft: 0, timerTotal: 0, audio: null, metroTimer: null,
         ringC: 2 * Math.PI * 44,
         // cards/counter: scene-local only, reset every enterScene() --
-        // never persisted, see bumpCounter()/toggleCardFlip() below.
-        cardIdx: 0, cardFlipped: false, counterVal: 0,
+        // never persisted, see counterTap()/toggleCardFlip() below.
+        // counterTimer drives the counter's own paced advance, same
+        // never-survives-the-scene rule as `timer`/`metroTimer` above --
+        // stopSound() clears it too (a rep count is not a metronome or a
+        // countdown, but it is exactly as scene-local as either one).
+        cardIdx: 0, cardFlipped: false, counterVal: 0, counterRunning: false,
+        counterTimer: null,
 
         open(w, lesson, preview) {
             this.w = w || {};
@@ -519,84 +555,128 @@ function lessonPlayer() {
                 + head + whites + blacks + `</svg>`;
         },
 
-        // 6 horizontal strings (string 1 at top, standard tab convention).
-        // The window widens to the dots' own fret span (a chord shape
-        // almost always fits) up to a sane cap; only a span past that cap
-        // falls back to compression, and even then a compressed dot is
-        // marked unmistakably as approximate rather than drawn as if it
-        // were exact -- the renderer owning drawing is what makes a wrong
-        // spec VISIBLE, and a confidently-wrong chord diagram in a
-        // teaching tool is worse than none. An open string (fret 0) is
-        // never squeezed into the fret-1 column, where it would be
-        // indistinguishable from an actually-fretted note: notation draws
-        // it above the nut, so this draws it to the LEFT of the grid
-        // instead (this diagram runs sideways), on that string's own row,
-        // as a hollow ring rather than a filled dot.
-        fretboardSvg(dots) {
+        // Vertical, book-convention diagram: strings are vertical lines,
+        // LOW E (string 6) leftmost, HIGH E (string 1) rightmost -- the way
+        // a method book prints a chord, never a mirror-image or a
+        // face-each-other view (see the fix report for the ambiguity that
+        // forced this call explicitly). Frets are horizontal lines running
+        // DOWNWARD from the nut. The window still widens to the dots' own
+        // fret span (a chord shape almost always fits) up to a sane cap;
+        // only a span past that cap falls back to compression, and even
+        // then a compressed dot is marked unmistakably as approximate
+        // rather than drawn as if it were exact -- the renderer owning
+        // drawing is what makes a wrong spec VISIBLE, and a
+        // confidently-wrong chord diagram in a teaching tool is worse than
+        // none. An open string (fret 0) draws as an O above the nut, and a
+        // muted string (see `muted` -- an optional per-string list,
+        // program_lessons._valid_fretboard) as an X beside it; neither is
+        // a dot and neither is ever squeezed into the fret-1 row, where an
+        // O would be indistinguishable from an actually-fretted note. A
+        // string carrying a real dot never also gets a mute mark -- the
+        // dot already says more than an X could, so it wins. Either mark
+        // lives ABOVE the nut and means nothing without it, so having
+        // either one forces the window to start at fret 1 even when every
+        // fretted dot sits higher up the neck -- never a diagram that
+        // shows an open string with no nut in view.
+        fretboardSvg(dots, muted) {
             const clean = (Array.isArray(dots) ? dots : []).map(d => ({
                 string: parseInt(d && d.string, 10),
                 fret: parseInt(d && d.fret, 10),
                 finger: parseInt(d && d.finger, 10),
             })).filter(d => d.string >= 1 && d.string <= 6 && d.fret >= 0 && d.fret <= 24
                           && d.finger >= 1 && d.finger <= 4);
-            if (!clean.length) return '';
+            const dotStrings = new Set(clean.map(d => d.string));
+            const mutedStrings = (Array.isArray(muted) ? muted : [])
+                .map(m => parseInt(m, 10))
+                .filter(s => s >= 1 && s <= 6 && !dotStrings.has(s));
+            if (!clean.length && !mutedStrings.length) return '';
             const openDots = clean.filter(d => d.fret === 0);
             const frettedDots = clean.filter(d => d.fret > 0);
 
-            const BASE_WIN = 5, MAX_WIN = 12, FRET_W = 70, STR_GAP = 26;
-            const TOP = 30, LEFT = 34, RIGHT = 14, BOTTOM = 14;
-            // frettedDots is never empty AND anchored below fret 1 at once
-            // (fret > 0 by definition), so `start` always lands exactly on
-            // the lowest fretted dot -- clamping below the window can
-            // never happen; only ABOVE it can, once the true span outgrows
-            // MAX_WIN.
+            const STR_GAP = 34, FRET_H = 46, BASE_WIN = 5, MAX_WIN = 12;
+            const TOP = 56, LEFT = 22, RIGHT = 48, BOTTOM = 30;
+            // An open or muted mark lives above the nut and means nothing
+            // unless the nut is actually in view, so either one pins
+            // `start` to fret 1 regardless of where the fretted dots sit.
+            // Otherwise frettedDots is never empty AND anchored below fret
+            // 1 at once (fret > 0 by definition), so `start` always lands
+            // exactly on the lowest fretted dot -- clamping below the
+            // window can never happen in that branch either; only ABOVE
+            // it can, once the true span outgrows MAX_WIN.
+            const hasHeadMarks = openDots.length > 0 || mutedStrings.length > 0;
             const minFret = frettedDots.length ? Math.min(...frettedDots.map(d => d.fret)) : 1;
             const maxFret = frettedDots.length ? Math.max(...frettedDots.map(d => d.fret)) : minFret;
-            const span = Math.min(maxFret - minFret + 1, MAX_WIN);
+            const start = hasHeadMarks ? 1 : Math.max(1, minFret);
+            const span = Math.min(Math.max(maxFret - start + 1, 1), MAX_WIN);
             const WIN = Math.max(BASE_WIN, span);
-            const start = Math.max(1, minFret);
             const gx = LEFT, gy = TOP;
-            const w = gx + WIN * FRET_W + RIGHT, h = gy + 5 * STR_GAP + BOTTOM;
-            const solid = '#0f766e', ghost = '#f59e0b';
+            const w = gx + 5 * STR_GAP + RIGHT, h = gy + WIN * FRET_H + BOTTOM;
+            const solid = '#0f766e', ghost = '#f59e0b', openColor = '#2dd4bf';
             let body = '';
 
-            for (let s = 0; s < 6; s++) {
-                const y = gy + s * STR_GAP;
-                body += `<line x1="${gx}" y1="${y}" x2="${w - RIGHT}" y2="${y}" `
+            // Strings: 6 vertical lines. colOf() below is the one place
+            // the low-E-left/high-E-right mapping lives.
+            for (let col = 0; col < 6; col++) {
+                const x = gx + col * STR_GAP;
+                body += `<line x1="${x}" y1="${gy}" x2="${x}" y2="${gy + WIN * FRET_H}" `
                     + `stroke="rgba(255,255,255,0.35)" stroke-width="1.5"></line>`;
             }
+            // Frets: horizontal lines running down the neck. The topmost
+            // one is the NUT (thick) only when the window starts at fret
+            // 1; a window that starts higher draws an ordinary fret line
+            // there instead, and the `${start}fr` marker below names which
+            // fret it actually is -- exactly how a book prints a diagram
+            // that does not start at the nut.
             for (let f = 0; f <= WIN; f++) {
-                const x = gx + f * FRET_W;
+                const y = gy + f * FRET_H;
                 const isNut = start === 1 && f === 0;
-                body += `<line x1="${x}" y1="${gy}" x2="${x}" y2="${h - BOTTOM}" `
-                    + `stroke="rgba(255,255,255,0.5)" stroke-width="${isNut ? 4 : 1.5}"></line>`;
+                body += `<line x1="${gx}" y1="${y}" x2="${gx + 5 * STR_GAP}" y2="${y}" `
+                    + `stroke="rgba(255,255,255,0.5)" stroke-width="${isNut ? 5 : 1.5}"></line>`;
             }
-            body += `<text x="${gx}" y="${gy - 10}" text-anchor="start" ${FONT_ATTR} `
-                + `font-size="14" font-weight="800" fill="#94a3b8">${start}fr</text>`;
+            if (start > 1) {
+                body += `<text x="${gx}" y="${gy - 12}" text-anchor="start" ${FONT_ATTR} `
+                    + `font-size="14" font-weight="800" fill="#94a3b8">${start}fr</text>`;
+            }
 
-            // Open strings: a hollow ring left of the nut -- structurally
-            // outside the fret grid, so it can never land in the same
-            // column as a real fret-1 dot no matter what `start` is.
+            const colOf = string => gx + (6 - string) * STR_GAP;
+
+            // Open strings: an O above the nut, on the string's own line --
+            // no finger number inside it (there is no finger on an open
+            // string), and structurally above the grid so it can never
+            // land in the same row as a real fret-1 dot.
             openDots.forEach(d => {
-                const x = gx - 17, y = gy + (d.string - 1) * STR_GAP;
-                body += `<circle cx="${x}" cy="${y}" r="10" fill="none" stroke="#2dd4bf" stroke-width="2.5"></circle>`
-                    + `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" ${FONT_ATTR} `
-                    + `font-size="12" font-weight="800" fill="#2dd4bf">${d.finger}</text>`;
+                const x = colOf(d.string), y = gy - 24;
+                body += `<circle cx="${x}" cy="${y}" r="9" fill="none" `
+                    + `stroke="${openColor}" stroke-width="2.5"></circle>`;
+            });
+            // Muted strings: an X in that same row -- a string is never
+            // both (mutedStrings above already excludes any string that
+            // carries a real dot, open or fretted).
+            mutedStrings.forEach(s => {
+                const x = colOf(s), y = gy - 24, r = 7;
+                body += `<line x1="${x - r}" y1="${y - r}" x2="${x + r}" y2="${y + r}" `
+                    + `stroke="#64748b" stroke-width="2.5" stroke-linecap="round"></line>`
+                    + `<line x1="${x - r}" y1="${y + r}" x2="${x + r}" y2="${y - r}" `
+                    + `stroke="#64748b" stroke-width="2.5" stroke-linecap="round"></line>`;
             });
 
             // Fretted: true position whenever it fits the window (which
             // widened to the real span, up to MAX_WIN -- a realistic
             // one-finger-per-fret run across six frets gets six distinct
-            // columns, not five). Only a dot further out than MAX_WIN
-            // frets from the lowest one falls back to the edge column,
-            // and there it is drawn as a dashed, unfilled, amber ring
-            // with its REAL fret number written alongside -- approximate
-            // and visibly so, never mistaken for an exact position.
+            // ROWS, not five). Finger numbers stay inside the dot. Only a
+            // dot further out than MAX_WIN frets from `start` falls back
+            // to the bottom row, and there it is drawn as a dashed,
+            // unfilled, amber ring with its REAL fret number written
+            // BELOW it -- approximate and visibly so, never mistaken for
+            // an exact position. The label sits below rather than beside
+            // the dot on purpose: an out-of-window dot always lands in the
+            // bottom row (see the row clamp) but can be in ANY of the 6
+            // string columns, including the rightmost, where a label
+            // drawn to the side could run past the viewBox.
             frettedDots.forEach(d => {
                 const inWindow = d.fret <= start + WIN - 1;
-                const col = Math.max(0, Math.min(WIN - 1, d.fret - start));
-                const x = gx + (col + 0.5) * FRET_W;
-                const y = gy + (d.string - 1) * STR_GAP;
+                const row = Math.max(0, Math.min(WIN - 1, d.fret - start));
+                const x = colOf(d.string), y = gy + (row + 0.5) * FRET_H;
                 if (inWindow) {
                     body += `<circle cx="${x}" cy="${y}" r="12" fill="${solid}"></circle>`
                         + `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" ${FONT_ATTR} `
@@ -606,7 +686,7 @@ function lessonPlayer() {
                         + `stroke-width="2.5" stroke-dasharray="4,3"></circle>`
                         + `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" ${FONT_ATTR} `
                         + `font-size="13" font-weight="800" fill="${ghost}">${d.finger}</text>`
-                        + `<text x="${x + 15}" y="${y - 13}" text-anchor="start" ${FONT_ATTR} `
+                        + `<text x="${x}" y="${y + 24}" text-anchor="middle" ${FONT_ATTR} `
                         + `font-size="10" font-weight="700" fill="${ghost}">${d.fret}fr</text>`;
                 }
             });
@@ -636,11 +716,83 @@ function lessonPlayer() {
         },
         // A rep count is a within-scene convenience, not a record: no
         // fetch, no storage, just counterVal ticking toward the
-        // primitive's own target.
-        bumpCounter() {
+        // primitive's own target. It used to be tap-PER-rep, which nobody
+        // can actually do mid-exercise -- you cannot stop after each
+        // push-up to tap a phone. One tap now starts a PACED count instead:
+        // it advances itself on the primitive's own seconds_per_rep, same
+        // idea as an instructor counting reps out loud with even space
+        // between numbers. counterTap() is the single handler the dial's
+        // own @click.stop calls; it only ever decides start-vs-pause and
+        // never touches counterVal directly itself.
+        counterTap() {
             const s = this.scene();
             const target = (s.primitive && s.primitive.target) || 0;
-            if (this.counterVal < target) this.counterVal++;
+            if (target <= 0 || this.counterVal >= target) return;
+            if (this.counterRunning) { this.pauseCounter(); return; }
+            this.startCounterPace();
+        },
+        startCounterPace() {
+            const s = this.scene();
+            const raw = (s.primitive && s.primitive.seconds_per_rep) || COUNTER_DEFAULT_SPR;
+            // Independently bounded client-side, same discipline
+            // fretboardSvg's own `clean` filter uses -- the server already
+            // clamps seconds_per_rep to 1-10 (program_lessons._valid_counter),
+            // but a primitive stored before that existed has no field to
+            // clamp, so this is a wide defensive floor/ceiling, not the
+            // real UX range.
+            const spr = Math.max(1, Math.min(30, raw));
+            this.counterRunning = true;
+            // Announce the first rep right away, same pattern
+            // startMetronome() already uses for its own first click --
+            // only on a true fresh start, never on a resume (counterVal
+            // already > 0), or resuming mid-count would fire an extra,
+            // early tick on top of whatever cadence was already running.
+            if (this.counterVal === 0) this.tickCounter();
+            if (this.counterTimer) clearInterval(this.counterTimer);
+            this.counterTimer = setInterval(() => this.tickCounter(), spr * 1000);
+        },
+        // The one place that stops the pace, called both when a person
+        // taps to pause AND when tickCounter() reaches target on its own --
+        // finishing the count is visible (the dial's own done styling,
+        // counterStatusText()) and never needs a tap.
+        pauseCounter() {
+            this.counterRunning = false;
+            if (this.counterTimer) { clearInterval(this.counterTimer); this.counterTimer = null; }
+        },
+        tickCounter() {
+            const s = this.scene();
+            const target = (s.primitive && s.primitive.target) || 0;
+            if (this.counterVal >= target) { this.pauseCounter(); return; }
+            this.counterVal++;
+            this.playClick();
+            this.speakCount(this.counterVal);
+            if (this.counterVal >= target) this.pauseCounter();
+        },
+        counterDone() {
+            const s = this.scene();
+            const target = (s.primitive && s.primitive.target) || 0;
+            return target > 0 && this.counterVal >= target;
+        },
+        counterStatusText() {
+            if (this.counterDone()) return 'All done';
+            if (this.counterRunning) return 'Counting — tap to pause';
+            if (this.counterVal > 0) return 'Paused — tap to resume';
+            return 'Tap to start';
+        },
+        // Speech is a pure enhancement, never a dependency -- every call is
+        // wrapped, and a missing speechSynthesis or an empty voice list
+        // (the HA wall panel plausibly has neither) just leaves the tick as
+        // the only signal. cancel() first means a cadence the browser
+        // cannot keep up with never queues a backlog of stale numbers: the
+        // newest count is always the one that gets said, in step with the
+        // tick and the dial rather than trailing behind them.
+        speakCount(n) {
+            try {
+                const synth = window.speechSynthesis;
+                if (!synth || !(synth.getVoices() || []).length) return;
+                synth.cancel();
+                synth.speak(new SpeechSynthesisUtterance(String(n)));
+            } catch (e) { /* the tick alone is never blocked by a speech failure */ }
         },
 
         advance() {
@@ -655,8 +807,16 @@ function lessonPlayer() {
             // Cards/counter state is scene-local by design -- reset on
             // EVERY entry, not only when the new scene happens to be
             // cards/counter, so nothing stale can ever be visible even for
-            // a frame when hopping between two different scene types.
+            // a frame when hopping between two different scene types. The
+            // counter's own pace never survives a scene change either:
+            // advance() already calls stopSound() (which clears
+            // counterTimer) before this runs, and this clears it again on
+            // the way IN, so a fresh open() -- which never calls
+            // stopSound() first -- cannot inherit a running interval from
+            // nowhere.
             this.cardIdx = 0; this.cardFlipped = false; this.counterVal = 0;
+            this.counterRunning = false;
+            if (this.counterTimer) { clearInterval(this.counterTimer); this.counterTimer = null; }
             const s = this.scene();
             if (s.type === 'do' && s.seconds) this.startTimer(s.seconds);
             if (s.type === 'do' && s.metronome_bpm) this.startMetronome(s.metronome_bpm);
@@ -676,34 +836,46 @@ function lessonPlayer() {
             }, 1000);
         },
 
-        startMetronome(bpm) {
-            if (this.metroTimer) clearInterval(this.metroTimer);
+        // The one Web Audio click, shared by the metronome's own pulse AND
+        // the counter's rep tick (startCounterPace()/tickCounter() above)
+        // -- a lesson never gets a second audio implementation for what is,
+        // underneath, the identical short click at a different cadence.
+        // Lazily opens/resumes its AudioContext on first use either way.
+        playClick() {
             try {
                 if (!this.audio) this.audio = new (window.AudioContext || window.webkitAudioContext)();
                 if (this.audio.state === 'suspended') this.audio.resume().catch(() => {});
             } catch (e) { return; }
-            const click = () => {
-                if (!this.audio) return;
-                const osc = this.audio.createOscillator();
-                const gain = this.audio.createGain();
-                osc.frequency.value = 880;
-                osc.connect(gain).connect(this.audio.destination);
-                const now = this.audio.currentTime;
-                gain.gain.setValueAtTime(0.25, now);
-                gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.04);
-                osc.start(now);
-                osc.stop(now + 0.04);
-            };
-            click();
-            this.metroTimer = setInterval(click, Math.max(60000 / bpm, 100));
+            if (!this.audio) return;
+            const osc = this.audio.createOscillator();
+            const gain = this.audio.createGain();
+            osc.frequency.value = 880;
+            osc.connect(gain).connect(this.audio.destination);
+            const now = this.audio.currentTime;
+            gain.gain.setValueAtTime(0.25, now);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.04);
+            osc.start(now);
+            osc.stop(now + 0.04);
+        },
+
+        startMetronome(bpm) {
+            if (this.metroTimer) clearInterval(this.metroTimer);
+            this.playClick();
+            this.metroTimer = setInterval(() => this.playClick(), Math.max(60000 / bpm, 100));
         },
 
         // Cleared on every scene change (advance() calls this before it
         // moves idx), on close, and on finish -- so nothing here can ever
-        // keep ticking or clicking past the player being on screen.
+        // keep ticking or clicking past the player being on screen. The
+        // counter's own paced interval is exactly as scene-local as the
+        // countdown timer and the metronome, so it is cleared right beside
+        // them, not left to enterScene()'s reset alone (enterScene() clears
+        // it too, defensively, on the way back IN -- see its own comment).
         stopSound() {
             if (this.timer) { clearInterval(this.timer); this.timer = null; }
             if (this.metroTimer) { clearInterval(this.metroTimer); this.metroTimer = null; }
+            if (this.counterTimer) { clearInterval(this.counterTimer); this.counterTimer = null; }
+            this.counterRunning = false;
             if (this.audio) { try { this.audio.close(); } catch (e) {} this.audio = null; }
         },
 

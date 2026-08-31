@@ -3,6 +3,13 @@
 **Status:** design agreed 2026-08-31. Extends the Programs arc
 (v2.433.0–v2.436.0): programs already know the phases, the units, the
 rotation, and the evenings; this gives the evening itself a body.
+**Amended v2.448.0** (user-reported issues on the shipped v1): the
+fretboard primitive is redrawn vertical, book-convention (see the
+Primitives contract table) and gains an optional `muted` marker; the
+counter primitive paces itself instead of one-tap-per-rep and gains
+`seconds_per_rep`, spoken via the browser's own speech API where a voice
+exists (see the Player component section's Sound paragraph, and Out of
+scope, for why that is not a reversal of "no TTS in v1").
 
 **North star (the user's):** each session opens into something that feels
 like a generated video — interactive, modern, engaging for people who grew
@@ -129,8 +136,16 @@ append-only, has no undo, and moves the rung on. On `?panel=true` the
 final button says "Finish", not "Log it?" — nothing on the wall listens
 for `lesson-player:done`, deliberately.
 
-Sound is local Web Audio (metronome click); no TTS in v1. Both themes,
-both surfaces.
+Sound is local Web Audio (metronome click, and the counter's own rep
+tick). **Amended (v2.448.0):** the counter also SPEAKS its count, via the
+browser's own `window.speechSynthesis` — no network, no key, no cost —
+when a voice is available, falling back to the tick alone when none is
+(the HA wall panel plausibly has none; every call is wrapped so a missing
+or throwing speech API can never break the counter). This is narrowly a
+**spoken rep count**, not narration: numbers only, nothing read from a
+`say`/`do` beat's own text, and there is still no server-side or paid TTS
+anywhere in this arc — "no TTS in v1" meant no *narration*, and should have
+said so. Both themes, both surfaces.
 
 ## Generation pipeline
 
@@ -174,9 +189,9 @@ both surfaces.
 | `timer`     | seconds                                   | countdown ring             |
 | `metronome` | bpm 30–240                                | pulse + Web Audio click    |
 | `keyboard`  | keys[] (note names, range-checked)        | SVG keys highlighted       |
-| `fretboard` | dots[] {string, fret max 24, finger 1–4}  | SVG neck + dots            |
+| `fretboard` | dots[] {string, fret max 24, finger 1–4}, muted[] (optional, string numbers 1–6) | **vertical, book-convention diagram (amended v2.448.0):** strings are vertical lines, string 6 (low E) leftmost, string 1 (high E) rightmost, frets run downward; the nut is a thick top line when the window opens at fret 1, else an ordinary fret line plus an `Nfr` position marker beside it; open strings draw an O and muted strings an X, both above the nut; finger numbers stay inside a fretted dot; the window still widens to the dots' own span up to a cap, and a dot that still cannot be placed truthfully draws as a dashed amber ring with its real fret number rather than being clamped silently |
 | `cards`     | pairs[] {front, back}, each capped + screened | flip cards             |
-| `counter`   | target                                    | rep/interval counter       |
+| `counter`   | target, seconds_per_rep (optional, 1–10s, default 3 — amended v2.448.0) | **paced rep count:** one tap starts it; it then advances itself on `seconds_per_rep` up to `target`, with a Web Audio tick and, where a voice exists, a spoken number (`window.speechSynthesis`); pause/resume via the same tap; reaching `target` stops itself, visibly, with no tap required |
 
 Adding a primitive never changes the script schema — a new `kind`; old
 scripts untouched. Music primitives ship first (P3a), movement/cards
@@ -236,8 +251,12 @@ purchase away.
 
 ## Out of scope (named so nobody wonders)
 
-- Actual video generation; TTS narration (announce-arc TTS is a possible
-  later layer)
+- Actual video generation; TTS **narration** — reading a `say`/`do` beat's
+  own text aloud (announce-arc TTS, routed through Home Assistant's
+  `tts.speak`, is a possible later layer for that). The counter's own
+  **spoken rep count** (v2.448.0, browser `window.speechSynthesis`, numbers
+  only) is a narrow, deliberate exception to that line, not a quiet
+  reversal of it — see the Player component section above.
 - Agent tools for lesson editing
 - Per-response analytics of any kind — no streaks, no accuracy, no
   comparison; there is no field to build one from

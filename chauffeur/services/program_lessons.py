@@ -27,6 +27,14 @@ MAX_SHORT_TEXT = 120               # a check's ask, a show's caption, a card fac
 # session holds and is unmistakably minutes rather than an afternoon.
 MAX_DO_SECONDS = 60 * 60
 
+# A counter's own pace, in seconds between one rep and the next -- see
+# _valid_counter's own comment for why 1/10/3. Exists so a slot's session
+# length (`shape.minutes`) and its own primitive's pace can both be
+# validated by a number, never left to whatever a model happened to write.
+COUNTER_MIN_SPR = 1
+COUNTER_MAX_SPR = 10
+COUNTER_DEFAULT_SPR = 3
+
 _NOTE_RE = re.compile(r'^[A-G][#b]?[0-8]$')
 
 
@@ -62,6 +70,20 @@ def _valid_fretboard(p):
             return False
         if not (1 <= string <= 6 and 0 <= fret <= 24 and 1 <= finger <= 4):
             return False
+    # `muted` is OPTIONAL -- most chords name none -- and, unlike a dot,
+    # never carries a fret or a finger: a muted string is "do not play
+    # this", not a position. Held to the same all-or-nothing rule as
+    # `dots` itself: present but malformed (wrong type, an out-of-range
+    # string number) fails the whole primitive rather than silently
+    # dropping the bad entries, the same as every other primitive here.
+    muted = p.get('muted')
+    if muted is not None:
+        if not (isinstance(muted, list) and len(muted) <= 6):
+            return False
+        for m in muted:
+            s = _to_int(m)
+            if s is None or not (1 <= s <= 6):
+                return False
     return True
 
 
@@ -95,7 +117,25 @@ def _valid_counter(p):
     # (lesson_player.html renders it directly above the dial), so a second
     # unscreened text field would have been a duplicate with a hole in it.
     target = _to_int(p.get('target'))
-    return target is not None and 1 <= target <= 500
+    if target is None or not (1 <= target <= 500):
+        return False
+    # `seconds_per_rep` is OPTIONAL -- a counter without one still means
+    # something (_build_primitive fills in COUNTER_DEFAULT_SPR) -- but
+    # when the model DOES set it, it is clamped like every other numeric
+    # param: 1s floor (fast enough that a slow browser TTS call can still
+    # keep pace, once it is cancelled and restarted per tick -- see
+    # lesson_player.html's speakCount()) and 10s ceiling (a deliberately
+    # slow, controlled rep -- a held stretch, an eccentric-focused strength
+    # rep -- past which "paced counting" stops helping and starts
+    # dragging). 3s is the default: close to how a person actually counts
+    # reps out loud with a beat of space between them, per the report this
+    # primitive was added to answer.
+    spr = p.get('seconds_per_rep')
+    if spr is not None:
+        spr_i = _to_int(spr)
+        if spr_i is None or not (COUNTER_MIN_SPR <= spr_i <= COUNTER_MAX_SPR):
+            return False
+    return True
 
 
 # kind -> validator. Adding a primitive is a new row here plus a renderer
@@ -166,17 +206,33 @@ def _build_primitive(prim):
     if kind == 'keyboard':
         return {'kind': 'keyboard', 'keys': [str(k) for k in prim['keys']]}
     if kind == 'fretboard':
-        return {'kind': 'fretboard',
-                'dots': [{'string': _to_int(d.get('string')),
-                          'fret': _to_int(d.get('fret')),
-                          'finger': _to_int(d.get('finger'))}
-                         for d in prim['dots']]}
+        built = {'kind': 'fretboard',
+                 'dots': [{'string': _to_int(d.get('string')),
+                           'fret': _to_int(d.get('fret')),
+                           'finger': _to_int(d.get('finger'))}
+                          for d in prim['dots']]}
+        # Only added when the model actually sent one -- an omitted
+        # `muted` stays omitted here too, the same "exactly the validated
+        # keys survive" rule every other primitive follows (see the
+        # docstring above). `set(...)` first so a duplicate string number
+        # can't draw the same X twice.
+        if prim.get('muted') is not None:
+            built['muted'] = sorted({_to_int(m) for m in prim['muted']})
+        return built
     if kind == 'cards':
         return {'kind': 'cards',
                 'pairs': [{'front': _clean_text(x.get('front'), MAX_SHORT_TEXT),
                            'back': _clean_text(x.get('back'), MAX_SHORT_TEXT)}
                           for x in prim['pairs']]}
-    return {'kind': 'counter', 'target': _to_int(prim.get('target'))}
+    # counter: seconds_per_rep always ends up in the rebuilt primitive,
+    # model-supplied and clamped or defaulted to COUNTER_DEFAULT_SPR when
+    # absent -- so the player never has to guess a pace for a script this
+    # door just built (a fallback for an OLDER stored row, written before
+    # this field existed, still lives client-side; see lesson_player.html).
+    spr = _to_int(prim.get('seconds_per_rep'))
+    return {'kind': 'counter', 'target': _to_int(prim.get('target')),
+            'seconds_per_rep': max(COUNTER_MIN_SPR,
+                                   min(COUNTER_MAX_SPR, spr or COUNTER_DEFAULT_SPR))}
 
 
 def _primitive_text(prim: dict) -> list:
@@ -293,9 +349,13 @@ _SYSTEM = (
     'Primitives: {"kind":"timer","seconds":60}, '
     '{"kind":"metronome","bpm":80}, '
     '{"kind":"keyboard","keys":["C4","E4","G4"]}, '
-    '{"kind":"fretboard","dots":[{"string":5,"fret":2,"finger":2}]}, '
+    '{"kind":"fretboard","dots":[{"string":5,"fret":2,"finger":2}],"muted":[6]} '
+    '(string 1=high E .. string 6=low E; muted is optional, string numbers '
+    "that are not played at all -- never a fret or a finger for those), "
     '{"kind":"cards","pairs":[{"front":"","back":""}]}, '
-    '{"kind":"counter","target":10}. '
+    '{"kind":"counter","target":10,"seconds_per_rep":3} '
+    "(seconds_per_rep is optional, 1-10, how long one rep takes so the "
+    "count can pace itself hands-free -- default 3). "
     "At most 10 scenes. Structure: a short why, then the drill as do-beats, "
     "one check near the end. Every do-beat must be startable alone from its "
     "text. No praise-fluff, no streaks, no scores. Never write about "

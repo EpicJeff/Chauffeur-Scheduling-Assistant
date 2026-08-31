@@ -101,15 +101,24 @@ def scenario_the_stored_primitive_is_rebuilt_not_the_models_own_dict():
     object: any extra key it invented rode along past every cap and every
     screen, and the dict that reached storage was the same one the caller
     still held, so mutating the input afterwards rewrote a sanitized
-    scene."""
+    scene.
+
+    `seconds_per_rep` joined `target` as a validated key once the paced
+    counter shipped (fix round 2) -- the exact-key-set assertion below
+    widened from {'kind', 'target'} to include it, which is the point:
+    'label' and 'note' still have to be dropped, and the newly-added
+    field still has to survive alongside the old one, not push it out."""
     prim = {'kind': 'counter', 'target': 10, 'label': 'reps',
             'note': 'keep your wrist straight'}
     out = pl.sanitize_script([{'type': 'show', 'primitive': prim,
                                'caption': 'Ten'}], 'generated')
     check(len(out) == 1, f"the scene survives, got {out}")
     stored = out[0]['primitive']
-    check(set(stored) == {'kind', 'target'},
+    check(set(stored) == {'kind', 'target', 'seconds_per_rep'},
           f"only the validated keys are kept, got {sorted(stored)}")
+    check(stored['seconds_per_rep'] == pl.COUNTER_DEFAULT_SPR,
+          f"a primitive that never set one gets the module's own default, "
+          f"got {stored}")
     check(stored is not prim, "and it is a new dict, not the caller's own")
     prim['target'] = 999
     check(stored['target'] == 10,
@@ -136,6 +145,128 @@ def scenario_every_primitive_kind_survives_the_rebuild():
     check(scenes[2]['primitive']['keys'] == ['C4', 'E4'], f"got {scenes[2]}")
     check(scenes[3]['primitive']['dots'] == [{'string': 5, 'fret': 2, 'finger': 2}],
           f"got {scenes[3]}")
+
+
+def scenario_fretboard_muted_is_optional_and_validated():
+    """`muted` -- an optional per-string list added (fix round 2) so a
+    fretboard can express "do not play this string" at all, which the old
+    contract (fret 0..24 only) could never say -- follows the SAME
+    all-or-nothing rule as `dots`: absent is fine, present-and-valid
+    survives, present-and-malformed fails the WHOLE primitive (degrading to
+    caption, never a picture drawn from half-good data, the same answer
+    scenario_unknown_primitive_dropped_bad_params_degrade already pins for
+    a bad dot)."""
+    ok_no_muted = pl.sanitize_script([
+        {'type': 'show', 'primitive': {'kind': 'fretboard',
+                                       'dots': [{'string': 5, 'fret': 3, 'finger': 3}]},
+         'caption': 'no mute'},
+    ], 'generated')
+    check(len(ok_no_muted) == 1 and 'muted' not in ok_no_muted[0]['primitive'],
+          f"muted absent stays absent -- exactly the validated keys survive, got {ok_no_muted}")
+
+    ok_muted = pl.sanitize_script([
+        {'type': 'show', 'primitive': {'kind': 'fretboard',
+                                       'dots': [{'string': 5, 'fret': 3, 'finger': 3}],
+                                       'muted': [6, 1]},
+         'caption': 'C shape'},
+    ], 'generated')
+    check(len(ok_muted) == 1 and ok_muted[0]['primitive']['muted'] == [1, 6],
+          f"a valid muted list survives, sorted, got {ok_muted}")
+
+    bad_type = pl.sanitize_script([
+        {'type': 'show', 'primitive': {'kind': 'fretboard',
+                                       'dots': [{'string': 5, 'fret': 3, 'finger': 3}],
+                                       'muted': 'six'},
+         'caption': 'C shape'},
+    ], 'generated')
+    check(bad_type == [{'type': 'say', 'text': 'C shape'}],
+          f"a non-list muted fails the WHOLE primitive, degrading to caption, got {bad_type}")
+
+    bad_range = pl.sanitize_script([
+        {'type': 'show', 'primitive': {'kind': 'fretboard',
+                                       'dots': [{'string': 5, 'fret': 3, 'finger': 3}],
+                                       'muted': [0, 7]},
+         'caption': 'C shape'},
+    ], 'generated')
+    check(bad_range == [{'type': 'say', 'text': 'C shape'}],
+          f"an out-of-range string number in muted fails the whole primitive too, got {bad_range}")
+
+
+def scenario_fretboard_muted_deduplicates_and_sorts():
+    """_build_primitive rebuilds `muted` from a set -- a model that names
+    the same string twice must not draw the same X twice, and the order
+    the model wrote them in should never matter to what gets stored."""
+    out = pl.sanitize_script([
+        {'type': 'show', 'primitive': {'kind': 'fretboard',
+                                       'dots': [{'string': 3, 'fret': 2, 'finger': 1}],
+                                       'muted': [6, 1, 6, 1, 4]}},
+    ], 'generated')
+    check(len(out) == 1, f"the scene survives, got {out}")
+    check(out[0]['primitive']['muted'] == [1, 4, 6],
+          f"deduplicated and sorted, got {out[0]}")
+
+
+def scenario_counter_seconds_per_rep_is_optional_and_clamped():
+    """seconds_per_rep -- added (fix round 2) so a rep count can pace
+    itself hands-free -- is optional (an absent value gets
+    program_lessons.COUNTER_DEFAULT_SPR at build time, see
+    scenario_the_stored_primitive_is_rebuilt_not_the_models_own_dict above)
+    and, when the model DOES set one, validated like every other numeric
+    param: in-range survives untouched, out-of-range fails the whole
+    primitive rather than being silently clamped into range."""
+    in_range = pl.sanitize_script([
+        {'type': 'show', 'primitive': {'kind': 'counter', 'target': 12,
+                                       'seconds_per_rep': 5}},
+    ], 'generated')
+    check(in_range[0]['primitive']['seconds_per_rep'] == 5,
+          f"an in-range value survives untouched, got {in_range}")
+
+    floor_and_ceiling = pl.sanitize_script([
+        {'type': 'show', 'primitive': {'kind': 'counter', 'target': 12,
+                                       'seconds_per_rep': pl.COUNTER_MIN_SPR}},
+        {'type': 'show', 'primitive': {'kind': 'counter', 'target': 12,
+                                       'seconds_per_rep': pl.COUNTER_MAX_SPR}},
+    ], 'generated')
+    check(len(floor_and_ceiling) == 2, f"both ends of the range are valid, got {floor_and_ceiling}")
+
+    too_fast = pl.sanitize_script([
+        {'type': 'show', 'primitive': {'kind': 'counter', 'target': 12,
+                                       'seconds_per_rep': pl.COUNTER_MIN_SPR - 1},
+         'caption': 'reps'},
+    ], 'generated')
+    check(too_fast == [{'type': 'say', 'text': 'reps'}],
+          f"below the floor fails the whole primitive, degrading to caption, got {too_fast}")
+
+    too_slow = pl.sanitize_script([
+        {'type': 'show', 'primitive': {'kind': 'counter', 'target': 12,
+                                       'seconds_per_rep': pl.COUNTER_MAX_SPR + 1},
+         'caption': 'reps'},
+    ], 'generated')
+    check(too_slow == [{'type': 'say', 'text': 'reps'}],
+          f"above the ceiling fails the whole primitive too, got {too_slow}")
+
+
+def scenario_counter_seconds_per_rep_infinite_never_raises():
+    """Same non-negotiable as every other numeric param in this file:
+    int(float('inf')) raises OverflowError, and JSON hands this door that
+    shape for free (the bare token Infinity, or any numeral past a
+    double's range) -- see scenario_infinite_numerics_never_raise below
+    for the rest of the primitives held to this same bar."""
+    out = pl.sanitize_script([
+        {'type': 'show', 'primitive': {'kind': 'counter', 'target': 12,
+                                       'seconds_per_rep': float('inf')},
+         'caption': 'reps'},
+    ], 'generated')
+    check(out == [{'type': 'say', 'text': 'reps'}],
+          f"an unparseable seconds_per_rep degrades to the caption, not a crash, got {out}")
+
+
+def scenario_system_prompt_names_the_new_fields():
+    """The model can only set what the schema tells it exists -- both new
+    fields have to actually be IN _SYSTEM, not just accepted quietly if a
+    model happens to guess at them."""
+    check('muted' in pl._SYSTEM, "the fretboard schema mentions muted")
+    check('seconds_per_rep' in pl._SYSTEM, "the counter schema mentions seconds_per_rep")
 
 
 def scenario_a_do_beat_is_session_shaped_not_an_afternoon():
@@ -1058,6 +1189,11 @@ if __name__ == '__main__':
     scenario_card_faces_are_capped_like_every_other_string()
     scenario_the_stored_primitive_is_rebuilt_not_the_models_own_dict()
     scenario_every_primitive_kind_survives_the_rebuild()
+    scenario_fretboard_muted_is_optional_and_validated()
+    scenario_fretboard_muted_deduplicates_and_sorts()
+    scenario_counter_seconds_per_rep_is_optional_and_clamped()
+    scenario_counter_seconds_per_rep_infinite_never_raises()
+    scenario_system_prompt_names_the_new_fields()
     scenario_a_do_beat_is_session_shaped_not_an_afternoon()
     scenario_generated_origin_screens_physical_technique()
     scenario_body_screen_fires_on_every_origin()

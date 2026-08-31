@@ -468,14 +468,15 @@ def scenario_music_primitives_render():
     src = _read('components/lesson_player.html')
     import re
     check(re.search(r'keyboardSvg\(keys\)\s*\{', src), "keyboardSvg(keys) exists")
-    check(re.search(r'fretboardSvg\(dots\)\s*\{', src), "fretboardSvg(dots) exists")
+    check(re.search(r'fretboardSvg\(dots, muted\)\s*\{', src), "fretboardSvg(dots, muted) exists")
     check("kind === 'keyboard'" in src, "the show dispatch has a keyboard branch")
     check("kind === 'fretboard'" in src, "the show dispatch has a fretboard branch")
     check("kind === 'metronome'" in src, "metronome is still wired (Task 6)")
     check('keyboardSvg(scene().primitive.keys)' in src,
           "the keyboard branch feeds the renderer its own validated keys")
-    check('fretboardSvg(scene().primitive.dots)' in src,
-          "the fretboard branch feeds the renderer its own validated dots")
+    check('fretboardSvg(scene().primitive.dots, scene().primitive.muted)' in src,
+          "the fretboard branch feeds the renderer its own validated dots AND "
+          "its optional muted-string list")
     check('<svg' in src, "drawn, not described")
 
 
@@ -502,7 +503,7 @@ def scenario_keyboard_geometry_is_computed_not_hand_drawn():
     lookup keyed on the whole note string."""
     src = _read('components/lesson_player.html')
     import re
-    m = re.search(r'keyboardSvg\(keys\)\s*\{(.*?)fretboardSvg\(dots\)', src, re.S)
+    m = re.search(r'keyboardSvg\(keys\)\s*\{(.*?)fretboardSvg\(dots, muted\)', src, re.S)
     check(m, "keyboardSvg body is findable, bounded by the next function")
     body = m.group(1) if m else ''
     check(body.count('GEOM') >= 2,
@@ -519,7 +520,7 @@ def scenario_fretboard_window_starts_at_the_lowest_fretted_dot():
     body, bounded by the next function in source."""
     src = _read('components/lesson_player.html')
     import re
-    m = re.search(r'fretboardSvg\(dots\)\s*\{(.*?)cardFace\(', src, re.S)
+    m = re.search(r'fretboardSvg\(dots, muted\)\s*\{(.*?)cardFace\(', src, re.S)
     check(m, "fretboardSvg body is findable, bounded by the next function")
     body = m.group(1) if m else ''
     check('Math.max(1' in body and 'Math.min(' in body,
@@ -543,14 +544,23 @@ def scenario_remaining_primitives_render():
 
 
 def scenario_counter_taps_are_never_sent():
-    """A rep count is a within-scene convenience, not a record."""
+    """A rep count is a within-scene convenience, not a record -- true of
+    every function that drives the paced count, not just a tap handler.
+    bumpCounter() (tap-per-rep) is gone; counterTap() is the single entry
+    point the dial's own @click.stop calls, and it fans out to
+    startCounterPace()/pauseCounter()/tickCounter() -- all of them, plus
+    speakCount(), are checked here rather than just the one function a tap
+    directly reaches, because a rep now advances on ITS OWN TIMER as well
+    as on a tap, and it would be easy to guard the tap and forget the
+    interval it starts."""
     src = _read('components/lesson_player.html')
     import re
-    m = re.search(r'bumpCounter\([^)]*\)\s*\{([^}]*)\}', src)
-    check(m, "bumpCounter exists")
-    body = m.group(1) if m else ''
-    for forbidden in ('fetch', 'localStorage', 'api', 'POST'):
-        check(forbidden not in body, f"counter taps never {forbidden}")
+    for fn in ('counterTap', 'startCounterPace', 'pauseCounter', 'tickCounter', 'speakCount'):
+        m = re.search(fn + r'\([^)]*\)\s*\{(.*?)\n        \},', src, re.S)
+        check(m, f"{fn} exists")
+        body = m.group(1) if m else ''
+        for forbidden in ('fetch', 'localStorage', 'api', 'POST'):
+            check(forbidden not in body, f"{fn} never {forbidden}s")
 
 
 def scenario_card_flips_are_never_sent():
@@ -576,7 +586,7 @@ def scenario_cards_and_counter_taps_never_bubble_into_advance():
     scenario_check_taps_never_bubble_into_the_advance_handler above)."""
     src = _read('components/lesson_player.html')
     import re
-    for handler in ('toggleCardFlip', 'cardPrev', 'cardNext', 'bumpCounter'):
+    for handler in ('toggleCardFlip', 'cardPrev', 'cardNext', 'counterTap'):
         taps = re.findall(r'@click(\.stop)?="' + handler + r'\(\)"', src)
         check(len(taps) >= 1, f"{handler} is wired to a tap")
         check(all(t == '.stop' for t in taps),
@@ -584,25 +594,278 @@ def scenario_cards_and_counter_taps_never_bubble_into_advance():
               f"the scene area's own tap-to-advance handler")
 
 
+def scenario_counter_is_paced_not_tap_per_rep():
+    """Fix round 2's whole point: "you cannot stop after each rep and tap
+    your phone." bumpCounter() (one tap = one rep) is gone outright, and
+    the ONE tap that remains starts a self-advancing pace rather than
+    requiring one tap per rep."""
+    src = _read('components/lesson_player.html')
+    check('bumpCounter' not in src,
+          "tap-per-rep is gone, not merely joined by the new paced version")
+    check('counterTap' in src and 'startCounterPace' in src and 'tickCounter' in src,
+          "the paced-count functions exist")
+
+
+def scenario_counter_first_tap_announces_immediately_then_paces_itself():
+    """"One tap starts it. The count then advances on a cadence on its own"
+    -- a fresh start (counterVal === 0) ticks right away, the same pattern
+    startMetronome() already uses for its own first click, and every
+    following tick is scheduled spr seconds apart via setInterval, not
+    triggered by another tap."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'startCounterPace\(\)\s*\{(.*?)\n        \},', src, re.S)
+    check(m, "startCounterPace exists")
+    body = m.group(1) if m else ''
+    check(re.search(r'if \(this\.counterVal === 0\) this\.tickCounter\(\);', body),
+          "a fresh start (counterVal 0) fires the first rep immediately")
+    check(re.search(r'this\.counterTimer = setInterval\(\(\) => this\.tickCounter\(\), spr \* 1000\);', body),
+          "and every rep after that is scheduled on the primitive's own pace, not another tap")
+
+
+def scenario_counter_pause_and_resume_are_both_reachable():
+    """"Pause and resume must be possible." counterTap() is the single
+    handler for start/pause/resume, so its own branching -- not a separate
+    pause button -- is what has to prove both directions are reachable: a
+    tap while running pauses (does not silently no-op or restart from
+    zero), and a tap while paused-but-not-done resumes via the exact same
+    startCounterPace() a fresh start uses (which is what makes a resume NOT
+    fire an extra immediate tick -- counterVal is already > 0 there)."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'counterTap\(\)\s*\{(.*?)\n        \},', src, re.S)
+    check(m, "counterTap exists")
+    body = m.group(1) if m else ''
+    check(re.search(r'if \(this\.counterRunning\) \{ this\.pauseCounter\(\); return; \}', body),
+          "a tap while running pauses it")
+    check('this.startCounterPace();' in body,
+          "and a tap while stopped (paused, or not yet started) resumes/starts "
+          "the SAME pace function -- not a second, divergent resume path")
+
+
+def scenario_counter_reaching_target_stops_itself_without_a_tap():
+    """"Finishing at target should be visible and should not require a
+    tap." tickCounter() -- called only from the interval, never from a
+    tap directly -- has to stop its own pace the instant counterVal
+    reaches target, proven structurally rather than merely asserting
+    pauseCounter exists somewhere in the file."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'tickCounter\(\)\s*\{(.*?)\n        \},', src, re.S)
+    check(m, "tickCounter exists")
+    body = m.group(1) if m else ''
+    check(body.count('this.pauseCounter()') >= 1,
+          "tickCounter stops the pace itself once target is reached")
+    check(re.search(r'if \(this\.counterVal >= target\) this\.pauseCounter\(\);', body),
+          "checked again right after incrementing, so the interval never "
+          "fires one extra tick past target")
+
+
+def scenario_counter_done_state_is_visible_without_a_tap():
+    """The dial itself has to show completion -- a status line and a style
+    change on the dial's own container -- not merely stop silently."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'counterDone\(\)\s*\{(.*?)\n        \},', src, re.S)
+    check(m, "counterDone() exists")
+    m2 = re.search(r'counterStatusText\(\)\s*\{(.*?)\n        \},', src, re.S)
+    check(m2, "counterStatusText() exists")
+    status_body = m2.group(1) if m2 else ''
+    check('All done' in status_body, "a done state has its own honest label")
+    check('tap to pause' in status_body.lower() and 'tap to resume' in status_body.lower(),
+          "and running vs paused are told apart too, not merged into one label")
+    block = re.search(r"kind === 'counter'\">(.*?)</template>", src, re.S)
+    check(block, "the counter template block is findable")
+    counter_markup = block.group(1) if block else ''
+    check('counterDone()' in counter_markup,
+          "the dial's own container styling reads counterDone(), so "
+          "completion is visible without requiring a tap to discover it")
+    check('counterStatusText()' in counter_markup,
+          "and the status line is actually rendered, not just computed")
+
+
+def scenario_counter_speech_never_breaks_the_counter():
+    """"Never let a missing or throwing speech API break the counter."
+    speakCount() has to wrap window.speechSynthesis entirely in try/catch,
+    check for a voice before speaking (the HA wall panel plausibly has
+    none), and never use a browser dialog -- the standing house rule."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'speakCount\(n\)\s*\{(.*?)\n        \},', src, re.S)
+    check(m, "speakCount exists")
+    body = m.group(1) if m else ''
+    check('try {' in body and 'catch (e)' in body,
+          "the whole speech call is wrapped -- a throwing speechSynthesis "
+          "can never break the counter")
+    check('speechSynthesis' in body, "it uses the browser's own speech API")
+    check(re.search(r'!synth \|\| !\(synth\.getVoices\(\) \|\| \[\]\)\.length', body),
+          "and it checks for an available voice before speaking -- falling "
+          "back to the tick alone (no voices, e.g. the wall panel) rather "
+          "than calling speak() into the void")
+    check('SpeechSynthesisUtterance' in body, "it speaks via the standard utterance API")
+    for banned in ('alert(', 'confirm(', 'prompt('):
+        check(banned not in body, f"never a browser {banned} dialog (house rule)")
+
+
+def scenario_counter_speech_cancels_before_speaking_so_it_never_backlogs():
+    """A cadence the browser cannot keep up with (a fast seconds_per_rep, a
+    long spoken number) must never queue a backlog of stale numbers trailing
+    behind the tick and the dial -- cancel() has to run before every
+    speak()."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'speakCount\(n\)\s*\{(.*?)\n        \},', src, re.S)
+    check(m, "speakCount exists")
+    body = m.group(1) if m else ''
+    cancel_pos = body.find('synth.cancel()')
+    speak_pos = body.find('synth.speak(')
+    check(cancel_pos != -1 and speak_pos != -1, "both landmarks are present")
+    check(cancel_pos < speak_pos,
+          "cancel() runs before speak(), so a fast cadence never leaves a "
+          "backlog of un-spoken numbers behind")
+
+
+def scenario_counter_reads_its_own_seconds_per_rep_with_a_default():
+    """`seconds_per_rep` has to actually reach the pace, not just exist in
+    the schema -- read off the CURRENT scene's own primitive, with a
+    same-file default for a primitive stored before the field existed."""
+    src = _read('components/lesson_player.html')
+    check('COUNTER_DEFAULT_SPR' in src,
+          "a client-side default exists for an older stored primitive with "
+          "no seconds_per_rep field at all")
+    check('s.primitive.seconds_per_rep' in src,
+          "and the current scene's own value is what actually drives the pace")
+
+
+def scenario_stop_sound_and_enter_scene_both_clear_the_counters_pace():
+    """"Make sure stopSound() also stops the count, and that leaving the
+    scene resets it" -- the counter is scene-local and must never survive a
+    scene change or a close, exactly like the countdown timer and the
+    metronome it sits beside."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'stopSound\(\)\s*\{(.*?)\n        \},', src, re.S)
+    check(m, "stopSound exists")
+    stop_body = m.group(1) if m else ''
+    check('this.counterTimer' in stop_body and 'clearInterval(this.counterTimer)' in stop_body,
+          "stopSound() clears the counter's own interval, not just the timer/metronome")
+    check('this.counterRunning = false' in stop_body,
+          "and resets its running flag, so a re-entered scene never reads a stale 'running' state")
+    m2 = re.search(r'enterScene\(\)\s*\{(.*?)\n        \},', src, re.S)
+    check(m2, "enterScene exists")
+    enter_body = m2.group(1) if m2 else ''
+    check('this.counterVal = 0' in enter_body,
+          "counterVal itself resets on every entry, as it always has")
+    check('clearInterval(this.counterTimer)' in enter_body,
+          "and enterScene() ALSO clears counterTimer directly -- defensive "
+          "even though advance() already runs stopSound() first, so a "
+          "fresh open() (which never calls stopSound() before its first "
+          "enterScene()) cannot inherit a running interval from nowhere")
+
+
 def scenario_fretboard_open_strings_are_structurally_separate_from_fretted_dots():
-    """Fix round 1, finding 1. An open string (fret 0) used to clamp into
-    the SAME column as a fret-1 dot -- visually identical, though a
-    completely different instruction (nothing fretted vs finger down at
-    fret 1). Scoped to fretboardSvg's own body, bounded by the next
-    function in source (the same anchor
+    """Fix round 1, finding 1, carried into the vertical rewrite (fix round
+    2). An open string (fret 0) used to clamp into the SAME column as a
+    fret-1 dot -- visually identical, though a completely different
+    instruction (nothing fretted vs finger down at fret 1). The vertical
+    diagram keeps the SAME guarantee through a different mechanism: an open
+    mark draws in the head area above the nut (y < gy, structurally above
+    every fret ROW, never inside one), not merely "left of the grid" as the
+    old horizontal diagram had it. Scoped to fretboardSvg's own body,
+    bounded by the next function in source (the same anchor
     scenario_fretboard_window_starts_at_the_lowest_fretted_dot already
     uses)."""
     src = _read('components/lesson_player.html')
     import re
-    m = re.search(r'fretboardSvg\(dots\)\s*\{(.*?)cardFace\(', src, re.S)
+    m = re.search(r'fretboardSvg\(dots, muted\)\s*\{(.*?)cardFace\(', src, re.S)
     check(m, "fretboardSvg body is findable, bounded by the next function")
     body = m.group(1) if m else ''
     check('openDots' in body and 'frettedDots' in body,
           "open (fret 0) and fretted (fret > 0) dots are split before either is drawn")
-    check('fill="none" stroke="#2dd4bf"' in body,
+    check('fill="none" ' in body and 'stroke="${openColor}"' in body,
           "an open string draws as a hollow ring -- structurally distinct from a solid fretted dot")
-    check('gx - 17' in body,
-          "the open marker sits LEFT of the grid's own left edge, never inside a fret column")
+    m2 = re.search(r'openDots\.forEach\(d => \{([\s\S]*?)\}\);', body)
+    check(m2, "the openDots.forEach block is findable")
+    open_block = m2.group(1) if m2 else ''
+    check('gy - 24' in open_block,
+          "the open marker's y sits ABOVE the nut (gy is the nut's own y), "
+          "never inside a fret row")
+    check('d.finger' not in open_block,
+          "and it carries no finger number -- there is no finger on an open "
+          "string, unlike the old horizontal version which printed one anyway")
+
+
+def scenario_fretboard_muted_strings_draw_as_x_above_the_nut():
+    """The user's report named a third mark books use beside O: a muted
+    (never-played) string draws as an X, same row as an open O. The
+    contract could not express "muted" before this fix at all --
+    program_lessons._valid_fretboard gained an optional `muted` list for
+    exactly this (see test_program_lessons.py) -- so this is new behaviour,
+    not a carried-over pin."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'fretboardSvg\(dots, muted\)\s*\{(.*?)cardFace\(', src, re.S)
+    check(m, "fretboardSvg body is findable")
+    body = m.group(1) if m else ''
+    check('mutedStrings' in body, "muted strings are resolved into their own list")
+    m2 = re.search(r'mutedStrings\.forEach\(s => \{([\s\S]*?)\}\);', body)
+    check(m2, "the mutedStrings.forEach block is findable")
+    muted_block = m2.group(1) if m2 else ''
+    check('gy - 24' in muted_block,
+          "the muted marker sits in the SAME row as an open marker, above the nut")
+    check(muted_block.count('<line') == 2,
+          "an X is two crossing lines, drawn as two <line> elements")
+    check('!dotStrings.has(s)' in body,
+          "a string that already carries a real dot (open or fretted) is "
+          "excluded from muted -- the dot wins rather than drawing both marks")
+
+
+def scenario_fretboard_is_vertical_low_e_left_high_e_right():
+    """The whole point of the fix, pinned structurally: strings are VERTICAL
+    lines (not horizontal rows) and string 6 (low E) sits at a smaller x
+    than string 1 (high E) -- the book convention the user asked for, never
+    a mirror or a face-to-face view. Proven by the geometry formula itself
+    (colOf), not merely by absence of the old STR_GAP-as-a-y-offset code,
+    and independently re-verified by actually EXECUTING the function under
+    Node against six same-fret dots (see the fix report's own table) --
+    this is the source-level companion to that runtime proof."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'fretboardSvg\(dots, muted\)\s*\{(.*?)cardFace\(', src, re.S)
+    check(m, "fretboardSvg body is findable")
+    body = m.group(1) if m else ''
+    check(re.search(r'colOf\s*=\s*string\s*=>\s*gx\s*\+\s*\(6\s*-\s*string\)\s*\*\s*STR_GAP', body),
+          "colOf maps string number to x as gx + (6-string)*STR_GAP -- string "
+          "6 (low E) lands at the smallest x (leftmost), string 1 (high E) "
+          "at the largest (rightmost)")
+    check(re.search(r'for \(let col = 0; col < 6; col\+\+\) \{\s*const x = gx \+ col \* STR_GAP;', body),
+          "strings are drawn as 6 VERTICAL lines (constant x per string, "
+          "varying y), not horizontal rows")
+    check(re.search(r'for \(let f = 0; f <= WIN; f\+\+\) \{\s*const y = gy \+ f \* FRET_H;', body),
+          "frets are drawn as HORIZONTAL lines at increasing y -- running "
+          "down the neck, not across it")
+
+
+def scenario_fretboard_nut_is_thick_only_when_the_window_starts_at_fret_one():
+    """Book convention: the nut is a thick line across the top ONLY when
+    fret 1 is in view; a window that starts higher up the neck draws an
+    ordinary fret line there instead and names the real fret beside it
+    (`${start}fr`), which the OLD horizontal diagram printed unconditionally
+    regardless of whether it was really the nut."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'fretboardSvg\(dots, muted\)\s*\{(.*?)cardFace\(', src, re.S)
+    check(m, "fretboardSvg body is findable")
+    body = m.group(1) if m else ''
+    check("const isNut = start === 1 && f === 0;" in body,
+          "the nut is identified structurally, not merely styled")
+    check('stroke-width="${isNut ? 5 : 1.5}"' in body,
+          "and only the nut gets the thicker stroke")
+    m2 = re.search(r'if \(start > 1\) \{([\s\S]*?)\n            \}', body)
+    check(m2, "a start>1 branch exists for the position marker")
+    check('${start}fr' in (m2.group(1) if m2 else ''),
+          "and it is the ONLY place the position label is drawn -- never "
+          "printed when the window already starts at the nut")
 
 
 def scenario_fretboard_window_widens_to_fit_the_real_span():
@@ -612,7 +875,7 @@ def scenario_fretboard_window_widens_to_fit_the_real_span():
     only falling back to a cap past a sane width."""
     src = _read('components/lesson_player.html')
     import re
-    m = re.search(r'fretboardSvg\(dots\)\s*\{(.*?)cardFace\(', src, re.S)
+    m = re.search(r'fretboardSvg\(dots, muted\)\s*\{(.*?)cardFace\(', src, re.S)
     check(m, "fretboardSvg body is findable")
     body = m.group(1) if m else ''
     check('BASE_WIN' in body and 'MAX_WIN' in body,
@@ -631,7 +894,7 @@ def scenario_fretboard_overflow_gets_a_visibly_approximate_marker():
     approximation cannot be mistaken for a position."""
     src = _read('components/lesson_player.html')
     import re
-    m = re.search(r'fretboardSvg\(dots\)\s*\{(.*?)cardFace\(', src, re.S)
+    m = re.search(r'fretboardSvg\(dots, muted\)\s*\{(.*?)cardFace\(', src, re.S)
     check(m, "fretboardSvg body is findable")
     body = m.group(1) if m else ''
     check('inWindow' in body, "in-window vs out-of-window dots are distinguished before drawing")
@@ -648,7 +911,7 @@ def scenario_keyboard_signals_a_dropped_highlight_rather_than_hiding_it():
     a highlighted key it then drew nothing for."""
     src = _read('components/lesson_player.html')
     import re
-    m = re.search(r'keyboardSvg\(keys\)\s*\{(.*?)fretboardSvg\(dots\)', src, re.S)
+    m = re.search(r'keyboardSvg\(keys\)\s*\{(.*?)fretboardSvg\(dots, muted\)', src, re.S)
     check(m, "keyboardSvg body is findable, bounded by the next function")
     body = m.group(1) if m else ''
     check(re.search(r'dropped\s*=\s*notes\.filter\(', body),
@@ -1106,7 +1369,19 @@ if __name__ == '__main__':
     scenario_counter_taps_are_never_sent()
     scenario_card_flips_are_never_sent()
     scenario_cards_and_counter_taps_never_bubble_into_advance()
+    scenario_counter_is_paced_not_tap_per_rep()
+    scenario_counter_first_tap_announces_immediately_then_paces_itself()
+    scenario_counter_pause_and_resume_are_both_reachable()
+    scenario_counter_reaching_target_stops_itself_without_a_tap()
+    scenario_counter_done_state_is_visible_without_a_tap()
+    scenario_counter_speech_never_breaks_the_counter()
+    scenario_counter_speech_cancels_before_speaking_so_it_never_backlogs()
+    scenario_counter_reads_its_own_seconds_per_rep_with_a_default()
+    scenario_stop_sound_and_enter_scene_both_clear_the_counters_pace()
     scenario_fretboard_open_strings_are_structurally_separate_from_fretted_dots()
+    scenario_fretboard_muted_strings_draw_as_x_above_the_nut()
+    scenario_fretboard_is_vertical_low_e_left_high_e_right()
+    scenario_fretboard_nut_is_thick_only_when_the_window_starts_at_fret_one()
     scenario_fretboard_window_widens_to_fit_the_real_span()
     scenario_fretboard_overflow_gets_a_visibly_approximate_marker()
     scenario_keyboard_signals_a_dropped_highlight_rather_than_hiding_it()
