@@ -502,6 +502,219 @@ def scenario_a_parent_can_edit_a_childs_lesson():
     check(row['scenes'][0]['text'] == 'from mom', f"got {row}")
 
 
+# --- POST /api/programs/lessons/sweep: the forced, seen sweep -----------
+# The verb itself (which slots get written, why the rest were skipped) is
+# program_lessons.sweep_report's own job and is proven in depth over in
+# test_program_lessons.py; this file's job, same as every scenario above
+# it, is only that the endpoint asks it correctly and gates who is asking.
+# sweep_report is monkeypatched throughout so these never spend a model
+# call and never need a real practice-window fixture to prove the wiring.
+
+def _fake_sweep_report(report=None):
+    """A stand-in for program_lessons.sweep_report that records every call
+    it received (kwargs only -- the endpoint calls it that way) and hands
+    back a fixed, well-shaped report."""
+    calls = []
+    def fake(**kw):
+        calls.append(kw)
+        return dict(report or {'wrote': 0, 'skipped': 0, 'slots': []})
+    return calls, fake
+
+
+def scenario_forced_sweep_endpoint_exists_as_post():
+    import main
+    routes = [r for r in main.app.routes
+             if getattr(r, 'path', None) == '/api/programs/lessons/sweep']
+    methods = set()
+    for r in routes:
+        methods |= (getattr(r, 'methods', None) or set())
+    check('POST' in methods,
+          f"the forced sweep must be reachable by hand, got {methods}")
+
+
+def scenario_forced_sweep_refuses_a_child():
+    """Household-wide work, same rule as approve_program: a child cannot
+    force a sweep across every active program, only a parent/adult (or the
+    control-center standing in for one) can."""
+    _reset()
+    import main
+    kid_token = storage.create_member_token('kid')
+    code = _denied(main.sweep_program_lessons_now, body={},
+                   request=Req(kid_token))
+    check(code == 403, f"a child cannot force the household sweep, got {code}")
+
+
+def scenario_forced_sweep_allows_a_parent():
+    _reset()
+    import main
+    from services import program_lessons as pl
+    calls, fake = _fake_sweep_report()
+    orig = pl.sweep_report
+    pl.sweep_report = fake
+    try:
+        mom_token = storage.create_member_token('mom')
+        res = main.sweep_program_lessons_now(body={}, request=Req(mom_token))
+    finally:
+        pl.sweep_report = orig
+    check(len(calls) == 1, f"a parent reaches sweep_report, got {calls}")
+    check(res == {'wrote': 0, 'skipped': 0, 'slots': []}, f"got {res}")
+
+
+def scenario_forced_sweep_allows_the_control_center_with_no_claim():
+    """request=None is the trusted-place reading _mind_actor already gives
+    every other control-center admin action; _approver_of_record stands in
+    the household's own parent of record, exactly like approve_program
+    already does."""
+    _reset()
+    import main
+    from services import program_lessons as pl
+    calls, fake = _fake_sweep_report()
+    orig = pl.sweep_report
+    pl.sweep_report = fake
+    try:
+        res = main.sweep_program_lessons_now(body={}, request=None)
+    finally:
+        pl.sweep_report = orig
+    check(len(calls) == 1, f"the control-center reaches sweep_report, got {calls}")
+    check(res == {'wrote': 0, 'skipped': 0, 'slots': []}, f"got {res}")
+
+
+def scenario_forced_sweep_refuses_when_programs_are_off():
+    """The switches are never bypassed, only the day marker is -- and the
+    refusal has to happen BEFORE sweep_report is ever called, in words,
+    rather than a quiet empty-looking report indistinguishable from 'ran
+    and found nothing due'."""
+    _reset()
+    import main
+    from services import program_lessons as pl
+    calls, fake = _fake_sweep_report()
+    orig_sweep = pl.sweep_report
+    pl.sweep_report = fake
+    orig_settings = storage.get_settings
+    storage.get_settings = lambda: {'calendar_ids': ['primary'],
+                                    'programs_enabled': False}
+    try:
+        res = main.sweep_program_lessons_now(body={}, request=None)
+    finally:
+        storage.get_settings = orig_settings
+        pl.sweep_report = orig_sweep
+    check(res.get('status') == 'error' and res.get('message'),
+          f"a clear refusal, got {res}")
+    check(len(calls) == 0,
+          "sweep_report is never called once the switch says no")
+
+
+def scenario_forced_sweep_refuses_when_lessons_are_off():
+    _reset()
+    import main
+    from services import program_lessons as pl
+    calls, fake = _fake_sweep_report()
+    orig_sweep = pl.sweep_report
+    pl.sweep_report = fake
+    orig_settings = storage.get_settings
+    storage.get_settings = lambda: {'calendar_ids': ['primary'],
+                                    'program_lessons_enabled': False}
+    try:
+        res = main.sweep_program_lessons_now(body={}, request=None)
+    finally:
+        storage.get_settings = orig_settings
+        pl.sweep_report = orig_sweep
+    check(res.get('status') == 'error' and res.get('message'),
+          f"a clear refusal, got {res}")
+    check(len(calls) == 0,
+          "sweep_report is never called once the switch says no")
+
+
+def scenario_forced_sweep_passes_start_offset_zero_and_force_true():
+    """The two things that make this button different from waiting for
+    tonight: it scans from TODAY (start_offset=0, not generate_due's own
+    1) and it runs regardless of whether today's automatic pass already
+    happened (force=True). Defaults for days/limit mirror the docstring:
+    three days, MAX_SLOTS_PER_PASS slots."""
+    _reset()
+    import main
+    from services import program_lessons as pl
+    calls, fake = _fake_sweep_report()
+    orig = pl.sweep_report
+    pl.sweep_report = fake
+    try:
+        res = main.sweep_program_lessons_now(body={}, request=None)
+    finally:
+        pl.sweep_report = orig
+    check(len(calls) == 1, f"called once, got {calls}")
+    kw = calls[0]
+    check(kw.get('start_offset') == 0, f"scans from today, got {kw}")
+    check(kw.get('force') is True, f"bypasses the marker, got {kw}")
+    check(kw.get('days') == 3, f"default days, got {kw}")
+    check(kw.get('limit') == pl.MAX_SLOTS_PER_PASS, f"default limit, got {kw}")
+    check(res == {'wrote': 0, 'skipped': 0, 'slots': []},
+          "the report comes back exactly as sweep_report returned it")
+
+
+def scenario_forced_sweep_passes_custom_days_and_limit():
+    _reset()
+    import main
+    from services import program_lessons as pl
+    calls, fake = _fake_sweep_report()
+    orig = pl.sweep_report
+    pl.sweep_report = fake
+    try:
+        main.sweep_program_lessons_now(body={'days': 7, 'limit': 2},
+                                       request=None)
+    finally:
+        pl.sweep_report = orig
+    check(calls[0].get('days') == 7 and calls[0].get('limit') == 2,
+          f"a caller's own days/limit reach sweep_report, got {calls[0]}")
+
+
+def scenario_forced_sweep_a_non_numeric_days_is_a_400():
+    """Same shape as unit_n's own boundary above: a bad TYPE must land as
+    a 400, never a 500 out of a bare int()."""
+    _reset()
+    import main
+    code = _denied(main.sweep_program_lessons_now,
+                   body={'days': 'abc'}, request=None)
+    check(code == 400, f"a non-numeric days must be a 400, got {code}")
+
+
+def scenario_forced_sweep_a_non_numeric_limit_is_a_400():
+    _reset()
+    import main
+    code = _denied(main.sweep_program_lessons_now,
+                   body={'limit': 'abc'}, request=None)
+    check(code == 400, f"a non-numeric limit must be a 400, got {code}")
+
+
+def scenario_forced_sweep_an_infinite_limit_is_a_400():
+    """int(float('inf')) raises OverflowError, not ValueError or
+    TypeError -- and JSON hands this door exactly that shape for free, a
+    bare Infinity token parsing cleanly under json.loads."""
+    _reset()
+    import main
+    code = _denied(main.sweep_program_lessons_now,
+                   body={'limit': float('inf')}, request=None)
+    check(code == 400, f"an infinite limit must be a 400, got {code}")
+
+
+def scenario_forced_sweep_a_huge_finite_days_is_a_400():
+    """The failure shape the try/except alone does not catch: int(10**30)
+    raises nothing, so only the explicit range check stops it reaching
+    datetime.timedelta downstream."""
+    _reset()
+    import main
+    code = _denied(main.sweep_program_lessons_now,
+                   body={'days': 10**30}, request=None)
+    check(code == 400, f"a huge finite days must be a 400, got {code}")
+
+
+def scenario_forced_sweep_a_negative_days_is_a_400():
+    _reset()
+    import main
+    code = _denied(main.sweep_program_lessons_now,
+                   body={'days': -1}, request=None)
+    check(code == 400, f"a negative days must be a 400, got {code}")
+
+
 if __name__ == '__main__':
     scenario_endpoints_exist()
     scenario_the_wall_route_exists_and_is_wall_tier()
@@ -531,4 +744,17 @@ if __name__ == '__main__':
     scenario_a_child_cannot_edit_a_siblings_lesson()
     scenario_a_child_cannot_delete_a_siblings_lesson()
     scenario_a_parent_can_edit_a_childs_lesson()
+    scenario_forced_sweep_endpoint_exists_as_post()
+    scenario_forced_sweep_refuses_a_child()
+    scenario_forced_sweep_allows_a_parent()
+    scenario_forced_sweep_allows_the_control_center_with_no_claim()
+    scenario_forced_sweep_refuses_when_programs_are_off()
+    scenario_forced_sweep_refuses_when_lessons_are_off()
+    scenario_forced_sweep_passes_start_offset_zero_and_force_true()
+    scenario_forced_sweep_passes_custom_days_and_limit()
+    scenario_forced_sweep_a_non_numeric_days_is_a_400()
+    scenario_forced_sweep_a_non_numeric_limit_is_a_400()
+    scenario_forced_sweep_an_infinite_limit_is_a_400()
+    scenario_forced_sweep_a_huge_finite_days_is_a_400()
+    scenario_forced_sweep_a_negative_days_is_a_400()
     print("test_lesson_endpoints OK")

@@ -868,6 +868,188 @@ def scenario_generate_due_reaches_two_days_out():
     check(wrote == 1, f"a window two days past tomorrow is still reached, got {wrote}")
 
 
+# --- the forced sweep: generate_due, but seen ---------------------------
+
+def scenario_sweep_report_start_offset_zero_reaches_today():
+    """generate_due starts at tomorrow; sweep_report's whole reason to
+    take its own start_offset is that the forced button has to show
+    TODAY's windows too. day_offset=0 lands the fixture's window on today
+    and nowhere else inside a 4-day scan, so this fails under
+    generate_due's own tomorrow-first start. Also the closest thing to an
+    end-to-end proof that the report NAMES what it wrote, not just how
+    many: the one entry has to carry the program, the phase, the unit and
+    the date, plus the origin and scene count generate_for actually
+    stored."""
+    import datetime
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    storage.set_app_state('program_lessons_swept', '')
+    _due_fixture('pl-so0', day_offset=0)
+    today = datetime.date.today().isoformat()
+    orig = mp.call_pool_json
+    mp.call_pool_json = lambda *a, **k: {
+        'scenes': [{'type': 'say', 'text': 'Chords are shapes.'}],
+        '_model': 'gemma-4-31b-it'}
+    try:
+        out = pl.sweep_report(start_offset=0)
+    finally:
+        mp.call_pool_json = orig
+    check(out['wrote'] == 1 and out['skipped'] == 0,
+          f"today's window is reached and written, got {out}")
+    check(len(out['slots']) == 1, f"one slot named, got {out['slots']}")
+    slot = out['slots'][0]
+    check(slot['program'] == 'Play guitar', f"names the program, got {slot}")
+    check(slot['phase'] == 'Foundations', f"names the phase, got {slot}")
+    check(slot['unit_n'] == 0, f"names the unit, got {slot}")
+    check(slot['date'] == today, f"names today, not tomorrow, got {slot}")
+    check(slot['origin'] == 'generated' and slot['scenes'] == 1,
+          f"names what generate_for actually stored, got {slot}")
+
+
+def scenario_sweep_report_force_bypasses_the_marker():
+    """A marker that already says today ran must not stop a person from
+    running the sweep again by hand the same evening -- that is the entire
+    point of the admin endpoint this backs. Without force the identical
+    marker still gates it, exactly like generate_due; this proves both
+    halves together so they can never quietly drift apart."""
+    import datetime
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    _due_fixture('pl-fbm', day_offset=0)
+    storage.set_app_state('program_lessons_swept',
+                          datetime.date.today().isoformat())
+    calls = {'n': 0}
+    def fake_pool(*a, **k):
+        calls['n'] += 1
+        return {'scenes': [{'type': 'say', 'text': 'Chords are shapes.'}],
+                '_model': 'gemma-4-31b-it'}
+    orig = mp.call_pool_json
+    mp.call_pool_json = fake_pool
+    try:
+        # Checked BETWEEN the two calls, not after both: forced spends a
+        # real call by design, so calls['n'] can only prove blocked spent
+        # none if it is read before forced has had a chance to run at all.
+        blocked = pl.sweep_report(start_offset=0, force=False)
+        check(blocked == {'wrote': 0, 'skipped': 0, 'slots': []},
+              f"without force, today's own marker still blocks it, got {blocked}")
+        check(calls['n'] == 0, "and no call was spent finding that out")
+        forced = pl.sweep_report(start_offset=0, force=True)
+    finally:
+        mp.call_pool_json = orig
+    check(forced['wrote'] == 1, f"force runs right past the same marker, got {forced}")
+
+
+def scenario_sweep_report_lessons_switch_still_refuses_even_forced():
+    """force bypasses the day marker and NOTHING else. The switch is the
+    household saying it does not want this at all, so a forced call has to
+    refuse exactly like generate_due already does -- never run a pass
+    generate_due itself would have skipped."""
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    _due_fixture('pl-sw1', day_offset=0)
+    orig_settings = storage.get_settings
+    storage.get_settings = lambda: {'calendar_ids': ['primary'],
+                                    'program_lessons_enabled': False}
+    calls = {'n': 0}
+    def fake_pool(*a, **k):
+        calls['n'] += 1
+        return {'scenes': [{'type': 'say', 'text': 'x'}], '_model': 'x'}
+    orig_pool = mp.call_pool_json
+    mp.call_pool_json = fake_pool
+    try:
+        out = pl.sweep_report(start_offset=0, force=True)
+    finally:
+        storage.get_settings = orig_settings
+        mp.call_pool_json = orig_pool
+    check(out == {'wrote': 0, 'skipped': 0, 'slots': []},
+          f"program_lessons_enabled off refuses even forced, got {out}")
+    check(calls['n'] == 0, "the switch stops it before any model call")
+
+
+def scenario_sweep_report_programs_switch_still_refuses_even_forced():
+    """The OLDER master toggle gates the forced sweep too, same as it
+    already gates generate_due (scenario_sweep_respects_programs_enabled_
+    too) -- this sweep is downstream of the whole Programs arc, forced or
+    not."""
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    _due_fixture('pl-sw2', day_offset=0)
+    orig_settings = storage.get_settings
+    storage.get_settings = lambda: {'calendar_ids': ['primary'],
+                                    'programs_enabled': False}
+    orig_pool = mp.call_pool_json
+    mp.call_pool_json = lambda *a, **k: {'scenes': [], '_model': 'x'}
+    try:
+        out = pl.sweep_report(start_offset=0, force=True)
+    finally:
+        storage.get_settings = orig_settings
+        mp.call_pool_json = orig_pool
+    check(out == {'wrote': 0, 'skipped': 0, 'slots': []},
+          f"programs_enabled off refuses too, forced or not, got {out}")
+
+
+def scenario_sweep_report_names_why_a_slot_was_skipped():
+    """The whole feature is the WHY -- generate_due itself only ever
+    returns a count, which cannot tell these apart. Three programs share
+    one evening, each skipped for a different reason: one already has a
+    lesson, one already burned every attempt, and one asks for a call that
+    comes back with nothing sanitize_script can use."""
+    import datetime
+    from services import storage, programs, program_lessons as pl
+    import services.model_pools as mp
+    storage.set_app_state('program_lessons_swept', '')
+    _due_fixture_many(3, day_offset=0)
+    ws = programs.practice_windows(
+        datetime.date.today(), datetime.date.today() + datetime.timedelta(days=3))
+    check(len(ws) == 3, f"the fixture must make three windows, got {len(ws)}")
+    by_title = {w['title']: w for w in ws}
+    w0, w1 = by_title['Program 0'], by_title['Program 1']
+    storage.upsert_program_lesson(
+        w0['program_id'], pl.slot_of(w0, unit_n=0),
+        {'origin': 'generated',
+         'scenes': [{'type': 'say', 'text': 'already here'}]})
+    storage.upsert_program_lesson(
+        w1['program_id'], pl.slot_of(w1, unit_n=0),
+        {'origin': 'generated', 'scenes': [], 'attempts': pl.MAX_ATTEMPTS,
+         'note': 'nothing survived'})
+    orig = mp.call_pool_json
+    # Valid JSON, nothing sanitize_script keeps -- generate_for spends the
+    # call and still comes back with None.
+    mp.call_pool_json = lambda *a, **k: {'scenes': [], '_model': 'x'}
+    try:
+        out = pl.sweep_report(start_offset=0, force=True)
+    finally:
+        mp.call_pool_json = orig
+    reasons = {s['program']: s.get('skipped') for s in out['slots']}
+    check(reasons.get('Program 0') == 'already has a lesson', f"got {reasons}")
+    check(reasons.get('Program 1') == 'attempts exhausted', f"got {reasons}")
+    check(reasons.get('Program 2') == 'generation returned nothing', f"got {reasons}")
+    check(out['wrote'] == 0 and out['skipped'] == 3, f"got {out}")
+
+
+def scenario_sweep_report_names_over_the_pass_limit():
+    """The fourth reason: a slot that DOES need a call but the pass's own
+    budget is already spent. Three fresh programs, a cap of two -- the
+    third has to name itself as over the limit, not as any of the other
+    three reasons, so tomorrow's pass (or another forced one) knows
+    exactly what is still owed."""
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    storage.set_app_state('program_lessons_swept', '')
+    _due_fixture_many(3, day_offset=0)
+    orig = mp.call_pool_json
+    mp.call_pool_json = lambda *a, **k: {
+        'scenes': [{'type': 'say', 'text': 'Chords are shapes.'}], '_model': 'x'}
+    try:
+        out = pl.sweep_report(start_offset=0, limit=2, force=True)
+    finally:
+        mp.call_pool_json = orig
+    check(out['wrote'] == 2 and out['skipped'] == 1,
+          f"two written, one held back by the limit, got {out}")
+    over = [s for s in out['slots'] if s.get('skipped') == 'over the pass limit']
+    check(len(over) == 1, f"named as over the pass limit, got {out['slots']}")
+
+
 if __name__ == '__main__':
     scenario_scene_cap()
     scenario_text_cap_and_type_whitelist()
@@ -907,4 +1089,10 @@ if __name__ == '__main__':
     scenario_sweep_respects_the_switch()
     scenario_sweep_respects_programs_enabled_too()
     scenario_generate_due_reaches_two_days_out()
+    scenario_sweep_report_start_offset_zero_reaches_today()
+    scenario_sweep_report_force_bypasses_the_marker()
+    scenario_sweep_report_lessons_switch_still_refuses_even_forced()
+    scenario_sweep_report_programs_switch_still_refuses_even_forced()
+    scenario_sweep_report_names_why_a_slot_was_skipped()
+    scenario_sweep_report_names_over_the_pass_limit()
     print("test_program_lessons OK")

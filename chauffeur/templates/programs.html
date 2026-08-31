@@ -75,6 +75,38 @@
                         <input type="checkbox" x-model="s.program_lessons_enabled"
                             @change="saveProgramSettings()" class="shrink-0">
                     </label>
+                    <div class="pt-1">
+                        <button @click="runLessonSweep()" :disabled="sweeping"
+                            class="w-full text-xs font-semibold text-teal-300 border border-teal-700/60 rounded-lg py-2 hover:bg-teal-900/20 disabled:opacity-50 disabled:cursor-not-allowed">
+                            <span x-show="!sweeping">Write lessons now</span>
+                            <span x-show="sweeping" x-cloak>Writing lessons… this can take a couple of minutes.</span>
+                        </button>
+                        <p class="text-[11px] text-gray-500 mt-1">
+                            Runs tonight's sweep immediately, for every active program, so you
+                            can see what generation just produced instead of waiting until
+                            tonight.
+                        </p>
+                        <div x-show="sweepReport" x-cloak
+                            class="mt-2 text-[11px] text-gray-300 bg-gray-900/60 border border-gray-800 rounded-lg p-2 space-y-1.5">
+                            <div class="font-semibold text-gray-200"
+                                x-text="sweepReport ? `Wrote ${sweepReport.wrote}, skipped ${sweepReport.skipped}` : ''"></div>
+                            <template x-if="sweepReport && sweepReport.slots.length === 0">
+                                <div class="text-gray-500">Nothing due in the window scanned.</div>
+                            </template>
+                            <template x-for="(slot, idx) in (sweepReport ? sweepReport.slots : [])" :key="idx">
+                                <div class="border-t border-gray-800 pt-1.5">
+                                    <div class="text-gray-300">
+                                        <span x-text="slot.program"></span> —
+                                        <span x-text="slot.session_label || 'practice'"></span> —
+                                        <span x-text="fmtDate(slot.date)"></span>
+                                    </div>
+                                    <div x-show="slot.origin" class="text-teal-400"
+                                        x-text="`${slot.origin}, ${slot.scenes} scene(s)`"></div>
+                                    <div x-show="!slot.origin" class="text-amber-400" x-text="slot.skipped"></div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
                     <label class="flex items-center justify-between gap-3">
                         <span class="text-xs text-gray-300">
                             Ask after (hours)
@@ -786,6 +818,13 @@
                 proposing: false,
                 archiveOpen: false,
                 settingsOpen: false,
+                // The forced lesson sweep gets a busy flag of its own,
+                // never `proposing` -- that one already means "a network
+                // write is in flight, most buttons on this page are
+                // disabled", and a sweep that can run for minutes would
+                // freeze the whole page rather than just its own button.
+                sweeping: false,
+                sweepReport: null,
                 s: {
                     programs_enabled: true,
                     programs_ask_grace_hours: 2,
@@ -958,6 +997,38 @@
                             body: JSON.stringify(this.s),
                         });
                     } catch (e) { showGlobalAlert("Couldn't save that setting."); }
+                },
+
+                // The hand path onto program_lessons.sweep_report: force
+                // tonight's sweep to run now, against every active program,
+                // and show exactly what it did -- the whole reason this
+                // exists is that generation only otherwise runs overnight,
+                // unseen. Its own busy flag rather than `proposing`, since
+                // this can run for whole minutes and every other action on
+                // the page has nothing to do with it.
+                async runLessonSweep() {
+                    const ok = await promptConfirm('Write lessons now?',
+                        'Runs tonight\'s sweep immediately, for every active program. It spends real model calls and can take a couple of minutes.',
+                        'Write lessons', 'Cancel');
+                    if (!ok) return;
+                    this.sweeping = true;
+                    this.sweepReport = null;
+                    try {
+                        const r = await fetch(this.apiBase + 'api/programs/lessons/sweep', {
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            showGlobalAlert(d.detail || d.message || "Couldn't write those lessons.");
+                            return;
+                        }
+                        this.sweepReport = d;
+                    } catch (e) {
+                        showGlobalAlert("Couldn't write those lessons just now.");
+                    } finally {
+                        this.sweeping = false;
+                    }
                 },
 
                 async loadFootprint(id) {

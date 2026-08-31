@@ -6249,6 +6249,79 @@ def program_lesson_scenes(program_id: str, phase_name: str = '',
                        'source_url': lesson.get('source_url') or ''}}
 
 
+# The magnitude bound `days` and `limit` share below, mirroring
+# _LESSON_UNIT_N_MAX's own role for unit_n a few endpoints up: generous
+# enough that no real value is ever clipped (the scan below defaults to
+# three days deep and MAX_SLOTS_PER_PASS is 6), narrow enough that an
+# absurd one can never reach `datetime.timedelta` downstream and raise an
+# OverflowError instead of the clean 400 every other bad number on this
+# page already answers with.
+_LESSON_SWEEP_PARAM_MAX = 365
+
+
+@app.post("/api/programs/lessons/sweep")
+def sweep_program_lessons_now(body: dict = Body(default={}),
+                              request: Request = None):
+    """Force the nightly lesson sweep to run right now, and report what it
+    produced — the hand path beside `generate_due`'s own blind call off the
+    300s loop, for a household that just changed a prompt or a screen and
+    cannot wait for tonight to see what it does now (`program_lessons.
+    sweep_report`, which this only gates and calls).
+
+    Runs SYNCHRONOUSLY and can take minutes: every slot it reaches is up to
+    four model-pool candidates at a 180-second gemma timeout, exactly the
+    cost `generate_due`'s own docstring warns about. That is fine here and
+    nowhere else on this app's request path, because this is the one
+    caller who explicitly asked for this pass right now and is sitting
+    there waiting on the answer — the opposite of the 300s loop's "nobody
+    waiting on the other end", which is why that call stays backgrounded
+    on a thread (`asyncio.to_thread`) and this one does not need to be.
+
+    Parent/adult work, the same `_mind_actor` + `_approver_of_record`
+    pairing every other household-wide programs write already uses — this
+    is not scoped to one program a caller might own, so there is no
+    ownership half to check first, only the household-wide gate.
+
+    Bypasses the day marker — that is the entire point of a button someone
+    taps after the automatic pass already ran today — but never the two
+    switches: `programs_enabled` or `program_lessons_enabled` off means
+    this refuses outright, in words, exactly like every other programs
+    write already gated on them, rather than quietly running a pass the
+    household's own settings say it does not want.
+
+    Body takes two optional numbers — `days` (default 3, how far past
+    today the scan reaches) and `limit` (default `MAX_SLOTS_PER_PASS`, the
+    cap on slots this pass may spend a model call on) — always scanning
+    from TODAY (`start_offset=0`), never generate_due's own tomorrow, so
+    the report shows the very next lesson for every active program.
+    """
+    from services import program_lessons as _pl
+    _approver_of_record(_mind_actor(request, body.get('member_id')))
+    settings = storage.get_settings() or {}
+    if not settings.get('programs_enabled', True):
+        return {"status": "error",
+                "message": "Programs are switched off for this household."}
+    if not settings.get('program_lessons_enabled', True):
+        return {"status": "error",
+                "message": "Lesson scripts are switched off for this household."}
+    # Same shape as every other numeral this app takes off a raw JSON body
+    # (PUT .../lesson's own unit_n, just above): a bad TYPE has to land as
+    # a 400, never fall through to a raw traceback, and a huge-but-finite
+    # value (a plain `1e300`) sails through int() without complaint, so
+    # the magnitude is checked separately, after the coercion succeeds.
+    try:
+        days = int(body.get('days', 3))
+        limit = int(body.get('limit', _pl.MAX_SLOTS_PER_PASS))
+    except (TypeError, ValueError, OverflowError):
+        raise HTTPException(status_code=400,
+                            detail="days and limit must be whole numbers")
+    if not (0 <= days <= _LESSON_SWEEP_PARAM_MAX
+           and 0 <= limit <= _LESSON_SWEEP_PARAM_MAX):
+        raise HTTPException(status_code=400,
+                            detail="days and limit are out of range")
+    return _pl.sweep_report(start_offset=0, days=days, limit=limit, force=True)
+
+
 @app.get("/api/programs/celebrations")
 def program_celebrations():
     """What a hallway is allowed to know about the household's programs.

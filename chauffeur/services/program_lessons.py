@@ -482,13 +482,53 @@ def generate_for(program: dict, window: dict, unit: dict, settings: dict):
         return None
 
 
-# --- the nightly sweep ---------------------------------------------------
-# generate_for is a single slot; this is what actually runs, once a day,
-# with nobody watching. It exists because "a lesson generates itself"
-# (Task 9) is only half a feature until something calls it -- and calls it
-# exactly once, not once per 30-second tick forever.
+# --- the nightly sweep, and the forced one --------------------------------
+# generate_for is a single slot; generate_due is what actually runs, once a
+# day, with nobody watching -- "a lesson generates itself" (Task 9) is only
+# half a feature until something calls it, exactly once, not once per
+# 30-second tick forever. sweep_report runs the identical scan on demand
+# and NAMES what it did: a person who just changed generation code cannot
+# wait for tonight to see what it does now.
 
-def generate_due(now=None, limit: int = MAX_SLOTS_PER_PASS) -> int:
+def _windows_to_scan(now, start_offset: int, days: int):
+    """(program row, window, unit) for every practice window the scan
+    reaches -- `start_offset` days from `now` through `days` more.
+
+    The walk generate_due and sweep_report both need: which programs are
+    active, which windows practice_windows hands back for the date range,
+    and which unit each window's program currently sits on. Factored into
+    one place so a change to how any of that resolves can never drift
+    between the nightly sweep and the forced one. What is deliberately NOT
+    shared here is the day-marker/settings gate around this walk -- that
+    stays in each caller, because sweep_report's whole reason to exist is
+    that `force` may skip the marker where generate_due never does; see
+    `_lessons_switched_on` for the half of the gate that IS shared.
+    """
+    import datetime
+    from services import storage, programs
+    start = now.date() + datetime.timedelta(days=start_offset)
+    rows = {r['id']: r for r in storage.get_programs(state='active')}
+    for w in programs.practice_windows(
+            start, start + datetime.timedelta(days=days)):
+        row = rows.get(w.get('program_id'))
+        if not row:
+            continue
+        phase = programs.progress(row).get('phase') or {}
+        unit = programs.unit_for(row, phase) or {}
+        yield row, w, unit
+
+
+def _lessons_switched_on(settings: dict) -> bool:
+    """Both switches a real pass must clear, asked in one place --
+    generate_due's own two `if not settings.get(...): return` reads, so a
+    forced call from sweep_report can never silently outrun a switch
+    generate_due still honors."""
+    return bool(settings.get('programs_enabled', True)
+               and settings.get('program_lessons_enabled', True))
+
+
+def generate_due(now=None, limit: int = MAX_SLOTS_PER_PASS,
+                 start_offset: int = 1) -> int:
     """Tomorrow's lessons, written tonight. Called blindly from the 300s
     loop (main.py's `poll_schedule`, the one that already owns slow work)
     and self-throttled to one real pass per day, so a restart never
@@ -524,6 +564,13 @@ def generate_due(now=None, limit: int = MAX_SLOTS_PER_PASS) -> int:
     slot re-seen on its second night costs one storage read and nothing
     else.
 
+    `start_offset` exists for `sweep_report` below and nothing else: it
+    moves where "tomorrow" starts without touching what the scan means.
+    The default (1) reproduces the paragraph above exactly -- tomorrow
+    through tomorrow+2d -- so every existing caller, and every scenario
+    already pinned to that scan, is untouched. The 300s loop never passes
+    it.
+
     Never raises -- literally, not merely by the convention every
     function in this module follows. `generate_for` already promises that
     per slot, but the settings reads, `practice_windows` and
@@ -536,29 +583,19 @@ def generate_due(now=None, limit: int = MAX_SLOTS_PER_PASS) -> int:
     otherwise.
     """
     import datetime
-    from services import storage, programs
+    from services import storage
     now = now or datetime.datetime.now()
     marker = now.date().isoformat()
     if (storage.get_app_state('program_lessons_swept') or '') == marker:
         return 0
     try:
         settings = storage.get_settings() or {}
-        if not settings.get('programs_enabled', True):
-            return 0
-        if not settings.get('program_lessons_enabled', True):
+        if not _lessons_switched_on(settings):
             return 0
         storage.set_app_state('program_lessons_swept', marker)
-        tomorrow = now.date() + datetime.timedelta(days=1)
-        rows = {r['id']: r for r in storage.get_programs(state='active')}
         wrote = 0
         spent = 0
-        for w in programs.practice_windows(
-                tomorrow, tomorrow + datetime.timedelta(days=2)):
-            row = rows.get(w.get('program_id'))
-            if not row:
-                continue
-            phase = programs.progress(row).get('phase') or {}
-            unit = programs.unit_for(row, phase) or {}
+        for row, w, unit in _windows_to_scan(now, start_offset, 2):
             slot = slot_of(w, unit_n=int((unit or {}).get('n') or 0))
             if not needs_lesson(row['id'], slot):
                 continue          # costs one storage read, never a call
@@ -571,3 +608,92 @@ def generate_due(now=None, limit: int = MAX_SLOTS_PER_PASS) -> int:
     except Exception as e:
         print(f"[lessons] sweep failed: {e}")
         return 0
+
+
+def _lesson_skip_reason(program_id: str, slot: dict) -> str:
+    """Why `needs_lesson` said no for this slot, in words. Called only
+    after it already has, to name which of its two conditions (see its own
+    docstring) applied -- a slot that already carries a script, edited or
+    not, versus one that has burned MAX_ATTEMPTS chargeable failures --
+    never to re-decide the boolean itself."""
+    from services import storage
+    existing = storage.get_program_lesson(program_id, slot) or {}
+    if existing.get('edited') or existing.get('scenes'):
+        return 'already has a lesson'
+    return 'attempts exhausted'
+
+
+def sweep_report(now=None, start_offset: int = 0, days: int = 3,
+                 limit: int = MAX_SLOTS_PER_PASS, force: bool = False) -> dict:
+    """generate_due, but SEEN. A person who just changed a prompt or a
+    screen cannot wait for tonight to find out what it does now -- this
+    runs the identical scan, through the identical two functions
+    (`needs_lesson`, `generate_for`) generate_due itself calls, and names
+    every slot it touched: the program, the phase, the session label, the
+    unit and the window's date, plus either what got written (the origin
+    and how many scenes survived `sanitize_script`) or why nothing did
+    (already has a lesson, attempts exhausted, over this pass's own limit,
+    or the model came back with nothing usable).
+
+    `force` bypasses ONLY the day marker, never the two settings switches:
+    `_lessons_switched_on` is the exact predicate generate_due itself is
+    built from, so a forced call can never run a pass generate_due would
+    have refused. Without `force` this self-throttles exactly like
+    generate_due, sharing its own marker -- a real pass, forced or
+    nightly, earns the same `program_lessons_swept` date either way, so a
+    manual run at 3pm and the 300s loop's own pass later that night do not
+    both spend a full pass on the same slots twice: whatever the forced
+    run's own `limit` left undone is exactly what the nightly pass, or
+    tomorrow night's, still picks up.
+
+    `start_offset=0` is the other half of what makes this a different
+    question than generate_due's: today's own windows, not only
+    tomorrow's, so the button behind this shows the very next lesson for
+    every active program rather than nothing until this evening's windows
+    have passed. `days=3` widens the far edge to match -- one more day
+    than generate_due's own two-day lookahead, to cover the same real
+    span now that the scan starts a day earlier.
+    """
+    import datetime
+    from services import storage
+    now = now or datetime.datetime.now()
+    marker = now.date().isoformat()
+    if not force and (storage.get_app_state('program_lessons_swept')
+                      or '') == marker:
+        return {'wrote': 0, 'skipped': 0, 'slots': []}
+    try:
+        settings = storage.get_settings() or {}
+        if not _lessons_switched_on(settings):
+            return {'wrote': 0, 'skipped': 0, 'slots': []}
+        storage.set_app_state('program_lessons_swept', marker)
+        wrote = skipped = spent = 0
+        slots = []
+        for row, w, unit in _windows_to_scan(now, start_offset, days):
+            slot = slot_of(w, unit_n=int((unit or {}).get('n') or 0))
+            entry = {'program': row.get('title') or 'Practice',
+                     'phase': w.get('phase_name') or '',
+                     'session_label': w.get('session_label') or '',
+                     'unit_n': slot['unit_n'],
+                     'date': w.get('date') or ''}
+            if not needs_lesson(row['id'], slot):
+                entry['skipped'] = _lesson_skip_reason(row['id'], slot)
+                skipped += 1
+            elif spent >= max(0, int(limit or 0)):
+                entry['skipped'] = 'over the pass limit'
+                skipped += 1
+            else:
+                spent += 1
+                lid = generate_for(row, w, unit, settings)
+                if lid:
+                    wrote += 1
+                    saved = storage.get_program_lesson(row['id'], slot) or {}
+                    entry['origin'] = saved.get('origin') or ''
+                    entry['scenes'] = len(saved.get('scenes') or [])
+                else:
+                    entry['skipped'] = 'generation returned nothing'
+                    skipped += 1
+            slots.append(entry)
+        return {'wrote': wrote, 'skipped': skipped, 'slots': slots}
+    except Exception as e:
+        print(f"[lessons] sweep report failed: {e}")
+        return {'wrote': 0, 'skipped': 0, 'slots': []}
