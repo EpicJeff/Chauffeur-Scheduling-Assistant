@@ -672,7 +672,8 @@ def _source_none(reason: str, answer: str = '') -> dict:
     return {'plan_name': '', 'url': '',
             'why_this_one': REASON_TEXT.get(reason, reason),
             'facts': [], 'runners_up': [], 'answer': answer,
-            'origin': ORIGIN_NONE, 'reason': reason, 'hand_written': True}
+            'origin': ORIGIN_NONE, 'reason': reason, 'hand_written': True,
+            'book_spine': ''}
 
 
 def _source_generated(why: str, answer: str = '', reason: str = 'no_plan') -> dict:
@@ -690,7 +691,7 @@ def _source_generated(why: str, answer: str = '', reason: str = 'no_plan') -> di
     return {'plan_name': '', 'url': '', 'why_this_one': why,
             'facts': [], 'runners_up': [], 'answer': answer,
             'origin': ORIGIN_GENERATED, 'reason': reason,
-            'hand_written': True}
+            'hand_written': True, 'book_spine': ''}
 
 
 def curate(title: str, shape: dict, member_name: str = '',
@@ -766,7 +767,8 @@ def curate(title: str, shape: dict, member_name: str = '',
                        'runners_up': shaped['runners_up'],
                        'answer': answer,
                        'origin': ORIGIN_CITED, 'reason': '',
-                       'hand_written': False}}
+                       'hand_written': False,
+                       'book_spine': book_spine_of(shaped['phases'])}}
 
 
 def _fallback(title: str, per_week: int, api_key: str, context: str,
@@ -855,6 +857,92 @@ def _plan_name_ok(name: str, items: list, answer: str) -> bool:
         (i.get('title') or '') + ' ' + (i.get('claim') or '') + ' ' +
         (i.get('url') or '') for i in items))
     return needle in hay
+
+
+# A step that only points at a purchasable artifact. "Work through X",
+# "complete X", "buy X" plus a book-shaped token. Deliberately dumb -- a
+# phrase list, not a model -- because this decides whether the family is
+# ASKED a question, and a safety-adjacent ask must not depend on a model's
+# mood (same reasoning as the body screen above).
+_BOOK_TOKENS = re.compile(
+    r'\b(book|books|primer|workbook|method book|lesson book|volume|level'
+    r'|grade)\b', re.I)
+_BOOK_VERBS = re.compile(r'\b(work through|complete|finish|buy|get|order'
+                         r'|start)\b', re.I)
+# A capitalised run of 2+ words: the series name a step names, once the verb
+# in front of it and the level word after it are cut away. Matching the raw
+# step was the first draft, and it failed its own tests: a one-word verb
+# that opens a sentence -- "Complete Piano Adventures Level 1" -- capitalises
+# exactly like a title word, so the verb rode along in the match, and
+# "Level"/"Primer"/"Grade" rode along on the far end for the same reason.
+# Two phases naming the same series then produced two DIFFERENT strings,
+# sharing no common prefix at all.
+_SERIES_RE = re.compile(r'\b([A-Z][a-z]+(?: [A-Z][a-z]+)+)')
+
+
+def _book_step(step: str) -> str:
+    """The series name a step names, when the step is ONLY a pointer at a
+    purchasable artifact -- else ''.
+
+    Trims the verb phrase off the front and the book/level word (and
+    everything from there on) off the back before it goes looking for a
+    title, so "Work through X Level 1" and "Complete X Book 2" agree on X
+    even though one buries a verb inside what looks like a title-cased run
+    and the other doesn't.
+    """
+    s = str(step or '')
+    tok = _BOOK_TOKENS.search(s)
+    if not (tok and _BOOK_VERBS.search(s)):
+        return ''
+    middle = s[:tok.start()]
+    verb = _BOOK_VERBS.search(middle)
+    if verb:
+        middle = middle[verb.end():]
+    m = _SERIES_RE.search(middle)
+    return m.group(1) if m else ''
+
+
+def book_spine_of(phases: list) -> str:
+    """The book series a plan leans on, when the plan leans on nothing else.
+
+    'Cited' is sometimes hollow: the page read names lesson books and
+    teaches nothing -- the real content is a purchase away. That plan is
+    still worth having (a good series carries real sequencing knowledge),
+    but the family should be asked, not surprised at the till.
+
+    Flagged only when EVERY phase is book-shaped: all steps are purchase
+    pointers and no unit carries an instructional url. One taught phase, or
+    one cited unit, and the plan can be followed without buying anything --
+    a book line inside it is a resource, not a spine.
+    """
+    names = []
+    for ph in (phases or []):
+        if not isinstance(ph, dict):
+            return ''
+        if any((u or {}).get('url') for u in (ph.get('units') or [])):
+            return ''
+        steps = [s for s in (ph.get('steps') or []) if str(s or '').strip()]
+        if not steps:
+            return ''
+        per_step = [_book_step(s) for s in steps]
+        if not all(per_step):
+            return ''
+        names += per_step
+    if not names:
+        return ''
+    # Every step already agrees once _book_step has trimmed it, but this
+    # keeps only the words every name shares, left to right, so a stray
+    # difference at the margin shrinks the name instead of blanking it.
+    first = names[0].split()
+    for n in names[1:]:
+        words = n.split()
+        keep = 0
+        for a, b in zip(first, words):
+            if a != b:
+                break
+            keep += 1
+        first = first[:keep]
+    return ' '.join(first) if len(first) >= 2 else names[0]
 
 
 def unit_sessions(units) -> int:
