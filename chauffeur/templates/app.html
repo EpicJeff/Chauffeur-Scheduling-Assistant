@@ -1769,6 +1769,13 @@
         // which runs every time any session row is tapped, and a listener
         // added there would stack a fresh duplicate on every sheet opened,
         // logging one finished session N times over.
+        //
+        // The flag lesson_player.html's own finish() reads before it asks
+        // "Log this session?": a host announces that it actually listens
+        // rather than the player trying to sniff `window` for one, which
+        // is not reliably possible for a CustomEvent. Set here, next to
+        // the listener that makes the announcement true.
+        window.chfHasLessonDoneListener = true;
         window.addEventListener('lesson-player:done', (e) => {
             const w = (e.detail || {}).window || {};
             if (!w.program_id) return;

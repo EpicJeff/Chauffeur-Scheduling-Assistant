@@ -18,6 +18,14 @@
 <body class="flex flex-col h-screen overflow-hidden">
     {% include 'nav.html' %}
 
+    <!-- This page turns a finished session into a write (onLessonDone,
+         bound below via @lesson-player:done.window) -- announced here,
+         next to that binding, because lesson_player.html's own finish()
+         has no reliable way to sniff `window` for the Alpine listener
+         directive itself and asks "Log this session?" only when this flag
+         is set. See lesson_player.html's `hostListens` for the other half. -->
+    <script>window.chfHasLessonDoneListener = true;</script>
+
     <div class="flex-1 overflow-y-auto bg-gray-900/50">
         <div x-data="programsPage()" x-init="load()"
              @lesson-player:done.window="onLessonDone($event.detail)"

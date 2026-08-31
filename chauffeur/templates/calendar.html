@@ -10,6 +10,19 @@
          than drawing its own copy. -->
     {% include 'components/agenda_row.html' %}
     {% include 'components/family_calendar.html' %}
+    <!-- The lesson player: a practice window's details dialog
+         (family_calendar.html's own _typedDetailsHtml, shared with the
+         Family Day card and the wall's calendar card) now offers a Start
+         tap, and this page is where that dialog opens for a person who
+         is not on a board at all. Included once here, at the page, the
+         same placement programs.html/app.html/home.html each use for their
+         own copy.
+         This page never sets window.chfHasLessonDoneListener: a calendar
+         page has no "log a session" action of its own to call, so
+         lesson_player.html's finish() correctly never asks here and its
+         final button honestly says "Finish" rather than promising a write
+         this page cannot make. -->
+    {% include 'components/lesson_player.html' %}
     <style>
         body { 
             background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); /* slate-900 to slate-800 */

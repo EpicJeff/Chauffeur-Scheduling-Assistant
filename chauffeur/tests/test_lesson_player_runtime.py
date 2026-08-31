@@ -292,25 +292,44 @@ def scenario_finishing_asks_before_it_logs():
               f"never a browser {banned} dialog (house rule)")
     check(re.search(r'promptConfirm[\s\S]*?dispatchEvent', body),
           "and the dispatch only happens after the ask")
-    check('!this.panel' in body,
-          "no ask on a wall board, where nothing listens for the event and a "
-          "confirmed write would never happen")
+    # Fix round: gated on whether the HOST announced a listener, not on
+    # `panel` -- a non-panel host with no listener (the calendar page,
+    # which owns no log-a-session action) asked the identical dishonest
+    # question under the old gate. See
+    # scenario_host_listen_flag_is_explicit_not_dom_sniffed and its
+    # neighbours for the announcement side of this fix.
+    check('this.hostListens' in body,
+          "the ask is gated on whether the host announced a listener")
+    check('!this.panel' not in body,
+          "panel must no longer be what decides the ask")
 
 
 def scenario_the_wall_button_does_not_promise_a_write():
     """home.html registers no `lesson-player:done` listener, by design -- a
     panel authenticates as a place, not a person. "Log it?" there promised
-    a write that was never coming and simply closed the modal."""
+    a write that was never coming and simply closed the modal.
+
+    The gate used to be `panel` itself, which was dishonest in the OTHER
+    direction too: a non-panel host with no listener (home.html opened as
+    an ordinary page, or the calendar page, which owns no log-a-session
+    action at all) asked the identical question with nothing behind it.
+    It has to be gated on whether the host actually announced a
+    listener."""
     import re
     src = _read('components/lesson_player.html')
     m = re.search(r'x-text="isLast\(\) \? ([^"]*)"', src)
     check(m, "the footer button's label expression is findable")
     label = m.group(1) if m else ''
-    check("panel ? 'Finish'" in label,
-          f"a wall board says Finish, not Log it?, got {label!r}")
-    check("'Log it?'" in label, "and the phone still gets the log ask")
+    check("hostListens ? 'Log it?'" in label,
+          f"a host that listens gets the log ask, got {label!r}")
+    check("'Finish'" in label,
+          f"and a host that does not listen gets an honest Finish, got {label!r}")
+    check("panel ?" not in label,
+          "panel must not be what this ternary branches on any more")
     check('lesson-player:done' not in _read('home.html'),
           "the wall really does not listen -- if that changes, so must this")
+    check('window.chfHasLessonDoneListener = true' not in _read('home.html'),
+          "and it must never announce a listener it does not have")
 
 
 def scenario_the_player_says_where_the_lesson_came_from():
@@ -383,7 +402,11 @@ def scenario_the_lesson_player_is_included_once_on_each_page_not_inside_the_card
     card_src = _read('components/programs_card.html')
     check("include 'components/lesson_player.html'" not in card_src,
           "the CARD never includes the player itself")
-    for page in ('home.html', 'app.html'):
+    # calendar.html joined this list once family_calendar.html's shared
+    # details dialog gained its own Start tap -- without the include
+    # there, that page's dispatch of lesson-player:open would land on
+    # nobody.
+    for page in ('home.html', 'app.html', 'calendar.html'):
         src = _read(page)
         check(src.count("include 'components/lesson_player.html'") == 1,
               f"{page} includes the player exactly once")
@@ -673,18 +696,20 @@ def scenario_preview_flag_flows_from_open_to_state():
 
 def scenario_preview_footer_button_closes_instead_of_asking_to_log():
     """In preview the final-scene button must not promise a log write --
-    it closes instead. The label expression already branched on `panel`
-    (wall vs phone); preview extends that same ternary rather than
-    growing a second, independent one, and it is checked FIRST so it wins
-    over the panel branch too (a preview opened with ?panel=true still
-    just closes, never "Finish"). Anchored to the same x-text attribute
-    scenario_the_wall_button_does_not_promise_a_write already pins."""
+    it closes instead. The label expression now branches on `hostListens`
+    (a host that announced a listener, vs one that did not) rather than
+    `panel`; preview extends that same ternary rather than growing a
+    second, independent one, and it is checked FIRST so it wins over the
+    hostListens branch too (a preview opened on a page that DOES listen
+    still just closes, never "Log it?"). Anchored to the same x-text
+    attribute scenario_the_wall_button_does_not_promise_a_write already
+    pins."""
     import re
     src = _read('components/lesson_player.html')
     m = re.search(r'x-text="isLast\(\) \? ([^"]*)"', src)
     check(m, "the footer button's label expression is findable")
     label = m.group(1) if m else ''
-    check("(preview ? 'Close' : (panel ? 'Finish' : 'Log it?'))" in label,
+    check("(preview ? 'Close' : (hostListens ? 'Log it?' : 'Finish'))" in label,
           f"preview is checked first and closes rather than asking, got {label!r}")
 
 
@@ -851,6 +876,205 @@ def scenario_sweep_report_entries_carry_a_program_id_for_the_play_tap():
           "each report entry carries the program's real id")
 
 
+# ── Family Day / calendar: the Start tap in the shared details dialog ──────
+#
+# The lesson player was reachable from Programs, the wall's programs card
+# and the PWA -- but not from the surface the household actually looks at
+# most, because the Family Day card and the calendar both answer a tap
+# through _typedDetailsHtml (family_calendar.html), the ONE shared builder
+# for a typed event's details, and that builder offered no way to start a
+# practice session it was already describing in full.
+
+
+def scenario_family_calendar_offers_a_start_tap_for_practice():
+    """The one surface the design brief calls out by name: the shared
+    event-details dialog (family_calendar.html's _typedDetailsHtml) showed
+    a session's unit/steps/progression/milestone in full and offered no
+    way to start it -- on the Family Day card, the calendar grid, and the
+    wall's own calendar card alike, since all three open the identical
+    dialog through the identical builder."""
+    import re
+    src = _read('components/family_calendar.html')
+    m = re.search(r'if \(props\.isPractice\) \{(.*?)\n    \}', src, re.S)
+    check(m, "the isPractice branch is findable")
+    body = m.group(1) if m else ''
+    check('id="modal-practice-start"' in body,
+          "a Start tap lives inside the shared builder's own practice branch")
+    check('Start session' in body, "labelled the same as every other Start tap")
+    check(re.search(r'\(w\.program_id && !w\.logged\)\s*\?', body),
+          "offered only when there is a program to ask and nothing logged yet")
+
+
+def scenario_start_tap_is_wired_from_the_real_practice_payload():
+    """The button _typedDetailsHtml draws carries no handler of its own --
+    it is a plain button with an id, wired in _openEventDetails after the
+    innerHTML swap, the same pattern modal-config-btn already uses just
+    above it. Proven by finding the wiring itself, not merely the id --
+    a bare substring for 'modal-practice-start' would pass even if the id
+    were only ever drawn and never read back."""
+    import re
+    src = _read('components/family_calendar.html')
+    m = re.search(r"const typedContainer = document\.getElementById\('modal-typed-container'\);"
+                  r"(.*?)const descContainer", src, re.S)
+    check(m, "the wiring site between the typed container and the "
+             "description container is findable")
+    wiring = m.group(1) if m else ''
+    check("getElementById('modal-practice-start')" in wiring,
+          "the button is looked up by the same id it was drawn with")
+    check(re.search(r"startBtn\.onclick = \(\) => _startPracticeSession\(props\.practice\)", wiring),
+          "and wired to open with the REAL practice payload, not a copy")
+
+
+def scenario_start_practice_session_reuses_the_two_shapes_its_siblings_already_use():
+    """Not a third request shape: the same panel/signed-in split
+    programs.html's loadWindowLesson and programs_card.html's wall variant
+    already use, reused rather than invented -- a panel reads the
+    scenes-only WALL projection with no auth header, everywhere else reads
+    the full row with whatever member token this browser holds."""
+    import re
+    src = _read('components/family_calendar.html')
+    m = re.search(r'async function _startPracticeSession\(w\)\s*\{(.*?)\n\}', src, re.S)
+    check(m, "_startPracticeSession is findable")
+    body = m.group(1) if m else ''
+    check("get('panel') === 'true'" in body,
+          "panel-ness is read the same way lesson_player.html itself reads it")
+    check('api/programs/${w.program_id}/lesson-scenes?' in body,
+          "the panel branch reads the scenes-only WALL projection")
+    check('api/programs/${w.program_id}/lesson?' in body,
+          "the signed-in branch reads the full row")
+    for key in ('phase_name', 'unit_n', 'session_label'):
+        check(key in body, f"the slot key is whole -- {key} is part of it")
+    check('chauffeur_member_token' in body,
+          "the signed-in branch carries whatever member token this "
+          "browser holds, the same key programs.html's authHeaders() reads")
+    check('X-Member-Token' in body,
+          "over the same header programs.html sends it in")
+    check("method: 'POST'" not in body and 'method:"POST"' not in body,
+          "this fetch only ever reads -- POSTing a session is the HOST's "
+          "job, never this dialog's, and never the player's")
+
+
+def scenario_start_practice_session_never_blocks_the_tap_on_a_failed_fetch():
+    """The arc's standing rule: the player never blocks practice. A failed
+    or empty fetch must still open the player, on its own fallback
+    ladder -- proven by POSITION, not merely that a try/catch exists
+    somewhere in the function: the dispatch has to sit textually AFTER
+    the catch, so nothing inside the try/catch can prevent it from
+    running."""
+    import re
+    src = _read('components/family_calendar.html')
+    m = re.search(r'async function _startPracticeSession\(w\)\s*\{(.*?)\n\}', src, re.S)
+    check(m, "_startPracticeSession is findable")
+    body = m.group(1) if m else ''
+    check('try {' in body and 'catch (e)' in body, "the fetch is guarded")
+    catch_pos = body.rfind('catch (e)')
+    dispatch_pos = body.find("dispatchEvent(new CustomEvent('lesson-player:open'")
+    check(catch_pos != -1 and dispatch_pos != -1, "both landmarks are present")
+    check(catch_pos < dispatch_pos,
+          "the dispatch sits after the catch, so a failed fetch still opens "
+          "the player -- on lesson: null, its own fallback ladder")
+
+
+def scenario_start_practice_session_closes_the_dialog_before_dispatching():
+    """"Close the details dialog when the player opens, so the two are not
+    stacked" -- proven by position, the same discipline
+    scenario_preview_never_reaches_the_session_log_path already applies to
+    finish()'s own guard."""
+    import re
+    src = _read('components/family_calendar.html')
+    m = re.search(r'async function _startPracticeSession\(w\)\s*\{(.*?)\n\}', src, re.S)
+    check(m, "_startPracticeSession is findable")
+    body = m.group(1) if m else ''
+    close_pos = body.find('_closeEventModal()')
+    dispatch_pos = body.find("dispatchEvent(new CustomEvent('lesson-player:open'")
+    check(close_pos != -1 and dispatch_pos != -1, "both landmarks are present")
+    check(close_pos < dispatch_pos,
+          "the details dialog closes before the player opens, so the two "
+          "are never stacked")
+
+
+def scenario_start_practice_session_carries_the_practice_windows_own_unit_n():
+    """The slot key needs unit_n, and it does not have to be minted here:
+    practice_windows already emits it (services/programs.py) and it rides
+    the payload all the way to this dialog -- family_day.py's block carries
+    `practice: ev.get('practice') or None` and the calendar's own event
+    mapper carries `practice: ev.practice || null`, both the WHOLE window
+    dict, never a hand-picked subset -- so _startPracticeSession can read
+    it straight off what the dialog already holds, with no backend change
+    required."""
+    import re
+    from services import programs
+    import inspect
+    src = inspect.getsource(programs.practice_windows)
+    check("'unit_n': int(unit.get('n') or 0)" in src,
+          "the practice window carries its own rung")
+    check("'logged': _already_logged(row, day)" in src,
+          "and whether a session for it already happened")
+    fd_src = io.open(os.path.join(HERE, 'services', 'family_day.py'),
+                     encoding='utf-8').read()
+    check("'practice': ev.get('practice') or None" in fd_src,
+          "the Family Day card's own block carries the WHOLE practice payload")
+    cal_src = _read('components/family_calendar.html')
+    m = re.search(r'async function _startPracticeSession\(w\)\s*\{(.*?)\n\}', cal_src, re.S)
+    check(m, "_startPracticeSession is findable")
+    check('unit_n: w.unit_n' in (m.group(1) if m else ''),
+          "and the opener reads it straight off the payload, not a second lookup")
+
+
+# ── The wall's dishonest confirmation, fixed ────────────────────────────
+#
+# finish() used to ask "Log this session?" on every non-panel host, whether
+# or not anybody was listening for lesson-player:done -- home.html opened
+# as an ordinary page (no ?panel=true) confirmed a write that was never
+# coming. Adding a Start tap to Family Day makes that path front-and-centre
+# (home.html hosts both the Family Day card and the wall's calendar card),
+# so the ask now gates on an explicit announcement from the host instead.
+
+
+def scenario_host_listen_flag_is_explicit_not_dom_sniffed():
+    """The player cannot reliably discover whether `window` carries a
+    `lesson-player:done` listener -- there is no introspection for a
+    CustomEvent's listeners, and programs.html's own listener is an Alpine
+    directive (`@lesson-player:done.window`), not even a bare
+    addEventListener a script could search for. So a host has to announce
+    itself, the same way window.chfBase and the other chf-prefixed globals
+    already announce a capability of the page to whatever shared component
+    reads it."""
+    import re
+    src = _read('components/lesson_player.html')
+    check('hostListens: !!window.chfHasLessonDoneListener,' in src,
+          "the flag is read once, explicitly, at construction -- the same "
+          "way `panel` is read just above it")
+    m = re.search(r'async finish\(\)\s*\{(.*?)\n        \},', src, re.S)
+    check(m, "finish() is findable")
+    check('this.hostListens' in (m.group(1) if m else ''),
+          "and finish() actually reads what it announces")
+
+
+def scenario_hosts_that_log_a_session_announce_they_listen():
+    """programs.html and app.html each turn lesson-player:done into a real
+    write (onLessonDone / askProgramSession) -- both have to set the flag
+    lesson_player.html's finish() reads, right next to their own listener,
+    or the honest fix just moves the lie from 'always asks on non-panel'
+    to 'never asks at all, even where a write really happens'."""
+    for page in ('programs.html', 'app.html'):
+        src = _read(page)
+        check('window.chfHasLessonDoneListener = true' in src,
+              f"{page} announces that it listens")
+
+
+def scenario_hosts_with_no_log_action_never_announce():
+    """home.html and calendar.html own no session-log action to call --
+    neither may claim to listen, or finish() would ask a question with
+    nothing behind it again, just relocated to a different host."""
+    for page in ('home.html', 'calendar.html'):
+        src = _read(page)
+        check('window.chfHasLessonDoneListener = true' not in src,
+              f"{page} must never announce a listener it does not have")
+        check("addEventListener('lesson-player:done'" not in src,
+              f"{page} really has no listener to announce")
+
+
 if __name__ == '__main__':
     scenario_component_exists_and_renders_the_four_beats()
     scenario_checks_are_never_stored()
@@ -897,4 +1121,13 @@ if __name__ == '__main__':
     scenario_sweep_report_play_tap_only_on_rows_that_wrote_something()
     scenario_play_sweep_slot_fetches_by_program_id_and_previews()
     scenario_sweep_report_entries_carry_a_program_id_for_the_play_tap()
+    scenario_family_calendar_offers_a_start_tap_for_practice()
+    scenario_start_tap_is_wired_from_the_real_practice_payload()
+    scenario_start_practice_session_reuses_the_two_shapes_its_siblings_already_use()
+    scenario_start_practice_session_never_blocks_the_tap_on_a_failed_fetch()
+    scenario_start_practice_session_closes_the_dialog_before_dispatching()
+    scenario_start_practice_session_carries_the_practice_windows_own_unit_n()
+    scenario_host_listen_flag_is_explicit_not_dom_sniffed()
+    scenario_hosts_that_log_a_session_announce_they_listen()
+    scenario_hosts_with_no_log_action_never_announce()
     print("test_lesson_player_runtime OK")

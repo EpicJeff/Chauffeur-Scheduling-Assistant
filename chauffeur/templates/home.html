@@ -1506,8 +1506,11 @@
     <!-- The programs card: also self-fetching (rule 2), same reason. -->
     {% include 'components/programs_card.html' %}
     <!-- The lesson player the programs card's "Start session" tap opens
-         (lesson-player:open, a window event). Included HERE, on the page,
-         not inside programs_card.html itself: that file's `rows()` macro is
+         (lesson-player:open, a window event) -- and, now, the same tap
+         family_calendar.html's own event-details dialog offers for a
+         practice window on the Family Day card and the calendar card
+         both drawn below. Included HERE, on the page, not inside
+         programs_card.html itself: that file's `rows()` macro is
          imported (not included) by board_tile_body.html for every programs
          tile on the board, and a macro import discards a template's
          top-level markup, so an include buried inside programs_card.html
@@ -1517,7 +1520,13 @@
          placement alongside the other page-level singleton overlays, as
          avatar_editor.html / pet_editor.html / pet_battle.html /
          pet_guide.html just below: one modal, listening on `window`, however
-         many tiles on the board can ask it to open. -->
+         many tiles on the board can ask it to open.
+         This page never sets window.chfHasLessonDoneListener (contrast
+         programs.html/app.html, which do, right next to their own
+         listener): a board is a place, not a person, whether or not the
+         URL happens to carry `?panel=true`, so lesson_player.html's
+         finish() correctly never asks here and its final button honestly
+         says "Finish". -->
     {% include 'components/lesson_player.html' %}
     {% include 'components/avatar_editor.html' %}
     {% include 'components/pet_editor.html' %}

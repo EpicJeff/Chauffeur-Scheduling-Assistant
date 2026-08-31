@@ -295,15 +295,21 @@
              write. A check scene skips this row entirely -- its own three
              taps already advance, last scene or not, and land on the same
              finish() and the same ask.
-             On a wall board this button says "Finish", not "Log it?":
-             home.html registers no `lesson-player:done` listener at all, by
-             design (a panel authenticates as a place, not a person, and a
-             session log needs a person), so "Log it?" there promised a write
-             that was never going to happen and simply closed the modal. -->
+             This button says "Finish", not "Log it?", wherever the HOST
+             never turns a finished session into a write -- read off
+             `hostListens` (window.chfHasLessonDoneListener), not `panel`:
+             a wall board (home.html) and the calendar page (calendar.html)
+             both register no `lesson-player:done` listener at all, by
+             design (a panel authenticates as a place, not a person; the
+             calendar page has no session log to write to at all), so
+             gating this on panel alone used to leave a non-panel host with
+             no listener asking the identical dishonest question and
+             recording nothing either way. See `hostListens`'s own comment
+             above for the announcement this reads. -->
         <button type="button" @click="advance()" x-show="scene().type !== 'check'"
                 class="w-full rounded-xl bg-blue-600 text-white font-bold active:bg-blue-700"
                 :class="panel ? 'py-4 text-2xl' : 'py-3 text-sm'"
-                x-text="isLast() ? (preview ? 'Close' : (panel ? 'Finish' : 'Log it?')) : 'Continue'"></button>
+                x-text="isLast() ? (preview ? 'Close' : (hostListens ? 'Log it?' : 'Finish')) : 'Continue'"></button>
     </div>
 </div>
 
@@ -331,6 +337,23 @@ function lessonPlayer() {
         // a preview and a real session.
         preview: false,
         panel: new URLSearchParams(location.search).get('panel') === 'true',
+        // Whether THIS PAGE ever turns a finished session into a write --
+        // a different question than `panel` answers, and the one finish()
+        // below actually needs. programs.html and app.html both react to
+        // `lesson-player:done` (onLessonDone, askProgramSession) and each
+        // sets this flag right next to its own listener, so the
+        // announcement cannot drift from the thing it announces. home.html
+        // and calendar.html never set it: a panel authenticates as a
+        // place, not a person, and the calendar page owns no log-a-session
+        // action to call at all. There is no reliable way to sniff
+        // `window` for a registered listener instead -- no such
+        // introspection exists for a custom event, and programs.html's own
+        // listener is an Alpine directive (`@lesson-player:done.window`),
+        // not even a bare addEventListener a script could find -- so the
+        // host has to say so itself, the same way window.chfBase and the
+        // other chf-prefixed globals already announce a capability of the
+        // page to whatever shared component reads it.
+        hostListens: !!window.chfHasLessonDoneListener,
         timer: null, timeLeft: 0, timerTotal: 0, audio: null, metroTimer: null,
         ringC: 2 * Math.PI * 44,
         // cards/counter: scene-local only, reset every enterScene() --
@@ -720,22 +743,29 @@ function lessonPlayer() {
         // the log, fired by whichever tap happened to land last.
         // promptConfirm, never a browser dialog (house rule).
         //
-        // No ask on a wall board: nothing there listens for this event
-        // (home.html registers no done-handler, deliberately), so a panel
-        // confirming a write that is not going to happen would be the same
-        // lie the "Log it?" label was, one dialog deeper.
+        // No ask when nothing listens: gated on `hostListens`
+        // (window.chfHasLessonDoneListener), never on `panel` -- a wall
+        // board and the calendar page both genuinely have nobody listening
+        // for this event, but `panel` alone used to say so only for the
+        // FIRST of those, and only while the URL still carried the flag. A
+        // non-panel host with no listener (home.html opened as an ordinary
+        // page, or the calendar page, which owns no log-a-session action at
+        // all) asked the exact same dishonest question and recorded
+        // nothing either way -- the confirmed write it promised was never
+        // coming on either host.
         async finish() {
             this.stopSound();
             // A preview never reaches the log ask or the done dispatch --
             // it closes, full stop, before either one runs. Checked first,
-            // ahead of the panel branch below, so a preview opened with
-            // ?panel=true still just closes rather than asking a wall-board
-            // question nothing would ever answer. Nothing downstream --
-            // programs.html's onLessonDone, app.html's own listener -- can
-            // ever mistake a preview for a finished session, because the
-            // event that tells them one happened is never fired.
+            // ahead of the listener check below, so a preview still just
+            // closes rather than asking a question nothing would ever
+            // answer, even on a host that genuinely listens. Nothing
+            // downstream -- programs.html's onLessonDone, app.html's own
+            // listener -- can ever mistake a preview for a finished
+            // session, because the event that tells them one happened is
+            // never fired.
             if (this.preview) { this.openFlag = false; return; }
-            if (!this.panel) {
+            if (this.hostListens) {
                 const ok = await promptConfirm('Log this session?',
                     'It records the practice and cannot be undone.',
                     'Log it', 'Not now');
