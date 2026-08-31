@@ -135,6 +135,85 @@ def scenario_slot_of():
                 'session_label': 'Technique'}, f"got {s}")
 
 
+# --- storage: a lesson lives beside the program, keyed on its slot ---
+
+def _lreset():
+    from services import storage
+    storage.program_lessons_table.truncate()
+
+
+def scenario_lesson_roundtrip_by_slot():
+    from services import storage
+    _lreset()
+    slot = {'phase_name': 'Foundations', 'unit_n': 1, 'session_label': 'Technique'}
+    storage.upsert_program_lesson('p1', slot, {
+        'origin': 'generated', 'scenes': [_say()], 'model': 'gemma-4-31b-it'})
+    row = storage.get_program_lesson('p1', slot)
+    check(row and row['origin'] == 'generated' and row['edited'] is False,
+          f"got {row}")
+    check(storage.get_program_lesson('p1', {**slot, 'unit_n': 2}) is None,
+          "a different unit is a different lesson")
+
+
+def scenario_upsert_replaces_same_slot():
+    from services import storage
+    _lreset()
+    slot = {'phase_name': 'F', 'unit_n': 1, 'session_label': ''}
+    storage.upsert_program_lesson('p1', slot, {'origin': 'generated',
+                                               'scenes': [_say('v1')]})
+    storage.upsert_program_lesson('p1', slot, {'origin': 'generated',
+                                               'scenes': [_say('v2')]})
+    row = storage.get_program_lesson('p1', slot)
+    check(row['scenes'][0]['text'] == 'v2', "same slot, one row")
+
+
+def scenario_edited_is_never_regenerated_over():
+    from services import storage
+    _lreset()
+    slot = {'phase_name': 'F', 'unit_n': 1, 'session_label': ''}
+    storage.upsert_program_lesson('p1', slot, {
+        'origin': 'generated', 'scenes': [_say('mine')], 'edited': True})
+    wrote = storage.upsert_program_lesson('p1', slot, {
+        'origin': 'generated', 'scenes': [_say('robot')]})
+    check(wrote == '', "generation bounces off a hand edit")
+    check(storage.get_program_lesson('p1', slot)['scenes'][0]['text'] == 'mine',
+          "the hand edit stands")
+    wrote = storage.upsert_program_lesson('p1', slot, {
+        'origin': 'generated', 'scenes': [_say('mine v2')], 'edited': True})
+    check(wrote != '', "a hand may replace a hand")
+
+
+def scenario_delete_one_lesson():
+    from services import storage
+    _lreset()
+    slot = {'phase_name': 'F', 'unit_n': 1, 'session_label': ''}
+    other = {'phase_name': 'F', 'unit_n': 2, 'session_label': ''}
+    storage.upsert_program_lesson('p1', slot, {'scenes': []})
+    storage.upsert_program_lesson('p1', other, {'scenes': []})
+    gone = storage.delete_program_lesson('p1', slot)
+    check(gone is True, f"a row was there, got {gone}")
+    check(storage.get_program_lesson('p1', slot) is None,
+          "that slot's lesson is gone")
+    check(storage.get_program_lesson('p1', other) is not None,
+          "a different slot in the same program keeps its lesson")
+    gone_again = storage.delete_program_lesson('p1', slot)
+    check(gone_again is False, f"nothing left there the second time, got {gone_again}")
+
+
+def scenario_delete_clears_a_program():
+    from services import storage
+    _lreset()
+    storage.upsert_program_lesson('p1', {'phase_name': 'F', 'unit_n': 1,
+                                         'session_label': ''}, {'scenes': []})
+    storage.upsert_program_lesson('p2', {'phase_name': 'F', 'unit_n': 1,
+                                         'session_label': ''}, {'scenes': []})
+    n = storage.delete_program_lessons('p1')
+    check(n == 1, f"one program's lessons gone, got {n}")
+    check(storage.get_program_lesson('p2', {'phase_name': 'F', 'unit_n': 1,
+                                            'session_label': ''}) is not None,
+          "the other program keeps its lesson")
+
+
 if __name__ == '__main__':
     scenario_scene_cap()
     scenario_text_cap_and_type_whitelist()
@@ -145,4 +224,9 @@ if __name__ == '__main__':
     scenario_hostile_non_list_scenes_never_raise()
     scenario_infinite_numerics_never_raise()
     scenario_slot_of()
+    scenario_lesson_roundtrip_by_slot()
+    scenario_upsert_replaces_same_slot()
+    scenario_edited_is_never_regenerated_over()
+    scenario_delete_one_lesson()
+    scenario_delete_clears_a_program()
     print("test_program_lessons OK")

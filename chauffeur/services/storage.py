@@ -513,6 +513,12 @@ with db_lock:
     music_favorites_table = db.table('music_favorites')
     music_recent_table = db.table('music_recent')
     programs_table = db.table('programs')
+    # A practice window's lesson — scenes the player renders. Its own table
+    # rather than a field on the program row on purpose: the program
+    # document is the one place in this app that must not accumulate bulk
+    # or bookkeeping (see _check_program_keys), and a phase's worth of
+    # scripts is both.
+    program_lessons_table = db.table('program_lessons')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -3104,6 +3110,75 @@ def claim_program(program_id: str, expected_state: str, new_state: str) -> bool:
             return False
         return bool(programs_table.update({'state': new_state},
                                           Query().id == program_id))
+
+def _lesson_query(program_id: str, slot: dict):
+    # The slot IS the identity -- a second write to the same
+    # (program_id, phase_name, unit_n, session_label) has to land on the
+    # same row, which is what makes "one lesson per slot" true rather than
+    # aspirational.
+    q = Query()
+    return ((q.program_id == program_id)
+            & (q.phase_name == str(slot.get('phase_name') or ''))
+            & (q.unit_n == int(slot.get('unit_n') or 0))
+            & (q.session_label == str(slot.get('session_label') or '')))
+
+def upsert_program_lesson(program_id: str, slot: dict, data: dict) -> str:
+    """One lesson per slot -- (program_id, phase_name, unit_n, session_label),
+    the distinct lesson in the plan's own terms, never a date, so a rotation
+    session repeating inside one unit's week reuses this same row and a new
+    unit gets its own. Refuses to overwrite a row whose `edited` is true
+    unless this write is itself a hand edit (`data['edited']` true): a hand
+    edit may replace a hand edit, generation may not. Returns the row id, or
+    '' when the write was refused."""
+    import uuid
+    with db_lock:
+        cond = _lesson_query(program_id, slot)
+        existing = program_lessons_table.search(cond)
+        if existing and existing[0].get('edited') and not data.get('edited'):
+            return ''
+        row = {'id': existing[0]['id'] if existing else str(uuid.uuid4()),
+               'program_id': program_id,
+               'phase_name': str(slot.get('phase_name') or ''),
+               'unit_n': int(slot.get('unit_n') or 0),
+               'session_label': str(slot.get('session_label') or ''),
+               'origin': data.get('origin') or 'generated',
+               'source_url': data.get('source_url') or '',
+               'edited': bool(data.get('edited')),
+               'scenes': list(data.get('scenes') or []),
+               'model': data.get('model') or '',
+               'created_at': time.time()}
+        program_lessons_table.remove(cond)
+        program_lessons_table.insert(row)
+        return row['id']
+
+def get_program_lesson(program_id: str, slot: dict) -> Optional[dict]:
+    """The lesson for one slot, or None -- callers read None as 'nothing
+    generated yet for this slot' and fall back to the plain steps, never as
+    an error."""
+    with db_lock:
+        res = program_lessons_table.search(_lesson_query(program_id, slot))
+        return dict(res[0]) if res else None
+
+def delete_program_lesson(program_id: str, slot: dict) -> bool:
+    """One slot's lesson, gone -- a single session getting reset or
+    force-regenerated (including over a hand edit, which upsert on its own
+    will not do) without touching the rest of the program's plan. True only
+    when a row actually went, so a caller can tell 'deleted' apart from
+    'there was nothing there'; delete_program_lessons() below answers the
+    different question of how many a whole program held."""
+    with db_lock:
+        gone = program_lessons_table.remove(_lesson_query(program_id, slot))
+        return bool(gone)
+
+def delete_program_lessons(program_id: str) -> int:
+    """Every lesson a program holds, gone -- drop and replan both retire a
+    program's whole plan at once, and a lesson keyed to a phase/unit/session
+    that no longer exists has nothing left to mean. Returns how many rows
+    went."""
+    with db_lock:
+        q = Query()
+        gone = program_lessons_table.remove(q.program_id == program_id)
+        return len(gone) if isinstance(gone, list) else int(gone or 0)
 
 # --- Shopping lists (meals & provisioning arc M1) ---
 # A STANDING list bound to a recurring errand by TAG, never by errand id: the
