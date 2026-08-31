@@ -70,6 +70,20 @@
                                         <span x-show="w.label"
                                             class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-300 shrink-0"
                                             x-text="w.label"></span>
+                                        <!-- Opens the lesson player (components/lesson_player.html,
+                                             included once on the PAGE -- see home.html, not here,
+                                             so a board with more than one programs tile never stacks
+                                             a second copy of the modal). `w.raw` carries the actual
+                                             practice_windows row the player reads (steps, unit_title,
+                                             milestone...); `w` above is this card's own display
+                                             shape and has none of those fields. Panel-sized on
+                                             purpose -- a wall board tap target, read across a room,
+                                             not a phone chip. -->
+                                        <button type="button" @click="window.dispatchEvent(new CustomEvent('lesson-player:open',
+                                                {detail: {window: w.raw, lesson: w.raw._lesson || null}}))"
+                                            class="text-sm font-bold py-2 px-4 rounded-lg bg-teal-600 text-white active:bg-teal-700 shrink-0">
+                                            Start session
+                                        </button>
                                     </div>
                                 </template>
                             </div>
@@ -178,6 +192,15 @@
                             title: w.title || 'Practice',
                             label: w.session_label || '',
                             lesson: w.unit_title || '',
+                            // The player needs the RAW row (steps, unit_title,
+                            // milestone, title, session_label, program_id,
+                            // member_id, logged) -- everything above is a
+                            // display shape built for THIS card's own strings,
+                            // not what lesson_player.html reads. Kept as one
+                            // field rather than spreading the raw row flat so
+                            // the mapping above stays an honest, narrow
+                            // display projection.
+                            raw: w,
                         }));
                 } catch (e) {
                     // Stale beats false-empty, same as the celebrations poll.

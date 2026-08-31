@@ -1505,6 +1505,20 @@
     {% include 'components/packing_card.html' %}
     <!-- The programs card: also self-fetching (rule 2), same reason. -->
     {% include 'components/programs_card.html' %}
+    <!-- The lesson player the programs card's "Start session" tap opens
+         (lesson-player:open, a window event). Included HERE, on the page,
+         not inside programs_card.html itself: that file's `rows()` macro is
+         imported (not included) by board_tile_body.html for every programs
+         tile on the board, and a macro import discards a template's
+         top-level markup, so an include buried inside programs_card.html
+         would only ever reach the page by riding its OWN direct include
+         above -- correct today by coincidence, not by design, and silently
+         wrong the day that coupling changes. Same reasoning, and the same
+         placement alongside the other page-level singleton overlays, as
+         avatar_editor.html / pet_editor.html / pet_battle.html /
+         pet_guide.html just below: one modal, listening on `window`, however
+         many tiles on the board can ask it to open. -->
+    {% include 'components/lesson_player.html' %}
     {% include 'components/avatar_editor.html' %}
     {% include 'components/pet_editor.html' %}
     {% include 'components/pet_battle.html' %}

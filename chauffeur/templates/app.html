@@ -120,6 +120,11 @@
     {% include 'components/pet_editor.html' %}
     {% include 'components/pet_battle.html' %}
     {% include 'components/pet_guide.html' %}
+    <!-- The lesson player: opened from openSessionSheet's own Start tap
+         below (a `lesson-player:open` window event), same one component the
+         wall board and the Programs page open. Included once here, at the
+         page, same grouping as the overlays just above. -->
+    {% include 'components/lesson_player.html' %}
 
     <!-- Header -->
     <header
@@ -1667,9 +1672,24 @@
             // Logging somebody else's session is a parent/adult act the server
             // gates anyway; offering the button to a sibling would be an
             // invitation to a refusal.
-            const doneBtn = ((mine || grown) && !w.logged) ? `
+            const canLog = (mine || grown) && !w.logged;
+            const doneBtn = canLog ? `
                 <button data-done class="flex-1 px-4 py-2.5 rounded-xl bg-teal-600 text-white text-sm font-bold">${
                     mine ? 'Done' : mfEscape(`Done — ${w.member_name || 'them'}`)}</button>` : '';
+            // The interactive walkthrough -- the same player the wall board
+            // and the Programs page open (lesson-player:open). This sheet is
+            // where the PWA already shows a practice session in full (lesson,
+            // steps, progression, milestone), so every row that opens it --
+            // the program card's own rows, the practice-now banner's "Open
+            // the session", the family tab's practice card -- gains the tap
+            // from this one change, each already carrying the RAW window `w`
+            // this player needs. Same gate as Done: starting a session that
+            // ends in a log write is the same act Done already is. Blue, not
+            // teal, so it reads as its own action next to Done rather than a
+            // restyle of it -- and it is the exact color the player's own
+            // "Continue / Log it?" button uses, so the thread carries through.
+            const startBtn = canLog ? `
+                <button data-start class="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-bold">Start</button>` : '';
             _pwaModal(`
                 <div class="text-[11px] font-bold uppercase tracking-widest text-teal-400">${mfEscape(sessionDateLabel(w))}</div>
                 <div class="text-gray-100 font-bold text-lg mt-0.5">${mfEscape(w.title || 'Practice')}</div>
@@ -1683,6 +1703,7 @@
                 <div class="flex gap-2 mt-5">
                     <button data-close class="px-4 py-2.5 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-bold">Close</button>
                     ${doneBtn}
+                    ${startBtn}
                 </div>`, (overlay, close) => {
                 overlay.querySelector('[data-close]').onclick = close;
                 const done = overlay.querySelector('[data-done]');
@@ -1693,9 +1714,30 @@
                     // `_slot_ts` files it under the day it names.
                     await askProgramSession(w.program_id, w.date);
                 };
+                const start = overlay.querySelector('[data-start]');
+                if (start) start.onclick = () => {
+                    close();
+                    window.dispatchEvent(new CustomEvent('lesson-player:open',
+                        {detail: {window: w, lesson: w._lesson || null}}));
+                };
                 overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
             });
         }
+
+        // The player never posts (lesson_player.html's own contract) --
+        // finishing a session dispatches lesson-player:done on `window`, and
+        // this is the one place the PWA turns that into a write: the exact
+        // askProgramSession call the sheet's own Done button already makes
+        // above, reused rather than growing a second path to the same POST.
+        // Registered ONCE, here, at load -- not inside openSessionSheet,
+        // which runs every time any session row is tapped, and a listener
+        // added there would stack a fresh duplicate on every sheet opened,
+        // logging one finished session N times over.
+        window.addEventListener('lesson-player:done', (e) => {
+            const w = (e.detail || {}).window || {};
+            if (!w.program_id) return;
+            askProgramSession(w.program_id, w.date);
+        });
 
         // The same answer the wall's dialog gives for a background trip, in
         // the phone's own sheet -- one wording, wherever it is tapped. No way
