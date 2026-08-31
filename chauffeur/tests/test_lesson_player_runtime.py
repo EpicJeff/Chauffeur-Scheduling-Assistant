@@ -782,7 +782,12 @@ def scenario_fretboard_open_strings_are_structurally_separate_from_fretted_dots(
     body = m.group(1) if m else ''
     check('openDots' in body and 'frettedDots' in body,
           "open (fret 0) and fretted (fret > 0) dots are split before either is drawn")
-    check('fill="none" ' in body and 'stroke="${openColor}"' in body,
+    # v2.448.1: the literal `${openColor}` (`#2dd4bf`, dark-only -- it sat on
+    # the transparent scene canvas, invisible once the surface behind it
+    # turned light-theme near-white) became `stroke="currentColor"` plus the
+    # themed `text-teal-400` token, same teal, now theme-aware; the ring
+    # itself is still a hollow (`fill="none"`), structurally-distinct shape.
+    check('fill="none" class="text-teal-400"' in body and 'stroke="currentColor" stroke-width="2.5"></circle>' in body,
           "an open string draws as a hollow ring -- structurally distinct from a solid fretted dot")
     m2 = re.search(r'openDots\.forEach\(d => \{([\s\S]*?)\}\);', body)
     check(m2, "the openDots.forEach block is findable")
@@ -1338,6 +1343,192 @@ def scenario_hosts_with_no_log_action_never_announce():
               f"{page} really has no listener to announce")
 
 
+# ── Light-theme legibility (v2.448.1) ───────────────────────────────────
+#
+# A real user's report: the PWA in light theme showed white text on a
+# near-white background -- unreadable. Root cause was `text-white`, a
+# LITERAL Tailwind color that never runs through static/theme.css's
+# `[data-theme]` remap the way `bg-gray-*`/`text-gray-*` do. Confirmed by a
+# real render (Jinja + compiled tailwind-app.css + Alpine + headless
+# Chromium, both [data-theme] values, WCAG contrast measured against the
+# actual composited background) rather than by reading source: every scene
+# type and every `show` primitive was audited, not only the reported spot.
+#
+# tools/tailwind/tailwind.app.config.js documents the intended contract in
+# its own header comment: "white and black are deliberately NOT tokenized:
+# text-white on a solid accent fill must stay white in both themes.
+# Surface-level primary text uses text-gray-100 instead." The nine
+# `text-white` uses split exactly along that line -- seven were surface
+# text sitting on the themed `bg-gray-950/95` root (or a nested
+# `bg-gray-800`/`bg-teal-900/40` tile that inverts with it) and moved to
+# `text-gray-100`; two sit on `bg-teal-700`/`bg-blue-600`, both
+# theme-invariant solid fills (identical rgb in light and dark per
+# static/theme.css), and correctly stayed `text-white`.
+
+
+def scenario_text_white_survives_only_on_invariant_accent_fills():
+    """The fix's central claim, checked structurally: every remaining
+    literal `text-white` in the file sits in a class list that ALSO carries
+    one of the two theme-invariant solid accent fills this component uses
+    (`bg-teal-700`, `bg-blue-600` -- identical rgb in both
+    static/theme.css themes, confirmed by rendering both and measuring). A
+    `text-white` anywhere else is exactly the reported bug: surface text
+    that stops being visible the instant the surface itself inverts."""
+    import re
+    src = _read('components/lesson_player.html')
+    classes = re.findall(r'class="([^"]*\btext-white\b[^"]*)"', src)
+    check(len(classes) == 2,
+          f"exactly two text-white uses should remain (both on invariant "
+          f"solid fills), found {len(classes)}: {classes}")
+    for cls in classes:
+        check('bg-teal-700' in cls or 'bg-blue-600' in cls,
+              f"text-white must sit beside an invariant solid fill, got {cls!r}")
+
+
+def scenario_surface_text_uses_the_gray_100_token_not_literal_white():
+    """The other half of the same claim: the seven elements that USED to be
+    `text-white` on the themed surface now read `text-gray-100` -- the
+    exact token `app.html`'s own <body> uses for surface-level primary text
+    (`<body class="bg-gray-950 text-gray-100" ...>`), and the token
+    tailwind.app.config.js's header comment names as `text-white`'s
+    themed replacement. Anchored to each element's own x-text/x-show so
+    this cannot pass by a bare word-count coincidence."""
+    src = _read('components/lesson_player.html')
+    import re
+    anchors = [
+        (r'text-gray-100[^"]*"[^>]*x-text="\(w \|\| \{\}\)\.title', 'header title'),
+        (r'text-gray-100[^"]*"[^>]*x-text="sayText\(\)"', 'say beat text'),
+        (r'text-gray-100[^"]*"[^>]*x-text="scene\(\)\.text"', 'do beat text'),
+        (r'text-gray-100[^"]*"[^>]*x-text="scene\(\)\.ask"', 'check ask text'),
+        (r'text-gray-100 text-center" x-text="cardFace\(\)"', 'card face text'),
+        (r'text-gray-100[^"]*"[^>]*x-text="counterVal"', 'counter dial number'),
+        (r'text-gray-100"[^>]*x-text="fmtClock\(timeLeft\)"', 'countdown ring readout'),
+    ]
+    for pattern, label in anchors:
+        check(re.search(pattern, src), f"{label} should read text-gray-100")
+
+
+def scenario_check_button_active_state_stays_theme_invariant():
+    """Fix round finding: the "Got it" button's base fill (`bg-teal-700`) is
+    theme-invariant, but its OLD `:active` press state (`bg-teal-800`) was
+    not -- 800 is in static/theme.css's inverting tier, and in light theme
+    it resolves to a near-white mint (rgb(153,246,228)), which is exactly
+    as unreadable under white text as the reported bug, just for the
+    instant a finger is actually down. `active:brightness-90` darkens
+    whatever the invariant base fill already is, by a fixed multiplier, so
+    it can never depend on which theme is active."""
+    src = _read('components/lesson_player.html')
+    check('bg-teal-800' not in src,
+          "the light-breaking active state must be gone outright, not just joined by a fix")
+    import re
+    check(re.search(r'bg-teal-700 text-white font-bold active:brightness-90', src),
+          "the Got it button presses via a theme-invariant brightness shift, not a shade swap")
+
+
+def scenario_metadata_text_is_gray_400_not_gray_500():
+    """Measured, not assumed: text-gray-500 (this component's OLD metadata
+    color) renders at 4.18:1 against the true bg-gray-950 root in DARK
+    theme alone -- under even this file's own relaxed 4.5 floor for
+    non-bold body text, and the file's OWN neighboring comment already
+    named text-gray-400 as the intended metadata color
+    ("docs/ui_design_guide.md (\"metadata text-[11px] ... text-gray-400\")")
+    before this fix made the code match it. text-gray-400 measures 7.85:1
+    dark / 7.23:1 light on the same real background. Five spots carried the
+    stale color: the session-label subtitle, the cards position counter,
+    the counter's "of N" caption, the metronome bpm label, and the footer
+    origin label."""
+    src = _read('components/lesson_player.html')
+    check('text-gray-500' not in src,
+          "no text-gray-500 should remain anywhere in the component")
+    import re
+    anchors = [
+        (r'text-gray-400 truncate"[^>]*x-text="\(w \|\| \{\}\)\.session_label"', 'session label'),
+        (r'text-gray-400"[^>]*x-text="\(cardIdx \+ 1\)', 'cards position counter'),
+        (r"text-gray-400\"[^>]*x-text=\"'of ' \+", 'counter "of N" caption'),
+        (r'text-gray-400"[^>]*x-text="metroBpm\(\) \+', 'metronome bpm label'),
+        (r'font-semibold text-gray-400"[^>]*x-text="originLabel\(\)"', 'footer origin label'),
+    ]
+    for pattern, label in anchors:
+        check(re.search(pattern, src), f"{label} should read text-gray-400")
+
+
+def scenario_svg_elements_on_the_transparent_canvas_never_hardcode_a_dark_only_color():
+    """Every hardcoded colour drawn on the SVG's own TRANSPARENT canvas --
+    which shows whatever the themed scene-area background actually is --
+    used a value tuned only for dark: `rgba(255,255,255,X)` structural
+    lines (invisible past ~1.1:1 once the surface behind them turns
+    near-white) and a literal `#2dd4bf`/`#94a3b8`/`#f59e0b` for the
+    countdown ring, the open-string ring, the position label and the
+    out-of-window "ghost" marks. Measured: the ring's progress stroke alone
+    fell from a passing 10.64:1 in dark to a failing 1.74:1 in light. Fixed
+    by `stroke`/`fill="currentColor"` plus a themed `text-*` class (the
+    SAME tokens already proven correct elsewhere in this file, e.g. the
+    kicker's own `text-teal-400`) rather than a hand-picked literal, so
+    each one resolves through static/theme.css exactly like any other
+    themed text in the component."""
+    src = _read('components/lesson_player.html')
+    # The countdown ring is plain template markup (not JS-generated), so a
+    # file-wide check is safe for its two literals -- neither one has any
+    # OTHER legitimate use left in the file.
+    for banned, why in [
+        ('rgba(255,255,255,0.10)', 'countdown ring track'),
+        ('stroke="#2dd4bf"', 'countdown ring progress / fretboard open-string ring'),
+        ('fill="#94a3b8"', 'fretboard position label'),
+    ]:
+        check(banned not in src, f"{why} must not hardcode a dark-only literal ({banned!r})")
+    import re
+    # fretboardSvg's own body, scoped -- rgba(255,255,255,0.35) legitimately
+    # SURVIVES elsewhere in the file (the keyboard's self-contained black-key
+    # border, see the next scenario), so string/fret-line removal has to be
+    # checked here rather than file-wide.
+    fret_body_m = re.search(r'fretboardSvg\(dots, muted\)\s*\{(.*?)cardFace\(', src, re.S)
+    check(fret_body_m, "fretboardSvg body is findable")
+    fret_body = fret_body_m.group(1) if fret_body_m else ''
+    check('rgba(255,255,255,0.35)' not in fret_body,
+          "fretboard string lines must not hardcode a dark-only literal")
+    check('rgba(255,255,255,0.5)"' not in fret_body,
+          "fretboard fret lines must not hardcode a dark-only literal")
+    # fretboardSvg's local `ghost`/`openColor` consts existed ONLY to carry
+    # these now-removed literals -- their disappearance is proof the
+    # removal was structural, not a second, still-hardcoded copy elsewhere.
+    check('ghost' not in fret_body,
+          "no leftover reference to the removed 'ghost' constant")
+    check('openColor' not in fret_body,
+          "no leftover reference to the removed 'openColor' constant")
+    # And the replacements are the themed tokens, not a second literal:
+    check(fret_body.count('class="text-gray-400/70"') >= 2,
+          "both the string-line loop and the fret-line loop use the themed line color")
+    check('class="text-teal-400"' in fret_body, "the open-string ring uses the themed teal token")
+    check('class="text-slate-400"' in fret_body, "the position label uses the themed slate token")
+    check(fret_body.count('class="text-amber-400"') >= 3,
+          "the out-of-window ghost ring + finger number + fret label all use the themed amber token")
+
+
+def scenario_self_contained_svg_shapes_keep_their_literal_fills():
+    """The flip side of the previous scenario, so the fix cannot overreach:
+    a shape that paints its OWN fully opaque area -- a piano key, a
+    fretted-dot fill, the finger number printed on top of it, a muted
+    string's X -- never depends on the themed scene background showing
+    through, because nothing of that background is visible through an
+    opaque shape. These stay literal, unmeasured-by-theme constants on
+    purpose; changing them would be motion with no legibility reason
+    behind it. slate-500 (`#64748b`, the muted-X stroke) is additionally
+    theme-INVARIANT in static/theme.css itself (identical rgb both
+    themes), independently confirming it never needed the fix at all."""
+    src = _read('components/lesson_player.html')
+    for literal, why in [
+        ("accent = '#2dd4bf'", 'keyboard highlighted-key fill (opaque key shape)'),
+        ("'#f1f5f9'", 'keyboard white-key fill (opaque key shape)'),
+        ("'#1e293b'", 'keyboard black-key fill (opaque key shape)'),
+        ('stroke="rgba(255,255,255,0.35)"', "the black key's own border, painted "
+                                             "on its OWN opaque fill, not the scene background"),
+        ("solid = '#0f766e'", 'fretboard fretted-dot fill (opaque dot shape)'),
+        ('fill="#fff"', 'the finger number printed on the opaque dot fill'),
+        ('stroke="#64748b"', 'the muted-string X (theme-invariant slate-500 besides)'),
+    ]:
+        check(literal in src, f"{why} should still be the literal constant, unchanged")
+
+
 if __name__ == '__main__':
     scenario_component_exists_and_renders_the_four_beats()
     scenario_checks_are_never_stored()
@@ -1405,4 +1596,10 @@ if __name__ == '__main__':
     scenario_host_listen_flag_is_explicit_not_dom_sniffed()
     scenario_hosts_that_log_a_session_announce_they_listen()
     scenario_hosts_with_no_log_action_never_announce()
+    scenario_text_white_survives_only_on_invariant_accent_fills()
+    scenario_surface_text_uses_the_gray_100_token_not_literal_white()
+    scenario_check_button_active_state_stays_theme_invariant()
+    scenario_metadata_text_is_gray_400_not_gray_500()
+    scenario_svg_elements_on_the_transparent_canvas_never_hardcode_a_dark_only_color()
+    scenario_self_contained_svg_shapes_keep_their_literal_fills()
     print("test_lesson_player_runtime OK")

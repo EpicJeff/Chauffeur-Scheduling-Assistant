@@ -10,6 +10,9 @@ counter primitive paces itself instead of one-tap-per-rep and gains
 `seconds_per_rep`, spoken via the browser's own speech API where a voice
 exists (see the Player component section's Sound paragraph, and Out of
 scope, for why that is not a reversal of "no TTS in v1").
+**Amended v2.448.1** (another real user's report): the player is now
+theme-aware in the PWA rather than dark-by-accident — see the Player
+component section's Theming paragraph.
 
 **North star (the user's):** each session opens into something that feels
 like a generated video — interactive, modern, engaging for people who grew
@@ -146,6 +149,26 @@ or throwing speech API can never break the counter). This is narrowly a
 `say`/`do` beat's own text, and there is still no server-side or paid TTS
 anywhere in this arc — "no TTS in v1" meant no *narration*, and should have
 said so. Both themes, both surfaces.
+
+**Theming (amended v2.448.1):** the player is theme-aware on the PWA, not
+dark-by-accident. `static/theme.css`'s `[data-theme]` remap only reaches
+`app.html` — every other host (`home.html`, `programs.html`,
+`calendar.html`, `routines.html`, `chores.html`) is theme-invariant
+already — so this only ever mattered on the phone. Surface text reads
+`text-gray-100` (the same token `app.html`'s own `<body>` uses), never a
+literal `text-white`, which stays reserved for text on a solid,
+theme-invariant accent fill (`bg-teal-700`, `bg-blue-600`). Every SVG
+element drawn on the countdown ring's or the fretboard's own transparent
+canvas — which shows the themed surface straight through — paints via
+`currentColor` plus a themed `text-*` class rather than a hardcoded hex, so
+the ring, the open-string marker, the position label and the
+out-of-window "ghost" dot all read correctly in both themes; a piano
+key's or a fretted dot's own OPAQUE fill stays a literal constant on
+purpose, since nothing of the theme shows through an opaque shape. The
+four sibling full-screen overlays (`avatar_editor.html`, `pet_battle.html`,
+`pet_editor.html`, `pet_guide.html`) carry the identical un-themed
+`text-white` pattern and were not touched by this fix — a latent bug
+noted for whenever one of them is next worked on, not fixed here.
 
 ## Generation pipeline
 

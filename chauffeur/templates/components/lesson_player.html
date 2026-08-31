@@ -77,9 +77,9 @@
     <div class="shrink-0 flex items-center gap-3 px-4 py-3 border-b border-gray-800">
         <span class="shrink-0" :class="panel ? 'text-3xl' : 'text-xl'">&#9654;&#65039;</span>
         <div class="min-w-0 flex-1">
-            <div class="font-black text-white truncate" :class="panel ? 'text-2xl' : 'text-base'"
+            <div class="font-black text-gray-100 truncate" :class="panel ? 'text-2xl' : 'text-base'"
                  x-text="(w || {}).title || 'Practice'"></div>
-            <div class="text-gray-500 truncate" :class="panel ? 'text-base' : 'text-[11px]'"
+            <div class="text-gray-400 truncate" :class="panel ? 'text-base' : 'text-[11px]'"
                  x-show="(w || {}).session_label" x-text="(w || {}).session_label"></div>
             <!-- The preview marker: the only visible difference while a
                  preview plays out, so nobody watching mistakes a slot
@@ -118,13 +118,13 @@
              no primitive for lands -- its caption reads exactly like a say,
              which is the sanitizer's own degrade rule mirrored client-side. -->
         <template x-if="scene().type === 'say' || (scene().type === 'show' && !isRenderableShow(scene()))">
-            <div class="w-full max-w-sm font-bold text-white" :class="panel ? 'text-3xl' : 'text-xl'"
+            <div class="w-full max-w-sm font-bold text-gray-100" :class="panel ? 'text-3xl' : 'text-xl'"
                  x-text="sayText()"></div>
         </template>
 
         <!-- do: the drill itself, live -->
         <template x-if="scene().type === 'do'">
-            <div class="w-full max-w-sm font-bold text-white" :class="panel ? 'text-3xl' : 'text-xl'"
+            <div class="w-full max-w-sm font-bold text-gray-100" :class="panel ? 'text-3xl' : 'text-xl'"
                  x-text="scene().text"></div>
         </template>
 
@@ -143,10 +143,10 @@
              check would not be so lucky. -->
         <template x-if="scene().type === 'check'">
             <div class="w-full max-w-sm space-y-5">
-                <div class="font-bold text-white" :class="panel ? 'text-3xl' : 'text-xl'" x-text="scene().ask"></div>
+                <div class="font-bold text-gray-100" :class="panel ? 'text-3xl' : 'text-xl'" x-text="scene().ask"></div>
                 <div class="flex flex-col gap-2.5">
                     <button type="button" @click.stop="answerCheck()"
-                            class="w-full rounded-xl bg-teal-700 text-white font-bold active:bg-teal-800"
+                            class="w-full rounded-xl bg-teal-700 text-white font-bold active:brightness-90"
                             :class="panel ? 'py-4 text-2xl' : 'py-2.5 text-sm'">Got it</button>
                     <button type="button" @click.stop="answerCheck()"
                             class="w-full rounded-xl bg-gray-800 border border-gray-700 text-gray-200 font-bold active:bg-gray-700"
@@ -213,7 +213,7 @@
                         <div @click.stop="toggleCardFlip()"
                              class="w-full aspect-[3/2] rounded-2xl bg-gray-800 border border-gray-700 flex items-center justify-center p-6 cursor-pointer active:bg-gray-700"
                              :class="panel ? 'text-3xl' : 'text-xl'">
-                            <div class="font-bold text-white text-center" x-text="cardFace()"></div>
+                            <div class="font-bold text-gray-100 text-center" x-text="cardFace()"></div>
                         </div>
                         <div class="flex items-center gap-1.5">
                             <template x-for="(p, i) in (scene().primitive.pairs || [])" :key="i">
@@ -225,7 +225,7 @@
                             <button type="button" @click.stop="cardPrev()"
                                     class="rounded-lg bg-gray-800 border border-gray-700 text-gray-300 font-bold active:bg-gray-700"
                                     :class="panel ? 'px-6 py-3 text-xl' : 'px-4 py-2 text-sm'">Prev</button>
-                            <span class="text-gray-500" :class="panel ? 'text-lg' : 'text-xs'"
+                            <span class="text-gray-400" :class="panel ? 'text-lg' : 'text-xs'"
                                   x-text="(cardIdx + 1) + ' / ' + (scene().primitive.pairs || []).length"></span>
                             <button type="button" @click.stop="cardNext()"
                                     class="rounded-lg bg-gray-800 border border-gray-700 text-gray-300 font-bold active:bg-gray-700"
@@ -252,9 +252,9 @@
                              class="rounded-full border-2 flex items-center justify-center cursor-pointer active:bg-gray-700"
                              :class="[panel ? 'w-48 h-48' : 'w-32 h-32',
                                       counterDone() ? 'bg-teal-900/40 border-teal-400' : 'bg-gray-800 border-teal-700']">
-                            <div class="font-black text-white" :class="panel ? 'text-6xl' : 'text-5xl'" x-text="counterVal"></div>
+                            <div class="font-black text-gray-100" :class="panel ? 'text-6xl' : 'text-5xl'" x-text="counterVal"></div>
                         </div>
-                        <div class="text-gray-500" :class="panel ? 'text-lg' : 'text-xs'"
+                        <div class="text-gray-400" :class="panel ? 'text-lg' : 'text-xs'"
                              x-text="'of ' + (scene().primitive.target || 0)"></div>
                         <div class="font-bold" :class="[panel ? 'text-base' : 'text-xs',
                                                          counterDone() ? 'text-teal-400' : 'text-gray-400']"
@@ -267,11 +267,11 @@
         <!-- the countdown ring: a `do` with seconds, or a `show timer` -->
         <div class="relative w-36 h-36 mx-auto" x-show="timerSeconds() > 0">
             <svg class="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 100 100">
-                <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="8"></circle>
-                <circle cx="50" cy="50" r="44" fill="none" stroke="#2dd4bf" stroke-width="8" stroke-linecap="round"
+                <circle cx="50" cy="50" r="44" fill="none" stroke="currentColor" class="text-gray-400/70" stroke-width="8"></circle>
+                <circle cx="50" cy="50" r="44" fill="none" stroke="currentColor" class="text-teal-400" stroke-width="8" stroke-linecap="round"
                         :stroke-dasharray="ringC" :stroke-dashoffset="ringOffset()"></circle>
             </svg>
-            <div class="absolute inset-0 flex items-center justify-center font-black text-white"
+            <div class="absolute inset-0 flex items-center justify-center font-black text-gray-100"
                  :class="panel ? 'text-3xl' : 'text-2xl'" x-text="fmtClock(timeLeft)"></div>
         </div>
 
@@ -279,7 +279,7 @@
         <div class="flex items-center justify-center gap-2.5" x-show="metroBpm() > 0">
             <span class="rounded-full bg-teal-400 lp-metro-dot" :class="panel ? 'w-5 h-5' : 'w-3.5 h-3.5'"
                   :style="'animation-duration:' + (60 / (metroBpm() || 100)) + 's'"></span>
-            <span class="text-gray-500" :class="panel ? 'text-lg' : 'text-xs'" x-text="metroBpm() + ' bpm'"></span>
+            <span class="text-gray-400" :class="panel ? 'text-lg' : 'text-xs'" x-text="metroBpm() + ' bpm'"></span>
         </div>
     </div>
 
@@ -297,7 +297,7 @@
              is plain text: a panel has one window and no way back from a
              page it navigates to. -->
         <div class="flex items-center justify-center gap-1.5 flex-wrap" x-show="originLabel()">
-            <span class="font-semibold text-gray-500" :class="panel ? 'text-base' : 'text-[11px]'"
+            <span class="font-semibold text-gray-400" :class="panel ? 'text-base' : 'text-[11px]'"
                   x-text="originLabel()"></span>
             <template x-if="sourceHost() && !panel">
                 <a :href="(lesson || {}).source_url" target="_blank" rel="noopener"
@@ -547,8 +547,8 @@ function lessonPlayer() {
             // line -- see the Node-verified geometry notes in the fix
             // report for the proof.
             const head = dropped
-                ? `<text x="${totalW}" y="${HEAD - 7}" text-anchor="end" ${FONT_ATTR} `
-                    + `font-size="12" font-weight="800" fill="#f59e0b">+${dropped} more `
+                ? `<text x="${totalW}" y="${HEAD - 7}" text-anchor="end" ${FONT_ATTR} class="text-amber-400" `
+                    + `font-size="12" font-weight="800" fill="currentColor">+${dropped} more `
                     + `key${dropped > 1 ? 's' : ''} beyond this window &#8594;</text>`
                 : '';
             return `<svg viewBox="0 0 ${totalW} ${H + HEAD}" class="w-full h-auto" preserveAspectRatio="xMidYMid meet">`
@@ -611,15 +611,15 @@ function lessonPlayer() {
             const WIN = Math.max(BASE_WIN, span);
             const gx = LEFT, gy = TOP;
             const w = gx + 5 * STR_GAP + RIGHT, h = gy + WIN * FRET_H + BOTTOM;
-            const solid = '#0f766e', ghost = '#f59e0b', openColor = '#2dd4bf';
+            const solid = '#0f766e';
             let body = '';
 
             // Strings: 6 vertical lines. colOf() below is the one place
             // the low-E-left/high-E-right mapping lives.
             for (let col = 0; col < 6; col++) {
                 const x = gx + col * STR_GAP;
-                body += `<line x1="${x}" y1="${gy}" x2="${x}" y2="${gy + WIN * FRET_H}" `
-                    + `stroke="rgba(255,255,255,0.35)" stroke-width="1.5"></line>`;
+                body += `<line x1="${x}" y1="${gy}" x2="${x}" y2="${gy + WIN * FRET_H}" class="text-gray-400/70" `
+                    + `stroke="currentColor" stroke-width="1.5"></line>`;
             }
             // Frets: horizontal lines running down the neck. The topmost
             // one is the NUT (thick) only when the window starts at fret
@@ -630,12 +630,12 @@ function lessonPlayer() {
             for (let f = 0; f <= WIN; f++) {
                 const y = gy + f * FRET_H;
                 const isNut = start === 1 && f === 0;
-                body += `<line x1="${gx}" y1="${y}" x2="${gx + 5 * STR_GAP}" y2="${y}" `
-                    + `stroke="rgba(255,255,255,0.5)" stroke-width="${isNut ? 5 : 1.5}"></line>`;
+                body += `<line x1="${gx}" y1="${y}" x2="${gx + 5 * STR_GAP}" y2="${y}" class="text-gray-400/70" `
+                    + `stroke="currentColor" stroke-width="${isNut ? 5 : 1.5}"></line>`;
             }
             if (start > 1) {
-                body += `<text x="${gx}" y="${gy - 12}" text-anchor="start" ${FONT_ATTR} `
-                    + `font-size="14" font-weight="800" fill="#94a3b8">${start}fr</text>`;
+                body += `<text x="${gx}" y="${gy - 12}" text-anchor="start" ${FONT_ATTR} class="text-slate-400" `
+                    + `font-size="14" font-weight="800" fill="currentColor">${start}fr</text>`;
             }
 
             const colOf = string => gx + (6 - string) * STR_GAP;
@@ -646,8 +646,8 @@ function lessonPlayer() {
             // land in the same row as a real fret-1 dot.
             openDots.forEach(d => {
                 const x = colOf(d.string), y = gy - 24;
-                body += `<circle cx="${x}" cy="${y}" r="9" fill="none" `
-                    + `stroke="${openColor}" stroke-width="2.5"></circle>`;
+                body += `<circle cx="${x}" cy="${y}" r="9" fill="none" class="text-teal-400" `
+                    + `stroke="currentColor" stroke-width="2.5"></circle>`;
             });
             // Muted strings: an X in that same row -- a string is never
             // both (mutedStrings above already excludes any string that
@@ -682,12 +682,12 @@ function lessonPlayer() {
                         + `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" ${FONT_ATTR} `
                         + `font-size="13" font-weight="800" fill="#fff">${d.finger}</text>`;
                 } else {
-                    body += `<circle cx="${x}" cy="${y}" r="12" fill="none" stroke="${ghost}" `
+                    body += `<circle cx="${x}" cy="${y}" r="12" fill="none" stroke="currentColor" class="text-amber-400" `
                         + `stroke-width="2.5" stroke-dasharray="4,3"></circle>`
-                        + `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" ${FONT_ATTR} `
-                        + `font-size="13" font-weight="800" fill="${ghost}">${d.finger}</text>`
-                        + `<text x="${x}" y="${y + 24}" text-anchor="middle" ${FONT_ATTR} `
-                        + `font-size="10" font-weight="700" fill="${ghost}">${d.fret}fr</text>`;
+                        + `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" ${FONT_ATTR} class="text-amber-400" `
+                        + `font-size="13" font-weight="800" fill="currentColor">${d.finger}</text>`
+                        + `<text x="${x}" y="${y + 24}" text-anchor="middle" ${FONT_ATTR} class="text-amber-400" `
+                        + `font-size="10" font-weight="700" fill="currentColor">${d.fret}fr</text>`;
                 }
             });
             return `<svg viewBox="0 0 ${w} ${h}" class="w-full h-auto" preserveAspectRatio="xMidYMid meet">${body}</svg>`;
