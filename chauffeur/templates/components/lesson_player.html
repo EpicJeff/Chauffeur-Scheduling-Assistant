@@ -165,7 +165,8 @@
                      cardFlipped, reset unconditionally at the top of
                      enterScene() -- never fetched, never stored. -->
                 <template x-if="scene().primitive.kind === 'cards'">
-                    <div class="w-full max-w-sm flex flex-col items-center gap-4">
+                    <div class="w-full flex flex-col items-center gap-4"
+                         :class="panel ? 'max-w-2xl' : 'max-w-sm'">
                         <div @click.stop="toggleCardFlip()"
                              class="w-full aspect-[3/2] rounded-2xl bg-gray-800 border border-gray-700 flex items-center justify-center p-6 cursor-pointer active:bg-gray-700"
                              :class="panel ? 'text-3xl' : 'text-xl'">
@@ -248,6 +249,13 @@
 
 <script>
 function lessonPlayer() {
+    // Shared by keyboardSvg()/fretboardSvg()'s SVG <text> -- pinned
+    // explicitly rather than left to inherit, see fretboardSvg's own
+    // comment for why: a glyph an SVG's own font-matching substitutes
+    // unpredictably is the wrong place to save a few characters.
+    const FONT_ATTR = 'font-family="Inter,ui-sans-serif,system-ui,-apple-system,'
+        + '&quot;Segoe UI&quot;,Roboto,Arial,sans-serif"';
+
     return {
         openFlag: false, w: null, scenes: [], idx: 0,
         panel: new URLSearchParams(location.search).get('panel') === 'true',
@@ -354,39 +362,61 @@ function lessonPlayer() {
             if (!notes.length) return '';
             // The octave window CONTAINING the highlighted keys, capped at
             // two -- a wider span clamps to the first two rather than
-            // stretching the keybed to fit every requested key.
+            // stretching the keybed to fit every requested key. Capping is
+            // allowed to be silent about WHICH two octaves it kept; it is
+            // never allowed to be silent about a highlighted key it then
+            // drew nothing for -- see `dropped` below, the same honesty
+            // fretboardSvg's own window enforces for dots.
             const minO = Math.min(...notes.map(n => n.octave));
             const maxO = Math.min(Math.max(...notes.map(n => n.octave)), minO + 1);
+            const dropped = notes.filter(n => n.octave > maxO).length;
             const on = new Set(notes.filter(n => n.octave <= maxO)
                                      .map(n => n.octave + ':' + n.semi));
             const W = 32, H = 120, BW = 20, BH = 74, accent = '#2dd4bf';
+            const HEAD = dropped ? 22 : 0;
             let whites = '', blacks = '';
             for (let o = minO; o <= maxO; o++) {
                 const baseX = (o - minO) * 7 * W;
                 GEOM.forEach((g, p) => {
                     const hi = on.has(o + ':' + p);
                     if (g.w !== undefined) {
-                        whites += `<rect x="${baseX + g.w * W}" y="0" width="${W - 2}" height="${H}" rx="4" `
+                        whites += `<rect x="${baseX + g.w * W}" y="${HEAD}" width="${W - 2}" height="${H}" rx="4" `
                             + `fill="${hi ? accent : '#f1f5f9'}" stroke="#475569" stroke-width="1.5"></rect>`;
                     } else {
                         const x = baseX + (g.b + 1) * W - BW / 2;
-                        blacks += `<rect x="${x}" y="0" width="${BW}" height="${BH}" rx="3" `
+                        blacks += `<rect x="${x}" y="${HEAD}" width="${BW}" height="${BH}" rx="3" `
                             + `fill="${hi ? accent : '#1e293b'}" stroke="rgba(255,255,255,0.35)" stroke-width="1"></rect>`;
                     }
                 });
             }
             const totalW = (maxO - minO + 1) * 7 * W;
-            return `<svg viewBox="0 0 ${totalW} ${H}" class="w-full h-auto" preserveAspectRatio="xMidYMid meet">`
-                + whites + blacks + `</svg>`;
+            // Whenever `dropped` is nonzero the window is necessarily the
+            // full two octaves (a single-octave window can only happen
+            // when nothing exceeded it), so there is always room for this
+            // line -- see the Node-verified geometry notes in the fix
+            // report for the proof.
+            const head = dropped
+                ? `<text x="${totalW}" y="${HEAD - 7}" text-anchor="end" ${FONT_ATTR} `
+                    + `font-size="12" font-weight="800" fill="#f59e0b">+${dropped} more `
+                    + `key${dropped > 1 ? 's' : ''} beyond this window &#8594;</text>`
+                : '';
+            return `<svg viewBox="0 0 ${totalW} ${H + HEAD}" class="w-full h-auto" preserveAspectRatio="xMidYMid meet">`
+                + head + whites + blacks + `</svg>`;
         },
 
-        // 6 horizontal strings (string 1 at top, standard tab convention),
-        // a 5-fret window starting at max(1, min(dot fret)), the starting
-        // fret labelled, dots placed by (string, fret) arithmetic with the
-        // finger number as white text inside. A dot whose fret falls
-        // outside the drawn window (an open string paired with fretted
-        // notes higher up, say) clamps to the nearest edge column rather
-        // than vanishing.
+        // 6 horizontal strings (string 1 at top, standard tab convention).
+        // The window widens to the dots' own fret span (a chord shape
+        // almost always fits) up to a sane cap; only a span past that cap
+        // falls back to compression, and even then a compressed dot is
+        // marked unmistakably as approximate rather than drawn as if it
+        // were exact -- the renderer owning drawing is what makes a wrong
+        // spec VISIBLE, and a confidently-wrong chord diagram in a
+        // teaching tool is worse than none. An open string (fret 0) is
+        // never squeezed into the fret-1 column, where it would be
+        // indistinguishable from an actually-fretted note: notation draws
+        // it above the nut, so this draws it to the LEFT of the grid
+        // instead (this diagram runs sideways), on that string's own row,
+        // as a hollow ring rather than a filled dot.
         fretboardSvg(dots) {
             const clean = (Array.isArray(dots) ? dots : []).map(d => ({
                 string: parseInt(d && d.string, 10),
@@ -395,39 +425,75 @@ function lessonPlayer() {
             })).filter(d => d.string >= 1 && d.string <= 6 && d.fret >= 0 && d.fret <= 24
                           && d.finger >= 1 && d.finger <= 4);
             if (!clean.length) return '';
-            const WIN = 5, FRET_W = 70, STR_GAP = 26, PAD = 28;
-            const start = Math.max(1, Math.min(...clean.map(d => d.fret)));
-            const w = PAD + WIN * FRET_W + 14, h = PAD + 5 * STR_GAP + 14;
-            const accent = '#0f766e';
+            const openDots = clean.filter(d => d.fret === 0);
+            const frettedDots = clean.filter(d => d.fret > 0);
+
+            const BASE_WIN = 5, MAX_WIN = 12, FRET_W = 70, STR_GAP = 26;
+            const TOP = 30, LEFT = 34, RIGHT = 14, BOTTOM = 14;
+            // frettedDots is never empty AND anchored below fret 1 at once
+            // (fret > 0 by definition), so `start` always lands exactly on
+            // the lowest fretted dot -- clamping below the window can
+            // never happen; only ABOVE it can, once the true span outgrows
+            // MAX_WIN.
+            const minFret = frettedDots.length ? Math.min(...frettedDots.map(d => d.fret)) : 1;
+            const maxFret = frettedDots.length ? Math.max(...frettedDots.map(d => d.fret)) : minFret;
+            const span = Math.min(maxFret - minFret + 1, MAX_WIN);
+            const WIN = Math.max(BASE_WIN, span);
+            const start = Math.max(1, minFret);
+            const gx = LEFT, gy = TOP;
+            const w = gx + WIN * FRET_W + RIGHT, h = gy + 5 * STR_GAP + BOTTOM;
+            const solid = '#0f766e', ghost = '#f59e0b';
             let body = '';
+
             for (let s = 0; s < 6; s++) {
-                const y = PAD + s * STR_GAP;
-                body += `<line x1="${PAD}" y1="${y}" x2="${w - 14}" y2="${y}" `
+                const y = gy + s * STR_GAP;
+                body += `<line x1="${gx}" y1="${y}" x2="${w - RIGHT}" y2="${y}" `
                     + `stroke="rgba(255,255,255,0.35)" stroke-width="1.5"></line>`;
             }
             for (let f = 0; f <= WIN; f++) {
-                const x = PAD + f * FRET_W;
+                const x = gx + f * FRET_W;
                 const isNut = start === 1 && f === 0;
-                body += `<line x1="${x}" y1="${PAD}" x2="${x}" y2="${h - 14}" `
+                body += `<line x1="${x}" y1="${gy}" x2="${x}" y2="${h - BOTTOM}" `
                     + `stroke="rgba(255,255,255,0.5)" stroke-width="${isNut ? 4 : 1.5}"></line>`;
             }
-            // font-family set directly on the SVG text (not left to
-            // inherit) -- these two glyphs are numerals a session actually
-            // depends on reading correctly (the starting fret, the finger
-            // to use), so they get the app's own font stack explicitly
-            // rather than whatever an SVG's own font-matching falls back
-            // to when nothing local claims it.
-            const FONT = 'font-family="Inter,ui-sans-serif,system-ui,-apple-system,'
-                + '&quot;Segoe UI&quot;,Roboto,Arial,sans-serif"';
-            body += `<text x="${PAD - 10}" y="${PAD - 10}" text-anchor="end" ${FONT} `
+            body += `<text x="${gx}" y="${gy - 10}" text-anchor="start" ${FONT_ATTR} `
                 + `font-size="14" font-weight="800" fill="#94a3b8">${start}fr</text>`;
-            clean.forEach(d => {
+
+            // Open strings: a hollow ring left of the nut -- structurally
+            // outside the fret grid, so it can never land in the same
+            // column as a real fret-1 dot no matter what `start` is.
+            openDots.forEach(d => {
+                const x = gx - 17, y = gy + (d.string - 1) * STR_GAP;
+                body += `<circle cx="${x}" cy="${y}" r="10" fill="none" stroke="#2dd4bf" stroke-width="2.5"></circle>`
+                    + `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" ${FONT_ATTR} `
+                    + `font-size="12" font-weight="800" fill="#2dd4bf">${d.finger}</text>`;
+            });
+
+            // Fretted: true position whenever it fits the window (which
+            // widened to the real span, up to MAX_WIN -- a realistic
+            // one-finger-per-fret run across six frets gets six distinct
+            // columns, not five). Only a dot further out than MAX_WIN
+            // frets from the lowest one falls back to the edge column,
+            // and there it is drawn as a dashed, unfilled, amber ring
+            // with its REAL fret number written alongside -- approximate
+            // and visibly so, never mistaken for an exact position.
+            frettedDots.forEach(d => {
+                const inWindow = d.fret <= start + WIN - 1;
                 const col = Math.max(0, Math.min(WIN - 1, d.fret - start));
-                const x = PAD + (col + 0.5) * FRET_W;
-                const y = PAD + (d.string - 1) * STR_GAP;
-                body += `<circle cx="${x}" cy="${y}" r="12" fill="${accent}"></circle>`
-                    + `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" ${FONT} `
-                    + `font-size="13" font-weight="800" fill="#fff">${d.finger}</text>`;
+                const x = gx + (col + 0.5) * FRET_W;
+                const y = gy + (d.string - 1) * STR_GAP;
+                if (inWindow) {
+                    body += `<circle cx="${x}" cy="${y}" r="12" fill="${solid}"></circle>`
+                        + `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" ${FONT_ATTR} `
+                        + `font-size="13" font-weight="800" fill="#fff">${d.finger}</text>`;
+                } else {
+                    body += `<circle cx="${x}" cy="${y}" r="12" fill="none" stroke="${ghost}" `
+                        + `stroke-width="2.5" stroke-dasharray="4,3"></circle>`
+                        + `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" ${FONT_ATTR} `
+                        + `font-size="13" font-weight="800" fill="${ghost}">${d.finger}</text>`
+                        + `<text x="${x + 15}" y="${y - 13}" text-anchor="start" ${FONT_ATTR} `
+                        + `font-size="10" font-weight="700" fill="${ghost}">${d.fret}fr</text>`;
+                }
             });
             return `<svg viewBox="0 0 ${w} ${h}" class="w-full h-auto" preserveAspectRatio="xMidYMid meet">${body}</svg>`;
         },

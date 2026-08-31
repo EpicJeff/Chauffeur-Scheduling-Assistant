@@ -128,7 +128,7 @@ no TTS in v1. Both themes, both surfaces.
 | kind        | params (validated)                        | draws                      |
 |-------------|-------------------------------------------|----------------------------|
 | `timer`     | seconds                                   | countdown ring             |
-| `metronome` | bpm 30–240                                | pendulum + Web Audio click |
+| `metronome` | bpm 30–240                                | pulse + Web Audio click    |
 | `keyboard`  | keys[] (note names, range-checked)        | SVG keys highlighted       |
 | `fretboard` | dots[] {string, fret max 24, finger 1–4}  | SVG neck + dots            |
 | `cards`     | pairs[] {front, back}                     | flip cards                 |

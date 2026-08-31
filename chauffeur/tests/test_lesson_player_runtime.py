@@ -386,6 +386,100 @@ def scenario_cards_and_counter_taps_never_bubble_into_advance():
               f"the scene area's own tap-to-advance handler")
 
 
+def scenario_fretboard_open_strings_are_structurally_separate_from_fretted_dots():
+    """Fix round 1, finding 1. An open string (fret 0) used to clamp into
+    the SAME column as a fret-1 dot -- visually identical, though a
+    completely different instruction (nothing fretted vs finger down at
+    fret 1). Scoped to fretboardSvg's own body, bounded by the next
+    function in source (the same anchor
+    scenario_fretboard_window_starts_at_the_lowest_fretted_dot already
+    uses)."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'fretboardSvg\(dots\)\s*\{(.*?)cardFace\(', src, re.S)
+    check(m, "fretboardSvg body is findable, bounded by the next function")
+    body = m.group(1) if m else ''
+    check('openDots' in body and 'frettedDots' in body,
+          "open (fret 0) and fretted (fret > 0) dots are split before either is drawn")
+    check('fill="none" stroke="#2dd4bf"' in body,
+          "an open string draws as a hollow ring -- structurally distinct from a solid fretted dot")
+    check('gx - 17' in body,
+          "the open marker sits LEFT of the grid's own left edge, never inside a fret column")
+
+
+def scenario_fretboard_window_widens_to_fit_the_real_span():
+    """Fix round 1, finding 1's other half: a realistic one-finger-per-fret
+    run across six frets used to lose frets 5 and 6 to the same fixed
+    5-fret column. The window now widens to the dots' own span first,
+    only falling back to a cap past a sane width."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'fretboardSvg\(dots\)\s*\{(.*?)cardFace\(', src, re.S)
+    check(m, "fretboardSvg body is findable")
+    body = m.group(1) if m else ''
+    check('BASE_WIN' in body and 'MAX_WIN' in body,
+          "the window has both a normal-chord floor and a cap, not one fixed constant")
+    check(re.search(r'span\s*=\s*Math\.min\(', body),
+          "the window's span is computed from the dots' own fret range, not hard-coded")
+    check('Math.max(BASE_WIN, span)' in body,
+          "WIN grows to the real span (up to the cap) rather than staying fixed at the base width")
+
+
+def scenario_fretboard_overflow_gets_a_visibly_approximate_marker():
+    """Fix round 1, finding 1: past the widened window's cap, a dot used
+    to clamp to the edge column and render exactly like a real, in-place
+    dot -- a confidently-wrong chord diagram. It now draws dashed and
+    amber, with its real fret number written alongside, so the
+    approximation cannot be mistaken for a position."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'fretboardSvg\(dots\)\s*\{(.*?)cardFace\(', src, re.S)
+    check(m, "fretboardSvg body is findable")
+    body = m.group(1) if m else ''
+    check('inWindow' in body, "in-window vs out-of-window dots are distinguished before drawing")
+    check('stroke-dasharray' in body,
+          "an out-of-window dot draws dashed, not as a solid filled circle")
+    check('${d.fret}fr' in body,
+          "an out-of-window dot's real fret number is written next to it, not hidden by the approximation")
+
+
+def scenario_keyboard_signals_a_dropped_highlight_rather_than_hiding_it():
+    """Fix round 1, finding 3. keys=['C2','G4'] used to render octaves 2-3
+    and let G4 vanish with no signal at all. A capped window may still
+    decide WHICH two octaves to keep; it may no longer stay silent about
+    a highlighted key it then drew nothing for."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'keyboardSvg\(keys\)\s*\{(.*?)fretboardSvg\(dots\)', src, re.S)
+    check(m, "keyboardSvg body is findable, bounded by the next function")
+    body = m.group(1) if m else ''
+    check(re.search(r'dropped\s*=\s*notes\.filter\(', body),
+          "a `dropped` count is computed from keys that fell outside the capped window")
+    check('more' in body and '&#8594;' in body,
+          "a dropped highlight leaves a visible marker (an arrow, a count), not a silent gap")
+
+
+def scenario_cards_container_is_panel_aware_like_its_siblings():
+    """Fix round 1, finding 2. keyboard/fretboard both bind
+    `:class="panel ? 'max-w-2xl' : ...'"` on their own container; cards'
+    outer box was the one primitive left on a static max-w-sm, so a long
+    (up to the sanitizer's own 280-char MAX_TEXT) pair face in panel mode
+    grew the card tall enough to push Prev/Next and the position dots
+    against the footer. Scoped to the cards template block itself, bounded
+    by the counter block that follows it, so this cannot pass by
+    coincidence off keyboard/fretboard's OWN panel-aware classes
+    elsewhere in the file."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r"kind === 'cards'\">(.*?)kind === 'counter'\"", src, re.S)
+    check(m, "the cards template block is findable, bounded by the counter block that follows it")
+    block = m.group(1) if m else ''
+    check(":class=\"panel ? 'max-w-2xl' : 'max-w-sm'\"" in block,
+          "the cards container binds the same panel-aware max-width its keyboard/fretboard siblings use")
+    check('class="w-full max-w-sm' not in block,
+          "the old STATIC max-w-sm is gone, not merely joined by a conflicting bound class")
+
+
 if __name__ == '__main__':
     scenario_component_exists_and_renders_the_four_beats()
     scenario_checks_are_never_stored()
@@ -411,4 +505,9 @@ if __name__ == '__main__':
     scenario_counter_taps_are_never_sent()
     scenario_card_flips_are_never_sent()
     scenario_cards_and_counter_taps_never_bubble_into_advance()
+    scenario_fretboard_open_strings_are_structurally_separate_from_fretted_dots()
+    scenario_fretboard_window_widens_to_fit_the_real_span()
+    scenario_fretboard_overflow_gets_a_visibly_approximate_marker()
+    scenario_keyboard_signals_a_dropped_highlight_rather_than_hiding_it()
+    scenario_cards_container_is_panel_aware_like_its_siblings()
     print("test_lesson_player_runtime OK")
