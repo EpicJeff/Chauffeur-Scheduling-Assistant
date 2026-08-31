@@ -1181,6 +1181,30 @@ def scenario_sweep_report_names_over_the_pass_limit():
     check(len(over) == 1, f"named as over the pass limit, got {out['slots']}")
 
 
+# --- the tuner ----------------------------------------------------------
+
+
+def scenario_a_tuner_may_name_a_target_note():
+    out = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Tune the low E',
+         'primitive': {'kind': 'tuner', 'target': 'E2'}},
+        {'type': 'show', 'caption': 'Tune up',
+         'primitive': {'kind': 'tuner'}},
+        {'type': 'show', 'caption': 'Tune it',
+         'primitive': {'kind': 'tuner', 'target': 'somewhere around E'}},
+    ], 'generated')
+    check([s['type'] for s in out] == ['show', 'show', 'show'],
+          f"a tuner with, without and with a junk target all draw, got {out}")
+    check(out[0]['primitive']['target'] == 'E2', f"the note survives, got {out[0]}")
+    check('target' not in out[1]['primitive']
+          and 'target' not in out[2]['primitive'],
+          f"and an unparseable one is simply absent, got {out[1:]}")
+
+
+def scenario_the_schema_names_the_tuner():
+    check('"tuner"' in pl._SYSTEM, "the model is told the tuner exists")
+
+
 # --- listening ----------------------------------------------------------
 
 
@@ -1872,6 +1896,8 @@ if __name__ == '__main__':
     scenario_a_spoken_cue_runs_the_same_screens_as_everything_else()
     scenario_a_cue_line_is_shorter_than_a_beat_of_text()
     scenario_the_schema_names_cues()
+    scenario_a_tuner_may_name_a_target_note()
+    scenario_the_schema_names_the_tuner()
     scenario_a_listen_scene_names_one_of_three_modes()
     scenario_a_listen_scene_is_bounded_in_time()
     scenario_a_pitch_target_is_a_note_or_it_is_nothing()

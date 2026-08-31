@@ -330,16 +330,58 @@
                         <div class="font-bold text-teal-300"
                              :class="panel ? 'text-3xl' : 'text-xl'"
                              x-show="listenHeard" x-text="listenHeard"></div>
-                        <div class="w-full text-center space-y-3"
-                             x-show="micDenied || scene().primitive.mode !== 'presence'">
+                        <!-- pitch: the same needle the tuner draws, so a
+                             "play a G" scene shows exactly what a tuner
+                             would rather than a second vocabulary. -->
+                        <div class="text-center" x-show="micOn && scene().primitive.mode === 'pitch'">
+                            <div class="font-black text-gray-100"
+                                 :class="panel ? 'text-6xl' : 'text-4xl'"
+                                 x-text="tunerNote || '—'"></div>
                             <div class="text-gray-400" :class="panel ? 'text-lg' : 'text-xs'"
-                                 x-text="micDenied
-                                     ? 'No microphone here — do it out loud anyway.'
-                                     : 'Do it out loud — this screen is not listening for that yet.'"></div>
+                                 x-show="scene().primitive.target"
+                                 x-text="'Looking for ' + scene().primitive.target"></div>
+                        </div>
+                        <div class="w-full text-center space-y-3" x-show="micDenied">
+                            <div class="text-gray-400" :class="panel ? 'text-lg' : 'text-xs'">
+                                No microphone here — do it out loud anyway.
+                            </div>
                             <button type="button" @click.stop="advance()"
                                     class="w-full rounded-xl bg-teal-700 text-white font-bold active:brightness-90"
                                     :class="panel ? 'py-4 text-2xl' : 'py-2.5 text-sm'">Tap when you have</button>
                         </div>
+                    </div>
+                </template>
+
+                <!-- tuner: which note, and how far off, and nothing else.
+                     The needle is the distance in cents; there is no
+                     verdict anywhere on it, because "in tune" is a fact
+                     about a string and "good" is a judgment about a
+                     person, and this app makes the first and never the
+                     second. Degrades to nothing but an honest line where
+                     there is no microphone -- a tuner with no ears has
+                     nothing to offer but a tap that would mean nothing. -->
+                <template x-if="scene().primitive.kind === 'tuner'">
+                    <div class="w-full flex flex-col items-center gap-4"
+                         :class="panel ? 'max-w-2xl' : 'max-w-sm'">
+                        <div class="font-black text-gray-100"
+                             :class="[panel ? 'text-7xl' : 'text-5xl',
+                                      (scene().primitive.target && tunerNote === scene().primitive.target)
+                                          ? 'text-teal-300' : '']"
+                             x-text="tunerNote || '—'"></div>
+                        <div class="relative w-full h-8 rounded-full bg-gray-800 border border-gray-700"
+                             x-show="tunerNote">
+                            <span class="absolute top-0 bottom-0 w-px bg-gray-400/70 left-1/2"></span>
+                            <span class="absolute top-1 bottom-1 w-2 rounded-full bg-teal-400"
+                                  :style="'left: calc(' + (50 + Math.max(-48, Math.min(48, tunerCents / 50 * 48))) + '% - 4px)'"></span>
+                        </div>
+                        <div class="text-gray-400" :class="panel ? 'text-lg' : 'text-xs'"
+                             x-show="tunerNote"
+                             x-text="(tunerCents > 0 ? '+' : '') + tunerCents + ' cents'"></div>
+                        <div class="text-gray-400" :class="panel ? 'text-lg' : 'text-xs'"
+                             x-show="scene().primitive.target"
+                             x-text="'Tuning to ' + scene().primitive.target"></div>
+                        <div class="text-gray-400" :class="panel ? 'text-lg' : 'text-xs'"
+                             x-show="micDenied">No microphone on this screen — tune by ear.</div>
                     </div>
                 </template>
 
@@ -580,6 +622,11 @@ function lessonPlayer() {
         micOn: false, micDenied: false, micStream: null, micCtx: null,
         micAnalyser: null, micBuf: null, listenTimer: null,
         listenHeard: '', listenDone: false, listenLeft: 0,
+        // What the needle is showing right now, and the two bits of
+        // working state behind pitch and tempo. All scene-local, all
+        // cleared on entry and on release: none of it is a result.
+        tunerNote: '', tunerCents: 0, pitchHeldSince: 0,
+        peaks: [], lastPeakAt: 0,
         // The current beat's cues and how many of them have already been
         // said. A cursor rather than a set, which is safe because the
         // sanitizer stores them sorted by `at`. Both reset on every scene
@@ -673,7 +720,7 @@ function lessonPlayer() {
         isRenderableShow(s) {
             return !!(s && s.primitive && ['timer', 'metronome', 'keyboard',
                 'fretboard', 'cards', 'counter', 'hints',
-                'listen'].includes(s.primitive.kind));
+                'listen', 'tuner'].includes(s.primitive.kind));
         },
 
         // `say` always has non-empty text (sanitize_script drops an empty
@@ -1336,6 +1383,8 @@ function lessonPlayer() {
             this.waitLeft = 0; this.offerOpen = false;
             this.helpText = ''; this.helpBusy = false;
             this.listenHeard = ''; this.listenDone = false; this.listenLeft = 0;
+            this.tunerNote = ''; this.tunerCents = 0; this.pitchHeldSince = 0;
+            this.peaks = []; this.lastPeakAt = 0;
             if (this.waitTimer) { clearInterval(this.waitTimer); this.waitTimer = null; }
             if (this.counterTimer) { clearInterval(this.counterTimer); this.counterTimer = null; }
             const s = this.scene();
@@ -1350,13 +1399,100 @@ function lessonPlayer() {
             if (s.type === 'do' && s.cues) this.startCues(s.cues);
             if (s.type === 'wait') this.startWait(s);
             if (s.type === 'show' && s.primitive
-                && s.primitive.kind === 'listen') this.startListening(s.primitive);
+                && ['listen', 'tuner'].includes(s.primitive.kind)) {
+                this.startListening(s.primitive);
+            }
             if (s.type === 'do' && s.seconds) this.startTimer(s.seconds);
             if (s.type === 'do' && s.metronome_bpm) this.startMetronome(s.metronome_bpm);
             if (s.type === 'show' && s.primitive) {
                 if (s.primitive.kind === 'timer' && s.primitive.seconds) this.startTimer(s.primitive.seconds);
                 if (s.primitive.kind === 'metronome' && s.primitive.bpm) this.startMetronome(s.primitive.bpm);
             }
+        },
+
+        // --- what a microphone can honestly answer ---------------------
+        // Three pure functions, deliberately free of `this` and of any
+        // clock, so they can be lifted out of this file and driven under
+        // Node by synthesized sound with a known answer -- which is the
+        // only way to know a pitch detector works at all. A detector that
+        // merely LOOKS plausible is worthless; see
+        // tests/test_lesson_player_runtime.py.
+
+        // Normalized autocorrelation, the standard approach: slide the
+        // buffer against itself and find the lag whose overlap is
+        // strongest, then read the frequency off that lag. Robust to
+        // harmonics -- a guitar string's second and third partials are
+        // often LOUDER than its fundamental, which is exactly why an
+        // FFT-peak reading is the wrong tool here.
+        //
+        // Returns null rather than a number when there is nothing to hear.
+        // A tuner needle jumping around an empty room is worse than a
+        // tuner that says nothing, and "answer anyway" is the failure
+        // mode this kind of code falls into by default.
+        autoCorrelate(buf, sampleRate) {
+            const SIZE = buf.length;
+            let sum = 0;
+            for (let i = 0; i < SIZE; i++) sum += buf[i] * buf[i];
+            const rms = Math.sqrt(sum / SIZE);
+            if (rms < 0.01) return null;          // silence, honestly
+            // Trim the quiet head and tail so a note's attack and decay
+            // do not drag the correlation.
+            let start = 0, end = SIZE - 1;
+            const THRESH = 0.2;
+            while (start < SIZE / 2 && Math.abs(buf[start]) < THRESH) start++;
+            while (end > SIZE / 2 && Math.abs(buf[end]) < THRESH) end--;
+            const trimmed = buf.slice(start, end);
+            const n = trimmed.length;
+            if (n < 128) return null;
+            const c = new Array(n).fill(0);
+            for (let lag = 0; lag < n; lag++) {
+                for (let i = 0; i < n - lag; i++) c[lag] += trimmed[i] * trimmed[i + lag];
+            }
+            // Past the first trough, or the answer is always lag 0.
+            let d = 0;
+            while (d < n - 1 && c[d] > c[d + 1]) d++;
+            let best = -1, bestVal = -1;
+            for (let lag = d; lag < n; lag++) {
+                if (c[lag] > bestVal) { bestVal = c[lag]; best = lag; }
+            }
+            if (best <= 0) return null;
+            // Parabolic interpolation around the peak: a lag is an
+            // integer number of samples, and a note is not.
+            const x1 = c[best - 1] || 0, x2 = c[best], x3 = c[best + 1] || 0;
+            const a = (x1 + x3 - 2 * x2) / 2, b = (x3 - x1) / 2;
+            const shift = a ? -b / (2 * a) : 0;
+            const hz = sampleRate / (best + shift);
+            return (hz > 30 && hz < 5000) ? hz : null;
+        },
+
+        // A frequency as a note name, in the SAME grammar
+        // program_lessons._NOTE_RE validates -- so a heard note and a
+        // written target are directly comparable strings rather than two
+        // spellings of one idea. `cents` is how far off it is, signed,
+        // which is what a needle draws.
+        hzToNote(hz) {
+            const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+            const semis = 12 * Math.log2(hz / 440) + 69;      // MIDI number
+            const nearest = Math.round(semis);
+            const exact = 440 * Math.pow(2, (nearest - 69) / 12);
+            return {
+                name: NAMES[((nearest % 12) + 12) % 12] + (Math.floor(nearest / 12) - 1),
+                cents: Math.round(1200 * Math.log2(hz / exact)),
+            };
+        },
+
+        // A tempo is a GAP, never a count of peaks: five claps say
+        // nothing until you know how far apart they were, and one clap
+        // says nothing at all. Median rather than mean, so one
+        // dropped or doubled peak moves the answer by nothing.
+        peaksToBpm(times) {
+            const t = (times || []).slice().sort((a, b) => a - b);
+            if (t.length < 2) return null;
+            const gaps = [];
+            for (let i = 1; i < t.length; i++) gaps.push(t[i] - t[i - 1]);
+            gaps.sort((a, b) => a - b);
+            const mid = gaps[Math.floor(gaps.length / 2)];
+            return mid > 0 ? 60 / mid : null;
         },
 
         // --- listening -------------------------------------------------
@@ -1377,7 +1513,11 @@ function lessonPlayer() {
         // note, and the lesson carries on -- a wall panel plausibly has
         // no microphone, and saying no has to cost nothing.
         async startListening(s) {
-            this.listenLeft = s.seconds || 20;
+            // A tuner is not a timed challenge -- it is an instrument you
+            // stand in front of until the string is right -- so it takes
+            // the ceiling rather than a listen scene's own window.
+            this.listenLeft = s.seconds
+                || (s.kind === 'tuner' ? 120 : 20);
             this.listenTimer = setInterval(() => {
                 this.listenLeft = Math.max(0, this.listenLeft - 1);
                 if (this.listenLeft <= 0) {
@@ -1415,6 +1555,53 @@ function lessonPlayer() {
             let sum = 0;
             for (let i = 0; i < this.micBuf.length; i++) sum += this.micBuf[i] * this.micBuf[i];
             const rms = Math.sqrt(sum / this.micBuf.length);
+            const now = (this.micCtx && this.micCtx.currentTime) || 0;
+
+            if (p.kind === 'tuner' || p.mode === 'pitch') {
+                const hz = this.autoCorrelate(this.micBuf,
+                                              (this.micCtx || {}).sampleRate || 44100);
+                const note = hz ? this.hzToNote(hz) : null;
+                this.tunerNote = note ? note.name : '';
+                this.tunerCents = note ? note.cents : 0;
+                // A note has to HOLD. Advancing on one lucky frame would
+                // let a passing overtone off the wrong string finish the
+                // scene for you, which is the opposite of listening.
+                if (p.mode === 'pitch' && note && p.target && note.name === p.target) {
+                    if (!this.pitchHeldSince) this.pitchHeldSince = now;
+                    if (now - this.pitchHeldSince >= 0.5) {
+                        this.listenHeard = 'That is ' + note.name + '.';
+                        this.markHeard();
+                    }
+                } else {
+                    this.pitchHeldSince = 0;
+                }
+                return;
+            }
+
+            if (p.mode === 'tempo') {
+                // A peak is a rise above the floor after a quiet frame,
+                // with a refractory gap so one loud strike is not counted
+                // three times as it decays.
+                if (rms > 0.05 && now - (this.lastPeakAt || 0) > 0.15) {
+                    this.lastPeakAt = now;
+                    this.peaks.push(now);
+                    if (this.peaks.length > 12) this.peaks.shift();
+                }
+                const bpm = this.peaksToBpm(this.peaks);
+                if (bpm) {
+                    this.listenHeard = Math.round(bpm) + ' bpm';
+                    // Within a tenth of the asked-for tempo is keeping
+                    // up. It is a MATCH, not a mark: the scene says the
+                    // number it heard and never whether it was good.
+                    const want = p.bpm || this.metroBpm();
+                    if (want && Math.abs(bpm - want) / want < 0.1
+                        && this.peaks.length >= 4) {
+                        this.markHeard();
+                    }
+                }
+                return;
+            }
+
             if (p.mode === 'presence' && rms > 0.02) {
                 this.listenHeard = 'Heard you.';
                 this.markHeard();

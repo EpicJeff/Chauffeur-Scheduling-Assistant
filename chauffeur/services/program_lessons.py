@@ -188,6 +188,15 @@ def _valid_cards(p):
                     for x in pairs))
 
 
+def _valid_tuner(p):
+    # A tuner needs nothing at all -- "tune up" is a complete instruction
+    # and the needle draws whatever it hears. `target` is optional and,
+    # when unparseable, simply absent: a highlighted note the player
+    # cannot name is worse than no highlight, and it is never worth
+    # failing a whole scene over.
+    return True
+
+
 def _valid_listen(p):
     # The mode is the whole contract; everything else is optional and
     # mode-shaped. A target that is not a note and a bpm out of range are
@@ -249,6 +258,7 @@ PRIMITIVES = {
     'counter': _valid_counter,
     'hints': _valid_hints,
     'listen': _valid_listen,
+    'tuner': _valid_tuner,
 }
 
 # A generated lesson may structure practice; it may not prescribe what a
@@ -326,6 +336,12 @@ def _build_primitive(prim):
                 'pairs': [{'front': _clean_text(x.get('front'), MAX_SHORT_TEXT),
                            'back': _clean_text(x.get('back'), MAX_SHORT_TEXT)}
                           for x in prim['pairs']]}
+    if kind == 'tuner':
+        built = {'kind': 'tuner'}
+        target = str(prim.get('target') or '')
+        if _NOTE_RE.match(target):
+            built['target'] = target
+        return built
     if kind == 'listen':
         built = {'kind': 'listen', 'mode': prim['mode'],
                  'seconds': max(MIN_LISTEN_SECONDS,
@@ -727,6 +743,8 @@ _SYSTEM = (
     "that are not played at all -- never a fret or a finger for those), "
     '{"kind":"cards","pairs":[{"front":"","back":""}]}, '
     '{"kind":"hints","steps":["widest nudge","narrower"],"answer":""} '
+    '{"kind":"tuner","target":"E2"} '
+    "(a live tuner needle; target is optional), "
     '{"kind":"listen","mode":"presence","seconds":20} '
     "(listens through the microphone where there is one and becomes a "
     "tap where there is not -- mode is presence, meaning they said or "

@@ -1793,6 +1793,151 @@ def scenario_a_cue_stores_nothing():
                   f"a cue is said and forgotten -- {fn} must not {forbidden}")
 
 
+# --- pitch, and the tuner -----------------------------------------------
+
+
+def _pitch_under_node():
+    """The pitch detector, driven by synthesized sound rather than read.
+
+    A detector that is merely plausible-looking is worthless: it either
+    lands on the note or it does not, and the only way to know is to
+    generate a wave whose frequency is already known and ask. Same lesson
+    the fretboard round taught this file about geometry, one sense over.
+    """
+    import json
+    import os
+    import re
+    import shutil
+    import subprocess
+    import tempfile
+    node = shutil.which('node')
+    if not node:
+        print('  skip  node is not installed')
+        return None
+    src = _read('components/lesson_player.html')
+    fns = {}
+    for name, sig in [('autoCorrelate', r'autoCorrelate\(buf, sampleRate\)'),
+                      ('hzToNote', r'hzToNote\(hz\)'),
+                      ('peaksToBpm', r'peaksToBpm\(times\)')]:
+        m = re.search(r'\n        ' + sig + r' \{(.*?)\n        \},', src, re.S)
+        check(m, f"{name} is findable")
+        body = m.group(1)
+        check('this.' not in body,
+              f"{name} must stay pure so it can be run here, got {body!r}")
+        fns[name] = 'function ' + name + '(' \
+            + {'autoCorrelate': 'buf, sampleRate', 'hzToNote': 'hz',
+               'peaksToBpm': 'times'}[name] + ') {' + body + '\n}\n'
+    harness = r'''
+const SR = 44100;
+function tone(hz, {harmonics = 0, noise = 0} = {}) {
+    const buf = new Float32Array(2048);
+    for (let i = 0; i < buf.length; i++) {
+        let v = Math.sin(2 * Math.PI * hz * i / SR);
+        for (let h = 2; h <= 1 + harmonics; h++) {
+            v += Math.sin(2 * Math.PI * hz * h * i / SR) / h;
+        }
+        // Deterministic pseudo-noise: a fixed irrational walk, so the
+        // same test runs the same way on every machine, forever.
+        if (noise) v += noise * (((i * 2654435761) % 1000) / 500 - 1);
+        buf[i] = v / 2;
+    }
+    return buf;
+}
+const out = {};
+out.a4 = autoCorrelate(tone(440), SR);
+out.g3 = autoCorrelate(tone(196), SR);
+out.rich = autoCorrelate(tone(220, {harmonics: 3, noise: 0.05}), SR);
+out.silence = autoCorrelate(new Float32Array(2048), SR);
+out.notes = [440, 196, 261.63, 82.41].map(hz => hzToNote(hz));
+// A click train at a steady 100 bpm is 0.6s apart.
+out.bpm100 = peaksToBpm([0, 0.6, 1.2, 1.8, 2.4]);
+out.bpm_none = peaksToBpm([1.0]);
+console.log(JSON.stringify(out));
+'''
+    scratch = tempfile.mkdtemp(prefix='chauffeur_pitch_')
+    path = os.path.join(scratch, 'run.mjs')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(''.join(fns.values()) + harness)
+    proc = subprocess.run([node, path], capture_output=True, text=True,
+                          encoding='utf-8', errors='replace', timeout=60)
+    check(proc.returncode == 0, f"the detector threw:\n{proc.stderr[-1500:]}")
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def _within_a_semitone(got, want):
+    return got is not None and abs(1200 * (__import__('math').log2(got / want))) < 100
+
+
+def scenario_the_pitch_detector_lands_on_the_note():
+    got = _pitch_under_node()
+    if got is None:
+        return
+    check(_within_a_semitone(got['a4'], 440),
+          f"a 440 sine reads as A4, got {got['a4']}")
+    check(_within_a_semitone(got['g3'], 196),
+          f"a 196 sine reads as G3, got {got['g3']}")
+    check(_within_a_semitone(got['rich'], 220),
+          f"and a real instrument -- harmonics on top, noise underneath -- "
+          f"still reads its fundamental, got {got['rich']}")
+
+
+def scenario_silence_is_not_a_note():
+    """The failure mode that matters most: a detector that answers
+    anyway. A tuner needle jumping around an empty room is worse than a
+    tuner that says nothing."""
+    got = _pitch_under_node()
+    if got is None:
+        return
+    check(got['silence'] is None, f"silence reads as nothing, got {got['silence']}")
+
+
+def scenario_a_frequency_becomes_a_note_name_the_validator_would_accept():
+    got = _pitch_under_node()
+    if got is None:
+        return
+    import re
+    names = [n['name'] for n in got['notes']]
+    check(names == ['A4', 'G3', 'C4', 'E2'],
+          f"the four known frequencies name themselves, got {names}")
+    for n in names:
+        check(re.match(r'^[A-G][#b]?[0-8]$', n),
+              f"and in the same grammar the sanitizer validates, got {n}")
+
+
+def scenario_the_tempo_reader_counts_the_gaps_not_the_peaks():
+    got = _pitch_under_node()
+    if got is None:
+        return
+    check(abs(got['bpm100'] - 100) < 1,
+          f"peaks 0.6s apart are 100 bpm, got {got['bpm100']}")
+    check(got['bpm_none'] is None,
+          f"and one peak is not a tempo -- a tempo is a GAP, got "
+          f"{got['bpm_none']}")
+
+
+def scenario_a_pitch_scene_advances_on_the_target_being_held():
+    """Not on one lucky frame. A note has to hold, or a passing overtone
+    from the wrong string finishes the scene for you."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        listenTick\(\) \{(.*?)\n        \},', src, re.S)
+    body = m.group(1) if m else ''
+    check('hzToNote' in body, f"the tick names what it heard, got {body!r}")
+    check('pitchHeldSince' in body or 'heldSince' in body,
+          "and requires it to have held")
+
+
+def scenario_the_tuner_draws_a_needle_not_a_verdict():
+    """A tuner says WHICH note and how far off. It never says good."""
+    src = _read('components/lesson_player.html')
+    check("primitive.kind === 'tuner'" in src, "the player draws a tuner")
+    check('tunerCents' in src, "with a distance from the note in cents")
+    for word in ('good', 'perfect', 'well done', 'nice'):
+        import re
+        check(not re.search(r'>\s*' + word, src, re.I),
+              f"and never a verdict like {word!r}")
+
+
 # --- the microphone -----------------------------------------------------
 
 
@@ -2217,6 +2362,12 @@ if __name__ == '__main__':
     scenario_the_cue_scheduler_rides_the_beats_own_timer()
     scenario_cues_never_outlive_their_scene()
     scenario_a_cue_stores_nothing()
+    scenario_the_pitch_detector_lands_on_the_note()
+    scenario_silence_is_not_a_note()
+    scenario_a_frequency_becomes_a_note_name_the_validator_would_accept()
+    scenario_the_tempo_reader_counts_the_gaps_not_the_peaks()
+    scenario_a_pitch_scene_advances_on_the_target_being_held()
+    scenario_the_tuner_draws_a_needle_not_a_verdict()
     scenario_the_mic_is_asked_for_lazily_and_never_at_open()
     scenario_the_mic_is_released_on_every_way_out()
     scenario_nothing_heard_is_ever_recorded_or_sent()
