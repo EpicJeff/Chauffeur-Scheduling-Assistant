@@ -35,7 +35,30 @@ COUNTER_MIN_SPR = 1
 COUNTER_MAX_SPR = 10
 COUNTER_DEFAULT_SPR = 3
 
+# What Argyle SAYS on a scene, separate from what the scene shows. Capped
+# shorter than MAX_TEXT on purpose: a spoken line is heard once, at the
+# pace a voice reads it, over whatever else is happening in the room --
+# past a couple of sentences nobody is still listening, and a beat's own
+# visible text is where the long version belongs.
+MAX_SPEAK = 200
+
+# Two voices for one persona, not two personas: `coach` paces a drill,
+# `calm` winds one down. The player maps them to rate and pitch; nothing
+# here knows or cares how.
+TONES = ('coach', 'calm')
+
+# The two audio figures the player can draw, closed-set for exactly the
+# reason every primitive kind is: a chime the renderer has never heard of
+# is silence with a name.
+CHIMES = ('success', 'fanfare')
+
 _NOTE_RE = re.compile(r'^[A-G][#b]?[0-8]$')
+
+# A BCP-47 tag only as far as this app can actually act on one: a language
+# and, optionally, a region. The player picks a voice by prefix, so the
+# region half is a preference the browser may ignore and the language half
+# is the part that has to be right.
+_LANG_RE = re.compile(r'^[a-z]{2}(-[A-Z]{2})?$')
 
 
 def _to_int(value):
@@ -262,6 +285,37 @@ def _screened(text: str, origin: str) -> bool:
     return origin == 'generated' and bool(_PHYSICAL_RE.search(text))
 
 
+def _voice_fields(raw: dict, origin: str) -> dict:
+    """The fields any scene may carry for Argyle's voice.
+
+    Screened exactly like visible text, because the spoken words are the
+    ones a kid obeys -- a line nobody can read is still a line somebody
+    hears and does, and screening only what is drawn would have left the
+    louder half of a lesson unguarded. Same answer as `_primitive_text`
+    gives a card face, one field over.
+
+    A field that fails is DROPPED; the scene is not. That asymmetry is
+    deliberate and it is the opposite of what a screened `text` gets: the
+    visible half already passed its own screen, so the beat is sound and
+    practice is never blocked over a spoken line nobody needed. A scene
+    that plays silently is a smaller loss than a scene that vanishes.
+    """
+    out = {}
+    speak = _clean_text(raw.get('speak'), MAX_SPEAK)
+    if speak and not _screened(speak, origin):
+        out['speak'] = speak
+    lang = raw.get('speak_lang')
+    if isinstance(lang, str) and _LANG_RE.match(lang):
+        out['speak_lang'] = lang
+    if raw.get('tone') in TONES:
+        out['tone'] = raw['tone']
+    if raw.get('chime') in CHIMES:
+        out['chime'] = raw['chime']
+    if raw.get('grownup'):
+        out['grownup'] = True
+    return out
+
+
 def sanitize_script(scenes: list, origin: str) -> list:
     """Every script through one door. Clamps, whitelists, screens; returns
     what survives, which may be nothing — and nothing is a fine answer,
@@ -278,11 +332,16 @@ def sanitize_script(scenes: list, origin: str) -> list:
         if not isinstance(raw, dict):
             continue
         kind = raw.get('type')
+        # Computed once per scene and merged by every branch below,
+        # degrade paths included -- the voice rides the SCENE, not one
+        # type of it, so a `show` that speaks past its caption and a
+        # `check` that reads its ask aloud cost nothing extra here.
+        voice = _voice_fields(raw, origin)
         if kind == 'say':
             text = _clean_text(raw.get('text'))
             if not text or _screened(text, origin):
                 continue
-            out.append({'type': 'say', 'text': text})
+            out.append({'type': 'say', 'text': text, **voice})
         elif kind == 'do':
             text = _clean_text(raw.get('text'))
             if not text or _screened(text, origin):
@@ -294,12 +353,13 @@ def sanitize_script(scenes: list, origin: str) -> list:
             bpm = _to_int(raw.get('metronome_bpm'))
             if bpm is not None:
                 scene['metronome_bpm'] = max(30, min(240, bpm))
+            scene.update(voice)
             out.append(scene)
         elif kind == 'check':
             ask = _clean_text(raw.get('ask'), MAX_SHORT_TEXT)
             if not ask or _screened(ask, origin):
                 continue
-            out.append({'type': 'check', 'ask': ask})
+            out.append({'type': 'check', 'ask': ask, **voice})
         elif kind == 'show':
             prim = raw.get('primitive')
             caption = _clean_text(raw.get('caption'), MAX_SHORT_TEXT)
@@ -317,12 +377,12 @@ def sanitize_script(scenes: list, origin: str) -> list:
                 continue
             if built:
                 out.append({'type': 'show', 'primitive': built,
-                            'caption': caption})
+                            'caption': caption, **voice})
             elif (isinstance(prim, dict) and prim.get('kind') in PRIMITIVES
                   and caption):
                 # A known visual with broken params degrades to its own
                 # caption — the words survive, the wrong picture does not.
-                out.append({'type': 'say', 'text': caption})
+                out.append({'type': 'say', 'text': caption, **voice})
             # An unknown kind is dropped whole: the model demanded a
             # visual this player has never heard of.
     return out

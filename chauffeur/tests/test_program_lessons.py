@@ -1181,6 +1181,129 @@ def scenario_sweep_report_names_over_the_pass_limit():
     check(len(over) == 1, f"named as over the pass limit, got {out['slots']}")
 
 
+# --- the voice fields ---------------------------------------------------
+# Every scene may now carry what Argyle SAYS, separate from what is shown.
+# The spoken words are the ones a kid obeys, so they run the identical
+# screens the visible text already does -- these scenarios exist to hold
+# that equality, field by field, on both origins.
+
+
+def scenario_a_scene_may_carry_what_argyle_says():
+    out = pl.sanitize_script([
+        {'type': 'say', 'text': 'This is the C chord.',
+         'speak': 'x' * 5000},
+    ], 'generated')
+    check(len(out) == 1, f"the scene survives, got {out}")
+    check(len(out[0]['speak']) == pl.MAX_SPEAK,
+          f"speak clamped to {pl.MAX_SPEAK}, got {len(out[0].get('speak', ''))}")
+
+
+def scenario_a_spoken_line_runs_the_body_screen_on_every_origin():
+    """The whole reason a spoken field is screened at all: a line nobody
+    can see is still a line a five-year-old hears and obeys."""
+    for origin in ('cited', 'generated'):
+        out = pl.sanitize_script([
+            {'type': 'say', 'text': 'Three fingers.',
+             'speak': 'This one burns calories.'},
+        ], origin)
+        check(len(out) == 1, f"the scene itself survives on {origin}, got {out}")
+        check('speak' not in out[0],
+              f"a body-composition line never speaks on {origin}, got {out[0]}")
+
+
+def scenario_a_spoken_line_runs_the_physical_screen_on_generated_only():
+    made_up = pl.sanitize_script([
+        {'type': 'say', 'text': 'Three fingers.',
+         'speak': 'Keep your wrist straight.'},
+    ], 'generated')
+    check('speak' not in made_up[0],
+          f"a generated script may not prescribe a body out loud, got {made_up[0]}")
+    cited = pl.sanitize_script([
+        {'type': 'say', 'text': 'Three fingers.',
+         'speak': 'Keep your wrist straight.'},
+    ], 'cited')
+    check(cited[0].get('speak') == 'Keep your wrist straight.',
+          f"a real teacher's page may say it, and the citation carries it, "
+          f"got {cited[0]}")
+
+
+def scenario_a_language_tag_is_a_tag_or_it_is_nothing():
+    """The tag picks a VOICE. A malformed one drops the field and keeps
+    the scene -- a wrong-language voice is worse than the default one, and
+    neither is worth losing the beat over."""
+    good = pl.sanitize_script([
+        {'type': 'say', 'text': 'la manzana', 'speak': 'la manzana',
+         'speak_lang': 'es'},
+        {'type': 'say', 'text': 'o carro', 'speak': 'o carro',
+         'speak_lang': 'pt-BR'},
+    ], 'cited')
+    check([s.get('speak_lang') for s in good] == ['es', 'pt-BR'],
+          f"a well-formed tag survives, got {good}")
+    for junk in ('esp', 'ES', 'e', 'es-br', 'es_MX', 42, None, {'lang': 'es'}):
+        out = pl.sanitize_script([
+            {'type': 'say', 'text': 'la manzana', 'speak': 'la manzana',
+             'speak_lang': junk},
+        ], 'cited')
+        check(len(out) == 1 and 'speak_lang' not in out[0],
+              f"{junk!r} is not a tag, and the scene still plays, got {out}")
+
+
+def scenario_tone_and_chime_are_closed_sets():
+    out = pl.sanitize_script([
+        {'type': 'say', 'text': 'Settle in.', 'tone': 'calm',
+         'chime': 'fanfare'},
+        {'type': 'say', 'text': 'Go.', 'tone': 'loud', 'chime': 'airhorn'},
+    ], 'generated')
+    check(out[0].get('tone') == 'calm' and out[0].get('chime') == 'fanfare',
+          f"the shipped values survive, got {out[0]}")
+    check('tone' not in out[1] and 'chime' not in out[1],
+          f"an invented one is dropped, got {out[1]}")
+
+
+def scenario_the_grown_up_flag_normalises_to_a_bool():
+    out = pl.sanitize_script([
+        {'type': 'do', 'text': 'Slice the apple.', 'grownup': 1},
+        {'type': 'do', 'text': 'Stir the bowl.'},
+        {'type': 'do', 'text': 'Wash up.', 'grownup': False},
+    ], 'generated')
+    check(out[0].get('grownup') is True,
+          f"a truthy flag becomes a real bool, got {out[0]}")
+    check('grownup' not in out[1] and 'grownup' not in out[2],
+          f"absent and falsy both stay absent, got {out[1:]}")
+
+
+def scenario_every_scene_type_may_speak():
+    """The fields ride the SCENE, not one branch of it -- a `show` that
+    speaks past its own caption and a `check` that reads its ask aloud are
+    the two a first cut would most easily have missed."""
+    out = pl.sanitize_script([
+        {'type': 'say', 'text': 'Ready.', 'speak': 'Ready.'},
+        {'type': 'do', 'text': 'Play it.', 'speak': 'Play it four times.',
+         'tone': 'coach'},
+        {'type': 'check', 'ask': 'Even?', 'speak': 'Was that even?'},
+        {'type': 'show', 'caption': 'C major',
+         'primitive': {'kind': 'keyboard', 'keys': ['C4', 'E4', 'G4']},
+         'speak': 'C, E and G.', 'speak_lang': 'en-US'},
+    ], 'cited')
+    check(len(out) == 4, f"all four survive, got {out}")
+    check(all(s.get('speak') for s in out),
+          f"every type carries its spoken line, got {out}")
+    check(out[3].get('speak_lang') == 'en-US', f"and its tag, got {out[3]}")
+
+
+def scenario_a_screened_spoken_line_never_takes_the_scene_with_it():
+    """A dropped `speak` is a scene that plays silently, not a scene that
+    vanishes -- the visible text passed its own screen, and practice is
+    never blocked by a line nobody needed."""
+    out = pl.sanitize_script([
+        {'type': 'do', 'text': 'Four slow changes.',
+         'speak': 'Rotate the elbow as you go.'},
+    ], 'generated')
+    check(len(out) == 1 and out[0]['text'] == 'Four slow changes.',
+          f"the beat survives, got {out}")
+    check('speak' not in out[0], f"silently, got {out[0]}")
+
+
 if __name__ == '__main__':
     scenario_scene_cap()
     scenario_text_cap_and_type_whitelist()
@@ -1231,4 +1354,12 @@ if __name__ == '__main__':
     scenario_sweep_report_programs_switch_still_refuses_even_forced()
     scenario_sweep_report_names_why_a_slot_was_skipped()
     scenario_sweep_report_names_over_the_pass_limit()
+    scenario_a_scene_may_carry_what_argyle_says()
+    scenario_a_spoken_line_runs_the_body_screen_on_every_origin()
+    scenario_a_spoken_line_runs_the_physical_screen_on_generated_only()
+    scenario_a_language_tag_is_a_tag_or_it_is_nothing()
+    scenario_tone_and_chime_are_closed_sets()
+    scenario_the_grown_up_flag_normalises_to_a_bool()
+    scenario_every_scene_type_may_speak()
+    scenario_a_screened_spoken_line_never_takes_the_scene_with_it()
     print("test_program_lessons OK")
