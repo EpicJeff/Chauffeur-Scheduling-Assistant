@@ -55,6 +55,43 @@ those, filename included. Re-running it is safe: it overwrites, and a key
 whose render fails is dropped from the manifest rather than left pointing
 at a broken file.
 
+WHAT WAS ACTUALLY MEASURED (2026-09-01) — DO NOT RETRY THESE
+-------------------------------------------------------------
+Three rounds were spent guessing at output nobody could hear. These are
+the numbers that ended it, all against this house's own voice
+(`en-US-AndrewNeural`, an Edge/Azure neural voice — NOT Piper, whatever
+the rest of the docs assume). Byte length is the tell: a clip that reads
+something extra aloud is several times longer than the sound it was
+supposed to be.
+
+  through Home Assistant `tts.speak`:
+    "k"                                       4,176 B   says "kay"
+    "k as in kite"                           10,656 B   says the phrase
+    "<phoneme alphabet='ipa' ph='k'>k</...>" 34,704 B   READS THE MARKUP
+  → HA passes the message through as LITERAL TEXT. It neither
+    interprets SSML nor strips it. Every text route dies here.
+
+  calling the Edge endpoint directly, bypassing HA entirely
+  (edge_tts, injecting an unescaped fragment into `Communicate.texts`,
+  which `mkssml` interpolates into its own <speak><voice><prosody>):
+    raw plain word "hello"                   10,656 B   works — the
+                                                        injection itself
+                                                        is sound
+    "<break time='300ms'/>"                  NoAudioReceived
+    "<phoneme alphabet='ipa' ...>"           NoAudioReceived
+    "<say-as interpret-as='characters'>"     NoAudioReceived
+  → Microsoft's free read-aloud endpoint accepts ONLY the envelope it
+    generates and rejects every additional tag. The plain-word control is
+    what proves this is the service refusing markup rather than a broken
+    injection.
+
+So SSML is out on both free paths. What remains: paid Azure Cognitive
+Services TTS, which does honour `<phoneme>` and needs a subscription key;
+or a recording. Clipping the onset off a real word ("kite" → /k/) was
+considered and rejected — plosives do not survive being cut out of a
+word, and a confidently-wrong letter sound is the exact thing this whole
+closed set exists to prevent.
+
 WHY AN ISOLATED SOUND IS HARD, AND WHAT ACTUALLY WORKS
 ------------------------------------------------------
 A text-to-speech engine phonemizes GRAPHEMES AS WORDS. `k` is the word
