@@ -410,7 +410,21 @@ def _render(key: str, phrase: str, engine: str, language: str, voice: str):
     name = f'{key}{ext}'
     with open(os.path.join(OUT_DIR, name), 'wb') as f:
         f.write(audio)
+    _SIZES[name] = len(audio)
     return name
+
+
+# Byte size of the last thing written, per file. The one property of a
+# rendered clip that can be judged without hearing it, and it is enough:
+# every failure this tool has had reads something EXTRA aloud -- a letter
+# name, a whole exemplar sentence, an SSML tag spelled out character by
+# character -- and every one of those is dramatically longer than the
+# sound it was supposed to be. Length is the tell.
+_SIZES = {}
+
+
+def _kb(name):
+    return (_SIZES.get(name, 0) / 1024.0) if name else 0.0
 
 
 def _ssml(key: str, letter: str) -> str:
@@ -490,10 +504,27 @@ def main():
     if probe:
         print(f"\nProbing {probe!r} — listen to each and put the winner in\n"
               f"{OVERRIDES} as {{\"{probe}\": \"<the text that worked>\"}}.\n")
+        rendered = []
         for n, text in enumerate(_probe_texts(probe, phrases[probe]), 1):
             name = _render(f'probe_{probe}_{n}', text, engine, language, voice)
-            print(f"  {n}. {'ok ' if name else 'FAILED'} {name or '':22} "
-                  f"said: {text!r}")
+            rendered.append((n, name, text))
+        floor = min([_kb(nm) for _, nm, _ in rendered if nm] or [0]) or 1.0
+        for n, name, text in rendered:
+            if not name:
+                print(f"  {n}. FAILED  said: {text!r}")
+                continue
+            ratio = _kb(name) / floor
+            # A clip several times longer than the shortest candidate said
+            # something the shortest one did not -- a letter name, a whole
+            # sentence, or an SSML tag read out character by character.
+            # That is judgeable without hearing it, which is the point.
+            verdict = 'READS IT ALOUD' if ratio >= 2.5 else 'short enough'
+            print(f"  {n}. {name:24} {_kb(name):6.1f} KB  {ratio:4.1f}x  "
+                  f"{verdict:15} said: {text!r}")
+        print("\nAnything marked READS IT ALOUD is saying the markup or the "
+              "whole phrase.\nThe shortest candidate is the only one that "
+              "COULD be an isolated sound —\nlisten to it to find out whether "
+              "it is the right one.")
         print("\nThese probe_* files are scratch — delete them once you have "
               "picked.\nIf none of them is the real sound, that is the honest "
               "answer for this\nvoice: record it instead and name the file in "
