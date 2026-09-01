@@ -188,6 +188,49 @@ def _tts_config():
     return (ents[0]['entity_id'] if ents else None), None, None
 
 
+def speak_on(entity_id: str, message: str) -> dict:
+    """Say something on ONE named media player, skipping area matching.
+
+    `announce()` below answers "which speaker serves this room"; this
+    answers "say it on exactly that one", which is a different question
+    and the only one some callers can ask. A browser that has registered
+    itself as a Music Assistant player — the PWA as "<Name>'s phone", a
+    wall board as its own screen — belongs to no Home Assistant AREA at
+    all, so `match_area` can never find it however the room is spelled.
+    The device IS the address.
+
+    Deliberately the media-player half of `announce()` and nothing else:
+    the same `_tts_config()` engine, language and voice, the same
+    `tts.speak`, so a house cannot end up with two voices depending on
+    which surface happened to ask. No satellite branch, because a
+    satellite is a room's Argyle and is reached by naming its room.
+
+    Same shape of answer as `announce()`, so a caller can treat the two
+    interchangeably.
+    """
+    message = (message or '').strip()
+    if not message:
+        return {'status': 'error', 'message': "There's nothing to say."}
+    if not (entity_id or '').startswith('media_player.'):
+        return {'status': 'error',
+                'message': f"{entity_id} is not a media player."}
+    tts, language, voice = _tts_config()
+    if not tts:
+        return {'status': 'error',
+                'message': "No text-to-speech engine is set up in Home Assistant."}
+    data = {'entity_id': tts, 'media_player_entity_id': entity_id,
+            'message': message}
+    if language:
+        data['language'] = language
+    if voice:
+        data['options'] = {'voice': voice}
+    if ha_api.call_service('tts', 'speak', data) is None:
+        return {'status': 'error',
+                'message': f"{entity_id} didn't take the announcement."}
+    return {'status': 'success', 'entity_id': entity_id, 'kind': 'media_player',
+            'message': f"Said on {entity_id}: “{message}”"}
+
+
 def announce(room: str, message: str) -> dict:
     """Resolve the room, pick the speaker, say the words. Returns
     {'status', 'message', ...} in the agent-tool shape; success carries

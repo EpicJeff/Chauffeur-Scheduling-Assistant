@@ -144,6 +144,14 @@
         },
     });
 
+    // Announced to whatever shared component wants to speak through this
+    // handset -- the lesson player's own voice does. Same
+    // chf-prefixed-global pattern window.chfBase and
+    // window.chfHasLessonDoneListener already use, and it exists so
+    // nothing ever registers a SECOND Sendspin player for one device:
+    // the key is the identity, and this is the instance holding it.
+    window.chfLocalPlayer = _mwPhone;
+
     function _mwPhoneName() {
         if (typeof membersData !== 'undefined' && typeof selectedMemberId !== 'undefined') {
             const me = (membersData || []).find(m => m.id === selectedMemberId);

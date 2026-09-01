@@ -683,6 +683,12 @@ function lessonPlayer() {
         // Which room this SCREEN is in, on a wall panel. Empty everywhere
         // else and empty until somebody says -- see loadRoom()/askRoom().
         room: '',
+        // This device's own Music Assistant player, as a Home Assistant
+        // entity. Empty until MusicLogic has one AND somebody has exposed
+        // it in Music Assistant, which is a one-time step per device --
+        // so empty is the ordinary state on day one and the voice ladder
+        // simply falls through it.
+        deviceEntity: '',
         // A wait beat's on-screen countdown. Cosmetic only -- the call
         // into the room is armed on the server and outlives this.
         waitLeft: 0, waitTimer: null,
@@ -738,6 +744,12 @@ function lessonPlayer() {
                 ? lesson.scenes : this.stepsToScenes(this.w);
             this.idx = 0; this.openFlag = true;
             this.room = this.loadRoom();
+            this.deviceEntity = '';
+            // Not awaited: the session starts on time and the first
+            // lines come out of the browser, which is what would have
+            // happened anyway. Once the entity resolves, everything from
+            // that beat on is the house voice.
+            this.ensureDevicePlayer();
             // Asked ONCE per device, and never again whatever the answer
             // was -- a household that wants the panel to stay quiet says
             // so by cancelling, and the header chip is how they change
@@ -1274,8 +1286,97 @@ function lessonPlayer() {
         // the moment it was about is worse than one nobody heard.
         say(text, lang, tone) {
             if (this.muted || !text) return;
+            if (this.deviceSay(text)) return;
             if (this.roomSay(text)) return;
             this.sayLocal(text, lang, tone);
+        },
+
+        // The device channel, and the first rung of the ladder. Every
+        // surface that can run a lesson already registers itself as a
+        // real Music Assistant player -- the PWA as "<Name>'s phone", a
+        // wall board as its own screen -- so the house voice can come out
+        // of the thing the person is actually standing at instead of
+        // whatever text-to-speech that device happened to ship with.
+        //
+        // Addressed by ENTITY rather than by room because a registered
+        // browser player belongs to no Home Assistant area at all; area
+        // matching can never find it however the room is spelled. That is
+        // the whole reason `announce.speak_on` exists beside
+        // `announce.announce`.
+        //
+        // Fire-and-forget, like roomSay: a session never waits on Home
+        // Assistant, and a player that will not take the line is a quiet
+        // device, not a stalled lesson. Returns whether the line was
+        // handed off, so say() knows not to also read it out locally.
+        deviceSay(text) {
+            if (!this.deviceEntity || this.preview) return false;
+            try {
+                fetch((window.chfBase || '') + 'api/lessons/speak', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({entity_id: this.deviceEntity,
+                                          text: String(text)}),
+                }).catch(() => {});
+            } catch (e) { return false; }
+            return true;
+        },
+
+        // Make sure this device HAS a player, start it, and find out
+        // which Home Assistant entity it turned into.
+        //
+        // It REUSES `window.chfLocalPlayer` wherever a host already made
+        // one, and that is not an optimisation: the key is the identity,
+        // and a second instance under the same key is the duplicate
+        // Music-Assistant-player bug this app has already paid for once.
+        // Only a host with no player of its own (a board with no music
+        // card) gets one minted here, under the SAME canonical key the
+        // board itself would use, so adding a music card later adopts
+        // this registration rather than orphaning it.
+        //
+        // Started even though it cannot work until somebody exposes it in
+        // Music Assistant -- that is a one-time step per device, and a
+        // player nobody ever starts is a step nobody is ever prompted to
+        // take. The prompting is MusicLogic's own: the "is now a Music
+        // Assistant player 🎉" sentence and the failure sentences beside
+        // it all come from there, so this hands its creation the same
+        // `onNotice` the music widget does rather than inventing a second
+        // vocabulary for one event.
+        //
+        // Never in a preview, and never where there is no music logic at
+        // all -- programs.html and calendar.html load none, and a lesson
+        // still plays there in the browser's own voice.
+        async ensureDevicePlayer() {
+            if (this.preview) return;
+            if (typeof MusicLogic === 'undefined') return;
+            try {
+                let local = window.chfLocalPlayer;
+                if (!local) {
+                    const key = this.panel
+                        ? 'chauffeur_sendspin_id::screen::' + MusicLogic.deviceId()
+                        : 'chauffeur_sendspin_id::device';
+                    const name = this.panel
+                        ? 'Chauffeur screen ' + MusicLogic.deviceTag()
+                        : 'Chauffeur phone ' + MusicLogic.deviceTag();
+                    local = MusicLogic.localPlayer({name, key}, {
+                        get apiBase() { return window.chfBase || ''; },
+                        onNotice: (msg) => {
+                            if (typeof showGlobalAlert === 'function') showGlobalAlert(msg);
+                        },
+                    });
+                    window.chfLocalPlayer = local;
+                }
+                local.wanted = true;
+                await local.start();
+                const found = await MusicLogic.findLocalEntity(
+                    local, {apiBase: window.chfBase || ''});
+                // Null until Music Assistant has been told to expose this
+                // player, and null again whenever two players answer to
+                // one name (`entityIn` refuses to guess). Both mean the
+                // same thing here: no device channel tonight, and the
+                // ladder below it is already the answer.
+                const ent = (found || {}).entity;
+                this.deviceEntity = (ent && ent.entity_id) || '';
+            } catch (e) { this.deviceEntity = ''; }
         },
 
         // The room channel. Fire-and-forget on purpose: a session must

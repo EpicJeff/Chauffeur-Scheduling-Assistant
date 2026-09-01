@@ -2381,6 +2381,105 @@ def scenario_closing_a_wait_leaves_the_call_armed():
           "and the surface says so out loud")
 
 
+# --- the device's own voice ---------------------------------------------
+
+
+def scenario_the_voice_ladder_tries_the_device_first():
+    """Three addresses in one order, and the order is the design: the
+    thing you are standing at, then the room it is in, then the browser's
+    own voice. A phone got browser speech before this not by decision but
+    because the room channel was panel-only and nothing else answered."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        say\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
+    check(m, "say() is the ladder")
+    body = m.group(1) if m else ''
+    check(body.index('deviceSay') < body.index('roomSay') < body.index('sayLocal'),
+          f"device, then room, then the browser, got {body!r}")
+
+
+def scenario_the_device_channel_speaks_to_an_entity_not_a_room():
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        deviceSay\(text\) \{(.*?)\n        \},', src, re.S)
+    check(m, "deviceSay exists")
+    body = m.group(1) if m else ''
+    check('entity_id' in body,
+          f"a registered player belongs to no area, so it is addressed by "
+          f"entity, got {body!r}")
+    check('lessons/speak' in body, "through the same one speak route")
+    check('this.preview' in body,
+          "and a preview never talks to the house")
+
+
+def scenario_the_lesson_starts_the_players_own_player():
+    """Started even though it cannot work until somebody exposes it in
+    Music Assistant -- that is a one-time step per device, and a player
+    that is never started is a step nobody is ever prompted to take."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        async ensureDevicePlayer\(\) \{(.*?)\n        \},',
+                  src, re.S)
+    check(m, "ensureDevicePlayer exists")
+    body = m.group(1) if m else ''
+    check('chfLocalPlayer' in body,
+          f"it REUSES the host's own player where there is one -- one device, "
+          f"one Sendspin registration, got {body!r}")
+    check('wanted' in body and 'start()' in body, "and starts it")
+    check('findLocalEntity' in body,
+          "then asks which Home Assistant entity that turned into")
+    m2 = re.search(r'\n        open\(w, lesson, preview\) \{(.*?)\n        \},',
+                   src, re.S)
+    check('ensureDevicePlayer' in (m2.group(1) if m2 else ''),
+          "opened from a session, not from a tap somebody has to find")
+
+
+def scenario_a_created_player_says_the_same_thing_the_music_tab_says():
+    """The 'is now a Music Assistant player 🎉' sentence, and the failure
+    sentences beside it, come from MusicLogic itself. A surface only
+    decides where they are shown -- so the lesson player hands its
+    creation the same onNotice the music widget does rather than writing
+    a second vocabulary for the same event."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        async ensureDevicePlayer\(\) \{(.*?)\n        \},',
+                  src, re.S)
+    body = m.group(1) if m else ''
+    check('onNotice' in body, f"the notices are wired, got {body!r}")
+    check('showGlobalAlert' in body,
+          "to the house's own alert, the same one the music widget's toast "
+          "reaches")
+    for banned in ('alert(', 'confirm('):
+        check(banned not in body, f"never a browser {banned}")
+
+
+def scenario_the_hosts_announce_their_one_player():
+    """Two devices already register themselves: the PWA as a person, a
+    board as a place. Anything else that wants to speak through this
+    device has to find THAT instance -- a second registration under the
+    same key is the duplicate-player bug this app has already paid for
+    once."""
+    widget = _read('components/music_widget.html')
+    check('window.chfLocalPlayer = _mwPhone' in widget,
+          "the PWA announces its handset player")
+    home = _read('home.html')
+    check('window.chfLocalPlayer = inst' in home,
+          "and the board announces its screen player")
+
+
+def scenario_no_music_logic_is_not_an_error():
+    """programs.html and calendar.html load no music logic at all. The
+    lesson still plays there, in the browser's own voice."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        async ensureDevicePlayer\(\) \{(.*?)\n        \},',
+                  src, re.S)
+    body = m.group(1) if m else ''
+    check("typeof MusicLogic === 'undefined'" in body,
+          f"the sentinel is a literal, the same one home.html uses, "
+          f"got {body!r}")
+
+
 # --- the room voice -----------------------------------------------------
 
 
@@ -2566,6 +2665,12 @@ if __name__ == '__main__':
     scenario_a_wait_beat_renders_its_own_countdown()
     scenario_a_wait_says_out_loud_that_it_will_call_you_back()
     scenario_closing_a_wait_leaves_the_call_armed()
+    scenario_the_voice_ladder_tries_the_device_first()
+    scenario_the_device_channel_speaks_to_an_entity_not_a_room()
+    scenario_the_lesson_starts_the_players_own_player()
+    scenario_a_created_player_says_the_same_thing_the_music_tab_says()
+    scenario_the_hosts_announce_their_one_player()
+    scenario_no_music_logic_is_not_an_error()
     scenario_only_session_level_lines_reach_the_room()
     scenario_the_room_voice_is_a_panel_only_fork()
     scenario_the_room_is_asked_once_and_remembered_on_the_device()

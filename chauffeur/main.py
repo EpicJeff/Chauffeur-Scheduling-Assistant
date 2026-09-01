@@ -6281,7 +6281,11 @@ def program_lesson_scenes(program_id: str, phase_name: str = '',
 # machine-gun a room, short enough that a lesson's own beats -- which are
 # tens of seconds apart -- never notice it exists.
 _LESSON_SPEAK_GAP_S = 3.0
-_lesson_spoke_at = 0.0
+# How many distinct targets the ledger remembers. A runaway guard, not a
+# product limit -- a household has a handful of rooms and a device each,
+# and a client looping on a bug can invent entity names forever.
+_LESSON_SPEAK_TARGETS = 64
+_lesson_spoke_at = {}
 
 
 @app.post("/api/lessons/speak")
@@ -6316,10 +6320,18 @@ def lesson_speak_api(body: dict = Body(default={})):
     import time
     from services import announce as _announce, program_lessons as _pl
     room = str((body or {}).get('room') or '').strip()
+    entity_id = str((body or {}).get('entity_id') or '').strip()
     text = _pl._clean_text((body or {}).get('text'), _pl.MAX_SPEAK + 1)
-    if not room or not text:
+    if entity_id and not entity_id.startswith('media_player.'):
+        # The room half of this route already reaches whatever the
+        # household named a room; an entity is the same exposure with a
+        # narrower shape, and the shape is the only part worth checking
+        # here -- a light is not a speaker.
         raise HTTPException(status_code=400,
-                            detail="A room and something to say.")
+                            detail="That is not a media player.")
+    if not (room or entity_id) or not text:
+        raise HTTPException(status_code=400,
+                            detail="Somewhere to say it, and something to say.")
     if len(text) > _pl.MAX_SPEAK:
         raise HTTPException(status_code=400,
                             detail=f"A spoken line is at most {_pl.MAX_SPEAK} "
@@ -6327,11 +6339,33 @@ def lesson_speak_api(body: dict = Body(default={})):
     if _pl._screened(text, 'generated'):
         raise HTTPException(status_code=400,
                             detail="That is not something this app says out loud.")
+    # Per TARGET, not per process. It was per process while a room was the
+    # only address this route had, and the reasoning held then: two panels
+    # talking over each other in one kitchen is the failure, neither of
+    # them at fault. A DEVICE is not a room — two children running two
+    # lessons on two phones are two conversations, and letting one silence
+    # the other for three seconds would be exactly the mistake
+    # lesson-help's own per-program throttle exists to avoid, made
+    # backwards.
+    target = entity_id or room
     now = time.monotonic()
-    if now - _lesson_spoke_at < _LESSON_SPEAK_GAP_S:
+    if now - float(_lesson_spoke_at.get(target) or 0) < _LESSON_SPEAK_GAP_S:
         raise HTTPException(status_code=429,
                             detail="One line at a time.")
-    _lesson_spoke_at = now
+    if len(_lesson_spoke_at) >= _LESSON_SPEAK_TARGETS:
+        # Drop the coldest rather than the whole ledger: clearing it would
+        # hand every target a free line at exactly the moment something is
+        # generating targets fastest.
+        for stale in sorted(_lesson_spoke_at, key=_lesson_spoke_at.get)[:8]:
+            _lesson_spoke_at.pop(stale, None)
+    _lesson_spoke_at[target] = now
+    # The device wins when one is named. A browser that has registered
+    # itself as a Music Assistant player is the thing the person is
+    # actually standing at, and it belongs to no area, so this is the only
+    # address that can reach it — the room stays the answer for a board
+    # with no exposed player of its own.
+    if entity_id:
+        return _announce.speak_on(entity_id, text)
     return _announce.announce(room, text)
 
 

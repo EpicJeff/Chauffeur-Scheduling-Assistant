@@ -723,7 +723,7 @@ def scenario_forced_sweep_a_negative_days_is_a_400():
 
 def _speak(**kw):
     import main
-    main._lesson_spoke_at = 0.0          # a fresh throttle per scenario
+    main._lesson_spoke_at = {}           # a fresh throttle per scenario
     return main.lesson_speak_api(body=kw)
 
 
@@ -799,7 +799,7 @@ def scenario_the_speak_route_throttles():
         check(code == 429, f"a second line straight away is refused, got {code}")
         # A real gap between lines is fine -- this is a rate limit, not a
         # one-shot.
-        main._lesson_spoke_at -= (main._LESSON_SPEAK_GAP_S + 1)
+        main._lesson_spoke_at['kitchen'] -= (main._LESSON_SPEAK_GAP_S + 1)
         out = main.lesson_speak_api(body={'room': 'kitchen', 'text': 'Three.'})
         check((out or {}).get('status') == 'success',
               f"and the next one lands, got {out}")
@@ -973,6 +973,126 @@ def scenario_asking_for_help_writes_nothing():
     check(before == after, "and the lesson is untouched")
 
 
+# --- speaking to THIS device --------------------------------------------
+# Every device that can run a lesson is already a Music Assistant player
+# (the PWA registers "<Name>'s phone", a board registers "This Panel"), so
+# the house voice can come out of the thing you are standing at rather
+# than out of whatever browser TTS it shipped with.
+
+
+def scenario_two_devices_are_not_each_others_rate_limit():
+    """The throttle protected a ROOM when a room was the only address.
+    A device is not a room: two children doing two lessons on two phones
+    are two conversations, and one silencing the other for three seconds
+    would be this route's own per-program lesson-help reasoning applied
+    backwards."""
+    import main
+    from services import announce
+    orig_a, orig_s = announce.announce, announce.speak_on
+    announce.announce = lambda r, m: {'status': 'success'}
+    announce.speak_on = lambda e, m: {'status': 'success'}
+    try:
+        main._lesson_spoke_at = {}
+        main.lesson_speak_api(body={'entity_id': 'media_player.a', 'text': 'One.'})
+        out = main.lesson_speak_api(
+            body={'entity_id': 'media_player.b', 'text': 'Two.'})
+        check((out or {}).get('status') == 'success',
+              f"a different device speaks straight away, got {out}")
+        check(_denied(main.lesson_speak_api,
+                      body={'entity_id': 'media_player.a', 'text': 'Again.'}) == 429,
+              "while the same one is still held")
+        out = main.lesson_speak_api(body={'room': 'kitchen', 'text': 'Three.'})
+        check((out or {}).get('status') == 'success',
+              f"and a room is its own target too, got {out}")
+    finally:
+        announce.announce, announce.speak_on = orig_a, orig_s
+
+
+def scenario_the_throttle_ledger_cannot_grow_forever():
+    import main
+    from services import announce
+    orig = announce.speak_on
+    announce.speak_on = lambda e, m: {'status': 'success'}
+    try:
+        main._lesson_spoke_at = {}
+        for i in range(main._LESSON_SPEAK_TARGETS + 20):
+            main.lesson_speak_api(
+                body={'entity_id': f'media_player.p{i}', 'text': 'Hi.'})
+        check(len(main._lesson_spoke_at) <= main._LESSON_SPEAK_TARGETS,
+              f"capped at {main._LESSON_SPEAK_TARGETS}, got "
+              f"{len(main._lesson_spoke_at)}")
+    finally:
+        announce.speak_on = orig
+
+
+def scenario_the_speak_route_can_target_one_player():
+    """A room is not the only address. Argyle's own voice on the device in
+    your hand needs an ENTITY, because a phone's Sendspin player belongs
+    to no Home Assistant area and area matching can never find it."""
+    import main
+    from services import announce
+    seen = {}
+
+    def fake(entity_id, message):
+        seen['entity_id'], seen['message'] = entity_id, message
+        return {'status': 'success', 'entity_id': entity_id}
+
+    orig = announce.speak_on
+    announce.speak_on = fake
+    try:
+        main._lesson_spoke_at = {}
+        out = main.lesson_speak_api(
+            body={'entity_id': 'media_player.sams_phone', 'text': 'Ready?'})
+    finally:
+        announce.speak_on = orig
+    check(seen.get('entity_id') == 'media_player.sams_phone',
+          f"the player is addressed directly, got {seen}")
+    check((out or {}).get('status') == 'success', f"got {out}")
+
+
+def scenario_a_target_must_be_a_player():
+    """The route already reaches whatever the household named a room; an
+    entity is the same exposure with a narrower shape, and the shape is
+    the only thing worth checking — a light is not a speaker."""
+    import main
+    main._lesson_spoke_at = {}
+    check(_denied(main.lesson_speak_api,
+                  body={'entity_id': 'light.kitchen', 'text': 'Ready?'}) == 400,
+          "a non-player entity is refused")
+    main._lesson_spoke_at = {}
+    check(_denied(main.lesson_speak_api, body={'text': 'Ready?'}) == 400,
+          "and something has to be addressed")
+
+
+def scenario_a_room_still_works_beside_an_entity():
+    """The device channel is added, never swapped in: a wall board with a
+    room and no exposed player of its own keeps exactly what it had."""
+    import main
+    from services import announce
+    seen = {}
+    orig = announce.announce
+    announce.announce = lambda r, m: seen.setdefault('room', r) or {'status': 'success'}
+    try:
+        main._lesson_spoke_at = {}
+        main.lesson_speak_api(body={'room': 'kitchen', 'text': 'Ready?'})
+    finally:
+        announce.announce = orig
+    check(seen.get('room') == 'kitchen', f"the room path is untouched, got {seen}")
+
+
+def scenario_speak_on_reuses_the_one_tts_path():
+    """Not a second speaker implementation. `speak_on` is the media-player
+    half of `announce()` addressed by entity instead of by area -- same
+    engine, same language, same voice, so the house cannot end up with two
+    voices depending on which surface asked."""
+    import inspect
+    from services import announce
+    src = inspect.getsource(announce.speak_on)
+    check('_tts_config()' in src, "it reads the same engine/voice config")
+    check("'tts', 'speak'" in src or '"tts", "speak"' in src,
+          "and speaks through the same service call")
+
+
 # --- the wait's one-shot call -------------------------------------------
 
 
@@ -992,7 +1112,7 @@ def scenario_the_wait_route_arms_a_call_and_the_loop_fires_it():
     import main
     from services import storage, program_lessons as pl
     storage.set_app_state('lesson_wait_announces', [])
-    main._lesson_spoke_at = 0.0
+    main._lesson_spoke_at = {}
     out = main.lesson_wait_api(body={'room': 'kitchen', 'minutes': 45,
                                      'text': 'The dough is ready.'})
     check((out or {}).get('status') == 'armed', f"armed, got {out}")
@@ -1010,7 +1130,7 @@ def scenario_the_wait_route_screens_and_bounds_like_the_speak_route():
     import main
     from services import storage
     storage.set_app_state('lesson_wait_announces', [])
-    main._lesson_spoke_at = 0.0
+    main._lesson_spoke_at = {}
     check(_denied(main.lesson_wait_api,
                   body={'room': 'kitchen', 'minutes': 10,
                         'text': 'This one burns calories.'}) == 400,
@@ -1092,6 +1212,10 @@ if __name__ == '__main__':
     scenario_the_help_route_has_a_daily_cap()
     scenario_a_zero_cap_turns_the_hatch_off()
     scenario_asking_for_help_writes_nothing()
+    scenario_the_speak_route_can_target_one_player()
+    scenario_a_target_must_be_a_player()
+    scenario_a_room_still_works_beside_an_entity()
+    scenario_speak_on_reuses_the_one_tts_path()
     scenario_the_wait_route_exists_and_is_wall_tier()
     scenario_the_wait_route_arms_a_call_and_the_loop_fires_it()
     scenario_the_wait_route_screens_and_bounds_like_the_speak_route()

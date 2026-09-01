@@ -5468,6 +5468,13 @@
                         });
                         inst._tiles = new Set();
                         boardLocalPlayers[key] = inst;
+                        // Announced for shared components that want to
+                        // speak through this screen -- the lesson
+                        // player does. One device, one Sendspin
+                        // player: anything else reaching for one has
+                        // to find THIS instance rather than mint a
+                        // second under the same key.
+                        window.chfLocalPlayer = inst;
                     }
                     boardLocalPlayers[key]._tiles.add(t.id);
                     return boardLocalPlayers[key];
