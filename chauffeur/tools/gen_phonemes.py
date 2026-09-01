@@ -23,14 +23,28 @@ image, so anything this wrote in there would vanish on the next rebuild —
 these files are an ASSET that belongs in the repo, committed and shipped,
 exactly like the vendored fonts and the pet artwork beside them.
 
+PowerShell (this repo's usual shell — note that PowerShell has NO inline
+`VAR=value command` prefix, so the bash form below silently sets nothing
+there and the run fails with no connection at all):
+
+    cd chauffeur
+    $env:HA_BASE_URL = 'http://homeassistant.local:8123'
+    $env:HA_TOKEN    = '<long-lived token>'
+    python tools/gen_phonemes.py
+
+bash:
+
     cd chauffeur
     HA_BASE_URL=http://homeassistant.local:8123 HA_TOKEN=<long-lived token> \
         python tools/gen_phonemes.py
 
-(`ha_api._base_and_token` takes those two env vars as its dev fallback,
-which is the whole reason that fallback exists; `ha_base_url`/`ha_token`
-in settings work too if this checkout shares the household's database.)
-Then commit what it wrote and rebuild the add-on the usual way.
+The token is a long-lived access token from your Home Assistant profile
+page (Security → Long-lived access tokens). `ha_api._base_and_token`
+takes those two env vars as its dev fallback, which is the whole reason
+that fallback exists; `ha_base_url`/`ha_token` in settings work too if
+this checkout shares the household's database. `preflight()` below names
+which of the three ways this can fail actually happened, once, before
+spending anything. Then commit what it wrote and rebuild the add-on.
 
 It is not CI-runnable and never runs on boot.
 
@@ -93,13 +107,76 @@ LETTER_NAMES = {f'name_{c}': c for c in 'abcdefghijklmnopqrstuvwxyz'}
 ALL = dict(PHONEMES, **LETTER_NAMES)
 
 
-def _render(key: str, phrase: str):
+def preflight():
+    """What is actually wrong, worked out ONCE and said in words.
+
+    The first cut asked `_tts_config()` inside the render loop, so a
+    checkout with no Home Assistant connection at all printed "no TTS
+    engine configured in Home Assistant" seventy-one times -- a sentence
+    that names the last thing checked rather than the thing that failed,
+    repeated once per phoneme. Three states look identical from inside
+    that loop and want three different answers: nothing configured, a
+    connection that will not answer, and a real HA with no text-to-speech
+    integration in it.
+
+    Returns (engine, language, voice), or None having already explained.
+    """
+    from services import announce, ha_api
+    base, token = ha_api._base_and_token()
+    if not base or not token:
+        # Name what THIS PROCESS can see, not what a person believes they
+        # set. `$env:` in PowerShell lives in one window; a variable set
+        # in that window and a python started in another (or in Git Bash,
+        # which has its own environment entirely) are two different
+        # answers to "is it set", and only one of them is this one.
+        seen = {k: ('set' if os.environ.get(k) else 'not set')
+                for k in ('HA_BASE_URL', 'HA_TOKEN', 'SUPERVISOR_TOKEN')}
+        print("This process sees: "
+              + ', '.join(f"{k}={v}" for k, v in seen.items()))
+        print("No Home Assistant connection configured for this checkout.\n"
+              "This tool talks to the house's real HA to borrow its voice, so\n"
+              "it needs a base URL and a long-lived access token:\n"
+              "\n"
+              "  PowerShell:\n"
+              "    $env:HA_BASE_URL = 'http://homeassistant.local:8123'\n"
+              "    $env:HA_TOKEN    = '<long-lived token>'\n"
+              "    python tools/gen_phonemes.py\n"
+              "\n"
+              "  bash:\n"
+              "    HA_BASE_URL=http://homeassistant.local:8123 \\\n"
+              "        HA_TOKEN=<long-lived token> python tools/gen_phonemes.py\n"
+              "\n"
+              "(Create the token in Home Assistant under your profile ->\n"
+              "Security -> Long-lived access tokens. PowerShell has no inline\n"
+              "VAR=value command prefix, so the bash form silently sets\n"
+              "nothing there.)")
+        return None
+    print(f"Home Assistant: {base}")
+    if not ha_api.is_available():
+        print("  ...but it did not answer. The line above this one is the\n"
+              "  real error: a 401 means the token is wrong, a timeout or a\n"
+              "  connection error means the URL is.")
+        return None
+    engine, language, voice = announce._tts_config()
+    if not engine:
+        print("  Reached Home Assistant, and it has no tts.* entity at all.\n"
+              "  Add a text-to-speech integration first -- Piper is the one\n"
+              "  this house is built around (Settings -> Devices & services\n"
+              "  -> Add integration -> Piper), and any HA TTS engine works.")
+        return None
+    print(f"  voice: {engine}"
+          + (f" / {voice}" if voice else '')
+          + (f" [{language}]" if language else ''))
+    return engine, language, voice
+
+
+def _render(key: str, phrase: str, engine: str, language: str, voice: str):
     """One phrase through the household's own Piper voice.
 
-    Returns the written filename, or None. Anything that fails -- no HA,
-    no TTS engine configured, a voice that refuses the phrase -- returns
-    None and the key stays OUT of the manifest, which is exactly the
-    behaviour the no-guessing rule needs.
+    Returns the written filename, or None. A phrase the voice refuses
+    leaves its key OUT of the manifest, which is exactly the behaviour the
+    no-guessing rule needs -- a card whose sound never rendered draws no
+    speaker tap rather than a silent one.
 
     Rendering without playing is an HTTP endpoint, `POST /api/tts_get_url`,
     and NOT a service call: `tts.speak` sends audio at a media player,
@@ -113,12 +190,8 @@ def _render(key: str, phrase: str):
     serves mp3 for most engines and wav for some, and a file named .wav
     holding mp3 bytes plays on nothing.
     """
-    from services import announce, ha_api
-    tts, language, voice = announce._tts_config()
-    if not tts:
-        print("  no TTS engine configured in Home Assistant; nothing to render")
-        return None
-    body = {'engine_id': tts, 'message': phrase}
+    from services import ha_api
+    body = {'engine_id': engine, 'message': phrase}
     if language:
         body['language'] = language
     if voice:
@@ -141,13 +214,15 @@ def _render(key: str, phrase: str):
 
 
 def main():
+    ready = preflight()
+    if not ready:
+        return 1
+    engine, language, voice = ready
     os.makedirs(OUT_DIR, exist_ok=True)
-    from services import announce
-    _, _, voice = announce._tts_config()
     written = {}
     for key, phrase in ALL.items():
         try:
-            name = _render(key, phrase)
+            name = _render(key, phrase, engine, language, voice)
             if name:
                 written[key] = {'say': phrase, 'file': name}
                 print(f"  {key}: ok ({name})")
@@ -165,7 +240,11 @@ def main():
     with io.open(MANIFEST, 'w', encoding='utf-8') as f:
         json.dump(manifest, f, indent=2, sort_keys=True)
     print(f"{len(written)}/{len(ALL)} rendered into {OUT_DIR}")
+    if written:
+        print("Commit static/phonics/ and rebuild the add-on -- these are "
+              "repo assets, not runtime state.")
+    return 0 if written else 1
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
