@@ -62,16 +62,22 @@ A text-to-speech engine phonemizes GRAPHEMES AS WORDS. `k` is the word
 spelling fixes that, because the spelling is the thing being read. Three
 routes exist and only an ear can rank them:
 
-  1. Escape the text layer. Piper phonemizes with eSpeak-NG, and eSpeak
-     reads `[[...]]` as PHONEMES rather than letters -- `[[k]]` is /k/.
-     Whether that survives Wyoming and Home Assistant is unknowable from
-     here, which is what `--probe` is for.
-  2. An engine with SSML phoneme support (`<phoneme alphabet="ipa">`).
-     Piper has none; some cloud engines do.
-  3. A recording. Forty-four sounds in a parent's own voice is the
+  1. SSML. An Azure/Edge neural voice -- and this house's own is
+     `AndrewNeural`, not Piper, whatever the rest of the docs assume --
+     honours `<phoneme alphabet="ipa" ph="k">`, the tag built for exactly
+     this. The sound rides an ATTRIBUTE, so there is no spelling left for
+     the engine to read as a word. The open question is only whether
+     Home Assistant's `tts.speak` hands the markup through or escapes it.
+     `--mode ssml` renders the whole set this way once an ear confirms it.
+  2. eSpeak's bracket escape, `[[k]]`, for a house running Piper: eSpeak
+     reads double square brackets as phonemes rather than letters.
+  3. A recording. Forty-five sounds in a parent's own voice is the
      highest-quality answer available and the one a five-year-old would
      rather hear anyway. `overrides.json` takes `{"k": {"file":
      "my_k.wav"}}` and this tool then leaves that key alone entirely.
+
+`IPA` below carries the whole set in IPA, which is the payload for route
+1 and the script somebody would read from for route 3.
 
 TUNING IT BY EAR, which is the only way
 ---------------------------------------
@@ -80,6 +86,7 @@ the one that came out wrong, render that one again.
 
     python tools/gen_phonemes.py --list          what it will say, no HA needed
     python tools/gen_phonemes.py --probe k       every candidate for /k/, side by side
+    python tools/gen_phonemes.py --mode ssml     render the set as IPA phoneme tags
     python tools/gen_phonemes.py --only l,j      re-render just those
 
 Corrections go in `static/phonics/overrides.json`, either as
@@ -101,6 +108,16 @@ import sys
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
+
+# The IPA table below is the whole point of this tool and every character
+# in it is outside cp1252, which is what a Windows console still defaults
+# to -- printing one crashes the run rather than mis-rendering a glyph.
+# `errors='replace'` because a console that cannot draw ʃ should show a
+# box, not take the render down.
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
 
 OUT_DIR = os.path.join(HERE, 'static', 'phonics')
 MANIFEST = os.path.join(OUT_DIR, 'manifest.json')
@@ -169,6 +186,29 @@ OVERRIDES = os.path.join(OUT_DIR, 'overrides.json')
 # sensitive, and a vowel exemplar ("a as in cat") already carries its
 # sound in a real word; the leading letter name is the only wart, and it
 # is a smaller one there.
+# IPA for the whole set. This is the payload for the SSML route -- an
+# Azure/Edge neural voice (this house's own is `AndrewNeural`) honours
+# `<phoneme alphabet="ipa" ph="k">`, which is the tag purpose-built for
+# exactly this problem and is a completely different mechanism from
+# eSpeak's bracket escape below.
+#
+# It is worth having written down whichever route wins: it is also the
+# script a person would read from while recording these by hand.
+IPA = {
+    'b': 'b', 'd': 'd', 'f': 'f', 'g': 'ɡ', 'h': 'h', 'j': 'dʒ',
+    'k': 'k', 'l': 'l', 'm': 'm', 'n': 'n', 'p': 'p', 'r': 'ɹ',
+    's': 's', 't': 't', 'v': 'v', 'w': 'w', 'y': 'j', 'z': 'z',
+    'ch': 'tʃ', 'sh': 'ʃ', 'th': 'θ', 'th_voiced': 'ð', 'ng': 'ŋ',
+    'zh': 'ʒ', 'qu': 'kw',
+    'a_short': 'æ', 'e_short': 'ɛ', 'i_short': 'ɪ', 'o_short': 'ɒ',
+    'u_short': 'ʌ',
+    'a_long': 'eɪ', 'e_long': 'i', 'i_long': 'aɪ', 'o_long': 'oʊ',
+    'u_long': 'ju',
+    'oo_short': 'ʊ', 'oo_long': 'u',
+    'ar': 'ɑɹ', 'or': 'ɔɹ', 'er': 'ɝ', 'ow': 'aʊ', 'oy': 'ɔɪ',
+    'air': 'ɛɹ', 'ear': 'ɪɹ', 'schwa': 'ə',
+}
+
 ESPEAK = {
     'b': 'b', 'd': 'd', 'f': 'f', 'g': 'g', 'h': 'h', 'j': 'dZ',
     'k': 'k', 'l': 'l', 'm': 'm', 'n': 'n', 'p': 'p', 'r': 'r',
@@ -236,10 +276,23 @@ def _probe_texts(key: str, phrase: str) -> list:
         return [phrase]
     letter = key.split('_')[0]
     out = []
+    ipa = IPA.get(key)
+    if ipa:
+        # SSML, the route built for this. An Azure/Edge neural voice --
+        # which is what this house actually runs, `AndrewNeural` --
+        # honours `<phoneme alphabet="ipa">`; whether Home Assistant's
+        # tts.speak hands the markup through untouched or escapes it is
+        # the open question, and is exactly what listening answers.
+        # Wrapped and bare, because integrations differ on whether they
+        # add the <speak> envelope themselves.
+        out.append('<speak version="1.0" '
+                   'xmlns="http://www.w3.org/2001/10/synthesis" '
+                   f'xml:lang="en-US"><phoneme alphabet="ipa" ph="{ipa}">'
+                   f'{letter}</phoneme></speak>')
+        out.append(f'<phoneme alphabet="ipa" ph="{ipa}">{letter}</phoneme>')
     if key in ESPEAK:
-        # The one candidate that is a real phoneme rather than a spelling.
+        # eSpeak's own escape, for a house running Piper instead.
         out.append(f"[[{ESPEAK[key]}]]")
-        out.append(f"[[{ESPEAK[key]}{ESPEAK[key]}]]")
     out.append(phrase)                       # what ships today
     out.append(letter + 'uh')                # the syllable guess
     out.append(letter)                       # the letter name, as a control
@@ -360,9 +413,36 @@ def _render(key: str, phrase: str, engine: str, language: str, voice: str):
     return name
 
 
+def _ssml(key: str, letter: str) -> str:
+    """One key as an SSML phoneme tag. The whole point of the SSML route:
+    the sound is carried by an IPA attribute rather than by a spelling,
+    so there is nothing left for the engine to read as a word."""
+    return ('<speak version="1.0" '
+            'xmlns="http://www.w3.org/2001/10/synthesis" '
+            f'xml:lang="en-US"><phoneme alphabet="ipa" ph="{IPA[key]}">'
+            f'{letter}</phoneme></speak>')
+
+
 def main():
     phrases = _phrases()
     argv = sys.argv[1:]
+
+    # --mode ssml switches every key that HAS an IPA form over to the
+    # phoneme tag, in one pass, for the house whose engine honours it.
+    # Letter names stay plain text: a name is a word, and the tag would be
+    # solving a problem they do not have. Overrides still win over both --
+    # a correction made by ear outranks any mechanism.
+    if '--mode' in argv:
+        i = argv.index('--mode')
+        mode = argv[i + 1] if i + 1 < len(argv) else ''
+        if mode not in ('text', 'ssml'):
+            print("--mode takes 'text' (default) or 'ssml'.")
+            return 1
+        if mode == 'ssml':
+            pinned = set(_overrides())
+            for key in list(phrases):
+                if key in IPA and key not in pinned:
+                    phrases[key] = _ssml(key, key.split('_')[0])
 
     # --list spends nothing and needs no connection: it is how you read
     # what the voice is about to be asked for, which is the half of this
