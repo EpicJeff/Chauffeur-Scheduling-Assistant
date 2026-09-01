@@ -91,7 +91,21 @@ Two channels, split by latency:
   No voices installed → the tick alone.
 
 Sessions on personal devices stay fully local — a teenager's lesson
-does not play to the kitchen. Greeting and send-off lines are client
+does not play to the kitchen.
+
+**AS BUILT (v2.450.0), and this widened the architecture rather than
+correcting it:** "local" was conflated with "the browser's own
+speechSynthesis", and those are different things. Every surface that can
+run a lesson already registers itself as a Music Assistant player, so the
+between-beat channel is now a three-rung ladder — **the device you are
+standing at, then the room it is in, then the browser** — and a phone
+gets the house voice out of its own player without any of it reaching
+the kitchen. `announce.speak_on(entity_id, …)` addresses a player
+directly, because a registered browser player belongs to no HA area.
+The lesson starts that player itself and lets MusicLogic say its own
+"is now a Music Assistant player" sentence; until somebody performs the
+one-time Music Assistant exposure step, the entity is null and the
+ladder falls through to the browser. In-beat lines are unchanged. Greeting and send-off lines are client
 template strings (member name + program title), never model-written. A
 mute tap is always visible and silences Argyle for the session without
 touching the scenes. A duet mode (phone shows, room speaker talks) is
