@@ -48,12 +48,25 @@ spending anything. Then commit what it wrote and rebuild the add-on.
 
 It is not CI-runnable and never runs on boot.
 
-It writes `static/phonics/<key>.<ext>` for every phrase Piper renders --
-the extension comes from what HA's tts_proxy actually served, never
+It writes `static/phonics/<key>.<ext>` for every phrase the voice renders
+-- the extension comes from what HA's tts_proxy actually served, never
 assumed -- and rewrites `static/phonics/manifest.json` to list exactly
-those, filename included. Re-running
-it is safe: it overwrites, and a key whose render fails is left out of
-the manifest rather than left pointing at a broken file.
+those, filename included. Re-running it is safe: it overwrites, and a key
+whose render fails is dropped from the manifest rather than left pointing
+at a broken file.
+
+TUNING IT BY EAR, which is the only way
+---------------------------------------
+Nothing here can hear its own output. The loop is: render, listen, fix
+the one that came out wrong, render that one again.
+
+    python tools/gen_phonemes.py --list          what it will say, no HA needed
+    python tools/gen_phonemes.py --only l,j      re-render just those
+
+Corrections go in `static/phonics/overrides.json` as
+`{"key": "what to say"}`. That file is READ and never written, so a full
+regeneration cannot quietly undo a fix somebody made by ear -- and an ear
+is the only authority there is about how a letter sounds.
 
 Until it is run the manifest is empty, which is the correct empty state:
 cards still speak through `speak`/`speak_lang` in the browser's own
@@ -72,21 +85,35 @@ sys.path.insert(0, HERE)
 OUT_DIR = os.path.join(HERE, 'static', 'phonics')
 MANIFEST = os.path.join(OUT_DIR, 'manifest.json')
 
-# The closed set, key -> what to have the voice say. Keys are what a
-# lesson script writes in a card's `phoneme` field; the SPOKEN half is a
-# word or nonsense syllable chosen because a voice says it correctly,
-# which is the whole trick -- Piper is never asked to pronounce a symbol.
+# The closed set, key -> what to have the voice say.
 #
-# Consonants first, then short and long vowels, then the digraphs and
-# controlled vowels a phonics scheme actually teaches, then letter names.
+# EVERY ENTRY IS AN EXEMPLAR, and that is a correction rather than a
+# style choice. The first cut asked the voice for bare syllables -- `l`
+# was "ll", `j` was "juh" -- on the theory that a nonsense spelling would
+# come out as the sound. It does not: Piper read "ll" as "ello" and "juh"
+# as "jew", which is precisely the failure this whole closed set exists
+# to prevent, produced by the set itself. Meanwhile the entries already
+# written as "ch as in chair" came out right, because they are made of
+# real words and a text-to-speech engine is good at real words and bad at
+# everything else.
+#
+# So the rule, learned by listening: never ask the voice for a sound.
+# Ask it for a WORD that contains the sound, in the phrasing a phonics
+# lesson uses out loud anyway. It is also what a teacher says.
+#
+# A voice that happens to nail a bare form is welcome to -- put it in
+# `overrides.json` beside this file (see `_phrases()`), which this tool
+# reads and never rewrites.
 PHONEMES = {
-    'b': 'buh', 'd': 'duh', 'f': 'ff', 'g': 'guh', 'h': 'huh',
-    'j': 'juh', 'k': 'kuh', 'l': 'll', 'm': 'mm', 'n': 'nn',
-    'p': 'puh', 'r': 'rr', 's': 'ss', 't': 'tuh', 'v': 'vv',
-    'w': 'wuh', 'y': 'yuh', 'z': 'zz',
+    'b': 'b as in ball', 'd': 'd as in dog', 'f': 'f as in fish',
+    'g': 'g as in goat', 'h': 'h as in hat', 'j': 'j as in jam',
+    'k': 'k as in kite', 'l': 'l as in leaf', 'm': 'm as in moon',
+    'n': 'n as in net', 'p': 'p as in pig', 'r': 'r as in rain',
+    's': 's as in sun', 't': 't as in top', 'v': 'v as in van',
+    'w': 'w as in wind', 'y': 'y as in yes', 'z': 'z as in zip',
     'ch': 'ch as in chair', 'sh': 'sh as in ship', 'th': 'th as in thin',
     'th_voiced': 'th as in this', 'ng': 'ng as in ring',
-    'zh': 'zh as in measure', 'qu': 'kw',
+    'zh': 'zh as in measure', 'qu': 'qu as in queen',
     'a_short': 'a as in cat', 'e_short': 'e as in bed',
     'i_short': 'i as in sit', 'o_short': 'o as in hot',
     'u_short': 'u as in cup',
@@ -105,6 +132,33 @@ PHONEMES = {
 LETTER_NAMES = {f'name_{c}': c for c in 'abcdefghijklmnopqrstuvwxyz'}
 
 ALL = dict(PHONEMES, **LETTER_NAMES)
+
+OVERRIDES = os.path.join(OUT_DIR, 'overrides.json')
+
+
+def _phrases():
+    """What to say for each key, with the household's own corrections on
+    top.
+
+    This tool cannot hear its own output, and neither can whoever asked
+    for it until it has run — so the loop that matters is: render, listen,
+    fix the one that came out wrong, re-render only that one. A plain
+    `{key: "what to say"}` file at `static/phonics/overrides.json` is that
+    fix. It is READ here and never written, so a regeneration can never
+    quietly undo a correction somebody made by ear, which is the only kind
+    of authority there is about how a letter sounds.
+    """
+    out = dict(ALL)
+    try:
+        with io.open(OVERRIDES, encoding='utf-8') as f:
+            for key, phrase in (json.load(f) or {}).items():
+                if key in out and isinstance(phrase, str) and phrase.strip():
+                    out[key] = phrase.strip()
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"[overrides] ignored ({e})")
+    return out
 
 
 def preflight():
@@ -214,22 +268,66 @@ def _render(key: str, phrase: str, engine: str, language: str, voice: str):
 
 
 def main():
+    phrases = _phrases()
+    argv = sys.argv[1:]
+
+    # --list spends nothing and needs no connection: it is how you read
+    # what the voice is about to be asked for, which is the half of this
+    # you can check without listening to seventy-one files.
+    if '--list' in argv:
+        for key in sorted(phrases):
+            print(f"  {key:12} {phrases[key]}")
+        print(f"\n{len(phrases)} keys. Override any of them in {OVERRIDES} "
+              f"as {{\"key\": \"what to say\"}} and re-run with "
+              f"--only <keys>.")
+        return 0
+
+    # --only re-renders a subset, because the real loop here is listen,
+    # fix the one that came out wrong, render that one again. Making that
+    # cost a full pass over every key is how a person stops bothering.
+    only = []
+    if '--only' in argv:
+        i = argv.index('--only')
+        if i + 1 < len(argv):
+            only = [k.strip() for k in argv[i + 1].split(',') if k.strip()]
+        unknown = [k for k in only if k not in phrases]
+        if unknown:
+            print(f"Not keys: {', '.join(unknown)}. Try --list.")
+            return 1
+
     ready = preflight()
     if not ready:
         return 1
     engine, language, voice = ready
     os.makedirs(OUT_DIR, exist_ok=True)
+
+    # A partial run must not delete the rest of the manifest, so it starts
+    # from what is already there and replaces only what it re-rendered.
     written = {}
-    for key, phrase in ALL.items():
+    if only:
+        try:
+            with io.open(MANIFEST, encoding='utf-8') as f:
+                written = (json.load(f) or {}).get('phonemes') or {}
+        except Exception:
+            written = {}
+
+    todo = {k: phrases[k] for k in (only or sorted(phrases))}
+    for key, phrase in todo.items():
         try:
             name = _render(key, phrase, engine, language, voice)
             if name:
                 written[key] = {'say': phrase, 'file': name}
-                print(f"  {key}: ok ({name})")
+                print(f"  {key:12} ok  — said: {phrase!r}")
+            else:
+                written.pop(key, None)
         except Exception as e:
             print(f"  {key}: {e}")
+            written.pop(key, None)
     manifest = {
         'version': 1,
+        # sorted so a re-render produces a reviewable diff rather than a
+        # reshuffled file.
+        'keys': len(written),
         'voice': voice or '',
         'generated': datetime.datetime.now().isoformat(timespec='seconds'),
         'note': ('Generated by tools/gen_phonemes.py. Only keys with a real '
@@ -239,7 +337,7 @@ def main():
     }
     with io.open(MANIFEST, 'w', encoding='utf-8') as f:
         json.dump(manifest, f, indent=2, sort_keys=True)
-    print(f"{len(written)}/{len(ALL)} rendered into {OUT_DIR}")
+    print(f"{len(written)}/{len(phrases)} keys have audio in {OUT_DIR}")
     if written:
         print("Commit static/phonics/ and rebuild the add-on -- these are "
               "repo assets, not runtime state.")

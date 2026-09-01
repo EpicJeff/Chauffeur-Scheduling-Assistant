@@ -976,6 +976,41 @@ def _context_block(program: dict, now=None) -> str:
     return "\n".join(lines)
 
 
+def _phonics_line() -> str:
+    """The letter sounds THIS install can actually play, named for the
+    model — or nothing at all.
+
+    `phoneme` validated, stored and rendered from the day it shipped, and
+    no prompt ever mentioned it, so a model could only ever reach for
+    `speak`. `speak: "l"` makes a browser say "ell", which is why every
+    phonics card said the letter NAME instead of the sound: the field was
+    a capability with no path to it.
+
+    Built from the manifest rather than written into `_SYSTEM`, because
+    which sounds exist is a property of what `tools/gen_phonemes.py`
+    actually rendered on this machine, and a hardcoded list would promise
+    sounds the sanitizer then drops. An install with none says nothing:
+    offering a field whose every value will be refused spends the ask and
+    teaches a shape that cannot be used.
+    """
+    keys = sorted(phoneme_keys())
+    if not keys:
+        return ''
+    return (' A card pair may also carry "phoneme", a recorded letter '
+            'SOUND played when the card is tapped -- use it instead of '
+            '"speak" for a single letter or letter pair, because a voice '
+            'reading "l" says its name and not its sound. The only keys '
+            'that exist are: ' + ', '.join(keys)
+            + '. Keys starting name_ are the letter NAME (name_a is "ay"); '
+              'the rest are sounds. Any other key is dropped.')
+
+
+def system_prompt() -> str:
+    """`_SYSTEM` plus whatever this install can add to it. One place, so
+    a caller cannot forget the half that depends on the machine."""
+    return _SYSTEM + _phonics_line()
+
+
 def needs_lesson(program_id: str, slot: dict) -> bool:
     """Whether this slot would actually cost a model call.
 
@@ -1106,7 +1141,7 @@ def generate_for(program: dict, window: dict, unit: dict, settings: dict):
             prompt = _GENERATED_PROMPT.format(**fields)
         res = model_pools.call_pool_json(
             'background', settings.get('llm_gemini_api_key', ''),
-            _SYSTEM, prompt, timeout_s=60, gemma_timeout_s=180,
+            system_prompt(), prompt, timeout_s=60, gemma_timeout_s=180,
             settings=settings)
         if not isinstance(res, dict) or res.get('error'):
             _record_attempt(

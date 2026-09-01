@@ -1223,6 +1223,60 @@ def scenario_a_phoneme_key_must_be_one_this_app_actually_has():
     check(pair['front'] == 'c', "the card itself is untouched")
 
 
+def scenario_the_model_is_told_which_letter_sounds_exist():
+    """The field was unreachable. `phoneme` validated, stored and rendered
+    from the day it shipped, and nothing in the prompt ever named it -- so
+    a model could only ever set `speak`, `speak: "l"` made the browser say
+    "ell", and every phonics card said the letter NAME. A capability with
+    no path to it is not a capability.
+
+    The keys are named from the MANIFEST rather than a list in the prompt,
+    because which sounds exist is a property of what was actually
+    rendered on this install. An empty manifest omits the line entirely:
+    offering a field whose every value will be dropped wastes the ask and
+    teaches the model a shape it cannot use."""
+    real = pl.phoneme_keys()
+    if real:
+        line = pl._phonics_line()
+        check('phoneme' in line, f"the field is named, got {line!r}")
+        for k in list(real)[:5]:
+            check(k in line, f"and the key {k!r} is offered, got {line!r}")
+    orig = pl._PHONEME_KEYS
+    try:
+        pl._PHONEME_KEYS = frozenset()
+        check(pl._phonics_line() == '',
+              "an install with no rendered sounds is told nothing about them")
+        pl._PHONEME_KEYS = frozenset({'a_short', 'name_a'})
+        line = pl._phonics_line()
+        check('a_short' in line and 'name_a' in line,
+              f"and exactly what it has, got {line!r}")
+    finally:
+        pl._PHONEME_KEYS = orig
+
+
+def scenario_generation_offers_the_letter_sounds_it_actually_has():
+    """The line has to reach the CALL, not merely exist."""
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    storage.program_lessons_table.truncate()
+    seen = {}
+
+    def fake_pool(tier, api_key, system, prompt, **kw):
+        seen['system'] = system
+        return {'scenes': [{'type': 'say', 'text': 'Sound it out.'}]}
+
+    orig_pool, orig_keys = mp.call_pool_json, pl._PHONEME_KEYS
+    mp.call_pool_json = fake_pool
+    pl._PHONEME_KEYS = frozenset({'a_short', 'name_a'})
+    try:
+        pl.generate_for(_program_row(), _window(), {'n': 1},
+                        {'llm_gemini_api_key': 'k'})
+    finally:
+        mp.call_pool_json, pl._PHONEME_KEYS = orig_pool, orig_keys
+    check('a_short' in (seen.get('system') or ''),
+          f"the system prompt carries them, got {seen.get('system')!r}")
+
+
 def scenario_the_phoneme_set_is_read_from_the_manifest():
     """Whatever tools/gen_phonemes.py actually rendered, and nothing
     else -- the validator can never drift from the files on disk because
@@ -2040,6 +2094,8 @@ if __name__ == '__main__':
     scenario_a_card_face_may_carry_its_own_voice()
     scenario_a_card_spoken_line_runs_the_screens()
     scenario_a_phoneme_key_must_be_one_this_app_actually_has()
+    scenario_the_model_is_told_which_letter_sounds_exist()
+    scenario_generation_offers_the_letter_sounds_it_actually_has()
     scenario_the_phoneme_set_is_read_from_the_manifest()
     scenario_run_lines_are_cue_and_answer_pairs()
     scenario_a_line_without_its_cue_is_not_a_pair()
