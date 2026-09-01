@@ -55,18 +55,38 @@ those, filename included. Re-running it is safe: it overwrites, and a key
 whose render fails is dropped from the manifest rather than left pointing
 at a broken file.
 
+WHY AN ISOLATED SOUND IS HARD, AND WHAT ACTUALLY WORKS
+------------------------------------------------------
+A text-to-speech engine phonemizes GRAPHEMES AS WORDS. `k` is the word
+"kay"; so is the `k` at the front of "k as in kite". No choice of
+spelling fixes that, because the spelling is the thing being read. Three
+routes exist and only an ear can rank them:
+
+  1. Escape the text layer. Piper phonemizes with eSpeak-NG, and eSpeak
+     reads `[[...]]` as PHONEMES rather than letters -- `[[k]]` is /k/.
+     Whether that survives Wyoming and Home Assistant is unknowable from
+     here, which is what `--probe` is for.
+  2. An engine with SSML phoneme support (`<phoneme alphabet="ipa">`).
+     Piper has none; some cloud engines do.
+  3. A recording. Forty-four sounds in a parent's own voice is the
+     highest-quality answer available and the one a five-year-old would
+     rather hear anyway. `overrides.json` takes `{"k": {"file":
+     "my_k.wav"}}` and this tool then leaves that key alone entirely.
+
 TUNING IT BY EAR, which is the only way
 ---------------------------------------
 Nothing here can hear its own output. The loop is: render, listen, fix
 the one that came out wrong, render that one again.
 
     python tools/gen_phonemes.py --list          what it will say, no HA needed
+    python tools/gen_phonemes.py --probe k       every candidate for /k/, side by side
     python tools/gen_phonemes.py --only l,j      re-render just those
 
-Corrections go in `static/phonics/overrides.json` as
-`{"key": "what to say"}`. That file is READ and never written, so a full
-regeneration cannot quietly undo a fix somebody made by ear -- and an ear
-is the only authority there is about how a letter sounds.
+Corrections go in `static/phonics/overrides.json`, either as
+`{"key": "what to say"}` or `{"key": {"file": "your-recording.wav"}}`.
+That file is READ and never written, so a full regeneration cannot
+quietly undo a fix somebody made by ear -- and an ear is the only
+authority there is about how a letter sounds.
 
 Until it is run the manifest is empty, which is the correct empty state:
 cards still speak through `speak`/`speak_lang` in the browser's own
@@ -135,6 +155,28 @@ ALL = dict(PHONEMES, **LETTER_NAMES)
 
 OVERRIDES = os.path.join(OUT_DIR, 'overrides.json')
 
+# eSpeak-NG phoneme mnemonics, for the ONE route that can make a
+# text-to-speech engine produce an isolated sound rather than a word.
+#
+# Piper phonemizes with eSpeak-NG, and eSpeak reads anything inside
+# double square brackets as PHONEMES instead of letters: `[[k]]` is the
+# /k/ sound, where plain `k` is the letter name "kay". Whether that
+# survives the trip through Wyoming and Home Assistant is a question
+# nobody can answer by reading -- hence `--probe`, which renders the
+# candidates side by side so an ear can decide.
+#
+# Consonants only. The vowel mnemonics are long and engine-version
+# sensitive, and a vowel exemplar ("a as in cat") already carries its
+# sound in a real word; the leading letter name is the only wart, and it
+# is a smaller one there.
+ESPEAK = {
+    'b': 'b', 'd': 'd', 'f': 'f', 'g': 'g', 'h': 'h', 'j': 'dZ',
+    'k': 'k', 'l': 'l', 'm': 'm', 'n': 'n', 'p': 'p', 'r': 'r',
+    's': 's', 't': 't', 'v': 'v', 'w': 'w', 'y': 'j', 'z': 'z',
+    'ch': 'tS', 'sh': 'S', 'th': 'T', 'th_voiced': 'D', 'ng': 'N',
+    'zh': 'Z', 'qu': 'kw',
+}
+
 
 def _phrases():
     """What to say for each key, with the household's own corrections on
@@ -149,16 +191,67 @@ def _phrases():
     of authority there is about how a letter sounds.
     """
     out = dict(ALL)
+    for key, val in _overrides().items():
+        if key in out and isinstance(val, str) and val.strip():
+            out[key] = val.strip()
+    return out
+
+
+def _overrides() -> dict:
+    """The raw overrides file. A value may be a STRING (say this instead)
+    or `{"file": "something.wav"}` (play this instead, rendered by
+    nobody).
+
+    The file form is the escape hatch that always works. No engine can be
+    made to say an isolated consonant on demand -- see ESPEAK above for
+    the one route that might -- and a parent recording forty-four sounds
+    in their own voice is both the highest-quality answer available and
+    the one a five-year-old would rather hear anyway. Dropping the file
+    beside the manifest and naming it here is all that takes.
+    """
     try:
         with io.open(OVERRIDES, encoding='utf-8') as f:
-            for key, phrase in (json.load(f) or {}).items():
-                if key in out and isinstance(phrase, str) and phrase.strip():
-                    out[key] = phrase.strip()
+            return json.load(f) or {}
     except FileNotFoundError:
-        pass
+        return {}
     except Exception as e:
         print(f"[overrides] ignored ({e})")
-    return out
+        return {}
+
+
+def _probe_texts(key: str, phrase: str) -> list:
+    """Every plausible way to ask for one sound, so an ear can pick.
+
+    The problem this exists for: a text-to-speech engine phonemizes
+    GRAPHEMES AS WORDS, so `k` is "kay" and `k as in kite` is "kay as in
+    kite". Nothing about that is fixable by choosing better words -- it
+    needs either an escape out of the text layer entirely (the `[[...]]`
+    eSpeak form) or a recording. Which of these a given Piper build
+    actually honours is not knowable from here.
+    """
+    # A letter NAME is the one thing every engine already gets right --
+    # "kay" is a word to a phonemizer, which is exactly why the sound is
+    # hard and the name is not. Nothing to audition.
+    if key.startswith('name_'):
+        return [phrase]
+    letter = key.split('_')[0]
+    out = []
+    if key in ESPEAK:
+        # The one candidate that is a real phoneme rather than a spelling.
+        out.append(f"[[{ESPEAK[key]}]]")
+        out.append(f"[[{ESPEAK[key]}{ESPEAK[key]}]]")
+    out.append(phrase)                       # what ships today
+    out.append(letter + 'uh')                # the syllable guess
+    out.append(letter)                       # the letter name, as a control
+    exemplar = phrase.split(' as in ')
+    if len(exemplar) == 2:
+        out.append(exemplar[1])              # the bare word
+    seen, uniq = set(), []
+    for t in out:
+        if t and t not in seen:
+            seen.add(t)
+            uniq.append(t)
+    return uniq
 
 
 def preflight():
@@ -295,11 +388,38 @@ def main():
             print(f"Not keys: {', '.join(unknown)}. Try --list.")
             return 1
 
+    # --probe renders every plausible way of asking for one sound, side by
+    # side, so the choice is made by listening instead of by me guessing a
+    # third time. Nothing here can hear its own output; this is the whole
+    # answer to that.
+    probe = ''
+    if '--probe' in argv:
+        i = argv.index('--probe')
+        if i + 1 < len(argv):
+            probe = argv[i + 1].strip()
+        if probe not in phrases:
+            print(f"Not a key: {probe!r}. Try --list.")
+            return 1
+
     ready = preflight()
     if not ready:
         return 1
     engine, language, voice = ready
     os.makedirs(OUT_DIR, exist_ok=True)
+
+    if probe:
+        print(f"\nProbing {probe!r} — listen to each and put the winner in\n"
+              f"{OVERRIDES} as {{\"{probe}\": \"<the text that worked>\"}}.\n")
+        for n, text in enumerate(_probe_texts(probe, phrases[probe]), 1):
+            name = _render(f'probe_{probe}_{n}', text, engine, language, voice)
+            print(f"  {n}. {'ok ' if name else 'FAILED'} {name or '':22} "
+                  f"said: {text!r}")
+        print("\nThese probe_* files are scratch — delete them once you have "
+              "picked.\nIf none of them is the real sound, that is the honest "
+              "answer for this\nvoice: record it instead and name the file in "
+              "overrides.json as\n{\"" + probe + "\": {\"file\": \"my_" + probe
+              + ".wav\"}}.")
+        return 0
 
     # A partial run must not delete the rest of the manifest, so it starts
     # from what is already there and replaces only what it re-rendered.
@@ -311,8 +431,24 @@ def main():
         except Exception:
             written = {}
 
+    raw = _overrides()
     todo = {k: phrases[k] for k in (only or sorted(phrases))}
     for key, phrase in todo.items():
+        # A key whose override names a FILE is not rendered at all: it is
+        # somebody's own recording, which outranks anything an engine can
+        # be talked into. Checked for existence, because a manifest entry
+        # pointing at a file nobody put there is the exact broken-tap
+        # state the closed set exists to prevent.
+        pinned = raw.get(key)
+        if isinstance(pinned, dict) and pinned.get('file'):
+            fname = str(pinned['file'])
+            if os.path.exists(os.path.join(OUT_DIR, fname)):
+                written[key] = {'say': '(recorded)', 'file': fname}
+                print(f"  {key:12} kept — your own recording, {fname}")
+            else:
+                written.pop(key, None)
+                print(f"  {key:12} SKIPPED — {fname} is not in {OUT_DIR}")
+            continue
         try:
             name = _render(key, phrase, engine, language, voice)
             if name:

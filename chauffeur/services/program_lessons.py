@@ -999,8 +999,10 @@ def _phonics_line() -> str:
     return (' A card pair may also carry "phoneme", a recorded letter '
             'SOUND played when the card is tapped -- use it instead of '
             '"speak" for a single letter or letter pair, because a voice '
-            'reading "l" says its name and not its sound. The only keys '
-            'that exist are: ' + ', '.join(keys)
+            'reading "l" says its name and not its sound. Write the sound '
+            'itself between slashes on the card face, the way a reading '
+            'book prints it: front "k", back "/k/ as in kite". The only '
+            'keys that exist are: ' + ', '.join(keys)
             + '. Keys starting name_ are the letter NAME (name_a is "ay"); '
               'the rest are sounds. Any other key is dropped.')
 
