@@ -256,6 +256,107 @@ def scenario_step_approve_rides_the_chat_rail():
         _auth.identify, _ca._execute = orig_identify, orig_execute
 
 
+# --- A closed step is closed, and an approval that moves the schedule says so
+# I2: `Skip` left the step's bound proposal sitting there, still approvable --
+# so skipping was a suggestion, not an answer, and a stale card could still be
+# fired. I5: a Mind approval runs the same typed actions a chat card runs, and
+# `act_on_proposal` reports `schedule_dirty`; both Mind approve doors dropped
+# it, so the wall kept showing the old driver until something else re-solved.
+
+
+class _FakeBackground:
+    """Stands in for FastAPI's BackgroundTasks so a direct call can see what
+    the endpoint queued."""
+
+    def __init__(self):
+        self.tasks = []
+
+    def add_task(self, fn, *a, **kw):
+        self.tasks.append(fn)
+
+
+def _planned_row_with_bound_step(step_status='open'):
+    from services import chat_actions as _ca
+    prop = _ca.create_action_proposal(
+        'reassign_driver', 'Give Tuesday soccer to Lorena',
+        {'event_name': 'Soccer', 'driver_name': 'Lorena',
+         'target_date': '2026-09-08'})
+    iid = storage.add_mind_insight({'slug': 'planned', 'category': 'load',
+                                    'line': 'Tuesday is stacked'})
+    storage.update_mind_insight(iid, {
+        'state': 'in_hand',
+        'plan_json': {'created_ts': 1.0, 'steps': [
+            {'id': 's1', 'kind': 'tool', 'text': 'Hand Tuesday to Lorena',
+             'owner_member_id': None, 'owner_name': '', 'due': '2026-09-08',
+             'status': step_status,
+             'proposal_json': {'proposal_id': prop['proposal_id'],
+                               'summary': 'Give it to Lorena'}}]}})
+    return iid, prop['proposal_id']
+
+
+def scenario_a_skipped_step_cannot_be_approved():
+    _reset(); _reset_people()
+    import main
+    from fastapi import HTTPException
+    from services import auth as _auth, chat_actions as _ca
+    iid, pid = _planned_row_with_bound_step(step_status='skipped')
+    orig_identify, orig_execute = _auth.identify, _ca._execute
+    ran = []
+    try:
+        _auth.identify = lambda h, q: {'tier': _auth.SERVICE, 'member': None}
+        _ca._execute = lambda a, p: (ran.append(a) or
+                                     {'status': 'success', 'message': 'done'})
+        try:
+            main.mind_step_approve(iid, 's1', body={}, request=None)
+            check(False, "a skipped step must not be executable")
+        except HTTPException as e:
+            check(e.status_code == 400, f"refused with 400, got {e.status_code}")
+            check('skipped' in (e.detail or ''), f"and says why, got {e.detail}")
+        check(not ran, "nothing ran")
+        check(storage.get_action_proposal(pid)['status'] == 'proposed',
+              "the proposal is untouched, not spent")
+    finally:
+        _auth.identify, _ca._execute = orig_identify, orig_execute
+
+
+def scenario_a_schedule_changing_step_approval_asks_for_a_resolve():
+    _reset(); _reset_people()
+    import main
+    from services import auth as _auth, chat_actions as _ca
+    iid, pid = _planned_row_with_bound_step()
+    orig_identify, orig_execute = _auth.identify, _ca._execute
+    bg = _FakeBackground()
+    try:
+        _auth.identify = lambda h, q: {'tier': _auth.SERVICE, 'member': None}
+        _ca._execute = lambda a, p: {'status': 'success', 'message': 'done'}
+        res = main.mind_step_approve(iid, 's1', body={}, request=None,
+                                     background_tasks=bg)
+        check(res.get('status') == 'success', f"the step ran, got {res}")
+        check(main.trigger_background_refresh in bg.tasks,
+              f"a reassignment re-solves, got {bg.tasks}")
+        check(res.get('insight_state') == 'retired',
+              "and the last step closing retires the insight")
+    finally:
+        _auth.identify, _ca._execute = orig_identify, orig_execute
+
+
+def scenario_the_row_level_approval_asks_for_one_too():
+    _reset(); _reset_people()
+    import main
+    from services import auth as _auth, chat_actions as _ca
+    iid, pid = _insight_with_proposal()
+    orig_identify, orig_execute = _auth.identify, _ca._execute
+    bg = _FakeBackground()
+    try:
+        _auth.identify = lambda h, q: {'tier': _auth.SERVICE, 'member': None}
+        _ca._execute = lambda a, p: {'status': 'success', 'message': 'done'}
+        main.mind_act(iid, body={}, request=None, background_tasks=bg)
+        check(main.trigger_background_refresh in bg.tasks,
+              f"same defect, same visit, got {bg.tasks}")
+    finally:
+        _auth.identify, _ca._execute = orig_identify, orig_execute
+
+
 if __name__ == '__main__':
     scenario_dismiss_records_outcome()
     scenario_act_records_outcome()
@@ -266,4 +367,7 @@ if __name__ == '__main__':
     scenario_no_parent_on_record_is_an_honest_refusal()
     scenario_snooze_clamps_and_parks()
     scenario_step_approve_rides_the_chat_rail()
+    scenario_a_skipped_step_cannot_be_approved()
+    scenario_a_schedule_changing_step_approval_asks_for_a_resolve()
+    scenario_the_row_level_approval_asks_for_one_too()
     print("test_mind_endpoints OK")

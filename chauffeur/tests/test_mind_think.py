@@ -161,6 +161,38 @@ def scenario_think_stores_approach_and_spares_parked_rows():
           and 'in hand' in CALLS[0]['prompt'],
           "the prompt shows the model what is parked and what is in hand")
 
+def scenario_a_revived_slug_starts_clean():
+    """I3: reviving reused the same row and kept whatever was hanging off it.
+    An acted slug came back carrying the plan whose steps were all closed
+    (a checklist of last month's work), the proposal_json still wired to the
+    Approve button, and a snooze that would silence it the moment it
+    returned. It is a NEW observation; it arrives with nothing attached."""
+    _reset()
+    iid = storage.add_mind_insight({'slug': 'returns', 'line': 'old',
+                                    'category': 'c'})
+    storage.update_mind_insight(iid, {
+        'state': 'retired', 'outcome': 'acted', 'resolved_ts': time.time(),
+        'snoozed_until': time.time() + 86400,
+        'proposal_json': {'proposal_id': 'old-pr', 'summary': 'stale'},
+        'plan_json': {'created_ts': 1.0, 'steps': [
+            {'id': 's1', 'kind': 'human', 'text': 'done long ago',
+             'owner_member_id': None, 'owner_name': '', 'due': '2026-01-01',
+             'status': 'done', 'proposal_json': None}]}})
+    mind._pool_call = _fake_pool([{'slug': 'returns', 'line': 'it is back',
+                                   'category': 'c'}])
+    mind.deep_think(NOON, force=True)
+    row = storage.get_mind_insight_by_slug('returns')
+    check(row['state'] == 'active' and row['line'] == 'it is back',
+          f"the slug returns, got {row['state']}")
+    check(row['plan_json'] is None, f"no stale checklist, got {row['plan_json']}")
+    check(row['proposal_json'] is None,
+          f"no stale Approve button, got {row['proposal_json']}")
+    check(row['snoozed_until'] is None,
+          f"and it is not born parked, got {row['snoozed_until']}")
+    check(mind.visible_insights({'id': 'mom', 'role': 'parent'}, now=NOON),
+          "so it is actually in the lane")
+
+
 if __name__ == '__main__':
     scenario_think_reconciles()
     scenario_unchanged_snapshot_skips()
@@ -170,4 +202,5 @@ if __name__ == '__main__':
     scenario_expired_can_return_dismissed_cannot()
     scenario_mid_think_chat_is_not_skipped()
     scenario_think_stores_approach_and_spares_parked_rows()
+    scenario_a_revived_slug_starts_clean()
     print("test_mind_think OK")

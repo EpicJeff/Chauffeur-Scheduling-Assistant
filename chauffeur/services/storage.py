@@ -2724,6 +2724,25 @@ def update_mind_insight(insight_id: str, data: dict) -> bool:
     with db_lock:
         return bool(mind_insights_table.update(data, Query().id == insight_id))
 
+def mutate_mind_insight(insight_id: str, fn) -> bool:
+    """Read-modify-write ONE insight without letting go of the lock in between.
+
+    A mind plan lives as a whole JSON blob on the row, and `bind_step` holds
+    that blob across a live agent call that takes tens of seconds. Writing it
+    back wholesale at the end would silently undo anything the family did to
+    another step meanwhile — a skip, a done, the retirement that followed.
+    `fn` is handed the FRESH row and returns the fields to write (falsy =
+    write nothing), so the plan it edits is the one on disk right now.
+    db_lock is an RLock, but `fn` must still not call back into storage."""
+    with db_lock:
+        rows = mind_insights_table.search(Query().id == insight_id)
+        if not rows:
+            return False
+        fields = fn(dict(rows[0]))
+        if not fields:
+            return False
+        return bool(mind_insights_table.update(fields, Query().id == insight_id))
+
 def get_mind_insights(state: str = None) -> List[dict]:
     with db_lock:
         rows = [dict(r) for r in mind_insights_table.all()]

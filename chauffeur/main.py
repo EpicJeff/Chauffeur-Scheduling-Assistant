@@ -5068,6 +5068,16 @@ def _approver_of_record(actor):
     return parents[0]
 
 
+def _mind_refresh_if_dirty(result, background_tasks):
+    """A Mind approval runs the SAME typed actions a chat card runs, so it can
+    reassign a driver or cancel an event — and `act_on_proposal` says so with
+    `schedule_dirty`. `/api/action-proposals/{id}/act` has always re-solved on
+    that flag; the Mind's two approve doors dropped it on the floor, leaving
+    the wall showing yesterday's driver until something else re-solved."""
+    if result.get('schedule_dirty') and background_tasks is not None:
+        background_tasks.add_task(trigger_background_refresh)
+
+
 @app.post("/api/mind/insights/{insight_id}/dismiss")
 def mind_dismiss(insight_id: str, body: dict = Body(default={}),
                  request: Request = None):
@@ -5082,7 +5092,7 @@ def mind_dismiss(insight_id: str, body: dict = Body(default={}),
 
 @app.post("/api/mind/insights/{insight_id}/act")
 def mind_act(insight_id: str, body: dict = Body(default={}),
-             request: Request = None):
+             request: Request = None, background_tasks: BackgroundTasks = None):
     """Approves the attached proposal, if any, then retires the insight
     as acted — the lane's tap is the same tap chat_actions already knows."""
     import time as _t
@@ -5099,6 +5109,7 @@ def mind_act(insight_id: str, body: dict = Body(default={}),
                                      _approver_of_record(actor))
         if result.get('status') != 'success':
             raise HTTPException(status_code=400, detail=result.get('message'))
+        _mind_refresh_if_dirty(result, background_tasks)
     storage.update_mind_insight(insight_id, {
         'state': 'retired', 'outcome': 'acted', 'resolved_ts': _t.time()})
     return result
@@ -5176,7 +5187,8 @@ def mind_step_bind(insight_id: str, step_id: str,
 
 @app.post("/api/mind/insights/{insight_id}/step/{step_id}/approve")
 def mind_step_approve(insight_id: str, step_id: str,
-                      body: dict = Body(default={}), request: Request = None):
+                      body: dict = Body(default={}), request: Request = None,
+                      background_tasks: BackgroundTasks = None):
     """Runs ONE bound step via the same approve rail chat uses, then closes
     it done. Per-step approval is the whole design — nothing else runs."""
     from services import mind as _mind, chat_actions as _ca
@@ -5188,6 +5200,13 @@ def mind_step_approve(insight_id: str, step_id: str,
     step = next((s for s in steps if s.get('id') == step_id), None)
     if not step:
         raise HTTPException(status_code=404, detail="No such step")
+    if step.get('status') != 'open':
+        # A skipped step's proposal is still sitting there, still approvable —
+        # so "Skip" would only be a suggestion unless this door is shut. The
+        # answer to a closed step is no, not a second execution of it.
+        raise HTTPException(
+            status_code=400,
+            detail=f"That step is already {step.get('status') or 'closed'}")
     prop = step.get('proposal_json') or {}
     if not prop.get('proposal_id'):
         raise HTTPException(status_code=400, detail="Nothing bound to approve")
@@ -5195,6 +5214,7 @@ def mind_step_approve(insight_id: str, step_id: str,
                                  _approver_of_record(actor))
     if result.get('status') != 'success':
         raise HTTPException(status_code=400, detail=result.get('message'))
+    _mind_refresh_if_dirty(result, background_tasks)
     closed = _mind.close_step(insight_id, step_id, 'done')
     return {**result, 'plan': closed.get('plan'),
             'insight_state': closed.get('insight_state')}

@@ -264,6 +264,159 @@ def scenario_sensitive_gate_still_holds():
           "parent still sees it")
 
 
+# --- C1: the bind tap must be structurally unable to ACT --------------------
+# Before this, "Do it" ran the same rail chat runs, and the rail EXECUTES: a
+# step reading "DM Lorena about Tuesday" sent the DM at bind time, left the
+# step open, and sent it again on the next tap. Per-step approval was a
+# promise the code did not keep. Two tests, because the invariant has two
+# halves: the Mind has to ask for the proposal-only rail, and the rail has to
+# really refuse. `_REAL_AGENT_REQUEST` is captured at import, before any
+# scenario above swaps that attribute out for a stub.
+
+_REAL_AGENT_REQUEST = mind._agent_request
+
+
+def _fake_llm(name, args=None, box=None):
+    """One canned tool call, no network. `box` collects what the router put in
+    front of the model, so a test can assert on the offered tool list."""
+    def f(prompt, tools, system_prompt):
+        if box is not None:
+            box['tools'] = [t.get('name') for t in tools]
+            box['system'] = system_prompt
+        return {'message': '', 'tool_calls': [{'name': name,
+                                               'arguments': args or {}}]}
+    return f
+
+
+def scenario_both_mind_taps_ask_for_the_proposal_only_rail():
+    _reset()
+    from services import agent_router
+    seen = {}
+
+    def fake_router(prompt, **kw):
+        seen.clear()
+        seen.update(kw)
+        return {'message': 'noted', 'card': None}
+
+    orig_router, orig_req = agent_router.process_agent_request, mind._agent_request
+    try:
+        agent_router.process_agent_request = fake_router
+        mind._agent_request = _REAL_AGENT_REQUEST
+        iid = _planned_insight([_step(1)])
+        mind.bind_step(iid, 's1', PARENT, now=NOON)
+        check(seen.get('propose_only') is True,
+              f"bind_step must run the rail proposal-only, got {seen}")
+        # propose_fix is the same rail with the same hole and it predates
+        # plans: fixing one and leaving the other is half a fix.
+        legacy = storage.add_mind_insight({'slug': 'legacy', 'category': 'c',
+                                           'line': 'older path'})
+        mind.propose_fix(legacy, PARENT, now=NOON)
+        check(seen.get('propose_only') is True,
+              f"propose_fix must too, got {seen}")
+    finally:
+        agent_router.process_agent_request = orig_router
+        mind._agent_request = orig_req
+
+
+def scenario_the_rail_refuses_to_act_when_asked_only_to_propose():
+    _reset()
+    from services import agent_router, agent_tools_v2
+    sent, box = [], {}
+    orig_llm = agent_router.call_gemma_with_fallback
+    orig_dm = agent_tools_v2.send_direct_message
+    try:
+        agent_tools_v2.send_direct_message = lambda *a, **kw: (
+            sent.append(a) or {'status': 'success', 'message': 'sent'})
+        agent_router.call_gemma_with_fallback = _fake_llm(
+            'send_direct_message',
+            {'recipient_name': 'Dad', 'message_text': 'hi'}, box)
+
+        res = agent_router.process_agent_request('do the step', propose_only=True)
+        check(not sent, "no DM may be sent on the proposal-only rail")
+        check(res.get('card') is None, "and nothing was proposed either")
+        check('send_direct_message' not in (box.get('tools') or []),
+              "the acting tool is not even offered to the model")
+        check('processed your request' not in (res.get('message') or ''),
+              f"the note kept on the step must be honest, got {res.get('message')}")
+
+        # The control. Without it a broken stub -- one that never reaches
+        # dispatch at all -- would look exactly like a working refusal.
+        agent_router.process_agent_request('do the step')
+        check(len(sent) == 1, f"the unflagged chat rail still acts, got {sent}")
+    finally:
+        agent_router.call_gemma_with_fallback = orig_llm
+        agent_tools_v2.send_direct_message = orig_dm
+
+
+def scenario_the_proposal_only_rail_still_proposes_and_still_reads():
+    _reset()
+    from services import agent_router, agent_tools_v2
+    asked = []
+    orig_llm = agent_router.call_gemma_with_fallback
+    orig_rq = agent_tools_v2.research_question
+    try:
+        agent_router.call_gemma_with_fallback = _fake_llm(
+            'propose_family_action',
+            {'action_type': 'reassign_driver',
+             'summary': 'Give Tuesday soccer to Lorena',
+             'payload': {'event_name': 'Soccer', 'driver_name': 'Lorena',
+                         'target_date': '2026-09-08'}})
+        res = agent_router.process_agent_request('do the step', propose_only=True)
+        check((res.get('card') or {}).get('proposal_id'),
+              f"a card a parent still has to tap is the whole point, got {res}")
+
+        agent_tools_v2.research_question = lambda q: (
+            asked.append(q) or {'status': 'success',
+                                'message': 'three sitters, from $18/h'})
+        agent_router.call_gemma_with_fallback = _fake_llm(
+            'research_question', {'question': 'what does a sitter cost here'})
+        agent_router.process_agent_request('go find out', propose_only=True)
+        check(asked, "a read still runs -- its answer IS the step's note")
+    finally:
+        agent_router.call_gemma_with_fallback = orig_llm
+        agent_tools_v2.research_question = orig_rq
+
+
+def scenario_a_late_bind_does_not_undo_a_skip():
+    """I4: bind holds the plan across a long agent call. The family kept using
+    the card meanwhile; the write-back must not roll them back."""
+    _reset()
+    iid = _planned_insight([_step(1), _step(2)])
+
+    def slow_agent(prompt, actor):
+        # what a person does while the agent is thinking
+        mind.close_step(iid, 's2', 'skipped')
+        return {'message': 'ok', 'card': {'proposal_id': 'pr9', 'title': 'T'}}
+
+    mind._agent_request = slow_agent
+    mind.bind_step(iid, 's1', PARENT, now=NOON)
+    by_id = {s['id']: s for s
+             in storage.get_mind_insight_by_slug('p')['plan_json']['steps']}
+    check(by_id['s2']['status'] == 'skipped',
+          f"the skip taken mid-bind survives, got {by_id['s2']}")
+    check(by_id['s1']['proposal_json']['proposal_id'] == 'pr9',
+          "and the bind still landed on its own step")
+
+
+def scenario_parse_steps_survives_a_model_answering_in_numbers():
+    """I7: a numeric due or a non-string text used to raise AttributeError --
+    a 500 on the card with the day's cap already spent."""
+    _reset()
+    iid = storage.add_mind_insight({'slug': 'n', 'category': 'c', 'line': 'x'})
+    mind._pool_call = _fake_pool({'steps': [
+        {'kind': 'tool', 'text': 'Ask the school', 'due': 20260904},
+        {'kind': 'human', 'text': 12345, 'owner': 'Dad', 'due': '2026-09-06'},
+        {'kind': 'tool', 'text': 'Third', 'due': None},
+    ]})
+    res = mind.make_plan(iid, PARENT, now=NOON)
+    check(res['status'] == 'planned', f"no exception, a plan, got {res}")
+    steps = res['plan']['steps']
+    check(steps[0]['due'] == '2026-09-04',
+          f"a numeric ISO due is coerced and normalised, got {steps[0]['due']}")
+    check(steps[1]['text'] == '12345', f"numeric text is coerced, got {steps[1]}")
+    check(steps[2]['due'] == '2026-09-05', "a missing due still defaults")
+
+
 if __name__ == '__main__':
     scenario_plan_attaches_and_state_moves()
     scenario_second_tap_returns_existing_plan()
@@ -278,4 +431,9 @@ if __name__ == '__main__':
     scenario_steps_due()
     scenario_lane_visibility()
     scenario_sensitive_gate_still_holds()
+    scenario_both_mind_taps_ask_for_the_proposal_only_rail()
+    scenario_the_rail_refuses_to_act_when_asked_only_to_propose()
+    scenario_the_proposal_only_rail_still_proposes_and_still_reads()
+    scenario_a_late_bind_does_not_undo_a_skip()
+    scenario_parse_steps_survives_a_model_answering_in_numbers()
     print("test_mind_plan OK")

@@ -289,9 +289,18 @@ def visible_insights(viewer: Optional[dict],
 def _agent_request(prompt: str, actor: dict) -> dict:
     """Indirection so tests stub one attribute. The live path is the same
     agent stack chat uses — its tools build and validate the proposal payload
-    (the suggestion funnel in chat_actions.py rides the identical rail)."""
+    (the suggestion funnel in chat_actions.py rides the identical rail).
+
+    `propose_only=True` is load-bearing, not a hint: the router refuses every
+    acting tool before dispatch on this flag (see PROPOSE_ONLY_TOOLS), so a
+    Mind tap can only ever come back with a proposal card or an honest note.
+    Without it "Do it" would SEND the DM the moment the step was bound, leave
+    the step open, and send it again on the next tap — the per-step approval
+    promise, undone. Both Mind callers (bind_step and the legacy propose_fix)
+    go through here so neither can be fixed and the other forgotten."""
     from services.agent_router import process_agent_request
-    return process_agent_request(prompt, source='family', acting_member=actor)
+    return process_agent_request(prompt, source='family', acting_member=actor,
+                                 propose_only=True)
 
 
 def propose_fix(insight_id: str, actor: dict = None,
@@ -319,8 +328,9 @@ def propose_fix(insight_id: str, actor: dict = None,
               f"the family: \"{row.get('line')}\""
               + (f" ({row.get('detail')})" if row.get('detail') else '')
               + ". Propose exactly ONE concrete action that would resolve it, "
-                "using your action tools. If no schedule or household action "
-                "genuinely helps, say so plainly instead of forcing one.")
+                "as a proposal a parent approves with one tap. If no schedule "
+                "or household action genuinely helps, say so plainly instead "
+                "of forcing one.")
     try:
         res = _agent_request(prompt, actor) or {}
     except Exception as e:
@@ -371,7 +381,11 @@ def _parse_steps(raw, members, now: datetime.datetime) -> list:
     """Clamp what the model returned into the step shape every later tap
     trusts. Unknown kind becomes 'human' (a step that can never execute is
     the safe misread); a missing/bad due gets today+3 so no plan can sit
-    invisible forever; an unknown owner stays unresolved, never invented."""
+    invisible forever; an unknown owner stays unresolved, never invented.
+
+    Every field is str()-coerced before it is stripped: a model that answers
+    `"due": 20260904` or a text as a number is a bad plan, not a 500 with the
+    day's cap already spent."""
     by_id = {str(m.get('id')): m for m in members}
     by_name = {(m.get('name') or '').strip().lower(): m for m in members}
     out = []
@@ -380,15 +394,18 @@ def _parse_steps(raw, members, now: datetime.datetime) -> list:
             break
         if not isinstance(item, dict):
             continue
-        text = (item.get('text') or '').strip()
+        text = str(item.get('text') or '').strip()
         if not text:
             continue
         kind = item.get('kind') if item.get('kind') in ('tool', 'human') else 'human'
         want = str(item.get('owner') or '').strip()
         m = by_id.get(want) or by_name.get(want.lower())
-        due = (item.get('due') or '').strip()
+        due = str(item.get('due') or '').strip()
         try:
-            datetime.date.fromisoformat(due)
+            # Re-emit what parsed, so an ISO variant the model happened to
+            # pick (20260904, 2026-W36-5) is stored as the YYYY-MM-DD every
+            # other reader and every rendered "by …" line expects.
+            due = datetime.date.fromisoformat(due).isoformat()
         except ValueError:
             due = (now.date()
                    + datetime.timedelta(days=DEFAULT_STEP_DUE_DAYS)).isoformat()
@@ -465,9 +482,10 @@ def bind_step(insight_id: str, step_id: str, actor: dict = None,
         return {'status': 'capped'}
     prompt = (f"Today is {now.strftime('%A %Y-%m-%d')}. You are handling this "
               f"observation about the family: \"{row.get('line')}\". The plan "
-              f"step to do RIGHT NOW is: \"{step['text']}\". Do exactly this "
-              "step using your action tools. If it genuinely cannot be done "
-              "with them, say so plainly instead of forcing something else.")
+              f"step to do RIGHT NOW is: \"{step['text']}\". Line up exactly "
+              "this step: put it in front of a parent as a proposal, or read "
+              "what it asks you to find out. If it genuinely can't be done "
+              "that way, say so plainly instead of forcing something else.")
     try:
         res = _agent_request(prompt, actor) or {}
     except Exception as e:
@@ -475,43 +493,68 @@ def bind_step(insight_id: str, step_id: str, actor: dict = None,
         return {'status': 'error'}
     card = res.get('card') or {}
     if card.get('proposal_id'):
-        step['proposal_json'] = {
-            'proposal_id': card['proposal_id'],
-            'summary': card.get('title') or res.get('message') or 'proposed action'}
-        storage.update_mind_insight(insight_id, {'plan_json': plan})
-        return {'status': 'proposed', **step['proposal_json']}
+        attach = {'proposal_id': card['proposal_id'],
+                  'summary': (card.get('title') or res.get('message')
+                              or 'proposed action')}
+        _write_step(insight_id, step_id, {'proposal_json': attach})
+        return {'status': 'proposed', **attach}
     note = res.get('message') or ''
     if note:
-        step['note'] = note
-        storage.update_mind_insight(insight_id, {'plan_json': plan})
+        _write_step(insight_id, step_id, {'note': note})
     return {'status': 'no_move', 'note': note}
+
+
+def _write_step(insight_id: str, step_id: str, patch: dict) -> bool:
+    """Merge `patch` onto ONE step of the plan as it stands on disk right now.
+
+    The row read at the top of `bind_step` is minutes stale by the time the
+    agent answers — a family that skipped another step, or closed the last
+    one, did so in that window. Writing the whole remembered plan back would
+    erase them; this re-reads under the lock and touches one step's keys.
+    A step that vanished or closed meanwhile is simply not written."""
+    def _apply(fresh):
+        plan = fresh.get('plan_json') or {}
+        s = next((x for x in plan.get('steps') or []
+                  if x.get('id') == step_id), None)
+        if not s or s.get('status') != 'open':
+            return None
+        s.update(patch)
+        return {'plan_json': plan}
+    return storage.mutate_mind_insight(insight_id, _apply)
 
 
 def close_step(insight_id: str, step_id: str, status: str) -> dict:
     """Mark one open step done|skipped. When the last open step closes, the
     insight retires: any done => acted, all skipped => dismissed — so the
-    graduation math hears the family's real answer."""
+    graduation math hears the family's real answer.
+
+    Read, decide and write happen inside one `mutate_mind_insight` so the
+    retirement math is done on the plan as it stands, not on a copy taken
+    before some other tap (a bind finishing, a second Skip) changed it."""
     if status not in ('done', 'skipped'):
         return {'status': 'bad_status'}
-    rows = [r for r in storage.get_mind_insights() if r['id'] == insight_id]
-    if not rows:
+    out = {}
+
+    def _apply(row):
+        plan = row.get('plan_json') or {}
+        steps = plan.get('steps') or []
+        step = next((s for s in steps if s.get('id') == step_id), None)
+        if not step or step.get('status') != 'open':
+            return None
+        step['status'] = status
+        fields = {'plan_json': plan}
+        if all(s.get('status') != 'open' for s in steps):
+            outcome = 'acted' if any(s.get('status') == 'done' for s in steps) \
+                else 'dismissed'
+            fields.update({'state': 'retired', 'outcome': outcome,
+                           'resolved_ts': time.time()})
+        out['plan'] = plan
+        out['insight_state'] = fields.get('state', row.get('state'))
+        return fields
+
+    if not storage.mutate_mind_insight(insight_id, _apply):
         return {'status': 'not_found'}
-    row = rows[0]
-    plan = row.get('plan_json') or {}
-    steps = plan.get('steps') or []
-    step = next((s for s in steps if s.get('id') == step_id), None)
-    if not step or step.get('status') != 'open':
-        return {'status': 'not_found'}
-    step['status'] = status
-    fields = {'plan_json': plan}
-    if all(s.get('status') != 'open' for s in steps):
-        outcome = 'acted' if any(s.get('status') == 'done' for s in steps) \
-            else 'dismissed'
-        fields.update({'state': 'retired', 'outcome': outcome,
-                       'resolved_ts': time.time()})
-    storage.update_mind_insight(insight_id, fields)
-    return {'status': 'success', 'plan': plan,
-            'insight_state': fields.get('state', row.get('state'))}
+    return {'status': 'success', **out}
 
 
 def steps_due(row: dict, today: datetime.date = None) -> list:
@@ -834,10 +877,17 @@ def deep_think(now: datetime.datetime = None, force: bool = False) -> dict:
             pass  # a dismissed slug is never resurrected
         elif existing:
             # acted/expired slug returning: revive the SAME row (slugs stay
-            # unique) as a fresh observation.
+            # unique) as a fresh observation — and FRESH means the last life's
+            # leftovers go with it. A row revived carrying its old plan would
+            # come back with a checklist of steps that were closed months ago
+            # (and a stale proposal_json wired to the Approve button, or a
+            # snooze that silences it the moment it returns). It is a new
+            # observation; it starts with nothing attached.
             storage.update_mind_insight(existing['id'], {
                 **fields, 'state': 'active', 'outcome': None,
-                'resolved_ts': None, 'created_ts': time.time()})
+                'resolved_ts': None, 'created_ts': time.time(),
+                'plan_json': None, 'proposal_json': None,
+                'snoozed_until': None})
         else:
             storage.add_mind_insight({'slug': item['slug'], **fields})
 

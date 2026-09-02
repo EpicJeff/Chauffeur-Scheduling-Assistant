@@ -3045,7 +3045,14 @@
             const steps = ((ins.plan_json || {}).steps || []);
             const local = mindLocal[ins.id];
             if (steps.length) {
-                return steps.map(s => _mindStepHtml(ins, s)).join('');
+                // The checklist REPLACED these three, which quietly took away
+                // the only ways to make a planned insight go away: a plan you
+                // don't want could no longer be dismissed, parked, or cleared
+                // without skipping every step one at a time. They belong
+                // beneath the plan, not instead of it.
+                return steps.map(s => _mindStepHtml(ins, s)).join('')
+                    + `<div class="flex flex-wrap gap-2 mt-2">${notNow}${clear('Clear')}${dismiss}</div>`
+                    + _mindSnoozeRow(ins.id);
             }
             if (ins.proposal_json && ins.proposal_json.proposal_id) {
                 return `<div class="text-xs text-violet-300 mt-1.5">Argyle proposes: ${mfEscape(ins.proposal_json.summary || '')}</div>
@@ -3136,10 +3143,12 @@
             try {
                 const res = await fetch(`${apiBase}api/mind/insights/${id}/step/${stepId}/${action}`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-                const data = res.ok ? await res.json() : {};
+                // Parse the body either way: the failure branch wants `detail`,
+                // and reading it off an unparsed Response only ever yielded
+                // undefined — every 400/403 said "Couldn't do that step."
+                const data = await res.json().catch(() => ({}));
                 if (!res.ok) {
-                    const err = data || {};
-                    showGlobalAlert(err.detail || "Couldn't do that step.");
+                    showGlobalAlert(data.detail || "Couldn't do that step.");
                 } else if (action === 'bind' && data.status === 'no_move') {
                     showGlobalAlert(data.note || "Argyle doesn't have a move for that step.");
                 } else if (action === 'bind' && data.status === 'capped') {

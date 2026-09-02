@@ -5915,7 +5915,10 @@ of the time.
   slug stays suppressed — the family heard it and said no. A slug that was
   acted on or that simply expired out of the lane may return later: the
   situation being back is exactly what the lane should say, and it revives
-  the same row rather than minting a duplicate.
+  the same row rather than minting a duplicate — **empty** (v2.452.35): the
+  revive clears `plan_json`, `proposal_json` and `snoozed_until`, so a
+  returning slug can't arrive carrying last month's closed checklist, a
+  stale Approve button, or a snooze that silences it on arrival.
 - **Sensitivity gating is server-side.** An insight the model marks
   `sensitive` (the curation prompt asks for this explicitly on anything
   about a child's emotional state) is stripped out before the response body
@@ -5965,20 +5968,34 @@ unresolved rather than invented. An insight that genuinely doesn't need a
 plan comes back empty (`no_plan`) instead of busywork. The insight moves to
 state `in_hand` and stops restating the original observation.
 
-**Steps don't run themselves.** A tool step's "Do it" calls
-`POST .../step/{sid}/bind`, which runs the same live agent rail chat uses
-(`process_agent_request`, the tapping parent as acting member) on just that
-one sentence; a returned card attaches `{proposal_id, summary}` and the row
+**Steps don't run themselves, and that is structural (v2.452.35).** A tool
+step's "Do it" calls `POST .../step/{sid}/bind`, which runs the same live
+agent rail chat uses (`process_agent_request`, the tapping parent as acting
+member) on just that one sentence — but with **`propose_only=True`**, and
+that flag is the whole invariant rather than a hint. The rail otherwise
+EXECUTES: most of its tools are not the proposal-card kind, so a step reading
+"DM Lorena about Tuesday" sent the DM at bind time, left the step open, and
+sent it again on the next tap. Under the flag `agent_router` offers, and
+dispatches, only `PROPOSE_ONLY_TOOLS` — the reads (`research_question` among
+them) plus `propose_family_action`; every other tool is refused *before*
+dispatch with an honest sentence, and the v1 scheduling bridge isn't offered
+at all. It is an allowlist on purpose, so a tool added later defaults to
+refused. A returned card attaches `{proposal_id, summary}` and the row
 becomes **Approve**, which calls `POST .../step/{sid}/approve` to execute via
 `chat_actions.act_on_proposal` and close the step `done` — binding and
-approving are two separate taps, never one. A no-card answer is kept as the
-step's honest `note` rather than failing silently (this is how a "go find
-out" step's research answer reaches the family). A human step just gets
-**Done** / **Skip** — the app tracks it, a person does it in the real world.
-Per-step approval, no exceptions: a bad plan costs one skipped line, not a
-cascade, and nothing in a plan ever runs unattended. Planner and binder calls
-both draw from the same `mind_cap_handle` purse (default 30/day) the old
-propose flow used.
+approving are two separate taps, never one, and an already `done`/`skipped`
+step is refused (400) so a skipped step's card can never be fired. A no-card
+answer is kept as the step's honest `note` rather than failing silently (this
+is how a "go find out" step's research answer reaches the family, and how a
+refusal reaches it too). A human step just gets **Done** / **Skip** — the app
+tracks it, a person does it in the real world. Per-step approval, no
+exceptions: a bad plan costs one skipped line, not a cascade, and nothing in a
+plan ever runs unattended. Both approve doors (`/act` and `/step/{sid}/approve`)
+re-solve when the executed action reports `schedule_dirty`, exactly as the
+chat card's own endpoint does. Planner and binder calls both draw from the
+same `mind_cap_handle` purse (default 30/day) the old propose flow used — and
+the legacy `propose_fix` rail rides the same proposal-only flag, since it had
+the same hole first.
 
 **Retirement moved from the insight to its last step.**
 `.../step/{sid}/done` or `/skip` closes one step; when none are left open the
@@ -6001,7 +6018,11 @@ an amber "N steps due" chip in place of the observation. The PWA Family lane
 drops an in-hand row entirely while nothing is due; `/mind`, being the
 full-visibility surface, shows every in-hand row regardless — the due-count
 chip or a static "in hand" one — with its complete step checklist open
-beneath. Sensitivity gating carries over unchanged.
+beneath. Sensitivity gating carries over unchanged. **Dismiss / Not now /
+Clear render BENEATH the checklist** on both surfaces (v2.452.35): the plan
+added a way to work an insight, it must not take away the ways to put one
+down — a plan you don't want is dismissable and parkable without skipping
+every step in it one at a time.
 
 **The old one-proposal path still works.** A row that already carries a
 row-level `proposal_json` — from before this shipped, or the untouched

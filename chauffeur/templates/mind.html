@@ -247,12 +247,16 @@
                                             </template>
                                         </div>
                                     </template>
-                                    <div class="flex flex-wrap gap-2 mt-2" x-show="!((ins.plan_json || {}).steps || []).length">
-                                        <template x-if="ins.proposal_json && ins.proposal_json.proposal_id">
+                                    <!-- Beneath the checklist, never instead of it: a planned
+                                         insight must still be dismissable, parkable and
+                                         clearable. Only the two "start something" buttons
+                                         belong to the no-plan state. -->
+                                    <div class="flex flex-wrap gap-2 mt-2">
+                                        <template x-if="!((ins.plan_json || {}).steps || []).length && ins.proposal_json && ins.proposal_json.proposal_id">
                                             <button @click="act(ins.id)" title="Approves and runs this action"
                                                 class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Approve</button>
                                         </template>
-                                        <template x-if="!(ins.proposal_json && ins.proposal_json.proposal_id)">
+                                        <template x-if="!((ins.plan_json || {}).steps || []).length && !(ins.proposal_json && ins.proposal_json.proposal_id)">
                                             <button @click="plan(ins.id)" :disabled="busy[ins.id]"
                                                 title="Asks Argyle for a step-by-step plan — nothing runs until you approve each step"
                                                 class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700 disabled:bg-gray-800 disabled:text-gray-500"
@@ -481,7 +485,9 @@
                     try {
                         const r = await fetch(this.apiBase + `api/mind/insights/${id}/step/${stepId}/${action}`, {
                             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-                        const d = r.ok ? await r.json() : {};
+                        // Parse either way — `detail` off an unparsed Response is
+                        // always undefined, so every 400/403 read as the generic line.
+                        const d = await r.json().catch(() => ({}));
                         if (!r.ok) {
                             showGlobalAlert(d.detail || "Couldn't do that step.");
                         } else if (action === 'bind' && d.status === 'no_move') {

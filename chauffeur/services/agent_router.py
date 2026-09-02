@@ -95,9 +95,51 @@ def _is_admin_member(member) -> bool:
     return bool(member) and member.get('role') in ('parent', 'adult')
 
 
+DEFAULT_AGENT_MESSAGE = "I have processed your request."
+
+# --- The proposal-only rail (the Mind's bind tap) ---------------------------
+# The Mind's promise is per-step approval: NOTHING runs without its own human
+# tap. That has to be structural, not prompt-deep — a "just propose it" system
+# line is a request, and this rail executes whatever the model calls. Under
+# `propose_only` exactly two kinds of tool are reachable: READS, whose answer
+# IS the step's note ("go find out what a sitter costs"), and
+# `propose_family_action`, which posts a card a parent still has to approve.
+# Everything else is refused before dispatch, and the refusal is what the
+# binder keeps on the step.
+#
+# An ALLOWLIST on purpose: a tool added to this router next year defaults to
+# refused rather than to executing on a bind tap, so the invariant outlives
+# whoever read this comment. Each name below was checked to be a read.
+PROPOSE_ONLY_READS = {
+    "research_question",
+    "get_calendar_events",
+    "get_household_tasks", "get_household_load",
+    "get_shopping_list_items", "get_kid_tasks",
+    "get_family_messages", "get_requests",
+    "get_assist_coverage", "get_routine_status",
+    "get_drive_digest", "get_run_sheet",
+    "get_point_balances", "get_family_goals",
+    "get_occasion_insights", "get_occasion_gaps",
+    "suggest_dinner",
+    "list_chores", "list_open_findings", "list_insights",
+    "list_threads", "list_programs", "program_progress",
+}
+PROPOSE_ONLY_TOOLS = PROPOSE_ONLY_READS | {"propose_family_action"}
+
+
+def _propose_only_refusal(func_name: str) -> str:
+    """What the model is told instead of running the tool, in words honest
+    enough to survive being shown to the family as the step's note."""
+    return (f"`{func_name}` was NOT run: this request may only propose, never "
+            "act. Put the change in front of a parent with "
+            "propose_family_action, or answer from what you read. Nothing may "
+            "be sent, posted, added, claimed or changed from here.")
+
+
 def process_agent_request(user_prompt: str, context: Optional[Dict] = None, history: Optional[List[Dict]] = None,
                           source: str = "admin", driver_id: Optional[str] = None,
-                          acting_member: Optional[Dict] = None) -> Dict[str, Any]:
+                          acting_member: Optional[Dict] = None,
+                          propose_only: bool = False) -> Dict[str, Any]:
     """
     Main entrypoint for the Agent Orchestrator.
     Decides whether to route to Gemma (tools) or Gemini (heavy lifting).
@@ -106,6 +148,10 @@ def process_agent_request(user_prompt: str, context: Optional[Dict] = None, hist
     acting_member (the resolved family member) is set for @argyle in the family
     chat: it supplies a known identity for 'me'/from_member resolution and gates
     the admin scheduling tools to parents/adults.
+    propose_only=True runs the SAME rail with its acting tools switched off
+    (see PROPOSE_ONLY_TOOLS): reads still run and propose_family_action still
+    posts a card, everything else is refused before dispatch. Only the Mind's
+    bind/propose taps pass it — chat is unaffected.
     """
     # Resolve driver context (PWA chat only). The driver must actually exist —
     # a stale localStorage id must not grant driver tools acting on nobody.
@@ -286,7 +332,12 @@ sending or claiming, and never pass from_member/member_name for them.
     # asker is authorized: either a legacy call with no acting_member (admin
     # dashboard / HA voice) or an acting_member who is a parent/adult. Children
     # and helpers using @argyle never get them.
-    bridge_ok = (not driver) and (acting_member is None or _is_admin_member(acting_member))
+    # …and never on the proposal-only rail: every bridged tool is an action,
+    # so offering them would only buy refusals and wasted rounds. The guard in
+    # the dispatch loop is what makes that a rule; this just keeps the prompt
+    # honest about what is on the table.
+    bridge_ok = ((not propose_only) and (not driver)
+                 and (acting_member is None or _is_admin_member(acting_member)))
     tools = get_available_tools()
     if driver:
         from services.agent_tools_v2 import get_driver_tools
@@ -295,6 +346,18 @@ sending or claiming, and never pass from_member/member_name for them.
         # Full-parity v1 bridge tools (routing/priority rules, errands, solver,
         # memory, places, deep trip planning).
         tools = tools + get_bridged_v1_tools()
+    if propose_only:
+        tools = [t for t in tools if t.get("name") in PROPOSE_ONLY_TOOLS]
+        system_prompt += (
+            "\nPROPOSE ONLY. You are lining up ONE step for a parent to "
+            "approve, so you may not act: no message, DM, announcement, task, "
+            "claim, chore, program, thread or schedule change may be made "
+            "here. Your two moves are (a) call propose_family_action with a "
+            "clear one-sentence summary, which puts a card in front of a "
+            "parent for one tap, and (b) read — including research_question, "
+            "whose answer IS a good outcome for a 'go find out' step. If "
+            "neither fits this step, say so plainly in your message; an "
+            "honest 'I can't do this without acting' is a real answer.\n")
 
     import time as _time
     request_start = _time.time()
@@ -382,7 +445,8 @@ sending or claiming, and never pass from_member/member_name for them.
     target_driver_id = None
     schedule_dirty = False
     card = None
-    agent_message = "I have processed your request."
+    refused_tools = []
+    agent_message = DEFAULT_AGENT_MESSAGE
     
     for iteration in range(max_iterations):
         current_system_prompt = system_prompt
@@ -457,6 +521,20 @@ sending or claiming, and never pass from_member/member_name for them.
                 agent_scratchpad += f"\nTool Result (already executed, NOT re-run — do not call again): {json.dumps(res)}\n"
                 if not _is_terminal_success(func_name, res):
                     round_all_terminal = False
+                continue
+
+            if propose_only and func_name not in PROPOSE_ONLY_TOOLS:
+                # The invariant, and the reason it is HERE: the tool is never
+                # reached, whatever the model asked for and whatever a future
+                # prompt says. A bind tap can only ever come back with a
+                # proposal card or an honest note.
+                res = {"status": "refused",
+                       "message": _propose_only_refusal(func_name)}
+                logger.info(f"[agent] propose_only refused {func_name}")
+                refused_tools.append(func_name)
+                agent_scratchpad += f"\nTool Result: {json.dumps(res)}\n"
+                executed_results[sig] = res
+                round_all_terminal = False
                 continue
 
             res = {"error": f"Unknown tool: {func_name}"}
@@ -1110,6 +1188,15 @@ sending or claiming, and never pass from_member/member_name for them.
 
     logger.info(f"[agent-timing] process_agent_request total {_time.time() - request_start:.1f}s "
                 f"({llm_calls} LLM call(s))")
+    if propose_only and card is None and refused_tools \
+            and agent_message == DEFAULT_AGENT_MESSAGE:
+        # It spent every round reaching for tools it may not use and never
+        # wrote a closing line of its own. "I have processed your request" is
+        # then a lie, and this message is kept as the step's note — so say
+        # what actually happened.
+        agent_message = ("I couldn't line this step up without doing it myself, "
+                         "so I did nothing. It needs a person, or a differently "
+                         "worded step.")
     return {
         "status": "success",
         "message": agent_message,
