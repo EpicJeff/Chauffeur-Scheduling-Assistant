@@ -5947,19 +5947,68 @@ of the time.
   needs the usual deployment ritual (Check for updates → rebuild) to pick up
   the code before the setting means anything.
 
-**Proposals are on-demand, never volunteered (v2.426.21).** The think prompt
-still doesn't ask the model for proposals — the Mind observes; it does not
-pitch. The **Handle it** button on an insight is the human asking: it calls
-`POST /api/mind/insights/{id}/propose`, which runs the LIVE chat agent stack
-(`process_agent_request`, the tapping parent/adult as acting member — the
-same rail as the chat suggestion funnel) with the insight as the prompt. A
-returned card attaches `{proposal_id, summary}` to the insight and the
-button becomes **Approve: <summary>** (the existing act endpoint executes it
-via chat_actions on tap); no card is an honest "I don't have a move for this
-one," which is itself capability-gap data. **Clear** / **Clear anyway**
-retires the insight as `acted` without touching any proposal — useful, but
-the human handled it. Guard: `mind_cap_handle` (default 30/day), parent and
-adult only, and nothing ever executes without the separate approve tap.
+**Handle it now asks for a plan, not a proposal (v2.452.0–v2.452.33, spec
+`docs/superpowers/specs/2026-09-02-mind-plans-design.md`).** The think
+prompt still doesn't pitch — it now writes one extra field per insight,
+`approach`, a single line naming the shape of the fix it would build ("I'd
+price two outside-hand options and ask whether Thursday can drop"). Same
+call, zero extra requests; rendered muted on both lanes so the lane stops
+reading as bare reminders before anyone taps anything.
+
+**Handle it → `POST /api/mind/insights/{id}/plan`** spends one heavy planner
+call — a hand-written natural-language menu of what the household's tools
+can do, not 99 tool schemas — and gets back 2–5 ordered steps, each `kind`
+`tool` or `human`. Every step gets a due date (a missing or unparseable one,
+on either kind, defaults to today+3 so nothing can sit invisible forever); a
+human step also gets an owner, resolved against the roster or left
+unresolved rather than invented. An insight that genuinely doesn't need a
+plan comes back empty (`no_plan`) instead of busywork. The insight moves to
+state `in_hand` and stops restating the original observation.
+
+**Steps don't run themselves.** A tool step's "Do it" calls
+`POST .../step/{sid}/bind`, which runs the same live agent rail chat uses
+(`process_agent_request`, the tapping parent as acting member) on just that
+one sentence; a returned card attaches `{proposal_id, summary}` and the row
+becomes **Approve**, which calls `POST .../step/{sid}/approve` to execute via
+`chat_actions.act_on_proposal` and close the step `done` — binding and
+approving are two separate taps, never one. A no-card answer is kept as the
+step's honest `note` rather than failing silently (this is how a "go find
+out" step's research answer reaches the family). A human step just gets
+**Done** / **Skip** — the app tracks it, a person does it in the real world.
+Per-step approval, no exceptions: a bad plan costs one skipped line, not a
+cascade, and nothing in a plan ever runs unattended. Planner and binder calls
+both draw from the same `mind_cap_handle` purse (default 30/day) the old
+propose flow used.
+
+**Retirement moved from the insight to its last step.**
+`.../step/{sid}/done` or `/skip` closes one step; when none are left open the
+insight retires on its own — any step `done` → outcome `acted`, all
+`skipped` → outcome `dismissed` — so an ignored plan still tells the
+graduation math the family said no.
+
+**"Not now" is a snooze, never a dismiss.** `POST .../snooze {days}` (clamped
+1–60; 3/7/14 are the UI's quick picks) sets `snoozed_until` and the row
+leaves the lane at once. Deep think's retire-by-omission explicitly skips
+snoozed rows — going quiet about a snoozed insight can never read as the
+family dismissing it — and the snapshot instead tags the row for the prompt
+(`[snoozed until …]`, leave it alone). It reappears in the lane on its own on
+the wake date.
+
+**`in_hand` rows stay quiet until work is due.** A planned insight leaves the
+lane exactly like a snoozed one, except when `steps_due` finds an open step
+due or overdue (an unparseable due date counts as due) — then it renders as
+an amber "N steps due" chip in place of the observation. The PWA Family lane
+drops an in-hand row entirely while nothing is due; `/mind`, being the
+full-visibility surface, shows every in-hand row regardless — the due-count
+chip or a static "in hand" one — with its complete step checklist open
+beneath. Sensitivity gating carries over unchanged.
+
+**The old one-proposal path still works.** A row that already carries a
+row-level `proposal_json` — from before this shipped, or the untouched
+`propose_fix` rail — keeps its original **Approve: <summary>** / **Clear**
+buttons (`POST .../propose`, `/act`, `/clear`); nothing a person could
+already do was taken away, new insights just get a richer verb than "Handle
+it" used to mean.
 
 ## Family vitals — the pulse the Mind reads (v2.427.0 — `services/vitals.py`)
 
