@@ -421,6 +421,97 @@ def make_plan(insight_id: str, actor: dict = None,
     return {'status': 'planned', 'plan': plan}
 
 
+def bind_step(insight_id: str, step_id: str, actor: dict = None,
+              now: datetime.datetime = None) -> dict:
+    """Turn ONE open tool step's sentence into a real proposal via the same
+    agent rail chat uses. Attaches to the step; never executes — the approve
+    tap stays a separate human act. A no-card answer (research results, an
+    honest can't) is kept on the step as `note` for the family to read."""
+    now = now or datetime.datetime.now()
+    rows = [r for r in storage.get_mind_insights() if r['id'] == insight_id]
+    if not rows:
+        return {'status': 'not_found'}
+    row = rows[0]
+    plan = row.get('plan_json') or {}
+    step = next((s for s in plan.get('steps') or [] if s.get('id') == step_id),
+                None)
+    if not step or step.get('kind') != 'tool' or step.get('status') != 'open':
+        return {'status': 'not_found'}
+    if (step.get('proposal_json') or {}).get('proposal_id'):
+        return {'status': 'proposed', **step['proposal_json']}
+    settings = storage.get_settings() or {}
+    if not settings.get('llm_gemini_api_key', ''):
+        return {'status': 'no_key'}
+    cap = int(settings.get('mind_cap_handle', CAPS_DEFAULT['handle']))
+    if not _bump_call('handle', cap):
+        return {'status': 'capped'}
+    prompt = (f"Today is {now.strftime('%A %Y-%m-%d')}. You are handling this "
+              f"observation about the family: \"{row.get('line')}\". The plan "
+              f"step to do RIGHT NOW is: \"{step['text']}\". Do exactly this "
+              "step using your action tools. If it genuinely cannot be done "
+              "with them, say so plainly instead of forcing something else.")
+    try:
+        res = _agent_request(prompt, actor) or {}
+    except Exception as e:
+        logger.warning(f"[mind] bind_step agent run failed: {e}")
+        return {'status': 'error'}
+    card = res.get('card') or {}
+    if card.get('proposal_id'):
+        step['proposal_json'] = {
+            'proposal_id': card['proposal_id'],
+            'summary': card.get('title') or res.get('message') or 'proposed action'}
+        storage.update_mind_insight(insight_id, {'plan_json': plan})
+        return {'status': 'proposed', **step['proposal_json']}
+    note = res.get('message') or ''
+    if note:
+        step['note'] = note
+        storage.update_mind_insight(insight_id, {'plan_json': plan})
+    return {'status': 'no_move', 'note': note}
+
+
+def close_step(insight_id: str, step_id: str, status: str) -> dict:
+    """Mark one open step done|skipped. When the last open step closes, the
+    insight retires: any done => acted, all skipped => dismissed — so the
+    graduation math hears the family's real answer."""
+    if status not in ('done', 'skipped'):
+        return {'status': 'bad_status'}
+    rows = [r for r in storage.get_mind_insights() if r['id'] == insight_id]
+    if not rows:
+        return {'status': 'not_found'}
+    row = rows[0]
+    plan = row.get('plan_json') or {}
+    steps = plan.get('steps') or []
+    step = next((s for s in steps if s.get('id') == step_id), None)
+    if not step or step.get('status') != 'open':
+        return {'status': 'not_found'}
+    step['status'] = status
+    fields = {'plan_json': plan}
+    if all(s.get('status') != 'open' for s in steps):
+        outcome = 'acted' if any(s.get('status') == 'done' for s in steps) \
+            else 'dismissed'
+        fields.update({'state': 'retired', 'outcome': outcome,
+                       'resolved_ts': time.time()})
+    storage.update_mind_insight(insight_id, fields)
+    return {'status': 'success', 'plan': plan,
+            'insight_state': fields.get('state', row.get('state'))}
+
+
+def steps_due(row: dict, today: datetime.date = None) -> list:
+    """Open steps whose due date has arrived. An unparseable due counts as
+    due — a step must never be able to hide behind a garbled date."""
+    today = today or datetime.date.today()
+    out = []
+    for s in (row.get('plan_json') or {}).get('steps') or []:
+        if s.get('status') != 'open':
+            continue
+        try:
+            if datetime.date.fromisoformat(s.get('due') or '') <= today:
+                out.append(s)
+        except ValueError:
+            out.append(s)
+    return out
+
+
 GRADUATION_MIN_RESOLVED = 10
 GRADUATION_MIN_ACT_RATE = 0.60
 

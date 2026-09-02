@@ -112,10 +112,128 @@ def scenario_defaults_exist_on_new_rows():
           f"new-row defaults present, got {row}")
 
 
+AGENT_CALLS = []
+
+
+def _fake_agent(result):
+    def f(prompt, actor):
+        AGENT_CALLS.append({'prompt': prompt, 'actor': actor})
+        return result
+    return f
+
+
+def _planned_insight(steps):
+    """Row already in hand with the given steps (bypasses the planner)."""
+    iid = storage.add_mind_insight({'slug': 'p', 'category': 'c',
+                                    'line': 'needs handling'})
+    storage.update_mind_insight(iid, {
+        'state': 'in_hand',
+        'plan_json': {'created_ts': 1.0, 'steps': steps}})
+    return iid
+
+
+def _step(i, kind='tool', **kw):
+    return {'id': f's{i}', 'kind': kind, 'text': f'step {i}',
+            'owner_member_id': None, 'owner_name': '', 'due': '2026-09-02',
+            'status': 'open', 'proposal_json': None, **kw}
+
+
+def scenario_bind_attaches_proposal_to_the_step():
+    _reset()
+    AGENT_CALLS.clear()
+    iid = _planned_insight([_step(1), _step(2, kind='human')])
+    mind._agent_request = _fake_agent({
+        'message': 'I can ask the Hendersons.',
+        'card': {'proposal_id': 'pr1', 'title': 'Ask Hendersons to cover Tue'}})
+    res = mind.bind_step(iid, 's1', PARENT, now=NOON)
+    check(res['status'] == 'proposed' and res['proposal_id'] == 'pr1',
+          f"got {res}")
+    row = storage.get_mind_insight_by_slug('p')
+    s1 = row['plan_json']['steps'][0]
+    check(s1['proposal_json'] == {'proposal_id': 'pr1',
+                                  'summary': 'Ask Hendersons to cover Tue'},
+          f"proposal stored on the step, got {s1}")
+    check(s1['status'] == 'open', "binding never closes the step")
+    check('step 1' in AGENT_CALLS[0]['prompt']
+          and 'needs handling' in AGENT_CALLS[0]['prompt'],
+          "step text and insight line reach the agent")
+    res2 = mind.bind_step(iid, 's1', PARENT, now=NOON)
+    check(res2['status'] == 'proposed' and len(AGENT_CALLS) == 1,
+          "second bind returns the stored proposal, no second call")
+
+
+def scenario_bind_refuses_human_and_closed_steps():
+    _reset()
+    iid = _planned_insight([_step(1, kind='human'),
+                            _step(2, status='done')])
+    check(mind.bind_step(iid, 's1', PARENT)['status'] == 'not_found',
+          "human step never binds")
+    check(mind.bind_step(iid, 's2', PARENT)['status'] == 'not_found',
+          "closed step never binds")
+
+
+def scenario_bind_no_move_keeps_step_open_with_note():
+    _reset()
+    iid = _planned_insight([_step(1)])
+    mind._agent_request = _fake_agent({'message': 'Found: three sitters, from $18/h.',
+                                       'card': None})
+    res = mind.bind_step(iid, 's1', PARENT, now=NOON)
+    check(res['status'] == 'no_move' and 'sitters' in res['note'], f"got {res}")
+    s1 = storage.get_mind_insight_by_slug('p')['plan_json']['steps'][0]
+    check(s1['status'] == 'open' and 'sitters' in (s1.get('note') or ''),
+          "the answer is kept on the step for the family to read")
+
+
+def scenario_close_math_any_done_is_acted():
+    _reset()
+    iid = _planned_insight([_step(1), _step(2, kind='human')])
+    r1 = mind.close_step(iid, 's1', 'done')
+    check(r1['status'] == 'success' and r1['insight_state'] == 'in_hand',
+          f"one open step left, got {r1}")
+    r2 = mind.close_step(iid, 's2', 'skipped')
+    check(r2['insight_state'] == 'retired', f"got {r2}")
+    row = storage.get_mind_insight_by_slug('p')
+    check(row['state'] == 'retired' and row['outcome'] == 'acted'
+          and row['resolved_ts'], "any done => acted")
+
+
+def scenario_close_math_all_skipped_is_dismissed():
+    _reset()
+    iid = _planned_insight([_step(1), _step(2)])
+    mind.close_step(iid, 's1', 'skipped')
+    mind.close_step(iid, 's2', 'skipped')
+    row = storage.get_mind_insight_by_slug('p')
+    check(row['outcome'] == 'dismissed', "all skipped => the family said no")
+    check(mind.close_step(iid, 's1', 'done')['status'] == 'not_found',
+          "closed step refuses a second close")
+    check(mind.close_step(iid, 's2', 'bogus')['status'] == 'bad_status',
+          "unknown status refused")
+
+
+def scenario_steps_due():
+    _reset()
+    row = {'plan_json': {'steps': [
+        _step(1, due='2026-09-01'),                 # overdue
+        _step(2, due='2026-09-02'),                 # due today
+        _step(3, due='2026-09-09'),                 # future
+        _step(4, due='2026-09-01', status='done'),  # closed
+        _step(5, due='garbled'),                    # unparseable counts due
+    ]}}
+    due = mind.steps_due(row, today=datetime.date(2026, 9, 2))
+    check([s['id'] for s in due] == ['s1', 's2', 's5'], f"got {[s['id'] for s in due]}")
+    check(mind.steps_due({'plan_json': None}) == [], "no plan, nothing due")
+
+
 if __name__ == '__main__':
     scenario_plan_attaches_and_state_moves()
     scenario_second_tap_returns_existing_plan()
     scenario_steps_are_clamped_and_defaulted()
     scenario_empty_plan_is_honest()
     scenario_defaults_exist_on_new_rows()
+    scenario_bind_attaches_proposal_to_the_step()
+    scenario_bind_refuses_human_and_closed_steps()
+    scenario_bind_no_move_keeps_step_open_with_note()
+    scenario_close_math_any_done_is_acted()
+    scenario_close_math_all_skipped_is_dismissed()
+    scenario_steps_due()
     print("test_mind_plan OK")
