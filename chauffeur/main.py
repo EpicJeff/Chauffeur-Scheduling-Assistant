@@ -5237,8 +5237,9 @@ def mind_admin(request: Request = None):
     if actor and actor.get('role') != 'parent':
         raise HTTPException(status_code=403,
                             detail="Only a parent can open the Mind's admin view")
-    return {"insights": storage.get_mind_insights(state='active')
-                        + storage.get_mind_insights(state='in_hand'),
+    in_hand_rows = [{**r, 'due_step_count': len(_mind.steps_due(r))}
+                    for r in storage.get_mind_insights(state='in_hand')]
+    return {"insights": storage.get_mind_insights(state='active') + in_hand_rows,
             "history": storage.get_mind_insights(state='retired')[-60:],
             "counters": _mind.category_counters(),
             "graduation": _mind.graduation_candidates()}

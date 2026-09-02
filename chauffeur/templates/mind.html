@@ -199,12 +199,15 @@
                                         <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 shrink-0"
                                             x-show="ins.sensitivity === 'sensitive'">sensitive</span>
                                     </div>
-                                    <div class="text-xs text-gray-500 mt-0.5" x-show="ins.detail" x-text="ins.detail"></div>
+                                    <div class="text-xs text-gray-500 mt-0.5" x-show="ins.state !== 'in_hand' && ins.detail" x-text="ins.detail"></div>
                                     <div class="text-xs text-gray-400 italic mt-0.5"
-                                        x-show="!((ins.plan_json || {}).steps || []).length && ins.approach"
+                                        x-show="ins.state !== 'in_hand' && !((ins.plan_json || {}).steps || []).length && ins.approach"
                                         x-text="'Argyle would: ' + ins.approach"></div>
                                     <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 shrink-0"
-                                        x-show="ins.state === 'in_hand'" x-text="'in hand'"></span>
+                                        x-show="ins.state === 'in_hand' && ins.due_step_count > 0"
+                                        x-text="ins.due_step_count + ' step' + (ins.due_step_count > 1 ? 's' : '') + ' due'"></span>
+                                    <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 shrink-0"
+                                        x-show="ins.state === 'in_hand' && !ins.due_step_count" x-text="'in hand'"></span>
                                     <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 shrink-0"
                                         x-show="snoozedLabel(ins)" x-text="snoozedLabel(ins)"></span>
                                     <div class="text-[11px] text-gray-600 mt-1" x-text="(ins.category || 'other') + ' · ' + fmtTs(ins.created_ts)"></div>
