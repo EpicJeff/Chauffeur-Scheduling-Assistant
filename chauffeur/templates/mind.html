@@ -200,6 +200,13 @@
                                             x-show="ins.sensitivity === 'sensitive'">sensitive</span>
                                     </div>
                                     <div class="text-xs text-gray-500 mt-0.5" x-show="ins.detail" x-text="ins.detail"></div>
+                                    <div class="text-xs text-gray-400 italic mt-0.5"
+                                        x-show="!((ins.plan_json || {}).steps || []).length && ins.approach"
+                                        x-text="'Argyle would: ' + ins.approach"></div>
+                                    <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 shrink-0"
+                                        x-show="ins.state === 'in_hand'" x-text="'in hand'"></span>
+                                    <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 shrink-0"
+                                        x-show="snoozedLabel(ins)" x-text="snoozedLabel(ins)"></span>
                                     <div class="text-[11px] text-gray-600 mt-1" x-text="(ins.category || 'other') + ' · ' + fmtTs(ins.created_ts)"></div>
                                     <div class="text-xs text-violet-300 mt-1.5"
                                         x-show="ins.proposal_json && ins.proposal_json.proposal_id"
@@ -207,23 +214,62 @@
                                     <div class="text-xs text-gray-400 mt-1.5 italic"
                                         x-show="noMove[ins.id]"
                                         x-text="noMove[ins.id] || ''"></div>
-                                    <div class="flex flex-wrap gap-2 mt-2">
+                                    <template x-if="((ins.plan_json || {}).steps || []).length">
+                                        <div>
+                                            <template x-for="s in ins.plan_json.steps" :key="s.id">
+                                                <div class="border-t border-gray-800 pt-1.5 mt-1.5">
+                                                    <div class="text-sm text-gray-200" x-text="s.text"></div>
+                                                    <div class="text-[11px] text-gray-500"
+                                                        x-text="(s.kind === 'human' ? (s.owner_name || 'someone') : 'Argyle') + ' · by ' + (s.due || '?')"></div>
+                                                    <div class="text-xs text-gray-400 italic mt-0.5" x-show="s.note" x-text="s.note"></div>
+                                                    <div class="text-xs text-violet-300 mt-1"
+                                                        x-show="s.status === 'open' && s.proposal_json && s.proposal_json.proposal_id"
+                                                        x-text="'Argyle proposes: ' + ((s.proposal_json || {}).summary || '')"></div>
+                                                    <span class="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                                                        :class="s.status === 'done' ? 'bg-teal-500/20 text-teal-300' : 'bg-gray-700 text-gray-400'"
+                                                        x-show="s.status !== 'open'" x-text="s.status"></span>
+                                                    <div class="flex flex-wrap gap-2 mt-1.5" x-show="s.status === 'open'">
+                                                        <button x-show="s.kind === 'tool' && !(s.proposal_json && s.proposal_json.proposal_id)"
+                                                            @click="stepDo(ins.id, s.id, 'bind')" :disabled="busy[ins.id]"
+                                                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700 disabled:bg-gray-800 disabled:text-gray-500">Do it</button>
+                                                        <button x-show="s.kind === 'tool' && s.proposal_json && s.proposal_json.proposal_id"
+                                                            @click="stepDo(ins.id, s.id, 'approve')"
+                                                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Approve</button>
+                                                        <button x-show="s.kind === 'human'" @click="stepDo(ins.id, s.id, 'done')"
+                                                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">Done</button>
+                                                        <button @click="stepDo(ins.id, s.id, 'skip')"
+                                                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Skip</button>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </template>
+                                    <div class="flex flex-wrap gap-2 mt-2" x-show="!((ins.plan_json || {}).steps || []).length">
                                         <template x-if="ins.proposal_json && ins.proposal_json.proposal_id">
                                             <button @click="act(ins.id)" title="Approves and runs this action"
                                                 class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Approve</button>
                                         </template>
-                                        <template x-if="!(ins.proposal_json && ins.proposal_json.proposal_id) && !noMove[ins.id]">
-                                            <button @click="propose(ins.id)" :disabled="busy[ins.id]"
-                                                title="Asks Argyle to propose one concrete action — nothing runs until you approve it"
+                                        <template x-if="!(ins.proposal_json && ins.proposal_json.proposal_id)">
+                                            <button @click="plan(ins.id)" :disabled="busy[ins.id]"
+                                                title="Asks Argyle for a step-by-step plan — nothing runs until you approve each step"
                                                 class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700 disabled:bg-gray-800 disabled:text-gray-500"
-                                                x-text="busy[ins.id] ? 'Thinking…' : 'Handle it'"></button>
+                                                x-text="busy[ins.id] ? 'Planning…' : 'Handle it'"></button>
                                         </template>
+                                        <button @click="snoozeOpen[ins.id] = !snoozeOpen[ins.id]"
+                                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Not now ▾</button>
                                         <button @click="clearIt(ins.id)"
                                             title="Marks this as useful and clears it — nothing else happens"
                                             class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700"
                                             x-text="ins.proposal_json && ins.proposal_json.proposal_id ? 'Clear anyway' : 'Clear'"></button>
                                         <button @click="dismiss(ins.id)"
                                             class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Dismiss</button>
+                                    </div>
+                                    <div class="flex flex-wrap gap-2 mt-2" x-show="snoozeOpen[ins.id]">
+                                        <template x-for="opt in [[3, '3 days'], [7, '1 week'], [14, '2 weeks']]" :key="opt[0]">
+                                            <button @click="snooze(ins.id, opt[0])"
+                                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700"
+                                                x-text="opt[1]"></button>
+                                        </template>
                                     </div>
                                 </div>
                             </template>
@@ -326,6 +372,7 @@
                 graduation: [],
                 busy: {},      // insight id -> Handle-it call in flight
                 noMove: {},    // insight id -> the agent's no-move note
+                snoozeOpen: {}, // insight id -> Not-now quick-pick row open
 
                 async load() {
                     try {
@@ -388,6 +435,59 @@
                             showGlobalAlert(err.detail || "Couldn't handle that.");
                         }
                     } catch (e) { showGlobalAlert("Couldn't handle that."); }
+                    this.loadAdmin();
+                },
+
+                snoozedLabel(ins) {
+                    if (!ins.snoozed_until || ins.snoozed_until * 1000 < Date.now()) return '';
+                    return 'snoozed until ' + new Date(ins.snoozed_until * 1000)
+                        .toLocaleDateString([], { month: 'short', day: 'numeric' });
+                },
+
+                async plan(id) {
+                    this.busy[id] = true;
+                    try {
+                        const r = await fetch(this.apiBase + `api/mind/insights/${id}/plan`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                        const d = r.ok ? await r.json() : {};
+                        if (d.status === 'no_plan') {
+                            showGlobalAlert("Argyle doesn't see a plan that would genuinely help here.");
+                        } else if (d.status === 'capped') {
+                            showGlobalAlert("Argyle has hit today's thinking budget — try tomorrow.");
+                        } else if (d.status !== 'planned') {
+                            showGlobalAlert("Argyle couldn't come up with a plan just now.");
+                        }
+                    } catch (e) { showGlobalAlert("Argyle couldn't come up with a plan just now."); }
+                    this.busy[id] = false;
+                    this.loadAdmin();
+                },
+
+                async snooze(id, days) {
+                    this.snoozeOpen[id] = false;
+                    try {
+                        const r = await fetch(this.apiBase + `api/mind/insights/${id}/snooze`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ days }) });
+                        if (!r.ok) showGlobalAlert("Couldn't park that.");
+                    } catch (e) { showGlobalAlert("Couldn't park that."); }
+                    this.loadAdmin();
+                },
+
+                async stepDo(id, stepId, action) {
+                    this.busy[id] = true;
+                    try {
+                        const r = await fetch(this.apiBase + `api/mind/insights/${id}/step/${stepId}/${action}`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                        const d = r.ok ? await r.json() : {};
+                        if (!r.ok) {
+                            showGlobalAlert(d.detail || "Couldn't do that step.");
+                        } else if (action === 'bind' && d.status === 'no_move') {
+                            showGlobalAlert(d.note || "Argyle doesn't have a move for that step.");
+                        } else if (action === 'bind' && d.status === 'capped') {
+                            showGlobalAlert("Argyle has hit today's thinking budget — try tomorrow.");
+                        }
+                    } catch (e) { showGlobalAlert("Couldn't do that step."); }
+                    this.busy[id] = false;
                     this.loadAdmin();
                 },
 

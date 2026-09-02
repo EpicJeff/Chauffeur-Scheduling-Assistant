@@ -2988,13 +2988,65 @@
         // every fetch — the server's proposal_json is the durable state.
         let mindLocal = {};
 
+        function _mindSnoozeRow(id) {
+            return `<div class="flex flex-wrap gap-2 mt-2" id="mind-snooze-${id}" style="display:none">
+                ${[[3, '3 days'], [7, '1 week'], [14, '2 weeks']].map(([d, label]) =>
+                    `<button onclick="mindSnooze('${id}', ${d})"
+                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">${label}</button>`).join('')}
+            </div>`;
+        }
+
+        function _mindStepHtml(ins, s) {
+            const canHandle = ['parent', 'adult'].includes(currentMemberRole());
+            const who = s.kind === 'human' ? (s.owner_name || 'someone') : 'Argyle';
+            const meta = `${who} · by ${s.due || '?'}`;
+            const note = s.note ? `<div class="text-xs text-gray-400 italic mt-0.5">${mfEscape(s.note)}</div>` : '';
+            const bound = s.proposal_json && s.proposal_json.proposal_id;
+            let tail = '';
+            if (s.status !== 'open') {
+                tail = `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${s.status === 'done' ? 'bg-teal-500/20 text-teal-300' : 'bg-gray-700 text-gray-400'}">${s.status}</span>`;
+            } else if (!canHandle) {
+                tail = '';
+            } else if (s.kind === 'tool' && !bound) {
+                tail = `<div class="flex flex-wrap gap-2 mt-1.5">
+                    <button onclick="mindStep('${ins.id}', '${s.id}', 'bind')" title="Asks Argyle to line this step up — nothing runs until you approve it"
+                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Do it</button>
+                    <button onclick="mindStep('${ins.id}', '${s.id}', 'skip')"
+                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Skip</button></div>`;
+            } else if (s.kind === 'tool') {
+                tail = `<div class="text-xs text-violet-300 mt-1">Argyle proposes: ${mfEscape(s.proposal_json.summary || '')}</div>
+                    <div class="flex flex-wrap gap-2 mt-1.5">
+                    <button onclick="mindStep('${ins.id}', '${s.id}', 'approve')" title="Approves and runs this one step"
+                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Approve</button>
+                    <button onclick="mindStep('${ins.id}', '${s.id}', 'skip')"
+                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Skip</button></div>`;
+            } else {
+                tail = `<div class="flex flex-wrap gap-2 mt-1.5">
+                    <button onclick="mindStep('${ins.id}', '${s.id}', 'done')"
+                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">Done</button>
+                    <button onclick="mindStep('${ins.id}', '${s.id}', 'skip')"
+                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Skip</button></div>`;
+            }
+            return `<div class="border-t border-gray-800 pt-1.5 mt-1.5">
+                <div class="text-sm text-gray-200">${mfEscape(s.text || '')}</div>
+                <div class="text-[11px] text-gray-500">${mfEscape(meta)}</div>
+                ${note}${tail}</div>`;
+        }
+
         function _mindButtons(ins) {
             const dismiss = `<button onclick="mindDismiss('${ins.id}')"
                 class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Dismiss</button>`;
             const clear = (label) => `<button onclick="mindClear('${ins.id}')"
                 title="Marks this as useful and clears it — nothing else happens"
                 class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">${label}</button>`;
+            const notNow = `<button onclick="mindToggleSnooze('${ins.id}')"
+                title="Parks this until a wake date — it comes back on its own"
+                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Not now ▾</button>`;
+            const steps = ((ins.plan_json || {}).steps || []);
             const local = mindLocal[ins.id];
+            if (steps.length) {
+                return steps.map(s => _mindStepHtml(ins, s)).join('');
+            }
             if (ins.proposal_json && ins.proposal_json.proposal_id) {
                 return `<div class="text-xs text-violet-300 mt-1.5">Argyle proposes: ${mfEscape(ins.proposal_json.summary || '')}</div>
                     <div class="flex flex-wrap gap-2 mt-2">
@@ -3004,16 +3056,12 @@
             }
             if (local === 'busy') {
                 return `<div class="flex gap-2 mt-2"><button disabled
-                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-500 border border-gray-700">Thinking…</button></div>`;
+                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-500 border border-gray-700">Planning…</button></div>`;
             }
-            if (local && local.noMove) {
-                return `<div class="text-xs text-gray-400 mt-1.5 italic">${mfEscape(local.note || "I don't have a move for this one.")}</div>
-                    <div class="flex gap-2 mt-2">${clear('Clear')}${dismiss}</div>`;
-            }
-            return `<div class="flex gap-2 mt-2">
-                <button onclick="mindPropose('${ins.id}')" title="Asks Argyle to propose one concrete action — nothing runs until you approve it"
+            return `<div class="flex flex-wrap gap-2 mt-2">
+                <button onclick="mindPlan('${ins.id}')" title="Asks Argyle for a step-by-step plan — nothing runs until you approve each step"
                     class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Handle it</button>
-                ${dismiss}</div>`;
+                ${notNow}${dismiss}</div>${_mindSnoozeRow(ins.id)}`;
         }
 
         function renderMind() {
@@ -3031,10 +3079,74 @@
             wrap.innerHTML = '<div class="text-xs font-black uppercase tracking-widest text-violet-400 px-1">✨ Argyle noticed</div>'
                 + mindInsights.map(ins => `
                 <div class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
-                    <div class="text-sm text-gray-100">${mfEscape(ins.line || '')}</div>
-                    ${ins.detail ? `<div class="text-xs text-gray-500 mt-0.5">${mfEscape(ins.detail)}</div>` : ''}
+                    <div class="flex items-start justify-between gap-2">
+                        <div class="text-sm text-gray-100">${mfEscape(ins.line || '')}</div>
+                        ${ins.due_step_count ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 shrink-0">${ins.due_step_count} step${ins.due_step_count > 1 ? 's' : ''} due</span>` : ''}
+                    </div>
+                    ${!ins.due_step_count && ins.detail ? `<div class="text-xs text-gray-500 mt-0.5">${mfEscape(ins.detail)}</div>` : ''}
+                    ${!((ins.plan_json || {}).steps || []).length && ins.approach ? `<div class="text-xs text-gray-400 italic mt-0.5">Argyle would: ${mfEscape(ins.approach)}</div>` : ''}
                     ${canHandle ? _mindButtons(ins) : ''}
                 </div>`).join('');
+        }
+
+        function mindToggleSnooze(id) {
+            const el = document.getElementById(`mind-snooze-${id}`);
+            if (el) el.style.display = el.style.display === 'none' ? 'flex' : 'none';
+        }
+
+        async function mindSnooze(id, days) {
+            try {
+                const res = await fetch(`${apiBase}api/mind/insights/${id}/snooze`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ days }) });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    showGlobalAlert(err.detail || "Couldn't park that.");
+                }
+            } catch (e) { showGlobalAlert("Couldn't park that."); }
+            fetchMind();
+        }
+
+        async function mindPlan(id) {
+            mindLocal[id] = 'busy';
+            renderMind();
+            try {
+                const res = await fetch(`${apiBase}api/mind/insights/${id}/plan`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                const data = res.ok ? await res.json() : {};
+                delete mindLocal[id];
+                if (data.status === 'planned') {
+                    const ins = mindInsights.find(i => i.id === id);
+                    if (ins) ins.plan_json = data.plan;
+                } else if (data.status === 'no_plan') {
+                    showGlobalAlert("Argyle doesn't see a plan that would genuinely help here.");
+                } else {
+                    showGlobalAlert(data.status === 'capped'
+                        ? "Argyle has hit today's thinking budget — try tomorrow."
+                        : "Argyle couldn't come up with a plan just now.");
+                }
+            } catch (e) {
+                delete mindLocal[id];
+                showGlobalAlert("Argyle couldn't come up with a plan just now.");
+            }
+            renderMind();
+        }
+
+        async function mindStep(id, stepId, action) {
+            try {
+                const res = await fetch(`${apiBase}api/mind/insights/${id}/step/${stepId}/${action}`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                const data = res.ok ? await res.json() : {};
+                if (!res.ok) {
+                    const err = data || {};
+                    showGlobalAlert(err.detail || "Couldn't do that step.");
+                } else if (action === 'bind' && data.status === 'no_move') {
+                    showGlobalAlert(data.note || "Argyle doesn't have a move for that step.");
+                } else if (action === 'bind' && data.status === 'capped') {
+                    showGlobalAlert("Argyle has hit today's thinking budget — try tomorrow.");
+                }
+            } catch (e) { showGlobalAlert("Couldn't do that step."); }
+            fetchMind();
         }
 
         async function mindPropose(id) {
