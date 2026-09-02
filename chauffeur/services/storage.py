@@ -2714,6 +2714,7 @@ def add_mind_insight(data: dict) -> str:
     row = {'id': _uuid.uuid4().hex, 'created_ts': time.time(), 'state': 'active',
            'outcome': None, 'resolved_ts': None, 'sensitivity': 'normal',
            'detail': '', 'domain': '', 'proposal_json': None, 'confidence': None,
+           'approach': '', 'snoozed_until': None, 'plan_json': None,
            **data}
     with db_lock:
         mind_insights_table.insert(row)

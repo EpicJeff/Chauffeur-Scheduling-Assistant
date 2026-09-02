@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from typing import List, Optional
 
 from services import storage
@@ -314,6 +315,110 @@ def propose_fix(insight_id: str, actor: dict = None,
         storage.update_mind_insight(insight_id, {'proposal_json': pj})
         return {'status': 'proposed', **pj}
     return {'status': 'no_move', 'note': res.get('message') or ''}
+
+
+# --- Make a plan: an insight terminates in steps, not a shrug --------------
+# The capability menu is a hand-written paragraph, not 99 tool schemas: the
+# planner writes SENTENCES, and each tool sentence is bound lazily through
+# the same agent rail chat uses, at that step's own Approve tap.
+
+MAX_PLAN_STEPS = 5
+DEFAULT_STEP_DUE_DAYS = 3
+
+PLAN_SYSTEM = (
+    "You are Argyle, a family home's mind, turning ONE observation into a "
+    "short plan. Each step is exactly one of:\n"
+    "- kind 'tool': one sentence a household assistant can do with its own "
+    "abilities: research a question on the web (reading real pages), create "
+    "or advance a thread (an open loop with someone outside the family — a "
+    "school, vendor, sitter, coach), send a message to the family channel, "
+    "DM a member, announce to a room, add a household or kid task, request "
+    "ride coverage, propose a schedule change (assign a driver, move or "
+    "cancel an event), open a negotiation over a crowded day, propose a "
+    "practice program for a member, or add shopping items.\n"
+    "- kind 'human': something only a family member can do in the real "
+    "world (a phone call, a signup, a decision, a conversation). Give it an "
+    "'owner' (a family member's name) and keep it honest — the app only "
+    "tracks it.\n"
+    "Rules: 2-5 steps, ordered so earlier steps inform later ones; EVERY "
+    "step gets a 'due' date YYYY-MM-DD; prefer the smallest plan that "
+    "genuinely resolves the observation; if nothing would truly help, "
+    "return an empty list rather than busywork. Return STRICT JSON: "
+    '{"steps": [{"kind": "tool|human", "text": "one sentence", '
+    '"owner": "name (human steps)", "due": "YYYY-MM-DD"}]}'
+)
+
+
+def _parse_steps(raw, members, now: datetime.datetime) -> list:
+    """Clamp what the model returned into the step shape every later tap
+    trusts. Unknown kind becomes 'human' (a step that can never execute is
+    the safe misread); a missing/bad due gets today+3 so no plan can sit
+    invisible forever; an unknown owner stays unresolved, never invented."""
+    by_id = {str(m.get('id')): m for m in members}
+    by_name = {(m.get('name') or '').strip().lower(): m for m in members}
+    out = []
+    for item in (raw or []):
+        if len(out) >= MAX_PLAN_STEPS:
+            break
+        if not isinstance(item, dict):
+            continue
+        text = (item.get('text') or '').strip()
+        if not text:
+            continue
+        kind = item.get('kind') if item.get('kind') in ('tool', 'human') else 'human'
+        want = str(item.get('owner') or '').strip()
+        m = by_id.get(want) or by_name.get(want.lower())
+        due = (item.get('due') or '').strip()
+        try:
+            datetime.date.fromisoformat(due)
+        except ValueError:
+            due = (now.date()
+                   + datetime.timedelta(days=DEFAULT_STEP_DUE_DAYS)).isoformat()
+        out.append({'id': uuid.uuid4().hex, 'kind': kind, 'text': text,
+                    'owner_member_id': m.get('id') if m else None,
+                    'owner_name': (m.get('name') or '') if m else '',
+                    'due': due, 'status': 'open', 'proposal_json': None})
+    return out
+
+
+def make_plan(insight_id: str, actor: dict = None,
+              now: datetime.datetime = None) -> dict:
+    """One heavy call turns an insight into ordered steps and parks the row
+    in_hand. Nothing executes — binding and approval are separate taps."""
+    now = now or datetime.datetime.now()
+    rows = [r for r in storage.get_mind_insights() if r['id'] == insight_id]
+    if not rows or rows[0].get('state') not in ('active', 'in_hand'):
+        return {'status': 'not_found'}
+    row = rows[0]
+    if (row.get('plan_json') or {}).get('steps'):
+        return {'status': 'planned', 'plan': row['plan_json']}
+    settings = storage.get_settings() or {}
+    api_key = settings.get('llm_gemini_api_key', '')
+    if not api_key:
+        return {'status': 'no_key'}
+    cap = int(settings.get('mind_cap_handle', CAPS_DEFAULT['handle']))
+    if not _bump_call('handle', cap):
+        return {'status': 'capped'}
+    members = [m for m in storage.get_all_members() if not m.get('system')]
+    roster = ', '.join(f"{m.get('name')} ({m.get('role')})" for m in members)
+    prompt = (f"Today is {now.strftime('%A %Y-%m-%d')}.\nFamily: {roster}\n\n"
+              f"Observation: {row.get('line')}"
+              + (f"\nDetail: {row.get('detail')}" if row.get('detail') else '')
+              + (f"\nYour instinct was: {row.get('approach')}"
+                 if row.get('approach') else '')
+              + "\n\n" + snapshot(now))
+    res = _pool_call('heavy', api_key, PLAN_SYSTEM, prompt,
+                     timeout_s=90, gemma_timeout_s=180)
+    if not isinstance(res, dict) or res.get('error'):
+        logger.warning(f"[mind] make_plan failed: {res}")
+        return {'status': 'error'}
+    steps = _parse_steps(res.get('steps'), members, now)
+    if not steps:
+        return {'status': 'no_plan'}
+    plan = {'created_ts': time.time(), 'steps': steps}
+    storage.update_mind_insight(insight_id, {'plan_json': plan,
+                                             'state': 'in_hand'})
+    return {'status': 'planned', 'plan': plan}
 
 
 GRADUATION_MIN_RESOLVED = 10
