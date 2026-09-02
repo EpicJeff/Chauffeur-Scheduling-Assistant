@@ -5131,6 +5131,99 @@ def mind_clear(insight_id: str, body: dict = Body(default={}),
     return {"status": "success"}
 
 
+@app.post("/api/mind/insights/{insight_id}/snooze")
+def mind_snooze(insight_id: str, body: dict = Body(default={}),
+                request: Request = None):
+    """Not now: silence an insight until a wake date. Not a dismiss — think
+    is shown the row with its date and told to leave it be until then."""
+    import time as _t
+    _mind_actor(request, body.get('member_id'))
+    try:
+        days = max(1, min(60, int(body.get('days', 7))))
+    except (TypeError, ValueError):
+        days = 7
+    ok = storage.update_mind_insight(insight_id, {
+        'snoozed_until': _t.time() + days * 86400})
+    if not ok:
+        raise HTTPException(status_code=404, detail="No such insight")
+    return {"status": "success", "days": days}
+
+
+@app.post("/api/mind/insights/{insight_id}/plan")
+def mind_plan(insight_id: str, body: dict = Body(default={}),
+              request: Request = None):
+    """Handle it: one planner call turns the insight into ordered steps.
+    Nothing executes — every step has its own later tap."""
+    from services import mind as _mind
+    actor = _mind_actor(request, body.get('member_id'))
+    res = _mind.make_plan(insight_id, actor)
+    if res.get('status') == 'not_found':
+        raise HTTPException(status_code=404, detail="No such insight")
+    return res
+
+
+@app.post("/api/mind/insights/{insight_id}/step/{step_id}/bind")
+def mind_step_bind(insight_id: str, step_id: str,
+                   body: dict = Body(default={}), request: Request = None):
+    """Turn one tool step's sentence into a real proposal. Attach only."""
+    from services import mind as _mind
+    actor = _mind_actor(request, body.get('member_id'))
+    res = _mind.bind_step(insight_id, step_id, actor)
+    if res.get('status') == 'not_found':
+        raise HTTPException(status_code=404, detail="No such step")
+    return res
+
+
+@app.post("/api/mind/insights/{insight_id}/step/{step_id}/approve")
+def mind_step_approve(insight_id: str, step_id: str,
+                      body: dict = Body(default={}), request: Request = None):
+    """Runs ONE bound step via the same approve rail chat uses, then closes
+    it done. Per-step approval is the whole design — nothing else runs."""
+    from services import mind as _mind, chat_actions as _ca
+    actor = _mind_actor(request, body.get('member_id'))
+    rows = [r for r in storage.get_mind_insights() if r['id'] == insight_id]
+    if not rows:
+        raise HTTPException(status_code=404, detail="No such insight")
+    steps = (rows[0].get('plan_json') or {}).get('steps') or []
+    step = next((s for s in steps if s.get('id') == step_id), None)
+    if not step:
+        raise HTTPException(status_code=404, detail="No such step")
+    prop = step.get('proposal_json') or {}
+    if not prop.get('proposal_id'):
+        raise HTTPException(status_code=400, detail="Nothing bound to approve")
+    result = _ca.act_on_proposal(prop['proposal_id'], 'approve',
+                                 _approver_of_record(actor))
+    if result.get('status') != 'success':
+        raise HTTPException(status_code=400, detail=result.get('message'))
+    closed = _mind.close_step(insight_id, step_id, 'done')
+    return {**result, 'plan': closed.get('plan'),
+            'insight_state': closed.get('insight_state')}
+
+
+@app.post("/api/mind/insights/{insight_id}/step/{step_id}/done")
+def mind_step_done(insight_id: str, step_id: str,
+                   body: dict = Body(default={}), request: Request = None):
+    """A human step done in the real world — or a family that did a tool
+    step themselves. Closes without executing anything."""
+    from services import mind as _mind
+    _mind_actor(request, body.get('member_id'))
+    res = _mind.close_step(insight_id, step_id, 'done')
+    if res.get('status') != 'success':
+        raise HTTPException(status_code=404, detail="No such step")
+    return res
+
+
+@app.post("/api/mind/insights/{insight_id}/step/{step_id}/skip")
+def mind_step_skip(insight_id: str, step_id: str,
+                   body: dict = Body(default={}), request: Request = None):
+    from services import mind as _mind
+    _mind_actor(request, body.get('member_id'))
+    res = _mind.close_step(insight_id, step_id, 'skipped')
+    if res.get('status') != 'success':
+        raise HTTPException(status_code=404, detail="No such step")
+    return res
+
+
 @app.get("/api/mind/admin")
 def mind_admin(request: Request = None):
     """Active + recent history + counters + graduation candidates — the
@@ -5144,7 +5237,8 @@ def mind_admin(request: Request = None):
     if actor and actor.get('role') != 'parent':
         raise HTTPException(status_code=403,
                             detail="Only a parent can open the Mind's admin view")
-    return {"insights": storage.get_mind_insights(state='active'),
+    return {"insights": storage.get_mind_insights(state='active')
+                        + storage.get_mind_insights(state='in_hand'),
             "history": storage.get_mind_insights(state='retired')[-60:],
             "counters": _mind.category_counters(),
             "graduation": _mind.graduation_candidates()}

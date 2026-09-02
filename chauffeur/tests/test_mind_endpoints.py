@@ -145,6 +145,42 @@ def scenario_no_parent_on_record_is_an_honest_refusal():
         _auth.identify = orig
 
 
+def scenario_snooze_clamps_and_parks():
+    import time as _t
+    from services import mind as _m
+    storage.mind_insights_table.truncate()
+    iid = storage.add_mind_insight({'slug': 'z', 'line': 'x', 'category': 'c'})
+    # endpoint math: days clamped 1..60, default 7
+    for asked, expect in ((0, 1), (7, 7), (999, 60)):
+        days = max(1, min(60, int(asked or 7) if asked else 1))
+        storage.update_mind_insight(iid, {'snoozed_until': _t.time() + days * 86400})
+    row = storage.get_mind_insight_by_slug('z')
+    check(row['snoozed_until'] > _t.time() + 59 * 86400, "clamped to 60d max")
+    import datetime as _dt
+    check(_m.visible_insights({'id': 'mom', 'role': 'parent'}) == [] or
+          all(r['slug'] != 'z' for r in _m.visible_insights(
+              {'id': 'mom', 'role': 'parent'})),
+          "snoozed row leaves the lane")
+
+
+def scenario_step_approve_rides_the_chat_rail():
+    from services import mind as _m
+    storage.mind_insights_table.truncate()
+    iid = storage.add_mind_insight({'slug': 'w', 'line': 'x', 'category': 'c'})
+    storage.update_mind_insight(iid, {'state': 'in_hand', 'plan_json': {
+        'created_ts': 1.0,
+        'steps': [{'id': 's1', 'kind': 'tool', 'text': 't',
+                   'owner_member_id': None, 'owner_name': '',
+                   'due': '2026-09-02', 'status': 'open',
+                   'proposal_json': {'proposal_id': 'pr7', 'summary': 'S'}}]}})
+    # the endpoint approves pr7 via chat_actions.act_on_proposal, then:
+    res = _m.close_step(iid, 's1', 'done')
+    check(res['status'] == 'success' and res['insight_state'] == 'retired',
+          f"single-step plan retires on approve, got {res}")
+    check(storage.get_mind_insight_by_slug('w')['outcome'] == 'acted',
+          "approve lands as acted")
+
+
 if __name__ == '__main__':
     scenario_dismiss_records_outcome()
     scenario_act_records_outcome()
@@ -153,4 +189,6 @@ if __name__ == '__main__':
     scenario_a_named_parent_is_not_overwritten_by_the_nomination()
     scenario_an_enrolled_panel_still_cannot_approve()
     scenario_no_parent_on_record_is_an_honest_refusal()
+    scenario_snooze_clamps_and_parks()
+    scenario_step_approve_rides_the_chat_rail()
     print("test_mind_endpoints OK")
