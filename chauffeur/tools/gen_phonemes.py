@@ -123,8 +123,24 @@ the one that came out wrong, render that one again.
 
     python tools/gen_phonemes.py --list          what it will say, no HA needed
     python tools/gen_phonemes.py --probe k       every candidate for /k/, side by side
-    python tools/gen_phonemes.py --mode ssml     render the set as IPA phoneme tags
     python tools/gen_phonemes.py --only l,j      re-render just those
+    python tools/gen_phonemes.py --force         redo keys that are already done
+    python tools/gen_phonemes.py --rate 60       requests per minute (see below)
+    python tools/gen_phonemes.py --mode text     exemplars instead of phoneme tags
+
+RATE LIMITS, AND WHY A RUN CAN BE RE-RUN
+-----------------------------------------
+Azure's free tier allows roughly twenty neural requests a minute and this
+tool wants seventy-one, so the first unpaced version earned a wall of
+429s. Calls are now spaced to that rate by default, a 429 is retried with
+the `Retry-After` the service asks for (geometric backoff when it does
+not say), and `--rate` raises the ceiling on a paid resource.
+
+A run that dies anyway is picked up by re-running it: every key records a
+STAMP of what was asked for, and a key whose stamp matches, whose file is
+still on disk, is skipped without spending anything. Change a phrase, the
+voice, or the engine and the stamp changes with it, so the re-render
+happens exactly where it should. `--force` redoes everything.
 
 Corrections go in `static/phonics/overrides.json`, either as
 `{"key": "what to say"}` or `{"key": {"file": "your-recording.wav"}}`.
@@ -422,26 +438,68 @@ def _azure_ssml(key: str, phrase: str, voice: str, want_phoneme: bool) -> str:
             f'<voice name="{_xml_escape(voice)}">{inner}</voice></speak>')
 
 
-def _render_azure(name_base: str, ssml: str, key: str, region: str):
+# Azure's free tier (F0) allows about 20 neural requests a minute, and
+# this tool wants seventy-one of them. Firing them back to back earns a
+# wall of 429s, which is what happened. One request every three seconds
+# is the free-tier rate; `--rate` raises it for a paid resource.
+AZURE_RATE_PER_MIN = 20
+_LAST_CALL = [0.0]
+
+
+def _pace(per_min: int):
+    """Wait until the next call is allowed. A rate limit is a promise
+    about a WINDOW, so the honest way to stay inside one is to space the
+    calls rather than to sprint and apologise."""
+    import time
+    gap = 60.0 / max(1, per_min)
+    wait = gap - (time.monotonic() - _LAST_CALL[0])
+    if wait > 0:
+        time.sleep(wait)
+    _LAST_CALL[0] = time.monotonic()
+
+
+def _render_azure(name_base: str, ssml: str, key: str, region: str,
+                  per_min: int = AZURE_RATE_PER_MIN, tries: int = 4):
     """POST the SSML, write the mp3, return the filename or None.
 
     Plain `requests` against the documented REST endpoint -- no SDK, no
     new dependency in a repo that would carry it forever for a tool run
     by hand a few times a year.
     """
+    import time
     import requests
     url = f'https://{region}.tts.speech.microsoft.com/cognitiveservices/v1'
-    try:
-        resp = requests.post(
-            url, data=ssml.encode('utf-8'),
-            headers={
-                'Ocp-Apim-Subscription-Key': key,
-                'Content-Type': 'application/ssml+xml',
-                'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
-                'User-Agent': 'chauffeur-gen-phonemes',
-            }, timeout=30)
-    except Exception as e:
-        print(f"  {name_base}: {e}")
+    resp = None
+    for attempt in range(tries):
+        _pace(per_min)
+        try:
+            resp = requests.post(
+                url, data=ssml.encode('utf-8'),
+                headers={
+                    'Ocp-Apim-Subscription-Key': key,
+                    'Content-Type': 'application/ssml+xml',
+                    'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
+                    'User-Agent': 'chauffeur-gen-phonemes',
+                }, timeout=30)
+        except Exception as e:
+            print(f"  {name_base}: {e}")
+            return None
+        if resp.status_code != 429:
+            break
+        # Azure says how long to wait when it can; when it cannot, back
+        # off geometrically rather than hammering the window that just
+        # refused us. Last attempt does not sleep -- there is nothing
+        # after it to protect.
+        if attempt == tries - 1:
+            break
+        delay = float(resp.headers.get('Retry-After') or 0) or (2 ** attempt) * 5
+        print(f"  {name_base}: rate limited, waiting {delay:.0f}s")
+        time.sleep(delay)
+    if resp is None:
+        return None
+    if resp.status_code == 429:
+        print(f"  {name_base}: still rate limited after {tries} tries -- "
+              f"lower --rate, or wait and re-run (finished keys are skipped)")
         return None
     if resp.status_code >= 400:
         # 401 is the key, 400 is usually the SSML, 404 is the region.
@@ -619,9 +677,33 @@ def _ssml(key: str, letter: str) -> str:
             f'{letter}</phoneme></speak>')
 
 
+def _stamp(key, phrase, ready, mode):
+    """What was ASKED FOR, as a short string. Two runs with the same stamp
+    would send the same request, so the second one can be skipped -- and a
+    changed phrase, a changed voice, or a switch of engine all change the
+    stamp and force the re-render they should."""
+    if ready.get('kind') == 'azure' and mode != 'text' and key in IPA:
+        return f"azure-phoneme:{ready.get('voice')}:{IPA[key]}"
+    return f"{ready.get('kind')}:{ready.get('voice')}:{phrase}"
+
+
 def main():
     phrases = _phrases()
     argv = sys.argv[1:]
+    force = '--force' in argv
+
+    # A rate is a promise about a WINDOW. Azure's free tier allows about
+    # twenty neural requests a minute, which is where the 429s came from:
+    # seventy-one requests fired back to back. Paced by default; raise it
+    # on a paid resource.
+    rate = AZURE_RATE_PER_MIN
+    if '--rate' in argv:
+        i = argv.index('--rate')
+        try:
+            rate = max(1, int(argv[i + 1]))
+        except (IndexError, ValueError):
+            print("--rate takes a number of requests per minute.")
+            return 1
 
     # Empty means AUTO, and auto is the right default because the two
     # engines want opposite things: Azure honours <phoneme> and should use
@@ -696,7 +778,8 @@ def main():
         if ready['kind'] == 'azure':
             ssml = _azure_ssml(key_for_ipa, text, ready['voice'],
                                want_phoneme=(mode != 'text'))
-            return _render_azure(name_base, ssml, ready['key'], ready['region'])
+            return _render_azure(name_base, ssml, ready['key'],
+                                 ready['region'], per_min=rate)
         return _render(name_base, text, ready['engine'], ready['language'],
                        ready['voice'])
 
@@ -716,9 +799,11 @@ def main():
                            else _xml_escape(text))
                         + '</voice></speak>')
                 name = _render_azure(f'probe_{probe}_{n}', ssml,
-                                     ready['key'], ready['region'])
+                                     ready['key'], ready['region'],
+                                     per_min=rate)
             else:
-                name = _render(f'probe_{probe}_{n}', text, engine, language, voice)
+                name = _render(f'probe_{probe}_{n}', text, ready['engine'],
+                               ready['language'], ready['voice'])
             rendered.append((n, name, text))
         floor = min([_kb(nm) for _, nm, _ in rendered if nm] or [0]) or 1.0
         for n, name, text in rendered:
@@ -744,19 +829,32 @@ def main():
               + ".wav\"}}.")
         return 0
 
-    # A partial run must not delete the rest of the manifest, so it starts
-    # from what is already there and replaces only what it re-rendered.
+    # ALWAYS start from what is already on disk, not just for --only. A
+    # rate-limited run dies partway through by design, and a tool that
+    # threw away the forty keys it had already paid for would make every
+    # 429 cost the whole pass again.
     written = {}
-    if only:
-        try:
-            with io.open(MANIFEST, encoding='utf-8') as f:
-                written = (json.load(f) or {}).get('phonemes') or {}
-        except Exception:
-            written = {}
+    try:
+        with io.open(MANIFEST, encoding='utf-8') as f:
+            written = (json.load(f) or {}).get('phonemes') or {}
+    except Exception:
+        written = {}
 
     raw = _overrides()
     todo = {k: phrases[k] for k in (only or sorted(phrases))}
+    skipped = 0
     for key, phrase in todo.items():
+        # Already rendered, by the same route, from the same request, with
+        # the file still there? Then there is nothing to buy. This is what
+        # makes an interrupted run resumable: re-run it and it picks up
+        # where the rate limit stopped it. --force and --only both mean
+        # "do it anyway".
+        have = written.get(key)
+        if (not force and not only and isinstance(have, dict)
+                and have.get('stamp') == _stamp(key, phrase, ready, mode)
+                and os.path.exists(os.path.join(OUT_DIR, have.get('file') or ''))):
+            skipped += 1
+            continue
         # A key whose override names a FILE is not rendered at all: it is
         # somebody's own recording, which outranks anything an engine can
         # be talked into. Checked for existence, because a manifest entry
@@ -766,7 +864,8 @@ def main():
         if isinstance(pinned, dict) and pinned.get('file'):
             fname = str(pinned['file'])
             if os.path.exists(os.path.join(OUT_DIR, fname)):
-                written[key] = {'say': '(recorded)', 'file': fname}
+                written[key] = {'say': '(recorded)', 'file': fname,
+                                'stamp': 'recorded:' + fname}
                 print(f"  {key:12} kept — your own recording, {fname}")
             else:
                 written.pop(key, None)
@@ -775,7 +874,8 @@ def main():
         try:
             name = render(key, key, phrase)
             if name:
-                written[key] = {'say': phrase, 'file': name}
+                written[key] = {'say': phrase, 'file': name,
+                                'stamp': _stamp(key, phrase, ready, mode)}
                 print(f"  {key:12} ok  — said: {phrase!r}")
             else:
                 written.pop(key, None)
@@ -787,7 +887,8 @@ def main():
         # sorted so a re-render produces a reviewable diff rather than a
         # reshuffled file.
         'keys': len(written),
-        'voice': voice or '',
+        'voice': ready.get('voice') or '',
+        'via': ready['kind'],
         'generated': datetime.datetime.now().isoformat(timespec='seconds'),
         'note': ('Generated by tools/gen_phonemes.py. Only keys with a real '
                  'file are listed; program_lessons validates against this, so '
@@ -796,6 +897,8 @@ def main():
     }
     with io.open(MANIFEST, 'w', encoding='utf-8') as f:
         json.dump(manifest, f, indent=2, sort_keys=True)
+    if skipped:
+        print(f"  ({skipped} already rendered and unchanged -- --force redoes them)")
     print(f"{len(written)}/{len(phrases)} keys have audio in {OUT_DIR}")
     if written:
         print("Commit static/phonics/ and rebuild the add-on -- these are "
