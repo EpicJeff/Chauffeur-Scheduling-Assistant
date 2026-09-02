@@ -224,6 +224,46 @@ def scenario_steps_due():
     check(mind.steps_due({'plan_json': None}) == [], "no plan, nothing due")
 
 
+def scenario_lane_visibility():
+    _reset()
+    # snoozed_until is anchored to NOON (the `now` passed to visible_insights
+    # below), never to the real wall clock -- a real-time anchor would make
+    # this test's pass/fail depend on what time of day it happens to run.
+    storage.add_mind_insight({'slug': 'plain', 'category': 'c', 'line': 'a'})
+    snoozed = storage.add_mind_insight({'slug': 'parked', 'category': 'c',
+                                        'line': 'b'})
+    storage.update_mind_insight(snoozed,
+                                {'snoozed_until': NOON.timestamp() + 86400})
+    woken = storage.add_mind_insight({'slug': 'woken', 'category': 'c',
+                                      'line': 'c'})
+    storage.update_mind_insight(woken,
+                                {'snoozed_until': NOON.timestamp() - 60})
+    _planned_insight([_step(1, due='2026-09-09')])       # in hand, nothing due
+    quiet = storage.get_mind_insight_by_slug('p')
+    storage.update_mind_insight(quiet['id'], {'slug': 'quiet-hand'})
+    iid2 = storage.add_mind_insight({'slug': 'due-hand', 'category': 'c',
+                                     'line': 'e'})
+    storage.update_mind_insight(iid2, {
+        'state': 'in_hand',
+        'plan_json': {'created_ts': 1.0, 'steps': [_step(9, due='2026-09-01')]}})
+    lane = mind.visible_insights({'id': 'mom', 'role': 'parent'}, now=NOON)
+    slugs = {r['slug'] for r in lane}
+    check(slugs == {'plain', 'woken', 'due-hand'}, f"got {slugs}")
+    due_row = next(r for r in lane if r['slug'] == 'due-hand')
+    check(due_row.get('due_step_count') == 1,
+          "in-hand row says how many steps are due")
+
+
+def scenario_sensitive_gate_still_holds():
+    _reset()
+    storage.add_mind_insight({'slug': 's', 'category': 'c', 'line': 'x',
+                              'sensitivity': 'sensitive'})
+    check(len(mind.visible_insights({'id': 'k', 'role': 'child'}, now=NOON)) == 0,
+          "sensitive stays parents-only through the new path")
+    check(len(mind.visible_insights({'id': 'mom', 'role': 'parent'}, now=NOON)) == 1,
+          "parent still sees it")
+
+
 if __name__ == '__main__':
     scenario_plan_attaches_and_state_moves()
     scenario_second_tap_returns_existing_plan()
@@ -236,4 +276,6 @@ if __name__ == '__main__':
     scenario_close_math_any_done_is_acted()
     scenario_close_math_all_skipped_is_dismissed()
     scenario_steps_due()
+    scenario_lane_visibility()
+    scenario_sensitive_gate_still_holds()
     print("test_mind_plan OK")

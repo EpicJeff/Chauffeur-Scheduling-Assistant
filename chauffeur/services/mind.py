@@ -185,8 +185,19 @@ def snapshot(now: datetime.datetime = None) -> str:
         rows = storage.get_mind_insights()
         lines = []
         for r in rows[-30:]:
-            tag = r['state'] if r['state'] == 'active' else \
-                f"{r['state']}/{r.get('outcome')}"
+            if r['state'] == 'active' and \
+                    (r.get('snoozed_until') or 0) > time.time():
+                until = datetime.datetime.fromtimestamp(
+                    r['snoozed_until']).strftime('%m-%d')
+                tag = f"active, snoozed until {until}"
+            elif r['state'] == 'in_hand':
+                n = sum(1 for s in (r.get('plan_json') or {}).get('steps') or []
+                        if s.get('status') == 'open')
+                tag = f"in hand, {n} open steps"
+            elif r['state'] == 'active':
+                tag = 'active'
+            else:
+                tag = f"{r['state']}/{r.get('outcome')}"
             lines.append(f"- [{tag}] [{_fmt_day(r.get('created_ts'))}] "
                          f"({r.get('category')}) {r.get('line')}")
         return '\n'.join(lines)
@@ -255,12 +266,19 @@ def snapshot_hash(text: str) -> str:
                           .encode('utf-8')).hexdigest()
 
 
-def visible_insights(viewer: Optional[dict]) -> List[dict]:
-    """Server-side sensitivity gate. No identity (wall panel) or non-parent
-    identity gets a payload that never contained sensitive rows."""
-    rows = storage.get_mind_insights(state='active')
-    # 'parent' is the only role that sees sensitive rows — the codebase has
-    # no 'admin' role.
+def visible_insights(viewer: Optional[dict],
+                     now: datetime.datetime = None) -> List[dict]:
+    """Server-side lane. Snoozed rows are silent until their wake date;
+    in-hand rows appear only while a step is due — as work, not as the
+    restated observation. Sensitivity gate unchanged: no identity (wall
+    panel) or non-parent identity never receives a sensitive row."""
+    now = now or datetime.datetime.now()
+    rows = [r for r in storage.get_mind_insights(state='active')
+            if (r.get('snoozed_until') or 0) <= now.timestamp()]
+    for r in storage.get_mind_insights(state='in_hand'):
+        due = steps_due(r, now.date())
+        if due:
+            rows.append({**r, 'due_step_count': len(due)})
     if viewer and viewer.get('role') in ('parent',):
         return rows
     return [r for r in rows if r.get('sensitivity') != 'sensitive']
@@ -732,11 +750,16 @@ THINK_SYSTEM = (
     "Curate: return the FULL DESIRED set of current insights (max {max_n}); "
     "any active slug you omit is retired. Keep a slug stable while the "
     "observation is the same one.\n\n"
+    "A row marked snoozed was parked by the family until the date shown — "
+    "leave it out of your desired set and do not re-describe it. A row "
+    "marked in hand has a plan being worked — never restate its "
+    "observation.\n\n"
     "Mark sensitivity 'sensitive' for anything about a child's emotional "
     "state, stress, health, or another member's private strain — those render "
     "to parents only.\n\n"
     "Return STRICT JSON: {{\"insights\": [{{\"slug\": \"kebab-case-stable\", "
     "\"line\": \"one plain sentence\", \"detail\": \"1-2 optional sentences\", "
+    "\"approach\": \"one line: the shape of the fix you would build\", "
     "\"domain\": \"kids|meals|cars|schedule|supply|other\", "
     "\"sensitivity\": \"normal|sensitive\", \"category\": "
     "\"reusable-pattern-slug\", \"confidence\": 0.0}}]}}. "
@@ -783,6 +806,10 @@ def deep_think(now: datetime.datetime = None, force: bool = False) -> dict:
 
     active = storage.get_mind_insights(state='active')
     for row in active:
+        # A snoozed row was parked by a person; omission must not turn that
+        # into a silent dismiss. It rejoins the reconcile when it wakes.
+        if (row.get('snoozed_until') or 0) > time.time():
+            continue
         if row['slug'] not in desired_slugs:
             storage.update_mind_insight(row['id'], {
                 'state': 'retired', 'outcome': 'expired',
@@ -799,8 +826,9 @@ def deep_think(now: datetime.datetime = None, force: bool = False) -> dict:
                   'domain': item.get('domain') or '',
                   'sensitivity': item.get('sensitivity') or 'normal',
                   'category': item.get('category') or 'other',
-                  'confidence': item.get('confidence')}
-        if existing and existing['state'] == 'active':
+                  'confidence': item.get('confidence'),
+                  'approach': item.get('approach') or ''}
+        if existing and existing['state'] in ('active', 'in_hand'):
             storage.update_mind_insight(existing['id'], fields)
         elif item['slug'] in dismissed_slugs:
             pass  # a dismissed slug is never resurrected

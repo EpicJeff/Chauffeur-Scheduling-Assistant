@@ -126,6 +126,41 @@ def scenario_mid_think_chat_is_not_skipped():
     check(wm < row['ts'],
           "the watermark predates the mid-think message: the next snapshot sees it")
 
+def scenario_think_stores_approach_and_spares_parked_rows():
+    _reset()
+    import time as _t
+    snoozed = storage.add_mind_insight({'slug': 'parked', 'line': 'z',
+                                        'category': 'c'})
+    storage.update_mind_insight(snoozed, {'snoozed_until': _t.time() + 86400})
+    held = storage.add_mind_insight({'slug': 'held', 'line': 'h',
+                                     'category': 'c'})
+    storage.update_mind_insight(held, {'state': 'in_hand', 'plan_json': {
+        'created_ts': 1.0, 'steps': [{'id': 's1', 'kind': 'human',
+                                      'text': 't', 'owner_member_id': None,
+                                      'owner_name': '', 'due': '2026-09-09',
+                                      'status': 'open', 'proposal_json': None}]}})
+    mind._pool_call = _fake_pool([
+        {'slug': 'fresh', 'line': 'new', 'category': 'c',
+         'sensitivity': 'normal', 'domain': 'kids', 'confidence': 0.9,
+         'approach': 'ask an outside hand to cover Tuesday'},
+        {'slug': 'held', 'line': 'updated text', 'category': 'c',
+         'sensitivity': 'normal', 'domain': 'kids', 'confidence': 0.9},
+    ])
+    res = mind.deep_think(NOON)
+    check(res['status'] == 'thought', f"got {res}")
+    fresh = storage.get_mind_insight_by_slug('fresh')
+    check(fresh['approach'] == 'ask an outside hand to cover Tuesday',
+          f"approach stored, got {fresh.get('approach')}")
+    parked = storage.get_mind_insight_by_slug('parked')
+    check(parked['state'] == 'active' and parked['outcome'] is None,
+          "omitted snoozed row is NOT retired — a snooze is not a dismiss")
+    h = storage.get_mind_insight_by_slug('held')
+    check(h['state'] == 'in_hand' and h['line'] == 'updated text',
+          "re-emitted in-hand slug updates fields, keeps state")
+    check('snoozed until' in CALLS[0]['prompt']
+          and 'in hand' in CALLS[0]['prompt'],
+          "the prompt shows the model what is parked and what is in hand")
+
 if __name__ == '__main__':
     scenario_think_reconciles()
     scenario_unchanged_snapshot_skips()
@@ -134,4 +169,5 @@ if __name__ == '__main__':
     scenario_dismissed_insights_stay_dismissed()
     scenario_expired_can_return_dismissed_cannot()
     scenario_mid_think_chat_is_not_skipped()
+    scenario_think_stores_approach_and_spares_parked_rows()
     print("test_mind_think OK")
