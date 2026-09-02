@@ -42,3 +42,10 @@ chauffeur/serpapi_api_key.txt
 # The household board dump used to author the shipped boards. Real member and
 # entity ids, and it sits inside the package that gets built into the add-on.
 chauffeur/boards.json
+
+# Secrets kept beside the checkout for hand-run tools
+# (tools/gen_phonemes.py reads the Azure Speech key from one).
+# Never committed: a key in git history is a key to rotate.
+azure_speech_key.txt
+*_speech_key.txt
+*.key.txt

@@ -344,6 +344,119 @@ def _probe_texts(key: str, phrase: str) -> list:
     return uniq
 
 
+AZURE_VOICE_DEFAULT = 'en-US-AndrewNeural'
+
+
+def _azure_config():
+    """(key, region, voice) from the environment, or (None, None, None).
+
+    Azure Cognitive Services is the ONE route measured to work for an
+    isolated sound: its REST endpoint takes SSML and honours
+    `<phoneme alphabet="ipa">`, which neither Home Assistant's tts.speak
+    (reads markup aloud) nor Microsoft's free Edge endpoint (rejects
+    every tag) will do. See the measurements in this module's docstring.
+
+    The voice defaults to the one the household already speaks in, so the
+    letter sounds match the rest of the house rather than arriving in a
+    stranger's voice.
+    """
+    key = os.environ.get('AZURE_SPEECH_KEY', '').strip()
+    region = os.environ.get('AZURE_SPEECH_REGION', '').strip()
+    voice = os.environ.get('AZURE_SPEECH_VOICE', '').strip()
+    # A key file beside the checkout, the same shape `services/maps.py`
+    # and `services/travel_api.py` already read their own dev keys from
+    # (`mapbox_api_key.txt`, `serpapi_api_key.txt`) -- and gitignored for
+    # the same reason: a key in git history is a key to rotate.
+    #
+    # A second line, if there is one, is the region: it is not derivable
+    # from the key and it is part of the endpoint hostname, so keeping the
+    # pair together is one less thing to set separately.
+    # Both spellings, because the repo's own convention is
+    # `<thing>_api_key.txt` (mapbox, serpapi) and the shorter name is an
+    # easy one to reach for. Accepting both costs a loop and saves a
+    # rename that would otherwise be load-bearing; .gitignore covers each.
+    if not key or not region:
+        for fname in ('azure_speech_api_key.txt', 'azure_speech_key.txt'):
+            try:
+                with io.open(os.path.join(HERE, fname),
+                             encoding='utf-8-sig') as f:
+                    lines = [ln.strip() for ln in f if ln.strip()]
+            except FileNotFoundError:
+                continue
+            except Exception as e:
+                print(f"[{fname}] ignored ({e})")
+                continue
+            if lines and not key:
+                key = lines[0]
+            if len(lines) > 1 and not region:
+                region = lines[1]
+            if len(lines) > 2 and not voice:
+                voice = lines[2]
+            break
+    return (key or None), (region or None), (voice or AZURE_VOICE_DEFAULT)
+
+
+def _xml_escape(text: str) -> str:
+    return (text.replace('&', '&amp;').replace('<', '&lt;')
+                .replace('>', '&gt;').replace('"', '&quot;'))
+
+
+def _azure_ssml(key: str, phrase: str, voice: str, want_phoneme: bool) -> str:
+    """The body Azure is sent for one key.
+
+    A key with an IPA form becomes a `<phoneme>` tag, which is the entire
+    point of this route: the sound rides an ATTRIBUTE, so there is no
+    spelling left for the engine to read as a word. Everything else --
+    letter names, and anything pinned by hand in overrides.json -- is
+    escaped plain text, because a name IS a word and the tag would be
+    solving a problem it does not have.
+    """
+    if want_phoneme and key in IPA:
+        letter = key.split('_')[0]
+        inner = (f'<phoneme alphabet="ipa" ph="{_xml_escape(IPA[key])}">'
+                 f'{_xml_escape(letter)}</phoneme>')
+    else:
+        inner = _xml_escape(phrase)
+    return ('<speak version="1.0" '
+            'xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">'
+            f'<voice name="{_xml_escape(voice)}">{inner}</voice></speak>')
+
+
+def _render_azure(name_base: str, ssml: str, key: str, region: str):
+    """POST the SSML, write the mp3, return the filename or None.
+
+    Plain `requests` against the documented REST endpoint -- no SDK, no
+    new dependency in a repo that would carry it forever for a tool run
+    by hand a few times a year.
+    """
+    import requests
+    url = f'https://{region}.tts.speech.microsoft.com/cognitiveservices/v1'
+    try:
+        resp = requests.post(
+            url, data=ssml.encode('utf-8'),
+            headers={
+                'Ocp-Apim-Subscription-Key': key,
+                'Content-Type': 'application/ssml+xml',
+                'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
+                'User-Agent': 'chauffeur-gen-phonemes',
+            }, timeout=30)
+    except Exception as e:
+        print(f"  {name_base}: {e}")
+        return None
+    if resp.status_code >= 400:
+        # 401 is the key, 400 is usually the SSML, 404 is the region.
+        print(f"  {name_base}: HTTP {resp.status_code} {resp.text[:160]}")
+        return None
+    if not resp.content:
+        print(f"  {name_base}: empty response")
+        return None
+    fname = f'{name_base}.mp3'
+    with open(os.path.join(OUT_DIR, fname), 'wb') as f:
+        f.write(resp.content)
+    _SIZES[fname] = len(resp.content)
+    return fname
+
+
 def preflight():
     """What is actually wrong, worked out ONCE and said in words.
 
@@ -356,8 +469,33 @@ def preflight():
     connection that will not answer, and a real HA with no text-to-speech
     integration in it.
 
-    Returns (engine, language, voice), or None having already explained.
+    Returns a dict describing how to render, or None having already
+    explained. Azure wins whenever a key is present: it is the only route
+    measured to produce an isolated sound, so a house that has one should
+    never be silently served the path that cannot.
     """
+    az_key, az_region, az_voice = _azure_config()
+    if az_key:
+        if not az_region:
+            print("Found an Azure Speech key, but no region.\n"
+                  "The region is part of the endpoint hostname, so there is\n"
+                  "no sensible default -- it is on the resource's Keys and\n"
+                  "Endpoint page (eastus, westeurope, ...).\n"
+                  "\n"
+                  "Easiest: put it on the SECOND LINE of the key file,\n"
+                  "under the key itself. A third line, if you want one, is\n"
+                  "the voice (default " + AZURE_VOICE_DEFAULT + ").\n"
+                  "\n"
+                  "Or in the environment:\n"
+                  "    $env:AZURE_SPEECH_REGION = 'eastus'")
+            return None
+        print(f"Azure Speech: {az_region} / {az_voice}")
+        print("  letter SOUNDS render as <phoneme alphabet=\"ipa\">, which "
+              "is the\n  one route measured to work; letter NAMES render as "
+              "plain text.")
+        return {'kind': 'azure', 'key': az_key, 'region': az_region,
+                'voice': az_voice}
+
     from services import announce, ha_api
     base, token = ha_api._base_and_token()
     if not base or not token:
@@ -404,7 +542,14 @@ def preflight():
     print(f"  voice: {engine}"
           + (f" / {voice}" if voice else '')
           + (f" [{language}]" if language else ''))
-    return engine, language, voice
+    print("  NOTE: this route cannot produce an isolated letter sound. It"
+          " reads markup aloud")
+    print("  (see this module's docstring for the measurements). Set"
+          " AZURE_SPEECH_KEY and")
+    print("  AZURE_SPEECH_REGION, or put them in azure_speech_key.txt,"
+          " for the route that can.")
+    return {'kind': 'ha', 'engine': engine, 'language': language,
+            'voice': voice}
 
 
 def _render(key: str, phrase: str, engine: str, language: str, voice: str):
@@ -478,18 +623,24 @@ def main():
     phrases = _phrases()
     argv = sys.argv[1:]
 
-    # --mode ssml switches every key that HAS an IPA form over to the
-    # phoneme tag, in one pass, for the house whose engine honours it.
-    # Letter names stay plain text: a name is a word, and the tag would be
-    # solving a problem they do not have. Overrides still win over both --
-    # a correction made by ear outranks any mechanism.
+    # Empty means AUTO, and auto is the right default because the two
+    # engines want opposite things: Azure honours <phoneme> and should use
+    # it for every sound, while the Home Assistant path cannot and must
+    # fall back to exemplars. `--mode text` forces exemplars everywhere,
+    # which is the escape hatch for a house that prefers "k as in kite"
+    # spoken aloud to an isolated sound.
+    mode = ''
     if '--mode' in argv:
         i = argv.index('--mode')
         mode = argv[i + 1] if i + 1 < len(argv) else ''
         if mode not in ('text', 'ssml'):
-            print("--mode takes 'text' (default) or 'ssml'.")
+            print("--mode takes 'text' (exemplars everywhere) or 'ssml'.")
             return 1
         if mode == 'ssml':
+            # Only meaningful on the HA path, where the SSML has to be
+            # smuggled inside the message. Azure builds its own envelope
+            # and never needs this. Overrides still win -- a correction
+            # made by ear outranks any mechanism.
             pinned = set(_overrides())
             for key in list(phrases):
                 if key in IPA and key not in pinned:
@@ -535,15 +686,39 @@ def main():
     ready = preflight()
     if not ready:
         return 1
-    engine, language, voice = ready
     os.makedirs(OUT_DIR, exist_ok=True)
+
+    def render(name_base, key_for_ipa, text):
+        """One key, through whichever route preflight settled on. The
+        callers below do not know or care which -- the difference between
+        an engine that can say a phoneme and one that cannot belongs in
+        exactly one place."""
+        if ready['kind'] == 'azure':
+            ssml = _azure_ssml(key_for_ipa, text, ready['voice'],
+                               want_phoneme=(mode != 'text'))
+            return _render_azure(name_base, ssml, ready['key'], ready['region'])
+        return _render(name_base, text, ready['engine'], ready['language'],
+                       ready['voice'])
 
     if probe:
         print(f"\nProbing {probe!r} — listen to each and put the winner in\n"
               f"{OVERRIDES} as {{\"{probe}\": \"<the text that worked>\"}}.\n")
         rendered = []
         for n, text in enumerate(_probe_texts(probe, phrases[probe]), 1):
-            name = _render(f'probe_{probe}_{n}', text, engine, language, voice)
+            # Probing asks for each candidate VERBATIM, so a probe under
+            # Azure compares the phoneme tag against the text forms
+            # rather than silently rewriting them all into tags.
+            if ready['kind'] == 'azure':
+                ssml = ('<speak version="1.0" '
+                        'xmlns="http://www.w3.org/2001/10/synthesis" '
+                        f'xml:lang="en-US"><voice name="{ready["voice"]}">'
+                        + (text if text.lstrip().startswith('<')
+                           else _xml_escape(text))
+                        + '</voice></speak>')
+                name = _render_azure(f'probe_{probe}_{n}', ssml,
+                                     ready['key'], ready['region'])
+            else:
+                name = _render(f'probe_{probe}_{n}', text, engine, language, voice)
             rendered.append((n, name, text))
         floor = min([_kb(nm) for _, nm, _ in rendered if nm] or [0]) or 1.0
         for n, name, text in rendered:
@@ -598,7 +773,7 @@ def main():
                 print(f"  {key:12} SKIPPED — {fname} is not in {OUT_DIR}")
             continue
         try:
-            name = _render(key, phrase, engine, language, voice)
+            name = render(key, key, phrase)
             if name:
                 written[key] = {'say': phrase, 'file': name}
                 print(f"  {key:12} ok  — said: {phrase!r}")
