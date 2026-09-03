@@ -25,6 +25,38 @@
   }
   const useRoom = webglOk() && Math.min(innerWidth, innerHeight) >= 560 && innerWidth >= 900;
 
+  // Every link this file follows is RELATIVE on purpose. Under Home Assistant
+  // ingress the whole app is served beneath /api/hassio_ingress/<token>/, so
+  // an absolute '/mind' walks straight out of the add-on -- the same reasoning
+  // as nav.html's `_up`. /study is one path segment, so dropping the leading
+  // slash is all the climbing this page ever needs.
+  const rel = u => String(u || '').replace(/^\//, '');
+  const go = u => { location.href = rel(u); };
+
+  // The only chrome this file builds itself: a small fixed chip saying the
+  // house is unreachable. Shown ONCE per outage (not once per retry) and
+  // cleared the moment a poll answers. Never a dialog.
+  let outageEl = null, outageShown = false;
+  function showOutage() {
+    if (outageShown) return;
+    outageShown = true;
+    if (!outageEl) {
+      outageEl = document.createElement('div');
+      outageEl.id = 'study-outage';
+      outageEl.textContent = "can't reach the house right now";
+      outageEl.style.cssText = 'position:fixed;right:14px;bottom:18px;z-index:50;' +
+        'background:rgba(42,27,20,.94);color:#e8c9a8;border:1px solid #7a4a34;' +
+        'border-radius:9px;padding:6px 11px;font:13px system-ui;opacity:0;' +
+        'transition:opacity .25s;pointer-events:none';
+      document.body.appendChild(outageEl);
+    }
+    requestAnimationFrame(() => { if (outageEl) outageEl.style.opacity = '1'; });
+  }
+  function clearOutage() {
+    outageShown = false;
+    if (outageEl) outageEl.style.opacity = '0';
+  }
+
   // The calm form of every section, client side. A payload that is missing a
   // section (older server, half-written cache) renders that furniture tidy
   // rather than throwing and taking the whole room down with it — the same
@@ -70,7 +102,7 @@
     f.binders.filter(b => b.pulled).forEach(b => rows.push(['/programs', 'Program', `${b.title} needs a look`, false]));
     if (!rows.length) rows.push(['', 'All quiet', 'Nothing needs you right now.', true]);
     document.getElementById('fallback-rows').innerHTML = rows.map(([href, kind, sig, calm]) =>
-      `<a class="frow${calm ? ' calm' : ''}" ${href ? `href="${href}"` : ''}>` +
+      `<a class="frow${calm ? ' calm' : ''}" ${href ? `href="${rel(href)}"` : ''}>` +
       `<strong>${kind}</strong><div class="sig"></div></a>`).join('');
     [...document.querySelectorAll('#fallback-rows .sig')].forEach((el, i) => el.textContent = rows[i][2]);
   }
@@ -78,8 +110,10 @@
   async function poll(apply) {
     try {
       const r = await fetch(window.STUDY_STATE_URL);
-      if (r.ok) apply((await r.json()).furniture);
-    } catch (e) { /* next poll retries; the room stays calm */ }
+      if (!r.ok) throw new Error(r.status);
+      apply((await r.json()).furniture);
+      clearOutage();
+    } catch (e) { showOutage(); /* next poll retries; the room stays calm */ }
     setTimeout(() => poll(apply), 60000);
   }
 
@@ -295,9 +329,14 @@
     binders:   { meshes: [], url: '/programs',    parts: {}, summary: '' },
     gauges:    { meshes: [], url: '/mind',        parts: {}, summary: '' }
   };
-  // Exactly two lean-in presets in v1 (spec): the board and the desk.
-  ZONES.board.focus = { p: new THREE.Vector3(1.6, 5.0, -1.2), l: new THREE.Vector3(.5, 4.55, -6.1) };
-  ZONES.desk.focus  = { p: new THREE.Vector3(3.0, 4.5, 5.2),  l: new THREE.Vector3(.3, 1.9, 1.2) };
+  // Exactly two lean-in presets in v1 (spec): the board and the desk. Both
+  // are framed so the ZONE'S OWN SIGNAL fits: the whole corkboard including
+  // its bottom row of pins, and the whole desk from the paper stacks at the
+  // left to the gauges at the right. Standing any closer crops the thing you
+  // leaned in to read -- checked by screenshot at 1440x900, where the nav bar
+  // also eats the top 64px, so each preset sits its subject below that.
+  ZONES.board.focus = { p: new THREE.Vector3(.5, 5.0, 1.25), l: new THREE.Vector3(.5, 4.66, -6.13) };
+  ZONES.desk.focus  = { p: new THREE.Vector3(.9, 4.9, 8.4),  l: new THREE.Vector3(.3, 2.1, 1.3) };
 
   function reg(name, mesh) {                 // register a hit target
     ZONES[name].meshes.push(mesh);
@@ -477,12 +516,13 @@
   cyl(.15, .13, .32, 16, M(0xc4552f, { roughness: .45 }), -1.05, TOP + .16, 2.5, {});
   put(new THREE.Mesh(new THREE.TorusGeometry(.09, .026, 8, 14), M(0xc4552f, { roughness: .45 })),
     -.87, TOP + .18, 2.5, { rz: Math.PI / 2 });
+  const steam = [];
   for (let i = 0; i < 3; i++)
-    put(new THREE.Mesh(new THREE.PlaneGeometry(.13, .38),
+    steam.push(put(new THREE.Mesh(new THREE.PlaneGeometry(.13, .38),
       new THREE.MeshBasicMaterial({
         color: 0xfff6e8, transparent: true, opacity: .12 - i * .035,
         side: THREE.DoubleSide, depthWrite: false
-      })), -1.05, TOP + .48 + i * .22, 2.5, { ry: i * .8 });
+      })), -1.05, TOP + .48 + i * .22, 2.5, { ry: i * .8 }));
 
   // ---- chair: rounded seat and back on a real five-star base
   const chairMat = M(0x413a32, { roughness: .72 });
@@ -642,12 +682,12 @@
   put(new THREE.Mesh(new THREE.TorusGeometry(.52, .05, 8, 24), M(0x5a4029, { roughness: .6 })),
     4.15, 6.8, -6.1, {});
   const nowClock = new Date();
-  [[.055, .28, ((nowClock.getHours() % 12) / 12 + nowClock.getMinutes() / 720)],
-   [.04, .42, nowClock.getMinutes() / 60]].forEach(([w, len, frac]) => {
+  const clockHands = [[.055, .28, ((nowClock.getHours() % 12) / 12 + nowClock.getMinutes() / 720)],
+   [.04, .42, nowClock.getMinutes() / 60]].map(([w, len, frac]) => {
     const g = new THREE.BoxGeometry(w, len, .02); g.translate(0, len / 2, 0);
     const m = new THREE.Mesh(g, M(PAL.dark, { roughness: .6 }));
     m.rotation.z = -frac * Math.PI * 2;
-    put(m, 4.15, 6.8, -6.06, {});
+    return put(m, 4.15, 6.8, -6.06, {});
   });
   // floor lamp
   cyl(.42, .5, .07, 14, M(0x2c2823, { roughness: .5 }), 6.2, .05, -4.4, {});
@@ -661,9 +701,59 @@
   const motePos = [];
   for (let i = 0; i < 260; i++)
     motePos.push((rnd() - .5) * 13, rnd() * 7 + .5, (rnd() - .5) * 12);
-  scene.add(new THREE.Points(
-    new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(motePos, 3)),
+  const moteGeo = new THREE.BufferGeometry().setAttribute('position',
+    new THREE.Float32BufferAttribute(motePos, 3));
+  scene.add(new THREE.Points(moteGeo,
     new THREE.PointsMaterial({ color: 0xffe9c0, size: .035, transparent: true, opacity: .4 })));
+  const moteAttr = moteGeo.getAttribute('position');
+
+  // =====================================================================
+  // since you were here — the last visit, and the day turning over
+  // =====================================================================
+  // Storage can be absent, blocked (private mode), or full. EVERY touch is
+  // guarded: a browser that refuses it shows no glows and throws nothing.
+  const VISIT_KEY = 'study_last_visit';
+  let LAST_VISIT = null;
+  try {
+    const raw = localStorage.getItem(VISIT_KEY);
+    const n = raw == null ? NaN : Number(raw);
+    if (isFinite(n) && n > 0) LAST_VISIT = n;
+  } catch (e) { LAST_VISIT = null; }
+
+  // A pin or a stack that arrived after your last visit wears a soft warm
+  // emissive. The materials are per-mesh (box() mints one each), so this
+  // only ever touches the things it lit, and clears them before a rebuild.
+  const NEW_GLOW = 0xffcf7a;
+  let glowMats = [];
+  function glowReset() {
+    glowMats.forEach(m => { m.emissive.setHex(0x000000); m.emissiveIntensity = 1; });
+    glowMats = [];
+  }
+  function glowIf(mat, ts) {
+    if (LAST_VISIT == null || !mat || !mat.emissive) return;
+    const t = Number(ts);
+    if (!isFinite(t) || t <= LAST_VISIT) return;
+    mat.emissive.setHex(NEW_GLOW);
+    glowMats.push(mat);
+  }
+
+  // The hour turns while the page is open: a poll that crosses 07:00 or
+  // 19:00 swaps the sky map (both textures were built up front) and re-aims
+  // the window light. Nothing is redrawn per frame.
+  function syncSky() {
+    const h = new Date().getHours();
+    const isNight = (h < 7 || h >= 19);
+    if (isNight === night) return;
+    night = isNight;
+    skyMat.map = night ? skyNight : skyDay;
+    skyMat.needsUpdate = true;
+    sun.color.setHex(night ? 0x8fa8d8 : 0xdce9ff);
+    sun.intensity = night ? .8 : 1.15;
+  }
+
+  // The payload the room is currently wearing — what the flying sheet asks
+  // before it decides whether there is anything honest to carry.
+  let LAST = null, lastJson = '';
 
   // =====================================================================
   // 5. FURNITURE — the whole of the room's data behaviour, one row per
@@ -681,10 +771,15 @@
       P.forEach((p, i) => {
         const row = data[i];
         p.group.visible = !!row;
-        if (!row) return;
+        if (!row) { p.sway = 0; return; }
         p.card.material.color.setHex(row.bad ? PAL.pinBad : row.warn ? PAL.pinWarn : PAL.pin);
-        p.group.rotation.z = row.bad ? -.16 : row.warn ? -.1 : p.rest;
+        // The hang the card settles at; the life loop sways stalled ones
+        // around this, so the state lives here and the motion lives there.
+        p.base = row.bad ? -.16 : row.warn ? -.1 : p.rest;
+        p.sway = row.bad ? 1 : row.warn ? .55 : 0;
+        p.group.rotation.z = p.base;
         p.card.userData.pin = row;
+        glowIf(p.card.material, row.changed_ts);
       });
       // ids are unique per table, not across them: a string is always
       // [insight id, thread id], so each end resolves in its own half first.
@@ -725,6 +820,7 @@
         st.due.visible = !!(p && p.due);
         st.due.position.y = TOP + .03 + Math.max(n - 1, 0) * .05;
         st.plan = p || null;
+        if (p) for (let j = 0; j < n; j++) glowIf(st.sheets[j].material, p.changed_ts);
       });
       const due = plans.filter(p => p.due).length;
       z.summary = plans.length
@@ -735,7 +831,7 @@
     tray: (d, z) => {
       const n = clamp(d.count | 0, 0, CAPS.tray);
       z.parts.sheets.forEach((s, i) => { s.visible = i < n; });
-      z.summary = d.count ? `${d.count} waiting in the tray` : 'Tray empty';
+      z.summary = d.count ? `${d.count} waiting` : 'Tray empty';
     },
 
     // count is how many notes are stuck up; the worst severity colours the
@@ -769,10 +865,7 @@
     // the weather outside is the family's own week: clear when steady, one
     // cloud bank per sign that got worse. Day/night is the wall clock's.
     window: (d, z) => {
-      const h = new Date().getHours();
-      night = (h < 7 || h >= 19);
-      skyMat.map = night ? skyNight : skyDay;
-      skyMat.needsUpdate = true;
+      syncSky();
       const worse = (d.worse || []).length;
       clouds.forEach((c, i) => { c.visible = i < (d.ready ? worse : Math.max(worse, 1)); });
       z.summary = d.label || '';
@@ -836,24 +929,291 @@
   // 6. applyState — the only place in this file that reads the payload
   // =====================================================================
   function applyState(payload) {
+    syncSky();                      // the hour turns even when nothing else does
+    // Minimal diff: an unchanged payload touches nothing at all, so the
+    // static room never flickers and the glows already lit stay lit. When
+    // something HAS moved, the pin/sheet groups are rebuilt wholesale --
+    // they are a few hundred visibility flags, not geometry.
+    let json;
+    try { json = JSON.stringify(payload); } catch (e) { json = undefined; }
+    if (json !== undefined && json === lastJson) return;
+    lastJson = json;
     const f = normal(payload);
+    LAST = f;
+    glowReset();
     Object.keys(FURNITURE).forEach(k => {
       try { FURNITURE[k](f[k], ZONES[k]); }
       catch (e) { /* one broken signal never empties the room */ }
     });
+    // Whatever the pointer is already resting on now says the new number.
+    if (hoverZone) updateTip(hoverZone);
+    if (leaned) chipEl.textContent = chipText(leaned);
+  }
+
+  // =====================================================================
+  // 7. interaction + life — the room answers the pointer, and breathes
+  // =====================================================================
+  const LABEL = {
+    board: 'The board', desk: 'The desk', tray: 'Intake', stickies: 'Findings',
+    calendar: 'This week', window: 'Outside', keys: 'Cars',
+    contracts: 'Deals', binders: 'Programs', gauges: "Argyle's budget"
+  };
+  const tipEl = document.getElementById('tip');
+  const chipEl = document.getElementById('chip');
+
+  // Every registered mesh, flattened once. reg() already stamped
+  // userData.zone on each, so a hit knows its own zone with no lookup.
+  const HIT = [];
+  Object.keys(ZONES).forEach(k => ZONES[k].meshes.forEach(m => HIT.push(m)));
+
+  // r150's Raycaster does NOT test ancestor visibility, and a great deal of
+  // this room is legitimately invisible in a quiet house (unpinned cards,
+  // empty tray slots, cars with no telemetry). Walk up and check for real,
+  // or the pointer finds furniture that is not there.
+  function shown(o) {
+    while (o) { if (!o.visible) return false; o = o.parent; }
+    return true;
+  }
+
+  const ray = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+  let ptrX = 0, ptrY = 0, ptrIn = false, needPick = false;
+  let pnx = 0, pny = 0;                       // pointer in -1..1, for parallax
+  let paraX = 0, paraY = 0;                   // the damped camera offset it feeds
+  let hoverZone = null, leaned = null;
+
+  function pick() {
+    if (!ptrIn) return null;
+    const b = R.domElement.getBoundingClientRect();
+    if (!b.width || !b.height) return null;
+    ndc.x = ((ptrX - b.left) / b.width) * 2 - 1;
+    ndc.y = -((ptrY - b.top) / b.height) * 2 + 1;
+    ray.setFromCamera(ndc, cam);
+    const hits = ray.intersectObjects(HIT, false);
+    for (let i = 0; i < hits.length; i++)
+      if (shown(hits[i].object)) return hits[i].object.userData.zone || null;
+    return null;
+  }
+
+  // The one line a zone is currently saying. Built from zone.summary, which
+  // applyState is the only writer of -- no payload is read out here.
+  function signal(name) {
+    const s = (ZONES[name] && ZONES[name].summary) || '';
+    return s ? LABEL[name] + ' \u2014 ' + s : LABEL[name];
+  }
+  const chipText = name => signal(name) + ' \u00b7 tap again to open';
+
+  function updateTip(zone) {
+    // The chip already says this zone's line (and more) while you are leaned
+    // into it -- two labels saying the same thing is noise, so the tip yields.
+    if (!zone || !ptrIn || zone === leaned) { tipEl.style.opacity = '0'; return; }
+    tipEl.textContent = signal(zone);
+    const w = tipEl.offsetWidth || 170, h = tipEl.offsetHeight || 28;
+    tipEl.style.left = Math.max(8, Math.min(ptrX + 16, innerWidth - w - 10)) + 'px';
+    tipEl.style.top = Math.max(8, ptrY - h - 12) + 'px';
+    tipEl.style.opacity = '1';
+  }
+
+  // ---- lean-in ---------------------------------------------------------
+  // Only the board and the desk carry a focus preset (the spec's two). A
+  // click there leans the camera in and says what the zone is; a second
+  // click opens the page. Every other zone is a link on the first click.
+  const camAt = CAM0.clone(), lookNow = LOOK0.clone();
+  let camTo = CAM0, lookTo = LOOK0;
+
+  // The template parks #chip 18px off the bottom, but this page also carries
+  // the Ask-Argyle bar (#chat-overlay-container, fixed along the bottom at
+  // z-80), which would sit on top of it. Lift the chip clear of whatever
+  // height that bar actually has rather than hard-coding one; with no bar in
+  // the page the template's own 18px stands.
+  function placeChip() {
+    let bottom = 18;
+    const bar = document.getElementById('chat-overlay-container');
+    if (bar) {
+      const r = bar.getBoundingClientRect();
+      if (r.height > 0) bottom = Math.max(18, Math.round(innerHeight - r.top) + 12);
+    }
+    chipEl.style.bottom = bottom + 'px';
+  }
+
+  function leanInto(name) {
+    leaned = name;
+    camTo = ZONES[name].focus.p; lookTo = ZONES[name].focus.l;
+    chipEl.textContent = chipText(name);
+    placeChip();
+    chipEl.style.opacity = '1';
+  }
+  function leanBack() {
+    if (!leaned) return;
+    leaned = null; camTo = CAM0; lookTo = LOOK0;
+    chipEl.style.opacity = '0';
+  }
+
+  R.domElement.addEventListener('pointermove', e => {
+    ptrX = e.clientX; ptrY = e.clientY; ptrIn = true; needPick = true;
+    pnx = (ptrX / innerWidth) * 2 - 1;
+    pny = -((ptrY / innerHeight) * 2 - 1);
+  });
+  R.domElement.addEventListener('pointerleave', () => {
+    ptrIn = false; needPick = true; pnx = pny = 0;
+  });
+  R.domElement.addEventListener('click', e => {
+    // A tap arrives with no preceding move, so take the position from the
+    // click itself rather than trusting whatever the pointer last said.
+    ptrX = e.clientX; ptrY = e.clientY; ptrIn = true; needPick = true;
+    const zone = pick();
+    if (!zone) { leanBack(); return; }
+    const z = ZONES[zone];
+    if (z.focus && leaned !== zone) { leanInto(zone); return; }
+    go(z.url);
+  });
+  addEventListener('keydown', e => { if (e.key === 'Escape') leanBack(); });
+
+  // ---- the flying sheet ------------------------------------------------
+  // Every ~90s a sheet leaves the tray for the board -- but only when there
+  // really is something in the tray AND something already pinned for it to
+  // join. An empty room never animates just to look busy.
+  const FLY_EVERY = 90, FLY_SECS = 2.4;
+  const flyer = box(1.0, .04, .7, PAL.paper, 0, -20, 0, { mo: { roughness: .95 } });
+  flyer.name = 'study-flyer';
+  flyer.material.transparent = true;
+  flyer.visible = false;
+  const flyA = new THREE.Vector3(), flyB = new THREE.Vector3(), flyC = new THREE.Vector3();
+  let flyT = -1, nextFly = FLY_EVERY;
+
+  function maybeFly(t) {
+    if (flyT >= 0 || t < nextFly) return;
+    nextFly = t + FLY_EVERY;
+    const waiting = (LAST && LAST.tray && LAST.tray.count) | 0;
+    const insights = LAST && LAST.board
+      ? (LAST.board.pins || []).filter(p => p && p.kind === 'insight').length : 0;
+    if (waiting <= 0 || insights < 1) return;
+    let target = null;
+    const P = ZONES.board.parts.pins;
+    for (let i = 0; i < P.length; i++) if (P[i].group.visible) { target = P[i].group.position; break; }
+    flyA.set(TRAY.x, TOP + .3, TRAY.z);
+    flyC.set(target ? target.x : BD.x, (target ? target.y : BD.y) - .25,
+             ZONES.board.parts.face + .07);
+    flyB.set((flyA.x + flyC.x) / 2, Math.max(flyA.y, flyC.y) + 1.4, (flyA.z + flyC.z) / 2);
+    flyT = 0; flyer.material.opacity = 1; flyer.visible = true;
+  }
+
+  function stepFly(dt) {
+    if (flyT < 0) return;
+    flyT += dt / FLY_SECS;
+    if (flyT >= 1) { flyT = -1; flyer.visible = false; flyer.material.opacity = 1; return; }
+    const u = flyT, v = 1 - u, a = v * v, b = 2 * v * u, c = u * u;
+    flyer.position.set(a * flyA.x + b * flyB.x + c * flyC.x,
+                       a * flyA.y + b * flyB.y + c * flyC.y,
+                       a * flyA.z + b * flyB.z + c * flyC.z);
+    flyer.rotation.x = Math.PI / 2 * Math.min(u * 1.2, 1);   // flat in the tray, upright on the board
+    flyer.rotation.z = Math.sin(u * Math.PI) * .22;
+    flyer.material.opacity = u > .82 ? Math.max(0, (1 - u) / .18) : 1;
+  }
+
+  // ---- the loop --------------------------------------------------------
+  const SCREEN0 = new THREE.Color(PAL.screen);
+  const MOTE_TOP = 7.6, MOTE_BOT = .4;
+  const T0 = performance.now();
+  let lastMs = T0, T = 0;
+
+  function frame(nowMs) {
+    requestAnimationFrame(frame);
+    // Two clocks on purpose. `el` is the real elapsed time and drives the
+    // exponential eases, which are frame-rate independent by construction and
+    // only ever land closer to the target after a stall. `dt` is capped so the
+    // integrators (dust, the flying sheet, every phase) cannot leap forward
+    // when a backgrounded tab hands back half a minute at once.
+    const ms = nowMs || lastMs;
+    const el = Math.min(Math.max((ms - lastMs) / 1000, 0), 1);
+    const dt = Math.min(el, .05);
+    lastMs = ms; T += dt;
+
+    // hover: at most one raycast per frame, and only when something moved
+    if (needPick) {
+      needPick = false;
+      const z = pick();
+      if (z !== hoverZone) {
+        hoverZone = z;
+        R.domElement.style.cursor = z ? 'pointer' : 'default';
+      }
+      updateTip(z);
+    }
+
+    // camera: a slow idle drift and a damped cursor parallax, laid on top of
+    // whichever pose the rig is lerping toward (home, or a lean-in preset).
+    const k = 1 - Math.pow(.06, el), kp = 1 - Math.pow(.004, el);
+    camAt.lerp(camTo, k); lookNow.lerp(lookTo, k);
+    paraX += (pnx * .35 - paraX) * kp;
+    paraY += (pny * .35 - paraY) * kp;
+    const amp = leaned ? .35 : 1;
+    cam.position.set(camAt.x + paraX + Math.sin(T * .17) * .16 * amp,
+                     camAt.y + paraY + Math.sin(T * .11) * .11 * amp,
+                     camAt.z + Math.cos(T * .13) * .13 * amp);
+    cam.lookAt(lookNow);
+
+    // the monitor breathes, and the desk lamp breathes with it
+    screen.material.color.copy(SCREEN0).multiplyScalar(.9 + .1 * Math.sin(T * .9));
+    deskGlow.intensity = 1.05 + .12 * Math.sin(T * .9);
+
+    // dust turning over in the window light
+    const ma = moteAttr.array;
+    for (let i = 1; i < ma.length; i += 3) {
+      ma[i] += dt * .055;
+      if (ma[i] > MOTE_TOP) ma[i] = MOTE_BOT;
+      ma[i - 1] += Math.sin(T * .3 + i) * dt * .03;
+    }
+    moteAttr.needsUpdate = true;
+
+    // steam off the mug: each ribbon rises, fades, and starts again
+    for (let i = 0; i < steam.length; i++) {
+      const ph = (T * .32 + i * .34) % 1, sm = steam[i];
+      sm.position.y = TOP + .4 + i * .18 + ph * .55;
+      sm.material.opacity = (.14 - i * .03) * Math.sin(ph * Math.PI);
+      sm.rotation.y = i * .8 + Math.sin(T * .4 + i) * .35;
+      sm.scale.setScalar(.75 + ph * .5);
+    }
+
+    // the clock is the room's own, not a decoration
+    const d = new Date(), mins = d.getMinutes() + d.getSeconds() / 60;
+    clockHands[0].rotation.z = -((d.getHours() % 12) / 12 + mins / 720) * Math.PI * 2;
+    clockHands[1].rotation.z = -(mins / 60) * Math.PI * 2;
+
+    // a stalled card never hangs quite still
+    const P = ZONES.board.parts.pins;
+    for (let i = 0; i < P.length; i++) {
+      const p = P[i];
+      if (p.group.visible && p.sway)
+        p.group.rotation.z = p.base + Math.sin(T * 1.05 + i * .7) * .024 * p.sway;
+    }
+
+    // what arrived since you were last in the room
+    if (glowMats.length) {
+      const gi = .32 + .16 * Math.sin(T * 1.4);
+      for (let i = 0; i < glowMats.length; i++) glowMats[i].emissiveIntensity = gi;
+    }
+
+    // The flight is scheduled on the WALL clock, not on T: a slow renderer
+    // makes the room breathe slower, but a sheet still files every ~90s.
+    maybeFly((ms - T0) / 1000); stepFly(dt);
+    R.render(scene, cam);
   }
 
   // Before the first poll answers, the room is simply tidy.
   applyState(null);
+  requestAnimationFrame(frame);
 
-  function frame() {
-    requestAnimationFrame(frame);
-    R.render(scene, cam);
-  }
-  frame();
+  // Ten seconds after the room is up, this visit becomes the new "since".
+  // The glows already on screen keep the OLD mark, so what was new when you
+  // walked in stays marked for as long as you are standing here.
+  setTimeout(() => {
+    try { localStorage.setItem(VISIT_KEY, String(Date.now() / 1000)); }
+    catch (e) { /* no storage: nothing to remember it with, and that is fine */ }
+  }, 10000);
 
   addEventListener('resize', () => {
     cam.aspect = W() / H(); cam.updateProjectionMatrix(); R.setSize(W(), H());
+    if (leaned) placeChip();
   });
 
   window.STUDY = { applyState: applyState, scene: scene, camera: cam, zones: ZONES, renderer: R };

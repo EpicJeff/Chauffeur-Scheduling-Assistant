@@ -187,6 +187,16 @@ def scenario_template_carries_room_fallback_and_vendored_three():
         check(banned not in src, f'{banned} is banned')
 
 
+def scenario_scene_honors_the_read_only_law():
+    import os, re
+    path = os.path.join(os.path.dirname(__file__), '..', 'static', 'study.js')
+    src = open(path, encoding='utf-8').read()
+    check(not re.search(r"method:\s*['\"](POST|PUT|DELETE|PATCH)", src),
+          'the room never writes')
+    check("localStorage" in src and 'try' in src,
+          'since-you-were-here uses guarded localStorage')
+
+
 if __name__ == '__main__':
     scenario_board_pins_are_role_filtered()
     scenario_desk_stacks_carry_open_steps_and_due()
@@ -197,4 +207,5 @@ if __name__ == '__main__':
     scenario_gauges_read_without_writing()
     scenario_endpoint_gates_and_serves()
     scenario_template_carries_room_fallback_and_vendored_three()
+    scenario_scene_honors_the_read_only_law()
     print("test_study_state OK")
