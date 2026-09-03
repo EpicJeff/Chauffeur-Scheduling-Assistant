@@ -53,6 +53,8 @@
      'paths': ['M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15']},
     {'slug': 'intake', 'href': 'intake', 'label': 'Intake', 'short': 'Intake', 'match': '/intake',
      'paths': ['M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z']},
+    {'slug': 'study', 'href': 'study', 'label': 'The Study', 'short': 'Study', 'match': '/study',
+     'paths': ['M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25']},
     {'slug': 'mind', 'href': 'mind', 'label': 'The Mind', 'short': 'Mind', 'match': '/mind',
      'paths': ['M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z']},
     {'slug': 'threads', 'href': 'threads', 'label': 'Threads', 'short': 'Threads', 'match': '/threads',
@@ -470,19 +472,20 @@
                 });
 
             // Intake (mail approvals, IMAP settings), Mind (dial settings,
-            // the full sensitive insight lane, graduation), Threads
-            // (vendor/project correspondence — counterparty emails, and the
-            // odd employment-screening thread) and Programs (proposing and
-            // approving a family member's program) are admin surfaces — hide
-            // each on kiosk displays unless a card explicitly opts back in via
-            // ?tabs=...,intake / ?tabs=...,mind / ?tabs=...,threads /
-            // ?tabs=...,programs. Mind
-            // especially: its whole reason to exist is keeping sensitive
-            // insights off shared screens, so the page that administers that
-            // must itself stay off one.
+            // the full sensitive insight lane, graduation), the Study (the
+            // same lane and the rest of the household's admin state, drawn
+            // as a room), Threads (vendor/project correspondence —
+            // counterparty emails, and the odd employment-screening thread)
+            // and Programs (proposing and approving a family member's
+            // program) are admin surfaces — hide each on kiosk displays
+            // unless a card explicitly opts back in via ?tabs=...,intake /
+            // ?tabs=...,mind / ?tabs=...,study / ?tabs=...,threads /
+            // ?tabs=...,programs. Mind especially: its whole reason to exist
+            // is keeping sensitive insights off shared screens, so the page
+            // that administers that must itself stay off one.
             const kioskTabs = (urlParams.get('tabs') || '').toLowerCase()
                 .split(',').map(s => s.trim());
-            ['intake', 'mind', 'threads', 'programs'].forEach(slug => {
+            ['intake', 'mind', 'study', 'threads', 'programs'].forEach(slug => {
                 if (!kioskTabs.includes(slug)) {
                     document.querySelectorAll(`[data-slug="${slug}"]`)
                         .forEach(a => { a.style.display = 'none'; });

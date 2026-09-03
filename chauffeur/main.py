@@ -1680,6 +1680,10 @@ def settings_page(request: Request):
 def mind_page(request: Request):
     return templates.TemplateResponse(request=request, name="mind.html")
 
+@app.get("/study")
+def study_page(request: Request):
+    return templates.TemplateResponse(request=request, name="study.html")
+
 @app.get("/threads")
 def threads_page(request: Request):
     return templates.TemplateResponse(request=request, name="threads.html")
@@ -5263,6 +5267,17 @@ def mind_admin(request: Request = None):
             "history": storage.get_mind_insights(state='retired')[-60:],
             "counters": _mind.category_counters(),
             "graduation": _mind.graduation_candidates()}
+
+# --- The Study: the read-only room (task 2 wiring) ---
+
+@app.get("/api/study/state")
+def study_state(request: Request = None):
+    """The Study's one read. Same person-gate as the mind endpoints —
+    parents/adults or a trusted admin surface; the payload is role-filtered
+    underneath by mind.visible_insights."""
+    from services import study as _study
+    actor = _mind_actor(request, None)
+    return _study.state(actor)
 
 # --- Stages: the child that grows (load arc A4) ---
 

@@ -128,6 +128,46 @@ def scenario_gauges_read_without_writing():
     check(not writes, f'the room never writes, got {writes}')
 
 
+def scenario_endpoint_gates_and_serves():
+    _reset()
+    storage.members_table.truncate()
+    storage.add_member({'id': 'mom', 'name': 'Mom', 'role': 'parent'})
+    storage.add_member({'id': 'kid', 'name': 'Lily', 'role': 'child'})
+    import main
+    from fastapi import HTTPException
+    from services import auth as _auth
+    orig = _auth.identify
+    try:
+        _auth.identify = lambda h, q: {'tier': _auth.SERVICE, 'member': None}
+        res = main.study_state(request=None)
+        check('furniture' in res and 'board' in res['furniture'],
+              'admin surface gets the payload')
+    finally:
+        _auth.identify = orig
+    # a child identity is refused by the same gate the mind endpoints use
+    try:
+        _auth.identify = lambda h, q: {'tier': _auth.DEVICE, 'device': {}, 'member': None}
+        try:
+            main.study_state(request=None)
+            check(False, 'a device tier must not read the study')
+        except HTTPException as e:
+            check(e.status_code == 403, f'403, got {e.status_code}')
+    finally:
+        _auth.identify = orig
+
+
+def scenario_template_carries_room_fallback_and_vendored_three():
+    import os
+    path = os.path.join(os.path.dirname(__file__), '..', 'templates', 'study.html')
+    src = open(path, encoding='utf-8').read()
+    check('id="room"' in src and 'id="fallback"' in src,
+          'both render targets present')
+    check('static/vendor/three.min.js' in src, 'vendored three referenced')
+    check('static/study.js' in src, 'scene script referenced')
+    for banned in ('alert(', 'confirm(', 'prompt('):
+        check(banned not in src, f'{banned} is banned')
+
+
 if __name__ == '__main__':
     scenario_board_pins_are_role_filtered()
     scenario_desk_stacks_carry_open_steps_and_due()
@@ -135,4 +175,6 @@ if __name__ == '__main__':
     scenario_calendar_reads_the_solvers_own_unassigned_list()
     scenario_a_raising_section_is_calm_not_fatal()
     scenario_gauges_read_without_writing()
+    scenario_endpoint_gates_and_serves()
+    scenario_template_carries_room_fallback_and_vendored_three()
     print("test_study_state OK")

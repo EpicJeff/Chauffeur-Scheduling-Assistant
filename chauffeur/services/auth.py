@@ -200,6 +200,9 @@ RULES = [
     (ANY, '/dashboard_v2', ANYONE, None),
     (ANY, '/settings', ANYONE, None),
     (ANY, '/mind', ANYONE, None),
+    # Study (task 2): same admin-page shape as Mind — a shell anyone can
+    # load, the data behind it gated at /api/study/state below.
+    (ANY, '/study', ANYONE, None),
     # Threads: same admin-page shape as Mind — a shell anyone can load, the
     # data behind it gated at /api/threads/* above (SIGNED_IN to read, the
     # handler's `_mind_actor` refusing a child/helper/guest write).
@@ -346,6 +349,9 @@ RULES = [
     # Mind insight lane: same discipline — SIGNED_IN at the route, role
     # decided in the handler (`_mind_actor`) for dismiss/act/admin.
     (ANY, '/api/mind/*', SIGNED_IN, None),
+    # The Study's one read (task 2): same discipline — SIGNED_IN at the
+    # route, role decided in the handler (`_mind_actor`).
+    (ANY, '/api/study/state', SIGNED_IN, None),
     # Threads: open loops with somebody outside the family. Same discipline —
     # SIGNED_IN at the route, `_mind_actor` (reused, not rebuilt) refuses a
     # child/helper/guest in the handler for every write; reads are open to
