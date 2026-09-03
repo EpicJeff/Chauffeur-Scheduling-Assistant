@@ -116,6 +116,25 @@ def scenario_a_raising_section_is_calm_not_fatal():
         study._SECTIONS['stickies'] = orig
 
 
+def scenario_tray_counts_proposed_proposals():
+    _reset()
+    # Monkeypatch get_proposals to return rows only for status='proposed'
+    # since the storage helper may require heavy fields
+    orig = storage.get_proposals
+    def stub_get_proposals(status=None):
+        if status == 'proposed':
+            return [{'id': 'p1', 'status': 'proposed'}]
+        elif status == 'ignored':
+            return [{'id': 'p2', 'status': 'ignored'}]
+        return []
+    storage.get_proposals = stub_get_proposals
+    try:
+        tray = study.state(PARENT, now=NOON)['furniture']['tray']
+        check(tray['count'] == 1, f'tray shows one proposed proposal: {tray}')
+    finally:
+        storage.get_proposals = orig
+
+
 def scenario_gauges_read_without_writing():
     _reset()
     writes = []
@@ -174,6 +193,7 @@ if __name__ == '__main__':
     scenario_calendar_counts_only_uncovered_driver_events()
     scenario_calendar_reads_the_solvers_own_unassigned_list()
     scenario_a_raising_section_is_calm_not_fatal()
+    scenario_tray_counts_proposed_proposals()
     scenario_gauges_read_without_writing()
     scenario_endpoint_gates_and_serves()
     scenario_template_carries_room_fallback_and_vendored_three()

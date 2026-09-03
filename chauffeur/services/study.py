@@ -69,7 +69,7 @@ def _desk(now, viewer):
 
 
 def _tray(now, viewer):
-    return {'count': len(storage.get_proposals(status='pending') or [])}
+    return {'count': len(storage.get_proposals(status='proposed') or [])}
 
 
 def _stickies(now, viewer):
