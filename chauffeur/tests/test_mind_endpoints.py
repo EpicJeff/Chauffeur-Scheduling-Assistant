@@ -357,6 +357,22 @@ def scenario_the_row_level_approval_asks_for_one_too():
         _auth.identify, _ca._execute = orig_identify, orig_execute
 
 
+def scenario_admin_template_boolean_bindings_are_coerced():
+    """The vendored Alpine build mis-stamps a boolean attribute binding whose
+    expression indexes with the x-for iteration variable: on first render
+    `:disabled="busy[ins.id]"` sets disabled=true even though the value is
+    undefined (self-heals on the next reactive touch, which is why every
+    LATER interaction works). Proven empirically 2026-09-02 with a minimal
+    playwright repro; `!!` coercion (and only coercion) stamps correctly.
+    This pins the template so the landmine cannot be reintroduced."""
+    import os, re
+    path = os.path.join(os.path.dirname(__file__), '..', 'templates', 'mind.html')
+    with open(path, encoding='utf-8') as f:
+        src = f.read()
+    bare = re.findall(r':disabled="(?!!!)[^"]*\[', src)
+    check(not bare, f"boolean bindings must coerce with !!, found bare: {bare}")
+
+
 if __name__ == '__main__':
     scenario_dismiss_records_outcome()
     scenario_act_records_outcome()
@@ -370,4 +386,5 @@ if __name__ == '__main__':
     scenario_a_skipped_step_cannot_be_approved()
     scenario_a_schedule_changing_step_approval_asks_for_a_resolve()
     scenario_the_row_level_approval_asks_for_one_too()
+    scenario_admin_template_boolean_bindings_are_coerced()
     print("test_mind_endpoints OK")
