@@ -87,18 +87,57 @@ def _stickies(now, viewer):
 
 def _calendar(now, viewer):
     sched = storage.get_cached_schedule() or {}
-    assignments = dict(sched.get('assignments') or {})
-    assignments.update(sched.get('ghost_assignments') or {})
     days = [(now.date() + datetime.timedelta(days=i)) for i in range(7)]
     counts = {d.isoformat(): 0 for d in days}
-    for e in sched.get('events') or []:
+    events_by_id = {e.get('id'): e for e in (sched.get('events') or [])}
+
+    def _event_date(e):
         try:
-            d = datetime.datetime.fromisoformat(
+            return datetime.datetime.fromisoformat(
                 str(e.get('start')).replace('Z', '+00:00')).date().isoformat()
         except (ValueError, TypeError):
-            continue
-        if d in counts and not assignments.get(e.get('id')):
-            counts[d] += 1
+            return None
+
+    # storage.get_cached_schedule()['events'] is all_events_for_ui (main.py
+    # ~17375, ~17524) -- the family's WHOLE calendar, written before the
+    # is_display_only_event() gate (main.py ~17068-17088, applied ~17532).
+    # An all-day 'No School Today' event lives in `events` and was never a
+    # driving need. The schedule's own `true_unassigned` id list (aliased as
+    # `unassigned`, both written at main.py ~18280/~18288) does NOT have
+    # this problem: it is built solely from daily_events_to_solve (main.py
+    # ~18479, unassigned/true_unassigned computed ~18603-18623), which comes
+    # from events_to_solve -- the set the display-only gate already emptied
+    # of all-day events before the solver ever ran. Joining THAT id list to
+    # `events` (for each id's own date) is what keeps a display-only event
+    # from ever counting as an uncovered ride.
+    unassigned_ids = sched.get('true_unassigned')
+    if unassigned_ids is None:
+        unassigned_ids = sched.get('unassigned')
+
+    if unassigned_ids is not None:
+        for eid in set(unassigned_ids):
+            e = events_by_id.get(eid)
+            if not e:
+                continue
+            d = _event_date(e)
+            if d in counts:
+                counts[d] += 1
+    else:
+        # Old cache shape, neither id list present: fall back to the
+        # assigned/ghost-covered comparison, but skip display-only rows by
+        # hand -- the same two fields is_display_only_event() itself reads
+        # (main.py ~17068-17088): `all_day` true and `event_type` not
+        # `background_trip` (a background trip IS scheduling information,
+        # so it is deliberately not excluded here either).
+        assignments = dict(sched.get('assignments') or {})
+        assignments.update(sched.get('ghost_assignments') or {})
+        for e in sched.get('events') or []:
+            if e.get('all_day') and e.get('event_type') != 'background_trip':
+                continue
+            d = _event_date(e)
+            if d in counts and not assignments.get(e.get('id')):
+                counts[d] += 1
+
     return {'days': [{'date': d.isoformat(), 'unassigned': counts[d.isoformat()]}
                      for d in days]}
 

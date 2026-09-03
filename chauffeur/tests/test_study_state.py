@@ -47,6 +47,10 @@ def scenario_desk_stacks_carry_open_steps_and_due():
 
 
 def scenario_calendar_counts_only_uncovered_driver_events():
+    """Old cache shape: no true_unassigned/unassigned id list at all, so
+    _calendar falls back to the assigned/ghost-covered comparison -- which
+    must still skip a display-only (all_day) event by hand, the same way
+    is_display_only_event() would have kept it out of the solver."""
     _reset()
     storage.get_cached_schedule = lambda: {
         'events': [
@@ -54,6 +58,8 @@ def scenario_calendar_counts_only_uncovered_driver_events():
             {'id': 'e2', 'start': '2026-09-04T18:00:00', 'title': 'game'},
             {'id': 'e3', 'start': '2026-09-05T09:00:00', 'title': 'lesson'},
             {'id': 'e9', 'start': '2026-10-20T09:00:00', 'title': 'far away'},
+            {'id': 'e4', 'start': '2026-09-06T00:00:00', 'title': 'No School Today',
+             'all_day': True},
         ],
         'assignments': {'e1': 'driver1'},
         'ghost_assignments': {'e2': 'ghost_neighbor'},
@@ -63,7 +69,38 @@ def scenario_calendar_counts_only_uncovered_driver_events():
     by_date = {d['date']: d['unassigned'] for d in cal['days']}
     check(by_date['2026-09-04'] == 0, 'assigned + ghost-covered are not holes')
     check(by_date['2026-09-05'] == 1, 'the real hole shows')
+    check(by_date['2026-09-06'] == 0,
+          'an all-day event is never a driving hole, fallback path (no id list)')
     check('2026-10-20' not in by_date and len(cal['days']) == 7, 'seven days only')
+
+
+def scenario_calendar_reads_the_solvers_own_unassigned_list():
+    """Current cache shape: a `true_unassigned` id list is present (main.py
+    ~18280-18288). _calendar must join THAT list to `events` by id rather
+    than re-deriving holes from assignments -- an all-day event sits in
+    `events` (the family's whole calendar) but a solver never puts one in
+    daily_events_to_solve, so it can never legitimately appear in
+    true_unassigned either. Reproduces the reviewer's 'No School Today'
+    case: same all-day event, same otherwise-clean day, this time with the
+    real cache shape a live refresh actually writes."""
+    _reset()
+    storage.get_cached_schedule = lambda: {
+        'events': [
+            {'id': 'e3', 'start': '2026-09-05T09:00:00', 'title': 'lesson'},
+            {'id': 'e4', 'start': '2026-09-06T00:00:00', 'title': 'No School Today',
+             'all_day': True},
+        ],
+        'assignments': {},
+        'ghost_assignments': {},
+        'true_unassigned': ['e3'],
+    }
+    cal = study.state(PARENT, now=NOON)['furniture']['calendar']
+    by_date = {d['date']: d['unassigned'] for d in cal['days']}
+    check(by_date['2026-09-05'] == 1,
+          'the id the solver actually named as unassigned shows')
+    check(by_date['2026-09-06'] == 0,
+          'an all-day event never enters true_unassigned, so it never counts '
+          'even though it sits unassigned-looking in events')
 
 
 def scenario_a_raising_section_is_calm_not_fatal():
@@ -95,6 +132,7 @@ if __name__ == '__main__':
     scenario_board_pins_are_role_filtered()
     scenario_desk_stacks_carry_open_steps_and_due()
     scenario_calendar_counts_only_uncovered_driver_events()
+    scenario_calendar_reads_the_solvers_own_unassigned_list()
     scenario_a_raising_section_is_calm_not_fatal()
     scenario_gauges_read_without_writing()
     print("test_study_state OK")
