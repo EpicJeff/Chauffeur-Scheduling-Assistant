@@ -6031,6 +6031,129 @@ buttons (`POST .../propose`, `/act`, `/clear`); nothing a person could
 already do was taken away, new insights just get a richer verb than "Handle
 it" used to mean.
 
+## The Study — a living low-poly 3D office as admin home (v2.453.0–v2.453.9 — `services/study.py`, `static/study.js`, `templates/study.html`; design in `docs/superpowers/specs/2026-09-03-argyle-study-design.md`)
+
+The admin surfaces used to be text-heavy card piles: no state at a glance, no
+visible thinking, no pull to return. The Study is a new admin home at
+**`/study`** — a low-poly three.js office, warm-graded and built client-side
+from canvas textures and rounded-extrude geometry — where ten pieces of
+furniture are live readouts of the household domains that can need
+attention. Every existing page (`/mind`, `/intake`, `/dashboard`,
+`/programs`, `/config#cars`) stays exactly where it is as the deep-dive the
+room's taps reach *through*; nothing about them changed for this arc.
+
+**Four laws, the same numbering the spec and the code both use** (`_CALM`'s
+own comment in `study.py` cites "Law 2" by name):
+1. Only a domain that can need attention gets a physical form — no config,
+   no editors, no registries in the room.
+2. A quiet room is the success state: calm renders as calm (empty tray,
+   sagging nothing), never as an empty-state apology.
+3. The room never writes. `static/study.js` makes exactly one network call
+   in the whole file — a bare, method-less (so GET) `fetch(window
+   .STUDY_STATE_URL)` — and every tap either leans the camera in or
+   navigates away; nothing ever posts.
+4. Every furniture signal is one number or flag straight off the state
+   endpoint, no client-side inference: `applyState()` is the only place the
+   scene reads data, and it allocates no geometry — every mesh a signal can
+   touch was built once, up front, then only shown, hidden, coloured or
+   moved.
+
+**Route, access, nav — the same admin-page shape as Mind.** `auth.RULES`
+carries `(ANY, '/study', ANYONE, None)` right beside `(ANY, '/mind', ANYONE,
+None)`: a shell anyone can load, the data gated behind the API. `(ANY,
+'/api/study/state', SIGNED_IN, None)` sits beside `/api/mind/*`'s identical
+line, role decided in the handler rather than at the route — `main.py`'s
+`study_state` resolves the caller through `_mind_actor`, reused rather than
+rebuilt: a child/helper/guest gets 403 ("Only a parent or adult can handle
+these"), a resolved parent/adult gets the real payload, and an admin surface
+with nobody resolved gets it anyway with no author attached, exactly Mind's
+own tri-state. `templates/nav.html`'s kiosk script hides the `study` slug
+from the wall/kiosk shelf alongside `intake`/`mind`/`threads`/`programs` —
+its own comment names the Study outright as an admin surface "drawn as a
+room" — unless a board opts back in with `?tabs=...,study`. Not the landing
+page; adoption is by habit, same as Mind.
+
+**Furniture inventory — ten live signals**, adapted from the spec's table
+but corrected against `services/study.py`, the live truth:
+
+| Furniture | Domain | Live signal | Tap → |
+|---|---|---|---|
+| Evidence board | Mind insights + threads | `mind.visible_insights` pins (active, or in-hand with a step due) plus every open thread; a stall of either kind yellows and sways the pin, `overdue` specifically reddens it; strings join an insight pin to a thread pin **by index only** — an honest "same household" join, not a claimed relation (real relations are later work; the spec's illustration is deliberately narrowed here) | `/mind` |
+| Desk paper stacks | In-hand plans | one stack per **every** `in_hand` insight, not gated to due ones the way the board's own feed is — height = open steps, a due step pushes an amber sheet out; sensitivity is filtered by its own inline parent-only check, not by `visible_insights` | `/mind` |
+| In-tray | Intake proposals | `count(storage.get_proposals(status='proposed'))` | `/intake` |
+| Monitor + stickies | Findings | count of `findings.open_findings()`; worst severity uses the real vocabulary — **`decide` > `approve` > `fyi`**, never high/medium/low | `/dashboard` |
+| Wall calendar | Next 7 days of solver output | a day reddens when the cached schedule's own **`true_unassigned`** id list (aliased `unassigned`) places a driver event there — built upstream from `daily_events_to_solve`, after the display-only gate already dropped all-day events, so an all-day "No School Today" row can never paint a day red; an old cache carrying neither field falls back to an assignments diff that skips `all_day` rows by hand | `/dashboard` |
+| Window | Vitals pulse | `vitals.read()`'s household levels vs. this family's own baseline (`ready`/`worse`/label) — levels only, never per-person | `/mind` |
+| Key hook | Cars | one tag per car that both has telemetry configured and isn't disabled; fuel/charge ≤25% reddens it — a car with **no** telemetry configured is left off the hook entirely, not hung as a dangling tag | `/config#cars` |
+| Contracts on desk | Negotiation | count of deals whose `state` is `draft` or `asking` — the identical non-terminal pair `negotiation.propose` calls "open" and `watchers._deal_line` treats as a live deal | `/dashboard` |
+| Bookshelf binders | Programs | one binder per active program; the spine pulls out when `programs.weekday_shortfall` finds a weekday going quiet — a pending rebaseline offer is a separate check this signal does not read | `/programs` |
+| Desk gauges | System health | today's Mind think-calls vs. cap, this month's web-research calls vs. cap, and how many of the **last 10** ingest-log rows mention "error" (a count, not a true consecutive streak) | `/mind` / `/intake` |
+| Clock, plant, rug, lamp, photos | — | decoration; only the clock hands read real time | — |
+
+**Per-section failure isolation mirrors `mind.snapshot`'s own pattern.**
+`mind.snapshot` already wraps each text section in try/except so "a provider
+that raises contributes nothing and never sinks the rest"; `study.state()`
+does the same around all ten furniture functions, logging `[study] section
+{key} failed: {e}` and substituting that key's row out of `_CALM` rather
+than omitting it — the one adaptation, because a fixed JSON contract needs
+every key present while free text can just skip a paragraph. The client
+repeats the guarantee a second time: its own `CALM`/`normal()` fills in any
+furniture key an old cache or a half-written payload left out, so a missing
+section renders that piece of furniture tidy instead of throwing and taking
+the whole room down.
+
+**Role filtering rides the Mind's own gate, not a copy of it.** The board's
+insight pins come straight from `mind.visible_insights(viewer, now=now)` —
+the exact function that already filters `/mind`'s own lane — so a
+`sensitive` insight is invisible to a non-parent's Study the same way it is
+invisible to their Mind page. The desk reads `in_hand` rows directly (it
+needs all of them, not just the due ones `visible_insights` would hand
+back) and carries its own equivalent check inline, dropping
+`sensitivity: 'sensitive'` rows for anyone who isn't a parent.
+
+**Interaction: lean-in-then-navigate, on exactly the two zones the spec
+names.** Board and desk carry a camera `focus` preset; the first tap leans
+the camera into it and raises a chip naming the zone and its one-line
+signal ("tap again to open"), the second tap — or a tap while already
+leaned in — navigates. Every other zone is a single-tap link. Escape or a
+click on empty space leans back out. Hover raises a tooltip with the same
+one-line signal, suppressed while already leaned into that zone since the
+chip is already saying it.
+
+**Since-you-were-here glow.** A `study_last_visit` timestamp lives in
+`localStorage`, read and written inside try/catch on both ends so a browser
+that refuses storage just shows no glows and throws nothing. On load, any
+pin, sheet or card whose `changed_ts` is newer than that stamp gets a soft
+warm emissive that breathes for the whole visit. Ten seconds after the room
+comes up, the stamp is overwritten with *now* — late enough that what was
+new when you walked in stays marked for the visit you're having, soon
+enough that the next visit's "new" is genuinely new.
+
+**The fallback list is the phone (and no-WebGL) experience, not a stub.**
+`study.js`'s capability gate — `webglOk()` plus a viewport floor
+(`min(innerWidth, innerHeight) >= 560 && innerWidth >= 900`) — chooses room
+vs. list before anything renders. The fallback polls the identical
+`/api/study/state` payload every 60s and renders it as severity-ranked
+rows — uncovered calendar days first, then board pins, in-hand plans, the
+tray, findings, low cars, open contracts, pulled binders — each a real link
+to its deep-dive, calm rows visually muted, collapsing to "All quiet.
+Nothing needs you right now." when none qualify. Every link is relative
+(`rel()` strips a leading slash) so it survives Home Assistant ingress's
+token prefix, the same reasoning `nav.html`'s own `_up` already
+established.
+
+**Vendored, not CDN.** `static/vendor/three.min.js` is r150's UMD build
+(~600KB), vendored the same way `static/vendor/alpine.min.js` is — the
+offline-HA constraint holds, and `templates/study.html` loads it ahead of
+`static/study.js`.
+
+**A failed poll degrades to a chip, never a dialog.** A `/api/study/state`
+fetch that throws or answers non-200 shows a small fixed "can't reach the
+house right now" chip once per outage (not once per retry) and clears it
+the moment a later poll succeeds; the scene itself needs no special-casing
+because both the server's `_CALM` and the client's `CALM` already cover a
+missing or failing section.
+
 ## Family vitals — the pulse the Mind reads (v2.427.0 — `services/vitals.py`)
 
 Every other watcher in the app measures a **level**: this ride is unassigned,
