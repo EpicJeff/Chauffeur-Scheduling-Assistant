@@ -369,10 +369,13 @@ def build_card(proposal_id: str, action_type: str, summary: str, status: str) ->
 
 
 def create_action_proposal(action_type: str, summary: str, payload: dict,
-                           created_by_member_id: str = None) -> Dict[str, Any]:
-    """Store a proposed action; return {status, message, proposal_id, card}."""
+                           created_by_member_id: str = None,
+                           extra_allowed: frozenset = frozenset()) -> Dict[str, Any]:
+    """Store a proposed action; return {status, message, proposal_id, card}.
+    extra_allowed widens the proposable set for the mission engine ONLY —
+    chat's own funnel never passes it, so chat behavior is unchanged."""
     from services import storage
-    if action_type not in ADMIN_ACTIONS:
+    if action_type not in ADMIN_ACTIONS and action_type not in extra_allowed:
         return {"status": "error", "message": f"'{action_type}' is not a proposable action."}
     summary = (summary or action_type).strip()
     pid = storage.add_action_proposal({
