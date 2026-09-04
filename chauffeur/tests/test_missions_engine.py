@@ -351,6 +351,26 @@ def scenario_tick_promotes_due_retries_and_respects_disabled():
           "a due retry re-enters the loop and can finish")
 
 
+def scenario_mission_findings_emit_and_hush():
+    _reset()
+    from services import watchers
+    import datetime as _dt
+    now = _dt.datetime.now()
+    done = _mk(); storage.update_mission(done, {'status': 'done',
+                                                'summary': '2 proposals ready'})
+    waiting = _mk('q'); storage.update_mission(waiting, {'status': 'waiting_user'})
+    acked = _mk('a'); storage.update_mission(acked, {'status': 'done',
+                                                     'acknowledged_at': 1.0})
+    rows = watchers._mission_states(now)
+    kinds = sorted(f.kind for f in rows)
+    check(kinds == ['mission_done', 'mission_waiting'],
+          f"done + waiting page, acknowledged stays quiet, got {kinds}")
+    for k in ('mission_done', 'mission_blocked', 'mission_waiting'):
+        check(k in watchers.SCANNED_KINDS, f"{k} is a scanned kind")
+    line = next(f.line for f in rows if f.kind == 'mission_done')
+    check('proposal' in line, "the done line carries the next action")
+
+
 if __name__ == '__main__':
     scenario_mission_rows_round_trip()
     scenario_prune_spares_active_and_steps_follow()
@@ -370,4 +390,5 @@ if __name__ == '__main__':
     scenario_launch_gates()
     scenario_tick_advances_one_mission_serially()
     scenario_tick_promotes_due_retries_and_respects_disabled()
+    scenario_mission_findings_emit_and_hush()
     print("test_missions_engine OK")

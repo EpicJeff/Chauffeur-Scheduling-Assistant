@@ -393,7 +393,8 @@ SCANNED_KINDS = ('unassigned', 'optional_skip', 'proposal', 'chore_verify',
                  'redemption', 'errand_pastdue', 'supply_deadline',
                  'occasion_gap', 'household_task', 'stage', 'care_gap',
                  'commitment', 'chore_unclaimed', 'thread_stall',
-                 'program_session', 'program_rebaseline', 'program_drift')
+                 'program_session', 'program_rebaseline', 'program_drift',
+                 'mission_done', 'mission_blocked', 'mission_waiting')
 
 
 def _thread_stalls(now: datetime.datetime):
@@ -435,6 +436,38 @@ def _thread_stalls(now: datetime.datetime):
             line=f"🧵 {title} has stalled — {what}",
             kind='thread_stall', severity=severity, dm=dm,
             subject_type='thread', subject_id=str(thread_id)))
+    return out
+
+
+def _mission_states(now: datetime.datetime):
+    """A mission that stopped needing the engine and started needing a person.
+    Signal policy: the next action is IN the line. done/blocked hush once a
+    parent taps OK on /missions (acknowledged_at); waiting hushes when the
+    answer arrives (status leaves waiting_user). Steps never page — only
+    states a human must resolve."""
+    from services import storage as _st
+    out = []
+    for m in _st.get_missions(status=['done', 'blocked', 'waiting_user']):
+        status = m.get('status')
+        if status in ('done', 'blocked') and m.get('acknowledged_at'):
+            continue
+        goal = (m.get('goal') or 'Mission')[:60]
+        if status == 'done':
+            kind, sev, dm = 'mission_done', 'fyi', False
+            what = m.get('summary') or 'review its proposals on /missions'
+            line = f"🎯 Mission done — {goal}: {what}"
+        elif status == 'blocked':
+            kind, sev, dm = 'mission_blocked', 'fyi', False
+            line = f"🎯 Mission stuck — {goal}: {m.get('error') or 'needs a decision'}"
+        else:
+            kind, sev, dm = 'mission_waiting', 'decide', True
+            steps = _st.get_mission_steps(m['id'])
+            asks = [s for s in steps if s.get('kind') == 'ask']
+            q = (asks[-1].get('result_json') or {}).get('question') if asks else ''
+            line = f"🎯 Mission asks — {goal}: {q or 'answer it on /missions'}"
+        out.append(Finding(key=f"{kind}:{m['id']}", line=line, kind=kind,
+                           severity=sev, dm=dm,
+                           subject_type='mission', subject_id=str(m['id'])))
     return out
 
 
@@ -576,6 +609,7 @@ def collect_findings(now: datetime.datetime = None):
     findings += _care_gap_findings(now)
     findings += _commitment_findings(now)
     findings += _thread_stalls(now)
+    findings += _mission_states(now)
     findings += _program_findings(now)
     return findings, unclaimed
 
