@@ -6,7 +6,7 @@ of 2026-08-30):
 
 - lite:  gemini-3.5-flash-lite (500), gemini-3.1-flash-lite (500),
          gemini-2.5-flash-lite (20)  -> ~1,020/day, answers in seconds.
-- flash: gemini-3.7/3.6/3.5/3.1/3/2.5-flash (20 each) -> ~120/day, highest quality.
+- flash: gemini-3.8/3.7/3.6/3.5/3.1/3/2.5-flash (20 each) -> ~140/day, highest quality.
 - gemma: gemma-4-31b-it (14,400), gemma-4-26b-it (14,400) -> ~28,800/day, but
          44-180s per call measured on the free API (2026-07-30).
 
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_POOLS = {
     'lite': ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"],
-    'flash': ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash",
+    'flash': ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash",
               "gemini-3.1-flash", "gemini-3-flash", "gemini-2.5-flash"],
     'gemma': ["gemma-4-31b-it", "gemma-4-26b-it"],
 }
