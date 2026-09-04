@@ -482,6 +482,8 @@ with db_lock:
     coverage_asks_table = db.table('coverage_asks')
     mind_noticings_table = db.table('mind_noticings')
     mind_insights_table = db.table('mind_insights')
+    missions_table = db.table('missions')
+    mission_steps_table = db.table('mission_steps')
     # Per-member music (favorites + recently chosen). OURS on purpose: Music
     # Assistant's lead has declined per-user libraries outright — MA 2.7 user
     # profiles scope providers and speakers, favourites stay one shared pile.
@@ -2775,6 +2777,68 @@ def prune_mind(insights_before_ts: float, noticings_before_ts: float = None) -> 
                 mind_insights_table.remove(Query().id == r['id'])
                 doomed += 1
     return doomed
+
+# --- Missions (engine arc) ---
+
+def add_mission(data: dict) -> str:
+    import uuid as _uuid
+    row = {'id': _uuid.uuid4().hex, 'created_at': time.time(),
+           'updated_at': time.time(), 'status': 'running', 'goal': '',
+           'origin_kind': 'manual', 'origin_ref': None, 'created_by': None,
+           'tier': 'mission', 'summary': '', 'error': '', 'step_count': 0,
+           'consec_errors': 0, 'retry_at': None, 'acknowledged_at': None,
+           'finished_at': None,
+           **data}
+    with db_lock:
+        missions_table.insert(row)
+    return row['id']
+
+def update_mission(mission_id: str, data: dict) -> bool:
+    data = {**data, 'updated_at': time.time()}
+    with db_lock:
+        return bool(missions_table.update(data, Query().id == mission_id))
+
+def get_mission(mission_id: str):
+    with db_lock:
+        rows = missions_table.search(Query().id == mission_id)
+    return dict(rows[0]) if rows else None
+
+def get_missions(status=None) -> List[dict]:
+    with db_lock:
+        rows = [dict(r) for r in missions_table.all()]
+    if status:
+        wanted = {status} if isinstance(status, str) else set(status)
+        rows = [r for r in rows if r.get('status') in wanted]
+    return sorted(rows, key=lambda r: r.get('created_at') or 0, reverse=True)
+
+def add_mission_step(mission_id: str, data: dict) -> str:
+    import uuid as _uuid
+    with db_lock:
+        idx = len(mission_steps_table.search(Query().mission_id == mission_id))
+        row = {'id': _uuid.uuid4().hex, 'mission_id': mission_id, 'idx': idx,
+               'ts': time.time(), 'kind': 'note', 'name': '',
+               'args_json': None, 'result_json': None, **data}
+        mission_steps_table.insert(row)
+    return row['id']
+
+def get_mission_steps(mission_id: str) -> List[dict]:
+    with db_lock:
+        rows = [dict(r) for r in
+                mission_steps_table.search(Query().mission_id == mission_id)]
+    return sorted(rows, key=lambda r: r.get('idx') or 0)
+
+def prune_missions(before_ts: float) -> int:
+    """Terminal missions older than the cutoff; running/waiting rows are live
+    state and are NEVER pruned. Steps go with their mission."""
+    terminal = ('done', 'blocked', 'dropped')
+    with db_lock:
+        rows = [dict(r) for r in missions_table.all()]
+        doomed = [r['id'] for r in rows if r.get('status') in terminal
+                  and (r.get('finished_at') or r.get('created_at') or 0) < before_ts]
+        for mid in doomed:
+            missions_table.remove(Query().id == mid)
+            mission_steps_table.remove(Query().mission_id == mid)
+    return len(doomed)
 
 # --- Coverage asks (findings arc, slice 2) ---
 
