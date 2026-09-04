@@ -493,7 +493,7 @@
     board:     { meshes: [], url: '/mind',        parts: {}, summary: '' },
     desk:      { meshes: [], url: '/mind',        parts: {}, summary: '' },
     tray:      { meshes: [], url: '/intake',      parts: {}, summary: '' },
-    stickies:  { meshes: [], url: '/dashboard',   parts: {}, summary: '' },
+    stickies:  { meshes: [], url: null,           parts: {}, summary: '' },  // findings have no page yet (Needs-You tile unbuilt) — the focused stickies ARE the findings view; a false destination is worse than none
     calendar:  { meshes: [], url: '/dashboard',   parts: {}, summary: '' },
     window:    { meshes: [], url: '/mind',        parts: {}, summary: '' },
     keys:      { meshes: [], url: '/config#cars', parts: {}, summary: '' },
