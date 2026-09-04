@@ -1479,6 +1479,22 @@ class Settings(BaseModel):
     # Insight categories graduated to direct delivery (phase B). Empty until
     # a category is promoted from the Mind page.
     mind_direct_categories: List[str] = Field(default_factory=list)
+    # --- Missions (multi-step agent loop, spec: 2026-09-04-mission-engine) ---
+    # Off means completely off: no LLM calls, no ticks (services/missions.py).
+    # The flip is the user's act, same as mind_enabled.
+    missions_enabled: Optional[bool] = False
+    # Billed key used ONLY by the pro pool (services/model_pools.py:
+    # api_key_for_pool). Regular Chauffeur traffic never touches this key.
+    llm_gemini_paid_api_key: Optional[str] = None
+    # Comma-separated pro model override, same idiom as the unregistered
+    # model_pool_lite/flash/gemma escape hatches (services/model_pools.py:_pool).
+    model_pool_pro: Optional[str] = ''
+    # Missions that may be launched per day.
+    mission_cap_launch: Optional[int] = 3
+    # LLM calls one mission may spend before it must stop.
+    mission_step_cap: Optional[int] = 40
+    # Total paid-model calls per day across all missions.
+    mission_cap_pro_calls: Optional[int] = 120
     # --- Threads (open loops with people outside the family) ---
     # Days of no movement before an open thread counts as quiet (services/
     # threads.py: is_stalled). An overdue next_action_at stalls regardless.

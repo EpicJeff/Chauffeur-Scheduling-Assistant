@@ -51,6 +51,7 @@ GROUPS = [
     ('threads', '🧵', 'Threads'),
     ('negotiation', '🤝', 'Negotiation'),
     ('programs', '🎯', 'Programs'),
+    ('missions', '🚀', 'Missions'),
 ]
 
 _CONFIG = 'config'
@@ -531,6 +532,26 @@ ENTRIES: List[dict] = [
     _e('mind_direct_categories', 'mind', 'Graduated categories',
        'Insight categories approved for direct delivery (phase B). Empty until '
        'you graduate one from the Mind page.', page='mind'),
+
+    # --- Missions (a multi-step agent loop on the paid pro model) ---
+    _e('missions_enabled', 'missions', 'Missions',
+       'Argyle can work multi-step missions (research, compare, draft, '
+       'propose) on the paid pro model. Off means completely off — no LLM '
+       'calls, no ticks.', page='missions'),
+    _e('llm_gemini_paid_api_key', 'missions', 'Paid Gemini API key',
+       'Billed key used ONLY by missions (the pro pool). Regular Chauffeur '
+       'traffic stays on the free key.', page='missions'),
+    _e('model_pool_pro', 'missions', 'Pro model pool',
+       'Comma-separated pro models missions may use '
+       '(default gemini-3.1-pro, gemini-2.5-pro).', page='missions'),
+    _e('mission_cap_launch', 'missions', 'Daily launch cap',
+       'Missions that may be started per day (default 3).', page='missions'),
+    _e('mission_step_cap', 'missions', 'Steps per mission',
+       'LLM calls one mission may spend before it must stop (default 40).',
+       page='missions'),
+    _e('mission_cap_pro_calls', 'missions', 'Daily pro-call cap',
+       'Total paid-model calls per day across all missions (default 120).',
+       page='missions'),
 
     # --- Threads (open loops with people outside the family) ---
     _e('thread_stall_days', 'threads', 'Stalls after (days)',

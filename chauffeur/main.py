@@ -743,6 +743,15 @@ async def push_notification_loop():
             except Exception as me:
                 print(f"Mind tick error: {me}")
 
+            # --- Missions (spec: 2026-09-04-mission-engine-design) ---
+            # All gating (enabled flag, caps, retries, serialization) lives in
+            # missions.tick; this block only keeps the loop alive.
+            try:
+                from services import missions as _missions_svc
+                await asyncio.to_thread(_missions_svc.tick)
+            except Exception as me:
+                print(f"Missions tick error: {me}")
+
         except Exception as e:
             print(f"Error in push loop: {e}")
 
@@ -1679,6 +1688,10 @@ def settings_page(request: Request):
 @app.get("/mind")
 def mind_page(request: Request):
     return templates.TemplateResponse(request=request, name="mind.html")
+
+@app.get("/missions")
+def missions_page(request: Request):
+    return templates.TemplateResponse(request=request, name="missions.html")
 
 @app.get("/study")
 def study_page(request: Request):
@@ -5267,6 +5280,90 @@ def mind_admin(request: Request = None):
             "history": storage.get_mind_insights(state='retired')[-60:],
             "counters": _mind.category_counters(),
             "graduation": _mind.graduation_candidates()}
+
+
+# --- Missions (spec: 2026-09-04-mission-engine-design) ---
+
+@app.get("/api/missions/admin")
+def missions_admin(request: Request = None):
+    from services import missions as _missions
+    active = storage.get_missions(status=['running', 'waiting_user', 'waiting_retry'])
+    for m in active:
+        m['steps'] = storage.get_mission_steps(m['id'])
+    return {"active": active,
+            "history": storage.get_missions(status=['done', 'blocked', 'dropped'])[:60]}
+
+
+@app.post("/api/missions/launch")
+def missions_launch(body: dict = Body(default={}), request: Request = None):
+    from services import missions as _missions
+    actor = _mind_actor(request, body.get('member_id'))
+    res = _missions.launch((body.get('goal') or ''),
+                           origin_kind=body.get('origin_kind') or 'manual',
+                           origin_ref=body.get('origin_ref'),
+                           created_by=(actor or {}).get('id') if actor else body.get('member_id'),
+                           tier=body.get('tier') or 'mission')
+    if res.get('status') not in ('launched',):
+        raise HTTPException(status_code=400, detail=res.get('message') or res['status'])
+    return res
+
+
+@app.post("/api/missions/{mission_id}/proposals/{proposal_id}/act")
+def missions_proposal_act(mission_id: str, proposal_id: str,
+                          body: dict = Body(default={}), request: Request = None,
+                          background_tasks: BackgroundTasks = None):
+    from services import chat_actions as _ca
+    actor = _mind_actor(request, body.get('member_id'))
+    act = body.get('act') or 'approve'
+    if act not in ('approve', 'dismiss'):
+        raise HTTPException(status_code=400, detail="act must be approve|dismiss")
+    result = _ca.act_on_proposal(proposal_id, act, _approver_of_record(actor))
+    if result.get('status') != 'success':
+        raise HTTPException(status_code=400, detail=result.get('message'))
+    _mind_refresh_if_dirty(result, background_tasks)
+    storage.add_mission_step(mission_id, {'kind': 'note', 'name': f'proposal_{act}',
+                                          'result_json': {'proposal_id': proposal_id}})
+    return result
+
+
+@app.post("/api/missions/{mission_id}/answer")
+def missions_answer(mission_id: str, body: dict = Body(default={}),
+                    request: Request = None):
+    _mind_actor(request, body.get('member_id'))
+    row = storage.get_mission(mission_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="No such mission")
+    text = (body.get('text') or '').strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Say something to send")
+    storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'user_answer',
+                                          'result_json': {'text': text}})
+    if row.get('status') == 'waiting_user':
+        storage.update_mission(mission_id, {'status': 'running'})
+    return {"status": "success"}
+
+
+@app.post("/api/missions/{mission_id}/drop")
+def missions_drop(mission_id: str, body: dict = Body(default={}),
+                  request: Request = None):
+    _mind_actor(request, body.get('member_id'))
+    if not storage.get_mission(mission_id):
+        raise HTTPException(status_code=404, detail="No such mission")
+    import time as _t
+    storage.update_mission(mission_id, {'status': 'dropped', 'finished_at': _t.time()})
+    return {"status": "success"}
+
+
+@app.post("/api/missions/{mission_id}/ack")
+def missions_ack(mission_id: str, body: dict = Body(default={}),
+                 request: Request = None):
+    _mind_actor(request, body.get('member_id'))
+    if not storage.get_mission(mission_id):
+        raise HTTPException(status_code=404, detail="No such mission")
+    import time as _t
+    storage.update_mission(mission_id, {'acknowledged_at': _t.time()})
+    return {"status": "success"}
+
 
 # --- The Study: the read-only room (task 2 wiring) ---
 

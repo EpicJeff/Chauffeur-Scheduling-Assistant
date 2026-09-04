@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Missions</title>
+    <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
+    {% include 'ha_theme.html' %}
+    <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
+    <style>
+        body { background-color: #111827; color: #e5e7eb; }
+        [x-cloak] { display: none !important; }
+    </style>
+    <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
+</head>
+
+<body class="flex flex-col h-screen overflow-hidden">
+    {% include 'nav.html' %}
+
+    <div class="flex-1 overflow-y-auto bg-gray-900/50">
+        <!-- Task 6 (spec: 2026-09-04-mission-engine-design) ships the dials
+             below so the six settings the endpoints/engine already read have
+             a hand path. Task 7 builds the rest of this surface around them:
+             the launch card, the running transcript, proposal approve/dismiss,
+             the answer box and history — polling GET /api/missions/admin and
+             posting to the routes in main.py's Missions block. -->
+        <div x-data="missionsSettings()" x-init="load()" class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
+
+            <h2 class="panel-page-title">Missions</h2>
+            <p class="text-sm text-gray-500 mb-5">
+                Argyle researches and proposes; people approve. A mission works a
+                bigger goal over many steps on the paid pro model — nothing is
+                booked, sent or paid without a tap here.
+            </p>
+
+            <div class="space-y-4">
+                <label class="flex items-center justify-between bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                    <span class="text-sm font-semibold text-gray-200">Missions are on</span>
+                    <input type="checkbox" x-model="s.missions_enabled" @change="save()"
+                        class="h-5 w-5 accent-pink-400">
+                </label>
+                <p class="text-[11px] text-gray-500 -mt-2 px-1">
+                    Off means completely off — no LLM calls, no ticks.
+                </p>
+
+                <div>
+                    <label class="block text-gray-400 mb-2 font-semibold text-xs uppercase tracking-wider">Paid
+                        Gemini API key</label>
+                    <input type="password" x-model="s.llm_gemini_paid_api_key" @change="save()"
+                        placeholder="Billed key, used only by missions"
+                        class="w-full bg-gray-900 border border-gray-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono text-sm">
+                    <p class="text-[11px] text-gray-500 mt-1">
+                        Billed key used ONLY by missions (the pro pool). Regular Chauffeur
+                        traffic stays on the free key.
+                    </p>
+                </div>
+
+                <div>
+                    <div class="text-xs font-semibold text-gray-400 mb-1">Pro model pool</div>
+                    <input type="text" x-model="s.model_pool_pro" @change="save()"
+                        placeholder="gemini-3.1-pro, gemini-2.5-pro"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm">
+                    <p class="text-[11px] text-gray-500 mt-1">
+                        Comma-separated pro models missions may use (default gemini-3.1-pro,
+                        gemini-2.5-pro).
+                    </p>
+                </div>
+
+                <div class="grid grid-cols-3 gap-3">
+                    <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                        <div class="text-xs font-semibold text-gray-400 mb-1">Daily launch cap</div>
+                        <input type="number" min="0" x-model.number="s.mission_cap_launch" @change="save()"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
+                    </div>
+                    <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                        <div class="text-xs font-semibold text-gray-400 mb-1">Steps per mission</div>
+                        <input type="number" min="0" x-model.number="s.mission_step_cap" @change="save()"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
+                    </div>
+                    <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                        <div class="text-xs font-semibold text-gray-400 mb-1">Daily pro-call cap</div>
+                        <input type="number" min="0" x-model.number="s.mission_cap_pro_calls" @change="save()"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
+                    </div>
+                </div>
+                <p class="text-[11px] text-gray-500 -mt-2 px-1">
+                    Missions that may be started per day; LLM calls one mission may spend
+                    before it must stop; total paid-model calls per day across all missions.
+                </p>
+            </div>
+        </div>
+    </div>
+    {% include 'components/control_center.html' %}
+    {% include 'components/moments_hearth.html' %}
+
+    <script>
+        function missionsSettings() {
+            return {
+                apiBase: window.location.pathname.endsWith('/') ? '../' : '',
+                s: {
+                    missions_enabled: false, llm_gemini_paid_api_key: '',
+                    model_pool_pro: '', mission_cap_launch: 3,
+                    mission_step_cap: 40, mission_cap_pro_calls: 120
+                },
+
+                async load() {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/settings');
+                        const d = r.ok ? await r.json() : {};
+                        for (const k of Object.keys(this.s)) {
+                            if (d[k] !== undefined && d[k] !== null) this.s[k] = d[k];
+                        }
+                    } catch (e) { /* defaults already in place */ }
+                },
+
+                // Sends only the keys this page owns — /api/settings merges
+                // with exclude_unset, so no other surface's settings are at risk.
+                async save() {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/settings', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                missions_enabled: !!this.s.missions_enabled,
+                                llm_gemini_paid_api_key: this.s.llm_gemini_paid_api_key || '',
+                                model_pool_pro: this.s.model_pool_pro || '',
+                                mission_cap_launch: Math.max(0, parseInt(this.s.mission_cap_launch, 10) || 0),
+                                mission_step_cap: Math.max(0, parseInt(this.s.mission_step_cap, 10) || 0),
+                                mission_cap_pro_calls: Math.max(0, parseInt(this.s.mission_cap_pro_calls, 10) || 0)
+                            })
+                        });
+                        if (!r.ok) showGlobalAlert('Could not save that just now.');
+                    } catch (e) {
+                        showGlobalAlert('Could not save that just now.');
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>
