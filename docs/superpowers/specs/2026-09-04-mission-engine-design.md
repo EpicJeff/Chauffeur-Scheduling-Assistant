@@ -37,10 +37,9 @@ pipeline is ever added to the engine.
 
 `model_pools.py` gains:
 
-- Pool `'pro'`: default `["gemini-3-pro", "gemini-2.5-pro"]`, overridable via
-  `model_pool_pro` like every other pool. (Open question for review: confirm
-  the exact pro model ids the paid key serves; the 404→6h-cooldown path
-  already handles a stale default loudly.)
+- Pool `'pro'`: default `["gemini-3.1-pro", "gemini-2.5-pro"]` (confirmed by
+  the user at spec review, 2026-09-04), overridable via `model_pool_pro` like
+  every other pool.
 - Tier `'mission'`: chain `['pro']` — **no fallback into free pools**. If the
   pro pool is exhausted or erroring, the mission pauses (`waiting_retry`) and
   resumes on a later tick. A mission never silently degrades mid-run; a
@@ -112,7 +111,9 @@ approve time, resolved at dispatch, never from the model.
 `mission_step_cap` 40 LLM calls per mission, `mission_cap_pro_calls` 120/day
 global, concurrent running missions: 1 (queue the rest as `waiting_retry`).
 The per-mission step cap times pro pricing is the bank-account guard; caps are
-enforced in the engine, not the prompt.
+enforced in the engine, not the prompt. These defaults are uncalibrated
+starting values (user's call at review: no way to judge without trying) —
+settings-editable on /missions, revisit after the first real missions.
 
 ## Doorways (v1 ships three, all thin)
 
@@ -172,12 +173,8 @@ explicitly deferred — Law 1 review when the engine is real.
   end-to-end with the fake LLM — the source-reading-tests-miss-runtime-breaks
   rule.
 
-## Open questions for review
+## Review resolutions (2026-09-04)
 
-1. Pro model ids to default into `model_pool_pro` — confirm what the paid key
-   serves (`gemini-3-pro`? a 3.5/3.8-pro?).
-2. Cap defaults: 3 launches/day, 40 steps/mission, 120 pro calls/day —
-   comfortable ceilings?
-3. Mission proposals surface on /missions only, or also in the family-chat
-   card flow like mind proposals? (Spec says /missions only for v1 — one
-   surface, less blast radius.)
+1. Pro pool default: `gemini-3.1-pro`, `gemini-2.5-pro` (user-confirmed).
+2. Cap defaults stand as starting values; calibrate from real missions.
+3. Proposals surface on /missions only for v1 (confirmed).
