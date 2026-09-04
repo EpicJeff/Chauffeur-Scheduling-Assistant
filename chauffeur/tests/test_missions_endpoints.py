@@ -16,6 +16,19 @@ def _reset():
                                     'llm_gemini_paid_api_key': 'P'}
 
 
+class _TokenReq:
+    """What auth.acting_member actually reads (mirrors test_study_state.py's
+    sibling gate scenario) — driven through the real token path rather than
+    a stubbed resolver, since a stub only proves it returns what it's told."""
+    def __init__(self, token):
+        self.headers = {'x-member-token': token}
+        self.query_params = {}
+
+
+def _as(member_id):
+    return _TokenReq(storage.create_member_token(member_id))
+
+
 def scenario_child_cannot_launch():
     _reset()
     import main
@@ -48,10 +61,46 @@ def scenario_admin_payload_shape():
     _reset()
     import main
     mid = missions.launch('g', created_by='mom')['mission_id']
-    out = main.missions_admin(request=None)
+    out = main.missions_admin(request=_as('mom'))
     check(out['active'][0]['id'] == mid and 'steps' in out['active'][0],
           "active missions arrive with their transcript")
     check('history' in out, "history lane present")
+
+
+def scenario_admin_refuses_a_child():
+    """Review finding: GET /api/missions/admin sits under a bare SIGNED_IN
+    route rule (`/api/missions/*`), same shape as `/api/study/state` — any
+    signed-in member, a child included, could read every mission's full
+    transcript. The role decision has to live in the handler via
+    `_mind_actor`, exactly as `study_state` does."""
+    _reset()
+    import main
+    from fastapi import HTTPException
+    mid = missions.launch('g', created_by='mom')['mission_id']
+    try:
+        main.missions_admin(request=_as('kid'))
+        check(False, "a signed-in child must not read the missions admin lane")
+    except HTTPException as e:
+        check(e.status_code == 403, f"403 for a child, got {e.status_code}")
+    out = main.missions_admin(request=_as('mom'))
+    check(out['active'][0]['id'] == mid,
+          "the same door still opens for a signed-in parent")
+
+
+def scenario_proposal_act_requires_a_real_mission():
+    """Review finding: the route wrote its transcript note unconditionally,
+    with no check that mission_id names anything real — matching the 404
+    guard the answer/drop/ack routes already carry."""
+    _reset()
+    import main
+    from fastapi import HTTPException
+    try:
+        main.missions_proposal_act('no-such-mission', 'no-such-proposal',
+                                   body={'member_id': 'mom', 'act': 'approve'},
+                                   request=None)
+        check(False, "acting on a nonexistent mission must raise")
+    except HTTPException as e:
+        check(e.status_code == 404, f"404 for a missing mission, got {e.status_code}")
 
 
 def scenario_ack_and_drop():
@@ -68,5 +117,7 @@ if __name__ == '__main__':
     scenario_child_cannot_launch()
     scenario_parent_launches_and_answers()
     scenario_admin_payload_shape()
+    scenario_admin_refuses_a_child()
+    scenario_proposal_act_requires_a_real_mission()
     scenario_ack_and_drop()
     print("test_missions_endpoints OK")

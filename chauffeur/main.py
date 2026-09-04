@@ -5286,7 +5286,11 @@ def mind_admin(request: Request = None):
 
 @app.get("/api/missions/admin")
 def missions_admin(request: Request = None):
-    from services import missions as _missions
+    """Same person-gate as study_state: parents/adults or a trusted admin
+    surface via `_mind_actor`, refusing a child/helper/guest with 403. The
+    route rule is a bare SIGNED_IN wildcard (`/api/missions/*`), same as
+    `/api/mind/*`, so the role decision has to live here."""
+    _mind_actor(request, None)
     active = storage.get_missions(status=['running', 'waiting_user', 'waiting_retry'])
     for m in active:
         m['steps'] = storage.get_mission_steps(m['id'])
@@ -5314,6 +5318,8 @@ def missions_proposal_act(mission_id: str, proposal_id: str,
                           background_tasks: BackgroundTasks = None):
     from services import chat_actions as _ca
     actor = _mind_actor(request, body.get('member_id'))
+    if not storage.get_mission(mission_id):
+        raise HTTPException(status_code=404, detail="No such mission")
     act = body.get('act') or 'approve'
     if act not in ('approve', 'dismiss'):
         raise HTTPException(status_code=400, detail="act must be approve|dismiss")
