@@ -357,11 +357,18 @@ def build_card(proposal_id: str, action_type: str, summary: str, status: str) ->
             {"label": "Approve", "style": "primary", "proposal_id": proposal_id, "act": "approve"},
             {"label": "Dismiss", "style": "default", "proposal_id": proposal_id, "act": "dismiss"},
         ]
+    # ACTION_LABELS only names the ~15 chat-native actions; the mission
+    # engine can propose any of the ~77 registry tools on top of those
+    # (services/missions.py: proposable_tools()), and a raw action_type like
+    # "assign_driver_to_event" is not something a parent should have to
+    # parse before approving. Humanize anything not in the table rather than
+    # showing the tool name verbatim.
+    label = ACTION_LABELS.get(action_type) or action_type.replace('_', ' ').title()
     return {
         "kind": "action_proposal",
         "proposal_id": proposal_id,
         "action_type": action_type,
-        "action_label": ACTION_LABELS.get(action_type, action_type),
+        "action_label": label,
         "title": summary,
         "status": status,          # proposed | approved | dismissed
         "actions": actions,

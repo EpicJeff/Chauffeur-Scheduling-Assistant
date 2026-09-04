@@ -173,6 +173,11 @@
                                                     <div class="text-xs text-gray-400 italic mt-0.5"
                                                         x-show="(step.result_json || {}).why"
                                                         x-text="'Why: ' + (step.result_json || {}).why"></div>
+                                                    <!-- The exact payload that executes on Approve — a parent
+                                                         should never have to trust the summary alone. -->
+                                                    <div class="text-[11px] text-gray-500 font-mono mt-0.5 break-all"
+                                                        x-show="stepArgsText(step)"
+                                                        x-text="stepArgsText(step)"></div>
                                                     <template x-if="!proposalOutcome(mission, step)">
                                                         <div class="flex gap-2 mt-1.5">
                                                             <button
@@ -485,6 +490,18 @@
                 stepResultText(step) {
                     const v = step.result_json;
                     if (v === null || v === undefined) return '';
+                    let s;
+                    try { s = JSON.stringify(v); } catch (e) { s = String(v); }
+                    return s.length > 400 ? s.slice(0, 400) + '…' : s;
+                },
+
+                // The proposal's exact args_json — same compact idiom as
+                // stepResultText above, so Approve never asks a parent to
+                // trust a summary sentence for what will actually execute.
+                stepArgsText(step) {
+                    const v = step.args_json;
+                    if (v === null || v === undefined
+                        || (typeof v === 'object' && !Object.keys(v).length)) return '';
                     let s;
                     try { s = JSON.stringify(v); } catch (e) { s = String(v); }
                     return s.length > 400 ? s.slice(0, 400) + '…' : s;

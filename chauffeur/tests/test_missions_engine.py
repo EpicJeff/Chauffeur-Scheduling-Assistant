@@ -304,18 +304,70 @@ def _enable(extra=None):
 def scenario_launch_gates():
     _reset()
     storage.get_settings = lambda: {}
-    check(missions.launch('x')['status'] == 'disabled', "OFF means off")
+    disabled = missions.launch('x')
+    check(disabled['status'] == 'disabled', "OFF means off")
+    check(disabled.get('message'), f"a disabled launch says so, got {disabled}")
     _enable({'llm_gemini_paid_api_key': ''})
     check(missions.launch('x')['status'] == 'no_key',
           "mission tier without a paid key refuses at launch")
     _enable()
-    check(missions.launch('  ')['status'] == 'empty', "blank goal refused")
+    empty = missions.launch('  ')
+    check(empty['status'] == 'empty', "blank goal refused")
+    check(empty.get('message'), f"an empty-goal launch says so, got {empty}")
     got = missions.launch('plan the party', created_by='mom')
     check(got['status'] == 'launched' and storage.get_mission(got['mission_id']),
           "launch creates a running mission")
+    check(got.get('message'), f"a launched mission says so too, got {got}")
     storage.set_app_state(f"mission_calls:{date.today().isoformat()}",
                           {'launch': missions.CAPS_DEFAULT['launch']})
     check(missions.launch('another')['status'] == 'capped', "daily launch cap")
+
+
+def scenario_launch_seeds_thread_context():
+    """Review finding: a thread-origin mission shipped blind — its only clue
+    was '(Opened from thread <id>)', an opaque id the model cannot use. Both
+    thread doorways (the button and chat's fuzzy title match) funnel through
+    launch(), so fixing it here covers both at once."""
+    _reset()
+    _enable()
+    tid = storage.add_thread({
+        'title': 'Pool guy', 'goal': 'get the pump fixed before summer',
+        'kind': 'vendor', 'state': 'open',
+        'counterparty_name': 'Ace Pools', 'counterparty_email': 'ace@example.com',
+        'next_action': 'call them back', 'next_action_at': '2026-09-10',
+        'history': [
+            {'kind': 'opened', 'text': 'Opened: Pool guy', 'ts': 1},
+            {'kind': 'note', 'text': 'Left a voicemail Tuesday', 'ts': 2},
+            {'kind': 'advance', 'text': 'Next: call them back by 2026-09-10', 'ts': 3},
+        ],
+    })
+    got = missions.launch('get the pool serviced', origin_kind='thread',
+                          origin_ref=tid, created_by='mom')
+    check(got['status'] == 'launched', f"thread-origin launch succeeds, got {got}")
+    steps = storage.get_mission_steps(got['mission_id'])
+    ctx = [s for s in steps if s['kind'] == 'note' and s['name'] == 'thread_context']
+    check(len(ctx) == 1, f"exactly one thread_context note seeded, got {steps}")
+    r = ctx[0]['result_json']
+    check(r.get('title') == 'Pool guy' and r.get('goal') == 'get the pump fixed before summer',
+          f"title + goal carried over, got {r}")
+    check(r.get('counterparty', {}).get('counterparty_name') == 'Ace Pools'
+          and r.get('counterparty', {}).get('counterparty_email') == 'ace@example.com',
+          f"counterparty carried over, got {r.get('counterparty')}")
+    check(r.get('state') == 'open' and r.get('next_action') == 'call them back'
+          and r.get('next_action_at') == '2026-09-10',
+          f"state + next action carried over, got {r}")
+    tail = r.get('history_tail') or []
+    check(len(tail) == 3 and tail[-1]['kind'] == 'advance'
+          and 'call them back' in tail[-1]['text'],
+          f"history tail present, oldest-first, got {tail}")
+    # A 'manual' or unmatched-chat origin must NOT try to seed anything --
+    # no thread means no context to seed, and it must not crash the launch.
+    plain = missions.launch('unrelated goal', created_by='mom')
+    check(plain['status'] == 'launched', f"manual launch unaffected, got {plain}")
+    plain_steps = storage.get_mission_steps(plain['mission_id'])
+    check(not any(s['kind'] == 'note' and s['name'] == 'thread_context'
+                 for s in plain_steps),
+          "a manual-origin mission gets no thread_context note")
 
 
 def scenario_tick_advances_one_mission_serially():
@@ -336,6 +388,26 @@ def scenario_tick_advances_one_mission_serially():
     other = b if seen[0] == a else a
     check(storage.get_mission(other)['status'] == 'running',
           "the queued mission waits its turn untouched")
+
+
+def scenario_tick_advances_exactly_one_step_per_beat():
+    """Controller ruling (mission-engine flip review): STEPS_PER_TICK dropped
+    3 -> 1 so a running mission can never make the family push loop's other
+    30s beats (runway/presence/prep) wait behind it. Scripted action keeps
+    the mission RUNNING (unlike ask_user in the serial scenario above, which
+    already stops the loop after one step regardless of the cap) so this
+    actually distinguishes 1 from 3 -- it would have failed at the old
+    default of 3 before this fix."""
+    _reset()
+    _enable()
+    mid = _mk()
+    tool_call = {'action': 'tool', 'tool': 'get_current_state', 'args': {}}
+    missions._llm = _script(tool_call, tool_call, tool_call)
+    out = missions.tick()
+    check(out['advanced'] == 1, f"exactly one step per tick, got {out}")
+    row = storage.get_mission(mid)
+    check(row['status'] == 'running' and row['step_count'] == 1,
+          f"mission stays running after its one step, got {row}")
 
 
 def scenario_tick_promotes_due_retries_and_respects_disabled():
@@ -388,7 +460,9 @@ if __name__ == '__main__':
     scenario_research_action_dispatches_and_records()
     scenario_pro_cap_exhausted_pauses_without_calling_llm()
     scenario_launch_gates()
+    scenario_launch_seeds_thread_context()
     scenario_tick_advances_one_mission_serially()
+    scenario_tick_advances_exactly_one_step_per_beat()
     scenario_tick_promotes_due_retries_and_respects_disabled()
     scenario_mission_findings_emit_and_hush()
     print("test_missions_engine OK")

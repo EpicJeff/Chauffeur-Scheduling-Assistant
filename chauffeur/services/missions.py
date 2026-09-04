@@ -20,7 +20,10 @@ from services import storage, model_pools
 logger = logging.getLogger(__name__)
 
 CAPS_DEFAULT = {'launch': 3, 'steps': 40, 'pro_calls': 120}
-STEPS_PER_TICK = 3
+# One LLM call per 30s beat, not three: a running mission must never make
+# runway/presence/prep beats wait behind it in the same push-loop tick. A
+# dedicated loop is the phase-2 fix if one-per-tick proves too slow.
+STEPS_PER_TICK = 1
 RETRY_DELAY_S = 300
 MAX_CONSEC_ERRORS = 3
 RETENTION_DAYS = 120
@@ -242,8 +245,9 @@ def step(mission: dict) -> dict:
         if not thread:
             storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
                 'result_json': {'note': 'no unambiguous thread matched — a tie '
-                                        'declines, ask the user or open one via '
-                                        'propose'}})
+                                        'declines; ask the user which thread, or '
+                                        'finish with the draft text in your '
+                                        'summary'}})
             return storage.get_mission(mid)
         from services import threads as _threads
         out = _threads.draft_message(thread['id'],
@@ -273,14 +277,39 @@ def step(mission: dict) -> dict:
     return storage.get_mission(mid)
 
 
+def _seed_thread_context(mission_id: str, thread: dict) -> None:
+    """Doorway 2 (thread) must not ship the mission blind (spec: the mission's
+    context needs title/goal/counterparty/history-tail). One note step, added
+    before the engine ever calls the model, so the very first digest
+    `_user_prompt` builds already carries what the thread knows — before this
+    fix all it said was '(Opened from thread <id>)', an opaque id the model
+    has no way to use. Covers both thread doorways at once (the button and
+    chat's fuzzy title match) because both funnel through `launch()`."""
+    counterparty = {k: thread.get(k) for k in
+                    ('counterparty_name', 'counterparty_email', 'contact_id')}
+    history_tail = [{'kind': h.get('kind'), 'text': _compact(h.get('text'), 300)}
+                    for h in (thread.get('history') or [])[-5:]]
+    storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'thread_context',
+        'result_json': {
+            'title': thread.get('title'),
+            'goal': thread.get('goal'),
+            'counterparty': counterparty,
+            'state': thread.get('state'),
+            'next_action': thread.get('next_action'),
+            'next_action_at': thread.get('next_action_at'),
+            'history_tail': history_tail,
+        }})
+
+
 def launch(goal: str, origin_kind: str = 'manual', origin_ref=None,
            created_by=None, tier: str = 'mission') -> dict:
     settings = storage.get_settings() or {}
     if not settings.get('missions_enabled', False):
-        return {'status': 'disabled'}
+        return {'status': 'disabled',
+                'message': 'Missions are switched off (Config → Missions).'}
     goal = (goal or '').strip()
     if not goal:
-        return {'status': 'empty'}
+        return {'status': 'empty', 'message': 'Give the mission a goal first.'}
     if tier != 'flash' and not model_pools.api_key_for_pool('pro', settings):
         return {'status': 'no_key',
                 'message': 'Missions need the paid Gemini key (Config → Missions).'}
@@ -291,8 +320,14 @@ def launch(goal: str, origin_kind: str = 'manual', origin_ref=None,
     mid = storage.add_mission({'goal': goal, 'origin_kind': origin_kind,
                                'origin_ref': origin_ref, 'created_by': created_by,
                                'tier': tier})
+    if origin_kind == 'thread' and origin_ref:
+        thread = storage.get_thread(origin_ref)
+        if thread:
+            _seed_thread_context(mid, thread)
     logger.info(f"[missions] launched {mid} ({origin_kind}): {goal[:80]}")
-    return {'status': 'launched', 'mission_id': mid}
+    return {'status': 'launched', 'mission_id': mid,
+            'message': 'Mission started — watch the Missions page; nothing '
+                       'runs without approval.'}
 
 
 def tick(now: datetime.datetime = None) -> dict:

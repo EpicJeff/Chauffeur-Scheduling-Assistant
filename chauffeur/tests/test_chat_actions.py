@@ -138,6 +138,72 @@ def scenario_create_event_requires_calendar():
           "a failed execution leaves the proposal open to retry")
 
 
+class _TokenReq:
+    """A fake Request carrying only a member token — what `_acting_id`
+    actually reads (mirrors test_missions_endpoints.py's `_TokenReq`), driven
+    through the real token path rather than a stubbed resolver."""
+    def __init__(self, token):
+        self.headers = {'x-member-token': token}
+        self.query_params = {}
+
+
+def scenario_action_proposal_act_resolves_identity_not_claim():
+    """Review finding: /api/action-proposals/{id}/act resolved the approver
+    from the raw client-claimed member_id via storage.get_member — never
+    _acting_id — so a child holding their OWN valid token could claim to be
+    "mom" in the request body and be treated as that parent. Same S2
+    discipline /api/missions/* and /api/mind/* already apply: a token always
+    outranks the body's claim, so the child's own token wins and the
+    downstream admin check in chat_actions.act_on_proposal (unchanged) still
+    catches it."""
+    _seed()
+    import main
+    from fastapi import BackgroundTasks
+    pid = _propose()["proposal_id"]
+    before = len(storage.get_all_rules())
+    kid_token = storage.create_member_token("kid")
+    req = main.ActionProposalAct(act="approve", member_id="mom")   # claims mom
+    res = main.act_on_action_proposal(pid, req, BackgroundTasks(),
+                                      request=_TokenReq(kid_token))
+    check(res.get("status") == "error" and len(storage.get_all_rules()) == before,
+          f"a child's own token outranks a claimed parent id, got {res}")
+    check(req.member_id == "kid", f"the claim was corrected to the token's owner, got {req.member_id}")
+    reopened = storage.get_action_proposal(pid)
+    check(reopened["status"] == "proposed", "still open for the real parent afterward")
+
+    # The real parent, with their own token, still approves normally.
+    mom_token = storage.create_member_token("mom")
+    req2 = main.ActionProposalAct(act="approve", member_id="mom")
+    res2 = main.act_on_action_proposal(pid, req2, BackgroundTasks(),
+                                       request=_TokenReq(mom_token))
+    check(res2.get("status") == "success" and len(storage.get_all_rules()) == before + 1,
+          f"a parent's own token still approves normally, got {res2}")
+
+
+def scenario_action_proposal_list_filters_for_non_admin():
+    """Review finding: the generic list endpoint is a side window around
+    every parent-gated surface (mind/missions/negotiation/programs proposals
+    are never posted to a chat channel), so a non-admin caller must not see
+    those there even though this GET never raises. A channel-bearing
+    proposal (already visible in the chat it was posted to) is unaffected."""
+    _seed()
+    import main
+    channel_less = _propose()["proposal_id"]
+    bearing = chat_actions.create_action_proposal(
+        "add_car_stop", "Fuel stop on the way",
+        {"title": "Gas", "location": "Shell"})["proposal_id"]
+    storage.update_action_proposal(bearing, {"channel_id": "chan1"})
+
+    kid_rows = main.list_action_proposals(request=_TokenReq(storage.create_member_token("kid")))
+    kid_ids = {r["id"] for r in kid_rows}
+    check(bearing in kid_ids and channel_less not in kid_ids,
+          f"a child sees only channel-bearing proposals, got {kid_ids}")
+
+    mom_rows = main.list_action_proposals(request=_TokenReq(storage.create_member_token("mom")))
+    mom_ids = {r["id"] for r in mom_rows}
+    check(channel_less in mom_ids and bearing in mom_ids, "a parent still sees everything")
+
+
 def scenario_create_event_normalizes_datetimes():
     # The LLM emits NAIVE ISO datetimes; Google 400s any dateTime without a
     # zone ("Missing time zone definition") — the field failure where an
@@ -200,6 +266,8 @@ SCENARIOS = [
     scenario_dismiss_does_not_execute,
     scenario_idempotent_after_resolution,
     scenario_router_surfaces_card,
+    scenario_action_proposal_act_resolves_identity_not_claim,
+    scenario_action_proposal_list_filters_for_non_admin,
 ]
 
 if __name__ == "__main__":

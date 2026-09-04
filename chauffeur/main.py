@@ -4687,20 +4687,48 @@ class ActionProposalAct(BaseModel):
 
 
 @app.get("/api/action-proposals")
-def list_action_proposals(status: str = "proposed"):
+def list_action_proposals(status: str = "proposed", request: Request = None):
     """Pending (or filtered) agent action proposals — the dashboard's
-    approvals banner polls this (C3, docs/car_errand_proposals_design.md)."""
-    return storage.get_action_proposals(status=status or None)
+    approvals banner polls this (C3, docs/car_errand_proposals_design.md).
+
+    This is a side window onto EVERY proposal in the table, regardless of
+    which surface created it — mind/missions/negotiation/programs proposals
+    carry counterparty/pricing/gift content, and none of them ever gets a
+    `channel_id` (only the chat suggestion funnel and the car-stop delivery
+    post one into a channel). A non-admin caller therefore sees only the
+    channel-bearing rows — the same cards already sitting in a chat
+    transcript they can read — while parents/adults and an admin surface
+    (a control-center page with no person to resolve, same carve-out
+    `_mind_actor` makes) keep seeing everything, unchanged from before."""
+    rows = storage.get_action_proposals(status=status or None)
+    actor_id = _acting_id(request, None)
+    actor = storage.get_member(actor_id) if actor_id else None
+    if actor and actor.get('role') in ('parent', 'adult'):
+        return rows
+    if not actor and _is_admin_surface(request):
+        return rows
+    return [r for r in rows if r.get('channel_id')]
 
 
 @app.post("/api/action-proposals/{proposal_id}/act")
-def act_on_action_proposal(proposal_id: str, req: ActionProposalAct, background_tasks: BackgroundTasks):
+def act_on_action_proposal(proposal_id: str, req: ActionProposalAct, background_tasks: BackgroundTasks, request: Request = None):
     """Approve or dismiss an agent action proposal from a chat card. Approval
     executes the typed action (parent-scoped) and Argyle posts the outcome —
-    with the updated card — back into the proposal's origin channel."""
+    with the updated card — back into the proposal's origin channel.
+
+    The approver is resolved through `_acting_id`, never trusted from the
+    raw claim: the PWA's global fetch wrapper (app.html's attachMemberToken)
+    already attaches a signed-in member's own token to this chat-card call,
+    so a child there cannot approve an admin action by naming a parent's
+    member_id in the body — the same S2 discipline `/api/missions/*` and
+    `/api/mind/*` already apply. The dashboard's approvals banner sends no
+    member token today (a control-center surface, device-token territory
+    only) and so still falls back to the claim there, exactly as before this
+    fix — unchanged, not widened."""
     from services import chat_actions
     from services.agent_tools_v2 import _post_chat_message
-    approver = storage.get_member(req.member_id)
+    req.member_id = _acting_id(request, req.member_id)
+    approver = storage.get_member(req.member_id) if req.member_id else None
     res = chat_actions.act_on_proposal(proposal_id, (req.act or '').strip().lower(), approver)
 
     prop = storage.get_action_proposal(proposal_id)
