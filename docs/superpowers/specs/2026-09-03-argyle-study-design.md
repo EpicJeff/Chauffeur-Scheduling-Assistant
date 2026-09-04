@@ -57,7 +57,7 @@ animation. The look is flat-shaded charm, deliberately not painterly.
 
 | Furniture | Domain | Signal (all read-only) | Tap → |
 |---|---|---|---|
-| **Evidence board** | Mind insights + threads | pinned cards (insight lines, thread titles); string between related pins; stalled thread sags/yellows; sensitive rows filtered by role server-side | /mind |
+| **Evidence board** | Mind insights + threads | pinned cards (insight lines, thread titles); stalled thread sags/yellows with a decorative dangling thread tail; sensitive rows filtered by role server-side. **v1 amendment (final review, v2.453.11):** cross-pin strings removed — the app stores no real insight-to-thread relation yet, and a drawn string claims one; relation edges return when a stored link exists | /mind |
 | **Desk paper stacks** | In-hand plans | one stack per plan, height = open steps; a due step renders as an amber sheet sticking out | /mind |
 | **In-tray** | Intake proposals | sheet count | /intake |
 | **Monitor + stickies** | Findings | sticky count, worst severity colors the top sticky; screen glow is decoration | /dashboard (findings render there today) |
