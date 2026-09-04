@@ -6031,7 +6031,7 @@ buttons (`POST .../propose`, `/act`, `/clear`); nothing a person could
 already do was taken away, new insights just get a richer verb than "Handle
 it" used to mean.
 
-## The Study — a living low-poly 3D office as admin home (v2.453.0–v2.454.0 — `services/study.py`, `static/study.js`, `templates/study.html`; design in `docs/superpowers/specs/2026-09-03-argyle-study-design.md`)
+## The Study — a living low-poly 3D office as admin home (v2.453.0–v2.455.0 — `services/study.py`, `static/study.js`, `templates/study.html`; design in `docs/superpowers/specs/2026-09-03-argyle-study-design.md`)
 
 The admin surfaces used to be text-heavy card piles: no state at a glance, no
 visible thinking, no pull to return. The Study is a new admin home at
@@ -6113,19 +6113,63 @@ needs all of them, not just the due ones `visible_insights` would hand
 back) and carries its own equivalent check inline, dropping
 `sensitivity: 'sensitive'` rows for anyone who isn't a parent.
 
-**Interaction: lean-in-then-navigate, on exactly the two zones the spec
-names.** Board and desk carry a camera `focus` preset; the first tap leans
-the camera into it and raises a chip naming the zone and its one-line
-signal ("tap again to open"), the second tap — or a tap while already
-leaned in — navigates. Every other zone is a single-tap link, except one:
-since v2.454.0 a zone may carry an `act` — something to do *here* — which
-runs instead of navigating, and the monitor screen is the only zone that has
-one (it focuses the Ask-Argyle bar and pulses it, since no "Argyle's graph"
-page exists to send anybody to, and inventing a destination is worse than
-the tap doing the obvious thing). An `act` writes nothing either. Escape or
-a click on empty space leans back out. Hover raises a tooltip with the same
-one-line signal, suppressed while already leaned into that zone since the
-chip is already saying it.
+**Interaction: EVERY zone leans in, and only then goes through
+(v2.455.0).** The first tap on any of the twelve frames that zone face-on
+and raises a chip naming it and its one-line signal ("tap again to open");
+the second tap navigates. The preset is computed, not hand-placed:
+`focusFor()` takes the zone's own world-space bounding box, decides which
+way the thing faces from where it sits — anything against the back wall
+(`z < -5`) or the side wall (`x < -6.2`) is looked at straight on, and
+everything else is on or around the desk and is looked at from the yaw it
+was BUILT with (`faceYaw`, read off `monHead.rotation.y` and
+`gaugeBody.rotation.y` themselves) at a ~26° reading elevation — then backs
+away until the box fits **the band of the page that is actually free**
+(`FRAME_TOP`/`FRAME_BOT`: the nav bar owns the top, the chip and the
+Ask-Argyle bar the bottom), centring the subject in that band rather than
+in the window. A zone may declare `focusMeshes` when its registry is wider
+than its signal — the desk does, so its legs and drawer unit stop dragging
+the camera back across the room — and the board keeps a hand-tuned preset
+(`focusHand`) that the generic fit lands within a few centimetres of anyway.
+Presets are cached per aspect ratio and recomputed on resize.
+
+Since v2.454.0 a zone may carry an `act` — something to do *here* — which
+runs instead of navigating, and the monitor screen is the only zone with
+one (it focuses the Ask-Argyle bar and pulses it; no "Argyle's graph" page
+exists to send anybody to, and its chip says "tap again to ask him"). An
+`act` writes nothing either. Escape or a click on empty space leans back
+out. Hover raises a tooltip with the same one-line signal, suppressed while
+already leaned into that zone since the chip is already saying it.
+
+**Detail-on-focus: the room says the actual words, painted (v2.455.0).**
+Leaning into a zone triggers a **one-time detail paint** for it — a canvas
+drawn once and uploaded as a texture, cached per zone, and invalidated only
+when `applyState` sees that zone's own slice of the payload change. The
+idle room is untouched by all of it: every detail surface is hidden until a
+lean-in, and its canvas is not even **allocated** until the first paint, so
+a visit that never leans anywhere allocates none of the forty of them.
+Text density follows the device pixel ratio (`TX`), capped like the
+renderer's own.
+
+| Zone | What a focused reader gets | Payload it rides on |
+|---|---|---|
+| Evidence board | each pin card carries its item's real text, wrapped to 3 lines; the two decorative "handwriting" bars stand down while it does | `pins[].label` (already role-filtered by `visible_insights`) |
+| Desk stacks | the top sheet of each pile prints the in-hand insight's own line plus "N steps open · one due" | `desk[].line` — **no gate of its own**: a non-parent never receives the row at all, so there is no sensitive line for a client to blank |
+| In-tray | the top sheet lists what is waiting, up to five titles | `tray.items[].title` (cap 5, `event_proposals`' own `title`) |
+| Monitor stickies | each note carries its finding's sentence | `stickies.items[]` — `{line, severity}`, cap 5, in `open_findings`' decide-first order |
+| Wall calendar | the face redraws as a real 7-day grid: date numbers, up to 3 event titles a day **in the assigned driver's own `color_code`**, `+N` for the rest, red tint retained on a day with uncovered rides. The seven idle cells and the ruled lines stand down while it is up, and the red they carried is redrawn here | `calendar.days[].events[]` — `{title, color}` cap 4 plus `more`, the count that did NOT fit, so `+N` is the real remainder rather than the remainder of what was sent. Colour is the driver's, ghosts included; unstored → `null`, never invented |
+| Window | a small card stands **on the sill** listing the week's signs as levels | `window.signs[]` — worse-first only once `ready`; before that, levels in their own order and nothing singled out |
+| Key hook | a card under each key: the car's name, its percentage, and a level bar coloured by whether it is low | `keys[].pct` + `keys[].kind` (`battery`\|`fuel`) — the reading the low/not-low call was actually made on, battery-first exactly as `cars.py` decides it |
+| Contracts | the top slip prints the deals awaiting answers | `contracts.items[].title` — `seed_title`, falling back to `line` (a `Deal` has no title of its own) |
+| Bookshelf binders | each spine reads bottom-to-top: the program's title, and under it a compact week | `binders[].detail` — e.g. `3x30min · Breathing`. Read, never defaulted (`clamp_shape` would invent `3x25min`), and deliberately **not** "phase 2 of 4": `programs.progress` withholds the phase total because a count next to a total is a completion percentage away |
+| Desk gauges | painted readouts on the dials — `13/20` think, `0/40` research, and the ingest error count beside the lamp | already in `gauges` |
+| Monitor screen | each cluster gets its person's name and count beside it, on its own high-resolution overlay so the graph stays at 256×150/10fps; labels route around each other and never run off the glass | already in `monitor.clusters` |
+| Wall map | each pin gets its trip's title and date (`Sep 12`, from `start_ts`), the home marker gets `home`; labels route around both each other **and** the pin heads | already in `map.trips` |
+
+Everything above is drawn with `fillText` into a canvas. `study.js` assigns
+`innerHTML` exactly **once** in the whole file — the fallback list's fixed
+row template, which carries no model text — and a test pins that count, so
+an insight line, a proposal subject or a counterparty the family never
+chose can no more execute in this room than it could on a Post-it.
 
 **Since-you-were-here glow.** A `study_last_visit` timestamp lives in
 `localStorage`, read and written inside try/catch on both ends so a browser

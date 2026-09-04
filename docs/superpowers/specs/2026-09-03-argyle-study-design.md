@@ -74,6 +74,58 @@ animation. The look is flat-shaded charm, deliberately not painterly.
 Adding furniture later requires passing Law 1; the inventory table in this
 spec is the registry of record.
 
+### Detail on focus (v2.455.0)
+
+Leaning into a zone triggers a **one-time detail paint** for it: a canvas
+drawn once and uploaded as a texture, cached per zone and invalidated only
+when `applyState` sees that zone's own slice of the payload change. The idle
+room is unchanged — every detail surface is hidden until a lean-in, and its
+canvas is not allocated until the first paint, so a visit that never leans
+anywhere allocates none of them. **All of it is `fillText` into a canvas,
+never `innerHTML`**; a test pins that `study.js` assigns `innerHTML` exactly
+once (the fallback list's fixed row template, which carries no model text).
+Nothing here bypasses a section's existing filter: the board rides
+`visible_insights`, and the desk's `line` rides the same parent-only drop
+that already removes the whole row.
+
+| Furniture | What a focused reader gets | New payload |
+|---|---|---|
+| **Evidence board** | every pin card carries its item's real text, wrapped to 3 lines; the decorative "handwriting" bars stand down | none — `pins[].label` already existed |
+| **Desk paper stacks** | the top sheet of each pile prints the plan's own line + "N steps open · one due" | `desk[].line` — no gate of its own; the row is dropped whole for a non-parent |
+| **In-tray** | the top sheet lists the waiting proposals | `tray.items[].title`, cap 5 |
+| **Monitor stickies** | each note carries its finding's sentence | `stickies.items[] = {line, severity}`, cap 5 |
+| **Wall calendar** | the face redraws as a real 7-day grid: dates, up to 3 event titles a day in the assigned driver's own colour, `+N` for the rest, red retained on uncovered days. The idle cells stand down and their red is redrawn here | `calendar.days[].events[] = {title, color}` cap 4, plus `more` — the count that did NOT fit, so `+N` is the day's real remainder. Colour is the driver's `color_code`, ghosts included; unstored → `null` |
+| **Window** | a card standing **on the sill** lists the week's signs as levels | `window.signs[]` — worse-first only once `ready` |
+| **Key hook** | a card under each key: name, percentage, level bar coloured by low/not | `keys[].pct` + `keys[].kind` (`battery`/`fuel`) — the reading the low call was made on, battery-first as `cars.py` decides it |
+| **Contracts on desk** | the top slip prints the deals awaiting answers | `contracts.items[].title`, cap 3 — `seed_title`, falling back to `line` |
+| **Bookshelf binders** | each spine reads bottom-to-top: the program title, and under it a compact week | `binders[].detail`, e.g. `3x30min · Breathing`. Read, never defaulted, and deliberately **not** "phase 2 of 4" — `programs.progress` withholds the phase total because a count next to a total is a completion percentage away |
+| **Desk gauges** | painted readouts on the dials: think n/cap, research n/cap, ingest errors | none |
+| **Monitor screen** | name + count beside each cluster, on its own high-res overlay so the graph stays at 256×150/10fps | none |
+| **Wall map** | trip title + date beside each pin, `home` on the home marker; labels route around each other and the pins, and draw a leader back when they had to step away | none |
+
+### Spike punch list, second pass (v2.455.0)
+
+Three modelling faults the room had been carrying, all found by looking at
+it rather than at the code:
+
+- **Chair base.** The spoke was yawed by `-a + PI/2` while its caster was
+  placed along `a` — the same line only where `cos a` is zero, so four legs
+  out of five pointed somewhere their caster was not and the casters read as
+  loose pucks on the rug. Rebuilt as five groups, each yawed to its own leg
+  and everything inside authored along that group's `+z`, so the spoke and
+  the wheel cannot disagree. The base stands on the RUG's top face, not on
+  the boards underneath it.
+- **Keyboard and mouse.** Laid flat with `rx` and turned with `ry` — but
+  with the default XYZ Euler order the `ry` composes *before* the flip, so
+  it came out as a tilt about world X: one end buried in the desktop, the
+  other lifted into the air. The yaw belongs in `rz`, applied after the
+  flip. `TOP` also now includes the rounded-extrude bevel, so everything on
+  the desk rests on the wood rather than 2cm inside it.
+- **The desk photo frame.** Grounded in the arithmetic (its foot was on the
+  wood) but the desk behind it is edge-on from the room's own camera, so it
+  read as a picture frame hanging in mid-air against the baseboard. Moved to
+  the shelf, beside the plant.
+
 ## State endpoint
 
 **`GET /api/study/state`** — one aggregation, parents/adults only, role
@@ -113,6 +165,16 @@ flags, short labels, and stable ids only; no prose bodies.
   **v2.454.0:** a zone may instead carry an `act` — something to do *here* —
   which runs in place of navigating; the monitor screen is the only one, and
   it focuses the Ask-Argyle bar. An `act` still never writes.
+  **v2.455.0 — lean-in is universal.** Every registered zone gets
+  focus-then-through. The preset is computed rather than placed:
+  `focusFor()` takes the zone's world-space bounding box, reads which way it
+  faces off where it sits (back wall / side wall = straight on; anything
+  else is on the desk and is read from the yaw it was built with, at a ~26°
+  elevation), and backs away until the box fits the band of the page the nav
+  bar and the Ask-Argyle chip leave free. A zone may declare `focusMeshes`
+  when its registry is wider than its signal (the desk does — its legs are
+  hit targets, not the thing you leaned in to read); the board keeps a
+  hand-tuned preset. Second tap still navigates, or runs the `act`.
 - **Since-you-were-here:** per-device `localStorage` timestamp; items whose
   `changed_ts` exceeds it glow softly until the page has been open 10s, then
   the timestamp updates. Wrapped in try/catch; absent storage = no glows.

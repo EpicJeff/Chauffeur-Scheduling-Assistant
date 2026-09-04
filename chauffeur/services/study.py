@@ -16,12 +16,12 @@ logger = logging.getLogger(__name__)
 _CALM = {
     'board': {'pins': [], 'strings': []},
     'desk': [],
-    'tray': {'count': 0},
-    'stickies': {'count': 0, 'worst': None},
+    'tray': {'count': 0, 'items': []},
+    'stickies': {'count': 0, 'worst': None, 'items': []},
     'calendar': {'days': []},
-    'window': {'ready': False, 'worse': [], 'label': ''},
+    'window': {'ready': False, 'worse': [], 'label': '', 'signs': []},
     'keys': [],
-    'contracts': {'count': 0},
+    'contracts': {'count': 0, 'items': []},
     'binders': [],
     'gauges': {'think': None, 'think_cap': None, 'research': None,
                'research_cap': None, 'ingest_errors': 0},
@@ -88,14 +88,26 @@ def _desk(now, viewer):
         if viewer is None or viewer.get('role') != 'parent':
             if r.get('sensitivity') == 'sensitive':
                 continue
+        # `line` is the detail the room paints on the top sheet of the stack
+        # when somebody leans in. It rides the SAME filter as the row it is
+        # part of and gets no gate of its own: the `continue` above means a
+        # non-parent never receives the row, so there is no sensitive line
+        # here for a client to leak. A second gate on one field would be a
+        # second thing to keep in step with the first.
         out.append({'id': r['id'], 'open_steps': len(open_steps),
+                    'line': r.get('line') or '',
                     'due': bool(mind.steps_due(r, now.date())),
                     'changed_ts': r.get('created_ts')})
     return out[:6]
 
 
 def _tray(now, viewer):
-    return {'count': len(storage.get_proposals(status='proposed') or [])}
+    rows = storage.get_proposals(status='proposed') or []
+    # `title` is the field email_ingest.normalize_item writes (services/
+    # email_ingest.py:366-371) and the only human-readable name a proposal
+    # has; a task proposal's title arrives already carrying its pin glyph.
+    return {'count': len(rows),
+            'items': [{'title': (r.get('title') or '')[:90]} for r in rows[:5]]}
 
 
 def _stickies(now, viewer):
@@ -108,7 +120,32 @@ def _stickies(now, viewer):
     order = {'decide': 2, 'approve': 1, 'fyi': 0}
     worst = max(rows, key=lambda r: order.get(r.get('severity'), 0))['severity'] \
         if rows else None
-    return {'count': len(rows), 'worst': worst}
+    # open_findings() already sorted decide-first, so the five notes the room
+    # can hold are the five that matter most, in the order the surface that
+    # owns findings would list them.
+    return {'count': len(rows), 'worst': worst,
+            'items': [{'line': (r.get('line') or '')[:140],
+                       'severity': r.get('severity') or 'fyi'} for r in rows[:5]]}
+
+
+def _driver_colours():
+    """{id: '#rrggbb'} for everything an assignment can name.
+
+    Drivers first, because an assignment value IS a driver id (main.py
+    ~19115: `for e_id, d_id in sched['assignments'].items()`), and a member
+    only fills a gap the drivers table left. A colour nobody stored stays
+    None rather than becoming a made-up one: the calendar face draws an
+    uncoloured title in plain ink, which says exactly as much as it knows.
+    """
+    out = {}
+    for d in storage.get_all_drivers() or []:
+        if d.get('id') is not None:
+            out[str(d['id'])] = d.get('color_code') or None
+    for m in storage.get_all_members() or []:
+        for key in (m.get('driver_id'), m.get('id')):
+            if key is not None and str(key) not in out:
+                out[str(key)] = m.get('color_code') or None
+    return out
 
 
 def _calendar(now, viewer):
@@ -161,17 +198,71 @@ def _calendar(now, viewer):
             if d in counts and not assignments.get(e.get('id')):
                 counts[d] += 1
 
-    return {'days': [{'date': d.isoformat(), 'unassigned': counts[d.isoformat()]}
+    # What is actually ON each day, for the face a leaned-in reader gets. A
+    # wall calendar shows the day, so an all-day row belongs on it — it just
+    # can never be one of the uncovered rides counted above, which is the
+    # only thing that turns a day red. Colour is the assigned driver's own,
+    # ghosts included (a covered ride is covered); an unassigned ride and a
+    # row nobody drives both come through with colour None.
+    colours = _driver_colours()
+    assigned = dict(sched.get('assignments') or {})
+    assigned.update(sched.get('ghost_assignments') or {})
+    by_day = {d.isoformat(): [] for d in days}
+    extra = {d.isoformat(): 0 for d in days}
+    rows = []
+    for e in sched.get('events') or []:
+        d = _event_date(e)
+        if d in by_day:
+            rows.append((d, _event_ts(e) or 0, e))
+    rows.sort(key=lambda r: r[1])
+    for d, _ts, e in rows:
+        if len(by_day[d]) >= 4:
+            # `more` is what did not fit, counted rather than dropped: a face
+            # that says '+1' on a day holding nine things is a lie the room
+            # would have no way to notice.
+            extra[d] += 1
+            continue
+        who = assigned.get(e.get('id')) or assigned.get(f"{e.get('id')}_dropoff")
+        by_day[d].append({'title': (e.get('title') or '')[:60],
+                          'color': colours.get(str(who)) if who else None})
+
+    return {'days': [{'date': d.isoformat(), 'unassigned': counts[d.isoformat()],
+                      'events': by_day[d.isoformat()], 'more': extra[d.isoformat()]}
                      for d in days]}
+
+
+def _sign_line(r):
+    """One vital said plainly: the label and where it currently sits.
+
+    `vitals.snapshot_section`'s own not-ready phrasing (`- {label}: {current}`)
+    without the punctuation, because a level is honest whether or not there is
+    enough history to compare it to anything. No delta and no percentage: the
+    'worse' flag below already carries the only comparison the pulse makes,
+    and it only exists once `ready` is true.
+    """
+    val = r.get('current')
+    try:
+        val = f'{float(val):g}'
+    except (TypeError, ValueError):
+        val = ''
+    return f"{r.get('label') or ''} {val}".strip()
 
 
 def _window(now, viewer):
     from services import vitals
     res = vitals.read(now)
-    worse = [r['label'] for r in (res.get('household') or []) if r.get('worse')]
-    label = 'steady week' if res.get('ready') and not worse else \
-        ('early days' if not res.get('ready') else 'a strained week')
-    return {'ready': bool(res.get('ready')), 'worse': worse[:3], 'label': label}
+    ready = bool(res.get('ready'))
+    rows = res.get('household') or []
+    worse = [r['label'] for r in rows if r.get('worse')]
+    label = 'steady week' if ready and not worse else \
+        ('early days' if not ready else 'a strained week')
+    # The card on the sill. `worse` is only meaningful once the family has a
+    # baseline, so before that every sign is simply a level and none of them
+    # is singled out — the same ready gate the clouds already ride.
+    bad = [_sign_line(r) for r in rows if ready and r.get('worse')][:3]
+    steady = [_sign_line(r) for r in rows if not (ready and r.get('worse'))]
+    return {'ready': ready, 'worse': worse[:3], 'label': label,
+            'signs': bad + steady[:3]}
 
 
 def _keys(now, viewer):
@@ -202,14 +293,25 @@ def _keys(now, viewer):
         # hybrid with both readings is judged on both. Reading one blended
         # percentage against one number, as this did, hung no tag on an EV at
         # 28% and hung one on a petrol car the family was never warned about.
-        if lv.get('battery_pct') is not None and lv['battery_pct'] < batt_warn:
-            low = True
-        elif lv.get('fuel_pct') is not None and lv['fuel_pct'] < fuel_warn:
-            low = True
+        batt, fuel = lv.get('battery_pct'), lv.get('fuel_pct')
+        if batt is not None and batt < batt_warn:
+            low, kind, pct = True, 'battery', batt
+        elif fuel is not None and fuel < fuel_warn:
+            low, kind, pct = True, 'fuel', fuel
+        # Same order once nothing is low, so the number the tag shows is
+        # always the one the low/not-low decision was actually made on. A
+        # hybrid reading fine on both is judged on its battery and SAYS
+        # battery; one whose tank is low shows the tank, not the charge it
+        # was not warned about.
+        elif batt is not None:
+            low, kind, pct = False, 'battery', batt
+        elif fuel is not None:
+            low, kind, pct = False, 'fuel', fuel
         else:
-            low = False
+            low, kind, pct = False, None, None
         out.append({'id': car.get('id'), 'name': car.get('name') or 'car',
-                    'low': low})
+                    'low': low, 'kind': kind,
+                    'pct': None if pct is None else int(round(pct))})
     return out[:4]
 
 
@@ -225,7 +327,49 @@ def _contracts(now, viewer):
     # a LIVE deal, letting dead/expired fall through to the coverage ladder.
     rows = storage.get_deals() or []
     openish = [d for d in rows if d.get('state') in ('draft', 'asking')]
-    return {'count': len(openish)}
+    # `seed_title` is the event the deal exists to cover (models/schemas.py
+    # Deal: `seed_event_id` -- what was uncovered -- and `seed_title` beside
+    # it). A Deal has no title field of its own; `line` is the whole sentence
+    # a parent reads, which is what a slip falls back to when the seed event
+    # was recorded without one.
+    return {'count': len(openish),
+            'items': [{'title': (d.get('seed_title') or d.get('line') or '')[:70]}
+                      for d in openish[:3]]}
+
+
+def _binder_detail(programs, p):
+    """The one compact line a focused spine adds under its title.
+
+    What this deliberately does NOT say is 'phase 2 of 4'. `programs.progress`
+    withholds the phase total on purpose — "a count next to a total is a
+    completion percentage away, and a completion percentage is one of the six
+    banned things" (services/programs.py:129-137) — so the honest thing to
+    name is the phase a person is actually IN, which is what `progress()`
+    hands back. Every part is read, never defaulted: `clamp_shape` would
+    happily invent 3x25min for a program that stored neither number, and an
+    invented week is worse than a short line.
+    """
+    shape = p.get('shape') or {}
+    bits = []
+    try:
+        spw = int(shape.get('sessions_per_week') or 0)
+        mins = int(shape.get('minutes') or 0)
+    except (TypeError, ValueError):
+        spw = mins = 0
+    if spw and mins:
+        bits.append(f'{spw}x{mins}min')
+    elif mins:
+        bits.append(f'{mins}min')
+    elif spw:
+        bits.append(f'{spw}/week')
+    try:
+        phase = (programs.progress(p) or {}).get('phase') or {}
+        name = str(phase.get('name') or '').strip()
+    except Exception:
+        name = ''
+    if name:
+        bits.append(name[:32])
+    return ' · '.join(bits)
 
 
 def _binders(now, viewer):
@@ -242,7 +386,7 @@ def _binders(now, viewer):
         except Exception:
             pass
         out.append({'id': p.get('id'), 'title': p.get('title') or '',
-                    'pulled': pulled})
+                    'pulled': pulled, 'detail': _binder_detail(programs, p)})
     return out[:5]
 
 
