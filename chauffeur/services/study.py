@@ -1,4 +1,4 @@
-"""The Study's one read. Eleven furniture signals, every section built in
+"""The Study's one read. Ten furniture signals, every section built in
 its own try/except (a provider that raises contributes its calm form and
 never sinks the room), all sources read-only. See
 docs/superpowers/specs/2026-09-03-argyle-study-design.md."""
@@ -30,8 +30,13 @@ _CALM = {
 
 def _board(now, viewer):
     from services import mind, threads as _th
-    pins, strings = [], []
+    pins = []
     insights = mind.visible_insights(viewer, now=now)
+    # Insights are appended BEFORE threads, and the order is load-bearing:
+    # study.js's maybeFly only launches the tray-to-board sheet when an
+    # insight pin survived the 14-pin cap below (it counts `kind ==
+    # 'insight'` in the payload it is wearing). Threads first would let a
+    # busy week spend every slot on threads and silently kill the animation.
     for r in insights:
         pins.append({'id': r['id'], 'kind': 'insight', 'label': r.get('line') or '',
                      'warn': False, 'bad': False, 'changed_ts': r.get('created_ts')})
@@ -41,16 +46,13 @@ def _board(now, viewer):
         pins.append({'id': t['id'], 'kind': 'thread', 'label': t.get('title') or '',
                      'warn': bool(reason), 'bad': reason == 'overdue',
                      'changed_ts': t.get('created_at')})
-    # Strings: insight pins connect to thread pins round-robin so the board
-    # reads as one investigation. Real relations are a later slice; drawing
-    # invented specifics would violate honesty, so strings only join pins
-    # that EXIST, by index, and carry no claim beyond "same household".
-    ins_ids = [p['id'] for p in pins if p['kind'] == 'insight']
-    th_ids = [p['id'] for p in pins if p['kind'] == 'thread']
-    for i, tid in enumerate(th_ids):
-        if ins_ids:
-            strings.append([ins_ids[i % len(ins_ids)], tid])
-    return {'pins': pins[:14], 'strings': strings[:10]}
+    # `strings` stays in the payload as a permanently empty list so the shape
+    # a client normalises against does not change under it. Nothing draws a
+    # line between two pins any more: the app stores no insight->thread
+    # relation, and a drawn edge is a claim that one exists. A stalled pin
+    # grows a decorative dangling thread tail in study.js instead, which
+    # claims nothing. Real relation edges wait for a real stored link.
+    return {'pins': pins[:14], 'strings': []}
 
 
 def _desk(now, viewer):
@@ -153,14 +155,40 @@ def _window(now, viewer):
 
 def _keys(now, viewer):
     from services import cars
+    settings = storage.get_settings() or {}
+
+    def _flt(key, default):
+        # cars.digest_fuel_notes's own coercion, verbatim (services/cars.py
+        # :283-287): a blank or unparsable setting falls back to the default
+        # rather than throwing the section into its calm form.
+        try:
+            return float(settings.get(key) or default)
+        except (ValueError, TypeError):
+            return default
+
+    batt_warn = _flt('car_battery_warn_pct', cars.DEFAULT_BATTERY_WARN_PCT)
+    fuel_warn = _flt('car_fuel_warn_pct', cars.DEFAULT_FUEL_WARN_PCT)
     out = []
     for car in storage.get_all_cars():
         if car.get('is_disabled') or not cars.has_telemetry(car):
             continue
         lv = cars.car_levels(car) or {}
-        pct = lv.get('fuel_pct') if lv.get('fuel_pct') is not None else lv.get('battery_pct')
+        # The exact shape and precedence of services/cars.py:298-303 — the
+        # code that decides whether the family is TOLD a car is low. Battery
+        # is asked first and against its own (higher) threshold, because a
+        # battery at 28% is genuinely low while 28% of a tank is not; a
+        # healthy battery still lets a low tank through the elif, so a plug-in
+        # hybrid with both readings is judged on both. Reading one blended
+        # percentage against one number, as this did, hung no tag on an EV at
+        # 28% and hung one on a petrol car the family was never warned about.
+        if lv.get('battery_pct') is not None and lv['battery_pct'] < batt_warn:
+            low = True
+        elif lv.get('fuel_pct') is not None and lv['fuel_pct'] < fuel_warn:
+            low = True
+        else:
+            low = False
         out.append({'id': car.get('id'), 'name': car.get('name') or 'car',
-                    'low': pct is not None and pct <= 25})
+                    'low': low})
     return out[:4]
 
 

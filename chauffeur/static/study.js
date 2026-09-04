@@ -36,10 +36,23 @@
   // The only chrome this file builds itself: a small fixed chip saying the
   // house is unreachable. Shown ONCE per outage (not once per retry) and
   // cleared the moment a poll answers. Never a dialog.
+  // Both floating chips this page raises have to clear the control centre's
+  // Ask-Argyle bar, which is fixed to the bottom of every page in the app.
+  // Measured rather than guessed: the bar grows when its placeholder wraps,
+  // which is exactly what happens on the narrow viewports the fallback list
+  // serves. Absent bar (it mounts with Alpine) = the plain 18px floor.
+  function barBottom() {
+    let bottom = 18;
+    const bar = document.getElementById('chat-overlay-container');
+    if (bar) {
+      const r = bar.getBoundingClientRect();
+      if (r.height > 0) bottom = Math.max(18, Math.round(innerHeight - r.top) + 12);
+    }
+    return bottom;
+  }
+
   let outageEl = null, outageShown = false;
   function showOutage() {
-    if (outageShown) return;
-    outageShown = true;
     if (!outageEl) {
       outageEl = document.createElement('div');
       outageEl.id = 'study-outage';
@@ -50,6 +63,11 @@
         'transition:opacity .25s;pointer-events:none';
       document.body.appendChild(outageEl);
     }
+    // Re-measured every time it is raised: the bar may not have mounted when
+    // the first poll failed, and the viewport may have changed since.
+    outageEl.style.bottom = barBottom() + 'px';
+    if (outageShown) return;
+    outageShown = true;
     requestAnimationFrame(() => { if (outageEl) outageEl.style.opacity = '1'; });
   }
   function clearOutage() {
@@ -62,6 +80,9 @@
   // rather than throwing and taking the whole room down with it — the same
   // Law 2 the aggregator keeps on the server.
   const CALM = {
+    // `strings` mirrors the server's own key, which is permanently empty:
+    // nothing draws a line between two pins, because nothing stores a
+    // relation between them. See FURNITURE.board.
     board: { pins: [], strings: [] },
     desk: [],
     tray: { count: 0 },
@@ -100,6 +121,23 @@
     f.keys.filter(k => k.low).forEach(k => rows.push(['/config#cars', 'Car', `${k.name} low`, false]));
     if (f.contracts.count) rows.push(['/dashboard', 'Deals', `${f.contracts.count} awaiting answers`, false]);
     f.binders.filter(b => b.pulled).forEach(b => rows.push(['/programs', 'Program', `${b.title} needs a look`, false]));
+    // The window: the week measured against the family's OWN baseline. Only
+    // once there is a baseline to measure against (`ready`) — "early days"
+    // is not a thing that needs you, so a young install stays silent here
+    // rather than reporting a shortage of history as a problem.
+    const worse = f.window.worse || [];
+    if (f.window.ready && worse.length)
+      rows.push(['/mind', 'This week', `${worse.join(', ')} worse than your baseline`, false]);
+    // The gauges: the only three states where Argyle's own budget is the
+    // thing that needs you. A dial merely part-way round is not news.
+    const g = f.gauges, gb = [];
+    if (g.ingest_errors > 0)
+      gb.push(`${g.ingest_errors} ingest error${g.ingest_errors === 1 ? '' : 's'}`);
+    if (g.think != null && g.think_cap && g.think >= g.think_cap)
+      gb.push(`thinking capped (${g.think}/${g.think_cap})`);
+    if (g.research != null && g.research_cap && g.research >= g.research_cap)
+      gb.push(`research capped (${g.research}/${g.research_cap})`);
+    if (gb.length) rows.push(['/mind', 'System', gb.join(' · '), false]);
     if (!rows.length) rows.push(['', 'All quiet', 'Nothing needs you right now.', true]);
     document.getElementById('fallback-rows').innerHTML = rows.map(([href, kind, sig, calm]) =>
       `<a class="frow${calm ? ' calm' : ''}" ${href ? `href="${rel(href)}"` : ''}>` +
@@ -117,7 +155,18 @@
     setTimeout(() => poll(apply), 60000);
   }
 
-  if (!useRoom) { fallback.style.display = 'block'; poll(renderFallback); return; }
+  if (!useRoom) {
+    fallback.style.display = 'block';
+    // Paint the calm rows BEFORE the first poll is even in flight. A blank
+    // list is indistinguishable from a broken page, and there are two ways
+    // to stay blank for good: a slow first answer, and a 403 — a child who
+    // followed the link gets the shell and never gets a payload. Law 2 says
+    // an unanswered room is calm, so say so out loud rather than showing
+    // nothing at all.
+    renderFallback(null);
+    poll(renderFallback);
+    return;
+  }
 
   // =====================================================================
   // 2. canvas textures
@@ -557,6 +606,12 @@
   // stalled card can sag around the point it is actually pinned at.
   const CARD = { w: .6, h: .44 };
   const pinFace = BD.z + BD.d / 2 + .03;
+  // The length of thread a stalled card comes apart into. Short enough to
+  // clear the card in the row below (rows are 1.02 apart, cards .44 tall),
+  // long enough to read as unravelling from across the room. One shared
+  // material: nothing ever recolours a tail, so all 14 can hold the same one.
+  const TAIL_H = .34;
+  const tailMat = M(PAL.string, { roughness: .95 });
   const pins = [];
   for (let r = 0; r < 3 && pins.length < 14; r++) {
     for (let c = 0; c < 5 && pins.length < 14; c++) {
@@ -572,23 +627,23 @@
       for (let i = 0; i < 2; i++)                      // a hint of handwriting
         box(CARD.w * .62, .016, .008, 0x9a8f7a, 0, -CARD.h / 2 + .06 - i * .1, .022,
           { parent: g, noCast: true });
+      // A stalled card comes apart a little: a short length of thread hangs
+      // off the bottom of it. This is DECORATION and says so — it connects
+      // to nothing and claims no relation, unlike a string drawn between two
+      // pins, which would assert a link the app does not store. It is
+      // parented to the pin group, so it sags and sways with the card it
+      // belongs to for free.
+      const tail = cyl(.011, .006, TAIL_H, 5, tailMat, 0,
+        -CARD.h - TAIL_H / 2 + .01, .03,
+        { parent: g, rz: (r % 2 ? .17 : -.13) + (rnd() - .5) * .1 });
+      tail.visible = false;
       const rest = (rnd() - .5) * .05;
       g.rotation.z = rest;
       g.visible = false;
-      pins.push({ group: g, card: card, rest: rest });
+      pins.push({ group: g, card: card, tail: tail, rest: rest });
     }
   }
-  // strings: one canonical sagging tube, re-aimed between pin heads. No
-  // geometry is built when the state arrives — only position/scale/rotation.
-  const stringCurve = new THREE.QuadraticBezierCurve3(
-    new THREE.Vector3(-.5, 0, 0), new THREE.Vector3(0, -.17, 0), new THREE.Vector3(.5, 0, 0));
-  const stringGeo = new THREE.TubeGeometry(stringCurve, 14, .015, 5);
-  const strings = [];
-  for (let i = 0; i < 10; i++) {
-    const m = new THREE.Mesh(stringGeo, M(PAL.string, { roughness: .9 }));
-    m.visible = false; scene.add(m); strings.push(m);
-  }
-  ZONES.board.parts = { pins: pins, strings: strings, face: pinFace };
+  ZONES.board.parts = { pins: pins, face: pinFace };
 
   // =====================================================================
   // wall calendar — seven day cells, one per day the solver answered for
@@ -764,7 +819,17 @@
 
   const FURNITURE = {
     // one pinned card per insight/thread; stalled ones yellow and sag,
-    // overdue ones go red; strings join the pairs the payload names.
+    // overdue ones go red, and a stalled card grows the dangling thread tail
+    // that reads as coming apart.
+    //
+    // What is deliberately NOT here: a string drawn between two pins. The
+    // spec pictured one, and it survived a round of review as an "honest
+    // by-index join" — which it was not. A line between an insight and a
+    // thread is a claim that they are related, and nothing in this app
+    // stores such a relation, so every line drawn would have been invented.
+    // The payload still carries `strings` (permanently empty) so the shape
+    // does not shift under an older client; when a real insight->thread link
+    // is stored, THAT is what earns an edge here.
     board: (d, z) => {
       const data = (d.pins || []).slice(0, CAPS.pins);
       const P = z.parts.pins;
@@ -778,30 +843,9 @@
         p.base = row.bad ? -.16 : row.warn ? -.1 : p.rest;
         p.sway = row.bad ? 1 : row.warn ? .55 : 0;
         p.group.rotation.z = p.base;
+        p.tail.visible = !!(row.warn || row.bad);
         p.card.userData.pin = row;
         glowIf(p.card.material, row.changed_ts);
-      });
-      // ids are unique per table, not across them: a string is always
-      // [insight id, thread id], so each end resolves in its own half first.
-      const ins = {}, th = {}, any = {};
-      data.forEach((row, i) => {
-        (row.kind === 'insight' ? ins : th)[row.id] = i;
-        if (any[row.id] === undefined) any[row.id] = i;
-      });
-      const at = (map, id) => (map[id] !== undefined ? map[id] : any[id]);
-      const pairs = (d.strings || [])
-        .map(s => [at(ins, s[0]), at(th, s[1])])
-        .filter(s => s[0] !== undefined && s[1] !== undefined && s[0] !== s[1])
-        .slice(0, z.parts.strings.length);
-      z.parts.strings.forEach((m, i) => {
-        const pair = pairs[i];
-        m.visible = !!pair;
-        if (!pair) return;
-        const a = P[pair[0]].group.position, b = P[pair[1]].group.position;
-        const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy);
-        m.position.set((a.x + b.x) / 2, (a.y + b.y) / 2, z.parts.face + .04);
-        m.rotation.z = Math.atan2(dy, dx);
-        m.scale.x = Math.max(len, .01);
       });
       const bad = data.filter(p => p.warn || p.bad).length;
       z.summary = data.length
@@ -929,6 +973,9 @@
   // 6. applyState — the only place in this file that reads the payload
   // =====================================================================
   function applyState(payload) {
+    // If the GPU took the context away, the scene can no longer answer and
+    // the list can: every later poll lands there instead, unchanged.
+    if (contextLost) { renderFallback(payload); return; }
     syncSky();                      // the hour turns even when nothing else does
     // Minimal diff: an unchanged payload touches nothing at all, so the
     // static room never flickers and the glows already lit stay lit. When
@@ -949,6 +996,26 @@
     if (hoverZone) updateTip(hoverZone);
     if (leaned) chipEl.textContent = chipText(leaned);
   }
+
+  // ---- WebGL context loss -> the honest list, in place -------------------
+  // The GPU can take the context away with no warning: a driver reset, a
+  // laptop waking from sleep, one browser tab too many holding contexts.
+  // Without preventDefault the context is never even a candidate for
+  // restoration and the room becomes a permanent black rectangle — the page
+  // still polling, still "working", showing nothing. The spec's error
+  // handling asks for the fallback list instead, so swap to it in place,
+  // wearing the last payload this page actually held (or the calm rows, if
+  // the first poll never answered). Every later poll keeps the list fed.
+  let contextLost = false;
+  R.domElement.addEventListener('webglcontextlost', e => {
+    if (contextLost) return;
+    e.preventDefault();
+    contextLost = true;
+    room.style.display = 'none';
+    fallback.style.display = 'block';
+    try { renderFallback(LAST); }
+    catch (err) { /* a dead room never takes the page down with it */ }
+  }, false);
 
   // =====================================================================
   // 7. interaction + life — the room answers the pointer, and breathes
@@ -1026,15 +1093,7 @@
   // z-80), which would sit on top of it. Lift the chip clear of whatever
   // height that bar actually has rather than hard-coding one; with no bar in
   // the page the template's own 18px stands.
-  function placeChip() {
-    let bottom = 18;
-    const bar = document.getElementById('chat-overlay-container');
-    if (bar) {
-      const r = bar.getBoundingClientRect();
-      if (r.height > 0) bottom = Math.max(18, Math.round(innerHeight - r.top) + 12);
-    }
-    chipEl.style.bottom = bottom + 'px';
-  }
+  function placeChip() { chipEl.style.bottom = barBottom() + 'px'; }
 
   function leanInto(name) {
     leaned = name;
@@ -1118,6 +1177,7 @@
   let lastMs = T0, T = 0;
 
   function frame(nowMs) {
+    if (contextLost) return;        // no context, no loop — the list has it now
     requestAnimationFrame(frame);
     // Two clocks on purpose. `el` is the real elapsed time and drives the
     // exponential eases, which are frame-rate independent by construction and

@@ -6031,7 +6031,7 @@ buttons (`POST .../propose`, `/act`, `/clear`); nothing a person could
 already do was taken away, new insights just get a richer verb than "Handle
 it" used to mean.
 
-## The Study — a living low-poly 3D office as admin home (v2.453.0–v2.453.9 — `services/study.py`, `static/study.js`, `templates/study.html`; design in `docs/superpowers/specs/2026-09-03-argyle-study-design.md`)
+## The Study — a living low-poly 3D office as admin home (v2.453.0–v2.453.11 — `services/study.py`, `static/study.js`, `templates/study.html`; design in `docs/superpowers/specs/2026-09-03-argyle-study-design.md`)
 
 The admin surfaces used to be text-heavy card piles: no state at a glance, no
 visible thinking, no pull to return. The Study is a new admin home at
@@ -6078,13 +6078,13 @@ but corrected against `services/study.py`, the live truth:
 
 | Furniture | Domain | Live signal | Tap → |
 |---|---|---|---|
-| Evidence board | Mind insights + threads | `mind.visible_insights` pins (active, or in-hand with a step due) plus every open thread; a stall of either kind yellows and sways the pin, `overdue` specifically reddens it; strings join an insight pin to a thread pin **by index only** — an honest "same household" join, not a claimed relation (real relations are later work; the spec's illustration is deliberately narrowed here) | `/mind` |
+| Evidence board | Mind insights + threads | `mind.visible_insights` pins (active, or in-hand with a step due) plus every open thread; a stall of either kind yellows and sways the pin, `overdue` specifically reddens it, and a stalled pin grows a short **dangling thread tail** — decoration attached to that one pin, claiming no relation to anything. The spec's string *between related pins* is **not built**: nothing in the app stores an insight→thread link, so every line drawn would have been invented (the round-robin "by index" join that shipped in v2.453.0 was exactly that, dressed as honesty). `strings` stays in the payload as a permanently empty list for shape stability; real relation edges are future work, unlocked by a real stored link | `/mind` |
 | Desk paper stacks | In-hand plans | one stack per **every** `in_hand` insight, not gated to due ones the way the board's own feed is — height = open steps, a due step pushes an amber sheet out; sensitivity is filtered by its own inline parent-only check, not by `visible_insights` | `/mind` |
 | In-tray | Intake proposals | `count(storage.get_proposals(status='proposed'))` | `/intake` |
 | Monitor + stickies | Findings | count of `findings.open_findings()`; worst severity uses the real vocabulary — **`decide` > `approve` > `fyi`**, never high/medium/low | `/dashboard` |
 | Wall calendar | Next 7 days of solver output | a day reddens when the cached schedule's own **`true_unassigned`** id list (aliased `unassigned`) places a driver event there — built upstream from `daily_events_to_solve`, after the display-only gate already dropped all-day events, so an all-day "No School Today" row can never paint a day red; an old cache carrying neither field falls back to an assignments diff that skips `all_day` rows by hand | `/dashboard` |
 | Window | Vitals pulse | `vitals.read()`'s household levels vs. this family's own baseline (`ready`/`worse`/label) — levels only, never per-person | `/mind` |
-| Key hook | Cars | one tag per car that both has telemetry configured and isn't disabled; fuel/charge ≤25% reddens it — a car with **no** telemetry configured is left off the hook entirely, not hung as a dangling tag | `/config#cars` |
+| Key hook | Cars | one tag per car that both has telemetry configured and isn't disabled; low is decided by `services/cars.py`'s own thresholds and precedence — **battery first** against `car_battery_warn_pct` (default 30), falling through to fuel against `car_fuel_warn_pct` (default 25), both read from settings the way `cars._flt` reads them — so the hook agrees with the fuel note the driver is already being sent. A car with **no** telemetry configured is left off the hook entirely, not hung as a dangling tag | `/config#cars` |
 | Contracts on desk | Negotiation | count of deals whose `state` is `draft` or `asking` — the identical non-terminal pair `negotiation.propose` calls "open" and `watchers._deal_line` treats as a live deal | `/dashboard` |
 | Bookshelf binders | Programs | one binder per active program; the spine pulls out when `programs.weekday_shortfall` finds a weekday going quiet — a pending rebaseline offer is a separate check this signal does not read | `/programs` |
 | Desk gauges | System health | today's Mind think-calls vs. cap, this month's web-research calls vs. cap, and how many of the **last 10** ingest-log rows mention "error" (a count, not a true consecutive streak) | `/mind` / `/intake` |
@@ -6135,12 +6135,30 @@ enough that the next visit's "new" is genuinely new.
 vs. list before anything renders. The fallback polls the identical
 `/api/study/state` payload every 60s and renders it as severity-ranked
 rows — uncovered calendar days first, then board pins, in-hand plans, the
-tray, findings, low cars, open contracts, pulled binders — each a real link
-to its deep-dive, calm rows visually muted, collapsing to "All quiet.
-Nothing needs you right now." when none qualify. Every link is relative
-(`rel()` strips a leading slash) so it survives Home Assistant ingress's
-token prefix, the same reasoning `nav.html`'s own `_up` already
-established.
+tray, findings, low cars, open contracts, pulled binders, then the two
+quietest signals: **the window** (only once vitals are `ready`, naming the
+signs running worse than the family's own baseline — "early days" is a
+shortage of history, not a problem) and **the gauges** (only at an actual
+edge: an ingest error, thinking at its cap, research at its cap). Each row
+is a real link to its deep-dive, calm rows visually muted, collapsing to
+"All quiet. Nothing needs you right now." when none qualify — and those
+calm rows are painted **before the first poll is in flight**, so the list is
+never blank while waiting, and never blank at all for a child whose 403
+means no payload ever arrives. Model-written text (insight lines, thread
+titles, car names) never touches `innerHTML`: the row template interpolates
+only the link and the fixed kind label, and each signal is written through
+`.textContent` afterwards. Every link is relative (`rel()` strips a leading
+slash) so it survives Home Assistant ingress's token prefix, the same
+reasoning `nav.html`'s own `_up` already established.
+
+**A lost WebGL context swaps to that list in place.** `webglcontextlost` on
+the renderer canvas is `preventDefault`ed (without it the context is never
+even a candidate for restoration), the room is hidden, the fallback is
+shown, and it is rendered from the last payload the page actually held — or
+the calm rows, if the first poll never answered. The animation loop stops
+and every later poll lands in the list instead of a dead scene, so a driver
+reset or a laptop waking degrades to the phone experience rather than to a
+black rectangle that is still politely polling.
 
 **Vendored, not CDN.** `static/vendor/three.min.js` is r150's UMD build
 (~600KB), vendored the same way `static/vendor/alpine.min.js` is — the

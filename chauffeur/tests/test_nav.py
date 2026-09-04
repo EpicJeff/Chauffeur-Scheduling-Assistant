@@ -168,16 +168,18 @@ def scenario_every_slug_is_filterable():
     content page missing from that vocabulary cannot be filtered off a kiosk
     card or a shelf at all."""
     from services import home_board
-    # `intake`, `mind`, `threads` and `programs` are the exceptions, and all
-    # four are deliberate: intake (v2.232.0) is mail approvals and IMAP
-    # settings, mind (v2.426.13) is dial settings plus the full sensitive
-    # insight lane, threads (v2.429.8) is vendor/project correspondence —
-    # counterparty emails and the odd employment-screening thread — and
-    # programs (task 5) is proposing and approving a family member's program.
-    # All four are admin surfaces, all four already off DEFAULT_TABS for that
-    # reason. A shelf vocabulary with members that are not boards is an
-    # exception to explain forever; each keeps its desktop-nav link, it is
-    # simply not something a wall panel can show.
+    # Five exceptions, every one deliberate: intake (v2.232.0) is mail
+    # approvals and IMAP settings, mind (v2.426.13) is dial settings plus the
+    # full sensitive insight lane, study (v2.453.0) is that same lane drawn
+    # as a room — the evidence board pins insight lines and thread titles,
+    # so it is the Mind's own content with a nicer frame — threads
+    # (v2.429.8) is vendor/project correspondence, counterparty emails and
+    # the odd employment-screening thread, and programs (task 5) is proposing
+    # and approving a family member's program. All five are admin surfaces,
+    # all five already off DEFAULT_TABS for that reason. A shelf vocabulary
+    # with members that are not boards is an exception to explain forever;
+    # each keeps its desktop-nav link, it is simply not something a wall
+    # panel can show.
     for it in _items():
         if it['slug'] in ADMIN_ONLY_SLUGS:
             check(it['slug'] not in home_board.NAV_SLUGS,
@@ -226,6 +228,19 @@ def scenario_mind_stays_off_shared_screens():
     kiosk = BODY[BODY.index('if (isKiosk) {'):]
     check("'mind'" in kiosk or 'data-slug="mind"' in kiosk,
           "the kiosk no longer hides mind")
+
+
+def scenario_study_stays_off_shared_screens():
+    """The Study draws the Mind's own lane as a room: the evidence board pins
+    insight lines and thread titles, and its state endpoint is the same
+    parent/adult gate. A room is a friendlier frame, not a weaker one — same
+    discipline as intake, mind, threads and programs: nav link for the
+    browser, hidden on every kiosk unless a card opts back in."""
+    check('study' in ADMIN_ONLY_SLUGS,
+          "study dropped out of the admin-only exception list")
+    kiosk = BODY[BODY.index('if (isKiosk) {'):]
+    check("'study'" in kiosk or 'data-slug="study"' in kiosk,
+          "the kiosk no longer hides study")
 
 
 def scenario_threads_stays_off_shared_screens():
