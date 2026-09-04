@@ -9,6 +9,7 @@ of 2026-08-30):
 - flash: gemini-3.8/3.7/3.6/3.5/3.1/3/2.5-flash (20 each) -> ~140/day, highest quality.
 - gemma: gemma-4-31b-it (14,400), gemma-4-26b-it (14,400) -> ~28,800/day, but
          44-180s per call measured on the free API (2026-07-30).
+- pro:   gemini-3.1-pro, gemini-2.5-pro (paid key only, mission tier exclusive).
 
 Tiers map a class of work onto an ordered chain of pools:
 
@@ -40,6 +41,7 @@ DEFAULT_POOLS = {
     'flash': ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash",
               "gemini-3.1-flash", "gemini-3-flash", "gemini-2.5-flash"],
     'gemma': ["gemma-4-31b-it", "gemma-4-26b-it"],
+    'pro': ["gemini-3.1-pro", "gemini-2.5-pro"],
 }
 
 TIER_CHAINS = {
@@ -50,6 +52,13 @@ TIER_CHAINS = {
     # excluded; flash first because flyers/screenshots are the hard case and
     # volume is family-scale (dozens/week vs the ~120/day flash quota).
     'vision': ['flash', 'lite'],
+    # Missions (services/missions.py). 'mission' is the ONLY tier that touches
+    # the pro pool and it never falls back to a free pool — a mission pauses
+    # rather than silently degrading. 'mission_flash' exists for benchmarking
+    # the same mission on the free flash chain (pure flash: no lite/gemma, so
+    # the comparison measures the model, not the fallback).
+    'mission': ['pro'],
+    'mission_flash': ['flash'],
 }
 
 # model -> unix timestamp until which it is skipped
@@ -62,6 +71,18 @@ def _pool(name: str, settings: dict) -> list:
     if raw.strip():
         return [m.strip() for m in raw.split(',') if m.strip()]
     return list(DEFAULT_POOLS[name])
+
+
+def api_key_for_pool(pool_name: str, settings: dict) -> str:
+    """The pro pool bills the paid key; every other pool stays on the free
+    key. This helper is the ONLY reader of llm_gemini_paid_api_key — the
+    source-pin test in test_missions_pins.py is the fence that keeps regular
+    traffic from ever spending paid money. Missing paid key returns '' so a
+    caller fails loudly instead of quietly billing the free key."""
+    s = settings or {}
+    if pool_name == 'pro':
+        return s.get('llm_gemini_paid_api_key', '') or ''
+    return s.get('llm_gemini_api_key', '') or ''
 
 
 def _next_midnight_pacific() -> float:
