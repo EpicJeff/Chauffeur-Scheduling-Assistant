@@ -1,4 +1,4 @@
-"""The Study's one read. Ten furniture signals, every section built in
+"""The Study's one read. Twelve furniture signals, every section built in
 its own try/except (a provider that raises contributes its calm form and
 never sinks the room), all sources read-only. See
 docs/superpowers/specs/2026-09-03-argyle-study-design.md."""
@@ -25,7 +25,31 @@ _CALM = {
     'binders': [],
     'gauges': {'think': None, 'think_cap': None, 'research': None,
                'research_cap': None, 'ingest_errors': 0},
+    'monitor': {'clusters': []},
+    'map': {'trips': []},
 }
+
+
+def _event_day(e):
+    """The local date an event starts on, or None when it cannot be read.
+    One parser, because two of them drift and only one of the two is ever
+    the one a bug is found in."""
+    try:
+        return datetime.datetime.fromisoformat(
+            str(e.get('start')).replace('Z', '+00:00')).date()
+    except (ValueError, TypeError):
+        return None
+
+
+def _event_ts(e):
+    """The same start as an epoch float. Naive stamps are read as local, the
+    way `datetime.now()` is, so 'in the future' means the same thing on both
+    sides of the comparison."""
+    try:
+        return datetime.datetime.fromisoformat(
+            str(e.get('start')).replace('Z', '+00:00')).timestamp()
+    except (ValueError, TypeError, OSError, OverflowError):
+        return None
 
 
 def _board(now, viewer):
@@ -94,11 +118,8 @@ def _calendar(now, viewer):
     events_by_id = {e.get('id'): e for e in (sched.get('events') or [])}
 
     def _event_date(e):
-        try:
-            return datetime.datetime.fromisoformat(
-                str(e.get('start')).replace('Z', '+00:00')).date().isoformat()
-        except (ValueError, TypeError):
-            return None
+        d = _event_day(e)
+        return d.isoformat() if d else None
 
     # storage.get_cached_schedule()['events'] is all_events_for_ui (main.py
     # ~17375, ~17524) -- the family's WHOLE calendar, written before the
@@ -239,9 +260,103 @@ def _gauges(now, viewer):
             'ingest_errors': errors}
 
 
+def _monitor(now, viewer):
+    """Argyle's own screen: one cluster per person, sized by the week they
+    are walking into. The node graph the screen animates is DECORATION — the
+    dots orbit, the edges are drawn between whatever happens to be near, and
+    none of that is a claim. The only thing on the screen that means
+    anything is how big each person's cluster is, which is this count.
+
+    An event belongs to a person the way `mind._calendar` already decides it
+    does: members own `calendar_ids` and an event carries the ids of the
+    calendars it came from. One event can name the same person through two
+    of their calendars — that is one thing in their week, not two — so each
+    person is counted at most once per event.
+    """
+    sched = storage.get_cached_schedule() or {}
+    horizon = now.date() + datetime.timedelta(days=7)
+    members = sorted(storage.get_all_members(),
+                     key=lambda m: ((m.get('name') or '').lower(), str(m.get('id'))))
+    owner = {}
+    for m in members:
+        for cid in (m.get('calendar_ids') or []):
+            owner.setdefault(str(cid), set()).add(m.get('id'))
+    counts = {}
+    for e in sched.get('events') or []:
+        day = _event_day(e)
+        if day is None or not (now.date() <= day <= horizon):
+            continue
+        theirs = set()
+        for cid in (e.get('calendar_ids') or []):
+            theirs |= owner.get(str(cid), set())
+        for mid in theirs:
+            counts[mid] = counts.get(mid, 0) + 1
+    # Everybody gets a cluster, including whoever has an empty week. A small
+    # quiet cluster is the honest drawing of a quiet week (Law 2); a missing
+    # one would read as a missing person.
+    return {'clusters': [{'name': m.get('name') or '',
+                          'count': counts.get(m.get('id'), 0)}
+                         for m in members][:8]}
+
+
+def _map(now, viewer):
+    """Trips as pins on a wall map, each on a string back to home.
+
+    The one relation drawn here is one the app actually stores — a trip has
+    a destination and the family leaves from home to reach it — which is
+    exactly the test the evidence board's cross-pin strings failed. Where a
+    pin SITS on the map is decoration (a hash of its own title, so it stays
+    put between polls); the map is not geography and never claims to be.
+    """
+    from services import scope
+    sched = storage.get_cached_schedule() or {}
+    starts = {}
+    for e in sched.get('events') or []:
+        eid = e.get('id')
+        if eid is None or str(eid) in starts:
+            continue
+        ts = _event_ts(e)
+        if ts is not None:
+            starts[str(eid)] = ts
+    rows = []
+    for t in storage.get_all_trip_metadata() or []:
+        # A trip with a metadata record is 'parents' by default
+        # (scope.AUDIENCE_DEFAULTS: a plan is a surprise until somebody says
+        # otherwise), and a RESOLVED non-parent viewer is held to that — an
+        # adult in the house must not read a surprise off the study wall.
+        # `viewer is None` is the ADMIN SURFACE, where /trips itself already
+        # lists every trip including the ones the family wall may not show,
+        # so the map opens no door that surface did not already have.
+        if viewer is not None and not scope.audience_allows(t, 'trip', viewer):
+            continue
+        ts = t.get('mock_start_date')
+        try:
+            ts = float(ts) if ts is not None else None
+        except (TypeError, ValueError):
+            ts = None
+        if ts is None:
+            ts = starts.get(str(t.get('event_id')))
+        rows.append({'id': t.get('id') or t.get('event_id') or '',
+                     'title': t.get('title') or '',
+                     'location': t.get('location') or '',
+                     'start_ts': ts, 'upcoming': False})
+    # A trip that already happened is not a plan any more. A trip with no
+    # date yet still is one, so it keeps its pin and simply never glows.
+    nowts = now.timestamp()
+    rows = [r for r in rows if r['start_ts'] is None or r['start_ts'] >= nowts]
+    rows.sort(key=lambda r: (r['start_ts'] is None, r['start_ts'] or 0))
+    rows = rows[:6]
+    for r in rows:                      # the soonest dated one, and only it
+        if r['start_ts'] is not None:
+            r['upcoming'] = True
+            break
+    return {'trips': rows}
+
+
 _SECTIONS = {'board': _board, 'desk': _desk, 'tray': _tray, 'stickies': _stickies,
              'calendar': _calendar, 'window': _window, 'keys': _keys,
-             'contracts': _contracts, 'binders': _binders, 'gauges': _gauges}
+             'contracts': _contracts, 'binders': _binders, 'gauges': _gauges,
+             'monitor': _monitor, 'map': _map}
 
 
 def state(viewer: Optional[dict], now: datetime.datetime = None) -> dict:

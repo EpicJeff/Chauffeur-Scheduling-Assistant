@@ -6031,7 +6031,7 @@ buttons (`POST .../propose`, `/act`, `/clear`); nothing a person could
 already do was taken away, new insights just get a richer verb than "Handle
 it" used to mean.
 
-## The Study — a living low-poly 3D office as admin home (v2.453.0–v2.453.11 — `services/study.py`, `static/study.js`, `templates/study.html`; design in `docs/superpowers/specs/2026-09-03-argyle-study-design.md`)
+## The Study — a living low-poly 3D office as admin home (v2.453.0–v2.454.0 — `services/study.py`, `static/study.js`, `templates/study.html`; design in `docs/superpowers/specs/2026-09-03-argyle-study-design.md`)
 
 The admin surfaces used to be text-heavy card piles: no state at a glance, no
 visible thinking, no pull to return. The Study is a new admin home at
@@ -6073,7 +6073,7 @@ its own comment names the Study outright as an admin surface "drawn as a
 room" — unless a board opts back in with `?tabs=...,study`. Not the landing
 page; adoption is by habit, same as Mind.
 
-**Furniture inventory — ten live signals**, adapted from the spec's table
+**Furniture inventory — twelve live signals**, adapted from the spec's table
 but corrected against `services/study.py`, the live truth:
 
 | Furniture | Domain | Live signal | Tap → |
@@ -6081,7 +6081,9 @@ but corrected against `services/study.py`, the live truth:
 | Evidence board | Mind insights + threads | `mind.visible_insights` pins (active, or in-hand with a step due) plus every open thread; a stall of either kind yellows and sways the pin, `overdue` specifically reddens it, and a stalled pin grows a short **dangling thread tail** — decoration attached to that one pin, claiming no relation to anything. The spec's string *between related pins* is **not built**: nothing in the app stores an insight→thread link, so every line drawn would have been invented (the round-robin "by index" join that shipped in v2.453.0 was exactly that, dressed as honesty). `strings` stays in the payload as a permanently empty list for shape stability; real relation edges are future work, unlocked by a real stored link | `/mind` |
 | Desk paper stacks | In-hand plans | one stack per **every** `in_hand` insight, not gated to due ones the way the board's own feed is — height = open steps, a due step pushes an amber sheet out; sensitivity is filtered by its own inline parent-only check, not by `visible_insights` | `/mind` |
 | In-tray | Intake proposals | `count(storage.get_proposals(status='proposed'))` | `/intake` |
-| Monitor + stickies | Findings | count of `findings.open_findings()`; worst severity uses the real vocabulary — **`decide` > `approve` > `fyi`**, never high/medium/low | `/dashboard` |
+| Monitor stickies | Findings | count of `findings.open_findings()`; worst severity uses the real vocabulary — **`decide` > `approve` > `fyi`**, never high/medium/low. Since v2.454.0 the notes are all this zone owns: the bezel and the glass they are stuck around became the Monitor screen's own zone, so hovering the screen no longer says "Findings" | `/dashboard` |
+| Monitor screen (v2.454.0) | The household's own week, per person | a live **node graph** on the glass: one cluster per member from `storage.get_all_members()` (Argyle and archived people already excluded at that boundary), cluster size = that person's events in the **next 7 days**, joined the way `mind._calendar` joins them — members own `calendar_ids`, events carry the ids of the calendars they came from, and an event that names one person through two of their own calendars counts **once**. Everybody gets a cluster including whoever has an empty week (a small quiet cluster is the honest drawing of a quiet week; a missing one reads as a missing person). Cap 8, ordered by name so nothing jumps between polls. The orbiting, the webbing between dots that happen to be near each other and the pulse that crosses between two clusters every ~4s are **decoration** and claim nothing — cluster size is the only data on the glass, the same line the board's dangling tails sit on. Drawn into a 256×150 offscreen canvas uploaded as a `CanvasTexture`, **≤10 redraws a second, none at all while `document.hidden`**, and the layout is rebuilt only when the numbers themselves change | **nothing** — no page exists for it, so the tap focuses `#chat-input` and pulses the Ask-Argyle bar with an injected CSS class. The only zone in the room that never navigates |
+| Wall map (v2.454.0) | Trips | a framed map on the free wall between the window and the corner: a home marker at the middle, one **pin per planned trip**, and a sagging string from home to each — the one relation drawn anywhere in this room that the app actually **stores** (a trip has a destination; the family leaves from home to reach it), which is exactly the test the board's cross-pin strings failed. Rows come from `storage.get_all_trip_metadata()`; the date is `mock_start_date`, else the linked event's start out of the cached schedule, else none. A trip that already happened loses its pin; an **undated** trip keeps one (a plan without a week in it is still a plan) and never glows; the **soonest dated** one is bigger and lit. Cap 6, soonest first, undated last. Where a pin lands is a hash of the trip's own name — decoration that stays put between polls — and the landmasses under it are a map of nowhere on purpose. A **resolved** non-parent never sees a `parents`-audience trip (`scope.audience_allows`, the same gate every other trip surface runs); `viewer is None` is the admin surface, where `/trips` itself already lists every trip, so the map opens no door that surface did not already have | `/trips` |
 | Wall calendar | Next 7 days of solver output | a day reddens when the cached schedule's own **`true_unassigned`** id list (aliased `unassigned`) places a driver event there — built upstream from `daily_events_to_solve`, after the display-only gate already dropped all-day events, so an all-day "No School Today" row can never paint a day red; an old cache carrying neither field falls back to an assignments diff that skips `all_day` rows by hand | `/dashboard` |
 | Window | Vitals pulse | `vitals.read()`'s household levels vs. this family's own baseline (`ready`/`worse`/label) — levels only, never per-person | `/mind` |
 | Key hook | Cars | one tag per car that both has telemetry configured and isn't disabled; low is decided by `services/cars.py`'s own thresholds and precedence — **battery first** against `car_battery_warn_pct` (default 30), falling through to fuel against `car_fuel_warn_pct` (default 25), both read from settings the way `cars._flt` reads them — so the hook agrees with the fuel note the driver is already being sent. A car with **no** telemetry configured is left off the hook entirely, not hung as a dangling tag | `/config#cars` |
@@ -6115,8 +6117,13 @@ back) and carries its own equivalent check inline, dropping
 names.** Board and desk carry a camera `focus` preset; the first tap leans
 the camera into it and raises a chip naming the zone and its one-line
 signal ("tap again to open"), the second tap — or a tap while already
-leaned in — navigates. Every other zone is a single-tap link. Escape or a
-click on empty space leans back out. Hover raises a tooltip with the same
+leaned in — navigates. Every other zone is a single-tap link, except one:
+since v2.454.0 a zone may carry an `act` — something to do *here* — which
+runs instead of navigating, and the monitor screen is the only zone that has
+one (it focuses the Ask-Argyle bar and pulses it, since no "Argyle's graph"
+page exists to send anybody to, and inventing a destination is worse than
+the tap doing the obvious thing). An `act` writes nothing either. Escape or
+a click on empty space leans back out. Hover raises a tooltip with the same
 one-line signal, suppressed while already leaned into that zone since the
 chip is already saying it.
 
@@ -6141,7 +6148,10 @@ signs running worse than the family's own baseline — "early days" is a
 shortage of history, not a problem) and **the gauges** (only at an actual
 edge: an ingest error, thinking at its cap, research at its cap). Each row
 is a real link to its deep-dive, calm rows visually muted, collapsing to
-"All quiet. Nothing needs you right now." when none qualify — and those
+"All quiet. Nothing needs you right now." when none qualify — with the map's
+one line appended **after** that check since v2.454.0, because the next trip
+is news rather than a thing that needs you, so a household whose only row is
+a trip is still told the room is quiet — and those
 calm rows are painted **before the first poll is in flight**, so the list is
 never blank while waiting, and never blank at all for a child whose 403
 means no payload ever arrives. Model-written text (insight lines, thread

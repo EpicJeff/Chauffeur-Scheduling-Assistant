@@ -53,14 +53,16 @@ animation. The look is flat-shaded charm, deliberately not painterly.
   the identical state payload (severity-ranked rows, each linking to its
   deep-dive). The fallback is not a stub — it is the mobile experience.
 
-## Furniture inventory (v1 — locked with the user)
+## Furniture inventory (v1 — locked with the user; v2 rows marked inline)
 
 | Furniture | Domain | Signal (all read-only) | Tap → |
 |---|---|---|---|
 | **Evidence board** | Mind insights + threads | pinned cards (insight lines, thread titles); stalled thread sags/yellows with a decorative dangling thread tail; sensitive rows filtered by role server-side. **v1 amendment (final review, v2.453.11):** cross-pin strings removed — the app stores no real insight-to-thread relation yet, and a drawn string claims one; relation edges return when a stored link exists | /mind |
 | **Desk paper stacks** | In-hand plans | one stack per plan, height = open steps; a due step renders as an amber sheet sticking out | /mind |
 | **In-tray** | Intake proposals | sheet count | /intake |
-| **Monitor + stickies** | Findings | sticky count, worst severity colors the top sticky; screen glow is decoration | /dashboard (findings render there today) |
+| **Monitor stickies** | Findings | sticky count, worst severity colors the top sticky. **v2 amendment (v2.454.0):** the bezel and the glass left this zone for the Monitor screen below; the notes stuck around them stay here | /dashboard (findings render there today) |
+| **Monitor screen** *(v2.454.0)* | The household's own week, per person | a live node graph: one cluster per family member, cluster size = that person's events in the next 7 days (an event owned through two of one person's calendars counts once); everyone gets a cluster, including whoever has an empty week. Cap 8. The orbiting, the webbing between near dots and the pulse between two clusters are DECORATION and claim nothing — the cluster sizes are the only data on the glass. Canvas texture, ≤10 redraws/sec, none at all while the tab is hidden | nothing — no such page exists, so the tap focuses the Ask-Argyle bar and pulses it. **The only zone in the room that does not navigate** |
+| **Wall map** *(v2.454.0)* | Trips | a pin per planned trip on the free wall between the window and the corner, each on a sagging string back to home — the one relation drawn in this room that the app actually STORES (a trip has a destination; the family leaves from home to reach it). Undated trips keep a pin; past trips lose theirs; the soonest dated one is bigger and lit. Cap 6. Pin placement is a hash of the trip's own name — decoration, stable between polls — and the drawing underneath is a map of nowhere on purpose. A resolved non-parent never sees a `parents`-audience trip (`scope.audience_allows`); `viewer is None` is the admin surface, which `/trips` already shows everything to | /trips |
 | **Wall calendar** | Next 7 days of solver output | a day with ≥1 unassigned driver event shows red; driver events only (all-day events never count, per the calendar law) | /dashboard |
 | **Window** | Vitals pulse | weather = the week vs the family's own baseline (levels only; never per-person) | /mind (vitals live in its snapshot context) |
 | **Key hook** | Cars | one key per active car with telemetry; low fuel/charge or stale telemetry = dangling tag | /config#cars (the cars editor — no standalone cars page exists) |
@@ -108,6 +110,9 @@ flags, short labels, and stable ids only; no prose bodies.
   tap on a zone = camera lean-in preset + summary chip; second tap =
   navigate to the mapped page. Escape or clicking empty space = lean back. (v1 has exactly
   two lean-in zones: board and desk; others navigate on first tap.)
+  **v2.454.0:** a zone may instead carry an `act` — something to do *here* —
+  which runs in place of navigating; the monitor screen is the only one, and
+  it focuses the Ask-Argyle bar. An `act` still never writes.
 - **Since-you-were-here:** per-device `localStorage` timestamp; items whose
   `changed_ts` exceeds it glow softly until the page has been open 10s, then
   the timestamp updates. Wrapped in try/catch; absent storage = no glows.

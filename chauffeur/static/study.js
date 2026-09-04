@@ -93,7 +93,9 @@
     contracts: { count: 0 },
     binders: [],
     gauges: { think: null, think_cap: null, research: null,
-              research_cap: null, ingest_errors: 0 }
+              research_cap: null, ingest_errors: 0 },
+    monitor: { clusters: [] },
+    map: { trips: [] }
   };
   function normal(f) {
     const o = {};
@@ -139,6 +141,14 @@
       gb.push(`research capped (${g.research}/${g.research_cap})`);
     if (gb.length) rows.push(['/mind', 'System', gb.join(' · '), false]);
     if (!rows.length) rows.push(['', 'All quiet', 'Nothing needs you right now.', true]);
+    // The map's one line, and it comes AFTER the quiet check on purpose: the
+    // next trip is news, not a thing that needs you, so a household whose
+    // only row is a trip still gets told the room is quiet. A pin with no
+    // date is a plan without a week in it and stays off the list entirely.
+    const nextTrip = (f.map.trips || []).filter(t => t && t.upcoming)[0];
+    if (nextTrip) rows.push(['/trips', 'Trip',
+      nextTrip.location ? `${nextTrip.title} — ${nextTrip.location}` : (nextTrip.title || ''),
+      true]);
     document.getElementById('fallback-rows').innerHTML = rows.map(([href, kind, sig, calm]) =>
       `<a class="frow${calm ? ' calm' : ''}" ${href ? `href="${rel(href)}"` : ''}>` +
       `<strong>${kind}</strong><div class="sig"></div></a>`).join('');
@@ -175,6 +185,19 @@
   // screenshot is reproducible and nothing shuffles under a poll.
   let _seed = 20260903;
   function rnd() { _seed = (_seed * 1664525 + 1013904223) % 4294967296; return _seed / 4294967296; }
+
+  // A stable 0..1 from a name (FNV-1a). Where a person's cluster sits on the
+  // screen and where a trip's pin sits on the map are DECORATION, and
+  // decoration that reshuffles every 60s poll reads as data changing. This
+  // keeps the same name in the same place for as long as it is the same name.
+  function hash01(s, salt) {
+    const str = String(salt || '') + '|' + String(s == null ? '' : s);
+    let h = 2166136261;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i); h = Math.imul(h, 16777619);
+    }
+    return ((h >>> 0) % 1000003) / 1000003;
+  }
 
   function canvasTex(draw, w, h) {
     const c = document.createElement('canvas');
@@ -276,7 +299,7 @@
   // 3. helpers + palette
   // =====================================================================
   const PAL = {
-    bg: 0x120f0c, paper: 0xf6efdd, screen: 0x86c9f2,
+    bg: 0x120f0c, paper: 0xf6efdd,
     pin: 0xf0e4c6, pinWarn: 0xe8a94e, pinBad: 0xdc6a55,
     string: 0xc0392b, plant: 0x4f8a37, pot: 0xc25c37, key: 0xd8c05a,
     dark: 0x28241f, wood: 0x7a5636, metal: 0x38332c, cream: 0xece2ca,
@@ -376,7 +399,14 @@
     keys:      { meshes: [], url: '/config#cars', parts: {}, summary: '' },
     contracts: { meshes: [], url: '/dashboard',   parts: {}, summary: '' },
     binders:   { meshes: [], url: '/programs',    parts: {}, summary: '' },
-    gauges:    { meshes: [], url: '/mind',        parts: {}, summary: '' }
+    gauges:    { meshes: [], url: '/mind',        parts: {}, summary: '' },
+    // The screen is the one zone that opens no page. There is no "Argyle's
+    // graph" page to send anybody to, and inventing a destination for a tap
+    // is worse than the tap doing the obvious thing: it puts the cursor in
+    // the bar you would ask him from. `act` instead of `url`, so nothing
+    // navigates.
+    monitor:   { meshes: [], url: '',             parts: {}, summary: '' },
+    map:       { meshes: [], url: '/trips',       parts: {}, summary: '' }
   };
   // Exactly two lean-in presets in v1 (spec): the board and the desk. Both
   // are framed so the ZONE'S OWN SIGNAL fits: the whole corkboard including
@@ -386,6 +416,31 @@
   // also eats the top 64px, so each preset sits its subject below that.
   ZONES.board.focus = { p: new THREE.Vector3(.5, 5.0, 1.25), l: new THREE.Vector3(.5, 4.66, -6.13) };
   ZONES.desk.focus  = { p: new THREE.Vector3(.9, 4.9, 8.4),  l: new THREE.Vector3(.3, 2.1, 1.3) };
+
+  // Tapping Argyle's screen puts the cursor where you would talk to him.
+  // The pulse is one injected rule rather than a template edit, so the page
+  // shell stays exactly as it was; both are removed again on their own.
+  (function () {
+    const s = document.createElement('style');
+    s.textContent =
+      '@keyframes study-ask-pulse{0%{box-shadow:0 0 0 0 rgba(232,179,106,.5)}' +
+      '70%{box-shadow:0 0 0 16px rgba(232,179,106,0)}' +
+      '100%{box-shadow:0 0 0 0 rgba(232,179,106,0)}}' +
+      '.study-ask-glow{animation:study-ask-pulse 1s ease-out 2;border-radius:16px}';
+    document.head.appendChild(s);
+  })();
+  let askTimer = 0;
+  ZONES.monitor.act = function () {
+    const i = document.getElementById('chat-input');
+    if (i) { i.focus(); if (i.scrollIntoView) i.scrollIntoView({ block: 'nearest' }); }
+    const bar = document.getElementById('chat-overlay-container');
+    if (!bar) return;
+    bar.classList.remove('study-ask-glow');
+    void bar.offsetWidth;                     // restart the animation on a re-tap
+    bar.classList.add('study-ask-glow');
+    clearTimeout(askTimer);
+    askTimer = setTimeout(() => bar.classList.remove('study-ask-glow'), 2100);
+  };
 
   function reg(name, mesh) {                 // register a hit target
     ZONES[name].meshes.push(mesh);
@@ -469,10 +524,135 @@
   // thickness — the screen and the stickies sit in FRONT of that, not inside
   // it (the spike's monitor was a dark slab for exactly this reason).
   const BEZ = { w: 2.05, h: 1.3, d: .1, front: .1 / 2 + .02 };
-  reg('stickies', put(rbox(BEZ.w, BEZ.h, BEZ.d, .06, M(PAL.dark, { roughness: .55 })), 0, 0, 0, { parent: monHead }));
+  // The bezel and the glass are the MONITOR's zone; the sticky notes stuck
+  // around them stay the findings' own. Two different things live on this
+  // one piece of furniture and each answers for itself.
+  reg('monitor', put(rbox(BEZ.w, BEZ.h, BEZ.d, .06, M(PAL.dark, { roughness: .55 })), 0, 0, 0, { parent: monHead }));
+  // What is on the screen: a node graph, one cluster per person, drawn into
+  // an offscreen canvas and uploaded as a texture. 256x150 is the plane's
+  // own aspect (1.71) to the pixel, so nothing is stretched.
+  const GR = { w: 256, h: 150 };
+  const grCanvas = document.createElement('canvas');
+  grCanvas.width = GR.w; grCanvas.height = GR.h;
+  const grCtx = grCanvas.getContext('2d');
+  grCtx.fillStyle = '#080b11'; grCtx.fillRect(0, 0, GR.w, GR.h);
+  const grTex = new THREE.CanvasTexture(grCanvas);
+  grTex.encoding = THREE.sRGBEncoding;
   const screen = put(new THREE.Mesh(new THREE.PlaneGeometry(BEZ.w - .34, BEZ.h - .3),
-    new THREE.MeshBasicMaterial({ color: PAL.screen })), 0, .02, BEZ.front + .008, { parent: monHead });
-  reg('stickies', screen);
+    new THREE.MeshBasicMaterial({ map: grTex, color: 0xffffff })),
+    0, .02, BEZ.front + .008, { parent: monHead });
+  reg('monitor', screen);
+  ZONES.monitor.parts = { screen: screen, key: '' };
+
+  // ---- the graph the screen is running --------------------------------
+  // One cluster per person; the cluster's SIZE is the only thing here that
+  // came from the house (that week's events). The orbiting, the webbing
+  // between near dots and the pulse between two clusters are decoration and
+  // claim nothing — the same line the evidence board's tails sit on.
+  // Layout is rebuilt only when the payload changes; the redraw is capped at
+  // ten frames a second and stops dead while the tab is hidden.
+  const GR_HUE = [10, 202, 96, 44, 268, 168, 320, 134];
+  const GR_STEP = .1, GR_LINK2 = 170, GR_PULSE = 1.1;
+  let grClusters = [], grNext = 0, grDirty = true, grPulseT = -1, grPulseAt = 3, grPair = 0;
+
+  function buildGraph(rows) {
+    grClusters = [];
+    const n = rows.length;
+    rows.forEach((row, i) => {
+      const name = String(row && row.name || i);
+      const cnt = Math.min(Math.max((row && row.count) | 0, 0) * 3 + 4, CAPS.nodes);
+      const a = (i / Math.max(n, 1)) * Math.PI * 2 + hash01(name, 'a') * .8;
+      const rr = n < 2 ? 0 : .55 + hash01(name, 'r') * .38;
+      const cl = { hue: GR_HUE[i % GR_HUE.length],
+                   cx: GR.w * .5 + Math.cos(a) * GR.w * .32 * rr,
+                   cy: GR.h * .5 + Math.sin(a) * GR.h * .31 * rr,
+                   nodes: [] };
+      // A busier week is a wider, denser cloud, not just more dots in the
+      // same spot: the spread grows with the square root of the count.
+      const spread = 4 + Math.sqrt(cnt) * 3.2;
+      for (let j = 0; j < cnt; j++) {
+        const t1 = hash01(name, 'n' + j), t2 = hash01(name, 'm' + j);
+        cl.nodes.push({ a: t1 * Math.PI * 2, r: 2 + Math.sqrt(t2) * spread,
+                        sp: .05 + t1 * .12, ph: t2 * 6.283, x: 0, y: 0 });
+      }
+      grClusters.push(cl);
+    });
+    grDirty = true;
+  }
+
+  function drawGraph(t) {
+    const g = grCtx, w = GR.w, h = GR.h;
+    g.fillStyle = '#080b11'; g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(120,160,220,.05)'; g.lineWidth = 1;
+    g.beginPath();
+    for (let x = 16; x < w; x += 32) { g.moveTo(x + .5, 0); g.lineTo(x + .5, h); }
+    for (let y = 15; y < h; y += 30) { g.moveTo(0, y + .5); g.lineTo(w, y + .5); }
+    g.stroke();
+    // Two passes on purpose: every halo first, so a neighbour's glow never
+    // washes over dots that were already drawn.
+    for (let c = 0; c < grClusters.length; c++) {
+      const cl = grClusters[c], N = cl.nodes;
+      for (let i = 0; i < N.length; i++) {
+        const nd = N[i];
+        nd.x = cl.cx + Math.cos(nd.a + t * nd.sp) * nd.r + Math.sin(t * 1.3 + nd.ph) * 1.1;
+        nd.y = cl.cy + Math.sin(nd.a + t * nd.sp) * nd.r * .88 + Math.cos(t * 1.1 + nd.ph) * 1.1;
+      }
+      const rad = 9 + N.length * .8;
+      const halo = g.createRadialGradient(cl.cx, cl.cy, 1, cl.cx, cl.cy, rad);
+      halo.addColorStop(0, `hsla(${cl.hue},80%,60%,.22)`);
+      halo.addColorStop(1, `hsla(${cl.hue},80%,60%,0)`);
+      g.fillStyle = halo;
+      g.fillRect(cl.cx - rad, cl.cy - rad, rad * 2, rad * 2);
+    }
+    for (let c = 0; c < grClusters.length; c++) {
+      const cl = grClusters[c], N = cl.nodes;
+      g.strokeStyle = `hsla(${cl.hue},72%,66%,.22)`; g.lineWidth = .7;
+      g.beginPath();
+      for (let i = 0; i < N.length; i++)
+        for (let j = i + 1; j < N.length; j++) {
+          const dx = N[i].x - N[j].x, dy = N[i].y - N[j].y;
+          if (dx * dx + dy * dy < GR_LINK2) { g.moveTo(N[i].x, N[i].y); g.lineTo(N[j].x, N[j].y); }
+        }
+      g.stroke();
+      for (let i = 0; i < N.length; i++) {
+        g.fillStyle = `hsl(${cl.hue},76%,${56 + (i % 3) * 7}%)`;
+        g.beginPath(); g.arc(N[i].x, N[i].y, 1.4, 0, 6.283); g.fill();
+      }
+      g.fillStyle = `hsl(${cl.hue},84%,74%)`;
+      g.beginPath(); g.arc(cl.cx, cl.cy, 2.5, 0, 6.283); g.fill();
+    }
+    // every few seconds one cluster says something to another
+    const n = grClusters.length;
+    if (n < 2) { grPulseT = -1; grPulseAt = t + 3; return; }
+    if (grPulseT < 0 && t >= grPulseAt) { grPulseT = t; grPair++; }
+    if (grPulseT < 0) return;
+    const u = (t - grPulseT) / GR_PULSE;
+    if (u >= 1) { grPulseT = -1; grPulseAt = t + 3.2 + (grPair % 3) * .6; return; }
+    const A = grClusters[grPair % n];
+    const B = grClusters[((grPair % n) + 1 + (grPair % (n - 1))) % n];
+    // Drawn fat and bright on purpose: this canvas is MINIFIED onto a screen
+    // a fifth of the room wide, and a hairline at .4 alpha averages away to
+    // nothing by the time it is a monitor across the study.
+    const fade = Math.sin(u * Math.PI);
+    g.strokeStyle = `rgba(210,228,255,${(.30 * fade).toFixed(3)})`; g.lineWidth = 3.4;
+    g.beginPath(); g.moveTo(A.cx, A.cy); g.lineTo(B.cx, B.cy); g.stroke();
+    g.strokeStyle = `rgba(238,246,255,${(.85 * fade).toFixed(3)})`; g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(A.cx, A.cy); g.lineTo(B.cx, B.cy); g.stroke();
+    g.fillStyle = `rgba(255,255,255,${fade.toFixed(3)})`;
+    g.beginPath();
+    g.arc(A.cx + (B.cx - A.cx) * u, A.cy + (B.cy - A.cy) * u, 3.2, 0, 6.283);
+    g.fill();
+  }
+
+  function stepGraph(t) {
+    if (document.hidden) return;              // a hidden tab draws nothing
+    if (!grDirty && (t < grNext || !grClusters.length)) return;
+    grNext = t + GR_STEP; grDirty = false;
+    drawGraph(t);
+    grTex.needsUpdate = true;                 // a texture upload, not geometry
+  }
+
+  // ---- back to the monitor itself -------------------------------------
   // stand: post down to the desk surface, foot flat on it
   box(.2, .46, .13, PAL.dark, 0, -.88, -.02, { parent: monHead, mo: { roughness: .55 } });
   put(rbox(.9, .6, .06, .08, M(PAL.dark, { roughness: .55 })), 0, -1.06, .06,
@@ -485,7 +665,7 @@
       { parent: monHead, rz: rz, mo: { roughness: 1 } });
     s.visible = false; stickies.push(reg('stickies', s));
   });
-  ZONES.stickies.parts = { notes: stickies, screen: screen };
+  ZONES.stickies.parts = { notes: stickies };
 
   // keyboard + mouse + a cable
   put(rbox(1.55, .52, .07, .03, M(0x3a352e, { roughness: .6 })), .5, TOP + .04, 1.98, { rx: Math.PI / 2, ry: .1 });
@@ -752,6 +932,99 @@
   const lampLight = new THREE.PointLight(0xffcf8a, .9, 7, 1.8);
   lampLight.position.set(6.2, 3.4, -4.4); scene.add(lampLight);
 
+  // =====================================================================
+  // wall map — where the family is going, on a string from home
+  // =====================================================================
+  // The back wall is full (keys, photograph, board, calendar, clock) and the
+  // side wall carries only the window, so the map hangs on the free stretch
+  // between that window and the corner. Everything below lives in the map's
+  // own group: its ry puts local +x along the wall and local +z out into the
+  // room, so the map is authored flat and hung once.
+  //
+  // The one relation drawn here is one the app STORES — a trip has a
+  // destination, and the family leaves from home to reach it. Where a pin
+  // lands is decoration (a hash of the trip's own name, so it stays put),
+  // and the drawing underneath is abstract on purpose: it is a map of
+  // nowhere, and claims to be nothing else.
+  const MAP = { x: -7.05, y: 4.45, z: -3.95, w: 2.6, h: 1.9, rail: .15 };
+  const mapTex = canvasTex((g, w, h) => {
+    g.fillStyle = '#c9b489'; g.fillRect(0, 0, w, h);
+    const blob = (cx, cy, rx, ry, ph, fill, edge) => {
+      g.beginPath();
+      for (let a = 0; a <= 40; a++) {
+        const th = a / 40 * Math.PI * 2;
+        const rr = .82 + Math.sin(th * 3 + ph) * .15 + Math.sin(th * 5 + ph * 2) * .07;
+        const x = cx + Math.cos(th) * rx * rr, y = cy + Math.sin(th) * ry * rr;
+        if (a === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.closePath(); g.fillStyle = fill; g.fill();
+      g.strokeStyle = edge; g.lineWidth = 1.6; g.stroke();
+    };
+    blob(w * .30, h * .44, w * .26, h * .30, .6, '#a8ab7c', 'rgba(86,74,44,.5)');
+    blob(w * .74, h * .34, w * .19, h * .22, 2.4, '#b0a878', 'rgba(86,74,44,.5)');
+    blob(w * .62, h * .80, w * .21, h * .16, 4.1, '#9fa677', 'rgba(86,74,44,.45)');
+    g.strokeStyle = 'rgba(96,78,48,.16)'; g.lineWidth = 1;
+    for (let x = 24; x < w; x += 26) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke(); }
+    for (let y = 20; y < h; y += 26) { g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
+    for (let i = 0; i < 500; i++) {                       // paper tooth
+      g.fillStyle = `rgba(70,54,30,${rnd() * .07})`;
+      g.fillRect(rnd() * w, rnd() * h, 1.6, 1.6);
+    }
+    g.strokeStyle = 'rgba(74,58,32,.45)'; g.lineWidth = 2;
+    g.strokeRect(5, 5, w - 10, h - 10);
+  }, 256, 188);
+  const mapGrp = new THREE.Group();
+  mapGrp.position.set(MAP.x, MAP.y, MAP.z);
+  mapGrp.rotation.y = Math.PI / 2;
+  scene.add(mapGrp);
+  // The sun comes IN this wall, so its inner face is never lit by it: the
+  // sheet carries its own faint emissive so the map is readable at night as
+  // well as at noon, without becoming a lightbox in a warm room.
+  const mapMat = new THREE.MeshStandardMaterial({
+    map: mapTex, roughness: .95, metalness: 0,
+    emissive: 0xffffff, emissiveMap: mapTex, emissiveIntensity: .34 });
+  reg('map', box(MAP.w, MAP.h, .05, 0, 0, 0, 0,
+    { parent: mapGrp, mat: mapMat, noCast: true }));
+  const mapRail = M(0x5a4029, { roughness: .8 });
+  [1, -1].forEach(s => {
+    box(MAP.w + MAP.rail * 2, MAP.rail, MAP.rail * 1.2, 0, 0,
+      s * (MAP.h / 2 + MAP.rail / 2), 0, { parent: mapGrp, mat: mapRail, noCast: true });
+    box(MAP.rail, MAP.h + MAP.rail * 2, MAP.rail * 1.2, 0,
+      s * (MAP.w / 2 + MAP.rail / 2), 0, 0, { parent: mapGrp, mat: mapRail, noCast: true });
+  });
+  // home: every string starts here, and it is the only fixed point on the map
+  const HOME = { x: -.10, y: -.12 };
+  put(new THREE.Mesh(new THREE.TorusGeometry(.075, .016, 6, 16),
+    M(0x3c3630, { roughness: .5 })), HOME.x, HOME.y, .035, { parent: mapGrp });
+  put(new THREE.Mesh(new THREE.SphereGeometry(.042, 10, 8),
+    M(0xf2e6c8, { roughness: .6 })), HOME.x, HOME.y, .045, { parent: mapGrp });
+  // Six pins and six strings, built ONCE. FURNITURE.map only ever moves,
+  // aims, scales, colours and hides them — applyState allocates no geometry.
+  const strMat = M(PAL.string, { roughness: .95, side: THREE.DoubleSide });
+  const strCurve = new THREE.QuadraticBezierCurve3(
+    new THREE.Vector3(0, 0, 0), new THREE.Vector3(.5, -.15, 0), new THREE.Vector3(1, 0, 0));
+  const strGeo = new THREE.TubeGeometry(strCurve, 12, .012, 5, false);
+  const mapPins = [];
+  for (let i = 0; i < 6; i++) {
+    // The string is authored once, from (0,0,0) to (1,0,0) with a sag in
+    // it; a pin is reached by aiming it and stretching x to the distance,
+    // and flipping y when the pin is to the left so the sag always hangs
+    // DOWN rather than bowing back over itself.
+    const str = new THREE.Mesh(strGeo, strMat);
+    str.visible = false; mapGrp.add(str);
+    const g = new THREE.Group();
+    g.position.set(0, 0, .055); g.visible = false; mapGrp.add(g);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(.062, 12, 10),
+      M(PAL.pinBad, { roughness: .45 }));
+    g.add(head);
+    const stalk = new THREE.Mesh(new THREE.CylinderGeometry(.013, .013, .08, 6),
+      M(0xb9b0a0, { roughness: .4, metalness: .5 }));
+    stalk.rotation.x = Math.PI / 2; stalk.position.z = -.045; g.add(stalk);
+    reg('map', head);
+    mapPins.push({ group: g, head: head, string: str });
+  }
+  ZONES.map.parts = { pins: mapPins, home: HOME };
+
   // dust motes in the window light
   const motePos = [];
   for (let i = 0; i < 260; i++)
@@ -815,7 +1088,8 @@
   //    section of the payload. Adding a signal is a row here, not surgery.
   // =====================================================================
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const CAPS = { pins: 14, sheets: 8, tray: 6, keys: 4, binders: 5, stickies: 5, slips: 4 };
+  const CAPS = { pins: 14, sheets: 8, tray: 6, keys: 4, binders: 5, stickies: 5,
+                 slips: 4, clusters: 8, nodes: 40, trips: 6 };
 
   const FURNITURE = {
     // one pinned card per insight/thread; stalled ones yellow and sag,
@@ -966,6 +1240,56 @@
       if (d.research != null && d.research_cap) bits.push(`research ${d.research}/${d.research_cap}`);
       if (d.ingest_errors) bits.push(`${d.ingest_errors} ingest errors`);
       z.summary = bits.join(' · ');
+    },
+
+    // Argyle's screen. One cluster per person, sized by the week they are
+    // walking into; the layout is rebuilt only when those numbers actually
+    // change, and the animation that runs on it after that is decoration.
+    monitor: (d, z) => {
+      const rows = (d.clusters || []).slice(0, CAPS.clusters);
+      const key = JSON.stringify(rows);
+      if (key !== z.parts.key) { z.parts.key = key; buildGraph(rows); }
+      const busy = rows.filter(r => r && (r.count | 0) > 0)
+        .sort((a, b) => (b.count | 0) - (a.count | 0));
+      let bits = busy.slice(0, 4).map(r => `${r.name} ${r.count}`).join(' · ');
+      if (busy.length > 4) bits += ' · …';
+      z.summary = bits ? `This week: ${bits}`
+        : (rows.length ? 'A quiet week' : '');
+    },
+
+    // A pin per planned trip, each on its string home. The soonest one is
+    // bigger and lit; a trip with no date yet is a pin like any other,
+    // because a plan without a week in it is still a plan.
+    map: (d, z) => {
+      const trips = (d.trips || []).slice(0, CAPS.trips);
+      const home = z.parts.home;
+      z.parts.pins.forEach((p, i) => {
+        const t = trips[i];
+        p.group.visible = !!t;
+        p.string.visible = !!t;
+        if (!t) { p.group.userData.trip = null; return; }
+        const seed = `${t.id || ''}|${t.title || ''}|${t.location || ''}`;
+        const a = hash01(seed, 'pa') * Math.PI * 2;
+        const rr = .45 + hash01(seed, 'pr') * .5;
+        const px = home.x + Math.cos(a) * MAP.w * .32 * rr;
+        const py = home.y + Math.sin(a) * MAP.h * .30 * rr;
+        p.group.position.set(px, py, .055);
+        p.group.scale.setScalar(t.upcoming ? 1.45 : 1);
+        p.head.material.color.setHex(t.upcoming ? PAL.pinWarn : PAL.pinBad);
+        p.head.material.emissive.setHex(t.upcoming ? 0x5a3204 : 0x000000);
+        const dx = px - home.x, dy = py - home.y;
+        p.string.position.set(home.x, home.y, .04);
+        p.string.rotation.z = Math.atan2(dy, dx);
+        p.string.scale.set(Math.max(Math.sqrt(dx * dx + dy * dy), .02),
+                           dx < 0 ? -1 : 1, 1);
+        p.group.userData.trip = t;
+      });
+      // Law 2: an empty map is a framed empty map, not an apology. It says
+      // nothing beyond its own name until there is a trip to name.
+      const titles = trips.map(t => t.title).filter(Boolean);
+      let line = titles.join(', ');
+      if (line.length > 64) line = line.slice(0, 63).trimEnd() + '…';
+      z.summary = line ? `Trips: ${line}` : '';
     }
   };
 
@@ -1023,7 +1347,8 @@
   const LABEL = {
     board: 'The board', desk: 'The desk', tray: 'Intake', stickies: 'Findings',
     calendar: 'This week', window: 'Outside', keys: 'Cars',
-    contracts: 'Deals', binders: 'Programs', gauges: "Argyle's budget"
+    contracts: 'Deals', binders: 'Programs', gauges: "Argyle's budget",
+    monitor: "Argyle's screen", map: 'The map'
   };
   const tipEl = document.getElementById('tip');
   const chipEl = document.getElementById('chip');
@@ -1124,6 +1449,9 @@
     if (!zone) { leanBack(); return; }
     const z = ZONES[zone];
     if (z.focus && leaned !== zone) { leanInto(zone); return; }
+    // A zone with something to DO here does it; only then does a zone with
+    // a page behind it navigate. Nothing in either branch writes.
+    if (z.act) { z.act(); return; }
     go(z.url);
   });
   addEventListener('keydown', e => { if (e.key === 'Escape') leanBack(); });
@@ -1171,7 +1499,10 @@
   }
 
   // ---- the loop --------------------------------------------------------
-  const SCREEN0 = new THREE.Color(PAL.screen);
+  // The screen carries a texture now, so the breathing multiplies WHITE:
+  // the graph brightens and dims like a real display rather than being
+  // tinted by a palette colour it no longer has.
+  const SCREEN0 = new THREE.Color(0xffffff);
   const MOTE_TOP = 7.6, MOTE_BOT = .4;
   const T0 = performance.now();
   let lastMs = T0, T = 0;
@@ -1215,6 +1546,13 @@
     // the monitor breathes, and the desk lamp breathes with it
     screen.material.color.copy(SCREEN0).multiplyScalar(.9 + .1 * Math.sin(T * .9));
     deskGlow.intensity = 1.05 + .12 * Math.sin(T * .9);
+    // and the graph on it moves — a canvas redraw and one texture upload,
+    // ten times a second at most, never while the tab is hidden. Driven off
+    // the WALL clock like the flying sheet, not off T: every dot's place is
+    // a function of the time, never an integration, so a slow renderer owes
+    // it no smoothing — and on T a software renderer would run the whole
+    // graph at a quarter speed and pulse once a minute.
+    stepGraph((ms - T0) / 1000);
 
     // dust turning over in the window light
     const ma = moteAttr.array;

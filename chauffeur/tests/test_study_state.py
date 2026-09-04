@@ -238,6 +238,153 @@ def scenario_calendar_falls_back_to_the_unassigned_alias():
           'never ran')
 
 
+def scenario_monitor_clusters_are_one_per_person_sized_by_their_week():
+    """Argyle's screen draws one cluster per member, sized by that person's
+    next seven days. Ownership is decided the way `mind._calendar` decides
+    it — members own `calendar_ids`, events carry the ids of the calendars
+    they came from — and an event that names the same person through two of
+    their own calendars is ONE thing in their week, not two."""
+    _reset()
+    orig = (storage.get_all_members, storage.get_cached_schedule)
+    people = [{'id': 'mom', 'name': 'Mom', 'calendar_ids': ['mom@cal', 'work@cal']},
+              {'id': 'lily', 'name': 'Lily', 'calendar_ids': ['lily@cal']},
+              {'id': 'ash', 'name': 'Ash', 'calendar_ids': ['ash@cal']},
+              {'id': 'ben', 'name': 'Ben'}]
+    events = [
+        {'id': 'a', 'start': '2026-09-04T17:00:00', 'calendar_ids': ['mom@cal']},
+        {'id': 'b', 'start': '2026-09-05T09:00:00', 'calendar_ids': ['mom@cal', 'lily@cal']},
+        {'id': 'c', 'start': '2026-09-06T09:00:00', 'calendar_ids': ['mom@cal', 'work@cal']},
+        {'id': 'd', 'start': '2026-09-01T09:00:00', 'calendar_ids': ['lily@cal']},
+        {'id': 'e', 'start': '2026-10-20T09:00:00', 'calendar_ids': ['lily@cal']},
+        {'id': 'f', 'start': 'not a date at all', 'calendar_ids': ['lily@cal']},
+    ]
+    try:
+        storage.get_all_members = lambda *a, **k: people
+        storage.get_cached_schedule = lambda: {'events': events, 'true_unassigned': []}
+        mon = study.state(PARENT, now=NOON)['furniture']['monitor']
+        counts = {c['name']: c['count'] for c in mon['clusters']}
+        check(counts == {'Ash': 0, 'Ben': 0, 'Lily': 1, 'Mom': 3},
+              f'three for Mom (her two calendars on one event count once), '
+              f'one for Lily, and a quiet cluster each for the other two: {counts}')
+        check([c['name'] for c in mon['clusters']] == ['Ash', 'Ben', 'Lily', 'Mom'],
+              'the order is by name, so a cluster does not move between polls')
+        # A member with an empty week still gets a cluster: a small quiet
+        # cluster is the honest drawing of a quiet week; a missing one reads
+        # as a missing person.
+        check(any(c['name'] == 'Ash' and c['count'] == 0 for c in mon['clusters']),
+              'a person with nothing on is still on the screen')
+
+        storage.get_all_members = lambda *a, **k: [
+            {'id': f'p{i}', 'name': f'P{i:02d}', 'calendar_ids': []} for i in range(11)]
+        capped = study.state(PARENT, now=NOON)['furniture']['monitor']['clusters']
+        check(len(capped) == 8, f'eight clusters at most, got {len(capped)}')
+        check([c['name'] for c in capped] == [f'P{i:02d}' for i in range(8)],
+              'and the cap takes the first eight of the same stable order')
+    finally:
+        (storage.get_all_members, storage.get_cached_schedule) = orig
+
+
+def scenario_map_pins_only_the_trips_still_ahead():
+    """The wall map is a plan board, not a scrapbook: a trip that already
+    happened loses its pin, a trip with no date yet keeps one (a plan
+    without a week in it is still a plan), and exactly one pin — the
+    soonest DATED one — is the upcoming one that glows."""
+    _reset()
+    orig = (storage.get_all_trip_metadata, storage.get_cached_schedule)
+    day, now_ts = 86400.0, NOON.timestamp()
+    trips = [
+        {'id': 't_past', 'event_id': 'ep', 'title': 'Last summer', 'location': 'Maine',
+         'mock_start_date': now_ts - 30 * day, 'audience': 'household'},
+        {'id': 't_later', 'event_id': 'el', 'title': 'Ski week', 'location': 'Vermont',
+         'mock_start_date': now_ts + 40 * day, 'audience': 'household'},
+        {'id': 't_soon', 'event_id': 'es', 'title': 'Disney', 'location': 'Orlando',
+         'mock_start_date': now_ts + 9 * day, 'audience': 'household'},
+        {'id': 't_undated', 'event_id': 'eu', 'title': 'Someday', 'location': 'Japan',
+         'audience': 'household'},
+        {'id': 't_event', 'event_id': 'ee', 'title': 'Grandma', 'location': 'Ohio',
+         'audience': 'household'},
+    ]
+    try:
+        storage.get_all_trip_metadata = lambda: trips
+        storage.get_cached_schedule = lambda: {
+            'events': [{'id': 'ee', 'start': '2026-09-20T08:00:00'}],
+            'true_unassigned': []}
+        rows = study.state(PARENT, now=NOON)['furniture']['map']['trips']
+        ids = [r['id'] for r in rows]
+        check('t_past' not in ids, f'a trip that already happened is off the map: {ids}')
+        check(ids == ['t_soon', 't_event', 't_later', 't_undated'],
+              f'soonest first, undated last: {ids}')
+        check(rows[1]['start_ts'] is not None,
+              'a trip with no mock date takes the date off its linked event')
+        check(rows[3]['start_ts'] is None and rows[3]['upcoming'] is False,
+              'the undated pin stays, and never claims to be the next thing')
+        check([r['upcoming'] for r in rows] == [True, False, False, False],
+              f'exactly the soonest dated trip is upcoming: {rows}')
+
+        storage.get_all_trip_metadata = lambda: [
+            {'id': f'x{i}', 'event_id': f'e{i}', 'title': f'Trip {i}', 'location': 'away',
+             'mock_start_date': now_ts + (i + 1) * day, 'audience': 'household'}
+            for i in range(9)]
+        capped = study.state(PARENT, now=NOON)['furniture']['map']['trips']
+        check(len(capped) == 6, f'six pins at most, got {len(capped)}')
+        check([r['id'] for r in capped] == [f'x{i}' for i in range(6)],
+              'and the six kept are the six soonest')
+    finally:
+        (storage.get_all_trip_metadata, storage.get_cached_schedule) = orig
+
+
+def scenario_map_holds_a_closed_trip_back_from_a_resolved_adult():
+    """A trip carrying a metadata record is `parents` by default
+    (`scope.AUDIENCE_DEFAULTS`) — a plan is a surprise until somebody says
+    otherwise — and the Study is open to adults, not just parents. So the
+    map runs the same audience gate every other trip surface runs.
+
+    `viewer is None` is the ADMIN SURFACE, not an anonymous kiosk (see
+    `main._is_admin_surface`): it is the control centre, where `/trips`
+    itself already lists every trip including the ones the family wall may
+    not show, so the map opens no door that surface did not already have."""
+    _reset()
+    orig = storage.get_all_trip_metadata
+    surprise = {'id': 't_secret', 'event_id': 'e1', 'title': 'Anniversary weekend',
+                'location': 'Charleston', 'mock_start_date': NOON.timestamp() + 86400,
+                'audience': 'parents'}
+    shared = {'id': 't_open', 'event_id': 'e2', 'title': 'Beach day',
+              'location': 'Cape', 'mock_start_date': NOON.timestamp() + 172800,
+              'audience': 'household'}
+    try:
+        storage.get_all_trip_metadata = lambda: [surprise, shared]
+        seen = lambda v: {r['id'] for r in
+                          study.state(v, now=NOON)['furniture']['map']['trips']}
+        check(seen(PARENT) == {'t_secret', 't_open'}, f'a parent sees both: {seen(PARENT)}')
+        check(seen(ADULT) == {'t_open'},
+              f'a resolved adult never reads a surprise off the wall: {seen(ADULT)}')
+        check(seen(None) == {'t_secret', 't_open'},
+              'the admin surface sees what /trips already shows it')
+    finally:
+        storage.get_all_trip_metadata = orig
+
+
+def scenario_every_section_carries_a_calm_form():
+    """`state()` substitutes `_CALM[key]` when a section raises, so a section
+    with no calm form of its own would turn one provider's bad day into a
+    KeyError that empties the whole room. The two newest sections are the
+    ones most likely to be added without one."""
+    check(set(study._SECTIONS) <= set(study._CALM),
+          f'every section has a calm form: '
+          f'{set(study._SECTIONS) - set(study._CALM)} missing')
+    check(study._CALM['monitor'] == {'clusters': []}, 'a calm screen has no clusters')
+    check(study._CALM['map'] == {'trips': []}, 'a calm map has no pins')
+    for key in ('monitor', 'map'):
+        orig = study._SECTIONS[key]
+        study._SECTIONS[key] = lambda now, viewer: (_ for _ in ()).throw(RuntimeError('boom'))
+        try:
+            out = study.state(PARENT, now=NOON)['furniture']
+            check(out[key] == study._CALM[key],
+                  f'a raising {key} renders calm, not missing')
+        finally:
+            study._SECTIONS[key] = orig
+
+
 def scenario_a_raising_section_is_calm_not_fatal():
     _reset()
     orig = study._SECTIONS['stickies']
@@ -387,6 +534,12 @@ def scenario_the_fallback_keeps_model_text_out_of_innerhtml():
               "the link and the fixed kind label may go that way")
     check(re.search(r'\.textContent\s*=\s*rows\[i\]\[2\]', src),
           'the signal is no longer assigned through textContent')
+    # The map's row carries a trip title and a place name, both typed by
+    # somebody. It must ride the same `rows` list as every other signal, not
+    # a template of its own — that is the whole protection.
+    check(re.search(r"rows\.push\(\['/trips',\s*'Trip',", src),
+          'the map row joins the same rows list, so its title goes out '
+          'through textContent with every other signal')
 
 
 if __name__ == '__main__':
@@ -398,6 +551,10 @@ if __name__ == '__main__':
     scenario_calendar_counts_only_uncovered_driver_events()
     scenario_calendar_reads_the_solvers_own_unassigned_list()
     scenario_calendar_falls_back_to_the_unassigned_alias()
+    scenario_monitor_clusters_are_one_per_person_sized_by_their_week()
+    scenario_map_pins_only_the_trips_still_ahead()
+    scenario_map_holds_a_closed_trip_back_from_a_resolved_adult()
+    scenario_every_section_carries_a_calm_form()
     scenario_a_raising_section_is_calm_not_fatal()
     scenario_tray_counts_proposed_proposals()
     scenario_gauges_read_without_writing()
