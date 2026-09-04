@@ -783,6 +783,7 @@ sending or claiming, and never pass from_member/member_name for them.
                 elif func_name in ("list_threads", "create_thread",
                                    "update_thread_action", "add_thread_note",
                                    "draft_thread_message", "close_thread",
+                                   "launch_mission",
                                    "negotiate_day", "ask_deal",
                                    "list_programs", "program_progress",
                                    "propose_program", "log_program_session"):
@@ -824,6 +825,10 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.draft_thread_message(args.get("thread_title", "") or "",
                                                          intent=args.get("intent"),
                                                          acting_member=actor)
+                    elif func_name == "launch_mission":
+                        res = _atv2.launch_mission(args.get("goal", "") or "",
+                                                   args.get("thread_title"),
+                                                   actor)
                     elif func_name == "close_thread":
                         res = _atv2.close_thread(args.get("thread_title", "") or "",
                                                  state=args.get("state"),

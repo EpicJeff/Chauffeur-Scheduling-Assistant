@@ -7,6 +7,7 @@ def _reset():
     storage.missions_table.truncate()
     storage.mission_steps_table.truncate()
     storage.members_table.truncate()
+    storage.threads_table.truncate()
     storage.add_member({'id': 'mom', 'name': 'Mom', 'role': 'parent'})
     storage.add_member({'id': 'kid', 'name': 'Lily', 'role': 'child'})
     import datetime as _dt
@@ -124,6 +125,45 @@ def scenario_page_route_serves_template():
         check(banned not in html, f"no browser dialogs ({banned})")
 
 
+# --- Task 8: Doorways — thread button and chat tool in both stacks --------
+
+def scenario_chat_tool_wired_into_both_stacks():
+    from services import agent_tools, agent_tools_v2
+    check('launch_mission' in agent_tools.TOOL_SCHEMAS
+          and 'launch_mission' in agent_tools.TOOL_HANDLERS, "v1 wired")
+    decls = agent_tools_v2.get_available_tools()   # match the real signature
+    check(any(d.get('name') == 'launch_mission' for d in decls), "v2 declared")
+    # If get_available_tools takes arguments (settings/actor), pass what its
+    # existing callers pass — keep the assertion, adjust only the call.
+    import inspect
+    src = inspect.getsource(__import__('services.agent_router', fromlist=['x']))
+    check('launch_mission' in src, "router dispatches it")
+
+
+def scenario_chat_launch_respects_allowlist_and_thread_origin():
+    _reset()
+    from services import agent_tools_v2, threads as _threads
+    tid = storage.add_thread({'title': 'Pool guy', 'goal': 'get him back',
+                              'kind': 'vendor', 'state': 'open'})
+    res = agent_tools_v2.launch_mission('get the pool serviced', 'Pool guy',
+                                        {'id': 'mom', 'role': 'parent'})
+    check(res.get('status') == 'launched', f"parent launches via chat, got {res}")
+    row = storage.get_mission(res['mission_id'])
+    check(row['origin_kind'] == 'thread' and row['origin_ref'] == tid,
+          "fuzzy thread title pins the origin")
+    res2 = agent_tools_v2.launch_mission('x', None, {'id': 'kid', 'role': 'child'})
+    check(res2.get('status') != 'launched', "child refused")
+    res3 = agent_tools_v2.launch_mission('x', None, None)
+    check(res3.get('status') != 'launched', "anonymous wall refused (allowlist)")
+
+
+def scenario_threads_page_has_the_button():
+    import main, os
+    tpl = os.path.join(os.path.dirname(main.__file__), 'templates', 'threads.html')
+    html = open(tpl, encoding='utf-8').read()
+    check('/api/missions/launch' in html, "Work-this button posts a launch")
+
+
 if __name__ == '__main__':
     scenario_child_cannot_launch()
     scenario_parent_launches_and_answers()
@@ -132,4 +172,7 @@ if __name__ == '__main__':
     scenario_proposal_act_requires_a_real_mission()
     scenario_ack_and_drop()
     scenario_page_route_serves_template()
+    scenario_chat_tool_wired_into_both_stacks()
+    scenario_chat_launch_respects_allowlist_and_thread_origin()
+    scenario_threads_page_has_the_button()
     print("test_missions_endpoints OK")

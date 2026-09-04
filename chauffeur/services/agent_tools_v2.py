@@ -1518,6 +1518,18 @@ def draft_thread_message(thread_title: str, intent: str = None,
                         f"Subject: {res['subject']}\n\n{res['body']}")}
 
 
+def launch_mission(goal: str, thread_title: str = None, actor: dict = None) -> dict:
+    """Allowlist: a resolved parent/adult launches; anyone else is refused —
+    /api/chat is WALL_OR_SERVICE, so an anonymous panel arrives with no actor
+    and must not walk through a role blocklist."""
+    if not actor or (actor.get('role') or '') not in ('parent', 'adult'):
+        return {'status': 'refused',
+                'message': 'Only a parent or adult can start a mission.'}
+    from services import agent_tools as _v1
+    return _v1.handle_launch_mission({'goal': goal, 'thread_title': thread_title,
+                                      '_member_id': actor.get('id')})
+
+
 def close_thread(thread_title: str, state: str = None,
                  acting_member: dict = None) -> Dict[str, Any]:
     """End a thread — `done` when it resolved, `dropped` when it didn't and
@@ -4046,6 +4058,18 @@ def get_available_tools() -> List[Dict]:
                     "intent": {"type": "string", "description": "What the message should do, if said — e.g. 'ask when they can come back'."}
                 },
                 "required": ["thread_title"]
+            }
+        },
+        {
+            "name": "launch_mission",
+            "description": "Starts a multi-step Argyle MISSION for a bigger goal ('plan the birthday party', 'find someone to fix the fence'): Argyle researches, compares and drafts over the next hour and brings back proposals a parent approves on the Missions page. Nothing is booked, sent or paid automatically — never promise it will be. Parent/adult only.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "goal": {"type": "string", "description": "What the mission should achieve."},
+                    "thread_title": {"type": "string", "description": "Existing thread it belongs to, if the user named one (fuzzy matched)."}
+                },
+                "required": ["goal"]
             }
         },
         {

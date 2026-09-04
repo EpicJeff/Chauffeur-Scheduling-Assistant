@@ -6452,6 +6452,31 @@ Settings field is Optional and POST /api/settings accepts it) falls back to
 the default instead of crashing the sweep (v2.430.0), and the page's save
 now surfaces a refused write instead of looking saved.
 
+**Turning a thread into a mission** (v2.457.9 — a mission-engine doorway,
+`services/missions.py`, `services/agent_tools.py`, `services/agent_tools_v2.py`,
+`services/agent_router.py`, `templates/threads.html`; the mission engine
+itself — launch/step/tick, caps, the pro-pool-only rule, `/missions`,
+`/api/missions/*` — predates this doc entry). Each open thread's action row
+grows a **Work this** button (`POST /api/missions/launch` with
+`origin_kind: 'thread', origin_ref: <thread id>`, goal templated as "Advance
+this thread: {title} — {goal}") that hands the thread to the mission
+engine's research/compare/draft loop; nothing executes without a parent's
+approval on `/missions`. The same capability is a chat tool,
+`launch_mission({goal, thread_title?})`, wired into **both** agent stacks per
+the two-stacks law: v1 (`agent_tools.TOOL_SCHEMAS`/`TOOL_HANDLERS`,
+`handle_launch_mission` — the v1 loop is admin-only trusted context, so it
+does no role check of its own, same reasoning as `handle_send_family_message`)
+and v2 (`agent_tools_v2.launch_mission`, dispatched in `agent_router.py`'s
+allowlisted elif chain next to `draft_thread_message`). The v2 wrapper gates
+the same way the other thread tools do — a resolved parent/adult only,
+refusing both an unresolved actor (`/api/chat` is WALL_OR_SERVICE, so an
+anonymous wall panel arrives with actor None) and a child/helper/guest —
+never a role blocklist. A given `thread_title` is fuzzy-matched against open
+threads by `missions._match_thread` (exact-lowercase title, else a unique
+substring; a tie matches nothing): a hit sets `origin_kind: 'thread'`; no
+unambiguous match falls back to `origin_kind: 'chat'` rather than refusing
+outright.
+
 ## Negotiation — the smallest change that makes a day work (v2.431.0–v2.432.0 — `services/negotiation.py`, `services/solve_pack.py`, `services/coverage_options.py`, `services/watchers.py`, `main.py` `/api/negotiation/*`, `templates/dashboard.html`, `templates/mind.html`)
 
 `services/coverage_options.py` softens an unassigned event with a ladder, but

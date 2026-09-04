@@ -860,6 +860,12 @@ class RestoreEventTool(BaseModel):
     event_name: str = Field(..., description="The name of the event or a substring of it.")
     target_date: Optional[str] = Field("today", description="The date of the occurrence.")
 
+class LaunchMissionTool(BaseModel):
+    """Start a multi-step Argyle mission (research, compare, draft, propose).
+    Parent/adult only. Nothing executes without human approval."""
+    goal: str = Field(description="What the mission should achieve, in one sentence.")
+    thread_title: Optional[str] = Field(None, description="Existing thread this belongs to, if any (fuzzy matched).")
+
 # A unified schema registry
 TOOL_SCHEMAS = {
     "start_drive": StartDriveTool.model_json_schema(),
@@ -960,6 +966,7 @@ TOOL_SCHEMAS = {
     "clear_dish_prep": ClearDishPrepTool.model_json_schema(),
     "get_prep_ahead": GetPrepAheadTool.model_json_schema(),
     "schedule_shopping_trip": ScheduleShoppingTripTool.model_json_schema(),
+    "launch_mission": LaunchMissionTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -2376,6 +2383,21 @@ def handle_restore_event(args: dict) -> dict:
                                          args.get("target_date") or "today",
                                          restore=True)
 
+def handle_launch_mission(args: dict) -> dict:
+    # v1 loop is admin-only (dashboard/HA voice), so no acting-member gate is
+    # needed here — same "trusted context" reasoning as handle_send_family_message
+    # and handle_cancel_event. _member_id rides through as attribution only.
+    from services import missions, storage as _st
+    thread = None
+    title = (args.get('thread_title') or '').strip()
+    if title:
+        thread = missions._match_thread(title)
+    return missions.launch(args.get('goal') or '',
+                           origin_kind='thread' if thread else 'chat',
+                           origin_ref=thread['id'] if thread else None,
+                           created_by=args.get('_member_id'),
+                           tier='mission')
+
 TOOL_HANDLERS = {
     "start_drive": handle_start_drive,
     "update_drive_status": handle_update_drive_status,
@@ -2475,6 +2497,7 @@ TOOL_HANDLERS = {
     "clear_dish_prep": handle_clear_dish_prep,
     "get_prep_ahead": handle_get_prep_ahead,
     "schedule_shopping_trip": handle_schedule_shopping_trip,
+    "launch_mission": handle_launch_mission,
 }
 
 def execute_tool(name: str, args: dict) -> dict:
