@@ -293,6 +293,64 @@ def scenario_pro_cap_exhausted_pauses_without_calling_llm():
     check(row['step_count'] == before, "step_count untouched -- no LLM call happened")
 
 
+def _enable(extra=None):
+    s = {'missions_enabled': True, 'llm_gemini_api_key': 'FREE',
+         'llm_gemini_paid_api_key': 'PAID'}
+    s.update(extra or {})
+    storage.get_settings = lambda: s      # harness already stubs get_settings
+    return s
+
+
+def scenario_launch_gates():
+    _reset()
+    storage.get_settings = lambda: {}
+    check(missions.launch('x')['status'] == 'disabled', "OFF means off")
+    _enable({'llm_gemini_paid_api_key': ''})
+    check(missions.launch('x')['status'] == 'no_key',
+          "mission tier without a paid key refuses at launch")
+    _enable()
+    check(missions.launch('  ')['status'] == 'empty', "blank goal refused")
+    got = missions.launch('plan the party', created_by='mom')
+    check(got['status'] == 'launched' and storage.get_mission(got['mission_id']),
+          "launch creates a running mission")
+    storage.set_app_state(f"mission_calls:{date.today().isoformat()}",
+                          {'launch': missions.CAPS_DEFAULT['launch']})
+    check(missions.launch('another')['status'] == 'capped', "daily launch cap")
+
+
+def scenario_tick_advances_one_mission_serially():
+    _reset()
+    _enable()
+    storage.set_app_state(f"mission_calls:{date.today().isoformat()}", {})
+    a = missions.launch('first', created_by='mom')['mission_id']
+    b = missions.launch('second', created_by='mom')['mission_id']
+    seen = []
+    def fake(mission, system, user, settings):
+        seen.append(mission['id'])
+        return {'action': 'ask_user', 'question': 'q?'}
+    missions._llm = fake
+    missions.tick()
+    check(seen and all(x == seen[0] for x in seen),
+          f"one tick works ONE mission only, got {seen}")
+    check(len(seen) == 1, "ask_user leaves running-state, tick stops advancing")
+    other = b if seen[0] == a else a
+    check(storage.get_mission(other)['status'] == 'running',
+          "the queued mission waits its turn untouched")
+
+
+def scenario_tick_promotes_due_retries_and_respects_disabled():
+    _reset()
+    storage.get_settings = lambda: {}
+    check(missions.tick()['status'] == 'disabled', "tick is inert when OFF")
+    _enable()
+    mid = _mk()
+    storage.update_mission(mid, {'status': 'waiting_retry', 'retry_at': 1.0})
+    missions._llm = _script({'action': 'finish', 'summary': 'ok'})
+    missions.tick()
+    check(storage.get_mission(mid)['status'] == 'done',
+          "a due retry re-enters the loop and can finish")
+
+
 if __name__ == '__main__':
     scenario_mission_rows_round_trip()
     scenario_prune_spares_active_and_steps_follow()
@@ -309,4 +367,7 @@ if __name__ == '__main__':
     scenario_draft_origin_thread_wins_over_decoy()
     scenario_research_action_dispatches_and_records()
     scenario_pro_cap_exhausted_pauses_without_calling_llm()
+    scenario_launch_gates()
+    scenario_tick_advances_one_mission_serially()
+    scenario_tick_promotes_due_retries_and_respects_disabled()
     print("test_missions_engine OK")

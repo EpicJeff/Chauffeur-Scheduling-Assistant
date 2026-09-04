@@ -271,3 +271,58 @@ def step(mission: dict) -> dict:
     storage.add_mission_step(mid, {'kind': 'note', 'name': 'unparsed',
                                    'result_json': {'got': _compact(res, 300)}})
     return storage.get_mission(mid)
+
+
+def launch(goal: str, origin_kind: str = 'manual', origin_ref=None,
+           created_by=None, tier: str = 'mission') -> dict:
+    settings = storage.get_settings() or {}
+    if not settings.get('missions_enabled', False):
+        return {'status': 'disabled'}
+    goal = (goal or '').strip()
+    if not goal:
+        return {'status': 'empty'}
+    if tier != 'flash' and not model_pools.api_key_for_pool('pro', settings):
+        return {'status': 'no_key',
+                'message': 'Missions need the paid Gemini key (Config → Missions).'}
+    cap = int(settings.get('mission_cap_launch', CAPS_DEFAULT['launch']))
+    if not _bump_call('launch', cap):
+        return {'status': 'capped',
+                'message': f"That's {cap} missions today — the cap resets tomorrow."}
+    mid = storage.add_mission({'goal': goal, 'origin_kind': origin_kind,
+                               'origin_ref': origin_ref, 'created_by': created_by,
+                               'tier': tier})
+    logger.info(f"[missions] launched {mid} ({origin_kind}): {goal[:80]}")
+    return {'status': 'launched', 'mission_id': mid}
+
+
+def tick(now: datetime.datetime = None) -> dict:
+    """The one entry the push loop calls (mirrors mind.tick). All gating —
+    enabled flag, retry promotion, one-mission-at-a-time, steps-per-tick —
+    lives here so main.py stays a two-line block and tests drive this."""
+    now = now or datetime.datetime.now()
+    settings = storage.get_settings() or {}
+    if not settings.get('missions_enabled', False):
+        return {'status': 'disabled'}
+    ts = now.timestamp()
+
+    for row in storage.get_missions(status='waiting_retry'):
+        if (row.get('retry_at') or 0) <= ts:
+            storage.update_mission(row['id'], {'status': 'running',
+                                               'retry_at': None})
+
+    running = sorted(storage.get_missions(status='running'),
+                     key=lambda r: r.get('created_at') or 0)
+    out = {'status': 'ticked', 'advanced': 0}
+    if running:
+        mission = running[0]
+        for _ in range(STEPS_PER_TICK):
+            mission = step(mission)
+            out['advanced'] += 1
+            if mission.get('status') != 'running':
+                break
+    else:
+        cutoff = ts - RETENTION_DAYS * 86400
+        pruned = storage.prune_missions(cutoff)
+        if pruned:
+            out['pruned'] = pruned
+    return out
