@@ -114,6 +114,7 @@ The per-mission step cap times pro pricing is the bank-account guard; caps are
 enforced in the engine, not the prompt. These defaults are uncalibrated
 starting values (user's call at review: no way to judge without trying) —
 settings-editable on /missions, revisit after the first real missions.
+`missions_enabled` itself shipped default-OFF, per the mind precedent — the flip is the user's act, not the arc's.
 
 ## Doorways (v1 ships three, all thin)
 
