@@ -113,6 +113,17 @@ def scenario_ack_and_drop():
     check(storage.get_mission(mid)['acknowledged_at'], "ack quiets the finding")
 
 
+def scenario_page_route_serves_template():
+    import main, os
+    tpl = os.path.join(os.path.dirname(main.__file__), 'templates', 'missions.html')
+    check(os.path.exists(tpl), "missions.html exists")
+    html = open(tpl, encoding='utf-8').read()
+    for needle in ('/api/missions/admin', '/api/missions/launch', 'waiting_user'):
+        check(needle in html, f"page wires {needle}")
+    for banned in ('alert(', 'confirm(', 'prompt('):
+        check(banned not in html, f"no browser dialogs ({banned})")
+
+
 if __name__ == '__main__':
     scenario_child_cannot_launch()
     scenario_parent_launches_and_answers()
@@ -120,4 +131,5 @@ if __name__ == '__main__':
     scenario_admin_refuses_a_child()
     scenario_proposal_act_requires_a_real_mission()
     scenario_ack_and_drop()
+    scenario_page_route_serves_template()
     print("test_missions_endpoints OK")

@@ -19,13 +19,18 @@
     {% include 'nav.html' %}
 
     <div class="flex-1 overflow-y-auto bg-gray-900/50">
-        <!-- Task 6 (spec: 2026-09-04-mission-engine-design) ships the dials
-             below so the six settings the endpoints/engine already read have
-             a hand path. Task 7 builds the rest of this surface around them:
-             the launch card, the running transcript, proposal approve/dismiss,
-             the answer box and history — polling GET /api/missions/admin and
-             posting to the routes in main.py's Missions block. -->
-        <div x-data="missionsSettings()" x-init="load()" class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
+        <!-- Task 7 (spec: 2026-09-04-mission-engine-design) builds the
+             operating surface around Task 6's dials below: a launch card
+             (POST /api/missions/launch), the active lane (GET
+             /api/missions/admin, polled every 15s while the tab is
+             visible) with each mission's step transcript, proposal
+             Approve/Dismiss (POST .../proposals/{pid}/act), an answer box
+             that appears once a mission is waiting_user (POST
+             .../answer), Drop (POST .../drop), and history with OK acks
+             (POST .../ack). Every model/user string below renders through
+             x-text or JSON.stringify into x-text — never x-html/innerHTML
+             — because a transcript carries raw LLM and thread output. -->
+        <div x-data="missionsSettings()" x-init="load(); loadAdmin(); startPolling()" class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
 
             <h2 class="panel-page-title">Missions</h2>
             <p class="text-sm text-gray-500 mb-5">
@@ -89,6 +94,203 @@
                     before it must stop; total paid-model calls per day across all missions.
                 </p>
             </div>
+
+            <!-- Admin-only sections: GET /api/missions/admin 403s a non-parent
+                 (same gate as the Mind's /api/mind/admin), and the settings
+                 form above must keep working regardless. -->
+            <p class="text-xs text-gray-500 italic bg-gray-800/60 border border-gray-700 rounded-xl px-4 py-3 mt-6"
+                x-show="adminChecked && !adminAllowed" x-cloak>
+                Only a parent can launch and manage missions, and see their
+                history. The dials above still work for you.
+            </p>
+
+            <template x-if="adminChecked && adminAllowed">
+                <div class="mt-6 space-y-6">
+
+                    <!-- Launch card: POST /api/missions/launch {goal, tier}. -->
+                    <div class="bg-gray-800 rounded-2xl border border-gray-700 p-4">
+                        <div class="text-sm font-bold text-gray-200 mb-2">Launch a mission</div>
+                        <textarea x-model="launchGoal" rows="2"
+                            placeholder="What should Argyle work on? (e.g. Find and compare weekend flights to Denver in October)"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm resize-none"></textarea>
+                        <div class="flex gap-2.5 mt-2.5">
+                            <select x-model="launchTier"
+                                class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 text-white text-sm">
+                                <option value="mission">Pro (paid)</option>
+                                <option value="flash">Flash (free, benchmark)</option>
+                            </select>
+                            <button @click="launch()" :disabled="launching || !s.missions_enabled"
+                                class="shrink-0 text-sm font-bold px-4 py-2 rounded-lg bg-blue-600 text-white active:bg-blue-700 disabled:bg-gray-800 disabled:text-gray-500"
+                                x-text="launching ? 'Launching…' : 'Launch'"></button>
+                        </div>
+                        <p class="text-[11px] text-amber-400 mt-1.5" x-show="!s.missions_enabled">
+                            Missions are off — turn them on in Settings above first.
+                        </p>
+                    </div>
+
+                    <!-- Active missions: each card is a mission plus its step
+                         transcript. A step's kind is one of llm | tool |
+                         proposal | draft | ask | note; proposal/draft/ask
+                         render specially below, everything else is a
+                         compact JSON.stringify of result_json (x-text, never
+                         innerHTML — a transcript carries raw LLM output). -->
+                    <div>
+                        <div class="text-xs font-black uppercase tracking-widest text-violet-400 px-1 mb-2">
+                            Active
+                        </div>
+                        <p class="text-xs text-gray-500 italic px-1" x-show="!active.length">
+                            Nothing running right now.
+                        </p>
+                        <div class="space-y-2">
+                            <template x-for="mission in active" :key="mission.id">
+                                <div class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
+                                    <div class="flex items-start justify-between gap-2">
+                                        <div class="text-sm text-gray-100 font-semibold" x-text="mission.goal"></div>
+                                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0"
+                                            :class="statusChipClass(mission.status)" x-text="mission.status"></span>
+                                    </div>
+                                    <div class="text-[11px] text-gray-600 mt-1"
+                                        x-text="(mission.tier === 'flash' ? 'Flash' : 'Pro') + ' · started ' + fmtTs(mission.created_at)"></div>
+
+                                    <template x-for="step in mission.steps" :key="step.id">
+                                        <div class="border-t border-gray-800 pt-1.5 mt-1.5">
+                                            <div class="flex items-center gap-1.5 flex-wrap">
+                                                <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-500"
+                                                    x-text="'#' + step.idx"></span>
+                                                <span class="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                                                    :class="stepKindClass(step.kind)" x-text="step.kind"></span>
+                                                <span class="text-xs font-semibold text-gray-300" x-text="step.name || ''"></span>
+                                            </div>
+
+                                            <!-- proposal: card.status is a creation-time snapshot that never
+                                                 changes (build_card freezes it as 'proposed' forever), so
+                                                 whether this one still needs a tap is read off the transcript
+                                                 itself — a later note step records the act. -->
+                                            <template x-if="step.kind === 'proposal'">
+                                                <div class="mt-1">
+                                                    <div class="text-sm text-violet-300"
+                                                        x-text="'Argyle proposes: ' + (((step.result_json || {}).card || {}).title || step.name)"></div>
+                                                    <div class="text-xs text-gray-400 italic mt-0.5"
+                                                        x-show="(step.result_json || {}).why"
+                                                        x-text="'Why: ' + (step.result_json || {}).why"></div>
+                                                    <template x-if="!proposalOutcome(mission, step)">
+                                                        <div class="flex gap-2 mt-1.5">
+                                                            <button
+                                                                @click="proposalAct(mission.id, (step.result_json || {}).proposal_id, 'approve')"
+                                                                :disabled="!!busy[mission.id]"
+                                                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700 disabled:bg-gray-800 disabled:text-gray-500">Approve</button>
+                                                            <button
+                                                                @click="proposalAct(mission.id, (step.result_json || {}).proposal_id, 'dismiss')"
+                                                                :disabled="!!busy[mission.id]"
+                                                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Dismiss</button>
+                                                        </div>
+                                                    </template>
+                                                    <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 inline-block mt-1"
+                                                        x-show="proposalOutcome(mission, step)"
+                                                        x-text="proposalOutcome(mission, step)"></span>
+                                                </div>
+                                            </template>
+
+                                            <!-- draft: threads.draft_message's {status, subject, body} -->
+                                            <template x-if="step.kind === 'draft'">
+                                                <div class="mt-1">
+                                                    <template x-if="(step.result_json || {}).status === 'ok'">
+                                                        <blockquote class="border-l-2 border-gray-700 pl-2.5 text-xs text-gray-300 space-y-0.5">
+                                                            <div class="font-semibold text-gray-200"
+                                                                x-text="(step.result_json || {}).subject"></div>
+                                                            <div x-text="(step.result_json || {}).body"></div>
+                                                        </blockquote>
+                                                    </template>
+                                                    <div class="text-xs text-gray-500 italic" x-show="(step.result_json || {}).status !== 'ok'"
+                                                        x-text="'Draft failed: ' + ((step.result_json || {}).reason || 'unknown reason')"></div>
+                                                    <p class="text-[11px] text-gray-500 italic mt-1" x-show="(step.result_json || {}).status === 'ok'">
+                                                        Argyle never sends mail — copy this into the thread yourself.
+                                                    </p>
+                                                </div>
+                                            </template>
+
+                                            <!-- ask: the question that (while the mission is waiting_user)
+                                                 also heads the answer box below -->
+                                            <template x-if="step.kind === 'ask'">
+                                                <div class="text-sm text-amber-200 mt-1"
+                                                    x-text="'Argyle asks: ' + ((step.result_json || {}).question || '')"></div>
+                                            </template>
+
+                                            <!-- note: the two interactions this page itself writes get plain
+                                                 English; every other note (and every llm/tool step) falls
+                                                 through to compact JSON below. -->
+                                            <template x-if="step.kind === 'note' && step.name === 'user_answer'">
+                                                <div class="text-sm text-teal-200 mt-1"
+                                                    x-text="'You answered: ' + ((step.result_json || {}).text || '')"></div>
+                                            </template>
+                                            <template x-if="step.kind === 'note' && step.name === 'proposal_approve'">
+                                                <div class="text-xs text-gray-400 italic mt-1">Approved that proposal.</div>
+                                            </template>
+                                            <template x-if="step.kind === 'note' && step.name === 'proposal_dismiss'">
+                                                <div class="text-xs text-gray-400 italic mt-1">Dismissed that proposal.</div>
+                                            </template>
+
+                                            <div class="text-[11px] text-gray-500 font-mono mt-0.5 break-all"
+                                                x-show="!['proposal', 'draft', 'ask'].includes(step.kind)
+                                                        && !(step.kind === 'note' && ['user_answer', 'proposal_approve', 'proposal_dismiss'].includes(step.name))"
+                                                x-text="stepResultText(step)"></div>
+                                        </div>
+                                    </template>
+
+                                    <!-- Answer box: only while Argyle is actually waiting on one. -->
+                                    <div class="mt-2 bg-gray-800/60 border border-amber-700/40 rounded-xl p-3"
+                                        x-show="mission.status === 'waiting_user'" x-cloak>
+                                        <div class="text-xs font-semibold text-amber-300 mb-1.5"
+                                            x-text="lastAskQuestion(mission) || 'Argyle is waiting on an answer.'"></div>
+                                        <div class="flex gap-2">
+                                            <input type="text" x-model="answerText[mission.id]"
+                                                @keydown.enter="sendAnswer(mission.id)" placeholder="Type your answer"
+                                                class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                                            <button @click="sendAnswer(mission.id)" :disabled="!!busy[mission.id]"
+                                                class="shrink-0 text-xs font-bold px-3 py-2 rounded-lg bg-blue-600 text-white active:bg-blue-700 disabled:bg-gray-800 disabled:text-gray-500">Send</button>
+                                        </div>
+                                    </div>
+
+                                    <div class="flex flex-wrap gap-2 mt-2">
+                                        <button @click="drop(mission.id)" :disabled="!!busy[mission.id]"
+                                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Drop</button>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- History: last 60 terminal rows (done | blocked | dropped). -->
+                    <div>
+                        <div class="text-xs font-black uppercase tracking-widest text-gray-500 px-1 mb-2">History</div>
+                        <p class="text-xs text-gray-500 italic px-1" x-show="!history.length">
+                            Nothing finished yet.
+                        </p>
+                        <div class="space-y-1.5">
+                            <template x-for="row in history" :key="row.id">
+                                <div class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 flex items-start justify-between gap-2">
+                                    <div>
+                                        <div class="text-sm text-gray-200" x-text="row.goal"></div>
+                                        <div class="text-[11px] text-gray-400 mt-0.5" x-show="row.summary" x-text="row.summary"></div>
+                                        <div class="text-[11px] text-red-400 mt-0.5" x-show="row.error" x-text="row.error"></div>
+                                        <div class="text-[11px] text-gray-500 italic mt-0.5" x-show="!row.summary && !row.error">
+                                            Dropped, no summary.
+                                        </div>
+                                        <div class="text-[11px] text-gray-500 mt-0.5" x-text="fmtTs(row.finished_at)"></div>
+                                    </div>
+                                    <div class="flex flex-col items-end gap-1.5 shrink-0">
+                                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                                            :class="statusChipClass(row.status)" x-text="row.status"></span>
+                                        <button x-show="!row.acknowledged_at" @click="ack(row.id)"
+                                            class="text-xs font-bold px-2.5 py-1 rounded-lg bg-gray-700 text-gray-200 active:bg-gray-600">OK</button>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                </div>
+            </template>
         </div>
     </div>
     {% include 'components/control_center.html' %}
@@ -133,6 +335,188 @@
                     } catch (e) {
                         showGlobalAlert('Could not save that just now.');
                     }
+                },
+
+                // --- Admin-only payload (403s a non-parent viewer; the settings
+                // form above must keep working regardless — see loadAdmin()). ---
+                adminChecked: false,
+                adminAllowed: false,
+                active: [],
+                history: [],
+                launchGoal: '',
+                launchTier: 'mission',   // 'mission' = Pro (paid, default); 'flash' = free benchmark
+                launching: false,
+                answerText: {},   // mission id -> draft answer text
+                busy: {},         // mission id -> a write is in flight for it
+
+                async loadAdmin() {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/missions/admin');
+                        if (!r.ok) { this.adminAllowed = false; this.adminChecked = true; return; }
+                        const d = await r.json();
+                        this.active = d.active || [];
+                        this.history = d.history || [];
+                        this.adminAllowed = true;
+                    } catch (e) {
+                        this.adminAllowed = false;
+                    }
+                    this.adminChecked = true;
+                },
+
+                // Missions run in the background over many ticks — a parent
+                // watching this page needs to see progress without a manual
+                // refresh, but a backgrounded tab has no reason to keep polling.
+                startPolling() {
+                    setInterval(() => {
+                        if (document.visibilityState === 'visible') this.loadAdmin();
+                    }, 15000);
+                },
+
+                async launch() {
+                    const goal = (this.launchGoal || '').trim();
+                    if (!goal) { showGlobalAlert('Say what the mission should do first.'); return; }
+                    this.launching = true;
+                    try {
+                        const r = await fetch(this.apiBase + 'api/missions/launch', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ goal, tier: this.launchTier })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok) {
+                            showGlobalAlert(d.detail || "Argyle couldn't launch that mission.");
+                        } else {
+                            this.launchGoal = '';
+                        }
+                    } catch (e) {
+                        showGlobalAlert("Argyle couldn't launch that mission.");
+                    }
+                    this.launching = false;
+                    this.loadAdmin();
+                },
+
+                async proposalAct(missionId, proposalId, act) {
+                    this.busy[missionId] = true;
+                    try {
+                        const r = await fetch(this.apiBase + `api/missions/${missionId}/proposals/${proposalId}/act`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ act })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok) showGlobalAlert(d.detail || "Couldn't do that just now.");
+                    } catch (e) {
+                        showGlobalAlert("Couldn't do that just now.");
+                    }
+                    delete this.busy[missionId];
+                    this.loadAdmin();
+                },
+
+                async sendAnswer(missionId) {
+                    const text = (this.answerText[missionId] || '').trim();
+                    if (!text) return;
+                    this.busy[missionId] = true;
+                    try {
+                        const r = await fetch(this.apiBase + `api/missions/${missionId}/answer`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ text })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok) {
+                            showGlobalAlert(d.detail || "Couldn't send that.");
+                        } else {
+                            this.answerText[missionId] = '';
+                        }
+                    } catch (e) {
+                        showGlobalAlert("Couldn't send that.");
+                    }
+                    delete this.busy[missionId];
+                    this.loadAdmin();
+                },
+
+                async drop(missionId) {
+                    this.busy[missionId] = true;
+                    try {
+                        const r = await fetch(this.apiBase + `api/missions/${missionId}/drop`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+                        });
+                        if (!r.ok) {
+                            const d = await r.json().catch(() => ({}));
+                            showGlobalAlert(d.detail || "Couldn't drop that.");
+                        }
+                    } catch (e) {
+                        showGlobalAlert("Couldn't drop that.");
+                    }
+                    delete this.busy[missionId];
+                    this.loadAdmin();
+                },
+
+                async ack(missionId) {
+                    try {
+                        const r = await fetch(this.apiBase + `api/missions/${missionId}/ack`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+                        });
+                        if (!r.ok) {
+                            const d = await r.json().catch(() => ({}));
+                            showGlobalAlert(d.detail || "Couldn't clear that.");
+                        }
+                    } catch (e) {
+                        showGlobalAlert("Couldn't clear that.");
+                    }
+                    this.loadAdmin();
+                },
+
+                // ---- Display helpers (pure — no fetches) ----
+
+                statusChipClass(status) {
+                    if (status === 'running') return 'bg-blue-500/20 text-blue-300';
+                    if (status === 'waiting_user') return 'bg-amber-500/20 text-amber-300';
+                    if (status === 'waiting_retry') return 'bg-gray-700 text-gray-400';
+                    if (status === 'done') return 'bg-teal-500/20 text-teal-300';
+                    if (status === 'blocked') return 'bg-red-500/20 text-red-300';
+                    return 'bg-gray-700 text-gray-300';   // dropped / unknown
+                },
+
+                stepKindClass(kind) {
+                    if (kind === 'proposal') return 'bg-violet-500/20 text-violet-300';
+                    if (kind === 'ask') return 'bg-amber-500/20 text-amber-300';
+                    if (kind === 'draft') return 'bg-teal-500/20 text-teal-300';
+                    return 'bg-gray-700 text-gray-300';   // llm | tool | note
+                },
+
+                stepResultText(step) {
+                    const v = step.result_json;
+                    if (v === null || v === undefined) return '';
+                    let s;
+                    try { s = JSON.stringify(v); } catch (e) { s = String(v); }
+                    return s.length > 400 ? s.slice(0, 400) + '…' : s;
+                },
+
+                lastAskQuestion(mission) {
+                    const asks = (mission.steps || []).filter(s => s.kind === 'ask');
+                    if (!asks.length) return '';
+                    return (asks[asks.length - 1].result_json || {}).question || '';
+                },
+
+                // A proposal step's own result_json.card is a creation-time
+                // snapshot (build_card always writes status "proposed" — it is
+                // never rewritten later), so whether it still needs a tap has
+                // to be read off the transcript: missions_proposal_act appends
+                // a note step recording whichever act actually happened.
+                proposalOutcome(mission, step) {
+                    const pid = (step.result_json || {}).proposal_id;
+                    if (!pid) return null;
+                    const note = (mission.steps || []).find(s => s.kind === 'note'
+                        && (s.name === 'proposal_approve' || s.name === 'proposal_dismiss')
+                        && (s.result_json || {}).proposal_id === pid);
+                    if (!note) return null;
+                    return note.name === 'proposal_approve' ? 'approved' : 'dismissed';
+                },
+
+                fmtTs(ts) {
+                    if (!ts) return '';
+                    try {
+                        return new Date(ts * 1000).toLocaleString(undefined,
+                            { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+                    } catch (e) { return ''; }
                 }
             }
         }
