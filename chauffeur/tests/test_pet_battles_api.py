@@ -232,7 +232,7 @@ def test_there_is_a_way_in_by_hand():
     reachable only from an overlay somebody has to know exists."""
     base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         'templates')
-    for page in ('app.html', 'home.html', 'chores.html', 'routines.html'):
+    for page in ('app.html', 'home.html', 'chores.html', 'components/routines_page.html'):
         src = open(os.path.join(base, page), encoding='utf-8').read()
         check("components/pet_battle.html" in src,
               "%s cannot open the arena" % page)

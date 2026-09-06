@@ -306,7 +306,7 @@ def scenario_editor_is_reachable_by_hand():
     check('promptConfirm' in comp, 'closing a dirty editor asks, never discards')
 
     # Every host page includes the overlay...
-    for page in ('app.html', 'home.html', 'chores.html', 'routines.html'):
+    for page in ('app.html', 'home.html', 'chores.html', 'components/routines_page.html'):
         check("components/avatar_editor.html" in read(page),
               f'{page} mounts the editor overlay')
     # ...and every prominent face is a door.

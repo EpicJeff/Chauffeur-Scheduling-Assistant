@@ -444,7 +444,7 @@ def test_the_guide_exists_and_is_reachable_from_the_game():
     guide = open(os.path.join(comp, 'pet_guide.html'), encoding='utf-8').read()
     check('openPetGuide' in guide and 'maybeOpenPetGuide' in guide,
           "the guide cannot be opened")
-    for page in ('app.html', 'home.html', 'chores.html', 'routines.html'):
+    for page in ('app.html', 'home.html', 'chores.html', 'components/routines_page.html'):
         src = open(os.path.join(here, 'templates', page), encoding='utf-8').read()
         check("components/pet_guide.html" in src,
               "%s cannot show the rules" % page)

@@ -1689,6 +1689,19 @@ def settings_page(request: Request):
 def mind_page(request: Request):
     return templates.TemplateResponse(request=request, name="mind.html")
 
+@app.get("/rhythms")
+def rhythms_page(request: Request):
+    """Routines + Programs side by side — presentation-only merge of the same
+    components the standalone pages serve."""
+    return templates.TemplateResponse(request=request, name="rhythms.html")
+
+
+@app.get("/work")
+def work_page(request: Request):
+    """Mind + Missions + Threads on one desk — three columns of the same
+    components the standalone pages serve."""
+    return templates.TemplateResponse(request=request, name="work.html")
+
 @app.get("/missions")
 def missions_page(request: Request):
     return templates.TemplateResponse(request=request, name="missions.html")

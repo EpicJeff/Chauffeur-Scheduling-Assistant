@@ -131,7 +131,7 @@ def scenario_every_inline_script_still_parses():
         headers = {}
 
     tmp = tempfile.mkdtemp()
-    for name in ('app.html', 'programs.html'):
+    for name in ('app.html', 'components/programs_page.html'):
         html = main.templates.env.get_template(name).render(request=_R())
         blocks = re.findall(r'<script(?![^>]*src=)[^>]*>(.*?)</script>',
                             html, re.S)
@@ -139,7 +139,7 @@ def scenario_every_inline_script_still_parses():
         for i, block in enumerate(blocks):
             if not block.strip():
                 continue
-            path = os.path.join(tmp, f'{name}.{i}.js')
+            path = os.path.join(tmp, f'{os.path.basename(name)}.{i}.js')
             with open(path, 'w', encoding='utf-8') as f:
                 f.write(block)
             res = subprocess.run([node, '--check', path],

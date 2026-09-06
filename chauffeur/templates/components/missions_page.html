@@ -1,0 +1,458 @@
+{# The whole missions page body + its Alpine island. Included by
+   the standalone /missions wrapper AND by the combined /work page —
+   chrome (nav, control_center, hearth) belongs to the HOST page,
+   never here. #}
+        <!-- Task 7 (spec: 2026-09-04-mission-engine-design) builds the
+             operating surface around Task 6's dials below: a launch card
+             (POST /api/missions/launch), the active lane (GET
+             /api/missions/admin, polled every 15s while the tab is
+             visible) with each mission's step transcript, proposal
+             Approve/Dismiss (POST .../proposals/{pid}/act), an answer box
+             that appears once a mission is waiting_user (POST
+             .../answer), Drop (POST .../drop), and history with OK acks
+             (POST .../ack). Every model/user string below renders through
+             x-text or JSON.stringify into x-text — never x-html/innerHTML
+             — because a transcript carries raw LLM and thread output. -->
+        <div x-data="missionsSettings()" x-init="load(); loadAdmin(); startPolling()" class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
+
+            <h2 class="panel-page-title">Missions</h2>
+            <p class="text-sm text-gray-500 mb-5">
+                Argyle researches and proposes; people approve. A mission works a
+                bigger goal over many steps on the paid pro model — nothing is
+                booked, sent or paid without a tap here.
+            </p>
+
+            <div class="space-y-4">
+                <label class="flex items-center justify-between bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                    <span class="text-sm font-semibold text-gray-200">Missions are on</span>
+                    <input type="checkbox" x-model="s.missions_enabled" @change="save()"
+                        class="h-5 w-5 accent-pink-400">
+                </label>
+                <p class="text-[11px] text-gray-500 -mt-2 px-1">
+                    Off means completely off — no LLM calls, no ticks.
+                </p>
+
+                <div>
+                    <label class="block text-gray-400 mb-2 font-semibold text-xs uppercase tracking-wider">Paid
+                        Gemini API key</label>
+                    <input type="password" x-model="s.llm_gemini_paid_api_key" @change="save()"
+                        placeholder="Billed key, used only by missions"
+                        class="w-full bg-gray-900 border border-gray-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono text-sm">
+                    <p class="text-[11px] text-gray-500 mt-1">
+                        Billed key used ONLY by missions (the pro pool). Regular Chauffeur
+                        traffic stays on the free key.
+                    </p>
+                </div>
+
+                <div>
+                    <div class="text-xs font-semibold text-gray-400 mb-1">Pro model pool</div>
+                    <input type="text" x-model="s.model_pool_pro" @change="save()"
+                        placeholder="gemini-3.1-pro, gemini-2.5-pro"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm">
+                    <p class="text-[11px] text-gray-500 mt-1">
+                        Comma-separated pro models missions may use (default gemini-3.1-pro,
+                        gemini-2.5-pro).
+                    </p>
+                </div>
+
+                <div class="grid grid-cols-3 gap-3">
+                    <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                        <div class="text-xs font-semibold text-gray-400 mb-1">Daily launch cap</div>
+                        <input type="number" min="0" x-model.number="s.mission_cap_launch" @change="save()"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
+                    </div>
+                    <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                        <div class="text-xs font-semibold text-gray-400 mb-1">Steps per mission</div>
+                        <input type="number" min="0" x-model.number="s.mission_step_cap" @change="save()"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
+                    </div>
+                    <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                        <div class="text-xs font-semibold text-gray-400 mb-1">Daily pro-call cap</div>
+                        <input type="number" min="0" x-model.number="s.mission_cap_pro_calls" @change="save()"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
+                    </div>
+                </div>
+                <p class="text-[11px] text-gray-500 -mt-2 px-1">
+                    Missions that may be started per day; LLM calls one mission may spend
+                    before it must stop; total paid-model calls per day across all missions.
+                </p>
+            </div>
+
+            <!-- Admin-only sections: GET /api/missions/admin 403s a non-parent
+                 (same gate as the Mind's /api/mind/admin), and the settings
+                 form above must keep working regardless. -->
+            <p class="text-xs text-gray-500 italic bg-gray-800/60 border border-gray-700 rounded-xl px-4 py-3 mt-6"
+                x-show="adminChecked && !adminAllowed" x-cloak>
+                Only a parent can launch and manage missions, and see their
+                history. The dials above still work for you.
+            </p>
+
+            <template x-if="adminChecked && adminAllowed">
+                <div class="mt-6 space-y-6">
+
+                    <!-- Launch card: POST /api/missions/launch {goal, tier}. -->
+                    <div class="bg-gray-800 rounded-2xl border border-gray-700 p-4">
+                        <div class="text-sm font-bold text-gray-200 mb-2">Launch a mission</div>
+                        <textarea x-model="launchGoal" rows="2"
+                            placeholder="What should Argyle work on? (e.g. Find and compare weekend flights to Denver in October)"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm resize-none"></textarea>
+                        <div class="flex gap-2.5 mt-2.5">
+                            <select x-model="launchTier"
+                                class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 text-white text-sm">
+                                <option value="mission">Pro (paid)</option>
+                                <option value="flash">Flash (free, benchmark)</option>
+                            </select>
+                            <button @click="launch()" :disabled="launching || !s.missions_enabled"
+                                class="shrink-0 text-sm font-bold px-4 py-2 rounded-lg bg-blue-600 text-white active:bg-blue-700 disabled:bg-gray-800 disabled:text-gray-500"
+                                x-text="launching ? 'Launching…' : 'Launch'"></button>
+                        </div>
+                        <p class="text-[11px] text-amber-400 mt-1.5" x-show="!s.missions_enabled">
+                            Missions are off — turn them on in Settings above first.
+                        </p>
+                    </div>
+
+                    <!-- Active missions: each card is a mission plus its step
+                         transcript. A step's kind is one of llm | tool |
+                         proposal | draft | ask | note; proposal/draft/ask
+                         render specially below, everything else is a
+                         compact JSON.stringify of result_json (x-text, never
+                         innerHTML — a transcript carries raw LLM output). -->
+                    <div>
+                        <div class="text-xs font-black uppercase tracking-widest text-violet-400 px-1 mb-2">
+                            Active
+                        </div>
+                        <p class="text-xs text-gray-500 italic px-1" x-show="!active.length">
+                            Nothing running right now.
+                        </p>
+                        <div class="space-y-2">
+                            <template x-for="mission in active" :key="mission.id">
+                                <div class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
+                                    <div class="flex items-start justify-between gap-2">
+                                        <div class="text-sm text-gray-100 font-semibold" x-text="mission.goal"></div>
+                                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0"
+                                            :class="statusChipClass(mission.status)" x-text="mission.status"></span>
+                                    </div>
+                                    <div class="text-[11px] text-gray-600 mt-1"
+                                        x-text="(mission.tier === 'flash' ? 'Flash' : 'Pro') + ' · started ' + fmtTs(mission.created_at)"></div>
+
+                                    {% include 'components/mission_transcript.html' %}
+
+                                    <!-- Answer box: only while Argyle is actually waiting on one. -->
+                                    <div class="mt-2 bg-gray-800/60 border border-amber-700/40 rounded-xl p-3"
+                                        x-show="mission.status === 'waiting_user'" x-cloak>
+                                        <div class="text-xs font-semibold text-amber-300 mb-1.5"
+                                            x-text="lastAskQuestion(mission) || 'Argyle is waiting on an answer.'"></div>
+                                        <div class="flex gap-2">
+                                            <input type="text" x-model="answerText[mission.id]"
+                                                @keydown.enter="sendAnswer(mission.id)" placeholder="Type your answer"
+                                                class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                                            <button @click="sendAnswer(mission.id)" :disabled="!!busy[mission.id]"
+                                                class="shrink-0 text-xs font-bold px-3 py-2 rounded-lg bg-blue-600 text-white active:bg-blue-700 disabled:bg-gray-800 disabled:text-gray-500">Send</button>
+                                        </div>
+                                    </div>
+
+                                    <div class="flex flex-wrap gap-2 mt-2">
+                                        <button @click="drop(mission.id)" :disabled="!!busy[mission.id]"
+                                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Drop</button>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- History: last 60 terminal rows (done | blocked | dropped). -->
+                    <div>
+                        <div class="text-xs font-black uppercase tracking-widest text-gray-500 px-1 mb-2">History</div>
+                        <p class="text-xs text-gray-500 italic px-1" x-show="!history.length">
+                            Nothing finished yet.
+                        </p>
+                        <div class="space-y-1.5">
+                            <template x-for="mission in history" :key="mission.id">
+                                <div>
+                                    <div class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 flex items-start justify-between gap-2">
+                                        <div>
+                                            <div class="text-sm text-gray-200" x-text="mission.goal"></div>
+                                            <div class="text-[11px] text-gray-400 mt-0.5" x-show="mission.summary" x-text="mission.summary"></div>
+                                            <div class="text-[11px] text-red-400 mt-0.5" x-show="mission.error" x-text="mission.error"></div>
+                                            <div class="text-[11px] text-gray-500 italic mt-0.5" x-show="!mission.summary && !mission.error">
+                                                Dropped, no summary.
+                                            </div>
+                                            <div class="text-[11px] text-gray-500 mt-0.5" x-text="fmtTs(mission.finished_at)"></div>
+                                        </div>
+                                        <div class="flex flex-col items-end gap-1.5 shrink-0">
+                                            <span class="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                                                :class="statusChipClass(mission.status)" x-text="mission.status"></span>
+                                            <button x-show="!mission.acknowledged_at" @click="ack(mission.id)"
+                                                class="text-xs font-bold px-2.5 py-1 rounded-lg bg-gray-700 text-gray-200 active:bg-gray-600">OK</button>
+                                            <button @click="toggleTranscript(mission)"
+                                                class="text-xs font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700"
+                                                x-text="mission._open ? 'Hide' : 'Transcript'"></button>
+                                        </div>
+                                    </div>
+                                    <!-- The finished mission's full transcript — proposals it left
+                                         behind are still approvable from here. -->
+                                    <template x-if="mission._open && mission.steps">
+                                        <div class="bg-gray-900 border border-gray-800 rounded-2xl p-3 mt-1">
+                                    {% include 'components/mission_transcript.html' %}
+                                        </div>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                </div>
+            </template>
+        </div>
+
+    <script>
+        function missionsSettings() {
+            return {
+                apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
+                s: {
+                    missions_enabled: false, llm_gemini_paid_api_key: '',
+                    model_pool_pro: '', mission_cap_launch: 3,
+                    mission_step_cap: 40, mission_cap_pro_calls: 120
+                },
+
+                async load() {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/settings');
+                        const d = r.ok ? await r.json() : {};
+                        for (const k of Object.keys(this.s)) {
+                            if (d[k] !== undefined && d[k] !== null) this.s[k] = d[k];
+                        }
+                    } catch (e) { /* defaults already in place */ }
+                },
+
+                // Sends only the keys this page owns — /api/settings merges
+                // with exclude_unset, so no other surface's settings are at risk.
+                async save() {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/settings', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                missions_enabled: !!this.s.missions_enabled,
+                                llm_gemini_paid_api_key: this.s.llm_gemini_paid_api_key || '',
+                                model_pool_pro: this.s.model_pool_pro || '',
+                                mission_cap_launch: Math.max(0, parseInt(this.s.mission_cap_launch, 10) || 0),
+                                mission_step_cap: Math.max(0, parseInt(this.s.mission_step_cap, 10) || 0),
+                                mission_cap_pro_calls: Math.max(0, parseInt(this.s.mission_cap_pro_calls, 10) || 0)
+                            })
+                        });
+                        if (!r.ok) showGlobalAlert('Could not save that just now.');
+                    } catch (e) {
+                        showGlobalAlert('Could not save that just now.');
+                    }
+                },
+
+                // --- Admin-only payload (403s a non-parent viewer; the settings
+                // form above must keep working regardless — see loadAdmin()). ---
+                adminChecked: false,
+                adminAllowed: false,
+                active: [],
+                history: [],
+                launchGoal: '',
+                launchTier: 'mission',   // 'mission' = Pro (paid, default); 'flash' = free benchmark
+                launching: false,
+                answerText: {},   // mission id -> draft answer text
+                busy: {},         // mission id -> a write is in flight for it
+
+                async loadAdmin() {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/missions/admin');
+                        if (!r.ok) { this.adminAllowed = false; this.adminChecked = true; return; }
+                        const d = await r.json();
+                        this.active = d.active || [];
+                        this.history = d.history || [];
+                        this.adminAllowed = true;
+                    } catch (e) {
+                        this.adminAllowed = false;
+                    }
+                    this.adminChecked = true;
+                },
+
+                // Missions run in the background over many ticks — a parent
+                // watching this page needs to see progress without a manual
+                // refresh, but a backgrounded tab has no reason to keep polling.
+                startPolling() {
+                    setInterval(() => {
+                        if (document.visibilityState === 'visible') this.loadAdmin();
+                    }, 15000);
+                },
+
+                async launch() {
+                    const goal = (this.launchGoal || '').trim();
+                    if (!goal) { showGlobalAlert('Say what the mission should do first.'); return; }
+                    this.launching = true;
+                    try {
+                        const r = await fetch(this.apiBase + 'api/missions/launch', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ goal, tier: this.launchTier })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok) {
+                            showGlobalAlert(d.detail || "Argyle couldn't launch that mission.");
+                        } else {
+                            this.launchGoal = '';
+                        }
+                    } catch (e) {
+                        showGlobalAlert("Argyle couldn't launch that mission.");
+                    }
+                    this.launching = false;
+                    this.loadAdmin();
+                },
+
+                async toggleTranscript(m) {
+                    if (m._open) { m._open = false; return; }
+                    if (!m.steps) {
+                        try {
+                            const r = await fetch(this.apiBase + 'api/missions/' + m.id,
+                                { credentials: 'same-origin' });
+                            if (!r.ok) { showGlobalAlert('Could not load the transcript'); return; }
+                            const d = await r.json();
+                            m.steps = d.steps || [];
+                        } catch (e) { showGlobalAlert('Could not load the transcript'); return; }
+                    }
+                    m._open = true;
+                },
+
+                async proposalAct(missionId, proposalId, act) {
+                    this.busy[missionId] = true;
+                    try {
+                        const r = await fetch(this.apiBase + `api/missions/${missionId}/proposals/${proposalId}/act`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ act })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok) showGlobalAlert(d.detail || "Couldn't do that just now.");
+                    } catch (e) {
+                        showGlobalAlert("Couldn't do that just now.");
+                    }
+                    delete this.busy[missionId];
+                    this.loadAdmin();
+                },
+
+                async sendAnswer(missionId) {
+                    const text = (this.answerText[missionId] || '').trim();
+                    if (!text) return;
+                    this.busy[missionId] = true;
+                    try {
+                        const r = await fetch(this.apiBase + `api/missions/${missionId}/answer`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ text })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok) {
+                            showGlobalAlert(d.detail || "Couldn't send that.");
+                        } else {
+                            this.answerText[missionId] = '';
+                        }
+                    } catch (e) {
+                        showGlobalAlert("Couldn't send that.");
+                    }
+                    delete this.busy[missionId];
+                    this.loadAdmin();
+                },
+
+                async drop(missionId) {
+                    this.busy[missionId] = true;
+                    try {
+                        const r = await fetch(this.apiBase + `api/missions/${missionId}/drop`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+                        });
+                        if (!r.ok) {
+                            const d = await r.json().catch(() => ({}));
+                            showGlobalAlert(d.detail || "Couldn't drop that.");
+                        }
+                    } catch (e) {
+                        showGlobalAlert("Couldn't drop that.");
+                    }
+                    delete this.busy[missionId];
+                    this.loadAdmin();
+                },
+
+                async ack(missionId) {
+                    try {
+                        const r = await fetch(this.apiBase + `api/missions/${missionId}/ack`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+                        });
+                        if (!r.ok) {
+                            const d = await r.json().catch(() => ({}));
+                            showGlobalAlert(d.detail || "Couldn't clear that.");
+                        }
+                    } catch (e) {
+                        showGlobalAlert("Couldn't clear that.");
+                    }
+                    this.loadAdmin();
+                },
+
+                // ---- Display helpers (pure — no fetches) ----
+
+                statusChipClass(status) {
+                    if (status === 'running') return 'bg-blue-500/20 text-blue-300';
+                    if (status === 'waiting_user') return 'bg-amber-500/20 text-amber-300';
+                    if (status === 'waiting_retry') return 'bg-gray-700 text-gray-400';
+                    if (status === 'done') return 'bg-teal-500/20 text-teal-300';
+                    if (status === 'blocked') return 'bg-red-500/20 text-red-300';
+                    return 'bg-gray-700 text-gray-300';   // dropped / unknown
+                },
+
+                stepKindClass(kind) {
+                    if (kind === 'proposal') return 'bg-violet-500/20 text-violet-300';
+                    if (kind === 'ask') return 'bg-amber-500/20 text-amber-300';
+                    if (kind === 'draft') return 'bg-teal-500/20 text-teal-300';
+                    return 'bg-gray-700 text-gray-300';   // llm | tool | note
+                },
+
+                stepResultText(step) {
+                    const v = step.result_json;
+                    if (v === null || v === undefined) return '';
+                    let s;
+                    try { s = JSON.stringify(v); } catch (e) { s = String(v); }
+                    return s.length > 400 ? s.slice(0, 400) + '…' : s;
+                },
+
+                // The proposal's exact args_json — same compact idiom as
+                // stepResultText above, so Approve never asks a parent to
+                // trust a summary sentence for what will actually execute.
+                stepArgsText(step) {
+                    const v = step.args_json;
+                    if (v === null || v === undefined
+                        || (typeof v === 'object' && !Object.keys(v).length)) return '';
+                    let s;
+                    try { s = JSON.stringify(v); } catch (e) { s = String(v); }
+                    return s.length > 400 ? s.slice(0, 400) + '…' : s;
+                },
+
+                lastAskQuestion(mission) {
+                    const asks = (mission.steps || []).filter(s => s.kind === 'ask');
+                    if (!asks.length) return '';
+                    return (asks[asks.length - 1].result_json || {}).question || '';
+                },
+
+                // A proposal step's own result_json.card is a creation-time
+                // snapshot (build_card always writes status "proposed" — it is
+                // never rewritten later), so whether it still needs a tap has
+                // to be read off the transcript: missions_proposal_act appends
+                // a note step recording whichever act actually happened.
+                proposalOutcome(mission, step) {
+                    const pid = (step.result_json || {}).proposal_id;
+                    if (!pid) return null;
+                    const note = (mission.steps || []).find(s => s.kind === 'note'
+                        && (s.name === 'proposal_approve' || s.name === 'proposal_dismiss')
+                        && (s.result_json || {}).proposal_id === pid);
+                    if (!note) return null;
+                    return note.name === 'proposal_approve' ? 'approved' : 'dismissed';
+                },
+
+                fmtTs(ts) {
+                    if (!ts) return '';
+                    try {
+                        return new Date(ts * 1000).toLocaleString(undefined,
+                            { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+                    } catch (e) { return ''; }
+                }
+            }
+        }
+    </script>

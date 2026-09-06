@@ -116,8 +116,13 @@ def scenario_ack_and_drop():
 
 def scenario_page_route_serves_template():
     import main, os
-    tpl = os.path.join(os.path.dirname(main.__file__), 'templates', 'missions.html')
-    check(os.path.exists(tpl), "missions.html exists")
+    tpl = os.path.join(os.path.dirname(main.__file__), 'templates',
+                       'components', 'missions_page.html')
+    check(os.path.exists(tpl), "missions page component exists")
+    wrapper = open(os.path.join(os.path.dirname(main.__file__), 'templates',
+                                'missions.html'), encoding='utf-8').read()
+    check("components/missions_page.html" in wrapper,
+          "standalone /missions serves the shared component")
     html = open(tpl, encoding='utf-8').read()
     for needle in ('/api/missions/admin', '/api/missions/launch', 'waiting_user'):
         check(needle in html, f"page wires {needle}")
@@ -159,7 +164,8 @@ def scenario_chat_launch_respects_allowlist_and_thread_origin():
 
 def scenario_threads_page_has_the_button():
     import main, os
-    tpl = os.path.join(os.path.dirname(main.__file__), 'templates', 'threads.html')
+    tpl = os.path.join(os.path.dirname(main.__file__), 'templates',
+                       'components', 'threads_page.html')
     html = open(tpl, encoding='utf-8').read()
     check('/api/missions/launch' in html, "Work-this button posts a launch")
 
@@ -190,11 +196,35 @@ def scenario_detail_serves_done_transcript_and_gates():
 
 def scenario_page_wires_history_transcript():
     import main, os
-    tpl = os.path.join(os.path.dirname(main.__file__), 'templates', 'missions.html')
+    tpl = os.path.join(os.path.dirname(main.__file__), 'templates',
+                       'components', 'missions_page.html')
     html = open(tpl, encoding='utf-8').read()
     check('toggleTranscript' in html, "history rows can open their transcript")
     check(html.count("mission_transcript.html") == 2,
           "one shared transcript component, used by active AND history")
+
+
+def scenario_work_page_hosts_all_three():
+    import main, os
+    tpl = os.path.join(os.path.dirname(main.__file__), 'templates', 'work.html')
+    html = open(tpl, encoding='utf-8').read()
+    for comp in ('components/mind_page.html', 'components/missions_page.html',
+                 'components/threads_page.html'):
+        check(comp in html, f"/work includes {comp}")
+    check(html.count('control_center.html') == 1,
+          "chrome included once by the host, never by components")
+    nav = open(os.path.join(os.path.dirname(main.__file__), 'templates',
+                            'nav.html'), encoding='utf-8').read()
+    check("'slug': 'work'" in nav, "nav gained the Work entry")
+    check("'slug': 'mind'" not in nav and "'slug': 'threads'" not in nav,
+          "mind and threads left the nav (their URLs still serve)")
+    check("'programs', 'work'" in nav, "work is kiosk-hidden")
+    for comp in ('mind_page', 'missions_page', 'threads_page'):
+        c = open(os.path.join(os.path.dirname(main.__file__), 'templates',
+                              'components', comp + '.html'), encoding='utf-8').read()
+        check("include 'components/control_center" not in c
+              and "include 'nav.html'" not in c,
+              f"{comp} carries no chrome")
 
 if __name__ == '__main__':
     scenario_child_cannot_launch()
@@ -209,4 +239,5 @@ if __name__ == '__main__':
     scenario_threads_page_has_the_button()
     scenario_detail_serves_done_transcript_and_gates()
     scenario_page_wires_history_transcript()
+    scenario_work_page_hosts_all_three()
     print("test_missions_endpoints OK")

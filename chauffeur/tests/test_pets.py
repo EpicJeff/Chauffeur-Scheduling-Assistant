@@ -290,7 +290,7 @@ def test_the_card_is_pageless():
 def test_the_editor_is_mounted_where_kids_already_are():
     base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         'templates')
-    for page in ('app.html', 'home.html', 'chores.html', 'routines.html'):
+    for page in ('app.html', 'home.html', 'chores.html', 'components/routines_page.html'):
         src = open(os.path.join(base, page), encoding='utf-8').read()
         check("components/pet_editor.html" in src,
               "%s can show a pet but cannot open the editor" % page)

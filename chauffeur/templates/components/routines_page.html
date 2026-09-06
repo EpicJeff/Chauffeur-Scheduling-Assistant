@@ -1,0 +1,1060 @@
+{% import 'components/routine_lanes.html' as routine_lanes %}
+{% import 'components/kid_digest_lanes.html' as kid_digest_lanes %}
+{# The whole routines page body: lanes, editor, its Alpine island and
+   the components those need (glyphs, lanes logic, celebrations, pet
+   and avatar editors, emoji picker). Included by the standalone
+   /routines wrapper AND by /rhythms — nav/control_center/hearth
+   chrome belongs to the HOST page, never here. #}
+    <div x-data="routinesPage()" x-init="init()" x-cloak>
+        <div class="panel-page mx-auto p-6 lg:p-10 w-full" :class="isKiosk ? 'max-w-none' : 'max-w-5xl'">
+
+            <header class="mb-8 flex items-start justify-between gap-4 flex-wrap" x-show="!hideTitle">
+                <div>
+                    <h2 class="panel-page-title">Daily Routines</h2>
+                    <p class="text-gray-400" x-show="!isKiosk">Personal checklists (brush teeth, homework…) shown on
+                        each member's My Day. No points — streaks instead. Optional time of day; leave days unchecked
+                        for every day.</p>
+                </div>
+                <!-- Runway voice cues (R3): the house-wide switch, on the page
+                     that owns runways. Per-child rooms are on each member
+                     block below. -->
+                <label id="runway" x-show="!isKiosk"
+                    class="flex items-center gap-2 text-sm font-bold text-gray-300 cursor-pointer bg-gray-800/60 border border-gray-700 rounded-lg px-3 py-2.5 self-center">
+                    <input type="checkbox" x-model="runwayCues" @change="saveRunwayCues()"
+                        class="w-4 h-4 accent-blue-500">
+                    🔊 Runway voice cues
+                </label>
+                <!-- New routine: only members with no routine yet -->
+                <div x-show="!isKiosk && availableMembers().length > 0" class="flex items-center gap-2">
+                    <select x-model="newRoutineMemberId"
+                        class="bg-gray-900 border border-gray-600 rounded-lg p-3 text-white">
+                        <option value="">Pick a member…</option>
+                        <template x-for="m in availableMembers()" :key="m.id">
+                            <option :value="m.id" x-text="m.name"></option>
+                        </template>
+                    </select>
+                    <button @click="startRoutine()"
+                        class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-3 rounded-lg shadow-md">
+                        New Routine
+                    </button>
+                </div>
+            </header>
+
+            <!-- ===== Kiosk: compact streak strip + interactive per-child lanes ===== -->
+            <template x-if="isKiosk">
+                <div>
+                    <!-- 🍽️ Tonight's eating plan (M2). Renders ONLY when the day is
+                         actually constrained — the server returns no lines on an
+                         ordinary evening (design principle 6), so the wall panel
+                         stays quiet instead of issuing orders every night. -->
+                    <div x-show="mealLines.length" class="mb-8">
+                        <h3 class="text-lg font-black text-pink-300 mb-2">🍽️ Tonight</h3>
+                        <div class="bg-gray-800/60 rounded-2xl border border-pink-900/60 p-4">
+                            <template x-for="(line, i) in mealLines" :key="'ml-' + i">
+                                <div class="text-sm text-gray-200 mb-1.5" x-text="line"></div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- 🌙 Kid digest strip FIRST (family request 2026-08-06): the day
+                         preview is what kids should see before the checklist. Today
+                         until the cutover time, then tomorrow (server decides).
+                         The SAME macro the board's `kids` tile renders — the tile
+                         shipped a stale flat-list drawing of this exact strip
+                         once, which is precisely the drift one drawing ends. -->
+                    <div x-show="digestCards().length" class="mb-8">
+{{ kid_digest_lanes.digest_grid() }}
+                    </div>
+
+                    <!-- Interactive lanes: tap an item to check it off as
+                         that child. The SAME macro the board's
+                         `routines_lanes` card renders — one drawing. -->
+{{ routine_lanes.lane_grid(interactive='true') }}
+
+                </div>
+            </template>
+
+            <!-- ===== Admin: one block per member ===== -->
+            <template x-if="!isKiosk">
+                <div class="space-y-6">
+                    <div x-show="blocks().length === 0" class="text-gray-500 bg-gray-800 rounded-xl p-8 text-center">
+                        No routines yet. Pick a member above to start their routine.
+                    </div>
+
+                    <template x-for="member in blocks()" :key="member.id">
+                        <section class="bg-gray-800 rounded-2xl border border-gray-700 shadow-lg overflow-hidden">
+                            <!-- Block header -->
+                            <div class="flex items-center gap-3 px-5 py-4 bg-gray-800 border-b border-gray-700/70">
+                                <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg text-white shrink-0 overflow-hidden"
+                                    :style="'background-color:' + (member.color_code || '#3b82f6')">
+                                    <template x-if="member.image"><img :src="member.image" class="w-full h-full object-cover"></template>
+                                    <template x-if="!member.image"><span x-text="member.avatar || (member.name || '?').charAt(0)"></span></template>
+                                </div>
+                                <!-- was member.name + \"'s routine\" — the backslashes reached Alpine
+     verbatim and the expression threw on every render since. -->
+<h3 class="text-xl font-bold text-white" x-text="member.name + `'s routine`"></h3>
+                                <template x-if="streakFor(member.id)">
+                                    <div class="flex items-center gap-3 ml-2">
+                                        <span class="px-2 py-0.5 bg-orange-900/40 text-orange-300 rounded-lg font-bold text-sm"
+                                            x-text="'🔥 ' + streakFor(member.id).current"></span>
+                                        <span class="text-xs text-gray-500 font-bold"
+                                            x-text="streakFor(member.id).today_total
+                                                ? streakFor(member.id).today_done + '/' + streakFor(member.id).today_total + ' today'
+                                                : 'rest day'"></span>
+                                    </div>
+                                </template>
+                                <div class="ml-auto flex items-center gap-2">
+                                    <template x-if="copySources(member.id).length">
+                                        <div class="flex items-center gap-1.5">
+                                            <select x-model="copyFrom[member.id]"
+                                                class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-xs font-bold text-gray-300">
+                                                <option value="">⧉ Copy from…</option>
+                                                <template x-for="src in copySources(member.id)" :key="src.id">
+                                                    <option :value="src.id" x-text="src.name"></option>
+                                                </template>
+                                            </select>
+                                            <button x-show="copyFrom[member.id]" @click="copyRoutine(member)"
+                                                class="text-blue-400 hover:text-blue-300 bg-blue-500/10 px-3 py-1.5 rounded-lg font-bold text-xs">
+                                                Copy
+                                            </button>
+                                        </div>
+                                    </template>
+                                    <!-- Runway cues (R3): which room speaks the ONE
+                                         calm sentence when this child's runway is
+                                         genuinely behind. No room = no cues for
+                                         them; no HA rooms at all = no control. -->
+                                    <div x-show="member.role === 'child' && cueRooms.length"
+                                        class="flex items-center gap-1.5">
+                                        <span class="text-xs">🔊</span>
+                                        <select :value="cueRoomFor(member.id)"
+                                            @change="setCueRoom(member.id, $event.target.value)"
+                                            class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-xs font-bold text-gray-300">
+                                            <option value="">No cue room (cues off)</option>
+                                            <template x-for="rm in cueRooms" :key="rm.id">
+                                                <option :value="rm.name" x-text="rm.name"></option>
+                                            </template>
+                                        </select>
+                                    </div>
+                                    <button @click="deleteBlock(member)"
+                                        class="text-red-500/70 hover:text-red-400 bg-red-500/10 px-3 py-1.5 rounded-lg font-bold text-xs">
+                                        Delete routine
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Items -->
+                            <div class="divide-y divide-gray-700/50">
+                                <template x-for="r in itemsFor(member.id)" :key="r.id">
+                                    <div>
+                                        <!-- Display row -->
+                                        <div x-show="editItemId !== r.id" class="flex items-center gap-3 px-5 py-3">
+                                            <span class="text-blue-400 font-bold text-sm w-20 shrink-0"
+                                                x-text="formatClock(r.time_of_day) || '—'"></span>
+                                            <span class="text-lg w-7 text-center shrink-0" x-text="kidGlyph(r)"></span>
+                                            <span class="text-white font-semibold" x-text="r.title"></span>
+                                            <span class="text-gray-500 text-xs font-bold ml-1"
+                                                x-text="(r.days_of_week && r.days_of_week.length) ? r.days_of_week.map(d => dayNames[d]).join(' ') : 'every day'"></span>
+                                            <span x-show="(r.steps || []).length"
+                                                class="text-purple-300/80 text-xs font-bold"
+                                                x-text="(r.steps || []).length + ' steps'"></span>
+                                            <span x-show="r.image_id" class="text-xs">📷</span>
+                                            <span x-show="r.runway" class="text-xs"
+                                                x-text="r.runway === 'morning' ? '🌅' : '🌙'"></span>
+                                            <div class="ml-auto flex gap-2 shrink-0">
+                                                <button @click="startEditItem(r)"
+                                                    class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-1.5 rounded-lg font-bold text-xs">Edit</button>
+                                                <button @click="deleteItem(r)"
+                                                    class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-1.5 rounded-lg font-bold text-xs">Delete</button>
+                                            </div>
+                                        </div>
+                                        <!-- Inline edit row -->
+                                        <div x-show="editItemId === r.id" class="px-5 py-3 bg-gray-900/40">
+                                            <div class="flex gap-3 items-end flex-wrap">
+                                                <div class="flex-1 min-w-[12rem]">
+                                                    <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Title</label>
+                                                    <input type="text" x-model="editItem.title"
+                                                        class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white">
+                                                </div>
+                                                <div class="w-20">
+                                                    <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Emoji</label>
+                                                    <div class="flex items-center gap-2">
+                                                        <button type="button" title="Pick an emoji"
+                                                            @click="EmojiPicker.open($event.currentTarget, v => editItem.emoji = v)"
+                                                            class="shrink-0 bg-gray-900 border border-gray-600 rounded p-2.5 text-xl leading-none"
+                                                            x-text="editItem.emoji || '😀'"></button>
+                                                        <input type="text" x-model="editItem.emoji" maxlength="8"
+                                                            :placeholder="kidGlyph({title: editItem.title})"
+                                                            class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-center">
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Time</label>
+                                                    <input type="time" x-model="editItem.time_of_day"
+                                                        class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white">
+                                                </div>
+                                                <div class="flex gap-1.5 flex-wrap items-center pb-1">
+                                                    <template x-for="(d, idx) in dayNames" :key="idx">
+                                                        <label class="flex items-center gap-1 text-gray-300 text-xs font-bold bg-gray-900 border border-gray-700 rounded px-2 py-1.5 cursor-pointer"
+                                                            :class="editItem.days_of_week.includes(idx) ? 'border-blue-500 text-blue-300' : ''">
+                                                            <input type="checkbox" :value="idx" x-model.number="editItem.days_of_week"
+                                                                class="w-3.5 h-3.5">
+                                                            <span x-text="d"></span>
+                                                        </label>
+                                                    </template>
+                                                </div>
+                                                <div class="flex gap-2">
+                                                    <button @click="saveEditItem()"
+                                                        class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2.5 rounded">Save</button>
+                                                    <button @click="editItemId = null"
+                                                        class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-3 py-2.5 rounded">Cancel</button>
+                                                </div>
+                                            </div>
+                                            <!-- The inside of the item: description, a photo
+                                                 (beats any glyph for a pre-reader), and one
+                                                 level of steps — "pack backpack" stops hiding
+                                                 the water bottle. -->
+                                            <div class="mt-3 space-y-3">
+                                                <div>
+                                                    <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Description (optional)</label>
+                                                    <textarea x-model="editItem.description" rows="2"
+                                                        placeholder="Anything worth saying under the title…"
+                                                        class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm"></textarea>
+                                                </div>
+                                                <div class="flex items-center gap-3">
+                                                    <label class="text-gray-500 text-xs font-bold uppercase">Photo</label>
+                                                    <template x-if="editItem.image_id">
+                                                        <span class="flex items-center gap-2">
+                                                            <img :src="apiBase + 'api/media/' + editItem.image_id"
+                                                                class="w-12 h-12 rounded-lg object-cover border border-gray-700">
+                                                            <button @click="editItem.image_id = ''"
+                                                                class="text-xs font-bold text-red-400 hover:text-red-300">Remove</button>
+                                                        </span>
+                                                    </template>
+                                                    <button @click="$refs.stepPhotoInput.click()"
+                                                        class="text-xs font-bold px-3 py-1.5 rounded bg-gray-900 border border-gray-600 text-gray-300 hover:text-white"
+                                                        x-text="editItem.image_id ? 'Replace…' : '📷 Add a photo…'"></button>
+                                                    <input type="file" accept="image/*" class="hidden" x-ref="stepPhotoInput"
+                                                        @change="uploadItemPhoto($event)">
+                                                </div>
+                                                <div>
+                                                    <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Steps (optional — the item completes when all are ticked)</label>
+                                                    <template x-for="(s, si) in editItem.steps" :key="s.id || si">
+                                                        <div class="flex gap-2 items-center mb-1.5">
+                                                            <button type="button" title="Pick an emoji"
+                                                                @click="EmojiPicker.open($event.currentTarget, v => s.emoji = v)"
+                                                                class="shrink-0 bg-gray-900 border border-gray-600 rounded p-2 text-lg leading-none"
+                                                                x-text="s.emoji || '➕'"></button>
+                                                            <input type="text" x-model="s.title" placeholder="e.g. Water bottle"
+                                                                class="flex-1 bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                                            <button @click="editItem.steps.splice(si, 1)"
+                                                                class="text-gray-500 hover:text-red-400 font-bold px-2">✕</button>
+                                                        </div>
+                                                    </template>
+                                                    <button @click="editItem.steps.push({ id: '', title: '', emoji: '' })"
+                                                        class="text-xs font-bold px-3 py-1.5 rounded bg-gray-900 border border-gray-600 text-gray-300 hover:text-white">
+                                                        + Add step</button>
+                                                </div>
+                                                <!-- Runway membership (R2): explicit, never
+                                                     inferred from text. Flagged items are what
+                                                     the wall's runway tracks; the item's own
+                                                     time is its target. -->
+                                                <div>
+                                                    <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Runway</label>
+                                                    <div class="flex gap-1.5">
+                                                        <template x-for="opt in [['', 'Not on one'], ['morning', '🌅 Morning'], ['bedtime', '🌙 Bedtime']]" :key="opt[0]">
+                                                            <button type="button" @click="editItem.runway = opt[0]"
+                                                                class="text-xs font-bold px-3 py-1.5 rounded border"
+                                                                :class="(editItem.runway || '') === opt[0]
+                                                                    ? 'bg-blue-600/30 border-blue-500 text-blue-200'
+                                                                    : 'bg-gray-900 border-gray-700 text-gray-400 hover:text-white'"
+                                                                x-text="opt[1]"></button>
+                                                        </template>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <!-- Quick-add row -->
+                            <div class="px-5 py-4 bg-gray-900/30 border-t border-gray-700/50">
+                                <div class="flex gap-3 items-end flex-wrap">
+                                    <div class="flex-1 min-w-[12rem]">
+                                        <input type="text" x-model="quickAdd[member.id].title" placeholder="Add an item… e.g. Brush teeth"
+                                            @keydown.enter="addItem(member.id)"
+                                            class="w-full bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white">
+                                    </div>
+                                    <input type="time" x-model="quickAdd[member.id].time_of_day"
+                                        class="bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white">
+                                    <div class="flex gap-1.5 flex-wrap items-center pb-1">
+                                        <template x-for="(d, idx) in dayNames" :key="idx">
+                                            <label class="flex items-center gap-1 text-gray-300 text-xs font-bold bg-gray-900 border border-gray-700 rounded px-2 py-1.5 cursor-pointer"
+                                                :class="quickAdd[member.id].days_of_week.includes(idx) ? 'border-blue-500 text-blue-300' : ''">
+                                                <input type="checkbox" :value="idx" x-model.number="quickAdd[member.id].days_of_week"
+                                                    class="w-3.5 h-3.5">
+                                                <span x-text="d"></span>
+                                            </label>
+                                        </template>
+                                    </div>
+                                    <button @click="addItem(member.id)"
+                                        class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-2.5 rounded-lg">Add</button>
+                                </div>
+                            </div>
+                        </section>
+                    </template>
+
+                    <!-- ===== Prep Kits ===== -->
+                    <section class="bg-gray-800 rounded-2xl border border-gray-700 shadow-lg overflow-hidden">
+                        <div class="flex items-center gap-3 px-5 py-4 bg-gray-800 border-b border-gray-700/70 flex-wrap">
+                            <h3 class="text-xl font-bold text-white">🎒 Prep Kits</h3>
+                            <p class="text-xs text-gray-500 font-semibold">Packing lists matched to events by title keywords — shown on My Day cards and in the tomorrow digest.</p>
+                            <button @click="suggestKits()" :disabled="suggesting"
+                                class="ml-auto bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-lg text-sm shrink-0"
+                                x-text="suggesting ? 'Thinking…' : '✨ Suggest kits'"></button>
+                        </div>
+
+                        <!-- Suggested kits: review/edit before anything saves -->
+                        <template x-if="suggestedKits.length">
+                            <div class="px-5 py-4 bg-purple-900/15 border-b border-purple-700/30 space-y-3">
+                                <p class="text-purple-300 text-xs font-bold uppercase">Suggested from your upcoming events — edit, then save the ones you want</p>
+                                <template x-for="(s, idx) in suggestedKits" :key="idx">
+                                    <div class="bg-gray-900/60 border border-purple-700/40 rounded-xl p-4 flex flex-col gap-2">
+                                        <div class="flex gap-3 flex-wrap items-end">
+                                            <div class="min-w-[10rem]">
+                                                <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Kit name</label>
+                                                <input type="text" x-model="s.name" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                            </div>
+                                            <div class="flex-1 min-w-[12rem]">
+                                                <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Keywords (comma-separated)</label>
+                                                <input type="text" x-model="s._keywords" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Items (comma-separated)</label>
+                                            <input type="text" x-model="s._items" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                        </div>
+                                        <div class="flex gap-2 justify-end">
+                                            <button @click="approveSuggested(idx)"
+                                                class="bg-purple-600 hover:bg-purple-500 text-white font-bold px-4 py-2 rounded-lg text-sm">✓ Save kit</button>
+                                            <button @click="suggestedKits.splice(idx, 1)"
+                                                class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-3 py-2 rounded-lg text-sm">✗ Dismiss</button>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+
+                        <!-- Existing kits -->
+                        <div class="divide-y divide-gray-700/50">
+                            <div x-show="!prepKits.length && !suggestedKits.length" class="px-5 py-6 text-gray-500 text-sm">
+                                No kits yet. Try <span class="font-bold text-purple-400">✨ Suggest kits</span> to have Argyle draft them from your real events, or add one below.
+                            </div>
+                            <template x-for="k in prepKits" :key="k.id">
+                                <div>
+                                    <div x-show="editKitId !== k.id" class="flex items-center gap-3 px-5 py-3 flex-wrap"
+                                        :class="k.enabled === false ? 'opacity-50' : ''">
+                                        <span class="text-white font-bold" x-text="k.name"></span>
+                                        <template x-for="kw in (k.keywords || [])" :key="kw">
+                                            <span class="px-2 py-0.5 bg-blue-900/40 text-blue-300 rounded text-xs font-bold" x-text="kw"></span>
+                                        </template>
+                                        <template x-for="pid in (k.passenger_ids || [])" :key="pid">
+                                            <span class="px-2 py-0.5 bg-green-900/40 text-green-300 rounded text-xs font-bold" x-text="passengerName(pid)"></span>
+                                        </template>
+                                        <span x-show="(k.days_of_week || []).length"
+                                            class="px-2 py-0.5 bg-pink-900/40 text-pink-300 rounded text-xs font-bold"
+                                            x-text="(k.days_of_week || []).map(d => dayNames[d]).join(' ')"></span>
+                                        <span x-show="k.time_start || k.time_end"
+                                            class="px-2 py-0.5 bg-gray-700/60 text-gray-300 rounded text-xs font-bold"
+                                            x-text="(k.time_start || '…') + '–' + (k.time_end || '…')"></span>
+                                        <span x-show="k.location"
+                                            class="px-2 py-0.5 bg-gray-700/60 text-gray-300 rounded text-xs font-bold"
+                                            x-text="'📍 ' + k.location"></span>
+                                        <span class="text-gray-400 text-sm" x-text="(k.items || []).join(' · ')"></span>
+                                        <div class="ml-auto flex gap-2 shrink-0 items-center">
+                                            <button @click="showMatchesKitId = showMatchesKitId === k.id ? null : k.id"
+                                                class="px-3 py-1.5 rounded-lg font-bold text-xs"
+                                                :class="matchesFor(k.id).length ? 'text-amber-300 bg-amber-500/10' : 'text-gray-500 bg-gray-700/40'"
+                                                x-text="matchesFor(k.id).length + ' upcoming'"></button>
+                                            <button @click="toggleKit(k)"
+                                                class="px-3 py-1.5 rounded-lg font-bold text-xs"
+                                                :class="k.enabled === false ? 'text-gray-400 bg-gray-700/60' : 'text-green-400 bg-green-500/10'"
+                                                x-text="k.enabled === false ? 'Off' : 'On'"></button>
+                                            <button @click="startEditKit(k)"
+                                                class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-1.5 rounded-lg font-bold text-xs">Edit</button>
+                                            <button @click="deleteKit(k)"
+                                                class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-1.5 rounded-lg font-bold text-xs">Delete</button>
+                                        </div>
+                                    </div>
+                                    <!-- Matched upcoming events (same visibility rules get) -->
+                                    <div x-show="showMatchesKitId === k.id" class="px-5 pb-3 bg-gray-900/30">
+                                        <div x-show="!matchesFor(k.id).length" class="text-gray-500 text-sm py-1">
+                                            No upcoming events match this kit's filters.
+                                        </div>
+                                        <template x-for="(m, mi) in matchesFor(k.id)" :key="mi">
+                                            <div class="flex items-center gap-3 py-1 text-sm">
+                                                <span class="text-amber-300/80 font-bold w-32 shrink-0" x-text="matchWhen(m.start)"></span>
+                                                <span class="text-gray-300" x-text="m.title"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                    <!-- Edit panel: the routing-rule filter-set form, filters only -->
+                                    <div x-show="editKitId === k.id" class="px-5 py-4 bg-gray-900/40 flex flex-col gap-4">
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Kit name</label>
+                                                <input type="text" x-model="kitEdit.name" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                            </div>
+                                            <div>
+                                                <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Items to bring (comma-separated)</label>
+                                                <input type="text" x-model="kitEdit.items" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label class="flex items-center space-x-2 cursor-pointer">
+                                                <div class="relative">
+                                                    <input type="checkbox" x-model="kitEdit.per_person" class="sr-only">
+                                                    <div class="block bg-gray-600 w-6 h-4 rounded-full" :class="kitEdit.per_person ? 'bg-blue-500' : ''"></div>
+                                                    <div class="dot absolute left-0.5 top-0.5 bg-white w-3 h-3 rounded-full transition transform" :class="kitEdit.per_person ? 'translate-x-2' : ''"></div>
+                                                </div>
+                                                <span class="text-gray-400 text-xs font-bold">One per person</span>
+                                            </label>
+                                            <p class="text-gray-500 text-xs mt-1">Two children at one activity need two of these. Turn off for a team snack or anything the family brings one of.</p>
+                                        </div>
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-gray-700/60 pt-4">
+                                            <div>
+                                                <div class="flex items-center justify-between mb-1">
+                                                    <label class="block text-gray-400 text-xs font-bold">Keywords</label>
+                                                    <label class="flex items-center space-x-1 cursor-pointer text-xs" x-show="kitEdit.keywords.length > 1">
+                                                        <span class="text-gray-500" :class="kitEdit.keywords_match_all ? '' : 'text-blue-400 font-bold'">Any</span>
+                                                        <div class="relative">
+                                                            <input type="checkbox" x-model="kitEdit.keywords_match_all" class="sr-only">
+                                                            <div class="block bg-gray-600 w-6 h-4 rounded-full" :class="kitEdit.keywords_match_all ? 'bg-blue-500' : ''"></div>
+                                                            <div class="dot absolute left-0.5 top-0.5 bg-white w-3 h-3 rounded-full transition transform" :class="kitEdit.keywords_match_all ? 'translate-x-2' : ''"></div>
+                                                        </div>
+                                                        <span class="text-gray-500" :class="kitEdit.keywords_match_all ? 'text-blue-400 font-bold' : ''">All</span>
+                                                    </label>
+                                                </div>
+                                                <div class="flex gap-2 mb-2">
+                                                    <input type="text" x-model="kitEdit._kwInput" placeholder="e.g. soccer"
+                                                        @keydown.enter.prevent="addKitKeyword()"
+                                                        class="flex-1 bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                                    <button @click="addKitKeyword()"
+                                                        class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 rounded text-sm">Add</button>
+                                                </div>
+                                                <div class="flex flex-wrap gap-2">
+                                                    <template x-for="(kw, ki) in kitEdit.keywords" :key="ki">
+                                                        <span class="bg-gray-800 text-yellow-300 border border-gray-600 px-2 py-1 rounded text-xs flex items-center">
+                                                            <span x-text="kw"></span>
+                                                            <button @click="kitEdit.keywords.splice(ki, 1)"
+                                                                class="ml-2 text-gray-400 hover:text-red-400">&times;</button>
+                                                        </span>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div class="flex items-center justify-between mb-1">
+                                                    <label class="block text-gray-400 text-xs font-bold">Passengers</label>
+                                                    <label class="flex items-center space-x-1 cursor-pointer text-xs" x-show="kitEdit.passenger_ids.length > 1">
+                                                        <span class="text-gray-500" :class="kitEdit.passengers_match_all ? '' : 'text-blue-400 font-bold'">Any</span>
+                                                        <div class="relative">
+                                                            <input type="checkbox" x-model="kitEdit.passengers_match_all" class="sr-only">
+                                                            <div class="block bg-gray-600 w-6 h-4 rounded-full" :class="kitEdit.passengers_match_all ? 'bg-blue-500' : ''"></div>
+                                                            <div class="dot absolute left-0.5 top-0.5 bg-white w-3 h-3 rounded-full transition transform" :class="kitEdit.passengers_match_all ? 'translate-x-2' : ''"></div>
+                                                        </div>
+                                                        <span class="text-gray-500" :class="kitEdit.passengers_match_all ? 'text-blue-400 font-bold' : ''">All</span>
+                                                    </label>
+                                                </div>
+                                                <div class="flex flex-wrap gap-2">
+                                                    <template x-for="p in passengerMembers()" :key="p.passenger_id">
+                                                        <button
+                                                            @click="kitEdit.passenger_ids.includes(p.passenger_id) ? kitEdit.passenger_ids = kitEdit.passenger_ids.filter(x => x !== p.passenger_id) : kitEdit.passenger_ids.push(p.passenger_id)"
+                                                            :class="kitEdit.passenger_ids.includes(p.passenger_id) ? 'bg-green-600 border-green-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
+                                                            class="border px-2 py-1 rounded text-xs font-bold transition-colors"
+                                                            x-text="p.name"></button>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <label class="block text-gray-400 mb-1 text-xs font-bold">Days of the Week</label>
+                                                <div class="flex flex-wrap gap-2">
+                                                    <template x-for="(day, di) in dayNames" :key="di">
+                                                        <button
+                                                            @click="kitEdit.days_of_week.includes(di) ? kitEdit.days_of_week = kitEdit.days_of_week.filter(d => d !== di) : kitEdit.days_of_week.push(di)"
+                                                            :class="kitEdit.days_of_week.includes(di) ? 'bg-pink-600 border-pink-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
+                                                            class="border px-2 py-1 rounded text-xs font-bold transition-colors"
+                                                            x-text="day"></button>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                            <div class="flex gap-2">
+                                                <div class="flex-1">
+                                                    <label class="block text-gray-400 mb-1 text-xs font-bold">Start Date</label>
+                                                    <input type="date" x-model="kitEdit.start_date" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                                </div>
+                                                <div class="flex-1">
+                                                    <label class="block text-gray-400 mb-1 text-xs font-bold">End Date</label>
+                                                    <input type="date" x-model="kitEdit.end_date" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="flex flex-col md:flex-row gap-2">
+                                            <div class="flex-1">
+                                                <label class="block text-gray-400 mb-1 text-xs font-bold">Starts After (Time)</label>
+                                                <input type="time" x-model="kitEdit.time_start" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                            </div>
+                                            <div class="flex-1">
+                                                <label class="block text-gray-400 mb-1 text-xs font-bold">Ends Before (Time)</label>
+                                                <input type="time" x-model="kitEdit.time_end" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                            </div>
+                                            <div class="flex-1 md:flex-[2]">
+                                                <label class="block text-gray-400 mb-1 text-xs font-bold">Location</label>
+                                                <input type="text" x-model="kitEdit.location" placeholder="Location keyword..."
+                                                    class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm placeholder-gray-600">
+                                            </div>
+                                        </div>
+                                        <div class="flex gap-2 justify-end">
+                                            <button @click="saveEditKit()"
+                                                class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 rounded text-sm">Save</button>
+                                            <button @click="editKitId = null"
+                                                class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-3 py-2 rounded text-sm">Cancel</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+
+                        <!-- Quick-add kit row -->
+                        <div class="px-5 py-4 bg-gray-900/30 border-t border-gray-700/50">
+                            <div class="flex gap-3 items-end flex-wrap">
+                                <input type="text" x-model="newKit.name" placeholder="Kit name… e.g. Soccer"
+                                    class="bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white min-w-[10rem]">
+                                <input type="text" x-model="newKit.keywords" placeholder="Keywords… e.g. soccer, futsal"
+                                    class="bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white flex-1 min-w-[10rem]">
+                                <input type="text" x-model="newKit.items" placeholder="Items… e.g. Cleats, Shin guards, Water bottle"
+                                    class="bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white flex-[2] min-w-[14rem]"
+                                    @keydown.enter="addKit()">
+                                <button @click="addKit()"
+                                    class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-2.5 rounded-lg">Add</button>
+                            </div>
+                        </div>
+                    </section>
+
+                    {% set tier_kind = 'routine' %}
+                    {% include 'components/status_tiers_editor.html' %}
+                </div>
+            </template>
+        </div>
+    </div>
+    <script>
+        function routinesPage() {
+            const base = (window.chfBase !== undefined ? window.chfBase : '');
+            return {
+                // The lanes' logic — the streaks, today's checklist per child
+                // and the one tap that changes anything. Spread in first, so
+                // `laneColumns` and the two celebration hooks below override
+                // it: the page measures its window and fires the full-screen
+                // status overlay, and a card does neither.
+                ...routineLanesLogic(base),
+                apiBase: base,
+                isKiosk: new URLSearchParams(window.location.search).get('kiosk') === 'true',
+                hideTitle: ['none', 'off', '0', 'false', 'hide'].includes(
+                    (new URLSearchParams(window.location.search).get('title') || '').toLowerCase()),
+                winW: window.innerWidth,
+                dayNames: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+                members: [],
+                routines: [],
+                kidDigests: { kids: {}, label: '', weather: '' },   // 🌙 strip (K1)
+                mealLines: [],                                     // 🍽️ strip (M2)
+                newRoutineMemberId: '',
+                // Members with an empty just-started block (no items saved yet):
+                // purely client-side; the block materializes once the first
+                // item is added and disappears on reload otherwise.
+                draftBlocks: [],
+                copyFrom: {},   // memberId -> source member picked in the header
+                quickAdd: {},
+                editItemId: null,
+                editItem: { title: '', time_of_day: '', days_of_week: [] },
+                prepKits: [],
+                suggestedKits: [],
+                suggesting: false,
+                editKitId: null,
+                kitEdit: {},
+                newKit: { name: '', keywords: '', items: '' },
+                kitMatches: {},
+                showMatchesKitId: null,
+
+                async init() {
+                    await this.loadClockFormat();
+                    if (this.isKiosk) {
+                        await this.reloadLanes();
+                        this.loadKidDigests();    // digest content moves slowly: own 5-min cadence
+                        this.loadMealPlan();      // same cadence — derived from the same schedule
+                        setInterval(() => this.reloadLanes(), 30000);
+                        setInterval(() => this.loadKidDigests(), 300000);
+                        window.addEventListener('resize', () => { this.winW = window.innerWidth; });
+                        return;
+                    }
+                    await Promise.all([this.loadMembers(), this.loadRoutines(), this.loadStreaks(), this.loadPrepKits()]);
+                    this.loadCueRooms();     // non-blocking; empty when HA is absent
+                    this.loadRunwayCues();
+                },
+
+                // --- Runway cues (R3): the hand paths. ---
+                runwayCues: true,
+                async loadRunwayCues() {
+                    try {
+                        const r = await fetch(`${this.apiBase}api/settings`);
+                        if (r.ok) this.runwayCues = (await r.json()).runway_cues_enabled !== false;
+                    } catch (e) { /* default on */ }
+                },
+                async saveRunwayCues() {
+                    const r = await fetch(`${this.apiBase}api/settings`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ runway_cues_enabled: !!this.runwayCues })
+                    });
+                    if (!r.ok) showGlobalAlert('Could not save the cue switch');
+                },
+                cueRooms: [],
+                async loadCueRooms() {
+                    try {
+                        const r = await fetch(`${this.apiBase}api/announce/rooms`);
+                        this.cueRooms = r.ok ? await r.json() : [];
+                    } catch (e) { this.cueRooms = []; }
+                },
+                cueRoomFor(memberId) {
+                    return (this.members.find(m => m.id === memberId) || {}).runway_cue_room || '';
+                },
+                async setCueRoom(memberId, room) {
+                    const r = await fetch(`${this.apiBase}api/members/${memberId}`, {
+                        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ runway_cue_room: room || null })
+                    });
+                    if (!r.ok) { showGlobalAlert('Could not save the cue room'); return; }
+                    const m = this.members.find(x => x.id === memberId);
+                    if (m) m.runway_cue_room = room || null;
+                },
+
+                // The celebration is this page's, not the shared logic's: it is
+                // a full-screen overlay, and a wall firing one per tile is not
+                // a celebration, it is a fault. The sweep runs on every fresh
+                // leaderboard (the first call seeds localStorage silently);
+                // `lanesOnChecked` fires it at the tap that earned it, and
+                // cannot double-fire because localStorage is written first.
+                lanesOnStreaks(data) { this._celebrateSweep(); },
+                lanesOnChecked(memberId, name, tierStatus) {
+                    maybeCelebrateStatusKiosk(memberId, name, 'routine', tierStatus);
+                },
+
+                _celebrateSweep() {
+                    for (const s of this.streaks) {
+                        maybeCelebrateStatusKiosk(s.member_id, s.name, 'routine', s.status);
+                    }
+                },
+
+                // --- Kiosk lanes: today's checklist per child, checked off with
+                // that child's identity (per-lane member_id → the /check endpoint,
+                // which validates the routine belongs to them). ---
+                async loadKidDigests() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/kids/digests`);
+                        this.kidDigests = res.ok ? await res.json() : { kids: {} };
+                    } catch (e) { this.kidDigests = { kids: {} }; }
+                },
+                async loadMealPlan() {
+                    // Empty `lines` is the normal case — the server stays silent
+                    // unless the evening is genuinely constrained.
+                    try {
+                        const res = await fetch(`${this.apiBase}api/meals/plan`);
+                        this.mealLines = res.ok ? ((await res.json()).lines || []) : [];
+                    } catch (e) { this.mealLines = []; }
+                },
+                digestCards() {
+                    return Object.entries(this.kidDigests.kids || {})
+                        .map(([id, k]) => ({ id, ...k }))
+                        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                },
+                // The other half of the shared macro's contract; the board's
+                // card wrapper (kidDigestCard) answers the same question from
+                // its tile payload.
+                digestLabel() {
+                    return (this.kidDigests.label === 'Today' ? '☀️ ' : '🌙 ')
+                        + (this.kidDigests.label || 'Tomorrow');
+                },
+                // The page shows every part; a card answers from its config.
+                digestShow(part) { return true; },
+                // the lanes right below draw the full figure; the digest strip
+                // up top shows the small face so the kid is not drawn twice
+                digestFigureFull(k) { return false; },
+                digestColumns() {
+                    const n = this.digestCards().length;
+                    if (n <= 1) return 1;
+                    const minLane = 320, pad = 96;
+                    const avail = Math.max(minLane, this.winW - pad);
+                    const maxFit = Math.max(1, Math.floor(avail / minLane));
+                    if (maxFit >= n) return n;
+                    const rows = Math.ceil(n / maxFit);
+                    return Math.ceil(n / rows);
+                },
+                laneColumns() {
+                    const n = this.streaks.length;
+                    if (n <= 1) return 1;
+                    const minLane = 320, pad = 96;
+                    const avail = Math.max(minLane, this.winW - pad);
+                    const maxFit = Math.max(1, Math.floor(avail / minLane));
+                    if (maxFit >= n) return n;
+                    const rows = Math.ceil(n / maxFit);
+                    return Math.ceil(n / rows);
+                },
+                async loadMembers() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/members`);
+                        const all = await res.json();
+                        this.members = all.filter(m => m.role !== 'helper');
+                    } catch (e) { this.members = []; }
+                },
+                async loadRoutines() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/routines`);
+                        this.routines = await res.json();
+                    } catch (e) { this.routines = []; }
+                },
+                memberIdsWithItems() {
+                    return [...new Set(this.routines.map(r => r.member_id))];
+                },
+                blocks() {
+                    const withItems = this.memberIdsWithItems();
+                    const ids = [...new Set([...withItems, ...this.draftBlocks])];
+                    return ids.map(id => this.members.find(m => m.id === id)).filter(Boolean)
+                        .map(m => { this.ensureQuickAdd(m.id); return m; })
+                        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                },
+                availableMembers() {
+                    const taken = new Set([...this.memberIdsWithItems(), ...this.draftBlocks]);
+                    return this.members.filter(m => !taken.has(m.id));
+                },
+                itemsFor(memberId) {
+                    return this.routines.filter(r => r.member_id === memberId)
+                        .sort((a, b) => (a.time_of_day === null) - (b.time_of_day === null)
+                            || (a.time_of_day || '').localeCompare(b.time_of_day || '')
+                            || (a.title || '').localeCompare(b.title || ''));
+                },
+                streakFor(memberId) {
+                    return this.streaks.find(s => s.member_id === memberId)?.streak || null;
+                },
+                ensureQuickAdd(memberId) {
+                    if (!this.quickAdd[memberId]) {
+                        this.quickAdd[memberId] = { title: '', time_of_day: '', days_of_week: [] };
+                    }
+                },
+
+                startRoutine() {
+                    if (!this.newRoutineMemberId) { showGlobalAlert('Pick a member first'); return; }
+                    this.ensureQuickAdd(this.newRoutineMemberId);
+                    this.draftBlocks.push(this.newRoutineMemberId);
+                    this.newRoutineMemberId = '';
+                },
+
+                async addItem(memberId) {
+                    const q = this.quickAdd[memberId];
+                    if (!(q.title || '').trim()) return;
+                    const payload = {
+                        member_id: memberId,
+                        title: q.title.trim(),
+                        time_of_day: q.time_of_day || null,
+                        days_of_week: (q.days_of_week || []).map(Number),
+                    };
+                    const res = await fetch(`${this.apiBase}api/routines`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        showGlobalAlert(err.detail || 'Could not add routine item');
+                        return;
+                    }
+                    // Keep time + days for rapid entry of the next item; clear title only.
+                    q.title = '';
+                    await Promise.all([this.loadRoutines(), this.loadStreaks()]);
+                },
+
+                startEditItem(r) {
+                    this.editItemId = r.id;
+                    this.editItem = {
+                        member_id: r.member_id,
+                        title: r.title,
+                        emoji: r.emoji || '',
+                        time_of_day: r.time_of_day || '',
+                        days_of_week: [...(r.days_of_week || [])],
+                        description: r.description || '',
+                        image_id: r.image_id || '',
+                        steps: (r.steps || []).map(s => ({ ...s })),
+                        runway: r.runway || '',
+                    };
+                },
+                async uploadItemPhoto(ev) {
+                    const file = ev.target.files && ev.target.files[0];
+                    ev.target.value = '';
+                    if (!file) return;
+                    const dataUrl = await new Promise((res, rej) => {
+                        const rd = new FileReader();
+                        rd.onload = () => res(rd.result);
+                        rd.onerror = rej;
+                        rd.readAsDataURL(file);
+                    }).catch(() => null);
+                    if (!dataUrl) { showGlobalAlert('Could not read that image'); return; }
+                    const r = await fetch(`${this.apiBase}api/media/photo`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ data_url: dataUrl })
+                    });
+                    if (!r.ok) {
+                        const e = await r.json().catch(() => ({}));
+                        showGlobalAlert(e.detail || 'Could not upload the photo');
+                        return;
+                    }
+                    this.editItem.image_id = (await r.json()).id;
+                },
+                async saveEditItem() {
+                    if (!(this.editItem.title || '').trim()) { showGlobalAlert('Title required'); return; }
+                    const payload = {
+                        member_id: this.editItem.member_id,
+                        title: this.editItem.title.trim(),
+                        emoji: (this.editItem.emoji || '').trim() || null,
+                        time_of_day: this.editItem.time_of_day || null,
+                        days_of_week: (this.editItem.days_of_week || []).map(Number),
+                        description: (this.editItem.description || '').trim() || null,
+                        image_id: this.editItem.image_id || null,
+                        steps: (this.editItem.steps || [])
+                            .filter(s => (s.title || '').trim())
+                            .map(s => ({ id: s.id || null, title: s.title.trim(),
+                                         emoji: (s.emoji || '').trim() || null })),
+                        runway: this.editItem.runway || null,
+                    };
+                    const res = await fetch(`${this.apiBase}api/routines/${this.editItemId}`, {
+                        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        showGlobalAlert(err.detail || 'Could not save routine item');
+                        return;
+                    }
+                    this.editItemId = null;
+                    await Promise.all([this.loadRoutines(), this.loadStreaks()]);
+                },
+                async deleteItem(r) {
+                    if (!await promptConfirm('Delete item', `Delete "${r.title}"?`, 'Delete')) return;
+                    await fetch(`${this.apiBase}api/routines/${r.id}`, { method: 'DELETE' });
+                    await Promise.all([this.loadRoutines(), this.loadStreaks()]);
+                },
+                // --- Prep kits ---
+                _parseList(str) {
+                    return String(str || '').split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+                },
+                async loadPrepKits() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/prep-kits`);
+                        this.prepKits = await res.json();
+                    } catch (e) { this.prepKits = []; }
+                    this.loadKitMatches();   // non-blocking refresh of the visibility chips
+                },
+                async loadKitMatches() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/prep-kits/matches`);
+                        this.kitMatches = res.ok ? await res.json() : {};
+                    } catch (e) { this.kitMatches = {}; }
+                },
+                matchesFor(kitId) { return this.kitMatches[kitId] || []; },
+                matchWhen(s) {
+                    try {
+                        const d = new Date(s);
+                        return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })
+                            + ' ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                    } catch (e) { return s; }
+                },
+                passengerMembers() {
+                    return this.members.filter(m => m.passenger_id);
+                },
+                passengerName(pid) {
+                    const m = this.members.find(x => x.passenger_id === pid);
+                    return m ? m.name : pid;
+                },
+                addKitKeyword() {
+                    const val = (this.kitEdit._kwInput || '').trim().toLowerCase();
+                    if (val && !this.kitEdit.keywords.includes(val)) this.kitEdit.keywords.push(val);
+                    this.kitEdit._kwInput = '';
+                },
+                async _postKit(payload, method, id) {
+                    const url = `${this.apiBase}api/prep-kits${id ? '/' + id : ''}`;
+                    const res = await fetch(url, {
+                        method: method, headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        showGlobalAlert(err.detail || 'Could not save kit');
+                        return false;
+                    }
+                    return true;
+                },
+                async addKit() {
+                    const payload = {
+                        name: (this.newKit.name || '').trim(),
+                        keywords: this._parseList(this.newKit.keywords),
+                        items: this._parseList(this.newKit.items),
+                        enabled: true,
+                    };
+                    if (await this._postKit(payload, 'POST')) {
+                        this.newKit = { name: '', keywords: '', items: '' };
+                        await this.loadPrepKits();
+                    }
+                },
+                startEditKit(k) {
+                    this.editKitId = k.id;
+                    this.kitEdit = {
+                        name: k.name,
+                        items: (k.items || []).join(', '),
+                        enabled: k.enabled !== false,
+                        per_person: k.per_person !== false,
+                        keywords: [...(k.keywords || [])],
+                        keywords_match_all: !!k.keywords_match_all,
+                        passenger_ids: [...(k.passenger_ids || [])],
+                        passengers_match_all: !!k.passengers_match_all,
+                        days_of_week: [...(k.days_of_week || [])],
+                        time_start: k.time_start || '',
+                        time_end: k.time_end || '',
+                        start_date: k.start_date || '',
+                        end_date: k.end_date || '',
+                        location: k.location || '',
+                        _kwInput: '',
+                    };
+                },
+                _kitEditPayload() {
+                    return {
+                        name: (this.kitEdit.name || '').trim(),
+                        items: this._parseList(this.kitEdit.items),
+                        enabled: this.kitEdit.enabled,
+                        per_person: this.kitEdit.per_person,
+                        keywords: this.kitEdit.keywords,
+                        keywords_match_all: this.kitEdit.keywords_match_all,
+                        passenger_ids: this.kitEdit.passenger_ids,
+                        passengers_match_all: this.kitEdit.passengers_match_all,
+                        days_of_week: this.kitEdit.days_of_week.map(Number),
+                        time_start: this.kitEdit.time_start || null,
+                        time_end: this.kitEdit.time_end || null,
+                        start_date: this.kitEdit.start_date || null,
+                        end_date: this.kitEdit.end_date || null,
+                        location: (this.kitEdit.location || '').trim() || null,
+                    };
+                },
+                async saveEditKit() {
+                    this.addKitKeyword();   // capture a typed-but-unadded keyword
+                    if (await this._postKit(this._kitEditPayload(), 'PUT', this.editKitId)) {
+                        this.editKitId = null;
+                        await this.loadPrepKits();
+                    }
+                },
+                async toggleKit(k) {
+                    await this._postKit({ ...k, enabled: k.enabled === false }, 'PUT', k.id);
+                    await this.loadPrepKits();
+                },
+                async deleteKit(k) {
+                    if (!await promptConfirm('Delete kit', `Delete the "${k.name}" prep kit?`, 'Delete')) return;
+                    await fetch(`${this.apiBase}api/prep-kits/${k.id}`, { method: 'DELETE' });
+                    await this.loadPrepKits();
+                },
+                async suggestKits() {
+                    this.suggesting = true;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/prep-kits/suggest`, { method: 'POST' });
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) {
+                            showGlobalAlert(data.detail || 'Suggestion failed');
+                            return;
+                        }
+                        const kits = data.kits || [];
+                        if (!kits.length) {
+                            showGlobalAlert('No new kits to suggest — your events look covered.');
+                            return;
+                        }
+                        this.suggestedKits = kits.map(k => ({
+                            name: k.name,
+                            _keywords: (k.keywords || []).join(', '),
+                            _items: (k.items || []).join(', '),
+                        }));
+                    } finally {
+                        this.suggesting = false;
+                    }
+                },
+                async approveSuggested(idx) {
+                    const s = this.suggestedKits[idx];
+                    const payload = {
+                        name: (s.name || '').trim(),
+                        keywords: this._parseList(s._keywords),
+                        items: this._parseList(s._items),
+                        enabled: true,
+                    };
+                    if (await this._postKit(payload, 'POST')) {
+                        this.suggestedKits.splice(idx, 1);
+                        await this.loadPrepKits();
+                    }
+                },
+
+                async deleteBlock(member) {
+                    const items = this.itemsFor(member.id);
+                    if (items.length &&
+                        !await promptConfirm('Delete routine',
+                            `Delete ${member.name}'s whole routine (${items.length} item${items.length === 1 ? '' : 's'})? Their check-off history goes too.`,
+                            'Delete')) {
+                        return;
+                    }
+                    for (const r of items) {
+                        await fetch(`${this.apiBase}api/routines/${r.id}`, { method: 'DELETE' });
+                    }
+                    this.draftBlocks = this.draftBlocks.filter(id => id !== member.id);
+                    await Promise.all([this.loadRoutines(), this.loadStreaks()]);
+                },
+
+                // --- Copy a routine between members ---
+                // The kids' routines are mostly the same: set one up, copy,
+                // edit the differences. The server merges by title, so a
+                // half-built routine tops up rather than doubling.
+                copySources(memberId) {
+                    return this.members
+                        .filter(m => m.id !== memberId && this.itemsFor(m.id).length)
+                        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                },
+                async copyRoutine(member) {
+                    const fromId = this.copyFrom[member.id];
+                    if (!fromId) return;
+                    const src = this.members.find(m => m.id === fromId) || {};
+                    const res = await fetch(`${this.apiBase}api/routines/copy`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ from_member_id: fromId, to_member_id: member.id })
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        showGlobalAlert(err.detail || 'Could not copy the routine');
+                        return;
+                    }
+                    const out = await res.json();
+                    this.copyFrom[member.id] = '';
+                    showGlobalAlert(out.created
+                        ? `Copied ${out.created} item${out.created === 1 ? '' : 's'} from ${src.name}`
+                          + (out.skipped ? ` (${out.skipped} already there)` : '')
+                        : `Nothing new to copy — ${member.name} already has all of ${src.name}'s items`);
+                    await Promise.all([this.loadRoutines(), this.loadStreaks()]);
+                },
+            };
+        }
+    </script>
+    {% include 'components/kid_glyphs.html' %}
+    {% include 'components/routine_lanes.html' %}
+    {% include 'components/status_celebration.html' %}
+    {% include 'components/avatar_editor.html' %}
+    {% include 'components/pet_editor.html' %}
+    {% include 'components/pet_battle.html' %}
+    {% include 'components/pet_guide.html' %}
+    {% include 'components/emoji_picker.html' %}

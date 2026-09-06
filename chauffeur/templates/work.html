@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Argyle's Work</title>
+    <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
+    {% include 'ha_theme.html' %}
+    <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
+    <style>
+        body { background-color: #111827; color: #e5e7eb; }
+        [x-cloak] { display: none !important; }
+    </style>
+    <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
+</head>
+
+<body class="flex flex-col h-screen overflow-hidden">
+    {% include 'nav.html' %}
+
+    <!-- One organism, three organs: the Mind notices, Missions work, Threads
+         hold the loops. Each column is the SAME component its standalone page
+         serves (three independent Alpine islands) — /mind, /missions and
+         /threads keep working for old links and kiosk opt-ins; this page is
+         just the desk they share. -->
+    <div class="flex-1 overflow-y-auto bg-gray-900/50">
+        <div class="grid grid-cols-1 xl:grid-cols-3 gap-2 max-w-[120rem] mx-auto">
+            <section id="mind" class="min-w-0">
+                {% include 'components/mind_page.html' %}
+            </section>
+            <section id="missions" class="min-w-0">
+                {% include 'components/missions_page.html' %}
+            </section>
+            <section id="threads" class="min-w-0">
+                {% include 'components/threads_page.html' %}
+            </section>
+        </div>
+    </div>
+    {% include 'components/control_center.html' %}
+    {% include 'components/moments_hearth.html' %}
+</body>
+</html>

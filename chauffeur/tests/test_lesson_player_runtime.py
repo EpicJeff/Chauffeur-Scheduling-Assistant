@@ -38,7 +38,7 @@ def scenario_checks_are_never_stored():
 
 
 def scenario_programs_page_opens_the_player():
-    src = _read('programs.html')
+    src = _read('components/programs_page.html')
     check('lesson_player.html' in src, "the page includes the player")
     check('lesson-player:open' in src, "and a window can open it")
 
@@ -54,7 +54,7 @@ def scenario_programs_page_never_posts_from_the_player_directly():
     one place that turns that into a write, and it has to reuse the
     existing session-log action rather than growing a second path to the
     same POST."""
-    src = _read('programs.html')
+    src = _read('components/programs_page.html')
     check('lesson-player:done' in src, "the page listens for the finish")
     check('onLessonDone' in src, "and handles it")
     import re
@@ -363,7 +363,7 @@ def scenario_the_editor_can_reorder_and_names_its_source():
     """Two claims the shipped editor did not honour: the spec's own
     "reorder/edit/delete beats", and showing where a script came from."""
     import re
-    src = _read('programs.html')
+    src = _read('components/programs_page.html')
     m = re.search(r'moveLessonRow\(p, ph, label, i, delta\)\s*\{(.*?)\n                \},',
                   src, re.S)
     check(m, "the editor can move a beat")
@@ -1043,7 +1043,7 @@ def scenario_the_lesson_editor_offers_a_play_tap():
     summary row alone (bounded by the disclosure's own expanded-content
     div), not a bare substring anywhere on the page."""
     import re
-    src = _read('programs.html')
+    src = _read('components/programs_page.html')
     m = re.search(
         r'@click="toggleLesson\(p, ph, label\)".*?'
         r'<div class="mt-2 space-y-2" x-show="lessonOpen\[lessonKey\(p, ph, label\)\]"',
@@ -1062,7 +1062,7 @@ def scenario_play_lesson_reads_storage_fresh_never_the_unsaved_draft():
     load/save already use, and opens in preview with an honest window
     stand-in built from what the editor actually has on screen."""
     import re
-    src = _read('programs.html')
+    src = _read('components/programs_page.html')
     m = re.search(r'async playLesson\(p, ph, label\)\s*\{(.*?)\n                \},', src, re.S)
     check(m, "playLesson is findable")
     body = m.group(1) if m else ''
@@ -1084,7 +1084,7 @@ def scenario_slot_steps_matches_the_rotation_vs_flat_branch_the_readonly_view_us
     unlabeled one -- slotSteps has to resolve the identical two shapes, or
     a rotated phase's preview would show the wrong session's steps."""
     import re
-    src = _read('programs.html')
+    src = _read('components/programs_page.html')
     m = re.search(r'slotSteps\(ph, label\)\s*\{(.*?)\n                \},', src, re.S)
     check(m, "slotSteps is findable")
     body = m.group(1) if m else ''
@@ -1100,7 +1100,7 @@ def scenario_sweep_report_play_tap_only_on_rows_that_wrote_something():
     report's -- has nothing this tap promises to show. Scoped to the
     sweep-report's own row template, bounded by its closing tag."""
     import re
-    src = _read('programs.html')
+    src = _read('components/programs_page.html')
     m = re.search(
         r'<template x-for="\(slot, idx\) in \(sweepReport \? sweepReport\.slots : \[\]\)"'
         r'[\s\S]*?</template>', src)
@@ -1127,7 +1127,7 @@ def scenario_play_sweep_slot_fetches_by_program_id_and_previews():
     has to fetch through the `program_id` sweep_report now names, exactly
     the scoped GET the editor's own playLesson uses, and open in preview."""
     import re
-    src = _read('programs.html')
+    src = _read('components/programs_page.html')
     m = re.search(r'async playSweepSlot\(slot\)\s*\{(.*?)\n                \},', src, re.S)
     check(m, "playSweepSlot is findable")
     body = m.group(1) if m else ''
@@ -1332,7 +1332,7 @@ def scenario_hosts_that_log_a_session_announce_they_listen():
     lesson_player.html's finish() reads, right next to their own listener,
     or the honest fix just moves the lie from 'always asks on non-panel'
     to 'never asks at all, even where a write really happens'."""
-    for page in ('programs.html', 'app.html'):
+    for page in ('components/programs_page.html', 'app.html'):
         src = _read(page)
         check('window.chfHasLessonDoneListener = true' in src,
               f"{page} announces that it listens")

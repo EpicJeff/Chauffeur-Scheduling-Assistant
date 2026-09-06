@@ -173,7 +173,7 @@ def scenario_the_flag_round_trips_and_the_lanes_draw():
           "the lanes draw the vehicle during a live window")
     check("rw.behind ? 'bg-amber-500' : 'bg-emerald-500'" in lanes,
           "behind tints amber — a calm color, never a siren")
-    editor = open(os.path.join(tpl, 'routines.html'), encoding='utf-8').read()
+    editor = open(os.path.join(tpl, 'components', 'routines_page.html'), encoding='utf-8').read()
     check("editItem.runway" in editor and 'Bedtime' in editor,
           "the editor's toggle is the explicit hand path")
 
@@ -264,7 +264,7 @@ def scenario_the_cue_hand_paths_exist():
     import os
     tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        'templates')
-    editor = open(os.path.join(tpl, 'routines.html'), encoding='utf-8').read()
+    editor = open(os.path.join(tpl, 'components', 'routines_page.html'), encoding='utf-8').read()
     check('setCueRoom' in editor and 'No cue room (cues off)' in editor
           and 'api/announce/rooms' in editor,
           "the per-child cue room is picked on the Routines page")

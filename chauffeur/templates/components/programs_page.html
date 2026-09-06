@@ -1,0 +1,1789 @@
+{# The whole programs page body: the shelf, proposals, sessions, the
+   lesson player and its done-listener flag, and the Alpine island.
+   Included by the standalone /programs wrapper AND by /rhythms —
+   nav/control_center/hearth chrome belongs to the HOST page. #}
+    <!-- This page turns a finished session into a write (onLessonDone,
+         bound below via @lesson-player:done.window) -- announced here,
+         next to that binding, because lesson_player.html's own finish()
+         has no reliable way to sniff `window` for the Alpine listener
+         directive itself and asks "Log this session?" only when this flag
+         is set. See lesson_player.html's `hostListens` for the other half. -->
+    <script>window.chfHasLessonDoneListener = true;</script>
+        <div x-data="programsPage()" x-init="load()"
+             @lesson-player:done.window="onLessonDone($event.detail)"
+             class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
+
+            <h2 class="panel-page-title">Programs</h2>
+            <p class="text-sm text-gray-500 mb-5">
+                An ambition with a real plan attached — a cited curriculum, a
+                weekly shape, a session log. Propose an aim, see the plan that
+                was found and where it came from, read exactly what approving
+                will claim, then it's on. Pausing, resuming and dropping are
+                all just what a program can do next — none of them is a
+                failure.
+            </p>
+
+            <!-- Settings: the five programs_* knobs live here, not on /config. -->
+            <div class="bg-gray-800 rounded-2xl border border-gray-700 p-4 mb-6">
+                <button @click="settingsOpen = !settingsOpen"
+                    class="w-full flex items-center justify-between text-sm font-bold text-gray-200">
+                    <span>⚙ Settings</span>
+                    <span class="text-gray-500 text-xs" x-text="settingsOpen ? 'Hide' : 'Show'"></span>
+                </button>
+                <div class="mt-3 space-y-3" x-show="settingsOpen" x-cloak>
+                    <label class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-300">
+                            Programs
+                            <span class="block text-[11px] text-gray-500 mt-0.5">
+                                Off means no asks, no re-baselining and no findings.
+                            </span>
+                        </span>
+                        <input type="checkbox" x-model="s.programs_enabled" @change="saveProgramSettings()"
+                            class="shrink-0">
+                    </label>
+                    <label class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-300">
+                            Make a plan when none is found
+                            <span class="block text-[11px] text-gray-500 mt-0.5">
+                                When research turns up no published program for an aim, the app
+                                writes one and labels it as its own. Off means those programs
+                                claim practice time and carry no plan at all.
+                            </span>
+                        </span>
+                        <input type="checkbox" x-model="s.programs_generate_enabled"
+                            @change="saveProgramSettings()" class="shrink-0">
+                    </label>
+                    <label id="lessons" class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-300">
+                            Lesson scripts
+                            <span class="block text-[11px] text-gray-500 mt-0.5">
+                                Write a short scripted lesson for each practice session the
+                                night before. Off still shows the plain steps — only the
+                                depth is lost.
+                            </span>
+                        </span>
+                        <input type="checkbox" x-model="s.program_lessons_enabled"
+                            @change="saveProgramSettings()" class="shrink-0">
+                    </label>
+                    <label class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-300">
+                            Questions a day during a session
+                            <span class="block text-[11px] text-gray-500 mt-0.5">
+                                How many times anybody in the house may tap
+                                &ldquo;Explain this&rdquo; inside a lesson before the app
+                                stops answering for the day. Zero switches it off.
+                                Nothing asked or answered is ever recorded.
+                            </span>
+                        </span>
+                        <input type="number" min="0" max="200" step="1"
+                            x-model.number="s.lesson_help_daily_cap"
+                            @change="saveProgramSettings()"
+                            class="w-20 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-center shrink-0">
+                    </label>
+                    <div class="pt-1">
+                        <button @click="runLessonSweep()" :disabled="sweeping"
+                            class="w-full text-xs font-semibold text-teal-300 border border-teal-700/60 rounded-lg py-2 hover:bg-teal-900/20 disabled:opacity-50 disabled:cursor-not-allowed">
+                            <span x-show="!sweeping">Write lessons now</span>
+                            <span x-show="sweeping" x-cloak>Writing lessons… this can take a couple of minutes.</span>
+                        </button>
+                        <p class="text-[11px] text-gray-500 mt-1">
+                            Runs tonight's sweep immediately, for every active program, so you
+                            can see what generation just produced instead of waiting until
+                            tonight.
+                        </p>
+                        <div x-show="sweepReport" x-cloak
+                            class="mt-2 text-[11px] text-gray-300 bg-gray-900/60 border border-gray-800 rounded-lg p-2 space-y-1.5">
+                            <div class="font-semibold text-gray-200"
+                                x-text="sweepReport ? `Wrote ${sweepReport.wrote}, skipped ${sweepReport.skipped}` : ''"></div>
+                            <template x-if="sweepReport && sweepReport.slots.length === 0">
+                                <div class="text-gray-500">Nothing due in the window scanned.</div>
+                            </template>
+                            <template x-for="(slot, idx) in (sweepReport ? sweepReport.slots : [])" :key="idx">
+                                <div class="border-t border-gray-800 pt-1.5">
+                                    <div class="text-gray-300">
+                                        <span x-text="slot.program"></span> —
+                                        <span x-text="slot.session_label || 'practice'"></span> —
+                                        <span x-text="fmtDate(slot.date)"></span>
+                                    </div>
+                                    <!-- Only a row that actually WROTE a script this pass offers
+                                         Play -- a skipped row, including one skipped because it
+                                         already had a lesson, has nothing this specific tap
+                                         promises to show (the lesson editor's own "Play this" is
+                                         the hand path onto an already-stored script). -->
+                                    <div x-show="slot.origin" class="text-teal-400 flex items-center justify-between gap-2">
+                                        <span x-text="`${slot.origin}, ${slot.scenes} scene(s)`"></span>
+                                        <button type="button" @click="playSweepSlot(slot)"
+                                            class="shrink-0 text-[11px] font-bold px-2.5 py-1 rounded-lg bg-teal-700 text-white active:bg-teal-800">
+                                            ▶ Play
+                                        </button>
+                                    </div>
+                                    <div x-show="!slot.origin" class="text-amber-400" x-text="slot.skipped"></div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                    <label class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-300">
+                            Ask after (hours)
+                            <span class="block text-[11px] text-gray-500 mt-0.5">
+                                How long after a practice window ends before asking whether it happened.
+                            </span>
+                        </span>
+                        <input type="number" min="0" step="0.5" x-model.number="s.programs_ask_grace_hours"
+                            @change="saveProgramSettings()"
+                            class="w-20 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-center shrink-0">
+                    </label>
+                    <label class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-300">
+                            Look back (days)
+                            <span class="block text-[11px] text-gray-500 mt-0.5">
+                                How far back the check for a struggling program looks.
+                            </span>
+                        </span>
+                        <input type="number" min="1" step="1" x-model.number="s.programs_rebaseline_days"
+                            @change="saveProgramSettings()"
+                            class="w-20 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-center shrink-0">
+                    </label>
+                    <label class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-300">
+                            Re-baseline at most every (days)
+                            <span class="block text-[11px] text-gray-500 mt-0.5">
+                                The minimum gap between two timeline stretches, so a plan cannot chatter about bending.
+                            </span>
+                        </span>
+                        <input type="number" min="1" step="1" x-model.number="s.programs_rebaseline_cooldown_days"
+                            @change="saveProgramSettings()"
+                            class="w-20 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-center shrink-0">
+                    </label>
+                    <label class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-300">
+                            Pages to read
+                            <span class="block text-[11px] text-gray-500 mt-0.5">
+                                How many real pages a curation run reads before proposing a plan. One run per program, cached for its life.
+                            </span>
+                        </span>
+                        <input type="number" min="1" step="1" x-model.number="s.programs_research_pages"
+                            @change="saveProgramSettings()"
+                            class="w-20 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-center shrink-0">
+                    </label>
+                </div>
+            </div>
+
+            <!-- Create form -->
+            <div class="bg-gray-800 rounded-2xl border border-gray-700 p-4 mb-6">
+                <button @click="creating = !creating"
+                    class="w-full flex items-center justify-between text-sm font-bold text-gray-200">
+                    <span>+ Propose a program</span>
+                    <span class="text-gray-500 text-xs" x-text="creating ? 'Hide' : 'Show'"></span>
+                </button>
+                <div class="mt-3 space-y-2.5" x-show="creating" x-cloak>
+                    <input type="text" x-model="draft.title" placeholder="The aim (e.g. Learn guitar, Train for a 5K)"
+                        @keydown.enter="proposeProgram()"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                    <select x-model="draft.for_member_id" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 text-white text-sm">
+                        <option value="">Whose program is this?</option>
+                        <template x-for="m in members" :key="m.id">
+                            <option :value="m.id" x-text="m.name"></option>
+                        </template>
+                    </select>
+                    <!-- The one thing that turns a generic beginner plan into
+                         theirs. Optional, and free text on purpose: every
+                         domain says "where you are" differently, and a set of
+                         levels would fit one of them. Screened for body
+                         targets server-side, same list as the aim. -->
+                    <input type="text" x-model="draft.starting_point"
+                        placeholder="Where they're starting from (optional — e.g. already plays open chords)"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                    <div class="grid grid-cols-2 gap-2.5">
+                        <label class="text-xs text-gray-400 flex items-center gap-2">
+                            Sessions / week
+                            <input type="number" min="1" max="7" x-model.number="draft.sessions_per_week"
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm">
+                        </label>
+                        <label class="text-xs text-gray-400 flex items-center gap-2">
+                            Minutes
+                            <!-- The ceiling is real, not decoration: minutes
+                                 become a commitment's `time_end`, and a
+                                 window ending at '29:00' is a solver rule
+                                 nothing can parse. Bounded in
+                                 services/programs.py too -- an input's `max`
+                                 is a courtesy, never a guarantee. -->
+                            <input type="number" min="5" max="240" x-model.number="draft.minutes"
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm">
+                        </label>
+                    </div>
+                    <div>
+                        <div class="text-[11px] text-gray-500 mb-1">Preferred days (optional)</div>
+                        <div class="flex flex-wrap gap-1.5">
+                            <template x-for="d in 7" :key="d">
+                                <button type="button" @click="toggleDay(d - 1)"
+                                    class="text-xs font-bold px-2.5 py-1 rounded-lg border"
+                                    :class="draft.preferred_days.includes(d - 1)
+                                        ? 'bg-blue-600 border-blue-600 text-white'
+                                        : 'bg-gray-900 border-gray-700 text-gray-400'"
+                                    x-text="dayLabel(d - 1)"></button>
+                            </template>
+                        </div>
+                    </div>
+                    <label class="text-xs text-gray-400 flex items-center gap-2">
+                        Target date (optional — a real date to aim at)
+                        <input type="date" x-model="draft.target_date"
+                            class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm">
+                    </label>
+                    <button @click="proposeProgram()" :disabled="proposing"
+                        class="w-full text-sm font-bold px-3 py-2 rounded-lg bg-blue-600 text-white active:bg-blue-700 disabled:opacity-50">
+                        <span x-show="!proposing">Find a plan</span>
+                        <span x-show="proposing" x-cloak>Looking for a real plan…</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Live programs, then a collapsed archive -->
+            <template x-for="sec in sections" :key="sec.key">
+                <div class="mb-6">
+                    <button x-show="sec.archived" @click="archiveOpen = !archiveOpen"
+                        class="w-full flex items-center justify-between text-xs font-black uppercase tracking-widest px-1 mb-2"
+                        :class="sec.titleClass">
+                        <span x-text="sec.label"></span>
+                        <span class="text-gray-600 normal-case font-semibold" x-text="archiveOpen ? 'Hide' : 'Show'"></span>
+                    </button>
+                    <div class="text-xs font-black uppercase tracking-widest px-1 mb-2"
+                        x-show="!sec.archived" :class="sec.titleClass">
+                        <span x-text="sec.label"></span>
+                    </div>
+                    <template x-if="!sec.archived || archiveOpen">
+                    <div>
+                    <p class="text-xs text-gray-500 italic px-1" x-show="!sec.items.length" x-text="sec.empty"></p>
+                    <div class="space-y-2">
+                        <template x-for="p in sec.items" :key="p.id">
+                            <div class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
+                                <div class="flex items-start justify-between gap-2">
+                                    <div class="text-sm font-bold text-gray-100" x-text="p.title"></div>
+                                    <span class="text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0" :class="stateChipClass(p.state)"
+                                        x-text="p.state"></span>
+                                </div>
+                                <div class="text-[11px] text-gray-500 mt-1" x-text="memberName(p.member_id)"></div>
+
+                                <!-- Where the plan came from. Three tiers, each said plainly:
+                                     a real published program, a plan the app wrote itself, or
+                                     no plan at all. One label for all three read as "written by
+                                     hand", which was a misnomer -- nothing had written anything
+                                     -- and it hid the difference between the web having nothing
+                                     and the research call simply not running. -->
+                                <div class="text-xs mt-1.5 space-y-1">
+                                    <template x-if="tier(p) === 'cited' && p.source.plan_name">
+                                        <div class="text-gray-400">Following
+                                            <a :href="p.source.url" target="_blank" rel="noopener"
+                                               class="text-blue-400 underline underline-offset-2" x-text="p.source.plan_name"></a>
+                                        </div>
+                                    </template>
+                                    <template x-if="tier(p) === 'cited' && !p.source.plan_name">
+                                        <div class="text-gray-400">Built from
+                                            <a :href="p.source.url" target="_blank" rel="noopener"
+                                               class="text-blue-400 underline underline-offset-2">pages the app read</a>
+                                        </div>
+                                    </template>
+                                    <template x-if="tier(p) === 'generated'">
+                                        <div class="flex items-start gap-1.5 flex-wrap">
+                                            <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 shrink-0">Made by the app</span>
+                                            <span class="text-gray-500 italic">No published program fit this aim, so this plan is the app's own — not anyone's real curriculum.</span>
+                                        </div>
+                                    </template>
+                                    <template x-if="tier(p) === 'none'">
+                                        <div class="text-gray-500 italic">
+                                            Practice time only — <span x-text="p.source.why_this_one || 'no plan was found'"></span>.
+                                        </div>
+                                    </template>
+
+                                    <!-- Why this one, and what it beat. Both fields were
+                                         computed and stored from the day the arc shipped and
+                                         neither ever reached a screen, which left every plan
+                                         reading as an oracle's pick rather than a choice
+                                         somebody could argue with. -->
+                                    <template x-if="whyText(p)">
+                                        <div>
+                                            <button @click="whyOpen[p.id] = !whyOpen[p.id]"
+                                                class="text-[11px] font-semibold text-gray-500 underline underline-offset-2"
+                                                x-text="whyOpen[p.id] ? 'Hide why' : 'Why this one'"></button>
+                                            <div x-show="whyOpen[p.id]" x-cloak class="mt-1 space-y-1.5">
+                                                <div class="text-[11px] text-gray-400" x-text="whyText(p)"></div>
+                                                <div x-show="(p.source.runners_up || []).length">
+                                                    <div class="text-[10px] font-black uppercase tracking-widest text-gray-600 mb-1">Also considered</div>
+                                                    <template x-for="r in (p.source.runners_up || [])" :key="r.url">
+                                                        <div class="text-[11px] text-gray-500">
+                                                            <a :href="r.url" target="_blank" rel="noopener"
+                                                               class="text-blue-400 underline underline-offset-2" x-text="r.name"></a>
+                                                            <span x-text="r.why_not ? ' — ' + r.why_not : ''"></span>
+                                                        </div>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+
+                                <!-- Progress: every number here only goes up -->
+                                <div class="text-[11px] text-gray-500 mt-1.5" x-show="!sec.archived">
+                                    <span x-text="(p.progress.sessions || 0) + ' session' + (p.progress.sessions === 1 ? '' : 's') + ' logged'"></span>
+                                    <span class="text-gray-700"> · </span>
+                                    <span x-text="(p.progress.minutes || 0) + ' min total'"></span>
+                                    <template x-if="p.progress.phase">
+                                        <span><span class="text-gray-700"> · </span>working towards: <span x-text="p.progress.phase.milestone || p.progress.phase.name"></span></span>
+                                    </template>
+                                </div>
+
+                                <!-- Tonight: the practice-windows read this page never made until
+                                     now -- one compact row per today's window on THIS program,
+                                     carrying the tap that opens the lesson player. `w._lesson` is
+                                     always empty until a later task starts storing scripts, so
+                                     this always opens on the player's own fallback ladder for now
+                                     -- exactly the P1 shape, no LLM change. Gated like every other
+                                     action on this card: informational content shows to the room,
+                                     but a tap that ends in a session log is canAct(p) only. -->
+                                <div class="mt-2 space-y-1" x-show="!sec.archived && canAct(p) && todayWindowsFor(p).length">
+                                    <template x-for="w in todayWindowsFor(p)" :key="w.commitment_id + w.date + w.time_start">
+                                        <div class="flex items-center gap-2 text-xs bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5">
+                                            <span class="text-[11px] font-semibold text-gray-400 shrink-0" x-text="(w.time_start || '').slice(0, 5)"></span>
+                                            <span class="text-[11px] text-gray-300 truncate flex-1" x-text="w.session_label || 'Tonight'"></span>
+                                            <button @click="window.dispatchEvent(new CustomEvent('lesson-player:open',
+                                                    {detail: {window: w, lesson: w._lesson || null}}))"
+                                                class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-teal-600 text-white active:bg-teal-700 shrink-0">
+                                                Start session
+                                            </button>
+                                        </div>
+                                    </template>
+                                </div>
+
+                                <!-- Phases: milestones are only ever marked reached, never missed.
+                                     A phase carries two different sentences and the row used to
+                                     show only one of them, unlabelled: `what` is the practice,
+                                     `milestone` is how you know it worked. Reading a bare can-do
+                                     sentence under a phase name, with a button called "Mark hit"
+                                     beside it, there is no way to tell which of the two you are
+                                     looking at or what the button claims. -->
+                                <div class="mt-2 space-y-1" x-show="(p.phases || []).length && !sec.archived">
+                                    <template x-for="ph in (p.phases || [])" :key="ph.name">
+                                        <div class="flex items-start justify-between gap-2 text-xs bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5">
+                                            <div class="min-w-0">
+                                                <div class="font-semibold" :class="ph.milestone_hit_at ? 'text-teal-300' : 'text-gray-300'"
+                                                    x-text="ph.name + (ph.weeks ? ' · ' + ph.weeks + 'w' : '')"></div>
+                                                <div class="text-[11px] text-gray-400 mt-0.5" x-show="ph.what" x-text="ph.what"></div>
+                                                <!-- The phase's actual content. `what` is a paragraph
+                                                     ABOUT the phase and `milestone` is how you know it
+                                                     ended; neither is the session, and for a while
+                                                     nothing here was. -->
+                                                <ul class="mt-1 space-y-0.5" x-show="(ph.steps || []).length && !(ph.rotation || []).length">
+                                                    <template x-for="st in (ph.steps || [])" :key="st">
+                                                        <li class="text-[11px] text-gray-300 flex gap-1.5">
+                                                            <span class="text-gray-600 shrink-0">·</span>
+                                                            <span x-text="st"></span>
+                                                        </li>
+                                                    </template>
+                                                </ul>
+                                                <!-- A phase whose sessions are not all the same
+                                                     session. The flat list above is what a phase
+                                                     with one kind of session shows; this is the
+                                                     same thing dealt out, and the days these land
+                                                     on are the family's own practice windows. -->
+                                                <div class="mt-1.5 space-y-1.5" x-show="(ph.rotation || []).length">
+                                                    <template x-for="sess in (ph.rotation || [])" :key="sess.label">
+                                                        <div>
+                                                            <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300"
+                                                                x-text="sess.label"></span>
+                                                            <ul class="mt-1 space-y-0.5">
+                                                                <template x-for="st in (sess.steps || [])" :key="st">
+                                                                    <li class="text-[11px] text-gray-300 flex gap-1.5">
+                                                                        <span class="text-gray-600 shrink-0">·</span>
+                                                                        <span x-text="st"></span>
+                                                                    </li>
+                                                                </template>
+                                                            </ul>
+                                                        </div>
+                                                    </template>
+                                                </div>
+
+                                                <!-- The hand path (Task 8): everything generation
+                                                     will do to a slot's scenes, a person can do by
+                                                     tap. One disclosure per rotation label -- or a
+                                                     single unlabeled one when this phase has no
+                                                     rotation -- keyed to the SAME slot tonight's own
+                                                     Start-session tap uses (phase_name + the
+                                                     program's current unit + the label), so editing
+                                                     here and playing tonight can never drift onto two
+                                                     different lessons. Text only: hand-writing a
+                                                     primitive's params is P3a/P3b territory
+                                                     (lesson_player.html's own comments) and this form
+                                                     does not reach for it -- the player is the show,
+                                                     the editor is a form. -->
+                                                <div class="mt-2 space-y-1.5" x-show="onThisPhase(p, ph) && canAct(p) && !sec.archived">
+                                                    <template x-for="label in lessonSlotsFor(p, ph)" :key="label">
+                                                        <div class="bg-gray-950/60 border border-gray-800 rounded-lg p-2">
+                                                            <div class="flex items-center gap-2">
+                                                                <button type="button" @click="toggleLesson(p, ph, label)"
+                                                                    class="flex-1 min-w-0 flex items-center justify-between text-[11px] font-bold text-gray-400">
+                                                                    <span x-text="'Lesson' + (label ? ' · ' + label : '')"></span>
+                                                                    <span x-text="lessonOpen[lessonKey(p, ph, label)] ? '▾ hide' : '▸ edit'"></span>
+                                                                </button>
+                                                                <!-- The hand path's own preview: opens the player on
+                                                                     THIS slot's stored scenes, in preview, without
+                                                                     opening the disclosure first -- a fresh read
+                                                                     straight off storage (playLesson below), never
+                                                                     lessonDraft, which may hold an edit not yet
+                                                                     saved. A slot with no stored script previews the
+                                                                     plan's own steps instead (the same fallback
+                                                                     ladder tonight's own Start-session tap already
+                                                                     falls back to) rather than being hidden or
+                                                                     opening onto nothing. -->
+                                                                <button type="button" @click="playLesson(p, ph, label)"
+                                                                    class="shrink-0 text-[10px] font-bold px-2 py-1 rounded-lg bg-teal-700 text-white active:bg-teal-800">
+                                                                    ▶ Play
+                                                                </button>
+                                                            </div>
+                                                            <div class="mt-2 space-y-2" x-show="lessonOpen[lessonKey(p, ph, label)]" x-cloak>
+                                                                <template x-if="!lessonLoaded[lessonKey(p, ph, label)]">
+                                                                    <div class="text-[11px] text-gray-500 italic">Loading…</div>
+                                                                </template>
+                                                                <template x-if="lessonLoaded[lessonKey(p, ph, label)]">
+                                                                    <div class="space-y-2">
+                                                                        <!-- Where this script came from, which the family
+                                                                             could not see anywhere: the cited/generated
+                                                                             split is the whole reason the curate module
+                                                                             exists, and Task 9's "honest label" for an
+                                                                             uncited unit labelled nothing on any screen.
+                                                                             Metadata + chip vocabulary from
+                                                                             docs/ui_design_guide.md. -->
+                                                                        <div class="flex items-center gap-1.5 flex-wrap"
+                                                                            x-show="lessonOriginLabel(p, ph, label)">
+                                                                            <span class="text-[11px] font-semibold text-gray-500"
+                                                                                x-text="lessonOriginLabel(p, ph, label)"></span>
+                                                                            <template x-if="(lessonMeta[lessonKey(p, ph, label)] || {}).source_url">
+                                                                                <a :href="(lessonMeta[lessonKey(p, ph, label)] || {}).source_url"
+                                                                                    target="_blank" rel="noopener"
+                                                                                    class="text-[11px] font-bold text-blue-400 underline underline-offset-2 truncate"
+                                                                                    x-text="lessonSourceHost(p, ph, label)"></a>
+                                                                            </template>
+                                                                            <span x-show="(lessonMeta[lessonKey(p, ph, label)] || {}).edited"
+                                                                                class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300">edited by hand</span>
+                                                                        </div>
+                                                                        <p class="text-[11px] text-gray-500 italic"
+                                                                            x-show="!(lessonDraft[lessonKey(p, ph, label)] || []).length">
+                                                                            No script yet — tonight plays the plain steps above.
+                                                                        </p>
+                                                                        <!-- Why there is no script, when the answer is not
+                                                                             "nothing has tried yet". An empty
+                                                                             llm_gemini_api_key fails every call forever
+                                                                             while the toggle says lessons are being
+                                                                             written, and that used to be indistinguishable
+                                                                             from a sweep that had not reached this slot.
+                                                                             program_lessons._record_attempt writes the
+                                                                             reason down; this is where a person reads it. -->
+                                                                        <p class="text-[11px] text-amber-300/80"
+                                                                            x-show="(lessonMeta[lessonKey(p, ph, label)] || {}).note"
+                                                                            x-text="(lessonMeta[lessonKey(p, ph, label)] || {}).note"></p>
+                                                                        <template x-for="(row, i) in (lessonDraft[lessonKey(p, ph, label)] || [])" :key="i">
+                                                                            <div class="flex items-center gap-1.5">
+                                                                                <span class="text-[9px] font-bold uppercase tracking-wide text-gray-500 w-10 shrink-0"
+                                                                                    x-text="row.type"></span>
+                                                                                <input x-show="row.type === 'say' || row.type === 'do'" x-model="row.text"
+                                                                                    type="text" placeholder="Says…"
+                                                                                    class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-[11px]">
+                                                                                <input x-show="row.type === 'check'" x-model="row.ask"
+                                                                                    type="text" placeholder="Asks…"
+                                                                                    class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-[11px]">
+                                                                                <input x-show="row.type === 'show'" x-model="row.caption"
+                                                                                    type="text" placeholder="Caption…"
+                                                                                    class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-[11px]">
+                                                                                <!-- Reorder: the verb the spec named, the
+                                                                                     capabilities doc claimed, and this form
+                                                                                     did not have. The draft array IS the
+                                                                                     order and Save sends it whole, so a
+                                                                                     splice is the entire change. -->
+                                                                                <button type="button" @click="moveLessonRow(p, ph, label, i, -1)"
+                                                                                    :disabled="i === 0"
+                                                                                    aria-label="Move this beat up"
+                                                                                    class="text-[10px] font-bold px-1.5 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 disabled:opacity-30 shrink-0">
+                                                                                    ▲
+                                                                                </button>
+                                                                                <button type="button" @click="moveLessonRow(p, ph, label, i, 1)"
+                                                                                    :disabled="i === (lessonDraft[lessonKey(p, ph, label)] || []).length - 1"
+                                                                                    aria-label="Move this beat down"
+                                                                                    class="text-[10px] font-bold px-1.5 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 disabled:opacity-30 shrink-0">
+                                                                                    ▼
+                                                                                </button>
+                                                                                <button type="button" @click="removeLessonRow(p, ph, label, i)"
+                                                                                    aria-label="Delete this beat"
+                                                                                    class="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 shrink-0">
+                                                                                    ✕
+                                                                                </button>
+                                                                            </div>
+                                                                        </template>
+                                                                        <div class="flex items-center gap-1.5 pt-1 flex-wrap">
+                                                                            <select x-model="lessonAddType[lessonKey(p, ph, label)]"
+                                                                                class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-[11px]">
+                                                                                <option value="say">Say</option>
+                                                                                <option value="do">Do</option>
+                                                                                <option value="check">Check</option>
+                                                                            </select>
+                                                                            <button type="button" @click="addLessonRow(p, ph, label)"
+                                                                                class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">
+                                                                                Add a beat
+                                                                            </button>
+                                                                            <span class="flex-1"></span>
+                                                                            <button type="button" @click="regenerateLesson(p, ph, label)"
+                                                                                class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">
+                                                                                Regenerate
+                                                                            </button>
+                                                                            <button type="button" @click="saveLesson(p, ph, label)"
+                                                                                :disabled="lessonSaving[lessonKey(p, ph, label)]"
+                                                                                class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50">
+                                                                                Save
+                                                                            </button>
+                                                                        </div>
+                                                                    </div>
+                                                                </template>
+                                                            </div>
+                                                        </div>
+                                                    </template>
+                                                </div>
+
+                                                <!-- The ladder. A phase used to be a bucket of
+                                                     weeks with a flat list in it, which is not how
+                                                     any curriculum is organised: real ones are
+                                                     lessons in order, and a person follows one per
+                                                     session. The current rung is MARKED, never
+                                                     counted -- "3 of 10" is a completion
+                                                     percentage with the division left undone, and
+                                                     that is one of the six. -->
+                                                <div class="mt-1.5 space-y-1" x-show="(ph.units || []).length">
+                                                    <template x-for="u in (ph.units || [])" :key="u.n">
+                                                        <div class="flex items-start gap-1.5 text-[11px]">
+                                                            <span class="shrink-0"
+                                                                :class="onThisRung(p, ph, u) ? 'text-teal-400' : 'text-gray-600'"
+                                                                x-text="onThisRung(p, ph, u) ? '▸' : '·'"></span>
+                                                            <div class="min-w-0">
+                                                                <span :class="onThisRung(p, ph, u) ? 'text-teal-300 font-semibold' : 'text-gray-300'"
+                                                                    x-text="u.title"></span>
+                                                                <a x-show="u.url" :href="u.url" target="_blank" rel="noopener"
+                                                                    class="ml-1.5 text-blue-400 underline underline-offset-2">Open the lesson</a>
+                                                                <div x-show="u.body" class="text-gray-400 mt-0.5" x-text="u.body"></div>
+                                                            </div>
+                                                        </div>
+                                                    </template>
+                                                    <div class="flex gap-2 pt-0.5" x-show="onThisPhase(p, ph) && p.state === 'active' && canAct(p)">
+                                                        <button @click="moveUnit(p, 'stay')"
+                                                            class="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">
+                                                            Another session on this
+                                                        </button>
+                                                        <button @click="moveUnit(p, 'next')"
+                                                            class="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">
+                                                            Move on
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <!-- How one session beats the last one inside this
+                                                     phase. The counterpart to "Done when": that
+                                                     says when the phase ends, this says what makes
+                                                     Tuesday more than a repeat of last Tuesday. -->
+                                                <div class="text-[11px] text-gray-500 mt-1" x-show="ph.progression">
+                                                    <span class="text-gray-600">Next time:</span>
+                                                    <span x-text="ph.progression"></span>
+                                                </div>
+                                                <div class="text-[11px] text-gray-500 mt-1" x-show="ph.milestone">
+                                                    <span class="text-gray-600">Done when:</span>
+                                                    <span x-text="ph.milestone"></span>
+                                                </div>
+                                            </div>
+                                            <span class="text-[10px] font-bold text-teal-400 shrink-0" x-show="ph.milestone_hit_at">🎉 done</span>
+                                            <button x-show="!ph.milestone_hit_at && (p.state === 'active' || p.state === 'paused') && canAct(p)"
+                                                @click="markMilestone(p, ph)"
+                                                class="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 shrink-0">
+                                                Reached it
+                                            </button>
+                                        </div>
+                                    </template>
+                                </div>
+
+                                <!-- The footprint: exactly what approving will claim, before the tap -->
+                                <div class="mt-2.5 bg-gray-950/60 border border-gray-800 rounded-xl p-2.5 space-y-1.5"
+                                    x-show="p.state === 'proposed'" x-cloak>
+                                    <div class="text-[10px] font-bold uppercase tracking-wide text-blue-300">
+                                        Approving will claim
+                                    </div>
+                                    <template x-if="!footprints[p.id]">
+                                        <div class="text-[11px] text-gray-500 italic">Working it out…</div>
+                                    </template>
+                                    <template x-if="footprints[p.id]">
+                                        <div class="space-y-1.5">
+                                            <!-- The proposed windows, and the way to disagree with
+                                                 them. `propose_slots` has always said "the person can
+                                                 move them on the approval screen anyway" in its own
+                                                 docstring; until this row existed the screen offered
+                                                 no such thing, and preferred DAYS was the closest a
+                                                 family could get to naming a time. -->
+                                            <div class="text-xs text-gray-300" x-show="(footprints[p.id].slots || []).length && !slotOpen[p.id]">
+                                                <template x-for="s in footprints[p.id].slots" :key="s.day + s.time_start">
+                                                    <div><span x-text="dayLabel(s.day)"></span> <span x-text="s.time_start + '–' + s.time_end"></span></div>
+                                                </template>
+                                            </div>
+                                            <button x-show="!slotOpen[p.id] && canAct(p)" @click="startSlotEdit(p)"
+                                                class="text-[11px] font-semibold text-gray-500 underline underline-offset-2">Not these times?</button>
+
+                                            <template x-if="slotOpen[p.id] && slotDraft[p.id]">
+                                                <div class="space-y-1.5">
+                                                    <template x-for="(s, i) in slotDraft[p.id]" :key="i">
+                                                        <div class="flex items-center gap-1.5">
+                                                            <select x-model.number="s.day"
+                                                                class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-xs">
+                                                                <template x-for="d in 7" :key="d">
+                                                                    <option :value="d - 1" x-text="dayLabel(d - 1)"></option>
+                                                                </template>
+                                                            </select>
+                                                            <input type="time" x-model="s.time_start"
+                                                                class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-xs">
+                                                            <button @click="slotDraft[p.id].splice(i, 1)"
+                                                                class="text-xs font-bold px-2 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 shrink-0">Remove</button>
+                                                        </div>
+                                                    </template>
+                                                    <div class="flex flex-wrap gap-2">
+                                                        <button x-show="slotDraft[p.id].length < 7" @click="addSlot(p)"
+                                                            class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Add a window</button>
+                                                        <button @click="saveSlots(p)" :disabled="proposing"
+                                                            class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-blue-600 text-white active:bg-blue-700 disabled:opacity-50">Save these times</button>
+                                                        <button @click="slotOpen[p.id] = false"
+                                                            class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Cancel</button>
+                                                    </div>
+                                                    <p class="text-[11px] text-gray-500 italic">
+                                                        Each window runs <span x-text="(p.shape || {}).minutes || 25"></span> minutes from the time you set — change that under Edit.
+                                                        Remove them all and the app goes back to proposing times for you.
+                                                    </p>
+                                                </div>
+                                            </template>
+                                            <div class="text-xs text-gray-300" x-show="footprints[p.id].thread" x-text="'Kit thread: ' + footprints[p.id].thread"></div>
+                                            <div class="text-xs text-gray-300" x-show="footprints[p.id].event"
+                                                x-text="footprints[p.id].event ? ('Calendar target: ' + footprints[p.id].event.title + ' on ' + fmtDate(footprints[p.id].event.date)) : ''"></div>
+
+                                            <!-- The book-spine fork. A cited plan can be honest and
+                                                 still hollow: the page it read named lesson books and
+                                                 teaches nothing on its own. One question, two taps,
+                                                 no surprise at the till. -->
+                                            <div x-show="p.state === 'proposed' && canAct(p) && (p.source || {}).book_spine"
+                                                class="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+                                                <div class="text-[12px] text-amber-300 font-semibold mb-1">
+                                                    This path follows <span x-text="(p.source || {}).book_spine"></span> — real books, bought or borrowed.
+                                                </div>
+                                                <div class="text-[11px] text-gray-400 mb-2">
+                                                    Have it (or will get it)? Approve as usual and the books stay the spine.
+                                                    Or ask for a plan with the lessons on free pages instead.
+                                                </div>
+                                                <button @click="replanWithoutBooks(p)" :disabled="proposing"
+                                                    class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50">
+                                                    Plan without the book
+                                                </button>
+                                            </div>
+
+                                            <button @click="approveProgram(p)" x-show="canApprove()"
+                                                class="w-full text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">
+                                                Approve — claim this time
+                                            </button>
+                                            <p class="text-[11px] text-gray-500 italic" x-show="!canApprove()">
+                                                A parent or adult claims the time — ask one to approve this.
+                                            </p>
+                                        </div>
+                                    </template>
+                                </div>
+
+                                <!-- What a proposal can do other than be approved. Until
+                                     this row existed the only two moves were approving the
+                                     footprint or leaving the card on the page forever: every
+                                     action below was gated on active|paused, so a typo, a bad
+                                     guess at the week, or a research outage was permanent. -->
+                                <div class="flex flex-wrap gap-2 mt-2.5" x-show="p.state === 'proposed' && canAct(p)">
+                                    <button @click="startEdit(p)"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700"
+                                        x-text="editOpen[p.id] ? 'Close' : 'Edit'"></button>
+                                    <button @click="lookAgain(p)" :disabled="proposing"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Look again</button>
+                                    <button @click="dismissProgram(p)"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Dismiss</button>
+                                </div>
+
+                                <!-- Editing a proposal. Editable precisely because nothing has
+                                     been claimed yet; an approved program's way back here is
+                                     Re-shape the week, which frees the time first. -->
+                                <template x-if="p.state === 'proposed' && editOpen[p.id] && edits[p.id]">
+                                    <div class="mt-2.5 bg-gray-950/60 border border-gray-800 rounded-xl p-2.5 space-y-2.5">
+                                        <input type="text" x-model="edits[p.id].title" placeholder="The aim"
+                                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                                        <input type="text" x-model="edits[p.id].starting_point"
+                                            placeholder="Where they're starting from (optional)"
+                                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                                        <div class="grid grid-cols-2 gap-2.5">
+                                            <label class="text-xs text-gray-400 flex items-center gap-2">
+                                                Sessions / week
+                                                <input type="number" min="1" max="7" x-model.number="edits[p.id].sessions_per_week"
+                                                    class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm">
+                                            </label>
+                                            <label class="text-xs text-gray-400 flex items-center gap-2">
+                                                Minutes
+                                                <input type="number" min="5" max="240" x-model.number="edits[p.id].minutes"
+                                                    class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm">
+                                            </label>
+                                        </div>
+                                        <div>
+                                            <div class="text-[11px] text-gray-500 mb-1">Preferred days (optional)</div>
+                                            <div class="flex flex-wrap gap-1.5">
+                                                <template x-for="d in 7" :key="d">
+                                                    <button type="button" @click="toggleEditDay(p, d - 1)"
+                                                        class="text-xs font-bold px-2.5 py-1 rounded-lg border"
+                                                        :class="(edits[p.id].preferred_days || []).includes(d - 1)
+                                                            ? 'bg-blue-600 border-blue-600 text-white'
+                                                            : 'bg-gray-900 border-gray-700 text-gray-400'"
+                                                        x-text="dayLabel(d - 1)"></button>
+                                                </template>
+                                            </div>
+                                        </div>
+                                        <label class="text-xs text-gray-400 flex items-center gap-2">
+                                            Target date (optional)
+                                            <input type="date" x-model="edits[p.id].target_date"
+                                                class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm">
+                                        </label>
+                                        <p class="text-[11px] text-gray-500 italic">
+                                            Changing the aim looks for a new plan and spends a research run.
+                                            Changing the week re-paces the phases already found and reads nothing.
+                                            Changing the starting point is saved and used the next time you look again — on its own it reads nothing.
+                                        </p>
+                                        <div class="flex gap-2">
+                                            <button @click="saveEdit(p)" :disabled="proposing"
+                                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700 disabled:opacity-50">Save</button>
+                                            <button @click="editOpen[p.id] = false"
+                                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Cancel</button>
+                                        </div>
+                                    </div>
+                                </template>
+
+                                <!-- Log a session -->
+                                <div class="mt-2.5 flex gap-2" x-show="(p.state === 'active' || p.state === 'paused') && sessionOpen[p.id]" x-cloak>
+                                    <input type="number" min="1" x-model.number="sessionMinutes[p.id]" placeholder="min"
+                                        class="w-20 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-xs">
+                                    <button @click="logSession(p)"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700 shrink-0">Save</button>
+                                </div>
+
+                                <!-- Actions. Gated by ownership (canAct), not by hiding the whole
+                                     card -- a parent still sees every household program, they just
+                                     cannot act on somebody else's from here unless it's theirs to
+                                     act on or they're the parent standing in. -->
+                                <div class="flex flex-wrap gap-2 mt-2.5" x-show="!sec.archived && canAct(p)">
+                                    <button x-show="p.state === 'active' || p.state === 'paused'"
+                                        @click="sessionOpen[p.id] = !sessionOpen[p.id]"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Log a session</button>
+                                    <button x-show="p.state === 'active'" @click="pauseProgram(p)"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-amber-700/80 text-white active:bg-amber-800">Pause</button>
+                                    <button x-show="p.state === 'paused'" @click="resumeProgram(p)"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">Resume</button>
+                                    <!-- Finished is not dropped. Reaching the end of a plan
+                                         must not be indistinguishable from abandoning it,
+                                         and until this button existed the only exit read
+                                         "Dropped. The time is back." The other half of done
+                                         is marking the last milestone, which finishes the
+                                         program on its own. -->
+                                    <button x-show="p.state === 'active' || p.state === 'paused'" @click="finishProgram(p)"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-700 text-white active:bg-emerald-800">Finished</button>
+                                    <!-- The hand path for the drift finding's offer: when a
+                                         practice window has been deleted by hand, this puts
+                                         the program back to a proposal so the footprint can
+                                         be rebuilt and approved again. Nothing is ever
+                                         silently re-created. -->
+                                    <button x-show="p.state === 'active' || p.state === 'paused'" @click="reshapeProgram(p)"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Re-shape the week</button>
+                                    <button x-show="p.state === 'active' || p.state === 'paused'" @click="dropProgram(p)"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Drop</button>
+                                </div>
+                                <div class="mt-1.5 text-[11px] text-gray-600" x-show="sec.archived">
+                                    <span x-text="p.state === 'done' ? 'Done' : 'Dropped — the record stays'"></span>
+                                    <span x-show="p.finished_at" x-text="' · ' + fmtTs(p.finished_at)"></span>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                    </div>
+                    </template>
+                </div>
+            </template>
+
+        </div>
+    {% include 'components/lesson_player.html' %}
+    <script>
+        function programsPage() {
+            return {
+                apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
+                // Who is looking at this page, read the same way app.html
+                // sets it at sign-in. Empty here reads as the control-center
+                // surface — no person, a trusted place — which is shown
+                // every action because that is exactly what the server does
+                // with it (`_approver_of_record` stands in the household's
+                // parent of record). A RESOLVED identity that is neither the
+                // program's owner nor a parent is the one case this hides
+                // buttons for; the server enforces the real rule regardless
+                // (`_program_permission_or_refuse`, main.py) — this is UX,
+                // not the security boundary.
+                myId: '', myToken: '',
+                programs: [],
+                members: [],
+                footprints: {},
+                // Today's practice windows, so an active program's card can
+                // offer the exact tap that starts tonight's session. The
+                // other readers of api/practice-windows are the wall card
+                // (components/programs_card.html) and the PWA
+                // (app.html's `fetchPracticeWindows`, which takes a whole
+                // week rather than a day); both drop a window once it is
+                // logged -- todayWindowsFor() below does the same, for the
+                // same reason: a session that already happened offers
+                // nothing left to start.
+                practiceToday: [],
+                creating: false,
+                proposing: false,
+                archiveOpen: false,
+                settingsOpen: false,
+                // The forced lesson sweep gets a busy flag of its own,
+                // never `proposing` -- that one already means "a network
+                // write is in flight, most buttons on this page are
+                // disabled", and a sweep that can run for minutes would
+                // freeze the whole page rather than just its own button.
+                sweeping: false,
+                sweepReport: null,
+                s: {
+                    programs_enabled: true,
+                    programs_ask_grace_hours: 2,
+                    programs_rebaseline_days: 21,
+                    programs_rebaseline_cooldown_days: 14,
+                    programs_research_pages: 4,
+                    programs_generate_enabled: true,
+                    program_lessons_enabled: true,
+                    lesson_help_daily_cap: 20,
+                },
+                draft: { title: '', for_member_id: '', starting_point: '', sessions_per_week: 3, minutes: 25, preferred_days: [], target_date: '' },
+                sessionOpen: {}, sessionMinutes: {},
+                whyOpen: {}, editOpen: {}, edits: {},
+                slotOpen: {}, slotDraft: {},
+                // The lesson editor (Task 8): everything generation will do
+                // to a slot's scenes, by hand. Keyed by lessonKey(), never by
+                // program id alone -- one program can hold several open
+                // disclosures at once, one per rotation label.
+                lessonOpen: {}, lessonDraft: {}, lessonLoaded: {},
+                lessonSaving: {}, lessonAddType: {},
+                // What the row says about ITSELF -- origin, source_url,
+                // edited, and the note _record_attempt leaves when a
+                // generation failed. Held apart from the draft because the
+                // draft is scenes and only scenes: it is what gets PUT back.
+                lessonMeta: {},
+
+                readIdentity() {
+                    try {
+                        this.myId = localStorage.getItem('chauffeur_member_id') || '';
+                        this.myToken = localStorage.getItem('chauffeur_member_token') || '';
+                    } catch (e) { this.myId = ''; this.myToken = ''; }
+                },
+
+                authHeaders() {
+                    const h = { 'Content-Type': 'application/json' };
+                    if (this.myToken) h['X-Member-Token'] = this.myToken;
+                    return h;
+                },
+
+                isMine(p) { return !!(this.myId && p.member_id === this.myId); },
+
+                iAmParent() {
+                    if (!this.myId) return false;
+                    const me = this.members.find(m => m.id === this.myId);
+                    return !!(me && me.role === 'parent');
+                },
+
+                // Own it, or stand in for it (parent, or nobody resolved at
+                // all -- the control-center reading). The one case hidden is
+                // a KNOWN identity acting on a program that is neither
+                // theirs nor one they parent.
+                canAct(p) { return !this.myId || this.isMine(p) || this.iAmParent(); },
+
+                // Approving is never an ownership matter -- even the program's
+                // own owner needs a parent/adult to claim the week.
+                canApprove() { return !this.myId || this.iAmParent(); },
+
+                async load() {
+                    this.readIdentity();
+                    try {
+                        const [pRes, mRes, sRes] = await Promise.all([
+                            fetch(this.apiBase + 'api/programs?include_finished=true'),
+                            fetch(this.apiBase + 'api/members'),
+                            fetch(this.apiBase + 'api/settings'),
+                        ]);
+                        const pd = pRes.ok ? await pRes.json() : { programs: [] };
+                        this.programs = pd.programs || [];
+                        this.members = mRes.ok ? await mRes.json() : [];
+                        const sd = sRes.ok ? await sRes.json() : {};
+                        Object.keys(this.s).forEach(k => {
+                            if (sd[k] !== undefined && sd[k] !== null) this.s[k] = sd[k];
+                        });
+                        this.programs.forEach(p => {
+                            if (this.sessionMinutes[p.id] === undefined) {
+                                this.sessionMinutes[p.id] = (p.shape || {}).minutes || 25;
+                            }
+                        });
+                        await Promise.all([
+                            ...this.programs.filter(p => p.state === 'proposed')
+                                .map(p => this.loadFootprint(p.id)),
+                            this.loadPracticeToday(),
+                        ]);
+                    } catch (e) { showGlobalAlert("Couldn't load programs."); }
+                },
+
+                // A read this page never made before Task 6 (the lesson
+                // player). Its own try/catch never throws, so a failed
+                // fetch here can never turn into the generic "Couldn't
+                // load programs" alert above for a page that in fact
+                // loaded fine -- stale/absent beats a false alarm, the
+                // same call the wall card already made for this endpoint.
+                async loadPracticeToday() {
+                    try {
+                        const d = new Date();
+                        const pad = n => String(n).padStart(2, '0');
+                        const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+                        const r = await fetch(this.apiBase + `api/practice-windows?start_date=${day}&end_date=${day}`,
+                                              { headers: this.authHeaders() });
+                        if (r.ok) {
+                            const body = await r.json();
+                            this.practiceToday = (body.windows || []).filter(w => !w.logged);
+                            // Task 8: the join `w._lesson` has always been read
+                            // for (open() only ever saw null until now). One
+                            // fetch per window, keyed to the same slot the
+                            // editor below reads and writes -- phase_name +
+                            // the owning program's own current_unit (already
+                            // on `this.programs`, loaded just before this) +
+                            // session_label.
+                            await Promise.all(this.practiceToday.map(w => this.loadWindowLesson(w)));
+                        }
+                    } catch (e) { /* the Start tap just stays absent today */ }
+                },
+
+                // Never throws -- same bargain as loadPracticeToday itself.
+                // A lesson that fails to load just leaves that window's tap
+                // on the player's own fallback ladder, which is the whole
+                // point of shipping the player before generation existed.
+                //
+                // The rung comes off the WINDOW (`w.unit_n`, which
+                // programs.practice_windows derives from the same
+                // `unit_for` walk `p.current_unit` does) rather than off
+                // the program row this page happens to hold, so this page,
+                // the PWA and the wall board -- only one of which can read
+                // a program row at all -- resolve one evening to one lesson
+                // by one route. The EDITOR below still keys off
+                // `p.current_unit`, because it edits a phase's slot with no
+                // window in hand; both name the same rung by construction.
+                async loadWindowLesson(w) {
+                    try {
+                        const qs = new URLSearchParams({ phase_name: w.phase_name || '',
+                                                         unit_n: w.unit_n || 0,
+                                                         session_label: w.session_label || '' });
+                        const r = await fetch(this.apiBase + `api/programs/${w.program_id}/lesson?${qs}`,
+                                              { headers: this.authHeaders() });
+                        if (r.ok) w._lesson = (await r.json()).lesson || null;
+                    } catch (e) { /* the player just falls back to plain steps */ }
+                },
+
+                todayWindowsFor(p) {
+                    return this.practiceToday.filter(w => w.program_id === p.id);
+                },
+
+                // The player never posts. Finishing a lesson dispatches
+                // lesson-player:done and this is the one place that reacts
+                // to it -- by calling the exact same action the page's own
+                // "Log a session" button already calls, so there is one
+                // path to a logged session, not a second one grown for
+                // the player.
+                //
+                // It answers the SLOT, though, not "somebody practised at
+                // some point": `source: 'asked'` with the window's own
+                // date, which is what the PWA's own done-listener has
+                // always sent (app.html) and what this page used to throw
+                // away -- it had `detail.window` in hand and kept only the
+                // program id. The two surfaces wrote two different records
+                // for the identical act, and the page's one filed a session
+                // finished after midnight under the wrong day, which leaves
+                // `w.logged` false, the tonight row still offering Start,
+                // and the "did it happen?" ask still to come.
+                onLessonDone(detail) {
+                    const w = (detail || {}).window || {};
+                    const p = this.programs.find(x => x.id === w.program_id);
+                    if (p) this.logSession(p, { source: 'asked', slot_date: w.date });
+                },
+
+                async saveProgramSettings() {
+                    try {
+                        await fetch(this.apiBase + 'api/settings', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.s),
+                        });
+                    } catch (e) { showGlobalAlert("Couldn't save that setting."); }
+                },
+
+                // The hand path onto program_lessons.sweep_report: force
+                // tonight's sweep to run now, against every active program,
+                // and show exactly what it did -- the whole reason this
+                // exists is that generation only otherwise runs overnight,
+                // unseen. Its own busy flag rather than `proposing`, since
+                // this can run for whole minutes and every other action on
+                // the page has nothing to do with it.
+                async runLessonSweep() {
+                    const ok = await promptConfirm('Write lessons now?',
+                        'Runs tonight\'s sweep immediately, for every active program. It spends real model calls and can take a couple of minutes.',
+                        'Write lessons', 'Cancel');
+                    if (!ok) return;
+                    this.sweeping = true;
+                    this.sweepReport = null;
+                    try {
+                        const r = await fetch(this.apiBase + 'api/programs/lessons/sweep', {
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            showGlobalAlert(d.detail || d.message || "Couldn't write those lessons.");
+                            return;
+                        }
+                        this.sweepReport = d;
+                    } catch (e) {
+                        showGlobalAlert("Couldn't write those lessons just now.");
+                    } finally {
+                        this.sweeping = false;
+                    }
+                },
+
+                // The report's own preview: exactly the slot a forced pass
+                // just wrote, which is where a person is looking right after
+                // running one. The report entry itself carries no scenes
+                // (only a count) and no more than a program TITLE -- not an
+                // id, and not guaranteed unique -- so this reads the same
+                // `program_id` sweep_report now names and fetches through
+                // the identical scoped GET the editor's own Play uses. Only
+                // ever called for a slot with `slot.origin` set (the
+                // template gates the button on that already), which is only
+                // ever set once generate_for has actually stored at least
+                // one scene -- so the fallback ladder below is a safety net
+                // for a race (the row edited or cleared between the sweep
+                // and this tap), never the expected path.
+                async playSweepSlot(slot) {
+                    try {
+                        const qs = new URLSearchParams({ phase_name: slot.phase || '',
+                                                         unit_n: slot.unit_n || 0,
+                                                         session_label: slot.session_label || '' });
+                        const r = await fetch(this.apiBase + `api/programs/${slot.program_id}/lesson?${qs}`,
+                                              { headers: this.authHeaders() });
+                        const body = r.ok ? await r.json() : {};
+                        window.dispatchEvent(new CustomEvent('lesson-player:open', {
+                            detail: {
+                                preview: true,
+                                window: { title: slot.program || '', session_label: slot.session_label || '',
+                                         phase_name: slot.phase || '', steps: [], unit_title: '', milestone: '' },
+                                lesson: body.lesson || null,
+                            }
+                        }));
+                    } catch (e) { showGlobalAlert("Couldn't load that lesson to preview."); }
+                },
+
+                async loadFootprint(id) {
+                    try {
+                        const r = await fetch(this.apiBase + `api/programs/${id}/footprint`);
+                        if (r.ok) this.footprints[id] = await r.json();
+                    } catch (e) { /* the approve button just stays hidden behind "Working it out…" */ }
+                },
+
+                get proposedList() { return this.programs.filter(p => p.state === 'proposed'); },
+                get liveList() { return this.programs.filter(p => p.state === 'active' || p.state === 'paused'); },
+                get archiveList() {
+                    return this.programs.filter(p => p.state === 'done' || p.state === 'dropped')
+                        .sort((a, b) => (b.finished_at || 0) - (a.finished_at || 0));
+                },
+
+                get sections() {
+                    return [
+                        { key: 'proposed', label: 'Proposed', titleClass: 'text-blue-400',
+                          items: this.proposedList, empty: 'Nothing proposed yet.', archived: false },
+                        { key: 'live', label: 'Under way', titleClass: 'text-gray-500',
+                          items: this.liveList, empty: 'No program is active yet.', archived: false },
+                        { key: 'archive', label: 'Done & dropped (' + this.archiveList.length + ')',
+                          titleClass: 'text-gray-600',
+                          items: this.archiveList, empty: 'Nothing finished yet.', archived: true },
+                    ];
+                },
+
+                stateChipClass(state) {
+                    return {
+                        proposed: 'bg-blue-500/20 text-blue-300',
+                        active: 'bg-teal-500/20 text-teal-300',
+                        paused: 'bg-amber-500/20 text-amber-300',
+                        done: 'bg-gray-700 text-gray-300',
+                        dropped: 'bg-gray-700 text-gray-400',
+                    }[state] || 'bg-gray-700 text-gray-300';
+                },
+
+                // Which of the three tiers this program's plan came from.
+                // `origin` is authoritative; the fallback reads rows written
+                // before the tiers existed, where the only signal was a bool.
+                tier(p) {
+                    const src = p.source || {};
+                    if (src.origin) return src.origin;
+                    return src.hand_written ? 'none' : 'cited';
+                },
+
+                // The argument for the plan, when there is one to make. The
+                // 'none' tier already says its reason on the face of the card,
+                // so it gets no toggle to open onto a repeat of itself.
+                whyText(p) {
+                    if (this.tier(p) === 'none') return '';
+                    return ((p.source || {}).why_this_one || '').trim();
+                },
+
+                memberName(id) {
+                    const m = this.members.find(x => x.id === id);
+                    return m ? m.name : 'Nobody yet';
+                },
+
+                dayLabel(d) { return ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][d] || ''; },
+
+                toggleDay(d) {
+                    const i = this.draft.preferred_days.indexOf(d);
+                    if (i === -1) this.draft.preferred_days.push(d);
+                    else this.draft.preferred_days.splice(i, 1);
+                },
+
+                fmtDate(ds) {
+                    if (!ds) return '';
+                    try {
+                        return new Date(ds + 'T00:00:00').toLocaleDateString(undefined,
+                            { weekday: 'short', month: 'short', day: 'numeric' });
+                    } catch (e) { return ds; }
+                },
+
+                fmtTs(ts) {
+                    if (!ts) return '';
+                    try {
+                        return new Date(ts * 1000).toLocaleDateString(undefined,
+                            { weekday: 'short', month: 'short', day: 'numeric' });
+                    } catch (e) { return ''; }
+                },
+
+                blankDraft() {
+                    return { title: '', for_member_id: '', starting_point: '', sessions_per_week: 3, minutes: 25, preferred_days: [], target_date: '' };
+                },
+
+                async proposeProgram() {
+                    const title = (this.draft.title || '').trim();
+                    if (!title) { showGlobalAlert('What is the aim?'); return; }
+                    if (!this.draft.for_member_id) { showGlobalAlert('Whose program is this?'); return; }
+                    this.proposing = true;
+                    try {
+                        const r = await fetch(this.apiBase + 'api/programs', {
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({
+                                title, for_member_id: this.draft.for_member_id,
+                                member_id: this.myId || null,
+                                starting_point: (this.draft.starting_point || '').trim(),
+                                sessions_per_week: this.draft.sessions_per_week || 3,
+                                minutes: this.draft.minutes || 25,
+                                preferred_days: this.draft.preferred_days,
+                                target_date: this.draft.target_date || null,
+                            })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            let msg = (d.detail || d.message || "Couldn't propose that.");
+                            if (d.alternatives && d.alternatives.length) {
+                                msg += ' Try instead: ' + d.alternatives.join('; ') + '.';
+                            }
+                            showGlobalAlert(msg);
+                            return;
+                        }
+                        this.draft = this.blankDraft();
+                        this.creating = false;
+                        await this.load();
+                    } catch (e) {
+                        showGlobalAlert("Couldn't propose that just now.");
+                    } finally {
+                        this.proposing = false;
+                    }
+                },
+
+                // Picking your own practice windows. The draft is seeded from
+                // whatever is on screen -- the chosen ones if there are any,
+                // the proposal if there are not -- so "not these times" starts
+                // from the times you are objecting to rather than a blank.
+                startSlotEdit(p) {
+                    const fp = this.footprints[p.id] || {};
+                    const src = ((p.shape || {}).slots || []).length
+                        ? p.shape.slots : (fp.slots || []);
+                    this.slotDraft[p.id] = src.map(s => ({ day: s.day,
+                                                           time_start: s.time_start }));
+                    if (!this.slotDraft[p.id].length) this.addSlot(p);
+                    this.slotOpen[p.id] = true;
+                },
+
+                addSlot(p) {
+                    const draft = this.slotDraft[p.id] || (this.slotDraft[p.id] = []);
+                    const used = draft.map(s => s.day);
+                    const day = [1, 3, 5, 0, 2, 4, 6].find(d => !used.includes(d));
+                    draft.push({ day: day === undefined ? 1 : day, time_start: '19:00' });
+                },
+
+                async saveSlots(p) {
+                    const draft = (this.slotDraft[p.id] || [])
+                        .filter(s => s.time_start)
+                        .map(s => ({ day: Number(s.day), time_start: s.time_start }));
+                    // An empty list is not a mistake to block: it is how a
+                    // family hands the choice back to the app.
+                    const ok = await this.patchProgram(p, { slots: draft },
+                                                       "Couldn't save those times.");
+                    if (ok) {
+                        this.slotOpen[p.id] = false;
+                        await this.loadFootprint(p.id);
+                    }
+                },
+
+                startEdit(p) {
+                    if (this.editOpen[p.id]) { this.editOpen[p.id] = false; return; }
+                    const shape = p.shape || {};
+                    this.edits[p.id] = {
+                        title: p.title || '',
+                        sessions_per_week: shape.sessions_per_week || 3,
+                        minutes: shape.minutes || 25,
+                        preferred_days: [...(shape.preferred_days || [])],
+                        starting_point: p.starting_point || '',
+                        target_date: (p.baseline || {}).target_date || '',
+                    };
+                    this.editOpen[p.id] = true;
+                },
+
+                // Which rung, straight from the server. Re-deriving it here
+                // would mean a second implementation of a walk that depends
+                // on when the phase began and on every session logged since,
+                // and two implementations of that drift.
+                onThisPhase(p, ph) {
+                    return !!ph.name && ph.name === p.current_phase;
+                },
+
+                onThisRung(p, ph, u) {
+                    return this.onThisPhase(p, ph) && u.n === p.current_unit;
+                },
+
+                // The hand on the ladder: a lesson that needs another evening,
+                // or two done in one sitting. Both are ordinary and neither is
+                // visible to the app.
+                async moveUnit(p, direction) {
+                    await this.patchProgram(p, { direction },
+                        "Couldn't move to that lesson.", 'unit');
+                },
+
+                toggleEditDay(p, d) {
+                    const e = this.edits[p.id];
+                    if (!e) return;
+                    const i = e.preferred_days.indexOf(d);
+                    if (i === -1) e.preferred_days.push(d);
+                    else e.preferred_days.splice(i, 1);
+                },
+
+                async saveEdit(p) {
+                    const e = this.edits[p.id];
+                    if (!e) return;
+                    const title = (e.title || '').trim();
+                    if (!title) { showGlobalAlert('What is the aim?'); return; }
+                    // The aim changing means the plan that was found was found
+                    // for a different question, so it is re-run -- and that
+                    // spends a real research call, which the family is told
+                    // before it happens rather than after.
+                    if (title !== (p.title || '')) {
+                        const ok = await promptConfirm('Change the aim?',
+                            'The plan is looked up again for the new aim, which spends one research run. The old plan is replaced.',
+                            'Look again', 'Cancel');
+                        if (!ok) return;
+                    }
+                    await this.patchProgram(p, {
+                        title,
+                        sessions_per_week: e.sessions_per_week,
+                        minutes: e.minutes,
+                        preferred_days: e.preferred_days,
+                        starting_point: (e.starting_point || '').trim(),
+                        target_date: e.target_date || null,
+                    }, "Couldn't save that change.");
+                    this.editOpen[p.id] = false;
+                },
+
+                // The hand path out of the 'none' tier: research was off, or
+                // capped, or simply down when this was proposed, and nothing
+                // else on the card could ever try again.
+                async lookAgain(p) {
+                    const ok = await promptConfirm('Look for a plan again?',
+                        'This spends one research run. Anything found replaces the plan on this proposal; if nothing new turns up, the plan you have stays. The practice time is untouched.',
+                        'Look again', 'Cancel');
+                    if (!ok) return;
+                    await this.patchProgram(p, { recurate: true },
+                                            "Couldn't look again just now.");
+                },
+
+                // The other half of the same fork: a book-spined plan can be
+                // looked up again with the books ruled out, so the family
+                // is never stuck choosing between the plan that was found
+                // and a trip to the store. Same one research run as Look
+                // again; if nothing bookless turns up, the plan says so
+                // honestly rather than pretending the books were never there.
+                async replanWithoutBooks(p) {
+                    const ok = await promptConfirm('Plan without the book?',
+                        'This spends one research run looking for a plan whose lessons are on free pages. If nothing bookless turns up, the app writes a plan and says so.',
+                        'Look again', 'Cancel');
+                    if (!ok) return;
+                    await this.patchProgram(p, { recurate: true, exclude_books: true },
+                                            "Couldn't look again just now.");
+                },
+
+                // Every failure here says what actually happened. An
+                // unparseable body (a proxy's HTML, a plain-text 500) used to
+                // collapse into the same one-line "couldn't just now" as a
+                // dropped connection, which is the sentence that makes a bug
+                // unreportable: nobody can tell you what broke because the
+                // screen never knew either.
+                async patchProgram(p, body, failure, path) {
+                    this.proposing = true;
+                    try {
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/${path || 'edit'}`, {
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null, ...body })
+                        });
+                        const raw = await r.text().catch(() => '');
+                        let d = {};
+                        try { d = JSON.parse(raw) || {}; } catch (e) { d = {}; }
+                        if (!r.ok || d.status === 'error') {
+                            let msg = (d.detail || d.message);
+                            if (!msg) {
+                                const body = (raw || '').trim().slice(0, 160);
+                                msg = `${failure} (HTTP ${r.status}${body ? ': ' + body : ''})`;
+                            }
+                            if (d.alternatives && d.alternatives.length) {
+                                msg += ' Try instead: ' + d.alternatives.join('; ') + '.';
+                            }
+                            showGlobalAlert(msg);
+                            return false;
+                        }
+                        await this.load();
+                        return true;
+                    } catch (e) {
+                        showGlobalAlert(`${failure} (${e && e.message ? e.message : 'the request never completed'})`);
+                        return false;
+                    } finally {
+                        this.proposing = false;
+                    }
+                },
+
+                // Dropping a proposal is the same verb the server already had
+                // and the page never offered. The words differ from Drop
+                // because the facts differ: nothing was ever claimed.
+                async dismissProgram(p) {
+                    const ok = await promptConfirm('Dismiss this proposal?',
+                        'Nothing has been claimed, so nothing comes back. It moves to the archive and the record stays.',
+                        'Dismiss it', 'Cancel');
+                    if (!ok) return;
+                    try {
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/drop`, {
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            showGlobalAlert(d.detail || d.message || "Couldn't dismiss that.");
+                            return;
+                        }
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't dismiss that."); }
+                },
+
+                async approveProgram(p) {
+                    const fp = this.footprints[p.id];
+                    const ok = await promptConfirm('Approve this program?',
+                        'This claims the practice time shown above, right now.',
+                        'Approve', 'Cancel');
+                    if (!ok) return;
+                    try {
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/approve`, {
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null,
+                                                   slots: fp ? fp.slots : undefined })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            showGlobalAlert(d.detail || d.message || "Couldn't approve that.");
+                            return;
+                        }
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't approve that just now."); }
+                },
+
+                // `opts` is how the SAME write serves two different acts.
+                // The page's own "Log a session" button is practice nobody
+                // scheduled -- `source: 'added'`, with the minutes a person
+                // typed. Finishing the player is answering a scheduled slot
+                // -- `source: 'asked'`, with that slot's own date, so the
+                // server files it under the evening it was about
+                // (services/programs.py's `_slot_ts`) rather than the
+                // moment it was tapped. One POST, one code path; the caller
+                // says which act it is instead of a second function saying
+                // it a second way.
+                async logSession(p, opts) {
+                    const minutes = this.sessionMinutes[p.id];
+                    const o = opts || {};
+                    try {
+                        const payload = { member_id: this.myId || null,
+                                          minutes: minutes || null,
+                                          source: o.source || 'added' };
+                        if (o.slot_date) payload.slot_date = o.slot_date;
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/session`, {
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify(payload)
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            showGlobalAlert(d.detail || d.message || "Couldn't log that session.");
+                            return;
+                        }
+                        this.sessionOpen[p.id] = false;
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't log that session."); }
+                },
+
+                async markMilestone(p, ph) {
+                    // Nothing here can be un-marked and nothing counts a miss,
+                    // so the one thing worth asking is whether they meant this
+                    // milestone -- the button used to say "Mark hit", which
+                    // names neither what is being marked nor that it sticks.
+                    const ok = await promptConfirm('Reached this milestone?',
+                        (ph.milestone || ph.name || 'This phase') + ' — marking it moves the program on to the next phase.',
+                        'Yes, reached it', 'Not yet');
+                    if (!ok) return;
+                    try {
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/milestone`, {
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null,
+                                                   phase_name: ph.name })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            showGlobalAlert(d.detail || d.message || "Couldn't mark that.");
+                            return;
+                        }
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't mark that."); }
+                },
+
+                async pauseProgram(p) {
+                    try {
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/pause`, {
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            showGlobalAlert(d.detail || d.message || "Couldn't pause that.");
+                            return;
+                        }
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't pause that."); }
+                },
+
+                async resumeProgram(p) {
+                    try {
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/resume`, {
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            showGlobalAlert(d.detail || d.message || "Couldn't resume that.");
+                            return;
+                        }
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't resume that."); }
+                },
+
+                async finishProgram(p) {
+                    const ok = await promptConfirm('Finished?',
+                        'It goes to the archive as done, and the practice time it claimed goes back to open.',
+                        "It's done", 'Cancel');
+                    if (!ok) return;
+                    try {
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/finish`, {
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            showGlobalAlert(d.detail || d.message || "Couldn't finish that.");
+                            return;
+                        }
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't finish that."); }
+                },
+
+                async reshapeProgram(p) {
+                    const ok = await promptConfirm('Re-shape the week?',
+                        'The claimed practice time goes back to open and the program returns to a proposal, so you can approve a fresh footprint.',
+                        'Re-shape it', 'Cancel');
+                    if (!ok) return;
+                    try {
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/reshape`, {
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            showGlobalAlert(d.detail || d.message || "Couldn't re-shape that.");
+                            return;
+                        }
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't re-shape that."); }
+                },
+
+                async dropProgram(p) {
+                    const ok = await promptConfirm('Drop this program?',
+                        'The practice time it claimed goes back to open. The record stays.',
+                        'Drop it', 'Cancel');
+                    if (!ok) return;
+                    try {
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/drop`, {
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            showGlobalAlert(d.detail || d.message || "Couldn't drop that.");
+                            return;
+                        }
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't drop that."); }
+                },
+
+                // --- Lesson editor (Task 8): the hand path beside every
+                // generated script. One slot key -- phase_name + the
+                // program's current unit + a session label -- shared with
+                // both the server (program_lessons.slot_of) and tonight's
+                // own `w._lesson` join above, so editing here can never
+                // land on a different lesson than the one Start session
+                // would open. Keyed by lessonKey() throughout, never by
+                // program id alone: a rotated phase holds one open
+                // disclosure per label.
+
+                lessonKey(p, ph, label) {
+                    return `${p.id}|${ph.name || ''}|${p.current_unit || 0}|${label || ''}`;
+                },
+
+                // The distinct lessons THIS phase can hold right now: one
+                // per rotation label, or a single unlabeled one when the
+                // phase is not rotated -- the same two shapes the read-only
+                // steps/rotation blocks above already branch on.
+                lessonSlotsFor(p, ph) {
+                    const rotation = ph.rotation || [];
+                    return rotation.length ? rotation.map(s => s.label || '') : [''];
+                },
+
+                async toggleLesson(p, ph, label) {
+                    const key = this.lessonKey(p, ph, label);
+                    if (this.lessonOpen[key]) { this.lessonOpen[key] = false; return; }
+                    this.lessonOpen[key] = true;
+                    if (!this.lessonLoaded[key]) await this.loadLesson(p, ph, label);
+                },
+
+                async loadLesson(p, ph, label) {
+                    const key = this.lessonKey(p, ph, label);
+                    try {
+                        const qs = new URLSearchParams({ phase_name: ph.name || '',
+                                                         unit_n: p.current_unit || 0,
+                                                         session_label: label || '' });
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/lesson?${qs}`,
+                                              { headers: this.authHeaders() });
+                        const body = r.ok ? await r.json() : {};
+                        // Each row keeps every field it loaded with (seconds,
+                        // metronome_bpm, a show's primitive) even though the
+                        // form below only exposes text/ask/caption -- so
+                        // saving back a row this form did not touch never
+                        // clobbers what generation or a citation put there.
+                        const l = body.lesson || {};
+                        this.lessonDraft[key] = (l.scenes || []).map(s => ({ ...s }));
+                        this.lessonMeta[key] = { origin: l.origin || '',
+                                                 source_url: l.source_url || '',
+                                                 edited: !!l.edited,
+                                                 note: l.note || '' };
+                        this.lessonAddType[key] = this.lessonAddType[key] || 'say';
+                        this.lessonLoaded[key] = true;
+                    } catch (e) { showGlobalAlert("Couldn't load that lesson."); }
+                },
+
+                // Where the stored script came from, in the same words the
+                // player's own footer uses -- one sentence, two surfaces,
+                // said the same way. Empty for a slot with no script: a row
+                // that exists only to record a failed attempt has an origin
+                // field and nothing to attribute.
+                lessonOriginLabel(p, ph, label) {
+                    const key = this.lessonKey(p, ph, label);
+                    if (!(this.lessonDraft[key] || []).length) return '';
+                    return (this.lessonMeta[key] || {}).source_url
+                        ? 'From' : 'Written by the app';
+                },
+                lessonSourceHost(p, ph, label) {
+                    const u = (this.lessonMeta[this.lessonKey(p, ph, label)] || {}).source_url || '';
+                    if (!u) return '';
+                    try { return new URL(u).hostname.replace(/^www\./, ''); }
+                    catch (e) { return u.slice(0, 40); }
+                },
+
+                // The plan's own steps for this slot -- the same two shapes
+                // the read-only steps/rotation blocks above already branch
+                // on. Feeds the preview's window stand-in (playLesson,
+                // below) so a slot with no generated script still previews
+                // something real: the player's own fallback ladder turns
+                // these into `do` beats, exactly what tonight's Start tap
+                // would show for the identical slot today.
+                slotSteps(ph, label) {
+                    if (label) {
+                        const sess = (ph.rotation || []).find(s => (s.label || '') === label);
+                        return (sess && sess.steps) || [];
+                    }
+                    return ph.steps || [];
+                },
+
+                // The lesson editor's own preview (Task: "Play this"). A
+                // fresh read straight off storage -- never lessonDraft,
+                // which may hold an edit not yet saved -- so this always
+                // shows the STORED scenes the disclosure's own label
+                // promises, not a half-finished form above it. Works
+                // whether or not the disclosure has ever been opened: it
+                // does its own fetch rather than routing through
+                // loadLesson, which would otherwise stomp an in-progress
+                // edit the moment Play is tapped.
+                //
+                // The player wants a window-shaped object (title,
+                // session_label, phase_name, steps, unit_title, milestone)
+                // and the editor has no real practice window in hand -- only
+                // the program, the phase and the label -- so this builds the
+                // smallest honest stand-in from what IS on screen: the
+                // program's title, this slot's own steps, and the phase's
+                // CURRENT unit (ph.units, matched on p.current_unit exactly
+                // the way onThisRung and this slot's own lessonKey already
+                // do), so a lesson with no stored script still previews the
+                // plan's own steps rather than a bare, contentless check.
+                async playLesson(p, ph, label) {
+                    try {
+                        const qs = new URLSearchParams({ phase_name: ph.name || '',
+                                                         unit_n: p.current_unit || 0,
+                                                         session_label: label || '' });
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/lesson?${qs}`,
+                                              { headers: this.authHeaders() });
+                        const body = r.ok ? await r.json() : {};
+                        const unit = (ph.units || []).find(u => u.n === p.current_unit) || {};
+                        window.dispatchEvent(new CustomEvent('lesson-player:open', {
+                            detail: {
+                                preview: true,
+                                window: { title: p.title || '', session_label: label || '',
+                                         phase_name: ph.name || '', steps: this.slotSteps(ph, label),
+                                         unit_title: unit.title || '', milestone: ph.milestone || '' },
+                                lesson: body.lesson || null,
+                            }
+                        }));
+                    } catch (e) { showGlobalAlert("Couldn't load that lesson to preview."); }
+                },
+
+                addLessonRow(p, ph, label) {
+                    const key = this.lessonKey(p, ph, label);
+                    const draft = this.lessonDraft[key] || (this.lessonDraft[key] = []);
+                    if (draft.length >= 12) {
+                        showGlobalAlert('Twelve beats is the most a lesson holds.');
+                        return;
+                    }
+                    const type = this.lessonAddType[key] || 'say';
+                    draft.push(type === 'check' ? { type, ask: '' } : { type, text: '' });
+                },
+
+                removeLessonRow(p, ph, label, i) {
+                    (this.lessonDraft[this.lessonKey(p, ph, label)] || []).splice(i, 1);
+                },
+
+                // Move one beat by one place. The draft array is the order
+                // -- saveLesson PUTs it whole and sanitize_script preserves
+                // the sequence it is handed -- so reordering is a splice out
+                // and a splice back in, with no server round trip until
+                // Save, exactly like editing a beat's words.
+                moveLessonRow(p, ph, label, i, delta) {
+                    const draft = this.lessonDraft[this.lessonKey(p, ph, label)] || [];
+                    const j = i + delta;
+                    if (j < 0 || j >= draft.length) return;
+                    draft.splice(j, 0, draft.splice(i, 1)[0]);
+                },
+
+                // Refreshes tonight's own copy when this slot is what Start
+                // session would open, so a save or a clear shows up there
+                // without a full page reload.
+                _syncTonight(p, ph, label) {
+                    this.practiceToday
+                        .filter(w => w.program_id === p.id
+                            && (w.phase_name || '') === (ph.name || '')
+                            && (w.session_label || '') === (label || ''))
+                        .forEach(w => this.loadWindowLesson(w));
+                },
+
+                async saveLesson(p, ph, label) {
+                    const key = this.lessonKey(p, ph, label);
+                    const scenes = (this.lessonDraft[key] || []).map(s => ({ ...s }));
+                    this.lessonSaving[key] = true;
+                    try {
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/lesson`, {
+                            method: 'PUT', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null,
+                                                   phase_name: ph.name || '',
+                                                   unit_n: p.current_unit || 0,
+                                                   session_label: label || '', scenes })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            showGlobalAlert(d.detail || d.message || "Couldn't save that lesson.");
+                            return;
+                        }
+                        this.lessonLoaded[key] = false;
+                        await this.loadLesson(p, ph, label);
+                        this._syncTonight(p, ph, label);
+                    } catch (e) {
+                        showGlobalAlert("Couldn't save that lesson.");
+                    } finally {
+                        this.lessonSaving[key] = false;
+                    }
+                },
+
+                async regenerateLesson(p, ph, label) {
+                    const ok = await promptConfirm('Clear this lesson?',
+                        'The stored script goes away and the next sweep writes a fresh one. Tonight still plays -- the plain steps show until then.',
+                        'Clear it', 'Cancel');
+                    if (!ok) return;
+                    const key = this.lessonKey(p, ph, label);
+                    try {
+                        const qs = new URLSearchParams({ phase_name: ph.name || '',
+                                                         unit_n: p.current_unit || 0,
+                                                         session_label: label || '' });
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/lesson?${qs}`,
+                                              { method: 'DELETE', headers: this.authHeaders() });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            showGlobalAlert(d.detail || d.message || "Couldn't clear that lesson.");
+                            return;
+                        }
+                        this.lessonLoaded[key] = false;
+                        await this.loadLesson(p, ph, label);
+                        this._syncTonight(p, ph, label);
+                    } catch (e) { showGlobalAlert("Couldn't clear that lesson."); }
+                },
+            }
+        }
+    </script>

@@ -331,7 +331,11 @@ def scenario_every_page_says_its_name_in_the_same_place():
               # line its title up with pages it is never seen beside.
               'set_password.html')]
     for path in pages:
-        body = open(path, encoding='utf-8').read()
+        # Read the page as it RENDERS — titles live in included page
+        # components since the /work + /rhythms consolidation.
+        import tpl_source
+        rel = os.path.relpath(path, TPL).replace(os.sep, '/')
+        body = tpl_source.read(rel)
         name = os.path.basename(path)
         check('panel-page-title' in body, f"{name} has no page title")
         check('panel-page' in body.replace('panel-page-title', ''),

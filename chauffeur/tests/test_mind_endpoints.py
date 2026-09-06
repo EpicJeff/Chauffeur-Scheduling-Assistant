@@ -366,7 +366,8 @@ def scenario_admin_template_boolean_bindings_are_coerced():
     playwright repro; `!!` coercion (and only coercion) stamps correctly.
     This pins the template so the landmine cannot be reintroduced."""
     import os, re
-    path = os.path.join(os.path.dirname(__file__), '..', 'templates', 'mind.html')
+    path = os.path.join(os.path.dirname(__file__), '..', 'templates',
+                        'components', 'mind_page.html')
     with open(path, encoding='utf-8') as f:
         src = f.read()
     bare = re.findall(r':disabled="(?!!!)[^"]*\[', src)

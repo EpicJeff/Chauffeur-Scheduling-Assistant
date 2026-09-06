@@ -185,7 +185,7 @@ def scenario_the_hand_paths_exist():
     import os
     tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        'templates')
-    routines = open(os.path.join(tpl, 'routines.html'), encoding='utf-8').read()
+    routines = open(os.path.join(tpl, 'components', 'routines_page.html'), encoding='utf-8').read()
     check('editItem.steps' in routines and 'Add step' in routines
           and 'uploadItemPhoto' in routines and 'editItem.description' in routines,
           "the routine editor edits steps, description and photo")

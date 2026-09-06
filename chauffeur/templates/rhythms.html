@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Programs</title>
+    <title>Rhythms</title>
     <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
     {% include 'ha_theme.html' %}
     <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
@@ -18,8 +18,19 @@
 <body class="flex flex-col h-screen overflow-hidden">
     {% include 'nav.html' %}
 
+    <!-- The recurring shapes of family life on one page: routines (the daily
+         checklists) and programs (the goal plans). A presentation-only merge —
+         each column is the SAME component its standalone page serves, two
+         independent Alpine islands; /routines and /programs keep working. -->
     <div class="flex-1 overflow-y-auto bg-gray-900/50">
-        {% include 'components/programs_page.html' %}
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-2 max-w-[90rem] mx-auto">
+            <section id="routines" class="min-w-0">
+                {% include 'components/routines_page.html' %}
+            </section>
+            <section id="programs" class="min-w-0">
+                {% include 'components/programs_page.html' %}
+            </section>
+        </div>
     </div>
     {% include 'components/control_center.html' %}
     {% include 'components/moments_hearth.html' %}

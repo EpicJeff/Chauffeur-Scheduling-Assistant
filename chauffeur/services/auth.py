@@ -200,6 +200,8 @@ RULES = [
     (ANY, '/dashboard_v2', ANYONE, None),
     (ANY, '/settings', ANYONE, None),
     (ANY, '/mind', ANYONE, None),
+    (ANY, '/work', ANYONE, None),
+    (ANY, '/rhythms', ANYONE, None),
     # Missions: same admin-page shape as Mind — a shell anyone can load, the
     # data behind it gated at /api/missions/* below.
     (ANY, '/missions', ANYONE, None),

@@ -240,7 +240,7 @@ def scenario_the_celebration_stays_on_the_page():
     check(got['cards']['celebrates'] is False,
           "a lane card fires the full-screen status overlay; four of them on a "
           "wall is a fault, not a party")
-    page = open(os.path.join(TPL, 'routines.html'), encoding='utf-8').read()
+    page = tpl_source.read('routines.html')
     check('maybeCelebrateStatusKiosk' in page,
           "the page lost the celebration at the tap that earned it")
     src = tpl_source.read('components/routine_lanes.html')
@@ -322,10 +322,12 @@ def scenario_the_shared_logic_is_emitted_once_per_page():
         check(src.count('function routineLanesLogic') == 1,
               f"{name} emits the shared lane logic "
               f"{src.count('function routineLanesLogic')} times")
-    page = open(os.path.join(TPL, 'routines.html'), encoding='utf-8').read()
+    page = tpl_source.read('routines.html')
     check("import 'components/routine_lanes.html'" in page,
           "the routines page stopped rendering the shared macro")
-    body = page[page.index('function routinesPage()'):]
+    _start = page.index('function routinesPage()')
+    _end = page.find('function routineLanesLogic', _start)
+    body = page[_start:_end if _end != -1 else len(page)]
     for gone in ('async loadStreaks(', 'async loadAllDayItems(',
                  'async toggleRoutineCheck(', 'formatClock(hhmm) {'):
         check(gone not in body,
@@ -350,7 +352,7 @@ def scenario_the_kid_digest_is_one_drawing_on_both_surfaces():
           "the routines page no longer draws the digest lanes")
     check('border-indigo-900/60' in tpl_source.read('home.html'),
           "the board no longer draws the digest lanes")
-    page = open(os.path.join(TPL, 'routines.html'), encoding='utf-8').read()
+    page = tpl_source.read('routines.html')
     check("import 'components/kid_digest_lanes.html'" in page,
           "the routines page stopped rendering the shared digest macro")
     check('border-indigo-900/60' not in page,
@@ -392,6 +394,24 @@ def scenario_the_kid_digest_is_one_drawing_on_both_surfaces():
     check([k['name'] for k in filtered['kids']] == ['Emma'],
           f"the member filter is comparing against a missing field again: "
           f"{filtered['kids']}")
+
+
+def scenario_rhythms_hosts_both_presentation_only():
+    tpl = os.path.join(TPL, 'rhythms.html')
+    html = open(tpl, encoding='utf-8').read()
+    for comp in ('components/routines_page.html', 'components/programs_page.html'):
+        check(comp in html, f"/rhythms includes {comp}")
+    check(html.count('control_center.html') == 1,
+          "chrome included once by the host")
+    flat = tpl_source.read('rhythms.html')
+    check(flat.count('function routinesPage()') == 1
+          and flat.count('function programsPage()') == 1,
+          "each island emitted exactly once")
+    nav = open(os.path.join(TPL, 'nav.html'), encoding='utf-8').read()
+    check("'slug': 'rhythms'" in nav and "'slug': 'programs'" not in nav,
+          "rhythms replaced programs in the nav")
+    check("'slug': 'routines'" in nav,
+          "routines keeps its nav entry (kiosk affordance)")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

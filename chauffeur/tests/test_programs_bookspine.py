@@ -81,7 +81,7 @@ def scenario_the_fork_is_on_the_proposal():
     answers a tap away -- reachable by hand, per the house rule."""
     import io, os
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    src = io.open(os.path.join(here, 'templates', 'programs.html'),
+    src = io.open(os.path.join(here, 'templates', 'components', 'programs_page.html'),
                   encoding='utf-8').read()
     check('book_spine' in src, "the card knows a book-spined plan")
     check('exclude_books' in src, "and can ask for a bookless one")

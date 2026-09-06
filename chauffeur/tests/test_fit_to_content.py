@@ -745,7 +745,7 @@ def scenario_an_emoji_field_can_be_filled_without_a_keyboard():
     # Every page holding an emoji field includes it, or the button throws.
     # `tpl_source` INLINES includes, so this looks for the component's own
     # code in the rendered page rather than for the include statement.
-    for page in ('home.html', 'chores.html', 'routines.html', 'config.html',
+    for page in ('home.html', 'chores.html', 'components/routines_page.html', 'config.html',
                  'app.html'):
         rendered = tpl_source.read(page)
         check('window.EmojiPicker' in rendered,
