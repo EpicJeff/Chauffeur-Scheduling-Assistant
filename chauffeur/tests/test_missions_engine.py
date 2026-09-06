@@ -443,6 +443,79 @@ def scenario_mission_findings_emit_and_hush():
     check('proposal' in line, "the done line carries the next action")
 
 
+
+def scenario_prompt_carries_home_and_endgame_rules():
+    _reset()
+    storage.members_table.truncate()
+    storage.add_member({'id': 'mom', 'name': 'Mom', 'role': 'parent'})
+    storage.add_member({'id': 'kid', 'name': 'Lily', 'role': 'child'})
+    storage.add_member({'id': 'gone', 'name': 'Ghost', 'role': 'adult',
+                        'status': 'archived'})
+    mid = _mk()
+    seen = {}
+    storage.get_settings = lambda: {'missions_enabled': True,
+                                    'llm_gemini_api_key': 'F',
+                                    'llm_gemini_paid_api_key': 'P',
+                                    'home_location': '123 Maple Ct, Cary, NC'}
+    def fake(mission, system, user, settings):
+        seen['system'] = system
+        return {'action': 'finish', 'summary': 'x'}
+    missions._llm = fake
+    missions.step(storage.get_mission(mid))
+    sp = seen['system']
+    check('123 Maple Ct, Cary, NC' in sp, "home address rides the prompt")
+    check('never guess a city' in sp, "location rule stated")
+    check('Mom (parent)' in sp and 'Lily (child)' in sp,
+          "family roster rides the prompt")
+    check('Ghost' not in sp, "archived members stay off the roster")
+    check('NEVER finish with a question' in sp, "ask-over-finish rule stated")
+    check('ask_user EARLY' in sp, "ask-when-missing rule stated")
+    check('PLAIN TEXT' in sp, "plain-text rule stated")
+    check('create_thread' in sp, "outreach guidance names create_thread")
+
+
+def scenario_prompt_omits_home_when_unset():
+    _reset()
+    mid = _mk()
+    seen = {}
+    storage.get_settings = lambda: {'missions_enabled': True,
+                                    'llm_gemini_api_key': 'F',
+                                    'llm_gemini_paid_api_key': 'P'}
+    missions._llm = lambda m, sy, u, st: seen.update({'system': sy}) or {
+        'action': 'finish', 'summary': 'x'}
+    missions.step(storage.get_mission(mid))
+    check('never guess a city' not in seen['system'],
+          "no address = no home line, not an empty claim")
+
+
+def scenario_create_thread_proposal_round_trip():
+    _reset()
+    storage.threads_table.truncate()
+    storage.members_table.truncate()
+    storage.add_member({'id': 'mom', 'name': 'Mom', 'role': 'parent'})
+    mid = _mk()
+    missions._llm = _script(
+        {'action': 'propose', 'tool': 'create_thread',
+         'args': {'title': "Ana's Cleaning — biweekly", 'kind': 'vendor',
+                  'counterparty_name': 'Ana', 'goal': 'book a recurring clean'},
+         'summary': "Open a thread with Ana's Cleaning", 'why': 'chosen vendor'})
+    missions.step(storage.get_mission(mid))
+    prop = [s for s in storage.get_mission_steps(mid) if s['kind'] == 'proposal'][0]
+    pid = prop['result_json'].get('proposal_id')
+    check(pid, "create_thread minted a real proposal")
+    check(not storage.get_threads(include_closed=True),
+          "no thread exists before approval")
+    from services import chat_actions
+    res = chat_actions.act_on_proposal(pid, 'approve',
+                                       {'id': 'mom', 'name': 'Mom', 'role': 'parent'})
+    check(res.get('status') == 'success', f"approve executes on the rail, got {res}")
+    ts = storage.get_threads(include_closed=True)
+    check(len(ts) == 1 and ts[0]['title'] == "Ana's Cleaning — biweekly"
+          and (ts[0].get('counterparty_name') or '') == 'Ana',
+          "the thread exists with its counterparty")
+    check('create_thread' not in missions.READ_TOOLS,
+          "create_thread is write-classed (propose-only)")
+
 if __name__ == '__main__':
     scenario_mission_rows_round_trip()
     scenario_prune_spares_active_and_steps_follow()
@@ -465,4 +538,7 @@ if __name__ == '__main__':
     scenario_tick_advances_exactly_one_step_per_beat()
     scenario_tick_promotes_due_retries_and_respects_disabled()
     scenario_mission_findings_emit_and_hush()
+    scenario_prompt_carries_home_and_endgame_rules()
+    scenario_prompt_omits_home_when_unset()
+    scenario_create_thread_proposal_round_trip()
     print("test_missions_engine OK")

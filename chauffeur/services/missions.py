@@ -92,9 +92,33 @@ def _catalog() -> str:
     return '\n'.join(lines)
 
 
-def _system_prompt(now: datetime.datetime) -> str:
+def _family_context(settings: dict) -> str:
+    """The standing facts every mission needs regardless of its goal: where
+    home is and who the family is. Deep context stays pull-based (the READ
+    tools); this header just stops the model guessing the basics."""
+    lines = []
+    home = ((settings or {}).get('home_location') or '').strip()
+    if home:
+        lines.append(f"The family's home is: {home}. 'Here', 'near us', and "
+                     "any local search mean that place — never guess a city.")
+    try:
+        members = [m for m in storage.get_all_members()
+                   if not m.get('system') and (m.get('status') or 'active') == 'active']
+    except Exception:
+        members = []
+    if members:
+        roster = ', '.join(f"{m.get('name')} ({m.get('role') or 'member'})"
+                           for m in members if m.get('name'))
+        if roster:
+            lines.append(f"The family: {roster}.")
+    return ('\n'.join(lines) + '\n') if lines else ''
+
+
+def _system_prompt(now: datetime.datetime, settings: dict = None) -> str:
     return (
-        f"Today is {now.strftime('%A %Y-%m-%d')}. You are Argyle working a "
+        f"Today is {now.strftime('%A %Y-%m-%d')}. "
+        + _family_context(settings) +
+        "You are Argyle working a "
         "MISSION for the family: a multi-step goal you advance one action at "
         "a time. You cannot execute changes yourself — every change you want "
         "is a PROPOSAL a parent approves later, and drafted messages are "
@@ -112,7 +136,23 @@ def _system_prompt(now: datetime.datetime) -> str:
         'approval>"}\n'
         '{"action":"give_up","reason":"<honest blocker>"}\n\n'
         "Prefer finishing with a small set of strong proposals over endless "
-        "research. Available tools:\n" + _catalog()
+        "research.\n"
+        "If the outcome is a choice the family must make, use ask_user and "
+        "wait for the answer — NEVER finish with a question in your summary; "
+        "a finished mission cannot hear replies.\n"
+        "If information the goal depends on is missing (a budget, a "
+        "preference, who it is for, dates, addresses) and no READ tool "
+        "provides it, ask_user EARLY with one precise question — never "
+        "guess, and never research around a blank you could just ask "
+        "about.\n"
+        "Summaries, questions, whys and drafts are PLAIN TEXT — no markdown, "
+        "no asterisks, no ** formatting.\n"
+        "When the right next move is contacting someone outside the family "
+        "(a vendor, a company, a coach), propose create_thread for them — a "
+        "person approves it and messages get drafted on that thread "
+        "afterwards; say in your summary what the first message should "
+        "cover.\n"
+        "Available tools:\n" + _catalog()
     )
 
 
@@ -177,7 +217,8 @@ def step(mission: dict) -> dict:
         return storage.get_mission(mid)
 
     now = datetime.datetime.now()
-    res = _llm(mission, _system_prompt(now), _user_prompt(mission), settings)
+    res = _llm(mission, _system_prompt(now, settings), _user_prompt(mission),
+               settings)
     storage.update_mission(mid, {'step_count': int(mission.get('step_count') or 0) + 1})
 
     if not isinstance(res, dict) or res.get('error'):

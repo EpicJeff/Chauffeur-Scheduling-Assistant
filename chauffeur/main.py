@@ -5326,6 +5326,21 @@ def missions_admin(request: Request = None):
             "history": storage.get_missions(status=['done', 'blocked', 'dropped'])[:60]}
 
 
+@app.get("/api/missions/{mission_id}")
+def missions_detail(mission_id: str, request: Request = None):
+    """One mission with its full transcript — history rows load this on
+    demand (the admin list deliberately ships steps for ACTIVE missions
+    only, so sixty finished transcripts don't ride every 15s poll). Same
+    person-gate as the list; registered after /api/missions/admin so the
+    literal segment wins the route match."""
+    _mind_actor(request, None)
+    row = storage.get_mission(mission_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="No such mission")
+    row['steps'] = storage.get_mission_steps(mission_id)
+    return row
+
+
 @app.post("/api/missions/launch")
 def missions_launch(body: dict = Body(default={}), request: Request = None):
     from services import missions as _missions

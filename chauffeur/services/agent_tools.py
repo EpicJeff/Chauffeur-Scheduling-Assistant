@@ -866,6 +866,17 @@ class LaunchMissionTool(BaseModel):
     goal: str = Field(description="What the mission should achieve, in one sentence.")
     thread_title: Optional[str] = Field(None, description="Existing thread this belongs to, if any (fuzzy matched).")
 
+class CreateThreadTool(BaseModel):
+    """Opens a thread — a tracked open loop with someone OUTSIDE the family
+    (a vendor, a company, a coach). Nothing is sent by opening it; messages
+    are drafted on the thread later and a person reviews and sends them."""
+    title: str = Field(description="Short name for the loop (e.g. \"Ana's Cleaning — biweekly service\").")
+    goal: str = Field(default="", description="What done looks like.")
+    kind: str = Field(default="vendor", description="'vendor' or 'project'.")
+    counterparty_name: str = Field(default="", description="Who is on the other end.")
+    counterparty_email: str = Field(default="", description="Their email, if known.")
+    next_action: str = Field(default="", description="The first concrete move (e.g. 'send an intro email asking for a quote').")
+
 # A unified schema registry
 TOOL_SCHEMAS = {
     "start_drive": StartDriveTool.model_json_schema(),
@@ -967,6 +978,7 @@ TOOL_SCHEMAS = {
     "get_prep_ahead": GetPrepAheadTool.model_json_schema(),
     "schedule_shopping_trip": ScheduleShoppingTripTool.model_json_schema(),
     "launch_mission": LaunchMissionTool.model_json_schema(),
+    "create_thread": CreateThreadTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -2398,6 +2410,27 @@ def handle_launch_mission(args: dict) -> dict:
                            created_by=args.get('_member_id'),
                            tier='mission')
 
+def handle_create_thread(args: dict) -> dict:
+    # Reached only through the approve rail (a parent's tap) or the trusted
+    # v1 contexts — opening a thread sends nothing; the threads page's
+    # human-only Send is still the sole way words leave the house.
+    from services import threads as _threads
+    title = (args.get('title') or '').strip()
+    if not title:
+        return {"status": "error", "message": "The thread needs a title."}
+    kind = (args.get('kind') or 'vendor').strip().lower()
+    thread_id = _threads.create(
+        title=title,
+        owner_member_id=args.get('_member_id'),
+        goal=(args.get('goal') or '').strip(),
+        kind=kind if kind in ('vendor', 'project') else 'vendor',
+        counterparty_name=(args.get('counterparty_name') or '').strip(),
+        counterparty_email=(args.get('counterparty_email') or '').strip(),
+        next_action=(args.get('next_action') or '').strip(),
+        created_by=args.get('_member_id'))
+    return {"status": "success", "id": thread_id,
+            "message": f"Opened a thread: {title}."}
+
 TOOL_HANDLERS = {
     "start_drive": handle_start_drive,
     "update_drive_status": handle_update_drive_status,
@@ -2498,6 +2531,7 @@ TOOL_HANDLERS = {
     "get_prep_ahead": handle_get_prep_ahead,
     "schedule_shopping_trip": handle_schedule_shopping_trip,
     "launch_mission": handle_launch_mission,
+    "create_thread": handle_create_thread,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

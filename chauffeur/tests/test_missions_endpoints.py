@@ -164,6 +164,38 @@ def scenario_threads_page_has_the_button():
     check('/api/missions/launch' in html, "Work-this button posts a launch")
 
 
+
+def scenario_detail_serves_done_transcript_and_gates():
+    _reset()
+    mid = missions.launch('g', created_by='mom')['mission_id']
+    storage.add_mission_step(mid, {'kind': 'note', 'name': 'n',
+                                   'result_json': {'x': 1}})
+    storage.update_mission(mid, {'status': 'done'})
+    import main
+    out = main.missions_detail(mid, request=_as('mom'))
+    check(out['id'] == mid and out['steps'] and out['steps'][0]['kind'] == 'note',
+          "a finished mission's transcript is reachable")
+    from fastapi import HTTPException
+    try:
+        main.missions_detail(mid, request=_as('kid'))
+        check(False, "child must be refused")
+    except HTTPException as e:
+        check(e.status_code == 403, "child refused with 403")
+    try:
+        main.missions_detail('nope', request=_as('mom'))
+        check(False, "missing mission must 404")
+    except HTTPException as e:
+        check(e.status_code == 404, "missing mission 404s")
+
+
+def scenario_page_wires_history_transcript():
+    import main, os
+    tpl = os.path.join(os.path.dirname(main.__file__), 'templates', 'missions.html')
+    html = open(tpl, encoding='utf-8').read()
+    check('toggleTranscript' in html, "history rows can open their transcript")
+    check(html.count("mission_transcript.html") == 2,
+          "one shared transcript component, used by active AND history")
+
 if __name__ == '__main__':
     scenario_child_cannot_launch()
     scenario_parent_launches_and_answers()
@@ -175,4 +207,6 @@ if __name__ == '__main__':
     scenario_chat_tool_wired_into_both_stacks()
     scenario_chat_launch_respects_allowlist_and_thread_origin()
     scenario_threads_page_has_the_button()
+    scenario_detail_serves_done_transcript_and_gates()
+    scenario_page_wires_history_transcript()
     print("test_missions_endpoints OK")
