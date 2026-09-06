@@ -9,7 +9,7 @@ of 2026-08-30):
 - flash: gemini-3.8/3.7/3.6/3.5/3.1/3/2.5-flash (20 each) -> ~140/day, highest quality.
 - gemma: gemma-4-31b-it (14,400), gemma-4-26b-it (14,400) -> ~28,800/day, but
          44-180s per call measured on the free API (2026-07-30).
-- pro:   gemini-3.1-pro, gemini-2.5-pro (paid key only, mission tier exclusive).
+- pro:   gemini-3.1-pro-preview (paid key only, mission tier exclusive).
 
 Tiers map a class of work onto an ordered chain of pools:
 
@@ -41,7 +41,9 @@ DEFAULT_POOLS = {
     'flash': ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash",
               "gemini-3.1-flash", "gemini-3-flash", "gemini-2.5-flash"],
     'gemma': ["gemma-4-31b-it", "gemma-4-26b-it"],
-    'pro': ["gemini-3.1-pro", "gemini-2.5-pro"],
+    # gemini-2.5-pro is closed to new users; the live pro id is the -preview
+    # one (device-verified error text, 2026-09-06). Served via v1beta only.
+    'pro': ["gemini-3.1-pro-preview"],
 }
 
 TIER_CHAINS = {

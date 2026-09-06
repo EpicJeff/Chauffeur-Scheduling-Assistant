@@ -36,7 +36,7 @@ def test_llm_connection(provider: str, url: str = None, api_key: str = None, mod
             gemini_model = model or 'gemini-3.5-flash-lite'
             if gemini_model.startswith('models/'):
                 gemini_model = gemini_model[7:]
-            req_url = f"https://generativelanguage.googleapis.com/v1/models/{gemini_model}:generateContent?key={api_key}"
+            req_url = f"https://generativelanguage.googleapis.com/v1beta/models/{gemini_model}:generateContent?key={api_key}"
             payload = {
                 "contents": [{"parts": [{"text": "Hello"}]}],
                 "generationConfig": {"maxOutputTokens": 5}
@@ -115,7 +115,7 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
             gemini_model = model or 'gemini-3.5-flash-lite'
             if gemini_model.startswith('models/'):
                 gemini_model = gemini_model[7:]
-            req_url = f"https://generativelanguage.googleapis.com/v1/models/{gemini_model}:generateContent?key={api_key}"
+            req_url = f"https://generativelanguage.googleapis.com/v1beta/models/{gemini_model}:generateContent?key={api_key}"
             user_parts = [{"text": f"{system_prompt}\n\nUser Request: {user_prompt}"}]
             for img in (images or []):
                 user_parts.append({"inline_data": {

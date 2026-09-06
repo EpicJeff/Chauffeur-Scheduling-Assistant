@@ -543,7 +543,7 @@ ENTRIES: List[dict] = [
        'traffic stays on the free key.', page='missions'),
     _e('model_pool_pro', 'missions', 'Pro model pool',
        'Comma-separated pro models missions may use '
-       '(default gemini-3.1-pro, gemini-2.5-pro).', page='missions'),
+       '(default gemini-3.1-pro-preview).', page='missions'),
     _e('mission_cap_launch', 'missions', 'Daily launch cap',
        'Missions that may be started per day (default 3).', page='missions'),
     _e('mission_step_cap', 'missions', 'Steps per mission',
