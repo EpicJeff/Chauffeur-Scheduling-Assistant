@@ -142,7 +142,9 @@ def scenario_room_pins():
                    'confirm(', 'prompt('):
         check(banned not in js, f"kitchen.js never uses {banned}")
     for needed in ('webglcontextlost', 'setPixelRatio(1)', 'chfBase',
-                   'textContent', 'visibilityState'):
+                   'textContent', 'visibilityState',
+                   'chf_kitchen_quality', 'PCFSoftShadowMap',
+                   'ACESFilmicToneMapping'):
         check(needed in js, f"kitchen.js carries {needed}")
     html = _room_src(os.path.join('templates', 'kitchen.html'))
     for banned in ('alert(', 'confirm(', 'prompt('):

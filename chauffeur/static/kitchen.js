@@ -3,13 +3,22 @@
  * Spec: docs/superpowers/specs/2026-09-06-kitchen-design.md. The Study's
  * family-side twin, built on the same contracts (ZONES registry, applyState
  * as the sole data path, focus-then-through, since-you-were-here glow,
- * calm-first fallback) with one new discipline the wall demands:
+ * calm-first fallback) with two disciplines the wall demands:
  *
- *   RENDER ON DEMAND. No perpetual RAF loop. The scene draws a frame when
- *   state changes, while a camera tween runs, or while an HONEST animation
- *   is active (pot steam only when dinner is planned; the radio needle only
- *   while music actually plays). An idle kitchen costs the panel's GPU
- *   nothing — that is what lets a Raspberry Pi hold this page for weeks.
+ * RENDER ON DEMAND. No perpetual RAF loop. The scene draws a frame when
+ * state changes, while a camera tween runs, or while an HONEST animation is
+ * active (pot steam only when dinner is planned; the radio needle only while
+ * music actually plays). Because frames are rare, each one can be expensive:
+ * the high tier runs real soft shadow maps, physically-based materials,
+ * rounded-edge geometry and filmic tone mapping without costing an idle
+ * panel anything.
+ *
+ * QUALITY TIERS, like a game. high -> medium -> low -> 2d. The page boots at
+ * its stored tier (default high), measures a burst of frames once, and if
+ * the hardware can't hold the budget it persists the next tier down and
+ * reloads — so a Raspberry Pi settles into the tier it can afford and stays
+ * there, while a desktop gets the full look. `?quality=high|medium|low|2d`
+ * overrides and persists. The 2D fallback remains a first-class room.
  *
  * The room never writes: this file performs GET only (pinned by test).
  */
@@ -26,7 +35,32 @@
 
   var BASE = (typeof window.chfBase !== 'undefined' ? window.chfBase : '');
   var VISIT_KEY = 'chf_kitchen_last_visit';
+  var QUALITY_KEY = 'chf_kitchen_quality';
   var POLL_MS = 60000;
+  var TIERS = ['high', 'medium', 'low', '2d'];
+
+  /* ---- quality tier: stored, overridable, benchmarked ------------------ */
+  function pickQuality() {
+    var q = null;
+    try {
+      q = new URLSearchParams(window.location.search).get('quality');
+    } catch (e) { /* ancient parser: stored tier decides */ }
+    if (q && TIERS.indexOf(q) !== -1) {
+      try { localStorage.setItem(QUALITY_KEY, q); } catch (e) {}
+      return q;
+    }
+    try {
+      var stored = localStorage.getItem(QUALITY_KEY);
+      if (stored && TIERS.indexOf(stored) !== -1) return stored;
+    } catch (e) {}
+    return 'high';
+  }
+  var QUALITY = pickQuality();
+  var DETAIL = { high: 3, medium: 2, low: 1 }[QUALITY] || 0;
+  var FORCED = false;   // explicit ?quality= means the human chose; no auto-demote
+  try {
+    FORCED = TIERS.indexOf(new URLSearchParams(window.location.search).get('quality')) !== -1;
+  } catch (e) {}
 
   /* ---- since-you-were-here epoch (study idiom, seconds) ---------------- */
   function lastVisit() {
@@ -42,9 +76,6 @@
   }
 
   /* ---- ZONES: the registry is the room's contract ---------------------- */
-  /* Each zone: one signal number, a headline() for tips/fallback, and the
-   * family page a tap falls through to. Attention-only furniture: nothing
-   * here is decoration pretending to be data. */
   var ZONES = {
     fridge:   { label: 'Fridge',        url: 'moments',
                 num: function (s) { return (s.fridge || {}).new_moments || 0; },
@@ -141,10 +172,13 @@
   var webgl = null;
   function buildRoom() {
     var T = window.THREE;
-    if (!T) return null;
+    if (!T || DETAIL < 1) return null;
     var canvasProbe = document.createElement('canvas');
     var gl = canvasProbe.getContext('webgl2') || canvasProbe.getContext('webgl');
     if (!gl) return null;
+
+    var SHADOWS = DETAIL >= 3;            // real soft shadow maps: high only
+    var PBR = DETAIL >= 3;                // standard materials vs lambert
 
     var scene = new T.Scene();
     scene.background = new T.Color(0xbdb3c7);          // the soft lilac of the reference
@@ -154,36 +188,110 @@
     cam.position.copy(HOME_POS);
     cam.lookAt(HOME_AT);
 
-    var R = new T.WebGLRenderer({ antialias: true });  // near-iso edges alias hard; AA is affordable once frames are on-demand
+    var R = new T.WebGLRenderer({ antialias: DETAIL >= 2 });
     R.setPixelRatio(1);                                // the Pi law: never a retina multiplier
+    if (PBR) {
+      /* frames are rare, so each one can afford the full render look */
+      R.toneMapping = T.ACESFilmicToneMapping;
+      R.toneMappingExposure = 1.0;
+      /* no sRGB output pass: the legacy three build has color management
+         off, so the extra encode only bleaches every authored color */
+    }
+    if (SHADOWS) {
+      R.shadowMap.enabled = true;
+      R.shadowMap.type = T.PCFSoftShadowMap;
+    }
     ROOT.appendChild(R.domElement);
 
-    scene.add(new T.AmbientLight(0xfff4e6, 0.62));
-    var sun = new T.DirectionalLight(0xfff0d8, 0.5);
-    sun.position.set(8, 12, 6);
+    if (PBR) {
+      scene.add(new T.HemisphereLight(0xd9defc, 0xb8926a, 0.5));
+      scene.add(new T.AmbientLight(0xfff4e6, 0.14));
+    } else {
+      scene.add(new T.AmbientLight(0xfff4e6, DETAIL >= 2 ? 0.62 : 0.75));
+    }
+    var sun = new T.DirectionalLight(0xfff1dc, PBR ? 1.0 : 0.5);
+    sun.position.set(10.5, 12, 4.5);
     scene.add(sun);
-    var lamp = new T.PointLight(0xffd9a0, 0.28, 26);
-    lamp.position.set(0, 5.2, 0);
-    scene.add(lamp);
+    if (SHADOWS) {
+      sun.castShadow = true;
+      sun.shadow.mapSize.set(2048, 2048);
+      sun.shadow.camera.left = -10; sun.shadow.camera.right = 10;
+      sun.shadow.camera.top = 12; sun.shadow.camera.bottom = -10;
+      sun.shadow.camera.near = 2; sun.shadow.camera.far = 45;
+      sun.shadow.bias = -0.0006;
+      sun.shadow.radius = 3;
+    }
+    if (DETAIL >= 2) {
+      var lamp = new T.PointLight(0xffd9a0, PBR ? 0.5 : 0.28, 26);
+      lamp.position.set(0, 5.2, 0);
+      scene.add(lamp);
+    }
 
     /* palette (from the reference: cream shell, white cabinetry, wood tops,
        teal fridge panels, one red accent, one orange curtain) */
     var C = { shell: 0xefe9e2, wall: 0xf4efe8, cab: 0xf7f4ef, cabShade: 0xe6e0d6,
-              top: 0xdfc79a, floorA: '#f2eee7', floorB: '#d8d2c8', steel: 0xb9bec4,
+              floorA: '#f1ece3', floorB: '#cfc7b8', steel: 0xb9bec4,
               dark: 0x4a4f55, teal: 0x3fbdb2, red: 0xc9473d, orange: 0xe09a3e,
-              cork: 0xb5854f, wood: 0x8a6d4c, shadow: 0x3a3340 };
+              cork: 0xb5854f, wood: 0x8a6d4c, wood2: 0x6e5539, shadow: 0x3a3340,
+              leaf: 0x5f8f4e, bread: 0xcf9a55 };
 
-    function mat(c) { return new T.MeshLambertMaterial({ color: c }); }
-    function box(w, h, d, c, x, y, z, group) {
-      var m = new T.Mesh(new T.BoxGeometry(w, h, d), mat(c));
-      m.position.set(x, y, z); (group || scene).add(m); return m;
+    function mat(c, opts) {
+      opts = opts || {};
+      if (!PBR) return new T.MeshLambertMaterial({ color: c });
+      return new T.MeshStandardMaterial({
+        color: c,
+        roughness: opts.rough !== undefined ? opts.rough : 0.86,
+        metalness: opts.metal !== undefined ? opts.metal : 0.0
+      });
     }
-    function cyl(rt, rb, h, c, x, y, z, group, seg) {
-      var m = new T.Mesh(new T.CylinderGeometry(rt, rb, h, seg || 10), mat(c));
-      m.position.set(x, y, z); (group || scene).add(m); return m;
+    var STEEL = { rough: 0.45, metal: 0.35 };
+    var GLOSS = { rough: 0.35, metal: 0.05 };
+
+    function finish(m, noShadow) {
+      if (SHADOWS && !noShadow) { m.castShadow = true; m.receiveShadow = true; }
+      return m;
     }
-    function knob(x, y, z, group) { return cyl(0.035, 0.035, 0.05, C.steel, x, y, z, group, 8); }
+    function box(w, h, d, c, x, y, z, group, opts) {
+      var m = new T.Mesh(new T.BoxGeometry(w, h, d), mat(c, opts));
+      m.position.set(x, y, z); finish(m); (group || scene).add(m); return m;
+    }
+    /* rounded-edge slab (high tier): a rounded-rect extruded with a bevel —
+       ExtrudeGeometry is core three, no addon needed */
+    function roundedGeo(w, h, d, r) {
+      r = Math.min(r, w / 2 - 0.01, h / 2 - 0.01, d / 2 - 0.01);
+      var x = -w / 2 + r, y = -h / 2 + r, X = w / 2 - r, Y = h / 2 - r;
+      var shape = new T.Shape();
+      shape.moveTo(-w / 2, y);
+      shape.lineTo(-w / 2, Y);
+      shape.absarc(x, Y, r, Math.PI, Math.PI / 2, true);
+      shape.lineTo(X, h / 2);
+      shape.absarc(X, Y, r, Math.PI / 2, 0, true);
+      shape.lineTo(w / 2, y);
+      shape.absarc(X, y, r, 0, -Math.PI / 2, true);
+      shape.lineTo(x, -h / 2);
+      shape.absarc(x, y, r, -Math.PI / 2, Math.PI, true);
+      var g = new T.ExtrudeGeometry(shape, {
+        depth: d - 2 * r, bevelEnabled: true, bevelThickness: r,
+        bevelSize: r, bevelSegments: 2, steps: 1, curveSegments: 5 });
+      g.center();
+      return g;
+    }
+    function rbox(w, h, d, r, c, x, y, z, group, opts) {
+      if (!PBR) return box(w, h, d, c, x, y, z, group, opts);
+      var m = new T.Mesh(roundedGeo(w, h, d, r), mat(c, opts));
+      m.position.set(x, y, z); finish(m); (group || scene).add(m); return m;
+    }
+    function cyl(rt, rb, h, c, x, y, z, group, seg, opts) {
+      var m = new T.Mesh(new T.CylinderGeometry(rt, rb, h, seg || (DETAIL >= 3 ? 18 : 10)),
+                         mat(c, opts));
+      m.position.set(x, y, z); finish(m); (group || scene).add(m); return m;
+    }
+    function knob(x, y, z, group) {
+      if (DETAIL < 2) return null;
+      return cyl(0.035, 0.035, 0.05, C.steel, x, y, z, group, 8, STEEL);
+    }
     function blobShadow(rx, rz, x, z, group) {
+      if (SHADOWS) return null;          // the high tier has the real thing
       var m = new T.Mesh(new T.CircleGeometry(1, 20),
         new T.MeshBasicMaterial({ color: C.shadow, transparent: true, opacity: 0.16 }));
       m.rotation.x = -Math.PI / 2;
@@ -195,25 +303,33 @@
     /* ---- shell: open-corner diorama on a slab -------------------------- */
     box(13.6, 0.5, 11.6, C.shell, 0, -0.27, 0);
     var floorCanvas = document.createElement('canvas');
-    floorCanvas.width = floorCanvas.height = 512;
+    floorCanvas.width = floorCanvas.height = DETAIL >= 3 ? 1024 : 512;
     (function () {
-      var g = floorCanvas.getContext('2d'), n = 8, t = 512 / n;
+      var g = floorCanvas.getContext('2d'), n = 8, t = floorCanvas.width / n;
       for (var i = 0; i < n; i++) for (var j = 0; j < n; j++) {
         g.fillStyle = ((i + j) % 2) ? C.floorB : C.floorA;
         g.fillRect(i * t, j * t, t, t);
+        if (DETAIL >= 3) {               // faint grout so tiles read as tiles
+          g.strokeStyle = 'rgba(90,80,70,0.3)';
+          g.lineWidth = 2;
+          g.strokeRect(i * t + 1, j * t + 1, t - 2, t - 2);
+        }
       }
     })();
     var floorTex = new T.CanvasTexture(floorCanvas);
-    floorTex.magFilter = T.NearestFilter;
+    floorTex.magFilter = DETAIL >= 3 ? T.LinearFilter : T.NearestFilter;
     var floor = new T.Mesh(new T.PlaneGeometry(13, 11),
-      new T.MeshLambertMaterial({ map: floorTex }));
+      PBR ? new T.MeshStandardMaterial({ map: floorTex, roughness: 0.55 })
+          : new T.MeshLambertMaterial({ map: floorTex }));
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = 0.001;
+    if (SHADOWS) floor.receiveShadow = true;
     scene.add(floor);
 
-    box(13, 5.6, 0.35, C.wall, 0, 2.8, -5.55);          // back wall
-    box(0.35, 5.6, 11, C.wall, -6.65, 2.8, 0);          // left wall
-    box(13.6, 0.28, 0.5, C.shell, 0, 5.66, -5.6);       // wall caps
+    var wallB = box(13, 5.6, 0.35, C.wall, 0, 2.8, -5.55, null, { rough: 0.95 });
+    var wallL = box(0.35, 5.6, 11, C.wall, -6.65, 2.8, 0, null, { rough: 0.95 });
+    if (SHADOWS) { wallB.castShadow = false; wallL.castShadow = false; }
+    box(13.6, 0.28, 0.5, C.shell, 0, 5.66, -5.6);
     box(0.5, 0.28, 11.6, C.shell, -6.7, 5.66, 0);
 
     /* tiled backsplash band behind the counter run */
@@ -227,7 +343,8 @@
       for (var y = 0; y <= 64; y += 16) { g.beginPath(); g.moveTo(0, y); g.lineTo(256, y); g.stroke(); }
     })();
     var bs = new T.Mesh(new T.PlaneGeometry(8.6, 1.0),
-      new T.MeshLambertMaterial({ map: new T.CanvasTexture(bsCanvas) }));
+      PBR ? new T.MeshStandardMaterial({ map: new T.CanvasTexture(bsCanvas), roughness: 0.4 })
+          : new T.MeshLambertMaterial({ map: new T.CanvasTexture(bsCanvas) }));
     bs.position.set(-1.2, 1.62, -5.36);
     scene.add(bs);
 
@@ -240,75 +357,94 @@
     }
 
     /* ---- cabinet run along the back wall (decor + sink + window) ------- */
-    function lowerCab(w, x, z, group, doors) {
-      var g2 = group || scene;
-      box(w, 1.0, 1.4, C.cab, x, 0.56, z, g2);
-      var n = doors || Math.max(1, Math.round(w / 0.95));
+    function lowerCab(w, x, z) {
+      rbox(w, 1.0, 1.4, 0.05, C.cab, x, 0.56, z);
+      var n = Math.max(1, Math.round(w / 0.95));
       for (var i = 0; i < n; i++) {
         var dw = w / n - 0.1, dx = x - w / 2 + (i + 0.5) * (w / n);
-        box(dw, 0.78, 0.05, C.cabShade, dx, 0.56, z + 0.71, g2);
-        knob(dx + dw / 2 - 0.09, 0.72, z + 0.76, g2);
+        if (DETAIL >= 2) box(dw, 0.78, 0.05, C.cabShade, dx, 0.56, z + 0.71);
+        knob(dx + dw / 2 - 0.09, 0.72, z + 0.76);
       }
     }
     function upperCab(w, x, z) {
-      box(w, 1.25, 0.72, C.cab, x, 3.75, z);
+      rbox(w, 1.25, 0.72, 0.05, C.cab, x, 3.75, z);
       var n = Math.max(1, Math.round(w / 0.9));
       for (var i = 0; i < n; i++) {
         var dw = w / n - 0.08, dx = x - w / 2 + (i + 0.5) * (w / n);
-        box(dw, 1.05, 0.05, C.cabShade, dx, 3.75, z + 0.37);
+        if (DETAIL >= 2) box(dw, 1.05, 0.05, C.cabShade, dx, 3.75, z + 0.37);
         knob(dx + dw / 2 - 0.08, 3.45, z + 0.42);
       }
     }
     lowerCab(5.4, -2.2, -4.6);
-    box(5.6, 0.12, 1.56, 0xf3ede2, -2.2, 1.12, -4.6);   // countertop
+    rbox(5.6, 0.12, 1.56, 0.04, 0xf3ede2, -2.2, 1.12, -4.6, null, GLOSS);
     upperCab(2.0, -4.3, -5.1);
     upperCab(2.0, 0.3, -5.1);
 
     /* sink + faucet in the middle of the run */
-    box(0.9, 0.06, 0.6, C.steel, -2.2, 1.155, -4.62);
-    cyl(0.05, 0.05, 0.45, C.steel, -2.5, 1.4, -4.95);
-    box(0.34, 0.06, 0.08, C.steel, -2.35, 1.6, -4.95);
+    box(0.9, 0.06, 0.6, C.steel, -2.2, 1.155, -4.62, null, STEEL);
+    cyl(0.05, 0.05, 0.45, C.steel, -2.5, 1.4, -4.95, null, 10, STEEL);
+    box(0.34, 0.06, 0.08, C.steel, -2.35, 1.6, -4.95, null, STEEL);
 
     /* window with orange curtain above the sink */
-    box(1.9, 1.7, 0.1, 0xcfe4ec, -2.2, 3.4, -5.42);
+    var pane = box(1.9, 1.7, 0.1, 0xcfe4ec, -2.2, 3.4, -5.42, null, { rough: 0.15, metal: 0.1 });
+    if (SHADOWS) pane.castShadow = false;
     box(2.1, 0.12, 0.16, C.cab, -2.2, 4.32, -5.4);
     box(0.12, 1.9, 0.16, C.cab, -3.22, 3.38, -5.4);
     box(0.12, 1.9, 0.16, C.cab, -1.18, 3.38, -5.4);
-    var curtain = box(0.55, 1.2, 0.08, C.orange, -2.85, 3.75, -5.32);
+    var curtain = rbox(0.55, 1.2, 0.08, 0.03, C.orange, -2.85, 3.75, -5.32, null, { rough: 0.95 });
     curtain.rotation.z = 0.08;
 
-    /* counter props: bottles, jar, plate stack */
-    cyl(0.07, 0.07, 0.4, C.red, -4.4, 1.38, -4.7, null, 8);
-    cyl(0.07, 0.07, 0.34, 0x6a4a2f, -4.2, 1.35, -4.85, null, 8);
-    cyl(0.12, 0.12, 0.2, 0xead9b8, -3.6, 1.28, -4.75, null, 10);
-    box(0.4, 0.14, 0.4, 0xdad2c2, -0.4, 1.25, -4.8);
+    /* counter props: bottles, jar, plate stack, cutting board, kettle */
+    if (DETAIL >= 2) {
+      cyl(0.07, 0.07, 0.4, C.red, -4.4, 1.38, -4.7, null, 8, GLOSS);
+      cyl(0.07, 0.07, 0.34, 0x6a4a2f, -4.2, 1.35, -4.85, null, 8, GLOSS);
+      cyl(0.12, 0.12, 0.2, 0xead9b8, -3.6, 1.28, -4.75, null, 10);
+      box(0.4, 0.14, 0.4, 0xdad2c2, -0.4, 1.25, -4.8);
+    }
+    if (DETAIL >= 3) {
+      rbox(0.7, 0.05, 0.45, 0.02, C.wood, -3.1, 1.21, -4.5, null, { rough: 0.7 });
+      cyl(0.1, 0.14, 0.28, C.bread, -3.15, 1.36, -4.5, null, 10);
+      cyl(0.16, 0.2, 0.26, C.steel, -1.35, 1.32, -4.75, null, 14, STEEL);   // kettle
+      cyl(0.03, 0.03, 0.16, C.steel, -1.2, 1.48, -4.75, null, 8, STEEL);
+      rbox(0.42, 0.3, 0.24, 0.05, C.steel, -4.85, 1.34, -4.6, null, STEEL); // toaster
+      /* open shelf with plates, left of the window */
+      box(1.5, 0.07, 0.5, C.wood, -4.55, 2.9, -5.2, null, { rough: 0.7 });
+      cyl(0.22, 0.22, 0.05, 0xffffff, -4.95, 3.0, -5.2, null, 16, GLOSS);
+      cyl(0.22, 0.22, 0.05, 0xf3ded7, -4.5, 3.0, -5.2, null, 16, GLOSS);
+      cyl(0.22, 0.22, 0.05, 0xffffff, -4.05, 3.0, -5.2, null, 16, GLOSS);
+    }
 
     /* ---- STOVE (zone: counter) with hood ------------------------------- */
     var counter = zoneGroup('counter', 1.7, 0, -4.55);
-    box(1.5, 1.02, 1.45, C.dark, 0, 0.57, 0, counter);
-    box(1.3, 0.62, 0.06, 0x5a6067, 0, 0.5, 0.74, counter);
-    box(1.1, 0.06, 0.09, C.steel, 0, 0.86, 0.78, counter);
-    box(1.5, 0.05, 1.45, 0x3c4147, 0, 1.11, 0, counter);
+    rbox(1.5, 1.02, 1.45, 0.05, C.dark, 0, 0.57, 0, counter, { rough: 0.6, metal: 0.2 });
+    box(1.3, 0.62, 0.06, 0x5a6067, 0, 0.5, 0.74, counter, STEEL);
+    if (DETAIL >= 3) box(0.9, 0.34, 0.02, 0x2a2e33, 0, 0.5, 0.78, counter, GLOSS); // oven window
+    box(1.1, 0.06, 0.09, C.steel, 0, 0.86, 0.78, counter, STEEL);
+    box(1.5, 0.05, 1.45, 0x3c4147, 0, 1.11, 0, counter, { rough: 0.5, metal: 0.15 });
     cyl(0.16, 0.16, 0.03, 0x23262a, -0.4, 1.15, 0.3, counter, 12);
     cyl(0.16, 0.16, 0.03, 0x23262a, 0.4, 1.15, 0.3, counter, 12);
     cyl(0.16, 0.16, 0.03, 0x23262a, -0.4, 1.15, -0.35, counter, 12);
     cyl(0.16, 0.16, 0.03, 0x23262a, 0.4, 1.15, -0.35, counter, 12);
-    cyl(0.3, 0.3, 0.3, 0x8e969d, -0.4, 1.32, 0.3, counter, 14);
-    cyl(0.31, 0.31, 0.05, 0x6f767d, -0.4, 1.5, 0.3, counter, 14);
-    cyl(0.26, 0.26, 0.22, C.red, 0.4, 1.28, -0.35, counter, 14);
+    cyl(0.3, 0.3, 0.3, 0x8e969d, -0.4, 1.32, 0.3, counter, 16, STEEL);
+    cyl(0.31, 0.31, 0.05, 0x6f767d, -0.4, 1.5, 0.3, counter, 16, STEEL);
+    cyl(0.26, 0.26, 0.22, C.red, 0.4, 1.28, -0.35, counter, 16, GLOSS);
     var steam = box(0.16, 0.5, 0.16, 0xf2ead6, -0.4, 2.0, 0.3, counter);
     steam.material.transparent = true; steam.material.opacity = 0;
-    box(1.7, 0.5, 1.0, C.wall, 0, 3.05, -0.2, counter);
-    box(1.1, 1.8, 0.8, C.wall, 0, 4.2, -0.35, counter);
+    if (SHADOWS) steam.castShadow = false;
+    var steam2 = box(0.1, 0.34, 0.1, 0xf2ead6, -0.32, 2.35, 0.34, counter);
+    steam2.material.transparent = true; steam2.material.opacity = 0;
+    if (SHADOWS) steam2.castShadow = false;
+    rbox(1.7, 0.5, 1.0, 0.06, C.wall, 0, 3.05, -0.2, counter);
+    rbox(1.1, 1.8, 0.8, 0.06, C.wall, 0, 4.2, -0.35, counter);
     blobShadow(1.0, 0.85, 1.7, -4.35);
 
     /* ---- FRIDGE (zone: fridge) — teal panels + moment magnets ---------- */
     var fridge = zoneGroup('fridge', -5.35, 0, -3.4);
-    box(1.9, 3.9, 1.6, C.steel, 0, 1.95, 0, fridge);
-    box(1.6, 1.55, 0.07, C.teal, 0, 2.9, 0.82, fridge);
-    box(1.6, 1.35, 0.07, C.teal, 0, 1.0, 0.82, fridge);
-    box(0.07, 1.3, 0.09, C.steel, 0.62, 2.9, 0.87, fridge);
-    box(0.07, 1.0, 0.09, C.steel, 0.62, 1.05, 0.87, fridge);
+    rbox(1.9, 3.9, 1.6, 0.08, C.steel, 0, 1.95, 0, fridge, STEEL);
+    rbox(1.6, 1.55, 0.07, 0.03, C.teal, 0, 2.9, 0.82, fridge, GLOSS);
+    rbox(1.6, 1.35, 0.07, 0.03, C.teal, 0, 1.0, 0.82, fridge, GLOSS);
+    box(0.07, 1.3, 0.09, C.steel, 0.62, 2.9, 0.87, fridge, STEEL);
+    box(0.07, 1.0, 0.09, C.steel, 0.62, 1.05, 0.87, fridge, STEEL);
     var magnets = new T.Group();
     magnets.position.set(0, 0, 0.9);
     fridge.add(magnets);
@@ -317,74 +453,107 @@
     /* ---- CORKBOARD (zone: board) on the left wall ---------------------- */
     var board = zoneGroup('board', -6.42, 0, -0.6);
     var boardFace = new T.Mesh(new T.PlaneGeometry(2.0, 1.5),
-      new T.MeshLambertMaterial({ color: C.cork }));
+      mat(C.cork, { rough: 0.98 }));
     boardFace.rotation.y = Math.PI / 2;
     boardFace.position.set(0.06, 2.5, 0);
     board.add(boardFace);
-    box(0.06, 1.66, 2.16, 0x8a6335, -0.02, 2.5, 0, board);
+    box(0.06, 1.66, 2.16, 0x8a6335, -0.02, 2.5, 0, board, { rough: 0.8 });
 
     /* ---- WALL CALENDAR (zone: calendar) on the back wall --------------- */
     var calG = zoneGroup('calendar', 3.6, 0, -5.36);
-    var calFace = new T.Mesh(new T.PlaneGeometry(1.5, 1.9),
-      new T.MeshLambertMaterial({ color: 0xf6f1e4 }));
+    var calFace = new T.Mesh(new T.PlaneGeometry(1.5, 1.9), mat(0xf6f1e4, { rough: 0.9 }));
     calFace.position.set(0, 3.0, 0.05);
     calG.add(calFace);
-    box(1.62, 0.1, 0.08, C.red, 0, 4.0, 0.02, calG);
+    box(1.62, 0.1, 0.08, C.red, 0, 4.0, 0.02, calG, GLOSS);
+    if (DETAIL >= 3) {                  /* wall clock between calendar and door */
+      var clockFace = cyl(0.3, 0.3, 0.06, 0xffffff, 4.45, 4.75, -5.34, null, 20, GLOSS);
+      clockFace.rotation.x = Math.PI / 2;
+      box(0.03, 0.18, 0.02, C.dark, 4.45, 4.8, -5.28);
+      box(0.13, 0.03, 0.02, C.dark, 4.5, 4.75, -5.28);
+    }
 
     /* ---- DOOR (zone: door) on the back wall right ---------------------- */
     var doorG = zoneGroup('door', 5.35, 0, -5.32);
-    box(1.7, 4.1, 0.14, 0x9b7b53, 0, 2.05, 0, doorG);
-    box(1.3, 1.4, 0.05, 0x8a6d49, 0, 2.9, 0.08, doorG);
-    box(1.3, 1.2, 0.05, 0x8a6d49, 0, 1.2, 0.08, doorG);
-    cyl(0.07, 0.07, 0.1, 0xd8c48a, 0.6, 2.0, 0.1, doorG, 8);
-    var plaque = new T.Mesh(new T.PlaneGeometry(1.24, 0.5),
-      new T.MeshLambertMaterial({ color: 0xefe6cf }));
+    rbox(1.7, 4.1, 0.14, 0.04, 0x9b7b53, 0, 2.05, 0, doorG, { rough: 0.75 });
+    if (DETAIL >= 2) {
+      box(1.3, 1.4, 0.05, 0x8a6d49, 0, 2.9, 0.08, doorG, { rough: 0.75 });
+      box(1.3, 1.2, 0.05, 0x8a6d49, 0, 1.2, 0.08, doorG, { rough: 0.75 });
+    }
+    cyl(0.07, 0.07, 0.1, 0xd8c48a, 0.6, 2.0, 0.1, doorG, 10, STEEL);
+    var plaque = new T.Mesh(new T.PlaneGeometry(1.24, 0.5), mat(0xefe6cf, { rough: 0.9 }));
     plaque.position.set(0, 4.4, 0.09);
     doorG.add(plaque);
 
     /* ---- RADIO (zone: radio) on the countertop ------------------------- */
     var radio = zoneGroup('radio', 0.35, 0, -4.62);
-    box(0.8, 0.45, 0.4, C.red, 0, 1.41, 0, radio);
-    box(0.55, 0.28, 0.03, 0xf2e3b8, -0.06, 1.42, 0.21, radio);
-    cyl(0.035, 0.035, 0.1, C.steel, 0.28, 1.68, 0, radio, 8);
+    rbox(0.8, 0.45, 0.4, 0.06, C.red, 0, 1.41, 0, radio, GLOSS);
+    box(0.55, 0.28, 0.03, 0xf2e3b8, -0.06, 1.42, 0.21, radio, { rough: 0.95 });
+    cyl(0.035, 0.035, 0.1, C.steel, 0.28, 1.68, 0, radio, 8, STEEL);
     var needle = box(0.04, 0.22, 0.04, 0x3a332a, 0.28, 1.78, 0, radio);
 
     /* ---- ISLAND (decor) + stools + high chair -------------------------- */
-    box(3.4, 1.0, 2.0, C.cab, -0.4, 0.56, 0.9);
-    box(3.2, 0.66, 0.05, C.cabShade, -0.4, 0.5, 1.92);
-    knob(-1.1, 0.62, 1.97); knob(0.3, 0.62, 1.97);
-    box(3.7, 0.14, 2.3, 0xf3ede2, -0.4, 1.13, 0.9);
-    box(1.1, 0.06, 0.75, C.red, -1.2, 1.23, 0.7);
-    for (var cx = 0; cx < 4; cx++) for (var cz = 0; cz < 2; cz++) {
-      cyl(0.09, 0.07, 0.1, 0xf5e6d0, -1.55 + cx * 0.24, 1.31, 0.55 + cz * 0.3, null, 8);
-      cyl(0.07, 0.09, 0.08, (cx + cz) % 2 ? C.teal : C.red,
-          -1.55 + cx * 0.24, 1.4, 0.55 + cz * 0.3, null, 8);
+    rbox(3.4, 1.0, 2.0, 0.06, C.cab, -0.4, 0.56, 0.9);
+    if (DETAIL >= 2) {
+      box(3.2, 0.66, 0.05, C.cabShade, -0.4, 0.5, 1.92);
+      knob(-1.1, 0.62, 1.97); knob(0.3, 0.62, 1.97);
     }
-    cyl(0.34, 0.26, 0.16, 0xead9b8, 0.7, 1.3, 0.9, null, 12);
-    cyl(0.09, 0.09, 0.1, C.orange, 0.58, 1.42, 0.85, null, 8);
-    cyl(0.09, 0.09, 0.1, C.red, 0.82, 1.42, 0.95, null, 8);
+    rbox(3.7, 0.14, 2.3, 0.05, 0xf3ede2, -0.4, 1.13, 0.9, null, GLOSS);
+    if (DETAIL >= 2) {
+      rbox(1.1, 0.06, 0.75, 0.02, C.red, -1.2, 1.23, 0.7, null, GLOSS);
+      for (var cx = 0; cx < 4; cx++) for (var cz = 0; cz < 2; cz++) {
+        cyl(0.09, 0.07, 0.1, 0xf5e6d0, -1.55 + cx * 0.24, 1.31, 0.55 + cz * 0.3, null, 10);
+        cyl(0.07, 0.09, 0.08, (cx + cz) % 2 ? C.teal : C.red,
+            -1.55 + cx * 0.24, 1.4, 0.55 + cz * 0.3, null, 10, GLOSS);
+      }
+      cyl(0.34, 0.26, 0.16, 0xead9b8, 0.7, 1.3, 0.9, null, 14);
+      cyl(0.09, 0.09, 0.1, C.orange, 0.58, 1.42, 0.85, null, 10, GLOSS);
+      cyl(0.09, 0.09, 0.1, C.red, 0.82, 1.42, 0.95, null, 10, GLOSS);
+    }
+    if (DETAIL >= 3) {                  /* potted plant, the reference's life */
+      cyl(0.16, 0.12, 0.2, 0xc9704f, 0.15, 1.3, 1.5, null, 12);
+      cyl(0.02, 0.02, 0.3, 0x4e6e3e, 0.15, 1.5, 1.5, null, 6);
+      cyl(0.14, 0.02, 0.2, C.leaf, 0.15, 1.66, 1.5, null, 8);
+      cyl(0.1, 0.02, 0.16, C.leaf, 0.06, 1.6, 1.44, null, 8);
+    }
     blobShadow(2.1, 1.4, -0.4, 0.9);
     function stool(x, z) {
-      cyl(0.3, 0.26, 0.08, C.wood, x, 0.86, z, null, 10);
-      cyl(0.05, 0.07, 0.84, 0x6e5539, x, 0.42, z, null, 8);
+      cyl(0.3, 0.26, 0.08, C.wood, x, 0.86, z, null, 14, { rough: 0.7 });
+      cyl(0.05, 0.07, 0.84, C.wood2, x, 0.42, z, null, 10);
       blobShadow(0.34, 0.3, x, z);
     }
     stool(1.9, 0.5); stool(1.9, 1.5);
     var hc = new T.Group(); hc.position.set(2.7, 0, 2.6); scene.add(hc);
-    box(0.5, 0.08, 0.45, C.steel, 0, 1.05, 0, hc);
-    box(0.5, 0.5, 0.07, C.steel, 0, 1.36, -0.2, hc);
-    box(0.07, 1.05, 0.07, C.steel, -0.2, 0.55, -0.16, hc);
-    box(0.07, 1.05, 0.07, C.steel, 0.2, 0.55, -0.16, hc);
-    box(0.07, 1.0, 0.07, C.steel, -0.16, 0.5, 0.2, hc);
-    box(0.07, 1.0, 0.07, C.steel, 0.16, 0.5, 0.2, hc);
+    box(0.5, 0.08, 0.45, C.steel, 0, 1.05, 0, hc, STEEL);
+    box(0.5, 0.5, 0.07, C.steel, 0, 1.36, -0.2, hc, STEEL);
+    box(0.07, 1.05, 0.07, C.steel, -0.2, 0.55, -0.16, hc, STEEL);
+    box(0.07, 1.05, 0.07, C.steel, 0.2, 0.55, -0.16, hc, STEEL);
+    box(0.07, 1.0, 0.07, C.steel, -0.16, 0.5, 0.2, hc, STEEL);
+    box(0.07, 1.0, 0.07, C.steel, 0.16, 0.5, 0.2, hc, STEEL);
     blobShadow(0.4, 0.35, 2.7, 2.6);
+
+    /* pendant lamps over the island (high): warm emissive shades */
+    if (DETAIL >= 3) {
+      [-1.1, 0.4].forEach(function (px) {
+        var cord = cyl(0.012, 0.012, 1.4, 0x6b625a, px, 4.9, 0.9, null, 6);
+        cord.castShadow = false;   // a hair-thin cord throws a room-long streak
+        var shade = new T.Mesh(new T.CylinderGeometry(0.3, 0.42, 0.34, 18, 1, true),
+          new T.MeshStandardMaterial({ color: 0xf0e3c8, roughness: 0.7,
+                                       emissive: 0xffdf9e, emissiveIntensity: 0.55,
+                                       side: T.DoubleSide }));
+        shade.position.set(px, 4.05, 0.9);
+        scene.add(shade);
+      });
+    }
 
     /* ---- PET BOWL (zone: pet) ------------------------------------------ */
     var bowl = zoneGroup('pet', -5.0, 0, 2.8);
-    cyl(0.42, 0.32, 0.2, C.red, 0, 0.1, 0, bowl, 14);
-    cyl(0.34, 0.34, 0.06, 0x6a4a2f, 0, 0.2, 0, bowl, 14);
-    cyl(0.05, 0.05, 0.04, 0x8a6335, 0.5, 0.02, 0.2, bowl, 6);
-    cyl(0.05, 0.05, 0.04, 0x8a6335, 0.42, 0.02, -0.25, bowl, 6);
+    cyl(0.42, 0.32, 0.2, C.red, 0, 0.1, 0, bowl, 16, GLOSS);
+    cyl(0.34, 0.34, 0.06, 0x6a4a2f, 0, 0.2, 0, bowl, 16);
+    if (DETAIL >= 2) {
+      cyl(0.05, 0.05, 0.04, 0x8a6335, 0.5, 0.02, 0.2, bowl, 6);
+      cyl(0.05, 0.05, 0.04, 0x8a6335, 0.42, 0.02, -0.25, bowl, 6);
+    }
+    if (DETAIL >= 3) rbox(1.3, 0.03, 0.9, 0.01, 0xd8c1a8, -5.0, 0.02, 2.8, null, { rough: 0.98 });
     blobShadow(0.5, 0.42, -5.0, 2.8);
 
     /* canvas-texture detail (study slice-3 idiom): painted lazily,
@@ -409,8 +578,8 @@
 
     return {
       T: T, scene: scene, cam: cam, R: R, groups: groups,
-      steam: steam, needle: needle, plaque: plaque, calFace: calFace,
-      boardFace: boardFace, magnets: magnets,
+      steam: steam, steam2: steam2, needle: needle, plaque: plaque,
+      calFace: calFace, boardFace: boardFace, magnets: magnets,
       HOME_POS: HOME_POS, HOME_AT: HOME_AT, detailTexture: detailTexture
     };
   }
@@ -453,14 +622,20 @@
       var t = (tms || 0) / 1000;
       if (state.counter && state.counter.calm === false) {
         webgl.steam.material.opacity = 0.35 + 0.2 * Math.sin(t * 2.1);
-        webgl.steam.position.y = 2.1 + 0.08 * Math.sin(t * 1.3);
-      } else { webgl.steam.material.opacity = 0; }
+        webgl.steam.position.y = 2.0 + 0.08 * Math.sin(t * 1.3);
+        webgl.steam2.material.opacity = 0.22 + 0.16 * Math.sin(t * 1.7 + 1.2);
+        webgl.steam2.position.y = 2.35 + 0.1 * Math.sin(t * 1.1 + 0.6);
+      } else {
+        webgl.steam.material.opacity = 0;
+        webgl.steam2.material.opacity = 0;
+      }
       if (state.radio && state.radio.playing) {
         webgl.needle.rotation.z = 0.25 * Math.sin(t * 3.0);
       }
       keep = true;
     } else if (webgl.steam) {
       webgl.steam.material.opacity = 0;
+      webgl.steam2.material.opacity = 0;
     }
 
     webgl.R.render(webgl.scene, webgl.cam);
@@ -476,12 +651,35 @@
     requestFrame();
   }
 
+  /* ---- boot benchmark: settle into the tier the hardware affords ------- */
+  /* Runs once per tab session, right after the first real frame. If a burst
+   * of frames averages slower than the budget, the next tier down is
+   * persisted and the page reloads into it — the same one-way ratchet a
+   * game's autodetect uses. `?quality=` always wins because it persists. */
+  function benchmark() {
+    if (!webgl || FORCED) return;
+    try {
+      if (sessionStorage.getItem('chf_kitchen_benched')) return;
+      sessionStorage.setItem('chf_kitchen_benched', '1');
+    } catch (e) { return; }
+    var N = 14, n = 0, t0 = performance.now();
+    function tick() {
+      webgl.R.render(webgl.scene, webgl.cam);
+      if (++n < N) { requestAnimationFrame(tick); return; }
+      var avg = (performance.now() - t0) / N;
+      var i = TIERS.indexOf(QUALITY);
+      if (avg > 40 && i >= 0 && i < TIERS.length - 2) {   // never auto-drop into 2d
+        try { localStorage.setItem(QUALITY_KEY, TIERS[i + 1]); } catch (e) { return; }
+        window.location.reload();
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+
   /* ---- applyState: the sole data path ---------------------------------- */
-  var glowSet = {};
   function applyState(s) {
     state = s;
     if (!webgl) { drawFallback(s); return; }
-    var T = webgl.T;
 
     Object.keys(ZONES).forEach(function (key) {
       var g = webgl.groups[key];
@@ -495,7 +693,7 @@
       });
     });
 
-    /* honest detail faces, cheap to repaint only when payloads change */
+    /* honest detail faces, repainted only when payloads change */
     var d = s.door || {};
     var doorTex = webgl.detailTexture('door',
       d.calm !== false ? ['—'] : [(d.mins != null ? d.mins + ' min' : ''), d.label || '']);
@@ -593,7 +791,7 @@
     });
   }
 
-  /* ---- poll (60s), one-time outage chip -------------------------------- */
+  /* ---- poll (60s), once-per-outage chip -------------------------------- */
   var chipShown = false;    // once per OUTAGE, re-armed by the next good poll
   function chip(text) {
     if (chipShown) return;
@@ -635,6 +833,7 @@
     webgl.R.domElement.addEventListener('click', onTap);
     window.addEventListener('resize', size);
     size();
+    benchmark();
   } else {
     drawFallback(null);
   }
