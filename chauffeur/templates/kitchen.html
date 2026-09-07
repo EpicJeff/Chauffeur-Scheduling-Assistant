@@ -12,6 +12,9 @@
         body { background-color: #111827; color: #e5e7eb; }
         [x-cloak] { display: none !important; }
         #kitchen-wrap { position: fixed; inset: 0; background: #14110c; }
+        /* product-shot vignette: pure CSS, zero render cost */
+        #kitchen-wrap::after { content: ''; position: absolute; inset: 0; pointer-events: none;
+          background: radial-gradient(ellipse at 50% 42%, transparent 52%, rgba(28,18,42,0.28) 100%); }
         #room, #room canvas { position: absolute; inset: 0; display: block; }
         #tip { position: fixed; pointer-events: none; background: rgba(28,23,16,.94);
           color: #f0e6cf; border: 1px solid #74603f; border-radius: 8px; padding: 6px 10px;
