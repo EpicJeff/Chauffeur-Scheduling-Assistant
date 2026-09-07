@@ -128,6 +128,14 @@
                   return r.playing ? ('Playing: ' + (r.track || 'something good'))
                                    : 'The radio is quiet.';
                 } },
+    window:   { label: 'Window',        url: 'calendar',
+                num: function (s) { return (s.window || {}).calm === false ? 1 : 0; },
+                headline: function (s) {
+                  var w = s.window || {};
+                  if (!w.cond) return 'The sky is keeping to itself.';
+                  var t = (w.temp !== null && w.temp !== undefined) ? Math.round(w.temp) + '\u00b0 ' : '';
+                  return t + w.cond + (w.calm === false ? ' \u2014 plan for it' : '');
+                } },
     pet:      { label: 'Pet bowl',      url: 'chores',
                 num: function (s) { return (s.pet || {}).count || 0; },
                 headline: function (s) {
@@ -138,7 +146,7 @@
                   }).join(', ');
                 } }
   };
-  var ZONE_ORDER = ['door', 'calendar', 'counter', 'fridge', 'board', 'radio', 'pet'];
+  var ZONE_ORDER = ['door', 'window', 'calendar', 'counter', 'fridge', 'board', 'radio', 'pet'];
 
   function go(slug) { window.location.href = BASE + slug + window.location.search; }
 
@@ -307,21 +315,44 @@
     }
     /* tiny procedural cube env: what the metals reflect. Without this, PBR
        metalness has nothing to see and reads as gray plastic. */
-    var ENV = null;
+    /* Reflections need something WORTH reflecting: a bright sky above, a
+       dark warm floor below, and one hot window stripe on a wall so chrome
+       gets a highlight streak. PMREM prefilters it so every roughness level
+       samples a correctly blurred version — this single step is the
+       difference between painted plastic and material. */
     if (PBR) {
-      function envFace(top, bottom) {
-        var c = document.createElement('canvas'); c.width = c.height = 64;
-        var g = c.getContext('2d');
-        var grad = g.createLinearGradient(0, 0, 0, 64);
-        grad.addColorStop(0, top); grad.addColorStop(1, bottom);
-        g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+      function envFace(draw) {
+        var c = document.createElement('canvas'); c.width = c.height = 128;
+        draw(c.getContext('2d'));
         return c;
       }
-      ENV = new T.CubeTexture([
-        envFace('#efe6d8', '#c9bfae'), envFace('#efe6d8', '#c9bfae'),
-        envFace('#f4f6ff', '#e8e2f2'), envFace('#b3a48e', '#8f8270'),
-        envFace('#f0e8da', '#cbc1b0'), envFace('#f0e8da', '#cbc1b0')]);
-      ENV.needsUpdate = true;
+      function wallFace(stripe) {
+        return envFace(function (g) {
+          var grad = g.createLinearGradient(0, 0, 0, 128);
+          grad.addColorStop(0, '#efe4d0'); grad.addColorStop(1, '#8f8270');
+          g.fillStyle = grad; g.fillRect(0, 0, 128, 128);
+          if (stripe) {
+            g.fillStyle = '#ffffff';
+            g.fillRect(84, 8, 30, 88);
+            g.fillStyle = 'rgba(255,244,214,0.55)';
+            g.fillRect(74, 4, 50, 100);
+          }
+        });
+      }
+      var envCube = new T.CubeTexture([
+        wallFace(true), wallFace(false),
+        envFace(function (g) {
+          var grad = g.createLinearGradient(0, 0, 0, 128);
+          grad.addColorStop(0, '#e9edf6'); grad.addColorStop(1, '#c3cbe2');
+          g.fillStyle = grad; g.fillRect(0, 0, 128, 128);
+        }),
+        envFace(function (g) {
+          g.fillStyle = '#6e6152'; g.fillRect(0, 0, 128, 128);
+        }),
+        wallFace(false), wallFace(true)]);
+      envCube.needsUpdate = true;
+      var pmrem = new T.PMREMGenerator(R);
+      scene.environment = pmrem.fromCubemap(envCube).texture;
     }
 
     var NICE = DETAIL >= 2;   // textures + rounded edges from medium up
@@ -343,15 +374,13 @@
         metalness: opts.metal !== undefined ? opts.metal : 0.0
       });
       if (opts.map) m.map = opts.map;
-      if (ENV && (m.metalness > 0.12 || (opts.rough !== undefined && opts.rough <= 0.3))) {
-        m.envMap = ENV;
-        m.envMapIntensity = opts.envInt !== undefined ? opts.envInt : 0.4;
-      }
+      m.envMapIntensity = opts.envInt !== undefined ? opts.envInt
+        : (m.metalness > 0.5 ? 1.0 : 0.1);
       return m;
     }
-    var STEEL = { rough: 0.32, metal: 0.75 };
-    var CHROME = { rough: 0.18, metal: 0.9, envInt: 1.0 };
-    var GLOSS = { rough: 0.25, metal: 0.05, envInt: 0.28 };
+    var STEEL = { rough: 0.3, metal: 0.85, envInt: 1.1 };
+    var CHROME = { rough: 0.12, metal: 1.0, envInt: 1.3 };
+    var GLOSS = { rough: 0.3, metal: 0.02, envInt: 0.25 };
     var WOODM = { rough: 0.6, metal: 0.0 };
 
     function finish(m, noShadow) {
@@ -425,7 +454,7 @@
     floorTex.magFilter = DETAIL >= 3 ? T.LinearFilter : T.NearestFilter;
     var floor = new T.Mesh(new T.PlaneGeometry(13, 11),
       PBR ? new T.MeshStandardMaterial({ map: floorTex, roughness: 0.5,
-                                         envMap: ENV, envMapIntensity: 0.25 })
+                                         envMapIntensity: 0.1 })
           : new T.MeshLambertMaterial({ map: floorTex }));
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = 0.001;
@@ -454,7 +483,7 @@
     })();
     var bs = new T.Mesh(new T.PlaneGeometry(6.9, 1.0),
       PBR ? new T.MeshStandardMaterial({ map: new T.CanvasTexture(bsCanvas), roughness: 0.35,
-                                         envMap: ENV, envMapIntensity: 0.35 })
+                                         envMapIntensity: 0.15 })
           : new T.MeshLambertMaterial({ map: new T.CanvasTexture(bsCanvas) }));
     bs.position.set(-1.05, 1.62, -5.36);
     scene.add(bs);
@@ -493,30 +522,35 @@
     upperCab(1.4, -3.9, -5.1);
     upperCab(2.0, 0.3, -5.1);
 
-    /* a REAL sink: raised rim, recessed dark basin, gooseneck faucet */
-    box(1.06, 0.03, 0.76, C.steel, -2.6, 1.19, -4.62, null, STEEL);     // rim
-    box(0.9, 0.1, 0.6, 0x565b61, -2.6, 1.14, -4.62, null,
-        { rough: 0.4, metal: 0.6 });                                    // recessed basin
-    cyl(0.045, 0.055, 0.5, C.steel, -2.6, 1.45, -5.05, null, 10, CHROME);
-    var neck = cyl(0.035, 0.035, 0.5, C.steel, -2.6, 1.7, -4.88, null, 8, CHROME);
-    neck.rotation.x = Math.PI / 2 - 0.35;
-    cyl(0.035, 0.035, 0.16, C.steel, -2.6, 1.6, -4.66, null, 8, CHROME);
+    /* a sink you can SEE: farmhouse apron front proud of the cabinets,
+       steel rim above the counter, dark opening, tall gooseneck */
+    rbox(1.2, 0.72, 0.16, 0.03, 0xcfd4d9, -2.6, 0.82, -3.84, null, STEEL); // apron
+    box(1.24, 0.07, 0.9, 0xc6cbd0, -2.6, 1.215, -4.42, null, STEEL);       // rim
+    box(1.06, 0.05, 0.72, 0x4c5157, -2.6, 1.24, -4.42, null,
+        { rough: 0.35, metal: 0.6 });                                      // opening
+    cyl(0.05, 0.06, 0.62, C.steel, -2.6, 1.55, -4.95, null, 12, CHROME);   // riser
+    var neck = cyl(0.04, 0.04, 0.55, C.steel, -2.6, 1.85, -4.72, null, 10, CHROME);
+    neck.rotation.x = 1.25;
+    var spout = cyl(0.035, 0.035, 0.22, C.steel, -2.6, 1.74, -4.5, null, 8, CHROME);
+    cyl(0.05, 0.02, 0.04, C.steel, -2.6, 1.62, -4.5, null, 8, CHROME);     // aerator
+    cyl(0.03, 0.03, 0.14, C.steel, -2.25, 1.28, -4.9, null, 8, CHROME);    // handle
 
-    /* window above the sink; a roman shade covers the TOP, full width */
-    var pane = new T.Mesh(new T.BoxGeometry(1.9, 1.7, 0.1),
-      PBR ? new T.MeshStandardMaterial({ map: skyTex(), roughness: 0.9,
-                                         emissive: 0xdff0fa, emissiveIntensity: 0.18,
-                                         emissiveMap: skyTex() })
-          : new T.MeshLambertMaterial({ color: 0xffffff,
-                                        map: NICE ? skyTex() : null }));
-    pane.position.set(-2.2, 3.4, -5.42);
-    scene.add(pane);
-    box(2.1, 0.12, 0.16, C.cab, -2.2, 4.32, -5.4);
-    box(0.12, 1.9, 0.16, C.cab, -3.22, 3.38, -5.4);
-    box(0.12, 1.9, 0.16, C.cab, -1.18, 3.38, -5.4);
-    rbox(2.14, 0.22, 0.14, 0.04, C.orange, -2.2, 4.14, -5.33, null, { rough: 0.9 });
-    rbox(2.1, 0.2, 0.12, 0.04, 0xd28f36, -2.2, 3.95, -5.34, null, { rough: 0.9 });
-    rbox(2.06, 0.18, 0.1, 0.04, C.orange, -2.2, 3.78, -5.35, null, { rough: 0.9 });
+    /* WINDOW (zone: window): the weather lives outside the glass. The
+       pane is a canvas the painter redraws when the sky changes; unlit
+       material so it always reads as daylight coming IN. */
+    var winG = zoneGroup('window', -2.2, 0, -5.4);
+    var paneMesh = new T.Mesh(new T.BoxGeometry(1.9, 1.7, 0.06),
+      new T.MeshBasicMaterial({ color: 0xffffff }));
+    paneMesh.position.set(0, 3.4, 0.06);
+    if (SHADOWS) paneMesh.castShadow = false;
+    winG.add(paneMesh);
+    box(2.1, 0.12, 0.16, C.cab, 0, 4.32, 0.1, winG);
+    box(2.1, 0.1, 0.16, C.cab, 0, 2.52, 0.1, winG);
+    box(0.12, 1.9, 0.16, C.cab, -1.02, 3.38, 0.1, winG);
+    box(0.12, 1.9, 0.16, C.cab, 1.02, 3.38, 0.1, winG);
+    rbox(2.14, 0.22, 0.14, 0.04, C.orange, 0, 4.14, 0.2, winG, { rough: 0.9 });
+    rbox(2.1, 0.2, 0.12, 0.04, 0xd28f36, 0, 3.95, 0.19, winG, { rough: 0.9 });
+    rbox(2.06, 0.18, 0.1, 0.04, C.orange, 0, 3.78, 0.18, winG, { rough: 0.9 });
 
     /* counter props */
     if (DETAIL >= 2) {
@@ -562,16 +596,16 @@
     var fridge = zoneGroup('fridge', -5.55, 0, -4.35);
     var fbody = new T.Mesh(
       NICE ? roundedGeo(1.9, 3.95, 1.5, 0.08) : new T.BoxGeometry(1.9, 3.95, 1.5),
-      PBR ? new T.MeshStandardMaterial({ map: brushed, color: 0xd7dbdf,
-                                         roughness: 0.38, metalness: 0.65,
-                                         envMap: ENV, envMapIntensity: 0.5 })
+      PBR ? new T.MeshStandardMaterial({ map: brushed, color: 0xdadee2,
+                                         roughness: 0.3, metalness: 0.8,
+                                         envMapIntensity: 1.1 })
           : new T.MeshLambertMaterial({ color: 0xd7dbdf, map: brushed || null }));
     fbody.position.set(0, 1.97, 0);
     finish(fbody); fridge.add(fbody);
     rbox(1.6, 1.55, 0.07, 0.03, C.teal, 0, 2.95, 0.77, fridge,
-         { rough: 0.25, metal: 0.1, envInt: 0.35 });
+         { rough: 0.3, metal: 0.05, envInt: 0.15 });
     rbox(1.6, 1.35, 0.07, 0.03, C.teal, 0, 1.02, 0.77, fridge,
-         { rough: 0.25, metal: 0.1, envInt: 0.35 });
+         { rough: 0.3, metal: 0.05, envInt: 0.15 });
     box(0.07, 1.3, 0.09, C.steel, 0.62, 2.95, 0.82, fridge, CHROME);
     box(0.07, 1.0, 0.09, C.steel, 0.62, 1.07, 0.82, fridge, CHROME);
     var magnets = new T.Group();
@@ -614,12 +648,15 @@
     slabD.position.set(0, 2.05, 0);
     finish(slabD); doorG.add(slabD);
     if (DETAIL >= 2) {
-      box(1.3, 1.4, 0.05, 0x8a6d49, 0, 2.9, 0.08, doorG, PBR ? { rough: 0.7, map: woodDoor } : { rough: 0.75 });
       box(1.3, 1.2, 0.05, 0x8a6d49, 0, 1.2, 0.08, doorG, PBR ? { rough: 0.7, map: woodDoor } : { rough: 0.75 });
     }
     cyl(0.07, 0.07, 0.1, 0xd8c48a, 0.6, 2.0, 0.1, doorG, 10, CHROME);
-    var plaque = new T.Mesh(new T.PlaneGeometry(1.24, 0.5), mat(0xefe6cf, { rough: 0.9 }));
-    plaque.position.set(0, 4.4, 0.09);
+    /* the next-leave HERO CARD, rendered app-style, big enough to read
+       from across the room — it hangs on the door because the door is
+       where leaving happens */
+    var plaque = new T.Mesh(new T.PlaneGeometry(1.5, 0.94),
+      new T.MeshBasicMaterial({ transparent: true }));
+    plaque.position.set(0, 3.02, 0.1);
     doorG.add(plaque);
 
     /* ---- RADIO (zone: radio) on the countertop ------------------------- */
@@ -637,8 +674,8 @@
     }
     var islandTop = new T.Mesh(
       NICE ? roundedGeo(3.7, 0.14, 2.3, 0.05) : new T.BoxGeometry(3.7, 0.14, 2.3),
-      PBR ? new T.MeshStandardMaterial({ map: marble, roughness: 0.22,
-                                         envMap: ENV, envMapIntensity: 0.5 })
+      PBR ? new T.MeshStandardMaterial({ map: marble, roughness: 0.2,
+                                         envMapIntensity: 0.3 })
           : new T.MeshLambertMaterial({ color: 0xffffff, map: marble || null }));
     islandTop.position.set(-0.4, 1.13, 0.9);
     finish(islandTop); scene.add(islandTop);
@@ -692,7 +729,7 @@
     cyl(0.24, 0.24, 0.05, 0x7a5638, -0.35, 0.17, 0, bowl, 16);
     cyl(0.3, 0.22, 0.16, C.teal, 0.35, 0.1, 0.05, bowl, 16, GLOSS);
     var water = cyl(0.24, 0.24, 0.04, 0x9fd4e8, 0.35, 0.17, 0.05, bowl, 16,
-                    { rough: 0.15, metal: 0.05, envInt: 0.8 });
+                    { rough: 0.1, metal: 0.05, envInt: 0.9 });
     if (DETAIL >= 2) {
       cyl(0.03, 0.03, 0.03, 0x8a6335, -0.05, 0.04, 0.25, bowl, 6);
       cyl(0.03, 0.03, 0.03, 0x8a6335, 0.02, 0.04, -0.3, bowl, 6);
@@ -700,31 +737,205 @@
     }
     blobShadow(0.85, 0.55, -5.2, 2.8);
 
-    /* canvas-texture detail (study slice-3 idiom): painted lazily,
-       cached per payload change */
+    /* ---- the painters: every data surface drawn like the app draws it —
+       Inter type, white cards, accent bars, soft shadows. Cached per
+       payload; a poll that changes nothing repaints nothing. ---- */
     var texCache = {};
-    function detailTexture(key, lines) {
-      var payload = key + '|' + lines.join('|');
-      if (texCache[key] && texCache[key].payload === payload) return texCache[key].tex;
-      var c = document.createElement('canvas'); c.width = 256; c.height = 256;
-      var g = c.getContext('2d');
-      g.fillStyle = key === 'board' ? '#c99a63' : '#f6f1e4';
-      g.fillRect(0, 0, 256, 256);
-      g.fillStyle = '#3a2f1f'; g.font = '600 20px system-ui';
-      var y = 34;
-      lines.slice(0, 8).forEach(function (line) {
-        g.fillText(String(line).slice(0, 24), 14, y); y += 28;
-      });
-      var tex = new T.CanvasTexture(c);
-      texCache[key] = { payload: payload, tex: tex };
-      return tex;
+    var FONT = 'Inter, system-ui, sans-serif';
+    function mkTex(key, w, h, payload, draw) {
+      var e = texCache[key];
+      if (e && e.payload === payload) return e.tex;
+      var c = document.createElement('canvas'); c.width = w; c.height = h;
+      draw(c.getContext('2d'), w, h);
+      var t = new T.CanvasTexture(c);
+      t.anisotropy = 4;
+      texCache[key] = { payload: payload, tex: t };
+      return t;
     }
+    function rr(g, x, y, w, h, r) {
+      g.beginPath();
+      g.moveTo(x + r, y);
+      g.arcTo(x + w, y, x + w, y + h, r);
+      g.arcTo(x + w, y + h, x, y + h, r);
+      g.arcTo(x, y + h, x, y, r);
+      g.arcTo(x, y, x + w, y, r);
+      g.closePath();
+    }
+    function card(g, x, y, w, h, accent) {
+      g.save();
+      g.shadowColor = 'rgba(45,32,18,0.28)';
+      g.shadowBlur = 14; g.shadowOffsetY = 5;
+      g.fillStyle = '#ffffff';
+      rr(g, x, y, w, h, 16); g.fill();
+      g.restore();
+      g.fillStyle = accent;
+      rr(g, x, y, 12, h, 6); g.fill();
+    }
+    var ACCENTS = ['#2563eb', '#7c3aed', '#0d9488', '#dc2626', '#d97706'];
+
+    function heroTex(d) {
+      var calm = !d || d.calm !== false || d.mins === null || d.mins === undefined;
+      var lbl = (d && d.label) || '';
+      var time = lbl.slice(0, 5), title = lbl.indexOf(' \u2014 ') !== -1
+        ? lbl.slice(lbl.indexOf(' \u2014 ') + 3) : lbl.slice(5);
+      var payload = calm ? 'calm' : [time, title, d.mins].join('|');
+      return mkTex('hero', 512, 320, payload, function (g, w, h) {
+        g.clearRect(0, 0, w, h);
+        card(g, 14, 14, w - 28, h - 28, calm ? '#0d9488' : '#2563eb');
+        if (calm) {
+          g.fillStyle = '#111827'; g.font = '800 44px ' + FONT;
+          g.fillText('All home', 48, 140);
+          g.fillStyle = '#6b7280'; g.font = '500 30px ' + FONT;
+          g.fillText('nobody has to leave', 48, 195);
+          return;
+        }
+        g.fillStyle = '#111827'; g.font = '800 88px ' + FONT;
+        g.fillText(time, 44, 128);
+        g.fillStyle = '#374151'; g.font = '600 36px ' + FONT;
+        g.fillText(String(title).slice(0, 22), 46, 190);
+        g.fillStyle = '#2563eb'; g.font = '700 32px ' + FONT;
+        g.fillText('leave in ' + d.mins + ' min', 46, 258);
+      });
+    }
+    function calendarTex(c) {
+      var calm = !c || c.calm !== false;
+      var next = (c && c.next) || [];
+      var payload = calm ? 'calm' : [c.today].concat(next).join('|');
+      return mkTex('calendar', 512, 640, payload, function (g, w, h) {
+        g.fillStyle = '#f6f1e4'; g.fillRect(0, 0, w, h);
+        g.fillStyle = '#111827'; g.font = '800 40px ' + FONT;
+        g.fillText('Today', 30, 66);
+        if (!calm) {
+          g.fillStyle = '#2563eb'; rr(g, w - 96, 26, 62, 52, 14); g.fill();
+          g.fillStyle = '#ffffff'; g.font = '800 34px ' + FONT;
+          g.fillText(String(c.today), w - 96 + (String(c.today).length > 1 ? 12 : 22), 64);
+        }
+        if (calm) {
+          g.fillStyle = '#6b7280'; g.font = '500 30px ' + FONT;
+          g.fillText('nothing left today', 30, 140);
+          return;
+        }
+        var y = 110;
+        next.slice(0, 4).forEach(function (line, i) {
+          card(g, 24, y, w - 48, 108, ACCENTS[i % ACCENTS.length]);
+          g.fillStyle = '#111827'; g.font = '800 34px ' + FONT;
+          g.fillText(String(line).slice(0, 5), 56, y + 48);
+          g.fillStyle = '#374151'; g.font = '500 29px ' + FONT;
+          g.fillText(String(line).slice(6, 26), 56, y + 90);
+          y += 128;
+        });
+      });
+    }
+    function boardTex(b) {
+      var calm = !b || b.calm !== false;
+      var top = (b && b.top) || [];
+      var payload = calm ? 'calm' : [b.items].concat(top).join('|');
+      return mkTex('board', 512, 384, payload, function (g, w, h) {
+        g.fillStyle = '#c08b52'; g.fillRect(0, 0, w, h);
+        for (var i = 0; i < 500; i++) {
+          g.fillStyle = 'rgba(90,60,30,' + (Math.random() * 0.1) + ')';
+          g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+        }
+        var notes = calm ? ['all set!'] : top.slice(0, 6);
+        var colors = ['#fef08a', '#fda4af', '#a7f3d0', '#bae6fd', '#fde68a', '#ddd6fe'];
+        notes.forEach(function (item, i) {
+          var nx = 34 + (i % 3) * 155, ny = 40 + Math.floor(i / 3) * 165;
+          g.save();
+          g.translate(nx + 62, ny + 62);
+          g.rotate(((i * 47) % 9 - 4) * 0.02);
+          g.shadowColor = 'rgba(60,40,20,0.35)'; g.shadowBlur = 8; g.shadowOffsetY = 4;
+          g.fillStyle = colors[i % colors.length];
+          g.fillRect(-62, -62, 124, 124);
+          g.restore();
+          g.fillStyle = '#b91c1c';
+          g.beginPath(); g.arc(nx + 62, ny + 10, 6, 0, 7); g.fill();
+          g.fillStyle = '#374151'; g.font = '600 24px ' + FONT;
+          var word = String(item).slice(0, 9);
+          g.fillText(word, nx + 62 - g.measureText(word).width / 2, ny + 70);
+        });
+      });
+    }
+    function weatherTex(wz) {
+      var cond = (wz && wz.cond) || '';
+      var temp = (wz && wz.temp !== null && wz.temp !== undefined) ? Math.round(wz.temp) : null;
+      var hour = new Date().getHours();
+      var night = hour < 7 || hour >= 19;
+      var payload = [cond, temp, night].join('|');
+      return mkTex('weather', 320, 288, payload, function (g, w, h) {
+        var top = '#7cc4f0', bot = '#d8ecf7';
+        if (night) { top = '#1c2748'; bot = '#33406b'; }
+        else if (cond.indexOf('rain') !== -1 || cond === 'pouring' || cond.indexOf('lightning') !== -1) { top = '#5b6c7d'; bot = '#8fa0af'; }
+        else if (cond.indexOf('snow') !== -1) { top = '#aebfd0'; bot = '#e8eef4'; }
+        else if (cond.indexOf('cloud') !== -1 || cond === 'fog') { top = '#8fb0c6'; bot = '#cfdde8'; }
+        var grad = g.createLinearGradient(0, 0, 0, h);
+        grad.addColorStop(0, top); grad.addColorStop(1, bot);
+        g.fillStyle = grad; g.fillRect(0, 0, w, h);
+        if (night) {
+          g.fillStyle = '#f5f0dc';
+          g.beginPath(); g.arc(w * 0.72, h * 0.28, 26, 0, 7); g.fill();
+          g.fillStyle = top;
+          g.beginPath(); g.arc(w * 0.68, h * 0.25, 22, 0, 7); g.fill();
+          g.fillStyle = 'rgba(255,255,255,0.8)';
+          for (var st = 0; st < 14; st++) {
+            g.fillRect(((st * 73) % w), ((st * 41) % (h * 0.5)), 2, 2);
+          }
+        } else if (cond === 'sunny' || cond === 'clear' || cond === '' || cond === 'partlycloudy') {
+          g.fillStyle = '#ffd968';
+          g.beginPath(); g.arc(w * 0.7, h * 0.26, 30, 0, 7); g.fill();
+          g.fillStyle = 'rgba(255,217,104,0.35)';
+          g.beginPath(); g.arc(w * 0.7, h * 0.26, 44, 0, 7); g.fill();
+        }
+        if (cond.indexOf('cloud') !== -1 || cond.indexOf('rain') !== -1 ||
+            cond.indexOf('snow') !== -1 || cond === 'pouring' || cond === 'fog') {
+          g.fillStyle = night ? 'rgba(200,205,220,0.55)' : 'rgba(255,255,255,0.9)';
+          [[0.3, 0.3], [0.62, 0.42]].forEach(function (pos) {
+            var cxp = w * pos[0], cyp = h * pos[1];
+            g.beginPath();
+            g.arc(cxp - 26, cyp, 18, 0, 7); g.arc(cxp, cyp - 12, 24, 0, 7);
+            g.arc(cxp + 26, cyp, 18, 0, 7);
+            g.fill(); g.fillRect(cxp - 26, cyp - 2, 52, 20);
+          });
+        }
+        if (cond.indexOf('rain') !== -1 || cond === 'pouring' || cond.indexOf('lightning') !== -1) {
+          g.strokeStyle = 'rgba(225,240,255,0.75)'; g.lineWidth = 3;
+          for (var rn = 0; rn < 16; rn++) {
+            var rx = ((rn * 61) % w), ry = h * 0.5 + ((rn * 37) % (h * 0.3));
+            g.beginPath(); g.moveTo(rx, ry); g.lineTo(rx - 6, ry + 18); g.stroke();
+          }
+        }
+        if (cond.indexOf('snow') !== -1) {
+          g.fillStyle = 'rgba(255,255,255,0.95)';
+          for (var sn = 0; sn < 18; sn++) {
+            g.beginPath();
+            g.arc(((sn * 53) % w), h * 0.45 + ((sn * 29) % (h * 0.4)), 3.5, 0, 7);
+            g.fill();
+          }
+        }
+        /* the hills the house looks out on */
+        g.fillStyle = night ? '#22321f' : '#4e6e50';
+        g.beginPath(); g.moveTo(0, h);
+        g.lineTo(0, h * 0.82);
+        g.quadraticCurveTo(w * 0.25, h * 0.68, w * 0.5, h * 0.82);
+        g.quadraticCurveTo(w * 0.75, h * 0.94, w, h * 0.8);
+        g.lineTo(w, h); g.closePath(); g.fill();
+        if (temp !== null) {
+          g.save();
+          g.shadowColor = 'rgba(0,0,0,0.4)'; g.shadowBlur = 8;
+          g.fillStyle = '#ffffff'; g.font = '800 54px ' + FONT;
+          g.fillText(temp + '\u00b0', 18, h - 20);
+          g.restore();
+        }
+      });
+    }
+    function clearPaint() { texCache = {}; }
 
     return {
       T: T, scene: scene, cam: cam, R: R, groups: groups,
       steam: steam, steam2: steam2, needle: needle, plaque: plaque,
       calFace: calFace, boardFace: boardFace, magnets: magnets,
-      HOME_POS: HOME_POS, HOME_AT: HOME_AT, detailTexture: detailTexture
+      paneMesh: paneMesh, heroTex: heroTex, calendarTex: calendarTex,
+      boardTex: boardTex, weatherTex: weatherTex, clearPaint: clearPaint,
+      HOME_POS: HOME_POS, HOME_AT: HOME_AT
     };
   }
 
@@ -846,27 +1057,16 @@
     });
 
     /* honest detail faces, repainted only when payloads change */
-    var d = s.door || {};
-    var doorTex = webgl.detailTexture('door',
-      d.calm !== false ? ['—'] : [(d.mins != null ? d.mins + ' min' : ''), d.label || '']);
-    if (webgl.plaque.material.map !== doorTex) {
-      webgl.plaque.material.map = doorTex;
-      webgl.plaque.material.needsUpdate = true;
+    function swap(mesh, tex) {
+      if (mesh.material.map !== tex) {
+        mesh.material.map = tex;
+        mesh.material.needsUpdate = true;
+      }
     }
-    var c = s.calendar || {};
-    var calTex = webgl.detailTexture('calendar',
-      c.calm !== false ? ['Today', 'clear'] : ['Today: ' + c.today].concat(c.next || []));
-    if (webgl.calFace.material.map !== calTex) {
-      webgl.calFace.material.map = calTex;
-      webgl.calFace.material.needsUpdate = true;
-    }
-    var bd = s.board || {};
-    var boardTex = webgl.detailTexture('board',
-      bd.calm !== false ? ['The list is clear'] : ['List: ' + bd.items].concat(bd.top || []));
-    if (webgl.boardFace.material.map !== boardTex) {
-      webgl.boardFace.material.map = boardTex;
-      webgl.boardFace.material.needsUpdate = true;
-    }
+    swap(webgl.plaque, webgl.heroTex(s.door || {}));
+    swap(webgl.calFace, webgl.calendarTex(s.calendar || {}));
+    swap(webgl.boardFace, webgl.boardTex(s.board || {}));
+    swap(webgl.paneMesh, webgl.weatherTex(s.window || {}));
 
     /* moment magnets on the fridge door: one colored square each, capped */
     var wantMagnets = Math.min(((s.fridge || {}).new_moments || 0), 6);
@@ -986,6 +1186,11 @@
     window.addEventListener('resize', size);
     size();
     benchmark();
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(function () {
+        if (webgl) { webgl.clearPaint(); if (state) applyState(state); }
+      });
+    }
   } else {
     drawFallback(null);
   }

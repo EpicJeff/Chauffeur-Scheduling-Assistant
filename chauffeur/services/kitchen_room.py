@@ -148,6 +148,28 @@ def _radio() -> dict:
     return _calm(playing=False, track='')
 
 
+def _window() -> dict:
+    """The weather outside the glass. HA-degrades-gracefully: any problem —
+    no HA, no weather entity, a changed forecast shape — is a calm window,
+    never a broken one. calm=False only when the sky needs attention (rain/
+    snow likely), matching attention-only furniture."""
+    from services import ha_api
+    fc = ha_api.get_weather_forecast(None) or []
+    if not fc:
+        return _calm(cond='', temp=None, precip=0)
+    f0 = fc[0] or {}
+    cond = str(f0.get('condition') or '').lower()
+    temp = f0.get('temperature')
+    try:
+        precip = int(f0.get('precipitation_probability') or 0)
+    except (TypeError, ValueError):
+        precip = 0
+    wet = cond in ('rainy', 'pouring', 'lightning', 'lightning-rainy', 'hail',
+                   'snowy', 'snowy-rainy') or precip >= 40
+    return {'calm': (not wet), 'cond': cond or 'unknown',
+            'temp': temp, 'precip': precip}
+
+
 def _pet() -> dict:
     # get_pets, never the raw table: level is DERIVED from the owner's
     # lifetime xp (a stored 'level' is a lie), and retired pets are filtered.
@@ -171,6 +193,7 @@ def state(since_ts: float = 0, now: datetime.datetime = None) -> dict:
                 ('door', lambda: _door(now)),
                 ('calendar', lambda: _calendar(now)),
                 ('radio', _radio),
+                ('window', _window),
                 ('pet', _pet))
     for name, build in sections:
         try:

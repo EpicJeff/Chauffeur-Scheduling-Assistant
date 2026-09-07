@@ -28,7 +28,8 @@ def scenario_all_seven_sections_present_and_calm_on_empty():
     storage.get_cached_schedule = lambda: {}
     st = kitchen.state(since_ts=time.time())
     check(st['status'] == 'ok', "empty house still answers ok")
-    for zone in ('fridge', 'counter', 'board', 'door', 'calendar', 'radio', 'pet'):
+    for zone in ('fridge', 'counter', 'board', 'door', 'calendar', 'radio',
+                 'window', 'pet'):
         check(zone in st, f"{zone} section present")
         check(st[zone].get('calm') is True, f"{zone} is calm when empty")
 
@@ -172,6 +173,33 @@ def scenario_mixed_timezone_stamps_do_not_blank_the_day():
     check('Aware' in st['door']['label'],
           "the door still sees the sooner (aware) event")
 
+
+def scenario_window_reads_the_sky_and_degrades():
+    _reset()
+    storage.get_cached_schedule = lambda: {}
+    from services import ha_api
+    orig = ha_api.get_weather_forecast
+    try:
+        ha_api.get_weather_forecast = lambda e=None, kind='daily': [
+            {'condition': 'rainy', 'temperature': 64,
+             'precipitation_probability': 80}]
+        st = kitchen.state(since_ts=0)
+        check(st['window']['calm'] is False and st['window']['cond'] == 'rainy'
+              and st['window']['temp'] == 64,
+              "rain outside lights the window")
+        ha_api.get_weather_forecast = lambda e=None, kind='daily': [
+            {'condition': 'sunny', 'temperature': 75,
+             'precipitation_probability': 0}]
+        st = kitchen.state(since_ts=0)
+        check(st['window']['calm'] is True and st['window']['temp'] == 75,
+              "a sunny day is calm but still shows its temperature")
+        ha_api.get_weather_forecast = lambda e=None, kind='daily': (
+            (_ for _ in ()).throw(RuntimeError('no HA')))
+        st = kitchen.state(since_ts=0)
+        check(st['window'].get('calm') is True, "no HA = calm window, never broken")
+    finally:
+        ha_api.get_weather_forecast = orig
+
 if __name__ == '__main__':
     scenario_all_seven_sections_present_and_calm_on_empty()
     scenario_signals_carry_real_numbers()
@@ -181,4 +209,5 @@ if __name__ == '__main__':
     scenario_endpoint_and_gate()
     scenario_room_pins()
     scenario_mixed_timezone_stamps_do_not_blank_the_day()
+    scenario_window_reads_the_sky_and_degrades()
     print("test_kitchen_state OK")
