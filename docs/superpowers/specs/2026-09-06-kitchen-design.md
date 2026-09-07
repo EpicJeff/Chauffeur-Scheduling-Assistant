@@ -18,7 +18,7 @@ every eye in the house, calm when nothing needs anyone.
    person; decoration never pretends to be data.
 2. **Quiet room = success** — everything calm renders a warm, settled kitchen,
    not an empty error state.
-3. **The room never writes** — pinned by test: `services/kitchen.py` and
+3. **The room never writes** — pinned by test: `services/kitchen_room.py` (named so because services/kitchen.py is the meals arc’s cook-time model, there first) and
    `static/kitchen.js` perform no POST/PUT/DELETE and import no mailer.
 4. **Every signal is one number from one endpoint** — `GET /api/kitchen/state`,
    each section built inside try/except falling to a `_CALM` form.

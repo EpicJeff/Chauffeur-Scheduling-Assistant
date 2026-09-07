@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Kitchen</title>
+    <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
+    {% include 'ha_theme.html' %}
+    <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
+    <style>
+        body { background-color: #111827; color: #e5e7eb; }
+        [x-cloak] { display: none !important; }
+        #kitchen-wrap { position: fixed; inset: 0; background: #14110c; }
+        #room, #room canvas { position: absolute; inset: 0; display: block; }
+        #tip { position: fixed; pointer-events: none; background: rgba(28,23,16,.94);
+          color: #f0e6cf; border: 1px solid #74603f; border-radius: 8px; padding: 6px 10px;
+          font: 13px/1.3 system-ui; opacity: 0; transition: opacity .15s; z-index: 40; max-width: 300px; }
+        #chip { position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px;
+          background: rgba(28,23,16,.9); color: #f0e6cf; border: 1px solid #74603f;
+          border-radius: 10px; padding: 8px 14px; font: 14px system-ui; opacity: 0;
+          transition: opacity .2s; z-index: 40; }
+        /* 120px floor: the Ask-Argyle bar is fixed to the bottom of every
+           page (study.html learned this first). */
+        #fallback { position: absolute; inset: 0; overflow-y: auto; padding: 90px 20px 120px;
+          color: #f0e6cf; font: 15px/1.5 system-ui; display: none; }
+        #fallback h1 { font-size: 18px; margin: 0 0 14px; color: #e3d3ab; }
+        /* one-title-per-page convention (test_panel_chrome): the marker stays
+           on SOMETHING even on a full-bleed scene page. */
+        #kitchen-title { position: fixed; top: 76px; left: 16px; z-index: 45; margin: 0;
+          font: 600 15px system-ui; color: #e3d3ab; text-shadow: 0 1px 6px rgba(0,0,0,.6);
+          pointer-events: none; }
+        .frow { display: block; background: #201a12; border: 1px solid #453a28;
+          border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; color: inherit;
+          text-decoration: none; }
+        .frow .sig { color: #f0b86e; font-size: 13px; }
+        .frow.calm .sig { color: #93a678; }
+    </style>
+    <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
+</head>
+
+<body class="flex flex-col h-screen overflow-hidden">
+    {% include 'nav.html' %}
+
+    <div id="kitchen-wrap" class="panel-page">
+        <h1 id="kitchen-title" class="panel-page-title">The Kitchen</h1>
+        <div id="room"></div>
+        <div id="fallback"><div id="fallback-rows"></div></div>
+        <div id="tip"></div><div id="chip"></div>
+    </div>
+    {% include 'components/control_center.html' %}
+    {% include 'components/moments_hearth.html' %}
+
+    <script>window.KITCHEN_STATE_URL = (window.chfBase !== undefined ? window.chfBase : '') + 'api/kitchen/state';</script>
+    <script src="{{ 'static/vendor/three.min.js'|ver }}"></script>
+    <script src="{{ 'static/kitchen.js'|ver }}"></script>
+</body>
+</html>

@@ -1710,6 +1710,12 @@ def missions_page(request: Request):
 def study_page(request: Request):
     return templates.TemplateResponse(request=request, name="study.html")
 
+@app.get("/kitchen")
+def kitchen_page(request: Request):
+    """The family's ambient room for the wall — the Study's family-side twin
+    (docs/superpowers/specs/2026-09-06-kitchen-design.md)."""
+    return templates.TemplateResponse(request=request, name="kitchen.html")
+
 @app.get("/threads")
 def threads_page(request: Request):
     return templates.TemplateResponse(request=request, name="threads.html")
@@ -5428,6 +5434,15 @@ def missions_ack(mission_id: str, body: dict = Body(default={}),
 
 
 # --- The Study: the read-only room (task 2 wiring) ---
+
+@app.get("/api/kitchen/state")
+def kitchen_state_api(since: float = 0, request: Request = None):
+    """The Kitchen's one feed. WALL_OR_SERVICE at the route on purpose: wall
+    panels are DEVICE tier and the payload is family-safe by construction
+    (pinned in test_kitchen_state), so this read needs no person."""
+    from services import kitchen_room as _kitchen
+    return _kitchen.state(since_ts=float(since or 0))
+
 
 @app.get("/api/study/state")
 def study_state(request: Request = None):
