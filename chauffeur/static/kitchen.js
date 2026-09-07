@@ -35,7 +35,7 @@
 
   var BASE = (typeof window.chfBase !== 'undefined' ? window.chfBase : '');
   var VISIT_KEY = 'chf_kitchen_last_visit';
-  var QUALITY_KEY = 'chf_kitchen_quality';
+  var QUALITY_KEY = 'chf_kitchen_quality2';  // v2: the v1 benchmark measured shader-compile and demoted everyone
   var POLL_MS = 60000;
   var TIERS = ['high', 'medium', 'low', '2d'];
 
@@ -324,14 +324,19 @@
       ENV.needsUpdate = true;
     }
 
-    var woodLight = PBR ? woodTex('#c89a66', '90,60,30', false) : null;
-    var woodDoor = PBR ? woodTex('#a97f52', '80,52,26', true) : null;
-    var marble = PBR ? marbleTex() : null;
-    var brushed = PBR ? steelTex() : null;
+    var NICE = DETAIL >= 2;   // textures + rounded edges from medium up
+    var woodLight = NICE ? woodTex('#c89a66', '90,60,30', false) : null;
+    var woodDoor = NICE ? woodTex('#a97f52', '80,52,26', true) : null;
+    var marble = NICE ? marbleTex() : null;
+    var brushed = NICE ? steelTex() : null;
 
     function mat(c, opts) {
       opts = opts || {};
-      if (!PBR) return new T.MeshLambertMaterial({ color: c });
+      if (!PBR) {
+        var lm = new T.MeshLambertMaterial({ color: c });
+        if (opts.map && DETAIL >= 2) lm.map = opts.map;
+        return lm;
+      }
       var m = new T.MeshStandardMaterial({
         color: c,
         roughness: opts.rough !== undefined ? opts.rough : 0.86,
@@ -377,7 +382,7 @@
       return g;
     }
     function rbox(w, h, d, r, c, x, y, z, group, opts) {
-      if (!PBR) return box(w, h, d, c, x, y, z, group, opts);
+      if (DETAIL < 2) return box(w, h, d, c, x, y, z, group, opts);
       var m = new T.Mesh(roundedGeo(w, h, d, r), mat(c, opts));
       m.position.set(x, y, z); finish(m); (group || scene).add(m); return m;
     }
@@ -484,7 +489,7 @@
     /* run sits to the RIGHT of the fridge: no clipping, one clean line */
     lowerCab(5.2, -1.8, -4.6);
     rbox(5.4, 0.12, 1.56, 0.04, 0xffffff, -1.8, 1.12, -4.6, null,
-         PBR ? { rough: 0.3, map: woodLight, envInt: 0.4 } : GLOSS);   // butcher top
+         { rough: 0.3, map: woodLight, envInt: 0.4 });   // butcher top
     upperCab(1.4, -3.9, -5.1);
     upperCab(2.0, 0.3, -5.1);
 
@@ -502,7 +507,8 @@
       PBR ? new T.MeshStandardMaterial({ map: skyTex(), roughness: 0.9,
                                          emissive: 0xdff0fa, emissiveIntensity: 0.18,
                                          emissiveMap: skyTex() })
-          : new T.MeshLambertMaterial({ color: 0xcfe4ec }));
+          : new T.MeshLambertMaterial({ color: 0xffffff,
+                                        map: NICE ? skyTex() : null }));
     pane.position.set(-2.2, 3.4, -5.42);
     scene.add(pane);
     box(2.1, 0.12, 0.16, C.cab, -2.2, 4.32, -5.4);
@@ -554,12 +560,12 @@
 
     /* ---- FRIDGE (zone: fridge) — brushed steel, teal panels, magnets --- */
     var fridge = zoneGroup('fridge', -5.55, 0, -4.35);
-    var fbody = new T.Mesh(roundedGeo(1.9, 3.95, 1.5, 0.08),
+    var fbody = new T.Mesh(
+      NICE ? roundedGeo(1.9, 3.95, 1.5, 0.08) : new T.BoxGeometry(1.9, 3.95, 1.5),
       PBR ? new T.MeshStandardMaterial({ map: brushed, color: 0xd7dbdf,
                                          roughness: 0.38, metalness: 0.65,
                                          envMap: ENV, envMapIntensity: 0.5 })
-          : new T.MeshLambertMaterial({ color: C.steel }));
-    if (!PBR) fbody.geometry = new T.BoxGeometry(1.9, 3.95, 1.5);
+          : new T.MeshLambertMaterial({ color: 0xd7dbdf, map: brushed || null }));
     fbody.position.set(0, 1.97, 0);
     finish(fbody); fridge.add(fbody);
     rbox(1.6, 1.55, 0.07, 0.03, C.teal, 0, 2.95, 0.77, fridge,
@@ -582,7 +588,7 @@
     board.add(boardFace);
     var bframe = new T.Mesh(new T.BoxGeometry(0.06, 1.66, 2.16),
       PBR ? new T.MeshStandardMaterial({ map: woodDoor, roughness: 0.7 })
-          : new T.MeshLambertMaterial({ color: 0x8a6335 }));
+          : new T.MeshLambertMaterial({ color: 0xb08a5c, map: woodDoor || null }));
     bframe.position.set(-0.02, 2.5, 0);
     finish(bframe); board.add(bframe);
 
@@ -601,10 +607,10 @@
 
     /* ---- DOOR (zone: door) on the back wall right ---------------------- */
     var doorG = zoneGroup('door', 5.35, 0, -5.32);
-    var slabD = new T.Mesh(roundedGeo(1.7, 4.1, 0.14, 0.04),
+    var slabD = new T.Mesh(
+      NICE ? roundedGeo(1.7, 4.1, 0.14, 0.04) : new T.BoxGeometry(1.7, 4.1, 0.14),
       PBR ? new T.MeshStandardMaterial({ map: woodDoor, roughness: 0.65 })
-          : new T.MeshLambertMaterial({ color: 0x9b7b53 }));
-    if (!PBR) slabD.geometry = new T.BoxGeometry(1.7, 4.1, 0.14);
+          : new T.MeshLambertMaterial({ color: 0xc9a06c, map: woodDoor || null }));
     slabD.position.set(0, 2.05, 0);
     finish(slabD); doorG.add(slabD);
     if (DETAIL >= 2) {
@@ -629,10 +635,11 @@
       box(3.2, 0.66, 0.05, C.cabShade, -0.4, 0.5, 1.92);
       knob(-1.1, 0.62, 1.97); knob(0.3, 0.62, 1.97);
     }
-    var islandTop = new T.Mesh(roundedGeo(3.7, 0.14, 2.3, 0.05),
+    var islandTop = new T.Mesh(
+      NICE ? roundedGeo(3.7, 0.14, 2.3, 0.05) : new T.BoxGeometry(3.7, 0.14, 2.3),
       PBR ? new T.MeshStandardMaterial({ map: marble, roughness: 0.22,
                                          envMap: ENV, envMapIntensity: 0.5 })
-          : new T.MeshLambertMaterial({ color: 0xf3ede2 }));
+          : new T.MeshLambertMaterial({ color: 0xffffff, map: marble || null }));
     islandTop.position.set(-0.4, 1.13, 0.9);
     finish(islandTop); scene.add(islandTop);
     if (DETAIL >= 2) {
@@ -656,7 +663,7 @@
     function stool(x, z) {
       var seat = new T.Mesh(new T.CylinderGeometry(0.3, 0.26, 0.08, 14),
         PBR ? new T.MeshStandardMaterial({ map: woodLight, roughness: 0.6 })
-            : new T.MeshLambertMaterial({ color: C.wood }));
+            : new T.MeshLambertMaterial({ color: 0xc89a66, map: woodLight || null }));
       seat.position.set(x, 0.86, z); finish(seat); scene.add(seat);
       cyl(0.05, 0.07, 0.84, C.wood2, x, 0.42, z, null, 10, WOODM);
       blobShadow(0.34, 0.3, x, z);
@@ -799,13 +806,21 @@
       if (sessionStorage.getItem('chf_kitchen_benched')) return;
       sessionStorage.setItem('chf_kitchen_benched', '1');
     } catch (e) { return; }
-    var N = 14, n = 0, t0 = performance.now();
+    /* the first frames of any WebGL page pay shader compilation and
+       texture upload — measuring them demotes every device on earth. Warm
+       up unmeasured, then judge the MEDIAN of a steady burst. */
+    var WARM = 8, N = 12, n = 0, times = [], last = 0;
     function tick() {
+      var t0 = performance.now();
       webgl.R.render(webgl.scene, webgl.cam);
-      if (++n < N) { requestAnimationFrame(tick); return; }
-      var avg = (performance.now() - t0) / N;
+      var dt = performance.now() - t0;
+      n++;
+      if (n > WARM) times.push(dt);
+      if (times.length < N) { requestAnimationFrame(tick); return; }
+      times.sort(function (a, b) { return a - b; });
+      var med = times[Math.floor(times.length / 2)];
       var i = TIERS.indexOf(QUALITY);
-      if (avg > 40 && i >= 0 && i < TIERS.length - 2) {   // never auto-drop into 2d
+      if (med > 40 && i >= 0 && i < TIERS.length - 2) {   // never auto-drop into 2d
         try { localStorage.setItem(QUALITY_KEY, TIERS[i + 1]); } catch (e) { return; }
         window.location.reload();
       }
