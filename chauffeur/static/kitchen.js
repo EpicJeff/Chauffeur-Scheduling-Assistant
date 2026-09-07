@@ -249,12 +249,11 @@
   /* ---- render-on-demand engine ---------------------------------------- */
   var state = null;
   var focused = null;        // zone key while leaned in
+  var lookAt = null;         // the camera's CURRENT look target (tween continuity)
   var tween = null;          // {fromP,toP,fromA,toA,t0,ms,cb}
-  var needFrame = false;
   var rafLive = false;
 
   function requestFrame() {
-    needFrame = true;
     if (!rafLive && webgl) { rafLive = true; requestAnimationFrame(frame); }
   }
 
@@ -275,6 +274,7 @@
       var e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
       webgl.cam.position.lerpVectors(tween.fromP, tween.toP, e);
       var at = new webgl.T.Vector3().lerpVectors(tween.fromA, tween.toA, e);
+      lookAt = at.clone();
       webgl.cam.lookAt(at);
       if (k >= 1) { var cb = tween.cb; tween = null; if (cb) cb(); }
       else keep = true;
@@ -295,7 +295,6 @@
     }
 
     webgl.R.render(webgl.scene, webgl.cam);
-    needFrame = false;
     if (keep) { rafLive = true; requestAnimationFrame(frame); }
   }
 
@@ -329,13 +328,19 @@
 
     /* honest detail faces, cheap to repaint only when payloads change */
     var d = s.door || {};
-    webgl.plaque.material.map = webgl.detailTexture('door',
+    var doorTex = webgl.detailTexture('door',
       d.calm !== false ? ['—'] : [(d.mins != null ? d.mins + ' min' : ''), d.label || '']);
-    webgl.plaque.material.needsUpdate = true;
+    if (webgl.plaque.material.map !== doorTex) {
+      webgl.plaque.material.map = doorTex;
+      webgl.plaque.material.needsUpdate = true;
+    }
     var c = s.calendar || {};
-    webgl.calFace.material.map = webgl.detailTexture('calendar',
+    var calTex = webgl.detailTexture('calendar',
       c.calm !== false ? ['Today', 'clear'] : ['Today: ' + c.today].concat(c.next || []));
-    webgl.calFace.material.needsUpdate = true;
+    if (webgl.calFace.material.map !== calTex) {
+      webgl.calFace.material.map = calTex;
+      webgl.calFace.material.needsUpdate = true;
+    }
 
     requestFrame();
   }
@@ -351,14 +356,13 @@
     var toP = center.clone().add(dir.multiplyScalar(dist));
     toP.y = Math.max(toP.y, center.y + 0.6);
     tween = { fromP: webgl.cam.position.clone(), toP: toP,
-              fromA: focused ? new webgl.T.Vector3() : webgl.HOME_AT.clone(),
+              fromA: (lookAt || webgl.HOME_AT).clone(),
               toA: center, t0: performance.now(), ms: 650, cb: cb };
-    tween.fromA = webgl.HOME_AT.clone();
     requestFrame();
   }
   function goHome() {
     tween = { fromP: webgl.cam.position.clone(), toP: webgl.HOME_POS.clone(),
-              fromA: webgl.HOME_AT.clone(), toA: webgl.HOME_AT.clone(),
+              fromA: (lookAt || webgl.HOME_AT).clone(), toA: webgl.HOME_AT.clone(),
               t0: performance.now(), ms: 650, cb: null };
     focused = null;
     TIP.style.opacity = 0;
@@ -400,13 +404,17 @@
   }
 
   /* ---- poll (60s), one-time outage chip -------------------------------- */
-  var chipShown = false;
+  var chipShown = false;    // once per OUTAGE, re-armed by the next good poll
   function chip(text) {
     if (chipShown) return;
     chipShown = true;
     CHIP.textContent = text;
     CHIP.style.opacity = 1;
     setTimeout(function () { CHIP.style.opacity = 0; }, 6000);
+  }
+  function clearOutage() {
+    chipShown = false;
+    CHIP.style.opacity = 0;
   }
 
   var sinceEpoch = lastVisit();
@@ -417,7 +425,7 @@
         if (!r.ok) throw new Error('http ' + r.status);
         return r.json();
       })
-      .then(function (s) { applyState(s); })
+      .then(function (s) { clearOutage(); applyState(s); })
       .catch(function () {
         chip('The kitchen lost the house for a moment — showing the last look.');
         if (!state) drawFallback(null);
@@ -445,5 +453,5 @@
   setInterval(function () {
     if (document.visibilityState === 'visible') poll();
   }, POLL_MS);
-  stampVisit();
+  setTimeout(stampVisit, 10000);   // study idiom: glows survive a quick reload
 })();

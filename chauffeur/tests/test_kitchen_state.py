@@ -46,20 +46,25 @@ def scenario_signals_carry_real_numbers():
     storage.shopping_items_table.insert({'id': 's1', 'name': 'Milk', 'is_checked': False, 'created_at': 1})
     storage.shopping_items_table.insert({'id': 's2', 'name': 'Eggs', 'is_checked': False, 'created_at': 2})
     storage.shopping_items_table.insert({'id': 's3', 'name': 'Old', 'is_checked': True, 'created_at': 0})
-    # pets
-    storage.pets_table.insert({'id': 'p1', 'name': 'Biscuit', 'level': 3, 'member_id': 'kid'})
-    # schedule cache: one assigned event later today
-    start = (datetime.datetime.now() + datetime.timedelta(hours=2)).replace(microsecond=0)
+    # pets: the room must use get_pets (derived level, active-only) —
+    # never the raw table, whose stored 'level' is a lie
+    storage.get_pets = lambda *a, **k: [{'id': 'p1', 'name': 'Biscuit',
+                                         'level': 3, 'active': True}]
+    # schedule cache: one assigned event later the same (fixed) day —
+    # the clock is pinned so a run near midnight cannot push it to tomorrow
+    fixed_now = datetime.datetime(2026, 9, 8, 10, 0)
+    start = fixed_now + datetime.timedelta(hours=2)
     storage.get_cached_schedule = lambda: {
         'events': [{'id': 'e1', 'title': 'Practice', 'start': start.isoformat()}],
         'assignments': {'e1': 'drv1'}}
-    st = kitchen.state(since_ts=now - 3600)
+    st = kitchen.state(since_ts=now - 3600, now=fixed_now)
     check(st['fridge']['new_moments'] == 1 and not st['fridge'].get('calm'),
           "a fresh moment lights the fridge")
     check(st['board']['items'] == 2 and st['board']['top'][0] == 'Milk',
           "the corkboard counts only open items, remembered order")
-    check(st['pet']['count'] == 1 and st['pet']['pets'][0]['name'] == 'Biscuit',
-          "the pet bowl knows Biscuit")
+    check(st['pet']['count'] == 1 and st['pet']['pets'][0]['name'] == 'Biscuit'
+          and st['pet']['pets'][0]['level'] == 3,
+          "the pet bowl knows Biscuit at his DERIVED level")
     check(st['calendar']['today'] == 1
           and any('Practice' in x for x in (st['calendar']['next'] or [])),
           "the wall calendar sees today's remaining event")
@@ -145,6 +150,26 @@ def scenario_room_pins():
     check('panel-page-title' in html, "one-title-per-page marker present")
     check('chfBase' in html, "state URL rides chfBase, never a self-computed depth")
 
+
+def scenario_mixed_timezone_stamps_do_not_blank_the_day():
+    _reset()
+    import datetime as _dt
+    now = _dt.datetime(2026, 9, 8, 10, 0)
+    aware = (now + _dt.timedelta(hours=1)).astimezone()
+    naive = now + _dt.timedelta(hours=3)
+    storage.get_cached_schedule = lambda: {
+        'events': [
+            {'id': 'a', 'title': 'Aware', 'start': aware.isoformat()},
+            {'id': 'b', 'title': 'Naive', 'start': naive.isoformat()},
+            {'id': 'c', 'title': 'Broken', 'start': 'not-a-date'},
+        ],
+        'assignments': {'a': 'd1'}}
+    st = kitchen.state(since_ts=0, now=now)
+    check(st['calendar']['today'] == 2,
+          "aware and naive stamps both count; the broken one drops alone")
+    check('Aware' in st['door']['label'],
+          "the door still sees the sooner (aware) event")
+
 if __name__ == '__main__':
     scenario_all_seven_sections_present_and_calm_on_empty()
     scenario_signals_carry_real_numbers()
@@ -153,4 +178,5 @@ if __name__ == '__main__':
     scenario_the_room_never_writes()
     scenario_endpoint_and_gate()
     scenario_room_pins()
+    scenario_mixed_timezone_stamps_do_not_blank_the_day()
     print("test_kitchen_state OK")

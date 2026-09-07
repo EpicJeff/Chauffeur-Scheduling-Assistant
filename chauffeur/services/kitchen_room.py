@@ -75,20 +75,33 @@ def _board() -> dict:
                     for i in items[:BOARD_TOP]]}
 
 
+def _flat(dt: datetime.datetime) -> datetime.datetime:
+    """Cache events mix aware and naive stamps depending on which calendar
+    they came from; comparing those raises (home_board._local_naive learned
+    this first). Flattened to local wall time once, here."""
+    if dt.tzinfo is not None:
+        try:
+            dt = dt.astimezone().replace(tzinfo=None)
+        except Exception:
+            dt = dt.replace(tzinfo=None)
+    return dt
+
+
 def _today_events(now: datetime.datetime):
     """Today's still-to-come events from the schedule CACHE — the
     calendar-shows-everything feed, never recomputed here (trip ownership
-    and driver_events rules live upstream)."""
+    and driver_events rules live upstream). The try covers the COMPARISON
+    too: one malformed or mixed-tz event drops itself, never the day."""
     cache = storage.get_cached_schedule() or {}
     out = []
     for ev in cache.get('events', []):
         try:
-            start = datetime.datetime.fromisoformat(ev.get('start'))
+            start = _flat(datetime.datetime.fromisoformat(ev.get('start')))
+            if start.date() != now.date() or start < now:
+                continue
+            out.append((start, ev))
         except Exception:
             continue
-        if start.date() != now.date() or start < now:
-            continue
-        out.append((start, ev))
     out.sort(key=lambda p: p[0])
     return out, (cache.get('assignments') or {})
 
@@ -121,7 +134,7 @@ def _radio() -> dict:
     from services import ma_api
     if not ma_api.available():
         return _calm(playing=False, track='')
-    players = ma_api.command('players') or []
+    players = ma_api.command('players/all') or []
     if isinstance(players, dict):
         players = players.get('players') or players.get('items') or []
     for p in players:
@@ -136,7 +149,9 @@ def _radio() -> dict:
 
 
 def _pet() -> dict:
-    rows = [dict(r) for r in storage.pets_table.all()]
+    # get_pets, never the raw table: level is DERIVED from the owner's
+    # lifetime xp (a stored 'level' is a lie), and retired pets are filtered.
+    rows = storage.get_pets()
     if not rows:
         return _calm(count=0, pets=[])
     return {'calm': False, 'count': len(rows),
