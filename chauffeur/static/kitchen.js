@@ -147,35 +147,90 @@
     if (!gl) return null;
 
     var scene = new T.Scene();
-    scene.background = new T.Color(0x17130d);
-    var cam = new T.PerspectiveCamera(46, 1, 0.1, 60);
-    var HOME_POS = new T.Vector3(6.4, 5.0, 8.6);
-    var HOME_AT = new T.Vector3(0, 1.4, 0);
+    scene.background = new T.Color(0xbdb3c7);          // the soft lilac of the reference
+    var cam = new T.PerspectiveCamera(24, 1, 0.1, 90); // narrow FOV = near-isometric diorama
+    var HOME_POS = new T.Vector3(17.5, 13.0, 17.5);
+    var HOME_AT = new T.Vector3(-0.2, 0.8, -0.4);
     cam.position.copy(HOME_POS);
     cam.lookAt(HOME_AT);
 
-    var R = new T.WebGLRenderer({ antialias: false });
-    R.setPixelRatio(1);                       // the Pi law: never a retina multiplier
+    var R = new T.WebGLRenderer({ antialias: true });  // near-iso edges alias hard; AA is affordable once frames are on-demand
+    R.setPixelRatio(1);                                // the Pi law: never a retina multiplier
     ROOT.appendChild(R.domElement);
 
-    scene.add(new T.AmbientLight(0xfff2dc, 0.75));
-    var lamp = new T.PointLight(0xffd9a0, 0.9, 30);
-    lamp.position.set(0, 5.4, 0);
+    scene.add(new T.AmbientLight(0xfff4e6, 0.62));
+    var sun = new T.DirectionalLight(0xfff0d8, 0.5);
+    sun.position.set(8, 12, 6);
+    scene.add(sun);
+    var lamp = new T.PointLight(0xffd9a0, 0.28, 26);
+    lamp.position.set(0, 5.2, 0);
     scene.add(lamp);
+
+    /* palette (from the reference: cream shell, white cabinetry, wood tops,
+       teal fridge panels, one red accent, one orange curtain) */
+    var C = { shell: 0xefe9e2, wall: 0xf4efe8, cab: 0xf7f4ef, cabShade: 0xe6e0d6,
+              top: 0xdfc79a, floorA: '#f2eee7', floorB: '#d8d2c8', steel: 0xb9bec4,
+              dark: 0x4a4f55, teal: 0x3fbdb2, red: 0xc9473d, orange: 0xe09a3e,
+              cork: 0xb5854f, wood: 0x8a6d4c, shadow: 0x3a3340 };
 
     function mat(c) { return new T.MeshLambertMaterial({ color: c }); }
     function box(w, h, d, c, x, y, z, group) {
       var m = new T.Mesh(new T.BoxGeometry(w, h, d), mat(c));
       m.position.set(x, y, z); (group || scene).add(m); return m;
     }
+    function cyl(rt, rb, h, c, x, y, z, group, seg) {
+      var m = new T.Mesh(new T.CylinderGeometry(rt, rb, h, seg || 10), mat(c));
+      m.position.set(x, y, z); (group || scene).add(m); return m;
+    }
+    function knob(x, y, z, group) { return cyl(0.035, 0.035, 0.05, C.steel, x, y, z, group, 8); }
+    function blobShadow(rx, rz, x, z, group) {
+      var m = new T.Mesh(new T.CircleGeometry(1, 20),
+        new T.MeshBasicMaterial({ color: C.shadow, transparent: true, opacity: 0.16 }));
+      m.rotation.x = -Math.PI / 2;
+      m.scale.set(rx, rz, 1);
+      m.position.set(x, 0.012, z);
+      (group || scene).add(m); return m;
+    }
 
-    /* shell */
-    box(14, 0.2, 12, 0x6e5a41, 0, -0.1, 0);                    // floor
-    box(14, 6, 0.2, 0x9b8a6a, 0, 3, -6);                       // back wall
-    box(0.2, 6, 12, 0x8f7e60, -7, 3, 0);                       // left wall
-    box(3.4, 2.2, 0.1, 0xbfd9e8, -2.6, 3.4, -5.93);            // window
+    /* ---- shell: open-corner diorama on a slab -------------------------- */
+    box(13.6, 0.5, 11.6, C.shell, 0, -0.27, 0);
+    var floorCanvas = document.createElement('canvas');
+    floorCanvas.width = floorCanvas.height = 512;
+    (function () {
+      var g = floorCanvas.getContext('2d'), n = 8, t = 512 / n;
+      for (var i = 0; i < n; i++) for (var j = 0; j < n; j++) {
+        g.fillStyle = ((i + j) % 2) ? C.floorB : C.floorA;
+        g.fillRect(i * t, j * t, t, t);
+      }
+    })();
+    var floorTex = new T.CanvasTexture(floorCanvas);
+    floorTex.magFilter = T.NearestFilter;
+    var floor = new T.Mesh(new T.PlaneGeometry(13, 11),
+      new T.MeshLambertMaterial({ map: floorTex }));
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = 0.001;
+    scene.add(floor);
 
-    /* furniture, one group per zone */
+    box(13, 5.6, 0.35, C.wall, 0, 2.8, -5.55);          // back wall
+    box(0.35, 5.6, 11, C.wall, -6.65, 2.8, 0);          // left wall
+    box(13.6, 0.28, 0.5, C.shell, 0, 5.66, -5.6);       // wall caps
+    box(0.5, 0.28, 11.6, C.shell, -6.7, 5.66, 0);
+
+    /* tiled backsplash band behind the counter run */
+    var bsCanvas = document.createElement('canvas');
+    bsCanvas.width = 256; bsCanvas.height = 64;
+    (function () {
+      var g = bsCanvas.getContext('2d');
+      g.fillStyle = '#f8f6f1'; g.fillRect(0, 0, 256, 64);
+      g.strokeStyle = '#ddd6ca'; g.lineWidth = 2;
+      for (var x = 0; x <= 256; x += 32) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 64); g.stroke(); }
+      for (var y = 0; y <= 64; y += 16) { g.beginPath(); g.moveTo(0, y); g.lineTo(256, y); g.stroke(); }
+    })();
+    var bs = new T.Mesh(new T.PlaneGeometry(8.6, 1.0),
+      new T.MeshLambertMaterial({ map: new T.CanvasTexture(bsCanvas) }));
+    bs.position.set(-1.2, 1.62, -5.36);
+    scene.add(bs);
+
     var groups = {};
     function zoneGroup(key, x, y, z) {
       var g = new T.Group();
@@ -184,51 +239,164 @@
       groups[key] = g; scene.add(g); return g;
     }
 
-    var fridge = zoneGroup('fridge', -5.6, 0, -4.2);
-    box(1.7, 3.4, 1.5, 0xdfe3e6, 0, 1.7, 0, fridge);
-    box(1.5, 0.08, 0.06, 0xb8bcbf, 0, 2.35, 0.78, fridge);     // handle seam
+    /* ---- cabinet run along the back wall (decor + sink + window) ------- */
+    function lowerCab(w, x, z, group, doors) {
+      var g2 = group || scene;
+      box(w, 1.0, 1.4, C.cab, x, 0.56, z, g2);
+      var n = doors || Math.max(1, Math.round(w / 0.95));
+      for (var i = 0; i < n; i++) {
+        var dw = w / n - 0.1, dx = x - w / 2 + (i + 0.5) * (w / n);
+        box(dw, 0.78, 0.05, C.cabShade, dx, 0.56, z + 0.71, g2);
+        knob(dx + dw / 2 - 0.09, 0.72, z + 0.76, g2);
+      }
+    }
+    function upperCab(w, x, z) {
+      box(w, 1.25, 0.72, C.cab, x, 3.75, z);
+      var n = Math.max(1, Math.round(w / 0.9));
+      for (var i = 0; i < n; i++) {
+        var dw = w / n - 0.08, dx = x - w / 2 + (i + 0.5) * (w / n);
+        box(dw, 1.05, 0.05, C.cabShade, dx, 3.75, z + 0.37);
+        knob(dx + dw / 2 - 0.08, 3.45, z + 0.42);
+      }
+    }
+    lowerCab(5.4, -2.2, -4.6);
+    box(5.6, 0.12, 1.56, 0xf3ede2, -2.2, 1.12, -4.6);   // countertop
+    upperCab(2.0, -4.3, -5.1);
+    upperCab(2.0, 0.3, -5.1);
 
-    var counter = zoneGroup('counter', -1.2, 0, -4.9);
-    box(4.6, 1.1, 1.6, 0x7a6248, 0, 0.55, 0, counter);
-    box(4.6, 0.12, 1.7, 0xcfc4ae, 0, 1.16, 0, counter);        // top
-    var pot = box(0.7, 0.42, 0.7, 0x51575c, 0.9, 1.44, 0, counter);
-    var steam = box(0.16, 0.5, 0.16, 0xf2ead6, 0.9, 2.1, 0, counter);
+    /* sink + faucet in the middle of the run */
+    box(0.9, 0.06, 0.6, C.steel, -2.2, 1.155, -4.62);
+    cyl(0.05, 0.05, 0.45, C.steel, -2.5, 1.4, -4.95);
+    box(0.34, 0.06, 0.08, C.steel, -2.35, 1.6, -4.95);
+
+    /* window with orange curtain above the sink */
+    box(1.9, 1.7, 0.1, 0xcfe4ec, -2.2, 3.4, -5.42);
+    box(2.1, 0.12, 0.16, C.cab, -2.2, 4.32, -5.4);
+    box(0.12, 1.9, 0.16, C.cab, -3.22, 3.38, -5.4);
+    box(0.12, 1.9, 0.16, C.cab, -1.18, 3.38, -5.4);
+    var curtain = box(0.55, 1.2, 0.08, C.orange, -2.85, 3.75, -5.32);
+    curtain.rotation.z = 0.08;
+
+    /* counter props: bottles, jar, plate stack */
+    cyl(0.07, 0.07, 0.4, C.red, -4.4, 1.38, -4.7, null, 8);
+    cyl(0.07, 0.07, 0.34, 0x6a4a2f, -4.2, 1.35, -4.85, null, 8);
+    cyl(0.12, 0.12, 0.2, 0xead9b8, -3.6, 1.28, -4.75, null, 10);
+    box(0.4, 0.14, 0.4, 0xdad2c2, -0.4, 1.25, -4.8);
+
+    /* ---- STOVE (zone: counter) with hood ------------------------------- */
+    var counter = zoneGroup('counter', 1.7, 0, -4.55);
+    box(1.5, 1.02, 1.45, C.dark, 0, 0.57, 0, counter);
+    box(1.3, 0.62, 0.06, 0x5a6067, 0, 0.5, 0.74, counter);
+    box(1.1, 0.06, 0.09, C.steel, 0, 0.86, 0.78, counter);
+    box(1.5, 0.05, 1.45, 0x3c4147, 0, 1.11, 0, counter);
+    cyl(0.16, 0.16, 0.03, 0x23262a, -0.4, 1.15, 0.3, counter, 12);
+    cyl(0.16, 0.16, 0.03, 0x23262a, 0.4, 1.15, 0.3, counter, 12);
+    cyl(0.16, 0.16, 0.03, 0x23262a, -0.4, 1.15, -0.35, counter, 12);
+    cyl(0.16, 0.16, 0.03, 0x23262a, 0.4, 1.15, -0.35, counter, 12);
+    cyl(0.3, 0.3, 0.3, 0x8e969d, -0.4, 1.32, 0.3, counter, 14);
+    cyl(0.31, 0.31, 0.05, 0x6f767d, -0.4, 1.5, 0.3, counter, 14);
+    cyl(0.26, 0.26, 0.22, C.red, 0.4, 1.28, -0.35, counter, 14);
+    var steam = box(0.16, 0.5, 0.16, 0xf2ead6, -0.4, 2.0, 0.3, counter);
     steam.material.transparent = true; steam.material.opacity = 0;
+    box(1.7, 0.5, 1.0, C.wall, 0, 3.05, -0.2, counter);
+    box(1.1, 1.8, 0.8, C.wall, 0, 4.2, -0.35, counter);
+    blobShadow(1.0, 0.85, 1.7, -4.35);
 
-    var board = zoneGroup('board', 2.9, 0, -5.8);
-    box(2.4, 1.7, 0.08, 0x9a6f43, 0, 3.2, 0, board);
+    /* ---- FRIDGE (zone: fridge) — teal panels + moment magnets ---------- */
+    var fridge = zoneGroup('fridge', -5.35, 0, -3.4);
+    box(1.9, 3.9, 1.6, C.steel, 0, 1.95, 0, fridge);
+    box(1.6, 1.55, 0.07, C.teal, 0, 2.9, 0.82, fridge);
+    box(1.6, 1.35, 0.07, C.teal, 0, 1.0, 0.82, fridge);
+    box(0.07, 1.3, 0.09, C.steel, 0.62, 2.9, 0.87, fridge);
+    box(0.07, 1.0, 0.09, C.steel, 0.62, 1.05, 0.87, fridge);
+    var magnets = new T.Group();
+    magnets.position.set(0, 0, 0.9);
+    fridge.add(magnets);
+    blobShadow(1.15, 0.95, -5.35, -3.4);
 
-    var doorG = zoneGroup('door', 5.9, 0, -3.0);
-    box(1.7, 3.9, 0.18, 0x6d4f33, 0, 1.95, 0, doorG);
-    box(0.16, 0.16, 0.1, 0xd8c48a, 0.55, 1.9, 0.12, doorG);    // knob
-    var plaque = box(1.3, 0.5, 0.06, 0xefe6cf, 0, 3.5, 0.14, doorG);
+    /* ---- CORKBOARD (zone: board) on the left wall ---------------------- */
+    var board = zoneGroup('board', -6.42, 0, -0.6);
+    var boardFace = new T.Mesh(new T.PlaneGeometry(2.0, 1.5),
+      new T.MeshLambertMaterial({ color: C.cork }));
+    boardFace.rotation.y = Math.PI / 2;
+    boardFace.position.set(0.06, 2.5, 0);
+    board.add(boardFace);
+    box(0.06, 1.66, 2.16, 0x8a6335, -0.02, 2.5, 0, board);
 
-    var calG = zoneGroup('calendar', 0.6, 0, -5.85);
-    var calFace = box(1.5, 1.8, 0.06, 0xf4efe2, 0, 3.4, 0, calG);
+    /* ---- WALL CALENDAR (zone: calendar) on the back wall --------------- */
+    var calG = zoneGroup('calendar', 3.6, 0, -5.36);
+    var calFace = new T.Mesh(new T.PlaneGeometry(1.5, 1.9),
+      new T.MeshLambertMaterial({ color: 0xf6f1e4 }));
+    calFace.position.set(0, 3.0, 0.05);
+    calG.add(calFace);
+    box(1.62, 0.1, 0.08, C.red, 0, 4.0, 0.02, calG);
 
-    var radio = zoneGroup('radio', -3.9, 0, -4.7);
-    box(0.9, 0.5, 0.5, 0x8a2f2b, 0, 1.5 + 0.25 + 0.12, 0, radio);
-    var needle = box(0.05, 0.3, 0.05, 0xf2e3b8, 0.2, 2.15, 0, radio);
+    /* ---- DOOR (zone: door) on the back wall right ---------------------- */
+    var doorG = zoneGroup('door', 5.35, 0, -5.32);
+    box(1.7, 4.1, 0.14, 0x9b7b53, 0, 2.05, 0, doorG);
+    box(1.3, 1.4, 0.05, 0x8a6d49, 0, 2.9, 0.08, doorG);
+    box(1.3, 1.2, 0.05, 0x8a6d49, 0, 1.2, 0.08, doorG);
+    cyl(0.07, 0.07, 0.1, 0xd8c48a, 0.6, 2.0, 0.1, doorG, 8);
+    var plaque = new T.Mesh(new T.PlaneGeometry(1.24, 0.5),
+      new T.MeshLambertMaterial({ color: 0xefe6cf }));
+    plaque.position.set(0, 4.4, 0.09);
+    doorG.add(plaque);
 
-    var bowl = zoneGroup('pet', 3.4, 0, 2.6);
-    box(0.8, 0.18, 0.8, 0xc46a4f, 0, 0.09, 0, bowl);
+    /* ---- RADIO (zone: radio) on the countertop ------------------------- */
+    var radio = zoneGroup('radio', 0.35, 0, -4.62);
+    box(0.8, 0.45, 0.4, C.red, 0, 1.41, 0, radio);
+    box(0.55, 0.28, 0.03, 0xf2e3b8, -0.06, 1.42, 0.21, radio);
+    cyl(0.035, 0.035, 0.1, C.steel, 0.28, 1.68, 0, radio, 8);
+    var needle = box(0.04, 0.22, 0.04, 0x3a332a, 0.28, 1.78, 0, radio);
 
-    var table = new T.Group();                                  // decoration only
-    box(3.2, 0.14, 2.0, 0x8a6d4c, 0, 1.25, 1.6, table);
-    [[-1.4, 0.8], [1.4, 0.8], [-1.4, 2.4], [1.4, 2.4]].forEach(function (p) {
-      box(0.14, 1.25, 0.14, 0x6e5539, p[0], 0.62, p[1], table);
-    });
-    scene.add(table);
+    /* ---- ISLAND (decor) + stools + high chair -------------------------- */
+    box(3.4, 1.0, 2.0, C.cab, -0.4, 0.56, 0.9);
+    box(3.2, 0.66, 0.05, C.cabShade, -0.4, 0.5, 1.92);
+    knob(-1.1, 0.62, 1.97); knob(0.3, 0.62, 1.97);
+    box(3.7, 0.14, 2.3, 0xf3ede2, -0.4, 1.13, 0.9);
+    box(1.1, 0.06, 0.75, C.red, -1.2, 1.23, 0.7);
+    for (var cx = 0; cx < 4; cx++) for (var cz = 0; cz < 2; cz++) {
+      cyl(0.09, 0.07, 0.1, 0xf5e6d0, -1.55 + cx * 0.24, 1.31, 0.55 + cz * 0.3, null, 8);
+      cyl(0.07, 0.09, 0.08, (cx + cz) % 2 ? C.teal : C.red,
+          -1.55 + cx * 0.24, 1.4, 0.55 + cz * 0.3, null, 8);
+    }
+    cyl(0.34, 0.26, 0.16, 0xead9b8, 0.7, 1.3, 0.9, null, 12);
+    cyl(0.09, 0.09, 0.1, C.orange, 0.58, 1.42, 0.85, null, 8);
+    cyl(0.09, 0.09, 0.1, C.red, 0.82, 1.42, 0.95, null, 8);
+    blobShadow(2.1, 1.4, -0.4, 0.9);
+    function stool(x, z) {
+      cyl(0.3, 0.26, 0.08, C.wood, x, 0.86, z, null, 10);
+      cyl(0.05, 0.07, 0.84, 0x6e5539, x, 0.42, z, null, 8);
+      blobShadow(0.34, 0.3, x, z);
+    }
+    stool(1.9, 0.5); stool(1.9, 1.5);
+    var hc = new T.Group(); hc.position.set(2.7, 0, 2.6); scene.add(hc);
+    box(0.5, 0.08, 0.45, C.steel, 0, 1.05, 0, hc);
+    box(0.5, 0.5, 0.07, C.steel, 0, 1.36, -0.2, hc);
+    box(0.07, 1.05, 0.07, C.steel, -0.2, 0.55, -0.16, hc);
+    box(0.07, 1.05, 0.07, C.steel, 0.2, 0.55, -0.16, hc);
+    box(0.07, 1.0, 0.07, C.steel, -0.16, 0.5, 0.2, hc);
+    box(0.07, 1.0, 0.07, C.steel, 0.16, 0.5, 0.2, hc);
+    blobShadow(0.4, 0.35, 2.7, 2.6);
 
-    /* canvas-texture detail (study slice-3 idiom): painted lazily on focus,
-     * cached per payload change */
+    /* ---- PET BOWL (zone: pet) ------------------------------------------ */
+    var bowl = zoneGroup('pet', -5.0, 0, 2.8);
+    cyl(0.42, 0.32, 0.2, C.red, 0, 0.1, 0, bowl, 14);
+    cyl(0.34, 0.34, 0.06, 0x6a4a2f, 0, 0.2, 0, bowl, 14);
+    cyl(0.05, 0.05, 0.04, 0x8a6335, 0.5, 0.02, 0.2, bowl, 6);
+    cyl(0.05, 0.05, 0.04, 0x8a6335, 0.42, 0.02, -0.25, bowl, 6);
+    blobShadow(0.5, 0.42, -5.0, 2.8);
+
+    /* canvas-texture detail (study slice-3 idiom): painted lazily,
+       cached per payload change */
     var texCache = {};
     function detailTexture(key, lines) {
       var payload = key + '|' + lines.join('|');
       if (texCache[key] && texCache[key].payload === payload) return texCache[key].tex;
       var c = document.createElement('canvas'); c.width = 256; c.height = 256;
       var g = c.getContext('2d');
-      g.fillStyle = '#f4efe2'; g.fillRect(0, 0, 256, 256);
+      g.fillStyle = key === 'board' ? '#c99a63' : '#f6f1e4';
+      g.fillRect(0, 0, 256, 256);
       g.fillStyle = '#3a2f1f'; g.font = '600 20px system-ui';
       var y = 34;
       lines.slice(0, 8).forEach(function (line) {
@@ -242,6 +410,7 @@
     return {
       T: T, scene: scene, cam: cam, R: R, groups: groups,
       steam: steam, needle: needle, plaque: plaque, calFace: calFace,
+      boardFace: boardFace, magnets: magnets,
       HOME_POS: HOME_POS, HOME_AT: HOME_AT, detailTexture: detailTexture
     };
   }
@@ -341,6 +510,26 @@
       webgl.calFace.material.map = calTex;
       webgl.calFace.material.needsUpdate = true;
     }
+    var bd = s.board || {};
+    var boardTex = webgl.detailTexture('board',
+      bd.calm !== false ? ['The list is clear'] : ['List: ' + bd.items].concat(bd.top || []));
+    if (webgl.boardFace.material.map !== boardTex) {
+      webgl.boardFace.material.map = boardTex;
+      webgl.boardFace.material.needsUpdate = true;
+    }
+
+    /* moment magnets on the fridge door: one colored square each, capped */
+    var wantMagnets = Math.min(((s.fridge || {}).new_moments || 0), 6);
+    if (webgl.magnets.children.length !== wantMagnets) {
+      while (webgl.magnets.children.length) webgl.magnets.remove(webgl.magnets.children[0]);
+      var MAG_COLORS = [0xc9473d, 0x3fbdb2, 0xe09a3e, 0x5a7fc0, 0x7fae5a, 0xb06ab0];
+      for (var mi = 0; mi < wantMagnets; mi++) {
+        var mm = new webgl.T.Mesh(new webgl.T.BoxGeometry(0.22, 0.22, 0.03),
+          new webgl.T.MeshLambertMaterial({ color: MAG_COLORS[mi % 6] }));
+        mm.position.set(-0.45 + (mi % 3) * 0.45, 3.2 - Math.floor(mi / 3) * 0.42, 0);
+        webgl.magnets.add(mm);
+      }
+    }
 
     requestFrame();
   }
@@ -351,7 +540,8 @@
     var boxb = new webgl.T.Box3().setFromObject(g);
     var center = boxb.getCenter(new webgl.T.Vector3());
     var size3 = boxb.getSize(new webgl.T.Vector3());
-    var dist = Math.max(size3.x, size3.y, size3.z) * 1.9 + 1.2;
+    var span = Math.max(size3.x, size3.y, size3.z);
+    var dist = (span / 2) / Math.tan((webgl.cam.fov / 2) * Math.PI / 180) * 1.45 + 0.8;
     var dir = new webgl.T.Vector3().subVectors(webgl.cam.position, center).normalize();
     var toP = center.clone().add(dir.multiplyScalar(dist));
     toP.y = Math.max(toP.y, center.y + 0.6);
