@@ -1,0 +1,170 @@
+{% import 'components/packing_card.html' as packing %}
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Home</title>
+    <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
+    {% include 'ha_theme.html' %}
+    <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
+    <!-- before the body: the music widget's inline script reads MusicLogic
+         at parse time (same order app.html loads them) -->
+    <script src="{{ 'static/music_logic.js'|ver }}"></script>
+    <style>
+        body { background-color: #111827; color: #e5e7eb; }
+        [x-cloak] { display: none !important; }
+        #kitchen-wrap { position: fixed; inset: 0; background: #14110c; }
+        /* product-shot vignette: pure CSS, zero render cost */
+        #kitchen-wrap::after { content: ''; position: absolute; inset: 0; pointer-events: none;
+          background: radial-gradient(ellipse at 50% 42%, transparent 52%, rgba(28,18,42,0.28) 100%); }
+        #room, #room canvas { position: absolute; inset: 0; display: block; }
+        #tip { position: fixed; pointer-events: none; background: rgba(28,23,16,.94);
+          color: #f0e6cf; border: 1px solid #74603f; border-radius: 8px; padding: 6px 10px;
+          font: 13px/1.3 system-ui; opacity: 0; transition: opacity .15s; z-index: 40; max-width: 300px; }
+        #chip { position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px;
+          background: rgba(28,23,16,.9); color: #f0e6cf; border: 1px solid #74603f;
+          border-radius: 10px; padding: 8px 14px; font: 14px system-ui; opacity: 0;
+          transition: opacity .2s; z-index: 40; }
+        /* 120px floor: the Ask-Argyle bar is fixed to the bottom of every
+           page (study.html learned this first). */
+        #fallback { position: absolute; inset: 0; overflow-y: auto; padding: 90px 20px 120px;
+          color: #f0e6cf; font: 15px/1.5 system-ui; display: none; }
+        #fallback h1 { font-size: 18px; margin: 0 0 14px; color: #e3d3ab; }
+        /* one-title-per-page convention (test_panel_chrome): the marker stays
+           on SOMETHING even on a full-bleed scene page. */
+        #kitchen-title { position: fixed; top: 76px; left: 16px; z-index: 45; margin: 0;
+          font: 600 15px system-ui; color: #e3d3ab; text-shadow: 0 1px 6px rgba(0,0,0,.6);
+          pointer-events: none; }
+        .frow { display: block; background: #201a12; border: 1px solid #453a28;
+          border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; color: inherit;
+          text-decoration: none; }
+        .frow .sig { color: #f0b86e; font-size: 13px; }
+        .frow.calm .sig { color: #93a678; }
+        /* focus overlay: the board's own card, laid onto the furniture the
+           camera just framed. Page-layer chrome — the room only announces
+           focus (chf-kitchen-focus); static/kitchen_overlay.js draws. */
+        /* no opacity fade: the camera tween IS the motion, and a CSS
+           transition starves on an idle (render-on-demand) compositor —
+           headless proof: 0.19 opacity two seconds after .on landed */
+        #focus-overlay { position: absolute; z-index: 30; display: none; opacity: 0;
+          will-change: transform;
+          pointer-events: auto; background: #f6f1e4; border: 1px solid #d9cba8;
+          border-radius: 12px; padding: 12px 14px; overflow-y: auto; overflow-x: hidden;
+          color: #2b2318; font-family: Inter, system-ui, sans-serif;
+          box-shadow: 0 3px 14px rgba(30,20,10,.30); scrollbar-width: thin; }
+        #focus-overlay.on { opacity: 1; }
+        #overlay-door, #overlay-calendar, #overlay-tile, #overlay-music { display: none; }
+        #overlay-open { position: sticky; top: 0; float: right; z-index: 5;
+          display: inline-grid; place-items: center; width: 28px; height: 28px;
+          margin: -4px -6px 0 8px; border-radius: 8px; background: rgba(43,35,24,.10);
+          color: #2b2318; text-decoration: none; font-size: 15px; font-weight: 700; }
+        /* the tile island must hand real HEIGHT down to collage grids
+           (moments/meals draw with flex-1 + minmax(0,1fr) rows, which
+           collapse to slivers without it) */
+        #overlay-tile { height: 100%; min-height: 0; flex-direction: column; }
+        #overlay-tile > div { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+        /* the radio wears the real Music Assistant widget, player half only:
+           search and shelves belong to the Music page */
+        #overlay-music #mw-search, #overlay-music #mw-search-filters,
+        #overlay-music #mw-results, #overlay-music #mw-favorites-section { display: none !important; }
+        #overlay-music #music-widget { background: #17130d; border-color: #74603f; }
+        /* the board's vocabulary, in the kitchen's own paper-and-ink — the
+           same scoped-reskin idiom agenda_row.html already uses for
+           body.ha-theme. Board cards ship dark-theme constants; on the
+           room's cream paper those read as holes, so inside the overlay
+           (and only inside it) they become paper tints. */
+        #focus-overlay .panel-text { color: #2b2318; }
+        #focus-overlay .panel-dim { color: rgba(43,35,24,.60); }
+        #focus-overlay .agenda-day { background: rgba(43,35,24,.05);
+          border: 1px solid rgba(43,35,24,.12); }
+        #focus-overlay .agenda-event,
+        #focus-overlay .agenda-event:hover { background: rgba(43,35,24,.07); }
+        #focus-overlay .text-white { color: #2b2318; }
+        #focus-overlay .text-gray-100, #focus-overlay .text-gray-200,
+        #focus-overlay .text-gray-300 { color: #3a3021; }
+        #focus-overlay .text-gray-400, #focus-overlay .text-gray-500 { color: rgba(43,35,24,.55); }
+        #focus-overlay .text-gray-600 { color: rgba(43,35,24,.45); }
+        #focus-overlay .text-amber-300 { color: #92400e; }
+        #focus-overlay .text-amber-200 { color: #78350f; }
+        #focus-overlay .text-teal-300 { color: #0f766e; }
+        #focus-overlay .text-emerald-300 { color: #047857; }
+        #focus-overlay .text-blue-300 { color: #1d4ed8; }
+        #focus-overlay .bg-gray-700, #focus-overlay .bg-gray-700\/60,
+        #focus-overlay .bg-gray-700\/70,
+        #focus-overlay .bg-gray-800, #focus-overlay .bg-gray-800\/60,
+        #focus-overlay .bg-gray-900, #focus-overlay .bg-gray-900\/60,
+        #focus-overlay .bg-gray-950, #focus-overlay .bg-black\/20 {
+          background-color: rgba(43,35,24,.08); }
+        #focus-overlay .border-gray-600, #focus-overlay .border-gray-700,
+        #focus-overlay .border-gray-700\/50, #focus-overlay .border-gray-800,
+        #focus-overlay .border-white\/10 { border-color: rgba(43,35,24,.18); }
+        #focus-overlay .text-gray-700 { color: rgba(43,35,24,.40); }
+        #focus-overlay .text-green-200, #focus-overlay .text-green-300 { color: #166534; }
+        #focus-overlay .text-green-400, #focus-overlay .text-emerald-400 { color: #15803d; }
+        #focus-overlay .text-amber-400, #focus-overlay .text-amber-400\/80,
+        #focus-overlay .text-amber-300\/80 { color: #92400e; }
+        #focus-overlay .text-red-400 { color: #b91c1c; }
+        #focus-overlay .text-sky-300, #focus-overlay .text-sky-400 { color: #0369a1; }
+        #focus-overlay .text-indigo-300 { color: #4338ca; }
+        #focus-overlay .text-white\/70, #focus-overlay .text-white\/60 { color: rgba(43,35,24,.62); }
+        /* the hero band is a wide two-column row on a board; a door is a
+           portrait surface, so its halves stack and the title wraps */
+        #overlay-door .flex-1 { flex-basis: 100%; }
+        #overlay-door .truncate { white-space: normal; overflow: visible; }
+        #overlay-door .text-right { text-align: left; }
+    </style>
+    <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
+</head>
+
+<body class="flex flex-col h-screen overflow-hidden">
+    {% include 'nav.html' %}
+
+    <div id="kitchen-wrap" class="panel-page">
+        <h1 id="kitchen-title" class="panel-page-title">The Home</h1>
+        <div id="room"></div>
+        <div id="fallback"><div id="fallback-rows"></div></div>
+        <div id="tip"></div><div id="chip"></div>
+        <!-- The lean-in detail, drawn by the board's own builders: the door
+             wears the hero card (the screensaver's compact form), the wall
+             calendar wears the Family Day card in the board's own read-only
+             mode. Display only — pointer-events: none — so the room's own
+             second-tap-through still works underneath. -->
+        <div id="focus-overlay">
+            <a id="overlay-open" href="#" title="Open the page">&#8599;</a>
+            <div id="overlay-door"></div>
+            <div id="overlay-calendar"
+                x-data="packingCard({ data: { interactive: true, days: 1 } }, (window.chfBase !== undefined ? window.chfBase : ''))">
+                {{ packing.rows() }}
+            </div>
+            <div id="overlay-music">{% include 'components/music_widget.html' %}</div>
+            <!-- Every other card zone mounts through the board's OWN tile
+                 body: one include, every branch, and only the branch whose
+                 type matches the island's `t` ever renders. The island shim
+                 (kitchen_overlay.js) provides the few board-scope helpers
+                 the mounted branches reach for; interactive is forced off
+                 before `t` is set. -->
+            <div id="overlay-tile" x-data="kitchenTileIsland()">
+                <template x-if="t">
+                    <div>{% include 'components/board_tile_body.html' %}</div>
+                </template>
+            </div>
+        </div>
+    </div>
+    {% include 'components/control_center.html' %}
+    {% include 'components/moments_hearth.html' %}
+    {% include 'components/agenda_row.html' %}
+    {% include 'components/packing_card.html' %}
+    {% include 'components/shopping_lists.html' %}
+    {% include 'components/family_calendar.html' %}
+    {% include 'components/pack_dialog.html' %}
+    {% include 'components/pet_editor.html' %}
+    {% include 'components/pet_battle.html' %}
+
+    <script>window.HOUSE_STATE_URL = (window.chfBase !== undefined ? window.chfBase : '') + 'api/house/state';</script>
+    <script src="{{ 'static/vendor/three.min.js'|ver }}"></script>
+    <script src="{{ 'static/house.js'|ver }}"></script>
+    <script src="{{ 'static/kitchen_overlay.js'|ver }}"></script>
+</body>
+</html>

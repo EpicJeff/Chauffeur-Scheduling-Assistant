@@ -70,9 +70,28 @@ def scenario_endpoint_and_gate():
     check("'/house', ANYONE" in auth_src, "the shell serves anyone")
 
 
+def scenario_house_template_pins():
+    p = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), 'templates', 'house.html')
+    check(os.path.exists(p), "house.html exists")
+    src = io.open(p, encoding='utf-8').read()
+    check('<title>The Home</title>' in src, "the page says its name")
+    check('The Kitchen' not in src, "no leftover kitchen copy")
+    check('HOUSE_STATE_URL' in src and 'api/house/state' in src,
+          "the page points at the house feed")
+    check("static/house.js" in src, "the page loads house.js")
+    check("static/kitchen_overlay.js" in src,
+          "the overlay is reused verbatim until H4 renames it")
+    check('panel-page-title' in src, "one-title-per-page marker present")
+    check('chfBase' in src, "state URL rides chfBase, never a self-computed depth")
+    for dialog in ('alert(', 'confirm(', 'prompt('):
+        check(dialog not in src, f"no browser dialogs ({dialog})")
+
+
 if __name__ == '__main__':
     scenario_h1_house_speaks_with_the_kitchens_voice()
     scenario_family_safe_pin()
     scenario_the_house_never_writes()
     scenario_endpoint_and_gate()
+    scenario_house_template_pins()
     print("test_house_state OK")
