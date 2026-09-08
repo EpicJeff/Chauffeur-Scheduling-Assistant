@@ -42,8 +42,11 @@
         /* focus overlay: the board's own card, laid onto the furniture the
            camera just framed. Page-layer chrome — the room only announces
            focus (chf-kitchen-focus); static/kitchen_overlay.js draws. */
+        /* no opacity fade: the camera tween IS the motion, and a CSS
+           transition starves on an idle (render-on-demand) compositor —
+           headless proof: 0.19 opacity two seconds after .on landed */
         #focus-overlay { position: absolute; z-index: 30; display: none; opacity: 0;
-          transition: opacity .22s ease; will-change: transform;
+          will-change: transform;
           pointer-events: none; background: #f6f1e4; border: 1px solid #d9cba8;
           border-radius: 12px; padding: 12px 14px; overflow: hidden;
           color: #2b2318; font-family: Inter, system-ui, sans-serif;
@@ -51,7 +54,7 @@
           -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
           mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent); }
         #focus-overlay.on { opacity: 1; }
-        #overlay-door, #overlay-calendar { display: none; }
+        #overlay-door, #overlay-calendar, #overlay-tile { display: none; }
         /* the board's vocabulary, in the kitchen's own paper-and-ink — the
            same scoped-reskin idiom agenda_row.html already uses for
            body.ha-theme. Board cards ship dark-theme constants; on the
@@ -104,12 +107,24 @@
                 x-data="packingCard({ data: { interactive: false, days: 1 } }, (window.chfBase !== undefined ? window.chfBase : ''))">
                 {{ packing.rows() }}
             </div>
+            <!-- Every other card zone mounts through the board's OWN tile
+                 body: one include, every branch, and only the branch whose
+                 type matches the island's `t` ever renders. The island shim
+                 (kitchen_overlay.js) provides the few board-scope helpers
+                 the mounted branches reach for; interactive is forced off
+                 before `t` is set. -->
+            <div id="overlay-tile" x-data="kitchenTileIsland()">
+                <template x-if="t">
+                    <div>{% include 'components/board_tile_body.html' %}</div>
+                </template>
+            </div>
         </div>
     </div>
     {% include 'components/control_center.html' %}
     {% include 'components/moments_hearth.html' %}
     {% include 'components/agenda_row.html' %}
     {% include 'components/packing_card.html' %}
+    {% include 'components/shopping_lists.html' %}
 
     <script>window.KITCHEN_STATE_URL = (window.chfBase !== undefined ? window.chfBase : '') + 'api/kitchen/state';</script>
     <script src="{{ 'static/vendor/three.min.js'|ver }}"></script>

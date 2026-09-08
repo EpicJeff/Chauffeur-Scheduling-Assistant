@@ -30,8 +30,13 @@ def scenario_overlay_layer_present_and_wired():
           "the factory script is emitted once (Jinja import renders nothing)")
     check("include 'components/agenda_row.html'" in html,
           "the agenda vocabulary CSS rides along")
+    check("include 'components/board_tile_body.html'" in html,
+          "the generic island mounts the board's own tile body")
+    check("include 'components/shopping_lists.html'" in html,
+          "the shopping factory script is emitted once")
     for needed in ('id="focus-overlay"', 'id="overlay-door"',
-                   'id="overlay-calendar"', 'kitchen_overlay.js'):
+                   'id="overlay-calendar"', 'id="overlay-tile"',
+                   'kitchenTileIsland', 'kitchen_overlay.js'):
         check(needed in html, f"kitchen.html carries {needed}")
     js = _src('static', 'kitchen.js')
     check('chf-kitchen-focus' in js,
@@ -40,7 +45,9 @@ def scenario_overlay_layer_present_and_wired():
           "the lean-in has a callable hand path (deep links, harnesses)")
     ov = _src('static', 'kitchen_overlay.js')
     for needed in ('chf-kitchen-focus', 'HeroCard.html', 'isLight: true',
-                   'loadPacking', 'api/home_board', 'matrix3d'):
+                   'loadPacking', 'api/home_board', 'matrix3d',
+                   'moments,shopping_list,meals,pets,weather',
+                   'tile.data.interactive = false'):
         check(needed in ov, f"kitchen_overlay.js carries {needed}")
     check('quad' in _src('static', 'kitchen.js'),
           "the room announces the face quad the transform maps onto")

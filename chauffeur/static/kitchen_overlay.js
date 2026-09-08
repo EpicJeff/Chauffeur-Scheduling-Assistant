@@ -10,10 +10,43 @@
  *               mounted with interactive: false — the board's own read-only
  *               mode). No x-init: the island fetches NOTHING until the first
  *               lean-in, so the idle room still speaks to one endpoint.
+ *   fridge / corkboard / counter / critter laptop / window → the board's
+ *               own tile body, one include, mounted per zone through the
+ *               kitchenTileIsland shim below; data from ONE lazy
+ *               api/home_board?widgets=… fetch, interactive forced off.
+ *               The radio keeps its tip: the music card needs the whole
+ *               Music Assistant runtime, and a display-only mount of it
+ *               would be dead transport chrome.
  *
  * Never writes: every fetch here is a GET, and innerHTML is only ever fed
  * by HeroCard.html, which escapes every field it prints (or cleared).
  */
+/* The generic tile island's scope: `t` (the mounted tile) plus the few
+   board-scope helpers the mounted branches reach for. Layout shims are
+   deliberately dumb — collageSpan '' falls back to a uniform grid — and
+   the write-side ones (openPetEditor and friends) stay UNDEFINED, which
+   the branches themselves treat as "draw disabled". Defined before Alpine
+   boots (alpine.min.js is deferred; this file is a classic script). */
+window.kitchenTileIsland = function () {
+  var base = (window.chfBase !== undefined ? window.chfBase : '');
+  return {
+    t: null,
+    apiBase: base,
+    board: {},
+    hero: {},
+    collageSpan: function () { return ''; },
+    momentSrc: function (m) {
+      var att = (m && m.attachment) || {};
+      var u = (m && (m.poster_url || m.media_url)) || att.url || '';
+      return u ? base + String(u).replace(/^\//, '') : (att.data_url || '');
+    },
+    link: function () { return '#'; },
+    tone: function (hex, fb) {
+      return window.HeroCard ? HeroCard.tone(hex, fb, true) : (hex || fb);
+    }
+  };
+};
+
 (function () {
   'use strict';
   var BASE = (window.chfBase !== undefined ? window.chfBase : '');
@@ -21,25 +54,36 @@
   var OV = document.getElementById('focus-overlay');
   var DOOR = document.getElementById('overlay-door');
   var CAL = document.getElementById('overlay-calendar');
-  if (!WRAP || !OV || !DOOR || !CAL) return;
+  var TILE = document.getElementById('overlay-tile');
+  if (!WRAP || !OV || !DOOR || !CAL || !TILE) return;
 
-  /* hero payload, cached briefly: a lean-in is a moment, not a poll */
-  var hero = null, heroAt = 0, heroTick = null;
-  var HERO_TTL = 60000;
+  /* which board tile a zone wears on focus */
+  var ZONE_TILES = { fridge: 'moments', board: 'shopping_list',
+                     counter: 'meals', pet: 'pets', window: 'weather' };
+  var WIDGETS = 'moments,shopping_list,meals,pets,weather';
 
-  function fetchHero(cb) {
-    if (hero !== null && Date.now() - heroAt < HERO_TTL) { cb(hero); return; }
-    fetch(BASE + 'api/home_board', { credentials: 'same-origin' })
+  /* board payload, cached briefly: a lean-in is a moment, not a poll.
+     One request carries the hero (top-level, always) and the five tile
+     types the zones wear — `?widgets=` builds exactly those, not the
+     household's whole wall. */
+  var payload = null, payloadAt = 0, heroTick = null;
+  var hero = null;
+  var BOARD_TTL = 60000;
+
+  function fetchBoard(cb) {
+    if (payload !== null && Date.now() - payloadAt < BOARD_TTL) { cb(payload); return; }
+    fetch(BASE + 'api/home_board?widgets=' + WIDGETS, { credentials: 'same-origin' })
       .then(function (r) {
         if (!r.ok) throw new Error('http ' + r.status);
         return r.json();
       })
       .then(function (b) {
-        heroAt = Date.now();
-        var h = (b || {}).hero || {};
+        payloadAt = Date.now();
+        payload = b || {};
+        var h = payload.hero || {};
         /* the screensaver's own test: a done day has no "next" */
         hero = (!h.all_done && h.next) ? h.next : false;
-        cb(hero);
+        cb(payload);
       })
       .catch(function () { cb(null); });
   }
@@ -103,7 +147,12 @@
      content, never less than `min` of the face. */
   var LAYOUT = {
     calendar: { mode: 'fill', top: 0.17, bottom: 0.97 },
-    door: { mode: 'fit', top: 0.07, min: 0.30 }
+    door: { mode: 'fit', top: 0.07, min: 0.30 },
+    fridge: { mode: 'fill', top: 0.06, bottom: 0.94 },
+    board: { mode: 'fill', top: 0.07, bottom: 0.93 },
+    counter: { mode: 'fit', top: null, min: 0.55 },
+    pet: { mode: 'fill', top: 0.05, bottom: 0.95 },
+    window: { mode: 'fit', top: 0.34, min: 0.16 }
   };
 
   function placeQuad(q, zone) {
@@ -172,8 +221,14 @@
   function show(zone, d) {
     DOOR.style.display = zone === 'door' ? 'block' : 'none';
     CAL.style.display = zone === 'calendar' ? 'block' : 'none';
+    TILE.style.display = ZONE_TILES[zone] ? 'block' : 'none';
     if (d.quad) placeQuad(d.quad, zone); else place(d.rect);
     requestAnimationFrame(function () { OV.classList.add('on'); });
+  }
+
+  function tileScope() {
+    try { return window.Alpine && window.Alpine.$data(TILE); }
+    catch (e) { return null; }
   }
 
   function hide() {
@@ -181,6 +236,9 @@
     OV.style.display = 'none';
     DOOR.style.display = 'none';
     CAL.style.display = 'none';
+    TILE.style.display = 'none';
+    var c = tileScope();
+    if (c && c.t) c.t = null;
     if (heroTick) { clearInterval(heroTick); heroTick = null; }
   }
 
@@ -188,8 +246,8 @@
     var d = (ev && ev.detail) || {};
     if (!d.zone || !d.rect) { hide(); return; }
     if (d.zone === 'door') {
-      fetchHero(function (h) {
-        if (!h) { hide(); return; }   /* calm or unreachable: the tip answers */
+      fetchBoard(function (b) {
+        if (!b || !hero) { hide(); return; }   /* calm or unreachable: the tip answers */
         renderDoor();
         show('door', d);
         /* the countdown pill recomputes from the event's own times on each
@@ -202,6 +260,26 @@
         if (comp && comp.loadPacking) comp.loadPacking();
       } catch (e) { /* island not up: the room's own tip still answers */ }
       show('calendar', d);
+    } else if (ZONE_TILES[d.zone]) {
+      var want = ZONE_TILES[d.zone];
+      fetchBoard(function (b) {
+        var tiles = (b && b.tiles) || [];
+        var tile = null;
+        for (var i = 0; i < tiles.length; i++) {
+          if (tiles[i] && tiles[i].type === want) { tile = tiles[i]; break; }
+        }
+        /* a quiet tile keeps the tip: an empty card on a wall answers
+           nothing the one-line headline was not already answering */
+        if (!tile || !tile.data || tile.data.empty) { hide(); return; }
+        tile.data.interactive = false;   /* display only, always */
+        if (tile.config) tile.config.interactive = false;
+        var c = tileScope();
+        if (!c) { hide(); return; }
+        c.t = tile;
+        /* Alpine renders the island on its own tick; place after it, so a
+           fit-mode zone measures real content instead of an empty div */
+        window.Alpine.nextTick(function () { show(d.zone, d); });
+      });
     } else {
       hide();   /* a zone without a card yet keeps today's tip-only lean-in */
     }

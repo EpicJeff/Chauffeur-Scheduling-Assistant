@@ -73,7 +73,9 @@ def scenario_overlay_lives_on_the_real_page():
     _seed()
     shots = os.environ.get('KITCHEN_SHOTS', '')
     with served.browser() as page:
-        page.goto(served.url('kitchen'))
+        # forced tier: the boot benchmark on a headless GPU can demote and
+        # RELOAD the page mid-test, aborting whatever fetch was in flight
+        page.goto(served.url('kitchen?quality=high'))
         page.wait_for_selector('#focus-overlay', state='attached')
         page.wait_for_timeout(600)   # alpine boot
 
@@ -119,7 +121,9 @@ def scenario_the_real_lean_in_wears_the_card():
     _seed()
     shots = os.environ.get('KITCHEN_SHOTS', '')
     with served.browser() as page:
-        page.goto(served.url('kitchen'))
+        # forced tier: the boot benchmark on a headless GPU can demote and
+        # RELOAD the page mid-test, aborting whatever fetch was in flight
+        page.goto(served.url('kitchen?quality=high'))
         page.wait_for_timeout(1800)   # boot, benchmark warmup, first paint
         has_room = page.evaluate(
             "!!document.querySelector('#room canvas') && "
@@ -162,7 +166,81 @@ def scenario_the_real_lean_in_wears_the_card():
         check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
 
 
+def scenario_other_zones_wear_their_cards():
+    """The port: corkboard wears the real shopping-list card, the window
+    wears the weather card — mounted through the board's own tile body,
+    read-only, from one ?widgets= payload. A zone whose tile is empty
+    (nothing seeded) keeps the tip, and that path is the fridge here."""
+    served = live_app()
+    if served is None:
+        return
+    _seed()
+    from services import storage, ha_api
+    storage.shopping_lists_table.truncate()
+    storage.shopping_items_table.truncate()
+    storage.add_shopping_list({'id': 'grocery', 'name': 'Groceries',
+                               'is_default': True})
+    storage.shopping_items_table.insert(
+        {'id': 's1', 'name': 'Oat milk', 'list_id': 'grocery',
+         'is_checked': False, 'created_at': 1})
+    storage.shopping_items_table.insert(
+        {'id': 's2', 'name': 'Eggs', 'list_id': 'grocery',
+         'is_checked': False, 'created_at': 2})
+    base = datetime.datetime.now().replace(hour=12, minute=0, second=0,
+                                           microsecond=0)
+    days = [{'condition': 'sunny', 'temperature': 70 + i, 'templow': 55,
+             'precipitation_probability': 0,
+             'datetime': (base + datetime.timedelta(days=i)).isoformat()}
+            for i in range(5)]
+    ha_api.get_weather_forecast = lambda e=None, kind='daily': days
+    # the board payload is TTL-cached server-side; the previous scenario
+    # already built it WITHOUT this stub, so drop that copy
+    from services import home_board
+    home_board.invalidate_cache()
+
+    shots = os.environ.get('KITCHEN_SHOTS', '')
+    with served.browser() as page:
+        # forced tier: the boot benchmark on a headless GPU can demote and
+        # RELOAD the page mid-test, aborting whatever fetch was in flight
+        page.goto(served.url('kitchen?quality=high'))
+        page.wait_for_timeout(1800)
+        has_room = page.evaluate(
+            "!!document.querySelector('#room canvas') && "
+            "typeof window.chfKitchenFocus === 'function'")
+        if not has_room:
+            print("  skip  no WebGL room here — the fallback owns the page")
+            return
+
+        page.evaluate("window.chfKitchenFocus('board')")
+        page.wait_for_selector('#overlay-tile >> text=Eggs', timeout=8000)
+        live_buttons = page.evaluate(
+            "Array.from(document.querySelectorAll('#overlay-tile button'))"
+            ".filter(b => b.offsetParent !== null && !b.disabled).length")
+        check(live_buttons == 0,
+              "the shopping card mounts read-only: every affordance disabled")
+        if shots:
+            page.screenshot(path=os.path.join(shots, 'kitchen_board_leanin.png'))
+
+        page.evaluate("window.chfKitchenFocus('window')")
+        page.wait_for_selector('#overlay-tile >> text=70', timeout=8000)
+        check(not page.is_visible('#overlay-calendar'),
+              "zone switch swaps the mounted card")
+        if shots:
+            page.screenshot(path=os.path.join(shots, 'kitchen_window_leanin.png'))
+
+        # nothing seeded for moments: the fridge keeps its tip-only lean-in
+        page.evaluate("window.chfKitchenFocus('fridge')")
+        page.wait_for_timeout(1400)
+        check(not page.is_visible('#focus-overlay'),
+              "an empty tile hides the overlay instead of showing blank paper")
+
+        errs = [e for e in served.errors()
+                if 'WebGL' not in e and 'GroupMarker' not in e]
+        check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
+
+
 if __name__ == '__main__':
     scenario_overlay_lives_on_the_real_page()
     scenario_the_real_lean_in_wears_the_card()
+    scenario_other_zones_wear_their_cards()
     print("test_kitchen_overlay_live OK")

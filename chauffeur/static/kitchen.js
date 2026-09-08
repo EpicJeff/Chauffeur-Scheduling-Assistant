@@ -802,6 +802,14 @@
       });
     }
     function critterTex(p) {
+      if (p && p.__blank) {
+        return mkTex('critters', 512, 324, 'blank', function (g, w, h) {
+          g.fillStyle = '#12151c'; g.fillRect(0, 0, w, h);
+          g.fillStyle = '#1d2230'; g.fillRect(0, 0, w, 64);
+          g.fillStyle = '#7ee787'; g.font = '800 34px ' + FONT;
+          g.fillText('CRITTERS', 26, 44);
+        });
+      }
       var calm = !p || p.calm !== false;
       var pets = (p && p.pets) || [];
       var payload = calm ? 'calm'
@@ -871,6 +879,16 @@
       });
     }
     function boardTex(b) {
+      if (b && b.__blank) {
+        /* focused: the list card is ON the cork — bare board underneath */
+        return mkTex('board', 512, 384, 'blank', function (g, w, h) {
+          g.fillStyle = '#c08b52'; g.fillRect(0, 0, w, h);
+          for (var i = 0; i < 500; i++) {
+            g.fillStyle = 'rgba(90,60,30,' + (Math.random() * 0.1) + ')';
+            g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+          }
+        });
+      }
       var calm = !b || b.calm !== false;
       var top = (b && b.top) || [];
       var payload = calm ? 'calm' : [b.items].concat(top).join('|');
@@ -901,7 +919,10 @@
     }
     function weatherTex(wz) {
       var cond = (wz && wz.cond) || '';
-      var temp = (wz && wz.temp !== null && wz.temp !== undefined) ? Math.round(wz.temp) : null;
+      /* focused: the forecast card is ON the glass — sky stays (scenery),
+         the painted number goes quiet (data) */
+      var temp = (wz && !wz.__blank && wz.temp !== null && wz.temp !== undefined)
+        ? Math.round(wz.temp) : null;
       var hour = new Date().getHours();
       var night = hour < 7 || hour >= 19;
       var payload = [cond, temp, night].join('|');
@@ -1112,12 +1133,17 @@
     /* a focused surface goes quiet: the board's card IS its detail now,
        and the room must not say the same thing twice at two sizes */
     webgl.plaque.visible = focused !== 'door';
+    webgl.magnets.visible = focused !== 'fridge';
     swap(webgl.plaque, webgl.heroTex(s.door || {}));
     swap(webgl.calFace, webgl.calendarTex(
       focused === 'calendar' ? { __blank: true } : (s.calendar || {})));
-    swap(webgl.critFace, webgl.critterTex(s.pet || {}));
-    swap(webgl.boardFace, webgl.boardTex(s.board || {}));
-    swap(webgl.paneMesh, webgl.weatherTex(s.window || {}));
+    swap(webgl.boardFace, webgl.boardTex(
+      focused === 'board' ? { __blank: true } : (s.board || {})));
+    swap(webgl.critFace, webgl.critterTex(
+      focused === 'pet' ? { __blank: true } : (s.pet || {})));
+    swap(webgl.paneMesh, webgl.weatherTex(
+      focused === 'window' ? Object.assign({ __blank: true }, s.window || {})
+                           : (s.window || {})));
 
     /* moment magnets on the fridge door: one colored square each, capped */
     var wantMagnets = Math.min(((s.fridge || {}).new_moments || 0), 6);
@@ -1191,13 +1217,25 @@
     }
     var rect = { left: minX, top: minY, width: maxX - minX, height: maxY - minY };
 
-    /* the camera-facing face across the box's THINNEST axis */
+    /* the camera-facing face across the box's THINNEST axis — except for
+       props where that guess is wrong (a fridge is deep, a laptop's screen
+       tilts): those name their outward face explicitly */
+    var FACE_OVERRIDE = { fridge: ['z', 1], board: ['x', 1],
+                          counter: ['z', 1], pet: ['z', 1] };
+    /* the window's card belongs on the GLASS; the zone group's bbox is
+       dominated by the valance above it, so the face comes off the pane */
+    if (key === 'window' && webgl.paneMesh) {
+      b = new webgl.T.Box3().setFromObject(webgl.paneMesh);
+    }
     var size = b.getSize(new webgl.T.Vector3());
     var c = b.getCenter(new webgl.T.Vector3());
-    var axis = (size.x <= size.y && size.x <= size.z) ? 'x'
+    var ovr = FACE_OVERRIDE[key];
+    var axis = ovr ? ovr[0]
+             : (size.x <= size.y && size.x <= size.z) ? 'x'
              : (size.y <= size.z ? 'y' : 'z');
     var toCam = new webgl.T.Vector3().subVectors(webgl.cam.position, c);
-    var fixed = toCam[axis] >= 0 ? b.max[axis] : b.min[axis];
+    var fixed = ovr ? (ovr[1] > 0 ? b.max[axis] : b.min[axis])
+              : (toCam[axis] >= 0 ? b.max[axis] : b.min[axis]);
     var A = axis === 'x' ? ['y', 'z'] : (axis === 'y' ? ['x', 'z'] : ['x', 'y']);
     var quad = [];
     var bad = false;
