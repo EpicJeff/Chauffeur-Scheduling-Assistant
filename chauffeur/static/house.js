@@ -194,11 +194,14 @@
 
     var scene = new T.Scene();
     scene.background = new T.Color(0xbdb3c7);          // the soft lilac of the reference
-    var cam = new T.PerspectiveCamera(24, 1, 0.1, 90); // narrow FOV = near-isometric diorama
+    var cam = new T.PerspectiveCamera(24, 1, 0.1, 200); // narrow FOV = near-isometric diorama; far covers the yard dome
     var HOME_POS = new T.Vector3(17.5, 13.0, 17.5);
     var HOME_AT = new T.Vector3(-0.2, 0.8, -0.4);
-    cam.position.copy(HOME_POS);
-    cam.lookAt(HOME_AT);
+    /* the house from the yard: the panel's resting view */
+    var EXT_POS = new T.Vector3(36.0, 22.0, 36.0);
+    var EXT_AT = new T.Vector3(-2.5, 1.8, 1.5);
+    cam.position.copy(EXT_POS);
+    cam.lookAt(EXT_AT);
 
     var R = new T.WebGLRenderer({ antialias: DETAIL >= 2 });
     R.setPixelRatio(1);                                // the Pi law: never a retina multiplier
@@ -790,7 +793,7 @@
       sidingT = canvasTex(256, function (g, S) {
         g.fillStyle = '#e7e0d5'; g.fillRect(0, 0, S, S);
         for (var y = 0; y < S; y += 21) {
-          g.fillStyle = 'rgba(120,108,90,0.35)'; g.fillRect(0, y + 18, S, 3);
+          g.fillStyle = 'rgba(110,98,80,0.5)'; g.fillRect(0, y + 18, S, 3);
           g.fillStyle = 'rgba(255,255,255,0.5)'; g.fillRect(0, y, S, 2);
         }
       });
@@ -860,23 +863,23 @@
        on the LEFT flank: the +x/+z quadrant is the diorama's open corner
        and nothing may stand between the camera and the kitchen. */
     rbox(5.6, 4.6, 8.0, 0.06, NICE ? 0xffffff : EXTC.garage,
-         -10.0, 2.3, -1.6, extG, { rough: 0.95, map: sidingT });
-    rbox(3.6, 3.0, 0.14, 0.05, EXTC.trim, -10.0, 1.6, 2.42, extG,
+         -10.0, 2.3, 6.0, extG, { rough: 0.95, map: sidingT });
+    rbox(3.6, 3.0, 0.14, 0.05, EXTC.trim, -10.0, 1.6, 10.02, extG,
          { rough: 0.85 });
     if (DETAIL >= 2) {
-      box(3.4, 0.05, 0.06, 0xc4bcae, -10.0, 1.0, 2.5, extG);
-      box(3.4, 0.05, 0.06, 0xc4bcae, -10.0, 1.8, 2.5, extG);
-      box(3.4, 0.05, 0.06, 0xc4bcae, -10.0, 2.6, 2.5, extG);
+      box(3.4, 0.05, 0.06, 0xc4bcae, -10.0, 1.0, 10.1, extG);
+      box(3.4, 0.05, 0.06, 0xc4bcae, -10.0, 1.8, 10.1, extG);
+      box(3.4, 0.05, 0.06, 0xc4bcae, -10.0, 2.6, 10.1, extG);
     }
     if (DETAIL >= 3) {          /* a small window right of the garage door */
-      box(0.86, 0.76, 0.1, EXTC.trim, -7.85, 2.7, 2.44, extG);
-      box(0.7, 0.6, 0.12, 0x39434e, -7.85, 2.7, 2.45, extG, GLOSS);
+      box(0.86, 0.76, 0.1, EXTC.trim, -7.85, 2.7, 10.04, extG);
+      box(0.7, 0.6, 0.12, 0x39434e, -7.85, 2.7, 10.05, extG, GLOSS);
     }
-    ebox(6.2, 0.16, 8.8, NICE ? 0xffffff : EXTC.roof, -10.0, 4.78, -1.6,
+    ebox(6.2, 0.16, 8.8, NICE ? 0xffffff : EXTC.roof, -10.0, 4.78, 6.0,
          { rough: 0.9, map: shingleT });
-    blobShadow(3.0, 4.2, -10.0, -1.6, extG);
+    blobShadow(3.0, 4.2, -10.0, 6.0, extG);
     /* driveway from the garage door to the yard's edge */
-    ebox(4.4, 0.08, 11.0, NICE ? 0xffffff : EXTC.drive, -10.0, -0.25, 8.4,
+    ebox(4.4, 0.08, 7.2, NICE ? 0xffffff : EXTC.drive, -10.0, -0.25, 14.0,
          { rough: 0.95, map: driveT });
     /* two blob trees + a bush: the yard is a place, not a void */
     function tree(x, z, s) {
@@ -904,8 +907,9 @@
     blobShadow(0.8, 0.7, 6.0, 7.6, extG);
     /* sky dome: weather-painted from the inside, swapped by applyState.
        The dome IS the background now, so the flat clear color retires. */
-    var skyDome = new T.Mesh(new T.SphereGeometry(55, 24, 12),
+    var skyDome = new T.Mesh(new T.SphereGeometry(80, 24, 12),
       new T.MeshBasicMaterial({ side: T.BackSide }));
+    skyDome.rotation.y = Math.PI / 4;   /* UV seam behind the house, not the camera */
     extG.add(skyDome);
     scene.background = null;
 
@@ -1165,7 +1169,7 @@
       var payload = ['dome', cond, night].join('|');
       return mkTex('skydome', 512, 256, payload, function (g, w, h) {
         var top = '#7cc4f0', bot = '#d8ecf7';
-        if (night) { top = '#141d38'; bot = '#33406b'; }
+        if (night) { top = '#1c2748'; bot = '#3a4a78'; }
         else if (cond.indexOf('rain') !== -1 || cond === 'pouring' ||
                  cond.indexOf('lightning') !== -1) { top = '#5b6c7d'; bot = '#8fa0af'; }
         else if (cond.indexOf('snow') !== -1) { top = '#aebfd0'; bot = '#e8eef4'; }
@@ -1175,9 +1179,9 @@
         grad.addColorStop(1, bot);
         g.fillStyle = grad; g.fillRect(0, 0, w, h);
         if (night) {
-          g.fillStyle = 'rgba(255,255,255,0.85)';
+          g.fillStyle = 'rgba(255,255,255,0.9)';
           for (var st = 0; st < 40; st++) {
-            g.fillRect(((st * 131) % w), ((st * 67) % (h * 0.55)), 2, 2);
+            g.fillRect(((st * 131) % w), ((st * 67) % (h * 0.55)), 3, 3);
           }
         }
         if (!night && cond.indexOf('cloud') === -1 && cond !== 'fog' &&
@@ -1211,13 +1215,15 @@
       paneMesh: paneMesh, heroTex: heroTex, calendarTex: calendarTex,
       boardTex: boardTex, weatherTex: weatherTex, clearPaint: clearPaint,
       extG: extG, skyDome: skyDome, skyDomeTex: skyDomeTex,
-      HOME_POS: HOME_POS, HOME_AT: HOME_AT
+      HOME_POS: HOME_POS, HOME_AT: HOME_AT,
+      EXT_POS: EXT_POS, EXT_AT: EXT_AT
     };
   }
 
   /* ---- render-on-demand engine ---------------------------------------- */
   var state = null;
   var focused = null;        // zone key while leaned in
+  var mode = 'exterior';     // 'exterior' | 'kitchen'
   var lookAt = null;         // the camera's CURRENT look target (tween continuity)
   var tween = null;          // {fromP,toP,fromA,toA,t0,ms,cb}
   var rafLive = false;
@@ -1430,6 +1436,41 @@
     announceFocus(null);
     requestFrame();
   }
+  /* the two-level camera: exterior home <-> kitchen home (goHome). */
+  function enterKitchen(cb) {
+    if (mode === 'kitchen') { if (cb) cb(); return; }
+    mode = 'kitchen';
+    tween = { fromP: webgl.cam.position.clone(), toP: webgl.HOME_POS.clone(),
+              fromA: (lookAt || webgl.EXT_AT).clone(),
+              toA: webgl.HOME_AT.clone(),
+              t0: performance.now(), ms: 850, cb: cb || null };
+    requestFrame();
+  }
+  function goExterior() {
+    mode = 'exterior';
+    focused = null;
+    TIP.style.opacity = 0;
+    announceFocus(null);
+    tween = { fromP: webgl.cam.position.clone(), toP: webgl.EXT_POS.clone(),
+              fromA: (lookAt || webgl.HOME_AT).clone(),
+              toA: webgl.EXT_AT.clone(),
+              t0: performance.now(), ms: 850, cb: null };
+    requestFrame();
+  }
+  function inExterior(obj) {
+    var o = obj;
+    while (o) { if (o === webgl.extG) return true; o = o.parent; }
+    return false;
+  }
+  function anyHit(clientX, clientY) {
+    var rect = webgl.R.domElement.getBoundingClientRect();
+    var v = new webgl.T.Vector2(((clientX - rect.left) / rect.width) * 2 - 1,
+                                -((clientY - rect.top) / rect.height) * 2 + 1);
+    var ray = new webgl.T.Raycaster();
+    ray.setFromCamera(v, webgl.cam);
+    var hits = ray.intersectObjects(webgl.scene.children, true);
+    return hits.length ? hits[0].object : null;
+  }
 
   /* Where a zone sits on the SCREEN, so the page layer can lay the board's
      own card over the furniture the camera just framed. The room never
@@ -1529,10 +1570,14 @@
      announces; it never taps through. */
   window.chfKitchenFocus = function (key) {
     if (!webgl || !ZONES[key]) return;
-    focused = key;
-    announceFocus(null);
-    frameZone(key, function () { announceFocus(key); });
+    enterKitchen(function () {
+      focused = key;
+      announceFocus(null);
+      frameZone(key, function () { announceFocus(key); });
+    });
   };
+  window.chfHouseEnter = function () { if (webgl) enterKitchen(null); };
+  window.chfHouseExit = function () { if (webgl) goExterior(); };
 
   function announceFocus(key) {
     if (webgl && state) applyState(state);   /* blank/restore the faces */
@@ -1564,8 +1609,19 @@
   }
 
   function onTap(ev) {
+    if (!webgl) return;
+    if (mode === 'exterior') {
+      /* any tap on the HOUSE goes inside; sky and flat yard stay a view.
+         The garage massing is sealed until H2 — a knock there enters the
+         kitchen too: one room exists, every knock reaches it. */
+      var hit = anyHit(ev.clientX, ev.clientY);
+      if (hit && hit !== webgl.skyDome &&
+          (!inExterior(hit) || hit.position.y > 0.2))
+        enterKitchen(null);
+      return;
+    }
     var key = zoneAt(ev.clientX, ev.clientY);
-    if (!key) { if (focused) goHome(); return; }
+    if (!key) { if (focused) { goHome(); } else { goExterior(); } return; }
     if (focused === key) { go(ZONES[key].url); return; }   // second tap: through
     focused = key;
     announceFocus(null);   /* the old card must not ride the camera move */
