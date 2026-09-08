@@ -91,9 +91,24 @@
         #focus-overlay .text-teal-300 { color: #0f766e; }
         #focus-overlay .text-emerald-300 { color: #047857; }
         #focus-overlay .text-blue-300 { color: #1d4ed8; }
+        #focus-overlay .bg-gray-700, #focus-overlay .bg-gray-700\/60,
+        #focus-overlay .bg-gray-700\/70,
         #focus-overlay .bg-gray-800, #focus-overlay .bg-gray-800\/60,
-        #focus-overlay .bg-gray-900\/60 { background-color: rgba(43,35,24,.08); }
-        #focus-overlay .border-gray-700 { border-color: rgba(43,35,24,.18); }
+        #focus-overlay .bg-gray-900, #focus-overlay .bg-gray-900\/60,
+        #focus-overlay .bg-gray-950, #focus-overlay .bg-black\/20 {
+          background-color: rgba(43,35,24,.08); }
+        #focus-overlay .border-gray-600, #focus-overlay .border-gray-700,
+        #focus-overlay .border-gray-700\/50, #focus-overlay .border-gray-800,
+        #focus-overlay .border-white\/10 { border-color: rgba(43,35,24,.18); }
+        #focus-overlay .text-gray-700 { color: rgba(43,35,24,.40); }
+        #focus-overlay .text-green-200, #focus-overlay .text-green-300 { color: #166534; }
+        #focus-overlay .text-green-400, #focus-overlay .text-emerald-400 { color: #15803d; }
+        #focus-overlay .text-amber-400, #focus-overlay .text-amber-400\/80,
+        #focus-overlay .text-amber-300\/80 { color: #92400e; }
+        #focus-overlay .text-red-400 { color: #b91c1c; }
+        #focus-overlay .text-sky-300, #focus-overlay .text-sky-400 { color: #0369a1; }
+        #focus-overlay .text-indigo-300 { color: #4338ca; }
+        #focus-overlay .text-white\/70, #focus-overlay .text-white\/60 { color: rgba(43,35,24,.62); }
         /* the hero band is a wide two-column row on a board; a door is a
            portrait surface, so its halves stack and the title wraps */
         #overlay-door .flex-1 { flex-basis: 100%; }
@@ -143,6 +158,7 @@
     {% include 'components/packing_card.html' %}
     {% include 'components/shopping_lists.html' %}
     {% include 'components/family_calendar.html' %}
+    {% include 'components/pack_dialog.html' %}
     {% include 'components/pet_editor.html' %}
     {% include 'components/pet_battle.html' %}
 

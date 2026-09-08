@@ -171,17 +171,17 @@ window.kitchenTileIsland = function () {
      content, never less than `min` of the face. */
   var LAYOUT = {
     calendar: { mode: 'fill', top: 0.17, bottom: 0.97 },
-    radio: { mode: 'fit', top: null, min: 0.5 },
-    door: { mode: 'fit', top: 0.07, min: 0.30 },
+    radio: { mode: 'fit', top: null },
+    door: { mode: 'fit', top: 0.07 },
     fridge: { mode: 'fill', top: 0.06, bottom: 0.94 },
     board: { mode: 'fill', top: 0.07, bottom: 0.93 },
-    counter: { mode: 'fit', top: null, min: 0.55 },
+    counter: { mode: 'fit', top: null },
     pet: { mode: 'fill', top: 0.05, bottom: 0.95 },
-    window: { mode: 'fit', top: 0.34, min: 0.16 }
+    window: { mode: 'fit', top: 0.34 }
   };
 
   function placeQuad(q, zone) {
-    var cfg = LAYOUT[zone] || { mode: 'fit', top: null, min: 0.14 };
+    var cfg = LAYOUT[zone] || { mode: 'fit', top: null };
     var faceW = (_len(q[0], q[1]) + _len(q[3], q[2])) / 2;
     var faceH = (_len(q[0], q[3]) + _len(q[1], q[2])) / 2;
     /* layout width: the card composes at a readable width and the
@@ -206,10 +206,12 @@ window.kitchenTileIsland = function () {
       t0 = cfg.top;
       frac = cfg.bottom - cfg.top;
     } else {
-      frac = Math.min(capFrac, Math.max(cfg.min || 0, (srcH * scale) / faceH));
+      /* NEVER stretch or squish a fit card: the mapped slice is exactly
+         the content's own height on the face (maxHeight already caps
+         srcH, so the cap can't distort either). A stretched card is what
+         breaks the on-the-surface illusion. */
+      frac = Math.min(capFrac, (srcH * scale) / faceH);
       t0 = cfg.top !== null ? cfg.top : Math.max(0.04, (1 - frac) / 2);
-      /* a fit card padded up to its minimum keeps the measured height —
-         the transform stretches it the small remaining way instead */
     }
     var quad = [_lerp(q[0], q[3], t0), _lerp(q[1], q[2], t0),
                 _lerp(q[1], q[2], t0 + frac), _lerp(q[0], q[3], t0 + frac)];

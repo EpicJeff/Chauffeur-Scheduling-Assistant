@@ -34,7 +34,8 @@ def scenario_overlay_layer_present_and_wired():
           "the generic island mounts the board's own tile body")
     check("include 'components/shopping_lists.html'" in html,
           "the shopping factory script is emitted once")
-    for comp in ('family_calendar', 'pet_editor', 'pet_battle', 'music_widget'):
+    for comp in ('family_calendar', 'pack_dialog', 'pet_editor', 'pet_battle',
+                 'music_widget'):
         check(f"include 'components/{comp}.html'" in html,
               f"the {comp} component rides along (interactive lean-ins)")
     for needed in ('id="focus-overlay"', 'id="overlay-door"',
@@ -48,6 +49,10 @@ def scenario_overlay_layer_present_and_wired():
           "the room announces focus; it never draws HTML itself")
     check('chfKitchenFocus' in js,
           "the lean-in has a callable hand path (deep links, harnesses)")
+    check('zoneFaceNormal' in js,
+          "card zones lean in FACE-ON (oblique cards break the illusion)")
+    check('.bg-gray-900' in html,
+          "the paper reskin covers the pack panel's dark constants")
     ov = _src('static', 'kitchen_overlay.js')
     for needed in ('chf-kitchen-focus', 'HeroCard.html', 'isLight: true',
                    'loadPacking', 'api/home_board', 'matrix3d',

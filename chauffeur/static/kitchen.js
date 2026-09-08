@@ -662,7 +662,7 @@
     /* ---- RADIO (zone: radio) on the countertop ------------------------- */
     var radio = zoneGroup('radio', 0.45, 0, -4.62);
     rbox(0.8, 0.45, 0.4, 0.06, C.red, 0, 1.41, 0, radio, GLOSS);
-    box(0.55, 0.28, 0.03, 0xf2e3b8, -0.06, 1.42, 0.21, radio, { rough: 0.95 });
+    var radioFace = box(0.55, 0.28, 0.03, 0xf2e3b8, -0.06, 1.42, 0.21, radio, { rough: 0.95 });
     cyl(0.035, 0.035, 0.1, C.steel, 0.28, 1.68, 0, radio, 8, CHROME);
     var needle = box(0.04, 0.22, 0.04, 0x3a332a, 0.28, 1.78, 0, radio);
 
@@ -707,10 +707,14 @@
     }
     stool(1.9, 0.5); stool(1.9, 1.5);
 
-    /* pendant lamps over the island: warm emissive shades */
+    /* pendant lamps over the island: warm emissive shades. Grouped so a
+       lean-in can hide them — a cord across a focused card breaks the
+       card-on-the-surface illusion. */
+    var pendants = new T.Group();
+    scene.add(pendants);
     if (DETAIL >= 3) {
       [-1.1, 0.4].forEach(function (px) {
-        var cord = cyl(0.008, 0.008, 1.4, 0x8a8178, px, 4.9, 0.9, null, 6);
+        var cord = cyl(0.008, 0.008, 1.4, 0x8a8178, px, 4.9, 0.9, pendants, 6);
         cord.castShadow = false;   // a hair-thin cord throws a room-long streak
         var shade = new T.Mesh(new T.CylinderGeometry(0.3, 0.42, 0.34, 18, 1, true),
           new T.MeshStandardMaterial({ color: 0xf0e3c8, roughness: 0.7,
@@ -718,7 +722,7 @@
                                        side: T.DoubleSide }));
         shade.position.set(px, 4.05, 0.9);
         shade.castShadow = false;
-        scene.add(shade);
+        pendants.add(shade);
       });
     }
 
@@ -995,7 +999,8 @@
       T: T, scene: scene, cam: cam, R: R, groups: groups,
       steam: steam, steam2: steam2, needle: needle, plaque: plaque,
       calFace: calFace, boardFace: boardFace, magnets: magnets,
-      critFace: critFace, critterTex: critterTex,
+      critFace: critFace, critterTex: critterTex, pendants: pendants,
+      radioFace: radioFace,
       paneMesh: paneMesh, heroTex: heroTex, calendarTex: calendarTex,
       boardTex: boardTex, weatherTex: weatherTex, clearPaint: clearPaint,
       HOME_POS: HOME_POS, HOME_AT: HOME_AT
@@ -1131,6 +1136,8 @@
        and the room must not say the same thing twice at two sizes */
     webgl.plaque.visible = focused !== 'door';
     webgl.magnets.visible = focused !== 'fridge';
+    /* leaned in, the pendants get out of the sightline entirely */
+    if (webgl.pendants) webgl.pendants.visible = !focused;
     swap(webgl.plaque, webgl.heroTex(s.door || {}));
     swap(webgl.calFace, webgl.calendarTex(
       focused === 'calendar' ? { __blank: true } : (s.calendar || {})));
@@ -1156,7 +1163,32 @@
     requestFrame();
   }
 
-  /* ---- focus-then-through (universal lean-in, generic bbox framing) ----- */
+  /* ---- focus-then-through (lean-in; card zones approach FACE-ON) ------- */
+  /* Which mesh/axis carries a zone's card face — shared by the framing
+     (approach along the normal, so the pasted card is seen square) and by
+     the quad the page layer maps onto. */
+  var FACE_MESH_MAP = { window: 'paneMesh', pet: 'critFace',
+                        calendar: 'calFace', board: 'boardFace',
+                        radio: 'radioFace' };
+  var FACE_AXIS_MAP = { fridge: ['z', 1], board: ['x', 1], counter: ['z', 1],
+                        pet: ['z', 1], radio: ['z', 1], door: ['z', 1] };
+
+  function zoneFaceNormal(key) {
+    if (!webgl) return null;
+    var fmesh = FACE_MESH_MAP[key] && webgl[FACE_MESH_MAP[key]];
+    if (fmesh && fmesh.getWorldQuaternion) {
+      /* a plane's front is its local +z; the cork face's rotation carries
+         it to +x, the laptop screen's tilt carries it up-forward */
+      return new webgl.T.Vector3(0, 0, 1)
+        .applyQuaternion(fmesh.getWorldQuaternion(new webgl.T.Quaternion()));
+    }
+    var o = FACE_AXIS_MAP[key];
+    if (!o) return null;
+    var v = new webgl.T.Vector3();
+    v[o[0]] = o[1];
+    return v;
+  }
+
   function frameZone(key, cb) {
     var g = webgl.groups[key];
     var boxb = new webgl.T.Box3().setFromObject(g);
@@ -1164,7 +1196,14 @@
     var size3 = boxb.getSize(new webgl.T.Vector3());
     var span = Math.max(size3.x, size3.y, size3.z);
     var dist = (span / 2) / Math.tan((webgl.cam.fov / 2) * Math.PI / 180) * 1.45 + 0.8;
-    var dir = new webgl.T.Vector3().subVectors(webgl.cam.position, center).normalize();
+    /* a zone with a card face is approached ALONG that face's normal (a
+       touch of height mixed in so the room keeps its depth): an oblique
+       wall card reads as a misaligned web element; a square one reads as
+       part of the surface */
+    var fn = zoneFaceNormal(key);
+    var dir = fn
+      ? fn.clone().add(new webgl.T.Vector3(0, 0.22, 0)).normalize()
+      : new webgl.T.Vector3().subVectors(webgl.cam.position, center).normalize();
     var toP = center.clone().add(dir.multiplyScalar(dist));
     toP.y = Math.max(toP.y, center.y + 0.6);
     tween = { fromP: webgl.cam.position.clone(), toP: toP,
@@ -1215,15 +1254,12 @@
     /* the camera-facing face across the box's THINNEST axis — except for
        props where that guess is wrong (a fridge is deep, a laptop's screen
        tilts): those name their outward face explicitly */
-    var FACE_OVERRIDE = { fridge: ['z', 1], board: ['x', 1],
-                          counter: ['z', 1], pet: ['z', 1] };
     /* Some zones name the exact MESH their card sits on: the window's
        glass (the zone bbox is dominated by the valance) and the laptop's
        tilted screen (an axis-aligned bbox face floats in front of it).
        A PlaneGeometry's four corners, world-transformed, give the TRUE
        quad — tilt included. */
-    var FACE_MESH = { window: 'paneMesh', pet: 'critFace' };
-    var fm = FACE_MESH[key] && webgl[FACE_MESH[key]];
+    var fm = FACE_MESH_MAP[key] && webgl[FACE_MESH_MAP[key]];
     if (fm && fm.geometry && fm.geometry.parameters
         && fm.geometry.parameters.width) {
       fm.updateWorldMatrix(true, false);
@@ -1246,7 +1282,7 @@
     }
     var size = b.getSize(new webgl.T.Vector3());
     var c = b.getCenter(new webgl.T.Vector3());
-    var ovr = FACE_OVERRIDE[key];
+    var ovr = FACE_AXIS_MAP[key];
     var axis = ovr ? ovr[0]
              : (size.x <= size.y && size.x <= size.z) ? 'x'
              : (size.y <= size.z ? 'y' : 'z');
