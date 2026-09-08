@@ -1,3 +1,4 @@
+{% import 'components/packing_card.html' as packing %}
 <!DOCTYPE html>
 <html lang="en" class="dark">
 
@@ -38,6 +39,17 @@
           text-decoration: none; }
         .frow .sig { color: #f0b86e; font-size: 13px; }
         .frow.calm .sig { color: #93a678; }
+        /* focus overlay: the board's own card, laid onto the furniture the
+           camera just framed. Page-layer chrome — the room only announces
+           focus (chf-kitchen-focus); static/kitchen_overlay.js draws. */
+        #focus-overlay { position: absolute; z-index: 30; display: none; opacity: 0;
+          transform: translateY(6px); transition: opacity .22s ease, transform .22s ease;
+          pointer-events: none; background: rgba(26,21,13,.94); border: 1px solid #74603f;
+          border-radius: 12px; padding: 12px 14px; overflow: hidden;
+          -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
+          mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent); }
+        #focus-overlay.on { opacity: 1; transform: none; }
+        #overlay-door, #overlay-calendar { display: none; }
     </style>
     <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
 </head>
@@ -50,12 +62,27 @@
         <div id="room"></div>
         <div id="fallback"><div id="fallback-rows"></div></div>
         <div id="tip"></div><div id="chip"></div>
+        <!-- The lean-in detail, drawn by the board's own builders: the door
+             wears the hero card (the screensaver's compact form), the wall
+             calendar wears the Family Day card in the board's own read-only
+             mode. Display only — pointer-events: none — so the room's own
+             second-tap-through still works underneath. -->
+        <div id="focus-overlay">
+            <div id="overlay-door"></div>
+            <div id="overlay-calendar"
+                x-data="packingCard({ data: { interactive: false, days: 1 } }, (window.chfBase !== undefined ? window.chfBase : ''))">
+                {{ packing.rows() }}
+            </div>
+        </div>
     </div>
     {% include 'components/control_center.html' %}
     {% include 'components/moments_hearth.html' %}
+    {% include 'components/agenda_row.html' %}
+    {% include 'components/packing_card.html' %}
 
     <script>window.KITCHEN_STATE_URL = (window.chfBase !== undefined ? window.chfBase : '') + 'api/kitchen/state';</script>
     <script src="{{ 'static/vendor/three.min.js'|ver }}"></script>
     <script src="{{ 'static/kitchen.js'|ver }}"></script>
+    <script src="{{ 'static/kitchen_overlay.js'|ver }}"></script>
 </body>
 </html>

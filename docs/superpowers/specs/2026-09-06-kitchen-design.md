@@ -110,3 +110,20 @@ the lens).
   the user will optimize later if the panel stutters — fallback is the net.
 - Radio via `ma_api.command('players')` inside try/except: MA absent →
   calm zone (HA-degrades-gracefully rule).
+
+
+## Addendum — focus overlay (v2.459.0, two-zone proof)
+
+The lean-in now wears the board's own cards: door → hero card
+(`HeroCard.html(next, {compact: true})`, the screensaver's renderer),
+wall calendar → Family Day card (`packingCard`, `interactive: false`).
+The room stays pure — kitchen.js only dispatches `chf-kitchen-focus`
+(zone + projected rect); `static/kitchen_overlay.js` draws, display-only
+(pointer-events: none), so tap-through is unchanged.
+
+Law 4 nuance, on purpose: the IDLE room still speaks to one endpoint.
+Overlay payloads are fetched lazily on the first lean-in only, from
+existing WALL-tier surfaces (`/api/home_board`, `/api/packing/day`) —
+no new server code, no second renderer. Remaining zones map the same
+way later if the proof earns it (fridge→moments, corkboard→shopping,
+counter→meals, radio→music, pet bowl→pets).

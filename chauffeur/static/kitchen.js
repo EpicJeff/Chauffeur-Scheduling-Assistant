@@ -1003,6 +1003,7 @@
     webgl.R.setSize(w, h, false);
     webgl.cam.aspect = w / h;
     webgl.cam.updateProjectionMatrix();
+    if (focused && !tween) announceFocus(focused);
     requestFrame();
   }
 
@@ -1106,7 +1107,37 @@
               t0: performance.now(), ms: 650, cb: null };
     focused = null;
     TIP.style.opacity = 0;
+    announceFocus(null);
     requestFrame();
+  }
+
+  /* Where a zone sits on the SCREEN, so the page layer can lay the board's
+     own card over the furniture the camera just framed. The room never
+     draws HTML; it only announces (chf-kitchen-focus, zone + rect). */
+  function zoneScreenRect(key) {
+    var g = webgl.groups[key];
+    if (!g) return null;
+    webgl.cam.updateMatrixWorld();
+    webgl.cam.matrixWorldInverse.copy(webgl.cam.matrixWorld).invert();
+    var b = new webgl.T.Box3().setFromObject(g);
+    var w = ROOT.clientWidth || 1, h = ROOT.clientHeight || 1;
+    var xs = [b.min.x, b.max.x], ys = [b.min.y, b.max.y], zs = [b.min.z, b.max.z];
+    var minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+    for (var i = 0; i < 2; i++) for (var j = 0; j < 2; j++) for (var k = 0; k < 2; k++) {
+      var v = new webgl.T.Vector3(xs[i], ys[j], zs[k]).project(webgl.cam);
+      var sx = (v.x + 1) / 2 * w, sy = (1 - v.y) / 2 * h;
+      if (sx < minX) minX = sx; if (sx > maxX) maxX = sx;
+      if (sy < minY) minY = sy; if (sy > maxY) maxY = sy;
+    }
+    return { left: minX, top: minY, width: maxX - minX, height: maxY - minY };
+  }
+
+  function announceFocus(key) {
+    var rect = (key && webgl) ? zoneScreenRect(key) : null;
+    try {
+      window.dispatchEvent(new CustomEvent('chf-kitchen-focus',
+        { detail: { zone: rect ? key : null, rect: rect } }));
+    } catch (e) { /* an ancient browser without CustomEvent just gets the tip */ }
   }
 
   function zoneAt(clientX, clientY) {
@@ -1133,6 +1164,7 @@
     if (focused === key) { go(ZONES[key].url); return; }   // second tap: through
     focused = key;
     frameZone(key, function () {
+      announceFocus(key);
       if (state) {
         TIP.textContent = ZONES[key].label + ' — ' + ZONES[key].headline(state);
         TIP.style.left = '16px';
@@ -1178,6 +1210,7 @@
     webgl.R.domElement.addEventListener('webglcontextlost', function (e) {
       e.preventDefault();
       /* the graceful death: swap to the calm 2D room, stop asking the GPU */
+      announceFocus(null);
       try { ROOT.style.display = 'none'; } catch (err) {}
       webgl = null;
       drawFallback(state);
