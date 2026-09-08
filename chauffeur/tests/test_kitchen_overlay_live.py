@@ -106,6 +106,63 @@ def scenario_overlay_lives_on_the_real_page():
         check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
 
 
+def scenario_the_real_lean_in_wears_the_card():
+    """The vision, end to end: the tap's own camera move (chfKitchenFocus
+    drives the exact frameZone path), then the board's card ON the framed
+    furniture — filling the zone's projected rect, not the old centred
+    toast. Skipped politely when this machine's chromium has no WebGL,
+    because then there is no room to lean into (the 2D fallback owns the
+    page and draws its own detail)."""
+    served = live_app()
+    if served is None:
+        return
+    _seed()
+    shots = os.environ.get('KITCHEN_SHOTS', '')
+    with served.browser() as page:
+        page.goto(served.url('kitchen'))
+        page.wait_for_timeout(1800)   # boot, benchmark warmup, first paint
+        has_room = page.evaluate(
+            "!!document.querySelector('#room canvas') && "
+            "typeof window.chfKitchenFocus === 'function'")
+        if not has_room:
+            print("  skip  no WebGL room here — the fallback owns the page")
+            return
+
+        page.evaluate(
+            "window.__rect = null;"
+            "window.addEventListener('chf-kitchen-focus',"
+            " e => { if (e.detail && e.detail.rect) window.__rect = e.detail.rect; })")
+        page.evaluate("window.chfKitchenFocus('calendar')")
+        page.wait_for_selector('#overlay-calendar .agenda-event', timeout=8000)
+        page.wait_for_timeout(450)    # tween settled + fade done
+        geo = page.evaluate(
+            "(() => { const r = document.getElementById('focus-overlay')"
+            ".getBoundingClientRect();"
+            " return { l: r.left, w: r.width, z: window.__rect }; })()")
+        check(geo['z'] is not None, "the room announced the framed rect")
+        ov_cx = geo['l'] + geo['w'] / 2
+        zone_cx = geo['z']['left'] + geo['z']['width'] / 2
+        check(abs(ov_cx - zone_cx) < 48,
+              "the card sits ON the framed furniture, centred on its face")
+        check(geo['w'] >= 300, "the card stays readable")
+        if shots:
+            page.screenshot(path=os.path.join(shots, 'kitchen_calendar_leanin.png'))
+
+        page.evaluate("window.chfKitchenFocus('door')")
+        page.wait_for_selector('#overlay-door >> text=Soccer practice',
+                               timeout=8000)
+        page.wait_for_timeout(450)
+        check(not page.is_visible('#overlay-calendar'),
+              "switching zones swaps the card, never stacks them")
+        if shots:
+            page.screenshot(path=os.path.join(shots, 'kitchen_door_leanin.png'))
+
+        errs = [e for e in served.errors()
+                if 'WebGL' not in e and 'GroupMarker' not in e]
+        check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
+
+
 if __name__ == '__main__':
     scenario_overlay_lives_on_the_real_page()
+    scenario_the_real_lean_in_wears_the_card()
     print("test_kitchen_overlay_live OK")

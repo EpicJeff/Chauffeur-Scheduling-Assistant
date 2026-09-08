@@ -1113,30 +1113,77 @@
 
   /* Where a zone sits on the SCREEN, so the page layer can lay the board's
      own card over the furniture the camera just framed. The room never
-     draws HTML; it only announces (chf-kitchen-focus, zone + rect). */
-  function zoneScreenRect(key) {
+     draws HTML; it only announces (chf-kitchen-focus: zone, bbox rect, and
+     the projected QUAD of the prop's camera-facing face — wall furniture
+     is a thin box, so that face lies across the box's thinnest axis. The
+     quad is what lets the page layer paste a card ON the surface in the
+     room's own perspective rather than floating one in front of it). */
+  function _project(v3, w, h) {
+    var v = v3.clone().project(webgl.cam);
+    return { x: (v.x + 1) / 2 * w, y: (1 - v.y) / 2 * h, z: v.z };
+  }
+
+  function zoneFaceQuad(key) {
     var g = webgl.groups[key];
     if (!g) return null;
     webgl.cam.updateMatrixWorld();
     webgl.cam.matrixWorldInverse.copy(webgl.cam.matrixWorld).invert();
     var b = new webgl.T.Box3().setFromObject(g);
     var w = ROOT.clientWidth || 1, h = ROOT.clientHeight || 1;
+
+    /* bbox rect stays: guards, harnesses, any zone without a clean face */
     var xs = [b.min.x, b.max.x], ys = [b.min.y, b.max.y], zs = [b.min.z, b.max.z];
     var minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
     for (var i = 0; i < 2; i++) for (var j = 0; j < 2; j++) for (var k = 0; k < 2; k++) {
-      var v = new webgl.T.Vector3(xs[i], ys[j], zs[k]).project(webgl.cam);
-      var sx = (v.x + 1) / 2 * w, sy = (1 - v.y) / 2 * h;
-      if (sx < minX) minX = sx; if (sx > maxX) maxX = sx;
-      if (sy < minY) minY = sy; if (sy > maxY) maxY = sy;
+      var p = _project(new webgl.T.Vector3(xs[i], ys[j], zs[k]), w, h);
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
     }
-    return { left: minX, top: minY, width: maxX - minX, height: maxY - minY };
+    var rect = { left: minX, top: minY, width: maxX - minX, height: maxY - minY };
+
+    /* the camera-facing face across the box's THINNEST axis */
+    var size = b.getSize(new webgl.T.Vector3());
+    var c = b.getCenter(new webgl.T.Vector3());
+    var axis = (size.x <= size.y && size.x <= size.z) ? 'x'
+             : (size.y <= size.z ? 'y' : 'z');
+    var toCam = new webgl.T.Vector3().subVectors(webgl.cam.position, c);
+    var fixed = toCam[axis] >= 0 ? b.max[axis] : b.min[axis];
+    var A = axis === 'x' ? ['y', 'z'] : (axis === 'y' ? ['x', 'z'] : ['x', 'y']);
+    var quad = [];
+    var bad = false;
+    [[b.min[A[0]], b.min[A[1]]], [b.max[A[0]], b.min[A[1]]],
+     [b.max[A[0]], b.max[A[1]]], [b.min[A[0]], b.max[A[1]]]].forEach(function (uv) {
+      var v3 = new webgl.T.Vector3();
+      v3[axis] = fixed; v3[A[0]] = uv[0]; v3[A[1]] = uv[1];
+      var p = _project(v3, w, h);
+      if (p.z > 1 || p.z < -1) bad = true;
+      quad.push(p);
+    });
+    if (bad) return { rect: rect, quad: null };
+    /* order in SCREEN space: the top pair then the bottom pair, left first */
+    quad.sort(function (a, b2) { return a.y - b2.y; });
+    var top = quad.slice(0, 2).sort(function (a, b2) { return a.x - b2.x; });
+    var bot = quad.slice(2, 4).sort(function (a, b2) { return a.x - b2.x; });
+    return { rect: rect, quad: [top[0], top[1], bot[1], bot[0]] };
   }
 
+  /* The tap's own lean-in, callable by zone name — the hand path a
+     deep-link or a harness needs. Read-only: it moves the camera and
+     announces; it never taps through. */
+  window.chfKitchenFocus = function (key) {
+    if (!webgl || !ZONES[key]) return;
+    focused = key;
+    announceFocus(null);
+    frameZone(key, function () { announceFocus(key); });
+  };
+
   function announceFocus(key) {
-    var rect = (key && webgl) ? zoneScreenRect(key) : null;
+    var shape = (key && webgl) ? zoneFaceQuad(key) : null;
     try {
       window.dispatchEvent(new CustomEvent('chf-kitchen-focus',
-        { detail: { zone: rect ? key : null, rect: rect } }));
+        { detail: { zone: shape ? key : null,
+                    rect: shape ? shape.rect : null,
+                    quad: shape ? shape.quad : null } }));
     } catch (e) { /* an ancient browser without CustomEvent just gets the tip */ }
   }
 
@@ -1163,6 +1210,7 @@
     if (!key) { if (focused) goHome(); return; }
     if (focused === key) { go(ZONES[key].url); return; }   // second tap: through
     focused = key;
+    announceFocus(null);   /* the old card must not ride the camera move */
     frameZone(key, function () {
       announceFocus(key);
       if (state) {
