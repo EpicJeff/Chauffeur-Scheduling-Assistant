@@ -39,7 +39,7 @@ def scenario_overlay_layer_present_and_wired():
     check('chfKitchenFocus' in js,
           "the lean-in has a callable hand path (deep links, harnesses)")
     ov = _src('static', 'kitchen_overlay.js')
-    for needed in ('chf-kitchen-focus', 'HeroCard.html', 'compact: true',
+    for needed in ('chf-kitchen-focus', 'HeroCard.html', 'isLight: true',
                    'loadPacking', 'api/home_board', 'matrix3d'):
         check(needed in ov, f"kitchen_overlay.js carries {needed}")
     check('quad' in _src('static', 'kitchen.js'),

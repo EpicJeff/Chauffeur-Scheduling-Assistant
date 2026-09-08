@@ -136,11 +136,11 @@
                   var t = (w.temp !== null && w.temp !== undefined) ? Math.round(w.temp) + '\u00b0 ' : '';
                   return t + w.cond + (w.calm === false ? ' \u2014 plan for it' : '');
                 } },
-    pet:      { label: 'Pet bowl',      url: 'chores',
+    pet:      { label: 'Critters',      url: 'chores',
                 num: function (s) { return (s.pet || {}).count || 0; },
                 headline: function (s) {
                   var p = s.pet || {};
-                  if (p.calm) return 'No pets at the bowl.';
+                  if (p.calm) return 'The critters are resting.';
                   return (p.pets || []).map(function (x) {
                     return x.name + ' (lv ' + x.level + ')';
                   }).join(', ');
@@ -722,20 +722,24 @@
       });
     }
 
-    /* ---- PET CORNER (zone: pet): mat, food bowl, water bowl, kibble ----- */
-    var bowl = zoneGroup('pet', -5.2, 0, 2.8);
-    rbox(1.6, 0.03, 1.0, 0.01, 0x9a8a74, 0, 0.02, 0, bowl, { rough: 0.98 });
-    cyl(0.3, 0.22, 0.16, C.red, -0.35, 0.1, 0, bowl, 16, GLOSS);
-    cyl(0.24, 0.24, 0.05, 0x7a5638, -0.35, 0.17, 0, bowl, 16);
-    cyl(0.3, 0.22, 0.16, C.teal, 0.35, 0.1, 0.05, bowl, 16, GLOSS);
-    var water = cyl(0.24, 0.24, 0.04, 0x9fd4e8, 0.35, 0.17, 0.05, bowl, 16,
-                    { rough: 0.1, metal: 0.05, envInt: 0.9 });
-    if (DETAIL >= 2) {
-      cyl(0.03, 0.03, 0.03, 0x8a6335, -0.05, 0.04, 0.25, bowl, 6);
-      cyl(0.03, 0.03, 0.03, 0x8a6335, 0.02, 0.04, -0.3, bowl, 6);
-      cyl(0.03, 0.03, 0.03, 0x8a6335, -0.6, 0.04, -0.15, bowl, 6);
-    }
-    blobShadow(0.85, 0.55, -5.2, 2.8);
+    /* ---- CRITTER LAPTOP (zone: pet): the game lives on a screen -------
+       Critters are a rudimentary Pokemon, not a care loop — and not the
+       family's real pets, so no bowl pretending otherwise. A laptop sits
+       on the island the way a kid leaves one, its screen carrying the
+       roster. */
+    var crit = zoneGroup('pet', -1.55, 0, 1.45);
+    rbox(0.66, 0.035, 0.46, 0.012, 0x2a2d34, 0, 1.225, 0.02, crit,
+         { rough: 0.35, metal: 0.4, envInt: 0.6 });
+    var lid = rbox(0.66, 0.44, 0.028, 0.012, 0x2a2d34, 0, 1.44, -0.24, crit,
+                   { rough: 0.35, metal: 0.4, envInt: 0.6 });
+    lid.rotation.x = -0.30;
+    lid.position.y = 1.43; lid.position.z = -0.175;
+    var critFace = new T.Mesh(new T.PlaneGeometry(0.60, 0.38),
+                              mat(0x12151c, { rough: 0.6 }));
+    critFace.rotation.x = -0.30;
+    critFace.position.set(0, 1.4245, -0.157);
+    crit.add(critFace); finish(critFace);
+    blobShadow(0.42, 0.30, -1.55, 1.45);
 
     /* ---- the painters: every data surface drawn like the app draws it —
        Inter type, white cards, accent bars, soft shadows. Cached per
@@ -797,7 +801,47 @@
         g.fillText('leave in ' + d.mins + ' min', 46, 258);
       });
     }
+    function critterTex(p) {
+      var calm = !p || p.calm !== false;
+      var pets = (p && p.pets) || [];
+      var payload = calm ? 'calm'
+        : pets.map(function (x) { return x.name + ':' + x.level; }).join('|');
+      return mkTex('critters', 512, 324, payload, function (g, w, h) {
+        g.fillStyle = '#12151c'; g.fillRect(0, 0, w, h);
+        g.fillStyle = '#1d2230'; g.fillRect(0, 0, w, 64);
+        g.fillStyle = '#7ee787'; g.font = '800 34px ' + FONT;
+        g.fillText('CRITTERS', 26, 44);
+        if (calm) {
+          g.fillStyle = '#4a5265'; g.font = '500 30px ' + FONT;
+          g.fillText('everyone is resting…', 26, 140);
+          return;
+        }
+        var CC = ['#f87171', '#60a5fa', '#fbbf24', '#34d399'];
+        pets.slice(0, 3).forEach(function (x, i) {
+          var y = 108 + i * 74;
+          g.fillStyle = CC[i % 4];
+          g.beginPath(); g.arc(48, y, 22, 0, Math.PI * 2); g.fill();
+          g.fillStyle = '#0d1017';
+          g.beginPath(); g.arc(41, y - 5, 4, 0, Math.PI * 2); g.fill();
+          g.beginPath(); g.arc(55, y - 5, 4, 0, Math.PI * 2); g.fill();
+          g.fillStyle = '#e6e9f2'; g.font = '700 32px ' + FONT;
+          g.fillText(String(x.name || 'Critter').slice(0, 12), 88, y + 10);
+          g.fillStyle = '#8b93a8'; g.font = '600 26px ' + FONT;
+          g.fillText('Lv ' + (x.level || 1), w - 110, y + 10);
+        });
+      });
+    }
+
     function calendarTex(c) {
+      if (c && c.__blank) {
+        /* focused: the board's own card is ON this sheet — bare paper
+           underneath, so the room never says the same thing twice */
+        return mkTex('calendar', 512, 640, 'blank', function (g, w, h) {
+          g.fillStyle = '#f6f1e4'; g.fillRect(0, 0, w, h);
+          g.fillStyle = '#111827'; g.font = '800 40px ' + FONT;
+          g.fillText('Today', 30, 66);
+        });
+      }
       var calm = !c || c.calm !== false;
       var next = (c && c.next) || [];
       var payload = calm ? 'calm' : [c.today].concat(next).join('|');
@@ -933,6 +977,7 @@
       T: T, scene: scene, cam: cam, R: R, groups: groups,
       steam: steam, steam2: steam2, needle: needle, plaque: plaque,
       calFace: calFace, boardFace: boardFace, magnets: magnets,
+      critFace: critFace, critterTex: critterTex,
       paneMesh: paneMesh, heroTex: heroTex, calendarTex: calendarTex,
       boardTex: boardTex, weatherTex: weatherTex, clearPaint: clearPaint,
       HOME_POS: HOME_POS, HOME_AT: HOME_AT
@@ -1064,8 +1109,13 @@
         mesh.material.needsUpdate = true;
       }
     }
+    /* a focused surface goes quiet: the board's card IS its detail now,
+       and the room must not say the same thing twice at two sizes */
+    webgl.plaque.visible = focused !== 'door';
     swap(webgl.plaque, webgl.heroTex(s.door || {}));
-    swap(webgl.calFace, webgl.calendarTex(s.calendar || {}));
+    swap(webgl.calFace, webgl.calendarTex(
+      focused === 'calendar' ? { __blank: true } : (s.calendar || {})));
+    swap(webgl.critFace, webgl.critterTex(s.pet || {}));
     swap(webgl.boardFace, webgl.boardTex(s.board || {}));
     swap(webgl.paneMesh, webgl.weatherTex(s.window || {}));
 
@@ -1178,6 +1228,7 @@
   };
 
   function announceFocus(key) {
+    if (webgl && state) applyState(state);   /* blank/restore the faces */
     var shape = (key && webgl) ? zoneFaceQuad(key) : null;
     try {
       window.dispatchEvent(new CustomEvent('chf-kitchen-focus',

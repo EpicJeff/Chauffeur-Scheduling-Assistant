@@ -44,13 +44,43 @@
            focus (chf-kitchen-focus); static/kitchen_overlay.js draws. */
         #focus-overlay { position: absolute; z-index: 30; display: none; opacity: 0;
           transition: opacity .22s ease; will-change: transform;
-          pointer-events: none; background: rgba(26,21,13,.94); border: 1px solid #74603f;
+          pointer-events: none; background: #f6f1e4; border: 1px solid #d9cba8;
           border-radius: 12px; padding: 12px 14px; overflow: hidden;
-          box-shadow: 0 3px 14px rgba(30,20,10,.35);
+          color: #2b2318; font-family: Inter, system-ui, sans-serif;
+          box-shadow: 0 3px 14px rgba(30,20,10,.30);
           -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
           mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent); }
         #focus-overlay.on { opacity: 1; }
         #overlay-door, #overlay-calendar { display: none; }
+        /* the board's vocabulary, in the kitchen's own paper-and-ink — the
+           same scoped-reskin idiom agenda_row.html already uses for
+           body.ha-theme. Board cards ship dark-theme constants; on the
+           room's cream paper those read as holes, so inside the overlay
+           (and only inside it) they become paper tints. */
+        #focus-overlay .panel-text { color: #2b2318; }
+        #focus-overlay .panel-dim { color: rgba(43,35,24,.60); }
+        #focus-overlay .agenda-day { background: rgba(43,35,24,.05);
+          border: 1px solid rgba(43,35,24,.12); }
+        #focus-overlay .agenda-event,
+        #focus-overlay .agenda-event:hover { background: rgba(43,35,24,.07); }
+        #focus-overlay .text-white { color: #2b2318; }
+        #focus-overlay .text-gray-100, #focus-overlay .text-gray-200,
+        #focus-overlay .text-gray-300 { color: #3a3021; }
+        #focus-overlay .text-gray-400, #focus-overlay .text-gray-500 { color: rgba(43,35,24,.55); }
+        #focus-overlay .text-gray-600 { color: rgba(43,35,24,.45); }
+        #focus-overlay .text-amber-300 { color: #92400e; }
+        #focus-overlay .text-amber-200 { color: #78350f; }
+        #focus-overlay .text-teal-300 { color: #0f766e; }
+        #focus-overlay .text-emerald-300 { color: #047857; }
+        #focus-overlay .text-blue-300 { color: #1d4ed8; }
+        #focus-overlay .bg-gray-800, #focus-overlay .bg-gray-800\/60,
+        #focus-overlay .bg-gray-900\/60 { background-color: rgba(43,35,24,.08); }
+        #focus-overlay .border-gray-700 { border-color: rgba(43,35,24,.18); }
+        /* the hero band is a wide two-column row on a board; a door is a
+           portrait surface, so its halves stack and the title wraps */
+        #overlay-door .flex-1 { flex-basis: 100%; }
+        #overlay-door .truncate { white-space: normal; overflow: visible; }
+        #overlay-door .text-right { text-align: left; }
     </style>
     <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
 </head>

@@ -46,7 +46,10 @@
 
   function renderDoor() {
     if (!hero || !window.HeroCard) { DOOR.innerHTML = ''; return; }
-    DOOR.innerHTML = HeroCard.html(hero, { compact: true });
+    /* the BOARD's own band (not the screensaver's dark scrim): its inks are
+       panel-text/panel-dim, which kitchen.html defines inside the overlay
+       as the room's own paper-and-ink palette */
+    DOOR.innerHTML = HeroCard.html(hero, { isLight: true });
   }
 
   /* ---- pasting the card ONTO the surface -------------------------------
