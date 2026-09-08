@@ -34,9 +34,14 @@ def scenario_overlay_layer_present_and_wired():
           "the generic island mounts the board's own tile body")
     check("include 'components/shopping_lists.html'" in html,
           "the shopping factory script is emitted once")
+    for comp in ('family_calendar', 'pet_editor', 'pet_battle', 'music_widget'):
+        check(f"include 'components/{comp}.html'" in html,
+              f"the {comp} component rides along (interactive lean-ins)")
     for needed in ('id="focus-overlay"', 'id="overlay-door"',
                    'id="overlay-calendar"', 'id="overlay-tile"',
-                   'kitchenTileIsland', 'kitchen_overlay.js'):
+                   'id="overlay-music"', 'id="overlay-open"',
+                   'kitchenTileIsland', 'kitchen_overlay.js',
+                   'pointer-events: auto'):
         check(needed in html, f"kitchen.html carries {needed}")
     js = _src('static', 'kitchen.js')
     check('chf-kitchen-focus' in js,
@@ -47,7 +52,7 @@ def scenario_overlay_layer_present_and_wired():
     for needed in ('chf-kitchen-focus', 'HeroCard.html', 'isLight: true',
                    'loadPacking', 'api/home_board', 'matrix3d',
                    'moments,shopping_list,meals,pets,weather',
-                   'tile.data.interactive = false'):
+                   'startMusicWidget', 'openBoardMoment'):
         check(needed in ov, f"kitchen_overlay.js carries {needed}")
     check('quad' in _src('static', 'kitchen.js'),
           "the room announces the face quad the transform maps onto")
@@ -64,8 +69,9 @@ def scenario_overlay_never_writes_and_stays_escaped():
         check('HeroCard.html(' in s or s.strip() == "''",
               "every innerHTML is the shared escaping hero builder (or a clear)")
     html = _src('templates', 'kitchen.html')
-    check('interactive: false' in html,
-          "the island mounts the board's read-only mode, pinned literally")
+    check('interactive: true' in html,
+          "the Family Day island mounts the board's interactive mode — the "
+          "cards ARE the board here; writes ride the board's own endpoints")
 
 
 def scenario_overlay_sources_stay_wall_reachable():

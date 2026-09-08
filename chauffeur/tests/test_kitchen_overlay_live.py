@@ -85,8 +85,10 @@ def scenario_overlay_lives_on_the_real_page():
         check(page.is_visible('#focus-overlay'), "overlay shows on calendar focus")
         check('Soccer practice' in page.inner_text('#overlay-calendar'),
               "the Family Day card names the seeded event")
-        check(page.locator('#overlay-calendar button').count() == 0,
-              "read-only island draws no write affordance")
+        check(page.evaluate(
+                  "Alpine.$data(document.getElementById('overlay-calendar'))"
+                  ".pkInteractive") is True,
+              "the Family Day island mounts interactive — the card IS the board")
         if shots:
             page.screenshot(path=os.path.join(shots, 'kitchen_calendar_overlay.png'))
 
@@ -216,8 +218,12 @@ def scenario_other_zones_wear_their_cards():
         live_buttons = page.evaluate(
             "Array.from(document.querySelectorAll('#overlay-tile button'))"
             ".filter(b => b.offsetParent !== null && !b.disabled).length")
-        check(live_buttons == 0,
-              "the shopping card mounts read-only: every affordance disabled")
+        check(live_buttons > 0,
+              "the shopping card mounts interactive: real ticks, enabled")
+        check(page.evaluate(
+                  "document.getElementById('overlay-open').getAttribute('href')"
+                  ".indexOf('lists') !== -1"),
+              "the open chip is the door to the zone's own page")
         if shots:
             page.screenshot(path=os.path.join(shots, 'kitchen_board_leanin.png'))
 
@@ -227,6 +233,12 @@ def scenario_other_zones_wear_their_cards():
               "zone switch swaps the mounted card")
         if shots:
             page.screenshot(path=os.path.join(shots, 'kitchen_window_leanin.png'))
+
+        # the radio wears the real Music Assistant player widget
+        page.evaluate("window.chfKitchenFocus('radio')")
+        page.wait_for_timeout(1400)
+        check(page.is_visible('#overlay-music'),
+              "the radio wears the music widget (player half)")
 
         # nothing seeded for moments: the fridge keeps its tip-only lean-in
         page.evaluate("window.chfKitchenFocus('fridge')")

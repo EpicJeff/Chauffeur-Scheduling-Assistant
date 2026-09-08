@@ -40,6 +40,13 @@ window.kitchenTileIsland = function () {
       var u = (m && (m.poster_url || m.media_url)) || att.url || '';
       return u ? base + String(u).replace(/^\//, '') : (att.data_url || '');
     },
+    openBoardMoment: function (ev, m) {
+      /* the same full-screen overlay a fresh moment pops on the wall —
+         moments_hearth is already on this page */
+      if (typeof window.showMomentOverlayKiosk === 'function') {
+        window.showMomentOverlayKiosk(m);
+      }
+    },
     link: function () { return '#'; },
     tone: function (hex, fb) {
       return window.HeroCard ? HeroCard.tone(hex, fb, true) : (hex || fb);
@@ -55,7 +62,15 @@ window.kitchenTileIsland = function () {
   var DOOR = document.getElementById('overlay-door');
   var CAL = document.getElementById('overlay-calendar');
   var TILE = document.getElementById('overlay-tile');
+  var MUSIC = document.getElementById('overlay-music');
+  var OPEN = document.getElementById('overlay-open');
   if (!WRAP || !OV || !DOOR || !CAL || !TILE) return;
+
+  /* where the open-chip goes: the zone's own family page. Card taps now do
+     card things, so the ↗ is the door through. */
+  var PAGES = { door: 'home', calendar: 'calendar', fridge: 'moments',
+                board: 'lists', counter: 'meals', pet: 'chores',
+                window: 'calendar', radio: 'music' };
 
   /* which board tile a zone wears on focus */
   var ZONE_TILES = { fridge: 'moments', board: 'shopping_list',
@@ -70,7 +85,7 @@ window.kitchenTileIsland = function () {
   var hero = null;
   var BOARD_TTL = 60000;
 
-  function fetchBoard(cb) {
+  function fetchBoard(cb, isRetry) {
     if (payload !== null && Date.now() - payloadAt < BOARD_TTL) { cb(payload); return; }
     fetch(BASE + 'api/home_board?widgets=' + WIDGETS, { credentials: 'same-origin' })
       .then(function (r) {
@@ -85,7 +100,16 @@ window.kitchenTileIsland = function () {
         hero = (!h.all_done && h.next) ? h.next : false;
         cb(payload);
       })
-      .catch(function () { cb(null); });
+      .catch(function () {
+        /* one retry: a page's very first request is occasionally aborted
+           (proxied setups, cold connections) and a lean-in should not
+           lose its card to that */
+        if (!isRetry) {
+          setTimeout(function () { fetchBoard(cb, true); }, 350);
+        } else {
+          cb(null);
+        }
+      });
   }
 
   function renderDoor() {
@@ -147,6 +171,7 @@ window.kitchenTileIsland = function () {
      content, never less than `min` of the face. */
   var LAYOUT = {
     calendar: { mode: 'fill', top: 0.17, bottom: 0.97 },
+    radio: { mode: 'fit', top: null, min: 0.5 },
     door: { mode: 'fit', top: 0.07, min: 0.30 },
     fridge: { mode: 'fill', top: 0.06, bottom: 0.94 },
     board: { mode: 'fill', top: 0.07, bottom: 0.93 },
@@ -221,7 +246,12 @@ window.kitchenTileIsland = function () {
   function show(zone, d) {
     DOOR.style.display = zone === 'door' ? 'block' : 'none';
     CAL.style.display = zone === 'calendar' ? 'block' : 'none';
-    TILE.style.display = ZONE_TILES[zone] ? 'block' : 'none';
+    TILE.style.display = ZONE_TILES[zone] ? 'flex' : 'none';   /* flex: the height chain collage grids need */
+    if (MUSIC) MUSIC.style.display = zone === 'radio' ? 'block' : 'none';
+    if (OPEN) {
+      OPEN.href = PAGES[zone] ? BASE + PAGES[zone] : '#';
+      OPEN.style.display = PAGES[zone] ? '' : 'none';
+    }
     if (d.quad) placeQuad(d.quad, zone); else place(d.rect);
     requestAnimationFrame(function () { OV.classList.add('on'); });
   }
@@ -237,6 +267,7 @@ window.kitchenTileIsland = function () {
     DOOR.style.display = 'none';
     CAL.style.display = 'none';
     TILE.style.display = 'none';
+    if (MUSIC) MUSIC.style.display = 'none';
     var c = tileScope();
     if (c && c.t) c.t = null;
     if (heroTick) { clearInterval(heroTick); heroTick = null; }
@@ -260,6 +291,13 @@ window.kitchenTileIsland = function () {
         if (comp && comp.loadPacking) comp.loadPacking();
       } catch (e) { /* island not up: the room's own tip still answers */ }
       show('calendar', d);
+    } else if (d.zone === 'radio' && MUSIC) {
+      if (!MUSIC.__started && typeof window.startMusicWidget === 'function') {
+        MUSIC.__started = true;
+        try { window.startMusicWidget(); } catch (e) { /* MA absent: the
+          widget's own empty states answer */ }
+      }
+      show('radio', d);
     } else if (ZONE_TILES[d.zone]) {
       var want = ZONE_TILES[d.zone];
       fetchBoard(function (b) {
@@ -271,8 +309,6 @@ window.kitchenTileIsland = function () {
         /* a quiet tile keeps the tip: an empty card on a wall answers
            nothing the one-line headline was not already answering */
         if (!tile || !tile.data || tile.data.empty) { hide(); return; }
-        tile.data.interactive = false;   /* display only, always */
-        if (tile.config) tile.config.interactive = false;
         var c = tileScope();
         if (!c) { hide(); return; }
         c.t = tile;

@@ -127,3 +127,13 @@ existing WALL-tier surfaces (`/api/home_board`, `/api/packing/day`) —
 no new server code, no second renderer. Remaining zones map the same
 way later if the proof earns it (fridge→moments, corkboard→shopping,
 counter→meals, radio→music, pet bowl→pets).
+
+### Interactivity (v2.462.0, supersedes the read-only note above)
+
+The user's ruling: the cards ARE the interface — read-only was jumping
+through to pages for things the card already knows. Law 3 is re-scoped,
+not broken: THE ROOM never writes (kitchen.js / kitchen_room.py, still
+pinned); the board cards it wears write through the board's own
+WALL-tier endpoints, as on every panel. The ↗ chip is the tap-through
+now; card taps do card things (ticks, carets, event details dialog,
+pet editor/battle, moment overlay, the real music player on the radio).

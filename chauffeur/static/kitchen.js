@@ -728,18 +728,17 @@
        on the island the way a kid leaves one, its screen carrying the
        roster. */
     var crit = zoneGroup('pet', -1.55, 0, 1.45);
-    rbox(0.66, 0.035, 0.46, 0.012, 0x2a2d34, 0, 1.225, 0.02, crit,
+    rbox(0.66, 0.035, 0.46, 0.012, 0x2a2d34, 0, 1.24, 0.02, crit,
          { rough: 0.35, metal: 0.4, envInt: 0.6 });
     var lid = rbox(0.66, 0.44, 0.028, 0.012, 0x2a2d34, 0, 1.44, -0.24, crit,
                    { rough: 0.35, metal: 0.4, envInt: 0.6 });
     lid.rotation.x = -0.30;
-    lid.position.y = 1.43; lid.position.z = -0.175;
+    lid.position.y = 1.445; lid.position.z = -0.175;
     var critFace = new T.Mesh(new T.PlaneGeometry(0.60, 0.38),
                               mat(0x12151c, { rough: 0.6 }));
     critFace.rotation.x = -0.30;
-    critFace.position.set(0, 1.4245, -0.157);
+    critFace.position.set(0, 1.4395, -0.157);
     crit.add(critFace); finish(critFace);
-    blobShadow(0.42, 0.30, -1.55, 1.45);
 
     /* ---- the painters: every data surface drawn like the app draws it —
        Inter type, white cards, accent bars, soft shadows. Cached per
@@ -919,9 +918,7 @@
     }
     function weatherTex(wz) {
       var cond = (wz && wz.cond) || '';
-      /* focused: the forecast card is ON the glass — sky stays (scenery),
-         the painted number goes quiet (data) */
-      var temp = (wz && !wz.__blank && wz.temp !== null && wz.temp !== undefined)
+      var temp = (wz && wz.temp !== null && wz.temp !== undefined)
         ? Math.round(wz.temp) : null;
       var hour = new Date().getHours();
       var night = hour < 7 || hour >= 19;
@@ -1141,9 +1138,7 @@
       focused === 'board' ? { __blank: true } : (s.board || {})));
     swap(webgl.critFace, webgl.critterTex(
       focused === 'pet' ? { __blank: true } : (s.pet || {})));
-    swap(webgl.paneMesh, webgl.weatherTex(
-      focused === 'window' ? Object.assign({ __blank: true }, s.window || {})
-                           : (s.window || {})));
+    swap(webgl.paneMesh, webgl.weatherTex(s.window || {}));
 
     /* moment magnets on the fridge door: one colored square each, capped */
     var wantMagnets = Math.min(((s.fridge || {}).new_moments || 0), 6);
@@ -1222,10 +1217,32 @@
        tilts): those name their outward face explicitly */
     var FACE_OVERRIDE = { fridge: ['z', 1], board: ['x', 1],
                           counter: ['z', 1], pet: ['z', 1] };
-    /* the window's card belongs on the GLASS; the zone group's bbox is
-       dominated by the valance above it, so the face comes off the pane */
-    if (key === 'window' && webgl.paneMesh) {
-      b = new webgl.T.Box3().setFromObject(webgl.paneMesh);
+    /* Some zones name the exact MESH their card sits on: the window's
+       glass (the zone bbox is dominated by the valance) and the laptop's
+       tilted screen (an axis-aligned bbox face floats in front of it).
+       A PlaneGeometry's four corners, world-transformed, give the TRUE
+       quad — tilt included. */
+    var FACE_MESH = { window: 'paneMesh', pet: 'critFace' };
+    var fm = FACE_MESH[key] && webgl[FACE_MESH[key]];
+    if (fm && fm.geometry && fm.geometry.parameters
+        && fm.geometry.parameters.width) {
+      fm.updateWorldMatrix(true, false);
+      var pw = fm.geometry.parameters.width / 2;
+      var ph = fm.geometry.parameters.height / 2;
+      var pq = [], pbad = false;
+      [[-pw, ph], [pw, ph], [pw, -ph], [-pw, -ph]].forEach(function (uv) {
+        var v3 = new webgl.T.Vector3(uv[0], uv[1], 0)
+          .applyMatrix4(fm.matrixWorld);
+        var pp = _project(v3, w, h);
+        if (pp.z > 1 || pp.z < -1) pbad = true;
+        pq.push(pp);
+      });
+      if (!pbad) {
+        pq.sort(function (a, b2) { return a.y - b2.y; });
+        var ptop = pq.slice(0, 2).sort(function (a, b2) { return a.x - b2.x; });
+        var pbot = pq.slice(2, 4).sort(function (a, b2) { return a.x - b2.x; });
+        return { rect: rect, quad: [ptop[0], ptop[1], pbot[1], pbot[0]] };
+      }
     }
     var size = b.getSize(new webgl.T.Vector3());
     var c = b.getCenter(new webgl.T.Vector3());
