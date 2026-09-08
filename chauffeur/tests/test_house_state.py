@@ -56,8 +56,23 @@ def scenario_the_house_never_writes():
         check(verb not in src, f"house_room.py never writes ({verb})")
 
 
+def scenario_endpoint_and_gate():
+    _reset()
+    storage.get_cached_schedule = lambda: {}
+    import main
+    out = main.house_state_api(since=0, request=None)
+    check(out['status'] == 'ok' and 'fridge' in out, "the API serves the house")
+    auth_src = io.open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), 'services', 'auth.py'),
+        encoding='utf-8').read()
+    check("'/api/house/state', WALL_OR_SERVICE" in auth_src,
+          "wall DEVICES may read the house (family-safe by construction)")
+    check("'/house', ANYONE" in auth_src, "the shell serves anyone")
+
+
 if __name__ == '__main__':
     scenario_h1_house_speaks_with_the_kitchens_voice()
     scenario_family_safe_pin()
     scenario_the_house_never_writes()
+    scenario_endpoint_and_gate()
     print("test_house_state OK")

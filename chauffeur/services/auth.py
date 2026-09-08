@@ -203,6 +203,7 @@ RULES = [
     (ANY, '/work', ANYONE, None),
     (ANY, '/rhythms', ANYONE, None),
     (ANY, '/kitchen', ANYONE, None),
+    (ANY, '/house', ANYONE, None),
     # Missions: same admin-page shape as Mind — a shell anyone can load, the
     # data behind it gated at /api/missions/* below.
     (ANY, '/missions', ANYONE, None),
@@ -363,6 +364,8 @@ RULES = [
     (ANY, '/api/study/state', SIGNED_IN, None),
     # The Kitchen: family-safe by construction, read by wall DEVICES.
     (ANY, '/api/kitchen/state', WALL_OR_SERVICE, None),
+    # The Home: the dollhouse (H1) — same family-safe-by-construction read.
+    (ANY, '/api/house/state', WALL_OR_SERVICE, None),
     # Threads: open loops with somebody outside the family. Same discipline —
     # SIGNED_IN at the route, `_mind_actor` (reused, not rebuilt) refuses a
     # child/helper/guest in the handler for every write; reads are open to
