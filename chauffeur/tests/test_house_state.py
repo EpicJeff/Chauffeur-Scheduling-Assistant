@@ -1,0 +1,63 @@
+"""The Home's one feed. H1: the house speaks with the kitchen's voice —
+same eight sections, same laws, pinned HERE so H2's garage/curb sections
+join an already-lawed file.
+
+Spec: docs/superpowers/specs/2026-09-08-house-design.md.
+"""
+import io
+import json
+import os
+import time
+
+from harness import check
+from services import storage, house_room
+
+
+def _reset():
+    storage.shopping_items_table.truncate()
+    storage.pets_table.truncate()
+    storage.chat_channels_table.truncate()
+    storage.chat_messages_table.truncate()
+    storage.get_settings = lambda: {}
+
+
+def scenario_h1_house_speaks_with_the_kitchens_voice():
+    _reset()
+    storage.get_cached_schedule = lambda: {}
+    st = house_room.state(since_ts=time.time())
+    check(st['status'] == 'ok', "the empty house still answers ok")
+    for zone in ('fridge', 'counter', 'board', 'door', 'calendar', 'radio',
+                 'window', 'pet'):
+        check(zone in st, f"{zone} section present")
+        check(st[zone].get('calm') is True, f"{zone} calm when empty")
+
+
+def scenario_family_safe_pin():
+    src = io.open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), 'services', 'house_room.py'),
+        encoding='utf-8').read()
+    for banned in ('from services import threads', 'import missions',
+                   'import mind', 'import watchers', 'import occasions',
+                   'mailer', 'send_drafted'):
+        check(banned not in src, f"house_room.py never touches {banned}")
+    _reset()
+    storage.get_cached_schedule = lambda: {}
+    blob = json.dumps(house_room.state(since_ts=0)).lower()
+    for banned in ('counterparty', 'gift', 'sensitive', 'insight', 'finding'):
+        check(banned not in blob, f"state JSON never carries '{banned}'")
+
+
+def scenario_the_house_never_writes():
+    src = io.open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), 'services', 'house_room.py'),
+        encoding='utf-8').read()
+    for verb in ('.insert(', '.update(', '.remove(', 'set_app_state',
+                 'add_mission', 'add_finding', 'add_thread'):
+        check(verb not in src, f"house_room.py never writes ({verb})")
+
+
+if __name__ == '__main__':
+    scenario_h1_house_speaks_with_the_kitchens_voice()
+    scenario_family_safe_pin()
+    scenario_the_house_never_writes()
+    print("test_house_state OK")
