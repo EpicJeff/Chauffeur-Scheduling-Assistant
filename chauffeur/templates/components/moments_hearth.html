@@ -22,7 +22,6 @@
      24 h ago (a fresh panel badges today, not the week). -->
 <script>
     (function () {
-        if (new URLSearchParams(window.location.search).get('kiosk') !== 'true') return;
         // ha_theme.html works the path climb out once, board level included.
         const apiBase = (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : '');
         const SEEN_KEY = 'chauffeur_moments_seen_ts';
@@ -158,6 +157,13 @@
         // moments as full-screen pops, and reusing it would mean a panel that
         // polled at 3am shows a zero badge over breakfast for moments nobody
         // saw. This seeds to 24h ago instead.
+        //
+        // EVERYTHING ABOVE — the overlay builder and its helpers — is
+        // defined on every page that includes this component: a moments
+        // card tap opens the same lightbox whether the page is a kiosk, the
+        // kitchen, or a desktop board. Everything BELOW (the pop and the
+        // badge poll) is wall furniture and stays kiosk-only.
+        if (new URLSearchParams(window.location.search).get('kiosk') !== 'true') return;
         const VIEWED_KEY = 'chauffeur_moments_viewed_ts';
 
         function viewedTs() {

@@ -602,7 +602,7 @@
           : new T.MeshLambertMaterial({ color: 0xd7dbdf, map: brushed || null }));
     fbody.position.set(0, 1.97, 0);
     finish(fbody); fridge.add(fbody);
-    rbox(1.6, 1.55, 0.07, 0.03, C.teal, 0, 2.95, 0.77, fridge,
+    var fridgeDoorTop = rbox(1.6, 1.55, 0.07, 0.03, C.teal, 0, 2.95, 0.77, fridge,
          { rough: 0.3, metal: 0.05, envInt: 0.15 });
     rbox(1.6, 1.35, 0.07, 0.03, C.teal, 0, 1.02, 0.77, fridge,
          { rough: 0.3, metal: 0.05, envInt: 0.15 });
@@ -1000,7 +1000,7 @@
       steam: steam, steam2: steam2, needle: needle, plaque: plaque,
       calFace: calFace, boardFace: boardFace, magnets: magnets,
       critFace: critFace, critterTex: critterTex, pendants: pendants,
-      radioFace: radioFace,
+      radioFace: radioFace, fridgeDoorTop: fridgeDoorTop,
       paneMesh: paneMesh, heroTex: heroTex, calendarTex: calendarTex,
       boardTex: boardTex, weatherTex: weatherTex, clearPaint: clearPaint,
       HOME_POS: HOME_POS, HOME_AT: HOME_AT
@@ -1169,7 +1169,7 @@
      the quad the page layer maps onto. */
   var FACE_MESH_MAP = { window: 'paneMesh', pet: 'critFace',
                         calendar: 'calFace', board: 'boardFace',
-                        radio: 'radioFace' };
+                        radio: 'radioFace', fridge: 'fridgeDoorTop' };
   var FACE_AXIS_MAP = { fridge: ['z', 1], board: ['x', 1], counter: ['z', 1],
                         pet: ['z', 1], radio: ['z', 1], door: ['z', 1] };
 
@@ -1191,7 +1191,8 @@
 
   function frameZone(key, cb) {
     var g = webgl.groups[key];
-    var boxb = new webgl.T.Box3().setFromObject(g);
+    var fmesh = FACE_MESH_MAP[key] && webgl[FACE_MESH_MAP[key]];
+    var boxb = new webgl.T.Box3().setFromObject(fmesh || g);
     var center = boxb.getCenter(new webgl.T.Vector3());
     var size3 = boxb.getSize(new webgl.T.Vector3());
     var span = Math.max(size3.x, size3.y, size3.z);
@@ -1260,8 +1261,14 @@
        A PlaneGeometry's four corners, world-transformed, give the TRUE
        quad — tilt included. */
     var fm = FACE_MESH_MAP[key] && webgl[FACE_MESH_MAP[key]];
-    if (fm && fm.geometry && fm.geometry.parameters
-        && fm.geometry.parameters.width) {
+    if (fm && !(fm.geometry && fm.geometry.parameters
+                && fm.geometry.parameters.width)) {
+      /* no clean plane params (rounded/extruded door): the face is still
+         THAT mesh's box, not the whole prop's */
+      b = new webgl.T.Box3().setFromObject(fm);
+      fm = null;
+    }
+    if (fm) {
       fm.updateWorldMatrix(true, false);
       var pw = fm.geometry.parameters.width / 2;
       var ph = fm.geometry.parameters.height / 2;
