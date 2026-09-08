@@ -748,6 +748,82 @@
     critFace.position.set(0, 1.4395, -0.157);
     crit.add(critFace); finish(critFace);
 
+    /* ---- the house around the kitchen (H1): everything out here lives
+       in extG so the camera modes can reason about "outside". The
+       kitchen's world coordinates never moved — the house grew around
+       them. ---- */
+    var EXTC = { grass: 0x8fae6e, siding: 0xe7e0d5, trim: 0xd8d0c2,
+                 roof: 0x55606b, ridge: 0x3f444a, drive: 0xb8b2a6,
+                 garage: 0xece5da, trunk: 0x6e5539, leaf: 0x5f8f4e,
+                 leafB: 0x527f44 };
+    var extG = new T.Group();
+    scene.add(extG);
+    function ebox(w, h, d, c, x, y, z, opts) {
+      return box(w, h, d, c, x, y, z, extG, opts);
+    }
+    /* yard: a grass slab whose top sits just under the kitchen plinth */
+    ebox(46, 0.4, 36, EXTC.grass, 2.5, -0.49, 0, { rough: 1.0 });
+    /* facade: siding OUTSIDE the kitchen's two closed walls, up to eaves */
+    ebox(15.2, 7.0, 0.3, EXTC.siding, 0.3, 3.5, -5.95, { rough: 0.95 });
+    ebox(0.3, 7.0, 12.6, EXTC.siding, -7.0, 3.5, -0.3, { rough: 0.95 });
+    /* eaves trim */
+    ebox(15.6, 0.24, 0.5, EXTC.trim, 0.3, 7.0, -5.95);
+    ebox(0.5, 0.24, 13.0, EXTC.trim, -7.0, 7.0, -0.3);
+    /* gable roof, BACK HALF ONLY — the front stays open so the exterior
+       view still looks down into the kitchen (the dollhouse cutaway).
+       Ridge along x at z=-2.0, y=9.2; eaves at y=6.9, z=-6.4. */
+    var roofSpan = Math.sqrt(2.3 * 2.3 + 4.4 * 4.4);
+    var roof = ebox(16.4, 0.18, roofSpan, EXTC.roof, 0.3, 8.05, -4.2,
+                    { rough: 0.9 });
+    roof.rotation.x = Math.atan2(2.3, 4.4);
+    ebox(16.6, 0.26, 0.34, EXTC.ridge, 0.3, 9.24, -2.0);
+    /* left gable end: the triangle under the back slope */
+    (function () {
+      var s = new T.Shape();
+      s.moveTo(-6.4, 6.9); s.lineTo(-2.0, 9.2); s.lineTo(-2.0, 6.9);
+      s.lineTo(-6.4, 6.9);
+      var m = new T.Mesh(new T.ExtrudeGeometry(s, { depth: 0.3,
+        bevelEnabled: false }), mat(EXTC.siding, { rough: 0.95 }));
+      m.rotation.y = -Math.PI / 2;   /* shape x-axis lies along world -z */
+      m.position.set(-7.0, 0, 0);
+      finish(m); extG.add(m);
+    })();
+    /* garage massing: SEALED in H1 — a promise, not a room. It hangs
+       on the LEFT flank: the +x/+z quadrant is the diorama's open corner
+       and nothing may stand between the camera and the kitchen. */
+    ebox(5.6, 4.6, 8.0, EXTC.garage, -10.0, 2.3, -1.6, { rough: 0.95 });
+    rbox(3.6, 3.0, 0.14, 0.05, EXTC.trim, -10.0, 1.6, 2.42, extG,
+         { rough: 0.85 });
+    if (DETAIL >= 2) {
+      box(3.4, 0.05, 0.06, 0xc4bcae, -10.0, 1.0, 2.5, extG);
+      box(3.4, 0.05, 0.06, 0xc4bcae, -10.0, 1.8, 2.5, extG);
+      box(3.4, 0.05, 0.06, 0xc4bcae, -10.0, 2.6, 2.5, extG);
+    }
+    ebox(6.2, 0.16, 8.8, EXTC.roof, -10.0, 4.78, -1.6, { rough: 0.9 });
+    /* driveway from the garage door to the yard's edge */
+    ebox(4.4, 0.08, 11.0, EXTC.drive, -10.0, -0.25, 8.4, { rough: 0.95 });
+    /* two blob trees + a bush: the yard is a place, not a void */
+    function tree(x, z, s) {
+      cyl(0.16 * s, 0.22 * s, 1.4 * s, EXTC.trunk, x, 0.7 * s, z, extG, 8);
+      var lv = new T.Mesh(new T.SphereGeometry(1.1 * s, 10, 8),
+        mat(EXTC.leaf, { rough: 1.0 }));
+      lv.position.set(x, 2.0 * s, z); finish(lv); extG.add(lv);
+      var lv2 = new T.Mesh(new T.SphereGeometry(0.75 * s, 10, 8),
+        mat(EXTC.leafB, { rough: 1.0 }));
+      lv2.position.set(x + 0.7 * s, 1.6 * s, z + 0.3 * s);
+      finish(lv2); extG.add(lv2);
+    }
+    tree(-15.5, 10.0, 1.4); tree(17.5, -6.0, 1.1);
+    var bush = new T.Mesh(new T.SphereGeometry(0.7, 10, 8),
+      mat(EXTC.leafB, { rough: 1.0 }));
+    bush.position.set(6.0, 0.4, 7.6); finish(bush); extG.add(bush);
+    /* sky dome: weather-painted from the inside, swapped by applyState.
+       The dome IS the background now, so the flat clear color retires. */
+    var skyDome = new T.Mesh(new T.SphereGeometry(55, 24, 12),
+      new T.MeshBasicMaterial({ side: T.BackSide }));
+    extG.add(skyDome);
+    scene.background = null;
+
     /* ---- the painters: every data surface drawn like the app draws it —
        Inter type, white cards, accent bars, soft shadows. Cached per
        payload; a poll that changes nothing repaints nothing. ---- */
@@ -997,6 +1073,35 @@
         }
       });
     }
+    function skyDomeTex(wz) {
+      var cond = (wz && wz.cond) || '';
+      var hour = new Date().getHours();
+      var night = hour < 7 || hour >= 19;
+      var payload = ['dome', cond, night].join('|');
+      return mkTex('skydome', 512, 256, payload, function (g, w, h) {
+        var top = '#7cc4f0', bot = '#d8ecf7';
+        if (night) { top = '#141d38'; bot = '#33406b'; }
+        else if (cond.indexOf('rain') !== -1 || cond === 'pouring' ||
+                 cond.indexOf('lightning') !== -1) { top = '#5b6c7d'; bot = '#8fa0af'; }
+        else if (cond.indexOf('snow') !== -1) { top = '#aebfd0'; bot = '#e8eef4'; }
+        else if (cond.indexOf('cloud') !== -1 || cond === 'fog') { top = '#8fb0c6'; bot = '#cfdde8'; }
+        var grad = g.createLinearGradient(0, 0, 0, h);
+        grad.addColorStop(0, top); grad.addColorStop(0.75, bot);
+        grad.addColorStop(1, bot);
+        g.fillStyle = grad; g.fillRect(0, 0, w, h);
+        if (night) {
+          g.fillStyle = 'rgba(255,255,255,0.85)';
+          for (var st = 0; st < 40; st++) {
+            g.fillRect(((st * 131) % w), ((st * 67) % (h * 0.55)), 2, 2);
+          }
+        }
+        if (!night && cond.indexOf('cloud') === -1 && cond !== 'fog' &&
+            cond.indexOf('rain') === -1 && cond.indexOf('snow') === -1) {
+          g.fillStyle = 'rgba(255,240,200,0.5)';
+          g.beginPath(); g.arc(w * 0.68, h * 0.3, 26, 0, 7); g.fill();
+        }
+      });
+    }
     function clearPaint() { texCache = {}; }
 
     return {
@@ -1007,6 +1112,7 @@
       radioFace: radioFace, fridgeDoorTop: fridgeDoorTop,
       paneMesh: paneMesh, heroTex: heroTex, calendarTex: calendarTex,
       boardTex: boardTex, weatherTex: weatherTex, clearPaint: clearPaint,
+      extG: extG, skyDome: skyDome, skyDomeTex: skyDomeTex,
       HOME_POS: HOME_POS, HOME_AT: HOME_AT
     };
   }
@@ -1150,6 +1256,7 @@
     swap(webgl.critFace, webgl.critterTex(
       focused === 'pet' ? { __blank: true } : (s.pet || {})));
     swap(webgl.paneMesh, webgl.weatherTex(s.window || {}));
+    swap(webgl.skyDome, webgl.skyDomeTex(s.window || {}));
 
     /* moment magnets on the fridge door: one colored square each, capped */
     var wantMagnets = Math.min(((s.fridge || {}).new_moments || 0), 6);
