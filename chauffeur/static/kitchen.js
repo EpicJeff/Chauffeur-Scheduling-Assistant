@@ -519,8 +519,8 @@
     lowerCab(5.2, -1.8, -4.6);
     rbox(5.4, 0.12, 1.56, 0.04, 0xffffff, -1.8, 1.12, -4.6, null,
          { rough: 0.3, map: woodLight, envInt: 0.4 });   // butcher top
-    upperCab(1.4, -3.9, -5.1);
-    upperCab(2.0, 0.3, -5.1);
+    upperCab(1.4, -3.78, -5.1);
+    upperCab(1.8, 0.2, -5.1);
 
     /* a sink you can SEE: farmhouse apron front proud of the cabinets,
        steel rim above the counter, dark opening, tall gooseneck */
@@ -538,7 +538,7 @@
     /* WINDOW (zone: window): the weather lives outside the glass. The
        pane is a canvas the painter redraws when the sky changes; unlit
        material so it always reads as daylight coming IN. */
-    var winG = zoneGroup('window', -2.2, 0, -5.4);
+    var winG = zoneGroup('window', -1.88, 0, -5.4);
     var paneMesh = new T.Mesh(new T.BoxGeometry(1.9, 1.7, 0.06),
       new T.MeshBasicMaterial({ color: 0xffffff }));
     paneMesh.position.set(0, 3.4, 0.06);
