@@ -45,7 +45,10 @@ def mk_driver(i):
 
 
 def mk_event(i, start_hour, optional=False):
-    day = datetime.datetime(2026, 9, 7)
+    # TODAY, not a literal date: stamp_decisions prunes decisions older than
+    # today, so a hardcoded day quietly started failing at the next midnight.
+    day = datetime.datetime.now().replace(hour=0, minute=0, second=0,
+                                          microsecond=0)
     start = day.replace(hour=start_hour)
     return Event(id=f"e{i}", title=f"Event {i}", start=start,
                  end=start + datetime.timedelta(minutes=60),
