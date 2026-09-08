@@ -761,11 +761,79 @@
     function ebox(w, h, d, c, x, y, z, opts) {
       return box(w, h, d, c, x, y, z, extG, opts);
     }
+    /* the outdoors pays the same tier the kitchen does (user ruling
+       2026-09-08): mottled grass, clapboard, offset shingles, jointed
+       concrete — canvas-procedural, zero downloads, NICE-gated like the
+       wood and marble inside. */
+    var grassT = null, sidingT = null, shingleT = null, driveT = null;
+    if (NICE) {
+      grassT = canvasTex(DETAIL >= 3 ? 512 : 256, function (g, S) {
+        g.fillStyle = '#8fae6e'; g.fillRect(0, 0, S, S);
+        for (var i = 0; i < S * 3; i++) {
+          g.fillStyle = 'rgba(' + (Math.random() < 0.5 ? '110,140,80' : '70,100,55') +
+                        ',' + (0.08 + Math.random() * 0.18) + ')';
+          g.fillRect(Math.random() * S, Math.random() * S,
+                     2 + Math.random() * 3, 2 + Math.random() * 3);
+        }
+        if (DETAIL >= 3) {
+          g.strokeStyle = 'rgba(60,90,50,0.25)'; g.lineWidth = 1;
+          for (var b = 0; b < 240; b++) {
+            var bx = Math.random() * S, by = Math.random() * S;
+            g.beginPath(); g.moveTo(bx, by);
+            g.lineTo(bx + (Math.random() - 0.5) * 3, by - 3 - Math.random() * 4);
+            g.stroke();
+          }
+        }
+      });
+      grassT.wrapS = grassT.wrapT = T.RepeatWrapping;
+      grassT.repeat.set(7, 5.5);
+      sidingT = canvasTex(256, function (g, S) {
+        g.fillStyle = '#e7e0d5'; g.fillRect(0, 0, S, S);
+        for (var y = 0; y < S; y += 21) {
+          g.fillStyle = 'rgba(120,108,90,0.35)'; g.fillRect(0, y + 18, S, 3);
+          g.fillStyle = 'rgba(255,255,255,0.5)'; g.fillRect(0, y, S, 2);
+        }
+      });
+      sidingT.wrapS = sidingT.wrapT = T.RepeatWrapping;
+      sidingT.repeat.set(4, 2);
+      shingleT = canvasTex(256, function (g, S) {
+        g.fillStyle = '#55606b'; g.fillRect(0, 0, S, S);
+        var rh = 32;
+        for (var r = 0; r < S / rh; r++) {
+          var off = (r % 2) ? 32 : 0;
+          g.fillStyle = 'rgba(20,24,30,0.5)';
+          g.fillRect(0, r * rh + rh - 4, S, 4);
+          for (var xx = -1; xx < S / 64 + 1; xx++) {
+            g.fillRect(xx * 64 + off, r * rh, 3, rh);
+          }
+          g.fillStyle = 'rgba(255,255,255,0.06)';
+          g.fillRect(0, r * rh, S, 3);
+        }
+      });
+      shingleT.wrapS = shingleT.wrapT = T.RepeatWrapping;
+      shingleT.repeat.set(5, 2);
+      driveT = canvasTex(256, function (g, S) {
+        g.fillStyle = '#b8b2a6'; g.fillRect(0, 0, S, S);
+        for (var i = 0; i < 500; i++) {
+          g.fillStyle = 'rgba(90,85,75,' + (Math.random() * 0.12) + ')';
+          g.fillRect(Math.random() * S, Math.random() * S, 2, 2);
+        }
+        g.strokeStyle = 'rgba(90,85,75,0.5)'; g.lineWidth = 3;
+        [0.33, 0.66].forEach(function (f) {
+          g.beginPath(); g.moveTo(0, S * f); g.lineTo(S, S * f); g.stroke();
+        });
+      });
+      driveT.wrapS = driveT.wrapT = T.RepeatWrapping;
+      driveT.repeat.set(1, 3);
+    }
     /* yard: a grass slab whose top sits just under the kitchen plinth */
-    ebox(46, 0.4, 36, EXTC.grass, 2.5, -0.49, 0, { rough: 1.0 });
+    ebox(46, 0.4, 36, NICE ? 0xffffff : EXTC.grass, 2.5, -0.49, 0,
+         { rough: 1.0, map: grassT });
     /* facade: siding OUTSIDE the kitchen's two closed walls, up to eaves */
-    ebox(15.2, 7.0, 0.3, EXTC.siding, 0.3, 3.5, -5.95, { rough: 0.95 });
-    ebox(0.3, 7.0, 12.6, EXTC.siding, -7.0, 3.5, -0.3, { rough: 0.95 });
+    ebox(15.2, 7.0, 0.3, NICE ? 0xffffff : EXTC.siding, 0.3, 3.5, -5.95,
+         { rough: 0.95, map: sidingT });
+    ebox(0.3, 7.0, 12.6, NICE ? 0xffffff : EXTC.siding, -7.0, 3.5, -0.3,
+         { rough: 0.95, map: sidingT });
     /* eaves trim */
     ebox(15.6, 0.24, 0.5, EXTC.trim, 0.3, 7.0, -5.95);
     ebox(0.5, 0.24, 13.0, EXTC.trim, -7.0, 7.0, -0.3);
@@ -773,8 +841,8 @@
        view still looks down into the kitchen (the dollhouse cutaway).
        Ridge along x at z=-2.0, y=9.2; eaves at y=6.9, z=-6.4. */
     var roofSpan = Math.sqrt(2.3 * 2.3 + 4.4 * 4.4);
-    var roof = ebox(16.4, 0.18, roofSpan, EXTC.roof, 0.3, 8.05, -4.2,
-                    { rough: 0.9 });
+    var roof = ebox(16.4, 0.18, roofSpan, NICE ? 0xffffff : EXTC.roof,
+                    0.3, 8.05, -4.2, { rough: 0.9, map: shingleT });
     roof.rotation.x = Math.atan2(2.3, 4.4);
     ebox(16.6, 0.26, 0.34, EXTC.ridge, 0.3, 9.24, -2.0);
     /* left gable end: the triangle under the back slope */
@@ -791,7 +859,8 @@
     /* garage massing: SEALED in H1 — a promise, not a room. It hangs
        on the LEFT flank: the +x/+z quadrant is the diorama's open corner
        and nothing may stand between the camera and the kitchen. */
-    ebox(5.6, 4.6, 8.0, EXTC.garage, -10.0, 2.3, -1.6, { rough: 0.95 });
+    rbox(5.6, 4.6, 8.0, 0.06, NICE ? 0xffffff : EXTC.garage,
+         -10.0, 2.3, -1.6, extG, { rough: 0.95, map: sidingT });
     rbox(3.6, 3.0, 0.14, 0.05, EXTC.trim, -10.0, 1.6, 2.42, extG,
          { rough: 0.85 });
     if (DETAIL >= 2) {
@@ -799,24 +868,40 @@
       box(3.4, 0.05, 0.06, 0xc4bcae, -10.0, 1.8, 2.5, extG);
       box(3.4, 0.05, 0.06, 0xc4bcae, -10.0, 2.6, 2.5, extG);
     }
-    ebox(6.2, 0.16, 8.8, EXTC.roof, -10.0, 4.78, -1.6, { rough: 0.9 });
+    if (DETAIL >= 3) {          /* a small window right of the garage door */
+      box(0.86, 0.76, 0.1, EXTC.trim, -7.85, 2.7, 2.44, extG);
+      box(0.7, 0.6, 0.12, 0x39434e, -7.85, 2.7, 2.45, extG, GLOSS);
+    }
+    ebox(6.2, 0.16, 8.8, NICE ? 0xffffff : EXTC.roof, -10.0, 4.78, -1.6,
+         { rough: 0.9, map: shingleT });
+    blobShadow(3.0, 4.2, -10.0, -1.6, extG);
     /* driveway from the garage door to the yard's edge */
-    ebox(4.4, 0.08, 11.0, EXTC.drive, -10.0, -0.25, 8.4, { rough: 0.95 });
+    ebox(4.4, 0.08, 11.0, NICE ? 0xffffff : EXTC.drive, -10.0, -0.25, 8.4,
+         { rough: 0.95, map: driveT });
     /* two blob trees + a bush: the yard is a place, not a void */
     function tree(x, z, s) {
       cyl(0.16 * s, 0.22 * s, 1.4 * s, EXTC.trunk, x, 0.7 * s, z, extG, 8);
-      var lv = new T.Mesh(new T.SphereGeometry(1.1 * s, 10, 8),
+      var lv = new T.Mesh(new T.SphereGeometry(1.1 * s, DETAIL >= 3 ? 14 : 10,
+                                               DETAIL >= 3 ? 10 : 8),
         mat(EXTC.leaf, { rough: 1.0 }));
       lv.position.set(x, 2.0 * s, z); finish(lv); extG.add(lv);
       var lv2 = new T.Mesh(new T.SphereGeometry(0.75 * s, 10, 8),
         mat(EXTC.leafB, { rough: 1.0 }));
       lv2.position.set(x + 0.7 * s, 1.6 * s, z + 0.3 * s);
       finish(lv2); extG.add(lv2);
+      if (DETAIL >= 3) {
+        var lv3 = new T.Mesh(new T.SphereGeometry(0.55 * s, 10, 8),
+          mat(EXTC.leaf, { rough: 1.0 }));
+        lv3.position.set(x - 0.55 * s, 1.5 * s, z - 0.25 * s);
+        finish(lv3); extG.add(lv3);
+      }
+      blobShadow(1.25 * s, 1.1 * s, x, z, extG);
     }
     tree(-15.5, 10.0, 1.4); tree(17.5, -6.0, 1.1);
     var bush = new T.Mesh(new T.SphereGeometry(0.7, 10, 8),
       mat(EXTC.leafB, { rough: 1.0 }));
     bush.position.set(6.0, 0.4, 7.6); finish(bush); extG.add(bush);
+    blobShadow(0.8, 0.7, 6.0, 7.6, extG);
     /* sky dome: weather-painted from the inside, swapped by applyState.
        The dome IS the background now, so the flat clear color retires. */
     var skyDome = new T.Mesh(new T.SphereGeometry(55, 24, 12),
@@ -1100,6 +1185,19 @@
           g.fillStyle = 'rgba(255,240,200,0.5)';
           g.beginPath(); g.arc(w * 0.68, h * 0.3, 26, 0, 7); g.fill();
         }
+        if (!night && DETAIL >= 2 && cond !== 'fog') {
+          g.fillStyle = 'rgba(255,255,255,' +
+            (cond.indexOf('cloud') !== -1 ? 0.75 : 0.5) + ')';
+          [[0.16, 0.34], [0.46, 0.24], [0.78, 0.4]].forEach(function (pc) {
+            var cx = w * pc[0], cy = h * pc[1];
+            g.beginPath();
+            g.arc(cx - 22, cy, 13, 0, 7); g.arc(cx, cy - 9, 17, 0, 7);
+            g.arc(cx + 22, cy, 13, 0, 7); g.fill();
+            g.fillRect(cx - 22, cy - 2, 44, 14);
+          });
+        }
+        g.fillStyle = night ? 'rgba(20,28,56,0.55)' : 'rgba(255,255,255,0.35)';
+        g.fillRect(0, h * 0.82, w, h * 0.18);   /* horizon haze */
       });
     }
     function clearPaint() { texCache = {}; }
