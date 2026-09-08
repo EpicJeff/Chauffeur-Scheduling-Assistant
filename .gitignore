@@ -49,3 +49,5 @@ chauffeur/boards.json
 azure_speech_key.txt
 *_speech_key.txt
 *.key.txt
+
+.superpowers/
