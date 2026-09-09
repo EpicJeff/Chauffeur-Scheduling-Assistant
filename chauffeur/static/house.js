@@ -229,8 +229,8 @@
     var GARAGE_AT = new T.Vector3(-10.2, 1.4, 4.6);
     var MUD_POS = new T.Vector3(-8.9, 11.5, 7.5);
     var MUD_AT = new T.Vector3(-9.35, 1.4, -3.4);
-    var LIV_POS = new T.Vector3(11.3, 10.5, 6.5);
-    var LIV_AT = new T.Vector3(11.2, 0.7, -3.6);
+    var LIV_POS = new T.Vector3(8.5, 11.0, 20.0);
+    var LIV_AT = new T.Vector3(-2.5, 1.0, 9.5);
     cam.position.copy(EXT_POS);
     cam.lookAt(EXT_AT);
 
@@ -477,20 +477,36 @@
     var floorCanvas = document.createElement('canvas');
     floorCanvas.width = floorCanvas.height = DETAIL >= 3 ? 1024 : 512;
     (function () {
-      var g = floorCanvas.getContext('2d'), n = 8, t = floorCanvas.width / n;
-      for (var i = 0; i < n; i++) for (var j = 0; j < n; j++) {
-        g.fillStyle = ((i + j) % 2) ? C.floorB : C.floorA;
-        g.fillRect(i * t, j * t, t, t);
-        if (DETAIL >= 3) {               // faint grout so tiles read as tiles
-          g.strokeStyle = 'rgba(90,80,70,0.3)';
-          g.lineWidth = 2;
-          g.strokeRect(i * t + 1, j * t + 1, t - 2, t - 2);
+      /* one wood floor through the whole great room (user ruling: no
+         flooring transitions in a modern house) — board rows with
+         offset seams, the checkerboard retired */
+      var g = floorCanvas.getContext('2d'), W = floorCanvas.width;
+      g.fillStyle = '#c9a06c'; g.fillRect(0, 0, W, W);
+      var rows = 9, bh = W / rows;
+      for (var r = 0; r < rows; r++) {
+        var off = (r % 3) * (W / 3.7);
+        g.fillStyle = 'rgba(120,80,40,' + (0.05 + (r % 3) * 0.045) + ')';
+        g.fillRect(0, r * bh, W, bh);
+        g.strokeStyle = 'rgba(90,60,30,0.5)'; g.lineWidth = 2;
+        g.strokeRect(-4, r * bh, W + 8, bh);
+        for (var seg = 0; seg < 3; seg++) {
+          var sx = (seg * W / 3 + off) % W;
+          g.beginPath(); g.moveTo(sx, r * bh); g.lineTo(sx, r * bh + bh);
+          g.stroke();
+        }
+        if (DETAIL >= 3) {
+          g.strokeStyle = 'rgba(120,80,40,0.22)'; g.lineWidth = 1;
+          for (var gr = 0; gr < 5; gr++) {
+            var gy = r * bh + 4 + Math.random() * (bh - 8);
+            g.beginPath(); g.moveTo(0, gy);
+            g.lineTo(W, gy + (Math.random() - 0.5) * 5); g.stroke();
+          }
         }
       }
     })();
     var floorTex = new T.CanvasTexture(floorCanvas);
-    floorTex.magFilter = DETAIL >= 3 ? T.LinearFilter : T.NearestFilter;
-    var floor = new T.Mesh(new T.PlaneGeometry(13, 11),
+    floorTex.magFilter = T.LinearFilter;   /* planks, not pixels */
+    var floor = new T.Mesh(new T.PlaneGeometry(13, 11.6),
       PBR ? new T.MeshStandardMaterial({ map: floorTex, roughness: 0.5,
                                          envMapIntensity: 0.1 })
           : new T.MeshLambertMaterial({ map: floorTex }));
@@ -508,6 +524,90 @@
       box(13, 0.2, 0.08, 0xe4ddd1, 0, 0.1, -5.34);
       box(0.08, 0.2, 11, 0xe4ddd1, -6.44, 0.1, 0);
     }
+
+    /* ---- the GREAT ROOM extension (architect pass): the kitchen flows
+       forward-left into a living room of its own scale — one open
+       floorplan, one wood floor, no wall between. ---- */
+    box(9.4, 0.5, 8.4, C.shell, -2.3, -0.27, 9.9);
+    var floorTex2 = floorTex.clone();
+    floorTex2.needsUpdate = true;
+    floorTex2.wrapS = floorTex2.wrapT = T.RepeatWrapping;
+    floorTex2.repeat.set(9.2 / 13, 8.2 / 11);
+    var floor2 = new T.Mesh(new T.PlaneGeometry(9.2, 8.5),
+      PBR ? new T.MeshStandardMaterial({ map: floorTex2, roughness: 0.5,
+                                         envMapIntensity: 0.1 })
+          : new T.MeshLambertMaterial({ map: floorTex2 }));
+    floor2.rotation.x = -Math.PI / 2;
+    floor2.position.set(-2.3, 0.004, 9.95);
+    if (SHADOWS) floor2.receiveShadow = true;
+    scene.add(floor2);
+    var wallL2 = box(0.35, 5.6, 8.4, C.wall, -6.65, 2.8, 10.0, null,
+                     { rough: 0.95 });
+    if (SHADOWS) wallL2.castShadow = false;
+    box(0.5, 0.28, 8.6, C.shell, -6.7, 5.66, 10.1);
+    if (DETAIL >= 3) box(0.08, 0.2, 8.2, 0xe4ddd1, -6.44, 0.1, 9.9);
+    /* the front door: decorative — the house has a face; the LEAVE
+       signal stays the mudroom door zone */
+    var fdoor = new T.Mesh(
+      NICE ? roundedGeo(0.14, 3.2, 1.4, 0.04) : new T.BoxGeometry(0.14, 3.2, 1.4),
+      PBR ? new T.MeshStandardMaterial({ map: woodDoor, roughness: 0.65 })
+          : new T.MeshLambertMaterial({ color: 0xc9a06c, map: woodDoor || null }));
+    fdoor.position.set(-6.42, 1.6, 12.6);
+    finish(fdoor); scene.add(fdoor);
+    cyl(0.06, 0.06, 0.1, 0xd8c48a, -6.32, 1.6, 12.1, null, 10, CHROME);
+    /* living furniture: hearth on the west wall, sofa facing it */
+    (function () {
+      function ltag(m) { if (m) m.userData.room = 'living'; return m; }
+      ltag(rbox(0.35, 1.6, 1.6, 0.05, 0xcfc4b2, -6.28, 0.8, 8.6, null,
+                { rough: 0.95 }));
+      ltag(box(0.16, 0.85, 0.9, 0x1c1c1c, -6.06, 0.62, 8.6));
+      if (DETAIL >= 2) {
+        ltag(box(0.08, 0.5, 0.66, 0xffb45c, -6.02, 0.5, 8.6));
+      }
+      ltag(box(0.5, 0.12, 1.8, NICE ? 0xffffff : 0xb98c58, -6.28, 1.68, 8.6,
+               null, NICE ? { rough: 0.7, map: woodLight } : { rough: 0.7 }));
+      if (DETAIL >= 3) {
+        var lg1 = cyl(0.09, 0.09, 0.6, C.wood2, -6.15, 0.26, 8.5, null, 8);
+        lg1.rotation.x = Math.PI / 2;
+        var lg2 = cyl(0.08, 0.08, 0.5, 0x8a6d49, -6.13, 0.38, 8.72, null, 8);
+        lg2.rotation.x = Math.PI / 2;
+        ltag(lg1); ltag(lg2);
+      }
+      ltag(rbox(1.0, 0.5, 2.2, 0.08, 0x6fa8a0, -3.3, 0.5, 8.6, null,
+                { rough: 0.95 }));
+      ltag(rbox(0.3, 0.7, 2.2, 0.08, 0x6fa8a0, -2.9, 0.95, 8.6, null,
+                { rough: 0.95 }));
+      ltag(rbox(1.0, 0.62, 0.28, 0.08, 0x5f938c, -3.3, 0.75, 7.55, null,
+                { rough: 0.95 }));
+      ltag(rbox(1.0, 0.62, 0.28, 0.08, 0x5f938c, -3.3, 0.75, 9.65, null,
+                { rough: 0.95 }));
+      var rug = new T.Mesh(new T.CircleGeometry(1.5, 22),
+        mat(0xd9c1a5, { rough: 1.0 }));
+      rug.rotation.x = -Math.PI / 2;
+      rug.position.set(-4.7, 0.06, 8.6);
+      ltag(rug); scene.add(rug);
+      ltag(rbox(1.4, 0.09, 0.85, 0.03, NICE ? 0xffffff : 0xb98c58,
+                -4.7, 0.83, 8.5, null,
+                NICE ? { rough: 0.7, map: woodLight } : { rough: 0.7 }));
+      ltag(cyl(0.05, 0.05, 0.78, C.wood2, -5.3, 0.4, 8.15, null, 8));
+      ltag(cyl(0.05, 0.05, 0.78, C.wood2, -4.1, 0.4, 8.15, null, 8));
+      ltag(cyl(0.05, 0.05, 0.78, C.wood2, -5.3, 0.4, 8.85, null, 8));
+      ltag(cyl(0.05, 0.05, 0.78, C.wood2, -4.1, 0.4, 8.85, null, 8));
+      /* radio shelf north of the hearth on the same wall */
+      ltag(rbox(0.6, 0.08, 1.3, 0.03, NICE ? 0xffffff : 0xb98c58,
+                -6.3, 1.33, 6.2, null,
+                NICE ? { rough: 0.7, map: woodLight } : { rough: 0.7 }));
+      ltag(box(0.5, 0.3, 0.08, C.wood2, -6.3, 1.14, 5.75));
+      ltag(box(0.5, 0.3, 0.08, C.wood2, -6.3, 1.14, 6.65));
+      if (DETAIL >= 2) {
+        ltag(cyl(0.05, 0.07, 1.3, 0x8a8178, -6.0, 0.65, 13.2, null, 8));
+        var lsh = new T.Mesh(new T.CylinderGeometry(0.26, 0.34, 0.3, 14, 1,
+                                                    true),
+          mat(0xf0e3c8, { rough: 0.8 }));
+        lsh.position.set(-6.0, 1.45, 13.2);
+        ltag(lsh); finish(lsh); scene.add(lsh);
+      }
+    })();
 
     /* tiled backsplash band behind the counter run */
     var bsCanvas = document.createElement('canvas');
@@ -728,8 +828,9 @@
     doorG.add(plaque);
 
     /* ---- RADIO (zone: radio) on the countertop ------------------------- */
-    var radio = zoneGroup('radio', 12.7, 0, -5.05);   /* H3: the living room shelf */
+    var radio = zoneGroup('radio', -6.15, 0, 6.2);   /* the living-room shelf */
     radio.userData.room = 'living';
+    radio.rotation.y = Math.PI / 2;   /* face east, into the great room */
     rbox(0.8, 0.45, 0.4, 0.06, C.red, 0, 1.41, 0, radio, GLOSS);
     var radioFace = box(0.55, 0.28, 0.03, 0xf2e3b8, -0.06, 1.42, 0.21, radio, { rough: 0.95 });
     cyl(0.035, 0.035, 0.1, C.steel, 0.28, 1.68, 0, radio, 8, CHROME);
@@ -800,7 +901,7 @@
        family's real pets, so no bowl pretending otherwise. A laptop sits
        on the island the way a kid leaves one, its screen carrying the
        roster. */
-    var crit = zoneGroup('pet', 11.2, -0.35, -3.25);   /* H3: the coffee table */
+    var crit = zoneGroup('pet', -4.7, -0.35, 8.25);   /* the coffee table */
     crit.userData.room = 'living';
     rbox(0.66, 0.035, 0.46, 0.012, 0x2a2d34, 0, 1.24, 0.02, crit,
          { rough: 0.35, metal: 0.4, envInt: 0.6 });
@@ -1000,6 +1101,11 @@
       }
       groups.garage = garageInterior;   /* the zone-glow loop lights the room */
     })();
+    /* the front path: door to street */
+    ebox(2.6, 0.06, 0.9, NICE ? 0xffffff : EXTC.drive, -8.3, -0.24, 12.6,
+         { rough: 0.95, map: driveT });
+    ebox(0.9, 0.06, 5.2, NICE ? 0xffffff : EXTC.drive, -9.2, -0.24, 15.5,
+         { rough: 0.95, map: driveT });
     /* driveway from the garage door to the street */
     ebox(4.4, 0.08, 7.8, NICE ? 0xffffff : EXTC.drive, -10.0, -0.25, 14.3,
          { rough: 0.95, map: driveT });
@@ -1184,89 +1290,8 @@
       }
       blobShadow(2.2, 3.4, -9.3, -2.1, extG);
     })();
-    /* ---- LIVING ROOM (right-back wing): radio, critters, the hearth.
-       Set back and walled on BOTH sides so the kitchen diorama's open
-       corner stays clear; its own cutaway faces the front (+z), the
-       same direction as every other room's. ---- */
-    var livingRoofG = new T.Group();
+    var livingRoofG = new T.Group();   /* open-concept: nothing to hide */
     extG.add(livingRoofG);
-    (function () {
-      function ltag(m) { if (m) m.userData.room = 'living'; return m; }
-      var lfloor = new T.Mesh(new T.BoxGeometry(5.0, 0.06, 4.8),
-        PBR ? new T.MeshStandardMaterial({ map: woodLight, color: 0xffffff,
-                                           roughness: 0.6,
-                                           envMapIntensity: 0.15 })
-            : new T.MeshLambertMaterial({ color: 0xc89a66,
-                                          map: woodLight || null }));
-      lfloor.position.set(11.2, 0.03, -3.3);
-      ltag(lfloor); finish(lfloor); extG.add(lfloor);
-      ltag(ebox(0.24, 4.2, 5.0, NICE ? 0xffffff : EXTC.siding,
-                8.72, 2.1, -3.3, { rough: 0.95, map: sidingT }));
-      ltag(ebox(0.24, 4.2, 5.0, NICE ? 0xffffff : EXTC.siding,
-                13.68, 2.1, -3.3, { rough: 0.95, map: sidingT }));
-      ltag(ebox(5.2, 4.2, 0.24, NICE ? 0xffffff : EXTC.siding,
-                11.2, 2.1, -5.68, { rough: 0.95, map: sidingT }));
-      var lroof = box(5.7, 0.14, 2.9, NICE ? 0xffffff : EXTC.roof,
-                      11.2, 4.9, -4.45, livingRoofG,
-                      NICE ? { rough: 0.9, map: shingleT } : { rough: 0.9 });
-      lroof.rotation.x = 0.1;
-      ltag(lroof);
-      ltag(box(5.8, 0.18, 0.3, EXTC.trim, 11.2, 4.68, -3.05, livingRoofG));
-      /* the hearth: static warmth, no fake fire (render-on-demand law) */
-      ltag(rbox(1.6, 1.6, 0.35, 0.05, 0xcfc4b2, 10.3, 0.8, -5.42, extG,
-                { rough: 0.95 }));
-      ltag(box(0.9, 0.85, 0.12, 0x1c1c1c, 10.3, 0.62, -5.3, extG));
-      if (DETAIL >= 2) {
-        ltag(box(0.7, 0.55, 0.06, 0xffb45c, 10.3, 0.52, -5.28, extG));
-      }
-      ltag(box(1.8, 0.12, 0.5, NICE ? 0xffffff : 0xb98c58, 10.3, 1.68, -5.4,
-               extG, NICE ? { rough: 0.7, map: woodLight } : { rough: 0.7 }));
-      if (DETAIL >= 3) {
-        var log1 = cyl(0.09, 0.09, 0.6, C.wood2, 10.2, 0.26, -5.3, extG, 8);
-        log1.rotation.z = Math.PI / 2;
-        var log2 = cyl(0.08, 0.08, 0.5, 0x8a6d49, 10.45, 0.38, -5.28, extG, 8);
-        log2.rotation.z = Math.PI / 2;
-        ltag(log1); ltag(log2);
-      }
-      /* sofa facing the hearth, rug and coffee table between */
-      ltag(rbox(2.2, 0.5, 0.95, 0.08, 0x6fa8a0, 11.2, 0.5, -1.7, extG,
-                { rough: 0.95 }));
-      ltag(rbox(2.2, 0.7, 0.3, 0.08, 0x6fa8a0, 11.2, 0.95, -1.4, extG,
-                { rough: 0.95 }));
-      ltag(rbox(0.28, 0.62, 0.95, 0.08, 0x5f938c, 10.15, 0.75, -1.7, extG,
-                { rough: 0.95 }));
-      ltag(rbox(0.28, 0.62, 0.95, 0.08, 0x5f938c, 12.25, 0.75, -1.7, extG,
-                { rough: 0.95 }));
-      var rug = new T.Mesh(new T.CircleGeometry(1.35, 22),
-        mat(0xd9c1a5, { rough: 1.0 }));
-      rug.rotation.x = -Math.PI / 2;
-      rug.position.set(11.2, 0.075, -3.4);
-      ltag(rug); extG.add(rug);
-      /* coffee table under the critter laptop (the crit group dropped
-         0.35 so the screen lands at table height) */
-      ltag(rbox(1.4, 0.09, 0.85, 0.03, NICE ? 0xffffff : 0xb98c58,
-                11.2, 0.83, -3.3, extG,
-                NICE ? { rough: 0.7, map: woodLight } : { rough: 0.7 }));
-      ltag(cyl(0.05, 0.05, 0.78, C.wood2, 10.65, 0.4, -3.62, extG, 8));
-      ltag(cyl(0.05, 0.05, 0.78, C.wood2, 11.75, 0.4, -3.62, extG, 8));
-      ltag(cyl(0.05, 0.05, 0.78, C.wood2, 10.65, 0.4, -2.98, extG, 8));
-      ltag(cyl(0.05, 0.05, 0.78, C.wood2, 11.75, 0.4, -2.98, extG, 8));
-      /* the radio's shelf beside the hearth */
-      ltag(rbox(1.3, 0.08, 0.6, 0.03, NICE ? 0xffffff : 0xb98c58,
-                12.7, 1.33, -5.05, extG,
-                NICE ? { rough: 0.7, map: woodLight } : { rough: 0.7 }));
-      ltag(box(0.08, 0.3, 0.5, C.wood2, 12.25, 1.14, -5.05, extG));
-      ltag(box(0.08, 0.3, 0.5, C.wood2, 13.15, 1.14, -5.05, extG));
-      if (DETAIL >= 2) {
-        ltag(cyl(0.05, 0.07, 1.3, 0x8a8178, 9.3, 0.65, -4.9, extG, 8));
-        var lshade = new T.Mesh(new T.CylinderGeometry(0.26, 0.34, 0.3, 14,
-                                                       1, true),
-          mat(0xf0e3c8, { rough: 0.8 }));
-        lshade.position.set(9.3, 1.45, -4.9);
-        ltag(lshade); finish(lshade); extG.add(lshade);
-      }
-      blobShadow(2.4, 2.3, 11.2, -3.3, extG);
-    })();
     /* two blob trees + a bush: the yard is a place, not a void */
     function tree(x, z, s) {
       cyl(0.16 * s, 0.22 * s, 1.4 * s, EXTC.trunk, x, 0.7 * s, z, extG, 8);
