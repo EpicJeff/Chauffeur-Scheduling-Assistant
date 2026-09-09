@@ -140,6 +140,30 @@
                   var t = (w.temp !== null && w.temp !== undefined) ? Math.round(w.temp) + '\u00b0 ' : '';
                   return t + w.cond + (w.calm === false ? ' \u2014 plan for it' : '');
                 } },
+    garage:   { label: 'Garage',        url: 'config',
+                num: function (s) {
+                  return ((s.garage || {}).cars || []).filter(function (c) {
+                    return c.warn; }).length;
+                },
+                headline: function (s) {
+                  var g = s.garage || {};
+                  var cars = g.cars || [];
+                  if (!cars.length) return 'No cars on the record yet.';
+                  var warns = cars.filter(function (c) { return c.warn; });
+                  if (!warns.length) return 'Every car is settled.';
+                  return warns.map(function (c) {
+                    var lvl = (c.battery_pct !== null && c.battery_pct !== undefined)
+                      ? c.battery_pct : c.fuel_pct;
+                    return c.name + (lvl !== null && lvl !== undefined
+                      ? ' at ' + Math.round(lvl) + '%' : ' needs a look');
+                  }).join(', ');
+                } },
+    curb:     { label: 'Curb',          url: 'home',
+                num: function (s) { return (s.curb || {}).bus ? 1 : 0; },
+                headline: function (s) {
+                  return (s.curb || {}).bus ? 'The bus is out.'
+                                            : 'No bus right now.';
+                } },
     pet:      { label: 'Critters',      url: 'chores',
                 num: function (s) { return (s.pet || {}).count || 0; },
                 headline: function (s) {
@@ -150,7 +174,7 @@
                   }).join(', ');
                 } }
   };
-  var ZONE_ORDER = ['door', 'window', 'calendar', 'counter', 'fridge', 'board', 'radio', 'pet'];
+  var ZONE_ORDER = ['door', 'window', 'calendar', 'counter', 'fridge', 'board', 'radio', 'pet', 'garage', 'curb'];
 
   function go(slug) { window.location.href = BASE + slug + window.location.search; }
 
@@ -200,6 +224,9 @@
     /* the house from the yard: the panel's resting view */
     var EXT_POS = new T.Vector3(37.5, 23.5, 37.5);
     var EXT_AT = new T.Vector3(-2.0, 1.0, 3.6);
+    /* the garage from its own doorway (roof + front hidden inside) */
+    var GARAGE_POS = new T.Vector3(-8.6, 12.5, 23.0);
+    var GARAGE_AT = new T.Vector3(-10.2, 1.4, 4.6);
     cam.position.copy(EXT_POS);
     cam.lookAt(EXT_AT);
 
@@ -959,7 +986,7 @@
     var CAR_DARK = 0x22252a;
     var busG = new T.Group();
     busG.visible = false;
-    busG.position.set(-4.0, -0.31, 20.3);
+    busG.position.set(-8.5, -0.31, 20.3);
     busG.userData.zone = 'curb';
     extG.add(busG);
     (function () {
@@ -1443,7 +1470,8 @@
       garageDoorG: garageDoorG, garageInterior: garageInterior,
       carsG: carsG, busG: busG, buildCar: buildCar, carTex: carTex,
       HOME_POS: HOME_POS, HOME_AT: HOME_AT,
-      EXT_POS: EXT_POS, EXT_AT: EXT_AT
+      EXT_POS: EXT_POS, EXT_AT: EXT_AT,
+      GARAGE_POS: GARAGE_POS, GARAGE_AT: GARAGE_AT
     };
   }
 
@@ -1708,9 +1736,21 @@
   function enterKitchen(cb) {
     if (mode === 'kitchen') { if (cb) cb(); return; }
     mode = 'kitchen';
+    if (webgl.garageDoorG) webgl.garageDoorG.visible = true;
     tween = { fromP: webgl.cam.position.clone(), toP: webgl.HOME_POS.clone(),
               fromA: (lookAt || webgl.EXT_AT).clone(),
               toA: webgl.HOME_AT.clone(),
+              t0: performance.now(), ms: 850, cb: cb || null };
+    requestFrame();
+  }
+  function enterGarage(cb) {
+    if (mode === 'garage') { if (cb) cb(); return; }
+    mode = 'garage';
+    /* the dollhouse trick: the front and roof step aside for the camera */
+    if (webgl.garageDoorG) webgl.garageDoorG.visible = false;
+    tween = { fromP: webgl.cam.position.clone(), toP: webgl.GARAGE_POS.clone(),
+              fromA: (lookAt || webgl.EXT_AT).clone(),
+              toA: webgl.GARAGE_AT.clone(),
               t0: performance.now(), ms: 850, cb: cb || null };
     requestFrame();
   }
@@ -1718,6 +1758,7 @@
     mode = 'exterior';
     focused = null;
     TIP.style.opacity = 0;
+    if (webgl.garageDoorG) webgl.garageDoorG.visible = true;
     announceFocus(null);
     tween = { fromP: webgl.cam.position.clone(), toP: webgl.EXT_POS.clone(),
               fromA: (lookAt || webgl.HOME_AT).clone(),
@@ -1845,6 +1886,7 @@
     });
   };
   window.chfHouseEnter = function () { if (webgl) enterKitchen(null); };
+  window.chfHouseEnterGarage = function () { if (webgl) enterGarage(null); };
   window.chfHouseExit = function () { if (webgl) goExterior(); };
 
   function announceFocus(key) {
@@ -1879,16 +1921,41 @@
   function onTap(ev) {
     if (!webgl) return;
     if (mode === 'exterior') {
-      /* any tap on the HOUSE goes inside; sky and flat yard stay a view.
-         The garage massing is sealed until H2 — a knock there enters the
-         kitchen too: one room exists, every knock reaches it. */
+      /* any tap on the HOUSE goes inside — routed by room tag: the
+         garage's meshes carry userData.room='garage', everything else
+         is the kitchen. Sky and flat yard stay a view. */
       var hit = anyHit(ev.clientX, ev.clientY);
-      if (hit && hit !== webgl.skyDome &&
-          (!inExterior(hit) || hit.position.y > 0.2))
-        enterKitchen(null);
+      if (!hit || hit === webgl.skyDome) return;
+      var o = hit, room = null;
+      while (o) {
+        if (o.userData && o.userData.room) { room = o.userData.room; break; }
+        o = o.parent;
+      }
+      if (room === 'garage') { enterGarage(null); return; }
+      if (!inExterior(hit) || hit.position.y > 0.2) enterKitchen(null);
       return;
     }
     var key = zoneAt(ev.clientX, ev.clientY);
+    if (mode === 'garage') {
+      /* one zone lives here; anything else is the way out */
+      if (key !== 'garage') { goExterior(); return; }
+      if (focused === 'garage') { go(ZONES.garage.url); return; }
+      focused = 'garage';
+      announceFocus(null);
+      frameZone('garage', function () {
+        announceFocus('garage');
+        if (state) {
+          TIP.textContent = ZONES.garage.label + ' — ' +
+            ZONES.garage.headline(state);
+          TIP.style.left = '16px'; TIP.style.bottom = '64px';
+          TIP.style.top = 'auto'; TIP.style.opacity = 1;
+        }
+      });
+      return;
+    }
+    /* kitchen mode: the garage and curb live outside these walls — a ray
+       that slips past the wall must not lean into another room */
+    if (key === 'garage' || key === 'curb') key = null;
     if (!key) { if (focused) { goHome(); } else { goExterior(); } return; }
     if (focused === key) { go(ZONES[key].url); return; }   // second tap: through
     focused = key;
