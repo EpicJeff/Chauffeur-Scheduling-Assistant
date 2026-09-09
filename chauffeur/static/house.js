@@ -230,8 +230,15 @@
     /* the garage from its own doorway (roof + front hidden inside) */
     var GARAGE_POS = new T.Vector3(-13.9, 11.2, 20.4);
     var GARAGE_AT = new T.Vector3(-15.7, 1.7, 5.2);
-    var MUD_POS = new T.Vector3(-5.9, 5.2, 12.0);
-    var MUD_AT = new T.Vector3(-9.8, 1.5, 2.9);
+    /* the mudroom: the old pose put the street door's BACK across the
+       left third of the frame (the wall it hangs in is cut away, the
+       slab is not) and showed no west wall at all. Swung east and in,
+       the door shrinks to a sliver at the very edge — still tappable,
+       which is the whole point of it — and the frame becomes the closed
+       north-west corner: garage door left, bench and hooks right
+       (bible S5.0/S5.1) */
+    var MUD_POS = new T.Vector3(-3.4, 6.2, 11.2);
+    var MUD_AT = new T.Vector3(-11.4, 1.7, 4.2);
     /* the living room: far enough back that the whole hearth wall, both
        built-ins and the reading corner sit inside the safe frame, high
        enough that the floor falls away to the lower right (bible S5.1) */
@@ -478,13 +485,16 @@
       if (DETAIL < 2) return null;
       return cyl(0.035, 0.035, 0.05, C.steel, x, y, z, group, 8, CHROME);
     }
-    function blobShadow(rx, rz, x, z, group) {
+    /* y0: rooms whose floor is not the house slab (the mudroom sits at
+       0.03, the pantry too) pass their own floor height, or the disc
+       renders underneath the boards and nothing reads as touching */
+    function blobShadow(rx, rz, x, z, group, y0) {
       if (SHADOWS) return null;          // the high tier has the real thing
       var m = new T.Mesh(new T.CircleGeometry(1, 20),
         new T.MeshBasicMaterial({ color: C.shadow, transparent: true, opacity: 0.16 }));
       m.rotation.x = -Math.PI / 2;
       m.scale.set(rx, rz, 1);
-      m.position.set(x, 0.012, z);
+      m.position.set(x, y0 === undefined ? 0.012 : y0, z);
       (group || scene).add(m); return m;
     }
 
@@ -1445,9 +1455,10 @@
     function kBays(g, W, D, y0, y1, row) {
       var bays = row.bays || 2, tiers = row.tiers || 2, i, j;
       var zf = D / 2, bd = row.depth || Math.min(D, 0.50);
-      /* back panel: darker, inset — this is what makes a bay a bay */
-      box(W - 0.06, y1 - y0, 0.03, KBAY, 0, (y0 + y1) / 2, zf - bd + 0.03,
-          g, { rough: 0.95 });
+      /* back panel: darker, inset — this is what makes a bay a bay.
+         `row.back` lets a room outside the kitchen pick its own shade. */
+      box(W - 0.06, y1 - y0, 0.03, row.back || KBAY, 0, (y0 + y1) / 2,
+          zf - bd + 0.03, g, { rough: 0.95 });
       var bh = (y1 - y0) / tiers;
       for (i = 0; i <= tiers; i++) {
         var sy = y0 + i * bh;
@@ -1949,6 +1960,85 @@
         sh.userData.zone = 'board';
         finish(sh); scene.add(sh);
       });
+      /* ---- the closet's §3.2 treatment (bible S7 mudroom.4) -----------
+         Shelf boards with a visible front edge on a back panel one shade
+         darker and inset, a divider, and STOCK: tins, boxes, a crock, a
+         sack. None of it is a jar and none of it sits on the jars' line
+         at x -8.05..-7.85, because the JARS are the signal — one leaves
+         for every open shopping item, and a long list still has to make
+         these shelves look bare. */
+      var PD2 = DETAIL >= 2, PD3 = DETAIL >= 3;
+      function ptag(m) {
+        if (m) { m.userData.zone = 'board'; m.userData.room = 'kitchen'; }
+        return m;
+      }
+      function pb(w, h, d, c, x, y, z, o) {
+        return ptag(box(w, h, d, c, x, y, z, null, o));
+      }
+      function pr(w, h, d, r, c, x, y, z, o) {
+        return ptag(rbox(w, h, d, r, c, x, y, z, null, o));
+      }
+      function pc(rt, rb, h, c, x, y, z, s, o) {
+        return ptag(cyl(rt, rb, h, c, x, y, z, null, s, o));
+      }
+      pb(0.03, 3.10, 2.00, KBAY, -8.46, 1.75, -0.60, { rough: 0.95 });
+      [0.9, 1.7, 2.5].forEach(function (sy) {
+        pb(0.02, 0.065, 2.00, C.cabShade, -7.345, sy, -0.60, MATT);
+        if (PD3) {
+          pb(1.16, 0.03, 0.04, C.cabShade, -7.95, sy - 0.045, -1.58, MATT);
+          pb(1.16, 0.03, 0.04, C.cabShade, -7.95, sy - 0.045, 0.38, MATT);
+        }
+      });
+      pb(1.05, 3.10, 0.05, C.cab, -7.925, 1.75, -0.94, MATT);
+      /* the stock. Tins and boxes, never jars. */
+      function tin(x, y, z, r, h, c) {
+        pc(r, r, h, c, x, y + h / 2, z, 12, GLOSS);
+        if (PD3) pc(r * 1.06, r * 1.06, 0.035, C.cabShade, x, y + h - 0.01, z,
+                    12, MATT);
+      }
+      function crock(x, y, z, r, h, c) {
+        pc(r * 0.86, r, h, c, x, y + h / 2, z, 14, GLOSS);
+        pc(r * 0.72, r * 0.9, 0.06, c, x, y + h + 0.02, z, 14, GLOSS);
+      }
+      function sack(x, y, z, r, h, c) {
+        pc(r * 0.62, r, h, c, x, y + h / 2, z, 12, { rough: 0.98 });
+        if (PD3) pc(r * 0.30, r * 0.60, 0.10, c, x, y + h + 0.04, z, 10,
+                    { rough: 0.98 });
+      }
+      function carton(x, y, z, w, h, d, c) {
+        pr(w, h, d, 0.02, c, x, y + h / 2, z, MATT);
+        if (PD3) pb(w * 0.62, h * 0.42, 0.01, C.cabShade, x, y + h * 0.6,
+                    z + d / 2 + 0.006, MATT);
+      }
+      if (PD2) {
+        /* shelf 1 (top 0.93) — the jars own the middle band */
+        sack(-8.28, 0.93, -1.30, 0.16, 0.30, C.linen);
+        crock(-8.26, 0.93, -0.30, 0.15, 0.24, C.terracotta);
+        tin(-7.56, 0.93, -1.44, 0.085, 0.20, C.sage);
+        tin(-7.56, 0.93, -1.16, 0.075, 0.16, C.cream);
+        carton(-7.56, 0.93, 0.10, 0.22, 0.26, 0.20, C.cork);
+        if (PD3) tin(-7.58, 0.93, 0.34, 0.07, 0.13, C.stone);
+        /* shelf 2 (top 1.73) */
+        carton(-8.28, 1.73, -1.24, 0.24, 0.22, 0.26, C.linen);
+        carton(-8.28, 1.95, -1.24, 0.20, 0.16, 0.22, C.cream);
+        crock(-8.26, 1.73, -0.26, 0.13, 0.20, C.cream);
+        tin(-7.56, 1.73, -1.48, 0.08, 0.22, C.stone);
+        pr(0.24, 0.20, 0.34, 0.03, C.cork, -7.58, 1.83, -0.56, { rough: 0.98 });
+        carton(-7.56, 1.73, 0.12, 0.20, 0.24, 0.18, C.sage);
+        /* shelf 3 (top 2.53) — no jars here, so it carries a full bay */
+        pr(0.30, 0.26, 0.42, 0.03, C.cork, -7.95, 2.66, -1.28, { rough: 0.98 });
+        if (PD3) pb(0.33, 0.05, 0.45, 0x8f6a3f, -7.95, 2.77, -1.28, MATT);
+        carton(-8.20, 2.53, -0.72, 0.24, 0.28, 0.22, C.linen);
+        tin(-7.60, 2.53, -0.76, 0.09, 0.24, C.cream);
+        crock(-7.94, 2.53, -0.12, 0.16, 0.26, C.stone);
+        tin(-8.24, 2.53, 0.18, 0.085, 0.19, C.sage);
+        if (PD3) carton(-7.58, 2.53, 0.24, 0.20, 0.20, 0.18, C.cork);
+        /* the closet floor: a crate, a bin and a sack of potatoes */
+        pr(0.60, 0.36, 0.52, 0.03, C.cork, -7.90, 0.24, -1.24, { rough: 0.98 });
+        if (PD3) pb(0.63, 0.05, 0.55, 0x8f6a3f, -7.90, 0.44, -1.24, MATT);
+        pc(0.19, 0.16, 0.46, C.stone, -7.66, 0.26, -0.42, 12, MATT);
+        sack(-8.16, 0.03, 0.14, 0.20, 0.44, C.linen);
+      }
     })();
     var pantryJars = [];
     (function () {
@@ -2731,6 +2821,7 @@
     extG.add(mudroomRoofG);
     var mudBagsG = new T.Group();
     scene.add(mudBagsG);
+    var makeBag = null;                  /* set below; used by syncMudroom */
     (function () {
       function mtag(m) { if (m) m.userData.room = 'mudroom'; return m; }
       var mFloorTex = floorTex.clone();
@@ -2755,22 +2846,469 @@
                       -9.8, 4.5, 5.4, mudroomRoofG,
                       NICE ? { rough: 0.9, map: shingleT } : { rough: 0.9 });
       mtag(mroof);
-      /* bench + hooks on the NORTH wall: they face the camera coming in
-         from the south-east */
-      mtag(rbox(2.4, 0.1, 0.5, 0.03, 0xb98c58, -10.6, 0.52, 2.95, extG,
-                { rough: 0.7, map: woodLight }));
-      mtag(box(0.06, 0.5, 0.06, C.wood2, -11.6, 0.26, 2.78, extG));
-      mtag(box(0.06, 0.5, 0.06, C.wood2, -9.6, 0.26, 2.78, extG));
-      mtag(box(0.06, 0.5, 0.06, C.wood2, -11.6, 0.26, 3.12, extG));
-      mtag(box(0.06, 0.5, 0.06, C.wood2, -9.6, 0.26, 3.12, extG));
-      if (DETAIL >= 3) {
-        mtag(box(0.1, 0.1, 0.1, C.wood2, -11.4, 2.5, 2.66, extG));
-        mtag(box(0.1, 0.1, 0.1, C.wood2, -10.6, 2.5, 2.66, extG));
-        mtag(box(0.1, 0.1, 0.1, C.wood2, -9.8, 2.5, 2.66, extG));
-        mtag(rbox(0.5, 0.85, 0.24, 0.06, C.teal, -10.6, 2.0, 2.80, extG,
-                  { rough: 0.9 }));
+      /* ============ the studio pass (docs/house_style_bible.md) =========
+         The room inherited exterior siding from the architect pass and
+         read as a covered porch. It is a finished room now: a shiplap
+         wainscot in sage under a cap rail, plaster above, a baseboard —
+         the hard-wearing lower wall the plates give a mudroom. Its four
+         accents were picked to sit BESIDE the kitchen's (teal,
+         terracotta, brass, oxblood), because the kitchen doorway looks
+         straight in here: sage, brass, oxblood, terracotta. Dark
+         anchors: the garage door on the west wall and the shoe cabinet
+         on the north, one at each end of the frame. */
+      var D2 = DETAIL >= 2, D3 = DETAIL >= 3;
+      var PLASTER = { rough: 0.94 }, FAB = { rough: 0.98 };
+      var woodO = NICE ? { rough: 0.62, map: woodLight } : { rough: 0.62 };
+      var woodK = NICE ? 0xffffff : 0xc89a66;
+      var SAGE = C.sage, SAGED = C.sageDeep, TRIM = C.cab;
+      var NWF = 2.60;                 /* the north wall's inner face */
+      var WWF = -12.60;               /* the west wall's inner face */
+      var FLR = 0.03;                 /* the mudroom floor, not the slab */
+      function mb(w, h, d, c, x, y, z, o) { return mtag(box(w, h, d, c, x, y, z, extG, o)); }
+      function mr(w, h, d, r, c, x, y, z, o) { return mtag(rbox(w, h, d, r, c, x, y, z, extG, o)); }
+      function mc(a, b2, h, c, x, y, z, s, o) { return mtag(cyl(a, b2, h, c, x, y, z, extG, s, o)); }
+      function msh(rx, rz, x, z) { return blobShadow(rx, rz, x, z, extG, FLR + 0.015); }
+      /* the kitchen's case builder, dropped into the shell group so the
+         mudroom's props hide and tag with the rest of the room */
+      function mCase(cx, cz, rot, W, D, y0, y1, rows, opt) {
+        var g = kCase(cx, cz, rot, W, D, y0, y1, rows, opt);
+        extG.add(g);
+        g.traverse(function (o) { o.userData.room = 'mudroom'; });
+        return g;
       }
-      blobShadow(2.9, 2.8, -9.7, 5.4, extG);
+      /* the kitchen's houseplant, three silhouettes, in its own group so
+         it carries the room tag and its own contact shadow */
+      function mPlant(x, y0, z, s, potC, potO, kind, shadow) {
+        var g = new T.Group();
+        extG.add(g);
+        kPlant(g, x, y0, z, s, potC, potO, kind, false);
+        g.traverse(function (o) { o.userData.room = 'mudroom'; });
+        if (shadow) msh(0.34 * s, 0.32 * s, x, z);
+        return g;
+      }
+      /* ---- one run of finished wall: plaster field, shiplap dado, cap
+         rail, baseboard. axis 'z' = the north wall (face looks +z),
+         axis 'x' = the west wall (face looks +x). One builder, both. */
+      function wallRun(axis, face, a0, a1, top, dado) {
+        var L = a1 - a0, mid = (a0 + a1) / 2;
+        function plate(h, d0, d1, c, y, o) {
+          var d = d1 - d0, ctr = face + (d0 + d1) / 2;
+          return axis === 'z' ? mb(L, h, d, c, mid, y, ctr, o)
+                              : mb(d, h, L, c, ctr, y, mid, o);
+        }
+        plate(top, 0, 0.05, C.wall, top / 2, PLASTER);
+        if (!dado) return;
+        plate(1.32, 0.05, 0.12, SAGE, 0.88, { rough: 0.92 });
+        if (D3) [0.45, 0.68, 0.90, 1.12, 1.34].forEach(function (y) {
+          plate(0.018, 0.113, 0.132, SAGED, y);          /* board seams */
+        });
+        plate(0.10, 0.05, 0.21, TRIM, 1.59, MATT);       /* cap rail */
+        if (D3) plate(0.045, 0.05, 0.155, C.cabShade, 1.512);
+        plate(0.22, 0.05, 0.17, TRIM, 0.11, MATT);       /* baseboard */
+      }
+      wallRun('z', NWF, -12.60, -6.85, 4.20, true);
+      if (D2) {                       /* crown: the wall head gets a line */
+        mb(5.75, 0.14, 0.14, TRIM, -9.725, 4.11, NWF + 0.12, MATT);
+        mb(0.14, 0.14, 5.75, TRIM, WWF + 0.12, 4.11, 5.425, MATT);
+        if (D3) {
+          mb(5.75, 0.05, 0.09, C.cabShade, -9.725, 4.00, NWF + 0.095, MATT);
+          mb(0.09, 0.05, 5.75, C.cabShade, WWF + 0.095, 4.00, 5.425, MATT);
+        }
+      }
+      /* the west wall breaks either side of the garage door */
+      wallRun('x', WWF, 2.55, 2.97, 4.20, true);
+      wallRun('x', WWF, 4.43, 8.30, 4.20, true);
+      mb(0.05, 1.28, 1.46, C.wall, WWF + 0.025, 3.56, 3.70, PLASTER);
+      /* the east side is the great room's face of the mudroom wall: it
+         closes the frame's right edge, so it gets plaster, not siding */
+      /* the east side is the great room's face of the mudroom wall, and
+         it closes the frame's right edge. Below the room's wall head it
+         wears the room's finish; above it the wall runs on to the eaves,
+         so a crown marks where the room stops and the rest goes quiet
+         instead of standing there as a white cliff. */
+      wallRun('x', -6.85, 4.40, 6.02, 4.20, true);
+      mb(0.05, 2.84, 1.62, 0xdcd5c8, -6.825, 5.62, 5.21, PLASTER);
+      /* and its cut end wears the plates' wall-thickness band, or the
+         camera reads raw clapboard down the frame's right edge */
+      mb(0.34, 7.00, 0.06, C.cabShade, -7.00, 3.50, 6.03, MATT);
+
+      /* ================= 1. the garage door (S7 mudroom.3) =============
+         The west wall is the garage connection and was blank. A cased
+         opening now: casing boards proud of the wall, a panelled slab in
+         slate — the room's first dark anchor — a brass knob, a
+         threshold, and a jamb the wall dies into. */
+      [3.03, 4.37].forEach(function (cz) {
+        mb(0.06, 2.92, 0.14, TRIM, WWF + 0.03, 1.46, cz, MATT);
+      });
+      mb(0.06, 0.14, 1.62, TRIM, WWF + 0.03, 2.85, 3.70, MATT);
+      if (D2) mb(0.15, 0.09, 1.80, TRIM, WWF + 0.075, 2.97, 3.70, MATT);
+      if (D3) {                        /* the casing's inner bead */
+        [3.09, 4.31].forEach(function (cz) {
+          mb(0.10, 2.86, 0.03, C.cabShade, WWF + 0.05, 1.43, cz, MATT);
+        });
+        mb(0.10, 0.03, 1.28, C.cabShade, WWF + 0.05, 2.79, 3.70, MATT);
+      }
+      mb(0.10, 2.72, 1.18, C.slate, WWF + 0.05, 1.38, 3.70, { rough: 0.62 });
+      if (D2) {                        /* stiles, rails and two panels */
+        [[0.86, 1.02], [1.94, 0.94]].forEach(function (pn) {
+          mb(0.02, pn[1], 0.86, 0x4a5460, WWF + 0.108, pn[0], 3.70,
+             { rough: 0.6 });
+          if (D3) mb(0.02, pn[1] - 0.14, 0.72, C.slate, WWF + 0.122, pn[0],
+                     3.70, { rough: 0.6 });
+        });
+        mc(0.05, 0.05, 0.09, C.brass, WWF + 0.16, 1.36, 4.16, 10, CHROME)
+          .rotation.z = Math.PI / 2;
+        mb(0.30, 0.05, 1.20, woodK, WWF + 0.15, FLR + 0.025, 3.70, woodO);
+      }
+
+      /* ================= 2. the bench (S7 mudroom.1) ===================
+         It was a plank on four posts. Now it is casework: toe kick,
+         carcass, face frame, three open shoe cubbies over a darker back,
+         a wood seat that overhangs, and a cushion. */
+      var BX = -11.45, BZ = 3.08;
+      mCase(BX, BZ, 0, 1.90, 0.62, 0, 0.52, [
+        { h: 0.36, kind: 'bays', bays: 3, tiers: 1, depth: 0.56, back: SAGED }
+      ], { toe: true });
+      mb(2.04, 0.06, 0.68, woodK, BX, 0.55, BZ + 0.02, woodO);
+      mr(1.80, 0.17, 0.56, 0.08, C.linen, BX, 0.665, BZ + 0.02, FAB);
+      if (D2) [-0.20, 0.20].forEach(function (dz) {
+        mb(1.78, 0.026, 0.026, C.oxblood, BX, 0.732, BZ + 0.02 + dz, FAB);
+      });
+      if (D3) [-0.56, 0.56].forEach(function (dx) {
+        mb(0.026, 0.16, 0.54, C.oxblood, BX + dx, 0.665, BZ + 0.02, FAB);
+      });
+      msh(1.08, 0.38, BX, BZ);
+      /* a folded throw at the far end: S4 wants two things on any
+         surface this size, and the backpacks are a count, not a given */
+      if (D2) {
+        mr(0.28, 0.10, 0.44, 0.03, SAGED, -12.26, 0.80, BZ - 0.06, FAB);
+        mr(0.26, 0.08, 0.42, 0.03, C.linen, -12.26, 0.89, BZ - 0.06, FAB);
+      }
+      /* shoes in the cubbies: a sole, an upper and a toe, not a block */
+      function shoe(x, y, z, c, flip) {
+        mr(0.12, 0.085, 0.26, 0.04, c, x, y + 0.075, z, { rough: 0.7 });
+        mc(0.055, 0.055, 0.11, c, x, y + 0.105, z - 0.09, 10, { rough: 0.7 })
+          .rotation.z = Math.PI / 2;
+        if (D3) mb(0.135, 0.035, 0.28, C.graphite, x, y + 0.018, z,
+                   { rough: 0.8 }).rotation.y = flip ? 0.06 : -0.06;
+      }
+      if (D2) {
+        [[-12.083, C.oxblood], [-11.45, C.slate], [-10.817, 0x6f7f74]]
+          .forEach(function (b, i) {
+            shoe(b[0] - 0.10, 0.22, BZ + 0.03, b[1], false);
+            shoe(b[0] + 0.10, 0.22, BZ + 0.03, b[1], true);
+            if (D3) mr(0.22, 0.10, 0.30, 0.03, i % 2 ? C.linen : C.cork,
+                       b[0] + 0.26, 0.28, BZ + 0.02, FAB);
+          });
+      }
+
+      /* ================= 3. the hook rail (S7 mudroom.1) ===============
+         Three cubes became a mounting rail with real hooks: a back
+         plate, an arm angling out and down, and an upturned tip. */
+      mb(1.90, 0.30, 0.06, woodK, BX, 2.02, NWF + 0.08, woodO);
+      if (D2) mb(1.94, 0.05, 0.12, TRIM, BX, 2.195, NWF + 0.11, MATT);
+      var HOOKX = [-12.16, -11.70, -11.24, -10.78];
+      HOOKX.forEach(function (hx) {
+        mr(0.09, 0.17, 0.03, 0.014, C.brass, hx, 1.99, NWF + 0.125, STEEL);
+        if (!D2) return;
+        mc(0.023, 0.023, 0.19, C.brass, hx, 1.96, NWF + 0.216, 8, STEEL)
+          .rotation.x = 2.0;
+        mc(0.023, 0.023, 0.07, C.brass, hx, 1.955, NWF + 0.303, 8, STEEL);
+      });
+      /* coats: a body, shoulders, a collar and two sleeves — a rounded
+         slab is a bath towel, not a coat */
+      function coat(hx, len, c, cd) {
+        var z = NWF + 0.245, top = 1.82;
+        /* shoulders across the hook, a flat body under them, and two
+           sleeves clear of the body's silhouette — a rounded slab with
+           no sleeve line reads as a sleeping bag, which is what the
+           first pass built */
+        mr(0.34, len, 0.14, 0.05, c, hx, top - len / 2, z, FAB);
+        mr(0.40, 0.13, 0.16, 0.05, c, hx, top - 0.02, z, FAB);
+        mr(0.15, 0.09, 0.13, 0.04, cd, hx, top + 0.075, z - 0.015, FAB);
+        [-1, 1].forEach(function (sn) {
+          var sl = mr(0.105, len * 0.74, 0.115, 0.045, c, hx + sn * 0.192,
+                      top - 0.06 - len * 0.37, z + 0.008, FAB);
+          sl.rotation.z = sn * 0.055;
+          if (D3) mr(0.10, 0.05, 0.11, 0.03, cd, hx + sn * 0.20,
+                     top - 0.09 - len * 0.74, z + 0.008, FAB);
+        });
+        if (D3) {
+          mb(0.025, len - 0.16, 0.015, cd, hx, top - 0.04 - len / 2,
+             z + 0.074, FAB);
+          mb(0.10, 0.085, 0.015, cd, hx - 0.085, top - 0.30 - len / 2,
+             z + 0.074, FAB);
+        }
+      }
+      if (D2) {
+        coat(-12.16, 0.96, C.oxblood, 0x71322b);
+        coat(-11.24, 0.82, SAGED, 0x5f7a6d);
+        coat(-10.78, 0.64, C.terracotta, 0x8f5528);
+        /* a tote on the spare hook — the plates always hang a bag */
+        mr(0.28, 0.32, 0.15, 0.05, C.terracotta, -11.70, 1.64, NWF + 0.25, FAB);
+        [-1, 1].forEach(function (s) {
+          var st = mr(0.035, 0.30, 0.05, 0.015, C.cork, -11.70 + s * 0.095,
+                      1.87, NWF + 0.25, FAB);
+          st.rotation.z = s * 0.22;
+        });
+        if (D3) mb(0.20, 0.09, 0.02, 0x8f5528, -11.70, 1.71, NWF + 0.327, FAB);
+      }
+
+      /* ================= 4. the shelf over the hooks (S3.2) ============ */
+      mb(2.00, 0.07, 0.42, woodK, BX, 2.60, NWF + 0.26, woodO);
+      if (D3) mb(2.00, 0.075, 0.02, C.cabShade, BX, 2.60, NWF + 0.46, MATT);
+      if (D2) [-12.28, -10.62].forEach(function (bx) {
+        mb(0.05, 0.24, 0.32, TRIM, bx, 2.44, NWF + 0.21, MATT);
+      });
+      /* a basket: a body, a darker rim, and woven handle slots */
+      function basket(x, w, d, h, c, cd) {
+        mr(w, h, d, 0.035, c, x, 2.635 + h / 2, NWF + 0.26, { rough: 0.98 });
+        mb(w + 0.03, 0.05, d + 0.03, cd, x, 2.635 + h - 0.02, NWF + 0.26,
+           { rough: 0.95 });
+        if (D3) [-1, 1].forEach(function (s) {
+          mb(0.10, 0.035, 0.02, cd, x + s * w * 0.22, 2.635 + h * 0.6,
+             NWF + 0.26 + d / 2, { rough: 0.9 });
+        });
+      }
+      if (D2) {
+        basket(-12.14, 0.52, 0.34, 0.30, C.cork, 0x8f6a3f);
+        basket(-11.56, 0.44, 0.32, 0.26, C.linen, 0xbdac92);
+        mr(0.36, 0.26, 0.28, 0.03, SAGED, -11.06, 2.755, NWF + 0.26, MATT);
+        mb(0.39, 0.05, 0.31, 0x5f7a6d, -11.06, 2.90, NWF + 0.26, MATT);
+        mPlant(-10.60, 2.635, NWF + 0.26, 0.33, C.terracotta,
+               { rough: 0.85 }, 'mound', false);
+        if (D3) {
+          mr(0.28, 0.07, 0.22, 0.02, C.cream, -11.06, 2.96, NWF + 0.26, FAB);
+          mr(0.26, 0.06, 0.20, 0.02, C.oxblood, -11.06, 3.02, NWF + 0.26, FAB);
+        }
+      }
+
+      /* ================= 5. the shoe cabinet (S3.1) ====================
+         The north wall's east panel is over two units wide, so it earns
+         a piece of furniture, art and a light. The cabinet is the room's
+         second dark anchor and balances the garage door across frame. */
+      var CX = -9.75, CZ2 = NWF + 0.43;
+      mCase(CX, CZ2, 0, 1.45, 0.52, 0, 1.02, [
+        { h: 0.46, cells: [{ w: 1, kind: 'drawers2' }] },
+        { h: 0.40, cells: [{ w: 1, kind: 'doors2' }] }
+      ], { toe: true, face: C.slate, body: 0x2b3138 });
+      mb(1.56, 0.07, 0.62, woodK, CX, 1.055, CZ2 + 0.02, woodO);
+      msh(0.82, 0.34, CX, CZ2);
+      if (D2) {
+        kBowl(extG, CX - 0.48, 1.09, CZ2 - 0.02, 0.16, C.brass);
+        mb(0.30, 0.05, 0.22, C.oxblood, CX - 0.02, 1.115, CZ2 + 0.04, MATT);
+        mb(0.28, 0.045, 0.20, C.cream, CX - 0.01, 1.163, CZ2 + 0.05, MATT);
+        mPlant(CX + 0.34, 1.09, CZ2 - 0.01, 0.36, C.terracotta,
+               { rough: 0.85 }, 'spray', false);
+        if (D3) {
+          mb(0.26, 0.04, 0.18, SAGE, CX - 0.02, 1.208, CZ2 + 0.03, MATT);
+          mc(0.055, 0.05, 0.10, C.cream, CX - 0.22, 1.14, CZ2 + 0.16, 10, GLOSS);
+        }
+      }
+      /* art: a pair of frames, mat and image, on the wall plane */
+      function art(x, y, w, h, c) {
+        mr(w, h, 0.05, 0.015, C.slate, x, y, NWF + 0.075, { rough: 0.55 });
+        if (D3) mb(w - 0.06, h - 0.06, 0.02, C.cream, x, y, NWF + 0.104, MATT);
+        mb(w - 0.15, h - 0.15, 0.02, c, x, y, NWF + 0.112, MATT);
+      }
+      if (D2) {
+        art(-10.18, 2.36, 0.46, 0.58, SAGE);
+        art(-9.60, 2.36, 0.42, 0.58, C.terracotta);
+      }
+      /* the wall light the plates always give a mudroom */
+      if (D2) {
+        mr(0.13, 0.20, 0.05, 0.02, C.brass, -10.30, 2.86, NWF + 0.075, STEEL);
+        mc(0.022, 0.022, 0.22, C.brass, -10.30, 2.86, NWF + 0.19, 8, STEEL)
+          .rotation.x = Math.PI / 2;
+        var scShade = new T.Mesh(
+          new T.CylinderGeometry(0.10, 0.18, 0.18, 14, 1, true),
+          PBR ? new T.MeshStandardMaterial({ color: 0xf3e8d2, roughness: 0.8,
+                                             emissive: 0xffd9a0,
+                                             emissiveIntensity: 0.45,
+                                             side: T.DoubleSide })
+              : new T.MeshLambertMaterial({ color: 0xf3e8d2, side: T.DoubleSide }));
+        scShade.position.set(-10.30, 2.77, NWF + 0.30);
+        mtag(scShade); finish(scShade, true); extG.add(scShade);
+      }
+
+      /* ================= 6. the floor (S4) =============================
+         A runner in front of the bench, a boot tray with two pairs, and
+         a mat at the street door. Nothing floats: every one of them has
+         a contact shadow on the mudroom's own floor height. */
+      function mrug(w, d, x, z, c, lift) {
+        var m = new T.Mesh(new T.PlaneGeometry(w, d), mat(c, { rough: 1.0 }));
+        m.rotation.x = -Math.PI / 2;
+        m.position.set(x, FLR + 0.012 + (lift || 0), z);
+        if (SHADOWS) m.receiveShadow = true;
+        mtag(m); extG.add(m); return m;
+      }
+      /* the quiet tone is the base layer: at the low tier only the base
+         draws, and a rug that is all border reads as a red slab. The
+         stripe is the layer that waits for tier 3. */
+      mrug(1.66, 0.76, -11.55, 3.92, C.rugB);
+      if (D3) mrug(1.52, 0.64, -11.55, 3.92, C.oxblood, 0.006);
+      if (D2) mrug(1.44, 0.56, -11.55, 3.92, C.rugF, 0.012);
+      mrug(1.10, 0.72, -9.80, 7.55, C.rugB);
+      if (D3) mrug(1.00, 0.62, -9.80, 7.55, SAGED, 0.006);
+      if (D2) mrug(0.92, 0.56, -9.80, 7.55, C.rugF, 0.012);
+      /* the boot tray: a lipped pan, not a slab */
+      mb(1.04, 0.05, 0.50, C.graphite, -10.20, FLR + 0.025, 3.80, { rough: 0.6 });
+      if (D2) {
+        mb(0.96, 0.03, 0.42, 0x3c434a, -10.20, FLR + 0.062, 3.80, { rough: 0.7 });
+        [-0.495, 0.495].forEach(function (dx) {
+          mb(0.05, 0.09, 0.50, C.graphite, -10.20 + dx, FLR + 0.075, 3.80,
+             { rough: 0.6 });
+        });
+      }
+      function boot(x, z, c) {
+        mc(0.085, 0.095, 0.32, c, x, FLR + 0.21, z, 10, { rough: 0.78 });
+        mr(0.17, 0.115, 0.28, 0.05, c, x, FLR + 0.115, z + 0.10, { rough: 0.78 });
+        if (D3) {
+          mb(0.185, 0.035, 0.30, C.ink, x, FLR + 0.048, z + 0.10, { rough: 0.85 });
+          mc(0.088, 0.088, 0.03, 0xd8cfc0, x, FLR + 0.37, z, 10, FAB);
+        }
+      }
+      if (D2) {
+        boot(-10.55, 3.74, C.slate); boot(-10.36, 3.74, C.slate);
+        boot(-10.04, 3.74, 0x4f5b52); boot(-9.85, 3.74, 0x4f5b52);
+      }
+      msh(0.56, 0.30, -10.20, 3.82);
+
+      /* ================= 7. the west wall's floor pieces ===============
+         An umbrella stand and the room's tall plant, both inside the
+         0.6-unit rule off the garage door. */
+      if (D2) {
+        mc(0.17, 0.145, 0.44, C.terracotta, -12.24, FLR + 0.22, 4.86, 14, GLOSS);
+        mc(0.18, 0.18, 0.05, C.terracotta, -12.24, FLR + 0.42, 4.86, 14, GLOSS);
+        [[-0.04, -0.05, SAGED, 0.10], [0.05, 0.04, C.oxblood, -0.08]]
+          .forEach(function (u) {
+            var sh = mc(0.032, 0.032, 0.86, u[2], -12.24 + u[0], FLR + 0.66,
+                        4.86 + u[1], 8, { rough: 0.7 });
+            sh.rotation.z = u[3];
+            mc(0.018, 0.072, 0.30, u[2], -12.24 + u[0] + u[3] * 0.72,
+               FLR + 0.94, 4.86 + u[1], 8, { rough: 0.7 }).rotation.z = u[3];
+            if (D3) mc(0.024, 0.024, 0.13, C.wood2,
+                       -12.24 + u[0] + u[3] * 1.05, FLR + 1.20, 4.86 + u[1],
+                       8, WOODM).rotation.z = u[3];
+          });
+        msh(0.22, 0.22, -12.24, 4.86);
+      }
+      mPlant(-12.12, FLR, 5.46, 0.90, C.terracotta, { rough: 0.85 },
+             'fiddle', true);
+      if (D2) {                       /* the garden can lives by the door */
+        mc(0.125, 0.145, 0.30, C.steel, -11.66, FLR + 0.15, 5.08, 12, STEEL);
+        mc(0.132, 0.132, 0.035, C.steel, -11.66, FLR + 0.315, 5.08, 12, STEEL);
+        var wcs = mc(0.05, 0.075, 0.42, C.steel, -11.85, FLR + 0.30, 5.22,
+                     10, STEEL);
+        wcs.rotation.z = -0.95; wcs.rotation.y = 0.55;
+        mc(0.085, 0.055, 0.06, C.steel, -12.02, FLR + 0.44, 5.34, 10, STEEL)
+          .rotation.z = -0.95;
+        if (D3) [-1, 1].forEach(function (sn) {   /* an arched handle */
+          var hd = mc(0.024, 0.024, 0.24, C.steel, -11.66 + sn * 0.055,
+                      FLR + 0.44, 5.08, 8, STEEL);
+          hd.rotation.z = sn * 0.55;
+        });
+        msh(0.17, 0.17, -11.70, 5.12);
+      }
+      /* the west wall's south panel is 3.9 units wide, so S4 wants
+         something on it: a clock, which is what a mudroom wall is for */
+      if (D2) {
+        mc(0.30, 0.30, 0.05, C.brass, WWF + 0.045, 2.74, 5.30, 20, STEEL)
+          .rotation.z = Math.PI / 2;
+        mc(0.26, 0.26, 0.05, C.cream, WWF + 0.075, 2.74, 5.30, 20, GLOSS)
+          .rotation.z = Math.PI / 2;
+        /* the hands are what makes it a clock rather than a brass
+           ring on a cream wall — they cannot wait for tier 3 */
+        mb(0.02, 0.17, 0.025, C.dark, WWF + 0.105, 2.80, 5.30, MATT);
+        mb(0.02, 0.025, 0.13, C.dark, WWF + 0.105, 2.74, 5.35, MATT);
+        if (D3) mc(0.028, 0.028, 0.02, C.dark, WWF + 0.11, 2.74, 5.30, 10,
+                   MATT).rotation.z = Math.PI / 2;
+        /* a print over the umbrella stand, and a peg with a sun hat:
+           the wall between the garage door and the clock was bare */
+        mr(0.05, 0.54, 0.42, 0.015, C.slate, WWF + 0.025, 2.52, 4.72,
+           { rough: 0.55 });
+        if (D3) mb(0.02, 0.48, 0.36, C.cream, WWF + 0.055, 2.52, 4.72, MATT);
+        mb(0.02, 0.40, 0.28, C.terracotta, WWF + 0.063, 2.52, 4.72, MATT);
+        mr(0.05, 0.38, 0.32, 0.015, C.slate, WWF + 0.025, 3.10, 4.72,
+           { rough: 0.55 });
+        if (D3) mb(0.02, 0.33, 0.27, C.cream, WWF + 0.055, 3.10, 4.72, MATT);
+        mb(0.02, 0.26, 0.20, SAGE, WWF + 0.063, 3.10, 4.72, MATT);
+      }
+
+      /* ================= 8. the street door's jamb =====================
+         The wall it hangs in is cut away for the camera, so the opening
+         gets the plates' visible wall-thickness band (S7 exterior.2) —
+         otherwise the slab is a plank floating in a gap. */
+      function jamb(m) { m.userData.zone = 'door'; return m; }
+      [-10.71, -8.89].forEach(function (jx) {
+        jamb(mb(0.12, 4.20, 0.26, C.cabShade, jx, 2.10, 8.21, MATT));
+      });
+      jamb(mb(1.94, 0.12, 0.26, C.cabShade, -9.80, 4.14, 8.21, MATT));
+      jamb(mb(1.94, 0.07, 0.30, woodK, -9.80, FLR + 0.035, 8.19, woodO));
+      /* and the slab's STREET face, which is the face this camera sees:
+         a glazed upper light, two raised panels, a lockset and a kick
+         plate. Everything stays inside the wall's 0.24 of thickness so
+         the exterior view still reads as a solid clapboard wall. They
+         carry the door's zone, so the tap target is the whole door. */
+      if (D2) {
+        var dz0 = 8.235;
+        function dpart(m) {
+          m.userData.zone = 'door'; m.userData.room = 'mudroom'; return m;
+        }
+        dpart(mb(1.44, 0.05, 0.05, 0x8a6d49, -9.80, 2.16, dz0, WOODM));
+        [[2.98, 1.36], [1.44, 0.86], [0.66, 0.52]].forEach(function (pn) {
+          dpart(mb(1.16, pn[1], 0.05, 0x8a6d49, -9.80, pn[0], dz0, WOODM));
+          dpart(mb(1.02, pn[1] - 0.14, 0.04, 0xc79b63, -9.80, pn[0],
+                   dz0 + 0.035, WOODM));
+        });
+        /* the upper panel is glass: a light in the door, the one thing
+           that says street side rather than cupboard */
+        dpart(mb(0.98, 1.18, 0.04, 0x9dbccd, -9.80, 2.98, dz0 + 0.05, GLOSS));
+        if (D3) [-0.32, 0.32].forEach(function (dx) {
+          dpart(mb(0.03, 1.18, 0.03, 0x8a6d49, -9.80 + dx, 2.98, dz0 + 0.072,
+                   WOODM));
+        });
+        dpart(mb(1.36, 0.20, 0.03, C.brass, -9.80, 0.28, dz0 + 0.02, STEEL));
+        dpart(mr(0.16, 0.34, 0.04, 0.02, C.brass, -9.16, 1.98, dz0 + 0.02,
+                 STEEL));
+        dpart(mc(0.06, 0.06, 0.10, C.brass, -9.16, 2.06, dz0 + 0.075, 10,
+                 CHROME)).rotation.x = Math.PI / 2;
+      }
+
+      /* ---- the backpacks syncMudroom deals onto the bench ------------
+         One per active child — the count is real data. The bag itself is
+         built here, where the rounded-box and material helpers live. */
+      makeBag = function (c) {
+        var g = new T.Group();
+        function part(m) { m.userData.room = 'mudroom'; finish(m); g.add(m); return m; }
+        function pb(w, h, d, r, col, x, y, z, o) {
+          var m = new T.Mesh(D2 ? roundedGeo(w, h, d, r) : new T.BoxGeometry(w, h, d),
+                             mat(col, o || FAB));
+          m.position.set(x, y, z); return part(m);
+        }
+        pb(0.34, 0.46, 0.26, 0.07, c, 0, 0, 0);
+        pb(0.345, 0.15, 0.265, 0.05, 0x3a3330, 0, 0.185, 0.01);
+        if (D2) {
+          pb(0.26, 0.18, 0.08, 0.03, 0x3a3330, 0, -0.09, 0.15);
+          [-0.10, 0.10].forEach(function (sx) {
+            pb(0.05, 0.36, 0.05, 0.02, 0x3a3330, sx, 0.00, -0.15);
+          });
+        }
+        if (D3) {
+          pb(0.11, 0.05, 0.05, 0.02, 0x3a3330, 0, 0.27, -0.03);
+          pb(0.05, 0.03, 0.03, 0.01, 0xc9a54e, 0, -0.02, 0.19, STEEL);
+        }
+        if (!SHADOWS) {
+          var sh = new T.Mesh(new T.CircleGeometry(1, 16),
+            new T.MeshBasicMaterial({ color: C.shadow, transparent: true,
+                                      opacity: 0.16 }));
+          sh.rotation.x = -Math.PI / 2;
+          sh.scale.set(0.22, 0.17, 1);
+          sh.position.set(0, -0.228, 0.01);
+          g.add(sh);
+        }
+        return g;
+      };
     })();
     var livingRoofG = new T.Group();   /* open-concept: nothing to hide */
     extG.add(livingRoofG);
@@ -3107,7 +3645,7 @@
       MUD_POS: MUD_POS, MUD_AT: MUD_AT, LIV_POS: LIV_POS, LIV_AT: LIV_AT,
       mudroomRoofG: mudroomRoofG, livingRoofG: livingRoofG,
       yardG: yardG, westWallG: westWallG,
-      mudBagsG: mudBagsG
+      mudBagsG: mudBagsG, makeBag: makeBag
     };
   }
 
@@ -3318,9 +3856,13 @@
 
   /* backpacks on the mudroom bench: one per child, rebuilt on count change */
   var bagCount = null;
-  var BAG_COLORS = [0xc9473d, 0x3fbdb2, 0xe09a3e, 0x5a7fc0];
-  var BAG_SPOTS = [[-11.3, 0.87, 2.95], [-9.9, 0.87, 2.95],
-                   [-11.6, 0.31, 3.65], [-9.6, 0.31, 3.65]];
+  /* the mudroom's own accents (sage, brass, oxblood, terracotta) plus
+     one teal, the kitchen's, because the two rooms share a sightline */
+  var BAG_COLORS = [0x8f4038, 0x3fbdb2, 0xb5713c, 0x7d968a];
+  /* two on the cushion (top 0.75, bag half-height 0.23), two on the
+     floor (0.03) either side of the bench */
+  var BAG_SPOTS = [[-12.00, 0.98, 3.14], [-10.86, 0.98, 3.14],
+                   [-12.32, 0.26, 3.66], [-9.30, 0.26, 3.62]];
   function syncMudroom(s) {
     if (!webgl) return;
     var n = Math.min(4, ((s.mudroom || {}).bags || 0));
@@ -3329,14 +3871,20 @@
     while (webgl.mudBagsG.children.length)
       webgl.mudBagsG.remove(webgl.mudBagsG.children[0]);
     for (var i = 0; i < n; i++) {
-      var bag = new webgl.T.Group();
-      var body = new webgl.T.Mesh(new webgl.T.BoxGeometry(0.34, 0.5, 0.26),
-        new webgl.T.MeshLambertMaterial({ color: BAG_COLORS[i % 4] }));
-      var flap = new webgl.T.Mesh(new webgl.T.BoxGeometry(0.36, 0.2, 0.28),
-        new webgl.T.MeshLambertMaterial({ color: 0x3a3330 }));
-      flap.position.y = 0.18;
-      bag.add(body); bag.add(flap);
+      var bag;
+      if (webgl.makeBag) {
+        bag = webgl.makeBag(BAG_COLORS[i % 4]);
+      } else {                       /* the 2D-adjacent tiers keep a block */
+        bag = new webgl.T.Group();
+        var body = new webgl.T.Mesh(new webgl.T.BoxGeometry(0.34, 0.46, 0.26),
+          new webgl.T.MeshLambertMaterial({ color: BAG_COLORS[i % 4] }));
+        var flap = new webgl.T.Mesh(new webgl.T.BoxGeometry(0.36, 0.18, 0.28),
+          new webgl.T.MeshLambertMaterial({ color: 0x3a3330 }));
+        flap.position.y = 0.17;
+        bag.add(body); bag.add(flap);
+      }
       bag.position.set(BAG_SPOTS[i][0], BAG_SPOTS[i][1], BAG_SPOTS[i][2]);
+      bag.rotation.y = (i % 2 ? 0.22 : -0.18);
       bag.userData.room = 'mudroom';
       webgl.mudBagsG.add(bag);
     }
