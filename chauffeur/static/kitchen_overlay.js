@@ -280,6 +280,15 @@ window.kitchenTileIsland = function () {
     DOOR.style.display = zone === 'door' ? 'block' : 'none';
     CAL.style.display = zone === 'calendar' ? 'block' : 'none';
     TILE.style.display = ZONE_TILES[zone] ? 'flex' : 'none';   /* flex: the height chain collage grids need */
+    /* leaving a tile zone for the door, the calendar or the radio hides the
+       island but does NOT unmount the card — only `hide()` cleared `t`, and
+       these three branches never call it. The card then sat behind a hidden
+       overlay still polling. Dropping the tile here tears it down, which is
+       what stops its timers (components/card_timers.html). */
+    if (!ZONE_TILES[zone]) {
+      var tc = tileScope();
+      if (tc && tc.t) tc.t = null;
+    }
     if (MUSIC) MUSIC.style.display = zone === 'radio' ? 'block' : 'none';
     if (OPEN) {
       var page = pageFor(zone);

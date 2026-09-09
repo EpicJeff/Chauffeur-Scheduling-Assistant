@@ -267,6 +267,9 @@ def _render_html(cfg, day_json, tile_width=480):
         "x-init=\"startPacking()\">"
         "{{ packing.rows() }}"
         "</div>"
+        # the shared card-timer mixin the factory spreads; the real page gets
+        # it from nav.html, which this harness does not draw
+        "{% include 'components/card_timers.html' %}"
         "{% include 'components/agenda_row.html' %}"
         "{% include 'components/pack_dialog.html' %}"
         "{% include 'components/packing_card.html' %}"

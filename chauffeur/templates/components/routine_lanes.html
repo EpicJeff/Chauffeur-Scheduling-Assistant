@@ -396,6 +396,9 @@
         const wanted = new Set(cfg.members || []);
         const parts = cfg.parts || {};
         return {
+            // The poll below stops when the card is torn out — which on a
+            // board that is the tile going away (components/card_timers.html).
+            ...cardTimers(),
             ...routineLanesLogic(apiBase),
             lanesInteractive: cfg.interactive !== false,
             routineShow(part) { return parts[part] !== false; },
@@ -418,7 +421,7 @@
             startRoutineLanes() {
                 this.loadClockFormat();
                 this.reloadLanes();
-                setInterval(() => this.reloadLanes(), ROUTINE_LANES_POLL_MS);
+                this.cardPoll(() => this.reloadLanes(), ROUTINE_LANES_POLL_MS);
             },
         };
     }

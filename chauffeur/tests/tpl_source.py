@@ -34,3 +34,19 @@ def read(name, _seen=None):
     with open(path, encoding='utf-8') as fh:
         src = fh.read()
     return _INCLUDE.sub(lambda m: read(m.group(1), seen), src)
+
+
+def card_timers_js():
+    """The board cards' shared timer mixin, as JavaScript.
+
+    Every self-fetching card factory spreads `cardTimers()` for its polls and
+    its `destroy()`. On a page that comes from nav.html; a node probe that
+    runs a factory has to load the same text, because a hand-written stub is
+    a second answer waiting to disagree with the one the browser runs.
+    `globalThis` fallback included: the script itself is written for both.
+    """
+    src = read('components/card_timers.html')
+    blocks = re.findall(r'<script>(.*?)</script>', src, re.S)
+    if not blocks:
+        raise AssertionError('components/card_timers.html has no script block')
+    return blocks[0]

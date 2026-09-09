@@ -424,6 +424,9 @@
         const wanted = new Set(cfg.members || []);
         const parts = cfg.parts || {};
         return {
+            // The poll below stops when the card is torn out — which on a
+            // board that is the tile going away (components/card_timers.html).
+            ...cardTimers(),
             ...choresLanesLogic(apiBase),
             lanesInteractive: cfg.interactive !== false,
             // Each part of a lane is a toggle on the card — the conversion
@@ -451,7 +454,7 @@
                 this.reloadLanes();
                 // The same cadence as the kiosk, so lanes reflect other
                 // screens' taps and parent OKs within half a minute.
-                setInterval(() => this.reloadLanes(), 30000);
+                this.cardPoll(() => this.reloadLanes(), 30000);
             },
         };
     }

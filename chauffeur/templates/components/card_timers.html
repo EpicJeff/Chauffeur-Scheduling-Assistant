@@ -1,0 +1,75 @@
+<script>
+    // ── A board card's polls, and the one thing that stops them.
+    //
+    // Every self-fetching card starts a `setInterval` in its `start*()` and
+    // for a long time none of them ever stopped one. On a BOARD that is
+    // invisible: the tile is mounted when the page loads and unmounted when
+    // the page goes away, so a timer that outlives the card outlives the
+    // document too. On the dollhouse (`/house`) and the kitchen (`/kitchen`)
+    // the same cards are worn by furniture — mounted on a lean-in, torn out
+    // on the lean-out — and Alpine tearing down an `x-if` subtree does not
+    // touch a `setInterval`. Measured on /house: three lean-ins into the
+    // pantry left six live intervals behind and nine shopping requests in
+    // sixty-five seconds with no card on screen, on a scene whose entire
+    // discipline is render-on-demand. Every further lean-in added another
+    // three a minute, for as long as the wall stayed up.
+    //
+    // Alpine 3 calls `destroy()` on an `x-data` object when its tree is torn
+    // down (x-data's own cleanup: `a.destroy && evaluate(el, a.destroy)`), so
+    // the fix is to keep the handles and clear them there. This is that, once,
+    // rather than in every card file: spread it into the factory and start
+    // polls through `cardPoll` instead of `setInterval`.
+    //
+    //     function myCard(t, apiBase) {
+    //         return {
+    //             ...cardTimers(),
+    //             ...myLogic(apiBase),
+    //             startMine() {
+    //                 this.load();
+    //                 this.cardPoll(() => this.load(), MY_POLL_MS);
+    //             },
+    //         };
+    //     }
+    //
+    // Nothing changes while the card is mounted — same cadence, same
+    // requests. `destroy()` fires on teardown alone, which on a board page
+    // means the tile actually going away (a board swap, an arrange, the page
+    // closing) and never merely being re-rendered.
+    //
+    // The handles live in a CLOSURE, not on the scope: a `_timers` property
+    // would be one more reactive array Alpine has to track, one more name a
+    // card's own data could collide with, and one more thing whose `this`
+    // has to be right inside a callback Alpine invokes for us. A closure has
+    // none of those problems and is not reachable from an Alpine expression,
+    // which is correct — a timer handle is not something markup should see.
+    //
+    // Classic script, included once from nav.html (the hero card's own
+    // idiom), so it is defined before Alpine boots on every page a card can
+    // mount on. Guarded so a page that somehow includes it twice keeps one.
+    //
+    // `root` rather than a bare `window.` because the node probes run these
+    // card factories outside a browser (test_shopping_cards, test_routine_lanes,
+    // the packing-card and errand-lists renders) and a probe must load the
+    // SAME text the page does, not a stub of it.
+    (function (root) {
+        root.cardTimers = root.cardTimers || function () {
+            const timers = [];
+            return {
+                // The card's poll. Same signature as setInterval and the same
+                // return, so a caller that wants to stop one early still can.
+                cardPoll(fn, ms) {
+                    const id = setInterval(fn, ms);
+                    timers.push(id);
+                    return id;
+                },
+
+                // Alpine's teardown hook. Not `stop*()` by any other name: the
+                // whole point is that nobody has to remember to call it.
+                destroy() {
+                    timers.forEach(id => clearInterval(id));
+                    timers.length = 0;
+                },
+            };
+        };
+    })(typeof window !== 'undefined' ? window : globalThis);
+</script>

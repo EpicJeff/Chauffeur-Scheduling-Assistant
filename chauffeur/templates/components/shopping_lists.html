@@ -641,6 +641,9 @@
     function shoppingListCard(t, apiBase) {
         const cfg = (t && t.data) || {};
         return {
+            // `cardTimers` first, always: it owns `destroy`, and a later
+            // spread that ever grew one of its own would silently win.
+            ...cardTimers(),
             // No `listShow` / `listsInteractive` out here: the PANE owns
             // both, and a copy on the outer scope is a second answer waiting
             // to disagree with it.
@@ -685,7 +688,7 @@
                 // The PANES poll their own items every minute; this catches a
                 // list created or renamed on a phone, which happens rarely
                 // enough that the minute cadence would be wasted on it.
-                setInterval(() => this.loadPanes(), SHOPPING_LISTS_POLL_MS);
+                this.cardPoll(() => this.loadPanes(), SHOPPING_LISTS_POLL_MS);
             },
             async loadPanes() {
                 let all = [];
@@ -739,6 +742,7 @@
         const cfg = data || {};
         const parts = cfg.parts || {};
         return {
+            ...cardTimers(),
             ...shoppingListsLogic(apiBase),
             activeId: listId,
             listsInteractive: cfg.interactive !== false,
@@ -746,7 +750,7 @@
             async startPane() {
                 this.loadMembers();
                 await this.loadItems();
-                setInterval(() => this.loadItems(true), SHOPPING_POLL_MS);
+                this.cardPoll(() => this.loadItems(true), SHOPPING_POLL_MS);
             },
         };
     }
@@ -755,6 +759,7 @@
         const cfg = (t && t.data) || {};
         const parts = cfg.parts || {};
         return {
+            ...cardTimers(),
             ...shoppingListsLogic(apiBase),
             listsInteractive: cfg.interactive !== false,
             listShow(part) { return parts[part] !== false; },
@@ -768,8 +773,8 @@
                 // between "tap to add" and "tap to undo".
                 await this.loadItems();
                 await this.loadStaples();
-                setInterval(() => { this.loadItems(true); this.loadStaples(); },
-                            SHOPPING_POLL_MS);
+                this.cardPoll(() => { this.loadItems(true); this.loadStaples(); },
+                              SHOPPING_POLL_MS);
             },
         };
     }
@@ -778,13 +783,14 @@
         const cfg = (t && t.data) || {};
         const parts = cfg.parts || {};
         return {
+            ...cardTimers(),
             ...mealWeekLogic(apiBase),
             listShow(part) { return parts[part] !== false; },
             boardNights() { return cfg.nights || 7; },
             async startMealWeek() {
                 await this.loadCategories();
                 await this.loadMealWeek();
-                setInterval(() => this.loadMealWeek(), MEAL_WEEK_POLL_MS);
+                this.cardPoll(() => this.loadMealWeek(), MEAL_WEEK_POLL_MS);
             },
         };
     }

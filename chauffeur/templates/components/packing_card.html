@@ -481,6 +481,9 @@
         const cfg = (t && t.data) || {};
         const wanted = new Set(cfg.members || []);
         return {
+            // The poll below stops when the card is torn out — which on the
+            // dollhouse and the kitchen is every lean-out (components/card_timers.html).
+            ...cardTimers(),
             blocks: [],
             // Several days, the way the agenda this card replaces shows
             // them — and the reason prep for tomorrow morning can appear
@@ -600,7 +603,7 @@
             },
             startPacking() {
                 this.loadPacking();
-                setInterval(() => this.loadPacking(), PACKING_CARD_POLL_MS);
+                this.cardPoll(() => this.loadPacking(), PACKING_CARD_POLL_MS);
             },
 
             // The household's clock, the same tolerant parse the schedule

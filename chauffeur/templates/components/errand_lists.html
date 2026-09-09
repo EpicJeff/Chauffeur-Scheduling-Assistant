@@ -319,6 +319,9 @@
         const wanted = new Set(cfg.members || []);
         const parts = cfg.parts || {};
         return {
+            // The poll below stops when the card is torn out — which on a
+            // board that is the tile going away (components/card_timers.html).
+            ...cardTimers(),
             ...errandListsLogic(apiBase),
             listsInteractive: cfg.interactive !== false,
             // Absent means shown, so a card saved before a part existed keeps
@@ -339,7 +342,7 @@
             startLists() {
                 this.loadTasks();
                 if (this.listShow('load')) this.loadLoadLine();
-                setInterval(() => {
+                this.cardPoll(() => {
                     this.loadTasks();
                     if (this.listShow('load')) this.loadLoadLine();
                 }, ERRAND_LIST_POLL_MS);
@@ -351,6 +354,9 @@
         const cfg = (t && t.data) || {};
         const parts = cfg.parts || {};
         return {
+            // The poll below stops when the card is torn out — which on a
+            // board that is the tile going away (components/card_timers.html).
+            ...cardTimers(),
             ...errandListsLogic(apiBase),
             listsInteractive: cfg.interactive !== false,
             listShow(part) {
@@ -374,7 +380,7 @@
             },
             startLists() {
                 this.loadErrands();
-                setInterval(() => this.loadErrands(), ERRAND_LIST_POLL_MS);
+                this.cardPoll(() => this.loadErrands(), ERRAND_LIST_POLL_MS);
             },
         };
     }

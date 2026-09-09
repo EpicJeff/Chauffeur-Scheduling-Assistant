@@ -318,7 +318,10 @@ def _run_card(cfg, lists):
     body = re.findall(r'<script>(.*?)</script>', src, re.S)
     body = next((b for b in body if 'function shoppingListCard' in b), None)
     check(body, "components/shopping_lists.html no longer defines shoppingListCard")
-    js = (SHOP_HARNESS.replace('LISTS_JSON', json.dumps(lists)) + body
+    # The shared timer mixin the factories spread, exactly as nav.html serves
+    # it — a probe that stubbed it would be running code the browser does not.
+    js = (SHOP_HARNESS.replace('LISTS_JSON', json.dumps(lists))
+          + tpl_source.card_timers_js() + body
           + SHOP_PROBE.replace('CFG_JSON', json.dumps(cfg)))
     path = os.path.join(tempfile.gettempdir(), 'chauffeur_shopping_card_probe.js')
     with open(path, 'w', encoding='utf-8') as f:
@@ -445,7 +448,9 @@ def _layout_probe():
     body = re.findall(r'<script>(.*?)</script>', src, re.S)
     body = next((b for b in body if 'function shoppingListCard' in b), None)
     check(body, "components/shopping_lists.html no longer defines shoppingListCard")
-    return sync_playwright, LAYOUT_PAGE + '<script>' + body + '</script>'
+    return (sync_playwright,
+            LAYOUT_PAGE + '<script>' + tpl_source.card_timers_js() + '</script>'
+            + '<script>' + body + '</script>')
 
 
 def scenario_the_lists_go_across_a_wide_tile_and_never_off_it():

@@ -13,6 +13,7 @@ Set KITCHEN_SHOTS=<dir> to also save screenshots of both overlays.
 import datetime
 import json
 import os
+import re
 import sys
 import tempfile
 
@@ -21,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault('CHAUFFEUR_DATA_DIR',
                       tempfile.mkdtemp(prefix='chauffeur_kitchen_overlay_'))
 
+import tpl_source
 from live_app import live_app
 
 
@@ -277,8 +279,212 @@ def scenario_other_zones_wear_their_cards():
         check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
 
 
+# ── The lean-out has to stop the polling.
+#
+# Every self-fetching card starts a `setInterval` in its `start*()`. On a
+# board that is invisible — the tile is mounted for the life of the document.
+# On the dollhouse the same cards are worn by FURNITURE: mounted on a lean-in,
+# torn out on the lean-out, several times an evening. Alpine tearing down an
+# `x-if` subtree does not touch a `setInterval`, so for a long time every
+# lean-in left its timers running.
+#
+# Measured on /house before the fix: three lean-ins into the shopping zone
+# registered six live intervals — [300000, 60000] x 3, one pair per lean-in,
+# none cleared — and with no card on screen the page went on asking for the
+# list three times a minute, permanently, on a scene whose entire discipline
+# is render-on-demand.
+#
+# This pins it two ways, because one alone is weak. The counts come from an
+# instrumented setInterval/clearInterval pair installed BEFORE any page
+# script runs, so nothing on the page can hide a timer from it; and then the
+# orphans are FIRED, which turns "some numbers survived" into the thing that
+# actually costs — requests the server answers for a card nobody is looking
+# at. The cadences are read out of the component rather than typed here, so
+# a poll that changes cannot leave this test quietly measuring nothing.
+TIMER_PROBE = """
+(() => {
+  const si = window.setInterval, ci = window.clearInterval;
+  window.__t = { live: new Map(), made: [] };
+  window.setInterval = function (fn, ms) {
+    const id = si.apply(window, arguments);
+    window.__t.live.set(id, { ms: ms, fn: fn });
+    window.__t.made.push(ms);
+    return id;
+  };
+  window.clearInterval = function (id) {
+    window.__t.live.delete(id);
+    return ci.apply(window, arguments);
+  };
+  /* every live interval, as [id, ms] pairs — playwright cannot carry a Map */
+  window.__live = () => Array.from(window.__t.live.entries()).map(e => [e[0], e[1].ms]);
+  /* what the next tick WOULD have done, now: the orphan's own callback */
+  window.__fire = (ids) => {
+    let n = 0;
+    ids.forEach(i => {
+      const rec = window.__t.live.get(i);
+      if (!rec) return;
+      n++;
+      try { rec.fn(); } catch (e) { /* an orphan throwing still counts */ }
+    });
+    return n;
+  };
+})();
+"""
+
+
+def _card_cadences():
+    """The shopping card's two polls, read from the component that owns them:
+    the list card's own (which lists exist) and the pane's (what is on one)."""
+    src = tpl_source.read('components/shopping_lists.html')
+    out = []
+    for name in ('SHOPPING_LISTS_POLL_MS', 'SHOPPING_POLL_MS'):
+        m = re.search(r'\b' + name + r'\s*=\s*(\d+)', src)
+        check(m, f"components/shopping_lists.html no longer defines {name}")
+        out.append(int(m.group(1)))
+    return out
+
+
+def _seed_a_list():
+    from services import storage, ha_api, home_board
+    storage.shopping_lists_table.truncate()
+    storage.shopping_items_table.truncate()
+    storage.add_shopping_list({'id': 'grocery', 'name': 'Groceries',
+                               'is_default': True})
+    storage.shopping_items_table.insert(
+        {'id': 's1', 'name': 'Oat milk', 'list_id': 'grocery',
+         'is_checked': False, 'created_at': 1})
+    # the weather zone is the OTHER exit: leaving the shopping zone for another
+    # card-bearing one is how the leak was found, and it unmounts differently
+    # (the tile swaps under the island) than an unfocus does.
+    base = datetime.datetime.now().replace(hour=12, minute=0, second=0,
+                                           microsecond=0)
+    ha_api.get_weather_forecast = lambda e=None, kind='daily': [
+        {'condition': 'sunny', 'temperature': 70 + i, 'templow': 55,
+         'precipitation_probability': 0,
+         'datetime': (base + datetime.timedelta(days=i)).isoformat()}
+        for i in range(5)]
+    home_board.invalidate_cache()
+
+
+def scenario_leaning_out_stops_the_cards_polling():
+    """Lean in, lean out, three times — and nothing keeps asking."""
+    served = live_app()
+    if served is None:
+        return
+    _seed()
+    _seed_a_list()
+    slow, quick = _card_cadences()
+    with served.browser() as page:
+        # before ANY page script: a card that armed its timer during boot
+        # would otherwise be invisible to this
+        page.add_init_script(TIMER_PROBE)
+        asked = []
+        page.on('request',
+                lambda r: 'api/shopping' in r.url and asked.append(r.url))
+        # the dollhouse, where the cards are worn by furniture. ?quality=low so
+        # a GPU-less machine still boots the real page (and cannot demote-and-
+        # reload mid-test); the lean-in is spoken as the CustomEvent the room
+        # announces, so this runs with or without WebGL.
+        page.goto(served.url('house?quality=low'))
+        page.wait_for_selector('#focus-overlay', state='attached')
+        page.wait_for_timeout(2000)   # alpine boot, the room's own boot timers
+
+        # everything the IDLE page runs. The hearth polls a minute, the theme
+        # five seconds — real timers that must survive, so the question is
+        # never "how many" but "which ones are NEW and still alive".
+        before = {i for i, _ in page.evaluate("window.__live()")}
+
+        exits = [None, 'window', None]
+        for out in exits:
+            _focus(page, 'board')
+            page.wait_for_selector('#overlay-tile >> text=Oat milk', timeout=8000)
+            _focus(page, out)
+            if out is None:
+                page.wait_for_selector('#focus-overlay', state='hidden',
+                                       timeout=8000)
+            else:
+                page.wait_for_selector('#overlay-tile >> text=70', timeout=8000)
+            page.wait_for_timeout(150)   # alpine tears down on its own tick
+        _focus(page, None)
+        page.wait_for_selector('#focus-overlay', state='hidden', timeout=8000)
+        page.wait_for_timeout(200)
+
+        made = page.evaluate("window.__t.made")
+        armed = [ms for ms in made if ms in (slow, quick)]
+        check(len(armed) >= 2 * len(exits),
+              "the card never armed its polls — this scenario would pass "
+              f"without measuring anything (cadences seen: {sorted(set(made))})")
+
+        live = page.evaluate("window.__live()")
+        orphans = [(i, ms) for i, ms in live
+                   if i not in before and ms in (slow, quick)]
+        check(not orphans,
+              f"{len(orphans)} of the card's polls outlived the lean-out "
+              f"(cadences {[ms for _, ms in orphans]}) — a lean-in that never "
+              f"stops is a wall that asks the server more every evening")
+
+        # and the thing that actually costs: what those orphans would ask for.
+        # Fired rather than waited out, so the pin is exact instead of a
+        # sixty-five-second nap that a slow machine could still lose.
+        strays = [(i, ms) for i, ms in live if i not in before]
+        asked.clear()
+        fired = page.evaluate("ids => window.__fire(ids)",
+                              [i for i, _ in strays])
+        page.wait_for_timeout(600)
+        check(not asked,
+              f"{len(asked)} shopping requests with no card mounted "
+              f"(fired {fired} surviving timers): " + '; '.join(asked[:4]))
+
+        errs = [e for e in served.errors()
+                if 'WebGL' not in e and 'GroupMarker' not in e]
+        check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
+
+
+def scenario_a_mounted_card_still_polls():
+    """The other half, and the one a careless fix breaks: while the card IS
+    on screen its poll must still be running at the cadence it always had.
+    `destroy()` fires on teardown alone — this is what says so out loud."""
+    served = live_app()
+    if served is None:
+        return
+    _seed()
+    _seed_a_list()
+    slow, quick = _card_cadences()
+    with served.browser() as page:
+        page.add_init_script(TIMER_PROBE)
+        page.goto(served.url('house?quality=low'))
+        page.wait_for_selector('#focus-overlay', state='attached')
+        page.wait_for_timeout(2000)
+        before = {i for i, _ in page.evaluate("window.__live()")}
+
+        _focus(page, 'board')
+        page.wait_for_selector('#overlay-tile >> text=Oat milk', timeout=8000)
+        page.wait_for_timeout(400)
+
+        live = page.evaluate("window.__live()")
+        mounted = sorted(ms for i, ms in live if i not in before)
+        check(mounted == sorted([slow, quick]),
+              "a mounted card must still hold both of its polls — "
+              f"found {mounted}, expected {sorted([slow, quick])}")
+
+        # and they still DO something: fire them and the server hears it.
+        asked = []
+        page.on('request',
+                lambda r: 'api/shopping' in r.url and asked.append(r.url))
+        page.evaluate("ids => window.__fire(ids)",
+                      [i for i, ms in live if i not in before])
+        page.wait_for_timeout(600)
+        check(asked, "the mounted card's poll asked for nothing")
+
+        errs = [e for e in served.errors()
+                if 'WebGL' not in e and 'GroupMarker' not in e]
+        check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
+
+
 if __name__ == '__main__':
     scenario_overlay_lives_on_the_real_page()
     scenario_the_real_lean_in_wears_the_card()
     scenario_other_zones_wear_their_cards()
+    scenario_leaning_out_stops_the_cards_polling()
+    scenario_a_mounted_card_still_polls()
     print("test_kitchen_overlay_live OK")

@@ -155,6 +155,9 @@
 
     function programsCard(t, apiBase) {
         return {
+            // The poll below stops when the card is torn out — which on the
+            // dollhouse and the kitchen is every lean-out (components/card_timers.html).
+            ...cardTimers(),
             // False until the first fetch resolves — the card draws nothing
             // at all until then, so "Nothing to celebrate yet." never
             // flashes ahead of real data (packing_card's own `pkLoaded`
@@ -270,7 +273,7 @@
             },
             startPrograms() {
                 this.loadCard();
-                setInterval(() => this.loadCard(), PROGRAMS_CARD_POLL_MS);
+                this.cardPoll(() => this.loadCard(), PROGRAMS_CARD_POLL_MS);
             },
         };
     }

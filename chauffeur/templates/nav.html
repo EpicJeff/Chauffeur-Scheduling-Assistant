@@ -336,6 +336,12 @@
 
 {% include 'components/hero_card.html' %}
 {% include 'components/panel_enrol.html' %}
+{# The board cards' shared teardown, on hero_card's own reasoning: one copy,
+   from the one file every page already includes, so it is in place before
+   Alpine boots wherever a self-fetching card can mount. Kept ABOVE nav's own
+   script on purpose — test_nav_runtime executes the LAST script block on the
+   page as nav's. #}
+{% include 'components/card_timers.html' %}
 <script>
     // Auth arc S6: a panel is a PLACE, not a person. It holds a device token
     // rather than a member session, because it has to come up after a power
