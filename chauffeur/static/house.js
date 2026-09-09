@@ -227,9 +227,15 @@
     /* the house from the yard: the panel's resting view */
     var EXT_POS = new T.Vector3(40.0, 26.0, 40.0);
     var EXT_AT = new T.Vector3(-4.6, 1.2, 5.0);
-    /* the garage from its own doorway (roof + front hidden inside) */
-    var GARAGE_POS = new T.Vector3(-13.9, 11.2, 20.4);
-    var GARAGE_AT = new T.Vector3(-15.7, 1.7, 5.2);
+    /* the garage from its own doorway (roof + front hidden inside).
+       The old pose spent half the frame's width on grass and the
+       neighbouring roof and cut the bay off at the cars' noses. Lower
+       (27 deg, not 32) and aimed a metre and a half deeper into the
+       bay, the whole room fits: the back wall with its plaques clear of
+       the nav bar, the long wall down the left, and the floor in front
+       of the cars where the clutter lives (bible S5.1) */
+    var GARAGE_POS = new T.Vector3(-14.05, 9.6, 21.3);
+    var GARAGE_AT = new T.Vector3(-15.45, 1.75, 6.05);
     /* the mudroom: the old pose put the street door's BACK across the
        left third of the frame (the wall it hangs in is cut away, the
        slab is not) and showed no west wall at all. Swung east and in,
@@ -2626,38 +2632,643 @@
         });
       })();
       blobShadow(3.0, 4.2, -15.4, 6.0, extG);
-      /* interior: wood floor (one floor through the whole house), bench
-         wall props */
-      var gFloorTex = floorTex.clone();
-      gFloorTex.needsUpdate = true;
-      gFloorTex.wrapS = gFloorTex.wrapT = T.RepeatWrapping;
-      gFloorTex.repeat.set(5.1 / 13, 7.5 / 11);
+      /* ================= THE BAY (style bible S7 garage) ================
+         Plates 3, 4 and 5: a working garage, not a shed. A concrete slab
+         with saw-cut joints (a garage floor is never plank), lined walls,
+         a bench that reads as used under a pegboard of tools, a shelf of
+         boxes down the long wall, a tyre on the wall, a strip light, and
+         the floor clutter a family actually keeps: a tool chest, cartons,
+         a mower, a wheelie bin.
+
+         Four accents and no strays (S4): mustard, oxblood, teal and
+         terracotta, the last only on a plant pot. Cardboard, wood and
+         concrete are materials, not accents. Dark anchors: the pegboard
+         and the tyre on the back wall, the bin, the bike and the tool
+         chest on the floor.
+
+         NOTHING IN HERE TAKES A SHADOW. The sun's shadow camera is a
+         +/-10 box centred on the house and its EDGE runs diagonally
+         across this bay: half the room sampled the map (and came back in
+         the house's shadow), half fell outside it and was forced lit, so
+         a hard diagonal lay across the floor, the back wall and the roof
+         of whichever car parked in the east bay. Contact is drawn by
+         hand instead, with the same multiply discs the vehicles use -
+         they work at every tier, which the real shadow map does not. */
+      var GD2 = DETAIL >= 2, GD3 = DETAIL >= 3;
+      var GX0 = -17.96, GX1 = -12.84;    /* the side walls' structural faces */
+      var GZ0 = 2.24, GZ1 = 9.76;        /* back wall face -> door line */
+      /* the lining is 0.05 proud of all three: everything hung on a wall
+         measures from THESE, or it renders inside the boards */
+      var GXW = GX0 + 0.05, GXE = GX1 - 0.05, GZW = GZ0 + 0.05;
+      var GFY = 0.035;                   /* the slab, not the house floor */
+      var GWALL = 0xe4ded2, GCARD = 0xc0956a, GCARDD = 0xa27b55;
+      var GMATT = { rough: 0.92 }, GPLAST = { rough: 0.95 };
+      var gWoodO = NICE ? { rough: 0.62, map: woodLight } : { rough: 0.62 };
+      var gWoodK = NICE ? 0xffffff : 0xc89a66;
+
+      function gt(m) {                   /* tag, and take it off the maps */
+        if (!m) return m;
+        m.userData.room = 'garage'; m.userData.zone = 'garage';
+        m.castShadow = false; m.receiveShadow = false;
+        return m;
+      }
+      function gb(w, h, d, c, x, y, z, o, gp) {
+        return gt(box(w, h, d, c, x, y, z, gp || garageInterior, o));
+      }
+      function gr(w, h, d, r, c, x, y, z, o, gp) {
+        return gt(rbox(w, h, d, r, c, x, y, z, gp || garageInterior, o));
+      }
+      function gc(a, b2, h, c, x, y, z, s, o, gp) {
+        return gt(cyl(a, b2, h, c, x, y, z, gp || garageInterior, s, o));
+      }
+      function gGroup(x, z, rot) {
+        var g = new T.Group();
+        g.position.set(x, 0, z);
+        if (rot) g.rotation.y = rot;
+        gt(g); garageInterior.add(g); return g;
+      }
+      /* contact, at EVERY tier: blobShadow goes quiet at tier 3 because
+         tier 3 has real shadows, and this room has none. A grey disc
+         multiplied into the slab can only darken it. */
+      function gsh(rx, rz, x, z, tone) {
+        var d = new T.Mesh(new T.CircleGeometry(1, GD2 ? 18 : 10),
+          new T.MeshBasicMaterial({ color: tone || 0xa9a5ad, transparent: true,
+                                    blending: T.MultiplyBlending,
+                                    depthWrite: false }));
+        d.rotation.x = -Math.PI / 2;
+        d.scale.set(rx, rz, 1);
+        d.position.set(x, GFY + 0.007, z);
+        d.renderOrder = -1;
+        gt(d); garageInterior.add(d); return d;
+      }
+
+      /* ---- 0. the slab: concrete, saw-cut, oil-marked ------------------
+         The bay wore the house's plank floor. A garage floor is a poured
+         slab: control joints on a grid, aggregate speckle, two dark
+         patches where the cars drip, and a whisper of shade where the
+         walls meet it. Drawn once into a canvas, so the joints land on
+         exact world coordinates and cost no meshes. */
+      var concT = canvasTex(GD3 ? 512 : 256, function (g, S) {
+        g.fillStyle = '#aaa599'; g.fillRect(0, 0, S, S);
+        for (var i = 0; i < S * 5; i++) {           /* aggregate */
+          g.fillStyle = 'rgba(' + (Math.random() < 0.5 ? '132,127,118' : '206,202,193')
+                      + ',' + (0.06 + Math.random() * 0.22) + ')';
+          g.fillRect(Math.random() * S, Math.random() * S, 2, 2);
+        }
+        [[0.245, 0.447], [0.755, 0.447]].forEach(function (o) {
+          var rg = g.createRadialGradient(o[0] * S, o[1] * S, 2,
+                                          o[0] * S, o[1] * S, S * 0.13);
+          rg.addColorStop(0, 'rgba(74,70,64,0.30)');
+          rg.addColorStop(1, 'rgba(74,70,64,0)');
+          g.fillStyle = rg;
+          g.fillRect(0, 0, S, S);
+        });
+        /* control joints: world z 4.75 and 7.25 across, world x -15.40
+           down the middle (the plane is 5.1 x 7.5 at repeat 1, and the
+           canvas top edge is the back wall) */
+        g.strokeStyle = 'rgba(104,99,90,0.95)';
+        g.lineWidth = Math.max(2, S / 150);
+        [(4.75 - 2.25) / 7.5, (7.25 - 2.25) / 7.5].forEach(function (f) {
+          g.beginPath(); g.moveTo(0, f * S); g.lineTo(S, f * S); g.stroke();
+        });
+        g.beginPath(); g.moveTo(0.5 * S, 0); g.lineTo(0.5 * S, S); g.stroke();
+        /* the walls' own shade, baked: a diorama floor that meets its
+           walls with a hard line reads as a decal */
+        var e = S * 0.09;
+        [[0, 0, S, e, 0, 1], [0, S - e, S, e, 0, -1],
+         [0, 0, e, S, 1, 0], [S - e, 0, e, S, -1, 0]].forEach(function (sd) {
+          var x0 = sd[4] > 0 ? sd[0] : (sd[4] < 0 ? sd[0] + sd[2] : sd[0]);
+          var y0 = sd[5] > 0 ? sd[1] : (sd[5] < 0 ? sd[1] + sd[3] : sd[1]);
+          var x1 = sd[4] > 0 ? sd[0] + sd[2] : (sd[4] < 0 ? sd[0] : sd[0]);
+          var y1 = sd[5] > 0 ? sd[1] + sd[3] : (sd[5] < 0 ? sd[1] : sd[1]);
+          var lg = g.createLinearGradient(x0, y0, x1, y1);
+          lg.addColorStop(0, 'rgba(90,86,80,0.28)');
+          lg.addColorStop(1, 'rgba(90,86,80,0)');
+          g.fillStyle = lg;
+          g.fillRect(sd[0], sd[1], sd[2], sd[3]);
+        });
+      });
+      if (GD2) {
+        var doorGlowT = canvasTex(64, function (g, S) {
+          var lg = g.createLinearGradient(0, 0, 0, S);
+          lg.addColorStop(0, 'rgba(255,241,209,0)');
+          lg.addColorStop(0.55, 'rgba(255,241,209,0.45)');
+          lg.addColorStop(1, 'rgba(255,241,209,1)');
+          g.fillStyle = lg; g.fillRect(0, 0, S, S);
+        });
+        var dg = new T.Mesh(new T.PlaneGeometry(4.5, 3.0),
+          new T.MeshBasicMaterial({ map: doorGlowT, transparent: true,
+                                    opacity: 0.16, depthWrite: false,
+                                    blending: T.AdditiveBlending }));
+        dg.rotation.x = -Math.PI / 2;
+        dg.position.set(-15.40, GFY + 0.004, 8.20);
+        dg.renderOrder = -3;
+        gt(dg); garageInterior.add(dg);
+      }
       var gfloor = new T.Mesh(new T.PlaneGeometry(5.1, 7.5),
-        PBR ? new T.MeshStandardMaterial({ map: gFloorTex, roughness: 0.6,
-                                           envMapIntensity: 0.1 })
-            : new T.MeshLambertMaterial({ map: gFloorTex }));
+        PBR ? new T.MeshStandardMaterial({ map: concT, roughness: 0.88,
+                                           envMapIntensity: 0.06 })
+            : new T.MeshLambertMaterial({ map: concT }));
       gfloor.rotation.x = -Math.PI / 2;
-      gfloor.position.set(-15.4, 0.035, 6.0);
-      itag(gfloor); finish(gfloor); garageInterior.add(gfloor);
-      if (DETAIL >= 2) {
-        itag(rbox(2.4, 0.1, 0.7, 0.03, 0xb98c58, -16.0, 1.05, 2.75,
-                  garageInterior, { rough: 0.7, map: woodLight }));
-        itag(box(0.08, 1.0, 0.08, C.wood2, -17.0, 0.5, 2.55, garageInterior));
-        itag(box(0.08, 1.0, 0.08, C.wood2, -15.1, 0.5, 2.55, garageInterior));
-        itag(box(0.08, 1.0, 0.08, C.wood2, -17.0, 0.5, 2.95, garageInterior));
-        itag(box(0.08, 1.0, 0.08, C.wood2, -15.1, 0.5, 2.95, garageInterior));
+      gfloor.position.set(-15.4, GFY, 6.0);
+      gt(gfloor); garageInterior.add(gfloor);
+
+      /* ---- 1. the three walls get an inside -----------------------------
+         They wore exterior clapboard on their inner faces. Lined now: a
+         painted board field, a splash board with its cap at the floor, a
+         ledger at bench height, and battens for rhythm. */
+      var gWallT = NICE ? canvasTex(256, function (g, S) {
+        g.fillStyle = '#ddd5c6'; g.fillRect(0, 0, S, S);
+        for (var i = 0; i < 320; i++) {
+          g.fillStyle = 'rgba(134,123,106,' + (Math.random() * 0.14) + ')';
+          g.fillRect(Math.random() * S, Math.random() * S, 3, 2);
+        }
+        for (var y = 0; y < S; y += 64) {
+          g.fillStyle = 'rgba(128,117,100,0.50)'; g.fillRect(0, y, S, 2);
+          g.fillStyle = 'rgba(255,252,244,0.50)'; g.fillRect(0, y + 2, S, 2);
+        }
+      }) : null;
+      if (gWallT) {
+        gWallT.wrapS = gWallT.wrapT = T.RepeatWrapping;
+        gWallT.repeat.set(3, 1.4);
       }
-      if (DETAIL >= 3) {
-        itag(box(2.0, 0.06, 0.5, 0x8a8178, -16.0, 2.6, 2.5, garageInterior));
-        itag(cyl(0.11, 0.11, 0.24, C.red, -16.6, 2.75, 2.5, garageInterior, 10));
-        itag(cyl(0.11, 0.11, 0.24, C.teal, -16.1, 2.75, 2.5, garageInterior, 10));
-        itag(cyl(0.11, 0.11, 0.24, C.orange, -15.6, 2.75, 2.5, garageInterior, 10));
-        itag(cyl(0.01, 0.01, 0.8, 0x8a8178, -15.4, 4.2, 6.0, garageInterior, 6));
-        var gbulb = new T.Mesh(new T.SphereGeometry(0.13, 10, 8),
-          mat(0xffe9b0, { rough: 0.5 }));
-        gbulb.position.set(-15.4, 3.75, 6.0);
-        itag(gbulb); finish(gbulb); garageInterior.add(gbulb);
+      var gWallO = NICE ? { rough: 0.95, map: gWallT } : GPLAST;
+      var gWallC = NICE ? 0xffffff : GWALL;
+      function gWall(axis, face, dir, a0, a1, battens) {
+        var L = a1 - a0, mid = (a0 + a1) / 2;
+        function plate(h, d0, d1, c, y, o) {
+          var d = d1 - d0, ctr = face + dir * ((d0 + d1) / 2);
+          return axis === 'z' ? gb(L, h, d, c, mid, y, ctr, o)
+                              : gb(d, h, L, c, ctr, y, mid, o);
+        }
+        plate(4.58, 0, 0.05, gWallC, 2.29, gWallO);
+        plate(0.34, 0.05, 0.13, C.cabShade, 0.17, GMATT);   /* splash board */
+        plate(0.06, 0.05, 0.16, C.cab, 0.37, GMATT);        /* its cap */
+        if (!GD2) return;
+        plate(0.07, 0.05, 0.14, C.cab, 1.24, GMATT);        /* the ledger */
+        plate(0.14, 0.05, 0.18, C.cab, 4.42, GMATT);        /* the top plate:
+             the wall head, or the long wall runs off the top of the frame
+             as a cliff */
+        if (GD3) plate(0.05, 0.05, 0.13, C.cabShade, 4.32);
+        if (!battens) return;
+        var n = Math.max(2, Math.round(L / 0.90));
+        for (var i = 1; i < n; i++) {
+          var a = a0 + i * (L / n), ctr = face + dir * 0.075;
+          gt(axis === 'z' ? box(0.07, 3.16, 0.045, C.cab, a, 2.94, ctr,
+                                garageInterior, GMATT)
+                          : box(0.045, 3.16, 0.07, C.cab, ctr, 2.94, a,
+                                garageInterior, GMATT));
+        }
       }
+      gWall('z', GZ0, 1, GX0, GX1, true);        /* the back wall */
+      gWall('x', GX0, 1, GZ0, GZ1, true);        /* the long west wall */
+      gWall('x', GX1, -1, GZ0, GZ1, false);      /* the east wall, edge-on */
+
+      /* ---- 2. the workbench (plate 4: a bench that reads as used) ------
+         Six parts like the casework: steel legs, a stretcher shelf, an
+         apron, a drawer bank, an overhanging wood top, and the mess of a
+         bench somebody actually works at. */
+      var BWX = -16.77, BWZ = 2.56, BWW = 2.22, BWD = 0.64, BWY = 1.02;
+      (function () {
+        var lx = BWW / 2 - 0.08, lz = BWD / 2 - 0.09;
+        [[-1, -1], [-1, 1], [1, -1], [1, 1]].forEach(function (s) {
+          gb(0.09, BWY - 0.09, 0.09, C.graphite, BWX + s[0] * lx,
+             (BWY - 0.09) / 2 + GFY, BWZ + s[1] * lz, { rough: 0.55 });
+        });
+        gb(BWW - 0.24, 0.05, BWD - 0.20, C.wood2, BWX, 0.30, BWZ, gWoodO);
+        if (GD2) {
+          gb(BWW - 0.22, 0.05, 0.05, C.graphite, BWX, 0.30, BWZ + lz,
+             { rough: 0.55 });
+          gb(BWW - 0.06, 0.10, 0.06, C.graphite, BWX, BWY - 0.16,
+             BWZ + BWD / 2 - 0.02, { rough: 0.55 });
+          var dx = BWX + 0.66, dw = 0.72, dz = BWZ + 0.02, df = BWD / 2 - 0.04;
+          gb(dw, 0.60, BWD - 0.10, C.cabShade, dx, 0.63, dz, GMATT);
+          [0.44, 0.79].forEach(function (dy) {
+            gb(dw - 0.07, 0.29, 0.04, C.cab, dx, dy, dz + df, GMATT);
+            gb(0.28, 0.03, 0.03, C.graphite, dx, dy, dz + df + 0.03,
+               { rough: 0.5 });
+          });
+        }
+        gr(BWW + 0.08, 0.09, BWD + 0.08, 0.02, gWoodK, BWX, BWY - 0.045,
+           BWZ + 0.02, gWoodO);
+        if (GD3) gb(BWW + 0.09, 0.02, BWD + 0.09, C.wood2, BWX, BWY - 0.092,
+                    BWZ + 0.02, gWoodO);
+        /* the vice, bolted to the left end */
+        if (GD2) {
+          gb(0.16, 0.20, 0.30, C.graphite, BWX - 0.94, BWY + 0.10, BWZ + 0.16,
+             { rough: 0.5 });
+          gb(0.24, 0.15, 0.09, C.ink, BWX - 0.94, BWY + 0.14, BWZ + 0.34,
+             { rough: 0.5 });
+          if (GD3) {
+            gc(0.02, 0.02, 0.30, C.steel, BWX - 0.94, BWY + 0.13, BWZ + 0.42,
+               8, STEEL).rotation.z = Math.PI / 2;
+            gb(0.24, 0.15, 0.05, C.graphite, BWX - 0.94, BWY + 0.14, BWZ + 0.08,
+               { rough: 0.5 });
+          }
+        }
+        /* on the top: an open toolbox, a tin of drivers, a jar, a rag */
+        if (GD2) {
+          var tbx = BWX - 0.30;
+          gr(0.52, 0.22, 0.30, 0.03, C.oxblood, tbx, BWY + 0.11, BWZ + 0.12,
+             { rough: 0.6 });
+          gb(0.50, 0.05, 0.28, 0x6d2f28, tbx, BWY + 0.24, BWZ + 0.12,
+             { rough: 0.7 });
+          gc(0.015, 0.015, 0.44, C.steel, tbx, BWY + 0.26, BWZ + 0.12, 8,
+             STEEL).rotation.z = Math.PI / 2;
+          gc(0.09, 0.09, 0.17, C.mustard, BWX + 0.24, BWY + 0.085, BWZ + 0.14,
+             12, GLOSS);
+          if (GD3) {
+            [[-0.03, 0.30, 0.05], [0.02, 0.30, -0.03], [0.04, 0.28, 0.05]]
+              .forEach(function (d) {
+                gc(0.012, 0.012, d[1], C.steel, BWX + 0.24 + d[0],
+                   BWY + 0.30, BWZ + 0.14 + d[2], 6, STEEL);
+              });
+            gc(0.07, 0.065, 0.13, C.teal, BWX + 0.06, BWY + 0.065, BWZ + 0.20,
+               12, GLOSS);
+            gr(0.20, 0.04, 0.15, 0.02, C.linen, BWX + 0.52, BWY + 0.02,
+               BWZ + 0.10, { rough: 0.98 });
+          }
+        }
+        /* under it, on the stretcher: paint tins and a jerry can */
+        if (GD2) {
+          gc(0.13, 0.13, 0.22, C.teal, BWX - 0.72, 0.435, BWZ, 12, GLOSS);
+          gc(0.13, 0.13, 0.22, C.cream, BWX - 0.44, 0.435, BWZ + 0.06, 12,
+             GLOSS);
+          gr(0.22, 0.34, 0.14, 0.03, C.mustard, BWX + 0.02, 0.495, BWZ,
+             { rough: 0.6 });
+          if (GD3) {
+            gc(0.135, 0.135, 0.02, C.steel, BWX - 0.72, 0.555, BWZ, 12, STEEL);
+            gc(0.135, 0.135, 0.02, C.steel, BWX - 0.44, 0.555, BWZ + 0.06, 12,
+               STEEL);
+            gc(0.03, 0.03, 0.07, C.ink, BWX + 0.02, 0.70, BWZ, 8, GLOSS);
+          }
+        }
+        gsh(1.14, 0.38, BWX, BWZ + 0.04, 0xc4c0c8);
+      })();
+
+      /* ---- 3. the pegboard, above the bench (plate 3) ------------------ */
+      (function () {
+        var PX = -16.77, PY = 1.88, PW = 2.10, PH = 1.16, PZ = GZW + 0.018;
+        var pegT = NICE ? canvasTex(GD3 ? 256 : 128, function (g, S) {
+          g.fillStyle = '#626871'; g.fillRect(0, 0, S, S);
+          var st = S / 10;
+          g.fillStyle = 'rgba(24,27,31,0.85)';
+          for (var y = st / 2; y < S; y += st)
+            for (var x = st / 2; x < S; x += st) {
+              g.beginPath(); g.arc(x, y, Math.max(1, S / 74), 0, 7); g.fill();
+            }
+        }) : null;
+        if (pegT) {
+          pegT.wrapS = pegT.wrapT = T.RepeatWrapping;
+          pegT.repeat.set(6, 3.5);
+        }
+        gb(PW, PH, 0.035, NICE ? 0xffffff : C.graphite, PX, PY, PZ,
+           NICE ? { rough: 0.88, map: pegT } : { rough: 0.88 });
+        gb(PW + 0.06, 0.05, 0.05, C.cab, PX, PY + PH / 2 + 0.02, PZ + 0.01,
+           GMATT);
+        gb(PW + 0.06, 0.05, 0.05, C.cab, PX, PY - PH / 2 - 0.02, PZ + 0.01,
+           GMATT);
+        if (!GD2) return;
+        var tz = PZ + 0.05;
+        gc(0.018, 0.018, 0.30, C.wood2, PX - 0.86, PY + 0.10, tz, 6, GMATT);
+        gb(0.16, 0.07, 0.07, C.ink, PX - 0.86, PY + 0.27, tz, { rough: 0.55 });
+        gb(0.44, 0.16, 0.02, C.steel, PX - 0.40, PY + 0.24, tz, STEEL);
+        gb(0.13, 0.13, 0.05, C.oxblood, PX - 0.66, PY + 0.24, tz,
+           { rough: 0.6 });
+        gb(0.62, 0.06, 0.05, C.mustard, PX + 0.38, PY + 0.38, tz, GLOSS);
+        var coil = new T.Mesh(new T.TorusGeometry(0.15, 0.038,
+          GD3 ? 8 : 5, GD3 ? 14 : 8), mat(C.teal, { rough: 0.7 }));
+        coil.position.set(PX + 0.82, PY - 0.22, tz + 0.02);
+        gt(coil); garageInterior.add(coil);
+        gb(1.00, 0.05, 0.20, C.cab, PX - 0.52, PY - 0.36, PZ + 0.10, GMATT);
+        [[-0.86, C.oxblood], [-0.60, C.teal], [-0.34, C.mustard]]
+          .forEach(function (t) {
+            gc(0.075, 0.075, 0.16, t[1], PX + t[0], PY - 0.255, PZ + 0.10,
+               10, GLOSS);
+          });
+        if (!GD3) return;
+        [[-0.06, 0.30], [0.04, 0.30], [0.14, 0.28]].forEach(function (d) {
+          gc(0.012, 0.012, d[1], C.steel, PX + d[0], PY + 0.20, tz, 6, STEEL);
+          gc(0.024, 0.024, 0.10, C.oxblood, PX + d[0], PY + 0.01, tz, 6, GLOSS);
+        });
+        gb(0.05, 0.24, 0.03, C.steel, PX + 0.60, PY + 0.04, tz, STEEL);
+        gb(0.04, 0.28, 0.03, C.steel, PX + 0.70, PY + 0.08, tz, STEEL);
+        gb(0.09, 0.09, 0.035, C.graphite, PX + 0.60, PY + 0.17, tz,
+           { rough: 0.5 });
+        gb(0.13, 0.13, 0.06, C.mustard, PX + 0.36, PY + 0.08, tz, GLOSS);
+        gb(0.11, 0.19, 0.05, C.oxblood, PX + 0.86, PY + 0.30, tz,
+           { rough: 0.6 });
+        gb(0.05, 0.15, 0.05, C.graphite, PX + 0.86, PY + 0.14, tz,
+           { rough: 0.5 });
+      })();
+
+      /* ---- 4. the back wall's right half: a shelf of cartons, a tyre --- */
+      (function () {
+        var SX = -14.72, SW = 1.56, SD = 0.38, SZ = GZW + SD / 2;
+        gb(SW, 1.00, 0.03, C.cabShade, SX, 2.02, GZW + 0.016, GMATT);
+        [1.58, 2.24].forEach(function (y) {
+          gb(SW, 0.06, SD, C.cab, SX, y, SZ, GMATT);
+          if (GD3) gb(SW, 0.065, 0.02, C.cabShade, SX, y, SZ + SD / 2 - 0.01,
+                      GMATT);
+        });
+        gb(0.05, 1.00, SD, C.cab, SX - SW / 2 + 0.02, 2.02, SZ, GMATT);
+        gb(0.05, 1.00, SD, C.cab, SX + SW / 2 - 0.02, 2.02, SZ, GMATT);
+        if (GD2) {
+          gb(0.05, 0.68, SD, C.cab, SX, 1.94, SZ, GMATT);
+          gb(0.38, 0.32, 0.30, GCARD, SX - 0.52, 1.77, SZ, GMATT);
+          gc(0.09, 0.09, 0.18, C.teal, SX - 0.24, 1.70, SZ - 0.02, 10, GLOSS);
+          gb(0.16, 0.22, 0.22, C.wood2, SX - 0.09, 1.72, SZ + 0.04, gWoodO);
+          gb(0.34, 0.26, 0.26, GCARD, SX + 0.20, 1.74, SZ, GMATT);
+          gc(0.08, 0.08, 0.16, C.mustard, SX + 0.46, 1.69, SZ - 0.03, 10,
+             GLOSS);
+          gb(0.14, 0.14, 0.20, C.cream, SX + 0.63, 1.68, SZ + 0.03, GMATT);
+          gc(0.10, 0.10, 0.20, C.oxblood, SX - 0.32, 2.37, SZ, 10, GLOSS);
+          gc(0.10, 0.10, 0.20, C.cream, SX - 0.54, 2.37, SZ - 0.13, 10, GLOSS);
+          gb(0.44, 0.28, 0.28, C.wood2, SX + 0.38, 2.41, SZ, gWoodO);
+          if (GD3) {
+            gb(0.39, 0.05, 0.10, GCARDD, SX - 0.52, 1.925, SZ, GMATT);
+            gb(0.35, 0.05, 0.09, GCARDD, SX + 0.20, 1.865, SZ, GMATT);
+            gc(0.105, 0.105, 0.02, C.steel, SX - 0.54, 2.48, SZ - 0.13, 10, STEEL);
+            gb(0.45, 0.05, 0.06, C.wood, SX + 0.38, 2.56, SZ, gWoodO);
+          }
+        } else {
+          gb(0.44, 0.32, 0.30, GCARD, SX - 0.44, 1.77, SZ, GMATT);
+          gb(0.36, 0.26, 0.26, GCARD, SX + 0.30, 1.74, SZ, GMATT);
+        }
+        /* the tyre on the wall (plate 3) - the wall's dark anchor */
+        var TY = -13.44, TYY = 2.10;
+        var ty = new T.Mesh(new T.TorusGeometry(0.30, 0.115,
+          GD3 ? 9 : 5, GD3 ? 18 : 10), mat(C.ink, { rough: 0.94 }));
+        ty.position.set(TY, TYY, GZW + 0.13);
+        gt(ty); garageInterior.add(ty);
+        if (GD2) {
+          gc(0.20, 0.20, 0.09, C.steel, TY, TYY, GZW + 0.13, 12, STEEL)
+            .rotation.x = Math.PI / 2;
+          gb(0.86, 0.07, 0.07, C.cab, TY, 1.32, GZW + 0.04, GMATT);
+          [-0.28, 0, 0.28].forEach(function (dx) {
+            gb(0.035, 0.13, 0.035, C.graphite, TY + dx, 1.24, GZW + 0.08,
+               { rough: 0.5 });
+          });
+          var hose = new T.Mesh(new T.TorusGeometry(0.22, 0.055,
+            GD3 ? 8 : 5, GD3 ? 14 : 8), mat(C.teal, { rough: 0.82 }));
+          hose.position.set(TY + 0.02, 1.02, GZW + 0.14);
+          gt(hose); garageInterior.add(hose);
+        }
+      })();
+
+      /* ---- 5. the long wall: a shelf of boxes and a ladder (plate 3) --- */
+      (function () {
+        var WD = 0.40, WXf = GXW + WD / 2, Z0 = 3.55, Z1 = 9.20;
+        var WZ = (Z0 + Z1) / 2, WL = Z1 - Z0;
+        [2.10, 2.80].forEach(function (y) {
+          gb(WD, 0.06, WL, C.cab, WXf, y, WZ, GMATT);
+          if (GD3) gb(0.02, 0.065, WL, C.cabShade, GXW + WD - 0.01, y, WZ,
+                      GMATT);
+          if (GD2) [Z0 + 0.35, WZ, Z1 - 0.35].forEach(function (bz) {
+            gb(WD - 0.06, 0.05, 0.05, C.graphite, WXf - 0.02, y - 0.055, bz,
+               { rough: 0.5 });
+          });
+        });
+        if (GD2) {
+          gb(0.34, 0.34, 0.46, GCARD, WXf, 2.30, Z0 + 0.42, GMATT);
+          gb(0.32, 0.28, 0.40, GCARD, WXf, 2.27, Z0 + 1.00, GMATT);
+          gb(0.34, 0.30, 0.52, C.wood2, WXf, 2.28, Z0 + 1.72, gWoodO);
+          gc(0.11, 0.11, 0.22, C.mustard, WXf, 2.24, Z0 + 2.34, 10, GLOSS);
+          gc(0.11, 0.11, 0.22, C.oxblood, WXf, 2.24, Z0 + 2.62, 10, GLOSS);
+          gb(0.30, 0.36, 0.50, GCARD, WXf, 2.31, Z0 + 3.24, GMATT);
+          gr(0.26, 0.38, 0.18, 0.03, C.mustard, WXf, 3.02, Z0 + 0.55,
+             { rough: 0.6 });
+          gb(0.32, 0.30, 0.44, GCARD, WXf, 2.98, Z0 + 1.24, GMATT);
+          gc(0.12, 0.12, 0.24, C.teal, WXf, 2.95, Z0 + 1.90, 10, GLOSS);
+          gb(0.30, 0.26, 0.38, GCARD, WXf, 2.96, Z0 + 2.52, GMATT);
+          gc(0.11, 0.11, 0.20, C.cream, WXf, 2.93, Z0 + 3.10, 10, GLOSS);
+          /* the run carries on over the tool chest to the door end */
+          gb(0.32, 0.34, 0.48, GCARD, WXf, 2.30, Z0 + 4.06, GMATT);
+          gb(0.34, 0.26, 0.40, C.wood2, WXf, 2.26, Z0 + 4.72, gWoodO);
+          gc(0.11, 0.11, 0.22, C.teal, WXf, 2.24, Z0 + 5.26, 10, GLOSS);
+          gr(0.24, 0.34, 0.17, 0.03, C.mustard, WXf, 3.00, Z0 + 4.10,
+             { rough: 0.6 });
+          gb(0.30, 0.30, 0.42, GCARD, WXf, 2.98, Z0 + 4.80, GMATT);
+          gc(0.10, 0.10, 0.19, C.oxblood, WXf, 2.92, Z0 + 5.32, 10, GLOSS);
+          if (GD3) {
+            gb(0.35, 0.05, 0.16, GCARDD, WXf, 2.475, Z0 + 0.42, GMATT);
+            gb(0.33, 0.05, 0.14, GCARDD, WXf, 2.415, Z0 + 1.00, GMATT);
+            gb(0.31, 0.05, 0.14, GCARDD, WXf, 2.49, Z0 + 3.24, GMATT);
+            gb(0.33, 0.05, 0.15, GCARDD, WXf, 3.135, Z0 + 1.24, GMATT);
+            gb(0.31, 0.05, 0.13, GCARDD, WXf, 3.115, Z0 + 2.52, GMATT);
+            gb(0.33, 0.05, 0.16, GCARDD, WXf, 2.485, Z0 + 4.06, GMATT);
+            gb(0.31, 0.05, 0.14, GCARDD, WXf, 3.145, Z0 + 4.80, GMATT);
+          }
+        } else {          /* the Pi gets the storage, just not the jars:
+             two bare planks read as a mistake, not as restraint */
+          gb(0.34, 0.34, 0.46, GCARD, WXf, 2.30, Z0 + 0.42, GMATT);
+          gb(0.32, 0.30, 0.44, GCARD, WXf, 2.98, Z0 + 1.30, GMATT);
+          gb(0.30, 0.32, 0.44, GCARD, WXf, 2.29, Z0 + 4.10, GMATT);
+        }
+        if (GD2) {                /* the long handles, hung in a row: the
+             long wall was blank from the splash board to the shelf */
+          gb(0.10, 0.06, 1.00, C.cab, GXW + 0.06, 2.02, 4.50, GMATT);
+          [[4.15, C.wood, C.oxblood], [4.50, C.wood2, C.graphite],
+           [4.85, C.wood, C.teal]].forEach(function (tl, i) {
+            gc(0.030, 0.030, 1.00, tl[1], GXW + 0.10, 1.50, tl[0],
+               GD3 ? 8 : 6, gWoodO);
+            gb(0.06, 0.16, i === 1 ? 0.36 : 0.22, tl[2], GXW + 0.10, 1.02,
+               tl[0], { rough: 0.7 });
+          });
+        }
+        if (GD2) {                /* the bike, hung over the tool chest:
+             the wall between the shelf and the chest was the last blank
+             panel wider than two units in the room (S4) */
+          var BKX = GXW + 0.15, BKZ = 8.42, BKY = 1.48, BR = 0.30;
+          [-0.56, 0.56].forEach(function (dz) {
+            var wh = new T.Mesh(new T.TorusGeometry(BR, 0.035,
+              GD3 ? 8 : 5, GD3 ? 16 : 10), mat(C.ink, { rough: 0.9 }));
+            wh.rotation.y = Math.PI / 2;
+            wh.position.set(BKX, BKY, BKZ + dz);
+            gt(wh); garageInterior.add(wh);
+            if (GD3) gc(0.075, 0.075, 0.04, C.steel, BKX, BKY, BKZ + dz, 10,
+                        STEEL).rotation.z = Math.PI / 2;
+          });
+          /* the frame, drawn as tubes in the wall's own z-y plane */
+          [[0.52, 0.06, -0.20, -0.395], [0.68, 0.04, 0.16, 0.869],
+           [0.72, 0.28, 0.06, 1.626], [0.30, 0.13, 0.49, 2.646]]
+            .forEach(function (tb) {
+              gb(0.045, tb[0], 0.045, C.oxblood, BKX, BKY + tb[1],
+                 BKZ + tb[2], { rough: 0.55 }).rotation.x = tb[3];
+            });
+          if (GD3) {
+            [[0.49, -0.09, -0.33, -1.198], [0.40, 0.15, -0.43, -2.428]]
+              .forEach(function (tb) {
+                gb(0.04, tb[0], 0.04, C.oxblood, BKX, BKY + tb[1],
+                   BKZ + tb[2], { rough: 0.55 }).rotation.x = tb[3];
+              });
+            gb(0.07, 0.05, 0.22, C.ink, BKX, BKY + 0.34, BKZ - 0.32,
+               { rough: 0.7 });
+            gb(0.26, 0.045, 0.045, C.graphite, BKX + 0.03, BKY + 0.30,
+               BKZ + 0.44, { rough: 0.5 });
+          }
+          [-1, 1].forEach(function (sgn) {
+            gb(0.10, 0.07, 0.07, C.graphite, GXW + 0.05, BKY + 0.30,
+               BKZ + sgn * 0.40, { rough: 0.5 });
+          });
+        }
+        if (GD2) {                          /* the ladder, hung flat */
+          var LY = 3.44, LZ = 5.72, LL = 3.70, LXf = GXW + 0.13;
+          [-0.17, 0.17].forEach(function (dy) {
+            gb(0.07, 0.07, LL, C.wood, LXf, LY + dy, LZ, gWoodO);
+          });
+          if (GD3) for (var i = 0; i < 8; i++)
+            gb(0.05, 0.30, 0.05, C.wood2, LXf, LY,
+               LZ - LL / 2 + 0.24 + i * ((LL - 0.48) / 7), gWoodO);
+          [-1, 1].forEach(function (s) {
+            gb(0.09, 0.09, 0.09, C.graphite, GXW + 0.04, LY,
+               LZ + s * (LL / 2 - 0.30), { rough: 0.5 });
+          });
+        }
+      })();
+
+      /* ---- 6. the east wall, seen edge-on: a reel and a hook rail ------ */
+      if (GD2) {
+        var EXf = GXE - 0.06;
+        gb(0.18, 0.10, 0.10, C.graphite, EXf, 1.62, 4.60, { rough: 0.5 });
+        var reel = new T.Mesh(new T.TorusGeometry(0.26, 0.085,
+          GD3 ? 8 : 5, GD3 ? 14 : 8), mat(C.teal, { rough: 0.82 }));
+        reel.rotation.y = Math.PI / 2;
+        reel.position.set(EXf - 0.10, 1.62, 4.60);
+        gt(reel); garageInterior.add(reel);
+        gb(0.10, 0.07, 1.90, C.cab, GXE - 0.04, 2.36, 7.00, GMATT);
+        [6.30, 6.86, 7.42].forEach(function (hz) {
+          gb(0.14, 0.13, 0.035, C.graphite, GXE - 0.11, 2.28, hz,
+             { rough: 0.5 });
+        });
+        gr(0.20, 0.25, 0.19, 0.08, C.mustard, GXE - 0.15, 2.13, 6.30,
+           { rough: 0.7 });
+        gr(0.17, 0.22, 0.22, 0.09, C.oxblood, GXE - 0.14, 2.15, 7.42,
+           { rough: 0.7 });
+      }
+
+      /* ---- 7. the strip light (plate 3) -------------------------------
+         Hung ACROSS the bay, not down it: run lengthwise it points its
+         3-unit top face straight at a camera looking down the bay and
+         reads as a pale plank across the middle of the frame. Its two
+         drops are placed in the gap between the car plaques so they
+         cross nothing that has to be read. */
+      (function () {
+        var LY = 3.20, LZ = 3.66, LW = 2.30;
+        [-15.75, -15.05].forEach(function (rx) {
+          gc(0.018, 0.018, 1.40, C.steel, rx, LY + 0.76, LZ, 6, STEEL);
+        });
+        gb(LW, 0.09, 0.28, C.graphite, -15.40, LY, LZ, { rough: 0.5 });
+        [-0.075, 0.075].forEach(function (dz) {   /* twin tubes, exposed:
+             a shop light seen from above is its tubes, and a closed
+             body just reads as a lintel across the wall */
+          gc(0.045, 0.045, LW - 0.12, 0xfff8e4, -15.40, LY + 0.075, LZ + dz,
+             GD3 ? 10 : 6, { rough: 0.35 }).rotation.z = Math.PI / 2;
+        });
+        if (GD3) [-1, 1].forEach(function (s) {
+          gb(0.07, 0.19, 0.30, C.steel, -15.40 + s * (LW / 2 - 0.02),
+             LY + 0.04, LZ, STEEL);
+        });
+      })();
+
+      /* ---- 8. the floor in front of the cars: the clutter --------------
+         S1's 0.6 rule - two groups, not a scatter. West: a tool chest
+         against the wall with cartons and the mower beside it. East: the
+         bin with two tyres and a watering can. */
+      (function () {
+        var TCX = -17.58, TCZ = 8.40, TCW = 1.16, TCD = 0.60;
+        if (GD2) {
+          var tc = kCase(TCX, TCZ, Math.PI / 2, TCW, TCD, GFY, GFY + 0.92,
+                         [{ h: 0.92, cells: [{ w: 1, kind: 'drawers3' }] }],
+                         { toe: true, face: C.oxblood,
+                           body: shadeHex(C.oxblood, 0.74) });
+          garageInterior.add(tc);
+          tc.traverse(gt);
+          gr(TCD + 0.08, 0.08, TCW + 0.08, 0.02, C.mustard, TCX, GFY + 0.96,
+             TCZ, { rough: 0.55 });
+        } else {
+          gb(TCD, 0.92, TCW, C.oxblood, TCX, GFY + 0.46, TCZ, { rough: 0.7 });
+          gb(TCD + 0.08, 0.08, TCW + 0.08, C.mustard, TCX, GFY + 0.96, TCZ,
+             { rough: 0.55 });
+        }
+        gsh(0.44, 0.72, TCX, TCZ);
+        gb(0.56, 0.42, 0.50, GCARD, -16.86, GFY + 0.21, 9.02, GMATT);
+        gb(0.48, 0.36, 0.44, GCARD, -16.90, GFY + 0.60, 8.98, GMATT);
+        if (GD2) gb(0.40, 0.30, 0.38, GCARD, -16.84, GFY + 0.93, 9.04, GMATT);
+        if (GD3) {
+          gb(0.57, 0.05, 0.17, GCARDD, -16.86, GFY + 0.40, 9.02, GMATT);
+          gb(0.49, 0.05, 0.15, GCARDD, -16.90, GFY + 0.755, 8.98, GMATT);
+          gb(0.41, 0.05, 0.13, GCARDD, -16.84, GFY + 1.055, 9.04, GMATT);
+        }
+        gsh(0.36, 0.32, -16.87, 9.01);
+        if (GD2) {                                  /* the mower (plate 3) */
+          var mw = gGroup(-16.06, 8.58, -0.42);
+          gr(0.66, 0.17, 0.80, 0.05, C.mustard, 0, GFY + 0.24, 0, GLOSS, mw);
+          gb(0.40, 0.20, 0.34, C.ink, 0, GFY + 0.42, -0.10, { rough: 0.6 }, mw);
+          if (GD3) {
+            gc(0.06, 0.06, 0.13, C.steel, 0.14, GFY + 0.56, -0.10, 8, STEEL,
+               mw);
+            gb(0.18, 0.10, 0.12, C.oxblood, -0.16, GFY + 0.48, -0.16,
+               { rough: 0.6 }, mw);
+          }
+          [[-0.27, 0.30], [0.27, 0.30], [-0.27, -0.30], [0.27, -0.30]]
+            .forEach(function (w) {
+              gc(0.14, 0.14, 0.09, C.ink, w[0], GFY + 0.14, w[1],
+                 GD3 ? 12 : 8, { rough: 0.9 }, mw).rotation.z = Math.PI / 2;
+            });
+          [-1, 1].forEach(function (s) {
+            gb(0.05, 0.86, 0.05, C.graphite, s * 0.28, GFY + 0.62, -0.42,
+               { rough: 0.5 }, mw).rotation.x = -0.62;
+          });
+          gb(0.62, 0.05, 0.05, C.graphite, 0, GFY + 0.96, -0.70,
+             { rough: 0.5 }, mw);
+          gsh(0.42, 0.48, -16.06, 8.58);
+        }
+        var BNX = -13.28, BNZ = 8.46;               /* the wheelie bin */
+        gr(0.60, 0.92, 0.54, 0.05, C.slate, BNX, GFY + 0.50, BNZ,
+           { rough: 0.7 });
+        gr(0.64, 0.08, 0.58, 0.03, C.ink, BNX, GFY + 0.98, BNZ,
+           { rough: 0.7 });
+        if (GD2) {
+          gb(0.44, 0.05, 0.05, C.ink, BNX, GFY + 1.06, BNZ - 0.20,
+             { rough: 0.6 });
+          [-1, 1].forEach(function (s) {
+            gc(0.09, 0.09, 0.07, C.ink, BNX + s * 0.26, GFY + 0.09, BNZ - 0.20,
+               8, { rough: 0.9 }).rotation.z = Math.PI / 2;
+          });
+        }
+        gsh(0.36, 0.34, BNX, BNZ);
+        if (GD2) {
+          for (var t = 0; t < 2; t++) {
+            var tr = new T.Mesh(new T.TorusGeometry(0.30, 0.115,
+              GD3 ? 8 : 5, GD3 ? 16 : 10), mat(C.ink, { rough: 0.94 }));
+            tr.rotation.x = Math.PI / 2;
+            tr.position.set(-14.16, GFY + 0.12 + t * 0.23, 8.48);
+            gt(tr); garageInterior.add(tr);
+          }
+          gsh(0.34, 0.34, -14.16, 8.48);
+          gr(0.22, 0.26, 0.20, 0.05, C.teal, -13.74, GFY + 0.13, 7.86,
+             { rough: 0.7 });
+          if (GD3) gc(0.02, 0.02, 0.26, C.teal, -13.60, GFY + 0.20, 7.86, 6,
+                      GLOSS).rotation.z = 1.1;
+          gsh(0.16, 0.15, -13.74, 7.86);
+        }
+      })();
+
+      /* ---- 9. three plants (S4) - the pots a family keeps in here ------ */
+      (function () {
+        function gPlant(x, y0, z, s, potC, kind) {
+          var g = gGroup(x, z, 0);
+          kPlant(g, 0, y0, 0, s, potC, { rough: 0.85 }, kind, false);
+          g.traverse(gt);
+          return g;
+        }
+        gPlant(-14.92, 2.30, GZW + 0.19, 0.50, C.terracotta, 'spray');
+        if (GD2) {
+          gPlant(-17.76, 2.16, 7.24, 0.44, C.cream, 'mound');
+          gPlant(-17.56, GFY + 0.97, 8.02, 0.42, C.cream, 'fiddle');
+        }
+      })();
       groups.garage = garageInterior;   /* the zone-glow loop lights the room */
     })();
     /* the front path: door to street */
@@ -2665,9 +3276,32 @@
          { rough: 0.95, map: driveT });
     ebox(0.9, 0.06, 5.2, NICE ? 0xffffff : EXTC.drive, -9.2, -0.24, 15.5,
          { rough: 0.95, map: driveT });
-    /* driveway from the garage door to the street */
-    ebox(4.4, 0.08, 7.8, NICE ? 0xffffff : EXTC.drive, -15.4, -0.25, 14.3,
+    /* driveway from the garage door to the street. Plate 3 scores its
+       apron with expansion joints, so the slab reads as poured concrete
+       and not as a painted plane; it also stopped half a unit short of
+       the garage door, leaving a ribbon of grass under the threshold.
+       Now it runs from the door line to the kerb and is saw-cut on a
+       grid, the joints proud by a hair so they catch the light. */
+    ebox(4.6, 0.08, 8.7, NICE ? 0xffffff : EXTC.drive, -15.4, -0.25, 13.95,
          { rough: 0.95, map: driveT });
+    if (DETAIL >= 2) {
+      [10.85, 12.60, 14.35, 16.10, 17.60].forEach(function (jz) {
+        ebox(4.6, 0.014, 0.055, 0x8e887d, -15.4, -0.204, jz, { rough: 0.95 });
+      });
+      ebox(0.055, 0.014, 8.7, 0x8e887d, -15.4, -0.204, 13.95, { rough: 0.95 });
+      /* the apron's own edge, where the slab meets the lawn */
+      [-1, 1].forEach(function (sx) {
+        ebox(0.10, 0.10, 8.7, EXTC.trim, -15.4 + sx * 2.30, -0.245, 13.95,
+             { rough: 0.9 });
+      });
+      /* and the thing every driveway ends in */
+      ebox(0.10, 0.92, 0.10, C.wood2, -12.95, 0.17, 17.30, { rough: 0.8 });
+      ebox(0.26, 0.24, 0.44, C.slate, -12.95, 0.74, 17.30, { rough: 0.7 });
+      if (DETAIL >= 3) {
+        ebox(0.05, 0.16, 0.04, C.red, -12.80, 0.80, 17.30, GLOSS);
+        ebox(0.28, 0.05, 0.46, C.dark, -12.95, 0.87, 17.30, { rough: 0.7 });
+      }
+    }
     /* the street along the yard's front, and its curb */
     var roadT = null;
     if (NICE) {
@@ -2976,11 +3610,14 @@
          whose boards sit darker than #3a3340, and came out as a halo
          round every car. Grey multiplied into whatever is underneath
          can only darken it. Two rings give the pool an edge instead of
-         a cut-out, and both are wider than the car - a pool the body
-         covers entirely does nothing at all, which is what the old
-         one did. The rings ride inside the group, so they land on the
-         garage boards (y 0.038) and the apron (y -0.206) alike. */
-      [[0.52, 0.50, 0xa8a4ac], [0.72, 0.57, 0xdad7dd]].forEach(
+         a cut-out, and they HUG THE FOOTPRINT: the outer one stops just
+         inside the body's own outline, because a contact shadow is the
+         shape of the thing touching the floor, softened. The first pass
+         ran them half a car's width past the bumpers on every side and
+         they read as dark pools parked around the cars rather than
+         under them. The rings ride inside the group, so they land on
+         the garage slab (y 0.038) and the apron (y -0.206) alike. */
+      [[0.44, 0.45, 0x9d99a3], [0.58, 0.54, 0xcfccd4]].forEach(
         function (ring, ri) {
           /* both rings at every tier: a lone hard-edged 12-gon pokes a
              visible triangle out from under the bumper at low, and two
@@ -2995,6 +3632,14 @@
           d.renderOrder = -2 + ri;
           grp.add(d);
         });
+      /* ...and nothing on a car RECEIVES one. The same +/-10 shadow box
+         has an EDGE, and it cuts across the garage bay: the east car
+         sampled the map over part of its body (coming back inside the
+         house's shadow) and was forced lit over the rest. The seam ran
+         straight across the minivan's roof cap, which then read as a
+         navy panel in a different material from the light blue flank
+         under it. The two rings above are this kit's whole shadow. */
+      grp.traverse(function (o) { o.receiveShadow = false; });
     }
 
     /* the school bus, at the curb only while it is actually out. Same
