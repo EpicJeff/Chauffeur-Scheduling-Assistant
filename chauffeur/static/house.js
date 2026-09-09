@@ -5714,6 +5714,10 @@
     swap(webgl.paneMesh, webgl.weatherTex(s.window || {}));
     swap(webgl.skyDome, webgl.skyDomeTex(s.window || {}));
     syncGarage(s);
+    /* the same law the door plaque and the fridge magnets obey: leaned in,
+       the card IS the detail, and the room must not say 68% twice at two
+       sizes with the small one half behind the big one */
+    carPlates.forEach(function (p) { p.visible = focused !== 'garage'; });
     syncMudroom(s);
 
     /* dusk and dawn ride the same tick the sky dome does */
@@ -5738,10 +5742,35 @@
   }
 
   /* ---- the garage floor plan: cars rebuilt only when their payload
-     changes. Two present cars park inside (with a status plaque on the
-     back wall); the rest line the driveway; an absent car is simply not
-     built — the empty spot IS the feature. ---- */
+     changes. Two present cars park in the bay, the rest fill the driveway
+     apron two abreast, and an absent car is simply not built — the empty
+     spot IS the feature.
+
+     EVERY present car wears its own plaque, floating over its own roof.
+     They used to be pinned to the garage back wall and only the first two
+     were built at all, so a household with four cars got a status on two
+     of them and nothing on the others — the bug this pass exists to fix.
+     Riding the car makes the association unarguable and costs one plane
+     per car instead of a wall rank that has to be laid out.
+
+     A plaque faces the eye that will actually see it: the bay's face the
+     garage camera, the driveway's face the exterior one. Both are
+     constants, so this is a lookAt done ONCE per payload change — never a
+     billboard, which would be per-frame work the room does not do. ---- */
   var garagePayload = null;
+  /* the bay's two slots, and the apron's grid: two columns across the
+     driveway's 4.6-unit width, rows 4.2 apart. The old single file at 4.6
+     spacing put the fourth car in the street with its nose past the kerb;
+     two abreast keeps four of them on the concrete.
+
+     The first row starts at z 13.4, not at the door: the garage camera
+     (-14.05, 9.6, 21.3 → -15.45, 1.75, 6.05) drops anything nearer than
+     about z 13 into the bottom edge of its frame, where the chat bar is,
+     and a plaque aimed at the EXTERIOR camera lands there as a skewed
+     sliver. Past 13 the apron is cleanly out of the garage's shot, which
+     is the honest answer — you cannot see the car there either. */
+  var BAY_X = [-16.7, -14.1], DRIVE_X = [-16.55, -14.25];
+  var carPlates = [];        /* the plaques, so the lean-in can blank them */
   function syncGarage(s) {
     if (!webgl) return;
     var g = s.garage || {};
@@ -5754,27 +5783,39 @@
       garagePayload = key;
       while (webgl.carsG.children.length)
         webgl.carsG.remove(webgl.carsG.children[0]);
+      carPlates = [];
       var inside = 0, outside = 0;
       cars.forEach(function (c) {
         if (!c.present) return;
         var grp = webgl.buildCar(c);
+        var eye;
         if (inside < 2) {
           /* the garage boards sit at 0.035 and the driveway apron at
              -0.21: a car parked at y 0 sinks into one and floats over
              the other, and its contact shadow goes with it */
-          grp.position.set(inside === 0 ? -16.7 : -14.1, 0.038, 5.6);
-          var plate = new webgl.T.Mesh(new webgl.T.PlaneGeometry(1.5, 0.75),
-            new webgl.T.MeshBasicMaterial({ transparent: true,
-                                            map: webgl.carTex(c) }));
-          plate.position.set(grp.position.x, 3.3, 2.4);   /* garage back wall */
-          plate.userData.zone = 'garage';
-          webgl.carsG.add(plate);
+          grp.position.set(BAY_X[inside], 0.038, 5.6);
+          eye = webgl.GARAGE_POS;
           inside++;
         } else {
-          grp.position.set(-15.4, -0.206, 12.6 + outside * 4.6);
+          grp.position.set(DRIVE_X[outside % 2], -0.206,
+                           13.4 + Math.floor(outside / 2) * 4.2);
+          eye = webgl.EXT_POS;
           outside++;
         }
         webgl.carsG.add(grp);
+        /* the plaque's height comes from the car's OWN box, so a van's
+           sits as clear of its roof as a hatchback's does */
+        var box = new webgl.T.Box3().setFromObject(grp);
+        var plate = new webgl.T.Mesh(new webgl.T.PlaneGeometry(1.5, 0.75),
+          new webgl.T.MeshBasicMaterial({ transparent: true,
+                                          map: webgl.carTex(c) }));
+        plate.position.set(grp.position.x, box.max.y + 0.86,
+                           grp.position.z);
+        plate.lookAt(eye);
+        plate.userData.zone = 'garage';
+        plate.userData.room = 'garage';
+        webgl.carsG.add(plate);
+        carPlates.push(plate);
       });
     }
     if (webgl.busG) webgl.busG.visible = !!((s.curb || {}).bus);
@@ -5842,6 +5883,11 @@
   var FACE_MESH_MAP = { window: 'paneMesh', pet: 'critFace',
                         calendar: 'calFace', board: 'boardFace',
                         radio: 'radioFace', fridge: 'fridgeDoorTop',
+                        /* the garage's card hangs on the BACK WALL — the
+                           surface the plaques vacated. Without a face named
+                           here the zone framed its whole interior group and
+                           the lean-in reversed out of the house to fit it */
+                        garage: 'garageBackWall',
                         door: 'plaque' };   /* frame the CARD, not the slab —
                         the whole-door span forces a 15-unit approach that
                         lands outside the mudroom's walls */
@@ -5850,6 +5896,15 @@
      through the wall */
   var FACE_AXIS_MAP = { fridge: ['z', 1], board: ['x', 1], counter: ['z', 1],
                         pet: ['z', 1], radio: ['z', 1], door: ['x', 1] };
+  /* How much of the approach a face actually needs. Every other zone's face
+     IS its card — a calendar sheet, a cork board — so framing the whole
+     mesh frames the card. The garage's is a five-and-a-half-unit WALL that
+     the card only wears a band of, and framing all of it reverses the
+     camera twenty units back, clean out of the house: the lean-in showed a
+     doll's house with a notice over it instead of a garage with a list on
+     the wall. 0.78 is the closest the eye can come and still stay behind a
+     car parked on the apron (row one sits at z 13.4, tail near 15.4). */
+  var FACE_DIST_MAP = { garage: 0.78 };
 
   function zoneFaceNormal(key) {
     if (!webgl) return null;
@@ -5875,6 +5930,7 @@
     var size3 = boxb.getSize(new webgl.T.Vector3());
     var span = Math.max(size3.x, size3.y, size3.z);
     var dist = (span / 2) / Math.tan((webgl.cam.fov / 2) * Math.PI / 180) * 1.45 + 0.8;
+    dist *= (FACE_DIST_MAP[key] || 1);
     /* a zone with a card face is approached ALONG that face's normal (a
        touch of height mixed in so the room keeps its depth): an oblique
        wall card reads as a misaligned web element; a square one reads as

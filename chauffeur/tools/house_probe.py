@@ -51,12 +51,41 @@ def _seed():
     for n in ('Milk', 'Eggs', 'Bread'):
         storage.add_shopping_item({'id': uuid.uuid4().hex, 'name': n,
                                    'is_checked': False, 'created_at': 1})
+    # FOUR cars, because two is the number the garage bay holds and every
+    # scaling bug in this room hides above it. Each one carries a different
+    # telemetry state so a single screenshot judges the whole ladder: fuel,
+    # charge, a car low enough to warn, and one that is out.
     storage.add_car(Car(name='Red Truck', body_type='truck',
-                        color_code='#c9473d', seat_capacity=4).model_dump())
+                        color_code='#c9473d', seat_capacity=4,
+                        ha_fuel_entity='sensor.truck_fuel').model_dump())
     storage.add_car(Car(name='Blue Minivan', body_type='minivan',
-                        color_code='#3b82f6', seat_capacity=7).model_dump())
+                        color_code='#3b82f6', seat_capacity=7,
+                        ha_battery_entity='sensor.minivan_battery',
+                        ha_range_entity='sensor.minivan_range').model_dump())
     storage.add_car(Car(name='Green Wagon', body_type='wagon',
-                        color_code='#5f8f4e', seat_capacity=5).model_dump())
+                        color_code='#5f8f4e', seat_capacity=5,
+                        ha_fuel_entity='sensor.wagon_fuel').model_dump())
+    storage.add_car(Car(name='Silver Hatch', body_type='hatch',
+                        color_code='#9aa2a9', seat_capacity=5,
+                        ha_device_tracker='device_tracker.hatch',
+                        ha_battery_entity='sensor.hatch_battery').model_dump())
+    # No Home Assistant here, so the entities above read as nothing and every
+    # car would come back "resting" — the same hole the weather stub below
+    # fills. Patch the two readers the fleet is built from (the idiom
+    # tests/test_house_state.py already uses) rather than ha_api itself, so
+    # nothing else in the app starts believing there is an HA.
+    from services import cars as cars_svc
+    _LEVELS = {'Red Truck': {'battery_pct': None, 'fuel_pct': 68.0, 'range': 340.0},
+               'Blue Minivan': {'battery_pct': 82.0, 'fuel_pct': None, 'range': 208.0},
+               'Green Wagon': {'battery_pct': None, 'fuel_pct': 14.0, 'range': 41.0},
+               'Silver Hatch': {'battery_pct': 47.0, 'fuel_pct': None, 'range': 96.0}}
+    cars_svc.car_levels = lambda c: dict(_LEVELS.get(
+        (c.get('name') if isinstance(c, dict) else None) or '',
+        {'battery_pct': None, 'fuel_pct': None, 'range': None}))
+    cars_svc.car_location = lambda c: (
+        {'state': 'not_home'}
+        if (c.get('name') if isinstance(c, dict) else None) == 'Silver Hatch'
+        else None)
     # the mudroom bench draws one backpack per PACKING GROUP, open while the
     # group is still short. Two kits match the seeded event, and only one of
     # them is claimed, so a screenshot carries both states at once — the same
@@ -130,7 +159,13 @@ def main():
             else:
                 page.evaluate(
                     "window.chfHouseEnterRoom(" + repr(view) + ")")
-            page.wait_for_timeout(1500)
+            # A lean-in is three waits back to back, not one: the room tween
+            # (850 ms), the zone tween (650 ms), and only THEN the focus
+            # event that fetches the board and mounts the card. At 1500 the
+            # shot landed before the card did, at random — which reads in a
+            # screenshot as "the zone has no card", the exact thing these
+            # views exist to judge.
+            page.wait_for_timeout(2800 if view.startswith('lean_') else 1500)
             if args.cam:
                 page.evaluate('window.chfHouseCam(' + args.cam + ')')
                 page.wait_for_timeout(400)

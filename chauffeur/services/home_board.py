@@ -726,6 +726,35 @@ WIDGETS = [
          _opt('show_location', 'Where it is', 'bool', True),
          _opt('show_pois', 'How many stops', 'bool', True),
      ]},
+    # ── The fleet. The MAP answers "where is it", and only for a car that has
+    # a tracker; this answers "what shape is it in", for every car the
+    # household has — including the ones with no Home Assistant at all, which
+    # is most of them. It is also the card the garage wears on a lean-in, and
+    # that is the reason it draws EVERY car rather than a capped few: the
+    # dollhouse bay holds two, so a family with four had no surface anywhere
+    # that showed them all.
+    {'key': 'cars', 'icon': '🚗', 'label': 'Cars',
+     'heading': 'The cars',
+     'blurb': "Every car the household keeps — what it is, whether it is "
+              "home, and how much charge or fuel is left in it.",
+     'options': [
+         # Empty means the whole fleet, the same bargain the map's picker
+         # makes. It never means none.
+         _opt('car_ids', 'Which cars', 'select', [], source='cars', multi=True,
+              help='Leave empty for every car.'),
+         _opt('show_level', 'Charge and fuel', 'bool', True,
+              help='The bar and the percentage. Needs Home Assistant '
+                   'entities on the car; without them a car reads as '
+                   'resting.'),
+         _opt('show_range', 'Range left', 'bool', True),
+         _opt('show_body', 'What kind of car it is', 'bool', True),
+         # A car that is out is not a car that is missing. Off, the card is
+         # a fleet list and says nothing about where anything is.
+         _opt('show_away', 'Whether it is home', 'bool', True),
+         _opt('show_seats', 'How many it seats', 'bool', False,
+              help='Off by default — seats matter to the solver, not to '
+                   'somebody walking past.'),
+     ]},
     {'key': 'map', 'icon': '🗺️', 'label': 'Map',
      'heading': 'Where everyone is',
      'blurb': "Who is home, out, or driving. Needs Home Assistant.",
@@ -2185,6 +2214,63 @@ def _tile_weather(now, config=None, **_):
         return {'days': days} if days else None
     except Exception as e:
         print(f"[home_board] weather failed: {e}")
+        return None
+
+
+# What the config picker's seven body types are called in a sentence. The
+# editor's own <option> labels, kept here because the card prints them and a
+# raw `suv` on a wall is a slug, not a word.
+_CAR_BODY_LABELS = {
+    'sedan': 'Sedan', 'suv': 'SUV', 'truck': 'Truck', 'minivan': 'Minivan',
+    'hatch': 'Hatchback', 'wagon': 'Wagon', 'van': 'Van',
+}
+
+
+def _tile_cars(now, config=None, **_):
+    """The household's fleet, every car of it.
+
+    Rows come from `cars.fleet_status`, which is also what the dollhouse
+    garage reads — one answer to "what shape are the cars in", so the plaque
+    over a car in the bay and its row here cannot drift apart. No Home
+    Assistant is a first-class state, not a gap: the car still has a name, a
+    body and a colour, and it reads as resting.
+    """
+    try:
+        from services import cars as cars_svc
+        wanted = set(_cfg_ids(config, 'car_ids'))
+        show_level = _cfg_bool(config, 'show_level', True)
+        rows = []
+        for c in cars_svc.fleet_status():
+            if wanted and str(c.get('id')) not in wanted:
+                continue
+            batt, fuel = c.get('battery_pct'), c.get('fuel_pct')
+            # Battery beats fuel when a plug-in hybrid reports both — the
+            # same order `readiness_warnings` picks, and the same order the
+            # garage plaque draws.
+            kind = 'battery' if batt is not None else (
+                'fuel' if fuel is not None else None)
+            level = batt if kind == 'battery' else (
+                fuel if kind == 'fuel' else None)
+            rng = c.get('range')
+            rows.append({
+                'id': c.get('id'), 'name': c.get('name'),
+                'color': c.get('color') or '',
+                'body': _CAR_BODY_LABELS.get(c.get('body') or '', '')
+                        if _cfg_bool(config, 'show_body', True) else '',
+                'seats': c.get('seats') if _cfg_bool(config, 'show_seats', False) else None,
+                'present': c.get('present'),
+                'level': round(level) if (show_level and level is not None) else None,
+                'level_kind': kind if show_level else None,
+                'range': (round(rng) if rng is not None else None)
+                         if _cfg_bool(config, 'show_range', True) else None,
+                'warn': bool(c.get('warn')) and show_level,
+            })
+        if not rows:
+            return None
+        return {'cars': rows,
+                'show_away': _cfg_bool(config, 'show_away', True)}
+    except Exception as e:
+        print(f"[home_board] cars failed: {e}")
         return None
 
 
@@ -3847,6 +3933,7 @@ _BUILDERS: dict = {
     'routines': _tile_routines, 'routines_lanes': _tile_routines_lanes,
     'avatar_editor': _tile_avatar_editor, 'pets': _tile_pets,
     'occasions': _tile_occasions, 'weather': _tile_weather, 'moments': _tile_moments,
+    'cars': _tile_cars,
     'moments_gallery': _tile_moments_gallery,
     'calendar': _tile_calendar, 'errands': _tile_errands, 'tasks': _tile_tasks,
     'task_list': _tile_task_list, 'errand_list': _tile_errand_list,

@@ -27,6 +27,14 @@
    the write-side ones (openPetEditor and friends) stay UNDEFINED, which
    the branches themselves treat as "draw disabled". Defined before Alpine
    boots (alpine.min.js is deferred; this file is a classic script). */
+/* Whether the overlay is handing a REAL height down to the card it is
+   wearing. A `fill` zone gives one (the layout caps the element in pixels);
+   a `fit` zone does not — it measures the content, so a card that put
+   `flex-1` on itself there would measure zero. The board answers the same
+   question with `fillsHere`, and the branches that ask it are the ones with
+   a scroll box inside (drives, cars). Written by the focus listener below,
+   before the island is handed its tile. */
+var chfOverlayFills = false;
 window.kitchenTileIsland = function () {
   var base = (window.chfBase !== undefined ? window.chfBase : '');
   return {
@@ -35,6 +43,7 @@ window.kitchenTileIsland = function () {
     board: {},
     hero: {},
     collageSpan: function () { return ''; },
+    fillsHere: function () { return chfOverlayFills; },
     momentSrc: function (m) {
       var att = (m && m.attachment) || {};
       var u = (m && (m.poster_url || m.media_url)) || att.url || '';
@@ -70,12 +79,19 @@ window.kitchenTileIsland = function () {
      card things, so the ↗ is the door through. */
   var PAGES = { door: 'home', calendar: 'calendar', fridge: 'moments',
                 board: 'lists', counter: 'meals', pet: 'chores',
-                window: 'calendar', radio: 'music' };
+                window: 'calendar', radio: 'music',
+                /* the garage's page is the CAR EDITOR: /cars is not a route,
+                   the fleet lives in Config beside the drivers */
+                garage: 'config' };
 
-  /* which board tile a zone wears on focus */
+  /* which board tile a zone wears on focus. The garage's card is the whole
+     fleet, and that is the point of it: the bay parks two cars, so a
+     household with four had no surface that showed them all. The kitchen
+     page has no garage zone, so this entry is inert there. */
   var ZONE_TILES = { fridge: 'moments', board: 'shopping_list',
-                     counter: 'meals', pet: 'pets', window: 'weather' };
-  var WIDGETS = 'moments,shopping_list,meals,pets,weather';
+                     counter: 'meals', pet: 'pets', window: 'weather',
+                     garage: 'cars' };
+  var WIDGETS = 'moments,shopping_list,meals,pets,weather,cars';
 
   /* board payload, cached briefly: a lean-in is a moment, not a poll.
      One request carries the hero (top-level, always) and the five tile
@@ -177,7 +193,13 @@ window.kitchenTileIsland = function () {
     board: { mode: 'fill', top: 0.07, bottom: 0.93 },
     counter: { mode: 'fit', top: null },
     pet: { mode: 'fill', top: 0.05, bottom: 0.95 },
-    window: { mode: 'fit', top: 0.34 }
+    window: { mode: 'fit', top: 0.34 },
+    /* the garage's face is its BACK WALL, and the fleet list is pinned to
+       the upper part of it — the bottom of that wall is behind the cars and
+       the workbench, and a card hung down there would be reading a list off
+       a bonnet. `fill` because the rows scroll: a fourth car lengthens the
+       scroll inside the card, never the card. */
+    garage: { mode: 'fill', top: 0.15, bottom: 0.66 }
   };
 
   function placeQuad(q, zone) {
@@ -277,6 +299,10 @@ window.kitchenTileIsland = function () {
 
   window.addEventListener('chf-kitchen-focus', function (ev) {
     var d = (ev && ev.detail) || {};
+    /* set BEFORE the island renders (`c.t = tile` below is what draws it),
+       not in `show`, which runs a tick later — a card asking `fillsHere` on
+       its first render would otherwise read the previous zone's answer */
+    chfOverlayFills = ((LAYOUT[d.zone] || {}).mode === 'fill');
     if (!d.zone || !d.rect) { hide(); return; }
     if (d.zone === 'door') {
       fetchBoard(function (b) {

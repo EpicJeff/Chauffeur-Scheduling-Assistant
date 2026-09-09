@@ -22,54 +22,15 @@ def _calm(**extra):
     return {'calm': True, **extra}
 
 
-def _warn_floats():
-    from services import cars as cars_svc
-    b, f = cars_svc.DEFAULT_BATTERY_WARN_PCT, cars_svc.DEFAULT_FUEL_WARN_PCT
-    try:
-        s = storage.get_settings() or {}
-        b = float(s.get('car_battery_warn_pct') or b)
-        f = float(s.get('car_fuel_warn_pct') or f)
-    except Exception:
-        pass
-    return b, f
-
-
 def _garage() -> dict:
+    """The fleet, straight from cars.fleet_status — the same rows the board's
+    own cars card draws, so the plaque over a car in the bay and the row for
+    it on the lean-in card can never disagree."""
     from services import cars as cars_svc
-    batt_warn, fuel_warn = _warn_floats()
-    out = []
-    any_warn = False
-    for c in storage.get_all_cars() or []:
-        if c.get('is_disabled'):
-            continue
-        try:
-            lv = cars_svc.car_levels(c) or {}
-        except Exception:
-            lv = {}
-        try:
-            loc = cars_svc.car_location(c)
-        except Exception:
-            loc = None
-        present = (loc is None) or (str(loc.get('state') or 'home') == 'home')
-        warn = False
-        if lv.get('battery_pct') is not None and lv['battery_pct'] < batt_warn:
-            warn = True
-        if lv.get('fuel_pct') is not None and lv['fuel_pct'] < fuel_warn:
-            warn = True
-        any_warn = any_warn or warn
-        out.append({'id': c.get('id') or str(c.get('doc_id') or ''),
-                    'name': c.get('name') or 'Car',
-                    'color': c.get('color_code') or '',
-                    'body': c.get('body_type') or '',
-                    'seats': int(c.get('seat_capacity') or 4),
-                    'present': present,
-                    'battery_pct': lv.get('battery_pct'),
-                    'fuel_pct': lv.get('fuel_pct'),
-                    'range': lv.get('range'),
-                    'warn': warn})
+    out = cars_svc.fleet_status()
     if not out:
         return _calm(cars=[])
-    return {'calm': (not any_warn), 'cars': out}
+    return {'calm': (not any(c['warn'] for c in out)), 'cars': out}
 
 
 def _curb() -> dict:

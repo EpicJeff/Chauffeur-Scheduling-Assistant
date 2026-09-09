@@ -628,6 +628,92 @@
                         </div>
                     </template>
 
+                    <!-- ── The fleet. One row per car, EVERY car — the garage
+                         in the dollhouse only has two bays, so this card is
+                         the surface a household with four cars actually
+                         reads. Rows scroll inside their own box: a fifth car
+                         lengthens the scroll, never the tile.
+
+                         The row is the agenda's row vocabulary
+                         (components/agenda_row.html:150-158): `agenda-event`
+                         rounded-lg px-2.5 py-1.5, a 4px left bar carrying the
+                         entity's own colour, a bold title, chips in the badge
+                         slot. Not the agenda BUILDER — a car is not an event —
+                         but the same surface, so a car row and a drive row
+                         read as the same app.
+
+                         Red, not amber, on a low car: it is the colour the
+                         garage plaque already paints itself (house.js carTex),
+                         and one concept may not be two colours on two
+                         surfaces. -->
+                    <template x-if="t.type === 'cars' && !t.data.empty">
+                        <!-- The drives card's own rule (line 220), and for the
+                             same reason: `flex-1` inside a tile that is FITTING
+                             its content is zero pixels tall, so the list would
+                             collapse to a sliver and clip the first car. Given
+                             a height, the rows scroll inside it; sized to fit,
+                             they flow and the tile grows — which is still the
+                             honest answer, because either way every car is
+                             reachable. -->
+                        <div class="flex flex-col gap-1.5"
+                            :class="fillsHere(t) ? 'flex-1 min-h-0 overflow-y-auto tile-scroll' : ''">
+                            <template x-for="c in (t.data.cars || [])" :key="c.id">
+                                <div class="agenda-event rounded-lg px-2.5 py-1.5 flex flex-col gap-1 shrink-0"
+                                    :class="(t.data.show_away && !c.present) ? 'opacity-45' : ''"
+                                    :style="'border-left: 4px solid ' + (c.color || '#6b7280')">
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-[13px] font-bold text-white truncate" x-text="c.name"></span>
+                                        <span x-show="c.body"
+                                            class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 shrink-0"
+                                            x-text="c.body"></span>
+                                        <span x-show="c.seats"
+                                            class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-400 shrink-0"
+                                            x-text="c.seats + ' seats'"></span>
+                                        <!-- At most one saturated element on a
+                                             resting row: the low chip, and only
+                                             when a level actually says so. -->
+                                        <span x-show="c.warn"
+                                            class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 shrink-0 ml-auto">Low</span>
+                                        <span x-show="t.data.show_away && !c.present"
+                                            class="text-[10px] font-bold text-gray-400 shrink-0"
+                                            :class="c.warn ? '' : 'ml-auto'">Out</span>
+                                    </div>
+                                    <div class="flex items-center gap-2" x-show="c.level !== null">
+                                        <!-- 🔌 / ⛽ — the family map's own words
+                                             for the same two numbers
+                                             (components/family_map_core.html:114).
+                                             A plug and a pump are different
+                                             errands and the percentage alone
+                                             cannot say which. -->
+                                        <span class="text-sm leading-none w-4 shrink-0 text-center"
+                                            x-text="c.level_kind === 'battery' ? '🔌' : '⛽'"></span>
+                                        <span class="flex-1 min-w-0 h-1.5 rounded-full bg-gray-700 overflow-hidden">
+                                            <span class="block h-full rounded-full"
+                                                :class="c.warn ? 'bg-red-500' : 'bg-teal-500'"
+                                                :style="'width:' + Math.max(3, Math.min(100, c.level || 0)) + '%'"></span>
+                                        </span>
+                                        <span class="text-[11px] font-bold tabular-nums shrink-0"
+                                            :class="c.warn ? 'text-red-400' : 'panel-text'"
+                                            x-text="c.level + '%'"></span>
+                                        <span x-show="c.range !== null"
+                                            class="text-[11px] font-semibold text-gray-400 tabular-nums shrink-0"
+                                            x-text="c.range + ' mi'"></span>
+                                    </div>
+                                    <!-- No telemetry at all is the ordinary
+                                         case, not a gap: the honest word for a
+                                         car that never says anything is the one
+                                         the plaque already uses. -->
+                                    <div class="flex items-center gap-2" x-show="c.level === null">
+                                        <span class="text-[11px] font-semibold text-gray-400">Resting</span>
+                                        <span x-show="c.range !== null"
+                                            class="text-[11px] font-semibold text-gray-400 tabular-nums"
+                                            x-text="c.range + ' mi'"></span>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
                     <!-- latest moments.
                          Interactive, the cell is a BUTTON and opens the photo
                          full screen — the same overlay a brand-new moment pops

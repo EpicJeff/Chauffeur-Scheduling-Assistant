@@ -71,6 +71,72 @@ def car_levels(car):
     }
 
 
+def warn_thresholds(settings=None):
+    """(battery_warn, fuel_warn) — the household's own numbers, or the module
+    defaults. One reader, so every surface that says a car is LOW means the
+    same thing by it."""
+    if settings is None:
+        try:
+            from services import storage
+            settings = storage.get_settings() or {}
+        except Exception:
+            settings = {}
+
+    def _f(key, default):
+        try:
+            return float((settings or {}).get(key) or default)
+        except (ValueError, TypeError):
+            return default
+
+    return (_f('car_battery_warn_pct', DEFAULT_BATTERY_WARN_PCT),
+            _f('car_fuel_warn_pct', DEFAULT_FUEL_WARN_PCT))
+
+
+def fleet_status(cars=None, settings=None):
+    """One row per car the household still keeps: what it is, whether it is
+    home, and how much charge or fuel is left in it.
+
+    THE single answer to that question. The garage draws these rows as
+    plaques over the cars and the home board draws them as a card, and a
+    fourth car must not mean two different things on two surfaces. Read
+    only, and honest with no Home Assistant: every level comes back None
+    and every car is home, which is what "resting" says on the plaque.
+    """
+    from services import storage
+    batt_warn, fuel_warn = warn_thresholds(settings)
+    rows = []
+    for c in (storage.get_all_cars() or [] if cars is None else cars):
+        if _get(c, 'is_disabled'):
+            continue
+        try:
+            lv = car_levels(c) or {}
+        except Exception:
+            lv = {}
+        try:
+            loc = car_location(c)
+        except Exception:
+            loc = None
+        batt, fuel = lv.get('battery_pct'), lv.get('fuel_pct')
+        warn = bool((batt is not None and batt < batt_warn)
+                    or (fuel is not None and fuel < fuel_warn))
+        rows.append({
+            'id': (c.get('id') if isinstance(c, dict) else _get(c, 'id'))
+                  or str((c.get('doc_id') if isinstance(c, dict) else '') or ''),
+            'name': _get(c, 'name') or 'Car',
+            'color': _get(c, 'color_code') or '',
+            'body': _get(c, 'body_type') or '',
+            'seats': int(_get(c, 'seat_capacity') or 4),
+            # No tracker is not "missing"; it is a car that never says where
+            # it is, and the household's answer to that has always been home.
+            'present': (loc is None) or (str(loc.get('state') or 'home') == 'home'),
+            'battery_pct': batt,
+            'fuel_pct': fuel,
+            'range': lv.get('range'),
+            'warn': warn,
+        })
+    return rows
+
+
 def _event_start(e):
     raw = e.get('start') if isinstance(e, dict) else getattr(e, 'start', None)
     if isinstance(raw, datetime.datetime):
