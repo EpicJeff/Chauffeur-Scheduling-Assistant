@@ -100,11 +100,11 @@
                   if (c.hands_mins) line += ' — about ' + c.hands_mins + ' min hands-on';
                   return line;
                 } },
-    board:    { label: 'Corkboard',     url: 'lists',
+    board:    { label: 'Pantry',        url: 'lists',
                 num: function (s) { return (s.board || {}).items || 0; },
                 headline: function (s) {
                   var b = s.board || {};
-                  if (b.calm) return 'The list is clear.';
+                  if (b.calm) return 'The pantry is stocked.';
                   return b.items + ' on the list: ' + (b.top || []).join(', ');
                 } },
     door:     { label: 'Door',          url: 'home',
@@ -653,16 +653,45 @@
 
     /* ---- CORKBOARD (zone: board) on the left wall ---------------------- */
     var board = zoneGroup('board', -6.42, 0, -0.6);
-    var boardFace = new T.Mesh(new T.PlaneGeometry(2.0, 1.5),
-      mat(C.cork, { rough: 0.98 }));
+    /* the PANTRY (H3): the corkboard retired — the grocery list lives
+       where food lives. The invisible face plane carries the overlay's
+       quad; the shelves are the furniture. Honest twist: a LONG list
+       means BARE shelves (syncPantry hides jars as items grow). */
+    var boardFace = new T.Mesh(new T.PlaneGeometry(1.9, 2.7),
+      new T.MeshBasicMaterial({ visible: false }));
     boardFace.rotation.y = Math.PI / 2;
-    boardFace.position.set(0.06, 2.5, 0);
+    boardFace.position.set(0.5, 1.75, 0);
     board.add(boardFace);
-    var bframe = new T.Mesh(new T.BoxGeometry(0.06, 1.66, 2.16),
-      PBR ? new T.MeshStandardMaterial({ map: woodDoor, roughness: 0.7 })
-          : new T.MeshLambertMaterial({ color: 0xb08a5c, map: woodDoor || null }));
-    bframe.position.set(-0.02, 2.5, 0);
-    finish(bframe); board.add(bframe);
+    (function () {
+      function pmat() {
+        return PBR ? new T.MeshStandardMaterial({ map: woodDoor,
+                                                  roughness: 0.7 })
+                   : new T.MeshLambertMaterial({ color: 0xb08a5c,
+                                                 map: woodDoor || null });
+      }
+      function pbox(w, h, d, x, y, z) {
+        var m = new T.Mesh(new T.BoxGeometry(w, h, d), pmat());
+        m.position.set(x, y, z); finish(m); board.add(m); return m;
+      }
+      pbox(0.12, 3.1, 2.3, 0.06, 1.6, 0);          /* back slab */
+      pbox(0.55, 3.1, 0.09, 0.28, 1.6, -1.1);      /* sides */
+      pbox(0.55, 3.1, 0.09, 0.28, 1.6, 1.1);
+      pbox(0.55, 0.09, 2.3, 0.28, 3.1, 0);         /* cap + base */
+      pbox(0.55, 0.12, 2.3, 0.28, 0.1, 0);
+      pbox(0.5, 0.06, 2.1, 0.26, 0.95, 0);         /* three shelves */
+      pbox(0.5, 0.06, 2.1, 0.26, 1.75, 0);
+      pbox(0.5, 0.06, 2.1, 0.26, 2.55, 0);
+    })();
+    var pantryJars = [];
+    (function () {
+      var JAR_C = [0xe09a3e, 0xc9473d, 0x3fbdb2, 0xcf9a55];
+      for (var j = 0; j < 8; j++) {
+        var jar = cyl(0.1, 0.1, 0.26, JAR_C[j % 4],
+                      0.26, (j < 4 ? 1.11 : 1.91), -0.78 + (j % 4) * 0.52,
+                      board, 10, GLOSS);
+        pantryJars.push(jar);
+      }
+    })();
 
     /* ---- WALL CALENDAR (zone: calendar) on the back wall --------------- */
     var calG = zoneGroup('calendar', 3.6, 0, -5.36);
@@ -1407,45 +1436,6 @@
         });
       });
     }
-    function boardTex(b) {
-      if (b && b.__blank) {
-        /* focused: the list card is ON the cork — bare board underneath */
-        return mkTex('board', 512, 384, 'blank', function (g, w, h) {
-          g.fillStyle = '#c08b52'; g.fillRect(0, 0, w, h);
-          for (var i = 0; i < 500; i++) {
-            g.fillStyle = 'rgba(90,60,30,' + (Math.random() * 0.1) + ')';
-            g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
-          }
-        });
-      }
-      var calm = !b || b.calm !== false;
-      var top = (b && b.top) || [];
-      var payload = calm ? 'calm' : [b.items].concat(top).join('|');
-      return mkTex('board', 512, 384, payload, function (g, w, h) {
-        g.fillStyle = '#c08b52'; g.fillRect(0, 0, w, h);
-        for (var i = 0; i < 500; i++) {
-          g.fillStyle = 'rgba(90,60,30,' + (Math.random() * 0.1) + ')';
-          g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
-        }
-        var notes = calm ? ['all set!'] : top.slice(0, 6);
-        var colors = ['#fef08a', '#fda4af', '#a7f3d0', '#bae6fd', '#fde68a', '#ddd6fe'];
-        notes.forEach(function (item, i) {
-          var nx = 34 + (i % 3) * 155, ny = 40 + Math.floor(i / 3) * 165;
-          g.save();
-          g.translate(nx + 62, ny + 62);
-          g.rotate(((i * 47) % 9 - 4) * 0.02);
-          g.shadowColor = 'rgba(60,40,20,0.35)'; g.shadowBlur = 8; g.shadowOffsetY = 4;
-          g.fillStyle = colors[i % colors.length];
-          g.fillRect(-62, -62, 124, 124);
-          g.restore();
-          g.fillStyle = '#b91c1c';
-          g.beginPath(); g.arc(nx + 62, ny + 10, 6, 0, 7); g.fill();
-          g.fillStyle = '#374151'; g.font = '600 24px ' + FONT;
-          var word = String(item).slice(0, 9);
-          g.fillText(word, nx + 62 - g.measureText(word).width / 2, ny + 70);
-        });
-      });
-    }
     function weatherTex(wz) {
       var cond = (wz && wz.cond) || '';
       var temp = (wz && wz.temp !== null && wz.temp !== undefined)
@@ -1590,12 +1580,14 @@
       T: T, scene: scene, cam: cam, R: R, groups: groups,
       steam: steam, steam2: steam2, needle: needle, plaque: plaque,
       calFace: calFace, boardFace: boardFace, magnets: magnets,
+      /* boardFace stays exported: the overlay quad rides its plane */
       critFace: critFace, critterTex: critterTex, pendants: pendants,
       radioFace: radioFace, fridgeDoorTop: fridgeDoorTop,
       paneMesh: paneMesh, heroTex: heroTex, calendarTex: calendarTex,
-      boardTex: boardTex, weatherTex: weatherTex, clearPaint: clearPaint,
+      weatherTex: weatherTex, clearPaint: clearPaint,
       extG: extG, skyDome: skyDome, skyDomeTex: skyDomeTex,
       garageDoorG: garageDoorG, garageInterior: garageInterior,
+      pantryJars: pantryJars,
       garageBackWall: webgl_garageBackWall,
       carsG: carsG, busG: busG, buildCar: buildCar, carTex: carTex,
       HOME_POS: HOME_POS, HOME_AT: HOME_AT,
@@ -1742,8 +1734,11 @@
     swap(webgl.plaque, webgl.heroTex(s.door || {}));
     swap(webgl.calFace, webgl.calendarTex(
       focused === 'calendar' ? { __blank: true } : (s.calendar || {})));
-    swap(webgl.boardFace, webgl.boardTex(
-      focused === 'board' ? { __blank: true } : (s.board || {})));
+    /* the pantry's honesty: a long list empties the shelves */
+    var stocked = Math.max(0, 8 - Math.min(8, (s.board || {}).items || 0));
+    webgl.pantryJars.forEach(function (jar, ji) {
+      jar.visible = ji < stocked;
+    });
     swap(webgl.critFace, webgl.critterTex(
       focused === 'pet' ? { __blank: true } : (s.pet || {})));
     swap(webgl.paneMesh, webgl.weatherTex(s.window || {}));
