@@ -47,6 +47,13 @@ def _seed():
         'assignments': {'e1': 'd1'},
     }
     storage.get_cached_schedule = lambda: sched
+    # H2: two cars through the real model (no HA entities: both present,
+    # no warnings, garage calm) so the garage has someone to park.
+    from models.schemas import Car as CarModel
+    storage.add_car(CarModel(name='Red Truck', body_type='truck',
+                             color_code='#c9473d', seat_capacity=4).model_dump())
+    storage.add_car(CarModel(name='Blue Minivan', body_type='minivan',
+                             color_code='#3b82f6', seat_capacity=7).model_dump())
 
 
 def scenario_the_house_boots_enters_and_leans_in():
@@ -91,6 +98,16 @@ def scenario_the_house_boots_enters_and_leans_in():
         page.wait_for_timeout(1100)
         check(not page.is_visible('#focus-overlay'),
               "walking out drops the lean-in card")
+
+        # H2: the garage is a room too
+        check(page.evaluate("typeof window.chfHouseEnterGarage === 'function'"),
+              "the garage hand path exists")
+        page.evaluate("window.chfHouseEnterGarage()")
+        page.wait_for_timeout(1100)
+        if shots:
+            page.screenshot(path=os.path.join(shots, 'house_garage.png'))
+        page.evaluate("window.chfHouseExit()")
+        page.wait_for_timeout(1100)
 
         errs = [e for e in served.errors()
                 if 'WebGL' not in e and 'GroupMarker' not in e]

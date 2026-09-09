@@ -222,8 +222,8 @@
     var HOME_POS = new T.Vector3(17.5, 13.0, 17.5);
     var HOME_AT = new T.Vector3(-0.2, 0.8, -0.4);
     /* the house from the yard: the panel's resting view */
-    var EXT_POS = new T.Vector3(37.5, 23.5, 37.5);
-    var EXT_AT = new T.Vector3(-2.0, 1.0, 3.6);
+    var EXT_POS = new T.Vector3(38.5, 25.0, 38.5);
+    var EXT_AT = new T.Vector3(-2.4, 0.9, 5.0);
     /* the garage from its own doorway (roof + front hidden inside) */
     var GARAGE_POS = new T.Vector3(-8.6, 12.5, 23.0);
     var GARAGE_AT = new T.Vector3(-10.2, 1.4, 4.6);
@@ -986,7 +986,7 @@
     var CAR_DARK = 0x22252a;
     var busG = new T.Group();
     busG.visible = false;
-    busG.position.set(-8.5, -0.31, 20.3);
+    busG.position.set(-5.5, -0.31, 19.8);
     busG.userData.zone = 'curb';
     extG.add(busG);
     (function () {
