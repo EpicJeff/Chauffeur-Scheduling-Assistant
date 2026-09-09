@@ -253,6 +253,41 @@ Every room camera must satisfy, verified in the probe shot:
 
 ---
 
+## 5.2 The shadow frustum (read before blaming a material)
+
+`sun.shadow.camera` is a **±10 orthographic box centred on the house**. Anything
+outside it either receives no shadow at all or samples the boundary and renders
+a **hard diagonal dark edge that looks exactly like a different material**.
+
+This has caused three bugs so far, each of which cost a builder time:
+
+- No vehicle had ever cast a shadow, in any version of the house — the garage
+  bay (x −16.7), the driveway (x −15.4) and the kerb (z 19.8) all fall outside
+  the box.
+- The minivan's roof cap read as a dark navy panel against a light blue body.
+  It was not a material: the `u = −10` boundary cuts diagonally across the bay
+  at x ≈ −14.1, so half the cap sampled the map and half was forced lit. It was
+  diagnosed by temporarily painting the cap magenta.
+- The whole garage bay had the same problem, and now disables `receiveShadow`
+  on every mesh in it.
+
+**Do not widen the frustum.** Measured: widening to ±40 makes the shadow appear
+but coarsens every other room's shadows about 4×. The house's interiors are the
+priority.
+
+Until the lighting pass resolves it properly (a second shadow camera for the
+yard is the obvious candidate), the workaround for anything outside the box is:
+disable `receiveShadow` on the object, and give it a hand-placed multiply disc
+for contact. `blobShadow` takes an optional floor-height parameter — the garage
+floor is at y 0.035 and the mudroom floor at y 0.03, and shadow discs authored
+without it render *underneath* the floor, which is its own silent bug.
+
+**Diagnostic trick worth reusing:** when a surface shades wrongly and you cannot
+tell whether it is the material or the light, paint it an impossible colour
+(magenta) and re-shoot. If the wrong shading survives, it is the light.
+
+---
+
 ## 6. Vehicles (plate 10)
 
 The current cars are extruded blocks and fail. The rebuild is a side-profile

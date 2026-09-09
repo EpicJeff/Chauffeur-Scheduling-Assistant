@@ -224,9 +224,13 @@
        the living room's edge and the yard (bible S5.1, S7.1) */
     var HOME_POS = new T.Vector3(16.0, 12.0, 16.0);
     var HOME_AT = new T.Vector3(0.4, 1.3, -0.7);
-    /* the house from the yard: the panel's resting view */
-    var EXT_POS = new T.Vector3(40.0, 26.0, 40.0);
-    var EXT_AT = new T.Vector3(-4.6, 1.2, 5.0);
+    /* the house from the yard: the panel's resting view. The old pose
+       aimed a metre off the ground and spent the bottom-left fifth of
+       the frame on tarmac; raised and swung a little north it crops the
+       road to a corner and the house and its garden fill the frame
+       (bible S5.1). */
+    var EXT_POS = new T.Vector3(41.0, 25.5, 39.0);
+    var EXT_AT = new T.Vector3(-4.8, 2.9, 3.6);
     /* the garage from its own doorway (roof + front hidden inside).
        The old pose spent half the frame's width on grass and the
        neighbouring roof and cut the bay off at the cars' noses. Lower
@@ -571,6 +575,14 @@
     }
     if (SHADOWS) { wallB.castShadow = false; wallL.castShadow = false;
                    wallL1b.castShadow = false; }
+    /* ---- THE SECTION (docs/house_style_bible.md S7.2) -----------------
+       The plates always show a wall's THICKNESS where the cut passes
+       through, which is what makes a dollhouse read as a deliberate
+       section instead of a house with a wall missing. Every cut edge the
+       exterior camera can see gets a band one shade darker than the face
+       it caps, and the floor slab gets the poche line at its top. */
+    var SECT = { rough: 0.9 };
+    box(0.09, 5.6, 0.41, C.linen, 6.53, 2.8, -5.55, null, SECT);
     box(13.6, 0.28, 0.5, C.shell, 0, 5.66, -5.6);
     box(0.5, 0.28, 11.6, C.shell, -6.7, 5.66, 0);
     if (DETAIL >= 3) {                   /* baseboards: the trim that sells a wall */
@@ -584,6 +596,11 @@
        forward-left into a living room of its own scale — one open
        floorplan, one wood floor, no wall between. ---- */
     box(13.6, 0.5, 8.4, C.shell, 0, -0.27, 9.9);
+    /* the slab's cut faces: the band the plates put under the floor */
+    box(13.70, 0.50, 0.05, C.cabShade, 0, -0.27, 14.125, null, { rough: 0.9 });
+    box(13.70, 0.13, 0.09, C.stone, 0, -0.045, 14.140, null, { rough: 0.9 });
+    box(0.05, 0.50, 19.92, C.cabShade, 6.825, -0.27, 4.14, null, { rough: 0.9 });
+    box(0.09, 0.13, 19.92, C.stone, 6.840, -0.045, 4.14, null, { rough: 0.9 });
     var floorTex2 = floorTex.clone();
     floorTex2.needsUpdate = true;
     floorTex2.wrapS = floorTex2.wrapT = T.RepeatWrapping;
@@ -598,6 +615,7 @@
     scene.add(floor2);
     var wallL2 = box(0.35, 5.6, 8.4, C.wall, -6.65, 2.8, 10.0, westWallG,
                      { rough: 0.95 });
+    box(0.41, 5.6, 0.09, C.linen, -6.65, 2.8, 14.235, westWallG, { rough: 0.9 });
     if (SHADOWS) wallL2.castShadow = false;
     box(0.5, 0.28, 8.6, C.shell, -6.7, 5.66, 10.1);
     if (DETAIL >= 3) box(0.08, 0.2, 8.2, 0xe4ddd1, -6.44, 0.1, 9.9);
@@ -2524,6 +2542,30 @@
          { rough: 0.95, map: sidingT });
     ebox(0.3, 3.6, 1.6, NICE ? 0xffffff : EXTC.siding, -7.0, 5.2, 3.6,
          { rough: 0.95, map: sidingT });
+    /* the siding's own cut, where the facade runs past the wall */
+    ebox(0.09, 7.0, 0.36, C.linen, 7.93, 3.5, -5.95, { rough: 0.9 });
+    /* a corner board: clapboard always ends in one, and it is what
+       makes the mass read as a built volume, not a sliced solid */
+    ebox(0.26, 7.0, 0.10, EXTC.trim, 7.77, 3.5, -5.75, { rough: 0.9 });
+    ebox(0.10, 7.0, 0.36, EXTC.trim, 7.95, 3.5, -5.95, { rough: 0.9 });
+    /* the one exterior wall this camera sees square on: give it a real
+       window - casing, sill, mullions and GLAZING the lighting pass can
+       make warm from the inside (S7.3) */
+    (function () {
+      var wx = 7.10, wy = 3.60;          /* the siding's face is z = -5.80 */
+      var gl = ebox(0.84, 1.34, 0.03, 0x9fc4dc, wx, wy, -5.775,
+                    { rough: 0.16, metal: 0.0, envInt: 0.6 });
+      gl.userData.glazing = true;        /* the lighting pass looks for this */
+      ebox(1.12, 0.13, 0.16, EXTC.trim, wx, wy + 0.735, -5.73, { rough: 0.9 });
+      [-0.555, 0.555].forEach(function (dx) {
+        ebox(0.14, 1.60, 0.16, EXTC.trim, wx + dx, wy, -5.73, { rough: 0.9 });
+      });
+      ebox(1.28, 0.10, 0.30, EXTC.trim, wx, wy - 0.745, -5.68, { rough: 0.9 });
+      if (DETAIL >= 2) {
+        ebox(0.06, 1.34, 0.06, EXTC.trim, wx, wy, -5.752, { rough: 0.9 });
+        ebox(0.84, 0.06, 0.06, EXTC.trim, wx, wy, -5.752, { rough: 0.9 });
+      }
+    })();
     /* eaves trim */
     ebox(15.6, 0.24, 0.5, EXTC.trim, 0.3, 7.0, -5.95);
     ebox(0.5, 0.24, 13.0, EXTC.trim, -7.0, 7.0, -0.3);
@@ -2546,6 +2588,19 @@
                         0.3, 8.78, -1.15, { rough: 0.9, map: shingleT });
     roofStub.rotation.x = Math.atan2(0.85, 1.6);
     ebox(16.5, 0.42, 0.12, EXTC.trim, 0.3, 8.14, -0.28);
+    ebox(16.5, 0.10, 0.06, C.stone, 0.3, 7.90, -0.315, { rough: 0.9 });
+    /* rake boards: the roof's own cut edge, both gable ends of both
+       slopes, offset down the slope so they hang under the shingles */
+    [[-4.2, roofSpan, -Math.atan2(2.3, 4.4)],
+     [-1.15, 2.0, Math.atan2(0.85, 1.6)]].forEach(function (rf) {
+      var ca = Math.cos(rf[2]), sa = Math.sin(rf[2]);
+      [-8.26, 8.26].forEach(function (dx) {
+        var m = ebox(0.12, 0.40, rf[1], EXTC.trim, 0.3 + dx,
+                     (rf[0] === -4.2 ? 8.05 : 8.78) - 0.11 * ca,
+                     rf[0] - 0.11 * sa, { rough: 0.9 });
+        m.rotation.x = rf[2];
+      });
+    });
     /* left gable end: the triangle under the back slope */
     (function () {
       var s = new T.Shape();
@@ -2582,6 +2637,13 @@
       gtag(box(5.6, 1.1, 0.24, NICE ? 0xffffff : EXTC.garage,
                -15.4, 4.05, 9.88, garageDoorG,
                NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 }));
+      /* the lintel: the header stopped at y 3.5 and the door at 3.1, so
+         a 0.4 slot ran the width of the bay and the resting camera
+         looked straight through it at the shelves */
+      gtag(box(5.6, 0.46, 0.24, NICE ? 0xffffff : EXTC.garage,
+               -15.4, 3.27, 9.88, garageDoorG,
+               NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 }));
+      gtag(box(3.9, 0.16, 0.16, EXTC.trim, -15.4, 3.16, 10.00, garageDoorG));
       gtag(box(0.76, 3.5, 0.24, NICE ? 0xffffff : EXTC.garage,
                -17.58, 1.75, 9.88, garageDoorG,
                NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 }));
@@ -2595,10 +2657,56 @@
         gtag(box(3.4, 0.05, 0.06, 0xc4bcae, -15.4, 1.8, 10.1, garageDoorG));
         gtag(box(3.4, 0.05, 0.06, 0xc4bcae, -15.4, 2.6, 10.1, garageDoorG));
       }
-      if (DETAIL >= 3) {        /* a small window right of the garage door */
-        gtag(box(0.86, 0.76, 0.1, EXTC.trim, -13.25, 2.7, 10.04, garageDoorG));
-        gtag(box(0.7, 0.6, 0.12, 0x39434e, -13.25, 2.7, 10.05, garageDoorG,
-                 GLOSS));
+      /* the bay's daylight, and the only exterior windows the resting
+         camera sees square on: real glazing in a real casing, left
+         emissive-capable for the lighting pass (bible S7.3). All of it
+         rides garageDoorG, so the inside camera still sees a bare wall
+         where the door is. */
+      if (DETAIL >= 2) {
+        var GLZ = { rough: 0.16, metal: 0.0, envInt: 0.6 };
+        function gGlass(w, h, x, y, z, gp) {
+          var m = box(w, h, 0.03, 0x9fc4dc, x, y, z, gp || garageDoorG, GLZ);
+          m.userData.glazing = true;      /* the lighting pass looks for this */
+          return gtag(m);
+        }
+        /* the window in the pier east of the door */
+        gGlass(0.58, 0.68, -13.22, 2.68, 10.02);
+        gtag(box(0.74, 0.09, 0.10, EXTC.trim, -13.22, 3.07, 10.03, garageDoorG));
+        gtag(box(0.80, 0.08, 0.18, EXTC.trim, -13.22, 2.29, 10.06, garageDoorG));
+        [-0.345, 0.345].forEach(function (dx) {
+          gtag(box(0.09, 0.86, 0.10, EXTC.trim, -13.22 + dx, 2.68, 10.03,
+                   garageDoorG));
+        });
+        if (DETAIL >= 3) {
+          gtag(box(0.05, 0.68, 0.05, EXTC.trim, -13.22, 2.68, 10.04, garageDoorG));
+          gtag(box(0.58, 0.05, 0.05, EXTC.trim, -13.22, 2.68, 10.04, garageDoorG));
+        }
+        /* the row of lights every sectional door carries in its top panel */
+        [-16.42, -15.74, -15.06, -14.38].forEach(function (lx) {
+          gGlass(0.52, 0.30, lx, 2.86, 10.10);
+          gtag(box(0.60, 0.38, 0.05, 0xd8d0c2, lx, 2.86, 10.085, garageDoorG));
+        });
+        /* the gable's half-round, and a coach lamp beside the door */
+        gGlass(0.44, 0.44, -15.40, 5.36, 10.27);
+        gtag(cyl(0.34, 0.34, 0.09, EXTC.trim, -15.40, 5.36, 10.24,
+                 garageDoorG, 16)).rotation.x = Math.PI / 2;
+        if (DETAIL >= 3) {
+          gtag(box(0.05, 0.42, 0.05, EXTC.trim, -15.40, 5.36, 10.28, garageDoorG));
+          gtag(box(0.42, 0.05, 0.05, EXTC.trim, -15.40, 5.36, 10.28, garageDoorG));
+        }
+        gtag(box(0.10, 0.34, 0.09, C.ink, -17.58, 2.96, 10.02, garageDoorG,
+                 { rough: 0.5 }));
+        gtag(box(0.34, 0.09, 0.26, C.ink, -17.58, 3.16, 10.13, garageDoorG,
+                 { rough: 0.5 }));
+        var lamp2 = gtag(cyl(0.06, 0.185, 0.34, 0xf7e8c2, -17.58, 2.76, 10.16,
+                             garageDoorG, 4, GLOSS));
+        lamp2.userData.lamp = true;       /* geometry only: the pass lights it */
+        lamp2.userData.glazing = true;
+        lamp2.rotation.y = Math.PI / 4;
+        gtag(cyl(0.075, 0.075, 0.06, C.ink, -17.58, 2.96, 10.16, garageDoorG,
+                 8, { rough: 0.5 }));
+        gtag(cyl(0.20, 0.20, 0.05, C.ink, -17.58, 2.57, 10.16, garageDoorG,
+                 4, { rough: 0.5 })).rotation.y = Math.PI / 4;
       }
       /* the GABLE: ridge along z, slopes east/west, siding triangles
          front and back — a garage roof that matches the house */
@@ -3271,11 +3379,9 @@
       })();
       groups.garage = garageInterior;   /* the zone-glow loop lights the room */
     })();
-    /* the front path: door to street */
-    ebox(2.6, 0.06, 0.9, NICE ? 0xffffff : EXTC.drive, -8.3, -0.24, 12.6,
-         { rough: 0.95, map: driveT });
-    ebox(0.9, 0.06, 5.2, NICE ? 0xffffff : EXTC.drive, -9.2, -0.24, 15.5,
-         { rough: 0.95, map: driveT });
+    /* the front path (door to street) is laid in flags down in the yard
+       block: it was one poured ribbon here, which is the defect S7.1
+       names. */
     /* driveway from the garage door to the street. Plate 3 scores its
        apron with expansion joints, so the slab reads as poured concrete
        and not as a painted plane; it also stopped half a unit short of
@@ -4283,34 +4389,511 @@
     })();
     var livingRoofG = new T.Group();   /* open-concept: nothing to hide */
     extG.add(livingRoofG);
-    /* two blob trees + a bush: the yard is a place, not a void. They
-       live in yardG so an INTERIOR camera can hide them — a tree that
-       crosses the near plane eats a third of the garage shot. */
+    /* ============ THE YARD (docs/house_style_bible.md S7, exterior) =====
+       The plinth was a bare green plane with two lollipop trees and one
+       sphere of a bush, and half the resting frame was empty grass.
+       Plates 1 and 2 line the plinth with planting: beds against the
+       foundation, shrubs of three sizes GROUPED rather than dotted, a
+       path laid in real units, a picket fence, pots and a chair on the
+       lawn. This is that yard.
+
+       Everything here lives in yardG, which an interior camera hides - a
+       tree that crosses the near plane eats a third of the garage shot.
+
+       NOTHING out here takes a shadow map. The sun's shadow camera is a
+       +/-10 box centred on the house and every one of these props sits
+       outside it, so the map clamps at its boundary and lays a hard
+       diagonal over whatever samples it - the bug that ate the garage
+       bay and the minivan's roof. Contact is drawn by hand with the same
+       multiply discs the garage uses; those work at every tier.
+
+       Accents (S4), three and no strays: terracotta (pots, brick),
+       oxblood (blooms), mustard (the one ornamental tree plate 2 stands
+       on the lawn). Green and stone are materials, not accents; the
+       slate roofs stay the dark anchor. */
     var yardG = new T.Group();
     extG.add(yardG);
-    function tree(x, z, s) {
-      cyl(0.16 * s, 0.22 * s, 1.4 * s, EXTC.trunk, x, 0.7 * s, z, yardG, 8);
-      var lv = new T.Mesh(new T.SphereGeometry(1.1 * s, DETAIL >= 3 ? 14 : 10,
-                                               DETAIL >= 3 ? 10 : 8),
-        mat(EXTC.leaf, { rough: 1.0 }));
-      lv.position.set(x, 2.0 * s, z); finish(lv); yardG.add(lv);
-      var lv2 = new T.Mesh(new T.SphereGeometry(0.75 * s, 10, 8),
-        mat(EXTC.leafB, { rough: 1.0 }));
-      lv2.position.set(x + 0.7 * s, 1.6 * s, z + 0.3 * s);
-      finish(lv2); yardG.add(lv2);
-      if (DETAIL >= 3) {
-        var lv3 = new T.Mesh(new T.SphereGeometry(0.55 * s, 10, 8),
-          mat(EXTC.leaf, { rough: 1.0 }));
-        lv3.position.set(x - 0.55 * s, 1.5 * s, z - 0.25 * s);
-        finish(lv3); yardG.add(lv3);
+    (function () {
+      var Y2 = DETAIL >= 2, Y3 = DETAIL >= 3;
+      var GY = -0.29;                     /* the lawn's top face */
+      var LEAF = [0x487436, 0x2f5a2a, 0x5d8443, 0x224b27, 0x71803c,
+                  0x74856f];   /* the grey-leaved shrub: a border needs
+                                      one value it is not */
+      var GOLD = [0xc09b3f, 0x9e8130];
+      var BLOOM = [0x8f4038, 0xf2ece1, 0xd1a13c];
+      var BARK = 0x6b543c, BARKD = 0x54432f, MULCH = 0x6b5340;
+      var EDGE = 0xa87a4c;                /* brick: plate 2 edges in it */
+      var PAVER = 0x8b8475, PAVER2 = 0x776f61;
+      var JOINT = 0x504b44, PICKET = 0xf1ece2, RAILC = 0xe3dcd0;
+      var MATT = { rough: 1.0 }, STONEO = { rough: 0.92 };
+
+      /* off both shadow maps: see the header */
+      function yt(m) {
+        if (!m) return m;
+        m.castShadow = false; m.receiveShadow = false;
+        return m;
       }
-      blobShadow(1.25 * s, 1.1 * s, x, z, yardG);
-    }
-    tree(-20.5, 12.5, 1.4); tree(17.5, -6.0, 1.1);
-    var bush = new T.Mesh(new T.SphereGeometry(0.7, 10, 8),
-      mat(EXTC.leafB, { rough: 1.0 }));
-    bush.position.set(9.6, 0.4, 9.0); finish(bush); yardG.add(bush);
-    blobShadow(0.8, 0.7, 9.6, 9.0, yardG);
+      function yb(w, h, d, c, x, y, z, o, g) {
+        return yt(box(w, h, d, c, x, y, z, g || yardG, o));
+      }
+      function yr(w, h, d, r, c, x, y, z, o, g) {
+        return yt(rbox(w, h, d, r, c, x, y, z, g || yardG, o));
+      }
+      function yl(a, b, h, c, x, y, z, s, o, g) {
+        return yt(cyl(a, b, h, c, x, y, z, g || yardG, s, o));
+      }
+      function ysph(r, c, x, y, z, sy, g) {
+        var m = new T.Mesh(new T.SphereGeometry(r, Y3 ? 12 : 7, Y3 ? 9 : 5),
+                           mat(c, MATT));
+        m.position.set(x, y, z);
+        if (sy) m.scale.y = sy;
+        yt(m); (g || yardG).add(m); return m;
+      }
+      /* contact at EVERY tier - blobShadow goes quiet at tier 3 because
+         tier 3 has real shadows, and out here it does not */
+      function ysh(rx, rz, x, z, tone) {
+        var m = new T.Mesh(new T.CircleGeometry(1, Y2 ? 16 : 8),
+          new T.MeshBasicMaterial({ color: tone || 0xa8a4aa, transparent: true,
+            blending: T.MultiplyBlending, depthWrite: false }));
+        m.rotation.x = -Math.PI / 2;
+        m.scale.set(rx, rz, 1);
+        m.position.set(x, GY + 0.009, z);
+        m.renderOrder = -1;
+        yardG.add(m); return m;
+      }
+      var YUP = new T.Vector3(0, 1, 0);
+
+      /* ---- ground: mulch beds, paving in units, the sidewalk --------- */
+      function bed(x0, z0, x1, z1, sides) {
+        var w = x1 - x0, d = z1 - z0, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+        yb(w, 0.10, d, MULCH, cx, GY + 0.03, cz, MATT);
+        if (!Y2) return;
+        var e = 0.16;                     /* the kerb that makes a bed a bed */
+        if (sides.indexOf('S') >= 0) yb(w, e, e, EDGE, cx, GY + 0.05, z1 - e / 2, STONEO);
+        if (sides.indexOf('N') >= 0) yb(w, e, e, EDGE, cx, GY + 0.05, z0 + e / 2, STONEO);
+        if (sides.indexOf('E') >= 0) yb(e, e, d, EDGE, x1 - e / 2, GY + 0.05, cz, STONEO);
+        if (sides.indexOf('W') >= 0) yb(e, e, d, EDGE, x0 + e / 2, GY + 0.05, cz, STONEO);
+      }
+      function pave(x0, z0, x1, z1, u, border) {
+        var w = x1 - x0, d = z1 - z0;
+        /* below tier 2 the flags never draw, so the base slab wears the
+           FLAG colour there: a Pi should see paving, not a dark hole */
+        yb(w, 0.10, d, Y2 ? JOINT : PAVER, (x0 + x1) / 2, GY + 0.01,
+           (z0 + z1) / 2, STONEO);
+        if (border && Y2) {              /* a soldier course: the edge that
+                                            stops paving reading as a plane */
+          yb(w + 0.24, 0.13, 0.14, EDGE, (x0 + x1) / 2, GY + 0.045, z1 + 0.07, STONEO);
+          yb(0.14, 0.13, d + 0.28, EDGE, x1 + 0.07, GY + 0.045, (z0 + z1) / 2, STONEO);
+          yb(w + 0.24, 0.13, 0.14, EDGE, (x0 + x1) / 2, GY + 0.045, z0 - 0.07, STONEO);
+        }
+        if (!Y2) return;
+        var nx = Math.max(1, Math.round(w / u)), nz = Math.max(1, Math.round(d / u));
+        var uw = w / nx, ud = d / nz;
+        for (var i = 0; i < nx; i++) {
+          for (var j = 0; j < nz; j++) {
+            yb(uw - 0.07, 0.06, ud - 0.07,
+               ((i * 3 + j * 5) % 4 === 0) ? PAVER2 : PAVER,
+               x0 + uw * (i + 0.5), GY + 0.05, z0 + ud * (j + 0.5), STONEO);
+          }
+        }
+      }
+
+      /* ---- a tree, built as a tree (S7.4): a flared trunk that forks,
+         limbs you can see at tier 3, and a crown of five to seven
+         overlapping FLATTENED masses in three greens. Two spheres on a
+         stick is the defect the houseplants had, at garden scale.
+         [dx, dy, dz, r, tone, squash] measured from the crown base. */
+      var CROWN = {
+        broad: [[0.00, 1.58, 0.00, 1.24, 0, 0.76],
+                [-1.02, 1.06, 0.34, 0.90, 1, 0.82],
+                [0.94, 1.20, -0.30, 0.96, 2, 0.78],
+                [0.16, 0.92, 0.94, 0.78, 3, 0.84],
+                [-0.40, 2.18, -0.32, 0.74, 2, 0.72],
+                [0.58, 2.02, 0.50, 0.58, 0, 0.76],
+                [-0.82, 0.58, -0.70, 0.54, 3, 0.88],
+                [1.24, 0.52, 0.44, 0.42, 1, 0.90]],
+        open:  [[-0.66, 1.20, 0.14, 1.02, 0, 0.70],
+                [0.84, 1.46, -0.24, 0.92, 2, 0.68],
+                [0.10, 2.10, 0.48, 0.66, 1, 0.74],
+                [-1.26, 1.74, -0.38, 0.58, 3, 0.78],
+                [1.22, 0.80, 0.52, 0.62, 3, 0.82],
+                [-0.26, 0.72, -0.92, 0.52, 1, 0.84],
+                [0.34, 2.46, -0.10, 0.40, 0, 0.80]],
+        gold:  [[0.00, 1.20, 0.00, 0.94, 4, 0.94],
+                [-0.60, 0.80, 0.22, 0.70, 5, 0.98],
+                [0.58, 0.90, -0.18, 0.66, 4, 0.96],
+                [0.04, 1.84, 0.08, 0.58, 5, 0.90],
+                [0.30, 0.58, 0.54, 0.50, 4, 1.00]]
+      };
+      var LIMBS = {
+        broad: [[-0.62, 0.72, 0.26, 1.05], [0.66, 0.70, -0.22, 1.00]],
+        open:  [[-0.70, 0.62, 0.14, 1.25], [0.72, 0.66, -0.20, 1.15],
+                [0.08, 0.86, 0.60, 0.90]],
+        gold:  [[-0.44, 0.80, 0.18, 0.80], [0.46, 0.78, -0.14, 0.76]]
+      };
+      function tree(x, z, s, kind, spin) {
+        var g = new T.Group();
+        g.position.set(x, GY, z);
+        g.rotation.y = spin || 0;
+        yardG.add(g);
+        var th = (kind === 'gold' ? 1.10 : 1.60) * s;
+        yl(0.15 * s, 0.27 * s, th, BARK, 0, th / 2, 0, Y3 ? 10 : 6, MATT, g);
+        if (Y2) yl(0.28 * s, 0.44 * s, 0.24 * s, BARKD, 0, 0.11 * s, 0,
+                   Y3 ? 10 : 6, MATT, g);
+        /* the crown sits INTO the trunk below tier 3: the fine masses
+           that close the junction are the ones the lower tiers drop */
+        var cb = th - (Y3 ? 0.14 : 0.70) * s;
+        if (Y3) (LIMBS[kind] || LIMBS.broad).forEach(function (L) {
+          var d = new T.Vector3(L[0], L[1], L[2]).normalize(), ln = L[3] * s;
+          var m = yl(0.05 * s, 0.10 * s, ln, BARK, d.x * ln / 2,
+                     cb - 0.16 * s + d.y * ln / 2, d.z * ln / 2, 6, MATT, g);
+          m.quaternion.setFromUnitVectors(YUP, d);
+        });
+        var tbl = CROWN[kind] || CROWN.broad;
+        var n = Y3 ? tbl.length : (Y2 ? Math.min(4, tbl.length) : 2);
+        for (var i = 0; i < n; i++) {
+          var b = tbl[i];
+          var tc = b[4] < 4 ? LEAF[b[4]] : GOLD[b[4] - 4];
+          ysph(b[3] * s, shadeHex(tc, 0.82 + Math.min(0.40, b[1] * 0.17)),
+               b[0] * s, cb + b[1] * s, b[2] * s, b[5], g);
+        }
+        ysh(1.30 * s, 1.10 * s, x + 0.30 * s, z + 0.20 * s);
+        return g;
+      }
+
+      /* ---- a shrub: three to four overlapping masses, never one
+         sphere. [dx, dy, dz, r, squash] */
+      var SHRUB = {
+        mound: [[0, 0.46, 0, 0.60, 0.80], [-0.34, 0.32, 0.16, 0.46, 0.84],
+                [0.32, 0.30, -0.14, 0.44, 0.86], [0.06, 0.28, 0.36, 0.38, 0.88]],
+        ball:  [[0, 0.60, 0, 0.54, 0.96], [-0.22, 0.42, 0.12, 0.38, 0.94],
+                [0.24, 0.44, -0.10, 0.36, 0.94]],
+        column:[[0, 0.62, 0, 0.34, 1.75], [0, 1.24, 0, 0.23, 1.55],
+                [-0.15, 0.38, 0.11, 0.27, 1.15], [0.13, 0.34, -0.10, 0.25, 1.15]],
+        low:   [[0, 0.26, 0, 0.44, 0.66], [-0.30, 0.20, 0.10, 0.32, 0.70],
+                [0.28, 0.22, -0.12, 0.30, 0.72], [0.02, 0.20, 0.30, 0.26, 0.72]]
+      };
+      function shrub(x, z, s, kind, tone, bloom) {
+        var g = new T.Group();
+        g.position.set(x, GY, z);
+        g.rotation.y = (x * 1.7 + z * 0.9) % 3.14;
+        yardG.add(g);
+        var tbl = SHRUB[kind] || SHRUB.mound;
+        var n = Y3 ? tbl.length : (Y2 ? Math.min(3, tbl.length) : 1);
+        /* ONE tone per shrub, its masses shaded off it - a shrub whose
+           lobes are four different greens is confetti, not a plant */
+        var base = LEAF[tone % 6], KS = [1, 1.10, 0.80, 1.04];
+        for (var i = 0; i < n; i++) {
+          var b = tbl[i];
+          ysph(b[3] * s, i ? shadeHex(base, KS[i % 4]) : base,
+               b[0] * s, b[1] * s, b[2] * s, b[4], g);
+        }
+        if (bloom && Y2) {
+          var bc = BLOOM[(bloom - 1) % 3], top = tbl[0];
+          for (var k = 0; k < (Y3 ? 9 : 4); k++) {
+            var a = k * 1.97, rr = (0.30 + (k % 3) * 0.09) * s;
+            ysph(0.115 * s, bc, Math.cos(a) * rr,
+                 (top[1] * top[4] * 0.94 + 0.10 + (k % 2) * 0.08) * s,
+                 Math.sin(a) * rr, 0.85, g);
+          }
+        }
+        ysh(0.80 * s, 0.72 * s, x + 0.07, z + 0.05);
+        return g;
+      }
+      /* ---- ornamental grass: blades, not a blob */
+      function tuft(x, z, s, tone) {
+        var g = new T.Group();
+        g.position.set(x, GY, z);
+        yardG.add(g);
+        var n = Y3 ? 11 : (Y2 ? 6 : 3);
+        for (var i = 0; i < n; i++) {
+          var a = i * 1.97, lean = 0.20 + (i % 3) * 0.11;
+          var h = (0.62 + (i % 4) * 0.13) * s;
+          var m = yb(0.055 * s, h, 0.035 * s,
+                     shadeHex(LEAF[tone % 6], 1 + (i % 3) * 0.10),
+                     Math.cos(a) * 0.13 * s, h / 2 * 0.92,
+                     Math.sin(a) * 0.13 * s, MATT, g);
+          m.rotation.z = -Math.cos(a) * lean;
+          m.rotation.x = Math.sin(a) * lean;
+        }
+        ysh(0.44 * s, 0.40 * s, x, z);
+        return g;
+      }
+      /* ---- a planted group: one call, one clump of three habits ------ */
+      function planting(list) {
+        (Y2 ? list : list.filter(function (_, i) { return i % 2 === 0; }))
+          .forEach(function (p) {
+            if (p[3] === 'tuft') tuft(p[0], p[1], p[2], p[4]);
+            else shrub(p[0], p[1], p[2], p[3], p[4], p[5]);
+          });
+      }
+
+      /* ---- a picket fence (plate 2) ---------------------------------- */
+      function fence(axis, a0, a1, fx) {
+        var PH = 0.94, L = a1 - a0;
+        function at(a, w, h, t, c, y, o) {   /* w along the run, t across */
+          return axis === 'x' ? yb(w, h, t, c, a, y, fx, o)
+                              : yb(t, h, w, c, fx, y, a, o);
+        }
+        var np = Math.max(2, Math.round(L / 2.30));
+        for (var i = 0; i <= np; i++) {
+          var a = a0 + L * i / np;
+          at(a, 0.15, PH + 0.16, 0.15, PICKET, GY + (PH + 0.16) / 2, STONEO);
+          if (Y3) at(a, 0.20, 0.09, 0.20, PICKET, GY + PH + 0.20, STONEO);
+        }
+        [0.30, 0.70].forEach(function (f) {
+          at(a0 + L / 2, L, 0.09, 0.07, RAILC, GY + PH * f, STONEO);
+        });
+        if (!Y2) return;
+        var nk = Math.floor(L / 0.34);
+        for (var k = 0; k < nk; k++) {
+          var a2 = a0 + 0.20 + (L - 0.40) * k / (nk - 1);
+          at(a2, 0.13, PH, 0.045, PICKET, GY + PH / 2, STONEO);
+          if (Y3) at(a2, 0.13, 0.055, 0.05, PICKET, GY + PH + 0.02, STONEO);
+        }
+      }
+
+      /* ---- terrace furniture: plate 2 stands a chair on the lawn ----- */
+      function gChair(x, z, rot, body, cush) {
+        var g = new T.Group();
+        g.position.set(x, GY, z); g.rotation.y = rot;
+        yardG.add(g);
+        var WD = { rough: 0.66 }, dk = shadeHex(body, 0.80),
+            lt = shadeHex(body, 1.14);
+        [[-0.26, -0.24], [0.26, -0.24], [-0.26, 0.24], [0.26, 0.24]]
+          .forEach(function (lg) {
+            yb(0.09, 0.44, 0.09, dk, lg[0], 0.22, lg[1], WD, g);
+          });
+        yb(0.62, 0.08, 0.58, body, 0, 0.48, 0, WD, g);      /* the seat deck */
+        if (Y3) [-0.19, 0.00, 0.19].forEach(function (dz) {
+          yb(0.60, 0.035, 0.13, lt, 0, 0.535, dz, WD, g);
+        });
+        yr(0.56, 0.15, 0.52, 0.06, cush, 0, 0.585, 0.01, { rough: 0.98 }, g);
+        [-0.26, 0.26].forEach(function (dx) {               /* raked back */
+          var u = yb(0.09, 0.80, 0.09, dk, dx, 0.86, -0.29, WD, g);
+          u.rotation.x = -0.13;
+        });
+        [0.76, 1.00, 1.22].forEach(function (yy, i) {
+          if (!Y2 && i) return;
+          var b2 = yb(0.54, 0.15, 0.05, body, 0, yy, -0.29 + (yy - 0.86) * 0.13,
+                      WD, g);
+          b2.rotation.x = -0.13;
+        });
+        if (Y2) [-0.32, 0.32].forEach(function (dx) {       /* arms */
+          yb(0.08, 0.07, 0.54, body, dx, 0.74, -0.03, WD, g);
+          yb(0.08, 0.28, 0.08, dk, dx, 0.60, 0.22, WD, g);
+        });
+        ysh(0.48, 0.48, x, z);
+        return g;
+      }
+      function gTable(x, z, r) {
+        yl(r, r, 0.09, C.wood2, x, GY + 0.60, z, Y3 ? 20 : 10, { rough: 0.62 });
+        if (Y3) yl(r - 0.05, r - 0.05, 0.03, shadeHex(C.wood2, 1.16),
+                   x, GY + 0.655, z, 20, { rough: 0.62 });
+        yl(0.075, 0.095, 0.56, C.graphite, x, GY + 0.28, z, 8, { rough: 0.55 });
+        yl(0.30, 0.34, 0.06, C.graphite, x, GY + 0.03, z, Y3 ? 14 : 8,
+           { rough: 0.55 });
+        ysh(0.46, 0.44, x, z);
+      }
+      /* a planter box: the long green mass a terrace needs at its edge */
+      function planter(x, z, len, rot) {
+        var g = new T.Group();
+        g.position.set(x, GY, z); g.rotation.y = rot || 0;
+        yardG.add(g);
+        yr(len, 0.44, 0.52, 0.03, C.wood2, 0, 0.22, 0, { rough: 0.66 }, g);
+        if (Y2) {
+          yr(len + 0.06, 0.06, 0.58, 0.02, shadeHex(C.wood2, 1.2), 0, 0.47, 0,
+             { rough: 0.66 }, g);
+          yb(len - 0.10, 0.06, 0.42, MULCH, 0, 0.45, 0, MATT, g);
+        }
+        var n = Math.max(2, Math.round(len / 0.62));
+        for (var i = 0; i < n; i++) {
+          var px = -len / 2 + len * (i + 0.5) / n;
+          ysph((0.20 + (i % 3) * 0.05), shadeHex(LEAF[(i + 2) % 6], 1 + (i % 2) * 0.12),
+               px, 0.56 + (i % 2) * 0.07, (i % 2 ? 0.07 : -0.06), 0.88, g);
+          if (Y3) ysph(0.13, shadeHex(LEAF[(i + 4) % 6], 0.9), px + 0.14,
+                       0.52, 0.12, 0.9, g);
+        }
+        ysh(len * 0.52, 0.34, x, z);
+        return g;
+      }
+      /* a pot: the kitchen's plant, dropped on the lawn without its
+         shadow (blobShadow is quiet at tier 3; ysh is not) */
+      function pot(x, z, s, potC, kind) {
+        var g = new T.Group();
+        yardG.add(g);
+        kPlant(g, x, GY, z, s, potC, { rough: 0.85 }, kind, false);
+        g.traverse(yt);
+        ysh(0.40 * s, 0.38 * s, x + 0.04, z + 0.03);
+        return g;
+      }
+
+      /* ================= THE PLAN ==================================== */
+      /* the sidewalk: the line every front yard has, and the thing that
+         stops the lawn bleeding into the kerb */
+      yb(38, 0.10, 1.20, 0xa9a294, -2.0, GY + 0.015, 16.95, STONEO);
+      if (Y2) {
+        for (var sw = -20; sw < 17; sw += 1.55) {
+          yb(0.05, 0.014, 1.20, 0x7d776c, sw, GY + 0.072, 16.95, STONEO);
+        }
+      }
+      /* the front path, relaid in flags (it was one poured ribbon) */
+      pave(-9.62, 12.16, -7.02, 13.04, 0.66);
+      pave(-9.66, 13.04, -8.74, 16.35, 0.62);
+      /* the terrace off the great room's open east side */
+      pave(6.86, 4.20, 10.30, 9.80, 0.80, true);
+
+      /* foundation beds: they wrap the corner the camera looks at */
+      bed(-8.70, 14.24, 8.30, 16.00, 'SEW');
+      bed(6.84, -6.10, 8.30, 4.14, 'NES');
+      bed(6.84, 9.86, 8.30, 14.12, 'NE');
+      /* the front bed, three groups with nothing further than 0.6 from a
+         neighbour (S1) and a skyline that rises and falls */
+      planting([
+        [-8.10, 15.34, 0.92, 'mound', 5, 0],  [-7.46, 15.62, 0.58, 'low', 2, 2],
+        [-6.94, 15.26, 0.74, 'tuft', 5, 0],
+        [-6.30, 15.42, 1.42, 'column', 1, 0], [-5.54, 15.28, 0.98, 'mound', 5, 0],
+        [-4.92, 15.60, 0.56, 'low', 2, 1],    [-4.32, 15.30, 0.74, 'tuft', 4, 0],
+        [-3.50, 15.46, 1.04, 'mound', 3, 0],  [-2.84, 15.26, 0.62, 'ball', 1, 0],
+        [-2.22, 15.62, 0.54, 'low', 0, 3],    [-1.56, 15.34, 0.96, 'mound', 5, 0],
+        [-0.92, 15.60, 0.70, 'tuft', 1, 0],   [-0.16, 15.28, 1.18, 'column', 0, 0],
+        [0.56, 15.58, 0.58, 'low', 3, 1],     [1.22, 15.30, 0.98, 'mound', 1, 0],
+        [1.90, 15.60, 0.64, 'ball', 4, 0],    [2.60, 15.28, 0.90, 'mound', 2, 3],
+        [3.26, 15.58, 0.68, 'tuft', 3, 0],    [3.96, 15.30, 1.06, 'mound', 5, 0],
+        [4.64, 15.58, 0.56, 'low', 2, 1],     [5.30, 15.28, 1.46, 'column', 1, 0],
+        [6.04, 15.56, 0.88, 'mound', 3, 0],   [6.74, 15.28, 0.62, 'ball', 0, 3],
+        [7.46, 15.56, 0.96, 'mound', 4, 0],   [7.98, 15.26, 0.72, 'tuft', 1, 0],
+        [-5.90, 14.66, 0.50, 'low', 3, 0],    [-3.10, 14.66, 0.52, 'low', 0, 0],
+        [-0.50, 14.64, 0.48, 'low', 2, 0],    [2.10, 14.66, 0.52, 'low', 1, 0],
+        [4.90, 14.64, 0.50, 'low', 3, 0],     [7.10, 14.66, 0.48, 'low', 0, 0]
+      ]);
+      /* the east bed, up the side the camera sees most */
+      planting([
+        [7.52, 13.34, 0.86, 'mound', 0, 0],   [7.48, 12.62, 0.58, 'low', 2, 1],
+        [7.56, 11.94, 1.40, 'column', 1, 0],  [7.46, 11.24, 0.76, 'ball', 3, 0],
+        [7.54, 10.56, 0.62, 'tuft', 4, 0],    [7.50, 10.02, 0.96, 'mound', 2, 0],
+        [7.52, 3.68, 0.98, 'mound', 1, 0],    [7.46, 2.92, 0.62, 'low', 4, 3],
+        [7.56, 2.20, 1.08, 'column', 2, 0],   [7.48, 1.50, 0.82, 'ball', 1, 0],
+        [7.52, 0.80, 0.70, 'tuft', 3, 0],     [7.50, 0.08, 0.92, 'mound', 5, 0],
+        [7.54, -0.64, 0.78, 'low', 2, 1],     [7.46, -1.36, 1.00, 'mound', 5, 0],
+        [7.52, -2.10, 0.72, 'ball', 0, 0],    [7.50, -2.82, 0.88, 'mound', 3, 0],
+        [7.54, -3.54, 0.66, 'tuft', 1, 0],    [7.46, -4.26, 1.04, 'column', 0, 0],
+        [7.52, -5.00, 0.84, 'mound', 2, 3],   [7.50, -5.70, 0.70, 'low', 1, 0]
+      ]);
+      /* the lawn groups: three specimens and their skirts, so the grass
+         reads as a garden and not as a mat */
+      planting([
+        [11.70, 14.30, 1.06, 'mound', 0, 0],  [12.44, 14.90, 0.62, 'low', 2, 1],
+        [12.20, 13.60, 0.80, 'ball', 1, 0],   [11.20, 13.55, 0.66, 'tuft', 3, 0],
+        [12.50, 6.10, 1.16, 'mound', 5, 0],   [12.10, 6.86, 0.60, 'low', 4, 3],
+        [12.30, 5.32, 0.82, 'ball', 2, 0],    [11.62, 6.02, 0.64, 'tuft', 0, 0],
+        [12.05, 9.90, 0.92, 'mound', 3, 0],   [12.60, 10.55, 0.58, 'low', 0, 1],
+        [11.55, 10.45, 0.70, 'ball', 4, 0],
+        [-11.40, 13.60, 1.00, 'mound', 2, 0], [-11.95, 14.20, 0.62, 'low', 0, 1],
+        [-10.85, 14.25, 0.74, 'ball', 3, 0],  [-12.15, 13.10, 0.66, 'tuft', 1, 0]
+      ]);
+
+      /* the neighbour's hedge, beyond the fence: the far corner of the
+         frame is a boundary, not a void */
+      planting([
+        [15.20, 15.30, 1.10, 'mound', 1, 0], [15.60, 14.10, 1.20, 'mound', 3, 0],
+        [15.30, 12.90, 1.06, 'mound', 0, 0], [15.70, 11.70, 1.16, 'mound', 1, 0],
+        [15.40, 10.50, 1.02, 'mound', 3, 0], [15.80, 9.30, 1.14, 'mound', 0, 0],
+        [15.50, 8.10, 1.08, 'mound', 1, 0],  [15.85, 6.90, 1.18, 'mound', 3, 0]
+      ]);
+      /* the drive's east edge and the mailbox foot: the left of the
+         frame was a driveway and a mown void */
+      bed(-12.98, 10.90, -11.72, 16.30, 'SEN');
+      planting([
+        [-12.40, 15.72, 0.94, 'mound', 0, 0], [-12.34, 15.02, 0.56, 'low', 2, 1],
+        [-12.42, 14.34, 1.06, 'column', 1, 0], [-12.36, 13.64, 0.74, 'ball', 3, 0],
+        [-12.40, 12.96, 0.62, 'tuft', 4, 0],  [-12.34, 12.26, 0.90, 'mound', 2, 0],
+        [-12.42, 11.56, 0.58, 'low', 1, 3],   [-12.40, 16.02, 0.60, 'mound', 3, 1],
+        [-12.86, 15.34, 0.50, 'low', 0, 2]
+      ]);
+      pot(-10.35, 12.85, 0.90, C.terracotta, 'spray');
+      pot(-10.30, 13.78, 0.76, C.cream, 'mound');
+
+      /* the fence: an L round the side garden, clear of the bus (which
+         stands at x -8.3..-2.7, z 18.8..20.8) and of the path */
+      fence('x', 2.20, 13.20, 16.30);
+      fence('z', 3.00, 16.30, 13.20);
+      ysh(5.50, 0.24, 7.75, 16.44);       /* nothing floats, S4 */
+      ysh(0.24, 6.70, 13.34, 9.62);
+      /* a birdbath on the side lawn: the vertical the grass wanted */
+      (function () {
+        var bx = 10.90, bz = 5.60;   /* the lawn's vertical */
+        yl(0.13, 0.20, 0.86, EDGE, bx, GY + 0.43, bz, Y3 ? 14 : 8, STONEO);
+        yl(0.30, 0.30, 0.06, EDGE, bx, GY + 0.03, bz, Y3 ? 14 : 8, STONEO);
+        yl(0.42, 0.30, 0.16, EDGE, bx, GY + 0.92, bz, Y3 ? 16 : 8, STONEO);
+        if (Y2) yl(0.35, 0.35, 0.03, 0x8fb6c4, bx, GY + 0.995, bz,
+                   Y3 ? 16 : 8, GLOSS);
+        ysh(0.34, 0.32, bx + 0.05, bz + 0.04);
+      })();
+
+      /* the terrace: a chair that faces another chair (S8) */
+      gTable(8.52, 6.70, 0.56);
+      gChair(8.50, 5.58, Math.PI, C.wood2, C.linen);
+      gChair(8.54, 7.82, 0, C.wood2, C.linen);
+      gChair(7.36, 6.66, -Math.PI / 2, C.wood2, C.linen);
+      planter(9.86, 8.30, 2.30, Math.PI / 2);
+      /* a bench along the plinth, and the two things every garden owns */
+      (function () {
+        var bx = 7.42, bz = 8.60, WD = { rough: 0.66 };
+        var g = new T.Group();
+        g.position.set(bx, GY, bz); g.rotation.y = -Math.PI / 2;
+        yardG.add(g);
+        [-0.66, 0.66].forEach(function (dx) {
+          yb(0.10, 0.42, 0.44, shadeHex(C.wood2, 0.82), dx, 0.21, 0, WD, g);
+        });
+        yb(1.56, 0.09, 0.50, C.wood2, 0, 0.465, 0, WD, g);
+        if (Y3) [-0.16, 0.16].forEach(function (dz) {
+          yb(1.52, 0.035, 0.15, shadeHex(C.wood2, 1.14), 0, 0.52, dz, WD, g);
+        });
+        if (Y2) {
+          [-0.66, 0.66].forEach(function (dx) {
+            var u = yb(0.09, 0.62, 0.09, shadeHex(C.wood2, 0.82), dx, 0.80,
+                       -0.20, WD, g);
+            u.rotation.x = -0.12;
+          });
+          [0.78, 1.00].forEach(function (yy) {
+            var b2 = yb(1.44, 0.14, 0.05, C.wood2, 0, yy, -0.22, WD, g);
+            b2.rotation.x = -0.12;
+          });
+          yr(0.42, 0.14, 0.36, 0.06, C.terracotta, -0.42, 0.58, 0.03,
+             { rough: 0.98 }, g);
+        }
+        ysh(0.90, 0.42, bx, bz);
+      })();
+      if (Y2) {                          /* a watering can by the pots */
+        yl(0.15, 0.17, 0.30, C.steel, 9.34, GY + 0.15, 4.30, 10, STEEL);
+        yb(0.05, 0.05, 0.30, C.steel, 9.34, GY + 0.26, 4.12, STEEL)
+          .rotation.x = 0.5;
+        if (Y3) {
+          var sp = yl(0.035, 0.06, 0.42, C.steel, 9.44, GY + 0.24, 4.52, 8,
+                      STEEL);
+          sp.rotation.x = -0.9; sp.rotation.z = -0.3;
+        }
+        ysh(0.20, 0.20, 9.34, 4.32);
+      }
+      pot(7.22, 4.74, 0.92, C.terracotta, 'spray');
+      pot(9.94, 4.72, 0.80, C.terracotta, 'fiddle');
+      pot(9.92, 9.42, 0.86, C.cream, 'mound');
+
+      /* four trees, three silhouettes (S7.4). The old pair were two
+         spheres on a stick, and one of them stood at x 17.5 - entirely
+         outside the frame. */
+      tree(-19.60, 13.90, 1.45, 'broad', 0.5);
+      tree(13.60, 4.60, 1.12, 'open', 2.2);
+      tree(12.20, 12.70, 1.05, 'gold', 1.1);
+      /* the back line: four crowns that break the skyline, so the roofs
+         sit against something instead of floating in a quarter-frame of
+         empty sky */
+      tree(-3.50, -12.20, 1.85, 'broad', 1.9);
+      tree(-19.80, -5.00, 1.60, 'broad', 2.7);
+      tree(8.60, -12.60, 1.75, 'open', 0.8);
+      tree(-11.60, -13.20, 1.50, 'broad', 0.3);
+    })();
     /* sky dome: weather-painted from the inside, swapped by applyState.
        The dome IS the background now, so the flat clear color retires. */
     var skyDome = new T.Mesh(new T.SphereGeometry(80, 24, 12),
@@ -4992,6 +5575,16 @@
     while (o) { if (o === webgl.extG) return true; o = o.parent; }
     return false;
   }
+  /* the GARDEN is scenery, not a door. The old rule let any exterior mesh
+     standing above y 0.2 walk you into the kitchen, which two blob trees
+     already broke and ~700 yard meshes would break constantly: a tap meant
+     for a shrub opened a room. Anything under yardG is now inert, so the
+     spec's "sky and flat yard stay a view" holds for the planting too. */
+  function inYard(obj) {
+    var o = obj;
+    while (o) { if (o === webgl.yardG) return true; o = o.parent; }
+    return false;
+  }
   function anyHit(clientX, clientY) {
     var rect = webgl.R.domElement.getBoundingClientRect();
     var v = new webgl.T.Vector2(((clientX - rect.left) / rect.width) * 2 - 1,
@@ -5167,6 +5760,7 @@
         o = o.parent;
       }
       if (room && roomsReg()[room]) { enterRoom(room, null); return; }
+      if (inYard(hit)) return;                 /* scenery: look, do not enter */
       if (!inExterior(hit) || hit.position.y > 0.2) enterRoom('kitchen', null);
       return;
     }
