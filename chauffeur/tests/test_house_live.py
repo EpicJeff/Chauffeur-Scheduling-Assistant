@@ -54,6 +54,9 @@ def _seed():
                              color_code='#c9473d', seat_capacity=4).model_dump())
     storage.add_car(CarModel(name='Blue Minivan', body_type='minivan',
                              color_code='#3b82f6', seat_capacity=7).model_dump())
+    # H3: children hang backpacks in the mudroom
+    storage.add_member({'id': 'k1', 'name': 'Maya', 'role': 'child'})
+    storage.add_member({'id': 'k2', 'name': 'Finn', 'role': 'child'})
 
 
 def scenario_the_house_boots_enters_and_leans_in():
@@ -106,6 +109,31 @@ def scenario_the_house_boots_enters_and_leans_in():
         page.wait_for_timeout(1100)
         if shots:
             page.screenshot(path=os.path.join(shots, 'house_garage.png'))
+        page.evaluate("window.chfHouseExit()")
+        page.wait_for_timeout(1100)
+
+        # H3: the mudroom owns the door — the hero card follows it there
+        page.evaluate("window.chfHouseEnterRoom('mudroom')")
+        page.wait_for_timeout(1100)
+        if shots:
+            page.screenshot(path=os.path.join(shots, 'house_mudroom.png'))
+        page.evaluate("window.chfKitchenFocus('door')")
+        page.wait_for_selector('#overlay-door >> text=Soccer practice',
+                               timeout=8000)
+        check(page.is_visible('#focus-overlay'),
+              "the door's hero card mounts in the mudroom")
+        page.evaluate("window.chfHouseExit()")
+        page.wait_for_timeout(1100)
+
+        # H3: the living room owns the radio — the music widget follows
+        page.evaluate("window.chfHouseEnterRoom('living')")
+        page.wait_for_timeout(1100)
+        if shots:
+            page.screenshot(path=os.path.join(shots, 'house_living.png'))
+        page.evaluate("window.chfKitchenFocus('radio')")
+        page.wait_for_selector('#overlay-music', state='visible', timeout=8000)
+        check(page.is_visible('#overlay-music'),
+              "the radio still wears the music widget in its new room")
         page.evaluate("window.chfHouseExit()")
         page.wait_for_timeout(1100)
 
