@@ -142,7 +142,14 @@
 {% endmacro %}
 
 {% macro shopping_items(interactive='true', remove='null', clear='null') %}
-                <div x-show="!openItems().length && !checkedItems().length"
+                <!-- `loaded` first, and x-cloak under it: an empty `items` is
+                     "nobody has asked yet" until the read comes back, and this
+                     line is the app SAYING the list is empty. It said it
+                     through every load — a flash on the page, and the entire
+                     lean-in on the dollhouse pantry, where the card's read sits
+                     behind a WebGL frame. A card that has not asked does not
+                     get to answer. -->
+                <div x-show="loaded && !openItems().length && !checkedItems().length" x-cloak
                     class="text-gray-500 bg-gray-800 rounded-2xl p-8 text-center">
                     Nothing on this list. Say "we're out of milk" to Argyle and it lands here.
                 </div>
@@ -402,6 +409,13 @@
             items: [], lists: [], activeId: null, members: {},
             runs: { groups: [] }, staples: [], stapleBusy: null,
             imgPreview: null, _photoItemId: null,
+            // Has this scope actually READ the list yet? An empty `items` is
+            // two different facts — "the list is empty" and "nobody has asked"
+            // — and every drawing that says "nothing on this list" was reading
+            // the second as the first. On a page that is a flash; on the
+            // dollhouse pantry, where a WebGL frame sits between the mount and
+            // the fetch's continuation, it is the whole lean-in.
+            loaded: false,
             // Markup bindings (thumbnails, the preview overlay) need the base
             // the fetches already close over.
             apiBase: apiBase,
@@ -506,24 +520,39 @@
                 }
             },
             async loadItems(quiet) {
-                if (!this.activeId) return;
-                const r = await fetch(apiBase + 'api/shopping/items?list_id='
-                    + encodeURIComponent(this.activeId));
+                // Nothing selected: there is no list here to be reading, so
+                // the drawings may say so straight away. Only the PAGE ever
+                // reaches this — a card's pane is built around a list id.
+                if (!this.activeId) { this.loaded = true; return; }
+                const id = encodeURIComponent(this.activeId);
+                const undivided = () => ({ groups: [{ key: 'next', label: '',
+                                                      items: this.openItems() }] });
+                // Two INDEPENDENT reads of one list — what is on it, and which
+                // shop RUN each line belongs to — so they go out TOGETHER.
+                // Held one behind the other, the split's whole round trip was
+                // time the card spent drawing a list it already had: the rows
+                // come from `runs.groups`, so `items` landing first is a card
+                // with nothing on it.
+                const runsReq = fetch(apiBase + 'api/shopping/runs?list_id=' + id)
+                    .then(rr => rr.ok ? rr.json() : null)
+                    .catch(() => null);
+                const r = await fetch(apiBase + 'api/shopping/items?list_id=' + id);
                 if (r.ok) this.items = await r.json();
+                // Draw it NOW, undivided — the same shape a failed split gets,
+                // and exactly what the list looked like before runs existed.
+                // Refined the moment the split lands; skipped on a refresh,
+                // which is already holding a real one.
+                if (!((this.runs || {}).groups || []).length) this.runs = undivided();
+                // Everything that says "nothing on this list" is allowed to say
+                // it from HERE — not one line earlier.
+                this.loaded = true;
                 // The run split comes from the SERVER, not from a second copy
                 // of the rule out here — which run an item belongs to is the
                 // same question the agent and the errand ask, and the page is
                 // the worst place for it to be answered differently. Falls
                 // back to one undivided group, which is exactly what the list
                 // looked like before runs existed.
-                try {
-                    const rr = await fetch(apiBase + 'api/shopping/runs?list_id='
-                        + encodeURIComponent(this.activeId));
-                    this.runs = rr.ok ? await rr.json()
-                        : { groups: [{ key: 'next', label: '', items: this.openItems() }] };
-                } catch (e) {
-                    this.runs = { groups: [{ key: 'next', label: '', items: this.openItems() }] };
-                }
+                this.runs = (await runsReq) || undivided();
                 if (!quiet) return;
                 // keep the store chips' counts honest on remote updates
                 const r2 = await fetch(apiBase + 'api/shopping/lists');

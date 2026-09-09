@@ -121,6 +121,43 @@ def _seed():
          'precipitation_probability': 60}]
 
 
+def _settle(page, quiet_frames=30, timeout=25000):
+    """Hold until the overlay has said the same thing for `quiet_frames`
+    consecutive animation frames.
+
+    FRAMES, not milliseconds, and that is the whole trick: the condition is
+    polled on rAF, so a busy main thread hands out one look per frame and a
+    quiet one hands out sixty a second. Thirty ticks is therefore half a
+    second of genuinely free main thread — which cannot be accumulated while
+    the room is still tweening, still rendering, or still waiting on a fetch
+    whose continuation has not been let in yet. A wall-clock nap cannot tell
+    those apart, which is exactly how the pantry photographed empty.
+
+    A zone with no card of its own (the tip-only lean-in) settles here too:
+    the overlay stays hidden, that is its answer, and thirty quiet frames say
+    the room has finished deciding.
+    """
+    page.evaluate("window.__chfSettle = null")
+    try:
+        page.wait_for_function(
+            """(want) => {
+                 const ov = document.getElementById('focus-overlay');
+                 const on = !!ov && getComputedStyle(ov).display !== 'none';
+                 const now = (on ? '1|' + (ov.innerText || '') : '0');
+                 const s = window.__chfSettle;
+                 if (!s || s.seen !== now) {
+                     window.__chfSettle = { seen: now, ticks: 0 };
+                     return false;
+                 }
+                 s.ticks += 1;
+                 return s.ticks >= want;
+               }""",
+            arg=quiet_frames, timeout=timeout)
+    except Exception:
+        print('  note: never settled inside the budget — the shot is whatever '
+              'was on screen, and may be mid-load')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--views', default='exterior')
@@ -180,13 +217,20 @@ def main():
             else:
                 page.evaluate(
                     "window.chfHouseEnterRoom(" + repr(view) + ")")
-            # A lean-in is three waits back to back, not one: the room tween
-            # (850 ms), the zone tween (650 ms), and only THEN the focus
-            # event that fetches the board and mounts the card. At 1500 the
-            # shot landed before the card did, at random — which reads in a
-            # screenshot as "the zone has no card", the exact thing these
-            # views exist to judge.
-            page.wait_for_timeout(2800 if view.startswith('lean_') else 1500)
+            # A lean-in is a SEQUENCE, and no nap can time it. The room tween
+            # (850 ms), the zone tween (650 ms), the focus event, the board
+            # fetch, and then whatever reads the mounted card makes of its
+            # own — and at --quality high one software-WebGL frame of this
+            # scene costs about 2.3 s, so the whole sequence occupies nine
+            # seconds of blocked main thread. A screenshot queued behind that
+            # is SERVICED the instant the frame ends, which is before the
+            # card's reads have landed however long the nap was: at 2800 the
+            # pantry photographed as a blank card while its list sat in the
+            # DOM 600 ms later. So wait for the card to stop CHANGING.
+            if view.startswith('lean_'):
+                _settle(page)
+            else:
+                page.wait_for_timeout(1500)
             if args.cam:
                 page.evaluate('window.chfHouseCam(' + args.cam + ')')
                 page.wait_for_timeout(400)

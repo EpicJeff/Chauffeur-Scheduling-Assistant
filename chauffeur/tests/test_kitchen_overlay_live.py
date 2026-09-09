@@ -213,8 +213,31 @@ def scenario_other_zones_wear_their_cards():
             print("  skip  no WebGL room here — the fallback owns the page")
             return
 
+        # Watch every single state the card passes through on its way up.
+        # The list's contents arrive over three round trips, and for a year
+        # the card filled that gap by ASSERTING the household had nothing on
+        # its list — `items: []` read as "empty" when it only ever meant
+        # "nobody has asked". On a board that was a flash; leaning into the
+        # dollhouse pantry, where a WebGL frame sits between the mount and
+        # the fetch's continuation, it was the whole lean-in, and the pantry
+        # photographed as "Nothing on this list" over two eggs and a milk.
+        page.evaluate("""() => {
+            window.__saidEmpty = false;
+            const tick = () => {
+                const t = document.querySelector('#overlay-tile');
+                // innerText, so a hidden empty state does not count — which
+                // is the whole distinction being pinned here
+                if (t && (t.innerText || '').indexOf('Nothing on this list') !== -1) {
+                    window.__saidEmpty = true;
+                }
+                requestAnimationFrame(tick);
+            };
+            tick();
+        }""")
         page.evaluate("window.chfKitchenFocus('board')")
         page.wait_for_selector('#overlay-tile >> text=Eggs', timeout=8000)
+        check(not page.evaluate("window.__saidEmpty"),
+              "the card never says the list is empty while it is still reading it")
         live_buttons = page.evaluate(
             "Array.from(document.querySelectorAll('#overlay-tile button'))"
             ".filter(b => b.offsetParent !== null && !b.disabled).length")
