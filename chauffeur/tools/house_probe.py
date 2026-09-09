@@ -7,6 +7,7 @@ playwright probes:
     python tools/house_probe.py --views exterior,living --out ../probe_shots
     python tools/house_probe.py --views all --quality high
     python tools/house_probe.py --views garage --clip 300,60,900,600
+    python tools/house_probe.py --views kitchen --scenery 0.5
 
 Views: exterior, kitchen, living, mudroom, garage, and lean_<zone> for any
 zone (lean_board, lean_door, lean_radio, lean_calendar, ...). `all` = the
@@ -48,8 +49,17 @@ def _seed():
                          'end': (start + datetime.timedelta(hours=1)).isoformat()}],
              'assignments': {'e1': 'd1'}}
     storage.get_cached_schedule = lambda: sched
+    # Items must hang off a real LIST. The pantry counts every item
+    # regardless of list (kitchen_room._board), but the shopping CARD the
+    # pantry wears on lean-in fetches per list — so list-less fixture items
+    # made the shelves empty and the card say "Nothing on this list" at the
+    # same time. The API always assigns a list; the fixture must too.
+    from models.schemas import ShoppingList
+    _list = ShoppingList(name='Groceries', is_default=True).model_dump()
+    storage.add_shopping_list(_list)
     for n in ('Milk', 'Eggs', 'Bread'):
         storage.add_shopping_item({'id': uuid.uuid4().hex, 'name': n,
+                                   'list_id': _list['id'],
                                    'is_checked': False, 'created_at': 1})
     # FOUR cars, because two is the number the garage bay holds and every
     # scaling bug in this room hides above it. Each one carries a different
@@ -124,6 +134,11 @@ def main():
     ap.add_argument('--cam', default='',
                     help='px,py,pz,ax,ay,az camera override, applied after '
                          'the view is entered (studio viewfinder)')
+    ap.add_argument('--scenery', default='',
+                    help='0..1 scenery-recession override, so a value can be '
+                         'trialled without editing house.js. 0 = nothing '
+                         'recedes; 1 = maximum. Applies to room views only '
+                         '(the exterior is always 0).')
     args = ap.parse_args()
 
     views = ROOM_VIEWS[:] if args.views == 'all' else [
@@ -148,6 +163,12 @@ def main():
         page.goto(served.url('house?quality=' + args.quality))
         page.wait_for_selector('#room canvas', timeout=20000)
         page.wait_for_timeout(2200)
+        if args.scenery != '':
+            # set once: the knob is a module-level value, and every room
+            # change re-applies it. The stats come back so a probe run says
+            # how much of the scene actually stepped back.
+            print('scenery', page.evaluate(
+                'window.chfHouseScenery(' + str(float(args.scenery)) + ')'))
         for view in views:
             if view == 'exterior':
                 page.evaluate("window.chfHouseExit && window.chfHouseExit()")

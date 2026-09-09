@@ -66,6 +66,58 @@
     FORCED = TIERS.indexOf(new URLSearchParams(window.location.search).get('quality')) !== -1;
   } catch (e) {}
 
+  /* ---- SCENERY: one knob for the whole hierarchy -----------------------
+   * Five set-builder passes took the room from "a few props" to well over a
+   * thousand meshes, and the ten things a person can actually TOUCH — door,
+   * radio, pet, board, calendar, counter, fridge, window, garage, curb —
+   * stopped standing out among them. The fix is art direction, not
+   * decoration: scenery quietly loses saturation and contrast so the
+   * touchable props read as the subject. Nothing moves, hides, resizes or
+   * outlines; colour and material response only.
+   *
+   * Deliberately NOT a glow. Zones already glow when they genuinely need a
+   * person (applyState's emissive loop), and ten permanent glows would
+   * destroy that signal. Quiet room = success.
+   *
+   *   0    nothing recedes — every pixel exactly as authored
+   *   0.45 the default. Measured, not guessed: below k = 0.42 the room's
+   *        DECORATIVE teal (jars, stool cushions, the toaster) renders at
+   *        a higher chroma than the fridge's — the set dressing literally
+   *        out-saturates the zone it sits next to, which is the complaint
+   *        this knob exists to answer. 0.45 puts the zone in front with a
+   *        margin, and costs the kitchen 3.9% of its mean brightness, so
+   *        the room still reads warm and lit rather than foggy.
+   *   1    maximum recession — scenery goes nearly monochrome
+   *
+   * Three ways in, because a knob you cannot turn is a constant:
+   *   - this constant
+   *   - ?scenery=0.5 on the URL (parsed like ?quality=)
+   *   - window.chfHouseScenery(k) at runtime — read-only in the same sense
+   *     as its chfHouse* siblings: it changes appearance, never state. This
+   *     is the hook a reveal-on-demand control would call, with a bigger k.
+   *     Called with no argument it changes nothing and just reports where
+   *     the knob stands. Out-of-range and non-numeric values are ignored
+   *     or clamped, never trusted.
+   *
+   * Applied INSIDE A ROOM only. At the exterior the whole house is the
+   * subject, so the effective value there is 0. Re-applied on room change
+   * — a state change, never a frame loop.
+   */
+  var SCENERY = 0.45;                  // 0 .. 1
+  try {
+    var _sq = new URLSearchParams(window.location.search).get('scenery');
+    if (_sq !== null && _sq !== '' && isFinite(parseFloat(_sq)))
+      SCENERY = Math.max(0, Math.min(1, parseFloat(_sq)));
+  } catch (e) { /* ancient parser: the constant decides */ }
+  /* `low` takes two thirds. Not because it is dim — measured, the knob
+     costs the low tier under 1% of its mean brightness at any value —
+     but because at low mat() drops every texture, so the floor, the
+     counters and the walls are flat colours that recede along with the
+     props instead of holding still under them. The Pi also draws far
+     less clutter to suppress in the first place (the DETAIL >= 2 loops
+     never run), so it needs less of the effect to get the same read. */
+  var SCENERY_TIER = DETAIL >= 2 ? 1 : 0.66;
+
   /* ---- since-you-were-here epoch (study idiom, seconds) ---------------- */
   function lastVisit() {
     try {
@@ -3597,6 +3649,14 @@
         }
       })();
       groups.garage = garageInterior;   /* the zone-glow loop lights the room */
+      /* THE ESCAPE HATCH (see SCENERY at the top). `garage` is the one zone
+         aliased to a whole ROOM, so every shelf, carton and bin in here
+         would count as touchable and the bay would be the one place where
+         nothing recedes. It is exactly backwards: in the garage the CARS
+         and their plaques are the subject — and they live in carsG, a
+         sibling of this group — while the bay itself is set dressing. So
+         the dressing is tagged scenery, and the tag outranks the zone. */
+      garageInterior.traverse(function (o) { o.userData.scenery = true; });
     })();
     /* the front path (door to street) is laid in flags down in the yard
        block: it was one poured ribbon here, which is the defect S7.1
@@ -5536,7 +5596,189 @@
     }
     function clearPaint() { texCache = {}; }
 
+    /* ================= SCENERY RECESSION ==============================
+       The knob at the top of the file, made real. Read that comment for
+       the WHY; this is the how.
+
+       WHAT COUNTS AS TOUCHABLE. A mesh is interactive when it carries
+       userData.zone on itself or any ancestor — the same walk zoneAt()
+       does for a tap, so what the eye is told and what the finger finds
+       are the same set by construction. One escape hatch:
+       userData.scenery === true recedes anyway, and it is checked BEFORE
+       the zone at every level so it can override one. The garage bay is
+       its only user (see the tag beside `groups.garage`).
+
+       THE MATERIAL TRAP. Tinting a scenery mesh naively bleeds onto
+       whatever zone prop shares its material, and a shared material is
+       invisible from the call site. So each material is CLASSIFIED first
+       — who uses it, scenery or zone or both — and only then touched:
+
+         used by scenery only  -> tinted IN PLACE. No clone: the material
+                                  already belongs to nobody else, and a
+                                  clone would cost a second object per
+                                  prop for an identical picture. It also
+                                  keeps the mesh's material IDENTITY,
+                                  which matters — swap() and the night
+                                  pass both reach for a mesh's material
+                                  by hand and would write to an orphan.
+         used by both          -> ONE clone, shared by every scenery mesh
+                                  on it; the zone meshes keep the
+                                  original, untouched.
+         used by zones only    -> never touched.
+
+       MEASURED (2026-09-09, `applied` stats from chfHouseScenery): 3234
+       lit meshes, 3234 distinct lit materials, ZERO shared. mat() really
+       does hand out a fresh material per call on every path this room
+       uses, so today the classifier finds nothing to clone and the whole
+       scene is tinted in place. The clone arm is not dead code — it is
+       the guard rail for the first builder who hoists a material into a
+       variable and reuses it, which is a one-line change nobody would
+       think to flag. It costs one integer of bookkeeping per material.
+
+       Every base colour (and roughness, and envMapIntensity) is cached on
+       the material the first time it is seen, so the curve is always
+       applied to the ORIGINAL value. Re-applying k = 0.3 twice cannot
+       double-desaturate, and k = 0 restores the authored value exactly —
+       which is what makes SCENERY = 0 pixel-identical to the room before
+       this existed.
+
+       Only LIT materials recede — Standard and Lambert. A basic material
+       has no material response to dull: the sky dome, the contact discs,
+       the multiply and additive glows and the painted card faces are all
+       MeshBasicMaterial, and half of them carry a blend mode where
+       "pull toward mid-grey" would mean something else entirely.
+
+       COST. One traverse of the graph per apply, and applies happen on
+       build, on room change, and on an explicit chfHouseScenery call —
+       never in the frame loop, and colour is a uniform, so nothing here
+       recompiles a shader or dirties the shadow map. ---- */
+    /* THE CURVE. Desaturation is the effect; the lightness pull is a
+       whisper on top of it. Two lessons from the screenshots:
+
+       - Luminance is what reads as "the lights are on". An early pass
+         pulled every value 42% of the way to mid at k=1 and dropped the
+         kitchen's mean brightness 15%: it stopped looking like art
+         direction and started looking like dusk, or a bug. The pull is
+         now small enough to soften a dark anchor without dimming a room.
+       - A MAPPED material takes no pull at all. Its colour is white and
+         multiplies its texture, so the only thing a pull can do there is
+         darken the picture — it cannot desaturate it. That exempts the
+         floors, the wood counters, the tile and the siding, which is the
+         right answer anyway: the architecture is the ground the props
+         stand on, and the ground should not move. (At `low` there are no
+         maps at all — mat() drops them below tier 2 — so the whole room
+         responds, which is exactly why SCENERY_TIER damps that tier.) */
+    var SCEN_SAT = 0.86;    /* saturation removed at k = 1 */
+    var SCEN_CON = 0.18;    /* lightness pulled toward SCEN_MID at k = 1 */
+    var SCEN_MID = 0.66;    /* the value everything converges on. NOT 0.5:
+                               the room is cream, and 0.5 grey would drag
+                               every wall down into a fog bank */
+    var SCEN_ROUGH = 0.14;  /* tier 3: flatter highlights */
+    var SCEN_ENV = 0.60;    /* tier 3: less environment sheen */
+    var scenEpoch = 0, scenClones = 0, scenSlots = [];
+    var scenHSL = { h: 0, s: 0, l: 0 };
+
+    function scenLit(m) {
+      return !!(m && m.color &&
+                (m.isMeshStandardMaterial || m.isMeshLambertMaterial));
+    }
+    function scenIsScenery(o) {
+      var p = o;
+      while (p) {
+        var u = p.userData;
+        if (u) {
+          if (u.scenery === true) return true;
+          if (u.zone) return false;
+        }
+        p = p.parent;
+      }
+      return true;                       /* no zone above it: set dressing */
+    }
+    function scenSlot(m) {
+      if (m.userData._scEpoch !== scenEpoch) {
+        m.userData._scEpoch = scenEpoch;
+        m.userData._scSlot = scenSlots.length;
+        scenSlots.push({ m: m, sc: 0, zn: 0 });
+      }
+      return scenSlots[m.userData._scSlot];
+    }
+    function scenBase(m) {
+      var b = m.userData._scBase;
+      if (!b) b = m.userData._scBase = { c: m.color.clone(),
+                                         r: m.roughness, e: m.envMapIntensity };
+      return b;
+    }
+    function scenTint(m, b, k) {
+      m.color.copy(b.c);
+      if (k > 0) {
+        m.color.getHSL(scenHSL);
+        var pull = m.map ? 0 : SCEN_CON;   /* see the curve note above */
+        m.color.setHSL(scenHSL.h,
+                       scenHSL.s * (1 - k * SCEN_SAT),
+                       scenHSL.l + (SCEN_MID - scenHSL.l) * k * pull);
+      }
+      /* a Lambert has neither of these: guard, never assume the tier */
+      if (b.r !== undefined) m.roughness = Math.min(1, b.r + k * SCEN_ROUGH);
+      if (b.e !== undefined) m.envMapIntensity = b.e * (1 - k * SCEN_ENV);
+    }
+
+    /* k: 0..1. Returns a small stats object — the studio's read on how
+       much sharing there actually is, and what the knob is set to. */
+    function applyScenery(k) {
+      k = Math.max(0, Math.min(1, isFinite(k) ? k : 0));
+      scenEpoch++;
+      scenSlots = [];
+      var meshes = 0, dressed = 0;
+      /* pass 1 — classify. o.userData._scOrig remembers the authored
+         material, so a second apply classifies the ORIGINAL and never a
+         clone it handed out itself. */
+      scene.traverse(function (o) {
+        if (!o.isMesh || !o.material || Array.isArray(o.material)) return;
+        var orig = o.userData._scOrig || o.material;
+        if (!scenLit(orig)) return;
+        o.userData._scOrig = orig;
+        meshes++;
+        var s = scenSlot(orig);
+        if (scenIsScenery(o)) { s.sc++; dressed++; } else s.zn++;
+      });
+      /* pass 2 — tint each distinct material once */
+      scenSlots.forEach(function (s) {
+        if (!s.sc) return;                       /* zones only: hands off */
+        var b = scenBase(s.m);
+        if (s.zn) {                              /* shared: one clone */
+          var d = s.m.userData._scDim;
+          if (!d) { d = s.m.userData._scDim = s.m.clone(); scenClones++; }
+          scenTint(d, b, k);
+        } else {
+          scenTint(s.m, b, k);                   /* nobody else's: in place */
+        }
+      });
+      /* pass 3 — hand each mesh the material it should be wearing */
+      scene.traverse(function (o) {
+        var orig = o.userData && o.userData._scOrig;
+        if (!orig) return;
+        /* the epoch check is not paranoia: a mesh pass 1 declined to
+           classify (its material swapped for an unlit one, say) still
+           carries _scOrig, and its slot index would point into a
+           PREVIOUS pass's array. Unclassified means: wear the original. */
+        var s = orig.userData._scEpoch === scenEpoch
+              ? scenSlots[orig.userData._scSlot] : null;
+        var dim = (k > 0 && s && s.zn && s.sc && orig.userData._scDim &&
+                   scenIsScenery(o));
+        o.material = dim ? orig.userData._scDim : orig;
+      });
+      return { applied: k, meshes: meshes, dressed: dressed,
+               materials: scenSlots.length, clones: scenClones };
+    }
+
+    /* on BUILD: the room boots at the exterior, where nothing recedes, so
+       this is a k = 0 pass. It is not a no-op — it is what caches every
+       authored colour, so the first room entered tints from the original
+       and not from whatever it happened to be wearing. */
+    applyScenery(0);
+
     return {
+      applyScenery: applyScenery,
       T: T, scene: scene, cam: cam, R: R, groups: groups,
       steam: steam, steam2: steam2, needle: needle, plaque: plaque,
       calFace: calFace, boardFace: boardFace, magnets: magnets,
@@ -5572,6 +5814,19 @@
 
   function requestFrame() {
     if (!rafLive && webgl) { rafLive = true; requestAnimationFrame(frame); }
+  }
+
+  /* ---- the scenery knob, applied ---------------------------------------
+     Inside a room only: at the exterior the whole house IS the subject and
+     a receded yard would just look like haze. Called on room change, at
+     the end of applyState (so props the state builds — the bay's cars, the
+     bench's backpacks — join the hierarchy instead of standing out of it),
+     and by chfHouseScenery. Never from frame(). */
+  function sceneryK() {
+    return mode === 'exterior' ? 0 : SCENERY * SCENERY_TIER;
+  }
+  function syncScenery() {
+    return webgl ? webgl.applyScenery(sceneryK()) : null;
   }
 
   function honestAnimationActive() {
@@ -5737,6 +5992,12 @@
         webgl.magnets.add(mm);
       }
     }
+
+    /* the state builds props of its own — the bay's cars, the bench's
+       backpacks, these magnets — so the hierarchy is re-read here rather
+       than only on room change, or a fresh backpack would sit at full
+       saturation in a room that had stepped back around it */
+    syncScenery();
 
     requestFrame();
   }
@@ -5994,6 +6255,7 @@
       g.visible = false;
     });
     webgl.aimShadow(name);        /* the sun's shadow box follows the camera */
+    syncScenery();                /* inside a room the set dressing steps back */
     tween = { fromP: webgl.cam.position.clone(), toP: room.pos.clone(),
               fromA: (lookAt || webgl.EXT_AT).clone(), toA: room.at.clone(),
               t0: performance.now(), ms: 850, cb: cb || null };
@@ -6014,6 +6276,7 @@
     announceFocus(null);
     webgl.aimShadow('exterior');  /* the whole property, for the one view
                                      that can see the whole property */
+    syncScenery();                /* ... and out here nothing recedes */
     tween = { fromP: webgl.cam.position.clone(), toP: webgl.EXT_POS.clone(),
               fromA: (lookAt || webgl.HOME_AT).clone(),
               toA: webgl.EXT_AT.clone(),
@@ -6158,6 +6421,21 @@
   /* the studio's viewfinder: snap the camera anywhere and repaint once.
      Read-only like its siblings — it moves the eye, nothing else. Set
      builders frame a room through this before they hard-code the pose. */
+  /* the scenery knob at runtime. Read-only like chfHouseCam: it changes
+     how the room LOOKS and never what it knows. The future reveal-on-
+     demand control is this call with a bigger k and nothing else. Returns
+     the stats the studio tunes against: how many meshes, how many distinct
+     materials, and how many of those actually needed a clone. */
+  window.chfHouseScenery = function (k) {
+    if (!webgl) return null;
+    SCENERY = Math.max(0, Math.min(1, isFinite(parseFloat(k))
+                                      ? parseFloat(k) : SCENERY));
+    var stats = syncScenery();
+    requestFrame();
+    if (stats) stats.knob = SCENERY;   /* `applied` is the EFFECTIVE value:
+         the exterior always reports 0, however the knob is set */
+    return stats;
+  };
   window.chfHouseCam = function (px, py, pz, ax, ay, az) {
     if (!webgl) return;
     tween = null;
