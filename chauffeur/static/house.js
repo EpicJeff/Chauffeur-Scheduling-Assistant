@@ -274,8 +274,11 @@
     /* the kitchen: pulled in and centred on the run after the studio
        pass filled the room — the old pose spent a third of the frame on
        the living room's edge and the yard (bible S5.1, S7.1) */
-    var HOME_POS = new T.Vector3(16.0, 12.0, 16.0);
-    var HOME_AT = new T.Vector3(0.4, 1.3, -0.7);
+    /* swung west once the calendar moved onto the wall between the pantry
+       and mudroom doors: the old pose put that wall at the frame's edge,
+       which is the opposite of making the calendar visible */
+    var HOME_POS = new T.Vector3(14.6, 11.2, 17.0);
+    var HOME_AT = new T.Vector3(-1.3, 1.7, -0.2);
     /* the house from the yard: the panel's resting view. The old pose
        aimed a metre off the ground and spent the bottom-left fifth of
        the frame on tarmac; raised and swung a little north it crops the
@@ -1900,10 +1903,19 @@
       { h: 1.33, cells: [{ w: 1, kind: 'doors2' }] },
       { h: 0.50, cells: [{ w: 1, kind: 'doors2' }] }
     ]);
+    /* the calendar used to hang here, beside the range. It moved to the
+       west wall (user ruling 2026-09-09) and open shelving took the gap —
+       plates 7 and 9 are half open shelving, and a blank patch of tile
+       beside a hood is the one thing a real kitchen never has. */
+    kCase(3.78, NZ + 0.25, 0, 2.00, 0.50, UP_Y0, UP_Y1, [
+      { h: 1.83, kind: 'bays', bays: 2, tiers: 3, depth: 0.48 }
+    ]);
     /* crown: the ceiling-to-upper gap gets filled (S1) */
     if (KD2) {
       box(1.62, 0.10, 0.60, C.cab, -3.75, UP_Y1 + 0.05, NZ + 0.30);
       box(1.70, 0.10, UP_D + 0.08, C.cab, 0.01, UP_Y1 + 0.05, NZ + UP_D / 2 + 0.04);
+      box(2.12, 0.10, 0.60, C.cab, 3.78, UP_Y1 + 0.05, NZ + 0.30);
+      box(2.06, 0.07, 0.52, C.cabShade, 3.78, UP_Y1 + 0.135, NZ + 0.28);
       box(1.56, 0.07, 0.52, C.cabShade, -3.75, UP_Y1 + 0.135, NZ + 0.28);
       box(1.64, 0.07, UP_D, C.cabShade, 0.01, UP_Y1 + 0.135, NZ + UP_D / 2);
     }
@@ -2343,7 +2355,14 @@
       }
     })();
     /* ---- WALL CALENDAR (zone: calendar) on the back wall --------------- */
-    var calG = zoneGroup('calendar', 3.92, 0, -5.36);
+    /* The family calendar hangs on the WEST wall panel between the pantry
+       door and the mudroom doorway (user ruling 2026-09-09) — the wall you
+       pass on the way out, which is where a household actually puts it. It
+       rides westWallG so the mudroom camera cuts it away with the wall it
+       hangs on, exactly as the TV and the built-ins do. */
+    var calG = zoneGroup('calendar', WXK, 0, 1.52);
+    calG.rotation.y = Math.PI / 2;      /* face east, into the great room */
+    westWallG.add(calG);
     var calFace = new T.Mesh(new T.PlaneGeometry(1.5, 1.9), mat(0xf6f1e4, { rough: 0.9 }));
     calFace.position.set(0, 3.0, 0.05);
     calG.add(calFace);
@@ -2642,29 +2661,24 @@
     }
 
     /* the west wall's blank panel: two prints and a sconce (S4) */
-    function kArt(y, z, h, w, art) {
-      rbox(0.05, h, w, 0.012, C.slate, WXK + 0.025, y, z, westWallG,
-           { rough: 0.55 });
-      if (KD3) box(0.02, h - 0.05, w - 0.05, C.cream, WXK + 0.050, y, z,
-                   westWallG, MATT);
-      box(0.02, h - 0.13, w - 0.13, art, WXK + 0.058, y, z, westWallG, MATT);
-    }
+    /* This panel is the CALENDAR's now (user ruling 2026-09-09), and it
+       keeps a clean wall: three prints behind a thing you are meant to read
+       across a room is exactly the competition the scenery knob exists to
+       settle. The sconce stays, because it lights what hangs here. */
     if (DETAIL >= 2) {
-      kArt(2.72, 1.05, 0.74, 0.56, C.teal);
-      kArt(2.72, 1.83, 0.74, 0.56, C.terracotta);
-      if (KD3) kArt(1.92, 1.44, 0.52, 0.40, C.oxblood);
-      /* the one wall light (plate 7). It hangs over the prints, NOT over
-         the L-return: the fridge lean-in flies up that stretch of wall and
-         anything on it lands on the fridge door's card. */
-      box(0.07, 0.16, 0.16, HW, WXK + 0.035, 3.62, 1.44, westWallG, STEEL);
-      cyl(0.02, 0.02, 0.26, HW, WXK + 0.16, 3.62, 1.44, westWallG, 8, STEEL);
+      /* the one wall light (plate 7). It sits ABOVE the calendar now, not
+         over the prints — and still not over the L-return, because the
+         fridge lean-in flies up that stretch of wall and anything on it
+         lands on the fridge door's card. */
+      box(0.07, 0.16, 0.16, HW, WXK + 0.035, 4.62, 1.52, westWallG, STEEL);
+      cyl(0.02, 0.02, 0.26, HW, WXK + 0.16, 4.62, 1.52, westWallG, 8, STEEL);
       var scs = new T.Mesh(new T.CylinderGeometry(0.13, 0.19, 0.20, 14, 1, true),
         PBR ? new T.MeshStandardMaterial({ color: 0xf3e8d2, roughness: 0.8,
                                            emissive: 0xffd9a0,
                                            emissiveIntensity: 0.4,
                                            side: T.DoubleSide })
             : new T.MeshLambertMaterial({ color: 0xf3e8d2, side: T.DoubleSide }));
-      scs.position.set(WXK + 0.29, 3.56, 1.44);
+      scs.position.set(WXK + 0.29, 4.56, 1.52);
       finish(scs, true); westWallG.add(scs);
     }
 
