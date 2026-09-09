@@ -192,7 +192,10 @@
                   var t = (w.temp !== null && w.temp !== undefined) ? Math.round(w.temp) + '\u00b0 ' : '';
                   return t + w.cond + (w.calm === false ? ' \u2014 plan for it' : '');
                 } },
-    garage:   { label: 'Garage',        url: 'config',
+    /* admin: Config is the car editor, and it is a DESKTOP destination.
+       A wall panel must never land there — the fleet card already carries
+       the answer, so on a panel this zone simply has no way through. */
+    garage:   { label: 'Garage',        url: 'config', admin: true,
                 num: function (s) {
                   return ((s.garage || {}).cars || []).filter(function (c) {
                     return c.warn; }).length;
@@ -228,7 +231,13 @@
   };
   var ZONE_ORDER = ['door', 'window', 'calendar', 'counter', 'fridge', 'board', 'radio', 'pet', 'garage', 'curb'];
 
+  var PANEL = /[?&]panel=true/.test(window.location.search);
   function go(slug) { window.location.href = BASE + slug + window.location.search; }
+  /* a zone's way through, or '' when this device must not go there */
+  function zoneUrl(key) {
+    var z = ZONES[key] || {};
+    return (z.admin && PANEL) ? '' : (z.url || '');
+  }
 
   /* ---- fallback: the DESIGNED weak-hardware experience ----------------- */
   /* textContent only — captions and dish names are family-typed strings and
@@ -244,7 +253,8 @@
       var calm = !state || ((s[key] || {}).calm !== false);
       var row = document.createElement('a');
       row.className = 'frow' + (calm ? ' calm' : '');
-      row.href = BASE + z.url + window.location.search;
+      var href = zoneUrl(key);
+      if (href) row.href = BASE + href + window.location.search;
       var name = document.createElement('div');
       name.textContent = z.label;
       var sig = document.createElement('div');
@@ -6515,7 +6525,11 @@
       goExterior();
       return;
     }
-    if (focused === key) { go(ZONES[key].url); return; }   // second tap: through
+    if (focused === key) {                                 // second tap: through
+      var through = zoneUrl(key);
+      if (through) go(through);                            // panel: nowhere to go
+      return;
+    }
     focused = key;
     announceFocus(null);   /* the old card must not ride the camera move */
     frameZone(key, function () {

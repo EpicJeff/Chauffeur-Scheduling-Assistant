@@ -83,6 +83,15 @@ window.kitchenTileIsland = function () {
                 /* the garage's page is the CAR EDITOR: /cars is not a route,
                    the fleet lives in Config beside the drivers */
                 garage: 'config' };
+  /* ADMIN destinations are desktop-only. A wall panel is the most shared
+     screen in the house and must never land on Config, so the open-chip
+     simply does not appear there — the fleet card already answers. */
+  var ADMIN_PAGES = { garage: true };
+  var IS_PANEL = /[?&]panel=true/.test(window.location.search);
+  function pageFor(zone) {
+    var p = PAGES[zone];
+    return (p && ADMIN_PAGES[zone] && IS_PANEL) ? '' : (p || '');
+  }
 
   /* which board tile a zone wears on focus. The garage's card is the whole
      fleet, and that is the point of it: the bay parks two cars, so a
@@ -273,8 +282,9 @@ window.kitchenTileIsland = function () {
     TILE.style.display = ZONE_TILES[zone] ? 'flex' : 'none';   /* flex: the height chain collage grids need */
     if (MUSIC) MUSIC.style.display = zone === 'radio' ? 'block' : 'none';
     if (OPEN) {
-      OPEN.href = PAGES[zone] ? BASE + PAGES[zone] : '#';
-      OPEN.style.display = PAGES[zone] ? '' : 'none';
+      var page = pageFor(zone);
+      OPEN.href = page ? BASE + page : '#';
+      OPEN.style.display = page ? '' : 'none';
     }
     if (d.quad) placeQuad(d.quad, zone); else place(d.rect);
     requestAnimationFrame(function () { OV.classList.add('on'); });
