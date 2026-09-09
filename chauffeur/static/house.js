@@ -5801,6 +5801,22 @@
        and not from whatever it happened to be wearing. */
     applyScenery(0);
 
+    /* Meshes that answer to a zone but live OUTSIDE its group — the
+       mudroom's garage door is tagged `door` yet hangs on the west wall,
+       not inside doorG. The awake-glow loop walks a zone's group, so
+       without this index a zone lights only the half of itself that
+       happens to be parented under it. Built once; the scene is static
+       apart from the cars and backpacks, which carry no zone glow. */
+    var zoneExtra = {};
+    scene.traverse(function (o) {
+      if (!o.isMesh || !o.userData) return;
+      var k = o.userData.zone;
+      if (!k || !groups[k]) return;
+      var p = o, inside = false;
+      while (p) { if (p === groups[k]) { inside = true; break; } p = p.parent; }
+      if (!inside) (zoneExtra[k] = zoneExtra[k] || []).push(o);
+    });
+
     return {
       applyScenery: applyScenery,
       T: T, scene: scene, cam: cam, R: R, groups: groups,
@@ -5823,7 +5839,7 @@
       GARAGE_POS: GARAGE_POS, GARAGE_AT: GARAGE_AT,
       MUD_POS: MUD_POS, MUD_AT: MUD_AT, LIV_POS: LIV_POS, LIV_AT: LIV_AT,
       mudroomRoofG: mudroomRoofG, livingRoofG: livingRoofG,
-      yardG: yardG, westWallG: westWallG,
+      yardG: yardG, westWallG: westWallG, zoneExtra: zoneExtra,
       mudBagsG: mudBagsG, makeBag: makeBag
     };
   }
@@ -5950,10 +5966,11 @@
 
     Object.keys(ZONES).forEach(function (key) {
       var g = webgl.groups[key];
-      if (!g) return;
+      var extra = (webgl.zoneExtra || {})[key] || [];
+      if (!g && !extra.length) return;
       var n = ZONES[key].num(s);
       var lit = n > 0 && (s[key] || {}).calm === false;
-      g.traverse(function (o) {
+      function paint(o) {
         if (o.isMesh && o.material && o.material.emissive) {
           /* the live-zone glow. 0x2a1e08 was authored against ACES, which
              compressed it; under a linear curve the same value added a
@@ -5962,7 +5979,9 @@
              awake" without repainting the prop. */
           o.material.emissive.setHex(lit ? 0x120c03 : 0x000000);
         }
-      });
+      }
+      if (g) g.traverse(paint);
+      extra.forEach(paint);   /* the same zone's parts on another wall */
     });
 
     /* honest detail faces, repainted only when payloads change */
@@ -6266,6 +6285,16 @@
     var room = rooms[name];
     if (!room) { if (cb) cb(); return; }
     if (mode === name) { if (cb) cb(); return; }
+    /* A zone's card belongs to the room it hangs in. Walking to another room
+       while one is worn left it mounted and visible over the new room until
+       the next lean-in — goExterior always dropped focus, this path never
+       did. chfKitchenFocus re-announces in its own callback, so clearing
+       here costs it nothing. */
+    if (focused) {
+      focused = null;
+      TIP.style.opacity = 0;
+      announceFocus(null);
+    }
     mode = name;
     Object.keys(rooms).forEach(function (k) {
       var h = rooms[k].hide;
