@@ -219,8 +219,11 @@
     var scene = new T.Scene();
     scene.background = new T.Color(0xbdb3c7);          // the soft lilac of the reference
     var cam = new T.PerspectiveCamera(24, 1, 0.1, 200); // narrow FOV = near-isometric diorama; far covers the yard dome
-    var HOME_POS = new T.Vector3(17.5, 13.0, 17.5);
-    var HOME_AT = new T.Vector3(-0.2, 0.8, -0.4);
+    /* the kitchen: pulled in and centred on the run after the studio
+       pass filled the room — the old pose spent a third of the frame on
+       the living room's edge and the yard (bible S5.1, S7.1) */
+    var HOME_POS = new T.Vector3(16.0, 12.0, 16.0);
+    var HOME_AT = new T.Vector3(0.4, 1.3, -0.7);
     /* the house from the yard: the panel's resting view */
     var EXT_POS = new T.Vector3(40.0, 26.0, 40.0);
     var EXT_AT = new T.Vector3(-4.6, 1.2, 5.0);
@@ -1238,22 +1241,9 @@
       }
     })();
 
-    /* tiled backsplash band behind the counter run */
-    var bsCanvas = document.createElement('canvas');
-    bsCanvas.width = 256; bsCanvas.height = 64;
-    (function () {
-      var g = bsCanvas.getContext('2d');
-      g.fillStyle = '#f8f6f1'; g.fillRect(0, 0, 256, 64);
-      g.strokeStyle = '#ddd6ca'; g.lineWidth = 2;
-      for (var x = 0; x <= 256; x += 32) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 64); g.stroke(); }
-      for (var y = 0; y <= 64; y += 16) { g.beginPath(); g.moveTo(0, y); g.lineTo(256, y); g.stroke(); }
-    })();
-    var bs = new T.Mesh(new T.PlaneGeometry(6.9, 1.0),
-      PBR ? new T.MeshStandardMaterial({ map: new T.CanvasTexture(bsCanvas), roughness: 0.35,
-                                         envMapIntensity: 0.15 })
-          : new T.MeshLambertMaterial({ map: new T.CanvasTexture(bsCanvas) }));
-    bs.position.set(-1.05, 1.62, -5.36);
-    scene.add(bs);
+    /* the backsplash moved into the kitchen millwork below: it is no
+       longer a band that stops short but a tile field running the whole
+       run, counter line to the underside of the uppers (bible S7.4) */
 
     var groups = {};
     function zoneGroup(key, x, y, z) {
@@ -1263,44 +1253,439 @@
       groups[key] = g; scene.add(g); return g;
     }
 
-    /* ---- cabinet run along the back wall — fridge owns the corner ------ */
-    function lowerCab(w, x, z) {
-      rbox(w, 1.0, 1.4, 0.05, C.cab, x, 0.56, z);
-      var n = Math.max(1, Math.round(w / 0.95));
-      for (var i = 0; i < n; i++) {
-        var dw = w / n - 0.1, dx = x - w / 2 + (i + 0.5) * (w / n);
-        if (DETAIL >= 2) box(dw, 0.78, 0.05, C.cabShade, dx, 0.56, z + 0.71);
-        knob(dx + dw / 2 - 0.09, 0.72, z + 0.76);
-      }
-    }
-    function upperCab(w, x, z) {
-      rbox(w, 1.25, 0.72, 0.05, C.cab, x, 3.75, z);
-      var n = Math.max(1, Math.round(w / 0.9));
-      for (var i = 0; i < n; i++) {
-        var dw = w / n - 0.08, dx = x - w / 2 + (i + 0.5) * (w / n);
-        if (DETAIL >= 2) box(dw, 1.05, 0.05, C.cabShade, dx, 3.75, z + 0.37);
-        knob(dx + dw / 2 - 0.08, 3.45, z + 0.42);
-      }
-    }
-    /* run sits to the RIGHT of the fridge: no clipping, one clean line */
-    lowerCab(5.2, -1.8, -4.6);
-    rbox(5.4, 0.12, 1.56, 0.04, 0xffffff, -1.8, 1.12, -4.6, null,
-         { rough: 0.3, map: woodLight, envInt: 0.4 });   // butcher top
-    upperCab(1.4, -3.78, -5.1);
-    upperCab(1.8, 0.2, -5.1);
+    /* ---- KITCHEN MILLWORK (studio pipeline — docs/house_style_bible.md
+       S3.1 / S3.2) ------------------------------------------------------
+       A cabinet is never one box. Every run here is toe kick, carcass,
+       face frame with a stile between every pair of fronts, inset fronts
+       on a 0.03 reveal, hardware, and a top that overhangs. The uppers
+       align to the window — sill line to cabinet bottom, head casing to
+       cabinet top — and the tile field fills the whole band between the
+       counter and the uppers, which is what S7.4 was asking for.
+       Palette: casework cream, counters wood, the island walnut; four
+       accents and no strays — teal (the fridge is this room's sage),
+       terracotta, brass, oxblood. Dark anchors: the hood and the
+       cooktop. ---- */
+    var KD2 = DETAIL >= 2, KD3 = DETAIL >= 3;
+    var NZ = -5.375;                    /* the north wall's inner face */
+    var WXK = -6.475;                   /* the west wall's inner face */
+    var CT_Y = 1.13, CT_T = 0.09;       /* counter surface + slab (S1) */
+    var TOE = 0.16, BASE_D = 1.44;
+    var UP_Y0 = 2.52, UP_Y1 = 4.35, UP_D = 0.74;
+    var MATT = { rough: 0.9 };
+    var kWoodO = NICE ? { rough: 0.55, map: woodLight, envInt: 0.35 }
+                      : { rough: 0.6 };
+    var kWoodK = NICE ? 0xffffff : 0xc89a66;
+    var HW = C.brass;                   /* one hardware finish, room-wide */
 
-    /* a sink you can SEE: farmhouse apron front proud of the cabinets,
-       steel rim above the counter, dark opening, tall gooseneck */
-    rbox(1.2, 0.72, 0.16, 0.03, 0xcfd4d9, -2.6, 0.82, -3.84, null, STEEL); // apron
-    box(1.24, 0.07, 0.9, 0xc6cbd0, -2.6, 1.215, -4.42, null, STEEL);       // rim
-    box(1.06, 0.05, 0.72, 0x4c5157, -2.6, 1.24, -4.42, null,
-        { rough: 0.35, metal: 0.6 });                                      // opening
-    cyl(0.05, 0.06, 0.62, C.steel, -2.6, 1.55, -4.95, null, 12, CHROME);   // riser
-    var neck = cyl(0.04, 0.04, 0.55, C.steel, -2.6, 1.85, -4.72, null, 10, CHROME);
-    neck.rotation.x = 1.25;
-    var spout = cyl(0.035, 0.035, 0.22, C.steel, -2.6, 1.74, -4.5, null, 8, CHROME);
-    cyl(0.05, 0.02, 0.04, C.steel, -2.6, 1.62, -4.5, null, 8, CHROME);     // aerator
-    cyl(0.03, 0.03, 0.14, C.steel, -2.25, 1.28, -4.9, null, 8, CHROME);    // handle
+    /* the tile field: a running bond with grout lines and tiles that are
+       not all one tone, so the wall is a surface and not a sheet */
+    var kTileTex = null;
+    if (NICE) {
+      kTileTex = canvasTex(256, function (g) {
+        g.fillStyle = '#d9d0c0'; g.fillRect(0, 0, 256, 256);   /* grout */
+        var TW = 64, TH = 32, TONE = ['#f7f3ec', '#f1ebe0', '#f9f6f0', '#ede6d9'];
+        for (var r = 0; r < 8; r++) {
+          for (var i = -1; i < 5; i++) {
+            var x = i * TW + (r % 2 ? TW / 2 : 0);
+            g.fillStyle = TONE[(r * 3 + i + 8) % 4];
+            g.fillRect(x + 2, r * TH + 2, TW - 4, TH - 4);
+          }
+        }
+      });
+      kTileTex.wrapS = kTileTex.wrapT = T.RepeatWrapping;
+    }
+    function kTile(w, h, x, y, z, rotY) {
+      var m;
+      if (kTileTex) {
+        var t = kTileTex.clone();
+        t.needsUpdate = true;
+        t.wrapS = t.wrapT = T.RepeatWrapping;
+        t.repeat.set(w / 2.0, h / 1.0);
+        m = new T.Mesh(new T.PlaneGeometry(w, h),
+          PBR ? new T.MeshStandardMaterial({ map: t, roughness: 0.30,
+                                             envMapIntensity: 0.2 })
+              : new T.MeshLambertMaterial({ map: t }));
+      } else {
+        m = new T.Mesh(new T.PlaneGeometry(w, h), mat(0xf2ede3, { rough: 0.4 }));
+      }
+      m.position.set(x, y, z);
+      if (rotY) m.rotation.y = rotY;
+      if (SHADOWS) m.receiveShadow = true;
+      scene.add(m);
+      return m;
+    }
+
+    /* ---- the case builder (S3.1) --------------------------------------
+       Built facing local +z, then dropped into place, so the west wall's
+       L-return is the same code as the north wall's run. `rows` runs
+       bottom to top; each row's `cells` run left to right. */
+    var FF = 0.09;                      /* face-frame stile/rail width */
+    function kPull(g, x, y, zf, len, vert) {
+      if (!KD2) return;
+      var t = 0.028;
+      box(vert ? t : len, vert ? len : t, t, HW, x, y, zf + 0.055, g, STEEL);
+      if (KD3) {                        /* stand-offs, so it is not a decal */
+        var d = (len / 2) - 0.03;
+        box(t * 0.7, t * 0.7, 0.05, HW, x + (vert ? 0 : -d), y + (vert ? -d : 0),
+            zf + 0.030, g, STEEL);
+        box(t * 0.7, t * 0.7, 0.05, HW, x + (vert ? 0 : d), y + (vert ? d : 0),
+            zf + 0.030, g, STEEL);
+      }
+    }
+    /* one inset front inside an opening: 0.03 reveal all round, a shaker
+       panel proud of it at tier 3, and its pull */
+    function kFront(g, x0, x1, y0, y1, zf, kind) {
+      var R = 0.03;
+      var w = (x1 - x0) - 2 * R, h = (y1 - y0) - 2 * R;
+      if (w <= 0.02 || h <= 0.02) return;
+      var cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+      rbox(w, h, 0.03, 0.02, kFaceC, cx, cy, zf + 0.010, g, MATT);
+      if (KD3 && w > 0.22 && h > 0.22)
+        rbox(w - 0.10, h - 0.10, 0.02, 0.015, kBodyC, cx, cy, zf + 0.030, g, MATT);
+      if (kind === 'drawer') kPull(g, cx, cy, zf, Math.min(0.30, w * 0.55), false);
+      else if (kind === 'left') kPull(g, x1 - 0.09, cy, zf, Math.min(0.30, h * 0.5), true);
+      else kPull(g, x0 + 0.09, cy, zf, Math.min(0.30, h * 0.5), true);
+    }
+    /* one opening's worth of fronts */
+    function kCell(g, x0, x1, y0, y1, zf, kind) {
+      var i, n, hs, y;
+      if (kind === 'doors2') {
+        var xm = (x0 + x1) / 2;
+        box(FF, y1 - y0, 0.04, kFaceC, xm, (y0 + y1) / 2, zf + 0.02, g, MATT);
+        kFront(g, x0, xm - FF / 2, y0, y1, zf, 'left');
+        kFront(g, xm + FF / 2, x1, y0, y1, zf, 'right');
+      } else if (kind === 'door') {
+        kFront(g, x0, x1, y0, y1, zf, 'left');
+      } else if (kind === 'drawers3' || kind === 'drawers2') {
+        n = kind === 'drawers3' ? 3 : 2;
+        hs = (y1 - y0) / (n === 3 ? 4.4 : 2.4);
+        y = y0;
+        for (i = 0; i < n; i++) {
+          var hh = (i === 0 && n === 3) ? hs * 1.8 : (i === 0 ? hs * 1.4 : hs * (n === 3 ? 1.3 : 1.0));
+          if (i === n - 1) hh = y1 - y;
+          if (i < n - 1) box(x1 - x0, FF * 0.7, 0.04, kFaceC, (x0 + x1) / 2,
+                             y + hh, zf + 0.02, g, MATT);
+          kFront(g, x0, x1, y, y + hh, zf, 'drawer');
+          y += hh;
+        }
+      } else if (kind === 'dish') {          /* a dishwasher panel (S3.4) */
+        rbox(x1 - x0 - 0.05, y1 - y0 - 0.05, 0.04, 0.02, 0xc9ced3,
+             (x0 + x1) / 2, (y0 + y1) / 2, zf + 0.015, g, STEEL);
+        box(x1 - x0 - 0.16, 0.05, 0.05, C.steel, (x0 + x1) / 2, y1 - 0.10,
+            zf + 0.05, g, CHROME);
+        if (KD3) box(0.24, 0.035, 0.02, C.ink, (x0 + x1) / 2 - 0.10, y1 - 0.20,
+                     zf + 0.045, g, GLOSS);
+      } else if (kind === 'open') {
+        /* handled by the caller: a bay needs a back panel + contents */
+      }
+    }
+    var kFaceC = C.cab, kBodyC = C.cabShade;    /* the run being built */
+    function kCase(cx, cz, rot, W, D, y0, y1, rows, opt) {
+      opt = opt || {};
+      kFaceC = opt.face || C.cab;
+      kBodyC = opt.body || C.cabShade;
+      var g = new T.Group();
+      g.position.set(cx, 0, cz);
+      if (rot) g.rotation.y = rot;
+      scene.add(g);
+      var zf = D / 2, by0 = y0;
+      if (opt.toe) {                                       /* 1. toe kick */
+        box(W - 0.02, TOE, D - 0.07, kBodyC, 0, y0 + TOE / 2, -0.035, g, MATT);
+        by0 = y0 + TOE;
+      }
+      var H = y1 - by0, TH = 0.05;
+      /* 2. carcass — a shell in cabShade, never the visible surface, and
+         hollow so an open bay's contents are not buried inside a block */
+      box(W, H, TH, kBodyC, 0, by0 + H / 2, -D / 2 + TH / 2, g, MATT);
+      box(TH, H, D, kBodyC, -W / 2 + TH / 2, by0 + H / 2, 0, g, MATT);
+      box(TH, H, D, kBodyC, W / 2 - TH / 2, by0 + H / 2, 0, g, MATT);
+      box(W, TH, D, kBodyC, 0, by0 + TH / 2, 0, g, MATT);
+      box(W, TH, D, kBodyC, 0, y1 - TH / 2, 0, g, MATT);
+      /* finished end panels: the exposed gable wears the door colour */
+      box(0.05, H, D + 0.03, kFaceC, -W / 2 - 0.005, by0 + H / 2, 0.015, g, MATT);
+      box(0.05, H, D + 0.03, kFaceC, W / 2 + 0.005, by0 + H / 2, 0.015, g, MATT);
+      var y = by0;
+      rows.forEach(function (row) {
+        var ry0 = y, ry1 = y + row.h;
+        y = ry1;
+        if (row.kind === 'ledge') {          /* a counter/shelf break */
+          box(W + 0.08, row.h, D + 0.06, kFaceC, 0, (ry0 + ry1) / 2, 0.03, g, MATT);
+          return;
+        }
+        if (row.kind === 'bays') { kBays(g, W, D, ry0, ry1, row); return; }
+        /* 3. face frame: rails top and bottom, a stile on every boundary */
+        box(W, FF, 0.04, kFaceC, 0, ry0 + FF / 2, zf + 0.02, g, MATT);
+        box(W, FF, 0.04, kFaceC, 0, ry1 - FF / 2, zf + 0.02, g, MATT);
+        var cells = row.cells, tot = 0, i;
+        for (i = 0; i < cells.length; i++) tot += cells[i].w;
+        var x = -W / 2, ox = [];
+        for (i = 0; i < cells.length; i++) {
+          var w = W * cells[i].w / tot;
+          ox.push([x, x + w]); x += w;
+        }
+        for (i = 0; i <= cells.length; i++) {
+          var sx = i === 0 ? -W / 2 + FF / 2
+                 : (i === cells.length ? W / 2 - FF / 2 : ox[i][0]);
+          box(FF, ry1 - ry0, 0.04, kFaceC, sx, (ry0 + ry1) / 2, zf + 0.02, g, MATT);
+        }
+        for (i = 0; i < cells.length; i++) {
+          kCell(g, ox[i][0] + (i === 0 ? FF : FF / 2),
+                ox[i][1] - (i === cells.length - 1 ? FF : FF / 2),
+                ry0 + FF, ry1 - FF, zf, cells[i].kind);
+        }
+      });
+      return g;
+    }
+
+    /* ---- open bays (S3.2) ---------------------------------------------
+       Shelf boards with a visible edge, a back panel one shade darker and
+       inset, dividers, and 3-6 objects in every bay. The bay contents are
+       the finest layer: tier 2 gets three, tier 3 gets the lot. */
+    var kBayFill = [];                  /* [group, x0, x1, y, seed] to load */
+    function kBays(g, W, D, y0, y1, row) {
+      var bays = row.bays || 2, tiers = row.tiers || 2, i, j;
+      var zf = D / 2, bd = row.depth || Math.min(D, 0.50);
+      /* back panel: darker, inset — this is what makes a bay a bay */
+      box(W - 0.06, y1 - y0, 0.03, KBAY, 0, (y0 + y1) / 2, zf - bd + 0.03,
+          g, { rough: 0.95 });
+      var bh = (y1 - y0) / tiers;
+      for (i = 0; i <= tiers; i++) {
+        var sy = y0 + i * bh;
+        box(W, 0.06, bd, kFaceC, 0, sy + (i === 0 ? 0.03 : -0.03), zf - bd / 2,
+            g, MATT);
+        if (KD3)                        /* the shelf's front edge line */
+          box(W, 0.062, 0.02, kBodyC, 0, sy + (i === 0 ? 0.03 : -0.03),
+              zf - 0.01, g, MATT);
+      }
+      var bw = W / bays;
+      for (i = 1; i < bays; i++)
+        box(0.05, y1 - y0, bd, kFaceC, -W / 2 + i * bw, (y0 + y1) / 2,
+            zf - bd / 2, g, MATT);
+      for (i = 0; i < bays; i++) for (j = 0; j < tiers; j++)
+        kBayFill.push([g, -W / 2 + i * bw + 0.09, -W / 2 + (i + 1) * bw - 0.09,
+                       y0 + j * bh + 0.06, zf - bd / 2, i * 3 + j]);
+    }
+
+    /* ---- the small-prop vocabulary, kitchen edition (S3.2) ------------- */
+    var KJARC = [C.teal, C.terracotta, C.brass, C.cream, C.oxblood, C.linen];
+    var KBAY = 0x4e6c6e;                /* bay backs: the teal family, dark */
+    function kJar(g, x, y, z, r, h, c) {
+      cyl(r, r * 0.92, h, c, x, y + h / 2, z, g, 12, GLOSS);
+      if (KD3) cyl(r * 0.66, r * 0.82, 0.045, HW, x, y + h + 0.022, z, g, 10, STEEL);
+    }
+    function kBowl(g, x, y, z, r, c) {
+      cyl(r, r * 0.58, 0.12, c, x, y + 0.06, z, g, 14, GLOSS);
+    }
+    function kPlates(g, x, y, z, r, c) {
+      for (var k = 0; k < (KD3 ? 4 : 2); k++)
+        cyl(r, r, 0.030, c, x, y + 0.016 + k * 0.038, z, g, 14, GLOSS);
+    }
+    function kCups(g, x, y, z, n, c) {
+      for (var k = 0; k < n; k++)
+        cyl(0.055, 0.048, 0.10, c, x + k * 0.135, y + 0.05, z, g, 10, GLOSS);
+    }
+    function kBooks(g, x, y, z0, n, step, seed) {
+      for (var k = 0; k < n; k++) {
+        var h = 0.20 + ((k * 5 + seed) % 4) * 0.028;
+        var m = box(0.17, h, step * 0.62, KJARC[(k + seed) % 6], x, y + h / 2,
+                    z0 + step * (k + 0.5), g);
+        if (KD3 && (k + seed) % 4 === 3) { m.rotation.x = 0.16; m.position.y += 0.012; }
+      }
+    }
+    /* a cake stand: the plates put one in nearly every bay */
+    function kCake(g, x, y, z, c) {
+      cyl(0.05, 0.09, 0.10, c, x, y + 0.05, z, g, 12, GLOSS);
+      cyl(0.16, 0.16, 0.025, c, x, y + 0.112, z, g, 14, GLOSS);
+      if (KD3) cyl(0.11, 0.13, 0.09, 0xf6e6c8, x, y + 0.17, z, g, 12, MATT);
+    }
+    /* a houseplant that reads as a houseplant: a clump at the rim and a
+       fan of leaves out of it, never a trunk with a ball on top */
+    var KLEAF = [C.leaf, 0x527f44, 0x74a05a];
+    var KPL = {
+      fiddle: [[0.31, 0.20, 0.20, 0.35], [0.29, 0.19, 0.40, 1.40],
+               [0.27, 0.185, 0.56, 2.50], [0.24, 0.17, 0.74, 3.60],
+               [0.21, 0.16, 0.92, 4.70], [0.18, 0.145, 1.08, 5.70]],
+      spray: [[0.31, 0.105, 0.20, 0.20], [0.29, 0.100, 0.34, 1.25],
+              [0.27, 0.095, 0.48, 2.30], [0.25, 0.090, 0.62, 3.35],
+              [0.22, 0.085, 0.76, 4.40], [0.19, 0.080, 0.90, 5.45]],
+      mound: [[0.28, 0.19, 0.42, 0.50], [0.27, 0.185, 0.54, 1.55],
+              [0.26, 0.18, 0.66, 2.60], [0.24, 0.17, 0.78, 3.65],
+              [0.22, 0.16, 0.88, 4.70], [0.20, 0.15, 0.98, 5.75]]
+    };
+    var KLIFT = { fiddle: 0, spray: 0.03, mound: 0.11 };
+    function kSph(g, r, c, x, y, z, sy) {
+      var m = new T.Mesh(new T.SphereGeometry(r, KD3 ? 10 : 6, KD3 ? 8 : 4),
+                         mat(c, { rough: 1.0 }));
+      m.position.set(x, y, z);
+      if (sy) m.scale.y = sy;
+      finish(m); (g || scene).add(m); return m;
+    }
+    function kLeaf(g, x, base, z, L, wide, thick, tilt, spin, c) {
+      var m = new T.Mesh(new T.SphereGeometry(1, KD3 ? 10 : 6, KD3 ? 8 : 4),
+                         mat(c, { rough: 1.0 }));
+      m.scale.set(thick, L, wide);
+      m.rotation.set(0, spin, tilt);
+      var rad = L * Math.sin(tilt), up = L * Math.cos(tilt);
+      m.position.set(x + Math.cos(spin) * rad, base + up, z - Math.sin(spin) * rad);
+      finish(m); (g || scene).add(m); return m;
+    }
+    function kPlant(g, x, y0, z, s, potC, potO, kind, shadow) {
+      var ph = 0.34 * s;
+      cyl(0.24 * s, 0.19 * s, ph, potC, x, y0 + ph / 2, z, g, 14, potO);
+      if (KD3) cyl(0.25 * s, 0.25 * s, 0.05, potC, x, y0 + ph - 0.015, z, g, 14, potO);
+      var b = y0 + ph + (KLIFT[kind] || 0) * s - 0.06 * s;
+      var tbl = KPL[kind] || KPL.mound;
+      var n = KD3 ? tbl.length : (KD2 ? 4 : 3);
+      kSph(g, 0.19 * s, KLEAF[1], x, b + 0.05 * s, z, 0.55);
+      for (var i = 0; i < n; i++) {
+        var lf = tbl[i];
+        kLeaf(g, x, b, z, lf[0] * s, lf[1] * s, 0.045 * s, lf[2], lf[3],
+              KLEAF[i % 3]);
+      }
+      if (shadow) blobShadow(0.34 * s, 0.32 * s, x, z);
+    }
+
+    /* ---- the runs ------------------------------------------------------ */
+    var BZ = NZ + BASE_D / 2;           /* base run centre on the north wall */
+    /* run A: doors, the apron sink under the window, a dishwasher, drawers */
+    kCase(-1.825, BZ, 0, 5.35, BASE_D, 0, CT_Y - CT_T, [
+      { h: CT_Y - CT_T - TOE, cells: [
+        { w: 1.72, kind: 'doors2' }, { w: 1.80, kind: 'apron' },
+        { w: 1.03, kind: 'dish' }, { w: 0.80, kind: 'drawers3' }] }
+    ], { toe: true });
+    /* run B: under the wall calendar, east of the range */
+    kCase(3.70, BZ, 0, 2.30, BASE_D, 0, CT_Y - CT_T, [
+      { h: CT_Y - CT_T - TOE, cells: [
+        { w: 1.15, kind: 'drawers3' }, { w: 1.15, kind: 'doors2' }] }
+    ], { toe: true });
+    /* the L-return on the west wall: plate 9's L-run, and the piece that
+       stops the pantry corner reading as bare floor */
+    kCase(-5.825, -2.65, Math.PI / 2, 1.70, 1.30, 0, CT_Y - CT_T, [
+      { h: CT_Y - CT_T - TOE, cells: [
+        { w: 0.85, kind: 'drawers3' }, { w: 0.85, kind: 'door' }] }
+    ], { toe: true });
+    /* countertops: a slab that overhangs the fronts by 0.05 (S3.1.6) */
+    function kTop(w, d, x, z) {
+      var m = new T.Mesh(
+        NICE ? roundedGeo(w, CT_T, d, 0.02) : new T.BoxGeometry(w, CT_T, d),
+        PBR ? new T.MeshStandardMaterial({ map: woodLight, color: kWoodK,
+                                           roughness: 0.42, envMapIntensity: 0.35 })
+            : new T.MeshLambertMaterial({ color: 0xc89a66, map: woodLight || null }));
+      m.position.set(x, CT_Y - CT_T / 2, z);
+      finish(m); scene.add(m); return m;
+    }
+    /* the worktop breaks either side of the apron sink: a counter that
+       runs THROUGH the bowl leaves the basin a tray sitting on top */
+    kTop(1.77, 1.49, -3.665, NZ + 0.745);
+    kTop(1.88, 1.49, -0.040, NZ + 0.745);
+    kTop(2.40, 1.49, 3.70, NZ + 0.745);
+    kTop(1.35, 1.80, WXK + 0.675, -2.65);
+    blobShadow(2.7, 0.75, -1.825, BZ);
+    blobShadow(1.2, 0.75, 3.70, BZ);
+    blobShadow(0.68, 0.9, WXK + 0.65, -2.65);
+
+    /* the tile field: counter line to the underside of the uppers, the
+       whole run, both walls (S7.4) */
+    kTile(9.40, UP_Y0 - CT_Y, 0.15, (CT_Y + UP_Y0) / 2, NZ + 0.012);
+    kTile(1.85, UP_Y0 - CT_Y, WXK + 0.012, (CT_Y + UP_Y0) / 2, -2.65, Math.PI / 2);
+
+    /* ---- the uppers ---------------------------------------------------
+       Left of the window: open bays, loaded (S7.3). Right of it: a closed
+       run with all six parts of S3.1. Both align to the window. */
+    kCase(-3.75, NZ + 0.25, 0, 1.50, 0.50, UP_Y0, UP_Y1, [
+      { h: 1.83, kind: 'bays', bays: 2, tiers: 3, depth: 0.48 }
+    ]);
+    kCase(0.01, NZ + UP_D / 2, 0, 1.58, UP_D, UP_Y0, UP_Y1, [
+      { h: 1.33, cells: [{ w: 1, kind: 'doors2' }] },
+      { h: 0.50, cells: [{ w: 1, kind: 'doors2' }] }
+    ]);
+    /* crown: the ceiling-to-upper gap gets filled (S1) */
+    if (KD2) {
+      box(1.62, 0.10, 0.60, C.cab, -3.75, UP_Y1 + 0.05, NZ + 0.30);
+      box(1.70, 0.10, UP_D + 0.08, C.cab, 0.01, UP_Y1 + 0.05, NZ + UP_D / 2 + 0.04);
+      box(1.56, 0.07, 0.52, C.cabShade, -3.75, UP_Y1 + 0.135, NZ + 0.28);
+      box(1.64, 0.07, UP_D, C.cabShade, 0.01, UP_Y1 + 0.135, NZ + UP_D / 2);
+    }
+
+    /* ---- the larder: a full-height hutch closing the east end --------- */
+    kCase(5.65, NZ + 0.40, 0, 1.50, 0.80, 0, UP_Y1, [
+      { h: 1.74, cells: [{ w: 1, kind: 'doors2' }] },
+      { h: 0.10, kind: 'ledge' },
+      { h: 1.30, kind: 'bays', bays: 2, tiers: 2, depth: 0.56 },
+      { h: 1.05, cells: [{ w: 1, kind: 'doors2' }] }
+    ], { toe: true });
+    if (KD2) {
+      box(1.62, 0.10, 0.88, C.cab, 5.65, UP_Y1 + 0.05, NZ + 0.44);
+      box(1.56, 0.07, 0.80, C.cabShade, 5.65, UP_Y1 + 0.135, NZ + 0.40);
+    }
+    blobShadow(0.78, 0.45, 5.65, NZ + 0.40);
+
+    /* ---- bay contents: 3-6 objects, never the same height twice ------- */
+    if (KD2) kBayFill.forEach(function (b) {
+      var g = b[0], x0 = b[1], x1 = b[2], y = b[3], z = b[4], s = b[5];
+      var w = x1 - x0, xm = (x0 + x1) / 2;
+      if (s % 4 === 0) {
+        kPlates(g, x0 + 0.13, y, z, 0.115, C.cream);
+        kJar(g, xm + 0.02, y, z - 0.02, 0.075, 0.20, KJARC[s % 6]);
+        kBowl(g, x1 - 0.12, y, z + 0.03, 0.115, C.terracotta);
+        if (KD3) kCups(g, x0 + 0.06, y, z + 0.14, 2, C.teal);
+      } else if (s % 4 === 1) {
+        kBooks(g, x0 + 0.10, y, z - 0.20, 4, 0.075, s);
+        kCake(g, xm + 0.14, y, z, C.cream);
+        if (KD3) kJar(g, x1 - 0.10, y, z + 0.06, 0.06, 0.15, C.brass);
+      } else if (s % 4 === 2) {
+        kJar(g, x0 + 0.11, y, z - 0.02, 0.085, 0.26, C.teal);
+        kJar(g, x0 + 0.30, y, z + 0.02, 0.065, 0.18, C.terracotta);
+        kPlates(g, x1 - 0.14, y, z - 0.01, 0.105, C.linen);
+        if (KD3) kCups(g, xm - 0.02, y, z + 0.15, 3, C.cream);
+      } else {
+        kPlant(g, x0 + 0.13, y, z, 0.30, C.cream, GLOSS, 'mound', false);
+        kBowl(g, xm + 0.10, y, z - 0.02, 0.13, C.terracotta);
+        kJar(g, x1 - 0.11, y, z + 0.04, 0.075, 0.22, C.oxblood);
+        if (KD3) kPlates(g, xm + 0.10, y, z + 0.16, 0.09, C.cream);
+      }
+    });
+
+    /* ---- the sink: a farmhouse apron proud of the run, under the window */
+    (function () {
+      var SX = -1.88, SZF = NZ + BASE_D + 0.055;   /* apron face */
+      /* the apron runs up to the bowl's rim, and the bowl stands proud of
+         the worktop: a flat grey rectangle on the counter reads as a tray */
+      var CER = { rough: 0.22, metal: 0.0, envInt: 0.45 };
+      /* the apron IS the bowl's front: it runs to the rim, proud of the run */
+      rbox(1.72, 1.10, 0.14, 0.03, 0xf1eee7, SX, 0.640,
+           SZF - 0.06, null, CER);
+      if (KD3) box(1.64, 0.03, 0.02, C.cabShade, SX, 0.20, SZF, null, MATT);
+      /* four rim bars, not a solid block: the dark interior has to be
+         visible through the opening or the sink reads as a grey tray */
+      box(1.80, 0.55, 0.10, 0xf1eee7, SX, 0.910, -5.10, null, CER);
+      box(1.80, 0.55, 0.10, 0xf1eee7, SX, 0.910, -4.04, null, CER);
+      box(0.10, 0.55, 0.96, 0xf1eee7, SX - 0.85, 0.910, -4.57, null, CER);
+      box(0.10, 0.55, 0.96, 0xf1eee7, SX + 0.85, 0.910, -4.57, null, CER);
+      box(1.60, 0.42, 0.96, 0x454b51, SX, 0.865, -4.57, null,
+          { rough: 0.35, metal: 0.55 });
+      if (KD3) {                            /* a drain, and a wet sheen */
+        cyl(0.075, 0.075, 0.02, C.steel, SX, 1.082, -4.57, null, 12, CHROME);
+        box(1.52, 0.01, 0.88, 0x5b656d, SX, 1.080, -4.57, null,
+            { rough: 0.12, metal: 0.7 });
+      }
+      cyl(0.05, 0.06, 0.52, C.steel, SX, CT_Y + 0.26, NZ + 0.30, null, 12, CHROME);
+      var neck = cyl(0.04, 0.04, 0.50, C.steel, SX, CT_Y + 0.50, NZ + 0.50,
+                     null, 10, CHROME);
+      neck.rotation.x = 1.25;
+      cyl(0.035, 0.035, 0.20, C.steel, SX, CT_Y + 0.40, NZ + 0.72, null, 8, CHROME);
+      cyl(0.05, 0.02, 0.04, C.steel, SX, CT_Y + 0.29, NZ + 0.72, null, 8, CHROME);
+      cyl(0.028, 0.028, 0.13, C.steel, SX + 0.34, CT_Y + 0.10, NZ + 0.26,
+          null, 8, CHROME);
+      if (KD2) {                            /* the sink is a used sink */
+        cyl(0.10, 0.12, 0.16, C.teal, SX + 0.52, CT_Y + 0.08, NZ + 0.28,
+            null, 12, GLOSS);
+        cyl(0.02, 0.02, 0.20, C.wood2, SX + 0.50, CT_Y + 0.22, NZ + 0.28,
+            null, 6, WOODM);
+        cyl(0.02, 0.02, 0.18, C.wood2, SX + 0.55, CT_Y + 0.21, NZ + 0.31,
+            null, 6, WOODM);
+      }
+    })();
 
     /* WINDOW (zone: window): the weather lives outside the glass. The
        pane is a canvas the painter redraws when the sky changes; unlit
@@ -1315,28 +1700,84 @@
     box(2.1, 0.1, 0.16, C.cab, 0, 2.52, 0.1, winG);
     box(0.12, 1.9, 0.16, C.cab, -1.02, 3.38, 0.1, winG);
     box(0.12, 1.9, 0.16, C.cab, 1.02, 3.38, 0.1, winG);
-    rbox(2.14, 0.22, 0.14, 0.04, C.orange, 0, 4.14, 0.2, winG, { rough: 0.9 });
-    rbox(2.1, 0.2, 0.12, 0.04, 0xd28f36, 0, 3.95, 0.19, winG, { rough: 0.9 });
-    rbox(2.06, 0.18, 0.1, 0.04, C.orange, 0, 3.78, 0.18, winG, { rough: 0.9 });
+    rbox(2.14, 0.22, 0.14, 0.04, C.terracotta, 0, 4.14, 0.2, winG, { rough: 0.9 });
+    rbox(2.1, 0.2, 0.12, 0.04, C.terraDeep, 0, 3.95, 0.19, winG, { rough: 0.9 });
+    rbox(2.06, 0.18, 0.1, 0.04, C.terracotta, 0, 3.78, 0.18, winG, { rough: 0.9 });
 
-    /* counter props */
-    if (DETAIL >= 2) {
-      cyl(0.07, 0.07, 0.4, C.red, -3.5, 1.38, -4.7, null, 8, GLOSS);
-      cyl(0.07, 0.07, 0.34, 0x6a4a2f, -3.3, 1.35, -4.85, null, 8, GLOSS);
-      cyl(0.12, 0.12, 0.2, 0xead9b8, -0.15, 1.28, -4.75, null, 10);
-      box(0.4, 0.14, 0.4, 0xdad2c2, -0.55, 1.25, -4.8, null, GLOSS);
+    /* the window earns a real sill, and the sill earns its plants — two
+       of the three kitchen plates put them there (S7.7) */
+    box(2.24, 0.07, 0.34, C.cab, 0, 2.535, 0.185, winG, MATT);
+    if (KD3) box(2.30, 0.05, 0.05, C.cabShade, 0, 2.485, 0.34, winG, MATT);
+    if (KD2) {
+      kPlant(winG, -0.74, 2.57, 0.20, 0.44, C.terracotta, { rough: 0.85 },
+             'mound', false);
+      kPlant(winG, 0.72, 2.57, 0.19, 0.38, C.cream, GLOSS, 'spray', false);
+      kJar(winG, 0.13, 2.57, 0.22, 0.06, 0.17, C.teal);
     }
-    if (DETAIL >= 3) {
-      rbox(0.7, 0.05, 0.45, 0.02, 0xb98c58, -0.95, 1.21, -4.5, null,
-           { rough: 0.7, map: woodLight });
-      cyl(0.1, 0.14, 0.28, C.bread, -0.95, 1.36, -4.5, null, 10);
-      cyl(0.16, 0.2, 0.26, C.steel, -1.5, 1.32, -4.75, null, 14, CHROME); // kettle
-      cyl(0.03, 0.03, 0.16, C.steel, -1.35, 1.48, -4.75, null, 8, CHROME);
-      rbox(0.42, 0.3, 0.24, 0.05, C.steel, -3.95, 1.34, -4.6, null, STEEL); // toaster
+
+    /* ---- counter clutter (S7.6, S4) -----------------------------------
+       Every surface over 0.5u2 carries at least two props: a coffee
+       machine and mugs, a canister set, a crock of utensils, a board with
+       produce, a kettle, a fruit bowl, a bread bin, a plant. */
+    if (DETAIL >= 2) {
+      /* the coffee station, run A left */
+      rbox(0.46, 0.50, 0.40, 0.04, C.ink, -4.02, 1.38, -4.78, null, { rough: 0.5 });
+      box(0.50, 0.06, 0.44, C.graphite, -4.02, 1.66, -4.78, null, STEEL);
+      box(0.34, 0.05, 0.05, HW, -4.02, 1.19, -4.56, null, STEEL);
+      if (KD3) {
+        box(0.16, 0.10, 0.02, C.cream, -4.02, 1.52, -4.575, null, GLOSS);
+        cyl(0.055, 0.05, 0.09, C.cream, -4.02, 1.185, -4.60, null, 10, GLOSS);
+      }
+      kCups(null, -3.62, 1.13, -4.30, 2, C.teal);
+      /* canister set, three heights */
+      kJar(null, -3.36, 1.13, -5.06, 0.105, 0.32, C.cream);
+      kJar(null, -3.12, 1.13, -5.08, 0.090, 0.25, C.terracotta);
+      kJar(null, -2.92, 1.13, -5.05, 0.075, 0.19, C.oxblood);
+      /* the crock of utensils, run A right */
+      cyl(0.115, 0.100, 0.30, C.terracotta, -0.86, 1.28, -5.04, null, 12, GLOSS);
+      cyl(0.020, 0.020, 0.30, C.wood2, -0.90, 1.52, -5.06, null, 6, WOODM);
+      cyl(0.020, 0.020, 0.26, C.wood2, -0.82, 1.50, -5.02, null, 6, WOODM);
+      /* a board with produce on it */
+      rbox(0.76, 0.05, 0.52, 0.02, kWoodK, -0.24, 1.155, -4.44, null, kWoodO);
+      kSph(null, 0.085, C.oxblood, -0.40, 1.24, -4.48, 0.9);
+      kSph(null, 0.075, C.oxblood, -0.24, 1.23, -4.36, 0.9);
+      kSph(null, 0.070, C.leaf, -0.08, 1.23, -4.52, 0.8);
+      /* the kettle: a body, a lid, a spout and a handle */
+      cyl(0.175, 0.155, 0.26, C.terracotta, 0.44, 1.26, -4.94, null, 14, GLOSS);
+      cyl(0.085, 0.105, 0.05, C.terracotta, 0.44, 1.415, -4.94, null, 12, GLOSS);
+      if (KD3) {
+        var sp = cyl(0.025, 0.055, 0.20, C.terracotta, 0.60, 1.34, -4.86,
+                     null, 8, GLOSS);
+        sp.rotation.z = -0.75; sp.rotation.y = 0.5;
+        var hd = box(0.03, 0.03, 0.26, HW, 0.44, 1.47, -4.94, null, STEEL);
+        hd.rotation.x = 0.0;
+      }
+      /* run B: a fruit bowl, a bread bin, bowls and a plant */
+      cyl(0.26, 0.20, 0.15, C.cream, 2.98, 1.205, -4.60, null, 16, GLOSS);
+      kSph(null, 0.075, C.oxblood, 2.90, 1.30, -4.62, 0.9);
+      kSph(null, 0.070, C.brass, 3.06, 1.29, -4.55, 0.9);
+      if (KD3) kSph(null, 0.065, C.leaf, 3.00, 1.31, -4.70, 0.85);
+      rbox(0.54, 0.30, 0.36, 0.05, C.teal, 3.72, 1.28, -4.98, null, GLOSS);
+      if (KD3) box(0.46, 0.02, 0.30, 0x2f9a92, 3.72, 1.44, -4.96, null, GLOSS);
+      kPlates(null, 3.66, 1.13, -4.34, 0.135, C.linen);
+      kPlant(null, 4.48, 1.13, -4.66, 0.56, C.terracotta, { rough: 0.85 },
+             'fiddle', false);
+      kJar(null, 4.14, 1.13, -5.08, 0.085, 0.24, C.teal);
+      /* the L-return: a toaster, jars and a plant */
+      rbox(0.44, 0.28, 0.30, 0.05, C.steel, -5.86, 1.28, -3.14, null, STEEL);
+      if (KD3) {
+        box(0.02, 0.05, 0.20, C.graphite, -5.63, 1.30, -3.14, null, STEEL);
+        box(0.30, 0.03, 0.12, C.cabShade, -5.86, 1.43, -3.14, null, MATT);
+      }
+      kJar(null, -6.18, 1.13, -2.62, 0.095, 0.28, C.oxblood);
+      kJar(null, -6.20, 1.13, -2.38, 0.075, 0.20, C.cream);
+      kPlant(null, -5.72, 1.13, -2.10, 0.50, C.linen, { rough: 0.8 },
+             'spray', false);
     }
 
     /* ---- STOVE (zone: counter) with hood ------------------------------- */
     var counter = zoneGroup('counter', 1.7, 0, -4.55);
+    box(1.40, 0.07, 1.32, C.ink, 0, 0.035, 0, counter, { rough: 0.7 });
     rbox(1.5, 1.02, 1.45, 0.05, 0x3f444a, 0, 0.57, 0, counter, { rough: 0.45, metal: 0.5 });
     box(1.3, 0.62, 0.06, 0x556069, 0, 0.5, 0.74, counter, STEEL);
     if (DETAIL >= 3) box(0.9, 0.34, 0.02, 0x1c2024, 0, 0.5, 0.78, counter, GLOSS);
@@ -1346,17 +1787,64 @@
     cyl(0.16, 0.16, 0.03, 0x14161a, 0.4, 1.15, 0.3, counter, 12);
     cyl(0.16, 0.16, 0.03, 0x14161a, -0.4, 1.15, -0.35, counter, 12);
     cyl(0.16, 0.16, 0.03, 0x14161a, 0.4, 1.15, -0.35, counter, 12);
+    if (DETAIL >= 3) {                 /* grates: a cooktop, not a slab */
+      [-0.4, 0.4].forEach(function (gx) {
+        [0.3, -0.35].forEach(function (gz) {
+          box(0.40, 0.022, 0.05, C.graphite, gx, 1.175, gz, counter, MATT);
+          box(0.05, 0.022, 0.40, C.graphite, gx, 1.175, gz, counter, MATT);
+        });
+      });
+    }
     cyl(0.3, 0.3, 0.3, 0x9aa2a9, -0.4, 1.32, 0.3, counter, 16, STEEL);
     cyl(0.31, 0.31, 0.05, 0x7d858c, -0.4, 1.5, 0.3, counter, 16, STEEL);
-    cyl(0.26, 0.26, 0.22, C.red, 0.4, 1.28, -0.35, counter, 16, GLOSS);
+    cyl(0.26, 0.26, 0.22, C.terracotta, 0.4, 1.28, -0.35, counter, 16, GLOSS);
     var steam = box(0.16, 0.5, 0.16, 0xf2ead6, -0.4, 2.0, 0.3, counter);
     steam.material.transparent = true; steam.material.opacity = 0;
     if (SHADOWS) steam.castShadow = false;
     var steam2 = box(0.1, 0.34, 0.1, 0xf2ead6, -0.32, 2.35, 0.34, counter);
     steam2.material.transparent = true; steam2.material.opacity = 0;
     if (SHADOWS) steam2.castShadow = false;
-    rbox(1.7, 0.5, 1.0, 0.06, C.wall, 0, 3.05, -0.2, counter);
-    rbox(1.1, 1.8, 0.8, 0.06, C.wall, 0, 4.2, -0.35, counter);
+    /* ---- the HOOD: every kitchen plate has one and it is the room's
+       dark anchor (S7.5). A lip, a tapered canopy, a chimney to the line
+       the uppers stop on, brass banding, and two warm downlights so the
+       cooktop sits in a pool of light. ---- */
+    (function () {
+      /* the lip hangs a working distance over the cooktop, not up level
+         with the uppers — a hood that high reads as a chimney breast */
+      var HY0 = 2.10, LIPW = 1.76, LIPD = 1.20, WZ = NZ + 4.55;  /* wall, local */
+      box(LIPW, 0.09, LIPD, C.ink, 0, HY0 + 0.045, WZ + LIPD / 2, counter,
+          { rough: 0.45 });
+      if (KD2) box(LIPW + 0.03, 0.045, LIPD + 0.03, HW, 0, HY0 + 0.012,
+                   WZ + LIPD / 2, counter, STEEL);
+      var hg = new T.Group();
+      hg.position.set(0, HY0 + 0.44, WZ + 0.60);
+      hg.scale.z = 0.679;
+      counter.add(hg);
+      var can = cyl(0.622, 1.188, 0.70, C.ink, 0, 0, 0, hg, 4, { rough: 0.45 });
+      can.rotation.y = Math.PI / 4;
+      box(0.86, 1.51, 0.52, C.ink, 0, HY0 + 1.545, WZ + 0.26, counter,
+          { rough: 0.45 });
+      if (KD2) {
+        box(0.90, 0.05, 0.56, HW, 0, HY0 + 0.810, WZ + 0.26, counter, STEEL);
+        box(0.90, 0.05, 0.56, HW, 0, HY0 + 2.270, WZ + 0.26, counter, STEEL);
+      }
+      /* the underside is not the same black: a lit hood glows */
+      var und = new T.Mesh(new T.PlaneGeometry(LIPW - 0.16, LIPD - 0.16),
+        PBR ? new T.MeshStandardMaterial({ color: 0x30363c, roughness: 0.6,
+                                           emissive: 0xffca7a,
+                                           emissiveIntensity: 0.16 })
+            : new T.MeshLambertMaterial({ color: 0x4a5158 }));
+      und.rotation.x = Math.PI / 2;
+      und.position.set(0, HY0 - 0.002, WZ + LIPD / 2);
+      counter.add(und);
+      if (KD3) [-0.42, 0.42].forEach(function (lx) {
+        var lp = new T.Mesh(new T.CircleGeometry(0.085, 12),
+          new T.MeshBasicMaterial({ color: 0xffe6b4 }));
+        lp.rotation.x = Math.PI / 2;
+        lp.position.set(lx, HY0 - 0.006, WZ + LIPD / 2);
+        counter.add(lp);
+      });
+    })();
     blobShadow(1.0, 0.85, 1.7, -4.35);
 
     /* ---- FRIDGE (zone: fridge) — brushed steel, teal panels, magnets --- */
@@ -1375,6 +1863,8 @@
          { rough: 0.3, metal: 0.05, envInt: 0.15 });
     box(0.07, 1.3, 0.09, C.steel, 0.62, 2.95, 0.82, fridge, CHROME);
     box(0.07, 1.0, 0.09, C.steel, 0.62, 1.07, 0.82, fridge, CHROME);
+    if (DETAIL >= 2)                    /* a plinth: appliances have feet */
+      box(1.72, 0.13, 0.06, C.graphite, 0, 0.065, 0.72, fridge, { rough: 0.6 });
     var magnets = new T.Group();
     magnets.position.set(0, 0, 0.85);
     fridge.add(magnets);
@@ -1399,6 +1889,23 @@
     pantryDoor.position.set(0.2, 1.6, 0);
     pantryDoor.userData.zone = 'board';
     finish(pantryDoor); board.add(pantryDoor);
+    if (DETAIL >= 2) {
+      /* a door is stiles, rails and two panels (S3.1). These are CHILDREN
+         of the slab so they step aside with it on the board lean-in. */
+      [[0.62, 1.10], [-0.72, 1.26]].forEach(function (pn) {
+        box(0.02, pn[1], 1.12, 0x6f5433, 0.07, pn[0], 0, pantryDoor,
+            { rough: 0.8 }).userData.zone = 'board';
+        box(0.04, pn[1] - 0.18, 0.94, 0xc79b63, 0.085, pn[0], 0, pantryDoor,
+            PBR ? { rough: 0.7, map: woodDoor } : { rough: 0.75 })
+          .userData.zone = 'board';
+      });
+      box(0.03, 0.12, 1.22, 0x6f5433, 0.075, -0.02, 0, pantryDoor,
+          { rough: 0.8 }).userData.zone = 'board';
+      /* casing stays on the wall: it frames the card when the door opens */
+      box(0.22, 3.36, 0.14, 0xe4ddd1, 0.16, 1.68, -0.87, board);
+      box(0.22, 3.36, 0.14, 0xe4ddd1, 0.16, 1.68, 0.87, board);
+      box(0.22, 0.14, 1.88, 0xe4ddd1, 0.16, 3.29, 0, board);
+    }
     var pknob = cyl(0.055, 0.055, 0.09, 0xd8c48a, 0.3, 1.55, 0.55, board, 10,
                     CHROME);
     pknob.userData.zone = 'board';
@@ -1441,7 +1948,8 @@
     })();
     var pantryJars = [];
     (function () {
-      var JAR_C = [0xe09a3e, 0xc9473d, 0x3fbdb2, 0xcf9a55];
+      /* the kitchen's four accents, no strays (bible S2/S4) */
+      var JAR_C = [C.terracotta, C.oxblood, C.teal, C.brass];
       for (var j = 0; j < 8; j++) {
         var jy = j < 4 ? 1.06 : 1.86;
         var jar = cyl(0.1, 0.1, 0.26, JAR_C[j % 4],
@@ -1451,16 +1959,18 @@
       }
     })();
     /* ---- WALL CALENDAR (zone: calendar) on the back wall --------------- */
-    var calG = zoneGroup('calendar', 3.6, 0, -5.36);
+    var calG = zoneGroup('calendar', 3.92, 0, -5.36);
     var calFace = new T.Mesh(new T.PlaneGeometry(1.5, 1.9), mat(0xf6f1e4, { rough: 0.9 }));
     calFace.position.set(0, 3.0, 0.05);
     calG.add(calFace);
-    box(1.62, 0.1, 0.08, C.red, 0, 4.0, 0.02, calG, GLOSS);
+    box(1.62, 0.1, 0.08, C.oxblood, 0, 4.0, 0.02, calG, GLOSS);
     if (DETAIL >= 3) {                  /* wall clock between calendar and door */
-      var clockFace = cyl(0.3, 0.3, 0.06, 0xffffff, 4.45, 4.75, -5.34, null, 20, GLOSS);
+      var clockFace = cyl(0.3, 0.3, 0.06, 0xffffff, 3.92, 4.88, -5.34, null, 20, GLOSS);
       clockFace.rotation.x = Math.PI / 2;
-      box(0.03, 0.18, 0.02, C.dark, 4.45, 4.8, -5.28);
-      box(0.13, 0.03, 0.02, C.dark, 4.5, 4.75, -5.28);
+      cyl(0.34, 0.34, 0.04, HW, 3.92, 4.88, -5.35, null, 20, STEEL)
+        .rotation.x = Math.PI / 2;
+      box(0.03, 0.18, 0.02, C.dark, 3.92, 4.93, -5.28);
+      box(0.13, 0.03, 0.02, C.dark, 3.97, 4.88, -5.28);
     }
 
     /* ---- DOOR (zone: door) on the back wall right ---------------------- */
@@ -1494,46 +2004,279 @@
     cyl(0.035, 0.035, 0.1, C.steel, 0.28, 1.68, 0, radio, 8, CHROME);
     var needle = box(0.04, 0.22, 0.04, 0x3a332a, 0.28, 1.78, 0, radio);
 
-    /* ---- ISLAND (decor) with a marble top + stools ---------------------- */
-    rbox(3.4, 1.0, 2.0, 0.06, C.cab, -0.4, 0.56, 0.9);
-    if (DETAIL >= 2) {
-      box(3.2, 0.66, 0.05, C.cabShade, -0.4, 0.5, 1.92);
-      knob(-1.1, 0.62, 1.97); knob(0.3, 0.62, 1.97);
-    }
+    /* ---- ISLAND: walnut casework under a marble top ---------------------
+       The room was cream on cream; the island is the biggest object below
+       the counter line, so it carries the mid-dark note that gives the
+       floor plane an edge. Real casework (S3.1) on the face the camera
+       actually sees — the south side. */
+    kCase(-0.4, 0.9, 0, 3.40, 2.00, 0, CT_Y - CT_T, [
+      { h: CT_Y - CT_T - TOE, cells: [
+        { w: 1.10, kind: 'drawers3' }, { w: 1.30, kind: 'doors2' },
+        { w: 1.00, kind: 'drawers2' }] }
+    ], { toe: true, face: 0x6f5540, body: 0x584129 });
     var islandTop = new T.Mesh(
-      NICE ? roundedGeo(3.7, 0.14, 2.3, 0.05) : new T.BoxGeometry(3.7, 0.14, 2.3),
-      PBR ? new T.MeshStandardMaterial({ map: marble, roughness: 0.2,
-                                         envMapIntensity: 0.3 })
-          : new T.MeshLambertMaterial({ color: 0xffffff, map: marble || null }));
-    islandTop.position.set(-0.4, 1.13, 0.9);
+      NICE ? roundedGeo(3.74, CT_T, 2.34, 0.03) : new T.BoxGeometry(3.74, CT_T, 2.34),
+      PBR ? new T.MeshStandardMaterial({ map: marble, color: 0xe4dfd5,
+                                         roughness: 0.24, envMapIntensity: 0.3 })
+          : new T.MeshLambertMaterial({ color: 0xe4dfd5, map: marble || null }));
+    islandTop.position.set(-0.4, CT_Y - CT_T / 2, 0.9);
     finish(islandTop); scene.add(islandTop);
     if (DETAIL >= 2) {
-      rbox(1.1, 0.06, 0.75, 0.02, C.red, -1.2, 1.23, 0.7, null, GLOSS);
-      for (var cx = 0; cx < 4; cx++) for (var cz = 0; cz < 2; cz++) {
-        cyl(0.09, 0.07, 0.1, 0xf5e6d0, -1.55 + cx * 0.24, 1.31, 0.55 + cz * 0.3, null, 10);
-        cyl(0.07, 0.09, 0.08, (cx + cz) % 2 ? C.teal : C.red,
-            -1.55 + cx * 0.24, 1.4, 0.55 + cz * 0.3, null, 10, GLOSS);
-      }
-      cyl(0.34, 0.26, 0.16, 0xead9b8, 0.7, 1.3, 0.9, null, 14);
-      cyl(0.09, 0.09, 0.1, C.orange, 0.58, 1.42, 0.85, null, 10, GLOSS);
-      cyl(0.09, 0.09, 0.1, C.red, 0.82, 1.42, 0.95, null, 10, GLOSS);
+      /* a rail on the east end: an island is a place people put a towel */
+      cyl(0.02, 0.02, 0.90, HW, 1.36, 0.86, 0.90, null, 8, STEEL).rotation.x = Math.PI / 2;
+      rbox(0.26, 0.44, 0.05, 0.02, C.teal, 1.36, 0.68, 0.72, null, { rough: 0.98 });
+      /* the top carries six things, none of them the same height (S4) */
+      rbox(1.06, 0.05, 0.70, 0.02, kWoodK, -1.30, 1.155, 0.86, null, kWoodO);
+      kCups(null, -1.62, 1.18, 0.72, 3, C.cream);
+      cyl(0.09, 0.11, 0.15, C.teal, -1.06, 1.255, 0.94, null, 12, GLOSS);
+      cyl(0.30, 0.22, 0.16, C.cream, 0.62, 1.21, 0.72, null, 16, GLOSS);
+      kSph(null, 0.080, C.terracotta, 0.52, 1.31, 0.68, 0.9);
+      kSph(null, 0.075, C.brass, 0.72, 1.30, 0.78, 0.9);
+      kSph(null, 0.070, C.leaf, 0.64, 1.31, 0.62, 0.85);
+      /* a cookbook left open, and a jug of branches */
+      box(0.34, 0.06, 0.26, C.oxblood, -0.28, 1.16, 1.52, null, MATT);
+      box(0.32, 0.05, 0.24, C.cream, -0.28, 1.215, 1.53, null, MATT);
+      cyl(0.11, 0.13, 0.30, C.terracotta, 0.96, 1.28, 1.44, null, 12, GLOSS);
+      cyl(0.02, 0.02, 0.42, C.wood2, 0.94, 1.60, 1.44, null, 6, WOODM);
+      cyl(0.02, 0.02, 0.34, C.wood2, 1.00, 1.56, 1.50, null, 6, WOODM);
     }
     if (DETAIL >= 3) {
-      cyl(0.16, 0.12, 0.2, 0xc9704f, 0.15, 1.3, 1.5, null, 12);
-      cyl(0.02, 0.02, 0.3, 0x4e6e3e, 0.15, 1.5, 1.5, null, 6);
-      cyl(0.14, 0.02, 0.2, C.leaf, 0.15, 1.66, 1.5, null, 8);
-      cyl(0.1, 0.02, 0.16, C.leaf, 0.06, 1.6, 1.44, null, 8);
+      kSph(null, 0.075, C.leaf, 0.92, 1.80, 1.42, 0.8);
+      kSph(null, 0.065, C.leaf, 1.02, 1.72, 1.51, 0.8);
+      kPlant(null, -1.94, 1.13, 1.42, 0.42, C.terracotta, { rough: 0.85 },
+             'mound', false);
+      box(0.30, 0.05, 0.22, C.slate, -0.32, 1.265, 1.51, null, MATT);
     }
     blobShadow(2.1, 1.4, -0.4, 0.9);
+    /* a stool: a turned column, a footring and a saddle seat */
     function stool(x, z) {
-      var seat = new T.Mesh(new T.CylinderGeometry(0.3, 0.26, 0.08, 14),
+      var seat = new T.Mesh(new T.CylinderGeometry(0.30, 0.26, 0.08, 14),
         PBR ? new T.MeshStandardMaterial({ map: woodLight, roughness: 0.6 })
             : new T.MeshLambertMaterial({ color: 0xc89a66, map: woodLight || null }));
       seat.position.set(x, 0.86, z); finish(seat); scene.add(seat);
       cyl(0.05, 0.07, 0.84, C.wood2, x, 0.42, z, null, 10, WOODM);
+      if (DETAIL >= 2) {
+        cyl(0.20, 0.22, 0.03, C.wood2, x, 0.26, z, null, 12, WOODM);
+        cyl(0.17, 0.19, 0.03, C.wood2, x, 0.04, z, null, 12, WOODM);
+      }
       blobShadow(0.34, 0.3, x, z);
     }
-    stool(1.9, 0.5); stool(1.9, 1.5);
+    stool(1.90, 0.12); stool(1.90, 1.08);
+    stool(-1.32, 2.62); stool(0.18, 2.62);
+
+    /* ---- the kitchen floor (S7.1) --------------------------------------
+       Bare plank was over half the frame and the island was the only
+       object below the counter line. A runner down the work aisle, a mat
+       at the pantry, floor plants, and a family table with four chairs on
+       its own rug in the east half — which is the foreground. */
+    function kRug(w, d, x, z, fieldC, borderC, round) {
+      /* below tier 2 the field never draws, so the base plane wears the
+         field colour there: a Pi should see a rug, not a dark slab */
+      var m = new T.Mesh(round ? new T.CircleGeometry(w, KD3 ? 30 : 16)
+                               : new T.PlaneGeometry(w, d),
+                         mat(KD2 ? borderC : fieldC, { rough: 1.0 }));
+      m.rotation.x = -Math.PI / 2;
+      m.position.set(x, 0.045, z);
+      if (SHADOWS) m.receiveShadow = true;
+      scene.add(m);
+      if (KD2) {
+        var m2 = new T.Mesh(round ? new T.CircleGeometry(w - 0.17, KD3 ? 30 : 16)
+                                  : new T.PlaneGeometry(w - 0.26, d - 0.26),
+                            mat(fieldC, { rough: 1.0 }));
+        m2.rotation.x = -Math.PI / 2;
+        m2.position.set(x, 0.052, z);
+        scene.add(m2);
+      }
+      if (KD3) {                 /* the inner line every woven rug has */
+        [[0.46, borderC, 0.057], [0.58, fieldC, 0.062]].forEach(function (k) {
+          var mi = new T.Mesh(round ? new T.CircleGeometry(w - k[0], 30)
+                                    : new T.PlaneGeometry(w - k[0], d - k[0]),
+                              mat(k[1], { rough: 1.0 }));
+          mi.rotation.x = -Math.PI / 2;
+          mi.position.set(x, k[2], z);
+          scene.add(mi);
+        });
+      }
+      return m;
+    }
+    /* a chair: splayed legs, a seat with a pad, and a raked back */
+    function kChair(x, z, rot) {
+      var g = new T.Group();
+      g.position.set(x, 0, z);
+      g.rotation.y = rot || 0;
+      scene.add(g);
+      [[-0.21, -0.21], [0.21, -0.21], [-0.21, 0.21], [0.21, 0.21]]
+        .forEach(function (lg) {
+          var m = cyl(0.034, 0.026, 0.58, C.wood2, lg[0], 0.29, lg[1], g, 8, WOODM);
+          m.rotation.z = lg[0] < 0 ? -0.07 : 0.07;
+          m.rotation.x = lg[1] < 0 ? 0.07 : -0.07;
+        });
+      rbox(0.52, 0.06, 0.50, 0.02, kWoodK, 0, 0.585, 0, g, kWoodO);
+      if (KD2) rbox(0.46, 0.08, 0.44, 0.03, C.linen, 0, 0.652, 0.01, g,
+                    { rough: 0.98 });
+      [-0.23, 0.23].forEach(function (dx) {
+        var u = cyl(0.028, 0.028, 0.64, C.wood2, dx, 0.90, -0.245, g, 8, WOODM);
+        u.rotation.x = -0.11;
+      });
+      rbox(0.50, 0.10, 0.05, 0.02, kWoodK, 0, 1.185, -0.30, g, kWoodO);
+      if (KD2) rbox(0.46, 0.07, 0.04, 0.02, kWoodK, 0, 0.94, -0.26, g, kWoodO);
+      blobShadow(0.30, 0.30, x, z);
+      return g;
+    }
+    /* the family table: the foreground the room did not have */
+    (function () {
+      var TX = 4.45, TZ = 1.35;
+      kRug(1.92, 0, TX, TZ, 0x9a8360, 0x7d4531, true);
+      cyl(0.98, 0.98, 0.08, kWoodK, TX, 0.940, TZ, null, KD3 ? 28 : 14, kWoodO);
+      if (KD3) cyl(0.96, 0.92, 0.05, C.wood2, TX, 0.878, TZ, null, 28, WOODM);
+      cyl(0.13, 0.17, 0.84, C.wood2, TX, 0.46, TZ, null, 12, WOODM);
+      [0, 1, 2, 3].forEach(function (i) {
+        var a = i * Math.PI / 2 + Math.PI / 4;
+        var f = box(0.66, 0.09, 0.15, C.wood2, TX + Math.cos(a) * 0.26, 0.055,
+                    TZ + Math.sin(a) * 0.26, null, WOODM);
+        f.rotation.y = -a;
+      });
+      blobShadow(0.95, 0.95, TX, TZ);
+      kChair(TX, TZ - 1.58, 0);
+      kChair(TX - 1.42, TZ, Math.PI / 2);
+      kChair(TX + 1.42, TZ, -Math.PI / 2);
+      kChair(TX + 0.10, TZ + 1.62, Math.PI);
+      if (DETAIL >= 2) {                       /* laid, not staged */
+        cyl(0.24, 0.19, 0.13, C.cream, TX - 0.06, 1.045, TZ - 0.10, null, 16, GLOSS);
+        kSph(null, 0.075, C.oxblood, TX - 0.12, 1.13, TZ - 0.14, 0.9);
+        kSph(null, 0.070, C.brass, TX + 0.02, 1.12, TZ - 0.05, 0.9);
+        cyl(0.085, 0.10, 0.26, C.teal, TX + 0.44, 1.11, TZ + 0.30, null, 12, GLOSS);
+        cyl(0.018, 0.018, 0.34, C.wood2, TX + 0.43, 1.38, TZ + 0.30, null, 6, WOODM);
+        kSph(null, 0.07, C.leaf, TX + 0.42, 1.55, TZ + 0.29, 0.8);
+        kSph(null, 0.06, C.leaf, TX + 0.50, 1.48, TZ + 0.34, 0.8);
+        rbox(0.34, 0.02, 0.26, 0.01, C.oxblood, TX - 0.48, 0.988, TZ + 0.34, null,
+             { rough: 0.98 });
+        rbox(0.34, 0.02, 0.26, 0.01, C.oxblood, TX + 0.42, 0.988, TZ - 0.36, null,
+             { rough: 0.98 });
+        if (KD3) {
+          kPlates(null, TX - 0.48, 0.998, TZ + 0.34, 0.115, C.cream);
+          kPlates(null, TX + 0.42, 0.998, TZ - 0.36, 0.115, C.cream);
+        }
+      }
+    })();
+    /* the work aisle gets a runner; the pantry gets a mat */
+    kRug(5.30, 1.14, -1.85, -2.92, 0x7c4130, 0x4a2a24, false);
+    /* floor plants, a bin and a market basket: nothing meets the plank
+       without a contact shadow */
+    kPlant(null, 6.02, 0, -3.52, 0.92, C.terracotta, { rough: 0.85 }, 'fiddle', true);
+    kPlant(null, -3.05, 0, 4.35, 0.90, C.linen, { rough: 0.8 }, 'spray', true);
+    kPlant(null, 2.72, 0, 4.42, 0.94, C.cream, GLOSS, 'mound', true);
+    /* the path in from the mudroom door, so the south-west corner is a
+       route and not an empty plank field */
+    kRug(3.20, 1.10, -4.85, 3.60, 0x8d5a3c, 0x4a2a24, false);
+    /* a drop bench under the prints: this is where a family puts a bag
+       down, and it is what stopped the west wall reading as a blank */
+    (function () {
+      var BX = -6.14, BZ = 1.78;
+      rbox(0.62, 0.08, 1.58, 0.02, kWoodK, BX, 0.615, BZ, westWallG, kWoodO);
+      [[-0.22, -0.66], [0.22, -0.66], [-0.22, 0.66], [0.22, 0.66]]
+        .forEach(function (lg) {
+          cyl(0.045, 0.036, 0.58, C.wood2, BX + lg[0], 0.29, BZ + lg[1],
+              westWallG, 8, WOODM);
+        });
+      box(0.50, 0.05, 1.38, C.wood2, BX, 0.24, BZ, westWallG, WOODM);
+      if (DETAIL >= 2) {
+        cyl(0.19, 0.16, 0.26, C.cork, BX, 0.38, BZ - 0.46, westWallG, 12,
+            { rough: 0.95 });
+        rbox(0.40, 0.26, 0.40, 0.04, C.linen, BX, 0.38, BZ + 0.44, westWallG,
+             { rough: 0.95 });
+        rbox(0.36, 0.15, 0.36, 0.07, C.teal, BX + 0.02, 0.73, BZ - 0.48,
+             westWallG, { rough: 0.98 });
+        if (KD3) {
+          box(0.30, 0.06, 0.22, C.oxblood, BX + 0.04, 0.685, BZ + 0.42, westWallG);
+          box(0.28, 0.05, 0.20, C.cream, BX + 0.04, 0.740, BZ + 0.43, westWallG);
+        }
+      }
+      blobShadow(0.34, 0.82, BX, BZ, westWallG);
+    })();
+    if (DETAIL >= 2) {
+      cyl(0.22, 0.19, 0.62, C.graphite, -4.34, 0.31, -3.10, null, 12,
+          { rough: 0.5, metal: 0.4 });
+      cyl(0.23, 0.23, 0.05, C.steel, -4.34, 0.645, -3.10, null, 12, STEEL);
+      blobShadow(0.26, 0.26, -4.34, -3.10);
+      cyl(0.30, 0.25, 0.36, C.cork, -6.02, 0.18, -1.92, null, 12, { rough: 0.95 });
+      kSph(null, 0.10, C.terracotta, -6.06, 0.40, -1.96, 0.8);
+      kSph(null, 0.09, C.leaf, -5.96, 0.39, -1.88, 0.8);
+      blobShadow(0.32, 0.32, -6.02, -1.92);
+    }
+    /* a rolling prep cart: the west half of the floor was a 6-unit hole
+       between the island and the pantry, and a cart is what a kitchen
+       actually puts there */
+    (function () {
+      var RX = -4.20, RZ = 1.35;
+      rbox(1.00, 0.08, 0.58, 0.02, kWoodK, RX, 0.98, RZ, null, kWoodO);
+      [[-0.42, -0.22], [0.42, -0.22], [-0.42, 0.22], [0.42, 0.22]]
+        .forEach(function (lg) {
+          cyl(0.032, 0.032, 0.86, C.graphite, RX + lg[0], 0.51, RZ + lg[1],
+              null, 8, STEEL);
+          if (DETAIL >= 2)
+            cyl(0.055, 0.055, 0.06, C.ink, RX + lg[0], 0.06, RZ + lg[1],
+                null, 8, { rough: 0.6 });
+        });
+      box(0.92, 0.05, 0.50, C.wood2, RX, 0.58, RZ, null, WOODM);
+      box(0.92, 0.05, 0.50, C.wood2, RX, 0.26, RZ, null, WOODM);
+      cyl(0.02, 0.02, 0.62, C.graphite, RX + 0.53, 0.98, RZ, null, 8, STEEL)
+        .rotation.x = Math.PI / 2;
+      if (DETAIL >= 2) {
+        kJar(null, RX - 0.34, 1.02, RZ - 0.10, 0.085, 0.24, C.terracotta);
+        kJar(null, RX - 0.16, 1.02, RZ + 0.06, 0.070, 0.17, C.teal);
+        kBowl(null, RX + 0.10, 1.02, RZ - 0.06, 0.145, C.cream);
+        kPlant(null, RX + 0.36, 1.02, RZ + 0.04, 0.42, C.linen, { rough: 0.8 },
+               'mound', false);
+        cyl(0.155, 0.145, 0.16, C.oxblood, RX - 0.26, 0.665, RZ, null, 12, GLOSS);
+        kPlates(null, RX + 0.22, 0.605, RZ, 0.145, C.linen);
+        rbox(0.32, 0.42, 0.05, 0.02, C.teal, RX + 0.53, 0.78, RZ, null,
+             { rough: 0.98 });
+        if (KD3) {
+          rbox(0.36, 0.20, 0.30, 0.04, C.cork, RX - 0.28, 0.365, RZ, null,
+               { rough: 0.95 });
+          kJar(null, RX + 0.22, 0.285, RZ - 0.02, 0.075, 0.20, C.brass);
+        }
+      }
+      blobShadow(0.54, 0.34, RX, RZ);
+    })();
+    /* the south-east corner, past the table: a plant and a lidded basket */
+    kPlant(null, 6.12, 0, -1.86, 0.92, C.terracotta, { rough: 0.85 }, 'mound', true);
+    if (DETAIL >= 2) {
+      cyl(0.30, 0.25, 0.40, C.cork, 5.42, 0.20, -1.10, null, 14, { rough: 0.95 });
+      cyl(0.31, 0.31, 0.05, C.linen, 5.42, 0.425, -1.10, null, 14, { rough: 0.95 });
+      blobShadow(0.32, 0.32, 5.42, -1.10);
+      cyl(0.27, 0.23, 0.34, C.cork, 0.05, 0.17, 4.18, null, 12, { rough: 0.95 });
+      rbox(0.30, 0.13, 0.30, 0.06, C.teal, 0.05, 0.40, 4.18, null, { rough: 0.98 });
+      blobShadow(0.29, 0.29, 0.05, 4.18);
+    }
+
+    /* the west wall's blank panel: two prints and a sconce (S4) */
+    function kArt(y, z, h, w, art) {
+      rbox(0.05, h, w, 0.012, C.slate, WXK + 0.025, y, z, westWallG,
+           { rough: 0.55 });
+      if (KD3) box(0.02, h - 0.05, w - 0.05, C.cream, WXK + 0.050, y, z,
+                   westWallG, MATT);
+      box(0.02, h - 0.13, w - 0.13, art, WXK + 0.058, y, z, westWallG, MATT);
+    }
+    if (DETAIL >= 2) {
+      kArt(2.72, 1.05, 0.74, 0.56, C.teal);
+      kArt(2.72, 1.83, 0.74, 0.56, C.terracotta);
+      if (KD3) kArt(1.92, 1.44, 0.52, 0.40, C.oxblood);
+      /* the one wall light (plate 7). It hangs over the prints, NOT over
+         the L-return: the fridge lean-in flies up that stretch of wall and
+         anything on it lands on the fridge door's card. */
+      box(0.07, 0.16, 0.16, HW, WXK + 0.035, 3.62, 1.44, westWallG, STEEL);
+      cyl(0.02, 0.02, 0.26, HW, WXK + 0.16, 3.62, 1.44, westWallG, 8, STEEL);
+      var scs = new T.Mesh(new T.CylinderGeometry(0.13, 0.19, 0.20, 14, 1, true),
+        PBR ? new T.MeshStandardMaterial({ color: 0xf3e8d2, roughness: 0.8,
+                                           emissive: 0xffd9a0,
+                                           emissiveIntensity: 0.4,
+                                           side: T.DoubleSide })
+            : new T.MeshLambertMaterial({ color: 0xf3e8d2, side: T.DoubleSide }));
+      scs.position.set(WXK + 0.29, 3.56, 1.44);
+      finish(scs, true); westWallG.add(scs);
+    }
 
     /* pendant lamps over the island: warm emissive shades. Grouped so a
        lean-in can hide them — a cord across a focused card breaks the
@@ -1541,16 +2284,21 @@
     var pendants = new T.Group();
     scene.add(pendants);
     if (DETAIL >= 3) {
-      [-1.1, 0.4].forEach(function (px) {
-        var cord = cyl(0.008, 0.008, 1.4, 0x8a8178, px, 4.9, 0.9, pendants, 6);
+      /* they hang a working distance over the island, not at ceiling
+         height where they eat the fridge and the counter run behind */
+      [[-1.10, 0.9], [0.40, 0.9]].forEach(function (p) {
+        var cord = cyl(0.008, 0.008, 2.62, 0x8a8178, p[0], 4.31, p[1], pendants, 6);
         cord.castShadow = false;   // a hair-thin cord throws a room-long streak
-        var shade = new T.Mesh(new T.CylinderGeometry(0.3, 0.42, 0.34, 18, 1, true),
+        var shade = new T.Mesh(new T.CylinderGeometry(0.24, 0.34, 0.30, 18, 1, true),
           new T.MeshStandardMaterial({ color: 0xf0e3c8, roughness: 0.7,
                                        emissive: 0xffdf9e, emissiveIntensity: 0.55,
                                        side: T.DoubleSide }));
-        shade.position.set(px, 4.05, 0.9);
+        shade.position.set(p[0], 2.90, p[1]);
         shade.castShadow = false;
         pendants.add(shade);
+        var cap = cyl(0.05, 0.05, 0.06, C.brass, p[0], 3.05, p[1], pendants, 10,
+                      STEEL);
+        cap.castShadow = false;
       });
     }
 
