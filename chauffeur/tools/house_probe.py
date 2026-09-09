@@ -11,8 +11,10 @@ playwright probes:
 Views: exterior, kitchen, living, mudroom, garage, and lean_<zone> for any
 zone (lean_board, lean_door, lean_radio, lean_calendar, ...). `all` = the
 five room views. Seeds a standard fixture set (two children, a driver, an
-event today, three shopping items, three cars of different bodies) so every
-signal has something honest to show. Requires playwright (skips loudly
+event today, three shopping items, three cars of different bodies, two prep
+kits with only one of them claimed) so every signal has something honest to
+show - including the mudroom bench, which needs a packed AND an unpacked
+group to show both of its backpack states. Requires playwright (skips loudly
 without it, exit 0 — the same bargain live_app makes).
 
 Run from chauffeur/. Screenshots land as <out>/<view>.png, 1400x1000.
@@ -55,6 +57,20 @@ def _seed():
                         color_code='#3b82f6', seat_capacity=7).model_dump())
     storage.add_car(Car(name='Green Wagon', body_type='wagon',
                         color_code='#5f8f4e', seat_capacity=5).model_dump())
+    # the mudroom bench draws one backpack per PACKING GROUP, open while the
+    # group is still short. Two kits match the seeded event, and only one of
+    # them is claimed, so a screenshot carries both states at once — the same
+    # reason the window carries a forecast.
+    from models.schemas import PrepKit
+    for kit in (PrepKit(id='kit_soccer', name='Soccer bag',
+                        items=['Water bottle', 'Shin guards'],
+                        keywords=['soccer']),
+                PrepKit(id='kit_snack', name='Team snack',
+                        items=['Orange slices', 'Cooler'],
+                        keywords=['soccer'], per_person=False)):
+        storage.add_prep_kit(kit.model_dump())
+    for item in ('kit_soccer:water bottle', 'kit_soccer:shin guards'):
+        storage.add_packing_claim('d1:e1', item, now.date().isoformat())
     # the window is a zone too: with no HA there is no forecast, so the pane
     # renders blank and the weather signal cannot be judged in a screenshot.
     from services import ha_api

@@ -4236,30 +4236,53 @@
          The west wall is the garage connection and was blank. A cased
          opening now: casing boards proud of the wall, a panelled slab in
          slate — the room's first dark anchor — a brass knob, a
-         threshold, and a jamb the wall dies into. */
+         threshold, and a jamb the wall dies into.
+
+         It is also THE DOOR ZONE. The street door still carries the zone
+         too — both doors answer to it — but this camera crops that one to
+         a sliver at the frame's left edge, so nobody could tell it was
+         tappable. The door you can SEE is the door you can tap: every
+         piece here takes userData.zone, exactly as dpart() does for the
+         street door's face, and the next-leave hero card hangs on this
+         slab (below). */
+      function gd(m) { if (m) m.userData.zone = 'door'; return m; }
       [3.03, 4.37].forEach(function (cz) {
-        mb(0.06, 2.92, 0.14, TRIM, WWF + 0.03, 1.46, cz, MATT);
+        gd(mb(0.06, 2.92, 0.14, TRIM, WWF + 0.03, 1.46, cz, MATT));
       });
-      mb(0.06, 0.14, 1.62, TRIM, WWF + 0.03, 2.85, 3.70, MATT);
-      if (D2) mb(0.15, 0.09, 1.80, TRIM, WWF + 0.075, 2.97, 3.70, MATT);
+      gd(mb(0.06, 0.14, 1.62, TRIM, WWF + 0.03, 2.85, 3.70, MATT));
+      if (D2) gd(mb(0.15, 0.09, 1.80, TRIM, WWF + 0.075, 2.97, 3.70, MATT));
       if (D3) {                        /* the casing's inner bead */
         [3.09, 4.31].forEach(function (cz) {
-          mb(0.10, 2.86, 0.03, C.cabShade, WWF + 0.05, 1.43, cz, MATT);
+          gd(mb(0.10, 2.86, 0.03, C.cabShade, WWF + 0.05, 1.43, cz, MATT));
         });
-        mb(0.10, 0.03, 1.28, C.cabShade, WWF + 0.05, 2.79, 3.70, MATT);
+        gd(mb(0.10, 0.03, 1.28, C.cabShade, WWF + 0.05, 2.79, 3.70, MATT));
       }
-      mb(0.10, 2.72, 1.18, C.slate, WWF + 0.05, 1.38, 3.70, { rough: 0.62 });
+      gd(mb(0.10, 2.72, 1.18, C.slate, WWF + 0.05, 1.38, 3.70, { rough: 0.62 }));
       if (D2) {                        /* stiles, rails and two panels */
         [[0.86, 1.02], [1.94, 0.94]].forEach(function (pn) {
-          mb(0.02, pn[1], 0.86, 0x4a5460, WWF + 0.108, pn[0], 3.70,
-             { rough: 0.6 });
-          if (D3) mb(0.02, pn[1] - 0.14, 0.72, C.slate, WWF + 0.122, pn[0],
-                     3.70, { rough: 0.6 });
+          gd(mb(0.02, pn[1], 0.86, 0x4a5460, WWF + 0.108, pn[0], 3.70,
+                { rough: 0.6 }));
+          if (D3) gd(mb(0.02, pn[1] - 0.14, 0.72, C.slate, WWF + 0.122, pn[0],
+                       3.70, { rough: 0.6 }));
         });
-        mc(0.05, 0.05, 0.09, C.brass, WWF + 0.16, 1.36, 4.16, 10, CHROME)
+        gd(mc(0.05, 0.05, 0.09, C.brass, WWF + 0.16, 1.36, 4.16, 10, CHROME))
           .rotation.z = Math.PI / 2;
-        mb(0.30, 0.05, 1.20, woodK, WWF + 0.15, FLR + 0.025, 3.70, woodO);
+        gd(mb(0.30, 0.05, 1.20, woodK, WWF + 0.15, FLR + 0.025, 3.70, woodO));
       }
+      /* the next-leave HERO CARD moves onto this slab. It was built on the
+         street door, where this camera reduced it to a few pixels of edge;
+         here it is the brightest thing on the west wall and reads as a
+         card from the room's resting pose. Just proud of the panels
+         (which end at WWF + 0.132), centred on the 1.18-wide slab, on the
+         upper panel — the door's head is at 2.74, so the old 3.02 is the
+         one thing about it that cannot be kept. */
+      plaque.geometry.dispose();
+      plaque.geometry = new T.PlaneGeometry(1.10, 0.69);
+      plaque.position.set(WWF + 0.16, 2.02, 3.70);
+      plaque.rotation.y = Math.PI / 2;         /* the face looks east, +x */
+      plaque.userData.zone = 'door';
+      mtag(plaque);
+      extG.add(plaque);                        /* reparented off doorG */
 
       /* ================= 2. the bench (S7 mudroom.1) ===================
          It was a plank on four posts. Now it is casework: toe kick,
@@ -4576,18 +4599,60 @@
       }
 
       /* ---- the backpacks syncMudroom deals onto the bench ------------
-         One per active child — the count is real data. The bag itself is
-         built here, where the rounded-box and material helpers live. */
-      makeBag = function (c) {
+         One per PACKING GROUP the household has for the day, and the bag
+         says which way that group is going: CLOSED and buckled when every
+         item on it is claimed, OPEN — flap thrown back off its hinge, a
+         dark mouth, and the work still sticking out of it — while it is
+         short. Same bag, two states.
+
+         The difference is deliberately carried by the silhouette (a lid
+         standing up, a folder above the rim) and not by any tier-2 or
+         tier-3 detail, because `low` is the tier a Pi draws and a Pi must
+         still be able to tell a packed bag from an unpacked one across
+         the room. The bag itself is built here, where the rounded-box and
+         material helpers live. */
+      makeBag = function (c, gaping) {
         var g = new T.Group();
-        function part(m) { m.userData.room = 'mudroom'; finish(m); g.add(m); return m; }
-        function pb(w, h, d, r, col, x, y, z, o) {
+        function part(m, p) {
+          m.userData.room = 'mudroom'; finish(m); (p || g).add(m); return m;
+        }
+        function pb(w, h, d, r, col, x, y, z, o, p) {
           var m = new T.Mesh(D2 ? roundedGeo(w, h, d, r) : new T.BoxGeometry(w, h, d),
                              mat(col, o || FAB));
-          m.position.set(x, y, z); return part(m);
+          m.position.set(x, y, z); return part(m, p);
         }
         pb(0.34, 0.46, 0.26, 0.07, c, 0, 0, 0);
-        pb(0.345, 0.15, 0.265, 0.05, 0x3a3330, 0, 0.185, 0.01);
+        /* the flap rides a hinge at the bag's back top edge, so the two
+           states are one number: closed it lies exactly where it always
+           did (0, 0.185, 0.01), open it swings off the mouth */
+        var hinge = new T.Group();
+        hinge.position.set(0, 0.185, -0.125);
+        hinge.rotation.x = gaping ? -1.72 : 0;
+        g.add(hinge);
+        pb(0.345, 0.15, 0.265, 0.05, 0x3a3330, 0, 0, 0.135, null, hinge);
+        if (gaping) {
+          /* a HOLE in the top of the bag, not a band across it: inset far
+             enough that the body's own colour rims it on all four sides */
+          pb(0.26, 0.08, 0.17, 0.02, 0x241f1d, 0, 0.215, 0.01, MATT);
+          /* and the work still to go in: a folder standing proud of the
+             rim, which is the half of the read that survives to `low` */
+          pb(0.20, 0.26, 0.045, 0.015, C.cream, -0.035, 0.30, 0.035,
+             MATT).rotation.z = 0.13;
+          if (D3) pb(0.045, 0.24, 0.05, 0.015, C.oxblood, -0.115, 0.295,
+                     0.035, MATT).rotation.z = 0.13;
+          if (D2) {
+            /* the flap's lining, in the bag's own colour: thrown back it
+               turns to face the room, which is what says "this bag's lid
+               is up" rather than "a dark slab stands behind a bag" */
+            pb(0.31, 0.04, 0.235, 0.012, c, 0, -0.095, 0.135, MATT, hinge);
+            var bc = function (r, h, col, x, y, z) {   /* a bottle, half in */
+              var m = cyl(r, r, h, col, x, y, z, g, 10, GLOSS);
+              m.userData.room = 'mudroom'; m.rotation.z = -0.1; return m;
+            };
+            bc(0.036, 0.24, C.teal, 0.10, 0.29, -0.03);
+            bc(0.022, 0.05, C.cream, 0.113, 0.41, -0.03);
+          }
+        }
         if (D2) {
           pb(0.26, 0.18, 0.08, 0.03, 0x3a3330, 0, -0.09, 0.15);
           [-0.10, 0.10].forEach(function (sx) {
@@ -4595,7 +4660,9 @@
           });
         }
         if (D3) {
-          pb(0.11, 0.05, 0.05, 0.02, 0x3a3330, 0, 0.27, -0.03);
+          /* the grab handle sits behind the mouth when the bag is open,
+             so the thrown-back flap clears it either way */
+          pb(0.11, 0.05, 0.05, 0.02, 0x3a3330, 0, 0.27, gaping ? -0.10 : -0.03);
           pb(0.05, 0.03, 0.03, 0.01, 0xc9a54e, 0, -0.02, 0.19, STEEL);
         }
         if (!SHADOWS) {
@@ -5713,8 +5780,19 @@
     if (webgl.busG) webgl.busG.visible = !!((s.curb || {}).bus);
   }
 
-  /* backpacks on the mudroom bench: one per child, rebuilt on count change */
-  var bagCount = null;
+  /* Backpacks on the mudroom bench: ONE PER PACKING GROUP the household
+     has for the day in focus, open while that group is still short. With
+     no packing groups — no kits, or a day with nothing to carry — the
+     bench falls back to what it always drew, one school bag per active
+     child, and every one of those is closed.
+
+     A bag is a kit group and not a child, because claims are filed against
+     (outing, item) with no member read back: "1 of 2 packed" is sayable,
+     "Maya's bottle is packed" is not, and the room does not pretend
+     otherwise. The bags stay untappable furniture — the DOOR is the
+     mudroom's zone. */
+  var bagKey = null;         /* the old count guard, widened: a rebuild now
+                                also follows a pack flipping ready */
   /* the mudroom's own accents (sage, brass, oxblood, terracotta) plus
      one teal, the kitchen's, because the two rooms share a sightline */
   var BAG_COLORS = [0x8f4038, 0x3fbdb2, 0xb5713c, 0x7d968a];
@@ -5724,22 +5802,30 @@
                    [-12.32, 0.26, 3.66], [-9.30, 0.26, 3.62]];
   function syncMudroom(s) {
     if (!webgl) return;
-    var n = Math.min(4, ((s.mudroom || {}).bags || 0));
-    if (n === bagCount) return;
-    bagCount = n;
+    var m = s.mudroom || {};
+    var packs = (m.packs || []).slice(0, 4);
+    var n = packs.length || Math.min(4, m.bags || 0);
+    var key = packs.length
+      ? packs.map(function (p) { return p && p.ready ? 'r' : 'o'; }).join('')
+      : 'n' + n;
+    if (key === bagKey) return;
+    bagKey = key;
     while (webgl.mudBagsG.children.length)
       webgl.mudBagsG.remove(webgl.mudBagsG.children[0]);
     for (var i = 0; i < n; i++) {
+      /* no packing data = no claim about packing: a fallback bag is shut */
+      var gaping = !!(packs[i] && !packs[i].ready);
       var bag;
       if (webgl.makeBag) {
-        bag = webgl.makeBag(BAG_COLORS[i % 4]);
+        bag = webgl.makeBag(BAG_COLORS[i % 4], gaping);
       } else {                       /* the 2D-adjacent tiers keep a block */
         bag = new webgl.T.Group();
         var body = new webgl.T.Mesh(new webgl.T.BoxGeometry(0.34, 0.46, 0.26),
           new webgl.T.MeshLambertMaterial({ color: BAG_COLORS[i % 4] }));
         var flap = new webgl.T.Mesh(new webgl.T.BoxGeometry(0.36, 0.18, 0.28),
           new webgl.T.MeshLambertMaterial({ color: 0x3a3330 }));
-        flap.position.y = 0.17;
+        flap.position.set(0, gaping ? 0.30 : 0.17, gaping ? -0.16 : 0);
+        if (gaping) flap.rotation.x = -1.72;
         bag.add(body); bag.add(flap);
       }
       bag.position.set(BAG_SPOTS[i][0], BAG_SPOTS[i][1], BAG_SPOTS[i][2]);
@@ -5759,8 +5845,11 @@
                         door: 'plaque' };   /* frame the CARD, not the slab —
                         the whole-door span forces a 15-unit approach that
                         lands outside the mudroom's walls */
+  /* the door's card hangs on the GARAGE door on the west wall, whose face
+     looks east along +x — the street door's ['z', 1] would approach it
+     through the wall */
   var FACE_AXIS_MAP = { fridge: ['z', 1], board: ['x', 1], counter: ['z', 1],
-                        pet: ['z', 1], radio: ['z', 1], door: ['z', 1] };
+                        pet: ['z', 1], radio: ['z', 1], door: ['x', 1] };
 
   function zoneFaceNormal(key) {
     if (!webgl) return null;
