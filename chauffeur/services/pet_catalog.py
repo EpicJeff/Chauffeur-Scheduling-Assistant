@@ -310,11 +310,19 @@ def gen_roster() -> List[Dict]:
                 break
             if pick is None:
                 pick = cand
+            fresh_name = cand['name'] not in seen_names
             fresh_type = (cand['type'] not in seen_types
                           or len(seen_types) >= len(keys()))
-            if fresh_type and cand['name'] not in seen_names:
+            if fresh_type and fresh_name:
                 pick = cand
                 break
+            # A fresh name ALONE still beats a repeated one: no-name-twice
+            # is the pin, the elemental spread is best-effort. Without this
+            # a round of 12 type-collisions kept the FIRST draw even when
+            # its name was already on the roster (the 'Static'/'Blink'
+            # flake).
+            if fresh_name and pick['name'] in seen_names:
+                pick = cand
         if pick:
             roster.append(pick)
             seen_types.add(pick['type'])
