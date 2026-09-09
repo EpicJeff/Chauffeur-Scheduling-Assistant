@@ -2364,9 +2364,9 @@
     calG.rotation.y = Math.PI / 2;      /* face east, into the great room */
     westWallG.add(calG);
     var calFace = new T.Mesh(new T.PlaneGeometry(1.5, 1.9), mat(0xf6f1e4, { rough: 0.9 }));
-    calFace.position.set(0, 3.0, 0.05);
+    calFace.position.set(0, 2.50, 0.05);
     calG.add(calFace);
-    box(1.62, 0.1, 0.08, C.oxblood, 0, 4.0, 0.02, calG, GLOSS);
+    box(1.62, 0.1, 0.08, C.oxblood, 0, 3.50, 0.02, calG, GLOSS);
     if (DETAIL >= 3) {                  /* wall clock between calendar and door */
       var clockFace = cyl(0.3, 0.3, 0.06, 0xffffff, 3.92, 4.88, -5.34, null, 20, GLOSS);
       clockFace.rotation.x = Math.PI / 2;
@@ -2670,15 +2670,15 @@
          over the prints — and still not over the L-return, because the
          fridge lean-in flies up that stretch of wall and anything on it
          lands on the fridge door's card. */
-      box(0.07, 0.16, 0.16, HW, WXK + 0.035, 4.62, 1.52, westWallG, STEEL);
-      cyl(0.02, 0.02, 0.26, HW, WXK + 0.16, 4.62, 1.52, westWallG, 8, STEEL);
+      box(0.07, 0.16, 0.16, HW, WXK + 0.035, 4.12, 1.52, westWallG, STEEL);
+      cyl(0.02, 0.02, 0.26, HW, WXK + 0.16, 4.12, 1.52, westWallG, 8, STEEL);
       var scs = new T.Mesh(new T.CylinderGeometry(0.13, 0.19, 0.20, 14, 1, true),
         PBR ? new T.MeshStandardMaterial({ color: 0xf3e8d2, roughness: 0.8,
                                            emissive: 0xffd9a0,
                                            emissiveIntensity: 0.4,
                                            side: T.DoubleSide })
             : new T.MeshLambertMaterial({ color: 0xf3e8d2, side: T.DoubleSide }));
-      scs.position.set(WXK + 0.29, 4.56, 1.52);
+      scs.position.set(WXK + 0.29, 4.06, 1.52);
       finish(scs, true); westWallG.add(scs);
     }
 
