@@ -234,15 +234,18 @@ def scenario_other_zones_wear_their_cards():
         if shots:
             page.screenshot(path=os.path.join(shots, 'kitchen_window_leanin.png'))
 
-        # the radio wears the real Music Assistant player widget
+        # the radio wears the real Music Assistant player widget.
+        # Condition-waits, not fixed sleeps: under a saturated sweep the
+        # 650ms focus tween alone can outlive a 1400ms nap (flaked twice
+        # on the 12-worker run, passed every standalone run).
         page.evaluate("window.chfKitchenFocus('radio')")
-        page.wait_for_timeout(1400)
+        page.wait_for_selector('#overlay-music', state='visible', timeout=8000)
         check(page.is_visible('#overlay-music'),
               "the radio wears the music widget (player half)")
 
         # nothing seeded for moments: the fridge keeps its tip-only lean-in
         page.evaluate("window.chfKitchenFocus('fridge')")
-        page.wait_for_timeout(1400)
+        page.wait_for_selector('#focus-overlay', state='hidden', timeout=8000)
         check(not page.is_visible('#focus-overlay'),
               "an empty tile hides the overlay instead of showing blank paper")
 
