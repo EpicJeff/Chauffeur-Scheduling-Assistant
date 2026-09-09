@@ -198,8 +198,8 @@
     var HOME_POS = new T.Vector3(17.5, 13.0, 17.5);
     var HOME_AT = new T.Vector3(-0.2, 0.8, -0.4);
     /* the house from the yard: the panel's resting view */
-    var EXT_POS = new T.Vector3(36.0, 22.0, 36.0);
-    var EXT_AT = new T.Vector3(-2.5, 1.8, 1.5);
+    var EXT_POS = new T.Vector3(37.5, 23.5, 37.5);
+    var EXT_AT = new T.Vector3(-2.0, 1.0, 3.6);
     cam.position.copy(EXT_POS);
     cam.lookAt(EXT_AT);
 
@@ -859,28 +859,230 @@
       m.position.set(-7.0, 0, 0);
       finish(m); extG.add(m);
     })();
-    /* garage massing: SEALED in H1 — a promise, not a room. It hangs
-       on the LEFT flank: the +x/+z quadrant is the diorama's open corner
-       and nothing may stand between the camera and the kitchen. */
-    rbox(5.6, 4.6, 8.0, 0.06, NICE ? 0xffffff : EXTC.garage,
-         -10.0, 2.3, 6.0, extG, { rough: 0.95, map: sidingT });
-    rbox(3.6, 3.0, 0.14, 0.05, EXTC.trim, -10.0, 1.6, 10.02, extG,
-         { rough: 0.85 });
-    if (DETAIL >= 2) {
-      box(3.4, 0.05, 0.06, 0xc4bcae, -10.0, 1.0, 10.1, extG);
-      box(3.4, 0.05, 0.06, 0xc4bcae, -10.0, 1.8, 10.1, extG);
-      box(3.4, 0.05, 0.06, 0xc4bcae, -10.0, 2.6, 10.1, extG);
-    }
-    if (DETAIL >= 3) {          /* a small window right of the garage door */
-      box(0.86, 0.76, 0.1, EXTC.trim, -7.85, 2.7, 10.04, extG);
-      box(0.7, 0.6, 0.12, 0x39434e, -7.85, 2.7, 10.05, extG, GLOSS);
-    }
-    ebox(6.2, 0.16, 8.8, NICE ? 0xffffff : EXTC.roof, -10.0, 4.78, 6.0,
-         { rough: 0.9, map: shingleT });
-    blobShadow(3.0, 4.2, -10.0, 6.0, extG);
-    /* driveway from the garage door to the yard's edge */
-    ebox(4.4, 0.08, 7.2, NICE ? 0xffffff : EXTC.drive, -10.0, -0.25, 14.0,
+    /* garage: H2 opened it. Shell walls stay; the whole FRONT (door,
+       panels, window, header, side strips) and the roof live in
+       garageDoorG, hidden while the camera is inside — the dollhouse
+       trick. Interior meshes carry userData.zone='garage'; every garage
+       mesh carries userData.room='garage' for the exterior tap router. */
+    var garageDoorG = new T.Group();
+    extG.add(garageDoorG);
+    var garageInterior = new T.Group();
+    extG.add(garageInterior);
+    (function () {
+      function gtag(m) { if (m) m.userData.room = 'garage'; return m; }
+      function itag(m) {
+        if (m) { m.userData.room = 'garage'; m.userData.zone = 'garage'; }
+        return m;
+      }
+      /* shell: left/right/back walls (clapboard rides both faces) */
+      gtag(ebox(0.24, 4.6, 8.0, NICE ? 0xffffff : EXTC.garage,
+                -12.68, 2.3, 6.0, { rough: 0.95, map: sidingT }));
+      gtag(ebox(0.24, 4.6, 8.0, NICE ? 0xffffff : EXTC.garage,
+                -7.32, 2.3, 6.0, { rough: 0.95, map: sidingT }));
+      gtag(ebox(5.6, 4.6, 0.24, NICE ? 0xffffff : EXTC.garage,
+                -10.0, 2.3, 2.12, { rough: 0.95, map: sidingT }));
+      /* front pieces + roof: hide when inside */
+      gtag(box(5.6, 1.1, 0.24, NICE ? 0xffffff : EXTC.garage,
+               -10.0, 4.05, 9.88, garageDoorG,
+               NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 }));
+      gtag(box(0.76, 3.5, 0.24, NICE ? 0xffffff : EXTC.garage,
+               -12.18, 1.75, 9.88, garageDoorG,
+               NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 }));
+      gtag(box(0.76, 3.5, 0.24, NICE ? 0xffffff : EXTC.garage,
+               -7.82, 1.75, 9.88, garageDoorG,
+               NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 }));
+      gtag(rbox(3.6, 3.0, 0.14, 0.05, EXTC.trim, -10.0, 1.6, 10.02,
+                garageDoorG, { rough: 0.85 }));
+      if (DETAIL >= 2) {
+        gtag(box(3.4, 0.05, 0.06, 0xc4bcae, -10.0, 1.0, 10.1, garageDoorG));
+        gtag(box(3.4, 0.05, 0.06, 0xc4bcae, -10.0, 1.8, 10.1, garageDoorG));
+        gtag(box(3.4, 0.05, 0.06, 0xc4bcae, -10.0, 2.6, 10.1, garageDoorG));
+      }
+      if (DETAIL >= 3) {        /* a small window right of the garage door */
+        gtag(box(0.86, 0.76, 0.1, EXTC.trim, -7.85, 2.7, 10.04, garageDoorG));
+        gtag(box(0.7, 0.6, 0.12, 0x39434e, -7.85, 2.7, 10.05, garageDoorG,
+                 GLOSS));
+      }
+      gtag(box(6.2, 0.16, 8.8, NICE ? 0xffffff : EXTC.roof, -10.0, 4.78, 6.0,
+               garageDoorG, NICE ? { rough: 0.9, map: shingleT }
+                                 : { rough: 0.9 }));
+      blobShadow(3.0, 4.2, -10.0, 6.0, extG);
+      /* interior: concrete floor, workbench, paint shelf, a bulb */
+      var gfloor = new T.Mesh(new T.PlaneGeometry(5.1, 7.5),
+        mat(NICE ? 0xffffff : EXTC.drive, { rough: 0.95, map: driveT }));
+      gfloor.rotation.x = -Math.PI / 2;
+      gfloor.position.set(-10.0, 0.035, 6.0);
+      itag(gfloor); finish(gfloor); garageInterior.add(gfloor);
+      if (DETAIL >= 2) {
+        itag(rbox(2.4, 0.1, 0.7, 0.03, 0xb98c58, -10.6, 1.05, 2.75,
+                  garageInterior, { rough: 0.7, map: woodLight }));
+        itag(box(0.08, 1.0, 0.08, C.wood2, -11.6, 0.5, 2.55, garageInterior));
+        itag(box(0.08, 1.0, 0.08, C.wood2, -9.7, 0.5, 2.55, garageInterior));
+        itag(box(0.08, 1.0, 0.08, C.wood2, -11.6, 0.5, 2.95, garageInterior));
+        itag(box(0.08, 1.0, 0.08, C.wood2, -9.7, 0.5, 2.95, garageInterior));
+      }
+      if (DETAIL >= 3) {
+        itag(box(2.0, 0.06, 0.5, 0x8a8178, -10.6, 2.6, 2.5, garageInterior));
+        itag(cyl(0.11, 0.11, 0.24, C.red, -11.2, 2.75, 2.5, garageInterior, 10));
+        itag(cyl(0.11, 0.11, 0.24, C.teal, -10.7, 2.75, 2.5, garageInterior, 10));
+        itag(cyl(0.11, 0.11, 0.24, C.orange, -10.2, 2.75, 2.5, garageInterior, 10));
+        itag(cyl(0.01, 0.01, 0.8, 0x8a8178, -10.0, 4.2, 6.0, garageInterior, 6));
+        var gbulb = new T.Mesh(new T.SphereGeometry(0.13, 10, 8),
+          mat(0xffe9b0, { rough: 0.5 }));
+        gbulb.position.set(-10.0, 3.75, 6.0);
+        itag(gbulb); finish(gbulb); garageInterior.add(gbulb);
+      }
+      groups.garage = garageInterior;   /* the zone-glow loop lights the room */
+    })();
+    /* driveway from the garage door to the street */
+    ebox(4.4, 0.08, 7.8, NICE ? 0xffffff : EXTC.drive, -10.0, -0.25, 14.3,
          { rough: 0.95, map: driveT });
+    /* the street along the yard's front, and its curb */
+    var roadT = null;
+    if (NICE) {
+      roadT = canvasTex(256, function (g, S) {
+        g.fillStyle = '#4a4f55'; g.fillRect(0, 0, S, S);
+        for (var i = 0; i < 600; i++) {
+          g.fillStyle = 'rgba(20,22,26,' + (Math.random() * 0.14) + ')';
+          g.fillRect(Math.random() * S, Math.random() * S, 2, 2);
+        }
+        g.fillStyle = 'rgba(240,230,200,0.8)';
+        for (var d = 0; d < S; d += 42) g.fillRect(d, S / 2 - 2, 22, 4);
+      });
+      roadT.wrapS = roadT.wrapT = T.RepeatWrapping;
+      roadT.repeat.set(6, 1);
+    }
+    ebox(46, 0.38, 5, NICE ? 0xffffff : 0x4a4f55, 2.5, -0.50, 20.5,
+         { rough: 0.95, map: roadT });
+    ebox(46, 0.1, 0.5, EXTC.trim, 2.5, -0.28, 17.85, { rough: 0.9 });
+    /* the school bus, at the curb only while it is actually out */
+    var CAR_DARK = 0x22252a;
+    var busG = new T.Group();
+    busG.visible = false;
+    busG.position.set(-4.0, -0.31, 20.3);
+    busG.userData.zone = 'curb';
+    extG.add(busG);
+    (function () {
+      function btag(m) { m.userData.zone = 'curb'; finish(m); busG.add(m); return m; }
+      var body = new T.Mesh(
+        NICE ? roundedGeo(5.4, 1.6, 1.95, 0.12) : new T.BoxGeometry(5.4, 1.6, 1.95),
+        mat(0xf2b12e, GLOSS));
+      body.position.set(0, 1.15, 0); btag(body);
+      var winb = new T.Mesh(new T.BoxGeometry(4.5, 0.5, 1.97),
+        mat(0x39434e, GLOSS));
+      winb.position.set(-0.2, 1.55, 0); btag(winb);
+      var stripe = new T.Mesh(new T.BoxGeometry(5.42, 0.09, 1.96),
+        mat(0x1c1c1c, {}));
+      stripe.position.set(0, 0.92, 0); btag(stripe);
+      [[-1.9, 0.95], [1.9, 0.95], [-1.9, -0.95], [1.9, -0.95]].forEach(function (wp) {
+        var wh = new T.Mesh(new T.CylinderGeometry(0.42, 0.42, 0.22, 14),
+          mat(CAR_DARK, {}));
+        wh.rotation.x = Math.PI / 2;
+        wh.position.set(wp[0], 0.42, wp[1]); btag(wh);
+      });
+      if (DETAIL >= 2) {
+        var stop = new T.Mesh(new T.CylinderGeometry(0.2, 0.2, 0.04, 8),
+          mat(C.red, GLOSS));
+        stop.rotation.x = Math.PI / 2;
+        stop.position.set(-1.4, 1.2, 1.05); btag(stop);
+      }
+      if (DETAIL >= 3) {
+        btag(box(0.14, 0.1, 0.1, C.red, -2.6, 2.02, 0.5, busG));
+        btag(box(0.14, 0.1, 0.1, C.red, -2.6, 2.02, -0.5, busG));
+      }
+      groups.curb = busG;
+    })();
+    /* parametric cars: the family's real records, drawn by shape */
+    var CAR_BODIES = {
+      sedan:   { L: 3.3, H: 0.5,  W: 1.6,  wheel: 0.3,  cabL: 1.7, cabH: 0.5,  cabOff: -0.1 },
+      suv:     { L: 3.5, H: 0.65, W: 1.7,  wheel: 0.36, cabL: 2.1, cabH: 0.6,  cabOff: -0.1 },
+      truck:   { L: 3.9, H: 0.6,  W: 1.7,  wheel: 0.38, cabL: 1.3, cabH: 0.62, cabOff: 0.95, bed: true },
+      minivan: { L: 3.7, H: 0.62, W: 1.7,  wheel: 0.32, cabL: 2.6, cabH: 0.66, cabOff: 0.05 },
+      hatch:   { L: 3.0, H: 0.5,  W: 1.55, wheel: 0.3,  cabL: 1.7, cabH: 0.55, cabOff: -0.3 },
+      wagon:   { L: 3.6, H: 0.52, W: 1.6,  wheel: 0.31, cabL: 2.3, cabH: 0.5,  cabOff: -0.15 },
+      van:     { L: 3.8, H: 0.85, W: 1.75, wheel: 0.34, cabL: 3.2, cabH: 0.7,  cabOff: 0 }
+    };
+    var carsG = new T.Group();
+    extG.add(carsG);
+    function buildCar(c) {
+      var p = CAR_BODIES[c.body] || CAR_BODIES.sedan;
+      var col = 0x9aa2a9;
+      try {
+        if (c.color) col = parseInt(String(c.color).replace('#', ''), 16);
+        if (!isFinite(col)) col = 0x9aa2a9;
+      } catch (e) { col = 0x9aa2a9; }
+      var L = Math.min(p.L * 1.25,
+        Math.max(p.L * 0.9, p.L * (1 + 0.03 * ((c.seats || 4) - 4))));
+      var grp = new T.Group();
+      function add(m) {
+        m.userData.zone = 'garage'; m.userData.room = 'garage';
+        finish(m); grp.add(m); return m;
+      }
+      var yBody = p.wheel + p.H / 2 - 0.05;
+      var body = new T.Mesh(
+        NICE ? roundedGeo(p.W, p.H, L, 0.07) : new T.BoxGeometry(p.W, p.H, L),
+        mat(col, GLOSS));
+      body.position.set(0, yBody, 0);
+      add(body);
+      var yCab = p.wheel + p.H + p.cabH / 2 - 0.08;
+      var cab = new T.Mesh(
+        NICE ? roundedGeo(p.W - 0.25, p.cabH, p.cabL, 0.08)
+             : new T.BoxGeometry(p.W - 0.25, p.cabH, p.cabL),
+        mat(col, GLOSS));
+      cab.position.set(0, yCab, p.cabOff);
+      add(cab);
+      var band = new T.Mesh(
+        new T.BoxGeometry(p.W - 0.18, p.cabH * 0.5, Math.max(0.4, p.cabL - 0.35)),
+        mat(0x39434e, GLOSS));
+      band.position.set(0, yCab + 0.03, p.cabOff);
+      add(band);
+      if (p.bed) {
+        var bedFront = p.cabOff - p.cabL / 2 - 0.08;
+        var bedBack = -L / 2 + 0.12;
+        var bedLen = bedFront - bedBack;
+        var yRail = p.wheel + p.H + 0.12;
+        add(new T.Mesh(new T.BoxGeometry(p.W - 0.2, 0.26, 0.07),
+          mat(col, GLOSS))).position.set(0, yRail, bedBack + 0.04);
+        add(new T.Mesh(new T.BoxGeometry(0.07, 0.26, bedLen),
+          mat(col, GLOSS))).position.set(-(p.W / 2 - 0.14), yRail,
+                                          bedBack + bedLen / 2);
+        add(new T.Mesh(new T.BoxGeometry(0.07, 0.26, bedLen),
+          mat(col, GLOSS))).position.set(p.W / 2 - 0.14, yRail,
+                                         bedBack + bedLen / 2);
+      }
+      [[-1, 1], [1, 1], [-1, -1], [1, -1]].forEach(function (wp) {
+        var wh = new T.Mesh(
+          new T.CylinderGeometry(p.wheel, p.wheel, 0.16, DETAIL >= 3 ? 14 : 10),
+          mat(CAR_DARK, {}));
+        wh.rotation.z = Math.PI / 2;
+        wh.position.set(wp[0] * (p.W / 2 - 0.02), p.wheel,
+                        wp[1] * (L / 2 - p.wheel * 1.5));
+        add(wh);
+        if (DETAIL >= 2) {
+          var hub = new T.Mesh(new T.CylinderGeometry(p.wheel * 0.45,
+            p.wheel * 0.45, 0.17, 10), mat(C.steel, CHROME));
+          hub.rotation.z = Math.PI / 2;
+          hub.position.copy(wh.position);
+          add(hub);
+        }
+      });
+      if (DETAIL >= 3) {
+        add(box(0.16, 0.09, 0.05, 0xfff3c4, -p.W / 4, yBody + 0.08, L / 2 + 0.01, grp, GLOSS));
+        add(box(0.16, 0.09, 0.05, 0xfff3c4, p.W / 4, yBody + 0.08, L / 2 + 0.01, grp, GLOSS));
+        add(box(0.16, 0.09, 0.05, C.red, -p.W / 4, yBody + 0.08, -L / 2 - 0.01, grp, GLOSS));
+        add(box(0.16, 0.09, 0.05, C.red, p.W / 4, yBody + 0.08, -L / 2 - 0.01, grp, GLOSS));
+      }
+      if (!SHADOWS) {
+        var sh = new T.Mesh(new T.CircleGeometry(1, 16),
+          new T.MeshBasicMaterial({ color: C.shadow, transparent: true,
+                                    opacity: 0.16 }));
+        sh.rotation.x = -Math.PI / 2;
+        sh.scale.set(p.W * 0.62, L * 0.52, 1);
+        sh.position.set(0, 0.012, 0);
+        grp.add(sh);
+      }
+      return grp;
+    }
     /* two blob trees + a bush: the yard is a place, not a void */
     function tree(x, z, s) {
       cyl(0.16 * s, 0.22 * s, 1.4 * s, EXTC.trunk, x, 0.7 * s, z, extG, 8);
@@ -1204,6 +1406,29 @@
         g.fillRect(0, h * 0.82, w, h * 0.18);   /* horizon haze */
       });
     }
+    function carTex(c) {
+      var payload = [c.name, c.battery_pct, c.fuel_pct, c.warn].join('|');
+      return mkTex('car:' + (c.id || c.name), 256, 128, payload,
+                   function (g, w, h) {
+        g.clearRect(0, 0, w, h);
+        card(g, 6, 6, w - 12, h - 12, c.warn ? '#dc2626' : '#0d9488');
+        g.fillStyle = '#111827'; g.font = '800 26px ' + FONT;
+        g.fillText(String(c.name || 'Car').slice(0, 12), 26, 44);
+        var lvl = (c.battery_pct !== null && c.battery_pct !== undefined)
+          ? c.battery_pct : c.fuel_pct;
+        if (lvl !== null && lvl !== undefined) {
+          g.fillStyle = '#e5e7eb'; rr(g, 26, 64, w - 64, 22, 10); g.fill();
+          g.fillStyle = c.warn ? '#dc2626' : '#0d9488';
+          rr(g, 26, 64, Math.max(14, (w - 64) * Math.min(1, lvl / 100)), 22, 10);
+          g.fill();
+          g.fillStyle = '#374151'; g.font = '700 20px ' + FONT;
+          g.fillText(Math.round(lvl) + '%', w - 58, 82);
+        } else {
+          g.fillStyle = '#6b7280'; g.font = '500 20px ' + FONT;
+          g.fillText('resting', 26, 80);
+        }
+      });
+    }
     function clearPaint() { texCache = {}; }
 
     return {
@@ -1215,6 +1440,8 @@
       paneMesh: paneMesh, heroTex: heroTex, calendarTex: calendarTex,
       boardTex: boardTex, weatherTex: weatherTex, clearPaint: clearPaint,
       extG: extG, skyDome: skyDome, skyDomeTex: skyDomeTex,
+      garageDoorG: garageDoorG, garageInterior: garageInterior,
+      carsG: carsG, busG: busG, buildCar: buildCar, carTex: carTex,
       HOME_POS: HOME_POS, HOME_AT: HOME_AT,
       EXT_POS: EXT_POS, EXT_AT: EXT_AT
     };
@@ -1361,6 +1588,7 @@
       focused === 'pet' ? { __blank: true } : (s.pet || {})));
     swap(webgl.paneMesh, webgl.weatherTex(s.window || {}));
     swap(webgl.skyDome, webgl.skyDomeTex(s.window || {}));
+    syncGarage(s);
 
     /* moment magnets on the fridge door: one colored square each, capped */
     var wantMagnets = Math.min(((s.fridge || {}).new_moments || 0), 6);
@@ -1376,6 +1604,46 @@
     }
 
     requestFrame();
+  }
+
+  /* ---- the garage floor plan: cars rebuilt only when their payload
+     changes. Two present cars park inside (with a status plaque on the
+     back wall); the rest line the driveway; an absent car is simply not
+     built — the empty spot IS the feature. ---- */
+  var garagePayload = null;
+  function syncGarage(s) {
+    if (!webgl) return;
+    var g = s.garage || {};
+    var cars = g.cars || [];
+    var key = JSON.stringify(cars.map(function (c) {
+      return [c.id, c.name, c.color, c.body, c.seats, c.present, c.warn,
+              c.battery_pct, c.fuel_pct];
+    }));
+    if (key !== garagePayload) {
+      garagePayload = key;
+      while (webgl.carsG.children.length)
+        webgl.carsG.remove(webgl.carsG.children[0]);
+      var inside = 0, outside = 0;
+      cars.forEach(function (c) {
+        if (!c.present) return;
+        var grp = webgl.buildCar(c);
+        if (inside < 2) {
+          grp.position.set(inside === 0 ? -11.3 : -8.7, 0, 5.6);
+          var plate = new webgl.T.Mesh(new webgl.T.PlaneGeometry(1.5, 0.75),
+            new webgl.T.MeshBasicMaterial({ transparent: true,
+                                            map: webgl.carTex(c) }));
+          plate.position.set(grp.position.x, 3.3, 2.4);
+          plate.userData.zone = 'garage';
+          webgl.carsG.add(plate);
+          inside++;
+        } else {
+          grp.position.set(-10.0, 0, 12.6 + outside * 4.6);
+          outside++;
+        }
+        webgl.carsG.add(grp);
+      });
+    }
+    if (webgl.busG) webgl.busG.visible = !!((s.curb || {}).bus);
   }
 
   /* ---- focus-then-through (lean-in; card zones approach FACE-ON) ------- */
