@@ -528,17 +528,17 @@
     /* ---- the GREAT ROOM extension (architect pass): the kitchen flows
        forward-left into a living room of its own scale — one open
        floorplan, one wood floor, no wall between. ---- */
-    box(9.4, 0.5, 8.4, C.shell, -2.3, -0.27, 9.9);
+    box(13.6, 0.5, 8.4, C.shell, 0, -0.27, 9.9);
     var floorTex2 = floorTex.clone();
     floorTex2.needsUpdate = true;
     floorTex2.wrapS = floorTex2.wrapT = T.RepeatWrapping;
-    floorTex2.repeat.set(9.2 / 13, 8.2 / 11);
-    var floor2 = new T.Mesh(new T.PlaneGeometry(9.2, 8.5),
+    floorTex2.repeat.set(1, 8.5 / 11);
+    var floor2 = new T.Mesh(new T.PlaneGeometry(13, 8.5),
       PBR ? new T.MeshStandardMaterial({ map: floorTex2, roughness: 0.5,
                                          envMapIntensity: 0.1 })
           : new T.MeshLambertMaterial({ map: floorTex2 }));
     floor2.rotation.x = -Math.PI / 2;
-    floor2.position.set(-2.3, 0.004, 9.95);
+    floor2.position.set(0, 0.004, 9.95);
     if (SHADOWS) floor2.receiveShadow = true;
     scene.add(floor2);
     var wallL2 = box(0.35, 5.6, 8.4, C.wall, -6.65, 2.8, 10.0, null,
@@ -1314,8 +1314,8 @@
     tree(-15.5, 10.0, 1.4); tree(17.5, -6.0, 1.1);
     var bush = new T.Mesh(new T.SphereGeometry(0.7, 10, 8),
       mat(EXTC.leafB, { rough: 1.0 }));
-    bush.position.set(6.0, 0.4, 7.6); finish(bush); extG.add(bush);
-    blobShadow(0.8, 0.7, 6.0, 7.6, extG);
+    bush.position.set(9.6, 0.4, 9.0); finish(bush); extG.add(bush);
+    blobShadow(0.8, 0.7, 9.6, 9.0, extG);
     /* sky dome: weather-painted from the inside, swapped by applyState.
        The dome IS the background now, so the flat clear color retires. */
     var skyDome = new T.Mesh(new T.SphereGeometry(80, 24, 12),
