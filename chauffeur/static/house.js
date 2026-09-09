@@ -227,6 +227,10 @@
     /* the garage from its own doorway (roof + front hidden inside) */
     var GARAGE_POS = new T.Vector3(-8.6, 12.5, 23.0);
     var GARAGE_AT = new T.Vector3(-10.2, 1.4, 4.6);
+    var MUD_POS = new T.Vector3(-8.9, 11.5, 7.5);
+    var MUD_AT = new T.Vector3(-9.35, 1.4, -3.4);
+    var LIV_POS = new T.Vector3(11.3, 10.5, 6.5);
+    var LIV_AT = new T.Vector3(11.2, 0.7, -3.6);
     cam.position.copy(EXT_POS);
     cam.lookAt(EXT_AT);
 
@@ -674,7 +678,8 @@
     }
 
     /* ---- DOOR (zone: door) on the back wall right ---------------------- */
-    var doorG = zoneGroup('door', 5.35, 0, -5.32);
+    var doorG = zoneGroup('door', -9.3, 0, -5.4);   /* H3: the mudroom's back wall */
+    doorG.userData.room = 'mudroom';
     var slabD = new T.Mesh(
       NICE ? roundedGeo(1.7, 4.1, 0.14, 0.04) : new T.BoxGeometry(1.7, 4.1, 0.14),
       PBR ? new T.MeshStandardMaterial({ map: woodDoor, roughness: 0.65 })
@@ -694,7 +699,8 @@
     doorG.add(plaque);
 
     /* ---- RADIO (zone: radio) on the countertop ------------------------- */
-    var radio = zoneGroup('radio', 0.45, 0, -4.62);
+    var radio = zoneGroup('radio', 12.7, 0, -5.05);   /* H3: the living room shelf */
+    radio.userData.room = 'living';
     rbox(0.8, 0.45, 0.4, 0.06, C.red, 0, 1.41, 0, radio, GLOSS);
     var radioFace = box(0.55, 0.28, 0.03, 0xf2e3b8, -0.06, 1.42, 0.21, radio, { rough: 0.95 });
     cyl(0.035, 0.035, 0.1, C.steel, 0.28, 1.68, 0, radio, 8, CHROME);
@@ -765,7 +771,8 @@
        family's real pets, so no bowl pretending otherwise. A laptop sits
        on the island the way a kid leaves one, its screen carrying the
        roster. */
-    var crit = zoneGroup('pet', -1.55, 0, 1.45);
+    var crit = zoneGroup('pet', 11.2, -0.35, -3.25);   /* H3: the coffee table */
+    crit.userData.room = 'living';
     rbox(0.66, 0.035, 0.46, 0.012, 0x2a2d34, 0, 1.24, 0.02, crit,
          { rough: 0.35, metal: 0.4, envInt: 0.6 });
     var lid = rbox(0.66, 0.44, 0.028, 0.012, 0x2a2d34, 0, 1.44, -0.24, crit,
@@ -892,6 +899,7 @@
        trick. Interior meshes carry userData.zone='garage'; every garage
        mesh carries userData.room='garage' for the exterior tap router. */
     var garageDoorG = new T.Group();
+    var webgl_garageBackWall = null;
     extG.add(garageDoorG);
     var garageInterior = new T.Group();
     extG.add(garageInterior);
@@ -906,8 +914,10 @@
                 -12.68, 2.3, 6.0, { rough: 0.95, map: sidingT }));
       gtag(ebox(0.24, 4.6, 8.0, NICE ? 0xffffff : EXTC.garage,
                 -7.32, 2.3, 6.0, { rough: 0.95, map: sidingT }));
-      gtag(ebox(5.6, 4.6, 0.24, NICE ? 0xffffff : EXTC.garage,
+      var garageBackWall = gtag(ebox(5.6, 4.6, 0.24,
+                NICE ? 0xffffff : EXTC.garage,
                 -10.0, 2.3, 2.12, { rough: 0.95, map: sidingT }));
+      webgl_garageBackWall = garageBackWall;
       /* front pieces + roof: hide when inside */
       gtag(box(5.6, 1.1, 0.24, NICE ? 0xffffff : EXTC.garage,
                -10.0, 4.05, 9.88, garageDoorG,
@@ -1110,6 +1120,124 @@
       }
       return grp;
     }
+    /* ---- MUDROOM (left-back, behind the garage): the door's room ---- */
+    var mudroomRoofG = new T.Group();
+    extG.add(mudroomRoofG);
+    var mudBagsG = new T.Group();
+    scene.add(mudBagsG);
+    (function () {
+      function mtag(m) { if (m) m.userData.room = 'mudroom'; return m; }
+      mtag(box(4.4, 0.06, 7.2, 0xd9cfc0, -9.3, 0.03, -2.1, extG,
+               { rough: 0.9 }));
+      mtag(ebox(0.24, 4.2, 7.4, NICE ? 0xffffff : EXTC.siding,
+                -11.48, 2.1, -2.1, { rough: 0.95, map: sidingT }));
+      mtag(ebox(4.6, 4.2, 0.24, NICE ? 0xffffff : EXTC.siding,
+                -9.3, 2.1, -5.68, { rough: 0.95, map: sidingT }));
+      var mroof = box(5.2, 0.14, 4.6, NICE ? 0xffffff : EXTC.roof,
+                      -9.3, 4.9, -3.6, mudroomRoofG,
+                      NICE ? { rough: 0.9, map: shingleT } : { rough: 0.9 });
+      mroof.rotation.x = 0.1;
+      mtag(mroof);
+      mtag(box(5.3, 0.18, 0.3, EXTC.trim, -9.3, 4.62, -1.42, mudroomRoofG));
+      /* bench along the shared kitchen wall, hooks above it */
+      mtag(rbox(0.5, 0.1, 2.0, 0.03, 0xb98c58, -7.7, 0.52, -1.0, extG,
+                { rough: 0.7, map: woodLight }));
+      mtag(box(0.06, 0.5, 0.06, C.wood2, -7.5, 0.26, -0.2, extG));
+      mtag(box(0.06, 0.5, 0.06, C.wood2, -7.9, 0.26, -0.2, extG));
+      mtag(box(0.06, 0.5, 0.06, C.wood2, -7.5, 0.26, -1.8, extG));
+      mtag(box(0.06, 0.5, 0.06, C.wood2, -7.9, 0.26, -1.8, extG));
+      if (DETAIL >= 3) {
+        mtag(box(0.1, 0.1, 0.1, C.wood2, -7.15, 2.5, -0.4, extG));
+        mtag(box(0.1, 0.1, 0.1, C.wood2, -7.15, 2.5, -1.2, extG));
+        mtag(box(0.1, 0.1, 0.1, C.wood2, -7.15, 2.5, -2.0, extG));
+        mtag(rbox(0.24, 0.85, 0.5, 0.06, C.teal, -7.3, 2.0, -1.2, extG,
+                  { rough: 0.9 }));
+      }
+      blobShadow(2.2, 3.4, -9.3, -2.1, extG);
+    })();
+    /* ---- LIVING ROOM (right-back wing): radio, critters, the hearth.
+       Set back and walled on BOTH sides so the kitchen diorama's open
+       corner stays clear; its own cutaway faces the front (+z), the
+       same direction as every other room's. ---- */
+    var livingRoofG = new T.Group();
+    extG.add(livingRoofG);
+    (function () {
+      function ltag(m) { if (m) m.userData.room = 'living'; return m; }
+      var lfloor = new T.Mesh(new T.BoxGeometry(5.0, 0.06, 4.8),
+        PBR ? new T.MeshStandardMaterial({ map: woodLight, color: 0xffffff,
+                                           roughness: 0.6,
+                                           envMapIntensity: 0.15 })
+            : new T.MeshLambertMaterial({ color: 0xc89a66,
+                                          map: woodLight || null }));
+      lfloor.position.set(11.2, 0.03, -3.3);
+      ltag(lfloor); finish(lfloor); extG.add(lfloor);
+      ltag(ebox(0.24, 4.2, 5.0, NICE ? 0xffffff : EXTC.siding,
+                8.72, 2.1, -3.3, { rough: 0.95, map: sidingT }));
+      ltag(ebox(0.24, 4.2, 5.0, NICE ? 0xffffff : EXTC.siding,
+                13.68, 2.1, -3.3, { rough: 0.95, map: sidingT }));
+      ltag(ebox(5.2, 4.2, 0.24, NICE ? 0xffffff : EXTC.siding,
+                11.2, 2.1, -5.68, { rough: 0.95, map: sidingT }));
+      var lroof = box(5.7, 0.14, 2.9, NICE ? 0xffffff : EXTC.roof,
+                      11.2, 4.9, -4.45, livingRoofG,
+                      NICE ? { rough: 0.9, map: shingleT } : { rough: 0.9 });
+      lroof.rotation.x = 0.1;
+      ltag(lroof);
+      ltag(box(5.8, 0.18, 0.3, EXTC.trim, 11.2, 4.68, -3.05, livingRoofG));
+      /* the hearth: static warmth, no fake fire (render-on-demand law) */
+      ltag(rbox(1.6, 1.6, 0.35, 0.05, 0xcfc4b2, 10.3, 0.8, -5.42, extG,
+                { rough: 0.95 }));
+      ltag(box(0.9, 0.85, 0.12, 0x1c1c1c, 10.3, 0.62, -5.3, extG));
+      if (DETAIL >= 2) {
+        ltag(box(0.7, 0.55, 0.06, 0xffb45c, 10.3, 0.52, -5.28, extG));
+      }
+      ltag(box(1.8, 0.12, 0.5, NICE ? 0xffffff : 0xb98c58, 10.3, 1.68, -5.4,
+               extG, NICE ? { rough: 0.7, map: woodLight } : { rough: 0.7 }));
+      if (DETAIL >= 3) {
+        var log1 = cyl(0.09, 0.09, 0.6, C.wood2, 10.2, 0.26, -5.3, extG, 8);
+        log1.rotation.z = Math.PI / 2;
+        var log2 = cyl(0.08, 0.08, 0.5, 0x8a6d49, 10.45, 0.38, -5.28, extG, 8);
+        log2.rotation.z = Math.PI / 2;
+        ltag(log1); ltag(log2);
+      }
+      /* sofa facing the hearth, rug and coffee table between */
+      ltag(rbox(2.2, 0.5, 0.95, 0.08, 0x6fa8a0, 11.2, 0.5, -1.7, extG,
+                { rough: 0.95 }));
+      ltag(rbox(2.2, 0.7, 0.3, 0.08, 0x6fa8a0, 11.2, 0.95, -1.4, extG,
+                { rough: 0.95 }));
+      ltag(rbox(0.28, 0.62, 0.95, 0.08, 0x5f938c, 10.15, 0.75, -1.7, extG,
+                { rough: 0.95 }));
+      ltag(rbox(0.28, 0.62, 0.95, 0.08, 0x5f938c, 12.25, 0.75, -1.7, extG,
+                { rough: 0.95 }));
+      var rug = new T.Mesh(new T.CircleGeometry(1.35, 22),
+        mat(0xd9c1a5, { rough: 1.0 }));
+      rug.rotation.x = -Math.PI / 2;
+      rug.position.set(11.2, 0.075, -3.4);
+      ltag(rug); extG.add(rug);
+      /* coffee table under the critter laptop (the crit group dropped
+         0.35 so the screen lands at table height) */
+      ltag(rbox(1.4, 0.09, 0.85, 0.03, NICE ? 0xffffff : 0xb98c58,
+                11.2, 0.83, -3.3, extG,
+                NICE ? { rough: 0.7, map: woodLight } : { rough: 0.7 }));
+      ltag(cyl(0.05, 0.05, 0.78, C.wood2, 10.65, 0.4, -3.62, extG, 8));
+      ltag(cyl(0.05, 0.05, 0.78, C.wood2, 11.75, 0.4, -3.62, extG, 8));
+      ltag(cyl(0.05, 0.05, 0.78, C.wood2, 10.65, 0.4, -2.98, extG, 8));
+      ltag(cyl(0.05, 0.05, 0.78, C.wood2, 11.75, 0.4, -2.98, extG, 8));
+      /* the radio's shelf beside the hearth */
+      ltag(rbox(1.3, 0.08, 0.6, 0.03, NICE ? 0xffffff : 0xb98c58,
+                12.7, 1.33, -5.05, extG,
+                NICE ? { rough: 0.7, map: woodLight } : { rough: 0.7 }));
+      ltag(box(0.08, 0.3, 0.5, C.wood2, 12.25, 1.14, -5.05, extG));
+      ltag(box(0.08, 0.3, 0.5, C.wood2, 13.15, 1.14, -5.05, extG));
+      if (DETAIL >= 2) {
+        ltag(cyl(0.05, 0.07, 1.3, 0x8a8178, 9.3, 0.65, -4.9, extG, 8));
+        var lshade = new T.Mesh(new T.CylinderGeometry(0.26, 0.34, 0.3, 14,
+                                                       1, true),
+          mat(0xf0e3c8, { rough: 0.8 }));
+        lshade.position.set(9.3, 1.45, -4.9);
+        ltag(lshade); finish(lshade); extG.add(lshade);
+      }
+      blobShadow(2.4, 2.3, 11.2, -3.3, extG);
+    })();
     /* two blob trees + a bush: the yard is a place, not a void */
     function tree(x, z, s) {
       cyl(0.16 * s, 0.22 * s, 1.4 * s, EXTC.trunk, x, 0.7 * s, z, extG, 8);
@@ -1468,10 +1596,14 @@
       boardTex: boardTex, weatherTex: weatherTex, clearPaint: clearPaint,
       extG: extG, skyDome: skyDome, skyDomeTex: skyDomeTex,
       garageDoorG: garageDoorG, garageInterior: garageInterior,
+      garageBackWall: webgl_garageBackWall,
       carsG: carsG, busG: busG, buildCar: buildCar, carTex: carTex,
       HOME_POS: HOME_POS, HOME_AT: HOME_AT,
       EXT_POS: EXT_POS, EXT_AT: EXT_AT,
-      GARAGE_POS: GARAGE_POS, GARAGE_AT: GARAGE_AT
+      GARAGE_POS: GARAGE_POS, GARAGE_AT: GARAGE_AT,
+      MUD_POS: MUD_POS, MUD_AT: MUD_AT, LIV_POS: LIV_POS, LIV_AT: LIV_AT,
+      mudroomRoofG: mudroomRoofG, livingRoofG: livingRoofG,
+      mudBagsG: mudBagsG
     };
   }
 
@@ -1617,6 +1749,7 @@
     swap(webgl.paneMesh, webgl.weatherTex(s.window || {}));
     swap(webgl.skyDome, webgl.skyDomeTex(s.window || {}));
     syncGarage(s);
+    syncMudroom(s);
 
     /* moment magnets on the fridge door: one colored square each, capped */
     var wantMagnets = Math.min(((s.fridge || {}).new_moments || 0), 6);
@@ -1672,6 +1805,32 @@
       });
     }
     if (webgl.busG) webgl.busG.visible = !!((s.curb || {}).bus);
+  }
+
+  /* backpacks on the mudroom bench: one per child, rebuilt on count change */
+  var bagCount = null;
+  var BAG_COLORS = [0xc9473d, 0x3fbdb2, 0xe09a3e, 0x5a7fc0];
+  var BAG_SPOTS = [[-7.7, 0.85, -0.5], [-7.7, 0.85, -1.5],
+                   [-8.35, 0.31, 0.3], [-8.35, 0.31, -2.4]];
+  function syncMudroom(s) {
+    if (!webgl) return;
+    var n = Math.min(4, ((s.mudroom || {}).bags || 0));
+    if (n === bagCount) return;
+    bagCount = n;
+    while (webgl.mudBagsG.children.length)
+      webgl.mudBagsG.remove(webgl.mudBagsG.children[0]);
+    for (var i = 0; i < n; i++) {
+      var bag = new webgl.T.Group();
+      var body = new webgl.T.Mesh(new webgl.T.BoxGeometry(0.34, 0.5, 0.26),
+        new webgl.T.MeshLambertMaterial({ color: BAG_COLORS[i % 4] }));
+      var flap = new webgl.T.Mesh(new webgl.T.BoxGeometry(0.36, 0.2, 0.28),
+        new webgl.T.MeshLambertMaterial({ color: 0x3a3330 }));
+      flap.position.y = 0.18;
+      bag.add(body); bag.add(flap);
+      bag.position.set(BAG_SPOTS[i][0], BAG_SPOTS[i][1], BAG_SPOTS[i][2]);
+      bag.userData.room = 'mudroom';
+      webgl.mudBagsG.add(bag);
+    }
   }
 
   /* ---- focus-then-through (lean-in; card zones approach FACE-ON) ------- */
@@ -1739,10 +1898,18 @@
     return {
       kitchen: { pos: webgl.HOME_POS, at: webgl.HOME_AT },
       garage:  { pos: webgl.GARAGE_POS, at: webgl.GARAGE_AT,
-                 hide: webgl.garageDoorG }
+                 hide: webgl.garageDoorG },
+      mudroom: { pos: webgl.MUD_POS, at: webgl.MUD_AT,
+                 /* the garage front+roof steps aside too: the way into
+                    the mudroom looks across the open garage */
+                 hide: [webgl.mudroomRoofG, webgl.garageDoorG,
+                        webgl.garageBackWall] },
+      living:  { pos: webgl.LIV_POS, at: webgl.LIV_AT,
+                 hide: webgl.livingRoofG }
     };
   }
-  var ZONE_ROOM = { garage: 'garage', curb: null };
+  var ZONE_ROOM = { garage: 'garage', curb: null,
+                    door: 'mudroom', radio: 'living', pet: 'living' };
   function zoneRoom(key) {
     var r = ZONE_ROOM[key];
     return r === undefined ? 'kitchen' : r;
@@ -1754,7 +1921,15 @@
     if (mode === name) { if (cb) cb(); return; }
     mode = name;
     Object.keys(rooms).forEach(function (k) {
-      if (rooms[k].hide) rooms[k].hide.visible = (k !== name);
+      var h = rooms[k].hide;
+      if (!h) return;
+      (Array.isArray(h) ? h : [h]).forEach(function (g) {
+        g.visible = true;
+      });
+    });
+    var act = room.hide;
+    if (act) (Array.isArray(act) ? act : [act]).forEach(function (g) {
+      g.visible = false;
     });
     tween = { fromP: webgl.cam.position.clone(), toP: room.pos.clone(),
               fromA: (lookAt || webgl.EXT_AT).clone(), toA: room.at.clone(),
@@ -1767,7 +1942,11 @@
     TIP.style.opacity = 0;
     var rooms = roomsReg();
     Object.keys(rooms).forEach(function (k) {
-      if (rooms[k].hide) rooms[k].hide.visible = true;
+      var h = rooms[k].hide;
+      if (!h) return;
+      (Array.isArray(h) ? h : [h]).forEach(function (g) {
+        g.visible = true;
+      });
     });
     announceFocus(null);
     tween = { fromP: webgl.cam.position.clone(), toP: webgl.EXT_POS.clone(),
