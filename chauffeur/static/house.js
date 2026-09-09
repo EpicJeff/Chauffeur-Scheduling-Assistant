@@ -2686,131 +2686,457 @@
     ebox(50, 0.38, 5, NICE ? 0xffffff : 0x4a4f55, 0.5, -0.50, 20.5,
          { rough: 0.95, map: roadT });
     ebox(50, 0.1, 0.5, EXTC.trim, 0.5, -0.28, 17.85, { rough: 0.9 });
-    /* the school bus, at the curb only while it is actually out */
-    var CAR_DARK = 0x22252a;
+    /* ================= VEHICLES (docs/house_style_bible.md S6) ==========
+       Plate 10 is a low-poly car pack: faceted bodies, hard chamfers,
+       inset blue glass, a grille, headlight blocks and a cut arch over
+       every wheel. The first pass built a body box, a cab box and a
+       flush window band - the three tells of a block car. This kit
+       replaces all three.
+
+       A vehicle is a SIDE PROFILE, traced once as a T.Shape in (z
+       forward, y up) and extruded across the width with ONE bevel
+       segment: two or more and the chamfer goes soft plastic. The glass
+       is its own extrusion set 0.06 inside the body sides, so the
+       pillars and the roof cap stand proud of it from every angle. The
+       arch is cut INTO the profile with 0.05 of air round the tyre.
+
+       One builder serves all seven car bodies and the school bus - the
+       bus is a long profile with a bonnet, not a different craft. */
+    var CAR_GLASS = 0x7fb6d9;            /* S6: the plate window blue */
+    var CAR_LAMP = 0xfdf6e3;             /* S6: headlight block */
+
+    function shadeHex(hex, k) {
+      function cl(v) { return Math.max(0, Math.min(255, Math.round(v))); }
+      return (cl(((hex >> 16) & 255) * k) << 16)
+           | (cl(((hex >> 8) & 255) * k) << 8) | cl((hex & 255) * k);
+    }
+    function lumaHex(hex) {
+      return (0.299 * ((hex >> 16) & 255) + 0.587 * ((hex >> 8) & 255)
+              + 0.114 * (hex & 255)) / 255;
+    }
+    /* ExtrudeGeometry pushes along ITS own +z, so the mesh takes a
+       quarter turn and slides back half a width; after that the shape
+       coordinates ARE vehicle coordinates.
+
+       bevelOffset is load-bearing. Without it three.js runs the BODY of
+       the extrusion at shape+bevelSize and the two end caps at the shape
+       itself - so the silhouette comes out 0.05 fat in every direction,
+       the beltline rises over the roof cap and the wheel arches lose the
+       whole of their clearance. bevelOffset:-bevelSize puts the shape
+       back on the body and chamfers the caps IN, which is the plate's
+       hard edge and the geometry this file's numbers assume. */
+    function profileMesh(shape, width, colour, opts) {
+      var bev = DETAIL >= 2, bt = 0.05;
+      var m = new T.Mesh(new T.ExtrudeGeometry(shape, {
+        depth: width - (bev ? 2 * bt : 0), bevelEnabled: bev,
+        bevelThickness: bt, bevelSize: bt, bevelOffset: -bt,
+        bevelSegments: 1, steps: 1,
+        curveSegments: DETAIL >= 3 ? 7 : 3 }), mat(colour, opts || GLOSS));
+      m.rotation.y = -Math.PI / 2;
+      m.position.x = width / 2 - (bev ? bt : 0);
+      return m;
+    }
+    /* the arch: the sill drops away, the profile lifts over the wheel
+       with 0.05 of air and comes back down. No arch reads as a toy. */
+    function archCut(sh, wz, wr, sill) {
+      var aR = wr + 0.05;
+      sh.lineTo(wz - aR, sill);
+      sh.lineTo(wz - aR, wr);
+      sh.absarc(wz, wr, aR, Math.PI, 0, true);
+      sh.lineTo(wz + aR, sill);
+    }
+    /* Every profile keeps belt > 2*wr + 0.09 (the arch has to clear the
+       beltline) and sill < wr (the arch needs a lip to cut). */
+    function buildVehicle(grp, p, col, tag) {
+      var zF = p.L / 2, zR = -p.L / 2, hw = p.W / 2;
+      /* The cabin comes in 0.09 a side from the body (S6's taper) and
+         the glass another 0.06 in from THAT, so every pillar and the
+         roof cap stand proud of the glass. Insetting the glass from the
+         body alone leaves no room: the tub's own 0.05 chamfer at the
+         beltline eats it, and the pillars come out as fins. */
+      var cabX = hw - 0.09, glassW = 2 * (cabX - 0.06);
+      var trimC = p.trim !== undefined ? p.trim
+                : (lumaHex(col) > 0.60 ? shadeHex(col, 0.56) : C.cabShade);
+
+      /* -- 1. the tub: sill, both arches, nose, bonnet, beltline, tail */
+      var sh = new T.Shape();
+      sh.moveTo(zR, p.sill);
+      archCut(sh, p.rw, p.wr, p.sill);
+      archCut(sh, p.fw, p.wr, p.sill);
+      sh.lineTo(zF, p.sill);
+      sh.lineTo(zF, p.nose);                       /* the nose face */
+      sh.lineTo(zF - 0.16, p.hood);                /* bonnet break */
+      sh.lineTo(p.wsB, p.hood);
+      if (Math.abs(p.belt - p.hood) > 0.01) sh.lineTo(p.wsB, p.belt);
+      if (p.bed) {                                 /* a truck: open well */
+        sh.lineTo(p.bed.z0, p.belt);
+        sh.lineTo(p.bed.z0, p.bed.floor);
+        sh.lineTo(p.bed.z1, p.bed.floor);
+        sh.lineTo(p.bed.z1, p.bed.rail);
+        sh.lineTo(zR, p.bed.rail);
+      } else {
+        sh.lineTo(p.blB, p.belt);
+        if (Math.abs(p.belt - p.deck) > 0.01) sh.lineTo(p.blB, p.deck);
+        sh.lineTo(zR + 0.03, p.deck);
+      }
+      sh.lineTo(zR, p.sill + 0.12);                /* the tail tucks in */
+      sh.closePath();
+      tag(profileMesh(sh, p.W, col, p.paint || GLOSS));
+
+      /* -- 2. the greenhouse: ONE glass mesh, 0.06 inside the body
+         sides. Flush glass is the clearest tell of a block car; this is
+         the line that removes it. It plunges 0.14 into the tub so there
+         is no seam at the beltline. */
+      var gh = new T.Shape();
+      var gy = p.belt - 0.14;
+      gh.moveTo(p.wsB, gy);
+      gh.lineTo(p.wsT, p.roof);
+      gh.lineTo(p.blT, p.roof);
+      gh.lineTo(p.blB, gy);
+      gh.closePath();
+      tag(profileMesh(gh, glassW, p.glass || CAR_GLASS,
+                      { rough: 0.34, metal: 0.0, envInt: 0.16 }));
+
+      /* -- 3. the roof cap: painted, capping the glass, drawn in from
+         the body sides so the cabin is narrower than the body (S6). */
+      var capZ0 = p.wsT + 0.03, capZ1 = p.blT - 0.03;
+      if (capZ0 > capZ1 + 0.05) {
+        tag(box(2 * cabX + 0.01, 0.075, capZ0 - capZ1, col, 0,
+                p.roof - 0.018, (capZ0 + capZ1) / 2, grp, GLOSS));
+      }
+
+      /* -- 4. pillars, at the BODY width: A, C and the cabin uprights
+         all stand 0.06 proud of the glass. */
+      function pillar(z0, z1, w) {
+        var dz = z1 - z0, dy = p.roof - p.belt;
+        var len = Math.sqrt(dz * dz + dy * dy) + 0.11;
+        [-1, 1].forEach(function (sx) {
+          var m = box(w, len, 0.07, col, sx * (cabX - w / 2),
+                      (p.belt + p.roof) / 2 - 0.05, (z0 + z1) / 2, grp,
+                      GLOSS);
+          m.rotation.x = Math.atan2(dz, dy);
+          tag(m);
+        });
+      }
+      if (DETAIL >= 2) {
+        pillar(p.wsB, p.wsT, 0.062);
+        pillar(p.blB, p.blT, 0.070);
+        (p.pil || []).forEach(function (t) {
+          var z = p.wsB + t * (p.blB - p.wsB);
+          pillar(z, z, 0.050);
+        });
+      }
+
+      /* -- 5. wheels: tyre in ink, rim at 0.62 radius set 0.02 inside
+         the tyre face, a proud hub cap at tier 3. */
+      function wheelAt(sx, wz, off) {
+        var xo = sx * (hw - 0.03) - sx * (off || 0);
+        var tw = p.wr * 0.30, t;
+        if (DETAIL >= 2) {
+          t = new T.Mesh(new T.TorusGeometry(p.wr - tw, tw,
+            DETAIL >= 3 ? 8 : 5, DETAIL >= 3 ? 16 : 10),
+            mat(C.ink, { rough: 0.92 }));
+          t.rotation.y = Math.PI / 2;
+          t.position.set(xo - sx * tw, p.wr, wz);
+        } else {
+          t = new T.Mesh(new T.CylinderGeometry(p.wr, p.wr, 0.20, 8),
+            mat(C.ink, { rough: 0.92 }));
+          t.rotation.z = Math.PI / 2;
+          t.position.set(xo - sx * 0.10, p.wr, wz);
+        }
+        t.userData.round = true;
+        tag(t);
+        if (DETAIL >= 2) {
+          var r = new T.Mesh(new T.CylinderGeometry(p.wr * 0.62,
+            p.wr * 0.62, 0.07, 12), mat(C.steel, STEEL));
+          r.rotation.z = Math.PI / 2;
+          r.position.set(xo - sx * 0.055, p.wr, wz);
+          r.userData.round = true;
+          tag(r);
+        }
+        if (DETAIL >= 3) {
+          var h = new T.Mesh(new T.CylinderGeometry(p.wr * 0.26,
+            p.wr * 0.26, 0.05, 8), mat(C.graphite, STEEL));
+          h.rotation.z = Math.PI / 2;
+          h.position.set(xo - sx * 0.024, p.wr, wz);
+          h.userData.round = true;
+          tag(h);
+        }
+      }
+      [-1, 1].forEach(function (sx) {
+        wheelAt(sx, p.fw, 0);
+        wheelAt(sx, p.rw, 0);
+        if (p.dual) wheelAt(sx, p.rw, 0.21);     /* a bus twin rear */
+      });
+
+      /* -- 6. bumpers 0.10 proud of the body; above them one band
+         carrying the grille and the light blocks, below the bonnet
+         break. The plate's cars read from the front, so this band is
+         the whole front-three-quarter silhouette. */
+      var bumpH = 0.19, bumpY = p.sill + bumpH / 2 + 0.01;
+      tag(box(p.W * 0.90, bumpH, 0.15, trimC, 0, bumpY, zF + 0.015, grp,
+              { rough: 0.55 }));
+      tag(box(p.W * 0.90, bumpH, 0.15, trimC, 0, bumpY, zR - 0.015, grp,
+              { rough: 0.55 }));
+      var gBot = p.sill + bumpH + 0.05;
+      var gTop = Math.max(gBot + 0.11, p.nose - 0.05);
+      var gMid = (gTop + gBot) / 2, gHt = gTop - gBot;
+      tag(box(p.W * 0.42, gHt, 0.08, C.graphite, 0, gMid, zF + 0.005, grp,
+              { rough: 0.5 }));
+      if (DETAIL >= 3) {
+        for (var si = 0; si < 4; si++) {
+          tag(box(p.W * 0.38, gHt / 10, 0.03, C.ink, 0,
+                  gBot + gHt * (si + 0.5) / 4, zF + 0.05, grp,
+                  { rough: 0.6 }));
+        }
+      }
+      var tailY = p.bed ? p.bed.rail - 0.24 : p.deck - 0.22;
+      [-1, 1].forEach(function (sx) {
+        var lx = sx * (hw - p.W * 0.155), ly = gMid + gHt * 0.06;
+        if (DETAIL >= 2) {         /* a bezel, or a cream lamp on a cream
+                                      bumper is just more trim */
+          tag(box(p.W * 0.25, gHt * 0.80, 0.05, C.graphite, lx, ly,
+                  zF + 0.002, grp, { rough: 0.5 }));
+          tag(box(p.W * 0.21, gHt * 0.78, 0.05, C.ink, sx * (hw - p.W * 0.15),
+                  Math.max(p.sill + 0.40, tailY), zR - 0.002, grp,
+                  { rough: 0.5 }));
+        }
+        tag(box(p.W * 0.21, gHt * 0.60, 0.07, CAR_LAMP, lx, ly,
+                zF + 0.012, grp, GLOSS));
+        tag(box(p.W * 0.17, gHt * 0.58, 0.07, C.oxblood,
+                sx * (hw - p.W * 0.15),
+                Math.max(p.sill + 0.40, tailY), zR - 0.012, grp, GLOSS));
+      });
+      /* the plate's cars are two-tone: a trim band along the rocker
+         picks up the bumpers and breaks the flank's flat slab */
+      if (DETAIL >= 2) {
+        var rkA = p.fw - p.wr - 0.10, rkB = p.rw + p.wr + 0.10;
+        [-1, 1].forEach(function (sx) {
+          tag(box(0.05, 0.11, rkA - rkB, trimC, sx * (hw + 0.004),
+                  p.sill + 0.065, (rkA + rkB) / 2, grp, { rough: 0.55 }));
+        });
+      }
+
+      /* -- 7. mirrors, handles, badge: the finest layer */
+      if (DETAIL >= 2 && !p.noMirror) {
+        [-1, 1].forEach(function (sx) {
+          tag(box(0.13, 0.09, 0.09, col, sx * (hw + 0.045), p.belt + 0.07,
+                  p.wsB - 0.10, grp, GLOSS));
+        });
+      }
+      if (DETAIL >= 3) {
+        var cabL = p.wsB - p.blB, hs = [0.34];
+        if (cabL > 1.5) hs.push(0.74);
+        [-1, 1].forEach(function (sx) {
+          hs.forEach(function (t) {
+            var hz = p.wsB - t * cabL;
+            tag(box(0.05, 0.07, 0.28, C.graphite, sx * (hw + 0.014),
+                    p.belt - 0.17, hz, grp, STEEL));
+            tag(box(0.02, p.belt - p.sill - 0.16, 0.035,
+                    shadeHex(col, 0.72), sx * (hw + 0.006),
+                    (p.belt + p.sill) / 2 + 0.02, hz + 0.30, grp,
+                    { rough: 0.8 }));
+          });
+        });
+        tag(box(0.16, 0.06, 0.03, C.steel, 0, tailY + 0.24, zR - 0.02,
+                grp, CHROME));
+        [-1, 1].forEach(function (sx) {      /* the shoulder crease */
+          tag(box(0.035, 0.032, p.L - 0.48, shadeHex(col, 0.80),
+                  sx * (hw + 0.002), p.belt - 0.085, -0.04, grp,
+                  { rough: 0.6 }));
+        });
+      }
+
+      /* -- 8. a truck bed: the profile cuts the well, two side panels
+         close it, and the floor sits a shade below the paint. */
+      if (p.bed) {
+        var bL = p.bed.z0 - p.bed.z1, bC = (p.bed.z0 + p.bed.z1) / 2;
+        [-1, 1].forEach(function (sx) {
+          tag(box(0.12, p.bed.rail - p.bed.floor + 0.08, bL, col,
+                  sx * (hw - 0.06),
+                  (p.bed.rail + p.bed.floor) / 2 - 0.04, bC, grp, GLOSS));
+        });
+        if (DETAIL >= 2) {
+          tag(box(p.W - 0.26, 0.05, bL - 0.08, shadeHex(col, 0.70), 0,
+                  p.bed.floor + 0.035, bC, grp, { rough: 0.8 }));
+        }
+      }
+
+      /* -- 9. nothing floats (S4), at EVERY tier. The sun's shadow
+         camera is a +/-10 orthographic box centred on the house, and
+         every vehicle - garage bay (x -16.7), driveway apron (x -15.4),
+         kerb (z 19.8) - projects outside it, so the tier-3 shadow map
+         does not reach them. Verified by widening the box to +/-40: the
+         cast shadow appears, and every other room's shadows coarsen 4x,
+         which is why the frustum is not the thing to change here. Drop
+         this the day the lighting pass gives the yard its own light.
+
+         The pool MULTIPLIES rather than blending a dark disc over the
+         floor: blobShadow's flat C.shadow quad LIGHTENS the garage bay,
+         whose boards sit darker than #3a3340, and came out as a halo
+         round every car. Grey multiplied into whatever is underneath
+         can only darken it. Two rings give the pool an edge instead of
+         a cut-out, and both are wider than the car - a pool the body
+         covers entirely does nothing at all, which is what the old
+         one did. The rings ride inside the group, so they land on the
+         garage boards (y 0.038) and the apron (y -0.206) alike. */
+      [[0.52, 0.50, 0xa8a4ac], [0.72, 0.57, 0xdad7dd]].forEach(
+        function (ring, ri) {
+          /* both rings at every tier: a lone hard-edged 12-gon pokes a
+             visible triangle out from under the bumper at low, and two
+             circles are ~40 triangles - not a tier concern */
+          var d = new T.Mesh(new T.CircleGeometry(1, DETAIL >= 2 ? 22 : 16),
+            new T.MeshBasicMaterial({ color: ring[2], transparent: true,
+                                      blending: T.MultiplyBlending,
+                                      depthWrite: false }));
+          d.rotation.x = -Math.PI / 2;
+          d.scale.set(p.W * ring[0], p.L * ring[1], 1);
+          d.position.set(0, 0.012 + ri * 0.004, 0);
+          d.renderOrder = -2 + ri;
+          grp.add(d);
+        });
+    }
+
+    /* the school bus, at the curb only while it is actually out. Same
+       kit as the cars: a conventional bonnet, a window band cut by the
+       cabin uprights, black rub rails, a stop arm on the traffic side. */
+    var BUS_BODY = { paint: { rough: 0.55, metal: 0.0, envInt: 0.10 },
+                     L: 5.6, W: 2.05, wr: 0.42, sill: 0.30, nose: 1.16,
+                     hood: 1.34, belt: 1.48, deck: 1.48, roof: 2.40,
+                     fw: 2.02, rw: -1.82, wsB: 1.86, wsT: 1.62,
+                     blT: -2.62, blB: -2.74, dual: true,
+                     pil: [0.12, 0.27, 0.42, 0.57, 0.72, 0.88],
+                     trim: 0x23272c, noMirror: true };
     var busG = new T.Group();
     busG.visible = false;
     busG.position.set(-5.5, -0.31, 19.8);
     busG.userData.zone = 'curb';
     extG.add(busG);
     (function () {
-      function btag(m) { m.userData.zone = 'curb'; finish(m); busG.add(m); return m; }
-      var body = new T.Mesh(
-        NICE ? roundedGeo(5.4, 1.6, 1.95, 0.12) : new T.BoxGeometry(5.4, 1.6, 1.95),
-        mat(0xf2b12e, GLOSS));
-      body.position.set(0, 1.15, 0); btag(body);
-      var winb = new T.Mesh(new T.BoxGeometry(4.5, 0.5, 1.97),
-        mat(0x39434e, GLOSS));
-      winb.position.set(-0.2, 1.55, 0); btag(winb);
-      var stripe = new T.Mesh(new T.BoxGeometry(5.42, 0.09, 1.96),
-        mat(0x1c1c1c, {}));
-      stripe.position.set(0, 0.92, 0); btag(stripe);
-      [[-1.9, 0.95], [1.9, 0.95], [-1.9, -0.95], [1.9, -0.95]].forEach(function (wp) {
-        var wh = new T.Mesh(new T.CylinderGeometry(0.42, 0.42, 0.22, 14),
-          mat(CAR_DARK, {}));
-        wh.rotation.x = Math.PI / 2;
-        wh.position.set(wp[0], 0.42, wp[1]); btag(wh);
-      });
-      if (DETAIL >= 2) {
-        var stop = new T.Mesh(new T.CylinderGeometry(0.2, 0.2, 0.04, 8),
-          mat(C.red, GLOSS));
-        stop.rotation.x = Math.PI / 2;
-        stop.position.set(-1.4, 1.2, 1.05); btag(stop);
+      var BUSY = 0xefa41c;
+      /* built nose-forward and turned a quarter: the bus runs along the
+         street (world +x) and shows the camera its left flank, which is
+         the side the stop arm lives on. */
+      var inner = new T.Group();
+      inner.rotation.y = Math.PI / 2;
+      busG.add(inner);
+      function btag(m) {
+        if (!m) return m;
+        m.userData.zone = 'curb';
+        finish(m);
+        if (m.parent !== inner) inner.add(m);
+        return m;
       }
-      if (DETAIL >= 3) {
-        btag(box(0.14, 0.1, 0.1, C.red, -2.6, 2.02, 0.5, busG));
-        btag(box(0.14, 0.1, 0.1, C.red, -2.6, 2.02, -0.5, busG));
+      buildVehicle(inner, BUS_BODY, BUSY, btag);
+      var hwB = BUS_BODY.W / 2;
+      if (DETAIL >= 2) {                 /* the rub rails, and the door */
+        [-1, 1].forEach(function (sx) {
+          [BUS_BODY.belt - 0.22, BUS_BODY.belt - 0.60].forEach(function (y) {
+            btag(box(0.04, 0.08, BUS_BODY.L - 1.30, C.ink,
+                     sx * (hwB + 0.012), y, -0.55, inner, { rough: 0.7 }));
+          });
+        });
+        /* the entrance: a glazed panel behind the front wheel, kerb side */
+        btag(box(0.05, 1.02, 0.50, C.ink, hwB + 0.012, 0.92, 1.30, inner,
+                 { rough: 0.6 }));
+        btag(box(0.03, 0.86, 0.38, CAR_GLASS, hwB + 0.03, 0.96, 1.30,
+                 inner, GLOSS));
+        /* the stop arm, on the traffic side */
+        var arm = new T.Mesh(new T.CylinderGeometry(0.27, 0.27, 0.05, 8),
+          mat(C.red, GLOSS));
+        arm.rotation.z = Math.PI / 2;
+        arm.position.set(-(hwB + 0.13), BUS_BODY.belt - 0.10, 0.35);
+        btag(arm);
+        if (DETAIL >= 3) {
+          var ring = new T.Mesh(new T.CylinderGeometry(0.17, 0.17, 0.055, 8),
+            mat(C.cream, GLOSS));
+          ring.rotation.z = Math.PI / 2;
+          ring.position.set(-(hwB + 0.145), BUS_BODY.belt - 0.10, 0.35);
+          btag(ring);
+          btag(box(0.06, 0.10, 0.16, C.ink, -(hwB + 0.05),
+                   BUS_BODY.belt - 0.10, 0.35, inner, { rough: 0.7 }));
+        }
+      }
+      if (DETAIL >= 3) {                 /* roof beacons, front and back */
+        [-1, 1].forEach(function (sx) {
+          btag(box(0.16, 0.12, 0.12, C.red, sx * 0.52, BUS_BODY.roof + 0.06,
+                   BUS_BODY.wsT - 0.16, inner, GLOSS));
+          btag(box(0.16, 0.12, 0.12, C.red, sx * 0.52, BUS_BODY.roof + 0.06,
+                   BUS_BODY.blT + 0.16, inner, GLOSS));
+        });
       }
       groups.curb = busG;
     })();
-    /* parametric cars: the family's real records, drawn by shape */
+
+    /* the family real cars, drawn by shape. color_code is the paint;
+       seat_capacity stretches the car along z (the tyres are counter-
+       scaled so they stay round). */
     var CAR_BODIES = {
-      sedan:   { L: 3.3, H: 0.5,  W: 1.6,  wheel: 0.3,  cabL: 1.7, cabH: 0.5,  cabOff: -0.1 },
-      suv:     { L: 3.5, H: 0.65, W: 1.7,  wheel: 0.36, cabL: 2.1, cabH: 0.6,  cabOff: -0.1 },
-      truck:   { L: 3.9, H: 0.6,  W: 1.7,  wheel: 0.38, cabL: 1.3, cabH: 0.62, cabOff: 0.95, bed: true },
-      minivan: { L: 3.7, H: 0.62, W: 1.7,  wheel: 0.32, cabL: 2.6, cabH: 0.66, cabOff: 0.05 },
-      hatch:   { L: 3.0, H: 0.5,  W: 1.55, wheel: 0.3,  cabL: 1.7, cabH: 0.55, cabOff: -0.3 },
-      wagon:   { L: 3.6, H: 0.52, W: 1.6,  wheel: 0.31, cabL: 2.3, cabH: 0.5,  cabOff: -0.15 },
-      van:     { L: 3.8, H: 0.85, W: 1.75, wheel: 0.34, cabL: 3.2, cabH: 0.7,  cabOff: 0 }
+      /* a boot deck below the beltline, a raked backlight */
+      sedan:   { L: 3.35, W: 1.62, wr: 0.27, sill: 0.15, nose: 0.56,
+                 hood: 0.65, belt: 0.70, deck: 0.64, roof: 1.21,
+                 fw: 1.02, rw: -1.02, wsB: 0.68, wsT: 0.30,
+                 blT: -0.50, blB: -0.86, pil: [0.50] },
+      /* tall, upright, roof almost to the tail */
+      suv:     { L: 3.55, W: 1.74, wr: 0.35, sill: 0.27, nose: 0.76,
+                 hood: 0.86, belt: 0.94, deck: 0.94, roof: 1.56,
+                 fw: 1.10, rw: -1.08, wsB: 0.82, wsT: 0.46,
+                 blT: -1.40, blB: -1.60, pil: [0.30, 0.62] },
+      /* a short cab and an open bed with a tailgate */
+      truck:   { L: 3.95, W: 1.76, wr: 0.32, sill: 0.25, nose: 0.80,
+                 hood: 0.90, belt: 0.98, deck: 0.98, roof: 1.62,
+                 fw: 1.30, rw: -1.06, wsB: 0.92, wsT: 0.56,
+                 blT: -0.12, blB: -0.20, pil: [],
+                 bed: { z0: -0.30, z1: -1.84, floor: 0.76, rail: 1.08 } },
+      /* long tall cabin, sloped nose, a slab flank */
+      minivan: { L: 3.75, W: 1.74, wr: 0.30, sill: 0.18, nose: 0.66,
+                 hood: 0.76, belt: 0.84, deck: 0.84, roof: 1.58,
+                 fw: 1.18, rw: -1.12, wsB: 1.08, wsT: 0.62,
+                 blT: -1.50, blB: -1.72, pil: [0.28, 0.58] },
+      /* short, steep backlight landing on the tail */
+      hatch:   { L: 3.02, W: 1.56, wr: 0.27, sill: 0.15, nose: 0.56,
+                 hood: 0.65, belt: 0.70, deck: 0.70, roof: 1.25,
+                 fw: 0.91, rw: -0.91, wsB: 0.62, wsT: 0.26,
+                 blT: -0.80, blB: -1.20, pil: [0.45] },
+      /* the sedan nose, a roof carried flat to a near-vertical tail */
+      wagon:   { L: 3.62, W: 1.64, wr: 0.28, sill: 0.16, nose: 0.58,
+                 hood: 0.67, belt: 0.72, deck: 0.72, roof: 1.26,
+                 fw: 1.09, rw: -1.09, wsB: 0.76, wsT: 0.40,
+                 blT: -1.44, blB: -1.66, pil: [0.30, 0.62] },
+      /* tallest, barely any bonnet, a slab flank */
+      van:     { L: 3.85, W: 1.80, wr: 0.32, sill: 0.20, nose: 0.92,
+                 hood: 0.98, belt: 1.04, deck: 1.04, roof: 1.96,
+                 fw: 1.30, rw: -1.16, wsB: 1.56, wsT: 1.32,
+                 blT: -1.66, blB: -1.83, pil: [0.24, 0.50, 0.76] }
     };
     var carsG = new T.Group();
     extG.add(carsG);
     function buildCar(c) {
-      var p = CAR_BODIES[c.body] || CAR_BODIES.sedan;
+      var p = CAR_BODIES[c.body] || CAR_BODIES.sedan;   /* unset = sedan */
       var col = 0x9aa2a9;
       try {
         if (c.color) col = parseInt(String(c.color).replace('#', ''), 16);
         if (!isFinite(col)) col = 0x9aa2a9;
       } catch (e) { col = 0x9aa2a9; }
-      var L = Math.min(p.L * 1.25,
-        Math.max(p.L * 0.9, p.L * (1 + 0.03 * ((c.seats || 4) - 4))));
       var grp = new T.Group();
-      function add(m) {
+      grp.userData.zone = 'garage';
+      grp.userData.room = 'garage';
+      function tag(m) {
+        if (!m) return m;
         m.userData.zone = 'garage'; m.userData.room = 'garage';
-        finish(m); grp.add(m); return m;
+        finish(m);
+        if (m.parent !== grp) grp.add(m);
+        return m;
       }
-      var yBody = p.wheel + p.H / 2 - 0.05;
-      var body = new T.Mesh(
-        NICE ? roundedGeo(p.W, p.H, L, 0.07) : new T.BoxGeometry(p.W, p.H, L),
-        mat(col, GLOSS));
-      body.position.set(0, yBody, 0);
-      add(body);
-      var yCab = p.wheel + p.H + p.cabH / 2 - 0.08;
-      var cab = new T.Mesh(
-        NICE ? roundedGeo(p.W - 0.25, p.cabH, p.cabL, 0.08)
-             : new T.BoxGeometry(p.W - 0.25, p.cabH, p.cabL),
-        mat(col, GLOSS));
-      cab.position.set(0, yCab, p.cabOff);
-      add(cab);
-      var band = new T.Mesh(
-        new T.BoxGeometry(p.W - 0.18, p.cabH * 0.5, Math.max(0.4, p.cabL - 0.35)),
-        mat(0x39434e, GLOSS));
-      band.position.set(0, yCab + 0.03, p.cabOff);
-      add(band);
-      if (p.bed) {
-        var bedFront = p.cabOff - p.cabL / 2 - 0.08;
-        var bedBack = -L / 2 + 0.12;
-        var bedLen = bedFront - bedBack;
-        var yRail = p.wheel + p.H + 0.12;
-        add(new T.Mesh(new T.BoxGeometry(p.W - 0.2, 0.26, 0.07),
-          mat(col, GLOSS))).position.set(0, yRail, bedBack + 0.04);
-        add(new T.Mesh(new T.BoxGeometry(0.07, 0.26, bedLen),
-          mat(col, GLOSS))).position.set(-(p.W / 2 - 0.14), yRail,
-                                          bedBack + bedLen / 2);
-        add(new T.Mesh(new T.BoxGeometry(0.07, 0.26, bedLen),
-          mat(col, GLOSS))).position.set(p.W / 2 - 0.14, yRail,
-                                         bedBack + bedLen / 2);
-      }
-      [[-1, 1], [1, 1], [-1, -1], [1, -1]].forEach(function (wp) {
-        var wh = new T.Mesh(
-          new T.CylinderGeometry(p.wheel, p.wheel, 0.16, DETAIL >= 3 ? 14 : 10),
-          mat(CAR_DARK, {}));
-        wh.rotation.z = Math.PI / 2;
-        wh.position.set(wp[0] * (p.W / 2 - 0.02), p.wheel,
-                        wp[1] * (L / 2 - p.wheel * 1.5));
-        add(wh);
-        if (DETAIL >= 2) {
-          var hub = new T.Mesh(new T.CylinderGeometry(p.wheel * 0.45,
-            p.wheel * 0.45, 0.17, 10), mat(C.steel, CHROME));
-          hub.rotation.z = Math.PI / 2;
-          hub.position.copy(wh.position);
-          add(hub);
-        }
-      });
-      if (DETAIL >= 3) {
-        add(box(0.16, 0.09, 0.05, 0xfff3c4, -p.W / 4, yBody + 0.08, L / 2 + 0.01, grp, GLOSS));
-        add(box(0.16, 0.09, 0.05, 0xfff3c4, p.W / 4, yBody + 0.08, L / 2 + 0.01, grp, GLOSS));
-        add(box(0.16, 0.09, 0.05, C.red, -p.W / 4, yBody + 0.08, -L / 2 - 0.01, grp, GLOSS));
-        add(box(0.16, 0.09, 0.05, C.red, p.W / 4, yBody + 0.08, -L / 2 - 0.01, grp, GLOSS));
-      }
-      if (!SHADOWS) {
-        var sh = new T.Mesh(new T.CircleGeometry(1, 16),
-          new T.MeshBasicMaterial({ color: C.shadow, transparent: true,
-                                    opacity: 0.16 }));
-        sh.rotation.x = -Math.PI / 2;
-        sh.scale.set(p.W * 0.62, L * 0.52, 1);
-        sh.position.set(0, 0.012, 0);
-        grp.add(sh);
+      buildVehicle(grp, p, col, tag);
+      /* seat_capacity still nudges the length: a z stretch on the whole
+         car, tyres counter-scaled so they stay round */
+      var k = Math.max(0.94, Math.min(1.12, 1 + 0.022 * ((c.seats || 4) - 4)));
+      if (Math.abs(k - 1) > 0.004) {
+        grp.scale.z = k;
+        grp.traverse(function (o) {
+          if (o.userData && o.userData.round) o.scale.z = 1 / k;
+        });
       }
       return grp;
     }
@@ -3836,7 +4162,10 @@
         if (!c.present) return;
         var grp = webgl.buildCar(c);
         if (inside < 2) {
-          grp.position.set(inside === 0 ? -16.7 : -14.1, 0, 5.6);
+          /* the garage boards sit at 0.035 and the driveway apron at
+             -0.21: a car parked at y 0 sinks into one and floats over
+             the other, and its contact shadow goes with it */
+          grp.position.set(inside === 0 ? -16.7 : -14.1, 0.038, 5.6);
           var plate = new webgl.T.Mesh(new webgl.T.PlaneGeometry(1.5, 0.75),
             new webgl.T.MeshBasicMaterial({ transparent: true,
                                             map: webgl.carTex(c) }));
@@ -3845,7 +4174,7 @@
           webgl.carsG.add(plate);
           inside++;
         } else {
-          grp.position.set(-15.4, 0, 12.6 + outside * 4.6);
+          grp.position.set(-15.4, -0.206, 12.6 + outside * 4.6);
           outside++;
         }
         webgl.carsG.add(grp);
