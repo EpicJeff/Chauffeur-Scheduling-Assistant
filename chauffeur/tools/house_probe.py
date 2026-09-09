@@ -38,7 +38,7 @@ def _seed():
     from models.schemas import Car
     storage.add_member({'id': 'k1', 'name': 'Maya', 'role': 'child'})
     storage.add_member({'id': 'k2', 'name': 'Finn', 'role': 'child'})
-    storage.add_driver({'id': 'd1', 'name': 'Alex', 'color': '#38bdf8'})
+    storage.add_driver({'id': 'd1', 'name': 'Alex', 'color_code': '#38bdf8'})
     now = datetime.datetime.now().replace(microsecond=0)
     start = now + datetime.timedelta(minutes=45)
     sched = {'events': [{'id': 'e1', 'title': 'Soccer practice',
@@ -67,6 +67,9 @@ def main():
     ap.add_argument('--clip', default='',
                     help='x,y,w,h crop of the 1400x1000 page')
     ap.add_argument('--no-seed', action='store_true')
+    ap.add_argument('--cam', default='',
+                    help='px,py,pz,ax,ay,az camera override, applied after '
+                         'the view is entered (studio viewfinder)')
     args = ap.parse_args()
 
     views = ROOM_VIEWS[:] if args.views == 'all' else [
@@ -103,6 +106,9 @@ def main():
                 page.evaluate(
                     "window.chfHouseEnterRoom(" + repr(view) + ")")
             page.wait_for_timeout(1500)
+            if args.cam:
+                page.evaluate('window.chfHouseCam(' + args.cam + ')')
+                page.wait_for_timeout(400)
             path = os.path.join(args.out, view + '.png')
             page.screenshot(path=path, clip=clip)
             print('shot', path)

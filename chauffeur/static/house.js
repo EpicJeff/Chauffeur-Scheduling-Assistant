@@ -222,15 +222,15 @@
     var HOME_POS = new T.Vector3(17.5, 13.0, 17.5);
     var HOME_AT = new T.Vector3(-0.2, 0.8, -0.4);
     /* the house from the yard: the panel's resting view */
-    var EXT_POS = new T.Vector3(38.5, 25.0, 38.5);
-    var EXT_AT = new T.Vector3(-2.4, 0.9, 5.0);
+    var EXT_POS = new T.Vector3(40.0, 26.0, 40.0);
+    var EXT_AT = new T.Vector3(-4.6, 1.2, 5.0);
     /* the garage from its own doorway (roof + front hidden inside) */
-    var GARAGE_POS = new T.Vector3(-10.6, 12.5, 23.0);
-    var GARAGE_AT = new T.Vector3(-12.2, 1.4, 4.6);
-    var MUD_POS = new T.Vector3(-7.35, 5.2, 3.2);
-    var MUD_AT = new T.Vector3(-8.6, 1.2, 9.2);
-    var LIV_POS = new T.Vector3(8.5, 11.0, 20.0);
-    var LIV_AT = new T.Vector3(-2.5, 1.0, 9.5);
+    var GARAGE_POS = new T.Vector3(-13.9, 11.2, 20.4);
+    var GARAGE_AT = new T.Vector3(-15.7, 1.7, 5.2);
+    var MUD_POS = new T.Vector3(-5.9, 5.2, 12.0);
+    var MUD_AT = new T.Vector3(-9.8, 1.5, 2.9);
+    var LIV_POS = new T.Vector3(4.0, 8.6, 18.5);
+    var LIV_AT = new T.Vector3(-3.6, 1.5, 9.8);
     cam.position.copy(EXT_POS);
     cam.lookAt(EXT_AT);
 
@@ -519,18 +519,23 @@
     /* west wall in two pieces + header: an open doorway into the
        mudroom at z 2.8..4.4 (architect pass — the kitchen looks through
        to the bench) */
-    var wallL = box(0.35, 5.6, 4.05, C.wall, -6.65, 2.8, -3.475, null,
+    /* every west-wall piece goes in westWallG: the mudroom lives on the
+       far side of it, so its camera hides the wall the way the garage
+       hides its door — the dollhouse trick, one wall further in. */
+    var westWallG = new T.Group();
+    scene.add(westWallG);
+    var wallL = box(0.35, 5.6, 4.05, C.wall, -6.65, 2.8, -3.475, westWallG,
                     { rough: 0.95 });
-    var wallL1a = box(0.35, 5.6, 2.55, C.wall, -6.65, 2.8, 1.525, null,
+    var wallL1a = box(0.35, 5.6, 2.55, C.wall, -6.65, 2.8, 1.525, westWallG,
                       { rough: 0.95 });
-    box(0.35, 2.4, 1.7, C.wall, -6.65, 4.4, -0.6, null, { rough: 0.95 });
-    var wallL1b = box(0.35, 5.6, 1.1, C.wall, -6.65, 2.8, 4.95, null,
+    box(0.35, 2.4, 1.7, C.wall, -6.65, 4.4, -0.6, westWallG, { rough: 0.95 });
+    var wallL1b = box(0.35, 5.6, 1.1, C.wall, -6.65, 2.8, 4.95, westWallG,
                       { rough: 0.95 });
-    box(0.35, 2.2, 1.6, C.wall, -6.65, 4.5, 3.6, null, { rough: 0.95 });
+    box(0.35, 2.2, 1.6, C.wall, -6.65, 4.5, 3.6, westWallG, { rough: 0.95 });
     if (DETAIL >= 2) {                   /* casing sells the opening */
-      box(0.42, 3.5, 0.1, 0xe4ddd1, -6.65, 1.72, 2.82);
-      box(0.42, 3.5, 0.1, 0xe4ddd1, -6.65, 1.72, 4.38);
-      box(0.42, 0.1, 1.66, 0xe4ddd1, -6.65, 3.44, 3.6);
+      box(0.42, 3.5, 0.1, 0xe4ddd1, -6.65, 1.72, 2.82, westWallG);
+      box(0.42, 3.5, 0.1, 0xe4ddd1, -6.65, 1.72, 4.38, westWallG);
+      box(0.42, 0.1, 1.66, 0xe4ddd1, -6.65, 3.44, 3.6, westWallG);
     }
     if (SHADOWS) { wallB.castShadow = false; wallL.castShadow = false;
                    wallL1b.castShadow = false; }
@@ -559,7 +564,7 @@
     floor2.position.set(0, 0.004, 9.95);
     if (SHADOWS) floor2.receiveShadow = true;
     scene.add(floor2);
-    var wallL2 = box(0.35, 5.6, 8.4, C.wall, -6.65, 2.8, 10.0, null,
+    var wallL2 = box(0.35, 5.6, 8.4, C.wall, -6.65, 2.8, 10.0, westWallG,
                      { rough: 0.95 });
     if (SHADOWS) wallL2.castShadow = false;
     box(0.5, 0.28, 8.6, C.shell, -6.7, 5.66, 10.1);
@@ -571,8 +576,10 @@
       PBR ? new T.MeshStandardMaterial({ map: woodDoor, roughness: 0.65 })
           : new T.MeshLambertMaterial({ color: 0xc9a06c, map: woodDoor || null }));
     fdoor.position.set(-6.42, 1.6, 12.6);
-    finish(fdoor); scene.add(fdoor);
-    cyl(0.06, 0.06, 0.1, 0xd8c48a, -6.32, 1.6, 12.1, null, 10, CHROME);
+    /* the front door belongs to the west wall: it hides with it, or it
+       fills the mudroom camera from behind */
+    finish(fdoor); westWallG.add(fdoor);
+    cyl(0.06, 0.06, 0.1, 0xd8c48a, -6.32, 1.6, 12.1, westWallG, 10, CHROME);
     /* living furniture: hearth on the west wall, sofa facing it */
     (function () {
       function ltag(m) { if (m) m.userData.room = 'living'; return m; }
@@ -593,7 +600,10 @@
       }
       /* the TV above the mantle, built-ins flanking the chimney — the
          media wall of a house people live in */
-      ltag(rbox(0.1, 1.15, 2.0, 0.03, 0x141a20, -6.4, 3.35, 8.6, null,
+      /* the TV HANGS on the west wall: it rides westWallG so the mudroom
+         camera, which cuts that wall away, does not get a black slab
+         floating in mid-air where the wall used to be */
+      ltag(rbox(0.1, 1.15, 2.0, 0.03, 0x141a20, -6.4, 3.35, 8.6, westWallG,
                 GLOSS));
       [6.95, 10.25].forEach(function (bz) {
         ltag(rbox(0.4, 2.7, 1.35, 0.04, 0xe8e2d6, -6.42, 1.35, bz, null,
@@ -910,7 +920,7 @@
     }
 
     /* ---- DOOR (zone: door) on the back wall right ---------------------- */
-    var doorG = zoneGroup('door', -8.1, 0, 9.42);   /* the mudroom's street door */
+    var doorG = zoneGroup('door', -9.8, 0, 8.14);   /* the mudroom's street door */
     doorG.rotation.y = Math.PI;   /* the hero card reads from inside */
     doorG.userData.room = 'mudroom';
     var slabD = new T.Mesh(
@@ -1098,7 +1108,7 @@
       driveT.repeat.set(1, 3);
     }
     /* yard: a grass slab whose top sits just under the kitchen plinth */
-    ebox(46, 0.4, 36, NICE ? 0xffffff : EXTC.grass, 2.5, -0.49, 0,
+    ebox(50, 0.4, 36, NICE ? 0xffffff : EXTC.grass, 0.5, -0.49, 0,
          { rough: 1.0, map: grassT });
     /* facade: siding OUTSIDE the kitchen's two closed walls, up to eaves */
     ebox(15.2, 7.0, 0.3, NICE ? 0xffffff : EXTC.siding, 0.3, 3.5, -5.95,
@@ -1122,7 +1132,12 @@
     var roofSpan = Math.sqrt(2.3 * 2.3 + 4.4 * 4.4);
     var roof = ebox(16.4, 0.18, roofSpan, NICE ? 0xffffff : EXTC.roof,
                     0.3, 8.05, -4.2, { rough: 0.9, map: shingleT });
-    roof.rotation.x = Math.atan2(2.3, 4.4);
+    /* NEGATIVE: a +x rotation drops the slab's +z end, and the back slope
+       runs NORTH from the ridge — so the sign that makes it descend from
+       the ridge cap (z=-2.0, y=9.2) to the eave (z=-6.4, y=6.9) is the
+       negative one. The stub below runs the other way and keeps its
+       positive sign. */
+    roof.rotation.x = -Math.atan2(2.3, 4.4);
     ebox(16.6, 0.26, 0.34, EXTC.ridge, 0.3, 9.24, -2.0);
     /* the FRONT stub slope: the ridge reads as a ridge (both slopes
        present), the cutaway starts just past it */
@@ -1156,32 +1171,32 @@
         return m;
       }
       gtag(ebox(0.24, 4.6, 8.0, NICE ? 0xffffff : EXTC.garage,
-                -14.68, 2.3, 6.0, { rough: 0.95, map: sidingT }));
+                -18.08, 2.3, 6.0, { rough: 0.95, map: sidingT }));
       gtag(ebox(0.24, 4.6, 8.0, NICE ? 0xffffff : EXTC.garage,
-                -9.32, 2.3, 6.0, { rough: 0.95, map: sidingT }));
+                -12.72, 2.3, 6.0, { rough: 0.95, map: sidingT }));
       var garageBackWall = gtag(ebox(5.6, 4.6, 0.24,
                 NICE ? 0xffffff : EXTC.garage,
-                -12.0, 2.3, 2.12, { rough: 0.95, map: sidingT }));
+                -15.4, 2.3, 2.12, { rough: 0.95, map: sidingT }));
       webgl_garageBackWall = garageBackWall;
       gtag(box(5.6, 1.1, 0.24, NICE ? 0xffffff : EXTC.garage,
-               -12.0, 4.05, 9.88, garageDoorG,
+               -15.4, 4.05, 9.88, garageDoorG,
                NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 }));
       gtag(box(0.76, 3.5, 0.24, NICE ? 0xffffff : EXTC.garage,
-               -14.18, 1.75, 9.88, garageDoorG,
+               -17.58, 1.75, 9.88, garageDoorG,
                NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 }));
       gtag(box(0.76, 3.5, 0.24, NICE ? 0xffffff : EXTC.garage,
-               -9.82, 1.75, 9.88, garageDoorG,
+               -13.22, 1.75, 9.88, garageDoorG,
                NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 }));
-      gtag(rbox(3.6, 3.0, 0.14, 0.05, EXTC.trim, -12.0, 1.6, 10.02,
+      gtag(rbox(3.6, 3.0, 0.14, 0.05, EXTC.trim, -15.4, 1.6, 10.02,
                 garageDoorG, { rough: 0.85 }));
       if (DETAIL >= 2) {
-        gtag(box(3.4, 0.05, 0.06, 0xc4bcae, -12.0, 1.0, 10.1, garageDoorG));
-        gtag(box(3.4, 0.05, 0.06, 0xc4bcae, -12.0, 1.8, 10.1, garageDoorG));
-        gtag(box(3.4, 0.05, 0.06, 0xc4bcae, -12.0, 2.6, 10.1, garageDoorG));
+        gtag(box(3.4, 0.05, 0.06, 0xc4bcae, -15.4, 1.0, 10.1, garageDoorG));
+        gtag(box(3.4, 0.05, 0.06, 0xc4bcae, -15.4, 1.8, 10.1, garageDoorG));
+        gtag(box(3.4, 0.05, 0.06, 0xc4bcae, -15.4, 2.6, 10.1, garageDoorG));
       }
       if (DETAIL >= 3) {        /* a small window right of the garage door */
-        gtag(box(0.86, 0.76, 0.1, EXTC.trim, -9.85, 2.7, 10.04, garageDoorG));
-        gtag(box(0.7, 0.6, 0.12, 0x39434e, -9.85, 2.7, 10.05, garageDoorG,
+        gtag(box(0.86, 0.76, 0.1, EXTC.trim, -13.25, 2.7, 10.04, garageDoorG));
+        gtag(box(0.7, 0.6, 0.12, 0x39434e, -13.25, 2.7, 10.05, garageDoorG,
                  GLOSS));
       }
       /* the GABLE: ridge along z, slopes east/west, siding triangles
@@ -1189,20 +1204,24 @@
       var gSlope = Math.atan2(1.5, 2.95);
       var gLen = Math.sqrt(1.5 * 1.5 + 2.95 * 2.95) + 0.5;
       var gw = box(gLen, 0.16, 9.0, NICE ? 0xffffff : EXTC.roof,
-                   -13.5, 5.6, 6.0, garageDoorG,
+                   -16.9, 5.6, 6.0, garageDoorG,
                    NICE ? { rough: 0.9, map: shingleT } : { rough: 0.9 });
-      gw.rotation.z = -gSlope;
+      gw.rotation.z = gSlope;    /* west slope: HIGH at the ridge, low at
+                                    the eave — the sign was inverted, which
+                                    made a butterfly roof with a hole into
+                                    the bay (invisible until the exterior
+                                    camera framed the garage) */
       gtag(gw);
       var ge = box(gLen, 0.16, 9.0, NICE ? 0xffffff : EXTC.roof,
-                   -10.5, 5.6, 6.0, garageDoorG,
+                   -13.9, 5.6, 6.0, garageDoorG,
                    NICE ? { rough: 0.9, map: shingleT } : { rough: 0.9 });
-      ge.rotation.z = gSlope;
+      ge.rotation.z = -gSlope;
       gtag(ge);
-      gtag(box(0.34, 0.24, 9.2, EXTC.ridge, -12.0, 6.42, 6.0, garageDoorG));
+      gtag(box(0.34, 0.24, 9.2, EXTC.ridge, -15.4, 6.42, 6.0, garageDoorG));
       (function () {
         var tri = new T.Shape();
-        tri.moveTo(-14.9, 4.7); tri.lineTo(-12.0, 6.34); tri.lineTo(-9.1, 4.7);
-        tri.lineTo(-14.9, 4.7);
+        tri.moveTo(-18.3, 4.7); tri.lineTo(-15.4, 6.34); tri.lineTo(-12.5, 4.7);
+        tri.lineTo(-18.3, 4.7);
         [10.0, 1.98].forEach(function (tz) {
           var m = new T.Mesh(new T.ExtrudeGeometry(tri, { depth: 0.22,
             bevelEnabled: false }), mat(NICE ? 0xffffff : EXTC.siding,
@@ -1211,7 +1230,7 @@
           gtag(m); finish(m); garageDoorG.add(m);
         });
       })();
-      blobShadow(3.0, 4.2, -12.0, 6.0, extG);
+      blobShadow(3.0, 4.2, -15.4, 6.0, extG);
       /* interior: wood floor (one floor through the whole house), bench
          wall props */
       var gFloorTex = floorTex.clone();
@@ -1223,25 +1242,25 @@
                                            envMapIntensity: 0.1 })
             : new T.MeshLambertMaterial({ map: gFloorTex }));
       gfloor.rotation.x = -Math.PI / 2;
-      gfloor.position.set(-12.0, 0.035, 6.0);
+      gfloor.position.set(-15.4, 0.035, 6.0);
       itag(gfloor); finish(gfloor); garageInterior.add(gfloor);
       if (DETAIL >= 2) {
-        itag(rbox(2.4, 0.1, 0.7, 0.03, 0xb98c58, -12.6, 1.05, 2.75,
+        itag(rbox(2.4, 0.1, 0.7, 0.03, 0xb98c58, -16.0, 1.05, 2.75,
                   garageInterior, { rough: 0.7, map: woodLight }));
-        itag(box(0.08, 1.0, 0.08, C.wood2, -13.6, 0.5, 2.55, garageInterior));
-        itag(box(0.08, 1.0, 0.08, C.wood2, -11.7, 0.5, 2.55, garageInterior));
-        itag(box(0.08, 1.0, 0.08, C.wood2, -13.6, 0.5, 2.95, garageInterior));
-        itag(box(0.08, 1.0, 0.08, C.wood2, -11.7, 0.5, 2.95, garageInterior));
+        itag(box(0.08, 1.0, 0.08, C.wood2, -17.0, 0.5, 2.55, garageInterior));
+        itag(box(0.08, 1.0, 0.08, C.wood2, -15.1, 0.5, 2.55, garageInterior));
+        itag(box(0.08, 1.0, 0.08, C.wood2, -17.0, 0.5, 2.95, garageInterior));
+        itag(box(0.08, 1.0, 0.08, C.wood2, -15.1, 0.5, 2.95, garageInterior));
       }
       if (DETAIL >= 3) {
-        itag(box(2.0, 0.06, 0.5, 0x8a8178, -12.6, 2.6, 2.5, garageInterior));
-        itag(cyl(0.11, 0.11, 0.24, C.red, -13.2, 2.75, 2.5, garageInterior, 10));
-        itag(cyl(0.11, 0.11, 0.24, C.teal, -12.7, 2.75, 2.5, garageInterior, 10));
-        itag(cyl(0.11, 0.11, 0.24, C.orange, -12.2, 2.75, 2.5, garageInterior, 10));
-        itag(cyl(0.01, 0.01, 0.8, 0x8a8178, -12.0, 4.2, 6.0, garageInterior, 6));
+        itag(box(2.0, 0.06, 0.5, 0x8a8178, -16.0, 2.6, 2.5, garageInterior));
+        itag(cyl(0.11, 0.11, 0.24, C.red, -16.6, 2.75, 2.5, garageInterior, 10));
+        itag(cyl(0.11, 0.11, 0.24, C.teal, -16.1, 2.75, 2.5, garageInterior, 10));
+        itag(cyl(0.11, 0.11, 0.24, C.orange, -15.6, 2.75, 2.5, garageInterior, 10));
+        itag(cyl(0.01, 0.01, 0.8, 0x8a8178, -15.4, 4.2, 6.0, garageInterior, 6));
         var gbulb = new T.Mesh(new T.SphereGeometry(0.13, 10, 8),
           mat(0xffe9b0, { rough: 0.5 }));
-        gbulb.position.set(-12.0, 3.75, 6.0);
+        gbulb.position.set(-15.4, 3.75, 6.0);
         itag(gbulb); finish(gbulb); garageInterior.add(gbulb);
       }
       groups.garage = garageInterior;   /* the zone-glow loop lights the room */
@@ -1252,7 +1271,7 @@
     ebox(0.9, 0.06, 5.2, NICE ? 0xffffff : EXTC.drive, -9.2, -0.24, 15.5,
          { rough: 0.95, map: driveT });
     /* driveway from the garage door to the street */
-    ebox(4.4, 0.08, 7.8, NICE ? 0xffffff : EXTC.drive, -12.0, -0.25, 14.3,
+    ebox(4.4, 0.08, 7.8, NICE ? 0xffffff : EXTC.drive, -15.4, -0.25, 14.3,
          { rough: 0.95, map: driveT });
     /* the street along the yard's front, and its curb */
     var roadT = null;
@@ -1269,9 +1288,9 @@
       roadT.wrapS = roadT.wrapT = T.RepeatWrapping;
       roadT.repeat.set(6, 1);
     }
-    ebox(46, 0.38, 5, NICE ? 0xffffff : 0x4a4f55, 2.5, -0.50, 20.5,
+    ebox(50, 0.38, 5, NICE ? 0xffffff : 0x4a4f55, 0.5, -0.50, 20.5,
          { rough: 0.95, map: roadT });
-    ebox(46, 0.1, 0.5, EXTC.trim, 2.5, -0.28, 17.85, { rough: 0.9 });
+    ebox(50, 0.1, 0.5, EXTC.trim, 0.5, -0.28, 17.85, { rough: 0.9 });
     /* the school bus, at the curb only while it is actually out */
     var CAR_DARK = 0x22252a;
     var busG = new T.Group();
@@ -1412,64 +1431,72 @@
       var mFloorTex = floorTex.clone();
       mFloorTex.needsUpdate = true;
       mFloorTex.wrapS = mFloorTex.wrapT = T.RepeatWrapping;
-      mFloorTex.repeat.set(2.2 / 13, 7.2 / 11);
-      var mfloor = new T.Mesh(new T.PlaneGeometry(2.2, 7.2),
+      mFloorTex.repeat.set(5.8 / 13, 5.6 / 11);
+      var mfloor = new T.Mesh(new T.PlaneGeometry(5.8, 5.6),
         PBR ? new T.MeshStandardMaterial({ map: mFloorTex, roughness: 0.55,
                                            envMapIntensity: 0.1 })
             : new T.MeshLambertMaterial({ map: mFloorTex }));
       mfloor.rotation.x = -Math.PI / 2;
-      mfloor.position.set(-8.1, 0.03, 6.0);
+      mfloor.position.set(-9.7, 0.03, 5.4);
       mtag(mfloor); finish(mfloor); extG.add(mfloor);
-      mtag(ebox(2.4, 4.2, 0.24, NICE ? 0xffffff : EXTC.siding,
-                -8.1, 2.1, 2.42, { rough: 0.95, map: sidingT }));
-      mtag(ebox(2.4, 4.2, 0.24, NICE ? 0xffffff : EXTC.siding,
-                -8.1, 2.1, 9.58, { rough: 0.95, map: sidingT }));
-      var mroof = box(2.9, 0.14, 7.8, NICE ? 0xffffff : EXTC.roof,
-                      -8.1, 4.5, 6.0, mudroomRoofG,
+      mtag(ebox(5.6, 4.2, 0.24, NICE ? 0xffffff : EXTC.siding,
+                -9.8, 2.1, 2.48, { rough: 0.95, map: sidingT }));
+      /* the street end is the mudroom's "garage door": hidden from the
+         inside so the camera can look straight into the room */
+      var mudFrontWall = mtag(ebox(5.6, 4.2, 0.24, NICE ? 0xffffff : EXTC.siding,
+                -9.8, 2.1, 8.32, { rough: 0.95, map: sidingT }));
+      mudroomRoofG.add(mudFrontWall);
+      var mroof = box(5.9, 0.14, 6.2, NICE ? 0xffffff : EXTC.roof,
+                      -9.8, 4.5, 5.4, mudroomRoofG,
                       NICE ? { rough: 0.9, map: shingleT } : { rough: 0.9 });
       mtag(mroof);
-      /* bench + hooks on the garage-side wall */
-      mtag(rbox(0.5, 0.1, 2.0, 0.03, 0xb98c58, -8.85, 0.52, 5.0, extG,
+      /* bench + hooks on the NORTH wall: they face the camera coming in
+         from the south-east */
+      mtag(rbox(2.4, 0.1, 0.5, 0.03, 0xb98c58, -10.6, 0.52, 2.95, extG,
                 { rough: 0.7, map: woodLight }));
-      mtag(box(0.06, 0.5, 0.06, C.wood2, -8.65, 0.26, 4.2, extG));
-      mtag(box(0.06, 0.5, 0.06, C.wood2, -9.05, 0.26, 4.2, extG));
-      mtag(box(0.06, 0.5, 0.06, C.wood2, -8.65, 0.26, 5.8, extG));
-      mtag(box(0.06, 0.5, 0.06, C.wood2, -9.05, 0.26, 5.8, extG));
+      mtag(box(0.06, 0.5, 0.06, C.wood2, -11.6, 0.26, 2.78, extG));
+      mtag(box(0.06, 0.5, 0.06, C.wood2, -9.6, 0.26, 2.78, extG));
+      mtag(box(0.06, 0.5, 0.06, C.wood2, -11.6, 0.26, 3.12, extG));
+      mtag(box(0.06, 0.5, 0.06, C.wood2, -9.6, 0.26, 3.12, extG));
       if (DETAIL >= 3) {
-        mtag(box(0.1, 0.1, 0.1, C.wood2, -9.12, 2.5, 4.2, extG));
-        mtag(box(0.1, 0.1, 0.1, C.wood2, -9.12, 2.5, 5.0, extG));
-        mtag(box(0.1, 0.1, 0.1, C.wood2, -9.12, 2.5, 5.8, extG));
-        mtag(rbox(0.24, 0.85, 0.5, 0.06, C.teal, -8.98, 2.0, 5.0, extG,
+        mtag(box(0.1, 0.1, 0.1, C.wood2, -11.4, 2.5, 2.66, extG));
+        mtag(box(0.1, 0.1, 0.1, C.wood2, -10.6, 2.5, 2.66, extG));
+        mtag(box(0.1, 0.1, 0.1, C.wood2, -9.8, 2.5, 2.66, extG));
+        mtag(rbox(0.5, 0.85, 0.24, 0.06, C.teal, -10.6, 2.0, 2.80, extG,
                   { rough: 0.9 }));
       }
-      blobShadow(1.1, 3.4, -8.1, 6.0, extG);
+      blobShadow(2.9, 2.8, -9.7, 5.4, extG);
     })();
     var livingRoofG = new T.Group();   /* open-concept: nothing to hide */
     extG.add(livingRoofG);
-    /* two blob trees + a bush: the yard is a place, not a void */
+    /* two blob trees + a bush: the yard is a place, not a void. They
+       live in yardG so an INTERIOR camera can hide them — a tree that
+       crosses the near plane eats a third of the garage shot. */
+    var yardG = new T.Group();
+    extG.add(yardG);
     function tree(x, z, s) {
-      cyl(0.16 * s, 0.22 * s, 1.4 * s, EXTC.trunk, x, 0.7 * s, z, extG, 8);
+      cyl(0.16 * s, 0.22 * s, 1.4 * s, EXTC.trunk, x, 0.7 * s, z, yardG, 8);
       var lv = new T.Mesh(new T.SphereGeometry(1.1 * s, DETAIL >= 3 ? 14 : 10,
                                                DETAIL >= 3 ? 10 : 8),
         mat(EXTC.leaf, { rough: 1.0 }));
-      lv.position.set(x, 2.0 * s, z); finish(lv); extG.add(lv);
+      lv.position.set(x, 2.0 * s, z); finish(lv); yardG.add(lv);
       var lv2 = new T.Mesh(new T.SphereGeometry(0.75 * s, 10, 8),
         mat(EXTC.leafB, { rough: 1.0 }));
       lv2.position.set(x + 0.7 * s, 1.6 * s, z + 0.3 * s);
-      finish(lv2); extG.add(lv2);
+      finish(lv2); yardG.add(lv2);
       if (DETAIL >= 3) {
         var lv3 = new T.Mesh(new T.SphereGeometry(0.55 * s, 10, 8),
           mat(EXTC.leaf, { rough: 1.0 }));
         lv3.position.set(x - 0.55 * s, 1.5 * s, z - 0.25 * s);
-        finish(lv3); extG.add(lv3);
+        finish(lv3); yardG.add(lv3);
       }
-      blobShadow(1.25 * s, 1.1 * s, x, z, extG);
+      blobShadow(1.25 * s, 1.1 * s, x, z, yardG);
     }
-    tree(-15.5, 10.0, 1.4); tree(17.5, -6.0, 1.1);
+    tree(-20.5, 12.5, 1.4); tree(17.5, -6.0, 1.1);
     var bush = new T.Mesh(new T.SphereGeometry(0.7, 10, 8),
       mat(EXTC.leafB, { rough: 1.0 }));
-    bush.position.set(9.6, 0.4, 9.0); finish(bush); extG.add(bush);
-    blobShadow(0.8, 0.7, 9.6, 9.0, extG);
+    bush.position.set(9.6, 0.4, 9.0); finish(bush); yardG.add(bush);
+    blobShadow(0.8, 0.7, 9.6, 9.0, yardG);
     /* sky dome: weather-painted from the inside, swapped by applyState.
        The dome IS the background now, so the flat clear color retires. */
     var skyDome = new T.Mesh(new T.SphereGeometry(80, 24, 12),
@@ -1774,6 +1801,7 @@
       GARAGE_POS: GARAGE_POS, GARAGE_AT: GARAGE_AT,
       MUD_POS: MUD_POS, MUD_AT: MUD_AT, LIV_POS: LIV_POS, LIV_AT: LIV_AT,
       mudroomRoofG: mudroomRoofG, livingRoofG: livingRoofG,
+      yardG: yardG, westWallG: westWallG,
       mudBagsG: mudBagsG
     };
   }
@@ -1965,7 +1993,7 @@
         if (!c.present) return;
         var grp = webgl.buildCar(c);
         if (inside < 2) {
-          grp.position.set(inside === 0 ? -13.3 : -10.7, 0, 5.6);
+          grp.position.set(inside === 0 ? -16.7 : -14.1, 0, 5.6);
           var plate = new webgl.T.Mesh(new webgl.T.PlaneGeometry(1.5, 0.75),
             new webgl.T.MeshBasicMaterial({ transparent: true,
                                             map: webgl.carTex(c) }));
@@ -1974,7 +2002,7 @@
           webgl.carsG.add(plate);
           inside++;
         } else {
-          grp.position.set(-12.0, 0, 12.6 + outside * 4.6);
+          grp.position.set(-15.4, 0, 12.6 + outside * 4.6);
           outside++;
         }
         webgl.carsG.add(grp);
@@ -1986,8 +2014,8 @@
   /* backpacks on the mudroom bench: one per child, rebuilt on count change */
   var bagCount = null;
   var BAG_COLORS = [0xc9473d, 0x3fbdb2, 0xe09a3e, 0x5a7fc0];
-  var BAG_SPOTS = [[-8.85, 0.87, 4.5], [-8.85, 0.87, 5.5],
-                   [-8.45, 0.31, 3.4], [-8.45, 0.31, 6.7]];
+  var BAG_SPOTS = [[-11.3, 0.87, 2.95], [-9.9, 0.87, 2.95],
+                   [-11.6, 0.31, 3.65], [-9.6, 0.31, 3.65]];
   function syncMudroom(s) {
     if (!webgl) return;
     var n = Math.min(4, ((s.mudroom || {}).bags || 0));
@@ -2075,13 +2103,14 @@
      room that owns them; unmapped zones belong to the kitchen. ---- */
   function roomsReg() {
     return {
-      kitchen: { pos: webgl.HOME_POS, at: webgl.HOME_AT },
+      kitchen: { pos: webgl.HOME_POS, at: webgl.HOME_AT,
+                 hide: webgl.yardG },
       garage:  { pos: webgl.GARAGE_POS, at: webgl.GARAGE_AT,
-                 hide: webgl.garageDoorG },
+                 hide: [webgl.garageDoorG, webgl.yardG] },
       mudroom: { pos: webgl.MUD_POS, at: webgl.MUD_AT,
-                 hide: webgl.mudroomRoofG },
+                 hide: [webgl.mudroomRoofG, webgl.westWallG, webgl.yardG] },
       living:  { pos: webgl.LIV_POS, at: webgl.LIV_AT,
-                 hide: webgl.livingRoofG }
+                 hide: [webgl.livingRoofG, webgl.yardG] }
     };
   }
   var ZONE_ROOM = { garage: 'garage', curb: null,
@@ -2256,6 +2285,17 @@
   window.chfHouseEnterGarage = function () { if (webgl) enterRoom('garage', null); };
   window.chfHouseEnterRoom = function (name) { if (webgl) enterRoom(name, null); };
   window.chfHouseExit = function () { if (webgl) goExterior(); };
+  /* the studio's viewfinder: snap the camera anywhere and repaint once.
+     Read-only like its siblings — it moves the eye, nothing else. Set
+     builders frame a room through this before they hard-code the pose. */
+  window.chfHouseCam = function (px, py, pz, ax, ay, az) {
+    if (!webgl) return;
+    tween = null;
+    webgl.cam.position.set(px, py, pz);
+    lookAt = new webgl.T.Vector3(ax, ay, az);
+    webgl.cam.lookAt(lookAt);
+    requestFrame();
+  };
 
   function announceFocus(key) {
     if (webgl && state) applyState(state);   /* blank/restore the faces */
