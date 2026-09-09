@@ -663,20 +663,58 @@
         lb(0.015, h - 0.09, w - 0.09, art, x + 0.024, y + h / 2, z, null, { rough: 0.9 });
         f.rotation.z = -0.05;
       }
+      /* ---- houseplants, not scale-model trees -------------------------
+         A trunk with a canopy sphere on top is an oak. A houseplant has
+         no visible trunk: the leaf mass starts at the pot rim and fans
+         out from it. One broad leaf = a flattened ellipsoid whose base
+         sits over the pot's centre and whose tip leans out by `tilt` at
+         azimuth `spin`. Three silhouettes so no two plants repeat. */
+      var LEAFC = [C.leaf, 0x527f44, 0x74a05a];
+      function pLeaf(x, base, z, L, wide, thick, tilt, spin, c) {
+        var m = new T.Mesh(new T.SphereGeometry(1, D3 ? 10 : 6, D3 ? 8 : 4),
+                           mat(c, { rough: 1.0 }));
+        m.scale.set(thick, L, wide);
+        m.rotation.set(0, spin, tilt);
+        var rad = L * Math.sin(tilt), up = L * Math.cos(tilt);
+        m.position.set(x + Math.cos(spin) * rad, base + up, z - Math.sin(spin) * rad);
+        ltag(m); finish(m); (PG || scene).add(m); return m;
+      }
+      /* leaf tables: [halfLength, halfWidth, tilt, spin] in units of s.
+         The leaves overlap on purpose - a fan of separated blades reads
+         as cut paper, a clump reads as a plant. */
+      var PLANTS = {
+        /* fiddle-leaf: a few broad leaves on very short stems, upright */
+        fiddle: [[0.31, 0.20, 0.20, 0.35], [0.29, 0.19, 0.40, 1.40],
+                 [0.27, 0.185, 0.56, 2.50], [0.24, 0.17, 0.74, 3.60],
+                 [0.21, 0.16, 0.92, 4.70], [0.18, 0.145, 1.08, 5.70]],
+        /* a spray: narrow leaves arcing out of the rim, a dracaena */
+        spray: [[0.31, 0.105, 0.20, 0.20], [0.29, 0.100, 0.34, 1.25],
+                [0.27, 0.095, 0.48, 2.30], [0.25, 0.090, 0.62, 3.35],
+                [0.22, 0.085, 0.76, 4.40], [0.19, 0.080, 0.90, 5.45]],
+        /* a low mound, wider than tall: fern / pothos */
+        mound: [[0.28, 0.19, 0.42, 0.50], [0.27, 0.185, 0.54, 1.55],
+                [0.26, 0.18, 0.66, 2.60], [0.24, 0.17, 0.78, 3.65],
+                [0.22, 0.16, 0.88, 4.70], [0.20, 0.15, 0.98, 5.75]]
+      };
+      var PLIFT = { fiddle: 0, spray: 0.03, mound: 0.11 };
       /* a potted plant. potO carries the material (ceramic gloss, matte
          terracotta, stone) so no two pots in the room read the same. */
-      function plant(x, y0, z, s, potC, potO, stem, shadow) {
+      function plant(x, y0, z, s, potC, potO, kind, shadow) {
         var ph = 0.34 * s;
         lc(0.24 * s, 0.19 * s, ph, potC, x, y0 + ph / 2, z, null, 14, potO);
         if (D3) lc(0.25 * s, 0.25 * s, 0.05, potC, x, y0 + ph - 0.015, z, null, 14, potO);
-        var b = y0 + ph;
-        if (stem) {
-          lc(0.035 * s, 0.048 * s, stem, C.wood2, x, b + stem / 2, z, null, 8, WOODM);
-          b += stem * 0.82;
+        /* the spreading kinds start a little higher, or their outermost
+           leaves hang over the rim and swallow the pot */
+        var b = y0 + ph + (PLIFT[kind] || 0) * s - 0.06 * s;
+        var tbl = PLANTS[kind] || PLANTS.mound;
+        var n = D3 ? tbl.length : (D2 ? 4 : 3);
+        /* a squashed clump at the rim: without it the leaves float */
+        sph(0.19 * s, LEAFC[1], x, b + 0.05 * s, z, 0.55);
+        for (var i = 0; i < n; i++) {
+          var lf = tbl[i];
+          pLeaf(x, b, z, lf[0] * s, lf[1] * s, 0.045 * s, lf[2], lf[3],
+                LEAFC[i % 3]);
         }
-        sph(0.30 * s, C.leaf, x, b + 0.15 * s, z, 0.82);
-        if (D2) sph(0.21 * s, 0x527f44, x + 0.15 * s, b + 0.40 * s, z + 0.09 * s, 0.85);
-        if (D3) sph(0.17 * s, C.leaf, x - 0.14 * s, b + 0.33 * s, z - 0.11 * s, 0.85);
         if (shadow) blobShadow(0.34 * s, 0.32 * s, x, z);
       }
 
@@ -702,13 +740,18 @@
          Stone, breast, firebox with a slate surround, a chunky mantle
          with four props, and the TV bracketed above it. */
       var HZ = 8.6;
-      /* the room needs a mass here, not a white panel on a white wall:
-         the breast is stone (round-2 correction) */
-      lb(0.90, 0.22, 2.72, C.stoneDk, WX + 0.45, 0.11, HZ, null, { rough: 0.9 });
-      lb(0.44, 4.38, 2.32, C.stone, WX + 0.22, 2.41, HZ, null, PLASTER);
-      if (D3) {                     /* a cap and a plinth band on the breast */
-        lb(0.50, 0.11, 2.44, C.stoneDk, WX + 0.25, 4.28, HZ, null, PLASTER);
-        lb(0.48, 0.09, 2.40, C.stoneDk, WX + 0.24, 2.26, HZ, null, PLASTER);
+      /* the room needs a mass here, not a white panel on a white wall,
+         but stone in a warm room is a warm grey-taupe, never concrete.
+         And the breast steps back above the mantle and stops well short
+         of the crown: a chimney is quieter than the casework beside it,
+         not the loudest thing in the frame. */
+      var STONE = 0x9e9182, STONE_DK = 0x7f7365;
+      lb(0.90, 0.22, 2.72, STONE_DK, WX + 0.45, 0.11, HZ, null, { rough: 0.9 });
+      lb(0.44, 1.72, 2.32, STONE, WX + 0.22, 1.08, HZ, null, PLASTER);
+      lb(0.38, 1.62, 1.86, STONE, WX + 0.19, 2.79, HZ, null, PLASTER);
+      if (D3) {           /* the shoulder where it steps back, and a cap */
+        lb(0.50, 0.10, 2.40, STONE_DK, WX + 0.25, 1.99, HZ, null, PLASTER);
+        lb(0.44, 0.10, 1.98, STONE_DK, WX + 0.22, 3.65, HZ, null, PLASTER);
       }
       /* firebox: a slate surround RING (a solid slab just reads as a
          second TV), a recessed ink box, and a fire inside it */
@@ -758,13 +801,15 @@
         lc(0.035, 0.035, 0.10, C.cream, WX + 0.48, 2.065, HZ - 0.42, null, 8);
         lb(0.14, 0.12, 0.94, C.graphite, WX + 0.50, 1.885, HZ + 0.12, null, { rough: 0.55 });
       }
-      plant(WX + 0.48, 1.825, HZ + 0.98, 0.46, C.cream, GLOSS, 0, false);
-      /* the TV: bracket, bezel, screen. westWallG - see the header note. */
-      lb(0.12, 0.32, 0.32, C.graphite, WX + 0.44, 3.18, HZ, westWallG, { rough: 0.6 });
-      lr(0.09, 1.14, 1.78, 0.025, 0x3a434e, WX + 0.560, 3.18, HZ, westWallG, { rough: 0.72 });
-      lb(0.02, 0.96, 1.56, 0x0d1013, WX + 0.616, 3.18, HZ, westWallG,
+      plant(WX + 0.48, 1.825, HZ + 0.98, 0.38, C.cream, GLOSS, 'mound', false);
+      /* the TV: bracket, bezel, screen. A television over a mantle, not
+         a cinema screen - it sits inside the stack's width and leaves
+         stone above it. westWallG - see the header note. */
+      lb(0.12, 0.30, 0.30, C.graphite, WX + 0.44, 2.80, HZ, westWallG, { rough: 0.6 });
+      lr(0.09, 0.92, 1.42, 0.025, 0x3a434e, WX + 0.560, 2.80, HZ, westWallG, { rough: 0.72 });
+      lb(0.02, 0.74, 1.24, 0x0d1013, WX + 0.616, 2.80, HZ, westWallG,
          { rough: 0.62, metal: 0.0, envInt: 0.04 });
-      if (D3) lb(0.02, 0.03, 0.05, C.teal, WX + 0.616, 2.72, HZ - 0.80, westWallG, GLOSS);
+      if (D3) lb(0.02, 0.03, 0.05, C.teal, WX + 0.616, 2.44, HZ - 0.58, westWallG, GLOSS);
 
       /* ================= 3. the built-ins flanking the hearth ==========
          S3.1 + S3.2: toe kick, carcass, face frame with a centre stile,
@@ -817,8 +862,9 @@
         photo(xs + 0.06, 1.75, bz + 0.40, 0.30, 0.24,
               seed % 2 ? C.oxblood : C.sage);
         /* bay C (y 2.33): a plant, a book run, a flat stack */
-        plant(xs, 2.33, bz - 0.44, 0.42, seed % 2 ? C.terracotta : C.cream,
-              seed % 2 ? { rough: 0.85 } : GLOSS, 0, false);
+        plant(xs, 2.33, bz - 0.44, 0.38, seed % 2 ? C.terracotta : C.cream,
+              seed % 2 ? { rough: 0.85 } : GLOSS,
+              seed % 2 ? 'spray' : 'fiddle', false);
         books(xs, 2.33, bz - 0.16, 5, 0.086, seed + 2);
         if (D3) {
           lb(0.20, 0.055, 0.30, C.slate, xs, 2.36, bz + 0.42);
@@ -884,6 +930,51 @@
         blobShadow(DP * 0.60, len * 0.52, x, z);
         return g;
       }
+      /* the reading corner's chair is NOT a second sofa. An exposed wood
+         frame on splayed legs, one thin seat pad, one thin back pad, and
+         open arms you can see the floor through - visibly lighter than
+         the sofa so the corner reads as the quieter zone. */
+      function lightChair(x, z, rot, body, accent) {
+        var g = new T.Group();
+        g.position.set(x, 0, z);
+        g.rotation.y = rot;
+        ltag(g); scene.add(g);
+        function sb(w, h, d, r, c, px, py, pz, o) {
+          var m = new T.Mesh(
+            D2 ? roundedGeo(w, h, d, r) : new T.BoxGeometry(w, h, d),
+            mat(c, o || FAB));
+          m.position.set(px, py, pz);
+          m.userData.room = 'living'; finish(m); g.add(m); return m;
+        }
+        function rod(rt, rb, h, px, py, pz, rx, rz) {
+          var m = new T.Mesh(new T.CylinderGeometry(rt, rb, h, D3 ? 10 : 6),
+                             mat(C.wood2, WOODM));
+          m.position.set(px, py, pz);
+          if (rx) m.rotation.x = rx;
+          if (rz) m.rotation.z = rz;
+          m.userData.room = 'living'; finish(m); g.add(m); return m;
+        }
+        [[-0.30, -0.30], [-0.30, 0.30], [0.30, -0.30], [0.30, 0.30]]
+          .forEach(function (lg) {          /* splayed legs, floor visible */
+            rod(0.045, 0.032, 0.48, lg[0], 0.24, lg[1],
+                lg[1] < 0 ? 0.10 : -0.10, lg[0] < 0 ? -0.10 : 0.10);
+          });
+        sb(0.80, 0.07, 0.80, 0.02, woodK, 0, 0.47, 0, woodO);
+        sb(0.72, 0.15, 0.72, 0.07, body, -0.02, 0.580, 0);
+        [-0.31, 0.31].forEach(function (dz) {   /* raked back uprights */
+          rod(0.040, 0.036, 0.68, 0.355, 0.80, dz, 0, 0.14);
+          rod(0.032, 0.032, 0.66, 0.02, 0.755, dz, 0, Math.PI / 2);
+          rod(0.032, 0.032, 0.28, -0.285, 0.615, dz, 0, 0);
+        });
+        var bk = sb(0.12, 0.48, 0.70, 0.06, body, 0.375, 0.94, 0);
+        bk.rotation.z = 0.14;
+        if (D2) {
+          var pw = sb(0.16, 0.34, 0.38, 0.09, accent, 0.245, 0.80, 0.02);
+          pw.rotation.z = 0.20;
+        }
+        blobShadow(0.48, 0.48, x, z);
+        return g;
+      }
       /* the sofa faces the hearth; the armchair closes the triangle at
          44 degrees off it, looking at the fire and the sofa both (S7.1) */
       seat(-2.55, 8.60, 0, 2.95, C.sage, C.sageDeep, 3,
@@ -893,7 +984,11 @@
          triangle read at a glance */
       seat(-4.30, 7.15, 0.80, 1.12, C.terracotta, C.terraDeep, 1,
            [[0.0, C.cream, -0.20]], 1.14);
-      seat(-4.35, 10.90, -1.05, 1.12, C.terracotta, C.terraDeep, 1,
+      /* the south chair is on the CAMERA's side of the group, so any
+         pose that faces the fire shows the lens a flat back. It turns
+         off the fire axis to face the coffee table instead - seating
+         faces other seating (S8), and that outranks facing the hearth. */
+      seat(-4.05, 10.62, -2.25, 1.12, C.terracotta, C.terraDeep, 1,
            [[0.0, C.cream, 0.20]], 1.14);
 
       /* a console behind the sofa, facing the kitchen half of the great
@@ -995,7 +1090,7 @@
         lb(0.25, 0.05, 0.32, C.sage, WX + 0.28, 1.030, CZ + 0.19);
         if (D3) lb(0.24, 0.05, 0.30, C.cream, WX + 0.28, 1.080, CZ + 0.17);
       }
-      plant(WX + 0.29, 0.95, CZ + 0.56, 0.46, C.linen, { rough: 0.8 }, 0, false);
+      plant(WX + 0.29, 0.95, CZ + 0.56, 0.39, C.linen, { rough: 0.8 }, 'fiddle', false);
       if (D3) lc(0.20, 0.24, 0.26, C.cork, WX + 0.30, 0.13, CZ + 0.50, null, 12, { rough: 0.95 });
       blobShadow(0.36, 0.82, WX + 0.30, CZ);
       /* the grid of five (S7.5) - wall plane, so westWallG */
@@ -1015,46 +1110,45 @@
          S7.2's second zone: the bare third of the floor gets a chair, a
          lamp, a side table and a tall plant on their own round rug. */
       (function () {
-        var rug = new T.Mesh(new T.CircleGeometry(2.00, D3 ? 28 : 16),
+        var rug = new T.Mesh(new T.CircleGeometry(1.60, D3 ? 28 : 16),
                              mat(C.linen, { rough: 1.0 }));
         rug.rotation.x = -Math.PI / 2;
-        rug.position.set(1.10, 0.048, 9.55);
+        rug.position.set(1.40, 0.048, 9.85);
         if (SHADOWS) rug.receiveShadow = true;
         ltag(rug); scene.add(rug);
         if (D2) {
-          var ring = new T.Mesh(new T.RingGeometry(1.72, 1.84, 28),
+          var ring = new T.Mesh(new T.RingGeometry(1.36, 1.48, 28),
                                 mat(C.sageDeep, { rough: 1.0 }));
           ring.rotation.x = -Math.PI / 2;
-          ring.position.set(1.10, 0.054, 9.55);
+          ring.position.set(1.40, 0.054, 9.85);
           ltag(ring); scene.add(ring);
         }
       })();
-      seat(0.55, 9.60, 0.55, 1.12, C.sage, C.sageDeep, 1,
-           [[0.0, C.oxblood, -0.22]], 1.14);
+      lightChair(0.88, 9.88, 0.55, C.sage, C.oxblood);
       /* the floor lamp: base, stem, shade. All of it is D2 - a bare pole
          with no shade at the low tier reads as broken geometry. */
       if (D2) {
-        lc(0.28, 0.30, 0.05, C.brass, 2.16, 0.03, 8.55, null, 14, STEEL);
-        lc(0.035, 0.035, 1.62, C.brass, 2.16, 0.86, 8.55, null, 8, STEEL);
+        lc(0.28, 0.30, 0.05, C.brass, 2.20, 0.03, 8.72, null, 14, STEEL);
+        lc(0.035, 0.035, 1.62, C.brass, 2.20, 0.86, 8.72, null, 8, STEEL);
         var lsh2 = new T.Mesh(new T.CylinderGeometry(0.24, 0.34, 0.34, 16, 1, true),
           PBR ? new T.MeshStandardMaterial({ color: 0xf3e8d2, roughness: 0.8,
                                              emissive: 0xffd9a0, emissiveIntensity: 0.45,
                                              side: T.DoubleSide })
               : new T.MeshLambertMaterial({ color: 0xf3e8d2, side: T.DoubleSide }));
-        lsh2.position.set(2.16, 1.82, 8.55);
+        lsh2.position.set(2.20, 1.82, 8.72);
         ltag(lsh2); finish(lsh2, true); scene.add(lsh2);
       }
-      blobShadow(0.32, 0.32, 2.16, 8.55);
+      blobShadow(0.32, 0.32, 2.20, 8.72);
       /* the side table: pedestal, base, top, three props */
-      lc(0.44, 0.44, 0.07, woodK, 1.72, 0.62, 10.22, null, 16, woodO);
-      lc(0.065, 0.065, 0.58, C.wood2, 1.72, 0.30, 10.22, null, 10, WOODM);
-      lc(0.26, 0.28, 0.05, C.wood2, 1.72, 0.03, 10.22, null, 14, WOODM);
+      lc(0.44, 0.44, 0.07, woodK, 1.86, 0.62, 10.40, null, 16, woodO);
+      lc(0.065, 0.065, 0.58, C.wood2, 1.86, 0.30, 10.40, null, 10, WOODM);
+      lc(0.26, 0.28, 0.05, C.wood2, 1.86, 0.03, 10.40, null, 14, WOODM);
       if (D2) {
-        lb(0.28, 0.055, 0.20, C.slate, 1.62, 0.683, 10.14);
-        lb(0.26, 0.05, 0.19, C.brass, 1.62, 0.735, 10.15);
-        lc(0.085, 0.075, 0.14, C.cream, 1.89, 0.725, 10.34, null, 10, GLOSS);
+        lb(0.28, 0.055, 0.20, C.slate, 1.76, 0.683, 10.32);
+        lb(0.26, 0.05, 0.19, C.brass, 1.76, 0.735, 10.33);
+        lc(0.085, 0.075, 0.14, C.cream, 2.03, 0.725, 10.52, null, 10, GLOSS);
       }
-      blobShadow(0.4, 0.4, 1.72, 10.22);
+      blobShadow(0.4, 0.4, 1.86, 10.40);
       /* a pouf bridging the two zones */
       lr(0.66, 0.36, 0.66, 0.17, C.terracotta, -1.30, 0.20, 10.20, null, FAB);
       if (D3) lb(0.60, 0.02, 0.60, C.terraDeep, -1.30, 0.385, 10.20, null, FAB);
@@ -1065,9 +1159,9 @@
       blobShadow(0.28, 0.28, -0.42, 9.05);
       /* a stack of books on the floor beside the chair */
       if (D2) {
-        lb(0.34, 0.06, 0.26, C.oxblood, 0.55, 0.03, 10.45);
-        lb(0.33, 0.055, 0.25, C.cream, 0.55, 0.088, 10.46);
-        if (D3) lb(0.31, 0.055, 0.24, C.sage, 0.56, 0.143, 10.44);
+        lb(0.34, 0.06, 0.26, C.oxblood, 0.82, 0.03, 10.78);
+        lb(0.33, 0.055, 0.25, C.cream, 0.82, 0.088, 10.79);
+        if (D3) lb(0.31, 0.055, 0.24, C.sage, 0.83, 0.143, 10.77);
       }
 
       /* a lidded basket of blankets and a floor stack: the rug's south
@@ -1087,10 +1181,12 @@
         blobShadow(0.3, 0.3, -2.72, 11.70);
       }
 
-      /* ================= 9. plants (S4 wants three; five here) ========= */
-      plant(-5.42, 0, 13.86, 1.20, C.terracotta, { rough: 0.85 }, 0.55, true);
-      plant(0.95, 0, 6.75, 1.14, C.terracotta, { rough: 0.85 }, 0.62, true);
-      plant(2.68, 0, 9.05, 1.00, C.linen, { rough: 0.78 }, 0.42, true);
+      /* ================= 9. plants (S4 wants three; eight here) ========
+         Houseplants: at most 0.9 units on the floor, 0.35 on a shelf,
+         and three silhouettes so the room never repeats one. */
+      plant(-5.42, 0, 13.86, 0.96, C.terracotta, { rough: 0.85 }, 'fiddle', true);
+      plant(0.95, 0, 6.75, 0.96, C.terracotta, { rough: 0.85 }, 'spray', true);
+      plant(2.68, 0, 9.05, 0.98, C.linen, { rough: 0.78 }, 'mound', true);
 
       PG = westWallG;
       /* ================= 10. the radio shelf (zone: radio) ============= */
@@ -1105,7 +1201,7 @@
         jar(WX + 0.24, 2.05, 5.10, 0.085, 0.22, C.terracotta);
         photo(WX + 0.27, 2.05, 4.90, 0.28, 0.22, C.brass);
         bowl(WX + 0.26, 1.34, 5.98, 0.15, C.sage);
-        plant(WX + 0.26, 1.34, 4.90, 0.46, C.cream, GLOSS, 0, false);
+        plant(WX + 0.26, 1.34, 4.90, 0.36, C.cream, GLOSS, 'mound', false);
       }
 
       /* ---- the decorative front door earns its casing and panels ---- */
