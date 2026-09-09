@@ -1131,17 +1131,17 @@
       /* the floor lamp: base, stem, shade. All of it is D2 - a bare pole
          with no shade at the low tier reads as broken geometry. */
       if (D2) {
-        lc(0.28, 0.30, 0.05, C.brass, 2.20, 0.03, 8.72, null, 14, STEEL);
-        lc(0.035, 0.035, 1.62, C.brass, 2.20, 0.86, 8.72, null, 8, STEEL);
+        lc(0.28, 0.30, 0.05, C.brass, 0.30, 0.03, 10.90, null, 14, STEEL);
+        lc(0.035, 0.035, 1.62, C.brass, 0.30, 0.86, 10.90, null, 8, STEEL);
         var lsh2 = new T.Mesh(new T.CylinderGeometry(0.24, 0.34, 0.34, 16, 1, true),
           PBR ? new T.MeshStandardMaterial({ color: 0xf3e8d2, roughness: 0.8,
                                              emissive: 0xffd9a0, emissiveIntensity: 0.45,
                                              side: T.DoubleSide })
               : new T.MeshLambertMaterial({ color: 0xf3e8d2, side: T.DoubleSide }));
-        lsh2.position.set(2.20, 1.82, 8.72);
+        lsh2.position.set(0.30, 1.82, 10.90);
         ltag(lsh2); finish(lsh2, true); scene.add(lsh2);
       }
-      blobShadow(0.32, 0.32, 2.20, 8.72);
+      blobShadow(0.32, 0.32, 0.30, 10.90);
       /* the side table: pedestal, base, top, three props */
       lc(0.44, 0.44, 0.07, woodK, 1.86, 0.62, 10.40, null, 16, woodO);
       lc(0.065, 0.065, 0.58, C.wood2, 1.86, 0.30, 10.40, null, 10, WOODM);
@@ -1709,7 +1709,7 @@
     box(2.24, 0.07, 0.34, C.cab, 0, 2.535, 0.185, winG, MATT);
     if (KD3) box(2.30, 0.05, 0.05, C.cabShade, 0, 2.485, 0.34, winG, MATT);
     if (KD2) {
-      kPlant(winG, -0.74, 2.57, 0.20, 0.44, C.terracotta, { rough: 0.85 },
+      kPlant(winG, -0.74, 2.57, 0.20, 0.39, C.terracotta, { rough: 0.85 },
              'mound', false);
       kPlant(winG, 0.72, 2.57, 0.19, 0.38, C.cream, GLOSS, 'spray', false);
       kJar(winG, 0.13, 2.57, 0.22, 0.06, 0.17, C.teal);
@@ -1760,7 +1760,7 @@
       rbox(0.54, 0.30, 0.36, 0.05, C.teal, 3.72, 1.28, -4.98, null, GLOSS);
       if (KD3) box(0.46, 0.02, 0.30, 0x2f9a92, 3.72, 1.44, -4.96, null, GLOSS);
       kPlates(null, 3.66, 1.13, -4.34, 0.135, C.linen);
-      kPlant(null, 4.48, 1.13, -4.66, 0.56, C.terracotta, { rough: 0.85 },
+      kPlant(null, 4.48, 1.13, -4.66, 0.39, C.terracotta, { rough: 0.85 },
              'fiddle', false);
       kJar(null, 4.14, 1.13, -5.08, 0.085, 0.24, C.teal);
       /* the L-return: a toaster, jars and a plant */
@@ -1771,7 +1771,7 @@
       }
       kJar(null, -6.18, 1.13, -2.62, 0.095, 0.28, C.oxblood);
       kJar(null, -6.20, 1.13, -2.38, 0.075, 0.20, C.cream);
-      kPlant(null, -5.72, 1.13, -2.10, 0.50, C.linen, { rough: 0.8 },
+      kPlant(null, -5.72, 1.13, -2.10, 0.38, C.linen, { rough: 0.8 },
              'spray', false);
     }
 
@@ -1811,22 +1811,26 @@
     (function () {
       /* the lip hangs a working distance over the cooktop, not up level
          with the uppers — a hood that high reads as a chimney breast */
-      var HY0 = 2.10, LIPW = 1.76, LIPD = 1.20, WZ = NZ + 4.55;  /* wall, local */
+      /* sized to the RANGE, not to the wall: the lip is the cooktop's
+         1.50 plus a 0.04 reveal each side, and the canopy is shallower
+         than the counter, so the hood never leans out over the aisle.
+         A hood wider than the appliance reads as extraction plant. */
+      var HY0 = 2.10, LIPW = 1.58, LIPD = 1.06, WZ = NZ + 4.55;  /* wall, local */
       box(LIPW, 0.09, LIPD, C.ink, 0, HY0 + 0.045, WZ + LIPD / 2, counter,
           { rough: 0.45 });
       if (KD2) box(LIPW + 0.03, 0.045, LIPD + 0.03, HW, 0, HY0 + 0.012,
                    WZ + LIPD / 2, counter, STEEL);
       var hg = new T.Group();
-      hg.position.set(0, HY0 + 0.44, WZ + 0.60);
-      hg.scale.z = 0.679;
+      hg.position.set(0, HY0 + 0.40, WZ + 0.53);
+      hg.scale.z = 0.672;
       counter.add(hg);
-      var can = cyl(0.622, 1.188, 0.70, C.ink, 0, 0, 0, hg, 4, { rough: 0.45 });
+      var can = cyl(0.556, 1.061, 0.62, C.ink, 0, 0, 0, hg, 4, { rough: 0.45 });
       can.rotation.y = Math.PI / 4;
-      box(0.86, 1.51, 0.52, C.ink, 0, HY0 + 1.545, WZ + 0.26, counter,
+      box(0.76, 1.44, 0.46, C.ink, 0, HY0 + 1.440, WZ + 0.23, counter,
           { rough: 0.45 });
       if (KD2) {
-        box(0.90, 0.05, 0.56, HW, 0, HY0 + 0.810, WZ + 0.26, counter, STEEL);
-        box(0.90, 0.05, 0.56, HW, 0, HY0 + 2.270, WZ + 0.26, counter, STEEL);
+        box(0.80, 0.05, 0.50, HW, 0, HY0 + 0.750, WZ + 0.23, counter, STEEL);
+        box(0.80, 0.05, 0.50, HW, 0, HY0 + 2.110, WZ + 0.23, counter, STEEL);
       }
       /* the underside is not the same black: a lit hood glows */
       var und = new T.Mesh(new T.PlaneGeometry(LIPW - 0.16, LIPD - 0.16),
@@ -2043,7 +2047,7 @@
     if (DETAIL >= 3) {
       kSph(null, 0.075, C.leaf, 0.92, 1.80, 1.42, 0.8);
       kSph(null, 0.065, C.leaf, 1.02, 1.72, 1.51, 0.8);
-      kPlant(null, -1.94, 1.13, 1.42, 0.42, C.terracotta, { rough: 0.85 },
+      kPlant(null, -1.94, 1.13, 1.42, 0.37, C.terracotta, { rough: 0.85 },
              'mound', false);
       box(0.30, 0.05, 0.22, C.slate, -0.32, 1.265, 1.51, null, MATT);
     }
@@ -2161,11 +2165,15 @@
     })();
     /* the work aisle gets a runner; the pantry gets a mat */
     kRug(5.30, 1.14, -1.85, -2.92, 0x7c4130, 0x4a2a24, false);
-    /* floor plants, a bin and a market basket: nothing meets the plank
-       without a contact shadow */
-    kPlant(null, 6.02, 0, -3.52, 0.92, C.terracotta, { rough: 0.85 }, 'fiddle', true);
-    kPlant(null, -3.05, 0, 4.35, 0.90, C.linen, { rough: 0.8 }, 'spray', true);
-    kPlant(null, 2.72, 0, 4.42, 0.94, C.cream, GLOSS, 'mound', true);
+    /* floor plants: three, no two of them the same silhouette, and each
+       one set against something a person would stand it beside — the
+       larder, the island's west end, the table's east chair. A plant
+       alone on open plank decorates a gap; it does not furnish a room
+       (S1's 0.6 rule). Under the 0.9-unit floor cap, and smaller than
+       the furniture they stand next to. */
+    kPlant(null, 5.98, 0, -3.72, 0.86, C.terracotta, { rough: 0.85 }, 'fiddle', true);
+    kPlant(null, -3.06, 0, 1.78, 0.76, C.linen, { rough: 0.8 }, 'spray', true);
+    kPlant(null, 1.72, 0, 2.42, 0.82, C.cream, GLOSS, 'mound', true);
     /* the path in from the mudroom door, so the south-west corner is a
        route and not an empty plank field */
     kRug(3.20, 1.10, -4.85, 3.60, 0x8d5a3c, 0x4a2a24, false);
@@ -2195,10 +2203,10 @@
       blobShadow(0.34, 0.82, BX, BZ, westWallG);
     })();
     if (DETAIL >= 2) {
-      cyl(0.22, 0.19, 0.62, C.graphite, -4.34, 0.31, -3.10, null, 12,
+      cyl(0.22, 0.19, 0.62, C.graphite, -4.30, 0.31, -3.42, null, 12,
           { rough: 0.5, metal: 0.4 });
-      cyl(0.23, 0.23, 0.05, C.steel, -4.34, 0.645, -3.10, null, 12, STEEL);
-      blobShadow(0.26, 0.26, -4.34, -3.10);
+      cyl(0.23, 0.23, 0.05, C.steel, -4.30, 0.645, -3.42, null, 12, STEEL);
+      blobShadow(0.26, 0.26, -4.30, -3.42);
       cyl(0.30, 0.25, 0.36, C.cork, -6.02, 0.18, -1.92, null, 12, { rough: 0.95 });
       kSph(null, 0.10, C.terracotta, -6.06, 0.40, -1.96, 0.8);
       kSph(null, 0.09, C.leaf, -5.96, 0.39, -1.88, 0.8);
@@ -2226,8 +2234,8 @@
         kJar(null, RX - 0.34, 1.02, RZ - 0.10, 0.085, 0.24, C.terracotta);
         kJar(null, RX - 0.16, 1.02, RZ + 0.06, 0.070, 0.17, C.teal);
         kBowl(null, RX + 0.10, 1.02, RZ - 0.06, 0.145, C.cream);
-        kPlant(null, RX + 0.36, 1.02, RZ + 0.04, 0.42, C.linen, { rough: 0.8 },
-               'mound', false);
+        kPlant(null, RX + 0.36, 1.02, RZ + 0.04, 0.36, C.linen, { rough: 0.8 },
+               'fiddle', false);
         cyl(0.155, 0.145, 0.16, C.oxblood, RX - 0.26, 0.665, RZ, null, 12, GLOSS);
         kPlates(null, RX + 0.22, 0.605, RZ, 0.145, C.linen);
         rbox(0.32, 0.42, 0.05, 0.02, C.teal, RX + 0.53, 0.78, RZ, null,
@@ -2240,15 +2248,17 @@
       }
       blobShadow(0.54, 0.34, RX, RZ);
     })();
-    /* the south-east corner, past the table: a plant and a lidded basket */
-    kPlant(null, 6.12, 0, -1.86, 0.92, C.terracotta, { rough: 0.85 }, 'mound', true);
+    /* the two floor baskets: neither one stands on open plank any more.
+       The lidded one goes at the foot of the larder, beside its plant;
+       the cushioned one is pushed under the island's overhang between
+       two stools, which is where a family actually keeps one. */
     if (DETAIL >= 2) {
-      cyl(0.30, 0.25, 0.40, C.cork, 5.42, 0.20, -1.10, null, 14, { rough: 0.95 });
-      cyl(0.31, 0.31, 0.05, C.linen, 5.42, 0.425, -1.10, null, 14, { rough: 0.95 });
-      blobShadow(0.32, 0.32, 5.42, -1.10);
-      cyl(0.27, 0.23, 0.34, C.cork, 0.05, 0.17, 4.18, null, 12, { rough: 0.95 });
-      rbox(0.30, 0.13, 0.30, 0.06, C.teal, 0.05, 0.40, 4.18, null, { rough: 0.98 });
-      blobShadow(0.29, 0.29, 0.05, 4.18);
+      cyl(0.30, 0.25, 0.40, C.cork, 5.20, 0.20, -3.70, null, 14, { rough: 0.95 });
+      cyl(0.31, 0.31, 0.05, C.linen, 5.20, 0.425, -3.70, null, 14, { rough: 0.95 });
+      blobShadow(0.32, 0.32, 5.20, -3.70);
+      cyl(0.27, 0.23, 0.34, C.cork, -0.57, 0.17, 2.66, null, 12, { rough: 0.95 });
+      rbox(0.30, 0.13, 0.30, 0.06, C.teal, -0.57, 0.40, 2.66, null, { rough: 0.98 });
+      blobShadow(0.29, 0.29, -0.57, 2.66);
     }
 
     /* the west wall's blank panel: two prints and a sconce (S4) */
@@ -2284,19 +2294,22 @@
     var pendants = new T.Group();
     scene.add(pendants);
     if (DETAIL >= 3) {
-      /* they hang a working distance over the island, not at ceiling
-         height where they eat the fridge and the counter run behind */
+      /* centred on the island's long axis (x -2.27..1.47) and on its
+         short axis (z 0.9), spaced along the run. They used to hang 1.8
+         units over the marble — a room light, not a task light, and from
+         the diorama camera that much air reads as a pendant over the
+         walkway. 1.05 units (0.79 m) is where a pendant belongs. */
       [[-1.10, 0.9], [0.40, 0.9]].forEach(function (p) {
-        var cord = cyl(0.008, 0.008, 2.62, 0x8a8178, p[0], 4.31, p[1], pendants, 6);
+        var cord = cyl(0.008, 0.008, 3.17, 0x8a8178, p[0], 4.035, p[1], pendants, 6);
         cord.castShadow = false;   // a hair-thin cord throws a room-long streak
         var shade = new T.Mesh(new T.CylinderGeometry(0.24, 0.34, 0.30, 18, 1, true),
           new T.MeshStandardMaterial({ color: 0xf0e3c8, roughness: 0.7,
                                        emissive: 0xffdf9e, emissiveIntensity: 0.55,
                                        side: T.DoubleSide }));
-        shade.position.set(p[0], 2.90, p[1]);
+        shade.position.set(p[0], 2.30, p[1]);
         shade.castShadow = false;
         pendants.add(shade);
-        var cap = cyl(0.05, 0.05, 0.06, C.brass, p[0], 3.05, p[1], pendants, 10,
+        var cap = cyl(0.05, 0.05, 0.06, C.brass, p[0], 2.45, p[1], pendants, 10,
                       STEEL);
         cap.castShadow = false;
       });
