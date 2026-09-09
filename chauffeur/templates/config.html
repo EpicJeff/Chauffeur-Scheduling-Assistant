@@ -2139,6 +2139,21 @@
                                     <input type="number" min="0" max="20" x-model.number="newCar.seat_capacity"
                                         class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-24">
                                 </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-1 text-sm">Body
+                                        <span class="text-gray-600">(how the house draws it)</span></label>
+                                    <select x-model="newCar.body_type"
+                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                        <option value="">Generic</option>
+                                        <option value="sedan">Sedan</option>
+                                        <option value="suv">SUV</option>
+                                        <option value="truck">Truck</option>
+                                        <option value="minivan">Minivan</option>
+                                        <option value="hatch">Hatchback</option>
+                                        <option value="wagon">Wagon</option>
+                                        <option value="van">Van</option>
+                                    </select>
+                                </div>
                             </div>
                             <div class="mt-4">
                                 <label class="block text-gray-400 mb-1 text-sm">Who may drive it</label>
@@ -4402,7 +4417,7 @@
                 showCarForm: false,
                 editCarId: null,
                 carPaxMode: 'any',
-                newCar: { name: '', icon: '', color_code: '#6b7280', seat_capacity: 4, allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '' },
+                newCar: { name: '', icon: '', color_code: '#6b7280', seat_capacity: 4, body_type: '', allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '' },
                 newCarRange: { start: '', end: '', reason: '' },
                 showDriverForm: false,
                 showPassengerForm: false,
@@ -5262,7 +5277,7 @@
                 },
 
                 blankCar() {
-                    return { name: '', icon: '', image: null, color_code: '#6b7280', seat_capacity: 4, allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '', ha_device_tracker: '', ha_battery_entity: '', ha_fuel_entity: '', ha_range_entity: '' };
+                    return { name: '', icon: '', image: null, color_code: '#6b7280', seat_capacity: 4, body_type: '', allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '', ha_device_tracker: '', ha_battery_entity: '', ha_fuel_entity: '', ha_range_entity: '' };
                 },
 
                 // Client-side photo shrink: square-crop to 128px JPEG so the
@@ -5313,6 +5328,7 @@
                         image: car.image || null,
                         color_code: car.color_code || '#6b7280',
                         seat_capacity: car.seat_capacity != null ? car.seat_capacity : 4,
+                        body_type: car.body_type || '',
                         allowed_driver_ids: [...(car.allowed_driver_ids || [])],
                         allowed_passenger_ids: car.allowed_passenger_ids ? [...car.allowed_passenger_ids] : null,
                         default_driver_id: '',
@@ -5377,6 +5393,7 @@
                         payload.allowed_passenger_ids = this.carPaxMode === 'limited' && Array.isArray(payload.allowed_passenger_ids) && payload.allowed_passenger_ids.length
                             ? payload.allowed_passenger_ids : null;
                         payload.default_driver_id = payload.default_driver_id || null;
+                        payload.body_type = payload.body_type || null;
                         for (const k of ['ha_device_tracker', 'ha_battery_entity', 'ha_fuel_entity', 'ha_range_entity']) {
                             payload[k] = (payload[k] || '').trim() || null;
                         }

@@ -143,6 +143,20 @@ def scenario_curb_sees_the_bus():
           "the bus out lights the curb")
 
 
+def scenario_body_type_rides_the_car_record():
+    from models.schemas import Car
+    c = Car(name='Truck', body_type='truck')
+    check(c.model_dump().get('body_type') == 'truck', "body_type persists")
+    check(Car(name='X').model_dump().get('body_type') is None,
+          "unset = generic car")
+    src = io.open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), 'templates', 'config.html'),
+        encoding='utf-8').read()
+    check('newCar.body_type' in src, "the editor offers the picker (hand path)")
+    for t in ('sedan', 'suv', 'truck', 'minivan', 'hatch', 'wagon', 'van'):
+        check(f'value="{t}"' in src, f"picker offers {t}")
+
+
 if __name__ == '__main__':
     scenario_h1_house_speaks_with_the_kitchens_voice()
     scenario_family_safe_pin()
@@ -150,5 +164,6 @@ if __name__ == '__main__':
     scenario_endpoint_and_gate()
     scenario_house_template_pins()
     scenario_garage_knows_the_cars()
+    scenario_body_type_rides_the_car_record()
     scenario_curb_sees_the_bus()
     print("test_house_state OK")

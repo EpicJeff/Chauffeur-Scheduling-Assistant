@@ -128,6 +128,9 @@ class Car(BaseModel):
     image: Optional[str] = None     # small data-URL photo (~128px); shown where chips have room
     color_code: str = '#6b7280'
     seat_capacity: int = 4          # passenger seats, excluding the driver
+    # sedan|suv|truck|minivan|hatch|wagon|van; None/'' = generic (the house
+    # draws the car from this shape — H2, house design spec 2026-09-08)
+    body_type: Optional[str] = None
     # Drivers permitted behind the wheel. A driver listed on NO car keeps an
     # implicit personal car (solver ignores cars for them entirely).
     allowed_driver_ids: List[str] = Field(default_factory=list)
