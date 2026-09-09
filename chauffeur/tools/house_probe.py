@@ -55,6 +55,15 @@ def _seed():
                         color_code='#3b82f6', seat_capacity=7).model_dump())
     storage.add_car(Car(name='Green Wagon', body_type='wagon',
                         color_code='#5f8f4e', seat_capacity=5).model_dump())
+    # the window is a zone too: with no HA there is no forecast, so the pane
+    # renders blank and the weather signal cannot be judged in a screenshot.
+    from services import ha_api
+    ha_api.get_weather_forecast = lambda _e=None: [
+        {'condition': 'partlycloudy', 'temperature': 86,
+         'precipitation_probability': 10},
+        {'condition': 'sunny', 'temperature': 93, 'precipitation_probability': 0},
+        {'condition': 'rainy', 'temperature': 85,
+         'precipitation_probability': 60}]
 
 
 def main():

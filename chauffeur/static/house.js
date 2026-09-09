@@ -5324,10 +5324,14 @@
         g.quadraticCurveTo(w * 0.75, h * 0.94, w, h * 0.8);
         g.lineTo(w, h); g.closePath(); g.fill();
         if (temp !== null) {
+          /* The pane is read through a 320x288 canvas whose top quarter is
+             hidden by the valance and whose bottom quarter is hidden by the
+             sill plants. The temperature goes in the band between them:
+             scenery must never cover signal. */
           g.save();
-          g.shadowColor = 'rgba(0,0,0,0.4)'; g.shadowBlur = 8;
+          g.shadowColor = 'rgba(0,0,0,0.45)'; g.shadowBlur = 10;
           g.fillStyle = '#ffffff'; g.font = '800 54px ' + FONT;
-          g.fillText(temp + '\u00b0', 18, h - 20);
+          g.fillText(temp + '\u00b0', 18, 168);
           g.restore();
         }
       });
