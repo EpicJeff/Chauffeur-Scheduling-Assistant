@@ -1732,25 +1732,32 @@
     announceFocus(null);
     requestFrame();
   }
-  /* the two-level camera: exterior home <-> kitchen home (goHome). */
-  function enterKitchen(cb) {
-    if (mode === 'kitchen') { if (cb) cb(); return; }
-    mode = 'kitchen';
-    if (webgl.garageDoorG) webgl.garageDoorG.visible = true;
-    tween = { fromP: webgl.cam.position.clone(), toP: webgl.HOME_POS.clone(),
-              fromA: (lookAt || webgl.EXT_AT).clone(),
-              toA: webgl.HOME_AT.clone(),
-              t0: performance.now(), ms: 850, cb: cb || null };
-    requestFrame();
+  /* ---- ROOMS: every room is a camera home; some hide a group while
+     the camera is inside (the dollhouse trick). Zone keys map to the
+     room that owns them; unmapped zones belong to the kitchen. ---- */
+  function roomsReg() {
+    return {
+      kitchen: { pos: webgl.HOME_POS, at: webgl.HOME_AT },
+      garage:  { pos: webgl.GARAGE_POS, at: webgl.GARAGE_AT,
+                 hide: webgl.garageDoorG }
+    };
   }
-  function enterGarage(cb) {
-    if (mode === 'garage') { if (cb) cb(); return; }
-    mode = 'garage';
-    /* the dollhouse trick: the front and roof step aside for the camera */
-    if (webgl.garageDoorG) webgl.garageDoorG.visible = false;
-    tween = { fromP: webgl.cam.position.clone(), toP: webgl.GARAGE_POS.clone(),
-              fromA: (lookAt || webgl.EXT_AT).clone(),
-              toA: webgl.GARAGE_AT.clone(),
+  var ZONE_ROOM = { garage: 'garage', curb: null };
+  function zoneRoom(key) {
+    var r = ZONE_ROOM[key];
+    return r === undefined ? 'kitchen' : r;
+  }
+  function enterRoom(name, cb) {
+    var rooms = roomsReg();
+    var room = rooms[name];
+    if (!room) { if (cb) cb(); return; }
+    if (mode === name) { if (cb) cb(); return; }
+    mode = name;
+    Object.keys(rooms).forEach(function (k) {
+      if (rooms[k].hide) rooms[k].hide.visible = (k !== name);
+    });
+    tween = { fromP: webgl.cam.position.clone(), toP: room.pos.clone(),
+              fromA: (lookAt || webgl.EXT_AT).clone(), toA: room.at.clone(),
               t0: performance.now(), ms: 850, cb: cb || null };
     requestFrame();
   }
@@ -1758,7 +1765,10 @@
     mode = 'exterior';
     focused = null;
     TIP.style.opacity = 0;
-    if (webgl.garageDoorG) webgl.garageDoorG.visible = true;
+    var rooms = roomsReg();
+    Object.keys(rooms).forEach(function (k) {
+      if (rooms[k].hide) rooms[k].hide.visible = true;
+    });
     announceFocus(null);
     tween = { fromP: webgl.cam.position.clone(), toP: webgl.EXT_POS.clone(),
               fromA: (lookAt || webgl.HOME_AT).clone(),
@@ -1879,14 +1889,17 @@
      announces; it never taps through. */
   window.chfKitchenFocus = function (key) {
     if (!webgl || !ZONES[key]) return;
-    enterKitchen(function () {
+    var target = zoneRoom(key);
+    if (target === null) return;   /* exterior-only zones have no lean-in */
+    enterRoom(target, function () {
       focused = key;
       announceFocus(null);
       frameZone(key, function () { announceFocus(key); });
     });
   };
-  window.chfHouseEnter = function () { if (webgl) enterKitchen(null); };
-  window.chfHouseEnterGarage = function () { if (webgl) enterGarage(null); };
+  window.chfHouseEnter = function () { if (webgl) enterRoom('kitchen', null); };
+  window.chfHouseEnterGarage = function () { if (webgl) enterRoom('garage', null); };
+  window.chfHouseEnterRoom = function (name) { if (webgl) enterRoom(name, null); };
   window.chfHouseExit = function () { if (webgl) goExterior(); };
 
   function announceFocus(key) {
@@ -1931,32 +1944,19 @@
         if (o.userData && o.userData.room) { room = o.userData.room; break; }
         o = o.parent;
       }
-      if (room === 'garage') { enterGarage(null); return; }
-      if (!inExterior(hit) || hit.position.y > 0.2) enterKitchen(null);
+      if (room && roomsReg()[room]) { enterRoom(room, null); return; }
+      if (!inExterior(hit) || hit.position.y > 0.2) enterRoom('kitchen', null);
       return;
     }
     var key = zoneAt(ev.clientX, ev.clientY);
-    if (mode === 'garage') {
-      /* one zone lives here; anything else is the way out */
-      if (key !== 'garage') { goExterior(); return; }
-      if (focused === 'garage') { go(ZONES.garage.url); return; }
-      focused = 'garage';
-      announceFocus(null);
-      frameZone('garage', function () {
-        announceFocus('garage');
-        if (state) {
-          TIP.textContent = ZONES.garage.label + ' — ' +
-            ZONES.garage.headline(state);
-          TIP.style.left = '16px'; TIP.style.bottom = '64px';
-          TIP.style.top = 'auto'; TIP.style.opacity = 1;
-        }
-      });
+    /* a ray that slips past a wall must not lean into another room */
+    if (key && zoneRoom(key) !== mode) key = null;
+    if (!key) {
+      /* the kitchen keeps its two-step walk-out; small rooms exit direct */
+      if (mode === 'kitchen' && focused) { goHome(); return; }
+      goExterior();
       return;
     }
-    /* kitchen mode: the garage and curb live outside these walls — a ray
-       that slips past the wall must not lean into another room */
-    if (key === 'garage' || key === 'curb') key = null;
-    if (!key) { if (focused) { goHome(); } else { goExterior(); } return; }
     if (focused === key) { go(ZONES[key].url); return; }   // second tap: through
     focused = key;
     announceFocus(null);   /* the old card must not ride the camera move */
