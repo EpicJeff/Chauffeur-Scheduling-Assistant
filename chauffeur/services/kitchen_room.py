@@ -17,7 +17,7 @@ import datetime
 import logging
 import time
 
-from services import storage
+from services import scope, storage
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +67,28 @@ def _counter() -> dict:
 
 
 def _board() -> dict:
-    items = storage.get_shopping_items(include_checked=False)
+    """The wall list: how much is on it, and the first few things by name.
+
+    ONE list at a time, never `get_shopping_items()` with no list_id — that
+    call spans every list in the house, private ones included, and this feed
+    is served at WALL tier with nobody signed in. `audience_allows(l,
+    'shopping_list', None)` is the whole test and it is the anonymous one on
+    purpose: a room is a place, not a person, so a `household` list (the
+    type's default — every ordinary grocery list) passes and a private one
+    (the present an occasion put on a list of its own) never does. Family-safe
+    by construction is the law this module states about itself; reading every
+    item there was quietly broke it.
+    """
+    lists = [l for l in (storage.get_shopping_lists() or [])
+             if scope.audience_allows(l, 'shopping_list', None)]
+    items = [i for l in lists
+             for i in storage.get_shopping_items(l['id'], include_checked=False)]
     if not items:
         return _calm(items=0, top=[])
+    # Oldest first across the lists that survived, which is the order
+    # get_shopping_items gave within one: a wall list reads in the order
+    # things were remembered.
+    items.sort(key=lambda i: i.get('created_at') or 0)
     return {'calm': False, 'items': len(items),
             'top': [(i.get('name') or i.get('title') or 'something')
                     for i in items[:BOARD_TOP]]}

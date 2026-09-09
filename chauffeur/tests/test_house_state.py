@@ -15,6 +15,7 @@ from services import storage, house_room
 
 def _reset():
     storage.shopping_items_table.truncate()
+    storage.shopping_lists_table.truncate()
     storage.pets_table.truncate()
     storage.chat_channels_table.truncate()
     storage.chat_messages_table.truncate()
@@ -30,6 +31,30 @@ def scenario_h1_house_speaks_with_the_kitchens_voice():
                  'window', 'pet'):
         check(zone in st, f"{zone} section present")
         check(st[zone].get('calm') is True, f"{zone} calm when empty")
+
+
+def scenario_the_house_never_draws_a_private_list():
+    """The kitchen's corkboard rule, inherited and pinned HERE too, because
+    /api/house/state is its own WALL-tier door: a private list's names must
+    not ride the house feed either."""
+    _reset()
+    storage.get_cached_schedule = lambda: {}
+    storage.shopping_lists_table.insert({'id': 'l1', 'name': 'Groceries'})
+    storage.shopping_lists_table.insert({'id': 'l2', 'name': "Maya's present",
+                                         'audience': 'private',
+                                         'shared_with': ['mom']})
+    storage.shopping_items_table.insert({'id': 's1', 'list_id': 'l1',
+                                         'name': 'Milk', 'is_checked': False,
+                                         'created_at': 1})
+    storage.shopping_items_table.insert({'id': 's2', 'list_id': 'l2',
+                                         'name': 'Racing bike',
+                                         'is_checked': False, 'created_at': 2})
+    st = house_room.state(since_ts=0)
+    check(st['board']['items'] == 1 and st['board']['top'] == ['Milk'],
+          f"the house draws only the open list, got {st['board']}")
+    blob = json.dumps(st).lower()
+    check('racing bike' not in blob and "maya's present" not in blob,
+          "no trace of the private list in the house feed")
 
 
 def scenario_family_safe_pin():
@@ -179,6 +204,7 @@ def scenario_body_type_rides_the_car_record():
 
 if __name__ == '__main__':
     scenario_h1_house_speaks_with_the_kitchens_voice()
+    scenario_the_house_never_draws_a_private_list()
     scenario_family_safe_pin()
     scenario_the_house_never_writes()
     scenario_endpoint_and_gate()

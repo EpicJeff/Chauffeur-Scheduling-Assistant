@@ -918,6 +918,105 @@ def scenario_a_configured_feature_that_is_quiet_still_shows():
         _clear_cache()
 
 
+def scenario_a_restricted_list_never_reaches_the_board_payload():
+    """SECURITY. §7's audience, on the one surface that has no viewer to
+    check it against.
+
+    `build()` takes no viewer, its answer is TTL-cached and handed to every
+    panel that asks, and the panel is DEVICE tier with nobody signed in — so
+    the anonymous test is the whole gate here: `audience_allows(l,
+    'shopping_list', None)` passes a `household` list (the type's default, so
+    every ordinary grocery list is unchanged) and refuses everything else,
+    because a private list's audience IS its `shared_with` and a place cannot
+    be on that list.
+
+    Item NAMES rode this payload with no test at all, which is how an
+    occasion's gift list — private by construction, see
+    `occasions._gift_visibility` — put the present on the kitchen wall in
+    front of the person it was for.
+
+    And the half that proves this filtered a SURFACE rather than a person:
+    the adults the list is shared with still read it, unchanged.
+    """
+    import json as _json
+    import main
+    from services import scope
+    _clear_cache()
+    open_list = {'id': 'l1', 'name': 'Groceries'}
+    secret = {'id': 'l2', 'name': "Emma's present", 'audience': 'private',
+              'shared_with': ['mom']}
+    items = {'l1': [{'name': 'Milk', 'is_checked': False}],
+             'l2': [{'name': 'Racing bike', 'is_checked': False}]}
+    orig = (storage.get_shopping_lists, storage.get_shopping_items,
+            storage.get_cached_schedule)
+    try:
+        storage.get_shopping_lists = lambda: [dict(open_list), dict(secret)]
+        storage.get_shopping_items = \
+            lambda lid=None, *a, **kw: [dict(i) for i in (items.get(lid) or [])]
+        storage.get_cached_schedule = lambda: {}
+
+        tile = home_board._tile_shopping(datetime.datetime.now())
+        drawn = [l['name'] for l in (tile or {}).get('lists') or []]
+        check(drawn == ['Groceries'],
+              f"the wall draws the household list and no other, got {drawn}")
+        things = [i for l in (tile or {}).get('lists') or [] for i in l['items']]
+        check(things == ['Milk'],
+              f"only the open list's things reach the tile, got {things}")
+
+        # The PAYLOAD, not just the builder: this is the object that gets
+        # cached and served to the wall, so this is where the proof belongs.
+        blob = _json.dumps(home_board.build(requested='lists'))
+        check("Racing bike" not in blob,
+              "the present is nowhere in the board payload")
+        check("Emma's present" not in blob,
+              "and neither is the name of the list holding it")
+        check("Milk" in blob, "the household list still rides the payload")
+
+        # A tile PINNED to a restricted list says nothing about it — no count,
+        # no 'hidden', no "that one is private". A viewerless panel gets no
+        # trace, which is the rule `_trips_payload` already follows: the
+        # existence of a secret is part of the secret.
+        pinned = home_board._tile_shopping(datetime.datetime.now(),
+                                           config={'list': 'l2'})
+        check(pinned == {'empty': "Nothing on the lists."},
+              f"a tile pinned to a private list gives nothing away, got {pinned}")
+
+        # The other half. The board lost the list; the people did not.
+        mom = {'id': 'mom', 'name': 'Mom', 'role': 'parent'}
+        dad = {'id': 'dad', 'name': 'Dad', 'role': 'parent'}
+        check(scope.audience_allows(secret, 'shopping_list', mom) is True,
+              "somebody on shared_with still sees the list")
+        check(main._shopping_list_visible(secret, mom) is True,
+              "…all the way through the read path the API uses")
+        check(scope.audience_allows(secret, 'shopping_list', dad) is False,
+              "a parent off the list still does not — no parent bypass")
+        check(scope.audience_allows(open_list, 'shopping_list', None) is True,
+              "and nothing changes for an ordinary household list")
+
+        # The editor's PICKER is the same door (/api/home_board/catalog is
+        # WALL too), and a name is a trace. It is also the only coherent
+        # answer now: offering a list the tile refuses to draw is a setting
+        # that does nothing.
+        labels = [o['label'] for o in home_board.option_sources()['lists']]
+        check(labels == ['Groceries'],
+              f"the tile picker offers only what the tile may draw, got {labels}")
+    finally:
+        (storage.get_shopping_lists, storage.get_shopping_items,
+         storage.get_cached_schedule) = orig
+        _clear_cache()
+
+
+def scenario_a_restricted_list_is_kept_off_the_wall_helper():
+    """Kept separate so the fix above is not the only thing holding the line:
+    the anonymous audience test is a §7 contract, not a shopping detail."""
+    from services import scope
+    check(scope.audience_allows({'audience': 'private', 'shared_with': ['a']},
+                                'shopping_list', None) is False,
+          "a place is never on a private list's shared_with")
+    check(scope.audience_allows({}, 'shopping_list', None) is True,
+          "an unmarked list is 'household' and the wall keeps it")
+
+
 def scenario_the_map_is_never_hidden_for_being_quiet():
     """Where everyone is has no empty day. A member with no tracking appears as
     unknown rather than silently missing — you cannot otherwise tell "not

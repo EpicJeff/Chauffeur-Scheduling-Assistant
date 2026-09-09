@@ -17,6 +17,7 @@ from services import storage, kitchen_room as kitchen
 
 def _reset():
     storage.shopping_items_table.truncate()
+    storage.shopping_lists_table.truncate()
     storage.pets_table.truncate()
     storage.chat_channels_table.truncate()
     storage.chat_messages_table.truncate()
@@ -43,10 +44,13 @@ def scenario_signals_carry_real_numbers():
     storage.chat_messages_table.insert({'id': 'm1', 'channel_id': 'ch1',
                                         'attachment': 'x.jpg', 'ts': now,
                                         'body': 'goal!', 'sender_member_id': 'kid'})
-    # shopping: two open, one checked
-    storage.shopping_items_table.insert({'id': 's1', 'name': 'Milk', 'is_checked': False, 'created_at': 1})
-    storage.shopping_items_table.insert({'id': 's2', 'name': 'Eggs', 'is_checked': False, 'created_at': 2})
-    storage.shopping_items_table.insert({'id': 's3', 'name': 'Old', 'is_checked': True, 'created_at': 0})
+    # shopping: two open, one checked — on a real LIST, because that is the
+    # only way items exist in the app and because the room reads one list at
+    # a time now (a bare get_shopping_items() spans private lists too).
+    storage.shopping_lists_table.insert({'id': 'l1', 'name': 'Groceries'})
+    storage.shopping_items_table.insert({'id': 's1', 'list_id': 'l1', 'name': 'Milk', 'is_checked': False, 'created_at': 1})
+    storage.shopping_items_table.insert({'id': 's2', 'list_id': 'l1', 'name': 'Eggs', 'is_checked': False, 'created_at': 2})
+    storage.shopping_items_table.insert({'id': 's3', 'list_id': 'l1', 'name': 'Old', 'is_checked': True, 'created_at': 0})
     # pets: the room must use get_pets (derived level, active-only) —
     # never the raw table, whose stored 'level' is a lie
     storage.get_pets = lambda *a, **k: [{'id': 'p1', 'name': 'Biscuit',
@@ -74,20 +78,52 @@ def scenario_signals_carry_real_numbers():
           "the door counts down to the next leave")
 
 
+def scenario_the_corkboard_never_draws_a_private_list():
+    """SECURITY, and the module's own stated law: family-safe by
+    construction, because the youngest eye in the house is the audience.
+
+    This feed is served at WALL tier with nobody signed in, so §7's anonymous
+    test is the whole gate — `audience_allows(l, 'shopping_list', None)`
+    passes a household list and refuses a private one, whose audience IS its
+    `shared_with` and which a place can never be on. Reading every item there
+    was (`get_shopping_items()` with no list_id spans every list in the
+    house) put the present on the corkboard.
+    """
+    _reset()
+    storage.get_cached_schedule = lambda: {}
+    storage.shopping_lists_table.insert({'id': 'l1', 'name': 'Groceries'})
+    storage.shopping_lists_table.insert({'id': 'l2', 'name': "Maya's present",
+                                         'audience': 'private',
+                                         'shared_with': ['mom']})
+    storage.shopping_items_table.insert({'id': 's1', 'list_id': 'l1',
+                                         'name': 'Milk', 'is_checked': False,
+                                         'created_at': 1})
+    storage.shopping_items_table.insert({'id': 's2', 'list_id': 'l2',
+                                         'name': 'Racing bike',
+                                         'is_checked': False, 'created_at': 2})
+    st = kitchen.state(since_ts=0)
+    check(st['board']['items'] == 1 and st['board']['top'] == ['Milk'],
+          f"the corkboard counts and names only the open list, got {st['board']}")
+    blob = json.dumps(st).lower()
+    check('racing bike' not in blob and "maya's present" not in blob,
+          "no trace of the private list anywhere in the room's JSON")
+
+
 def scenario_every_source_poisoned_still_answers():
     _reset()
     boom = lambda *a, **k: (_ for _ in ()).throw(RuntimeError('down'))
     storage.get_cached_schedule = boom
     orig = (storage.count_event_moments_since, storage.get_recent_event_moments,
-            storage.get_shopping_items)
+            storage.get_shopping_items, storage.get_shopping_lists)
     storage.count_event_moments_since = boom
     storage.get_recent_event_moments = boom
     storage.get_shopping_items = boom
+    storage.get_shopping_lists = boom
     try:
         st = kitchen.state(since_ts=0)
     finally:
         (storage.count_event_moments_since, storage.get_recent_event_moments,
-         storage.get_shopping_items) = orig
+         storage.get_shopping_items, storage.get_shopping_lists) = orig
     check(st['status'] == 'ok', "poisoned sources never break the room")
     for zone in ('fridge', 'board', 'door', 'calendar'):
         check(st[zone].get('calm') is True, f"{zone} fell to calm, not to error")
@@ -203,6 +239,7 @@ def scenario_window_reads_the_sky_and_degrades():
 if __name__ == '__main__':
     scenario_all_seven_sections_present_and_calm_on_empty()
     scenario_signals_carry_real_numbers()
+    scenario_the_corkboard_never_draws_a_private_list()
     scenario_every_source_poisoned_still_answers()
     scenario_family_safe_pin()
     scenario_the_room_never_writes()

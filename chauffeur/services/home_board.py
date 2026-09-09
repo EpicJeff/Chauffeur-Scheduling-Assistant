@@ -1846,6 +1846,23 @@ def _tile_shopping_list(now, config=None, **_):
 
 
 def _tile_shopping(now, config=None, **_):
+    """The lists, with the THINGS on them, in the board payload.
+
+    §7 audience, with NO viewer — and that is not an oversight to fix later,
+    it is what this surface is. `build()` takes no viewer, its answer is one
+    TTL-cached payload shared by every panel that asks, and the panel itself
+    is DEVICE tier with nobody signed in. So the test is the anonymous one,
+    exactly as `_tile_mind` builds its lane with no identity:
+    `audience_allows(l, 'shopping_list', None)` passes a `household` list —
+    the type's default, so nothing about an ordinary grocery list changes —
+    and refuses everything else, because a private list's audience IS its
+    `shared_with` and a place cannot be on that list.
+
+    What was here before was the item NAMES with no test at all, which is
+    how an occasion's gift list (private by construction —
+    `occasions._gift_visibility`) put the present on the kitchen wall in
+    front of the person it was for.
+    """
     try:
         all_lists = storage.get_shopping_lists()
         if not all_lists:
@@ -1863,6 +1880,13 @@ def _tile_shopping(now, config=None, **_):
         show_items = _cfg_int(config, 'items', 12, 0, 20)
         lists = []
         for l in all_lists:
+            # No count and no trace, the rule `_trips_payload` already
+            # follows: a viewerless panel is told nothing at all about a list
+            # it may not draw, so a tile PINNED to a private list falls
+            # through to "Nothing on the lists." rather than announcing that
+            # there is a secret in the house.
+            if not scope.audience_allows(l, 'shopping_list', None):
+                continue
             items = storage.get_shopping_items(l['id'])
             open_items = [i for i in items if not i.get('is_checked')]
             if open_items:
@@ -5484,8 +5508,15 @@ def option_sources() -> dict:
     except Exception as e:
         print(f"[home_board] driver options failed: {e}")
     try:
+        # The same anonymous §7 test `_tile_shopping` applies, for the same
+        # reason: this is served by /api/home_board/catalog, which is WALL
+        # tier with no viewer, and a private list's NAME is a trace of it.
+        # It is also the only coherent picker now — offering a list the tile
+        # will refuse to draw is a setting that does nothing. `household` is
+        # the type's default, so every ordinary list still appears.
         out['lists'] = [{'value': l['id'], 'label': l.get('name') or 'List'}
-                        for l in (storage.get_shopping_lists() or [])]
+                        for l in (storage.get_shopping_lists() or [])
+                        if scope.audience_allows(l, 'shopping_list', None)]
     except Exception as e:
         print(f"[home_board] list options failed: {e}")
     try:
