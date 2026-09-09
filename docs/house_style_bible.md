@@ -271,16 +271,39 @@ This has caused three bugs so far, each of which cost a builder time:
 - The whole garage bay had the same problem, and now disables `receiveShadow`
   on every mesh in it.
 
-**Do not widen the frustum.** Measured: widening to ±40 makes the shadow appear
-but coarsens every other room's shadows about 4×. The house's interiors are the
-priority.
+**SOLVED in the lighting pass (v2.467.9).** Recorded here because the reasoning
+matters and the maintenance obligation is permanent.
 
-Until the lighting pass resolves it properly (a second shadow camera for the
-yard is the obvious candidate), the workaround for anything outside the box is:
-disable `receiveShadow` on the object, and give it a hand-placed multiply disc
-for contact. `blobShadow` takes an optional floor-height parameter — the garage
-floor is at y 0.035 and the mudroom floor at y 0.03, and shadow discs authored
-without it render *underneath* the floor, which is its own silent bug.
+Two things that do *not* work, both tested:
+
+- **Widening the box.** ±40 makes yard shadows appear and coarsens every other
+  room's shadows about 4×. The interiors are the priority.
+- **A second shadow-casting light scoped to the yard.** Three tests
+  `light.layers` against the **camera**, not per object, so a light cannot be
+  scoped to part of the scene — a second sun lights the house twice.
+
+What works: **the scene has exactly five cameras**, so the shadow box follows
+the active view. One box per camera home, re-aimed in `enterRoom` / `goExterior`
+— a state change, not a frame loop. The sun's offset from its target is
+constant, so the light *direction* never changes and shading is identical room
+to room; only the map's footprint moves. Map is 4096 (capped by
+`maxTextureSize`).
+
+Texel size against the old ±10 @ 2048 (9.8 mm): kitchen/living 6.3 mm, mudroom
+5.9 mm, exterior 10.3 mm, garage 10.7 mm — three views finer, two within a
+tenth while covering 4–5× the area.
+
+`R.shadowMap.autoUpdate = false`; the map is marked dirty in `aimShadow` and
+`applyState` only, so tier 3 is now cheaper per steady frame than before — it
+used to redraw the depth pass on every tween frame.
+
+> **Maintenance obligation:** any code that mutates geometry or visibility
+> outside `applyState` / `aimShadow` **must** call `webgl.shadowDirty()`, or its
+> shadow goes stale.
+
+`blobShadow` still takes an optional floor-height parameter, and still needs it
+below tier 3 — the garage floor is at y 0.035 and the mudroom floor at y 0.03,
+and discs authored without it render *underneath* the floor, a silent bug.
 
 **Diagnostic trick worth reusing:** when a surface shades wrongly and you cannot
 tell whether it is the material or the light, paint it an impossible colour

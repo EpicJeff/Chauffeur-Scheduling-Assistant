@@ -260,8 +260,20 @@
     var R = new T.WebGLRenderer({ antialias: DETAIL >= 2 });
     R.setPixelRatio(1);                                // the Pi law: never a retina multiplier
     if (PBR) {
-      /* frames are rare, so each one can afford the full render look */
-      R.toneMapping = T.ACESFilmicToneMapping;
+      /* TONE MAPPING (lighting pass). ACES lived here, and it was the
+         reason the high tier read PALER and FLATTER than medium: three's
+         filmic fit pre-scales by 1/0.6, which LIFTS the midtones, and its
+         output matrix desaturates the top end. An authored armchair orange
+         (0.82, 0.50, 0.25) came back as (0.82, 0.71, 0.48) - cream. It also
+         lifted every dark anchor, which is why `ink` drifted olive.
+         Colour management is OFF in this three build, so the shading maths
+         already runs in display space: there is no linear HDR for a filmic
+         curve to tone-map, only authored hexes to distort. LINEAR is
+         identity, and with the light budget below (fill + key summing to
+         ~0.9 square to the sun, pools taking the lit patches to ~1.05) the
+         only thing that clips is a specular highlight, which is where the
+         plates put their white too. */
+      R.toneMapping = T.LinearToneMapping;
       R.toneMappingExposure = 1.0;
       /* no sRGB output pass: the legacy three build has color management
          off, so the extra encode only bleaches every authored color */
@@ -269,31 +281,169 @@
     if (SHADOWS) {
       R.shadowMap.enabled = true;
       R.shadowMap.type = T.PCFSoftShadowMap;
+      /* the shadow map obeys the same law the frame loop does. Nothing in
+         this scene moves under its own power, and the sun never travels,
+         so redrawing the depth pass on every tween frame is pure waste -
+         and once the yard casts too, that waste is ~700 extra meshes 50
+         times per camera move. It is marked dirty where the world can
+         actually change: aimShadow (the box moved) and applyState (the
+         only path that adds, removes or hides anything). */
+      R.shadowMap.autoUpdate = false;
+      R.shadowMap.needsUpdate = true;
     }
     ROOT.appendChild(R.domElement);
 
-    if (PBR) {
-      scene.add(new T.HemisphereLight(0xd9defc, 0xb8926a, 0.45));
-      scene.add(new T.AmbientLight(0xfff4e6, 0.14));
-    } else {
-      scene.add(new T.AmbientLight(0xfff4e6, DETAIL >= 2 ? 0.62 : 0.75));
+    /* ---- the rig: one budget, three tiers ------------------------------
+       COOL FILL, WARM KEY. The old rig was warm everywhere (hemisphere
+       ground 0xb8926a, ambient 0xfff4e6, sun 0xfff1dc) and summed past 1.6
+       on a lit face, so nothing could be dark and nothing could be neutral:
+       `ink` came back olive-brown on the tyres and the TV, and every
+       authored hue drowned. Now the fill is DAYLIGHT-COOL and only the key
+       is warm, which is the plates' whole read - warm light against a cool
+       surround - and it is what lets a near-black stay near-black.
+
+       The budget is shared across tiers ON PURPOSE: a panel that demotes
+       itself from high to medium must not change colour, only fidelity.
+       Square to the key, fill + key lands near 0.90; the room pools
+       (below, and the baked gradients in the floor textures) carry the lit
+       patches the rest of the way to ~1.05. Fully shaded sits near 0.40. */
+    /* one clock for the whole scene: the sky dome and the rig must never
+       disagree about whether it is dark out */
+    function isNight() {
+      var h = new Date().getHours();
+      return h < 7 || h >= 19;
     }
-    var sun = new T.DirectionalLight(0xfff1dc, PBR ? 1.0 : 0.5);
-    sun.position.set(10.5, 12, 4.5);
+    var SKY_C = 0xcbdcf2, GND_C = 0x9a8b74, SUN_C = 0xfff0d6;
+    var HEMI_I = PBR ? 0.34 : (DETAIL >= 2 ? 0.44 : 0.52);
+    var AMB_I = PBR ? 0.05 : (DETAIL >= 2 ? 0.10 : 0.16);
+    var SUN_I = PBR ? 0.56 : (DETAIL >= 2 ? 0.50 : 0.46);
+    /* Lambert takes hemisphere irradiance too: medium and low get the same
+       cool-over-warm gradient the high tier does, for one uniform */
+    var hemi = new T.HemisphereLight(SKY_C, GND_C, HEMI_I);
+    scene.add(hemi);
+    var amb = new T.AmbientLight(PBR ? 0xdfe6f0 : 0xe4eaf2, AMB_I);
+    scene.add(amb);
+    var sun = new T.DirectionalLight(SUN_C, SUN_I);
     scene.add(sun);
     if (SHADOWS) {
       sun.castShadow = true;
       sun.shadow.mapSize.set(2048, 2048);
-      sun.shadow.camera.left = -10; sun.shadow.camera.right = 10;
-      sun.shadow.camera.top = 12; sun.shadow.camera.bottom = -10;
-      sun.shadow.camera.near = 2; sun.shadow.camera.far = 45;
-      sun.shadow.bias = -0.0006;
-      sun.shadow.radius = 3;
     }
+    /* the wide exterior box gets a bigger map so the resting view - the one
+       the panel actually sits on - keeps the interiors' shadow detail. It is
+       affordable BECAUSE the depth pass is now on demand: one extra pass per
+       room change, never per frame. Capped by the driver's own limit. */
+    var SHADOW_HI = Math.min(4096, (R.capabilities && R.capabilities.maxTextureSize) || 2048);
+
+    /* ---- THE SHADOW FRUSTUM, ONE BOX PER VIEW (bible S5.2) -------------
+       The documented bug: a single +/-10 orthographic box pinned to the
+       house. Anything outside it - the garage bay, the driveway, the kerb,
+       the whole garden - either got no shadow or straddled the edge, and
+       three returns "fully lit" outside a shadow frustum, so the boundary
+       drew a HARD DIAGONAL that read as a different material. It cost three
+       builders time (the minivan roof cap, the garage bay, every vehicle),
+       and the standing workaround was to switch `receiveShadow` off out
+       there and hand-place multiply discs.
+
+       Widening to one +/-40 box was measured and rejected: yard shadows
+       appear, every interior's shadows coarsen ~4x.
+
+       A second shadow-casting light was the obvious candidate and does NOT
+       work here: three tests `light.layers` against the CAMERA, not against
+       each object, so a light cannot be scoped to the yard - a second sun
+       would light the whole house twice.
+
+       What does work is that this scene has exactly five cameras and only
+       ever sits at one of them. The box now FOLLOWS THE ACTIVE VIEW: sized
+       to what that camera can see, centred on what it is looking at. The
+       light's DIRECTION never changes (the sun's offset from its target is
+       constant), so shading is identical from room to room; only the
+       shadow map's footprint moves. Paired with the bigger map below, the
+       arithmetic comes out ahead everywhere: the old box put a shadow texel
+       at 20/2048 = 9.8mm; the kitchen and living boxes now sit at 6.3mm and
+       the mudroom at 5.9mm, while the two that have to reach out into the
+       garden - exterior and garage - land at 10.3mm and 10.7mm, within a
+       tenth of the old figure while covering four to five times the area
+       and carrying shadows that never existed out there at all.
+
+       It is a state change, not a frame loop: aimShadow() is called once at
+       build and once per room change, next to the camera tween. */
+    var SUN_OFF = new T.Vector3(21, 24, 9);   /* direction only - the length
+                                                 just keeps every roof in
+                                                 front of the near plane */
+    var sunTarget = new T.Object3D();
+    scene.add(sunTarget);
+    sun.target = sunTarget;
+    /* Sized to what each camera can REACH, not to the room's footprint: a
+       lean-in stands further off than the room pose, and the first cut of
+       this table (garage half 8.5) put the boundary back across the lawn in
+       the garage lean. Every box is a half-extent in LIGHT space, so a world
+       corner 8.5 out can still land at 10.7 once the sun's basis rotates it.
+       Erring wide costs resolution the bigger map pays back; erring tight
+       costs a hard diagonal, which is the bug this whole block exists for. */
+    var SHADOW_BOX = {          /* centre x, centre z, half-extent */
+      exterior: [-5.4, 7.4, 21],
+      kitchen: [0.0, 1.5, 13],
+      living: [-1.4, 8.6, 13],
+      mudroom: [-11.0, 5.6, 12],
+      garage: [-15.4, 6.2, 22]
+    };
+    function aimShadow(name) {
+      var b = SHADOW_BOX[name] || SHADOW_BOX.exterior;
+      sunTarget.position.set(b[0], 1.2, b[1]);
+      sunTarget.updateMatrixWorld();
+      sun.position.set(b[0] + SUN_OFF.x, 1.2 + SUN_OFF.y, b[1] + SUN_OFF.z);
+      if (!SHADOWS) return;
+      var c = sun.shadow.camera, h = b[2];
+      c.left = -h; c.right = h; c.top = h; c.bottom = -h;
+      c.near = 1; c.far = 52 + h;
+      c.updateProjectionMatrix();
+      var want = h > 9 ? SHADOW_HI : 2048;
+      if (sun.shadow.mapSize.x !== want) {
+        sun.shadow.mapSize.set(want, want);
+        /* three only allocates the depth target once; drop it and the next
+           depth pass builds one at the new size */
+        if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+      }
+      /* both biases follow the TEXEL, not the box: a wide box on a big map
+         has the same footprint as a tight one on a small map, and a bias
+         tuned for one acnes or peter-pans on the other */
+      var texel = 2 * h / want;
+      sun.shadow.normalBias = 0.010 + texel * 2.4;
+      sun.shadow.bias = -0.0004 - texel * 0.02;
+      R.shadowMap.needsUpdate = true;
+    }
+    function shadowDirty() { if (SHADOWS) R.shadowMap.needsUpdate = true; }
+    aimShadow('exterior');
+    /* ---- LIGHT POOLS (bible S4: "light pools; warm patches on the floor
+       and counters, cool elsewhere"). One 26-unit lamp over the middle of
+       the house used to be the whole answer, and it was doing two wrong
+       things at once: reaching every room equally (so nothing pooled) and
+       peaking hot enough to clip a stool top to yellow-white now that the
+       curve is linear. Replaced by one SHORT-THROW lamp per room, sitting
+       where that room's real light fitting is, none of them casting a
+       shadow map. They never move and never animate: this is a static rig,
+       drawn only when the scene draws.
+
+       The other half of the pooling is BAKED - the warm radial in each
+       floor texture below - because that half survives to `low`, where
+       there are no lamps at all. */
+    var poolLamps = [];
     if (DETAIL >= 2) {
-      var lamp = new T.PointLight(0xffd9a0, PBR ? 0.5 : 0.28, 26);
-      lamp.position.set(0, 5.2, 0);
-      scene.add(lamp);
+      var POOL = 0xffe2b4;                  /* warm, but not the orange the
+                                               old 0xffd9a0 pushed onto wood */
+      [[0.4, 4.55, -0.7, 13.5, 0.42],       /* the pendants over the island */
+       [-2.4, 4.35, 9.6, 13.0, 0.40],       /* the living room's own corner */
+       [-9.9, 3.45, 5.3, 8.5, 0.34],        /* the mudroom's wall light */
+       [-15.4, 3.95, 6.3, 10.0, 0.36],      /* the garage's strip light */
+       [-17.55, 2.80, 10.4, 7.0, 0.00]      /* the coach lamp: dark by day */
+      ].forEach(function (p) {
+        var lamp = new T.PointLight(POOL, (PBR ? 1 : 0.72) * p[4], p[3]);
+        lamp.position.set(p[0], p[1], p[2]);
+        lamp.userData.dayI = (PBR ? 1 : 0.72) * p[4];
+        scene.add(lamp);
+        poolLamps.push(lamp);
+      });
     }
 
     /* ---- procedural material library (canvas textures, zero downloads) -- */
@@ -542,10 +692,71 @@
     })();
     var floorTex = new T.CanvasTexture(floorCanvas);
     floorTex.magFilter = T.LinearFilter;   /* planks, not pixels */
+    /* ---- BAKED LIGHT POOLS (bible S4, and the arc brief) ---------------
+       "Light pools. Warm patches on the floor and counters, cool
+       elsewhere." The room lamps above do half of it, but only from
+       medium up: at `low` there are no lamps at all, and the great room's
+       floor is the surface that fills every frame at every tier. So the
+       other half is PAINTED - the same discipline the garage slab's door
+       gradient already uses.
+
+       Authored in WORLD units, not texture units, because the kitchen
+       floor and the living floor are two planes with DIFFERENT UV scales
+       across ONE open room: a gradient authored per-texture puts a visible
+       step across the seam at z 5.7. Mapped through each plane's own
+       affine world->canvas transform, the cool surround runs continuously
+       off one plane and onto the other.
+
+       And the surround is the point. A floor that is only ever LIGHTENED
+       ends up flat and pale - which is how the whole tier read before this
+       pass. The cool ring goes down first; the warm patches are then a
+       difference, not a brightening. */
+    var POOLS = [                 /* world x, world z, radius, strength */
+      [0.4, -0.9, 5.0, 0.30],     /* under the island pendants */
+      [2.3, 2.9, 3.4, 0.17],      /* the dining table's own light */
+      [-2.4, 9.7, 4.6, 0.28],     /* the living room's lamps */
+      [2.6, 12.4, 3.2, 0.16]      /* the reading corner */
+    ];
+    function pooledFloorTex(x0, xw, z0, zw) {
+      var c = document.createElement('canvas');
+      var W = c.width = c.height = floorCanvas.width;
+      var g = c.getContext('2d');
+      g.drawImage(floorCanvas, 0, 0);
+      function px(wx) { return (wx - x0) / xw * W; }
+      function py(wz) { return (wz - z0) / zw * W; }
+      function radial(wx, wz, r, stops) {
+        var rx = Math.abs(px(wx + r) - px(wx)), ry = Math.abs(py(wz + r) - py(wz));
+        g.save();
+        g.translate(px(wx), py(wz));
+        g.scale(rx || 1, ry || 1);
+        var gr = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+        stops.forEach(function (s) { gr.addColorStop(s[0], s[1]); });
+        g.fillStyle = gr;
+        g.fillRect(-W, -W, W * 2, W * 2);   /* scaled units: covers all */
+        g.restore();
+      }
+      /* the cool surround, centred on the great room, one ring for both
+         planes so the seam at z 5.7 has nothing to show */
+      radial(0, 4.2, 13.5, [[0, 'rgba(56,66,94,0)'], [0.42, 'rgba(56,66,94,0.06)'],
+                            [1, 'rgba(56,66,94,0.30)']]);
+      POOLS.forEach(function (p) {
+        radial(p[0], p[1], p[2],
+               [[0, 'rgba(255,228,172,' + p[3] + ')'],
+                [0.5, 'rgba(255,228,172,' + (p[3] * 0.5).toFixed(3) + ')'],
+                [1, 'rgba(255,228,172,0)']]);
+      });
+      var t = new T.CanvasTexture(c);
+      t.anisotropy = 4;
+      t.magFilter = T.LinearFilter;
+      return t;
+    }
+    /* the KITCHEN plane: 13 x 11.6 at the origin, repeat 1 - its canvas
+       spans world x -6.5..6.5 and z -5.8..5.8 exactly */
+    var floorTexK = pooledFloorTex(-6.5, 13, -5.8, 11.6);
     var floor = new T.Mesh(new T.PlaneGeometry(13, 11.6),
-      PBR ? new T.MeshStandardMaterial({ map: floorTex, roughness: 0.5,
+      PBR ? new T.MeshStandardMaterial({ map: floorTexK, roughness: 0.5,
                                          envMapIntensity: 0.1 })
-          : new T.MeshLambertMaterial({ map: floorTex }));
+          : new T.MeshLambertMaterial({ map: floorTexK }));
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = 0.001;
     if (SHADOWS) floor.receiveShadow = true;
@@ -601,8 +812,11 @@
     box(13.70, 0.13, 0.09, C.stone, 0, -0.045, 14.140, null, { rough: 0.9 });
     box(0.05, 0.50, 19.92, C.cabShade, 6.825, -0.27, 4.14, null, { rough: 0.9 });
     box(0.09, 0.13, 19.92, C.stone, 6.840, -0.045, 4.14, null, { rough: 0.9 });
-    var floorTex2 = floorTex.clone();
-    floorTex2.needsUpdate = true;
+    /* the LIVING plane: 13 x 8.5 at z 9.95, sampling only the top
+       8.5/11 of its texture, so the canvas spans world z 3.2..14.2 -
+       which is the range the pool bake is told about, and why the cool
+       ring lands on the same world circle it does next door */
+    var floorTex2 = pooledFloorTex(-6.5, 13, 3.2, 11.0);
     floorTex2.wrapS = floorTex2.wrapT = T.RepeatWrapping;
     floorTex2.repeat.set(1, 8.5 / 11);
     var floor2 = new T.Mesh(new T.PlaneGeometry(13, 8.5),
@@ -1595,9 +1809,9 @@
     ], { toe: true });
     /* the L-return on the west wall: plate 9's L-run, and the piece that
        stops the pantry corner reading as bare floor */
-    kCase(-5.825, -2.65, Math.PI / 2, 1.70, 1.30, 0, CT_Y - CT_T, [
+    kCase(-6.275, -2.20, Math.PI / 2, 1.30, 0.75, 0, CT_Y - CT_T, [
       { h: CT_Y - CT_T - TOE, cells: [
-        { w: 0.85, kind: 'drawers3' }, { w: 0.85, kind: 'door' }] }
+        { w: 0.65, kind: 'drawers3' }, { w: 0.65, kind: 'door' }] }
     ], { toe: true });
     /* countertops: a slab that overhangs the fronts by 0.05 (S3.1.6) */
     function kTop(w, d, x, z) {
@@ -1614,7 +1828,7 @@
     kTop(1.77, 1.49, -3.665, NZ + 0.745);
     kTop(1.88, 1.49, -0.040, NZ + 0.745);
     kTop(2.40, 1.49, 3.70, NZ + 0.745);
-    kTop(1.35, 1.80, WXK + 0.675, -2.65);
+    kTop(0.80, 1.40, WXK + 0.400, -2.20);
     blobShadow(2.7, 0.75, -1.825, BZ);
     blobShadow(1.2, 0.75, 3.70, BZ);
     blobShadow(0.68, 0.9, WXK + 0.65, -2.65);
@@ -1799,14 +2013,14 @@
              'fiddle', false);
       kJar(null, 4.14, 1.13, -5.08, 0.085, 0.24, C.teal);
       /* the L-return: a toaster, jars and a plant */
-      rbox(0.44, 0.28, 0.30, 0.05, C.steel, -5.86, 1.28, -3.14, null, STEEL);
+      rbox(0.44, 0.28, 0.30, 0.05, C.steel, -6.30, 1.28, -2.62, null, STEEL);
       if (KD3) {
-        box(0.02, 0.05, 0.20, C.graphite, -5.63, 1.30, -3.14, null, STEEL);
-        box(0.30, 0.03, 0.12, C.cabShade, -5.86, 1.43, -3.14, null, MATT);
+        box(0.02, 0.05, 0.20, C.graphite, -6.07, 1.30, -2.62, null, STEEL);
+        box(0.30, 0.03, 0.12, C.cabShade, -6.30, 1.43, -2.62, null, MATT);
       }
-      kJar(null, -6.18, 1.13, -2.62, 0.095, 0.28, C.oxblood);
-      kJar(null, -6.20, 1.13, -2.38, 0.075, 0.20, C.cream);
-      kPlant(null, -5.72, 1.13, -2.10, 0.38, C.linen, { rough: 0.8 },
+      kJar(null, -6.36, 1.13, -2.24, 0.095, 0.28, C.oxblood);
+      kJar(null, -6.34, 1.13, -2.02, 0.075, 0.20, C.cream);
+      kPlant(null, -6.22, 1.13, -1.78, 0.38, C.linen, { rough: 0.8 },
              'spray', false);
     }
 
@@ -2774,10 +2988,13 @@
       var gWoodO = NICE ? { rough: 0.62, map: woodLight } : { rough: 0.62 };
       var gWoodK = NICE ? 0xffffff : 0xc89a66;
 
-      function gt(m) {                   /* tag, and take it off the maps */
+      /* the bay is BACK ON the shadow map (lighting pass): the frustum
+         now follows the camera, and the garage view's box is centred on
+         this room, so there is no boundary running across it to draw the
+         diagonal that forced this off in the first place. */
+      function gt(m) {                   /* tag only */
         if (!m) return m;
         m.userData.room = 'garage'; m.userData.zone = 'garage';
-        m.castShadow = false; m.receiveShadow = false;
         return m;
       }
       function gb(w, h, d, c, x, y, z, o, gp) {
@@ -2795,10 +3012,12 @@
         if (rot) g.rotation.y = rot;
         gt(g); garageInterior.add(g); return g;
       }
-      /* contact, at EVERY tier: blobShadow goes quiet at tier 3 because
-         tier 3 has real shadows, and this room has none. A grey disc
+      /* contact BELOW tier 3. It used to draw at every tier, because the
+         bay had no real shadow at any tier; now that it does, a hand disc
+         under a real cast shadow just doubles the tone. A grey disc
          multiplied into the slab can only darken it. */
       function gsh(rx, rz, x, z, tone) {
+        if (SHADOWS) return null;
         var d = new T.Mesh(new T.CircleGeometry(1, GD2 ? 18 : 10),
           new T.MeshBasicMaterial({ color: tone || 0xa9a5ad, transparent: true,
                                     blending: T.MultiplyBlending,
@@ -3723,7 +3942,7 @@
          they read as dark pools parked around the cars rather than
          under them. The rings ride inside the group, so they land on
          the garage slab (y 0.038) and the apron (y -0.206) alike. */
-      [[0.44, 0.45, 0x9d99a3], [0.58, 0.54, 0xcfccd4]].forEach(
+      if (!SHADOWS) [[0.44, 0.45, 0x9d99a3], [0.58, 0.54, 0xcfccd4]].forEach(
         function (ring, ri) {
           /* both rings at every tier: a lone hard-edged 12-gon pokes a
              visible triangle out from under the bumper at low, and two
@@ -3738,20 +3957,24 @@
           d.renderOrder = -2 + ri;
           grp.add(d);
         });
-      /* ...and nothing on a car RECEIVES one. The same +/-10 shadow box
-         has an EDGE, and it cuts across the garage bay: the east car
-         sampled the map over part of its body (coming back inside the
-         house's shadow) and was forced lit over the rest. The seam ran
-         straight across the minivan's roof cap, which then read as a
-         navy panel in a different material from the light blue flank
-         under it. The two rings above are this kit's whole shadow. */
-      grp.traverse(function (o) { o.receiveShadow = false; });
+      /* ...and at tier 3 a car RECEIVES one again. The seam that ran
+         across the minivan's roof cap - half the cap sampling the map,
+         half forced lit - was the +/-10 box's boundary crossing the bay
+         at x ~ -14.1. The box now follows the camera and always contains
+         the room it is looking at, so there is no boundary to cross.
+         Below tier 3 the two painted rings above are still the whole
+         shadow. */
     }
 
     /* the school bus, at the curb only while it is actually out. Same
        kit as the cars: a conventional bonnet, a window band cut by the
        cabin uprights, black rub rails, a stop arm on the traffic side. */
-    var BUS_BODY = { paint: { rough: 0.55, metal: 0.0, envInt: 0.10 },
+    /* GLOSS, like every other painted-metal body (bible S2). The bus was
+       authored MATTE (rough 0.55, envInt 0.10) because ACES bleached its
+       yellow to cream; that was the renderer, not the paint, and the
+       lighting pass fixed the renderer. Reverted and re-shot: the yellow
+       holds at #efa41c with a sheen on the roof and bonnet. */
+    var BUS_BODY = { paint: { rough: 0.3, metal: 0.02, envInt: 0.25 },
                      L: 5.6, W: 2.05, wr: 0.42, sill: 0.30, nose: 1.16,
                      hood: 1.34, belt: 1.48, deck: 1.48, roof: 2.40,
                      fw: 2.02, rw: -1.82, wsB: 1.86, wsT: 1.62,
@@ -4427,12 +4650,10 @@
       var JOINT = 0x504b44, PICKET = 0xf1ece2, RAILC = 0xe3dcd0;
       var MATT = { rough: 1.0 }, STONEO = { rough: 0.92 };
 
-      /* off both shadow maps: see the header */
-      function yt(m) {
-        if (!m) return m;
-        m.castShadow = false; m.receiveShadow = false;
-        return m;
-      }
+      /* ON the shadow map again (lighting pass): the exterior view's box
+         is the whole property now, so the planting casts and the lawn
+         receives. See the aimShadow block. */
+      function yt(m) { return m; }
       function yb(w, h, d, c, x, y, z, o, g) {
         return yt(box(w, h, d, c, x, y, z, g || yardG, o));
       }
@@ -4449,9 +4670,9 @@
         if (sy) m.scale.y = sy;
         yt(m); (g || yardG).add(m); return m;
       }
-      /* contact at EVERY tier - blobShadow goes quiet at tier 3 because
-         tier 3 has real shadows, and out here it does not */
+      /* contact BELOW tier 3 only: tier 3 casts a real one out here now */
       function ysh(rx, rz, x, z, tone) {
+        if (SHADOWS) return null;
         var m = new T.Mesh(new T.CircleGeometry(1, Y2 ? 16 : 8),
           new T.MeshBasicMaterial({ color: tone || 0xa8a4aa, transparent: true,
             blending: T.MultiplyBlending, depthWrite: false }));
@@ -5043,8 +5264,7 @@
       var cond = (wz && wz.cond) || '';
       var temp = (wz && wz.temp !== null && wz.temp !== undefined)
         ? Math.round(wz.temp) : null;
-      var hour = new Date().getHours();
-      var night = hour < 7 || hour >= 19;
+      var night = isNight();       /* one clock for the whole scene */
       var payload = [cond, temp, night].join('|');
       return mkTex('weather', 320, 288, payload, function (g, w, h) {
         var top = '#7cc4f0', bot = '#d8ecf7';
@@ -5114,8 +5334,7 @@
     }
     function skyDomeTex(wz) {
       var cond = (wz && wz.cond) || '';
-      var hour = new Date().getHours();
-      var night = hour < 7 || hour >= 19;
+      var night = isNight();
       var payload = ['dome', cond, night].join('|');
       return mkTex('skydome', 512, 256, payload, function (g, w, h) {
         var top = '#7cc4f0', bot = '#d8ecf7';
@@ -5154,6 +5373,73 @@
         g.fillRect(0, h * 0.82, w, h * 0.18);   /* horizon haze */
       });
     }
+    /* ---- NIGHT (plate 1: warm interiors against a cool night) ----------
+       The exterior builder left the hooks and this is the pass that lights
+       them: every pane carries userData.glazing, the coach lamp carries
+       userData.lamp, and the sky dome already repaints itself at 07:00 and
+       19:00 because skyDomeTex bakes `night` into its cache payload.
+
+       It is a STATE CHANGE, not an animation. applyState is the only caller
+       and it already runs on the 60s poll, so the house crosses into
+       evening on the same tick its sky does, and NOTHING runs between
+       ticks - no RAF, no flicker, no timer.
+
+       What dusk does: the sun drops to a cold sliver and the sky fill goes
+       deep blue, so the outside reads as night; every room lamp roughly
+       doubles, so the inside stays legible and now reads WARM against that
+       cool surround; the coach lamp by the garage door comes on; and the
+       glazing turns emissive, which IS the plate - a dark house with lit
+       windows. The interiors are lit by their own lamps after dark, which
+       is both honest and the reason the rooms do not go dark when the panel
+       is looked at in the evening. */
+    var glazing = [], lampGlass = [];
+    scene.traverse(function (o) {
+      if (!o.isMesh || !o.userData) return;
+      if (o.userData.lamp) lampGlass.push(o);
+      else if (o.userData.glazing) glazing.push(o);
+    });
+    /* The cheapest tier has no lamps at all - the Pi law gates every point
+       light at DETAIL >= 2 - so `low` cannot be lit from inside after dark.
+       Dimming it as hard as the other two left a wall panel unreadable all
+       evening, which is a regression, not a look. Low gets a gentler curve
+       and a WARM ambient standing in for the lamps it cannot afford: dusk
+       rather than midnight, which is the honest degradation the checklist
+       asks for ("degraded but not broken"). */
+    var NIGHT_F = DETAIL >= 2
+      ? { sun: 0.22, hemi: 0.46, amb: 0.70, ambC: 0xdfe6f0, sky: 0x2c3d6b }
+      : { sun: 0.34, hemi: 0.62, amb: 1.90, ambC: 0xffd3a4, sky: 0x41537f };
+    var nightNow = null;
+    function setNight(n) {
+      if (n === nightNow) return;
+      nightNow = n;
+      hemi.intensity = n ? HEMI_I * NIGHT_F.hemi : HEMI_I;
+      hemi.color.setHex(n ? NIGHT_F.sky : SKY_C);
+      hemi.groundColor.setHex(n ? 0x1b1c22 : GND_C);
+      amb.intensity = n ? AMB_I * NIGHT_F.amb : AMB_I;
+      amb.color.setHex(n ? NIGHT_F.ambC : (PBR ? 0xdfe6f0 : 0xe4eaf2));
+      sun.intensity = n ? SUN_I * NIGHT_F.sun : SUN_I;
+      sun.color.setHex(n ? 0x9db4dd : SUN_C);   /* a moon, not a sun */
+      poolLamps.forEach(function (l, i) {
+        /* the coach lamp is the last one and is DARK by day */
+        l.intensity = n ? (i === poolLamps.length - 1 ? 0.34 : l.userData.dayI * 2.1)
+                        : l.userData.dayI;
+      });
+      glazing.forEach(function (m) {
+        if (!m.material || !m.material.emissive) return;
+        m.material.emissive.setHex(n ? 0xffb35a : 0x000000);
+        m.material.emissiveIntensity = n ? 0.92 : 0;
+        m.material.needsUpdate = true;
+      });
+      lampGlass.forEach(function (m) {
+        if (!m.material || !m.material.emissive) return;
+        m.material.emissive.setHex(n ? 0xffd07a : 0x000000);
+        m.material.emissiveIntensity = n ? 1.0 : 0;
+        m.material.needsUpdate = true;
+      });
+      shadowDirty();
+    }
+    setNight(isNight());
+
     function carTex(c) {
       var payload = [c.name, c.battery_pct, c.fuel_pct, c.warn].join('|');
       return mkTex('car:' + (c.id || c.name), 256, 128, payload,
@@ -5189,6 +5475,8 @@
       paneMesh: paneMesh, heroTex: heroTex, calendarTex: calendarTex,
       weatherTex: weatherTex, clearPaint: clearPaint,
       extG: extG, skyDome: skyDome, skyDomeTex: skyDomeTex,
+      aimShadow: aimShadow, shadowDirty: shadowDirty,
+      setNight: setNight, isNight: isNight,
       garageDoorG: garageDoorG, garageInterior: garageInterior,
       pantryJars: pantryJars, pantryDoor: pantryDoor,
       garageBackWall: webgl_garageBackWall,
@@ -5317,7 +5605,12 @@
       var lit = n > 0 && (s[key] || {}).calm === false;
       g.traverse(function (o) {
         if (o.isMesh && o.material && o.material.emissive) {
-          o.material.emissive.setHex(lit ? 0x2a1e08 : 0x000000);
+          /* the live-zone glow. 0x2a1e08 was authored against ACES, which
+             compressed it; under a linear curve the same value added a
+             sixth of full red straight onto the surface and turned a lit
+             door mustard. Halved and cooled - it still says "this one is
+             awake" without repainting the prop. */
+          o.material.emissive.setHex(lit ? 0x120c03 : 0x000000);
         }
       });
     });
@@ -5351,6 +5644,11 @@
     swap(webgl.skyDome, webgl.skyDomeTex(s.window || {}));
     syncGarage(s);
     syncMudroom(s);
+
+    /* dusk and dawn ride the same tick the sky dome does */
+    webgl.setNight(webgl.isNight());
+    /* the only path that can change what the depth pass would draw */
+    webgl.shadowDirty();
 
     /* moment magnets on the fridge door: one colored square each, capped */
     var wantMagnets = Math.min(((s.fridge || {}).new_moments || 0), 6);
@@ -5546,6 +5844,7 @@
     if (act) (Array.isArray(act) ? act : [act]).forEach(function (g) {
       g.visible = false;
     });
+    webgl.aimShadow(name);        /* the sun's shadow box follows the camera */
     tween = { fromP: webgl.cam.position.clone(), toP: room.pos.clone(),
               fromA: (lookAt || webgl.EXT_AT).clone(), toA: room.at.clone(),
               t0: performance.now(), ms: 850, cb: cb || null };
@@ -5564,6 +5863,8 @@
       });
     });
     announceFocus(null);
+    webgl.aimShadow('exterior');  /* the whole property, for the one view
+                                     that can see the whole property */
     tween = { fromP: webgl.cam.position.clone(), toP: webgl.EXT_POS.clone(),
               fromA: (lookAt || webgl.HOME_AT).clone(),
               toA: webgl.EXT_AT.clone(),
