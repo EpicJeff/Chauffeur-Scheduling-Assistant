@@ -88,10 +88,67 @@ def scenario_house_template_pins():
         check(dialog not in src, f"no browser dialogs ({dialog})")
 
 
+def scenario_garage_knows_the_cars():
+    _reset()
+    storage.get_cached_schedule = lambda: {}
+    from services import cars as cars_svc
+    orig = (storage.get_all_cars, cars_svc.car_levels, cars_svc.car_location)
+    storage.get_all_cars = lambda: [
+        {'id': 'c1', 'doc_id': 1, 'name': 'Minivan', 'color_code': '#3b82f6',
+         'body_type': 'minivan', 'seat_capacity': 7},
+        {'id': 'c2', 'doc_id': 2, 'name': 'EV', 'color_code': '#c9473d',
+         'body_type': 'suv', 'seat_capacity': 4, 'is_disabled': False,
+         'ha_device_tracker': 'device_tracker.ev', 'ha_battery_entity': 'sensor.b'},
+    ]
+    cars_svc.car_levels = lambda c: ({'battery_pct': 12.0, 'fuel_pct': None,
+                                      'range': 40.0}
+                                     if c.get('id') == 'c2' else
+                                     {'battery_pct': None, 'fuel_pct': None,
+                                      'range': None})
+    cars_svc.car_location = lambda c: ({'state': 'not_home'}
+                                       if c.get('id') == 'c2' else None)
+    try:
+        st = house_room.state(since_ts=0)
+    finally:
+        (storage.get_all_cars, cars_svc.car_levels, cars_svc.car_location) = orig
+    g = st['garage']
+    check(g['calm'] is False, "a low battery lights the garage")
+    van = [c for c in g['cars'] if c['name'] == 'Minivan'][0]
+    ev = [c for c in g['cars'] if c['name'] == 'EV'][0]
+    check(van['present'] is True and van['warn'] is False,
+          "no tracker = home, no warning")
+    check(van['body'] == 'minivan' and van['seats'] == 7
+          and van['color'] == '#3b82f6', "the record's shape rides through")
+    check(ev['present'] is False and ev['warn'] is True,
+          "away and low: the garage says so")
+
+
+def scenario_curb_sees_the_bus():
+    _reset()
+    storage.get_cached_schedule = lambda: {}
+    st = house_room.state(since_ts=0)
+    check(st['curb'].get('calm') is True, "no bus out = calm curb")
+    from services import bus as bus_svc
+    orig_bus = bus_svc.bus_active
+    orig_members = storage.get_all_members
+    bus_svc.bus_active = lambda m: True
+    storage.get_all_members = lambda **k: [{'id': 'kid1', 'name': 'Maya',
+                                            'role': 'child', 'status': 'active'}]
+    try:
+        st = house_room.state(since_ts=0)
+    finally:
+        bus_svc.bus_active = orig_bus
+        storage.get_all_members = orig_members
+    check(st['curb']['calm'] is False and st['curb']['bus'] is True,
+          "the bus out lights the curb")
+
+
 if __name__ == '__main__':
     scenario_h1_house_speaks_with_the_kitchens_voice()
     scenario_family_safe_pin()
     scenario_the_house_never_writes()
     scenario_endpoint_and_gate()
     scenario_house_template_pins()
+    scenario_garage_knows_the_cars()
+    scenario_curb_sees_the_bus()
     print("test_house_state OK")
