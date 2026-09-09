@@ -143,6 +143,26 @@ def scenario_curb_sees_the_bus():
           "the bus out lights the curb")
 
 
+def scenario_mudroom_counts_backpacks():
+    _reset()
+    storage.get_cached_schedule = lambda: {}
+    st = house_room.state(since_ts=0)
+    check(st['mudroom'].get('calm') is True and st['mudroom'].get('bags') == 0,
+          "an empty roster hangs no backpacks")
+    orig = storage.get_all_members
+    storage.get_all_members = lambda **k: [
+        {'id': 'k1', 'name': 'Maya', 'role': 'child'},
+        {'id': 'k2', 'name': 'Finn', 'role': 'child'},
+        {'id': 'p1', 'name': 'Alex', 'role': 'parent'},
+    ]
+    try:
+        st = house_room.state(since_ts=0)
+    finally:
+        storage.get_all_members = orig
+    check(st['mudroom']['calm'] is True and st['mudroom']['bags'] == 2,
+          "one backpack per child, parents carry their own problems")
+
+
 def scenario_body_type_rides_the_car_record():
     from models.schemas import Car
     c = Car(name='Truck', body_type='truck')
@@ -166,4 +186,5 @@ if __name__ == '__main__':
     scenario_garage_knows_the_cars()
     scenario_body_type_rides_the_car_record()
     scenario_curb_sees_the_bus()
+    scenario_mudroom_counts_backpacks()
     print("test_house_state OK")

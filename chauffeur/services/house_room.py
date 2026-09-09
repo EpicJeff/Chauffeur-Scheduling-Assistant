@@ -86,9 +86,19 @@ def _curb() -> dict:
     return {'calm': False, 'bus': True}
 
 
+def _mudroom() -> dict:
+    """Backpacks on the bench: one per active child. Honest decor data —
+    attention stays the DOOR zone's business, so the mudroom itself is
+    always calm."""
+    bags = len([m for m in storage.get_all_members() or []
+                if (m.get('role') or '') == 'child'])
+    return {'calm': True, 'bags': bags}
+
+
 def state(since_ts: float = 0, now=None) -> dict:
     out = kitchen_room.state(since_ts=since_ts, now=now)
-    for name, build in (('garage', _garage), ('curb', _curb)):
+    for name, build in (('garage', _garage), ('curb', _curb),
+                        ('mudroom', _mudroom)):
         try:
             out[name] = build()
         except Exception as e:
