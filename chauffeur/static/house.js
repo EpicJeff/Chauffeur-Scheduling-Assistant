@@ -519,8 +519,11 @@
     /* west wall in two pieces + header: an open doorway into the
        mudroom at z 2.8..4.4 (architect pass — the kitchen looks through
        to the bench) */
-    var wallL = box(0.35, 5.6, 8.3, C.wall, -6.65, 2.8, -1.35, null,
+    var wallL = box(0.35, 5.6, 4.05, C.wall, -6.65, 2.8, -3.475, null,
                     { rough: 0.95 });
+    var wallL1a = box(0.35, 5.6, 2.55, C.wall, -6.65, 2.8, 1.525, null,
+                      { rough: 0.95 });
+    box(0.35, 2.4, 1.7, C.wall, -6.65, 4.4, -0.6, null, { rough: 0.95 });
     var wallL1b = box(0.35, 5.6, 1.1, C.wall, -6.65, 2.8, 4.95, null,
                       { rough: 0.95 });
     box(0.35, 2.2, 1.6, C.wall, -6.65, 4.5, 3.6, null, { rough: 0.95 });
@@ -535,7 +538,8 @@
     box(0.5, 0.28, 11.6, C.shell, -6.7, 5.66, 0);
     if (DETAIL >= 3) {                   /* baseboards: the trim that sells a wall */
       box(13, 0.2, 0.08, 0xe4ddd1, 0, 0.1, -5.34);
-      box(0.08, 0.2, 8.2, 0xe4ddd1, -6.44, 0.1, -1.4);
+      box(0.08, 0.2, 4.0, 0xe4ddd1, -6.44, 0.1, -3.5);
+      box(0.08, 0.2, 2.5, 0xe4ddd1, -6.44, 0.1, 1.5);
       box(0.08, 0.2, 1.0, 0xe4ddd1, -6.44, 0.1, 4.95);
     }
 
@@ -824,46 +828,74 @@
 
     /* ---- CORKBOARD (zone: board) on the left wall ---------------------- */
     var board = zoneGroup('board', -6.42, 0, -0.6);
-    /* the PANTRY (H3): the corkboard retired — the grocery list lives
-       where food lives. The invisible face plane carries the overlay's
-       quad; the shelves are the furniture. Honest twist: a LONG list
-       means BARE shelves (syncPantry hides jars as items grow). */
-    var boardFace = new T.Mesh(new T.PlaneGeometry(1.9, 2.7),
+    /* the PANTRY (architect pass): a REAL closet. A paneled door hangs
+       in the kitchen wall where the corkboard once was; lean in and the
+       door steps aside (micro dollhouse trick) showing the shelves and
+       the honest jars — a long list still means bare shelves. */
+    var boardFace = new T.Mesh(new T.PlaneGeometry(1.6, 3.0),
       new T.MeshBasicMaterial({ visible: false }));
     boardFace.rotation.y = Math.PI / 2;
-    boardFace.position.set(0.5, 1.75, 0);
+    boardFace.position.set(0.26, 1.7, 0);
     board.add(boardFace);
+    var pantryDoor = new T.Mesh(
+      NICE ? roundedGeo(0.12, 3.1, 1.6, 0.04) : new T.BoxGeometry(0.12, 3.1, 1.6),
+      PBR ? new T.MeshStandardMaterial({ map: woodDoor, roughness: 0.65 })
+          : new T.MeshLambertMaterial({ color: 0xc9a06c,
+                                        map: woodDoor || null }));
+    pantryDoor.position.set(0.2, 1.6, 0);
+    pantryDoor.userData.zone = 'board';
+    finish(pantryDoor); board.add(pantryDoor);
+    var pknob = cyl(0.055, 0.055, 0.09, 0xd8c48a, 0.3, 1.55, 0.55, board, 10,
+                    CHROME);
+    pknob.userData.zone = 'board';
+    /* the closet itself: a bump-out behind the wall */
     (function () {
-      function pmat() {
-        return PBR ? new T.MeshStandardMaterial({ map: woodDoor,
-                                                  roughness: 0.7 })
-                   : new T.MeshLambertMaterial({ color: 0xb08a5c,
-                                                 map: woodDoor || null });
+      function cmat() {
+        /* literals + no map: this block builds before the exterior
+           texture pack exists (declaration order) */
+        return mat(0xece5da, { rough: 0.95 });
       }
-      function pbox(w, h, d, x, y, z) {
-        var m = new T.Mesh(new T.BoxGeometry(w, h, d), pmat());
-        m.position.set(x, y, z); finish(m); board.add(m); return m;
+      function cbox(w, h, d, x, y, z, m) {
+        var mm = new T.Mesh(new T.BoxGeometry(w, h, d), m || cmat());
+        mm.position.set(x, y, z); finish(mm); scene.add(mm); return mm;
       }
-      pbox(0.12, 3.1, 2.3, 0.06, 1.6, 0);          /* back slab */
-      pbox(0.55, 3.1, 0.09, 0.28, 1.6, -1.1);      /* sides */
-      pbox(0.55, 3.1, 0.09, 0.28, 1.6, 1.1);
-      pbox(0.55, 0.09, 2.3, 0.28, 3.1, 0);         /* cap + base */
-      pbox(0.55, 0.12, 2.3, 0.28, 0.1, 0);
-      pbox(0.5, 0.06, 2.1, 0.26, 0.95, 0);         /* three shelves */
-      pbox(0.5, 0.06, 2.1, 0.26, 1.75, 0);
-      pbox(0.5, 0.06, 2.1, 0.26, 2.55, 0);
+      cbox(1.9, 0.5, 2.6, -7.8, -0.27, -0.6, mat(C.shell, { rough: 0.9 }));
+      cbox(0.2, 3.4, 2.4, -8.6, 1.7, -0.6);
+      cbox(1.6, 3.4, 0.2, -7.8, 1.7, -1.75);
+      cbox(1.6, 3.4, 0.2, -7.8, 1.7, 0.55);
+      cbox(1.9, 0.18, 2.6, -7.8, 3.48, -0.6, mat(0x55606b, { rough: 0.9 }));
+      var pFloorTex = floorTex.clone();
+      pFloorTex.needsUpdate = true;
+      pFloorTex.wrapS = pFloorTex.wrapT = T.RepeatWrapping;
+      pFloorTex.repeat.set(1.5 / 13, 2.1 / 11);
+      var pfloor = new T.Mesh(new T.PlaneGeometry(1.5, 2.1),
+        PBR ? new T.MeshStandardMaterial({ map: pFloorTex, roughness: 0.55,
+                                           envMapIntensity: 0.1 })
+            : new T.MeshLambertMaterial({ map: pFloorTex }));
+      pfloor.rotation.x = -Math.PI / 2;
+      pfloor.position.set(-7.8, 0.03, -0.6);
+      finish(pfloor); scene.add(pfloor);
+      [0.9, 1.7, 2.5].forEach(function (sy) {
+        var sh = new T.Mesh(new T.BoxGeometry(1.2, 0.06, 2.0),
+          PBR ? new T.MeshStandardMaterial({ map: woodLight, roughness: 0.7 })
+              : new T.MeshLambertMaterial({ color: 0xb98c58,
+                                            map: woodLight || null }));
+        sh.position.set(-7.95, sy, -0.6);
+        sh.userData.zone = 'board';
+        finish(sh); scene.add(sh);
+      });
     })();
     var pantryJars = [];
     (function () {
       var JAR_C = [0xe09a3e, 0xc9473d, 0x3fbdb2, 0xcf9a55];
       for (var j = 0; j < 8; j++) {
+        var jy = j < 4 ? 1.06 : 1.86;
         var jar = cyl(0.1, 0.1, 0.26, JAR_C[j % 4],
-                      0.26, (j < 4 ? 1.11 : 1.91), -0.78 + (j % 4) * 0.52,
-                      board, 10, GLOSS);
+                      -1.53, jy, -1.06 + (j % 4) * 0.48, board, 10, GLOSS);
+        jar.userData.zone = 'board';
         pantryJars.push(jar);
       }
     })();
-
     /* ---- WALL CALENDAR (zone: calendar) on the back wall --------------- */
     var calG = zoneGroup('calendar', 3.6, 0, -5.36);
     var calFace = new T.Mesh(new T.PlaneGeometry(1.5, 1.9), mat(0xf6f1e4, { rough: 0.9 }));
@@ -1071,7 +1103,11 @@
     /* facade: siding OUTSIDE the kitchen's two closed walls, up to eaves */
     ebox(15.2, 7.0, 0.3, NICE ? 0xffffff : EXTC.siding, 0.3, 3.5, -5.95,
          { rough: 0.95, map: sidingT });
-    ebox(0.3, 7.0, 9.4, NICE ? 0xffffff : EXTC.siding, -7.0, 3.5, -1.9,
+    ebox(0.3, 7.0, 5.15, NICE ? 0xffffff : EXTC.siding, -7.0, 3.5, -4.025,
+         { rough: 0.95, map: sidingT });
+    ebox(0.3, 7.0, 2.55, NICE ? 0xffffff : EXTC.siding, -7.0, 3.5, 1.525,
+         { rough: 0.95, map: sidingT });
+    ebox(0.3, 3.8, 1.7, NICE ? 0xffffff : EXTC.siding, -7.0, 5.1, -0.6,
          { rough: 0.95, map: sidingT });
     ebox(0.3, 7.0, 1.6, NICE ? 0xffffff : EXTC.siding, -7.0, 3.5, 5.2,
          { rough: 0.95, map: sidingT });
@@ -1730,7 +1766,7 @@
       weatherTex: weatherTex, clearPaint: clearPaint,
       extG: extG, skyDome: skyDome, skyDomeTex: skyDomeTex,
       garageDoorG: garageDoorG, garageInterior: garageInterior,
-      pantryJars: pantryJars,
+      pantryJars: pantryJars, pantryDoor: pantryDoor,
       garageBackWall: webgl_garageBackWall,
       carsG: carsG, busG: busG, buildCar: buildCar, carTex: carTex,
       HOME_POS: HOME_POS, HOME_AT: HOME_AT,
@@ -1877,6 +1913,8 @@
     swap(webgl.plaque, webgl.heroTex(s.door || {}));
     swap(webgl.calFace, webgl.calendarTex(
       focused === 'calendar' ? { __blank: true } : (s.calendar || {})));
+    /* leaned in, the pantry door steps aside to show the shelves */
+    if (webgl.pantryDoor) webgl.pantryDoor.visible = focused !== 'board';
     /* the pantry's honesty: a long list empties the shelves */
     var stocked = Math.max(0, 8 - Math.min(8, (s.board || {}).items || 0));
     webgl.pantryJars.forEach(function (jar, ji) {
@@ -2319,7 +2357,12 @@
   }
 
   /* ---- boot ------------------------------------------------------------ */
-  try { webgl = buildRoom(); } catch (e) { webgl = null; }
+  try { webgl = buildRoom(); } catch (e) {
+    webgl = null;
+    /* the fallback is designed, but a BUILD failure must never be
+       silent — that is how a broken room masquerades as weak hardware */
+    if (window.console && console.error) console.error('[house] buildRoom failed:', e);
+  }
   if (webgl) {
     webgl.R.domElement.addEventListener('webglcontextlost', function (e) {
       e.preventDefault();
