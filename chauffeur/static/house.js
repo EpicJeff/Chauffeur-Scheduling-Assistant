@@ -2812,6 +2812,7 @@
       }
     })();
     var pantryJars = [];
+    var pantryLids = [];
     (function () {
       /* the kitchen's four accents, no strays (bible S2/S4) */
       var JAR_C = [C.terracotta, C.oxblood, C.teal, C.brass];
@@ -2821,12 +2822,25 @@
          intent carries over. jar.visible count semantics (below, in the
          webgl runtime) are untouched by this — only the material changes. */
       var JAR_GLASS = { finish: 'glassy', thick: 0.1 };
+      var JR = 0.1, JH = 0.26;
       for (var j = 0; j < 8; j++) {
         var jy = j < 4 ? 1.06 : 1.86;
-        var jar = cyl(0.1, 0.1, 0.26, JAR_C[j % 4],
+        var jar = cyl(JR, JR, JH, JAR_C[j % 4],
                       -1.53, jy, -1.06 + (j % 4) * 0.48, board, 10, JAR_GLASS);
         zoneTag(jar, 'board');
         pantryJars.push(jar);
+        /* R3: a brass lid, CHILD of the jar mesh (not a sibling in
+           `board`) — the stock toggle below sets jar.visible per item, and
+           parenting the lid means it hides for free through three's
+           parent-visibility cascade instead of a second parallel index to
+           keep in sync. Same recipe kJar already uses for the kitchen's
+           own shelf jars (r*0.85/0.37, h*0.12); local to the jar's own
+           centre-pivot origin, so y=JH/2 sits the lid's base on its top.
+           S4/S7 name jar lids as the DETAIL>=3 example — gated to match. */
+        if (DETAIL >= 3)
+          pantryLids.push(latheAt('lid',
+            [JR * 0.85 / 0.37, JH * 0.12, JR * 0.85 / 0.37],
+            HW, 0, JH / 2, 0, jar, STEEL));
       }
     })();
     /* ---- WALL CALENDAR (zone: calendar) on the back wall --------------- */
@@ -2866,8 +2880,17 @@
     finish(slabD); doorG.add(slabD);
     if (DETAIL >= 2) {
       box(1.3, 1.2, 0.05, 0x8a6d49, 0, 1.2, 0.08, doorG, PBR ? { rough: 0.7, map: woodDoor } : { rough: 0.75 });
+      /* R3: rails/stiles relief — the frame above is now the surround;
+         this inset panel, proud and lighter (dpart's own street-face
+         recipe below), is the field it frames (S3.1's two-panel minimum) */
+      box(1.14, 1.02, 0.03, 0xc79b63, 0, 1.2, 0.095, doorG,
+          PBR ? { rough: 0.65, map: woodDoor, ch: 0.008 } : { rough: 0.70, ch: 0.008 });
     }
-    cyl(0.07, 0.07, 0.1, 0xd8c48a, 0.6, 2.0, 0.1, doorG, 10, CHROME);
+    /* R3: knob handle upgrade to lathe — same position and the same
+       protrude-toward-camera rotation dpart's street-face knob already
+       uses below; only the plain cylinder becomes the turned profile */
+    latheAt('knob', [0.07, 0.1, 0.07], 0xd8c48a, 0.6, 2.0, 0.1, doorG, CHROME)
+      .rotation.x = Math.PI / 2;
     /* the next-leave HERO CARD, rendered app-style, big enough to read
        from across the room — it hangs on the door because the door is
        where leaving happens */
@@ -4740,6 +4763,12 @@
       function mr(w, h, d, r, c, x, y, z, o) { return mtag(rbox(w, h, d, r, c, x, y, z, extG, o)); }
       function mc(a, b2, h, c, x, y, z, s, o) { return mtag(cyl(a, b2, h, c, x, y, z, extG, s, o)); }
       function msh(rx, rz, x, z) { return blobShadow(rx, rz, x, z, extG, FLR + 0.015); }
+      /* R3 (studio pipeline authored pass): latheAt/sweepAt default their
+         own `group` to `scene`, not extG, so every mudroom kit-profile part
+         needs the same mtag()+extG wrap mb/mr/mc already give box/rbox/cyl
+         — otherwise it neither hides with the room nor tags for tap-routing. */
+      function ml(key, s, c, x, y, z, o) { return mtag(latheAt(key, s, c, x, y, z, extG, o)); }
+      function msw(pts, r, c, o) { return mtag(sweepAt(pts, r, c, extG, o)); }
       /* the kitchen's case builder, dropped into the shell group so the
          mudroom's props hide and tag with the rest of the room */
       function mCase(cx, cz, rot, W, D, y0, y1, rows, opt) {
@@ -4864,7 +4893,21 @@
       mCase(BX, BZ, 0, 1.90, 0.62, 0, 0.52, [
         { h: 0.36, kind: 'bays', bays: 3, tiers: 1, depth: 0.56, back: SAGED }
       ], { toe: true });
+      /* R3: small turned feet at the two corners the room camera actually
+         sees — the back pair sits hard against the cubby's own back panel
+         and the wall beyond it, so building them would spend budget on a
+         corner nothing frames. TRIM/MATT joins the wall-trim bucket the
+         room already has several members deep, so this reads for free. */
+      [-0.85, 0.85].forEach(function (dx) {
+        ml('foot', [0.055, 0.05, 0.055], TRIM, BX + dx, FLR, BZ + 0.28, MATT);
+      });
       mb(2.04, 0.06, 0.68, woodK, BX, 0.55, BZ + 0.02, woodO);
+      /* R3: a seat-plank groove strip — the cushion covers the middle of
+         the seat, so the plank line goes where it will actually read: the
+         two bare overhangs either side of the cushion, not buried under it */
+      if (D3) [-0.96, 0.96].forEach(function (dx) {
+        mb(0.018, 0.008, 0.64, C.cabShade, BX + dx, 0.584, BZ + 0.02, MATT);
+      });
       mr(1.80, 0.17, 0.56, 0.08, C.linen, BX, 0.665, BZ + 0.02, FAB);
       if (D2) [-0.20, 0.20].forEach(function (dz) {
         mb(1.78, 0.026, 0.026, C.oxblood, BX, 0.732, BZ + 0.02 + dz, FAB);
@@ -4904,11 +4947,18 @@
       if (D2) mb(1.94, 0.05, 0.12, TRIM, BX, 2.195, NWF + 0.11, MATT);
       var HOOKX = [-12.16, -11.70, -11.24, -10.78];
       HOOKX.forEach(function (hx) {
+        /* the RAIL is static: this mount plate never moves, never hides,
+           carries no state — only the bags on it are honest count */
         mr(0.09, 0.17, 0.03, 0.014, C.brass, hx, 1.99, NWF + 0.125, STEEL);
         if (!D2) return;
-        mc(0.023, 0.023, 0.19, C.brass, hx, 1.96, NWF + 0.216, 8, STEEL)
-          .rotation.x = 2.0;
-        mc(0.023, 0.023, 0.07, C.brass, hx, 1.955, NWF + 0.303, 8, STEEL);
+        /* R3: the arm + tip (2 straight cylinders) become one swept
+           J-curve — leaves the plate, bows out and down, curls back up
+           into the catch a hung coat actually needs. First pass (r=0.02
+           over a 0.19-deep curve) read as a fat gold blob, not a hook —
+           thinned the rod and gave the curve more room to bend in. */
+        msw([[hx, 1.98, NWF + 0.13], [hx, 1.88, NWF + 0.28],
+             [hx, 1.80, NWF + 0.38], [hx, 1.85, NWF + 0.43],
+             [hx, 1.98, NWF + 0.40]], 0.014, C.brass, STEEL);
       });
       /* coats: a body, shoulders, a collar and two sleeves — a rounded
          slab is a bath towel, not a coat */
@@ -4983,10 +5033,17 @@
          a piece of furniture, art and a light. The cabinet is the room's
          second dark anchor and balances the garage door across frame. */
       var CX = -9.75, CZ2 = NWF + 0.43;
+      /* R3: 'lathe' pulls (the mechanism R2's kitchen island already
+         wired into kCase/kCell — pull:'lathe' swaps kPull's box bar for a
+         latheAt('pull',...) turned bar, same count/position) — the room's
+         only DOORED built-in, so this is where "cubbies get knob pulls"
+         actually lands; the bench's own cubbies are open bays (S3.2, no
+         fronts to hang a pull on) and keep their box-free dividers/back
+         panel/shelf edges as the frame S3.2 already calls for. */
       mCase(CX, CZ2, 0, 1.45, 0.52, 0, 1.02, [
         { h: 0.46, cells: [{ w: 1, kind: 'drawers2' }] },
         { h: 0.40, cells: [{ w: 1, kind: 'doors2' }] }
-      ], { toe: true, face: C.slate, body: 0x2b3138 });
+      ], { toe: true, face: C.slate, body: 0x2b3138, pull: 'lathe' });
       mb(1.56, 0.07, 0.62, woodK, CX, 1.055, CZ2 + 0.02, woodO);
       msh(0.82, 0.34, CX, CZ2);
       if (D2) {
@@ -5166,8 +5223,18 @@
         dpart(mb(1.36, 0.20, 0.03, C.brass, -9.80, 0.28, dz0 + 0.02, STEEL));
         dpart(mr(0.16, 0.34, 0.04, 0.02, C.brass, -9.16, 1.98, dz0 + 0.02,
                  STEEL));
-        dpart(mc(0.06, 0.06, 0.10, C.brass, -9.16, 2.06, dz0 + 0.075, 10,
-                 CHROME)).rotation.x = Math.PI / 2;
+        /* R3: knob handle upgrade to lathe — same position/rotation as
+           the plain cylinder it replaces */
+        dpart(ml('knob', [0.06, 0.10, 0.06], C.brass, -9.16, 2.06,
+                 dz0 + 0.075, CHROME)).rotation.x = Math.PI / 2;
+        /* R3: hinge x3 on the jamb side — the knob sits near the east
+           jamb (-8.89), so the hinges mirror it onto the west one
+           (-10.71), standard top/mid/bottom spacing down the slab's own
+           4.1-tall span */
+        [0.55, 2.05, 3.55].forEach(function (hy) {
+          jamb(ml('hinge', [0.045, 0.10, 0.045], C.brass, -10.68, hy,
+                  dz0 - 0.015, STEEL));
+        });
       }
 
       /* ---- the backpacks syncMudroom deals onto the bench ------------
@@ -5930,6 +5997,11 @@
       calFace, boardFace, critFace, radioFace, paneMesh, plaque, needle,
       steam, steam2, pendants, fridgeDoorTop, pantryDoor]);
     (pantryJars || []).forEach(function (j) { NO_MERGE.add(j); });
+    /* R3: lids ride jar.visible via three's own parent-visibility cascade
+       (they're children of the jar mesh, not the merge-eligible `board`
+       group), but they still carry the same per-item toggle semantics the
+       jars do, so they get the same explicit belt-and-suspenders entry. */
+    (pantryLids || []).forEach(function (l) { NO_MERGE.add(l); });
     /* garageBackWall: exported and runtime-painted (FACE_MESH_MAP.garage
        hangs the garage's lean-in card on it), carries room 'garage' but
        no zone tag, and sits directly under extG (built via ebox(), which
