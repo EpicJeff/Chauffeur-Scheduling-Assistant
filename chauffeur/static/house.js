@@ -938,11 +938,22 @@
       else m.scale.set(s[0], s[1], s[2]);
       m.position.set(x, y, z); finish(m); g0.add(m); return m;
     }
+    /* R4 fix-round: route through cgeo like every other geometry helper.
+       buildCar() minted a fresh TubeGeometry on every call (bumper trim +
+       mirror stalk), and syncGarage's rebuild key includes live
+       battery/fuel values, so a car rebuilds often while its old group is
+       removed without dispose — orphaned GPU geometry. Sweep points are
+       baked into the geometry, so identical inputs (finite per body_type)
+       now share one cached mesh, matching cyl()'s resolve-then-key shape. */
     function sweepGeo(pts, r, seg, rad) {
-      return new T.TubeGeometry(new T.CatmullRomCurve3(
-        pts.map(function (p) { return new T.Vector3(p[0], p[1], p[2]); })),
-        seg || (DETAIL >= 3 ? 24 : 14), r, rad || (DETAIL >= 3 ? 10 : 7),
-        false);
+      var sg = seg || (DETAIL >= 3 ? 24 : 14);
+      var rd = rad || (DETAIL >= 3 ? 10 : 7);
+      return cgeo('S|' + JSON.stringify(pts) + '|' + r + '|' + sg + '|' + rd,
+        function () {
+          return new T.TubeGeometry(new T.CatmullRomCurve3(
+            pts.map(function (p) { return new T.Vector3(p[0], p[1], p[2]); })),
+            sg, r, rd, false);
+        });
     }
     function sweepAt(pts, r, c, group, opts) {
       var g0 = group || scene;
