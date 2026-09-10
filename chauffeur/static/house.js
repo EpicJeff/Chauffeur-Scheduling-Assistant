@@ -1063,7 +1063,7 @@
     /* the KITCHEN plane: 13 x 11.6 at the origin, repeat 1 - its canvas
        spans world x -6.5..6.5 and z -5.8..5.8 exactly */
     var floorTexK = pooledFloorTex(-6.5, 13, -5.8, 11.6);
-    var floor = new T.Mesh(new T.PlaneGeometry(13, 11.6),
+    var floor = new T.Mesh(new T.PlaneGeometry(13, 11.6, 26, 24),
       PBR ? new T.MeshStandardMaterial({ map: floorTexK, roughness: 0.5,
                                          envMapIntensity: 0.1 })
           : new T.MeshLambertMaterial({ map: floorTexK }));
@@ -1129,7 +1129,7 @@
     var floorTex2 = pooledFloorTex(-6.5, 13, 3.2, 11.0);
     floorTex2.wrapS = floorTex2.wrapT = T.RepeatWrapping;
     floorTex2.repeat.set(1, 8.5 / 11);
-    var floor2 = new T.Mesh(new T.PlaneGeometry(13, 8.5),
+    var floor2 = new T.Mesh(new T.PlaneGeometry(13, 8.5, 26, 18),
       PBR ? new T.MeshStandardMaterial({ map: floorTex2, roughness: 0.5,
                                          envMapIntensity: 0.1 })
           : new T.MeshLambertMaterial({ map: floorTex2 }));
@@ -5788,6 +5788,195 @@
     [westWallG, garageDoorG, mudroomRoofG, livingRoofG, yardG, extG]
       .forEach(function (g) { TOP.add(g); });
     mergeStatic(scene, TOP);
+
+    /* ---- K4 (quality spec §3): the AO occluder list ---------------------
+       ~30 world-space AABBs for the scene's big masses, read off each
+       builder's own authored literals (box/ebox/cyl args, kCase runs,
+       zoneGroup origins). Every group these live in — westWallG, extG,
+       garageInterior, the kCase groups, the zoneGroups — sits at either
+       an identity transform or a literal position.set() with no
+       rotation (except the two kCase runs noted below, whose rotation is
+       folded into the box already), so the builders' own numbers ARE
+       world coordinates. Row shape: [x0,x1,y0,y1,z0,z1]; a march sample
+       point inside ANY row counts as occluded. */
+    var AO_OCCLUDERS = [
+      [-6.8, 6.8, -0.52, -0.02, -5.8, 5.8],        /* kitchen floor slab */
+      [-6.8, 6.8, -0.52, -0.02, 5.7, 14.1],        /* great-room floor slab */
+      [-6.5, 6.5, 0.0, 5.6, -5.725, -5.375],       /* wallB: kitchen's north wall */
+      [-6.825, -6.475, 0.0, 5.6, -5.5, -1.45],     /* westWallG: wallL */
+      [-6.825, -6.475, 0.0, 5.6, 0.25, 2.8],       /* westWallG: wallL1a */
+      [-6.825, -6.475, 3.2, 5.6, -1.45, 0.25],     /* westWallG: mudroom doorway header */
+      [-6.825, -6.475, 0.0, 5.6, 4.4, 5.5],        /* westWallG: wallL1b */
+      [-6.825, -6.475, 3.4, 5.6, 2.8, 4.4],        /* westWallG: second doorway header */
+      [-6.825, -6.475, 0.0, 5.6, 5.8, 14.2],       /* westWallG: wallL2, the great room */
+      [6.8, 6.85, -0.52, -0.02, -5.82, 14.1],      /* the great-room east line: the slab's
+                                                       cut face — the open-corner diorama
+                                                       has no full wall here, this band is it */
+      [-2.27, 1.47, 0.0, 1.13, -0.27, 2.07],       /* the island */
+      [-4.5, 0.85, 0.0, 1.04, -5.375, -3.935],     /* kitchen counter run A (sink run) */
+      [2.55, 4.85, 0.0, 1.04, -5.375, -3.935],     /* kitchen counter run B (east of the range) */
+      [-6.65, -5.9, 0.0, 1.04, -2.85, -1.55],      /* kitchen L-return counter (rotated kCase,
+                                                       W/D already resolved into world x/z) */
+      [-4.5, -3.0, 2.52, 4.35, -5.375, -4.875],    /* kitchen uppers: left open bays */
+      [-0.78, 0.80, 2.52, 4.35, -5.375, -4.635],   /* kitchen uppers: closed run over the sink */
+      [2.78, 4.78, 2.52, 4.35, -5.375, -4.875],    /* kitchen uppers: right open bays */
+      [4.9, 6.4, 0.0, 4.35, -5.375, -4.575],       /* the larder — full-height hutch, east end */
+      [-6.5, -4.6, 0.0, 3.95, -5.1, -3.6],         /* the fridge */
+      [0.95, 2.45, 0.06, 1.08, -5.275, -3.825],    /* the range body */
+      [-6.475, -6.015, 0.0, 2.95, 6.17, 7.42],     /* hearth built-in, west bay */
+      [-6.475, -6.015, 0.0, 2.95, 9.78, 11.03],    /* hearth built-in, east bay */
+      [-6.475, -5.575, 0.0, 3.6, 7.24, 9.96],      /* the hearth mass (stone breast + firebox) */
+      [-12.40, -10.50, 0.0, 0.52, 2.77, 3.39],     /* the mudroom bench */
+      [-12.6, -7.0, 0.0, 4.2, 2.36, 2.60],         /* mudroom north wall, toward the kitchen */
+      [-12.6, -7.0, 0.0, 4.2, 8.20, 8.44],         /* mudroom south wall (the hidden "garage door" side) */
+      [-17.96, -12.84, 0.0, 4.7, 2.24, 2.42],      /* garage back wall */
+      [-17.96, -17.78, 0.0, 4.7, 2.24, 9.76],      /* garage west wall */
+      [-13.02, -12.84, 0.0, 4.7, 2.24, 9.76],      /* garage east wall, edge-on */
+      [-17.65, -15.75, 0.0, 1.9, 3.6, 7.6],        /* parked-car envelope, west bay — static,
+                                                       whichever car model is parked there */
+      [-15.05, -13.15, 0.0, 1.9, 3.6, 7.6],        /* parked-car envelope, east bay */
+      [-8.75, -6.85, -0.52, 3.57, -1.9, 0.7],      /* the pantry closet shell */
+      [-24.5, 25.5, -0.69, -0.29, -18, 18]         /* exterior grade (the yard's grass slab) */
+    ];
+
+    /* ---- K4 (quality spec §3): vertex AO, baked once ------------------
+       10 hemisphere directions per vertex, marched against authored
+       AABBs. Runs after the merge so merged fabric bakes on its final
+       vertices; before applyScenery so the knob classifies materials
+       that already wear their vertexColors flag. Materials flip
+       vertexColors ONLY when every wearer got an attribute — a shared
+       material with one bare wearer renders that wearer black. */
+    function bakeAO() {
+      if (DETAIL < 2) return { meshes: 0, clones: 0, fallback: false, ms: 0 };
+      var t0 = performance.now();
+      /* buildMs ceiling (spec §3 K4 verify step): the first pass at 10
+         dirs x 5 steps measured ~1.16s of bake time alone, pushing
+         buildMs past the 1500ms ceiling — halved per the brief's
+         prescribed remediation before anything else was tried. */
+      var DIRS = [], i;
+      for (i = 0; i < 6; i++) {
+        var az = (i + 0.5) / 6, th = Math.acos(1 - az * 0.92),
+            ph = i * 2.39996;
+        DIRS.push([Math.sin(th) * Math.cos(ph), Math.cos(th),
+                   Math.sin(th) * Math.sin(ph)]);
+      }
+      var STEPS = [0.05, 0.15, 0.35, 0.70];
+      var STR = 0.62;                       /* max darkening at a corner */
+      var tmp = new T.Vector3(), nrm = new T.Vector3();
+      var up = new T.Vector3(), tx = new T.Vector3(), tz = new T.Vector3();
+      var nm = new T.Matrix3();
+      var perMat = {};                       /* uuid -> {mat, wearers, baked} */
+      var count = 0, clones = 0;
+      scene.updateMatrixWorld(true);
+
+      /* ---- shared-geometry guard (spec §3 K4 caveat) ---------------------
+         cgeo geometries are SHARED: two meshes with identical dimensions
+         wear the SAME BufferGeometry. Writing a colour attribute for
+         mesh A and then mesh B leaves EVERY wearer showing B's occlusion
+         (computed from B's own transform), not its own. First pass:
+         count wearers per geometry, and the scene's current geometry
+         count (the same count `--budget` reports), before any attribute
+         gets written, so the clone trade can be sized up front. */
+      var geoWearers = {}, allGeo = {};
+      scene.traverse(function (o) {
+        if (o.isMesh && o.geometry) allGeo[o.geometry.uuid] = true;
+        if (!o.isMesh || o.isInstancedMesh || !o.material) return;
+        if (Array.isArray(o.material)) return;
+        if (!o.material.isMeshStandardMaterial &&
+            !o.material.isMeshLambertMaterial &&
+            !o.material.isMeshPhysicalMaterial) return;
+        if (o.material.transparent) return;  /* glass keeps its clarity */
+        geoWearers[o.geometry.uuid] = (geoWearers[o.geometry.uuid] || 0) + 1;
+        var e = perMat[o.material.uuid] ||
+                (perMat[o.material.uuid] = { m: o.material, w: [] });
+        e.w.push(o);
+      });
+      var preGeo = Object.keys(allGeo).length, projected = 0;
+      Object.keys(geoWearers).forEach(function (gu) {
+        if (geoWearers[gu] > 1) projected += geoWearers[gu] - 1;
+      });
+      /* budget guard: cloning trades geometry sharing for per-mesh AO. If
+         minting every multi-worn clone would push the scene's geometry
+         count past +10% of its pre-bake count, mint none instead — bake
+         only meshes whose geometry is already unshared (merged fabric,
+         the two floor planes, one-off props) and leave any material with
+         a multi-worn cached wearer un-flipped, exactly as authored
+         (never black, never borrowed). Whole materials are the unit of
+         fallback, not individual meshes: a material with a mix of safe
+         and unsafe wearers would otherwise spend the bake's time on
+         wearers whose material can never flip anyway. */
+      var fallback = (preGeo + projected) > preGeo * 1.10;
+
+      Object.keys(perMat).forEach(function (u) {
+        var wearers = perMat[u].w;
+        if (fallback) {
+          var skip = false;
+          for (var wi = 0; wi < wearers.length; wi++) {
+            var wg = wearers[wi].geometry;
+            if (wg.userData.cached && geoWearers[wg.uuid] > 1) { skip = true; break; }
+          }
+          if (skip) return;             /* left exactly as authored */
+        }
+        var allBaked = true;
+        wearers.forEach(function (mesh) {
+          var geo = mesh.geometry;
+          if (geo.userData.cached && geoWearers[geo.uuid] > 1) {
+            geo = mesh.geometry = geo.clone();   /* fallback already skipped this material */
+            geo.userData.cached = false;
+            clones++;
+          }
+          var p = geo.attributes.position, n = geo.attributes.normal;
+          if (!p || !n) { allBaked = false; return; }
+          nm.getNormalMatrix(mesh.matrixWorld);
+          var col = geo.attributes.color;
+          if (!col || col.count !== p.count) {
+            col = new T.BufferAttribute(new Float32Array(p.count * 3), 3);
+            geo.setAttribute('color', col);
+          }
+          for (var v = 0; v < p.count; v++) {
+            tmp.fromBufferAttribute(p, v).applyMatrix4(mesh.matrixWorld);
+            nrm.fromBufferAttribute(n, v).applyMatrix3(nm).normalize();
+            up.set(Math.abs(nrm.y) > 0.94 ? 1 : 0,
+                   Math.abs(nrm.y) > 0.94 ? 0 : 1, 0);
+            tx.crossVectors(up, nrm).normalize();
+            tz.crossVectors(nrm, tx);
+            var hit = 0;
+            for (var d2 = 0; d2 < DIRS.length; d2++) {
+              var D = DIRS[d2];
+              var dx = tx.x * D[0] + nrm.x * D[1] + tz.x * D[2];
+              var dy = tx.y * D[0] + nrm.y * D[1] + tz.y * D[2];
+              var dz = tx.z * D[0] + nrm.z * D[1] + tz.z * D[2];
+              for (var s3 = 0; s3 < STEPS.length; s3++) {
+                var L3 = STEPS[s3];
+                var qx = tmp.x + dx * L3, qy = tmp.y + dy * L3,
+                    qz = tmp.z + dz * L3;
+                var blocked = false;
+                for (var ob = 0; ob < AO_OCCLUDERS.length; ob++) {
+                  var B = AO_OCCLUDERS[ob];
+                  if (qx > B[0] && qx < B[1] && qy > B[2] && qy < B[3] &&
+                      qz > B[4] && qz < B[5]) { blocked = true; break; }
+                }
+                if (blocked) { hit += 1 - s3 / STEPS.length; break; }
+              }
+            }
+            var ao = 1 - (hit / DIRS.length) * STR;
+            col.setXYZ(v, ao, ao, ao);
+          }
+          col.needsUpdate = true;
+          count++;
+        });
+        if (allBaked) {
+          perMat[u].m.vertexColors = true;
+          perMat[u].m.needsUpdate = true;
+        }
+      });
+      return { meshes: count, clones: clones, fallback: fallback,
+               preGeo: preGeo, projected: projected,
+               ms: Math.round(performance.now() - t0) };
+    }
+    var aoStats = bakeAO();
+    scene.userData.aoStats = aoStats;   /* --budget-reachable via __hpScene,
+      the same pattern userData.merged already uses for test introspection */
 
     /* ---- the painters: every data surface drawn like the app draws it —
        Inter type, white cards, accent bars, soft shadows. Cached per
