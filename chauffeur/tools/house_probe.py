@@ -35,6 +35,77 @@ os.environ.setdefault('CHAUFFEUR_DATA_DIR',
 
 ROOM_VIEWS = ['exterior', 'kitchen', 'living', 'mudroom', 'garage']
 
+# The renderer wrapper the --budget flag appends to the vendored three
+# bundle via route interception. three assigns render as an INSTANCE
+# property, so patching WebGLRenderer.prototype.render is a silent no-op
+# — the constructor must be wrapped. No production code ships a debug
+# handle; this exists only on probed pages.
+THREE_WRAP = b"""
+;(function () {
+  var OR = window.THREE && window.THREE.WebGLRenderer;
+  if (!OR) { window.__hpFail = 'no THREE'; return; }
+  function W(p) {
+    var r = new OR(p);
+    window.__hpT0 = window.__hpT0 || performance.now();
+    var o = r.render.bind(r);
+    r.render = function (s, c) {
+      if (window.__hpBuildMs === undefined)
+        window.__hpBuildMs = Math.round(performance.now() - window.__hpT0);
+      window.__hpScene = s; window.__hpCam = c; window.__hpR = r;
+      return o(s, c);
+    };
+    return r;
+  }
+  W.prototype = OR.prototype;
+  window.THREE.WebGLRenderer = W;
+})();
+"""
+
+BUDGET_JS = """() => {
+  const T = window.THREE, S = window.__hpScene, C = window.__hpCam;
+  if (!S || !C) return { err: 'no captured scene' };
+  S.updateMatrixWorld(true); C.updateMatrixWorld(true);
+  const fr = new T.Frustum().setFromProjectionMatrix(
+    new T.Matrix4().multiplyMatrices(C.projectionMatrix, C.matrixWorldInverse));
+  const mats = new Set(), geos = new Set(), rows = {};
+  let total = 0, visible = 0, inFrustum = 0, tris = 0;
+  function vis(o) { for (let p = o; p; p = p.parent) if (!p.visible) return false; return true; }
+  S.traverse(o => {
+    if (!o.isMesh) return;
+    total += 1;
+    if (o.material && o.material.uuid) mats.add(o.material.uuid);
+    if (o.geometry) geos.add(o.geometry.uuid);
+    if (!vis(o)) return;
+    visible += 1;
+    const inst = o.isInstancedMesh ? o.count : 1;
+    if (o.frustumCulled && o.geometry) {
+      if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+      const sp = o.geometry.boundingSphere.clone().applyMatrix4(o.matrixWorld);
+      if (!fr.intersectsSphere(sp)) return;
+    }
+    inFrustum += 1;
+    const g = o.geometry;
+    if (g && g.attributes.position)
+      tris += inst * (g.index ? g.index.count / 3 : g.attributes.position.count / 3);
+    let top = o; while (top.parent && top.parent !== S) top = top.parent;
+    let key;
+    if (top === o) key = '(loose)';
+    else {
+      if (!top.userData.__hpN) {
+        let n = 0; top.traverse(q => { if (q.isMesh) n += 1; });
+        top.userData.__hpN = n;
+      }
+      key = 'group@' + ['x', 'y', 'z'].map(a => top.position[a].toFixed(1)).join(',') +
+            ' n=' + top.userData.__hpN;
+    }
+    rows[key] = (rows[key] || 0) + 1;
+  });
+  return { total, visible, inFrustum, tris: Math.round(tris),
+           materials: mats.size, geometries: geos.size,
+           buildMs: window.__hpBuildMs,
+           rows: Object.entries(rows).sort((a, b) => b[1] - a[1]).slice(0, 8) };
+}"""
+
 
 def _seed():
     from services import storage
@@ -176,6 +247,10 @@ def main():
                          'trialled without editing house.js. 0 = nothing '
                          'recedes; 1 = maximum. Applies to room views only '
                          '(the exterior is always 0).')
+    ap.add_argument('--budget', action='store_true',
+                    help='wrap the renderer and print per-view draw-budget '
+                         'numbers (meshes, in-frustum, tris, unique '
+                         'materials/geometries, build ms)')
     args = ap.parse_args()
 
     views = ROOM_VIEWS[:] if args.views == 'all' else [
@@ -197,6 +272,12 @@ def main():
         errors = []
         page.on('console', lambda m: errors.append(m.text)
                 if m.type == 'error' else None)
+        if args.budget:
+            with open('static/vendor/three.min.js', 'rb') as fh:
+                patched = fh.read() + THREE_WRAP
+            page.route('**/three.min.js*', lambda route: route.fulfill(
+                status=200, content_type='application/javascript',
+                body=patched))
         page.goto(served.url('house?quality=' + args.quality))
         page.wait_for_selector('#room canvas', timeout=20000)
         page.wait_for_timeout(2200)
@@ -237,6 +318,18 @@ def main():
             path = os.path.join(args.out, view + '.png')
             page.screenshot(path=path, clip=clip)
             print('shot', path)
+            if args.budget:
+                b = page.evaluate(BUDGET_JS)
+                if b.get('err'):
+                    print('budget', view, 'ERR', b['err'])
+                else:
+                    print('budget %-9s meshes=%d visible=%d inFrustum=%d '
+                          'tris=%d materials=%d geometries=%d buildMs=%s'
+                          % (view, b['total'], b['visible'], b['inFrustum'],
+                             b['tris'], b['materials'], b['geometries'],
+                             b['buildMs']))
+                    for k, v in b['rows']:
+                        print('    %5d  %s' % (v, k))
         if errors:
             print('CONSOLE ERRORS:', errors[:5])
             return 1
