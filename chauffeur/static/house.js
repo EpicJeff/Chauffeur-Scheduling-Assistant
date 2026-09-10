@@ -879,7 +879,7 @@
     }
 
     /* ---- shell: open-corner diorama on a slab -------------------------- */
-    box(13.6, 0.5, 11.6, C.shell, 0, -0.27, 0);
+    box(13.6, 0.5, 11.6, C.shell, 0, -0.27, 0, null, sharp());
     var floorCanvas = document.createElement('canvas');
     floorCanvas.width = floorCanvas.height = DETAIL >= 3 ? 1024 : 512;
     (function () {
@@ -2920,12 +2920,16 @@
                  leafB: 0x527f44 };
     var extG = new T.Group();
     scene.add(extG);
-    /* K1: every ebox() call is exterior shell fabric (siding, roof, trim,
-       driveway, street) unless the call is a genuine prop standing out
-       there (the mailbox) — those call box(..., extG, ...) directly so
-       they keep the NICE-tier chamfer default this wrapper opts out of. */
+    /* K1: every ebox() call defaults to sharp exterior shell fabric
+       (siding, roof, trim, driveway, street) unless the call is a
+       genuine prop standing out there (the mailbox calls box(...,
+       extG, ...) directly instead). The default only fills in when the
+       caller hasn't set opts.ch itself, so a future exterior PROP built
+       through ebox() can opt back into the chamfer with an explicit
+       { ch: ... } rather than needing to bypass this wrapper. */
     function ebox(w, h, d, c, x, y, z, opts) {
-      return box(w, h, d, c, x, y, z, extG, sharp(opts));
+      return box(w, h, d, c, x, y, z, extG,
+                 (!opts || opts.ch === undefined) ? sharp(opts) : opts);
     }
     /* the outdoors pays the same tier the kitchen does (user ruling
        2026-09-08): mottled grass, clapboard, offset shingles, jointed
@@ -4407,7 +4411,7 @@
       mudroomRoofG.add(mudFrontWall);
       var mroof = box(5.9, 0.14, 6.2, NICE ? 0xffffff : EXTC.roof,
                       -9.8, 4.5, 5.4, mudroomRoofG,
-                      NICE ? { rough: 0.9, map: shingleT } : { rough: 0.9 });
+                      sharp(NICE ? { rough: 0.9, map: shingleT } : { rough: 0.9 }));
       mtag(mroof);
       /* ============ the studio pass (docs/house_style_bible.md) =========
          The room inherited exterior siding from the architect pass and
@@ -4827,10 +4831,10 @@
          otherwise the slab is a plank floating in a gap. */
       function jamb(m) { return zoneTag(m, 'door'); }
       [-10.71, -8.89].forEach(function (jx) {
-        jamb(mb(0.12, 4.20, 0.26, C.cabShade, jx, 2.10, 8.21, MATT));
+        jamb(mb(0.12, 4.20, 0.26, C.cabShade, jx, 2.10, 8.21, sharp(MATT)));
       });
-      jamb(mb(1.94, 0.12, 0.26, C.cabShade, -9.80, 4.14, 8.21, MATT));
-      jamb(mb(1.94, 0.07, 0.30, woodK, -9.80, FLR + 0.035, 8.19, woodO));
+      jamb(mb(1.94, 0.12, 0.26, C.cabShade, -9.80, 4.14, 8.21, sharp(MATT)));
+      jamb(mb(1.94, 0.07, 0.30, woodK, -9.80, FLR + 0.035, 8.19, sharp(woodO)));
       /* and the slab's STREET face, which is the face this camera sees:
          a glazed upper light, two raised panels, a lockset and a kick
          plate. Everything stays inside the wall's 0.24 of thickness so
