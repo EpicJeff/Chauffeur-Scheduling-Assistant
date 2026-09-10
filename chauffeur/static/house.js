@@ -5873,20 +5873,49 @@
          cgeo geometries are SHARED: two meshes with identical dimensions
          wear the SAME BufferGeometry. Writing a colour attribute for
          mesh A and then mesh B leaves EVERY wearer showing B's occlusion
-         (computed from B's own transform), not its own. First pass:
-         count wearers per geometry, and the scene's current geometry
-         count (the same count `--budget` reports), before any attribute
-         gets written, so the clone trade can be sized up front. */
+         (computed from B's own transform), not its own. Counted in its
+         OWN full-scene pass, unfiltered by bake-eligibility (fix round 1,
+         CRITICAL-1b: a transparent/instanced/array-material wearer still
+         holds a real reference to the geometry, so it still has to count
+         toward "is this shared", even though it never gets baked — the
+         eligibility filters below decide who gets WRITTEN, never who
+         gets COUNTED). */
       var geoWearers = {}, allGeo = {};
       scene.traverse(function (o) {
-        if (o.isMesh && o.geometry) allGeo[o.geometry.uuid] = true;
-        if (!o.isMesh || o.isInstancedMesh || !o.material) return;
+        if (!o.isMesh || !o.geometry) return;   /* isInstancedMesh IS isMesh */
+        allGeo[o.geometry.uuid] = true;
+        geoWearers[o.geometry.uuid] = (geoWearers[o.geometry.uuid] || 0) + 1;
+      });
+
+      /* ---- instanced-material guard (fix round 1, CRITICAL-1) -----------
+         instanceYard() (batching spec B2) folds repeated yard props into
+         InstancedMesh batches that keep wearing the SOURCE mesh's shared
+         material, then removes every source mesh from the scene. An
+         InstancedMesh never gets a colour attribute of its own (the bake
+         skips InstancedMesh by design — SDD ledger ruling, exterior
+         grounding stays with cast shadows/contact discs) and three.js's
+         disabled-attribute default is (0,0,0,1), so if its material ever
+         flips vertexColors the whole batch renders SOLID BLACK. A regular
+         mesh elsewhere in the house can easily share that same cached
+         material (same colour+opts key) and bake cleanly — that clean
+         bake was enough to flip the shared material, with nothing
+         tracking the InstancedMesh wearer to veto it. Fix: every
+         InstancedMesh still registers itself against its material, so
+         the bucket exists and carries `instanced: true`, but it never
+         joins `w` — it is never baked, only ever a reason NOT to flip. */
+      scene.traverse(function (o) {
+        if (!o.isMesh || !o.material) return;
         if (Array.isArray(o.material)) return;
         if (!o.material.isMeshStandardMaterial &&
             !o.material.isMeshLambertMaterial &&
             !o.material.isMeshPhysicalMaterial) return;
         if (o.material.transparent) return;  /* glass keeps its clarity */
-        geoWearers[o.geometry.uuid] = (geoWearers[o.geometry.uuid] || 0) + 1;
+        if (o.isInstancedMesh) {
+          var e0 = perMat[o.material.uuid] ||
+                   (perMat[o.material.uuid] = { m: o.material, w: [] });
+          e0.instanced = true;
+          return;
+        }
         var e = perMat[o.material.uuid] ||
                 (perMat[o.material.uuid] = { m: o.material, w: [] });
         e.w.push(o);
@@ -5907,7 +5936,9 @@
          wearers whose material can never flip anyway. */
       var fallback = (preGeo + projected) > preGeo * 1.10;
 
+      var instancedMaterials = 0, instancedRescued = 0;
       Object.keys(perMat).forEach(function (u) {
+        if (perMat[u].instanced) instancedMaterials++;
         var wearers = perMat[u].w;
         if (fallback) {
           var skip = false;
@@ -5965,6 +5996,16 @@
           col.needsUpdate = true;
           count++;
         });
+        if (perMat[u].instanced) {
+          /* an InstancedMesh wearer can never carry a colour attribute of
+             its own, so it is an automatic veto no matter how cleanly
+             every OTHER wearer baked — those siblings keep the attribute
+             they just earned (harmless without the flip: dead data on a
+             material that stays vertexColors=false), the shared material
+             itself just never samples any of it. */
+          if (allBaked) instancedRescued++;
+          return;
+        }
         if (allBaked) {
           perMat[u].m.vertexColors = true;
           perMat[u].m.needsUpdate = true;
@@ -5972,6 +6013,8 @@
       });
       return { meshes: count, clones: clones, fallback: fallback,
                preGeo: preGeo, projected: projected,
+               instancedMaterials: instancedMaterials,
+               instancedRescued: instancedRescued,
                ms: Math.round(performance.now() - t0) };
     }
     var aoStats = bakeAO();
