@@ -5412,6 +5412,34 @@
     extG.add(skyDome);
     scene.background = null;
 
+    /* ---- THE TAP LAW (batching spec L6) -------------------------------
+       onTap used to guess "the house" from hit.position.y — a rule that
+       dies the moment merged fabric sits at its group's origin, and the
+       rule that once let two blob trees open the kitchen. The judgment
+       moves HERE, to build time, while every mesh still stands at its
+       own coordinates: shell fabric above the plinth is stamped with the
+       room it opens (kitchen, unless something nearer already routed
+       it), zone-tagged strays borrow their zone's room, and everything
+       else out here is scenery. The tap path then reads tags only. */
+    extG.updateMatrixWorld(true);
+    (function stampHouse() {
+      var bb = new T.Box3();
+      extG.traverse(function (o) {
+        if (!o.isMesh || o === skyDome) return;
+        for (var p = o; p && p !== extG; p = p.parent) {
+          if (p === yardG) return;                    /* scenery stays a view */
+          if (p.userData && p.userData.room) return;  /* already routed */
+          if (p.userData && p.userData.zone) {        /* stray: borrow the room */
+            var zr = ZONE_ROOM[p.userData.zone];
+            if (zr) o.userData.room = zr;
+            return;
+          }
+        }
+        bb.setFromObject(o);
+        if (bb.max.y > 0.6) o.userData.room = 'kitchen';
+      });
+    })();
+
     /* ---- the painters: every data surface drawn like the app draws it —
        Inter type, white cards, accent bars, soft shadows. Cached per
        payload; a poll that changes nothing repaints nothing. ---- */
@@ -6610,6 +6638,8 @@
   window.chfHouseEnterGarage = function () { if (webgl) enterRoom('garage', null); };
   window.chfHouseEnterRoom = function (name) { if (webgl) enterRoom(name, null); };
   window.chfHouseExit = function () { if (webgl) goExterior(); };
+  /* read-only, the chfHouseScenery stance: reports, never moves */
+  window.chfHouseMode = function () { return mode; };
   /* the studio's viewfinder: snap the camera anywhere and repaint once.
      Read-only like its siblings — it moves the eye, nothing else. Set
      builders frame a room through this before they hard-code the pose. */
@@ -6669,9 +6699,9 @@
   function onTap(ev) {
     if (!webgl) return;
     if (mode === 'exterior') {
-      /* any tap on the HOUSE goes inside — routed by room tag: the
-         garage's meshes carry userData.room='garage', everything else
-         is the kitchen. Sky and flat yard stay a view. */
+      /* stamped, not guessed (stampHouse, build time): walk up for a
+         room tag; yard and sky stay a view; anything INTERIOR seen
+         through the open front is the kitchen. */
       var hit = anyHit(ev.clientX, ev.clientY);
       if (!hit || hit === webgl.skyDome) return;
       var o = hit, room = null;
@@ -6681,7 +6711,7 @@
       }
       if (room && roomsReg()[room]) { enterRoom(room, null); return; }
       if (inYard(hit)) return;                 /* scenery: look, do not enter */
-      if (!inExterior(hit) || hit.position.y > 0.2) enterRoom('kitchen', null);
+      if (!inExterior(hit)) enterRoom('kitchen', null);
       return;
     }
     var key = zoneAt(ev.clientX, ev.clientY);

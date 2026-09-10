@@ -107,6 +107,27 @@ def scenario_the_house_boots_enters_and_leans_in():
         if not has_room:
             print("  skip  no WebGL room here — the fallback owns the page")
             return
+
+        # L6 (batching spec): the house is stamped, not guessed. A tap on
+        # the house walks in; a tap on the sky stays a view.
+        check(page.evaluate("typeof window.chfHouseMode === 'function'"),
+              'chfHouseMode reports the room')
+        cbox = page.evaluate(
+            "(() => { const r = document.querySelector('#room canvas')"
+            ".getBoundingClientRect();"
+            " return {x: r.x, y: r.y, w: r.width, h: r.height}; })()")
+        page.mouse.click(cbox['x'] + cbox['w'] * 0.5,
+                         cbox['y'] + cbox['h'] * 0.55)
+        page.wait_for_timeout(1100)
+        check(page.evaluate("window.chfHouseMode()") == 'kitchen',
+              'a tap on the house walks into the kitchen')
+        page.evaluate("window.chfHouseExit()")
+        page.wait_for_timeout(1100)
+        page.mouse.click(cbox['x'] + 24, cbox['y'] + 24)
+        page.wait_for_timeout(1100)
+        check(page.evaluate("window.chfHouseMode()") == 'exterior',
+              'a tap on the sky stays a view')
+
         if shots:
             page.screenshot(path=os.path.join(shots, 'house_exterior.png'))
 
