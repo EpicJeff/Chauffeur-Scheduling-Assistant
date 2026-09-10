@@ -847,6 +847,65 @@
     function sharp(o) {
       var r2 = {}; if (o) for (var k3 in o) r2[k3] = o[k3]; r2.ch = 0; return r2;
     }
+    /* ---- K2 (quality spec §3): lathe + sweep, the detail vocabulary ---
+       Profiles are UNIT-SCALE [x, y] outlines (max radius ~0.5, height
+       ~1.0); latheAt() puts size in mesh scale, so every jar shares one
+       geometry per segment tier — the batching lesson applied from
+       birth. Segment counts tier like cyl(). */
+    var PROFILES = {
+      jar:    [[0, 0], [0.36, 0], [0.40, 0.06], [0.40, 0.72], [0.32, 0.82],
+               [0.34, 0.88], [0.27, 0.92], [0.27, 1.0], [0, 1.0]],
+      lid:    [[0, 0], [0.36, 0], [0.37, 0.55], [0.28, 0.8], [0, 1.0]],
+      bowl:   [[0, 0.08], [0.18, 0], [0.44, 0.35], [0.50, 0.9], [0.47, 1.0],
+               [0.41, 0.42], [0.16, 0.12], [0, 0.2]],
+      plate:  [[0, 0], [0.30, 0], [0.48, 0.5], [0.50, 1.0], [0.44, 0.55],
+               [0.27, 0.18], [0, 0.18]],
+      cup:    [[0, 0], [0.30, 0], [0.34, 0.1], [0.36, 1.0], [0.30, 1.0],
+               [0.28, 0.16], [0, 0.16]],
+      vase:   [[0, 0], [0.26, 0], [0.38, 0.3], [0.20, 0.75], [0.24, 1.0],
+               [0, 1.0]],
+      knob:   [[0, 0], [0.18, 0], [0.20, 0.35], [0.42, 0.55], [0.46, 0.8],
+               [0.38, 1.0], [0, 1.0]],
+      foot:   [[0, 0], [0.46, 0], [0.46, 0.35], [0.30, 0.55], [0.27, 1.0],
+               [0, 1.0]],
+      hinge:  [[0, 0], [0.30, 0], [0.30, 0.2], [0.40, 0.28], [0.40, 0.72],
+               [0.30, 0.8], [0.30, 1.0], [0, 1.0]],
+      pull:   [[0, 0], [0.42, 0], [0.46, 0.25], [0.30, 0.5], [0.46, 0.75],
+               [0.42, 1.0], [0, 1.0]],
+      finial: [[0, 0], [0.20, 0], [0.34, 0.3], [0.12, 0.6], [0.20, 0.85],
+               [0, 1.0]],
+      shade:  [[0.22, 0], [0.50, 0], [0.34, 1.0], [0.20, 1.0]]
+    };
+    function latheGeo(key, seg) {
+      var sg = seg || (DETAIL >= 3 ? 16 : 10);
+      return cgeo('L|' + key + '|' + sg, function () {
+        var pts = PROFILES[key].map(function (p) {
+          return new T.Vector2(p[0], p[1]);
+        });
+        return new T.LatheGeometry(pts, sg);
+      });
+    }
+    function latheAt(key, s, c, x, y, z, group, opts) {
+      var g0 = group || scene;
+      var m = new T.Mesh(latheGeo(key, opts && opts.seg),
+                         mat(c, opts, inZoneGroup(g0)));
+      if (typeof s === 'number') m.scale.set(s, s, s);
+      else m.scale.set(s[0], s[1], s[2]);
+      m.position.set(x, y, z); finish(m); g0.add(m); return m;
+    }
+    function sweepGeo(pts, r, seg, rad) {
+      return new T.TubeGeometry(new T.CatmullRomCurve3(
+        pts.map(function (p) { return new T.Vector3(p[0], p[1], p[2]); })),
+        seg || (DETAIL >= 3 ? 24 : 14), r, rad || (DETAIL >= 3 ? 10 : 7),
+        false);
+    }
+    function sweepAt(pts, r, c, group, opts) {
+      var g0 = group || scene;
+      var m = new T.Mesh(sweepGeo(pts, r, opts && opts.seg,
+                                  opts && opts.rad),
+                         mat(c, opts, inZoneGroup(g0)));
+      finish(m); g0.add(m); return m;
+    }
     function rbox(w, h, d, r, c, x, y, z, group, opts) {
       var o = {}, k2;
       if (opts) for (k2 in opts) o[k2] = opts[k2];
