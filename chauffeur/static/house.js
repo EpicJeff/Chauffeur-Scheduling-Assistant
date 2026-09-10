@@ -1189,6 +1189,13 @@
       function lb(w, h, d, c, x, y, z, g, o) { return ltag(box(w, h, d, c, x, y, z, g || PG, o)); }
       function lr(w, h, d, r, c, x, y, z, g, o) { return ltag(rbox(w, h, d, r, c, x, y, z, g || PG, o)); }
       function lc(a, b2, h, c, x, y, z, g, s, o) { return ltag(cyl(a, b2, h, c, x, y, z, g || PG, s, o)); }
+      /* R1 (quality spec §4): the same PG-fallback convention as lb/lr/lc,
+         for the K2 lathe/sweep kit. latheAt/sweepAt default their OWN
+         group arg to `scene`, not PG - ll/ls close that gap so detail
+         parts on wall-plane props (built-ins, hearth) still ride
+         westWallG and hide with it under the mudroom camera. */
+      function ll(key, s, c, x, y, z, g, o) { return ltag(latheAt(key, s, c, x, y, z, g || PG, o)); }
+      function ls(pts, r, c, g, o) { return ltag(sweepAt(pts, r, c, g || PG, o)); }
       function sph(r, c, x, y, z, sy) {
         var m = new T.Mesh(new T.SphereGeometry(r, D3 ? 12 : 8, D3 ? 10 : 6),
                            mat(c, { rough: 1.0 }));
@@ -1276,8 +1283,14 @@
          terracotta, stone) so no two pots in the room read the same. */
       function plant(x, y0, z, s, potC, potO, kind, shadow) {
         var ph = 0.34 * s;
-        lc(0.24 * s, 0.19 * s, ph, potC, x, y0 + ph / 2, z, null, 14, potO);
-        if (D3) lc(0.25 * s, 0.25 * s, 0.05, potC, x, y0 + ph - 0.015, z, null, 14, potO);
+        /* R1 (quality spec §4): pots are `vase` lathes on a `foot` ring now.
+           GLOSS's flat glaze upgrades to K3's real ceramic clearcoat; the
+           matte terracotta/stone pots keep their own opts untouched - the
+           bible's "vary pot material" rule stays true prop to prop. */
+        var pf = potO === GLOSS ? { finish: 'ceramic' } : potO;
+        ll('vase', [s, ph, s], potC, x, y0, z, null, pf);
+        ll('foot', [0.65 * s, 0.05 * s, 0.65 * s], potC, x, y0, z, null, pf);
+        if (D3) lc(0.25 * s, 0.25 * s, 0.05, potC, x, y0 + ph - 0.015, z, null, 14, pf);
         /* the spreading kinds start a little higher, or their outermost
            leaves hang over the rim and swallow the pot */
         var b = y0 + ph + (PLIFT[kind] || 0) * s - 0.06 * s;
@@ -1336,13 +1349,27 @@
       lb(0.20, 1.20, 1.14, 0x14181c, WX + 0.33, 0.80, HZ, null, { rough: 0.95 });
       blobShadow(0.55, 1.42, WX + 0.45, HZ, PG);
       if (D2) {                    /* the hearth slab earns its two props */
-        lc(0.20, 0.17, 0.30, C.cork, WX + 0.62, 0.37, HZ - 1.02, null, 12,
-           { rough: 0.95 });
+        /* R1: the log bucket is a squashed `vase` lathe (a coal-scuttle
+           silhouette, not a plain taper) - same footprint the cyl held:
+           base on the hearth stone (y 0.22), radius/height matched. */
+        ll('vase', [0.53, 0.30, 0.53], C.cork, WX + 0.62, 0.22, HZ - 1.02,
+           null, { rough: 0.95 });
         lc(0.055, 0.055, 0.44, C.wood2, WX + 0.60, 0.62, HZ - 1.06, null, 8, WOODM);
         lc(0.055, 0.055, 0.38, C.wood2, WX + 0.66, 0.60, HZ - 0.98, null, 8, WOODM);
         lc(0.12, 0.14, 0.05, C.graphite, WX + 0.62, 0.245, HZ + 1.02, null, 10, STEEL);
         lc(0.02, 0.02, 0.66, C.graphite, WX + 0.62, 0.55, HZ + 1.02, null, 6, STEEL);
-        lc(0.02, 0.02, 0.58, C.graphite, WX + 0.62, 0.51, HZ + 1.10, null, 6, STEEL);
+        /* R1: the fire-tool stand's post earns a `finial` cap, and the
+           second bare rod becomes three short `sweepAt` tools (poker,
+           tongs, brush) leaning out from it at floor level - the plain
+           straight rod was one undifferentiated hint, not a set. */
+        ll('finial', [0.15, 0.08, 0.15], C.graphite, WX + 0.62, 0.88,
+           HZ + 1.02, null, STEEL);
+        ls([[WX + 0.62, 0.78, HZ + 1.02], [WX + 0.615, 0.50, HZ + 0.97],
+            [WX + 0.60, 0.26, HZ + 0.90]], 0.014, C.graphite, null, STEEL);
+        ls([[WX + 0.62, 0.76, HZ + 1.02], [WX + 0.645, 0.48, HZ + 1.08],
+            [WX + 0.66, 0.25, HZ + 1.16]], 0.014, C.graphite, null, STEEL);
+        ls([[WX + 0.62, 0.74, HZ + 1.02], [WX + 0.66, 0.47, HZ + 1.03],
+            [WX + 0.70, 0.25, HZ + 1.02]], 0.014, C.graphite, null, STEEL);
       }
       if (D2) {
         var fire = new T.Mesh(new T.BoxGeometry(0.04, 0.58, 0.92),
@@ -1385,6 +1412,16 @@
       lb(0.02, 0.74, 1.24, 0x0d1013, WX + 0.616, 2.80, HZ, westWallG,
          { rough: 0.62, metal: 0.0, envInt: 0.04 });
       if (D3) lb(0.02, 0.03, 0.05, C.teal, WX + 0.616, 2.44, HZ - 0.58, westWallG, GLOSS);
+      /* R1: one subtle power cable, screen to soundbar - routed past the
+         screen's right edge (0.62) AND the soundbar's (0.59) so it reads
+         in the gap toward the mantle's corbel (1.08) instead of vanishing
+         behind the screen's own proud face (probe-verified: z 0.52 sat
+         fully behind the screen from the room camera; 0.75 clears it).
+         D2-gated like the room's other fine cosmetic touches - a Pi's
+         low tier shows the TV, not its wiring. */
+      if (D2) ls([[WX + 0.50, 2.40, HZ + 0.75], [WX + 0.53, 2.12, HZ + 0.75],
+                  [WX + 0.50, 1.95, HZ + 0.75]], 0.008, C.ink, null,
+                 { rough: 0.6 });
 
       /* ================= 3. the built-ins flanking the hearth ==========
          S3.1 + S3.2: toe kick, carcass, face frame with a centre stile,
@@ -1396,6 +1433,11 @@
         lb(0.46, HH, 0.055, C.cabShade, xc, HH / 2, bz + 0.5975, null, PLASTER);
         lb(0.50, 0.08, W0 + 0.05, C.cab, xc + 0.02, HH + 0.04, bz, null, PLASTER);
         lb(0.40, 0.16, W0 - 0.12, C.cabShade, xc - 0.03, 0.08, bz);
+        /* R1: the plinth shadow-gap - a thin ink strip proud of the toe
+           kick's own lower edge, at the floor, so the recess actually
+           reads dark instead of relying on AO alone below tier 3. */
+        lb(0.40, 0.026, W0 - 0.13, C.ink, xc - 0.02, 0.013, bz, null,
+           { rough: 0.92 });
         lb(0.44, 0.90, W0 - 0.11, C.cabShade, xc, 0.61, bz);
         if (D2) {
           /* face frame: stiles 0.09 wide, 0.04 proud of the carcass */
@@ -1407,8 +1449,11 @@
           [-0.265, 0.265].forEach(function (dz) {
             lr(0.03, 0.66, 0.38, 0.02, C.cab, F + 0.028, 0.61, bz + dz);
             if (D3) lr(0.02, 0.54, 0.26, 0.015, C.cabShade, F + 0.043, 0.61, bz + dz);
-            lb(0.025, 0.30, 0.025, C.graphite, F + 0.055, 0.61,
-               bz + (dz > 0 ? 0.10 : -0.10));
+            /* R1: a `knob` lathe pull, rotated so its stem-to-bulb axis
+               (local +Y) points +X - straight out of the door face. */
+            var kb = ll('knob', [0.07, 0.06, 0.07], C.graphite, F + 0.03,
+              0.61, bz + (dz > 0 ? 0.10 : -0.10), null, STEEL);
+            kb.rotation.z = -Math.PI / 2;
           });
         }
         /* top cap: a different material from the fronts (S3.1.6) */
@@ -1470,19 +1515,36 @@
           m.userData.room = 'living';
           finish(m); g.add(m); return m;
         }
+        /* R1: `foot` lathes - the pad-then-shaft turned silhouette - in
+           place of the plain cylinder, same floor-to-0.16 footprint. */
         [[-DP / 2 + 0.16, -len / 2 + 0.18], [DP / 2 - 0.16, -len / 2 + 0.18],
          [-DP / 2 + 0.16, len / 2 - 0.18], [DP / 2 - 0.16, len / 2 - 0.18]]
           .forEach(function (lg) {
-            var m = new T.Mesh(new T.CylinderGeometry(0.05, 0.04, 0.16, 8),
-                               mat(C.wood2, WOODM));
-            m.position.set(lg[0], 0.08, lg[1]);
-            m.userData.room = 'living'; finish(m); g.add(m);
+            var m = latheAt('foot', [0.12, 0.16, 0.12], C.wood2, lg[0], 0,
+                            lg[1], g, WOODM);
+            m.userData.room = 'living';
           });
         sb(DP, 0.20, len, 0.16, shade, 0, 0.26, 0);
         var cw = (len - 0.10) / nc, k;
         for (k = 0; k < nc; k++) {                       /* the 0.02 gap */
           sb(DP - 0.16, 0.22, cw - 0.02, 0.16, body, -0.04, 0.47,
              -len / 2 + 0.05 + cw * (k + 0.5));
+        }
+        if (D2) {          /* R1: seam piping along the seat cushions' front-
+             top edge. The cushion's own chamfer caps at 0.49*halfHeight
+             (~0.054, not the nominal 0.16 r passed to sb) - nudged 0.03
+             proud on both axes so the trim clears the fillet instead of
+             sitting embedded in it (probe-verified with a magenta debug
+             pass, S5.2's trick: the line traced the seam exactly). `shade`
+             (a same-hue deep tone) read as invisible against `body` at
+             this radius - contrast piping in the room's existing dark
+             neutral reads instead, and isn't a 5th accent hue (S2 keeps
+             graphite out of the accent family). */
+          var pipX = -0.04 - (DP - 0.16) / 2 - 0.03;
+          var pipe = sweepAt([[pipX, 0.61, -len / 2 + 0.10], [pipX, 0.61, 0],
+                              [pipX, 0.61, len / 2 - 0.10]], 0.015, C.graphite,
+                             g, FAB);
+          pipe.userData.room = 'living';
         }
         sb(0.20, 0.92, len, 0.14, shade, DP / 2 - 0.10, 0.82, 0);
         for (k = 0; k < nc; k++) {
@@ -1579,8 +1641,12 @@
         if (D2) {
           lb(0.03, 0.34, 1.04, C.cab, SX + 0.20, 0.55, SZ - 0.56);
           lb(0.03, 0.34, 1.04, C.cab, SX + 0.20, 0.55, SZ + 0.56);
-          lb(0.025, 0.025, 0.30, C.graphite, SX + 0.225, 0.55, SZ - 0.56);
-          lb(0.025, 0.025, 0.30, C.graphite, SX + 0.225, 0.55, SZ + 0.56);
+          /* R1 (TV/console row): `knob` lathe pulls replace the flat bars */
+          [-0.56, 0.56].forEach(function (dz) {
+            var kn = ll('knob', [0.07, 0.06, 0.07], C.graphite, SX + 0.21,
+              0.55, SZ + dz, null, STEEL);
+            kn.rotation.z = -Math.PI / 2;
+          });
           /* four props: a vase of branches, a book stack, a tray, a bowl */
           lc(0.13, 0.09, 0.42, C.sageDeep, SX, 1.07, SZ - 0.92, null, 12, GLOSS);
           lc(0.02, 0.02, 0.52, C.wood2, SX - 0.03, 1.50, SZ - 0.94, null, 6);
@@ -1597,9 +1663,10 @@
       /* ================= 5. the coffee table ==========================
          The critter laptop's surface (zone: pet) - top at y 0.60. */
       lr(1.70, 0.10, 1.20, 0.03, woodK, -3.25, 0.55, 8.95, null, woodO);
+      /* R1: `foot` lathes for the legs - same floor-to-tabletop span. */
       [[-3.93, 8.45], [-2.57, 8.45], [-3.93, 9.45], [-2.57, 9.45]]
         .forEach(function (p) {
-          lc(0.055, 0.045, 0.50, C.wood2, p[0], 0.25, p[1], null, 8, WOODM);
+          ll('foot', [0.13, 0.50, 0.13], C.wood2, p[0], 0, p[1], null, WOODM);
         });
       if (D2) {
         lb(1.44, 0.05, 0.96, woodK, -3.25, 0.26, 8.95, null, woodO);
@@ -1607,8 +1674,12 @@
         lb(0.28, 0.05, 0.20, C.cream, -3.60, 0.368, 8.96);
         lc(0.20, 0.22, 0.16, C.cork, -2.85, 0.365, 8.95, null, 12, { rough: 0.9 });
         lr(0.44, 0.035, 0.32, 0.02, C.brass, -2.79, 0.62, 9.32, null, STEEL);
-        lc(0.075, 0.065, 0.12, C.cream, -2.87, 0.665, 9.32, null, 10, GLOSS);
-        lc(0.075, 0.065, 0.12, C.cream, -2.71, 0.665, 9.32, null, 10, GLOSS);
+        /* R1: the tray's two cups become a `plate`+`cup` lathe pair, ceramic -
+           the coffee-table dressing the part list names explicitly. */
+        ll('plate', [0.20, 0.025, 0.20], C.cream, -2.79, 0.6375, 9.32, null,
+           { finish: 'ceramic' });
+        ll('cup', [0.125, 0.07, 0.125], C.cream, -2.74, 0.6625, 9.32, null,
+           { finish: 'ceramic' });
       }
       if (D3) {
         lc(0.06, 0.06, 0.11, C.cream, -3.83, 0.66, 9.32, null, 10, GLOSS);
@@ -1649,7 +1720,10 @@
         [-0.36, 0.36].forEach(function (dz) {
           lr(0.03, 0.42, 0.62, 0.02, C.cab, WX + 0.525, 0.60, CZ + dz);
           if (D3) lr(0.02, 0.30, 0.50, 0.015, C.cabShade, WX + 0.54, 0.60, CZ + dz);
-          lb(0.025, 0.025, 0.28, C.graphite, WX + 0.555, 0.60, CZ + dz);
+          /* R1 (TV/console row): `knob` lathe pull replaces the flat bar */
+          var kg = ll('knob', [0.07, 0.06, 0.07], C.graphite, WX + 0.54,
+            0.60, CZ + dz, null, STEEL);
+          kg.rotation.z = -Math.PI / 2;
         });
         /* two props minimum on any surface over 0.5u2 (S4) - four here */
         lc(0.15, 0.11, 0.36, C.terracotta, WX + 0.28, 1.13, CZ - 0.52, null, 12, GLOSS);
@@ -1703,14 +1777,21 @@
       /* the floor lamp: base, stem, shade. All of it is D2 - a bare pole
          with no shade at the low tier reads as broken geometry. */
       if (D2) {
-        lc(0.28, 0.30, 0.05, C.brass, 0.90, 0.03, 10.90, null, 14, STEEL);
-        lc(0.035, 0.035, 1.62, C.brass, 0.90, 0.86, 10.90, null, 8, STEEL);
-        var lsh2 = new T.Mesh(new T.CylinderGeometry(0.24, 0.34, 0.34, 16, 1, true),
+        /* R1 (part list): `foot` lathe base, `sweepAt` arm at the old
+           stem's own endpoints (a gentle bow, not a right-angle reading
+           arm - the shade never moves), `shade` lathe at the head. The
+           shade keeps its own emissive material (mat() has no emissive
+           vocabulary) so the lit-from-within read survives the upgrade. */
+        ll('foot', [0.65, 0.07, 0.65], C.brass, 0.90, 0, 10.90, null, STEEL);
+        ls([[0.90, 0.07, 10.90], [0.94, 0.85, 10.90], [0.90, 1.65, 10.90]],
+           0.032, C.brass, null, STEEL);
+        var lsh2 = new T.Mesh(latheGeo('shade'),
           PBR ? new T.MeshStandardMaterial({ color: 0xf3e8d2, roughness: 0.8,
                                              emissive: 0xffd9a0, emissiveIntensity: 0.45,
                                              side: T.DoubleSide })
               : new T.MeshLambertMaterial({ color: 0xf3e8d2, side: T.DoubleSide }));
-        lsh2.position.set(0.90, 1.82, 10.90);
+        lsh2.scale.set(0.68, 0.34, 0.68);
+        lsh2.position.set(0.90, 1.65, 10.90);
         ltag(lsh2); finish(lsh2, true); scene.add(lsh2);
       }
       blobShadow(0.32, 0.32, 0.90, 10.90);
