@@ -664,6 +664,26 @@
         : (m.metalness > 0.5 ? 1.0 : 0.1);
       return m;
     }
+    /* ---- L1 rail (spec 2026-09-10-house-batching-design.md) ----------
+       A zone never shares a material: the glow loop writes emissive on
+       every mesh a zone owns, wherever it hangs. Materials handed out by
+       the cache (Task B1b) carry userData.shared; own() trades a shared
+       material for a private clone, and zoneTag() is the ONE way a mesh
+       outside a zoneGroup joins a zone. */
+    function own(m) {
+      if (m && m.isMesh && m.material && m.material.userData &&
+          m.material.userData.shared) {
+        m.material = m.material.clone();
+        m.material.userData.shared = false;
+      }
+      return m;
+    }
+    function zoneTag(m, zone, room) {
+      if (!m) return m;
+      m.userData.zone = zone;
+      if (room) m.userData.room = room;
+      return own(m);
+    }
     var STEEL = { rough: 0.3, metal: 0.85, envInt: 1.1 };
     var CHROME = { rough: 0.12, metal: 1.0, envInt: 1.3 };
     var GLOSS = { rough: 0.3, metal: 0.02, envInt: 0.25 };
@@ -2223,20 +2243,19 @@
           : new T.MeshLambertMaterial({ color: 0xc9a06c,
                                         map: woodDoor || null }));
     pantryDoor.position.set(0.2, 1.6, 0);
-    pantryDoor.userData.zone = 'board';
+    zoneTag(pantryDoor, 'board');
     finish(pantryDoor); board.add(pantryDoor);
     if (DETAIL >= 2) {
       /* a door is stiles, rails and two panels (S3.1). These are CHILDREN
          of the slab so they step aside with it on the board lean-in. */
       [[0.62, 1.10], [-0.72, 1.26]].forEach(function (pn) {
-        box(0.02, pn[1], 1.12, 0x6f5433, 0.07, pn[0], 0, pantryDoor,
-            { rough: 0.8 }).userData.zone = 'board';
-        box(0.04, pn[1] - 0.18, 0.94, 0xc79b63, 0.085, pn[0], 0, pantryDoor,
-            PBR ? { rough: 0.7, map: woodDoor } : { rough: 0.75 })
-          .userData.zone = 'board';
+        zoneTag(box(0.02, pn[1], 1.12, 0x6f5433, 0.07, pn[0], 0, pantryDoor,
+            { rough: 0.8 }), 'board');
+        zoneTag(box(0.04, pn[1] - 0.18, 0.94, 0xc79b63, 0.085, pn[0], 0, pantryDoor,
+            PBR ? { rough: 0.7, map: woodDoor } : { rough: 0.75 }), 'board');
       });
-      box(0.03, 0.12, 1.22, 0x6f5433, 0.075, -0.02, 0, pantryDoor,
-          { rough: 0.8 }).userData.zone = 'board';
+      zoneTag(box(0.03, 0.12, 1.22, 0x6f5433, 0.075, -0.02, 0, pantryDoor,
+          { rough: 0.8 }), 'board');
       /* casing stays on the wall: it frames the card when the door opens */
       box(0.22, 3.36, 0.14, 0xe4ddd1, 0.16, 1.68, -0.87, board);
       box(0.22, 3.36, 0.14, 0xe4ddd1, 0.16, 1.68, 0.87, board);
@@ -2244,7 +2263,7 @@
     }
     var pknob = cyl(0.055, 0.055, 0.09, 0xd8c48a, 0.3, 1.55, 0.55, board, 10,
                     CHROME);
-    pknob.userData.zone = 'board';
+    zoneTag(pknob, 'board');
     /* the closet itself: a bump-out behind the wall */
     (function () {
       function cmat() {
@@ -2278,7 +2297,7 @@
               : new T.MeshLambertMaterial({ color: 0xb98c58,
                                             map: woodLight || null }));
         sh.position.set(-7.95, sy, -0.6);
-        sh.userData.zone = 'board';
+        zoneTag(sh, 'board');
         finish(sh); scene.add(sh);
       });
       /* ---- the closet's §3.2 treatment (bible S7 mudroom.4) -----------
@@ -2290,7 +2309,7 @@
          these shelves look bare. */
       var PD2 = DETAIL >= 2, PD3 = DETAIL >= 3;
       function ptag(m) {
-        if (m) { m.userData.zone = 'board'; m.userData.room = 'kitchen'; }
+        if (m) { zoneTag(m, 'board', 'kitchen'); }
         return m;
       }
       function pb(w, h, d, c, x, y, z, o) {
@@ -2369,7 +2388,7 @@
         var jy = j < 4 ? 1.06 : 1.86;
         var jar = cyl(0.1, 0.1, 0.26, JAR_C[j % 4],
                       -1.53, jy, -1.06 + (j % 4) * 0.48, board, 10, GLOSS);
-        jar.userData.zone = 'board';
+        zoneTag(jar, 'board');
         pantryJars.push(jar);
       }
     })();
@@ -2922,7 +2941,7 @@
     (function () {
       function gtag(m) { if (m) m.userData.room = 'garage'; return m; }
       function itag(m) {
-        if (m) { m.userData.room = 'garage'; m.userData.zone = 'garage'; }
+        if (m) { zoneTag(m, 'garage', 'garage'); }
         return m;
       }
       gtag(ebox(0.24, 4.6, 8.0, NICE ? 0xffffff : EXTC.garage,
@@ -3079,7 +3098,7 @@
          diagonal that forced this off in the first place. */
       function gt(m) {                   /* tag only */
         if (!m) return m;
-        m.userData.room = 'garage'; m.userData.zone = 'garage';
+        zoneTag(m, 'garage', 'garage');
         return m;
       }
       function gb(w, h, d, c, x, y, z, o, gp) {
@@ -4089,7 +4108,7 @@
       busG.add(inner);
       function btag(m) {
         if (!m) return m;
-        m.userData.zone = 'curb';
+        zoneTag(m, 'curb');
         finish(m);
         if (m.parent !== inner) inner.add(m);
         return m;
@@ -4190,7 +4209,7 @@
       grp.userData.room = 'garage';
       function tag(m) {
         if (!m) return m;
-        m.userData.zone = 'garage'; m.userData.room = 'garage';
+        zoneTag(m, 'garage', 'garage');
         finish(m);
         if (m.parent !== grp) grp.add(m);
         return m;
@@ -4338,7 +4357,7 @@
          piece here takes userData.zone, exactly as dpart() does for the
          street door's face, and the next-leave hero card hangs on this
          slab (below). */
-      function gd(m) { if (m) m.userData.zone = 'door'; return m; }
+      function gd(m) { return zoneTag(m, 'door'); }
       [3.03, 4.37].forEach(function (cz) {
         gd(mb(0.06, 2.92, 0.14, TRIM, WWF + 0.03, 1.46, cz, MATT));
       });
@@ -4373,7 +4392,7 @@
       plaque.geometry = new T.PlaneGeometry(1.10, 0.69);
       plaque.position.set(WWF + 0.16, 2.02, 3.70);
       plaque.rotation.y = Math.PI / 2;         /* the face looks east, +x */
-      plaque.userData.zone = 'door';
+      zoneTag(plaque, 'door');
       mtag(plaque);
       extG.add(plaque);                        /* reparented off doorG */
 
@@ -4655,7 +4674,7 @@
          The wall it hangs in is cut away for the camera, so the opening
          gets the plates' visible wall-thickness band (S7 exterior.2) —
          otherwise the slab is a plank floating in a gap. */
-      function jamb(m) { m.userData.zone = 'door'; return m; }
+      function jamb(m) { return zoneTag(m, 'door'); }
       [-10.71, -8.89].forEach(function (jx) {
         jamb(mb(0.12, 4.20, 0.26, C.cabShade, jx, 2.10, 8.21, MATT));
       });
@@ -4669,7 +4688,7 @@
       if (D2) {
         var dz0 = 8.235;
         function dpart(m) {
-          m.userData.zone = 'door'; m.userData.room = 'mudroom'; return m;
+          return zoneTag(m, 'door', 'mudroom');
         }
         dpart(mb(1.44, 0.05, 0.05, 0x8a6d49, -9.80, 2.16, dz0, WOODM));
         [[2.98, 1.36], [1.44, 0.86], [0.66, 0.52]].forEach(function (pn) {
@@ -6125,6 +6144,7 @@
         plate.position.set(grp.position.x, box.max.y + 0.86,
                            grp.position.z);
         plate.lookAt(eye);
+        /* fresh material every rebuild: never cache-shared (L1) */
         plate.userData.zone = 'garage';
         plate.userData.room = 'garage';
         webgl.carsG.add(plate);
