@@ -4898,11 +4898,11 @@
         return yt(cyl(a, b, h, c, x, y, z, g || yardG, s, o));
       }
       function ysph(r, c, x, y, z, sy, g) {
-        var m = new T.Mesh(cgeo('s|' + r + '|' + (Y3 ? 12 : 7) + '|' + (Y3 ? 9 : 5), function () {
-          return new T.SphereGeometry(r, Y3 ? 12 : 7, Y3 ? 9 : 5);
-        }), mat(c, MATT, inZoneGroup(g || yardG)));
+        var m = new T.Mesh(cgeo('s|unit|' + (Y3 ? 12 : 7) + '|' + (Y3 ? 9 : 5),
+            function () { return new T.SphereGeometry(1, Y3 ? 12 : 7, Y3 ? 9 : 5); }),
+          mat(c, MATT, inZoneGroup(g || yardG)));
         m.position.set(x, y, z);
-        if (sy) m.scale.y = sy;
+        m.scale.set(r, r * (sy || 1), r);
         yt(m); (g || yardG).add(m); return m;
       }
       /* contact BELOW tier 3 only: tier 3 casts a real one out here now */
