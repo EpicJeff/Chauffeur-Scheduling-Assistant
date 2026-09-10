@@ -5494,7 +5494,7 @@
           if (q.userData && q.userData.room) { roomTag = q.userData.room; break; }
         var k = o.material.uuid + '|' + (o.castShadow ? 1 : 0) +
                 (o.receiveShadow ? 1 : 0) + '|' + (o.renderOrder || 0) +
-                '|' + roomTag;
+                '|' + roomTag + '|' + (o.visible ? 1 : 0);
         (buckets[k] = buckets[k] || []).push(o);
       });
       Object.keys(buckets).forEach(function (k) {
@@ -5506,6 +5506,14 @@
         mm.castShadow = first.castShadow;
         mm.receiveShadow = first.receiveShadow;
         mm.renderOrder = first.renderOrder;
+        mm.visible = first.visible;   /* bucket key now guarantees every
+          list member agrees, so this can only ever copy a uniform value
+          — but without it a build-time-hidden static's OWN bucket would
+          still default to visible (Mesh's own default), rendering
+          exactly the geometry the bucket key was just fenced to hide */
+        mm.userData.merged = true;    /* lets test invariants count the
+          merge-independent population (survivors only), not a post-merge
+          draw-call count */
         var rt = k.split('|')[3];
         if (rt) mm.userData.room = rt;
         root.add(mm);
@@ -5518,36 +5526,52 @@
       calFace, boardFace, critFace, radioFace, paneMesh, plaque, needle,
       steam, steam2, pendants, fridgeDoorTop, pantryDoor]);
     (pantryJars || []).forEach(function (j) { NO_MERGE.add(j); });
+    /* garageBackWall: exported and runtime-painted (FACE_MESH_MAP.garage
+       hangs the garage's lean-in card on it), carries room 'garage' but
+       no zone tag, and sits directly under extG (built via ebox(), which
+       always parents into extG) — nothing structural stops it bucketing
+       with the rest of the garage's same-material siding. It survives
+       unmerged today only because its material bucket holds exactly 3
+       members, one short of mergeStatic's 4-item floor: a data-dependent
+       safety, fenced here to make it structural instead. Note the bare
+       `garageBackWall` local this mesh is built under (inside the
+       garage's own build IIFE) does NOT resolve at this scope — only
+       its outer-scope capture, assigned there for exactly this reason,
+       does. */
+    NO_MERGE.add(webgl_garageBackWall);
     /* Per-group passes first (L5: within one hide-group, never across
        two). extG.add() makes garageDoorG, mudroomRoofG AND yardG its own
        children — plus a great deal of loose exterior fabric with no
        hide-group of its own (siding, roofline, street, driveway) — so
        extG gets a self-merge pass too, after the four dedicated passes
-       below have already run. garageDoorG and yardG are fenced out of
-       that self-pass explicitly: both carry substantial same-material,
-       same-room-tag fabric that would otherwise re-bucket with extG's
-       loose siding into an always-visible extG-level mesh, stranding
-       the hide-group's own visibility toggle. mudroomRoofG nests the
-       same way but is deliberately left OUT of the fence: it holds just
-       two meshes (the street-side wall + roof), one material each, and
-       neither one's material ever collects 3 more extG-reachable
-       'mudroom' siblings to cross mergeStatic's 4-item bucket floor —
-       verified empirically (quality=high and =low, several boots each:
-       mudroomRoofG.children.length stays 2 every time, untouched by the
-       extG pass). That is a fact about this scene's current material
-       diversity, not a structural guarantee — if a future material
-       consolidation pass ever collapses mudroom siding down to fewer,
-       more-shared materials, re-check this with the same method before
-       trusting it still holds. westWallG is a scene-level SIBLING of
-       extG (scene.add(westWallG), never extG.add), so it is never
-       reached by extG's own traversal regardless; skyDome is already in
-       NO_MERGE. */
+       below have already run. garageDoorG, mudroomRoofG and yardG are
+       all fenced out of that self-pass explicitly: each is a genuine L5
+       hide-group boundary, and any one of them left reachable risks its
+       own same-material, same-room-tag fabric re-bucketing with extG's
+       loose siding into an always-visible extG-level mesh that strands
+       the hide-group's own visibility toggle. mudroomRoofG was added to
+       this fence in a follow-up round: at first ship it held just two
+       meshes (the street-side wall + roof, different materials from
+       each other), and neither one's material ever collected 3 more
+       extG-reachable 'mudroom' siblings to cross mergeStatic's 4-item
+       bucket floor — verified empirically at the time (quality=high and
+       =low, several boots each). That was a fact about the scene's
+       material diversity that day, not a structural guarantee, and a
+       future consolidation of mudroom's siding materials down to fewer,
+       more-shared ones could have silently crossed the floor and
+       reparented mudroomRoofG's content out from under its own
+       visibility toggle. Fenced here instead, on equal footing with its
+       two siblings, so the safety is structural rather than a count to
+       keep re-verifying. westWallG is a scene-level SIBLING of extG
+       (scene.add(westWallG), never extG.add), so it is never reached by
+       extG's own traversal regardless; skyDome is already in NO_MERGE. */
     [westWallG, garageDoorG, mudroomRoofG, yardG].forEach(function (g) {
       mergeStatic(g, NO_MERGE);
     });
     var EXT_NO_MERGE = new Set(NO_MERGE);
     EXT_NO_MERGE.add(yardG);
     EXT_NO_MERGE.add(garageDoorG);
+    EXT_NO_MERGE.add(mudroomRoofG);
     mergeStatic(extG, EXT_NO_MERGE);
     /* Scene-level pass last: every hide-group (now including extG
        itself, whose loose fabric just became one boundary) is a
