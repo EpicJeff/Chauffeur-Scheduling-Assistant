@@ -49,7 +49,12 @@ THREE_WRAP = b"""
     window.__hpT0 = window.__hpT0 || performance.now();
     var o = r.render.bind(r);
     r.render = function (s, c) {
-      if (window.__hpBuildMs === undefined)
+      /* PBR tiers run PMREMGenerator first, which calls this same render()
+         on its own tiny internal scene (a handful of children) before the
+         house scene ever renders: latching there froze buildMs at a
+         constant ~7ms regardless of tier. Only latch on the real scene. */
+      if (window.__hpBuildMs === undefined && s && s.isScene &&
+          s.children.length > 8)
         window.__hpBuildMs = Math.round(performance.now() - window.__hpT0);
       window.__hpScene = s; window.__hpCam = c; window.__hpR = r;
       return o(s, c);

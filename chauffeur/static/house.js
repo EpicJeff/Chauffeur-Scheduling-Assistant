@@ -710,8 +710,20 @@
     function own(m) {
       if (m && m.isMesh && m.material && m.material.userData &&
           m.material.userData.shared) {
-        m.material = m.material.clone();
+        var src = m.material, b = src.userData._scBase;
+        m.material = src.clone();
         m.material.userData.shared = false;
+        /* a shared material may be wearing the scenery tint: the clone
+           must be born AUTHORED, and must not carry the knob's books */
+        if (b) {
+          m.material.color.copy(b.c);
+          if (b.r !== undefined) m.material.roughness = b.r;
+          if (b.e !== undefined) m.material.envMapIntensity = b.e;
+        }
+        delete m.material.userData._scBase;
+        delete m.material.userData._scEpoch;
+        delete m.material.userData._scSlot;
+        delete m.material.userData._scDim;
       }
       return m;
     }
@@ -5351,7 +5363,7 @@
       tree(-11.60, -13.20, 1.50, 'broad', 0.3);
     })();
     /* ---- B2 (batching spec): bake the garden into instances ----------
-       The yard is ~1,700 meshes drawn one call each, and after B1 its
+       The yard is ~1,043 meshes drawn one call each, and after B1 its
        repeated props already SHARE geometry and material objects — so
        identical (geometry, material) pairs are the buckets, and no
        builder needs to know it is being instanced. One InstancedMesh per
@@ -5561,8 +5573,16 @@
        more-shared ones could have silently crossed the floor and
        reparented mudroomRoofG's content out from under its own
        visibility toggle. Fenced here instead, on equal footing with its
-       two siblings, so the safety is structural rather than a count to
-       keep re-verifying. westWallG is a scene-level SIBLING of extG
+       siblings, so the safety is structural rather than a count to keep
+       re-verifying. livingRoofG carries the same fence pre-emptively
+       rather than after the fact: it too is a genuine extG-child
+       hide-group, and today it is safe only because it is open-concept
+       and holds zero meshes ("nothing to hide") — exactly the kind of
+       fact-about-the-scene-today that mudroomRoofG's own history, just
+       above, shows cannot be trusted to stay true. The first wall or
+       soffit ever hung on livingRoofG deserves the same structural
+       guarantee its siblings already have, not a future re-discovery of
+       this same bug. westWallG is a scene-level SIBLING of extG
        (scene.add(westWallG), never extG.add), so it is never reached by
        extG's own traversal regardless; skyDome is already in NO_MERGE. */
     [westWallG, garageDoorG, mudroomRoofG, yardG].forEach(function (g) {
@@ -5572,6 +5592,7 @@
     EXT_NO_MERGE.add(yardG);
     EXT_NO_MERGE.add(garageDoorG);
     EXT_NO_MERGE.add(mudroomRoofG);
+    EXT_NO_MERGE.add(livingRoofG);
     mergeStatic(extG, EXT_NO_MERGE);
     /* Scene-level pass last: every hide-group (now including extG
        itself, whose loose fabric just became one boundary) is a

@@ -32,22 +32,29 @@ def check(cond, msg):
 INVARIANT_JS = """() => {
   const S = window.__hpScene;
   if (!S) return { err: 'no scene captured' };
-  const use = new Map(), geos = new Set();
+  // use classifies EVERY mesh (merged included) into its material's
+  // zone-usage set, so a merged mesh that somehow crossed a zone
+  // boundary is still caught. mats/geos/meshes stay scoped to the
+  // never-merged survivors, because the ratio gates below measure how
+  // much of THAT population batched — merged output would flatter the
+  // ratio without reflecting new sharing.
+  const use = new Map(), geos = new Set(), mats = new Set();
   let meshes = 0;
   S.traverse(o => {
     if (!o.isMesh || !o.material || Array.isArray(o.material)) return;
-    if (o.userData && o.userData.merged) return;
-    meshes += 1;
-    if (o.geometry) geos.add(o.geometry.uuid);
     let z = '';
     for (let p = o; p; p = p.parent)
       if (p.userData && p.userData.zone) { z = p.userData.zone; break; }
     if (!use.has(o.material.uuid)) use.set(o.material.uuid, new Set());
     use.get(o.material.uuid).add(z);
+    if (o.userData && o.userData.merged) return;
+    meshes += 1;
+    mats.add(o.material.uuid);
+    if (o.geometry) geos.add(o.geometry.uuid);
   });
   let crossing = 0;
   use.forEach(s => { if (s.size > 1) crossing += 1; });
-  return { meshes, materials: use.size, geometries: geos.size, crossing };
+  return { meshes, materials: mats.size, geometries: geos.size, crossing };
 }"""
 
 
@@ -199,20 +206,25 @@ def scenario_the_house_boots_enters_and_leans_in():
         check(not inv.get('err'), 'sharing probe captured the scene')
         check(inv['crossing'] == 0,
               'no material crosses a zone boundary: %r' % inv)
-        # B3 fix round 1 (batching spec): INVARIANT_JS now skips any mesh
+        # B3 fix round 1 (batching spec): INVARIANT_JS excludes any mesh
         # stamped userData.merged (house.js's mergeStatic sets it on every
-        # merged mesh it builds), so `meshes`/`materials`/`geometries`
-        # count only the never-merged survivors: zone meshes (L4),
-        # NO_MERGE-fenced statics, transparent-material meshes, meshes
-        # whose material was never marked shared, and buckets that never
-        # reached mergeStatic's 4-item floor. That population is smaller
-        # AND less shared than either the pre-merge whole scene (Task
-        # 3/4: meshes=1006) or the post-merge whole scene this task's
-        # first round counted (merged output included: meshes=510,
-        # materials=409, geometries=442) — merge-eligibility already
-        # REQUIRES a shared material AND 4+ same-bucket instances, so
-        # survivors are drawn from exactly the categories least likely to
-        # share (one-offs by design, or simply under the floor).
+        # merged mesh it builds) from `meshes`/`materials`/`geometries`,
+        # so those three count only the never-merged survivors: zone
+        # meshes (L4), NO_MERGE-fenced statics, transparent-material
+        # meshes, meshes whose material was never marked shared, and
+        # buckets that never reached mergeStatic's 4-item floor. That
+        # population is smaller AND less shared than either the pre-merge
+        # whole scene (Task 3/4: meshes=1006) or the post-merge whole
+        # scene this task's first round counted (merged output included:
+        # meshes=510, materials=409, geometries=442) — merge-eligibility
+        # already REQUIRES a shared material AND 4+ same-bucket
+        # instances, so survivors are drawn from exactly the categories
+        # least likely to share (one-offs by design, or simply under the
+        # floor). Fix round 2 (final review): `crossing` no longer shares
+        # that exclusion — merged meshes ARE classified into the
+        # per-material zone-usage map, so a merge that somehow bucketed
+        # two zones' fabric together still trips this gate; only the
+        # three survivor counts stay scoped to the never-merged.
         #
         # That means the ORIGINAL pre-merge thresholds (materials <=
         # meshes*0.5, geometries <= meshes*0.8), calibrated against the
