@@ -1973,10 +1973,21 @@
        L-return is the same code as the north wall's run. `rows` runs
        bottom to top; each row's `cells` run left to right. */
     var FF = 0.09;                      /* face-frame stile/rail width */
+    var kPullStyle = 'box';             /* 'lathe' on the island run only */
     function kPull(g, x, y, zf, len, vert) {
       if (!KD2) return;
       var t = 0.028;
-      box(vert ? t : len, vert ? len : t, t, HW, x, y, zf + 0.055, g, STEEL);
+      if (kPullStyle === 'lathe') {
+        /* R2 (island): the `pull` PROFILE is a turned bar — lathed on its
+           natural Y axis for a vertical door pull, laid on its side (the
+           same rotate-to-protrude trick R1 used on `knob`) for a
+           horizontal drawer pull. Same x/y/zf/len every box pull used. */
+        var pm = latheAt('pull', [0.030, len, 0.030], HW, x, y, zf + 0.055,
+                         g, STEEL);
+        if (!vert) pm.rotation.z = Math.PI / 2;
+      } else {
+        box(vert ? t : len, vert ? len : t, t, HW, x, y, zf + 0.055, g, STEEL);
+      }
       if (KD3) {                        /* stand-offs, so it is not a decal */
         var d = (len / 2) - 0.03;
         box(t * 0.7, t * 0.7, 0.05, HW, x + (vert ? 0 : -d), y + (vert ? -d : 0),
@@ -2037,6 +2048,7 @@
       opt = opt || {};
       kFaceC = opt.face || C.cab;
       kBodyC = opt.body || C.cabShade;
+      kPullStyle = opt.pull || 'box';
       var g = new T.Group();
       g.position.set(cx, 0, cz);
       if (rot) g.rotation.y = rot;
@@ -2123,20 +2135,31 @@
     /* ---- the small-prop vocabulary, kitchen edition (S3.2) ------------- */
     var KJARC = [C.teal, C.terracotta, C.brass, C.cream, C.oxblood, C.linen];
     var KBAY = 0x4e6c6e;                /* bay backs: the teal family, dark */
+    /* R2: K2 profiles replace the cyl stand-ins, 1:1 by call site — every
+       (x,y,z,r,h) literal at every call site is unchanged (the function's
+       own `y` was always a BASE, matching latheAt's own base-pivot), only
+       the body each one builds. jar: K3 glassy (the pantry's own recipe,
+       §K3); lid stays brass/STEEL, same as the cyl lid it replaces. */
+    var KJAR_GLASS = { finish: 'glassy', thick: 0.1 };
+    var KCERAMIC = { finish: 'ceramic' };
     function kJar(g, x, y, z, r, h, c) {
-      cyl(r, r * 0.92, h, c, x, y + h / 2, z, g, 12, GLOSS);
-      if (KD3) cyl(r * 0.66, r * 0.82, 0.045, HW, x, y + h + 0.022, z, g, 10, STEEL);
+      latheAt('jar', [r / 0.40, h, r / 0.40], c, x, y, z, g, KJAR_GLASS);
+      if (KD3) latheAt('lid', [r * 0.85 / 0.37, h * 0.12, r * 0.85 / 0.37],
+                       HW, x, y + h, z, g, STEEL);
     }
     function kBowl(g, x, y, z, r, c) {
-      cyl(r, r * 0.58, 0.12, c, x, y + 0.06, z, g, 14, GLOSS);
+      latheAt('bowl', [r / 0.50, Math.max(0.10, r * 0.8), r / 0.50], c,
+              x, y, z, g, KCERAMIC);
     }
     function kPlates(g, x, y, z, r, c) {
+      var ph = 0.030;
       for (var k = 0; k < (KD3 ? 4 : 2); k++)
-        cyl(r, r, 0.030, c, x, y + 0.016 + k * 0.038, z, g, 14, GLOSS);
+        latheAt('plate', [r / 0.50, ph, r / 0.50], c, x,
+                y + k * (ph + 0.008), z, g, KCERAMIC);
     }
     function kCups(g, x, y, z, n, c) {
       for (var k = 0; k < n; k++)
-        cyl(0.055, 0.048, 0.10, c, x + k * 0.135, y + 0.05, z, g, 10, GLOSS);
+        latheAt('cup', [0.16, 0.11, 0.16], c, x + k * 0.135, y, z, g, KCERAMIC);
     }
     function kBooks(g, x, y, z0, n, step, seed) {
       for (var k = 0; k < n; k++) {
@@ -2228,7 +2251,13 @@
         NICE ? chamferGeo(w, CT_T, d, 0.02) : new T.BoxGeometry(w, CT_T, d),
         PBR ? new T.MeshStandardMaterial({ map: woodLight, color: kWoodK,
                                            roughness: 0.42, envMapIntensity: 0.35 })
-            : new T.MeshLambertMaterial({ color: 0xc89a66, map: woodLight || null }));
+            /* R2 (tier fix): this hand-rolled Lambert branch hardcoded the
+               LOW-tier fallback tan even at medium, where NICE is already
+               true and kWoodK is already 0xffffff — the PBR branch three
+               lines up got this right; the medium counter didn't, and read
+               measurably deeper for it. One authored value now, every
+               tier: kWoodK. */
+            : new T.MeshLambertMaterial({ color: kWoodK, map: woodLight || null }));
       m.position.set(x, CT_Y - CT_T / 2, z);
       finish(m); scene.add(m); return m;
     }
@@ -2336,14 +2365,24 @@
         box(1.52, 0.01, 0.88, 0x5b656d, SX, 1.080, -4.57, null,
             { rough: 0.12, metal: 0.7 });
       }
-      cyl(0.05, 0.06, 0.52, C.steel, SX, CT_Y + 0.26, NZ + 0.30, null, 12, CHROME);
-      var neck = cyl(0.04, 0.04, 0.50, C.steel, SX, CT_Y + 0.50, NZ + 0.50,
-                     null, 10, CHROME);
-      neck.rotation.x = 1.25;
-      cyl(0.035, 0.035, 0.20, C.steel, SX, CT_Y + 0.40, NZ + 0.72, null, 8, CHROME);
+      /* R2: the faucet becomes a proper sweepAt gooseneck — a riser and a
+         curved arc down to the spout in ONE tube, replacing the riser +
+         angled-cylinder "neck" + spout-tip cyl (3 meshes -> 1 sweep). The
+         base point matches the old riser's own foot (SX, CT_Y, NZ+0.30). */
+      sweepAt([[SX, CT_Y + 0.02, NZ + 0.30], [SX, CT_Y + 0.46, NZ + 0.30],
+               [SX, CT_Y + 0.64, NZ + 0.47], [SX, CT_Y + 0.60, NZ + 0.64],
+               [SX, CT_Y + 0.39, NZ + 0.72]], 0.032, C.steel, null, CHROME);
       cyl(0.05, 0.02, 0.04, C.steel, SX, CT_Y + 0.29, NZ + 0.72, null, 8, CHROME);
-      cyl(0.028, 0.028, 0.13, C.steel, SX + 0.34, CT_Y + 0.10, NZ + 0.26,
-          null, 8, CHROME);
+      /* twin knob handles flanking the riser (part list), deck-mounted —
+         replaces the single lever the apron-sink faucet had. Sized up
+         once already (probe-verified: 0.045 chrome-on-white deck read as
+         two pale flecks, same low-contrast lesson as the range knobs, but
+         a chrome faucet earns chrome handles, so size carries this one
+         instead of a colour swap). */
+      [-0.32, 0.32].forEach(function (hx) {
+        latheAt('knob', [0.065, 0.14, 0.065], C.steel, SX + hx, CT_Y + 0.02,
+                NZ + 0.26, null, CHROME);
+      });
       if (KD2) {                            /* the sink is a used sink */
         cyl(0.10, 0.12, 0.16, C.teal, SX + 0.52, CT_Y + 0.08, NZ + 0.28,
             null, 12, GLOSS);
@@ -2375,6 +2414,13 @@
        of the three kitchen plates put them there (S7.7) */
     box(2.24, 0.07, 0.34, C.cab, 0, 2.535, 0.185, winG, MATT);
     if (KD3) box(2.30, 0.05, 0.05, C.cabShade, 0, 2.485, 0.34, winG, MATT);
+    /* R2: a latch knob at the meeting rail (part list); sill chamfer
+       already arrives free (K1's default box ch, no override here) */
+    if (KD2) {
+      var latch = latheAt('knob', [0.045, 0.05, 0.045], HW, 0, 2.62, 0.13,
+                          winG, STEEL);
+      latch.rotation.x = Math.PI / 2;
+    }
     if (KD2) {
       /* the sill's LEFT end stays clear: the temperature is painted into
          the pane's bottom-left corner, and a plant there hid it. Moving the
@@ -2451,6 +2497,34 @@
     box(1.3, 0.62, 0.06, 0x556069, 0, 0.5, 0.74, counter, STEEL);
     if (DETAIL >= 3) box(0.9, 0.34, 0.02, 0x1c2024, 0, 0.5, 0.78, counter, GLOSS);
     box(1.1, 0.06, 0.09, C.steel, 0, 0.86, 0.78, counter, CHROME);
+    /* R2 (part list): 5 knob dials along the control rail just built.
+       C.graphite, not C.steel — a steel knob on the strip's own C.steel
+       read as a bump with no edge (probe-verified: invisible past arm's
+       length). Graphite against the chrome strip is the same trick the
+       hood's dark canopy plays against its own brass banding. */
+    [-0.44, -0.22, 0, 0.22, 0.44].forEach(function (kx) {
+      var kn = latheAt('knob', [0.048, 0.05, 0.048], C.graphite, kx, 0.86,
+                       0.825, counter, STEEL);
+      kn.rotation.x = Math.PI / 2;
+    });
+    /* the oven door's own pull — a full-width sweepAt bar, proud of the
+       body's front face (0.725) the way the fridge's D-pulls are proud of
+       its doors */
+    sweepAt([[-0.48, 0.38, 0.735], [-0.48, 0.38, 0.775],
+             [0.48, 0.38, 0.775], [0.48, 0.38, 0.735]],
+            0.020, C.steel, counter, CHROME);
+    /* 2 hinge caps, just outside the pull's own ends — grouping them with
+       the hardware they hang beside is what makes them read as hinges and
+       not stray dots (probe-verified: at the door's true bottom corner,
+       against the kick strip's own shadow, they vanished) */
+    [-0.50, 0.50].forEach(function (hx) {
+      latheAt('hinge', [0.040, 0.06, 0.040], C.steel, hx, 0.15, 0.735,
+              counter, STEEL);
+    });
+    /* a chamfered kick strip — the existing floor pad below (y 0.035,
+       z ±0.66) sits entirely behind the body's own front face (0.725) and
+       never reads; this one sits AT the face, like the fridge's plinth */
+    box(1.30, 0.06, 0.05, C.ink, 0, 0.05, 0.70, counter, { rough: 0.85, ch: 0.012 });
     box(1.5, 0.05, 1.45, 0x2e3237, 0, 1.11, 0, counter, { rough: 0.35, metal: 0.4 });
     cyl(0.16, 0.16, 0.03, 0x14161a, -0.4, 1.15, 0.3, counter, 12);
     cyl(0.16, 0.16, 0.03, 0x14161a, 0.4, 1.15, 0.3, counter, 12);
@@ -2541,8 +2615,41 @@
          { finish: 'enamel' });
     rbox(1.6, 1.35, 0.07, 0.03, C.teal, 0, 1.02, 0.77, fridge,
          { finish: 'enamel' });
-    box(0.07, 1.3, 0.09, C.steel, 0.62, 2.95, 0.82, fridge, CHROME);
-    box(0.07, 1.0, 0.09, C.steel, 0.62, 1.07, 0.82, fridge, CHROME);
+    /* R2: the spike's variant C, shipped for real. sweepAt D-pulls replace
+       the two box handle bars — same x and the same y-span each one had. */
+    [[2.95, 0.65], [1.07, 0.50]].forEach(function (p) {
+      sweepAt([[0.62, p[0] - p[1], 0.80], [0.62, p[0] - p[1], 0.92],
+               [0.62, p[0] + p[1], 0.92], [0.62, p[0] + p[1], 0.80]],
+              0.028, C.steel, fridge, CHROME);
+    });
+    /* 4 hinges, the west edge — opposite the pulls, top and bottom of
+       each door */
+    [3.68, 2.22, 1.65, 0.40].forEach(function (hy) {
+      latheAt('hinge', [0.045, 0.09, 0.045], C.steel, -0.83, hy, 0.79,
+              fridge, STEEL);
+    });
+    /* 4 feet, one per corner */
+    [[-0.80, -0.62], [0.80, -0.62], [-0.80, 0.62], [0.80, 0.62]]
+      .forEach(function (fp) {
+        latheAt('foot', [0.12, 0.09, 0.12], C.graphite, fp[0], 0, fp[1],
+                fridge, STEEL);
+      });
+    /* the maker's badge, lower-left of the top door, clear of the pull */
+    var badge = latheAt('plate', [0.045, 0.012, 0.045], HW, 0.28, 2.35,
+                        0.807, fridge, STEEL);
+    badge.rotation.x = Math.PI / 2;
+    /* door gasket frames: 4 thin ch strips per door, inset from its edge */
+    [[2.95, 1.55], [1.07, 1.35]].forEach(function (dp) {
+      var cy = dp[0], hh = dp[1] / 2 - 0.035;
+      [cy - hh, cy + hh].forEach(function (ry) {
+        box(1.53, 0.03, 0.012, C.ink, 0, ry, 0.808, fridge,
+            { rough: 0.9, ch: 0.006 });
+      });
+      [-0.765, 0.765].forEach(function (rx) {
+        box(0.03, dp[1] - 0.07, 0.012, C.ink, rx, cy, 0.808, fridge,
+            { rough: 0.9, ch: 0.006 });
+      });
+    });
     if (DETAIL >= 2)                    /* a plinth: appliances have feet */
       box(1.72, 0.13, 0.06, C.graphite, 0, 0.065, 0.72, fridge, { rough: 0.6 });
     var magnets = new T.Group();
@@ -2787,7 +2894,7 @@
       { h: CT_Y - CT_T - TOE, cells: [
         { w: 1.10, kind: 'drawers3' }, { w: 1.30, kind: 'doors2' },
         { w: 1.00, kind: 'drawers2' }] }
-    ], { toe: true, face: 0x6f5540, body: 0x584129 });
+    ], { toe: true, face: 0x6f5540, body: 0x584129, pull: 'lathe' });
     var islandTop = new T.Mesh(
       NICE ? chamferGeo(3.74, CT_T, 2.34, 0.03) : new T.BoxGeometry(3.74, CT_T, 2.34),
       PBR ? new T.MeshStandardMaterial({ map: marble, color: 0xe4dfd5,
@@ -2826,12 +2933,19 @@
     function stool(x, z) {
       var seat = new T.Mesh(new T.CylinderGeometry(0.30, 0.26, 0.08, 14),
         PBR ? new T.MeshStandardMaterial({ map: woodLight, roughness: 0.6 })
-            : new T.MeshLambertMaterial({ color: 0xc89a66, map: woodLight || null }));
+            /* R2 (tier fix): kWoodK, not the low-tier flat tan — see kTop */
+            : new T.MeshLambertMaterial({ color: kWoodK, map: woodLight || null }));
       seat.position.set(x, 0.86, z); finish(seat); scene.add(seat);
       cyl(0.05, 0.07, 0.84, C.wood2, x, 0.42, z, null, 10, WOODM);
       if (DETAIL >= 2) {
         cyl(0.20, 0.22, 0.03, C.wood2, x, 0.26, z, null, 12, WOODM);
         cyl(0.17, 0.19, 0.03, C.wood2, x, 0.04, z, null, 12, WOODM);
+        /* R2 (part list): 4 `foot` lathes, C.ink, at the base ring */
+        [0.785, 2.356, 3.927, 5.498].forEach(function (ang) {
+          latheAt('foot', [0.045, 0.035, 0.045], C.ink,
+                  x + Math.cos(ang) * 0.13, 0, z + Math.sin(ang) * 0.13,
+                  null, MATT);
+        });
       }
       blobShadow(0.34, 0.3, x, z);
     }
