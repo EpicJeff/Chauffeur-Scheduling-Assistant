@@ -744,37 +744,114 @@
     }
     function box(w, h, d, c, x, y, z, group, opts) {
       var g0 = group || scene;
-      var m = new T.Mesh(cgeo('b|' + w + '|' + h + '|' + d, function () {
-        return new T.BoxGeometry(w, h, d);
-      }), mat(c, opts, inZoneGroup(g0)));
+      var ch = opts && opts.ch !== undefined ? opts.ch
+             : (NICE ? 0.022 : 0);
+      var m = new T.Mesh(
+        ch > 0 ? chamferGeo(w, h, d, ch)
+               : cgeo('b|' + w + '|' + h + '|' + d, function () {
+                   return new T.BoxGeometry(w, h, d);
+                 }),
+        mat(c, opts, inZoneGroup(g0)));
       m.position.set(x, y, z); finish(m); g0.add(m); return m;
     }
-    function roundedGeo(w, h, d, r) {
-      return cgeo('r|' + w + '|' + h + '|' + d + '|' + r, function () {
-        r = Math.min(r, w / 2 - 0.01, h / 2 - 0.01, d / 2 - 0.01);
-        var x = -w / 2 + r, y = -h / 2 + r, X = w / 2 - r, Y = h / 2 - r;
-        var shape = new T.Shape();
-        shape.moveTo(-w / 2, y);
-        shape.lineTo(-w / 2, Y);
-        shape.absarc(x, Y, r, Math.PI, Math.PI / 2, true);
-        shape.lineTo(X, h / 2);
-        shape.absarc(X, Y, r, Math.PI / 2, 0, true);
-        shape.lineTo(w / 2, y);
-        shape.absarc(X, y, r, 0, -Math.PI / 2, true);
-        shape.lineTo(x, -h / 2);
-        shape.absarc(x, y, r, -Math.PI / 2, Math.PI, true);
-        var g = new T.ExtrudeGeometry(shape, {
-          depth: d - 2 * r, bevelEnabled: true, bevelThickness: r,
-          bevelSize: r, bevelSegments: 2, steps: 1, curveSegments: 5 });
-        g.center();
-        return g;
+    /* ---- K1 (quality spec §3): the chamfered box ----------------------
+       44 triangles: 6 faces, 12 one-segment chamfer strips, 8 corner
+       tris. Normals are position-averaged after computeVertexNormals so
+       the strip SHADES like a fillet — a flat corner facet square to the
+       sun reads as a white triangle (the spike's first draft). UVs are
+       planar per dominant axis, which matches how the box-face canvas
+       maps are authored. Cheap enough to build 254 times on a Pi, which
+       roundedGeo (a Shape triangulation) never was. */
+    function chamferRaw(w, h, d, ch) {
+      var full = [w / 2, h / 2, d / 2];
+      var c = Math.max(1e-4, Math.min(ch, full[0] * 0.49, full[1] * 0.49,
+                                      full[2] * 0.49));
+      var inner = [full[0] - c, full[1] - c, full[2] - c];
+      var pos = [], uv = [];
+      function tri(a, b, e) {
+        var ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+        var vx = e[0] - a[0], vy = e[1] - a[1], vz = e[2] - a[2];
+        var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz,
+            nz = ux * vy - uy * vx;
+        var cx = (a[0] + b[0] + e[0]) / 3, cy = (a[1] + b[1] + e[1]) / 3,
+            cz = (a[2] + b[2] + e[2]) / 3;
+        if (nx * cx + ny * cy + nz * cz < 0) { var t = b; b = e; e = t; }
+        var an = Math.abs(nx), bn = Math.abs(ny), dn = Math.abs(nz);
+        var i0 = 0, i1 = 1;
+        if (an >= bn && an >= dn) { i0 = 2; i1 = 1; }
+        else if (bn >= dn) { i0 = 0; i1 = 2; }
+        [a, b, e].forEach(function (p) {
+          pos.push(p[0], p[1], p[2]);
+          uv.push((p[i0] + full[i0]) / (2 * full[i0]),
+                  (p[i1] + full[i1]) / (2 * full[i1]));
+        });
+      }
+      function quad(a, b, e, f) { tri(a, b, e); tri(a, e, f); }
+      function V() { return [0, 0, 0]; }
+      var a, b, e, sa, sb, sc;
+      for (a = 0; a < 3; a++) {
+        b = (a + 1) % 3; e = (a + 2) % 3;
+        for (sa = -1; sa <= 1; sa += 2) {
+          var q = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(function (s) {
+            var p = V(); p[a] = sa * full[a]; p[b] = s[0] * inner[b];
+            p[e] = s[1] * inner[e]; return p;
+          });
+          quad(q[0], q[1], q[2], q[3]);
+        }
+      }
+      for (a = 0; a < 3; a++) {
+        b = (a + 1) % 3; e = (a + 2) % 3;
+        for (sa = -1; sa <= 1; sa += 2) for (sb = -1; sb <= 1; sb += 2) {
+          var p1 = V(); p1[a] = sa * full[a]; p1[b] = sb * inner[b]; p1[e] = -inner[e];
+          var p2 = V(); p2[a] = sa * full[a]; p2[b] = sb * inner[b]; p2[e] = inner[e];
+          var p3 = V(); p3[a] = sa * inner[a]; p3[b] = sb * full[b]; p3[e] = inner[e];
+          var p4 = V(); p4[a] = sa * inner[a]; p4[b] = sb * full[b]; p4[e] = -inner[e];
+          quad(p1, p2, p3, p4);
+        }
+      }
+      for (sa = -1; sa <= 1; sa += 2) for (sb = -1; sb <= 1; sb += 2)
+        for (sc = -1; sc <= 1; sc += 2) {
+          tri([sa * full[0], sb * inner[1], sc * inner[2]],
+              [sa * inner[0], sb * full[1], sc * inner[2]],
+              [sa * inner[0], sb * inner[1], sc * full[2]]);
+        }
+      var g = new T.BufferGeometry();
+      g.setAttribute('position', new T.Float32BufferAttribute(pos, 3));
+      g.setAttribute('uv', new T.Float32BufferAttribute(uv, 2));
+      g.computeVertexNormals();
+      var na = g.attributes.normal, pa = g.attributes.position, acc = {}, k, i;
+      for (i = 0; i < pa.count; i++) {
+        k = (pa.getX(i) * 1e4 | 0) + '_' + (pa.getY(i) * 1e4 | 0) + '_' +
+            (pa.getZ(i) * 1e4 | 0);
+        var s2 = acc[k] || (acc[k] = [0, 0, 0]);
+        s2[0] += na.getX(i); s2[1] += na.getY(i); s2[2] += na.getZ(i);
+      }
+      for (i = 0; i < pa.count; i++) {
+        k = (pa.getX(i) * 1e4 | 0) + '_' + (pa.getY(i) * 1e4 | 0) + '_' +
+            (pa.getZ(i) * 1e4 | 0);
+        var v2 = acc[k], L2 = Math.sqrt(v2[0] * v2[0] + v2[1] * v2[1] +
+                                        v2[2] * v2[2]) || 1;
+        na.setXYZ(i, v2[0] / L2, v2[1] / L2, v2[2] / L2);
+      }
+      na.needsUpdate = true;
+      return g;
+    }
+    function chamferGeo(w, h, d, ch) {
+      return cgeo('b|' + w + '|' + h + '|' + d + '|' + ch, function () {
+        return chamferRaw(w, h, d, ch);
       });
     }
+    /* K1: architecture (walls, slabs, roofs, trim that sells an edge)
+       opts out of the prop-tier chamfer default — sharp() forces ch:0
+       without disturbing whatever else the call site already passed. */
+    function sharp(o) {
+      var r2 = {}; if (o) for (var k3 in o) r2[k3] = o[k3]; r2.ch = 0; return r2;
+    }
     function rbox(w, h, d, r, c, x, y, z, group, opts) {
-      if (DETAIL < 2) return box(w, h, d, c, x, y, z, group, opts);
-      var g0 = group || scene;
-      var m = new T.Mesh(roundedGeo(w, h, d, r), mat(c, opts, inZoneGroup(g0)));
-      m.position.set(x, y, z); finish(m); g0.add(m); return m;
+      var o = {}, k2;
+      if (opts) for (k2 in opts) o[k2] = opts[k2];
+      o.ch = DETAIL < 2 ? 0 : r;
+      return box(w, h, d, c, x, y, z, group, o);
     }
     function cyl(rt, rb, h, c, x, y, z, group, seg, opts) {
       var g0 = group || scene;
@@ -905,7 +982,7 @@
     if (SHADOWS) floor.receiveShadow = true;
     scene.add(floor);
 
-    var wallB = box(13, 5.6, 0.35, C.wall, 0, 2.8, -5.55, null, { rough: 0.95 });
+    var wallB = box(13, 5.6, 0.35, C.wall, 0, 2.8, -5.55, null, sharp({ rough: 0.95 }));
     /* west wall in two pieces + header: an open doorway into the
        mudroom at z 2.8..4.4 (architect pass — the kitchen looks through
        to the bench) */
@@ -915,17 +992,17 @@
     var westWallG = new T.Group();
     scene.add(westWallG);
     var wallL = box(0.35, 5.6, 4.05, C.wall, -6.65, 2.8, -3.475, westWallG,
-                    { rough: 0.95 });
+                    sharp({ rough: 0.95 }));
     var wallL1a = box(0.35, 5.6, 2.55, C.wall, -6.65, 2.8, 1.525, westWallG,
-                      { rough: 0.95 });
-    box(0.35, 2.4, 1.7, C.wall, -6.65, 4.4, -0.6, westWallG, { rough: 0.95 });
+                      sharp({ rough: 0.95 }));
+    box(0.35, 2.4, 1.7, C.wall, -6.65, 4.4, -0.6, westWallG, sharp({ rough: 0.95 }));
     var wallL1b = box(0.35, 5.6, 1.1, C.wall, -6.65, 2.8, 4.95, westWallG,
-                      { rough: 0.95 });
-    box(0.35, 2.2, 1.6, C.wall, -6.65, 4.5, 3.6, westWallG, { rough: 0.95 });
+                      sharp({ rough: 0.95 }));
+    box(0.35, 2.2, 1.6, C.wall, -6.65, 4.5, 3.6, westWallG, sharp({ rough: 0.95 }));
     if (DETAIL >= 2) {                   /* casing sells the opening */
-      box(0.42, 3.5, 0.1, 0xe4ddd1, -6.65, 1.72, 2.82, westWallG);
-      box(0.42, 3.5, 0.1, 0xe4ddd1, -6.65, 1.72, 4.38, westWallG);
-      box(0.42, 0.1, 1.66, 0xe4ddd1, -6.65, 3.44, 3.6, westWallG);
+      box(0.42, 3.5, 0.1, 0xe4ddd1, -6.65, 1.72, 2.82, westWallG, sharp());
+      box(0.42, 3.5, 0.1, 0xe4ddd1, -6.65, 1.72, 4.38, westWallG, sharp());
+      box(0.42, 0.1, 1.66, 0xe4ddd1, -6.65, 3.44, 3.6, westWallG, sharp());
     }
     if (SHADOWS) { wallB.castShadow = false; wallL.castShadow = false;
                    wallL1b.castShadow = false; }
@@ -936,25 +1013,25 @@
        exterior camera can see gets a band one shade darker than the face
        it caps, and the floor slab gets the poche line at its top. */
     var SECT = { rough: 0.9 };
-    box(0.09, 5.6, 0.41, C.linen, 6.53, 2.8, -5.55, null, SECT);
-    box(13.6, 0.28, 0.5, C.shell, 0, 5.66, -5.6);
-    box(0.5, 0.28, 11.6, C.shell, -6.7, 5.66, 0);
+    box(0.09, 5.6, 0.41, C.linen, 6.53, 2.8, -5.55, null, sharp(SECT));
+    box(13.6, 0.28, 0.5, C.shell, 0, 5.66, -5.6, null, sharp());
+    box(0.5, 0.28, 11.6, C.shell, -6.7, 5.66, 0, null, sharp());
     if (DETAIL >= 3) {                   /* baseboards: the trim that sells a wall */
-      box(13, 0.2, 0.08, 0xe4ddd1, 0, 0.1, -5.34);
-      box(0.08, 0.2, 4.0, 0xe4ddd1, -6.44, 0.1, -3.5);
-      box(0.08, 0.2, 2.5, 0xe4ddd1, -6.44, 0.1, 1.5);
-      box(0.08, 0.2, 1.0, 0xe4ddd1, -6.44, 0.1, 4.95);
+      box(13, 0.2, 0.08, 0xe4ddd1, 0, 0.1, -5.34, null, sharp());
+      box(0.08, 0.2, 4.0, 0xe4ddd1, -6.44, 0.1, -3.5, null, sharp());
+      box(0.08, 0.2, 2.5, 0xe4ddd1, -6.44, 0.1, 1.5, null, sharp());
+      box(0.08, 0.2, 1.0, 0xe4ddd1, -6.44, 0.1, 4.95, null, sharp());
     }
 
     /* ---- the GREAT ROOM extension (architect pass): the kitchen flows
        forward-left into a living room of its own scale — one open
        floorplan, one wood floor, no wall between. ---- */
-    box(13.6, 0.5, 8.4, C.shell, 0, -0.27, 9.9);
+    box(13.6, 0.5, 8.4, C.shell, 0, -0.27, 9.9, null, sharp());
     /* the slab's cut faces: the band the plates put under the floor */
-    box(13.70, 0.50, 0.05, C.cabShade, 0, -0.27, 14.125, null, { rough: 0.9 });
-    box(13.70, 0.13, 0.09, C.stone, 0, -0.045, 14.140, null, { rough: 0.9 });
-    box(0.05, 0.50, 19.92, C.cabShade, 6.825, -0.27, 4.14, null, { rough: 0.9 });
-    box(0.09, 0.13, 19.92, C.stone, 6.840, -0.045, 4.14, null, { rough: 0.9 });
+    box(13.70, 0.50, 0.05, C.cabShade, 0, -0.27, 14.125, null, sharp({ rough: 0.9 }));
+    box(13.70, 0.13, 0.09, C.stone, 0, -0.045, 14.140, null, sharp({ rough: 0.9 }));
+    box(0.05, 0.50, 19.92, C.cabShade, 6.825, -0.27, 4.14, null, sharp({ rough: 0.9 }));
+    box(0.09, 0.13, 19.92, C.stone, 6.840, -0.045, 4.14, null, sharp({ rough: 0.9 }));
     /* the LIVING plane: 13 x 8.5 at z 9.95, sampling only the top
        8.5/11 of its texture, so the canvas spans world z 3.2..14.2 -
        which is the range the pool bake is told about, and why the cool
@@ -971,15 +1048,15 @@
     if (SHADOWS) floor2.receiveShadow = true;
     scene.add(floor2);
     var wallL2 = box(0.35, 5.6, 8.4, C.wall, -6.65, 2.8, 10.0, westWallG,
-                     { rough: 0.95 });
-    box(0.41, 5.6, 0.09, C.linen, -6.65, 2.8, 14.235, westWallG, { rough: 0.9 });
+                     sharp({ rough: 0.95 }));
+    box(0.41, 5.6, 0.09, C.linen, -6.65, 2.8, 14.235, westWallG, sharp({ rough: 0.9 }));
     if (SHADOWS) wallL2.castShadow = false;
-    box(0.5, 0.28, 8.6, C.shell, -6.7, 5.66, 10.1);
-    if (DETAIL >= 3) box(0.08, 0.2, 8.2, 0xe4ddd1, -6.44, 0.1, 9.9);
+    box(0.5, 0.28, 8.6, C.shell, -6.7, 5.66, 10.1, null, sharp());
+    if (DETAIL >= 3) box(0.08, 0.2, 8.2, 0xe4ddd1, -6.44, 0.1, 9.9, null, sharp());
     /* the front door: decorative — the house has a face; the LEAVE
        signal stays the mudroom door zone */
     var fdoor = new T.Mesh(
-      NICE ? roundedGeo(0.14, 3.2, 1.4, 0.04) : new T.BoxGeometry(0.14, 3.2, 1.4),
+      NICE ? chamferGeo(0.14, 3.2, 1.4, 0.04) : new T.BoxGeometry(0.14, 3.2, 1.4),
       PBR ? new T.MeshStandardMaterial({ map: woodDoor, roughness: 0.65 })
           : new T.MeshLambertMaterial({ color: 0xc9a06c, map: woodDoor || null }));
     fdoor.position.set(-6.42, 1.6, 13.35);
@@ -1283,7 +1360,7 @@
         var DP = dp || 1.24;
         function sb(w, h, d, r, c, px, py, pz, o) {
           var m = new T.Mesh(
-            D2 ? roundedGeo(w, h, d, r) : new T.BoxGeometry(w, h, d),
+            D2 ? chamferGeo(w, h, d, r) : new T.BoxGeometry(w, h, d),
             mat(c, o || FAB));
           m.position.set(px, py, pz);
           m.userData.room = 'living';
@@ -1335,7 +1412,7 @@
         ltag(g); scene.add(g);
         function sb(w, h, d, r, c, px, py, pz, o) {
           var m = new T.Mesh(
-            D2 ? roundedGeo(w, h, d, r) : new T.BoxGeometry(w, h, d),
+            D2 ? chamferGeo(w, h, d, r) : new T.BoxGeometry(w, h, d),
             mat(c, o || FAB));
           m.position.set(px, py, pz);
           m.userData.room = 'living'; finish(m); g.add(m); return m;
@@ -1963,7 +2040,7 @@
     /* countertops: a slab that overhangs the fronts by 0.05 (S3.1.6) */
     function kTop(w, d, x, z) {
       var m = new T.Mesh(
-        NICE ? roundedGeo(w, CT_T, d, 0.02) : new T.BoxGeometry(w, CT_T, d),
+        NICE ? chamferGeo(w, CT_T, d, 0.02) : new T.BoxGeometry(w, CT_T, d),
         PBR ? new T.MeshStandardMaterial({ map: woodLight, color: kWoodK,
                                            roughness: 0.42, envMapIntensity: 0.35 })
             : new T.MeshLambertMaterial({ color: 0xc89a66, map: woodLight || null }));
@@ -2268,7 +2345,7 @@
     /* ---- FRIDGE (zone: fridge) — brushed steel, teal panels, magnets --- */
     var fridge = zoneGroup('fridge', -5.55, 0, -4.35);
     var fbody = new T.Mesh(
-      NICE ? roundedGeo(1.9, 3.95, 1.5, 0.08) : new T.BoxGeometry(1.9, 3.95, 1.5),
+      NICE ? chamferGeo(1.9, 3.95, 1.5, 0.08) : new T.BoxGeometry(1.9, 3.95, 1.5),
       PBR ? new T.MeshStandardMaterial({ map: brushed, color: 0xdadee2,
                                          roughness: 0.3, metalness: 0.8,
                                          envMapIntensity: 1.1 })
@@ -2300,7 +2377,7 @@
     boardFace.position.set(0.26, 1.7, 0);
     board.add(boardFace);
     var pantryDoor = new T.Mesh(
-      NICE ? roundedGeo(0.12, 3.1, 1.6, 0.04) : new T.BoxGeometry(0.12, 3.1, 1.6),
+      NICE ? chamferGeo(0.12, 3.1, 1.6, 0.04) : new T.BoxGeometry(0.12, 3.1, 1.6),
       PBR ? new T.MeshStandardMaterial({ map: woodDoor, roughness: 0.65 })
           : new T.MeshLambertMaterial({ color: 0xc9a06c,
                                         map: woodDoor || null }));
@@ -2484,7 +2561,7 @@
     doorG.rotation.y = Math.PI;   /* the hero card reads from inside */
     doorG.userData.room = 'mudroom';
     var slabD = new T.Mesh(
-      NICE ? roundedGeo(1.7, 4.1, 0.14, 0.04) : new T.BoxGeometry(1.7, 4.1, 0.14),
+      NICE ? chamferGeo(1.7, 4.1, 0.14, 0.04) : new T.BoxGeometry(1.7, 4.1, 0.14),
       PBR ? new T.MeshStandardMaterial({ map: woodDoor, roughness: 0.65 })
           : new T.MeshLambertMaterial({ color: 0xc9a06c, map: woodDoor || null }));
     slabD.position.set(0, 2.05, 0);
@@ -2521,7 +2598,7 @@
         { w: 1.00, kind: 'drawers2' }] }
     ], { toe: true, face: 0x6f5540, body: 0x584129 });
     var islandTop = new T.Mesh(
-      NICE ? roundedGeo(3.74, CT_T, 2.34, 0.03) : new T.BoxGeometry(3.74, CT_T, 2.34),
+      NICE ? chamferGeo(3.74, CT_T, 2.34, 0.03) : new T.BoxGeometry(3.74, CT_T, 2.34),
       PBR ? new T.MeshStandardMaterial({ map: marble, color: 0xe4dfd5,
                                          roughness: 0.24, envMapIntensity: 0.3 })
           : new T.MeshLambertMaterial({ color: 0xe4dfd5, map: marble || null }));
@@ -2843,8 +2920,12 @@
                  leafB: 0x527f44 };
     var extG = new T.Group();
     scene.add(extG);
+    /* K1: every ebox() call is exterior shell fabric (siding, roof, trim,
+       driveway, street) unless the call is a genuine prop standing out
+       there (the mailbox) — those call box(..., extG, ...) directly so
+       they keep the NICE-tier chamfer default this wrapper opts out of. */
     function ebox(w, h, d, c, x, y, z, opts) {
-      return box(w, h, d, c, x, y, z, extG, opts);
+      return box(w, h, d, c, x, y, z, extG, sharp(opts));
     }
     /* the outdoors pays the same tier the kitchen does (user ruling
        2026-09-08): mottled grass, clapboard, offset shingles, jointed
@@ -3021,20 +3102,20 @@
       webgl_garageBackWall = garageBackWall;
       gtag(box(5.6, 1.1, 0.24, NICE ? 0xffffff : EXTC.garage,
                -15.4, 4.05, 9.88, garageDoorG,
-               NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 }));
+               sharp(NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 })));
       /* the lintel: the header stopped at y 3.5 and the door at 3.1, so
          a 0.4 slot ran the width of the bay and the resting camera
          looked straight through it at the shelves */
       gtag(box(5.6, 0.46, 0.24, NICE ? 0xffffff : EXTC.garage,
                -15.4, 3.27, 9.88, garageDoorG,
-               NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 }));
-      gtag(box(3.9, 0.16, 0.16, EXTC.trim, -15.4, 3.16, 10.00, garageDoorG));
+               sharp(NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 })));
+      gtag(box(3.9, 0.16, 0.16, EXTC.trim, -15.4, 3.16, 10.00, garageDoorG, sharp()));
       gtag(box(0.76, 3.5, 0.24, NICE ? 0xffffff : EXTC.garage,
                -17.58, 1.75, 9.88, garageDoorG,
-               NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 }));
+               sharp(NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 })));
       gtag(box(0.76, 3.5, 0.24, NICE ? 0xffffff : EXTC.garage,
                -13.22, 1.75, 9.88, garageDoorG,
-               NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 }));
+               sharp(NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 })));
       gtag(rbox(3.6, 3.0, 0.14, 0.05, EXTC.trim, -15.4, 1.6, 10.02,
                 garageDoorG, { rough: 0.85 }));
       if (DETAIL >= 2) {
@@ -3099,7 +3180,7 @@
       var gLen = Math.sqrt(1.5 * 1.5 + 2.95 * 2.95) + 0.5;
       var gw = box(gLen, 0.16, 9.0, NICE ? 0xffffff : EXTC.roof,
                    -16.9, 5.6, 6.0, garageDoorG,
-                   NICE ? { rough: 0.9, map: shingleT } : { rough: 0.9 });
+                   sharp(NICE ? { rough: 0.9, map: shingleT } : { rough: 0.9 }));
       gw.rotation.z = gSlope;    /* west slope: HIGH at the ridge, low at
                                     the eave — the sign was inverted, which
                                     made a butterfly roof with a hole into
@@ -3108,10 +3189,10 @@
       gtag(gw);
       var ge = box(gLen, 0.16, 9.0, NICE ? 0xffffff : EXTC.roof,
                    -13.9, 5.6, 6.0, garageDoorG,
-                   NICE ? { rough: 0.9, map: shingleT } : { rough: 0.9 });
+                   sharp(NICE ? { rough: 0.9, map: shingleT } : { rough: 0.9 }));
       ge.rotation.z = -gSlope;
       gtag(ge);
-      gtag(box(0.34, 0.24, 9.2, EXTC.ridge, -15.4, 6.42, 6.0, garageDoorG));
+      gtag(box(0.34, 0.24, 9.2, EXTC.ridge, -15.4, 6.42, 6.0, garageDoorG, sharp()));
       (function () {
         var tri = new T.Shape();
         tri.moveTo(-18.3, 4.7); tri.lineTo(-15.4, 6.34); tri.lineTo(-12.5, 4.7);
@@ -3296,8 +3377,8 @@
         var L = a1 - a0, mid = (a0 + a1) / 2;
         function plate(h, d0, d1, c, y, o) {
           var d = d1 - d0, ctr = face + dir * ((d0 + d1) / 2);
-          return axis === 'z' ? gb(L, h, d, c, mid, y, ctr, o)
-                              : gb(d, h, L, c, ctr, y, mid, o);
+          return axis === 'z' ? gb(L, h, d, c, mid, y, ctr, sharp(o))
+                              : gb(d, h, L, c, ctr, y, mid, sharp(o));
         }
         plate(4.58, 0, 0.05, gWallC, 2.29, gWallO);
         plate(0.34, 0.05, 0.13, C.cabShade, 0.17, GMATT);   /* splash board */
@@ -3313,9 +3394,9 @@
         for (var i = 1; i < n; i++) {
           var a = a0 + i * (L / n), ctr = face + dir * 0.075;
           gt(axis === 'z' ? box(0.07, 3.16, 0.045, C.cab, a, 2.94, ctr,
-                                garageInterior, GMATT)
+                                garageInterior, sharp(GMATT))
                           : box(0.045, 3.16, 0.07, C.cab, ctr, 2.94, a,
-                                garageInterior, GMATT));
+                                garageInterior, sharp(GMATT)));
         }
       }
       gWall('z', GZ0, 1, GX0, GX1, true);        /* the back wall */
@@ -3799,11 +3880,14 @@
              { rough: 0.9 });
       });
       /* and the thing every driveway ends in */
-      ebox(0.10, 0.92, 0.10, C.wood2, -12.95, 0.17, 17.30, { rough: 0.8 });
-      ebox(0.26, 0.24, 0.44, C.slate, -12.95, 0.74, 17.30, { rough: 0.7 });
+      /* the mailbox is a PROP standing in the shell fabric's group, not
+         shell fabric itself — box() directly, so it keeps the NICE-tier
+         chamfer default ebox() now opts out of */
+      box(0.10, 0.92, 0.10, C.wood2, -12.95, 0.17, 17.30, extG, { rough: 0.8 });
+      box(0.26, 0.24, 0.44, C.slate, -12.95, 0.74, 17.30, extG, { rough: 0.7 });
       if (DETAIL >= 3) {
-        ebox(0.05, 0.16, 0.04, C.red, -12.80, 0.80, 17.30, GLOSS);
-        ebox(0.28, 0.05, 0.46, C.dark, -12.95, 0.87, 17.30, { rough: 0.7 });
+        box(0.05, 0.16, 0.04, C.red, -12.80, 0.80, 17.30, extG, GLOSS);
+        box(0.28, 0.05, 0.46, C.dark, -12.95, 0.87, 17.30, extG, { rough: 0.7 });
       }
     }
     /* the street along the yard's front, and its curb */
@@ -4372,8 +4456,8 @@
         var L = a1 - a0, mid = (a0 + a1) / 2;
         function plate(h, d0, d1, c, y, o) {
           var d = d1 - d0, ctr = face + (d0 + d1) / 2;
-          return axis === 'z' ? mb(L, h, d, c, mid, y, ctr, o)
-                              : mb(d, h, L, c, ctr, y, mid, o);
+          return axis === 'z' ? mb(L, h, d, c, mid, y, ctr, sharp(o))
+                              : mb(d, h, L, c, ctr, y, mid, sharp(o));
         }
         plate(top, 0, 0.05, C.wall, top / 2, PLASTER);
         if (!dado) return;
@@ -4387,17 +4471,17 @@
       }
       wallRun('z', NWF, -12.60, -6.85, 4.20, true);
       if (D2) {                       /* crown: the wall head gets a line */
-        mb(5.75, 0.14, 0.14, TRIM, -9.725, 4.11, NWF + 0.12, MATT);
-        mb(0.14, 0.14, 5.75, TRIM, WWF + 0.12, 4.11, 5.425, MATT);
+        mb(5.75, 0.14, 0.14, TRIM, -9.725, 4.11, NWF + 0.12, sharp(MATT));
+        mb(0.14, 0.14, 5.75, TRIM, WWF + 0.12, 4.11, 5.425, sharp(MATT));
         if (D3) {
-          mb(5.75, 0.05, 0.09, C.cabShade, -9.725, 4.00, NWF + 0.095, MATT);
-          mb(0.09, 0.05, 5.75, C.cabShade, WWF + 0.095, 4.00, 5.425, MATT);
+          mb(5.75, 0.05, 0.09, C.cabShade, -9.725, 4.00, NWF + 0.095, sharp(MATT));
+          mb(0.09, 0.05, 5.75, C.cabShade, WWF + 0.095, 4.00, 5.425, sharp(MATT));
         }
       }
       /* the west wall breaks either side of the garage door */
       wallRun('x', WWF, 2.55, 2.97, 4.20, true);
       wallRun('x', WWF, 4.43, 8.30, 4.20, true);
-      mb(0.05, 1.28, 1.46, C.wall, WWF + 0.025, 3.56, 3.70, PLASTER);
+      mb(0.05, 1.28, 1.46, C.wall, WWF + 0.025, 3.56, 3.70, sharp(PLASTER));
       /* the east side is the great room's face of the mudroom wall: it
          closes the frame's right edge, so it gets plaster, not siding */
       /* the east side is the great room's face of the mudroom wall, and
@@ -4796,7 +4880,7 @@
           m.userData.room = 'mudroom'; finish(m); (p || g).add(m); return m;
         }
         function pb(w, h, d, r, col, x, y, z, o, p) {
-          var m = new T.Mesh(D2 ? roundedGeo(w, h, d, r) : new T.BoxGeometry(w, h, d),
+          var m = new T.Mesh(D2 ? chamferGeo(w, h, d, r) : new T.BoxGeometry(w, h, d),
                              mat(col, o || FAB));
           m.position.set(x, y, z); return part(m, p);
         }
