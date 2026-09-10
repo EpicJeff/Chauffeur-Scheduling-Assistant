@@ -733,13 +733,15 @@
       return g;
     }
     var discMatCache = {};
-    function discMat(color, opacity) {
-      var k4 = color + '|' + opacity;
+    function discMat(color, opacity, blending, depthWrite) {
+      var k4 = color + '|' + opacity + '|' + (blending || 'none') + '|' +
+               (depthWrite === undefined ? 'true' : depthWrite);
       var m = discMatCache[k4];
       if (!m) {
-        m = discMatCache[k4] = new T.MeshBasicMaterial({
-          color: color, transparent: true, opacity: opacity,
-          blending: T.MultiplyBlending, depthWrite: false });
+        var spec = { color: color, transparent: true, opacity: opacity };
+        if (blending !== undefined) spec.blending = blending;
+        if (depthWrite !== undefined) spec.depthWrite = depthWrite;
+        m = discMatCache[k4] = new T.MeshBasicMaterial(spec);
         m.userData.shared = true;
       }
       return m;
@@ -5117,7 +5119,7 @@
       function ysh(rx, rz, x, z, tone) {
         if (SHADOWS) return null;
         var m = new T.Mesh(cgeo('circ|' + (Y2 ? 16 : 8), function () { return new T.CircleGeometry(1, Y2 ? 16 : 8); }),
-          discMat(tone || 0xa8a4aa, 1));
+          discMat(tone || 0xa8a4aa, 1, T.MultiplyBlending, false));
         m.rotation.x = -Math.PI / 2;
         m.scale.set(rx, rz, 1);
         m.position.set(x, GY + 0.009, z);
