@@ -2032,8 +2032,10 @@
     box(2.24, 0.07, 0.34, C.cab, 0, 2.535, 0.185, winG, MATT);
     if (KD3) box(2.30, 0.05, 0.05, C.cabShade, 0, 2.485, 0.34, winG, MATT);
     if (KD2) {
-      kPlant(winG, -0.74, 2.57, 0.20, 0.39, C.terracotta, { rough: 0.85 },
-             'mound', false);
+      /* the sill's LEFT end stays clear: the temperature is painted into
+         the pane's bottom-left corner, and a plant there hid it. Moving the
+         reading was the wrong fix — it only walked into the lean-in card.
+         Move the thing doing the blocking, not the signal. */
       kPlant(winG, 0.72, 2.57, 0.19, 0.38, C.cream, GLOSS, 'spray', false);
       kJar(winG, 0.13, 2.57, 0.22, 0.06, 0.17, C.teal);
     }
@@ -5475,14 +5477,14 @@
         g.quadraticCurveTo(w * 0.75, h * 0.94, w, h * 0.8);
         g.lineTo(w, h); g.closePath(); g.fill();
         if (temp !== null) {
-          /* The pane is read through a 320x288 canvas whose top quarter is
-             hidden by the valance and whose bottom quarter is hidden by the
-             sill plants. The temperature goes in the band between them:
-             scenery must never cover signal. */
+          /* Bottom left, and the sill is kept clear there. The middle band
+             looks free but the weather card lands on it at lean-in, so the
+             only place a reading survives BOTH the room view and the
+             lean-in is the corner nothing else wants. */
           g.save();
           g.shadowColor = 'rgba(0,0,0,0.45)'; g.shadowBlur = 10;
           g.fillStyle = '#ffffff'; g.font = '800 54px ' + FONT;
-          g.fillText(temp + '\u00b0', 18, 168);
+          g.fillText(temp + '\u00b0', 18, h - 20);
           g.restore();
         }
       });
