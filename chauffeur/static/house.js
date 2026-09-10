@@ -1036,7 +1036,7 @@
 
       /* ================= 1. the rug: field, border stripe, field ======= */
       (function () {
-        var rx = -3.40, rz = 9.40, rw = 4.30, rd = 6.00;
+        var rx = -2.395, rz = 9.20, rw = 4.70, rd = 5.50;
         function ply(w, d, y, c) {
           var m = new T.Mesh(new T.PlaneGeometry(w, d), mat(c, { rough: 1.0 }));
           m.rotation.x = -Math.PI / 2;
@@ -1291,26 +1291,26 @@
         blobShadow(0.48, 0.48, x, z);
         return g;
       }
-      /* the sofa faces the hearth; the armchair closes the triangle at
-         44 degrees off it, looking at the fire and the sofa both (S7.1) */
-      seat(-2.55, 8.60, 0, 2.95, C.sage, C.sageDeep, 3,
+      /* The group stands OFF the hearth wall, not against it. A walkway
+         runs between the hearth slab and the coffee table; the rug and
+         everything standing on it moved east together, so the seating
+         occupies the room instead of pinning itself to the stone. The
+         sofa is the one piece still square on the hearth axis. */
+      seat(-1.35, 8.70, 0, 2.95, C.sage, C.sageDeep, 3,
            [[-0.95, C.oxblood, 0.22], [0.95, C.terracotta, -0.24]]);
-      /* a matched pair of chairs, one at each end of the table: the
-         north one shows the camera its FRONT, which is what makes the
-         triangle read at a glance */
-      seat(-4.30, 7.15, 0.80, 1.12, C.terracotta, C.terraDeep, 1,
+      /* BOTH armchairs face the COFFEE TABLE. Not the fire, not the TV,
+         not the lens. seat() is built facing -x, so each pose is exactly
+         atan2(dz, -dx) of the chair-to-table-centre vector, table centre
+         (-3.25, 8.95). Recompute both if the table ever moves. */
+      seat(-3.10, 7.22, 1.4843, 1.12, C.terracotta, C.terraDeep, 1,
            [[0.0, C.cream, -0.20]], 1.14);
-      /* the south chair is on the CAMERA's side of the group, so any
-         pose that faces the fire shows the lens a flat back. It turns
-         off the fire axis to face the coffee table instead - seating
-         faces other seating (S8), and that outranks facing the hearth. */
-      seat(-4.05, 10.62, -2.25, 1.12, C.terracotta, C.terraDeep, 1,
+      seat(-3.85, 10.60, -1.9206, 1.12, C.terracotta, C.terraDeep, 1,
            [[0.0, C.cream, 0.20]], 1.14);
 
       /* a console behind the sofa, facing the kitchen half of the great
          room - the piece that keeps the east floor from reading bare */
       (function () {
-        var SX = -1.72, SZ = 8.60;
+        var SX = -0.52, SZ = 8.70;
         [-1.10, 1.10].forEach(function (dz) {
           lc(0.045, 0.038, 0.30, C.wood2, SX - 0.14, 0.15, SZ + dz, null, 8, WOODM);
           lc(0.045, 0.038, 0.30, C.wood2, SX + 0.14, 0.15, SZ + dz, null, 8, WOODM);
@@ -1337,43 +1337,43 @@
 
       /* ================= 5. the coffee table ==========================
          The critter laptop's surface (zone: pet) - top at y 0.60. */
-      lr(1.70, 0.10, 1.20, 0.03, woodK, -4.45, 0.55, 8.95, null, woodO);
-      [[-5.13, 8.45], [-3.77, 8.45], [-5.13, 9.45], [-3.77, 9.45]]
+      lr(1.70, 0.10, 1.20, 0.03, woodK, -3.25, 0.55, 8.95, null, woodO);
+      [[-3.93, 8.45], [-2.57, 8.45], [-3.93, 9.45], [-2.57, 9.45]]
         .forEach(function (p) {
           lc(0.055, 0.045, 0.50, C.wood2, p[0], 0.25, p[1], null, 8, WOODM);
         });
       if (D2) {
-        lb(1.44, 0.05, 0.96, woodK, -4.45, 0.26, 8.95, null, woodO);
-        lb(0.30, 0.055, 0.22, C.oxblood, -4.80, 0.315, 8.95);
-        lb(0.28, 0.05, 0.20, C.cream, -4.80, 0.368, 8.96);
-        lc(0.20, 0.22, 0.16, C.cork, -4.05, 0.365, 8.95, null, 12, { rough: 0.9 });
-        lr(0.44, 0.035, 0.32, 0.02, C.brass, -3.99, 0.62, 9.32, null, STEEL);
-        lc(0.075, 0.065, 0.12, C.cream, -4.07, 0.665, 9.32, null, 10, GLOSS);
-        lc(0.075, 0.065, 0.12, C.cream, -3.91, 0.665, 9.32, null, 10, GLOSS);
+        lb(1.44, 0.05, 0.96, woodK, -3.25, 0.26, 8.95, null, woodO);
+        lb(0.30, 0.055, 0.22, C.oxblood, -3.60, 0.315, 8.95);
+        lb(0.28, 0.05, 0.20, C.cream, -3.60, 0.368, 8.96);
+        lc(0.20, 0.22, 0.16, C.cork, -2.85, 0.365, 8.95, null, 12, { rough: 0.9 });
+        lr(0.44, 0.035, 0.32, 0.02, C.brass, -2.79, 0.62, 9.32, null, STEEL);
+        lc(0.075, 0.065, 0.12, C.cream, -2.87, 0.665, 9.32, null, 10, GLOSS);
+        lc(0.075, 0.065, 0.12, C.cream, -2.71, 0.665, 9.32, null, 10, GLOSS);
       }
       if (D3) {
-        lc(0.06, 0.06, 0.11, C.cream, -5.03, 0.66, 9.32, null, 10, GLOSS);
-        lb(0.22, 0.05, 0.30, C.sage, -5.03, 0.625, 8.62);
+        lc(0.06, 0.06, 0.11, C.cream, -3.83, 0.66, 9.32, null, 10, GLOSS);
+        lb(0.22, 0.05, 0.30, C.sage, -3.83, 0.625, 8.62);
       }
-      blobShadow(0.9, 0.68, -4.45, 8.95);
+      blobShadow(0.9, 0.68, -3.25, 8.95);
 
       /* ================= 6. a lamp table at the sofa's north end ======= */
-      lr(0.62, 0.07, 0.62, 0.02, woodK, -2.95, 0.71, 6.62, null, woodO);
-      lc(0.06, 0.06, 0.70, C.wood2, -2.95, 0.35, 6.62, null, 8, WOODM);
-      lc(0.24, 0.26, 0.05, C.wood2, -2.95, 0.03, 6.62, null, 12, WOODM);
+      lr(0.62, 0.07, 0.62, 0.02, woodK, -1.75, 0.71, 6.72, null, woodO);
+      lc(0.06, 0.06, 0.70, C.wood2, -1.75, 0.35, 6.72, null, 8, WOODM);
+      lc(0.24, 0.26, 0.05, C.wood2, -1.75, 0.03, 6.72, null, 12, WOODM);
       if (D2) {
-        lc(0.14, 0.10, 0.34, C.terracotta, -3.02, 0.92, 6.62, null, 12, GLOSS);
+        lc(0.14, 0.10, 0.34, C.terracotta, -1.82, 0.92, 6.72, null, 12, GLOSS);
         var shd = new T.Mesh(new T.CylinderGeometry(0.17, 0.25, 0.26, 14, 1, true),
           PBR ? new T.MeshStandardMaterial({ color: 0xf3e8d2, roughness: 0.8,
                                              emissive: 0xffd9a0, emissiveIntensity: 0.35,
                                              side: T.DoubleSide })
               : new T.MeshLambertMaterial({ color: 0xf3e8d2, side: T.DoubleSide }));
-        shd.position.set(-3.02, 1.24, 6.62);
+        shd.position.set(-1.82, 1.24, 6.72);
         ltag(shd); finish(shd, true); scene.add(shd);
-        lb(0.22, 0.05, 0.16, C.slate, -2.80, 0.77, 6.46);
-        lb(0.21, 0.045, 0.15, C.brass, -2.80, 0.818, 6.47);
+        lb(0.22, 0.05, 0.16, C.slate, -1.60, 0.77, 6.56);
+        lb(0.21, 0.045, 0.15, C.brass, -1.60, 0.818, 6.57);
       }
-      blobShadow(0.36, 0.36, -2.95, 6.62);
+      blobShadow(0.36, 0.36, -1.75, 6.72);
 
       /* ================= 7. the console + the gallery wall =============
          S7.2's second anchor: a real sideboard under a grid of five
@@ -1426,75 +1426,75 @@
          S7.2's second zone: the bare third of the floor gets a chair, a
          lamp, a side table and a tall plant on their own round rug. */
       (function () {
-        var rug = new T.Mesh(new T.CircleGeometry(1.60, D3 ? 28 : 16),
+        var rug = new T.Mesh(new T.CircleGeometry(1.45, D3 ? 28 : 16),
                              mat(C.linen, { rough: 1.0 }));
         rug.rotation.x = -Math.PI / 2;
-        rug.position.set(1.40, 0.048, 9.85);
+        rug.position.set(2.00, 0.048, 9.85);
         if (SHADOWS) rug.receiveShadow = true;
         ltag(rug); scene.add(rug);
         if (D2) {
-          var ring = new T.Mesh(new T.RingGeometry(1.36, 1.48, 28),
+          var ring = new T.Mesh(new T.RingGeometry(1.22, 1.34, 28),
                                 mat(C.sageDeep, { rough: 1.0 }));
           ring.rotation.x = -Math.PI / 2;
-          ring.position.set(1.40, 0.054, 9.85);
+          ring.position.set(2.00, 0.054, 9.85);
           ltag(ring); scene.add(ring);
         }
       })();
-      lightChair(0.88, 9.88, 0.55, C.sage, C.oxblood);
+      lightChair(1.48, 9.88, 0.55, C.sage, C.oxblood);
       /* the floor lamp: base, stem, shade. All of it is D2 - a bare pole
          with no shade at the low tier reads as broken geometry. */
       if (D2) {
-        lc(0.28, 0.30, 0.05, C.brass, 0.30, 0.03, 10.90, null, 14, STEEL);
-        lc(0.035, 0.035, 1.62, C.brass, 0.30, 0.86, 10.90, null, 8, STEEL);
+        lc(0.28, 0.30, 0.05, C.brass, 0.90, 0.03, 10.90, null, 14, STEEL);
+        lc(0.035, 0.035, 1.62, C.brass, 0.90, 0.86, 10.90, null, 8, STEEL);
         var lsh2 = new T.Mesh(new T.CylinderGeometry(0.24, 0.34, 0.34, 16, 1, true),
           PBR ? new T.MeshStandardMaterial({ color: 0xf3e8d2, roughness: 0.8,
                                              emissive: 0xffd9a0, emissiveIntensity: 0.45,
                                              side: T.DoubleSide })
               : new T.MeshLambertMaterial({ color: 0xf3e8d2, side: T.DoubleSide }));
-        lsh2.position.set(0.30, 1.82, 10.90);
+        lsh2.position.set(0.90, 1.82, 10.90);
         ltag(lsh2); finish(lsh2, true); scene.add(lsh2);
       }
-      blobShadow(0.32, 0.32, 0.30, 10.90);
+      blobShadow(0.32, 0.32, 0.90, 10.90);
       /* the side table: pedestal, base, top, three props */
-      lc(0.44, 0.44, 0.07, woodK, 1.86, 0.62, 10.40, null, 16, woodO);
-      lc(0.065, 0.065, 0.58, C.wood2, 1.86, 0.30, 10.40, null, 10, WOODM);
-      lc(0.26, 0.28, 0.05, C.wood2, 1.86, 0.03, 10.40, null, 14, WOODM);
+      lc(0.44, 0.44, 0.07, woodK, 2.46, 0.62, 10.40, null, 16, woodO);
+      lc(0.065, 0.065, 0.58, C.wood2, 2.46, 0.30, 10.40, null, 10, WOODM);
+      lc(0.26, 0.28, 0.05, C.wood2, 2.46, 0.03, 10.40, null, 14, WOODM);
       if (D2) {
-        lb(0.28, 0.055, 0.20, C.slate, 1.76, 0.683, 10.32);
-        lb(0.26, 0.05, 0.19, C.brass, 1.76, 0.735, 10.33);
-        lc(0.085, 0.075, 0.14, C.cream, 2.03, 0.725, 10.52, null, 10, GLOSS);
+        lb(0.28, 0.055, 0.20, C.slate, 2.36, 0.683, 10.32);
+        lb(0.26, 0.05, 0.19, C.brass, 2.36, 0.735, 10.33);
+        lc(0.085, 0.075, 0.14, C.cream, 2.63, 0.725, 10.52, null, 10, GLOSS);
       }
-      blobShadow(0.4, 0.4, 1.86, 10.40);
+      blobShadow(0.4, 0.4, 2.46, 10.40);
       /* a pouf bridging the two zones */
-      lr(0.66, 0.36, 0.66, 0.17, C.terracotta, -1.30, 0.20, 10.20, null, FAB);
-      if (D3) lb(0.60, 0.02, 0.60, C.terraDeep, -1.30, 0.385, 10.20, null, FAB);
-      blobShadow(0.38, 0.38, -1.30, 10.20);
+      lr(0.66, 0.36, 0.66, 0.17, C.terracotta, -0.10, 0.20, 10.30, null, FAB);
+      if (D3) lb(0.60, 0.02, 0.60, C.terraDeep, -0.10, 0.385, 10.30, null, FAB);
+      blobShadow(0.38, 0.38, -0.10, 10.30);
       /* a basket and a stack of books beside the reading chair */
-      lc(0.26, 0.22, 0.34, C.cork, -0.42, 0.17, 9.05, null, 12, { rough: 0.95 });
-      if (D2) lc(0.27, 0.27, 0.05, C.sage, -0.42, 0.36, 9.05, null, 12, FAB);
-      blobShadow(0.28, 0.28, -0.42, 9.05);
+      lc(0.26, 0.22, 0.34, C.cork, 0.18, 0.17, 9.05, null, 12, { rough: 0.95 });
+      if (D2) lc(0.27, 0.27, 0.05, C.sage, 0.18, 0.36, 9.05, null, 12, FAB);
+      blobShadow(0.28, 0.28, 0.18, 9.05);
       /* a stack of books on the floor beside the chair */
       if (D2) {
-        lb(0.34, 0.06, 0.26, C.oxblood, 0.82, 0.03, 10.78);
-        lb(0.33, 0.055, 0.25, C.cream, 0.82, 0.088, 10.79);
-        if (D3) lb(0.31, 0.055, 0.24, C.sage, 0.83, 0.143, 10.77);
+        lb(0.34, 0.06, 0.26, C.oxblood, 1.42, 0.03, 10.78);
+        lb(0.33, 0.055, 0.25, C.cream, 1.42, 0.088, 10.79);
+        if (D3) lb(0.31, 0.055, 0.24, C.sage, 1.43, 0.143, 10.77);
       }
 
       /* a lidded basket of blankets and a floor stack: the rug's south
          half was bare plank in round 3 */
-      lc(0.30, 0.26, 0.42, C.cork, -5.05, 0.21, 11.75, null, 14, { rough: 0.95 });
+      lc(0.30, 0.26, 0.42, C.cork, -3.20, 0.21, 11.45, null, 14, { rough: 0.95 });
       if (D2) {
-        lc(0.31, 0.31, 0.05, C.rugB, -5.05, 0.44, 11.75, null, 14, FAB);
-        lr(0.34, 0.16, 0.34, 0.07, C.sage, -5.05, 0.53, 11.75, null, FAB);
+        lc(0.31, 0.31, 0.05, C.rugB, -3.20, 0.44, 11.45, null, 14, FAB);
+        lr(0.34, 0.16, 0.34, 0.07, C.sage, -3.20, 0.53, 11.45, null, FAB);
       }
-      blobShadow(0.33, 0.33, -5.05, 11.75);
+      blobShadow(0.33, 0.33, -3.20, 11.45);
       if (D2) {
-        lc(0.09, 0.09, 0.46, C.wood2, -2.72, 0.23, 11.70, null, 10, WOODM);
-        lc(0.34, 0.34, 0.06, woodK, -2.72, 0.48, 11.70, null, 16, woodO);
-        lc(0.24, 0.26, 0.04, C.wood2, -2.72, 0.02, 11.70, null, 12, WOODM);
-        lb(0.24, 0.05, 0.18, C.oxblood, -2.78, 0.535, 11.64);
-        lc(0.075, 0.065, 0.13, C.brass, -2.60, 0.575, 11.78, null, 10, STEEL);
-        blobShadow(0.3, 0.3, -2.72, 11.70);
+        lc(0.09, 0.09, 0.46, C.wood2, -1.55, 0.23, 11.05, null, 10, WOODM);
+        lc(0.34, 0.34, 0.06, woodK, -1.55, 0.48, 11.05, null, 16, woodO);
+        lc(0.24, 0.26, 0.04, C.wood2, -1.55, 0.02, 11.05, null, 12, WOODM);
+        lb(0.24, 0.05, 0.18, C.oxblood, -1.61, 0.535, 10.99);
+        lc(0.075, 0.065, 0.13, C.brass, -1.43, 0.575, 11.13, null, 10, STEEL);
+        blobShadow(0.3, 0.3, -1.55, 11.05);
       }
 
       /* ================= 9. plants (S4 wants three; eight here) ========
@@ -2151,11 +2151,18 @@
       counter.add(hg);
       var can = cyl(0.556, 1.061, 0.62, C.ink, 0, 0, 0, hg, 4, { rough: 0.45 });
       can.rotation.y = Math.PI / 4;
-      box(0.76, 1.44, 0.46, C.ink, 0, HY0 + 1.440, WZ + 0.23, counter,
+      /* the chimney stands on the canopy's own axis and its own top
+         footprint, or the duct reads as bolted on crooked. The canopy is a
+         4-segment cylinder turned 45 degrees, so its top SIDE is the
+         circumradius times root two — 0.556 * 1.414 = 0.786 in x, and
+         0.672 of that in z where the group is squashed. It was 0.76 x 0.46
+         centred 0.30 nearer the wall than the canopy it sits on, so the
+         two met only across part of their depth. */
+      box(0.79, 1.44, 0.53, C.ink, 0, HY0 + 1.440, WZ + 0.53, counter,
           { rough: 0.45 });
       if (KD2) {
-        box(0.80, 0.05, 0.50, HW, 0, HY0 + 0.750, WZ + 0.23, counter, STEEL);
-        box(0.80, 0.05, 0.50, HW, 0, HY0 + 2.110, WZ + 0.23, counter, STEEL);
+        box(0.83, 0.05, 0.57, HW, 0, HY0 + 0.750, WZ + 0.53, counter, STEEL);
+        box(0.83, 0.05, 0.57, HW, 0, HY0 + 2.110, WZ + 0.53, counter, STEEL);
       }
       /* the underside is not the same black: a lit hood glows */
       var und = new T.Mesh(new T.PlaneGeometry(LIPW - 0.16, LIPD - 0.16),
@@ -2726,7 +2733,7 @@
        family's real pets, so no bowl pretending otherwise. A laptop sits
        on the island the way a kid leaves one, its screen carrying the
        roster. */
-    var crit = zoneGroup('pet', -4.57, -0.610, 8.72);   /* the coffee table */
+    var crit = zoneGroup('pet', -3.37, -0.610, 8.72);   /* the coffee table */
     crit.userData.room = 'living';
     rbox(0.66, 0.035, 0.46, 0.012, 0x2a2d34, 0, 1.24, 0.02, crit,
          { rough: 0.35, metal: 0.4, envInt: 0.6 });
