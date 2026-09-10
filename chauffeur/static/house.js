@@ -654,6 +654,35 @@
         if (opts.map && DETAIL >= 2) lm.map = opts.map;
         return lm;
       }
+      /* K3 (quality spec §3): a small finish vocabulary on top of the
+         Standard-material default below. PBR-only by construction (this
+         whole branch sits past the !PBR return above) — below PBR, finish
+         is silently ignored and the prop falls through to Standard or
+         Lambert. Values are the calibrated numbers, not the spike's: the
+         spike's clearcoat blew highlights under LinearToneMapping, so
+         these were tuned against real probe screenshots (task-3 report). */
+      if (opts.finish && PBR) {
+        var pm;
+        if (opts.finish === 'enamel') {
+          pm = new T.MeshPhysicalMaterial({ color: c,
+            roughness: opts.rough !== undefined ? opts.rough : 0.34,
+            metalness: 0, clearcoat: 1.0, clearcoatRoughness: 0.09 });
+          pm.envMapIntensity = opts.envInt !== undefined ? opts.envInt : 0.4;
+        } else if (opts.finish === 'glassy') {
+          pm = new T.MeshPhysicalMaterial({ color: c,
+            roughness: 0.06, metalness: 0, transmission: 0.92,
+            thickness: opts.thick !== undefined ? opts.thick : 0.25,
+            ior: 1.45, transparent: true });
+          pm.envMapIntensity = 1.0;
+        } else {                                   /* ceramic */
+          pm = new T.MeshPhysicalMaterial({ color: c,
+            roughness: opts.rough !== undefined ? opts.rough : 0.2,
+            metalness: 0, clearcoat: 0.8, clearcoatRoughness: 0.12 });
+          pm.envMapIntensity = opts.envInt !== undefined ? opts.envInt : 0.6;
+        }
+        if (opts.map) pm.map = opts.map;
+        return pm;
+      }
       var m = new T.MeshStandardMaterial({
         color: c,
         roughness: opts.rough !== undefined ? opts.rough : 0.86,
@@ -674,7 +703,9 @@
                 '|' + (opts.rough !== undefined ? opts.rough : '') +
                 '|' + (opts.metal !== undefined ? opts.metal : '') +
                 '|' + (opts.envInt !== undefined ? opts.envInt : '') +
-                '|' + (opts.map ? opts.map.uuid : '');
+                '|' + (opts.map ? opts.map.uuid : '') +
+                '|' + (opts.finish || '') +
+                '|' + (opts.thick !== undefined ? opts.thick : '');
       var m = matCache[key];
       if (!m) {
         m = matCache[key] = makeMat(c, opts);
@@ -2412,9 +2443,9 @@
     fbody.position.set(0, 1.97, 0);
     finish(fbody); fridge.add(fbody);
     var fridgeDoorTop = rbox(1.6, 1.55, 0.07, 0.03, C.teal, 0, 2.95, 0.77, fridge,
-         { rough: 0.3, metal: 0.05, envInt: 0.15 });
+         { finish: 'enamel' });
     rbox(1.6, 1.35, 0.07, 0.03, C.teal, 0, 1.02, 0.77, fridge,
-         { rough: 0.3, metal: 0.05, envInt: 0.15 });
+         { finish: 'enamel' });
     box(0.07, 1.3, 0.09, C.steel, 0.62, 2.95, 0.82, fridge, CHROME);
     box(0.07, 1.0, 0.09, C.steel, 0.62, 1.07, 0.82, fridge, CHROME);
     if (DETAIL >= 2)                    /* a plinth: appliances have feet */
@@ -2582,10 +2613,16 @@
     (function () {
       /* the kitchen's four accents, no strays (bible S2/S4) */
       var JAR_C = [C.terracotta, C.oxblood, C.teal, C.brass];
+      /* K3: a private opts literal, not GLOSS — GLOSS is a shared constant
+         read by ~15 other call sites, and glassy ignores rough/metal/envInt
+         anyway (transmission/ior/thickness only), so nothing of GLOSS's
+         intent carries over. jar.visible count semantics (below, in the
+         webgl runtime) are untouched by this — only the material changes. */
+      var JAR_GLASS = { finish: 'glassy', thick: 0.1 };
       for (var j = 0; j < 8; j++) {
         var jy = j < 4 ? 1.06 : 1.86;
         var jar = cyl(0.1, 0.1, 0.26, JAR_C[j % 4],
-                      -1.53, jy, -1.06 + (j % 4) * 0.48, board, 10, GLOSS);
+                      -1.53, jy, -1.06 + (j % 4) * 0.48, board, 10, JAR_GLASS);
         zoneTag(jar, 'board');
         pantryJars.push(jar);
       }
