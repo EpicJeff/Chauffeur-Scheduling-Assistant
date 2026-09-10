@@ -687,6 +687,20 @@
         if (p.userData && p.userData.zone) return true;
       return false;
     }
+    /* B1 (batching spec): geometry is immutable here — every helper sets
+       position/rotation/scale on the MESH, so identical dimensions can
+       share one BufferGeometry. Also a boot-time win (L7): roundedGeo
+       runs a full Shape triangulation per call, and cabinet fronts
+       repeat their dimensions dozens of times. */
+    var geoCache = {};
+    function cgeo(key, make) {
+      var g = geoCache[key];
+      if (!g) {
+        g = geoCache[key] = make();
+        g.userData.cached = true;
+      }
+      return g;
+    }
     /* ---- L1 rail (spec 2026-09-10-house-batching-design.md) ----------
        A zone never shares a material: the glow loop writes emissive on
        every mesh a zone owns, wherever it hangs. Materials handed out by
@@ -718,27 +732,31 @@
     }
     function box(w, h, d, c, x, y, z, group, opts) {
       var g0 = group || scene;
-      var m = new T.Mesh(new T.BoxGeometry(w, h, d), mat(c, opts, inZoneGroup(g0)));
+      var m = new T.Mesh(cgeo('b|' + w + '|' + h + '|' + d, function () {
+        return new T.BoxGeometry(w, h, d);
+      }), mat(c, opts, inZoneGroup(g0)));
       m.position.set(x, y, z); finish(m); g0.add(m); return m;
     }
     function roundedGeo(w, h, d, r) {
-      r = Math.min(r, w / 2 - 0.01, h / 2 - 0.01, d / 2 - 0.01);
-      var x = -w / 2 + r, y = -h / 2 + r, X = w / 2 - r, Y = h / 2 - r;
-      var shape = new T.Shape();
-      shape.moveTo(-w / 2, y);
-      shape.lineTo(-w / 2, Y);
-      shape.absarc(x, Y, r, Math.PI, Math.PI / 2, true);
-      shape.lineTo(X, h / 2);
-      shape.absarc(X, Y, r, Math.PI / 2, 0, true);
-      shape.lineTo(w / 2, y);
-      shape.absarc(X, y, r, 0, -Math.PI / 2, true);
-      shape.lineTo(x, -h / 2);
-      shape.absarc(x, y, r, -Math.PI / 2, Math.PI, true);
-      var g = new T.ExtrudeGeometry(shape, {
-        depth: d - 2 * r, bevelEnabled: true, bevelThickness: r,
-        bevelSize: r, bevelSegments: 2, steps: 1, curveSegments: 5 });
-      g.center();
-      return g;
+      return cgeo('r|' + w + '|' + h + '|' + d + '|' + r, function () {
+        r = Math.min(r, w / 2 - 0.01, h / 2 - 0.01, d / 2 - 0.01);
+        var x = -w / 2 + r, y = -h / 2 + r, X = w / 2 - r, Y = h / 2 - r;
+        var shape = new T.Shape();
+        shape.moveTo(-w / 2, y);
+        shape.lineTo(-w / 2, Y);
+        shape.absarc(x, Y, r, Math.PI, Math.PI / 2, true);
+        shape.lineTo(X, h / 2);
+        shape.absarc(X, Y, r, Math.PI / 2, 0, true);
+        shape.lineTo(w / 2, y);
+        shape.absarc(X, y, r, 0, -Math.PI / 2, true);
+        shape.lineTo(x, -h / 2);
+        shape.absarc(x, y, r, -Math.PI / 2, Math.PI, true);
+        var g = new T.ExtrudeGeometry(shape, {
+          depth: d - 2 * r, bevelEnabled: true, bevelThickness: r,
+          bevelSize: r, bevelSegments: 2, steps: 1, curveSegments: 5 });
+        g.center();
+        return g;
+      });
     }
     function rbox(w, h, d, r, c, x, y, z, group, opts) {
       if (DETAIL < 2) return box(w, h, d, c, x, y, z, group, opts);
@@ -748,8 +766,10 @@
     }
     function cyl(rt, rb, h, c, x, y, z, group, seg, opts) {
       var g0 = group || scene;
-      var m = new T.Mesh(new T.CylinderGeometry(rt, rb, h, seg || (DETAIL >= 3 ? 18 : 10)),
-                         mat(c, opts, inZoneGroup(g0)));
+      var sg = seg || (DETAIL >= 3 ? 18 : 10);
+      var m = new T.Mesh(cgeo('c|' + rt + '|' + rb + '|' + h + '|' + sg, function () {
+        return new T.CylinderGeometry(rt, rb, h, sg);
+      }), mat(c, opts, inZoneGroup(g0)));
       m.position.set(x, y, z); finish(m); g0.add(m); return m;
     }
     function knob(x, y, z, group) {
@@ -4423,7 +4443,7 @@
          (which end at WWF + 0.132), centred on the 1.18-wide slab, on the
          upper panel — the door's head is at 2.74, so the old 3.02 is the
          one thing about it that cannot be kept. */
-      plaque.geometry.dispose();
+      if (!plaque.geometry.userData.cached) plaque.geometry.dispose();
       plaque.geometry = new T.PlaneGeometry(1.10, 0.69);
       plaque.position.set(WWF + 0.16, 2.02, 3.70);
       plaque.rotation.y = Math.PI / 2;         /* the face looks east, +x */
@@ -4878,8 +4898,9 @@
         return yt(cyl(a, b, h, c, x, y, z, g || yardG, s, o));
       }
       function ysph(r, c, x, y, z, sy, g) {
-        var m = new T.Mesh(new T.SphereGeometry(r, Y3 ? 12 : 7, Y3 ? 9 : 5),
-                           mat(c, MATT, inZoneGroup(g || yardG)));
+        var m = new T.Mesh(cgeo('s|' + r + '|' + (Y3 ? 12 : 7) + '|' + (Y3 ? 9 : 5), function () {
+          return new T.SphereGeometry(r, Y3 ? 12 : 7, Y3 ? 9 : 5);
+        }), mat(c, MATT, inZoneGroup(g || yardG)));
         m.position.set(x, y, z);
         if (sy) m.scale.y = sy;
         yt(m); (g || yardG).add(m); return m;

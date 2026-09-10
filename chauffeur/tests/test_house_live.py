@@ -32,11 +32,12 @@ def check(cond, msg):
 INVARIANT_JS = """() => {
   const S = window.__hpScene;
   if (!S) return { err: 'no scene captured' };
-  const use = new Map();   // material.uuid -> Set of zone-or-'' users
+  const use = new Map(), geos = new Set();
   let meshes = 0;
   S.traverse(o => {
     if (!o.isMesh || !o.material || Array.isArray(o.material)) return;
     meshes += 1;
+    if (o.geometry) geos.add(o.geometry.uuid);
     let z = '';
     for (let p = o; p; p = p.parent)
       if (p.userData && p.userData.zone) { z = p.userData.zone; break; }
@@ -45,7 +46,7 @@ INVARIANT_JS = """() => {
   });
   let crossing = 0;
   use.forEach(s => { if (s.size > 1) crossing += 1; });
-  return { meshes, materials: use.size, crossing };
+  return { meshes, materials: use.size, geometries: geos.size, crossing };
 }"""
 
 
@@ -178,6 +179,18 @@ def scenario_the_house_boots_enters_and_leans_in():
               'no material crosses a zone boundary: %r' % inv)
         check(inv['materials'] <= inv['meshes'] * 0.5,
               'the material cache is live: %r' % inv)
+        # B1 (batching spec): unlike mat(), which every mesh eventually
+        # flows through, cgeo() only wraps four helpers (box/cyl/
+        # roundedGeo/ysph); geometry built by anything else (blob-shadow
+        # discs, kSph/kLeaf plants, ad-hoc lamp/wheel cylinders, a few
+        # direct extrusions) is left alone by design, and at this
+        # scenario's forced quality=low every NICE/D2-gated roundedGeo
+        # call site is dark too (measured: 300 of 1006 meshes never
+        # touch cgeo). meshes*0.5 is unreachable under that scope; 0.8
+        # still rejects the pre-cache baseline (1006/1006) and holds
+        # with margin over the measured, three-run-stable 741/1006.
+        check(inv['geometries'] <= inv['meshes'] * 0.8,
+              'the geometry cache is live: %r' % inv)
 
 
 if __name__ == '__main__':
