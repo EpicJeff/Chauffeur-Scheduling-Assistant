@@ -732,6 +732,18 @@
       }
       return g;
     }
+    var discMatCache = {};
+    function discMat(color, opacity) {
+      var k4 = color + '|' + opacity;
+      var m = discMatCache[k4];
+      if (!m) {
+        m = discMatCache[k4] = new T.MeshBasicMaterial({
+          color: color, transparent: true, opacity: opacity,
+          blending: T.MultiplyBlending, depthWrite: false });
+        m.userData.shared = true;
+      }
+      return m;
+    }
     /* ---- L1 rail (spec 2026-09-10-house-batching-design.md) ----------
        A zone never shares a material: the glow loop writes emissive on
        every mesh a zone owns, wherever it hangs. Materials handed out by
@@ -960,8 +972,8 @@
        renders underneath the boards and nothing reads as touching */
     function blobShadow(rx, rz, x, z, group, y0) {
       if (SHADOWS) return null;          // the high tier has the real thing
-      var m = new T.Mesh(new T.CircleGeometry(1, 20),
-        new T.MeshBasicMaterial({ color: C.shadow, transparent: true, opacity: 0.16 }));
+      var m = new T.Mesh(cgeo('circ|20', function () { return new T.CircleGeometry(1, 20); }),
+        discMat(C.shadow, 0.16));
       m.rotation.x = -Math.PI / 2;
       m.scale.set(rx, rz, 1);
       m.position.set(x, y0 === undefined ? 0.012 : y0, z);
@@ -5104,9 +5116,8 @@
       /* contact BELOW tier 3 only: tier 3 casts a real one out here now */
       function ysh(rx, rz, x, z, tone) {
         if (SHADOWS) return null;
-        var m = new T.Mesh(new T.CircleGeometry(1, Y2 ? 16 : 8),
-          new T.MeshBasicMaterial({ color: tone || 0xa8a4aa, transparent: true,
-            blending: T.MultiplyBlending, depthWrite: false }));
+        var m = new T.Mesh(cgeo('circ|' + (Y2 ? 16 : 8), function () { return new T.CircleGeometry(1, Y2 ? 16 : 8); }),
+          discMat(tone || 0xa8a4aa, 1));
         m.rotation.x = -Math.PI / 2;
         m.scale.set(rx, rz, 1);
         m.position.set(x, GY + 0.009, z);
