@@ -198,19 +198,27 @@ def scenario_the_house_boots_enters_and_leans_in():
         check(not inv.get('err'), 'sharing probe captured the scene')
         check(inv['crossing'] == 0,
               'no material crosses a zone boundary: %r' % inv)
-        check(inv['materials'] <= inv['meshes'] * 0.5,
+        # B3 (batching spec): `meshes` here counts the scene AFTER
+        # mergeStatic has already collapsed same-material/same-room/
+        # same-hide-group fabric into single draws, so it is a post-merge
+        # draw-call count, not the raw per-primitive count these two
+        # ratios were first calibrated against (Task 3/4, pre-merge:
+        # meshes=1006). Merging shrinks the denominator without touching
+        # the numerator (a merged mesh still wears exactly one material,
+        # and the SET of distinct materials/geometries still in use is
+        # unchanged by consolidating their owners) — so both ratios rose
+        # on their own the moment merging went live, with no loss of
+        # sharing. Three-run-stable at quality=low, this task:
+        # meshes=510, materials=409 (ratio 0.802), geometries=442 (ratio
+        # 0.867). 0.85 / 0.92 hold with real margin over that measured
+        # pair while still failing a fully dead cache, which (because a
+        # dead material cache also starves mergeStatic's same-material
+        # buckets, so nothing merges either) reverts BOTH `meshes` and
+        # the numerator toward the pre-cache 1006/1006 baseline — ratio
+        # 1.0, comfortably caught by either ceiling.
+        check(inv['materials'] <= inv['meshes'] * 0.85,
               'the material cache is live: %r' % inv)
-        # B1 (batching spec): unlike mat(), which every mesh eventually
-        # flows through, cgeo() only wraps four helpers (box/cyl/
-        # roundedGeo/ysph); geometry built by anything else (blob-shadow
-        # discs, kSph/kLeaf plants, ad-hoc lamp/wheel cylinders, a few
-        # direct extrusions) is left alone by design, and at this
-        # scenario's forced quality=low every NICE/D2-gated roundedGeo
-        # call site is dark too (measured: 300 of 1006 meshes never
-        # touch cgeo). meshes*0.5 is unreachable under that scope; 0.8
-        # still rejects the pre-cache baseline (1006/1006) and holds
-        # with margin over the measured, three-run-stable 741/1006.
-        check(inv['geometries'] <= inv['meshes'] * 0.8,
+        check(inv['geometries'] <= inv['meshes'] * 0.92,
               'the geometry cache is live: %r' % inv)
 
 

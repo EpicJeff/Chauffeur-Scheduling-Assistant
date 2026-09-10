@@ -5440,6 +5440,126 @@
       });
     })();
 
+    /* ---- B3 (batching spec): merge the static fabric ------------------
+       Same material + same shadow flags + same room tag + same
+       hide-group = one mesh. Hand-rolled (BufferGeometryUtils is not in
+       the vendored bundle): expand to non-indexed, transform into the
+       root's space, concatenate. Triangle count is unchanged; draw
+       calls collapse. Transparent materials keep their own draws (order
+       semantics), unshared materials are somebody's mutation target and
+       are skipped, zones are exempt (L4), and each hide-group merges
+       only within itself (L5). */
+    function mergeGeoms(meshes, originMatrix) {
+      var pos = [], nor = [], uv = [];
+      var inv = new T.Matrix4().copy(originMatrix).invert();
+      var m4 = new T.Matrix4(), n3 = new T.Matrix3(), v = new T.Vector3();
+      meshes.forEach(function (o) {
+        var g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry;
+        var p = g.attributes.position, n = g.attributes.normal,
+            u = g.attributes.uv;
+        m4.copy(inv).multiply(o.matrixWorld);
+        n3.getNormalMatrix(m4);
+        for (var i = 0; i < p.count; i++) {
+          v.fromBufferAttribute(p, i).applyMatrix4(m4);
+          pos.push(v.x, v.y, v.z);
+          if (n) {
+            v.fromBufferAttribute(n, i).applyMatrix3(n3).normalize();
+            nor.push(v.x, v.y, v.z);
+          }
+          if (u) uv.push(u.getX(i), u.getY(i)); else uv.push(0, 0);
+        }
+        if (g !== o.geometry) g.dispose();   /* the temp non-indexed copy */
+      });
+      var out = new T.BufferGeometry();
+      out.setAttribute('position', new T.Float32BufferAttribute(pos, 3));
+      if (nor.length)
+        out.setAttribute('normal', new T.Float32BufferAttribute(nor, 3));
+      out.setAttribute('uv', new T.Float32BufferAttribute(uv, 2));
+      return out;
+    }
+    function mergeStatic(root, noMerge) {
+      root.updateMatrixWorld(true);
+      var buckets = {};
+      root.traverse(function (o) {
+        if (!o.isMesh || o.isInstancedMesh) return;
+        if (noMerge.has(o)) return;
+        for (var p = o; p && p !== root.parent; p = p.parent) {
+          if (p !== o && noMerge.has(p)) return;
+          if (p.userData && p.userData.zone) return;       /* L4 */
+        }
+        if (!o.material.userData || !o.material.userData.shared) return;
+        if (o.material.transparent) return;
+        var roomTag = '';
+        for (var q = o; q && q !== root.parent; q = q.parent)
+          if (q.userData && q.userData.room) { roomTag = q.userData.room; break; }
+        var k = o.material.uuid + '|' + (o.castShadow ? 1 : 0) +
+                (o.receiveShadow ? 1 : 0) + '|' + (o.renderOrder || 0) +
+                '|' + roomTag;
+        (buckets[k] = buckets[k] || []).push(o);
+      });
+      Object.keys(buckets).forEach(function (k) {
+        var list = buckets[k];
+        if (list.length < 4) return;
+        var first = list[0];
+        var mm = new T.Mesh(mergeGeoms(list, root.matrixWorld),
+                            first.material);
+        mm.castShadow = first.castShadow;
+        mm.receiveShadow = first.receiveShadow;
+        mm.renderOrder = first.renderOrder;
+        var rt = k.split('|')[3];
+        if (rt) mm.userData.room = rt;
+        root.add(mm);
+        list.forEach(function (o) { if (o.parent) o.parent.remove(o); });
+      });
+    }
+    /* Dynamic and painted things keep their own draws: state repaints
+       their maps, toggles their visibility, or rebuilds them wholesale. */
+    var NO_MERGE = new Set([carsG, busG, mudBagsG, magnets, skyDome,
+      calFace, boardFace, critFace, radioFace, paneMesh, plaque, needle,
+      steam, steam2, pendants, fridgeDoorTop, pantryDoor]);
+    (pantryJars || []).forEach(function (j) { NO_MERGE.add(j); });
+    /* Per-group passes first (L5: within one hide-group, never across
+       two). extG.add() makes garageDoorG, mudroomRoofG AND yardG its own
+       children — plus a great deal of loose exterior fabric with no
+       hide-group of its own (siding, roofline, street, driveway) — so
+       extG gets a self-merge pass too, after the four dedicated passes
+       below have already run. garageDoorG and yardG are fenced out of
+       that self-pass explicitly: both carry substantial same-material,
+       same-room-tag fabric that would otherwise re-bucket with extG's
+       loose siding into an always-visible extG-level mesh, stranding
+       the hide-group's own visibility toggle. mudroomRoofG nests the
+       same way but is deliberately left OUT of the fence: it holds just
+       two meshes (the street-side wall + roof), one material each, and
+       neither one's material ever collects 3 more extG-reachable
+       'mudroom' siblings to cross mergeStatic's 4-item bucket floor —
+       verified empirically (quality=high and =low, several boots each:
+       mudroomRoofG.children.length stays 2 every time, untouched by the
+       extG pass). That is a fact about this scene's current material
+       diversity, not a structural guarantee — if a future material
+       consolidation pass ever collapses mudroom siding down to fewer,
+       more-shared materials, re-check this with the same method before
+       trusting it still holds. westWallG is a scene-level SIBLING of
+       extG (scene.add(westWallG), never extG.add), so it is never
+       reached by extG's own traversal regardless; skyDome is already in
+       NO_MERGE. */
+    [westWallG, garageDoorG, mudroomRoofG, yardG].forEach(function (g) {
+      mergeStatic(g, NO_MERGE);
+    });
+    var EXT_NO_MERGE = new Set(NO_MERGE);
+    EXT_NO_MERGE.add(yardG);
+    EXT_NO_MERGE.add(garageDoorG);
+    mergeStatic(extG, EXT_NO_MERGE);
+    /* Scene-level pass last: every hide-group (now including extG
+       itself, whose loose fabric just became one boundary) is a
+       reparenting boundary, so an untagged exterior static (street,
+       driveway) can never escape extG into a scene-level mesh — that
+       would defeat onTap's !inExterior(hit) fallback (a street tap
+       would open the kitchen). */
+    var TOP = new Set(NO_MERGE);
+    [westWallG, garageDoorG, mudroomRoofG, livingRoofG, yardG, extG]
+      .forEach(function (g) { TOP.add(g); });
+    mergeStatic(scene, TOP);
+
     /* ---- the painters: every data surface drawn like the app draws it —
        Inter type, white cards, accent bars, soft shadows. Cached per
        payload; a poll that changes nothing repaints nothing. ---- */
