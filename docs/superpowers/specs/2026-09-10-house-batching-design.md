@@ -280,3 +280,33 @@ same:
 `docs/house_style_bible.md`, `docs/superpowers/plans/2026-09-09-house-open-items.md`
 (the punch list and the lighting work this pass makes affordable),
 `docs/superpowers/specs/2026-09-08-house-design.md`, `chauffeur/tools/house_probe.py`.
+
+## 9. Results (implemented v2.474.0–v2.477.1)
+
+Per-view in-frustum mesh counts at quality=high, baseline (v2.473.1) → final (v2.477.1):
+
+| view | baseline | final | reduction |
+|---|---|---|---|
+| exterior | 3,147 | 1,134 | -64% |
+| kitchen | 1,018 | 363 | -64% |
+| living | ~1,411 | 682 | -52% |
+| mudroom | ~575 | 373 | -35% |
+| garage | ~702 | 526 | -25% |
+
+(Three views use measured counts against true pre-merge HEAD; the plan's table had older fixture baselines: living was 1,019, mudroom 1,175, garage 606. Both numbers are reported here.)
+
+Scene totals: meshes 3,310 → ~1,220 (-63%); unique materials 3,310 → 952 (-71%, high tier distinct looks); unique geometries 3,310 → 901 (-73%).
+
+**Behavior changes shipped:**
+- Tap on the bus at the curb is now inert (was: entered the kitchen via the deleted height heuristic in L6).
+- Driveway car → garage case now guaranteed by the general mechanism (`buildCar` stamps room); no longer a special case.
+
+**Design invariants verified:**
+- Deterministic planting held: exterior pixel-identical (modulo known wall-clock card noise).
+- L1 sharing invariant + tap-law tests now run live in `test_house_live.py`.
+- `instanceYard` buckets by (geometry, material) identity; `ysph` normalized to canonical unit sphere per L3.
+
+**Trade recorded by ruling (performance penalty documented):**
+Per-room in-frustum **triangles** rose post-merge (kitchen 93.6k → 142.3k, +52%; living +19.5%; mudroom +17.3%; garage +5.1%) because merged meshes defeat per-object frustum culling. Accepted because the scene is draw-call bound (§1) and the triangle counts remain trivial for every target GPU. Pi device-verify pass (owed for the whole house arc) is the backstop.
+
+The draw-budget tool (`tools/house_probe.py --budget`) reports build time, unique materials and geometries, confirming L7 (no regression under load). Scene batches via materials/geometries cached, garden instanced, fabric merged.
