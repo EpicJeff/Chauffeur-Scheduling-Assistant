@@ -3901,6 +3901,11 @@
             gb(0.35, 0.05, 0.09, GCARDD, SX + 0.20, 1.865, SZ, GMATT);
             gc(0.105, 0.105, 0.02, C.steel, SX - 0.54, 2.48, SZ - 0.13, 10, STEEL);
             gb(0.45, 0.05, 0.06, C.wood, SX + 0.38, 2.56, SZ, gWoodO);
+            /* R4: a lid, proud of the box it closes - the strip above is
+               a fold seam, this is a separate cap sitting ON the carton,
+               the "not one box" tell (style bible S3) the shelf run was
+               still missing */
+            gb(0.40, 0.045, 0.32, GCARDD, SX - 0.52, 1.9525, SZ, GMATT);
           }
         } else {
           gb(0.44, 0.32, 0.30, GCARD, SX - 0.44, 1.77, SZ, GMATT);
@@ -3920,10 +3925,18 @@
             gb(0.035, 0.13, 0.035, C.graphite, TY + dx, 1.24, GZW + 0.08,
                { rough: 0.5 });
           });
-          var hose = new T.Mesh(new T.TorusGeometry(0.22, 0.055,
-            GD3 ? 8 : 5, GD3 ? 14 : 8), mat(C.teal, { rough: 0.82 }));
-          hose.position.set(TY + 0.02, 1.02, GZW + 0.14);
-          gt(hose); garageInterior.add(hose);
+          /* R4: a sweepAt coil, judged against the plain ring it
+             replaces - loops that wind AND drift in depth read as a
+             hose actually coiled on its hook; a single perfect torus
+             reads as a hoop. Same wall position the ring held. */
+          var coilPts = [];
+          for (var hcI = 0; hcI <= 20; hcI++) {
+            var hcF = hcI / 20, hcA = hcF * Math.PI * 2 * 1.6,
+                hcR = 0.23 - hcF * 0.06;
+            coilPts.push([TY + 0.02 + hcR * Math.cos(hcA),
+                         1.02 + hcR * Math.sin(hcA), GZW + 0.14 + hcF * 0.09]);
+          }
+          gt(sweepAt(coilPts, 0.030, C.teal, garageInterior, { rough: 0.82 }));
         }
       })();
 
@@ -3969,6 +3982,8 @@
             gb(0.31, 0.05, 0.13, GCARDD, WXf, 3.115, Z0 + 2.52, GMATT);
             gb(0.33, 0.05, 0.16, GCARDD, WXf, 2.485, Z0 + 4.06, GMATT);
             gb(0.31, 0.05, 0.14, GCARDD, WXf, 3.145, Z0 + 4.80, GMATT);
+            /* R4: a lid, proud of the front-most carton on this run */
+            gb(0.36, 0.045, 0.46, GCARDD, WXf, 2.4925, Z0 + 0.42, GMATT);
           }
         } else {          /* the Pi gets the storage, just not the jars:
              two bare planks read as a mistake, not as restraint */
@@ -4348,8 +4363,25 @@
       gh.lineTo(p.blT, p.roof);
       gh.lineTo(p.blB, gy);
       gh.closePath();
+      /* R4 tried real transmission glass at high (finish:'glassy',
+         thick:0.06) through the fresh-material path every car's paint
+         already takes — cars sit inside a zone-tagged group, so mat()
+         force-uniques every material it hands out here regardless of
+         finish (L1), and there is nothing to share-and-corrupt the way a
+         static prop's cached material would be, so the PLUMBING was
+         never the problem. The picture was: a probe screenshot
+         (zoom_truck_d9, task-9 report) showed the transmission pane
+         render as a near-black hole where the working pale-blue pane
+         used to be — this shell has no interior modelled, so the
+         refraction ray looks straight through the windshield, through
+         empty cabin, out the backlight, and samples whatever is behind
+         the car, which reads as void. Reverted per the room process
+         (the screenshot is the judge, not the code): high tier keeps the
+         same recipe as every other tier, just glossier — lower
+         roughness, a touch of reflectivity, no transparency to break. */
       tag(profileMesh(gh, glassW, p.glass || CAR_GLASS,
-                      { rough: 0.34, metal: 0.0, envInt: 0.16 }));
+                      DETAIL >= 3 ? { rough: 0.20, metal: 0.02, envInt: 0.35 }
+                                  : { rough: 0.34, metal: 0.0, envInt: 0.16 }));
 
       /* -- 3. the roof cap: painted, capping the glass, drawn in from
          the body sides so the cabin is narrower than the body (S6). */
@@ -4381,8 +4413,22 @@
         });
       }
 
-      /* -- 5. wheels: tyre in ink, rim at 0.62 radius set 0.02 inside
-         the tyre face, a proud hub cap at tier 3. */
+      /* -- 5. wheels (R4: real assemblies, not flat discs): tyre in ink,
+         a RIM lathed from the 'foot' profile at 0.62 radius, a domed
+         'knob' hub cap at tier 3. Ink/steel, the wheel's own palette.
+
+         Both lathes are the K2 unit profile (PROFILES.foot / .knob both
+         peak at local radius 0.46) scaled per instance, exactly the
+         "one shared cgeo geometry, sized by mesh.scale" trick every other
+         room's props already use — one LatheGeometry serves every rim on
+         every body type, at every seat_capacity. The radius rides in
+         scale.x/scale.z; rotation.z=PI/2 (matching the old cylinder rim's
+         own rotation, unchanged) lays the lathe's revolution axis (local
+         Y) down along the axle. That is the SAME slot the length-stretch
+         counter-scale below writes to for every round part, so it now
+         multiplies instead of assigning (buildCar) — the tyre torus never
+         set its own scale.z, so nothing about its behaviour changes. */
+      var RIM_PK = 0.46, HUB_PK = 0.46;      /* PROFILES.foot / .knob peak */
       function wheelAt(sx, wz, off) {
         var xo = sx * (hw - 0.03) - sx * (off || 0);
         var tw = p.wr * 0.30, t;
@@ -4401,18 +4447,18 @@
         t.userData.round = true;
         tag(t);
         if (DETAIL >= 2) {
-          var r = new T.Mesh(new T.CylinderGeometry(p.wr * 0.62,
-            p.wr * 0.62, 0.07, 12), mat(C.steel, STEEL));
+          var rk = (p.wr * 0.62) / RIM_PK;
+          var r = latheAt('foot', [rk, 0.075, rk], C.steel,
+                          xo - sx * 0.055, p.wr, wz, grp, STEEL);
           r.rotation.z = Math.PI / 2;
-          r.position.set(xo - sx * 0.055, p.wr, wz);
           r.userData.round = true;
           tag(r);
         }
         if (DETAIL >= 3) {
-          var h = new T.Mesh(new T.CylinderGeometry(p.wr * 0.26,
-            p.wr * 0.26, 0.05, 8), mat(C.graphite, STEEL));
+          var hk = (p.wr * 0.26) / HUB_PK;
+          var h = latheAt('knob', [hk, 0.05, hk], C.graphite,
+                          xo - sx * 0.024, p.wr, wz, grp, STEEL);
           h.rotation.z = Math.PI / 2;
-          h.position.set(xo - sx * 0.024, p.wr, wz);
           h.userData.round = true;
           tag(h);
         }
@@ -4444,16 +4490,36 @@
                   { rough: 0.6 }));
         }
       }
+      /* R4: one sweepAt trim line across the front bumper's face — the
+         grille's own slats and both bumpers already chamfer for free
+         (K1's default on every box() that doesn't opt out with sharp()),
+         so this is the one truly NEW bumper part the budget allows. */
+      if (DETAIL >= 2) {
+        tag(sweepAt([[-p.W * 0.40, bumpY, zF + 0.086],
+                     [0, bumpY, zF + 0.091],
+                     [p.W * 0.40, bumpY, zF + 0.086]],
+                    0.014, C.steel, grp, STEEL));
+      }
       var tailY = p.bed ? p.bed.rail - 0.24 : p.deck - 0.22;
+      var LAMP_PK = 0.34;                    /* PROFILES.finial's peak */
       [-1, 1].forEach(function (sx) {
         var lx = sx * (hw - p.W * 0.155), ly = gMid + gHt * 0.06;
-        if (DETAIL >= 2) {         /* a bezel, or a cream lamp on a cream
-                                      bumper is just more trim */
-          tag(box(p.W * 0.25, gHt * 0.80, 0.05, C.graphite, lx, ly,
-                  zF + 0.002, grp, { rough: 0.5 }));
-          tag(box(p.W * 0.21, gHt * 0.78, 0.05, C.ink, sx * (hw - p.W * 0.15),
-                  Math.max(p.sill + 0.40, tailY), zR - 0.002, grp,
-                  { rough: 0.5 }));
+        if (DETAIL >= 2) {         /* R4: the housing is a small squashed
+             'finial' dome behind the lens, standing in for the old flat
+             bezel — paint only, no emissive; the glow stays the zones'
+             language (S6), so a housing never wears anything but rough
+             paint even where it reads as "the light". */
+          var fhk = (gHt * 0.42) / LAMP_PK;
+          var fh = latheAt('finial', [fhk, 0.025, fhk], C.graphite, lx, ly,
+                           zF - 0.045, grp, { rough: 0.5 });
+          fh.rotation.x = Math.PI / 2;
+          tag(fh);
+          var rhk = (gHt * 0.40) / LAMP_PK;
+          var rh = latheAt('finial', [rhk, 0.025, rhk], C.ink,
+                           sx * (hw - p.W * 0.15), Math.max(p.sill + 0.40, tailY),
+                           zR + 0.045, grp, { rough: 0.5 });
+          rh.rotation.x = -Math.PI / 2;
+          tag(rh);
         }
         tag(box(p.W * 0.21, gHt * 0.60, 0.07, CAR_LAMP, lx, ly,
                 zF + 0.012, grp, GLOSS));
@@ -4471,11 +4537,36 @@
         });
       }
 
-      /* -- 7. mirrors, handles, badge: the finest layer */
-      if (DETAIL >= 2 && !p.noMirror) {
+      /* -- 6b. door seams (R4): a thin ink recess where a front door
+         would meet the next panel. The Z position reads off the SAME
+         per-body pil[] table that already places the B-pillar (pil[0]) —
+         a body with no intermediate pillar (the truck's two-door cab)
+         falls back to the cabin's own midpoint. Kept at D2: the budget
+         cap's own degrade order ("keep rims, lose hubs; lose mirrors;
+         keep seams") keeps this one down through medium, after mirrors
+         and hubs are already gone. */
+      if (DETAIL >= 2) {
+        var doorF = (p.pil && p.pil.length) ? p.pil[0] : 0.5;
+        var doorZ = p.wsB + doorF * (p.blB - p.wsB);
+        var seamY0 = p.sill + 0.08, seamY1 = Math.min(p.belt - 0.06, seamY0 + 0.60);
         [-1, 1].forEach(function (sx) {
-          tag(box(0.13, 0.09, 0.09, col, sx * (hw + 0.045), p.belt + 0.07,
-                  p.wsB - 0.10, grp, GLOSS));
+          tag(box(0.016, seamY1 - seamY0, 0.012, C.ink,
+                  sx * (hw + 0.006), (seamY0 + seamY1) / 2, doorZ, grp,
+                  sharp({ rough: 0.9 })));
+        });
+      }
+
+      /* -- 7. mirrors, handles, badge: the finest layer. R4: the whole
+         mirror - stalk and head - moved from D2 to D3, so it degrades as
+         a unit at the first step below high (the cap's own order: "keep
+         rims, lose hubs; lose mirrors; keep seams" — mirrors go together
+         with the handles/badge that already lived at this tier). */
+      if (DETAIL >= 3 && !p.noMirror) {
+        [-1, 1].forEach(function (sx) {
+          var mx = sx * (hw + 0.05), my = p.belt + 0.075, mz = p.wsB - 0.12;
+          tag(sweepAt([[sx * (hw - 0.02), p.belt + 0.02, p.wsB - 0.04],
+                       [mx, my, mz]], 0.017, C.graphite, grp, STEEL));
+          tag(rbox(0.13, 0.09, 0.10, 0.025, col, mx, my, mz, grp, GLOSS));
         });
       }
       if (DETAIL >= 3) {
@@ -4657,10 +4748,14 @@
                  fw: 1.30, rw: -1.06, wsB: 0.92, wsT: 0.56,
                  blT: -0.12, blB: -0.20, pil: [],
                  bed: { z0: -0.30, z1: -1.84, floor: 0.76, rail: 1.08 } },
-      /* long tall cabin, sloped nose, a slab flank */
+      /* long tall cabin, a LONG flat bonnet, a slab flank. wsB was 1.08
+         (R4): from the exterior camera the van and the minivan read as
+         the same tall box, so the bonnet plateau (zF-0.16 to wsB) is
+         pushed back another 0.22, from 0.64 long to 0.86 — a people-
+         mover prow, not a cargo slab. */
       minivan: { L: 3.75, W: 1.74, wr: 0.30, sill: 0.18, nose: 0.66,
                  hood: 0.76, belt: 0.84, deck: 0.84, roof: 1.58,
-                 fw: 1.18, rw: -1.12, wsB: 1.08, wsT: 0.62,
+                 fw: 1.18, rw: -1.12, wsB: 0.86, wsT: 0.62,
                  blT: -1.50, blB: -1.72, pil: [0.28, 0.58] },
       /* short, steep backlight landing on the tail */
       hatch:   { L: 3.02, W: 1.56, wr: 0.27, sill: 0.15, nose: 0.56,
@@ -4672,9 +4767,12 @@
                  hood: 0.67, belt: 0.72, deck: 0.72, roof: 1.26,
                  fw: 1.09, rw: -1.09, wsB: 0.76, wsT: 0.40,
                  blT: -1.44, blB: -1.66, pil: [0.30, 0.62] },
-      /* tallest, barely any bonnet, a slab flank */
+      /* tallest, barely any bonnet, a slab flank. roof was 1.96 (R4):
+         raised again so the van clears the minivan's 1.58 by 0.56, not
+         0.38 — a gap the exterior camera can actually resolve at
+         house scale, where the old margin read as the same silhouette. */
       van:     { L: 3.85, W: 1.80, wr: 0.32, sill: 0.20, nose: 0.92,
-                 hood: 0.98, belt: 1.04, deck: 1.04, roof: 1.96,
+                 hood: 0.98, belt: 1.04, deck: 1.04, roof: 2.14,
                  fw: 1.30, rw: -1.16, wsB: 1.56, wsT: 1.32,
                  blT: -1.66, blB: -1.83, pil: [0.24, 0.50, 0.76] }
     };
@@ -4704,7 +4802,15 @@
       if (Math.abs(k - 1) > 0.004) {
         grp.scale.z = k;
         grp.traverse(function (o) {
-          if (o.userData && o.userData.round) o.scale.z = 1 / k;
+          /* R4 multiplies rather than assigns: a lathed rim/hub carries its
+             OWN radius in scale.z (a unit lathe + mesh scale is how one
+             cached geometry serves every wheel size — see wheelAt), and an
+             assignment here would silently overwrite that radius with the
+             stretch's reciprocal instead of combining with it. Every
+             pre-R4 round part (the tyre) left scale.z at its default 1, so
+             multiplying reproduces the old behaviour for those exactly,
+             and is the only form that is also correct for the new ones. */
+          if (o.userData && o.userData.round) o.scale.z *= 1 / k;
         });
       }
       return grp;
