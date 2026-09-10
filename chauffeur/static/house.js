@@ -647,8 +647,8 @@
     var marble = NICE ? marbleTex() : null;
     var brushed = NICE ? steelTex() : null;
 
-    function mat(c, opts) {
-      opts = opts || {};
+    var matCache = {};
+    function makeMat(c, opts) {
       if (!PBR) {
         var lm = new T.MeshLambertMaterial({ color: c });
         if (opts.map && DETAIL >= 2) lm.map = opts.map;
@@ -663,6 +663,29 @@
       m.envMapIntensity = opts.envInt !== undefined ? opts.envInt
         : (m.metalness > 0.5 ? 1.0 : 0.1);
       return m;
+    }
+    /* B1 (batching spec): one material per LOOK, not per mesh. The cache
+       key is every input makeMat reads. forceUnique is the L1 valve: a
+       zone-bound mesh gets a private material the glow loop may paint. */
+    function mat(c, opts, forceUnique) {
+      opts = opts || {};
+      if (forceUnique || opts.unique) return makeMat(c, opts);
+      var key = (PBR ? 'p|' : 'l|') + c +
+                '|' + (opts.rough !== undefined ? opts.rough : '') +
+                '|' + (opts.metal !== undefined ? opts.metal : '') +
+                '|' + (opts.envInt !== undefined ? opts.envInt : '') +
+                '|' + (opts.map ? opts.map.uuid : '');
+      var m = matCache[key];
+      if (!m) {
+        m = matCache[key] = makeMat(c, opts);
+        m.userData.shared = true;
+      }
+      return m;
+    }
+    function inZoneGroup(g) {
+      for (var p = g; p; p = p.parent)
+        if (p.userData && p.userData.zone) return true;
+      return false;
     }
     /* ---- L1 rail (spec 2026-09-10-house-batching-design.md) ----------
        A zone never shares a material: the glow loop writes emissive on
@@ -694,8 +717,9 @@
       return m;
     }
     function box(w, h, d, c, x, y, z, group, opts) {
-      var m = new T.Mesh(new T.BoxGeometry(w, h, d), mat(c, opts));
-      m.position.set(x, y, z); finish(m); (group || scene).add(m); return m;
+      var g0 = group || scene;
+      var m = new T.Mesh(new T.BoxGeometry(w, h, d), mat(c, opts, inZoneGroup(g0)));
+      m.position.set(x, y, z); finish(m); g0.add(m); return m;
     }
     function roundedGeo(w, h, d, r) {
       r = Math.min(r, w / 2 - 0.01, h / 2 - 0.01, d / 2 - 0.01);
@@ -718,13 +742,15 @@
     }
     function rbox(w, h, d, r, c, x, y, z, group, opts) {
       if (DETAIL < 2) return box(w, h, d, c, x, y, z, group, opts);
-      var m = new T.Mesh(roundedGeo(w, h, d, r), mat(c, opts));
-      m.position.set(x, y, z); finish(m); (group || scene).add(m); return m;
+      var g0 = group || scene;
+      var m = new T.Mesh(roundedGeo(w, h, d, r), mat(c, opts, inZoneGroup(g0)));
+      m.position.set(x, y, z); finish(m); g0.add(m); return m;
     }
     function cyl(rt, rb, h, c, x, y, z, group, seg, opts) {
+      var g0 = group || scene;
       var m = new T.Mesh(new T.CylinderGeometry(rt, rb, h, seg || (DETAIL >= 3 ? 18 : 10)),
-                         mat(c, opts));
-      m.position.set(x, y, z); finish(m); (group || scene).add(m); return m;
+                         mat(c, opts, inZoneGroup(g0)));
+      m.position.set(x, y, z); finish(m); g0.add(m); return m;
     }
     function knob(x, y, z, group) {
       if (DETAIL < 2) return null;
@@ -1848,15 +1874,19 @@
     };
     var KLIFT = { fiddle: 0, spray: 0.03, mound: 0.11 };
     function kSph(g, r, c, x, y, z, sy) {
+      /* raw mat() call, not routed through box/rbox/cyl: kPlant(winG, ...)
+         (the window sill's plant) hands g=winG, a zone group, so this must
+         thread the same L1 valve those helpers do or the leaf-green
+         material leaks into every other plant in the house (L1 break). */
       var m = new T.Mesh(new T.SphereGeometry(r, KD3 ? 10 : 6, KD3 ? 8 : 4),
-                         mat(c, { rough: 1.0 }));
+                         mat(c, { rough: 1.0 }, inZoneGroup(g || scene)));
       m.position.set(x, y, z);
       if (sy) m.scale.y = sy;
       finish(m); (g || scene).add(m); return m;
     }
     function kLeaf(g, x, base, z, L, wide, thick, tilt, spin, c) {
       var m = new T.Mesh(new T.SphereGeometry(1, KD3 ? 10 : 6, KD3 ? 8 : 4),
-                         mat(c, { rough: 1.0 }));
+                         mat(c, { rough: 1.0 }, inZoneGroup(g || scene)));
       m.scale.set(thick, L, wide);
       m.rotation.set(0, spin, tilt);
       var rad = L * Math.sin(tilt), up = L * Math.cos(tilt);
@@ -2401,7 +2431,10 @@
     var calG = zoneGroup('calendar', WXK, 0, 1.52);
     calG.rotation.y = Math.PI / 2;      /* face east, into the great room */
     westWallG.add(calG);
-    var calFace = new T.Mesh(new T.PlaneGeometry(1.5, 1.9), mat(0xf6f1e4, { rough: 0.9 }));
+    /* L1: lands straight on calG (a zone group) with no zoneTag wrapper
+       after it, so the cache must be forced unique right here. */
+    var calFace = new T.Mesh(new T.PlaneGeometry(1.5, 1.9),
+                             mat(0xf6f1e4, { rough: 0.9 }, true));
     calFace.position.set(0, 2.50, 0.05);
     calG.add(calFace);
     box(1.62, 0.1, 0.08, C.oxblood, 0, 3.50, 0.02, calG, GLOSS);
@@ -2760,8 +2793,10 @@
                    { rough: 0.35, metal: 0.4, envInt: 0.6 });
     lid.rotation.x = -0.30;
     lid.position.y = 1.445; lid.position.z = -0.175;
+    /* L1: lands straight on crit (a zone group) with no zoneTag wrapper
+       after it, so the cache must be forced unique right here. */
     var critFace = new T.Mesh(new T.PlaneGeometry(0.60, 0.38),
-                              mat(0x12151c, { rough: 0.6 }));
+                              mat(0x12151c, { rough: 0.6 }, true));
     critFace.rotation.x = -0.30;
     critFace.position.set(0, 1.4395, -0.157);
     crit.add(critFace); finish(critFace);
@@ -4844,7 +4879,7 @@
       }
       function ysph(r, c, x, y, z, sy, g) {
         var m = new T.Mesh(new T.SphereGeometry(r, Y3 ? 12 : 7, Y3 ? 9 : 5),
-                           mat(c, MATT));
+                           mat(c, MATT, inZoneGroup(g || yardG)));
         m.position.set(x, y, z);
         if (sy) m.scale.y = sy;
         yt(m); (g || yardG).add(m); return m;

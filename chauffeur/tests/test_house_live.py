@@ -16,6 +16,8 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
 os.environ.setdefault('CHAUFFEUR_DATA_DIR',
                       tempfile.mkdtemp(prefix='chauffeur_house_live_'))
 
@@ -25,6 +27,26 @@ from live_app import live_app
 def check(cond, msg):
     if not cond:
         raise AssertionError(msg)
+
+
+INVARIANT_JS = """() => {
+  const S = window.__hpScene;
+  if (!S) return { err: 'no scene captured' };
+  const use = new Map();   // material.uuid -> Set of zone-or-'' users
+  let meshes = 0;
+  S.traverse(o => {
+    if (!o.isMesh || !o.material || Array.isArray(o.material)) return;
+    meshes += 1;
+    let z = '';
+    for (let p = o; p; p = p.parent)
+      if (p.userData && p.userData.zone) { z = p.userData.zone; break; }
+    if (!use.has(o.material.uuid)) use.set(o.material.uuid, new Set());
+    use.get(o.material.uuid).add(z);
+  });
+  let crossing = 0;
+  use.forEach(s => { if (s.size > 1) crossing += 1; });
+  return { meshes, materials: use.size, crossing };
+}"""
 
 
 def _seed():
@@ -68,6 +90,11 @@ def scenario_the_house_boots_enters_and_leans_in():
     _seed()
     shots = os.environ.get('HOUSE_SHOTS', '')
     with served.browser() as page:
+        from house_probe import THREE_WRAP
+        with open('static/vendor/three.min.js', 'rb') as fh:
+            _patched = fh.read() + THREE_WRAP
+        page.route('**/three.min.js*', lambda route: route.fulfill(
+            status=200, content_type='application/javascript', body=_patched))
         # ?quality=low on purpose: GPU-less machines still exercise the full
         # build path (low skips PBR/shadows but builds every mesh), and the
         # boot benchmark cannot demote-and-reload mid-test on a forced tier.
@@ -140,6 +167,17 @@ def scenario_the_house_boots_enters_and_leans_in():
         errs = [e for e in served.errors()
                 if 'WebGL' not in e and 'GroupMarker' not in e]
         check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
+
+        # L1 (batching spec): no material serves two masters. A material
+        # used by any zone mesh is used by that zone alone; scenery
+        # sharing is free. And the cache must actually be ON: a scene
+        # where every mesh still owns a private material has not batched.
+        inv = page.evaluate(INVARIANT_JS)
+        check(not inv.get('err'), 'sharing probe captured the scene')
+        check(inv['crossing'] == 0,
+              'no material crosses a zone boundary: %r' % inv)
+        check(inv['materials'] <= inv['meshes'] * 0.5,
+              'the material cache is live: %r' % inv)
 
 
 if __name__ == '__main__':
