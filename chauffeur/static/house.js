@@ -5350,6 +5350,60 @@
       tree(8.60, -12.60, 1.75, 'open', 0.8);
       tree(-11.60, -13.20, 1.50, 'broad', 0.3);
     })();
+    /* ---- B2 (batching spec): bake the garden into instances ----------
+       The yard is ~1,700 meshes drawn one call each, and after B1 its
+       repeated props already SHARE geometry and material objects — so
+       identical (geometry, material) pairs are the buckets, and no
+       builder needs to know it is being instanced. One InstancedMesh per
+       pair (L3: tinting stays a material property, applyScenery
+       untouched). Zone-stamped meshes (bus, curb) keep their own draw
+       so taps keep routing (L4). */
+    function instanceYard() {
+      var MIN = 8;
+      var buckets = {}, kill = [];
+      yardG.updateMatrixWorld(true);
+      var inv = new T.Matrix4().copy(yardG.matrixWorld).invert();
+      yardG.traverse(function (o) {
+        if (!o.isMesh || o.isInstancedMesh) return;
+        for (var p = o; p && p !== yardG; p = p.parent)
+          if (p.userData && p.userData.zone) return;
+        if (o.userData.zone) return;
+        var k = o.geometry.uuid + '|' + o.material.uuid + '|' +
+                (o.castShadow ? 1 : 0) + (o.receiveShadow ? 1 : 0) + '|' +
+                (o.renderOrder || 0);
+        (buckets[k] = buckets[k] || []).push(o);
+      });
+      var made = 0, folded = 0;
+      Object.keys(buckets).forEach(function (k) {
+        var list = buckets[k];
+        if (list.length < MIN) return;
+        var first = list[0];
+        var im = new T.InstancedMesh(first.geometry, first.material,
+                                     list.length);
+        im.frustumCulled = false;
+        im.castShadow = first.castShadow;
+        im.receiveShadow = first.receiveShadow;
+        im.renderOrder = first.renderOrder;
+        var m4 = new T.Matrix4();
+        list.forEach(function (o, i) {
+          m4.copy(inv).multiply(o.matrixWorld);
+          im.setMatrixAt(i, m4);
+          kill.push(o);
+        });
+        im.instanceMatrix.needsUpdate = true;
+        yardG.add(im);
+        made++; folded += list.length;
+      });
+      kill.forEach(function (o) { if (o.parent) o.parent.remove(o); });
+      (function prune(g) {
+        for (var i = g.children.length - 1; i >= 0; i--) {
+          var ch = g.children[i];
+          if (ch.isGroup) { prune(ch); if (!ch.children.length) g.remove(ch); }
+        }
+      })(yardG);
+      return { made: made, folded: folded };
+    }
+    instanceYard();
     /* sky dome: weather-painted from the inside, swapped by applyState.
        The dome IS the background now, so the flat clear color retires. */
     var skyDome = new T.Mesh(new T.SphereGeometry(80, 24, 12),
