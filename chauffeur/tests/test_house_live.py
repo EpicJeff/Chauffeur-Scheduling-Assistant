@@ -10,9 +10,12 @@ Run from chauffeur/:  python tests/test_house_live.py
 Set HOUSE_SHOTS=<dir> to also save exterior/kitchen/lean-in screenshots.
 """
 import datetime
+import io
 import os
 import sys
 import tempfile
+
+from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -901,11 +904,28 @@ def scenario_shell_fabric_registry():
     solveShell's degenerate-box guard (any bound non-finite, or min>max
     on any axis) forces such a piece 'solid' unconditionally, which
     reproduces that no-op exactly, for every view, not just living's.
+
+    Task 3 (spec section 3's ghost bullet + section 7 guards) changes what
+    a 'ghost' verdict actually draws: fills hidden + a prebuilt edge
+    outline shown, not dollhouse-hide. The mudroom row above already
+    exercises a 'ghost' verdict (west_wall) that used to render identically
+    to 'hide' (yard) -- same offed-set membership, opposite pixels once
+    edges exist -- so this scenario adds the pixel half of the proof
+    inside that same mudroom iteration, below.
     """
     served = live_app()
     if served is None:
         return
     with served.browser() as page:
+        # DAY_LOCK_JS (Task 3): the mudroom door's hero card renders a
+        # live leave-in-N-minutes countdown off the real wall clock
+        # (house.js's isNight()/countdown maths read `new Date()`
+        # directly), which would otherwise drift the mudroom screenshot's
+        # pixels test-run to test-run for reasons that have nothing to do
+        # with ghost edges. Registered before goto() so it wins the race
+        # against house.js's own module-scope closures, same idiom as the
+        # other live scenarios in this file that already need it.
+        page.add_init_script(DAY_LOCK_JS)
         # quality=high, wait_for_selector + a 2200ms settle: the same
         # boot idiom tools/house_probe.py uses ahead of its own reads,
         # not the has_room-and-skip dance the other scenarios in this
@@ -950,6 +970,58 @@ def scenario_shell_fabric_registry():
             check(offed == sorted(expected),
                   '%s: solver must reproduce the legacy set, got %r'
                   % (view, offed))
+
+            if view == 'mudroom':
+                # Task 3: west_wall is this view's one 'ghost' piece (the
+                # LEGACY row above), so it carries both halves of the
+                # proof -- the verdict string, and the pixels that verdict
+                # is now supposed to cause. 'hide'/'ghost' both land in
+                # `offed` above; only a verdict-string and a pixel check
+                # tell them apart.
+                west = [f for f in fab if f['name'] == 'west_wall'][0]
+                check(west['verdict'] == 'ghost',
+                      "west_wall must verdict 'ghost' in the mudroom, not "
+                      "just non-solid: %r" % west)
+                check(west.get('edgesVisible') is True,
+                      'west_wall edges group must be visible while its '
+                      'verdict is ghost: %r' % west)
+
+                # Pixel proof: a crop of the plain wall panel the west
+                # wall's own ghost lines cross in this exact camera framing
+                # -- no window, trim, calendar or hero-card pixel enters
+                # this box (confirmed against the derivation screenshots).
+                #
+                # Derivation run (this task, base commit abe36e7 /
+                # v2.492.1, BEFORE this task's house.js edit landed):
+                #   python tools/house_probe.py --views mudroom
+                #     --quality high --day
+                # gave the CONTROL shot -- west_wall's fill hidden, no
+                # edges built yet. This exact box scored 0 pixels within
+                # tolerance 60 of #2d2018 (0 all the way up through
+                # tolerance 70). The SAME command run again straight
+                # after this task's implementation (identical seed,
+                # identical day-lock, identical camera) scored 466 at the
+                # same tolerance, bit-for-bit stable across two
+                # independent probe processes (this harness's software
+                # WebGL renders deterministically). N=200 sits under half
+                # that measured value -- clear margin over the control's
+                # exact 0 in one direction, and over ordinary rendering
+                # variance in the other.
+                png = page.screenshot()
+                im = Image.open(io.BytesIO(png)).convert('RGB')
+                box = (1000, 160, 1240, 240)
+                tgt, tol = (0x2d, 0x20, 0x18), 60
+                crop = im.crop(box)
+                cw, ch = crop.size
+                pix = crop.load()
+                n = sum(1 for cy in range(ch) for cx in range(cw)
+                        if max(abs(pix[cx, cy][0] - tgt[0]),
+                               abs(pix[cx, cy][1] - tgt[1]),
+                               abs(pix[cx, cy][2] - tgt[2])) <= tol)
+                check(n >= 200,
+                      'west_wall ghost edges must paint >= 200 dark-line '
+                      'pixels in the wall crop %r (tolerance %d of '
+                      '#2d2018): got %d' % (box, tol, n))
 
         errs = [e for e in served.errors()
                 if 'WebGL' not in e and 'GroupMarker' not in e]

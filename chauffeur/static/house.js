@@ -901,11 +901,30 @@
           }
         }
         f.verdict = v;
-        /* Task 3 gives 'ghost' its edges; until then ghost draws as hide */
+        /* Task 3 (spec section 4, "applying a verdict"): fills show only
+           on 'solid', ghost lines show only on 'ghost'. mode:'hide'
+           pieces (just the yard) never get an edges group built at all
+           (see the build step below), so f.edges is null for them and
+           this second line is simply a no-op. */
         f.g.visible = (v === 'solid');
+        if (f.edges) f.edges.visible = (v === 'ghost');
       });
       if (webgl) webgl.shadowDirty();
     }
+    /* ---- SHELL (spec section 3): the one shared ghost-line material ----
+       LineBasicMaterial (LineSegments only, never a fill) — ONE instance
+       for every ghosted piece in the house, per the spec's "ONE shared
+       LineBasicMaterial"; a per-piece clone would be the batching arc's
+       own lesson broken one material at a time. Declared here, beside
+       FABRIC/regFabric/solveShell (the SHELL helper layer) rather than at
+       the build step's own call site far below: the build step itself
+       must run after every regFabric() call site in the file (FABRIC
+       only reaches its final membership once buildRoom() is nearly
+       done), so IT necessarily lives down near mergeStatic — but the
+       MATERIAL has no such ordering dependency and reads better beside
+       the rest of its own family. */
+    var GHOST_MAT = new T.LineBasicMaterial({ color: 0x2d2018,
+      transparent: true, opacity: 0.55 });
     var discMatCache = {};
     function discMat(color, opacity, blending, depthWrite) {
       var k4 = color + '|' + opacity + '|' +
@@ -6779,6 +6798,120 @@
       .forEach(function (g) { TOP.add(g); });
     mergeStatic(scene, TOP);
 
+    /* ---- SHELL (spec section 3): build the ghosts, once -----------------
+       AFTER every merge pass above, so each fabric group traverses to only
+       a handful of meshes (mergeStatic's own output) instead of the dozens
+       it started with. mode:'hide' (the yard) is skipped outright --
+       outlined scenery is still noise, section 3's own words -- and a
+       piece whose traversal turns up zero meshes (living_roof: open-
+       concept, never carried geometry; see its own regFabric call site
+       and boxOk's comment above) gets no edges object at all rather than
+       an empty one added for nothing: f.edges is left null for it, the
+       same as a piece that was never registered.
+
+       ONE LineSegments per piece, not one per surviving mesh (a first
+       draft, tried and rejected -- see the report): mergeStatic's 4-item
+       merge floor plus its L1/L4 exemptions (an unshared material never
+       merges; a zone subtree never merges) leave far more survivors
+       standing per fabric group than "a handful" -- measured at 100 for
+       west_wall alone (its picture frames, sconce and wall calendar all
+       carry their own unshared or zone-exempt materials), 12 for
+       garage_door, 2 for mudroom_roof. One EdgesGeometry+LineSegments per
+       survivor would cost that many draws per ghosted piece, dead against
+       section 7's "ghosts add at most one draw per ghosted piece" and
+       section 3's "ONE prebuilt ghost... as LineSegments" (singular).
+       So every survivor's EdgesGeometry is computed same as before, but
+       only to steal its (already local-space) vertex positions into one
+       shared `pos` array -- world-matrix transformed first so a mesh
+       three levels deep and a merged mesh sitting at the root both land
+       in the same combined array correctly -- and exactly one combined
+       BufferGeometry/LineSegments is built from that array per piece.
+       EdgesGeometry itself sets nothing but a bare, non-indexed `position`
+       attribute (verified by reading the vendored bundle's class body:
+       one this.setAttribute("position", ...) call, no index, no normal,
+       no uv), which is also all LineBasicMaterial ever reads off a
+       LineSegments -- so this loses nothing an unbatched version had.
+
+       Per-mesh transform: NOT a bare copy of o.position/o.rotation/
+       o.scale (also tried, also rejected). Two different shapes of
+       survivor reach this traversal, and only a world-matrix route gets
+       both right with the same code. (1) mergeStatic's own merged mesh
+       (mergeGeoms, above): every source vertex is baked into the MERGE
+       ROOT's own space, and the merged Mesh's position/rotation/scale
+       are never set afterward, so it carries an IDENTITY local transform
+       -- and every root this loop traverses (westWallG, mudroomRoofG,
+       garageDoorG -- verified by grep: none of the three is ever given a
+       .position or .rotation of its own) also sits at identity relative
+       to ITS OWN parent, so for a merged survivor, local-to-root and
+       local-to-root's-parent are the same numbers regardless of method.
+       (2) mergeStatic exempts an entire zone subtree from merging (L4,
+       the batching spec), and westWallG carries one such survivor group:
+       calG, the wall calendar, reparented in with its own real translate
+       PLUS a 90-degree yaw (`calG.rotation.y = Math.PI / 2`, its own
+       build site), holding un-merged mesh children two levels below
+       westWallG. Their OWN .position/.rotation are relative to calG, not
+       to westWallG -- a bare copy would silently drop calG's translate
+       and rotate and draw those edges in the wrong place, facing the
+       wrong way. A world-matrix transform relative to f.g.parent (the
+       combined LineSegments' own new parent, a few lines down) is
+       correct for both shapes at once. scene.updateMatrixWorld(true)
+       first, once, because the merge passes above added brand-new
+       meshes (mergeStatic's `mm`) whose matrixWorld has never been
+       computed at all -- Object3D leaves it at its constructor default
+       until something asks. */
+    scene.updateMatrixWorld(true);
+    FABRIC.forEach(function (f) {
+      if (f.mode === 'hide' || !f.g.parent) return;    /* yard; a stray
+        future registration with no parent yet -- fail safe, not crash */
+      var toParent = new T.Matrix4().copy(f.g.parent.matrixWorld).invert();
+      var m4 = new T.Matrix4(), v3 = new T.Vector3();
+      var pos = [];
+      f.g.traverse(function (o) {
+        if (!o.isMesh || !o.geometry) return;
+        var eg = new T.EdgesGeometry(o.geometry, 35);
+        var p = eg.attributes.position;
+        m4.multiplyMatrices(toParent, o.matrixWorld);
+        for (var i = 0; i < p.count; i++) {
+          v3.fromBufferAttribute(p, i).applyMatrix4(m4);
+          pos.push(v3.x, v3.y, v3.z);
+        }
+        eg.dispose();     /* scratch only -- its data is now baked into
+                              `pos`; nothing else ever references it */
+      });
+      if (!pos.length) return;
+      var geo = new T.BufferGeometry();
+      geo.setAttribute('position', new T.Float32BufferAttribute(pos, 3));
+      var ls = new T.LineSegments(geo, GHOST_MAT);
+      /* Tap law (spec section 5): "ghost lines carry no tags... no
+         special casing" only holds if a tap can never actually LAND on
+         one. Three's own raycaster does not consult .visible at all
+         (Raycaster.intersectObject calls object.raycast() unconditionally
+         once layers match -- verified against this file's own vendored
+         bundle), and its default Line hit-test radius is a full 1 world
+         unit -- generous enough, next to a wall's own trim and seams,
+         that an untagged edge-line hit could easily reach onTap's
+         exterior-mode path BEFORE the real tagged fill mesh occupying
+         the same location ever does, and that path trusts hits[0]
+         outright with no fallback scan (unlike zoneAt's loop, which
+         already tolerates an unrelated hit ahead of the one it wants).
+         A no-op raycast makes every ghost line permanently invisible to
+         EVERY caster, in every mode, independent of ls.visible -- the
+         one change that makes the spec's "no special casing" claim true
+         by construction instead of true by coincidence of which piece's
+         parent happens to sit inside extG. */
+      ls.raycast = function () {};
+      /* A SIBLING of f.g (f.g.parent.add), never a CHILD of it: three's
+         own render-list walk (WebGLRenderer's projectObject) returns the
+         instant an object's .visible is false, before it ever looks at
+         that object's children -- so a LineSegments parented INSIDE an
+         f.g the solver just hid could never draw no matter what its OWN
+         .visible said. Sibling placement is what makes ls's visibility
+         independent of the fill's, which is the entire trick the verdict
+         application above depends on. */
+      ls.visible = false; ls.renderOrder = 5;
+      f.g.parent.add(ls); f.edges = ls;
+    });
+
     /* ---- K4 (quality spec §3): the AO occluder list ---------------------
        ~30 world-space AABBs for the scene's big masses, read off each
        builder's own authored literals (box/ebox/cyl args, kCase runs,
@@ -8456,12 +8589,18 @@
      siblings above — reports the registry, changes nothing. FABRIC
      itself lives inside buildRoom()'s closure (beside westWallG etc.),
      so it rides out on the same returned webgl object the other groups
-     already use to reach this outer scope. */
+     already use to reach this outer scope. edgesVisible (Task 3): null
+     for a piece with no edges object built at all (mode:'hide', or a
+     merge-empty piece like living_roof — see the build step's own
+     comment), else the combined ghost-line LineSegments' own .visible,
+     so a pixel test can assert the solver actually flips it rather than
+     just trusting the verdict string. */
   window.chfShellFabric = function () {
     if (!webgl) return [];
     return webgl.FABRIC.map(function (f) {
       return { name: f.name, mode: f.mode, visible: f.g.visible,
-               verdict: f.verdict };
+               verdict: f.verdict,
+               edgesVisible: f.edges ? f.edges.visible : null };
     });
   };
 
