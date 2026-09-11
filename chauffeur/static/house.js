@@ -4306,12 +4306,29 @@
        back on the body and chamfers the caps IN, which is the plate's
        hard edge and the geometry this file's numbers assume. */
     function profileMesh(shape, width, colour, opts) {
-      var bev = DETAIL >= 2, bt = 0.05;
-      var m = new T.Mesh(new T.ExtrudeGeometry(shape, {
-        depth: width - (bev ? 2 * bt : 0), bevelEnabled: bev,
-        bevelThickness: bt, bevelSize: bt, bevelOffset: -bt,
-        bevelSegments: 1, steps: 1,
-        curveSegments: DETAIL >= 3 ? 7 : 3 }), mat(colour, opts || GLOSS));
+      var bev = DETAIL >= 2, bt = 0.05, cs = DETAIL >= 3 ? 7 : 3;
+      var depth = width - (bev ? 2 * bt : 0);
+      /* task 9b: the tub and glass shapes are built from the body-type
+         table (p) alone (archCut/lineTo in buildVehicle never read
+         anything per-car) -- the same body_type always extrudes the same
+         contour, so this shares exactly like the tyre torus beside it.
+         syncGarage's rebuild key includes live battery/fuel, so this used
+         to mint two fresh ExtrudeGeometry objects (tub+glass) per car on
+         every ordinary telemetry poll. extractPoints(cs) samples the
+         shape's own contour (arcs included) at the SAME segment count
+         the geometry itself extrudes with, so identical inputs key
+         identically and different body tables never collide. */
+      var pk = shape.extractPoints(cs).shape.map(function (v) {
+        return [v.x, v.y];
+      });
+      var g = cgeo('E|' + JSON.stringify(pk) + '|' + depth + '|' + bev +
+        '|' + cs, function () {
+          return new T.ExtrudeGeometry(shape, {
+            depth: depth, bevelEnabled: bev,
+            bevelThickness: bt, bevelSize: bt, bevelOffset: -bt,
+            bevelSegments: 1, steps: 1, curveSegments: cs });
+        });
+      var m = new T.Mesh(g, mat(colour, opts || GLOSS));
       m.rotation.y = -Math.PI / 2;
       m.position.x = width / 2 - (bev ? bt : 0);
       return m;
@@ -4444,9 +4461,16 @@
         var xo = sx * (hw - 0.03) - sx * (off || 0);
         var tw = p.wr * 0.30, t;
         if (DETAIL >= 2) {
-          t = new T.Mesh(new T.TorusGeometry(p.wr - tw, tw,
-            DETAIL >= 3 ? 8 : 5, DETAIL >= 3 ? 16 : 10),
-            mat(C.ink, { rough: 0.92 }));
+          /* task 9b: route through cgeo like the rim/hub lathes beside it.
+             p.wr is one-per-body-type, so every wheel on every car of the
+             same body shares this — and syncGarage's rebuild key includes
+             live battery/fuel, so this used to mint fresh every rebuild. */
+          var tRad = p.wr - tw, tRs = DETAIL >= 3 ? 8 : 5,
+              tTs = DETAIL >= 3 ? 16 : 10;
+          t = new T.Mesh(cgeo('t|' + tRad + '|' + tw + '|' + tRs + '|' + tTs,
+            function () {
+              return new T.TorusGeometry(tRad, tw, tRs, tTs);
+            }), mat(C.ink, { rough: 0.92 }));
           t.rotation.y = Math.PI / 2;
           t.position.set(xo - sx * tw, p.wr, wz);
         } else {
@@ -6978,6 +7002,7 @@
       pantryJars: pantryJars, pantryDoor: pantryDoor,
       garageBackWall: webgl_garageBackWall,
       carsG: carsG, busG: busG, buildCar: buildCar, carTex: carTex,
+      cgeo: cgeo,
       HOME_POS: HOME_POS, HOME_AT: HOME_AT,
       EXT_POS: EXT_POS, EXT_AT: EXT_AT,
       GARAGE_POS: GARAGE_POS, GARAGE_AT: GARAGE_AT,
@@ -7231,6 +7256,19 @@
       garagePayload = key;
       while (webgl.carsG.children.length)
         webgl.carsG.remove(webgl.carsG.children[0]);
+      /* task 9b: the plaque's material and the canvas texture it wraps
+         are minted fresh every rebuild and never shared (L1 — see the
+         comment below) -- .remove() above drops the old plaque from the
+         graph but frees nothing GPU-side. carPlates is the exact list of
+         the plaques just orphaned; car BODY meshes are not in this list
+         (they wear cgeo-cached, shared geometry and mat()-cached
+         materials that must never be disposed here). */
+      carPlates.forEach(function (p) {
+        if (p.material) {
+          if (p.material.map) p.material.map.dispose();
+          p.material.dispose();
+        }
+      });
       carPlates = [];
       var inside = 0, outside = 0;
       cars.forEach(function (c) {
@@ -7254,7 +7292,14 @@
         /* the plaque's height comes from the car's OWN box, so a van's
            sits as clear of its roof as a hatchback's does */
         var box = new webgl.T.Box3().setFromObject(grp);
-        var plate = new webgl.T.Mesh(new webgl.T.PlaneGeometry(1.5, 0.75),
+        /* task 9b: the plaque's dims never vary, so the GEOMETRY now
+           shares through cgeo exactly like every other cached primitive
+           in the room; see the dispose call above for the material and
+           texture this leaves behind, which stay fresh on purpose. */
+        var plate = new webgl.T.Mesh(
+          webgl.cgeo('pq|1.5|0.75', function () {
+            return new webgl.T.PlaneGeometry(1.5, 0.75);
+          }),
           new webgl.T.MeshBasicMaterial({ transparent: true,
                                           map: webgl.carTex(c) }));
         plate.position.set(grp.position.x, box.max.y + 0.86,
