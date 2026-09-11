@@ -88,14 +88,14 @@ list if that item had ever been meal-claimed.
   `GARAGE_POS` with FOV 24, a car on the apron projects below the chat-bar line.
   Every car now has a plaque and the fleet card shows them all, but making the
   *room* show four is a floor-plan or camera change.
-- **The near living-room armchair shows more back than front.** Forced: the
+- ~~**The near living-room armchair shows more back than front.** Forced: the
   camera looks north-west, so a chair south of the coffee table points away.
   Moving it south-west bought a readable three-quarter; going further means
-  parking it beside the hearth, which is the defect it was moved to fix.
-- **minivan and van are nearly interchangeable** at exterior distance. They
-  separate on roof height and bonnet length, which is not much at that scale.
-- **The bus stop arm** is a red octagon with a cream centre and no lettering; it
-  reads more like a "no entry" plate.
+  parking it beside the hearth, which is the defect it was moved to fix.~~ (retired 2026-09-10)
+- ~~**minivan and van are nearly interchangeable** at exterior distance. They
+  separate on roof height and bonnet length, which is not much at that scale.~~ (retired 2026-09-10)
+- ~~**The bus stop arm** is a red octagon with a cream centre and no lettering; it
+  reads more like a "no entry" plate.~~ (retired 2026-09-10)
 - **The garage strip light hangs from nothing** — with the roof hidden there is
   no ceiling plane to mount to, so it rides two drops that run off frame.
 - **The kitchen frame no longer shows the leave card.** It used to see the
@@ -110,19 +110,19 @@ list if that item had ever been meal-claimed.
 
 ## House: lighting work the pass did not reach
 
-- **Interior walls have no baked gradient.** Floors pool; walls are lit only by
+- ~~**Interior walls have no baked gradient.** Floors pool; walls are lit only by
   the hemisphere plus lamp falloff. A shared wall-gradient texture is the
-  obvious next step.
+  obvious next step.~~ (retired 2026-09-10)
 - **Counters do not pool either** — `woodLight` and `marble` are shared across
   dozens of props, so baking into them would put the same gradient on a stool
   and a cabinet door. Needs per-run textures.
-- **The sun is still near-frontal** (~15° off the exterior camera axis).
+- ~~**The sun is still near-frontal** (~15° off the exterior camera axis).
   Raking it darkens the kitchen's subject wall, so modelling currently comes
   from the cool/warm split and the pools instead. Stronger form needs a
-  dedicated fill on the north wall.
-- **Kitchen counter wood reads deeper at medium than at high** — an authored
+  dedicated fill on the north wall.~~ (retired 2026-09-10)
+- ~~**Kitchen counter wood reads deeper at medium than at high** — an authored
   tier inconsistency (`kWoodK = NICE ? 0xffffff : …` plus `mat()`'s tier-
-  dependent map handling), not a lighting bug.
+  dependent map handling), not a lighting bug.~~ (retired 2026-09-10)
 - **Contact language differs across tiers** — real cast shadows at tier 3, grey
   multiply ellipses at 1-2. Correct, but visibly different.
 - **The scenery knob only works on chroma**, so anything already neutral does

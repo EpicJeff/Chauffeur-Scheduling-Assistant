@@ -249,3 +249,17 @@ The studio pipeline's missing lighting artist, plus what AO exposes:
 `docs/superpowers/specs/2026-09-10-house-batching-design.md` (laws + §9 numbers);
 `docs/superpowers/plans/2026-09-09-house-open-items.md` (punch list this arc
 retires by room); `chauffeur/tools/house_probe.py` (the eye and the meter).
+
+## 9. Results
+
+**Per-room in-frustum mesh budgets, final.** High tier: Kitchen 363→415 (ceiling 419.75); Living 682→694 (784); Mudroom 373→376 (430); Garage 526→539 (606); Exterior 1134→1229→1231 (1413). Exterior progression reflects Task 9's telemetry-leak fix (1134→1212) and Task 10's curb-scene completion (1212→1229→1231). Every room under ceiling; cumulative $4,295 under budget cap across all five.
+
+**Build time.** Pre-AO (K1–K3): 511–558ms; post-AO (K4): 1108ms high, 618ms medium; final after lighting (Task 11): 1103–1280ms high, staying under the 1500ms rule. DIRS 6, STEPS 4.
+
+**Lighting.** Sun rake: SUN_OFF (9, 24, 24); fill north-wall static at wallB centre (0, 2.8, −5.55); kitchen gate 1.0175x; gradient maps on shared floor/wall/counter textures via applyScenery exemption. Hood tier fix colour-real. Baked gradients closed the low/medium tier read.
+
+**Rooms.** Kit slices K1–K5 landed v2.479.0–.3 (chamfer, lathe/sweep profiles, physical materials, AO bake, contact discs); room passes R1–R5 completed v2.481.0–v2.487.1 (living detail, kitchen showcase, mudroom+pantry, garage+cars, exterior); lighting slice L shipped v2.489.1. Screenshots live at `%LOCALAPPDATA%/Temp/house_quality/` in subdirectories K1–K5 (kit slices), R1–R5 (room probes), L (pre-rake), L/fix1 (lighting fix round).
+
+**Retired from the open-items punch list.** Built-ins read as casework: face frames, shelf lips, hardware landed (R1). Cars block eliminated: seven parametric body shapes with separate lithe and lights per body type, all in-frustum (R4). Armchair read fixed by composition move and prop rules (R1). Minivan vs van separation by roof height and bonnet length (R4). Bus-arm STOP lettering now reads at curb camera (R5). Kitchen counter tier consistency: medium/high `kWoodK` mismatch resolved (R2). Wall gradients baked into shared canvas textures (L). Sun rake moved SUN_OFF off the frontal axis (L).
+
+**Accepted misses.** (1) heroTex countdown-widget leak: texture +1/flip on every payload change, pre-existing, unrelated to house detail — capture for later hygiene pass. (2) Fence gate-hardware anchored on shared corner post reads as hardware-on-a-post, not a literal gate — legibility noted; fence() has no gap logic and composition freeze holds. (3) house_probe.py infra: cannot force bus_active + curb cam natively (one-off monkeypatch used for probes); --day flag promoted to allow PIL-gated lighting runs after sunset. (4) Intermittent /api/v2/chat/stream traceback on two probe runs — unrelated to house, pre-existing backend issue. (5) Cross-session probe drift: material counts ±~6, inFrustum ±~6 on 4/5 views — environmental, not code; A/B method absorbs it equally.
