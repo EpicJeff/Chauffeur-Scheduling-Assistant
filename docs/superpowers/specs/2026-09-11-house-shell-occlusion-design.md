@@ -41,9 +41,19 @@ solveShell(subject) runs on camera SETTLE only — enterRoom, goExterior, frameZ
 
 Tap routing stays stamped-tag-only. The new south wall stamps room:kitchen (it fronts the great room) so the exterior tap-to-enter flow survives the closed front. A GHOSTED piece must NOT capture taps aimed at the room behind it: ghost lines carry no tags, and hidden fills are unhittable by construction — no special casing. Bus/curb stays inert; zone taps unchanged.
 
-## 6. New fabric (the seal)
+## 6. New fabric (the seal + the face) — REVISED 2026-09-11 per user redirect
 
-South wall: full-width great-room run, same clapboard canvas/material as the other walls (shares the cached siding material — the R5 normal map rides along), two windows flanking reuse the existing pane idiom sized to the great room, trim/kick consistent with R5 hardware. Roof: the main roof's south half completes (both slopes exist per the architect pass — verify and close any cutaway gap over the great-room front). The exterior composition changes: THIS TASK'S SCREENSHOT GATE GOES TO THE USER before the arc proceeds past it. Interior face of the new wall: plaster + baseboard per the great-room idiom, wall-gradient map applied (T11 law: mapped materials, applyScenery exemption).
+The street face must read as an ACTUAL HOUSE from the curb: a front elevation that makes sense, a roofline that makes sense, and a front entrance — which this house has never had (the existing "front door" is decorative and lives on the WEST wall, house.js ~:1386; the mudroom's functional street door is a side entry).
+
+**South wall (the street face), composed as an elevation, not a slab:**
+- OFFSET FRONT DOOR under a COVERED GABLED PORCH (user-ratified): two posts, small gable roof echoing the garage gable's pitch family, stoop + one step, coach-lamp idiom beside the door (a second lamp instance; the garage's stays). Door reuses the decorative-door casing/panel idiom (~:2102) — decorative like the west one, NO new zone; it stamps room:kitchen like the wall it lives in.
+- Window rhythm: a living-side window pair and a kitchen-side window with ALIGNED HEADS, panes per the existing pane idiom; siding = the shared clapboard-mapped material (R5 normal map rides along); trim/kick consistent with R5 hardware.
+- Interior face: plaster + baseboard per the great-room idiom, wall-gradient map applied (T11 law: mapped materials, applyScenery exemption).
+- The porch (posts + gable) belongs to the south_wall fabric GROUP — it ghosts with the wall as one piece.
+
+**Roofline coherence law:** one pitch family across the whole silhouette. Exterior walls rise to the roof — gable ends get infill panels closing the wedge between interior wall height (5.6) and the eave/ridge line (~7.0); no daylight wedges under any slope (finding inherited from the first T4 attempt). Main roof both slopes complete over the great room; porch gable and garage gable share the pitch family; mudroom and living roof boxes are RE-CHECKED against the street read — if they float or fight the main roof from the compass shots, adjust pitch/eave to the family (composition change authorized in this task, and only this task).
+
+**Elevation sanity gate:** the compass exterior shots must read as one coherent house — door anchors the elevation, windows rhythmic, rooflines resolve into each other. The exterior composition changes: THIS TASK'S SCREENSHOT GATE GOES TO THE USER before the arc proceeds past it.
 
 ## 7. Guards
 
