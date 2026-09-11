@@ -259,6 +259,78 @@ def scenario_the_house_boots_enters_and_leans_in():
               'the geometry cache is live: %r' % inv)
 
 
+MEM_JS = ("() => ({t: window.__hpR.info.memory.textures, "
+          "g: window.__hpR.info.memory.geometries})")
+
+
+def scenario_leanin_focus_cycles_do_not_leak_textures():
+    """Task 13: mkTex (house.js) minted a fresh CanvasTexture on every
+    repaint and never disposed the one it replaced, so every lean-in and
+    lean-out orphaned a texture on the GPU permanently — measured before
+    the fix at +4 textures per calendar+pet focus cycle, monotonic,
+    12 -> 43 over 8 cycles while geometries stayed flat (the geometry
+    side was already fixed, task 9b/55f4b25).
+
+    Two full focus cycles must settle to the SAME texture count. The
+    first cycle still mints: every face's blank/real payload pairing is
+    being created for the first time under focus. The second cycle must
+    find both payloads already cached and dispose-swapped rather than
+    minting a third and fourth copy — that steady-state equality is
+    exactly what the pre-fix code fails, by +4.
+    """
+    served = live_app()
+    if served is None:
+        return
+    _seed()
+    with served.browser() as page:
+        from house_probe import THREE_WRAP
+        with open('static/vendor/three.min.js', 'rb') as fh:
+            _patched = fh.read() + THREE_WRAP
+        page.route('**/three.min.js*', lambda route: route.fulfill(
+            status=200, content_type='application/javascript', body=_patched))
+        page.goto(served.url('house?quality=low'))
+        page.wait_for_timeout(1800)   # boot, benchmark warmup, first paint
+        has_room = page.evaluate(
+            "!!document.querySelector('#room canvas') && "
+            "typeof window.chfHouseEnter === 'function'")
+        if not has_room:
+            print("  skip  no WebGL room here — the fallback owns the page")
+            return
+
+        page.evaluate("window.chfHouseEnter()")
+        page.wait_for_timeout(1100)   # 850ms tween + settle
+
+        def cycle():
+            # Mirrors the controller's repro (leanin_tex_leak_probe.py,
+            # scratchpad): calendar in/out, then pet in/out. Pet lives in
+            # the living room (ZONE_ROOM), so this also crosses a room
+            # change every cycle, exactly like the real lean-in path.
+            page.evaluate("window.chfKitchenFocus('calendar')")
+            page.wait_for_timeout(1400)
+            page.evaluate("window.chfKitchenFocus(null)")
+            page.wait_for_timeout(1000)
+            page.evaluate("window.chfKitchenFocus('pet')")
+            page.wait_for_timeout(1400)
+            page.evaluate("window.chfKitchenFocus(null)")
+            page.wait_for_timeout(1000)
+            return page.evaluate(MEM_JS)
+
+        c1 = cycle()
+        c2 = cycle()
+        check(c1['g'] == c2['g'],
+              'geometries must stay flat across focus cycles: %r -> %r'
+              % (c1, c2))
+        check(c1['t'] == c2['t'],
+              'mkTex leaks a texture per repaint: cycle1=%d cycle2=%d - '
+              'every replaced CanvasTexture must be disposed on overwrite'
+              % (c1['t'], c2['t']))
+
+        errs = [e for e in served.errors()
+                if 'WebGL' not in e and 'GroupMarker' not in e]
+        check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
+
+
 if __name__ == '__main__':
     scenario_the_house_boots_enters_and_leans_in()
+    scenario_leanin_focus_cycles_do_not_leak_textures()
     print("test_house_live OK")

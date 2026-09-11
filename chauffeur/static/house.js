@@ -6796,6 +6796,24 @@
       draw(c.getContext('2d'), w, h);
       var t = new T.CanvasTexture(c);
       t.anisotropy = 4;
+      /* task 13: e (if present) is the entry this call is about to
+         replace. Every key here has exactly one wearer (hero->plaque,
+         calendar->calFace, critters->critFace, weather->paneMesh,
+         skydome->skyDome, car:<id>->that car's plaque), and the new
+         texture is handed straight to that same wearer by the caller
+         (swap()/carTex's caller) immediately after this returns — so
+         nothing else can still be pointing at the old one. Without this,
+         every repaint (a lean-in blanking a face, a lean-out restoring
+         it, a countdown minute ticking over) orphaned the replaced
+         CanvasTexture on the GPU forever: +4 textures per calendar+pet
+         focus cycle, monotonic, never recovering after lean-out.
+         THREE's .dispose() is idempotent, so this is safe even on the
+         car:<id> key, where syncGarage's carPlates rebuild (55f4b25) may
+         already have disposed this exact texture object moments earlier
+         in the same rebuild — that loop always runs and clears its OLD
+         plaques before any new car:<id> texture is minted, so it never
+         touches the fresh one this call is about to create. */
+      if (e) e.tex.dispose();
       texCache[key] = { payload: payload, tex: t };
       return t;
     }
@@ -7537,11 +7555,23 @@
     /* moment magnets on the fridge door: one colored square each, capped */
     var wantMagnets = Math.min(((s.fridge || {}).new_moments || 0), 6);
     if (webgl.magnets.children.length !== wantMagnets) {
-      while (webgl.magnets.children.length) webgl.magnets.remove(webgl.magnets.children[0]);
+      /* task 13: same leak family as mkTex. The geometry is shared below
+         through cgeo (every magnet is the same box), so it is guarded by
+         the standard userData.cached idiom rather than disposed here —
+         but the Lambert material is a fresh mint per magnet (the color
+         varies) and this loop used to drop it on the floor every rebuild
+         without freeing it. */
+      while (webgl.magnets.children.length) {
+        var mOld = webgl.magnets.children[0];
+        webgl.magnets.remove(mOld);
+        if (mOld.material) mOld.material.dispose();
+        if (mOld.geometry && !mOld.geometry.userData.cached) mOld.geometry.dispose();
+      }
       var MAG_COLORS = [0xc9473d, 0x3fbdb2, 0xe09a3e, 0x5a7fc0, 0x7fae5a, 0xb06ab0];
       for (var mi = 0; mi < wantMagnets; mi++) {
-        var mm = new webgl.T.Mesh(new webgl.T.BoxGeometry(0.22, 0.22, 0.03),
-          new webgl.T.MeshLambertMaterial({ color: MAG_COLORS[mi % 6] }));
+        var mm = new webgl.T.Mesh(webgl.cgeo('b|0.22|0.22|0.03', function () {
+          return new webgl.T.BoxGeometry(0.22, 0.22, 0.03);
+        }), new webgl.T.MeshLambertMaterial({ color: MAG_COLORS[mi % 6] }));
         mm.position.set(-0.45 + (mi % 3) * 0.45, 3.2 - Math.floor(mi / 3) * 0.42, 0);
         webgl.magnets.add(mm);
       }
