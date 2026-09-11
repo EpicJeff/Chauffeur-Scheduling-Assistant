@@ -828,6 +828,29 @@
       }
       return g;
     }
+    /* ---- SHELL (shell spec section 3): the fabric registry -------------
+       Every shell piece registers itself where it is built. The solver
+       (section 4) reads FABRIC; mergeStatic and the fence sets read it so
+       shell membership is declared exactly once. Registration only —
+       visibility stays with the legacy hide: arrays until the solver
+       lands. */
+    var FABRIC = [];
+    function regFabric(group, o) {
+      FABRIC.push({ g: group, name: o.name,
+                    n: new T.Vector3(o.n[0], o.n[1], o.n[2]).normalize(),
+                    box: o.box, mode: o.mode || 'ghost', edges: null });
+    }
+    /* box helper for regFabric call sites: a plain Box3 does not survive
+       structured-clone back to a test harness, and the spec wants six
+       plain numbers anyway (section 3's world AABB), so every call site
+       converts once, here, instead of hand-unpacking min/max five times
+       over. updateMatrixWorld(true) first matches mergeStatic's own call
+       (below) — build time only, the group never moves after. */
+    function fabBox(g) {
+      g.updateMatrixWorld(true);
+      var b = new T.Box3().setFromObject(g);
+      return [b.min.x, b.max.x, b.min.y, b.max.y, b.min.z, b.max.z];
+    }
     var discMatCache = {};
     function discMat(color, opacity, blending, depthWrite) {
       var k4 = color + '|' + opacity + '|' +
@@ -3401,6 +3424,14 @@
       finish(scs, true); westWallG.add(scs);
     }
 
+    /* SHELL: west_wall is complete here — every wall-mounted item above
+       (TV, sconce, calendar, kitchen toe-kick trim, ...) is already
+       parented in, and nothing later in this file adds to westWallG (the
+       fence assembly ~6500 only reads it). Registering any earlier would
+       under-measure the box against a piece still being decorated. */
+    regFabric(westWallG, { name: 'west_wall', n: [-1, 0, 0],
+                            box: fabBox(westWallG) });
+
     /* pendant lamps over the island: warm emissive shades. Grouped so a
        lean-in can hide them — a cord across a focused card breaks the
        card-on-the-surface illusion. */
@@ -3839,6 +3870,11 @@
           gtag(m); finish(m); garageDoorG.add(m);
         });
       })();
+      /* SHELL: garage_door is complete here — gable slopes, ridge, siding
+         triangles and (above) the door leaf/frame/window/hardware are all
+         in; the fence assembly ~6500 is the only later reader. */
+      regFabric(garageDoorG, { name: 'garage_door', n: [0, 0, 1],
+                                box: fabBox(garageDoorG) });
       blobShadow(3.0, 4.2, -15.4, 6.0, extG);
       /* ================= THE BAY (style bible S7 garage) ================
          Plates 3, 4 and 5: a working garage, not a shed. A concrete slab
@@ -5229,6 +5265,12 @@
                       -9.8, 4.5, 5.4, mudroomRoofG,
                       sharp(NICE ? { rough: 0.9, map: shingleT } : { rough: 0.9 }));
       mtag(mroof);
+      /* SHELL: mudroom_roof holds exactly these two meshes (the street-
+         side wall that hides for the inside camera, plus the roof plane
+         over it) — the fence assembly's own comment records the same
+         two-mesh count. Nothing else is ever added to this group. */
+      regFabric(mudroomRoofG, { name: 'mudroom_roof', n: [0, 1, 0],
+                                 box: fabBox(mudroomRoofG) });
       /* ============ the studio pass (docs/house_style_bible.md) =========
          The room inherited exterior siding from the architect pass and
          read as a covered porch. It is a finished room now: a shiplap
@@ -5809,6 +5851,20 @@
     })();
     var livingRoofG = new T.Group();   /* open-concept: nothing to hide */
     extG.add(livingRoofG);
+    /* SHELL: living_roof registers empty on purpose — this room is still
+       open-concept (no meshes ever ride this group today), so fabBox
+       below returns Box3's own untouched empty sentinel
+       (min=(Infinity,Infinity,Infinity), max=(-Infinity,-Infinity,
+       -Infinity)): three.js's Box3.expandByObject only unions a
+       descendant mesh's geometry.boundingBox, never a bare group's own
+       position, and this group has no descendant meshes to union. A
+       hand-typed placeholder box was rejected on purpose (the brief
+       forbids guessing); this is an honest snapshot of "nothing built
+       yet", flagged for whichever task first hangs real roof geometry
+       here (the arc's own south-wall/roof work, spec section 6) to
+       re-derive once there is something to measure. */
+    regFabric(livingRoofG, { name: 'living_roof', n: [0, 1, 0],
+                              box: fabBox(livingRoofG) });
     /* ============ THE YARD (docs/house_style_bible.md S7, exterior) =====
        The plinth was a bare green plane with two lollipop trees and one
        sphere of a bush, and half the resting frame was empty grass.
@@ -6379,6 +6435,20 @@
       })(yardG);
       return { made: made, folded: folded };
     }
+    /* SHELL: yard registers HERE, before instanceYard() runs below, on
+       purpose — three's Box3.expandByObject unions a mesh's own
+       geometry.boundingBox transformed by that mesh's matrixWorld, with
+       no per-instance awareness of InstancedMesh at all (verified
+       against the vendored r150 build). Folding the yard's ~1,000
+       individual meshes into a handful of InstancedMesh objects first
+       would make fabBox(yardG) measure a few base-geometry footprints
+       near the origin instead of the true planted footprint. mode
+       'hide' means the solver never actually reads this box for a ghost
+       verdict today, but recording the real one now costs nothing and
+       avoids yet another registration-data mystery for whoever wires
+       the solver up next. */
+    regFabric(yardG, { name: 'yard', mode: 'hide', n: [0, 1, 0],
+                        box: fabBox(yardG) });
     instanceYard();
     /* sky dome: weather-painted from the inside, swapped by applyState.
        The dome IS the background now, so the flat clear color retires. */
@@ -6564,10 +6634,22 @@
       mergeStatic(g, NO_MERGE);
     });
     var EXT_NO_MERGE = new Set(NO_MERGE);
-    EXT_NO_MERGE.add(yardG);
-    EXT_NO_MERGE.add(garageDoorG);
-    EXT_NO_MERGE.add(mudroomRoofG);
-    EXT_NO_MERGE.add(livingRoofG);
+    /* SHELL (shell spec section 3): the registry feeds both fence sets
+       so shell membership is declared exactly once, replacing the four
+       hand adds this loop used to be. EFFECTIVE membership is unchanged:
+       yardG, garageDoorG, mudroomRoofG and livingRoofG land in
+       EXT_NO_MERGE exactly as the hand adds did (fencing them out of
+       extG's own self-merge pass, two comments above). westWallG's new
+       presence in EXT_NO_MERGE is inert — scene.add(westWallG), never
+       extG.add (see the westWallG note above), puts it outside extG's
+       own subtree, so extG.traverse() never visits it and this
+       membership is never tested. NO_MERGE also gains all five, which
+       is forward-looking only: the one other place NO_MERGE is read
+       (TOP, below) already hand-lists the same five groups, so this
+       cannot change TOP's membership either, and the per-group merge
+       passes above already ran against NO_MERGE before this line ever
+       executes, so they cannot be retroactively affected. */
+    FABRIC.forEach(function (f) { EXT_NO_MERGE.add(f.g); NO_MERGE.add(f.g); });
     mergeStatic(extG, EXT_NO_MERGE);
     /* Scene-level pass last: every hide-group (now including extG
        itself, whose loose fabric just became one boundary) is a
@@ -7412,7 +7494,7 @@
       MUD_POS: MUD_POS, MUD_AT: MUD_AT, LIV_POS: LIV_POS, LIV_AT: LIV_AT,
       mudroomRoofG: mudroomRoofG, livingRoofG: livingRoofG,
       yardG: yardG, westWallG: westWallG, zoneExtra: zoneExtra,
-      mudBagsG: mudBagsG, makeBag: makeBag
+      mudBagsG: mudBagsG, makeBag: makeBag, FABRIC: FABRIC
     };
   }
 
@@ -8120,6 +8202,17 @@
     lookAt = new webgl.T.Vector3(ax, ay, az);
     webgl.cam.lookAt(lookAt);
     requestFrame();
+  };
+  /* SHELL (shell spec section 3): debug/test hook, read-only like its
+     siblings above — reports the registry, changes nothing. FABRIC
+     itself lives inside buildRoom()'s closure (beside westWallG etc.),
+     so it rides out on the same returned webgl object the other groups
+     already use to reach this outer scope. */
+  window.chfShellFabric = function () {
+    if (!webgl) return [];
+    return webgl.FABRIC.map(function (f) {
+      return { name: f.name, mode: f.mode, visible: f.g.visible };
+    });
   };
 
   function announceFocus(key) {

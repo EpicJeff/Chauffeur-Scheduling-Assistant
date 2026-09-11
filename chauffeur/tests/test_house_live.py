@@ -879,9 +879,51 @@ def scenario_garage_rebuild_does_not_touch_plaque_textures():
         check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
 
 
+def scenario_shell_fabric_registry():
+    """Task 1 (shell/occlusion spec section 3): the fabric registry
+    replaces the four hand-grown hide: arrays with one regFabric() call
+    per shell piece, at its own build site. Registration only -- this
+    task changes zero rendered behavior (visibility still comes from the
+    legacy ROOMS hide: arrays until the solver lands) -- so this scenario
+    pins the registry's SHAPE instead: exactly the five migrated pieces,
+    yard as the one authored mode:'hide' piece, and everything reporting
+    visible at the sealed exterior boot (section 4: every piece SOLID
+    from outside). A later task's solver work leans on this same shape
+    staying put while verdict logic grows around it.
+    """
+    served = live_app()
+    if served is None:
+        return
+    with served.browser() as page:
+        # quality=high, wait_for_selector + a 2200ms settle: the same
+        # boot idiom tools/house_probe.py uses ahead of its own reads,
+        # not the has_room-and-skip dance the other scenarios in this
+        # file use -- there is nothing tier-dependent to skip here: all
+        # five regFabric() call sites sit outside any DETAIL/quality
+        # conditional (read at implementation time), so the registry's
+        # shape does not depend on which tier boots.
+        page.goto(served.url('house?quality=high'))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_timeout(2200)
+        fab = page.evaluate("window.chfShellFabric()")
+        names = sorted(f['name'] for f in fab)
+        check(names == ['garage_door', 'living_roof', 'mudroom_roof',
+                        'west_wall', 'yard'],
+              'registry must hold exactly the five migrated pieces: %r' % names)
+        yard = [f for f in fab if f['name'] == 'yard'][0]
+        check(yard['mode'] == 'hide', 'yard is the one authored hide piece')
+        check(all(f['visible'] for f in fab),
+              'exterior boot: every piece visible (solid): %r' % fab)
+
+        errs = [e for e in served.errors()
+                if 'WebGL' not in e and 'GroupMarker' not in e]
+        check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
+
+
 if __name__ == '__main__':
     scenario_the_house_boots_enters_and_leans_in()
     scenario_leanin_focus_cycles_do_not_leak_textures()
     scenario_fridge_magnets_rebuild_shares_geometry()
     scenario_garage_rebuild_does_not_touch_plaque_textures()
+    scenario_shell_fabric_registry()
     print("test_house_live OK")
