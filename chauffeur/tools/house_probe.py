@@ -256,6 +256,15 @@ def main():
                     help='wrap the renderer and print per-view draw-budget '
                          'numbers (meshes, in-frustum, tris, unique '
                          'materials/geometries, build ms)')
+    ap.add_argument('--day', action='store_true',
+                    help='lock the scene\'s own clock to midday before the '
+                         'page loads, so isNight() always resolves false. '
+                         'house.js follows the REAL wall clock (night rig '
+                         'outside ~07:00-19:00 local), so any probe that '
+                         'feeds a lighting/PIL gate is silently wrong if run '
+                         'at night without this. Off by default: identical '
+                         'behaviour and output to a probe run before this '
+                         'flag existed.')
     args = ap.parse_args()
 
     views = ROOM_VIEWS[:] if args.views == 'all' else [
@@ -277,6 +286,16 @@ def main():
         errors = []
         page.on('console', lambda m: errors.append(m.text)
                 if m.type == 'error' else None)
+        if args.day:
+            # Promoted from a session scratchpad (Task 11 fix round 1,
+            # finding 2): house.js's isNight() reads `new Date().getHours()`
+            # directly, so it has no seam of its own to freeze. An init
+            # script runs before ANY page script on the next navigation,
+            # so patching the prototype here always wins the race against
+            # house.js's own module-scope isNight() closure.
+            page.add_init_script(
+                'Date.prototype.getHours = function () { return 14; };')
+            print('day-lock: on (getHours() -> 14, isNight() -> false)')
         if args.budget:
             with open('static/vendor/three.min.js', 'rb') as fh:
                 patched = fh.read() + THREE_WRAP

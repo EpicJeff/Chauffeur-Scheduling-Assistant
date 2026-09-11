@@ -371,11 +371,13 @@
        itself from high to medium must not change colour, only fidelity -
        L found and fixed one violation of this rule (the hood's underside
        glow, search "a lit hood glows" below: the Lambert branch had gone
-       flat grey with no emissive at all, instead of the same charcoal +
-       warm glow rendered with less fidelity). Square to the key, fill +
-       key lands near 0.90; the room pools (below, and the baked
-       gradients in the floor textures) carry the lit patches the rest
-       of the way to ~1.05. Fully shaded sits near 0.40.
+       flat grey with no emissive at all, instead of the same charcoal
+       rendered with less fidelity - the warm-glow HALF of that authored
+       pair turns out never to reach the screen in EITHER branch, fix
+       round 1 finding 3, see below). Square to the key, fill + key lands
+       near 0.90; the room pools (below, and the baked gradients in the
+       floor textures) carry the lit patches the rest of the way to
+       ~1.05. Fully shaded sits near 0.40.
 
        L (quality spec §5): SUN_I/HEMI_I/AMB_I above never changed - what
        moved is SUN_OFF's direction (x=21 dominant, arriving close enough
@@ -386,8 +388,7 @@
        whatever the old azimuth used to hit close to square that the new
        one now grazes, chiefly the kitchen's north run. `fillN` buys that
        back on its own separate budget line: 0xdfe8f2 @ 0.14 (PBR) / 0.10
-       (else), aimed with the sun's own target (it re-points on every room
-       change), no shadow map. It hits a north-facing wall harder than it
+       (else), no shadow map. It hits a north-facing wall harder than it
        hits a south-facing one, which is what makes it a fill for THIS
        problem rather than a second key - PIL-measured, the kitchen wall's
        region mean is 0.94x its pre-rake reading right after the rake and
@@ -395,7 +396,27 @@
        faces (checked square-on) keep the same gradient with or without
        it. It is dim enough that it does not rewrite the ~0.90/~1.05/~0.40
        figures above; it only refuses to let the shaded case include the
-       one wall this room is framed around. */
+       one wall this room is framed around.
+
+       Fix round 1 (finding 1): the 0.94x->1.02x pair above was measured
+       while `fillN` rode `sunTarget` - the SAME point aimShadow() moves
+       to a new room's shadow box on every room change - so the fill's
+       own direction was silently re-aiming itself at whatever room the
+       camera last entered (x +2 in the kitchen out to x -13.4 in the
+       garage from one fixed lamp position), not at the north run it is
+       named for. Re-pointed at `fillNTarget`, a static Object3D fixed at
+       wallB's own centre (0, 2.8, -5.55) - the kitchen's north wall,
+       every room, forever. Re-measured PIL-style: the kitchen gate is
+       effectively unchanged (0.94x post-rake -> 1.0175x with the fill,
+       against 1.02x from the old room-chasing version - the room this
+       light exists for never depended on the bug). Every OTHER room's
+       whole-frame mean drops some from its old (buggy, self-flattering)
+       reading, because it no longer gets a fill custom-aimed at itself,
+       but every room still sits above its ORIGINAL pre-rake brightness
+       (garage 95.585 pre-rake -> 119.809 now; mudroom 93.165 -> 102.796;
+       full table in the task-11 fix-round-1 report). The ~0.90/~1.05/
+       ~0.40 figures still hold - fillN was never the term that set them,
+       the sun and pools were. */
     /* one clock for the whole scene: the sky dome and the rig must never
        disagree about whether it is dark out */
     function isNight() {
@@ -506,10 +527,26 @@
     aimShadow('exterior');
     /* L (quality spec §5): the rake's ransom - a dim cool fill aimed at
        the north run so raking the key for form does not price the
-       kitchen's subject wall into shadow. No shadow map; it is a fill. */
+       kitchen's subject wall into shadow. No shadow map; it is a fill.
+       Fix round 1 (finding 1): this used to ride `sunTarget` (the SAME
+       Object3D aimShadow() re-points at every room change), so the fill's
+       OWN direction silently swung with it too - x +2 in the kitchen out
+       to x -13.4 in the garage, from one fixed lamp position. A fill that
+       re-aims itself at whichever room the camera last entered is not a
+       fill for the kitchen's north run any more, it is a roaming second
+       key with the rake's own gradient bug. Given its own STATIC target
+       instead: `fillNTarget` sits once, forever, at wallB's own centre -
+       the kitchen's north wall itself, world (0, 2.8, -5.55) (see the
+       box() call for `wallB` and the AO_OCCLUDERS row that names it,
+       both further down this file) - so the direction this light exists
+       to hold steady can no longer move just because some other room's
+       shadow box did. */
+    var fillNTarget = new T.Object3D();
+    fillNTarget.position.set(0, 2.8, -5.55);
+    scene.add(fillNTarget);
     var fillN = new T.DirectionalLight(0xdfe8f2, PBR ? 0.14 : 0.10);
     fillN.position.set(-2, 9, 26);
-    fillN.target = sunTarget;
+    fillN.target = fillNTarget;
     scene.add(fillN);
     /* ---- LIGHT POOLS (bible S4: "light pools; warm patches on the floor
        and counters, cool elsewhere"). One 26-unit lamp over the middle of
@@ -2382,7 +2419,19 @@
     function kTop(w, d, x, z, run) {
       var ctex = NICE ? counterTex(run, Math.max(w, d)) : null;
       var m = new T.Mesh(
-        NICE ? chamferGeo(w, CT_T, d, 0.02) : new T.BoxGeometry(w, CT_T, d),
+        /* Fix round 1 (finding 5): the chamfered branch was already
+           cached (chamferGeo() is cgeo() underneath), but this plain
+           BoxGeometry branch built a unique geometry every call - the
+           same key-discipline gap box() itself avoids two screens up.
+           Routed through cgeo() with box()'s own 'b|w|h|d' key scheme
+           for consistency; no dedup expected today (the four kTop
+           slabs' w/d all differ), but a future slab that happens to
+           match another's dimensions now shares a buffer instead of
+           silently getting its own. */
+        NICE ? chamferGeo(w, CT_T, d, 0.02)
+             : cgeo('b|' + w + '|' + CT_T + '|' + d, function () {
+                 return new T.BoxGeometry(w, CT_T, d);
+               }),
         /* R2 (tier fix), preserved: kWoodK is white at NICE (the map
            carries the colour) and the low-tier tan below it - mat()'s
            own Lambert branch already applies that rule, so routing
@@ -2713,14 +2762,25 @@
         box(0.83, 0.05, 0.57, HW, 0, HY0 + 0.750, WZ + 0.53, counter, STEEL);
         box(0.83, 0.05, 0.57, HW, 0, HY0 + 2.110, WZ + 0.53, counter, STEEL);
       }
-      /* the underside is not the same black: a lit hood glows.
+      /* the underside is not the same black.
          L (tier fix, same family as kTop's R2 fix): the Lambert branch
          used to hardcode a lighter, greyer 0x4a5158 with no emissive at
          all - MeshLambertMaterial supports emissive same as Standard,
          so the medium/low hood underside was going through a real
-         colour change (grey, unlit) instead of a fidelity drop (same
-         charcoal, same warm glow, just Lambert's flatter shading). One
-         authored pair now, every tier. */
+         colour change (grey vs charcoal) instead of a fidelity drop.
+         One authored charcoal now, every tier - that fix is real and
+         it is what survives to the screen.
+         Fix round 1 (finding 3, corrected): "a lit hood glows" does
+         NOT survive to the screen. `und` lives in the `counter` zone
+         group, and applyState's live-zone sweep (search "the live-zone
+         glow" below) walks every mesh in that group on EVERY call and
+         unconditionally setHex()s .emissive to 0x120c03 (zone active)
+         or 0x000000 (zone calm) - in BOTH branches, on every tier,
+         regardless of whatever was authored here. The emissive pair
+         below (0xffca7a @ 0.16) can never render under any zone
+         state; it exists only so the two material branches read as
+         the same authored intent in source, matching PBR's emissive
+         to Lambert's rather than leaving Lambert bare. */
       var und = new T.Mesh(new T.PlaneGeometry(LIPW - 0.16, LIPD - 0.16),
         PBR ? new T.MeshStandardMaterial({ color: 0x30363c, roughness: 0.6,
                                            emissive: 0xffca7a,
