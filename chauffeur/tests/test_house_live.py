@@ -329,6 +329,17 @@ GARAGE_PLAQUE_JS = """() => {
   const S = window.__hpScene;
   if (!S) return null;
   let plates = 0, validMaps = 0;
+  // Fix round 2 (test-rigor): each matching plaque's OWN texture uuid,
+  // collected in traversal order. carsG is fully cleared and rebuilt in
+  // `cars` array order on every payload change (syncGarage), and that
+  // array order is the server's own storage.get_all_cars() order, which
+  // this scenario never mutates after _seed() -- so position i here
+  // names the SAME car before and after the flip, with no need to guess
+  // which index is Red Truck's. A texture's uuid changes ONLY when
+  // mkTex mints a fresh CanvasTexture (its cache MISSED because that
+  // car's own [name, battery_pct, fuel_pct, warn] payload changed); a
+  // cache HIT hands back the exact same object, same uuid.
+  const texUuids = [];
   S.traverse(o => {
     // The car plaque's PlaneGeometry(1.5, 0.75) (house.js cgeo key
     // 'pq|1.5|0.75') is the only geometry of that exact size -- car BODY
@@ -342,9 +353,10 @@ GARAGE_PLAQUE_JS = """() => {
       plates += 1;
       const img = o.material && o.material.map && o.material.map.image;
       if (img && img.width === 256 && img.height === 128) validMaps += 1;
+      texUuids.push(o.material && o.material.map && o.material.map.uuid);
     }
   });
-  return { plates: plates, validMaps: validMaps,
+  return { plates: plates, validMaps: validMaps, texUuids: texUuids,
            textures: window.__hpR.info.memory.textures,
            geometries: window.__hpR.info.memory.geometries };
 }"""
@@ -746,6 +758,7 @@ def scenario_garage_rebuild_does_not_touch_plaque_textures():
         # object; no server-side global is ever mutated, so there is
         # nothing for a concurrently-handled request to race.
         go = {'flip': False}
+        hits = {'n': 0}
 
         def _state_route(route):
             resp = route.fetch()
@@ -755,6 +768,7 @@ def scenario_garage_rebuild_does_not_touch_plaque_textures():
                     if c.get('name') == 'Red Truck':
                         c['battery_pct'] = 22.0
                         c['warn'] = True
+            hits['n'] += 1
             hdrs = dict(resp.headers)
             hdrs['cache-control'] = 'no-store'
             route.fulfill(response=resp, json=body, headers=hdrs)
@@ -790,6 +804,10 @@ def scenario_garage_rebuild_does_not_touch_plaque_textures():
         # confirmed (not a single pass) as cheap extra headroom now that
         # the flip itself is race-free.
         g1 = _settle_confirmed(page, GARAGE_PLAQUE_JS, ('geometries', 'textures'))
+        # Fix round 2 (test-rigor): mirrors the fridge magnets scenario's
+        # own hits['n'] check above -- proof the route interception is
+        # actually firing, not silently no-opping on a URL pattern miss.
+        check(hits['n'] >= 1, 'the state route was never hit: %r' % hits)
         check(g1['plates'] == 2, 'both seeded cars wear a plaque: %r' % g1)
         check(g1['validMaps'] == 2,
               'both plaques start with a real 256x128 canvas map: %r' % g1)
@@ -808,6 +826,35 @@ def scenario_garage_rebuild_does_not_touch_plaque_textures():
         check(g2['textures'] == g1['textures'],
               'texture ledger must stay flat across a multi-car rebuild '
               'triggered by ONE car changing: %r -> %r' % (g1, g2))
+
+        # Fix round 2 (test-rigor): everything above is a NEGATIVE proof
+        # (nothing broke) and would pass identically whether the rebuild
+        # actually ran or the route interception silently no-opped and
+        # nothing rebuilt at all -- a flat ledger and a steady plate/
+        # validMaps count describe both outcomes the same way. This is
+        # the missing POSITIVE proof: Red Truck's flipped fields
+        # (battery_pct None -> 22.0, warn False -> True) are two of
+        # carTex's own four-field cache key ([name, battery_pct,
+        # fuel_pct, warn]), so mkTex MUST cache-miss and mint a brand
+        # new CanvasTexture -- a new uuid -- for that one plaque, while
+        # Blue Minivan's completely untouched payload MUST stay a cache
+        # HIT (same object, same uuid). Compared by POSITION rather than
+        # a hardcoded "index 0 is Red Truck" guess: g1 and g2 are the
+        # same browser session with no car added/removed/reordered in
+        # between (the flip mutates the HTTP response body only, never
+        # the DB row storage.get_all_cars() reads), so position i in g1
+        # and position i in g2 name the same car either way, and exactly
+        # one position may legitimately move.
+        check(len(g1['texUuids']) == 2 and len(g2['texUuids']) == 2,
+              'expected exactly two plaque textures both times: %r -> %r'
+              % (g1['texUuids'], g2['texUuids']))
+        changed = sum(1 for a, b in zip(g1['texUuids'], g2['texUuids'])
+                      if a != b)
+        check(changed == 1,
+              "exactly one plaque -- the flipped car's -- must mint a "
+              "NEW texture identity (cache miss on its changed payload) "
+              "while the untouched car keeps its cached one (cache hit, "
+              "same uuid): %r -> %r" % (g1['texUuids'], g2['texUuids']))
 
         page.unroute_all(behavior='ignoreErrors')
 
