@@ -6807,12 +6807,27 @@
          it, a countdown minute ticking over) orphaned the replaced
          CanvasTexture on the GPU forever: +4 textures per calendar+pet
          focus cycle, monotonic, never recovering after lean-out.
-         THREE's .dispose() is idempotent, so this is safe even on the
-         car:<id> key, where syncGarage's carPlates rebuild (55f4b25) may
-         already have disposed this exact texture object moments earlier
-         in the same rebuild — that loop always runs and clears its OLD
-         plaques before any new car:<id> texture is minted, so it never
-         touches the fresh one this call is about to create. */
+         Fix round 1 correction: this is now the SOLE disposer for the
+         car:<id> key too. syncGarage's carPlates rebuild (55f4b25) used
+         to ALSO dispose the plaque's texture on every rebuild — but that
+         rebuild's own guard key hashes nine fields across EVERY car, so
+         it fires (and used to dispose every plaque's texture, changed or
+         not) on any single car's telemetry tick: routine with 2+ cars,
+         not the rare departed-then-returned edge the original report
+         named. That meant an unchanged car's texture was destroyed above
+         and then handed straight back out by THIS function's own
+         cache-hit branch a few lines up (`e.payload === payload`),
+         moments later in the SAME rebuild — a disposed object back in
+         live use. Confirmed via the vendored three.js (r150) source that
+         this was never a "blank plaque": `Texture.prototype.dispose` is
+         exactly `dispatchEvent({type:'dispose'})`, so the canvas backing
+         a texture is untouched by disposing it; the renderer simply
+         re-uploads that same intact canvas to a fresh GPU handle next
+         time it is bound — a wasted re-upload, not a visual defect.
+         carPlates now disposes only the plaque's MATERIAL (never cached,
+         always fresh); this overwrite path is the texture's only
+         disposer, car plaques included, so there is no second call site
+         left that could double-dispose against it. */
       if (e) e.tex.dispose();
       texCache[key] = { payload: payload, tex: t };
       return t;
@@ -7628,18 +7643,35 @@
       garagePayload = key;
       while (webgl.carsG.children.length)
         webgl.carsG.remove(webgl.carsG.children[0]);
-      /* task 9b: the plaque's material and the canvas texture it wraps
-         are minted fresh every rebuild and never shared (L1 — see the
-         comment below) -- .remove() above drops the old plaque from the
-         graph but frees nothing GPU-side. carPlates is the exact list of
-         the plaques just orphaned; car BODY meshes are not in this list
-         (they wear cgeo-cached, shared geometry and mat()-cached
-         materials that must never be disposed here). */
+      /* task 9b, corrected by task 13 fix round 1: the plaque's MATERIAL
+         is minted fresh every rebuild and never shared (L1 — see the
+         comment below), so it is always safe -- and required -- to
+         dispose it here. The TEXTURE it wears is a DIFFERENT lifecycle:
+         mkTex caches it by 'car:<id>' and hands back the very same
+         object across rebuilds whenever that one car's own carTex
+         payload ([name, battery_pct, fuel_pct, warn]) is unchanged. This
+         loop fires on ANY car's change (the key above hashes nine fields
+         across every car), so with 2+ cars it is routine, not rare, for
+         a rebuild to run here while some car's own payload is identical
+         to last time. This loop used to dispose that car's texture
+         anyway, unconditionally -- destroying an object mkTex's own
+         cache-hit branch (`e.payload === payload`) was about to hand
+         straight back out to that same car's new plaque, moments later
+         in this same rebuild. Not a leak (mkTex's dispose-on-overwrite,
+         task 13, is still the only path that ever actually drops a
+         texture for good) and not a blank plaque either (three.js
+         Texture.dispose() only fires an event; it never touches the
+         canvas a still-referenced, already-disposed texture wears) --
+         just a wasted GPU re-upload of an already-correct picture, every
+         time. Fixed by narrowing this loop to what it alone owns: the
+         material. mkTex is now the texture's sole disposer for car
+         plaques too, exactly like every other key in its table; carPlates
+         is the exact list of the plaques just orphaned from the graph by
+         .remove() above; car BODY meshes are not in this list (they wear
+         cgeo-cached, shared geometry and mat()-cached materials that must
+         never be disposed here). */
       carPlates.forEach(function (p) {
-        if (p.material) {
-          if (p.material.map) p.material.map.dispose();
-          p.material.dispose();
-        }
+        if (p.material) p.material.dispose();
       });
       carPlates = [];
       var inside = 0, outside = 0;
