@@ -1178,7 +1178,20 @@
     /* the front door belongs to the west wall: it hides with it, or it
        fills the mudroom camera from behind */
     finish(fdoor); westWallG.add(fdoor);
-    cyl(0.06, 0.06, 0.1, 0xd8c48a, -6.32, 1.6, 12.85, westWallG, 10, CHROME);
+    /* R5: the plain knob becomes a lathe at the same position, rotated
+       to protrude toward +x (into the room) — the same "protrude along
+       the face's own outward axis" convention every other door's knob
+       in the file already uses for ITS axis. A backplate sits just
+       behind it and the kick plate at the base is the same chamfered-
+       strip language R2 gave the range's kick strip. fdoor is
+       decorative, not a zoneGroup, so all three stay shared (non-
+       unique) materials and fold into westWallG's own merge pass. */
+    latheAt('knob', [0.06, 0.1, 0.06], 0xd8c48a, -6.32, 1.6, 12.85, westWallG,
+            CHROME).rotation.z = -Math.PI / 2;
+    rbox(0.03, 0.30, 0.14, 0.015, 0xd8c48a, -6.34, 1.6, 12.85, westWallG,
+         STEEL);
+    box(0.03, 0.36, 1.10, C.ink, -6.335, 0.30, 13.35, westWallG,
+        { rough: 0.85, ch: 0.010 });
     /* ---- LIVING ROOM (studio pipeline, style bible S3/S4) --------------
        The forward half of the great room, built to the bible: casework is
        toe kick + carcass + face frame + inset fronts + hardware + top;
@@ -3335,6 +3348,60 @@
       driveT.wrapS = driveT.wrapT = T.RepeatWrapping;
       driveT.repeat.set(1, 3);
     }
+    /* R5 (quality spec §4): a normal map derived from the SAME canvas
+       sidingT/shingleT already painted — no second download, just a
+       luminance-gradient read of the pixels canvasTex drew a moment
+       ago. PBR only: normalMap only matters under real PBR lighting,
+       and the two materials it flips are the shared cached instances
+       every ebox() siding/roof call already resolves to (mat()'s key
+       is color+rough+metal+envInt+map+finish+thick, and NICE forces
+       color to 0xffffff on every one of them) — one set() per texture
+       reaches every wall and roof plane built through this tier,
+       garage and mudroom included, since they share the same opts. */
+    if (PBR) {
+      var normalFromCanvas = function (srcCanvas, strength) {
+        var S = srcCanvas.width, sctx = srcCanvas.getContext('2d');
+        var src = sctx.getImageData(0, 0, S, S).data;
+        function lum(x, y) {
+          x = (x + S) % S; y = (y + S) % S;
+          var i = (y * S + x) * 4;
+          return (src[i] + src[i + 1] + src[i + 2]) / 765;
+        }
+        var nc = document.createElement('canvas');
+        nc.width = nc.height = S;
+        var nctx = nc.getContext('2d'), out = nctx.createImageData(S, S);
+        var d = out.data;
+        for (var y = 0; y < S; y++) {
+          for (var x = 0; x < S; x++) {
+            var dx = lum(x + 1, y) - lum(x - 1, y);
+            var dy = lum(x, y + 1) - lum(x, y - 1);
+            var nx = -dx * strength, ny = -dy * strength, nz = 1;
+            var L = Math.sqrt(nx * nx + ny * ny + nz * nz);
+            var i = (y * S + x) * 4;
+            d[i] = (nx / L * 0.5 + 0.5) * 255;
+            d[i + 1] = (ny / L * 0.5 + 0.5) * 255;
+            d[i + 2] = (nz / L * 0.5 + 0.5) * 255;
+            d[i + 3] = 255;
+          }
+        }
+        nctx.putImageData(out, 0, 0);
+        var t = new T.CanvasTexture(nc);
+        t.wrapS = t.wrapT = T.RepeatWrapping;
+        return t;
+      };
+      var sidingNT = normalFromCanvas(sidingT.image, 2.2);
+      sidingNT.repeat.copy(sidingT.repeat);
+      var sidingMat = mat(0xffffff, { rough: 0.95, map: sidingT });
+      sidingMat.normalMap = sidingNT;
+      sidingMat.normalScale.set(0.35, 0.35);
+      sidingMat.needsUpdate = true;
+      var shingleNT = normalFromCanvas(shingleT.image, 2.6);
+      shingleNT.repeat.copy(shingleT.repeat);
+      var roofMat = mat(0xffffff, { rough: 0.9, map: shingleT });
+      roofMat.normalMap = shingleNT;
+      roofMat.normalScale.set(0.35, 0.35);
+      roofMat.needsUpdate = true;
+    }
     /* yard: a grass slab whose top sits just under the kitchen plinth */
     ebox(50, 0.4, 36, NICE ? 0xffffff : EXTC.grass, 0.5, -0.49, 0,
          { rough: 1.0, map: grassT });
@@ -3421,11 +3488,33 @@
       m.position.set(-7.0, 0, 0);
       finish(m); extG.add(m);
     })();
+    /* R5: gutters along both eave lines, one downspout per gable end —
+       sweepAt runs in EXTC.trim with NO opts, the same bucket key most
+       of this fabric's rake boards and ridge caps above already share
+       (mat()'s key reads rough/metal/envInt/map/finish/thick, and none
+       of those calls pass any of them either), so these fold into that
+       bucket instead of opening a new one. Coordinates come off the
+       roof's own literals: the back eave is the rake-board comment's
+       own (y=6.9, z=-6.4, four lines up); the front eave sits just
+       past the fascia (y=8.14) and drip edge (y=7.90, z=-0.315) built
+       above. Downspouts run to the two real wall corners (left
+       ~x=-7.15, right ~x=7.86 — the latter is where the corner boards
+       already stand) rather than hanging in open air under the
+       overhang. */
+    sweepAt([[-7.85, 6.82, -6.30], [0.3, 6.82, -6.30], [8.45, 6.82, -6.30]],
+            0.045, EXTC.trim, extG);
+    sweepAt([[-7.85, 7.82, -0.36], [0.3, 7.82, -0.36], [8.45, 7.82, -0.36]],
+            0.045, EXTC.trim, extG);
+    sweepAt([[-7.85, 6.85, -6.30], [-7.20, 4.50, -6.05],
+             [-7.15, -0.29, -5.95]], 0.035, EXTC.trim, extG);
+    sweepAt([[8.45, 6.85, -6.30], [7.90, 4.50, -6.05],
+             [7.86, -0.29, -5.95]], 0.035, EXTC.trim, extG);
     /* garage: opened in H2, moved WEST in the architect pass so the
        mudroom slots between it and the great room. Front pieces + the
        new GABLE roof live in garageDoorG (hidden inside). */
     var garageDoorG = new T.Group();
     var webgl_garageBackWall = null;
+    var webgl_coachLampGlass = null;   /* R5: NO_MERGE anchor, see below */
     extG.add(garageDoorG);
     var garageInterior = new T.Group();
     extG.add(garageInterior);
@@ -3507,13 +3596,28 @@
                  { rough: 0.5 }));
         gtag(box(0.34, 0.09, 0.26, C.ink, -17.58, 3.16, 10.13, garageDoorG,
                  { rough: 0.5 }));
-        var lamp2 = gtag(cyl(0.06, 0.185, 0.34, 0xf7e8c2, -17.58, 2.76, 10.16,
-                             garageDoorG, 4, GLOSS));
+        /* R5: the shade becomes a lathe on PROFILES.shade — the same
+           wide-flare-at-the-rim silhouette the tapered cyl approximated
+           with two radii — and the flat disc cap above it becomes a
+           squashed `finial` (the trick R4 used for headlight housings).
+           latheAt grows a profile UP from the given y, where cyl() grew
+           it from its own CENTRE, so the y below is the old span's low
+           edge, not the old centre; x/z and the overall span are
+           unchanged. The round shade has no "facing" left to turn, so
+           the old 45-degree twist is dropped. NO_MERGE is what actually
+           keeps the night glow honest here, not the object's rarity
+           today: this is still the only mesh carrying userData.lamp,
+           and a future bucket crossing mergeStatic's 4-item floor on
+           this exact material must not be allowed to fold it into a
+           combined mesh and strand the toggle (webgl_coachLampGlass is
+           added to NO_MERGE beside webgl_garageBackWall, below). */
+        var lamp2 = gtag(latheAt('shade', [0.37, 0.34, 0.37], 0xf7e8c2,
+                                 -17.58, 2.59, 10.16, garageDoorG, GLOSS));
         lamp2.userData.lamp = true;       /* geometry only: the pass lights it */
         lamp2.userData.glazing = true;
-        lamp2.rotation.y = Math.PI / 4;
-        gtag(cyl(0.075, 0.075, 0.06, C.ink, -17.58, 2.96, 10.16, garageDoorG,
-                 8, { rough: 0.5 }));
+        webgl_coachLampGlass = lamp2;
+        gtag(latheAt('finial', [0.22, 0.06, 0.22], C.ink, -17.58, 2.93,
+                     10.16, garageDoorG, { rough: 0.5 }));
         gtag(cyl(0.20, 0.20, 0.05, C.ink, -17.58, 2.57, 10.16, garageDoorG,
                  4, { rough: 0.5 })).rotation.y = Math.PI / 4;
       }
@@ -4244,8 +4348,16 @@
       box(0.10, 0.92, 0.10, C.wood2, -12.95, 0.17, 17.30, extG, { rough: 0.8 });
       box(0.26, 0.24, 0.44, C.slate, -12.95, 0.74, 17.30, extG, { rough: 0.7 });
       if (DETAIL >= 3) {
+        /* R5: the flag becomes a swept arm carrying the same paddle —
+           same paddle position as before, now reached by a rod instead
+           of floating beside the body on its own. */
+        sweepAt([[-12.87, 0.66, 17.30], [-12.83, 0.72, 17.30],
+                 [-12.80, 0.80, 17.30]], 0.012, C.ink, extG, STEEL);
         box(0.05, 0.16, 0.04, C.red, -12.80, 0.80, 17.30, extG, GLOSS);
         box(0.28, 0.05, 0.46, C.dark, -12.95, 0.87, 17.30, extG, { rough: 0.7 });
+        /* the lid's lift handle, at its street-facing tip */
+        latheAt('knob', [0.032, 0.045, 0.032], C.dark, -12.95, 0.87, 17.53,
+                extG, STEEL).rotation.x = Math.PI / 2;
       }
     }
     /* the street along the yard's front, and its curb */
@@ -4742,11 +4854,42 @@
         arm.rotation.z = Math.PI / 2;
         arm.position.set(-(hwB + 0.13), BUS_BODY.belt - 0.10, 0.35);
         btag(arm);
+        /* R5 (open items: reads as a no-entry circle, not a stop sign)
+           — btag's zoneTag already cloned arm.material to a private
+           instance (L1: a zone never shares), so painting it here
+           touches only this one mesh. The canvas idiom every other
+           procedural texture in the file uses: drawn once, cached in
+           the closure, never redownloaded. Base colour goes white so
+           the map's own red/cream carries the true sign colours
+           instead of being multiplied by C.red a second time; the
+           octagon's thin rim samples the same map's border ring, which
+           is the right colour for an edge anyway. */
+        var stopArmTex = canvasTex(128, function (g, S) {
+          g.fillStyle = '#c9473d'; g.fillRect(0, 0, S, S);
+          g.strokeStyle = '#f2ece1'; g.lineWidth = S * 0.09;
+          g.beginPath(); g.arc(S / 2, S / 2, S * 0.40, 0, Math.PI * 2);
+          g.stroke();
+          g.fillStyle = '#f2ece1';
+          g.font = 'bold ' + Math.round(S * 0.30) + 'px Arial, sans-serif';
+          g.textAlign = 'center'; g.textBaseline = 'middle';
+          g.fillText('STOP', S / 2, S / 2 + S * 0.01);
+        });
+        arm.material.color.setHex(0xffffff);
+        arm.material.map = stopArmTex;
+        arm.material.needsUpdate = true;
         if (DETAIL >= 3) {
           var ring = new T.Mesh(new T.CylinderGeometry(0.17, 0.17, 0.055, 8),
             mat(C.cream, GLOSS));
           ring.rotation.z = Math.PI / 2;
-          ring.position.set(-(hwB + 0.145), BUS_BODY.belt - 0.10, 0.35);
+          /* R5: was -(hwB + 0.145) — FARTHER out than the arm itself
+             (arm sits at -(hwB + 0.13)), which puts this disc BETWEEN
+             the traffic side and the arm's own face and blanks out the
+             centre of the octagon exactly where STOP now reads. Tucked
+             behind the arm instead (still proud of the mount box at
+             -(hwB + 0.05)); its own radius (0.17) is smaller than the
+             arm's (0.27), so it stays fully hidden behind the sign
+             face from the front, same as it always was from the back. */
+          ring.position.set(-(hwB + 0.10), BUS_BODY.belt - 0.10, 0.35);
           btag(ring);
           btag(box(0.06, 0.10, 0.16, C.ink, -(hwB + 0.05),
                    BUS_BODY.belt - 0.10, 0.35, inner, { rough: 0.7 }));
@@ -5886,6 +6029,20 @@
          stands at x -8.3..-2.7, z 18.8..20.8) and of the path */
       fence('x', 2.20, 13.20, 16.30);
       fence('z', 3.00, 16.30, 13.20);
+      /* R5: hinge + latch at the gate coordinates — the fence's own
+         literals name exactly one distinguished point, the corner post
+         both runs share (13.20, 16.30), so that reads as the gate.
+         These are small hardware bits mounted ON that EXISTING post,
+         not a new swinging panel: the picket run itself (yb, folded
+         into InstancedMesh by instanceYard below) is untouched, and
+         these ride extG directly so instanceYard's own yardG-scoped
+         traversal never reaches them. */
+      sweepAt([[13.20, GY + 0.72, 16.40], [13.20, GY + 0.72, 16.34],
+               [13.20, GY + 0.60, 16.34]], 0.014, C.brass, extG, STEEL);
+      sweepAt([[13.20, GY + 0.38, 16.40], [13.20, GY + 0.38, 16.34],
+               [13.20, GY + 0.26, 16.34]], 0.014, C.brass, extG, STEEL);
+      latheAt('knob', [0.030, 0.05, 0.030], C.brass, 13.275, GY + 0.55,
+              16.30, extG, CHROME).rotation.z = -Math.PI / 2;
       ysh(5.50, 0.24, 7.75, 16.44);       /* nothing floats, S4 */
       ysh(0.24, 6.70, 13.34, 9.62);
       /* a birdbath on the side lawn: the vertical the grass wanted */
@@ -6156,6 +6313,12 @@
        its outer-scope capture, assigned there for exactly this reason,
        does. */
     NO_MERGE.add(webgl_garageBackWall);
+    /* R5: the coach lamp's shade is the only mesh carrying
+       userData.lamp — mergeStatic runs before the night-glow traverse
+       collects that flag, so a fold here would silently delete the
+       object the toggle depends on. Structural, not a count to keep
+       re-verifying, same reasoning as garageBackWall just above. */
+    NO_MERGE.add(webgl_coachLampGlass);
     /* Per-group passes first (L5: within one hide-group, never across
        two). extG.add() makes garageDoorG, mudroomRoofG AND yardG its own
        children — plus a great deal of loose exterior fabric with no
