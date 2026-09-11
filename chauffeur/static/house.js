@@ -3981,7 +3981,14 @@
          actually is. The OTHER three views already read this piece
          solid via the corridor check's x-axis overlap (garage_door's own
          x-range never reaches kitchen/mudroom/living's corridors), which
-         this leaves untouched. */
+         this leaves untouched.
+
+         The 8.5 is an interpolated margin, not a cited mesh feature, and
+         it exists ONLY because door + gable roof register as ONE piece
+         today. The shell arc's Task 4 splits garage fabric per spec
+         section 3 ("garage walls + gabled roof" vs "garage_door") — that
+         split makes this clamp unnecessary; whoever registers the split
+         should delete it rather than inherit it. */
       gdBox[4] = 8.5;
       regFabric(garageDoorG, { name: 'garage_door', n: [0, 0, 1],
                                 box: gdBox });
@@ -7649,6 +7656,11 @@
           walls top out at 5.6 (the main kitchen/living wall) and 4.2-4.5
           (mudroom/garage), so 6.0 sits in the clear gap between "tallest
           wall" and "lowest eave" for every room this build has today. */
+    /* LOAD-BEARING for solver verdicts, not just AABB hygiene: a mesh
+       whose top crosses this line silently drops out of ROOM_AABB, moving
+       the room's subject CENTRE on all three axes. If any wall or fixture
+       height changes near 6.0, re-verify against the LEGACY verdict table
+       (scenario_shell_fabric_registry). */
     var ROOM_CEILING = 6.0;
     var ROOM_AABB = {};
     (function () {
