@@ -830,7 +830,8 @@
     }
     var discMatCache = {};
     function discMat(color, opacity, blending, depthWrite) {
-      var k4 = color + '|' + opacity + '|' + (blending || 'none') + '|' +
+      var k4 = color + '|' + opacity + '|' +
+               (blending !== undefined ? blending : 'none') + '|' +
                (depthWrite === undefined ? 'true' : depthWrite);
       var m = discMatCache[k4];
       if (!m) {
@@ -2107,9 +2108,19 @@
         /* R2 (island): the `pull` PROFILE is a turned bar — lathed on its
            natural Y axis for a vertical door pull, laid on its side (the
            same rotate-to-protrude trick R1 used on `knob`) for a
-           horizontal drawer pull. Same x/y/zf/len every box pull used. */
-        var pm = latheAt('pull', [0.030, len, 0.030], HW, x, y, zf + 0.055,
-                         g, STEEL);
+           horizontal drawer pull. Same x/y/zf/len every box pull used.
+           Final-fix wave: latheAt grows a profile UP from the given y —
+           base-pivot — where the box bar it replaced was CENTRE-pivot, so
+           the bar landed off by len/2 from where the box bar (and KD3's
+           stand-offs below, which still assume a centred bar) sat: shifted
+           up for a vertical pull, and shifted left for a horizontal one
+           (rotation.z lays local +y along world -x). Offsetting the
+           lathe's position by len/2 along the bar's own axis — down for
+           vertical, right for horizontal — re-centres it exactly on the
+           stand-offs, same as every other lathe conversion in this arc. */
+        var pm = latheAt('pull', [0.030, len, 0.030], HW,
+                         vert ? x : x + len / 2, vert ? y - len / 2 : y,
+                         zf + 0.055, g, STEEL);
         if (!vert) pm.rotation.z = Math.PI / 2;
       } else {
         box(vert ? t : len, vert ? len : t, t, HW, x, y, zf + 0.055, g, STEEL);
@@ -3017,7 +3028,7 @@
       /* the kitchen's four accents, no strays (bible S2/S4) */
       var JAR_C = [C.terracotta, C.oxblood, C.teal, C.brass];
       /* K3: a private opts literal, not GLOSS — GLOSS is a shared constant
-         read by ~15 other call sites, and glassy ignores rough/metal/envInt
+         read by ~95 other call sites, and glassy ignores rough/metal/envInt
          anyway (transmission/ior/thickness only), so nothing of GLOSS's
          intent carries over. jar.visible count semantics (below, in the
          webgl runtime) are untouched by this — only the material changes. */
@@ -4762,8 +4773,12 @@
           t.rotation.y = Math.PI / 2;
           t.position.set(xo - sx * tw, p.wr, wz);
         } else {
-          t = new T.Mesh(new T.CylinderGeometry(p.wr, p.wr, 0.20, 8),
-            mat(C.ink, { rough: 0.92 }));
+          /* final-fix wave: same leak, same cure, DETAIL<2's own cylinder
+             stand-in — cgeo keyed like cyl()'s own cache ('c|rt|rb|h|sg')
+             so wheels of matching p.wr share across every car. */
+          t = new T.Mesh(cgeo('c|' + p.wr + '|' + p.wr + '|0.20|8', function () {
+            return new T.CylinderGeometry(p.wr, p.wr, 0.20, 8);
+          }), mat(C.ink, { rough: 0.92 }));
           t.rotation.z = Math.PI / 2;
           t.position.set(xo - sx * 0.10, p.wr, wz);
         }
@@ -4955,16 +4970,29 @@
         function (ring, ri) {
           /* both rings at every tier: a lone hard-edged 12-gon pokes a
              visible triangle out from under the bumper at low, and two
-             circles are ~40 triangles - not a tier concern */
-          var d = new T.Mesh(new T.CircleGeometry(1, DETAIL >= 2 ? 22 : 16),
-            new T.MeshBasicMaterial({ color: ring[2], transparent: true,
-                                      blending: T.MultiplyBlending,
-                                      depthWrite: false }));
+             circles are ~40 triangles - not a tier concern.
+             Final-fix wave: the geometry now routes through cgeo, unit
+             circle scaled at the mesh like every other disc in the
+             file — a raw CircleGeometry per ring per car leaked every
+             syncGarage rebuild at low/medium (the Pi's tiers). The
+             material routes through discMat (K5's own recipe) but MUST
+             still go through this function's own `tag`, not a bare
+             grp.add: buildVehicle serves two different zones (cars
+             'garage', the bus 'curb' — same ring colours, same
+             discMat cache entries), and every other part it builds
+             already relies on tag()'s own() call to privatize a shared
+             material per mesh (L1 — a zone material is never shared).
+             own() clones the material, not the geometry, so the
+             geometry-sharing win above survives untouched. */
+          var segs = DETAIL >= 2 ? 22 : 16;
+          var d = new T.Mesh(cgeo('circ|' + segs, function () {
+            return new T.CircleGeometry(1, segs);
+          }), discMat(ring[2], 1, T.MultiplyBlending, false));
           d.rotation.x = -Math.PI / 2;
           d.scale.set(p.W * ring[0], p.L * ring[1], 1);
           d.position.set(0, 0.012 + ri * 0.004, 0);
           d.renderOrder = -2 + ri;
-          grp.add(d);
+          tag(d);
         });
       /* ...and at tier 3 a car RECEIVES one again. The seam that ran
          across the minivan's roof cap - half the cap sampling the map,

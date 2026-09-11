@@ -113,9 +113,14 @@ list if that item had ever been meal-claimed.
 - ~~**Interior walls have no baked gradient.** Floors pool; walls are lit only by
   the hemisphere plus lamp falloff. A shared wall-gradient texture is the
   obvious next step.~~ (retired 2026-09-10)
-- **Counters do not pool either** — `woodLight` and `marble` are shared across
+- ~~**Counters do not pool either** — `woodLight` and `marble` are shared across
   dozens of props, so baking into them would put the same gradient on a stool
-  and a cabinet door. Needs per-run textures.
+  and a cabinet door. Needs per-run textures.~~ (retired 2026-09-11: `counterTex`
+  pools per counter-run, keyed the same A/B/L-return way K4's AO occluder list
+  already groups slabs — `kTop`'s countertops share one baked texture per run
+  without sharing a bounding box. Half-note: the island's marble top stays on
+  the single shared `marble` map, unpooled by design — it is one slab, not a
+  run of them, so per-run pooling has nothing to buy there.)
 - ~~**The sun is still near-frontal** (~15° off the exterior camera axis).
   Raking it darkens the kitchen's subject wall, so modelling currently comes
   from the cool/warm split and the pools instead. Stronger form needs a

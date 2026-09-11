@@ -826,6 +826,22 @@ def scenario_garage_rebuild_does_not_touch_plaque_textures():
         check(g2['textures'] == g1['textures'],
               'texture ledger must stay flat across a multi-car rebuild '
               'triggered by ONE car changing: %r -> %r' % (g1, g2))
+        # Final-fix wave (promoted from this scenario's own 9b-deferred
+        # minor): this runs at quality=low, which is exactly the tier the
+        # DETAIL<2 tyre-cylinder fallback and the two !SHADOWS contact-
+        # shadow rings (+ their raw MeshBasicMaterials) used to mint fresh,
+        # uncached, every rebuild -- disposed by nothing when the old car
+        # group is torn down above, so the renderer's own geometry ledger
+        # only ever grew. Both are now cgeo-keyed (tyre like cyl()'s own
+        # cache; rings like ysh()'s K5 discs) so every wheel/ring across
+        # both cars resolves to the same handful of shared objects and a
+        # rebuild mints nothing new. Impossible to assert before that fix
+        # (it never held); RED-proven against stashed pre-fix house.js,
+        # GREEN after (see final-fix-report.md).
+        check(g2['geometries'] == g1['geometries'],
+              'geometry ledger must stay flat across a multi-car rebuild '
+              'triggered by ONE car changing, at quality=low: %r -> %r'
+              % (g1, g2))
 
         # Fix round 2 (test-rigor): everything above is a NEGATIVE proof
         # (nothing broke) and would pass identically whether the rebuild
