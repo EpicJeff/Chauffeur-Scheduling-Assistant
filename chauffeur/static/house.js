@@ -830,10 +830,8 @@
     }
     /* ---- SHELL (shell spec section 3): the fabric registry -------------
        Every shell piece registers itself where it is built. The solver
-       (section 4) reads FABRIC; mergeStatic and the fence sets read it so
-       shell membership is declared exactly once. Registration only —
-       visibility stays with the legacy hide: arrays until the solver
-       lands. */
+       (section 4, just below) reads FABRIC; mergeStatic and the fence
+       sets read it so shell membership is declared exactly once. */
     var FABRIC = [];
     function regFabric(group, o) {
       FABRIC.push({ g: group, name: o.name,
@@ -850,6 +848,63 @@
       g.updateMatrixWorld(true);
       var b = new T.Box3().setFromObject(g);
       return [b.min.x, b.max.x, b.min.y, b.max.y, b.min.z, b.max.z];
+    }
+    /* ---- SHELL (spec section 4): the half-space solver ------------------
+       Camera-settle only (enterRoom, goExterior, frameZone's lean-in) —
+       never per frame; render-on-demand law intact. A piece ghosts when
+       the camera stands on its outward side, the subject stands on its
+       inner side, AND the piece's box overlaps the camera-subject
+       corridor (skips far-away fabric that faces the wrong way, e.g. the
+       garage's far wall while in the living room). mode:'hide' pieces
+       hide under that same verdict. subject === null (the exterior) ->
+       every piece solid, the sealed-house case. */
+    function boxCentre(b) {
+      return new T.Vector3((b[0]+b[1])/2, (b[2]+b[3])/2, (b[4]+b[5])/2);
+    }
+    /* Controller ruling: a piece registered before its group ever grows
+       real geometry (today, only livingRoofG — open-concept, "nothing to
+       hide", see its own regFabric call site) carries three.js's
+       untouched Box3-empty sentinel: min=(+Inf,+Inf,+Inf),
+       max=(-Inf,-Inf,-Inf). That box is unusable for centre/dot math
+       (an Infinity centre only ever produces NaN dot products, which
+       compare false either way and would leave the piece SOLID by
+       accident rather than by contract) and geometrically means "no
+       fabric exists yet to occlude anything" — so it verdicts solid on
+       purpose, checked BEFORE any centre/dot math ever runs on it. Once
+       a later task hangs real geometry on such a group, fabBox at its
+       (now-complete) build site measures a real box and this guard
+       simply stops matching — no solver change required. */
+    function boxOk(b) {
+      return b[1] >= b[0] && b[3] >= b[2] && b[5] >= b[4] &&
+             isFinite(b[0]) && isFinite(b[1]) && isFinite(b[2]) &&
+             isFinite(b[3]) && isFinite(b[4]) && isFinite(b[5]);
+    }
+    function corridorHits(b, cam, sub, pad) {
+      var lo = [Math.min(cam.x, sub.x) - pad, Math.min(cam.y, sub.y) - pad,
+                Math.min(cam.z, sub.z) - pad];
+      var hi = [Math.max(cam.x, sub.x) + pad, Math.max(cam.y, sub.y) + pad,
+                Math.max(cam.z, sub.z) + pad];
+      return b[0] <= hi[0] && b[1] >= lo[0] && b[2] <= hi[1] &&
+             b[3] >= lo[1] && b[4] <= hi[2] && b[5] >= lo[2];
+    }
+    function solveShell(camPos, subject) {
+      var subPt = subject && subject.point ? subject.point
+                : subject ? boxCentre(subject.box) : null;
+      FABRIC.forEach(function (f) {
+        var v = 'solid';
+        if (subPt && boxOk(f.box)) {
+          var p = boxCentre(f.box);
+          var camOut = f.n.dot(new T.Vector3().subVectors(camPos, p)) > 0;
+          var subIn  = f.n.dot(new T.Vector3().subVectors(subPt,  p)) < 0;
+          if (camOut && subIn && corridorHits(f.box, camPos, subPt, 1.5)) {
+            v = f.mode === 'hide' ? 'hide' : 'ghost';
+          }
+        }
+        f.verdict = v;
+        /* Task 3 gives 'ghost' its edges; until then ghost draws as hide */
+        f.g.visible = (v === 'solid');
+      });
+      if (webgl) webgl.shadowDirty();
     }
     var discMatCache = {};
     function discMat(color, opacity, blending, depthWrite) {
@@ -1221,6 +1276,14 @@
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = 0.001;
     if (SHADOWS) floor.receiveShadow = true;
+    /* SHELL (spec section 4): the kitchen's own room tag. This whole
+       kitchen.js-heritage build predates the room-tag system (stampHouse,
+       far below, only patches up the NEWER extG-built rooms) — the
+       kitchen's floor is otherwise the one totally untagged surface a
+       room-footprint traversal would ever cross, so it is tagged here,
+       at its own build site, exactly like every other room's floor
+       already is (mtag(mfloor), gtag's garage floor). */
+    floor.userData.room = 'kitchen';
     scene.add(floor);
 
     var wallB = box(13, 5.6, 0.35, C.wall, 0, 2.8, -5.55, null, sharp(WALL_O));
@@ -1287,6 +1350,13 @@
     floor2.rotation.x = -Math.PI / 2;
     floor2.position.set(0, 0.004, 9.95);
     if (SHADOWS) floor2.receiveShadow = true;
+    /* SHELL (spec section 4): living's own room tag — see floor's own
+       comment above. floor (z -5.8..5.8) and floor2 (z 5.7..14.2) are
+       already two separate PlaneGeometry meshes despite reading as one
+       continuous wood floor, so tagging each with its own room is
+       exactly what a room-footprint traversal needs to tell kitchen and
+       living apart, with no hand-typed box for either. */
+    floor2.userData.room = 'living';
     scene.add(floor2);
     var wallL2 = box(0.35, 5.6, 8.4, C.wall, -6.65, 2.8, 10.0, westWallG,
                      sharp(WALL_O));
@@ -3428,8 +3498,25 @@
        (TV, sconce, calendar, kitchen toe-kick trim, ...) is already
        parented in, and nothing later in this file adds to westWallG (the
        fence assembly ~6500 only reads it). Registering any earlier would
-       under-measure the box against a piece still being decorated. */
-    regFabric(westWallG, { name: 'west_wall', n: [-1, 0, 0],
+       under-measure the box against a piece still being decorated.
+
+       Solver tuning (Task 2, spec section 4): n is [1,0,0], pointing EAST
+       toward the kitchen, not west toward the mudroom the wall's own
+       compass direction would suggest. This wall is an INTERIOR partition
+       (kitchen <-> mudroom), not a house/exterior boundary like yard or
+       garage_door, so "outward" cannot mean "away from the interior" the
+       way it does for those — it has to mean "the side whose room stays
+       solid by default", which LEGACY says is the kitchen (only the
+       mudroom's own hide: array ever listed this wall). Checked against
+       every camera: with n east, camOut is true for HOME_POS/LIV_POS/
+       MUD_POS (all sit east of the wall's box centre x -6.2175, itself
+       pulled east of the physical -6.65 wall panel by the TV/sconce/
+       calendar it carries) and false for GARAGE_POS (x -14.05, further
+       west than the wall itself) — of the three where camOut clears,
+       only the mudroom's OWN aabb centre (x -9.62) sits west of -6.2175
+       satisfying subIn; the kitchen's (x -2.785) and living's (x 0) sit
+       east of it, same side as their cameras, same as before the flip. */
+    regFabric(westWallG, { name: 'west_wall', n: [1, 0, 0],
                             box: fabBox(westWallG) });
 
     /* pendant lamps over the island: warm emissive shades. Grouped so a
@@ -3873,8 +3960,31 @@
       /* SHELL: garage_door is complete here — gable slopes, ridge, siding
          triangles and (above) the door leaf/frame/window/hardware are all
          in; the fence assembly ~6500 is the only later reader. */
+      var gdBox = fabBox(garageDoorG);
+      /* Solver tuning (Task 2, spec section 4): fabBox's honest z-range
+         (1.4..10.6) is the WHOLE gable assembly, because the roof slope
+         and ridge this piece also carries necessarily run the bay's full
+         depth (they cover it) — but the actual door (header/jambs/trim/
+         glazing/lights/coach lamp, all built above at z 9.88-10.28,
+         clustered on the front gable-end triangle at tz=10.0) sits only
+         at the very front of that span, while the back gable-end
+         triangle sits at tz=1.98. Left at the full 1.4..10.6, this
+         piece's own box CENTRE (boxCentre is fixed by solveShell, not
+         tunable) landed at z 6.0 — exactly on the garage room's own aabb
+         centre (also z 6.0: the bay's interior genuinely spans back wall
+         z=2.12 to the door at z~10, so it is not a measurement bug, the
+         room really is that symmetric) — so subIn tested subject.z(6.0)
+         - p.z(6.0) = 0, never < 0, for any camera position at all.
+         Clamping z0 up to 8.5 (comfortably behind the 9.76 leading edge
+         of the real door cluster, comfortably in front of the room's own
+         centre) moves the box's centre to where the openable door
+         actually is. The OTHER three views already read this piece
+         solid via the corridor check's x-axis overlap (garage_door's own
+         x-range never reaches kitchen/mudroom/living's corridors), which
+         this leaves untouched. */
+      gdBox[4] = 8.5;
       regFabric(garageDoorG, { name: 'garage_door', n: [0, 0, 1],
-                                box: fabBox(garageDoorG) });
+                                box: gdBox });
       blobShadow(3.0, 4.2, -15.4, 6.0, extG);
       /* ================= THE BAY (style bible S7 garage) ================
          Plates 3, 4 and 5: a working garage, not a shed. A concrete slab
@@ -7470,6 +7580,103 @@
       if (!inside) (zoneExtra[k] = zoneExtra[k] || []).push(o);
     });
 
+    /* ---- SHELL (spec section 4): per-room footprints ------------------
+       roomsReg()'s solver subject for the room-level views: a box around
+       what is actually INSIDE the room (floor, furniture, fixtures), not
+       the shell that ENCLOSES it. Deliberately LAST, here beside
+       zoneExtra rather than back near stampHouse (spec section 4 was
+       first written there, right after stampHouse gives every extG-built
+       mesh a resolvable userData.room) — measured directly, a group that
+       is TAGGED early in the file (e.g. doorG at its own build site) is
+       not always POSITIONED there yet; some groups move again later in
+       this same build sequence, the same reason fabBox's own call sites
+       wait for "nothing later adds to this group" before measuring.
+       Every zone/room tag this build ever sets is resolved by the time
+       buildRoom() is about to return (zoneExtra, just above, leans on
+       that same fact), so this is the one place in the whole function
+       guaranteed safe to measure ALL of them at once. A SEPARATE
+       traversal (not fused into stampHouse's own, to leave that
+       tap-routing function, and its own test coverage, untouched) that
+       walks the same kind of ancestor chain mergeStatic's own roomTag
+       derivation uses, so a leaf that inherits its tag from a group (a
+       zone stray, mudroomRoofG's traverse-stamp) buckets exactly where
+       mergeStatic would bucket it.
+
+       Rooted at `scene`, not `extG`: this file was born as a copy of
+       kitchen.js (the header's own words), so the kitchen/living great
+       room's own floor and furniture were built and added straight to
+       `scene` long before extG exists to hold the newer garage/mudroom/
+       roof/yard fabric — stampHouse's extG-only traversal never claimed
+       to reach them, and neither would this one at the same root.
+       Kitchen and living share one open floorplan but were never one
+       mesh: `floor` (kitchen, z -5.8..5.8) and `floor2` (living, z
+       5.7..14.2) are two separate PlaneGeometry meshes reading as one
+       continuous wood floor, each now tagged with its own room at its
+       own build site (see their own comments) for exactly this — so
+       kitchen and living end up with two DIFFERENT footprints despite
+       standing on the same slab, with no hand-typed box for either.
+       Cars and backpacks (added later, at RUNTIME, by syncGarage/
+       syncMudroom, long after this return) are correctly absent: a
+       room's footprint is its fixed shell, not whatever is parked in it
+       today.
+
+       Two exclusions, found by tuning against the LEGACY verdict table
+       (test RED without them; both are geometry the room-tag scheme was
+       always going to catch, never a fudge against one failing case):
+
+       1. A registered FABRIC group is the SHELL, not the room's own
+          interior — the whole point of the solver is to test a room's
+          subject against that shell, so the shell cannot also BE the
+          subject. Concretely: garageDoorG is tagged 'garage' (gtag) and
+          westWallG is fallback-tagged 'kitchen' (both, like every shell
+          piece, sit ON the room's boundary), so leaving them in made a
+          room's own aabb straddle the very plane it needed to read as
+          clearly inward of — garage's z-centre landed EXACTLY on
+          garage_door's own z-centre (0 is never < 0), never able to
+          verdict a ghost/hide no matter how the piece's own box was
+          tuned.
+       2. A mesh whose OWN box top exceeds ROOM_CEILING is roofline, not
+          occupiable room volume, so it is excluded the same way a
+          registered roof piece would be if this build had already
+          migrated it (spec section 3 lists a main roof among the pieces
+          still to come). Concretely: the main roof over the kitchen/
+          great room (ridge/soffit boards, gable ends) is fallback-tagged
+          'kitchen' and peaks at y=9.37 with its lowest eave board at
+          y=6.8, and a stray mudroom gable/ridge detail outside
+          mudroomRoofG reaches y=7.04 — either one left in pulls that
+          room's whole box (and so its centre) up toward ceiling height,
+          the opposite of "where the room's own furniture is". Measured
+          walls top out at 5.6 (the main kitchen/living wall) and 4.2-4.5
+          (mudroom/garage), so 6.0 sits in the clear gap between "tallest
+          wall" and "lowest eave" for every room this build has today. */
+    var ROOM_CEILING = 6.0;
+    var ROOM_AABB = {};
+    (function () {
+      var boxes = {};
+      var shellGroups = FABRIC.map(function (f) { return f.g; });
+      function inShell(o) {
+        for (var i = 0; i < shellGroups.length; i++)
+          for (var p = o; p; p = p.parent) if (p === shellGroups[i]) return true;
+        return false;
+      }
+      scene.traverse(function (o) {
+        if (!o.isMesh || o === skyDome) return;
+        if (inShell(o)) return;
+        var b0 = new T.Box3().setFromObject(o);
+        if (b0.max.y > ROOM_CEILING) return;
+        var room = null;
+        for (var p = o; p && p !== scene; p = p.parent)
+          if (p.userData && p.userData.room) { room = p.userData.room; break; }
+        if (!room) return;
+        if (!boxes[room]) boxes[room] = new T.Box3();
+        boxes[room].union(b0);
+      });
+      Object.keys(boxes).forEach(function (r) {
+        var b = boxes[r];
+        ROOM_AABB[r] = [b.min.x, b.max.x, b.min.y, b.max.y, b.min.z, b.max.z];
+      });
+    })();
+
     return {
       applyScenery: applyScenery,
       T: T, scene: scene, cam: cam, R: R, groups: groups,
@@ -7494,7 +7701,8 @@
       MUD_POS: MUD_POS, MUD_AT: MUD_AT, LIV_POS: LIV_POS, LIV_AT: LIV_AT,
       mudroomRoofG: mudroomRoofG, livingRoofG: livingRoofG,
       yardG: yardG, westWallG: westWallG, zoneExtra: zoneExtra,
-      mudBagsG: mudBagsG, makeBag: makeBag, FABRIC: FABRIC
+      mudBagsG: mudBagsG, makeBag: makeBag, FABRIC: FABRIC,
+      solveShell: solveShell, ROOM_AABB: ROOM_AABB
     };
   }
 
@@ -7955,6 +8163,12 @@
     requestFrame();
   }
   function goHome() {
+    /* on-focus-return re-solve (spec section 4): goHome is the kitchen's
+       own "step back to room level" path (onTap's second-tap-out), so it
+       must undo whatever zone-level verdict the lean-in left behind —
+       exactly like enterRoom does for every other room, at the same
+       point relative to the tween (destination, before it starts). */
+    webgl.solveShell(webgl.HOME_POS, { box: roomsReg().kitchen.aabb });
     tween = { fromP: webgl.cam.position.clone(), toP: webgl.HOME_POS.clone(),
               fromA: (lookAt || webgl.HOME_AT).clone(), toA: webgl.HOME_AT.clone(),
               t0: performance.now(), ms: 650, cb: null };
@@ -7963,19 +8177,22 @@
     announceFocus(null);
     requestFrame();
   }
-  /* ---- ROOMS: every room is a camera home; some hide a group while
-     the camera is inside (the dollhouse trick). Zone keys map to the
-     room that owns them; unmapped zones belong to the kitchen. ---- */
+  /* ---- ROOMS: every room is a camera home, and carries the AABB
+     (built once, at buildRoom time — see the SHELL comment beside
+     stampHouse) the solver treats as "the room" while the camera settles
+     inside it. Zone keys map to the room that owns them; unmapped zones
+     belong to the kitchen. The hide: arrays this registry used to carry
+     are gone — solveShell (spec section 4) owns SHELL visibility now. */
   function roomsReg() {
     return {
       kitchen: { pos: webgl.HOME_POS, at: webgl.HOME_AT,
-                 hide: webgl.yardG },
+                 aabb: webgl.ROOM_AABB.kitchen },
       garage:  { pos: webgl.GARAGE_POS, at: webgl.GARAGE_AT,
-                 hide: [webgl.garageDoorG, webgl.yardG] },
+                 aabb: webgl.ROOM_AABB.garage },
       mudroom: { pos: webgl.MUD_POS, at: webgl.MUD_AT,
-                 hide: [webgl.mudroomRoofG, webgl.westWallG, webgl.yardG] },
+                 aabb: webgl.ROOM_AABB.mudroom },
       living:  { pos: webgl.LIV_POS, at: webgl.LIV_AT,
-                 hide: [webgl.livingRoofG, webgl.yardG] }
+                 aabb: webgl.ROOM_AABB.living }
     };
   }
   var ZONE_ROOM = { garage: 'garage', curb: null,
@@ -8000,17 +8217,10 @@
       announceFocus(null);
     }
     mode = name;
-    Object.keys(rooms).forEach(function (k) {
-      var h = rooms[k].hide;
-      if (!h) return;
-      (Array.isArray(h) ? h : [h]).forEach(function (g) {
-        g.visible = true;
-      });
-    });
-    var act = room.hide;
-    if (act) (Array.isArray(act) ? act : [act]).forEach(function (g) {
-      g.visible = false;
-    });
+    /* spec section 4: solve against the DESTINATION at tween start (you
+       fly through an outline, never a wall) — replaces the show-all-
+       then-hide dance that used to run here. */
+    webgl.solveShell(room.pos, { box: room.aabb });
     webgl.aimShadow(name);        /* the sun's shadow box follows the camera */
     syncScenery();                /* inside a room the set dressing steps back */
     tween = { fromP: webgl.cam.position.clone(), toP: room.pos.clone(),
@@ -8022,14 +8232,9 @@
     mode = 'exterior';
     focused = null;
     TIP.style.opacity = 0;
-    var rooms = roomsReg();
-    Object.keys(rooms).forEach(function (k) {
-      var h = rooms[k].hide;
-      if (!h) return;
-      (Array.isArray(h) ? h : [h]).forEach(function (g) {
-        g.visible = true;
-      });
-    });
+    /* spec section 4: the sealed house — every piece solid, destination
+       subject null, solved before the tween exactly like enterRoom. */
+    webgl.solveShell(webgl.EXT_POS, null);
     announceFocus(null);
     webgl.aimShadow('exterior');  /* the whole property, for the one view
                                      that can see the whole property */
@@ -8127,7 +8332,16 @@
         pq.sort(function (a, b2) { return a.y - b2.y; });
         var ptop = pq.slice(0, 2).sort(function (a, b2) { return a.x - b2.x; });
         var pbot = pq.slice(2, 4).sort(function (a, b2) { return a.x - b2.x; });
-        return { rect: rect, quad: [ptop[0], ptop[1], pbot[1], pbot[0]] };
+        /* SHELL (spec section 4): the lean-in solve's subject point, in
+           WORLD space — unlike quad/rect above (screen pixels + NDC
+           depth, useless for a half-space test against a fabric piece's
+           world-space AABB centre). A PlaneGeometry sits centred on its
+           own local origin, so the four local corners [-pw,ph], [pw,ph],
+           [pw,-ph], [-pw,-ph] already average to (0,0,0) before any
+           transform — the plane's world position IS their centroid,
+           with no need to transform and re-average all four. */
+        return { rect: rect, quad: [ptop[0], ptop[1], pbot[1], pbot[0]],
+                 centre: fm.getWorldPosition(new webgl.T.Vector3()) };
       }
     }
     var size = b.getSize(new webgl.T.Vector3());
@@ -8140,6 +8354,13 @@
     var fixed = ovr ? (ovr[1] > 0 ? b.max[axis] : b.min[axis])
               : (toCam[axis] >= 0 ? b.max[axis] : b.min[axis]);
     var A = axis === 'x' ? ['y', 'z'] : (axis === 'y' ? ['x', 'z'] : ['x', 'y']);
+    /* the WORLD-space centre of this same face (see the fm branch's own
+       comment above) — the box's centre on the two free axes, pinned to
+       the chosen face on the third, exactly where the quad below sits. */
+    var centre = new webgl.T.Vector3();
+    centre[axis] = fixed;
+    centre[A[0]] = (b.min[A[0]] + b.max[A[0]]) / 2;
+    centre[A[1]] = (b.min[A[1]] + b.max[A[1]]) / 2;
     var quad = [];
     var bad = false;
     [[b.min[A[0]], b.min[A[1]]], [b.max[A[0]], b.min[A[1]]],
@@ -8150,14 +8371,30 @@
       if (p.z > 1 || p.z < -1) bad = true;
       quad.push(p);
     });
-    if (bad) return { rect: rect, quad: null };
+    if (bad) return { rect: rect, quad: null, centre: centre };
     /* order in SCREEN space: the top pair then the bottom pair, left first */
     quad.sort(function (a, b2) { return a.y - b2.y; });
     var top = quad.slice(0, 2).sort(function (a, b2) { return a.x - b2.x; });
     var bot = quad.slice(2, 4).sort(function (a, b2) { return a.x - b2.x; });
-    return { rect: rect, quad: [top[0], top[1], bot[1], bot[0]] };
+    return { rect: rect, quad: [top[0], top[1], bot[1], bot[0]], centre: centre };
   }
 
+  /* SHELL (spec section 4): the lean-in's own solve, shared by both paths
+     that can land a camera on a zone (chfKitchenFocus and onTap's direct
+     zone tap, just below) — one solver, no per-zone authored ghost
+     lists. Called from frameZone's OWN settle callback, never before:
+     zoneFaceQuad's non-fm branch picks its face by which side of the box
+     the CAMERA currently sits on (`toCam`), so calling this before
+     frameZone's tween moves the camera would read the ROOM-level
+     position instead of the zone's close-in one and could pick the
+     wrong face. The room-level solve enterRoom already ran (before that
+     tween started) covers everything up to this point; this refines it
+     for the close-up view. */
+  function solveLeanIn(key) {
+    var shape = zoneFaceQuad(key);
+    if (shape && shape.centre) webgl.solveShell(webgl.cam.position,
+                                                { point: shape.centre });
+  }
   /* The tap's own lean-in, callable by zone name — the hand path a
      deep-link or a harness needs. Read-only: it moves the camera and
      announces; it never taps through. */
@@ -8168,7 +8405,7 @@
     enterRoom(target, function () {
       focused = key;
       announceFocus(null);
-      frameZone(key, function () { announceFocus(key); });
+      frameZone(key, function () { announceFocus(key); solveLeanIn(key); });
     });
   };
   window.chfHouseEnter = function () { if (webgl) enterRoom('kitchen', null); };
@@ -8211,7 +8448,8 @@
   window.chfShellFabric = function () {
     if (!webgl) return [];
     return webgl.FABRIC.map(function (f) {
-      return { name: f.name, mode: f.mode, visible: f.g.visible };
+      return { name: f.name, mode: f.mode, visible: f.g.visible,
+               verdict: f.verdict };
     });
   };
 
@@ -8280,6 +8518,7 @@
     announceFocus(null);   /* the old card must not ride the camera move */
     frameZone(key, function () {
       announceFocus(key);
+      solveLeanIn(key);
       if (state) {
         TIP.textContent = ZONES[key].label + ' — ' + ZONES[key].headline(state);
         TIP.style.left = '16px';

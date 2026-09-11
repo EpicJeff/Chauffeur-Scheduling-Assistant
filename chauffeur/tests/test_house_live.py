@@ -880,16 +880,27 @@ def scenario_garage_rebuild_does_not_touch_plaque_textures():
 
 
 def scenario_shell_fabric_registry():
-    """Task 1 (shell/occlusion spec section 3): the fabric registry
-    replaces the four hand-grown hide: arrays with one regFabric() call
-    per shell piece, at its own build site. Registration only -- this
-    task changes zero rendered behavior (visibility still comes from the
-    legacy ROOMS hide: arrays until the solver lands) -- so this scenario
-    pins the registry's SHAPE instead: exactly the five migrated pieces,
-    yard as the one authored mode:'hide' piece, and everything reporting
-    visible at the sealed exterior boot (section 4: every piece SOLID
-    from outside). A later task's solver work leans on this same shape
-    staying put while verdict logic grows around it.
+    """Task 1 (shell/occlusion spec section 3) built the fabric registry;
+    Task 2 (spec section 4) replaces the hand-grown hide: arrays and the
+    show-all-then-hide dance with the half-space solver. This scenario
+    still pins the registry's SHAPE (five migrated pieces, yard the one
+    authored mode:'hide' piece, everything solid at the sealed exterior
+    boot), then adds the verdict-equal proof: table-driven, view ->
+    expected non-solid set, LOCKED to what the deleted hide: arrays used
+    to produce -- a swap that changes zero rendered behavior.
+
+    'living' expects only ['yard'], NOT ['living_roof', 'yard'] as the
+    old ROOMS.living.hide array would suggest (controller ruling):
+    livingRoofG has never carried a single mesh (open-concept, "nothing
+    to hide" -- see its own regFabric call site), so fabBox(livingRoofG)
+    is three.js's untouched empty-Box3 sentinel (min=+Infinity,
+    max=-Infinity on every axis) and the legacy hide of it was always a
+    visual no-op. The pre-change budget probe proves this empirically:
+    quality=high, kitchen and living both read visible=928 -- hiding
+    living_roof on top of yard removes exactly zero additional meshes.
+    solveShell's degenerate-box guard (any bound non-finite, or min>max
+    on any axis) forces such a piece 'solid' unconditionally, which
+    reproduces that no-op exactly, for every view, not just living's.
     """
     served = live_app()
     if served is None:
@@ -914,6 +925,31 @@ def scenario_shell_fabric_registry():
         check(yard['mode'] == 'hide', 'yard is the one authored hide piece')
         check(all(f['visible'] for f in fab),
               'exterior boot: every piece visible (solid): %r' % fab)
+
+        # Task 2 (spec section 4): the half-space solver replaces the
+        # hide: arrays. Table-driven, LOCKED to today's legacy behavior
+        # (verdict-equal swap) -- 'living' adjusted per the controller
+        # ruling above.
+        LEGACY = {
+            'exterior': [],
+            'kitchen':  ['yard'],
+            'garage':   ['garage_door', 'yard'],
+            'mudroom':  ['mudroom_roof', 'west_wall', 'yard'],
+            'living':   ['yard'],
+        }
+        for view, expected in LEGACY.items():
+            if view == 'exterior':
+                page.evaluate("window.chfHouseExit && window.chfHouseExit()")
+            elif view == 'kitchen':
+                page.evaluate("window.chfHouseEnter()")
+            else:
+                page.evaluate("window.chfHouseEnterRoom(%r)" % view)
+            page.wait_for_timeout(1400)
+            fab = page.evaluate("window.chfShellFabric()")
+            offed = sorted(f['name'] for f in fab if f['verdict'] != 'solid')
+            check(offed == sorted(expected),
+                  '%s: solver must reproduce the legacy set, got %r'
+                  % (view, offed))
 
         errs = [e for e in served.errors()
                 if 'WebGL' not in e and 'GroupMarker' not in e]
