@@ -368,10 +368,34 @@
        surround - and it is what lets a near-black stay near-black.
 
        The budget is shared across tiers ON PURPOSE: a panel that demotes
-       itself from high to medium must not change colour, only fidelity.
-       Square to the key, fill + key lands near 0.90; the room pools
-       (below, and the baked gradients in the floor textures) carry the lit
-       patches the rest of the way to ~1.05. Fully shaded sits near 0.40. */
+       itself from high to medium must not change colour, only fidelity -
+       L found and fixed one violation of this rule (the hood's underside
+       glow, search "a lit hood glows" below: the Lambert branch had gone
+       flat grey with no emissive at all, instead of the same charcoal +
+       warm glow rendered with less fidelity). Square to the key, fill +
+       key lands near 0.90; the room pools (below, and the baked
+       gradients in the floor textures) carry the lit patches the rest
+       of the way to ~1.05. Fully shaded sits near 0.40.
+
+       L (quality spec §5): SUN_I/HEMI_I/AMB_I above never changed - what
+       moved is SUN_OFF's direction (x=21 dominant, arriving close enough
+       to the camera's own azimuth to light every camera-facing form
+       (counters, car hoods, the island) almost flat -> x=9,z=24, raked
+       toward the south-east so camera-facing and key-facing are no
+       longer the same surface). That gradient was the point; the price is
+       whatever the old azimuth used to hit close to square that the new
+       one now grazes, chiefly the kitchen's north run. `fillN` buys that
+       back on its own separate budget line: 0xdfe8f2 @ 0.14 (PBR) / 0.10
+       (else), aimed with the sun's own target (it re-points on every room
+       change), no shadow map. It hits a north-facing wall harder than it
+       hits a south-facing one, which is what makes it a fill for THIS
+       problem rather than a second key - PIL-measured, the kitchen wall's
+       region mean is 0.94x its pre-rake reading right after the rake and
+       back to 1.02x with fillN on, while the range and hood's OWN shaded
+       faces (checked square-on) keep the same gradient with or without
+       it. It is dim enough that it does not rewrite the ~0.90/~1.05/~0.40
+       figures above; it only refuses to let the shaded case include the
+       one wall this room is framed around. */
     /* one clock for the whole scene: the sky dome and the rig must never
        disagree about whether it is dark out */
     function isNight() {
@@ -433,7 +457,7 @@
 
        It is a state change, not a frame loop: aimShadow() is called once at
        build and once per room change, next to the camera tween. */
-    var SUN_OFF = new T.Vector3(21, 24, 9);   /* direction only - the length
+    var SUN_OFF = new T.Vector3(9, 24, 24);   /* direction only - the length
                                                  just keeps every roof in
                                                  front of the near plane */
     var sunTarget = new T.Object3D();
@@ -480,6 +504,13 @@
     }
     function shadowDirty() { if (SHADOWS) R.shadowMap.needsUpdate = true; }
     aimShadow('exterior');
+    /* L (quality spec §5): the rake's ransom - a dim cool fill aimed at
+       the north run so raking the key for form does not price the
+       kitchen's subject wall into shadow. No shadow map; it is a fill. */
+    var fillN = new T.DirectionalLight(0xdfe8f2, PBR ? 0.14 : 0.10);
+    fillN.position.set(-2, 9, 26);
+    fillN.target = sunTarget;
+    scene.add(fillN);
     /* ---- LIGHT POOLS (bible S4: "light pools; warm patches on the floor
        and counters, cool elsewhere"). One 26-unit lamp over the middle of
        the house used to be the whole answer, and it was doing two wrong
@@ -599,6 +630,22 @@
         g.beginPath(); g.arc(S * 0.6, S * 0.28, 12, 0, 7); g.fill();
       });
     }
+    /* L (quality spec §5): the wall's own bake - cream at the ceiling
+       line fading to 6% darker at the floor, so a flat plaster box
+       reads as one continuous run instead of a paint swatch. A MAPPED
+       material takes no lightness pull from applyScenery (scenTint's
+       `pull = m.map ? 0 : SCEN_CON`, ~L7010) - correct here on purpose:
+       architecture is the ground the props stand on and should not
+       recede with them, and this gradient is architecture's own baked
+       light, not scenery. Saturation still recedes normally. */
+    function wallGradTex() {
+      return canvasTex(128, function (g, S) {
+        var grad = g.createLinearGradient(0, 0, 0, S);
+        grad.addColorStop(0, '#ffffff');    /* cream top: unmodified C.wall */
+        grad.addColorStop(1, '#f0f0f0');    /* 240/255 = 0.94 - 6% darker */
+        g.fillStyle = grad; g.fillRect(0, 0, S, S);
+      });
+    }
     /* tiny procedural cube env: what the metals reflect. Without this, PBR
        metalness has nothing to see and reads as gray plastic. */
     /* Reflections need something WORTH reflecting: a bright sky above, a
@@ -646,6 +693,18 @@
     var woodDoor = NICE ? woodTex('#a97f52', '80,52,26', true) : null;
     var marble = NICE ? marbleTex() : null;
     var brushed = NICE ? steelTex() : null;
+    var wallTex = NICE ? wallGradTex() : null;   /* null below medium, same
+                                                     as every other map here -
+                                                     mat()'s Lambert branch
+                                                     only reads opts.map at
+                                                     DETAIL >= 2 anyway */
+    /* the shared wall material (kitchen + living, the west-wall group):
+       one opts object so every C.wall box() call below hands mat() the
+       identical key. The mudroom's own wall run (S3, rough 0.94) keeps
+       its own PLASTER opts and its own material - same map, different
+       rough, by original design (see wallRun) - not something this
+       slice unifies. */
+    var WALL_O = { rough: 0.95, map: wallTex };
 
     var matCache = {};
     function makeMat(c, opts) {
@@ -1050,7 +1109,13 @@
       [0.4, -0.9, 5.0, 0.30],     /* under the island pendants */
       [2.3, 2.9, 3.4, 0.17],      /* the dining table's own light */
       [-2.4, 9.7, 4.6, 0.28],     /* the living room's lamps */
-      [2.6, 12.4, 3.2, 0.16]      /* the reading corner */
+      /* L (quality spec §5): this used to sit at (2.6, 12.4), a full 1.7
+         x / 1.5 z away from the reading corner's own floor lamp (shade
+         at 0.90, 1.65, 10.90 - see `ll`/`ls` calls below) - closer to
+         the open floor past the side table than to the lamp it was
+         named for. Moved to sit under the lamp it is actually the pool
+         for; the existing idiom (extend to sit under ITS lamp). */
+      [0.90, 10.90, 3.2, 0.16]    /* the reading corner's own floor lamp */
     ];
     function pooledFloorTex(x0, xw, z0, zw) {
       var c = document.createElement('canvas');
@@ -1097,7 +1162,7 @@
     if (SHADOWS) floor.receiveShadow = true;
     scene.add(floor);
 
-    var wallB = box(13, 5.6, 0.35, C.wall, 0, 2.8, -5.55, null, sharp({ rough: 0.95 }));
+    var wallB = box(13, 5.6, 0.35, C.wall, 0, 2.8, -5.55, null, sharp(WALL_O));
     /* west wall in two pieces + header: an open doorway into the
        mudroom at z 2.8..4.4 (architect pass — the kitchen looks through
        to the bench) */
@@ -1107,13 +1172,13 @@
     var westWallG = new T.Group();
     scene.add(westWallG);
     var wallL = box(0.35, 5.6, 4.05, C.wall, -6.65, 2.8, -3.475, westWallG,
-                    sharp({ rough: 0.95 }));
+                    sharp(WALL_O));
     var wallL1a = box(0.35, 5.6, 2.55, C.wall, -6.65, 2.8, 1.525, westWallG,
-                      sharp({ rough: 0.95 }));
-    box(0.35, 2.4, 1.7, C.wall, -6.65, 4.4, -0.6, westWallG, sharp({ rough: 0.95 }));
+                      sharp(WALL_O));
+    box(0.35, 2.4, 1.7, C.wall, -6.65, 4.4, -0.6, westWallG, sharp(WALL_O));
     var wallL1b = box(0.35, 5.6, 1.1, C.wall, -6.65, 2.8, 4.95, westWallG,
-                      sharp({ rough: 0.95 }));
-    box(0.35, 2.2, 1.6, C.wall, -6.65, 4.5, 3.6, westWallG, sharp({ rough: 0.95 }));
+                      sharp(WALL_O));
+    box(0.35, 2.2, 1.6, C.wall, -6.65, 4.5, 3.6, westWallG, sharp(WALL_O));
     if (DETAIL >= 2) {                   /* casing sells the opening */
       box(0.42, 3.5, 0.1, 0xe4ddd1, -6.65, 1.72, 2.82, westWallG, sharp());
       box(0.42, 3.5, 0.1, 0xe4ddd1, -6.65, 1.72, 4.38, westWallG, sharp());
@@ -1163,7 +1228,7 @@
     if (SHADOWS) floor2.receiveShadow = true;
     scene.add(floor2);
     var wallL2 = box(0.35, 5.6, 8.4, C.wall, -6.65, 2.8, 10.0, westWallG,
-                     sharp({ rough: 0.95 }));
+                     sharp(WALL_O));
     box(0.41, 5.6, 0.09, C.linen, -6.65, 2.8, 14.235, westWallG, sharp({ rough: 0.9 }));
     if (SHADOWS) wallL2.castShadow = false;
     box(0.5, 0.28, 8.6, C.shell, -6.7, 5.66, 10.1, null, sharp());
@@ -2269,28 +2334,70 @@
       { h: CT_Y - CT_T - TOE, cells: [
         { w: 0.65, kind: 'drawers3' }, { w: 0.65, kind: 'door' }] }
     ], { toe: true });
-    /* countertops: a slab that overhangs the fronts by 0.05 (S3.1.6) */
-    function kTop(w, d, x, z) {
+    /* L (quality spec §5): per-run counter grain, cached by run id - the
+       sink run (A) breaks around the apron sink into two physical slabs
+       that still share ONE canvas/material, same idiom as the wall's
+       WALL_O above. Same grain painter as woodLight (streaks + fine
+       noise) plus a centre-brighter pool: `len` only sizes the streak
+       count so a short run and a long run read the same GRAIN DENSITY
+       instead of one stretched thin. The pool sits at the run's own
+       centre - for run A that centre (x -1.8ish) lands within a few
+       tenths of the island pendant's x (0.4, see poolLamps), which is
+       the one run actually standing under an overhead light; B and L
+       get the same treatment for consistency (bible S4's "warm patches
+       on... counters" reads as one family, not one lit counter and two
+       flat ones). */
+    var counterTexCache = {};
+    function counterTex(run, len) {
+      var t = counterTexCache[run];
+      if (!t) {
+        t = counterTexCache[run] = canvasTex(128, function (g, S) {
+          g.fillStyle = '#c89a66'; g.fillRect(0, 0, S, S);
+          var n = Math.max(14, Math.round(len * 13));
+          for (var i = 0; i < n; i++) {
+            g.strokeStyle = 'rgba(90,60,30,' + (0.10 + Math.random() * 0.22) + ')';
+            g.lineWidth = 1 + Math.random() * 3;
+            var a = Math.random() * S, wob = (Math.random() - 0.5) * 22;
+            g.beginPath();
+            g.moveTo(-10, a);
+            g.bezierCurveTo(S * 0.33, a + wob, S * 0.66, a - wob, S + 10, a);
+            g.stroke();
+          }
+          for (var j = 0; j < 400; j++) {
+            g.fillStyle = 'rgba(60,40,20,' + (Math.random() * 0.05) + ')';
+            g.fillRect(Math.random() * S, Math.random() * S, 2, 2);
+          }
+          var rg = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S * 0.6);
+          rg.addColorStop(0, 'rgba(255,238,208,0.08)');    /* +8%, warm */
+          rg.addColorStop(1, 'rgba(255,238,208,0)');
+          g.fillStyle = rg; g.fillRect(0, 0, S, S);
+        });
+      }
+      return t;
+    }
+    /* countertops: a slab that overhangs the fronts by 0.05 (S3.1.6).
+       `run` is the same A/B/L-return grouping the AO occluder list
+       already names (K4, below) - two physical slabs can share one run
+       and one baked texture without sharing a bounding box. */
+    function kTop(w, d, x, z, run) {
+      var ctex = NICE ? counterTex(run, Math.max(w, d)) : null;
       var m = new T.Mesh(
         NICE ? chamferGeo(w, CT_T, d, 0.02) : new T.BoxGeometry(w, CT_T, d),
-        PBR ? new T.MeshStandardMaterial({ map: woodLight, color: kWoodK,
-                                           roughness: 0.42, envMapIntensity: 0.35 })
-            /* R2 (tier fix): this hand-rolled Lambert branch hardcoded the
-               LOW-tier fallback tan even at medium, where NICE is already
-               true and kWoodK is already 0xffffff — the PBR branch three
-               lines up got this right; the medium counter didn't, and read
-               measurably deeper for it. One authored value now, every
-               tier: kWoodK. */
-            : new T.MeshLambertMaterial({ color: kWoodK, map: woodLight || null }));
+        /* R2 (tier fix), preserved: kWoodK is white at NICE (the map
+           carries the colour) and the low-tier tan below it - mat()'s
+           own Lambert branch already applies that rule, so routing
+           through the shared cache (instead of a hand-rolled Mesh
+           literal, the pre-L11 shape) gets it for free. */
+        mat(kWoodK, { rough: 0.42, envInt: 0.35, map: ctex }));
       m.position.set(x, CT_Y - CT_T / 2, z);
       finish(m); scene.add(m); return m;
     }
     /* the worktop breaks either side of the apron sink: a counter that
        runs THROUGH the bowl leaves the basin a tray sitting on top */
-    kTop(1.77, 1.49, -3.665, NZ + 0.745);
-    kTop(1.88, 1.49, -0.040, NZ + 0.745);
-    kTop(2.40, 1.49, 3.70, NZ + 0.745);
-    kTop(0.80, 1.40, WXK + 0.400, -2.20);
+    kTop(1.77, 1.49, -3.665, NZ + 0.745, 'A');
+    kTop(1.88, 1.49, -0.040, NZ + 0.745, 'A');
+    kTop(2.40, 1.49, 3.70, NZ + 0.745, 'B');
+    kTop(0.80, 1.40, WXK + 0.400, -2.20, 'L');
     blobShadow(2.7, 0.75, -1.825, BZ);
     blobShadow(1.2, 0.75, 3.70, BZ);
     blobShadow(0.68, 0.9, WXK + 0.65, -2.65);
@@ -2606,12 +2713,21 @@
         box(0.83, 0.05, 0.57, HW, 0, HY0 + 0.750, WZ + 0.53, counter, STEEL);
         box(0.83, 0.05, 0.57, HW, 0, HY0 + 2.110, WZ + 0.53, counter, STEEL);
       }
-      /* the underside is not the same black: a lit hood glows */
+      /* the underside is not the same black: a lit hood glows.
+         L (tier fix, same family as kTop's R2 fix): the Lambert branch
+         used to hardcode a lighter, greyer 0x4a5158 with no emissive at
+         all - MeshLambertMaterial supports emissive same as Standard,
+         so the medium/low hood underside was going through a real
+         colour change (grey, unlit) instead of a fidelity drop (same
+         charcoal, same warm glow, just Lambert's flatter shading). One
+         authored pair now, every tier. */
       var und = new T.Mesh(new T.PlaneGeometry(LIPW - 0.16, LIPD - 0.16),
         PBR ? new T.MeshStandardMaterial({ color: 0x30363c, roughness: 0.6,
                                            emissive: 0xffca7a,
                                            emissiveIntensity: 0.16 })
-            : new T.MeshLambertMaterial({ color: 0x4a5158 }));
+            : new T.MeshLambertMaterial({ color: 0x30363c,
+                                          emissive: 0xffca7a,
+                                          emissiveIntensity: 0.16 }));
       und.rotation.x = Math.PI / 2;
       und.position.set(0, HY0 - 0.002, WZ + LIPD / 2);
       counter.add(und);
@@ -5036,7 +5152,10 @@
          anchors: the garage door on the west wall and the shoe cabinet
          on the north, one at each end of the frame. */
       var D2 = DETAIL >= 2, D3 = DETAIL >= 3;
-      var PLASTER = { rough: 0.94 }, FAB = { rough: 0.98 };
+      /* L: same wall bake as the kitchen/living run (wallTex), kept on
+         its own opts object because this room's plaster is its own
+         rough value (0.94, not 0.95) - not something this slice unifies */
+      var PLASTER = { rough: 0.94, map: wallTex }, FAB = { rough: 0.98 };
       var woodO = NICE ? { rough: 0.62, map: woodLight } : { rough: 0.62 };
       var woodK = NICE ? 0xffffff : 0xc89a66;
       var SAGE = C.sage, SAGED = C.sageDeep, TRIM = C.cab;
