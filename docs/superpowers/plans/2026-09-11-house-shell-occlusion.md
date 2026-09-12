@@ -282,18 +282,20 @@ Verify against the current sets: the loop must reproduce exactly the shell membe
 
 ---
 
-### Task 8: The back elevation (spec section 6c)
+### Task 8: The full house (spec section 6c REVISED — massing)
 
 **Files:**
-- Modify: `chauffeur/static/house.js` (the protruding gable-end window's placement; the patio-abutting wall gains a slider)
-- Test: extend the navigation scenario (patio-side exterior tap enters the room behind the slider)
+- Modify: `chauffeur/static/house.js` (footprint expansion: new massing walls/roof sections, exterior windows on unbuilt rooms, patio slider, window re-seat; registrations for every new piece)
+- Test: `chauffeur/tests/test_house_live.py` (verdict table re-derived for the expanded registration set; navigation scenario extended: unbuilt-shell taps INERT, patio-side tap enters its room)
 
 **Interfaces:**
-- Consumes: FARMHOUSE palette + pane idiom (T6), regFabric room stamps (T7), fabric groups for the affected walls.
+- Consumes: FARMHOUSE palette + battenT + pitch family (T6), regFabric room/inert stamps (T7), the reference-image proportions (massing template — derive footprint numbers from the built rooms' extents scaled to the reference's ratios, record the derivation).
+- Produces: the expanded registration set (each new piece named `massing_*` or by compass); the patio slider; the re-seated window.
 
-- [ ] **Step 1:** Locate the protruding window (gable-end wall, casing past the corner trim — user screenshot in ledger); re-seat INBOARD so casing clears the corner trim fully; nothing else moves; before/after crops.
-- [ ] **Step 2:** Sliding patio door in the wall the patio abuts: two wood/black-frame panes (farmhouse language), decorative, no new zone, stamped with its room (T7 field); part of that wall's fabric group; transparent panes unmerged inside the group.
-- [ ] **Step 3:** Verify: navigation scenario extended (patio-side tap -> that room) GREEN; verdict table re-derived only if the wall's box changed; budget/buildMs within ceilings; back-elevation shots day + night (--day off run for the night shot) -> $LOCALAPPDATA/Temp/house_quality/shell-T8; full sweep. Commit v2.497.0 `'The patio earns its door (v2.497.0)'`, push.
+- [ ] **Step 1:** Derive the expanded footprint from the reference proportions against the built rooms' fixed positions; record the derivation table (reference ratio -> world units) in the report. Built rooms do not move.
+- [ ] **Step 2:** Build the massing: walls (battenT, farmhouse trim), full-house roofline (pitch family, gable infill, no wedges), exterior windows on unbuilt rooms (black frames; authored dark/curtain-glow panes — a couple glow at night, constants in FARMHOUSE); register every piece (regFabric, inert room stamp per T7's law); planting displaced by the footprint recorded and re-seated, never deleted.
+- [ ] **Step 3:** Absorbed fixes: re-seat the protruding gable-end window inboard (casing clears corner trim); patio slider in the post-expansion patio wall (farmhouse slider, decorative, stamped with its room).
+- [ ] **Step 4:** Verify: verdict table re-derived and green (expanded set; unbuilt massing ghosts when between camera and built rooms — hand-derive at least the kitchen and living cases); navigation scenario extended (unbuilt tap inert, patio tap enters) green; budget per view recorded with HONEST new ceilings proposed if the massing legitimately exceeds the old ones (state the arithmetic — the controller rules on the new ceilings); buildMs x3 <= 1500; leak scenarios green; full sweep. Day + night back/side/street shots -> $LOCALAPPDATA/Temp/house_quality/shell-T8. Commit v2.497.0 `'The house grows the rooms it keeps offstage (v2.497.0)'`, push.
 
 ---
 

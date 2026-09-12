@@ -72,10 +72,16 @@ The user's bar is a modern farmhouse, and the whole exterior converts — every 
 - Registry/solver/edges are deliberately untouched — restyled and reshaped fabric re-registers through the same build sites; this conversion is the arc's own zero-visibility-authoring claim exercised for real.
 - All gates re-run: verdict table (massing moves boxes/normals), AO, budget per view vs the same ceilings, buildMs <=1500, sweep; the compass + street set goes to the user as the closing screenshot gate.
 
-**6c. The back elevation (user gate findings, 2026-09-11)**
+**6c. The full house (user-ratified massing principle, 2026-09-11)**
 
-- The gable-end window that protrudes past the building corner re-seats INBOARD of its wall run — casing fully inside the corner trim, no other movement.
-- The patio gets its access: a sliding door in the farmhouse language (wood/black-frame slider, two panes) in the wall the patio abuts, decorative like the front door (no new zone), stamped with its room per section 5 — a natural back entry for the navigation law. Patio itself untouched.
+The shell is sized for a REAL house with a full complement of rooms, even though not all rooms are built out. The sealed shell of a partial floor plan (big square + corridor + garage) claims completeness it does not have; the massing must make the claim true.
+
+- **Template:** the user's reference image sets the full-house proportions — wide main body, garage wing, off-center entry. The footprint expands to those proportions; the current great room + mudroom + garage keep their EXACT positions, interiors, cameras, and zones.
+- **Unbuilt rooms are shell-only massing:** registered fabric (walls/roof sections) with exterior windows in the farmhouse language whose panes are dark or dimly curtain-glowing (authored constants; a couple glow at night for a lived-in read, the rest stay dark), NO interiors, and INERT to taps (scenery law — look, do not enter). The solver ghosts any unbuilt-massing fabric that lands between a camera and a built room automatically; zero visibility authoring.
+- **One roofline:** the full-house roof replaces the box-plus-corridor-plus-garage read; pitch family per 6b; gable ends infilled; no daylight wedges.
+- **Absorbed back-elevation fixes (from the earlier 6c):** the gable-end window that protrudes past the corner trim re-seats inboard; the patio gets a sliding door (wood/black-frame farmhouse slider, decorative, no new zone, stamped with its room) in whatever wall abuts the patio AFTER expansion — these land with the massing so walls move once.
+- **Arc-4 alignment:** the expanded footprint is the facade-matching projection target; FARMHOUSE proportions become the generator's default canvas.
+- Interiors of built rooms untouched; planting/yard adjusted only where the footprint genuinely displaces it (record what moved).
 
 **Elevation sanity gate:** the compass exterior shots must read as one coherent house — door anchors the elevation, windows rhythmic, rooflines resolve into each other. The exterior composition changes: THIS TASK'S SCREENSHOT GATE GOES TO THE USER before the arc proceeds past it.
 
