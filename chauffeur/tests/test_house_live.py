@@ -883,7 +883,22 @@ def scenario_garage_rebuild_does_not_touch_plaque_textures():
 
 
 def scenario_shell_fabric_registry():
-    """Task 1 (shell/occlusion spec section 3) built the fabric registry;
+    """Task 6 (spec section 6b, the modern-farmhouse conversion): the
+    saltbox roof_south slope is replaced by a flat-flank + steep
+    street-facing entry-gable + flat-flank assembly, all still ONE
+    registered piece. Registry SHAPE (12 pieces), REGISTRATION SET
+    (LEGACY below), tap-law targets and the mudroom ghost-line pixel
+    crop are all UNCHANGED by this task -- re-verified live against the
+    new geometry, not carried over on faith -- because none of the
+    conversion's changes (batten siding, farmhouse colors, enlarged
+    street windows, the reshaped roof mass) alter where any of the
+    camera-facing surfaces this scenario probes actually sit. Only
+    roof_south's own box/normal numbers changed (see its own
+    re-derivation below, in place); every other piece's hand-derivation
+    in this docstring was independently re-measured and found
+    byte-identical.
+
+    Task 1 (shell/occlusion spec section 3) built the fabric registry;
     Task 2 (spec section 4) replaces the hand-grown hide: arrays and the
     show-all-then-hide dance with the half-space solver. Task 4 (spec
     section 6, "the seal") builds the great room's own south wall (an
@@ -1062,16 +1077,69 @@ def scenario_shell_fabric_registry():
         #   dot(n, cam-p) comes out negative (the -0.463*z term dominates
         #   for every camera, all of which sit at z >= 11.2) -- SOLID
         #   everywhere.
-        # roof_south (n ~[0,0.991,0.133], box centre
-        #   (0.3, 7.8496, 4.405)): same camOut/subIn shape as south_wall
-        #   (its box spans a similar z run) for kitchen, living and
-        #   garage -- GHOST for kitchen and living, SOLID for garage via
-        #   the identical x-corridor argument south_wall's own garage row
-        #   uses (roof_south's own x-range [-8.02,8.62] never reaches the
-        #   garage corridor [-16.9,-12.55] either). mudroom: camOut fails
-        #   outright (dot comes out negative -- mudroom's own subject
-        #   sits behind this piece the same way it sits behind south_wall).
-        #   SOLID.
+        # roof_south -- RE-DERIVED for Task 6 (spec section 6b, the
+        #   modern-farmhouse conversion): the massing rewrite replaces
+        #   the one long saltbox slope this piece used to be with a flat
+        #   flank + a steep street-facing entry gable + a flat flank, all
+        #   still ONE registered group (house.js, "the roof over the
+        #   great room's street-facing two-thirds, same role the slope
+        #   they replace had" -- the granularity law, spec section 3,
+        #   does not require a second piece just because the SHAPE inside
+        #   one piece got more complex). Measured live via a temporary
+        #   window.chfDebugFabricBoxes() hook (built, used, and deleted
+        #   before this task's own commit, the same "measured, then
+        #   explained" discipline this docstring's own Task 4 rows
+        #   already use) at base commit 123bb7f + this task's own
+        #   house.js edit:
+        #     new box centre (0, 7.8924, 4.435); new n [0, 1, 0] exactly
+        #     -- the west flank (the mesh regFabric now reads its
+        #     quaternion from) is a flat, UNROTATED slab, so it carries
+        #     none of the old slab's small +z lean (that lean came from
+        #     roofSouth4's own shallow rotation.x, which no longer
+        #     exists). n=[0,1,0] collapses every dot product in this
+        #     piece's own verdict to a pure Y comparison -- simpler than
+        #     before, not a different LAW:
+        #       kitchen: HOME_POS.y 11.2 > 7.8924 -> camOut; kitchen aabb
+        #         centre y ~2.0 < 7.8924 -> subIn. Corridor: box x-range
+        #         [-6.85,6.85] overlaps the padded HOME_POS<->kitchen
+        #         segment (kitchen sits inside the great room). GHOST.
+        #       living: LIV_POS.y 13.6 > 7.8924 -> camOut; living aabb
+        #         centre y ~0.99 < 7.8924 -> subIn. GHOST.
+        #       mudroom: MUD_POS.y 6.2 < 7.8924 -> camOut FAILS (a low
+        #         camera looking at a piece whose box centre sits above
+        #         it) -- SOLID, the same shape the pre-T6 docstring's own
+        #         words already used ("mudroom's own subject sits behind
+        #         this piece"), just driven by Y instead of a mixed
+        #         Y/Z dot product now that n has no z component.
+        #       garage: GARAGE_POS.y 9.6 > 7.8924 -> camOut; garage aabb
+        #         centre y ~2.3 < 7.8924 -> subIn -- both true, same as
+        #         kitchen's own shape, but the corridor check saves it
+        #         exactly as before: box x-range [-6.85,6.85] (narrower
+        #         than the pre-T6 box's [-8.02,8.62] -- the old rake
+        #         boards this box no longer includes) never reaches the
+        #         garage corridor [-16.9,-12.55]. SOLID.
+        #   Verdict SET is UNCHANGED (ghost kitchen+living, solid
+        #   mudroom+garage+exterior) -- confirmed against the live solver
+        #   both before and after this re-derivation was written, not
+        #   assumed from the box/normal numbers alone.
+        #
+        #   The other five Task-4-derived rows above (south_wall,
+        #   east_wall, north_wall, roof_north, garage_shell/garage_door
+        #   below) were independently re-measured through the SAME
+        #   chfDebugFabricBoxes() hook and are BYTE-IDENTICAL to their
+        #   own numbers already written into this docstring -- south_wall
+        #   in particular because the conversion's enlarged windows and
+        #   the covered porch's own steeper pitch both stay well inside
+        #   the wall's existing [0,7] Y-range and [-6.5,6.5] X-range (the
+        #   wall itself, EXT_TOP4 and SW_W, is untouched code), and
+        #   roof_north because the conversion never touches the original
+        #   back-slope mesh at all (spec section 6b's own words: "the
+        #   pitch family steepens ... so garage gable, entry gable, porch
+        #   gable ... move together" names three gables sharing ONE
+        #   shared PITCH_FAMILY constant -- the ORIGINAL back roof keeps
+        #   its own separate, never-shared literal, atan2(2.3,4.4), and
+        #   this task does not touch it). None of these five needed a
+        #   single row edited.
         # garage_shell (n [1,0,0], box centre (-15.4, 3.27, 6.0) -- see
         #   its own build-site comment for the full derivation): SOLID
         #   for kitchen/mudroom/living/exterior (every other room's own
@@ -1167,6 +1235,22 @@ def scenario_shell_fabric_registry():
                 # that measured value -- clear margin over the control's
                 # exact 0 in one direction, and over ordinary rendering
                 # variance in the other.
+                #
+                # RE-VERIFIED for Task 6 (out-of-scope finding, flagged
+                # not fixed): this task touches neither west_wall nor
+                # west_skirt, but re-measuring this exact box after the
+                # farmhouse conversion found 3736 pixels, not 466 -- a
+                # PRE-EXISTING drift from the T4 fix round (which added
+                # west_skirt to the mudroom's own ghost set after this
+                # box was chosen against a T3 boot with no west_skirt in
+                # it) that nobody had re-measured until this task's own
+                # due-diligence pass surfaced it. The assertion below
+                # only ever required n>=200, so no test broke and no
+                # code changed; the "466" and "under half that value"
+                # prose above is the stale part, left as a dated
+                # historical note rather than rewritten, since owning
+                # west_wall/west_skirt's own re-derivation is not this
+                # task's to do.
                 png = page.screenshot()
                 im = Image.open(io.BytesIO(png)).convert('RGB')
                 box = (1000, 160, 1240, 240)
@@ -1201,12 +1285,24 @@ def scenario_shell_fabric_registry():
         # the wall's own world position. Both points were located by
         # screenshotting this exact camera framing (EXT_POS, the default
         # boot camera) and confirming by crop which mesh sits under each
-        # pixel: (320,610) lands on the south wall's own siding, just
-        # left of the window pair; (445,650) lands on the covered porch's
-        # own gable roof (the porch belongs to southWallG per spec
-        # section 6 -- "the porch ... belongs to the south_wall fabric
-        # GROUP" -- so a hit there must route through the same group tag
-        # as a hit on the wall itself).
+        # pixel.
+        #
+        # RE-VERIFIED for Task 6 (spec section 6b): the same two points
+        # still land on southWallG fabric after the farmhouse conversion,
+        # but (320,610) no longer lands on bare siding -- the enlarged,
+        # gridded street windows (spec 6b) grew the window casing's own
+        # footprint enough that this exact pixel now lands on the middle
+        # window's own BLACK FRAME (still southWallG, still swtag'd
+        # 'kitchen' -- a cased window is as much "the wall" as the
+        # siding beside it) instead of the plank siding between the
+        # windows the pre-conversion screenshot showed there. (445,650)
+        # is unaffected -- still the covered porch's own gable roof
+        # underside (the porch belongs to southWallG per spec section 6
+        # -- "the porch ... belongs to the south_wall fabric GROUP" --
+        # so a hit there must route through the same group tag as a hit
+        # on the wall itself), unmoved because neither the porch's own
+        # position (DOOR_X4, PORCH_W4) nor its roof's footprint (only its
+        # PITCH steepened) changed.
         page.mouse.click(320, 610)
         page.wait_for_timeout(1200)
         check(page.evaluate("window.chfHouseMode()") == 'kitchen',

@@ -3599,9 +3599,32 @@
        in extG so the camera modes can reason about "outside". The
        kitchen's world coordinates never moved — the house grew around
        them. ---- */
-    var EXTC = { grass: 0x8fae6e, siding: 0xe7e0d5, trim: 0xd8d0c2,
-                 roof: 0x55606b, ridge: 0x3f444a, drive: 0xb8b2a6,
-                 garage: 0xece5da, trunk: 0x6e5539, leaf: 0x5f8f4e,
+    /* FARMHOUSE (spec section 6b, user-ratified 2026-09-11 with a
+       reference image): the modern-farmhouse conversion's one named
+       palette table. Every restyled surface below reads its color from
+       HERE — arc 4 lifts this exact table to its own style enums, so
+       nothing about this conversion may scatter a second hand-typed hex
+       for a role this table already owns. */
+    var FARMHOUSE = {
+      body:     0xf4f1e9,   // board-and-batten WHITE, every exterior face
+      roofTone: 0x2b2f33,   // dark charcoal shingle
+      frame:    0x1b1c1e,   // black window frames + grilles
+      wood:     0x6b4a30,   // warm wood: front door, garage doors, posts
+      trim:     0xf7f5ef,   // minimal white trim (fascia, corner, gutters)
+      stoop:    0x8a8175    // masonry-tone stoop
+    };
+    /* the pitch family (spec section 6b): ONE constant pair — before this
+       task, the garage gable and the covered porch's own gable each
+       independently typed Math.atan2(1.5, 2.95); every place that used to
+       read that literal now reads PITCH_FAMILY, so steepening the family
+       is a one-line change instead of a re-synchronized hunt. Declared
+       here (ahead of every gable that consumes it: porch, entry, garage)
+       rather than at any one consumer's own build site. */
+    var PITCH_RISE4 = 2.05, PITCH_RUN4 = 2.95;
+    var PITCH_FAMILY = Math.atan2(PITCH_RISE4, PITCH_RUN4);
+    var EXTC = { grass: 0x8fae6e, siding: FARMHOUSE.body, trim: FARMHOUSE.trim,
+                 roof: FARMHOUSE.roofTone, ridge: 0x24272a, drive: 0xb8b2a6,
+                 garage: FARMHOUSE.body, trunk: 0x6e5539, leaf: 0x5f8f4e,
                  leafB: 0x527f44 };
     var extG = new T.Group();
     scene.add(extG);
@@ -3620,7 +3643,8 @@
        2026-09-08): mottled grass, clapboard, offset shingles, jointed
        concrete — canvas-procedural, zero downloads, NICE-gated like the
        wood and marble inside. */
-    var grassT = null, sidingT = null, shingleT = null, driveT = null;
+    var grassT = null, sidingT = null, shingleT = null, driveT = null,
+        battenT = null;
     if (NICE) {
       grassT = canvasTex(DETAIL >= 3 ? 512 : 256, function (g, S) {
         g.fillStyle = '#8fae6e'; g.fillRect(0, 0, S, S);
@@ -3652,7 +3676,11 @@
       sidingT.wrapS = sidingT.wrapT = T.RepeatWrapping;
       sidingT.repeat.set(4, 2);
       shingleT = canvasTex(256, function (g, S) {
-        g.fillStyle = '#55606b'; g.fillRect(0, 0, S, S);
+        g.fillStyle = '#2b2f33'; g.fillRect(0, 0, S, S);   // FARMHOUSE.roofTone
+                                                            // (spec 6b: dark
+                                                            // charcoal shingle,
+                                                            // tone constant
+                                                            // swap only)
         var rh = 32;
         for (var r = 0; r < S / rh; r++) {
           var off = (r % 2) ? 32 : 0;
@@ -3667,6 +3695,24 @@
       });
       shingleT.wrapS = shingleT.wrapT = T.RepeatWrapping;
       shingleT.repeat.set(5, 2);
+      /* battenT (spec section 6b): board-and-batten, the farmhouse
+         conversion's own body cladding — vertical battens over a flat
+         board, painted the SAME way sidingT paints horizontal clapboard
+         (an alternating highlight/shadow band pair, just turned 90
+         degrees) so the two share one visual family and one derivation
+         path below. sidingT itself is UNTOUCHED and stays live in the
+         file — arc 4 wants both painters as enum values — this is an
+         ADDITION beside it, not a replacement of it. */
+      battenT = canvasTex(256, function (g, S) {
+        g.fillStyle = '#f4f1e9'; g.fillRect(0, 0, S, S);   // FARMHOUSE.body
+        var bw = 32;
+        for (var bx = 0; bx < S; bx += bw) {
+          g.fillStyle = 'rgba(255,255,255,0.5)'; g.fillRect(bx, 0, 3, S);
+          g.fillStyle = 'rgba(110,98,80,0.5)'; g.fillRect(bx + 3, 0, 4, S);
+        }
+      });
+      battenT.wrapS = battenT.wrapT = T.RepeatWrapping;
+      battenT.repeat.set(4, 2);
       driveT = canvasTex(256, function (g, S) {
         g.fillStyle = '#b8b2a6'; g.fillRect(0, 0, S, S);
         for (var i = 0; i < 500; i++) {
@@ -3724,10 +3770,24 @@
       };
       var sidingNT = normalFromCanvas(sidingT.image, 2.2);
       sidingNT.repeat.copy(sidingT.repeat);
-      var sidingMat = mat(0xffffff, { rough: 0.95, map: sidingT });
+      var sidingMat = mat(0xffffff, { map: sidingT, rough: 0.95 });
       sidingMat.normalMap = sidingNT;
       sidingMat.normalScale.set(0.35, 0.35);
       sidingMat.needsUpdate = true;
+      /* battenT rides the SAME R5 idiom sidingT just did: a luminance
+         gradient read of the canvas it just painted, one normalMap set
+         onto the ONE cached material every battenT-mapped ebox()/box()
+         call below resolves to (mat()'s key carries map.uuid, so
+         battenT's own uuid — different from sidingT's — buckets these
+         calls into a NEW shared entry, not sidingT's). Strength 2.2,
+         matching sidingT's own board-relief depth (battens read as a
+         cladding reveal, not a deep carve). */
+      var battenNT = normalFromCanvas(battenT.image, 2.2);
+      battenNT.repeat.copy(battenT.repeat);
+      var battenMat = mat(0xffffff, { rough: 0.95, map: battenT });
+      battenMat.normalMap = battenNT;
+      battenMat.normalScale.set(0.35, 0.35);
+      battenMat.needsUpdate = true;
       var shingleNT = normalFromCanvas(shingleT.image, 2.6);
       shingleNT.repeat.copy(shingleT.repeat);
       var roofMat = mat(0xffffff, { rough: 0.9, map: shingleT });
@@ -3740,17 +3800,17 @@
          { rough: 1.0, map: grassT });
     /* facade: siding OUTSIDE the kitchen's two closed walls, up to eaves */
     ebox(15.2, 7.0, 0.3, NICE ? 0xffffff : EXTC.siding, 0.3, 3.5, -5.95,
-         { rough: 0.95, map: sidingT });
+         { rough: 0.95, map: battenT });
     ebox(0.3, 7.0, 5.15, NICE ? 0xffffff : EXTC.siding, -7.0, 3.5, -4.025,
-         { rough: 0.95, map: sidingT });
+         { rough: 0.95, map: battenT });
     ebox(0.3, 7.0, 2.55, NICE ? 0xffffff : EXTC.siding, -7.0, 3.5, 1.525,
-         { rough: 0.95, map: sidingT });
+         { rough: 0.95, map: battenT });
     ebox(0.3, 3.8, 1.7, NICE ? 0xffffff : EXTC.siding, -7.0, 5.1, -0.6,
-         { rough: 0.95, map: sidingT });
+         { rough: 0.95, map: battenT });
     ebox(0.3, 7.0, 1.6, NICE ? 0xffffff : EXTC.siding, -7.0, 3.5, 5.2,
-         { rough: 0.95, map: sidingT });
+         { rough: 0.95, map: battenT });
     ebox(0.3, 3.6, 1.6, NICE ? 0xffffff : EXTC.siding, -7.0, 5.2, 3.6,
-         { rough: 0.95, map: sidingT });
+         { rough: 0.95, map: battenT });
     /* the siding's own cut, where the facade runs past the wall */
     ebox(0.09, 7.0, 0.36, C.linen, 7.93, 3.5, -5.95, { rough: 0.9 });
     /* a corner board: clapboard always ends in one, and it is what
@@ -3765,14 +3825,19 @@
       var gl = ebox(0.84, 1.34, 0.03, 0x9fc4dc, wx, wy, -5.775,
                     { rough: 0.16, metal: 0.0, envInt: 0.6 });
       gl.userData.glazing = true;        /* the lighting pass looks for this */
-      ebox(1.12, 0.13, 0.16, EXTC.trim, wx, wy + 0.735, -5.73, { rough: 0.9 });
+      /* spec 6b: "other faces' windows recolor to the black-frame
+         language at their current sizes" — this window's own w/h/x/y/z
+         are UNCHANGED, only the casing/jamb/sill/muntin color moves from
+         EXTC.trim to FARMHOUSE.frame (black), matching every other
+         non-street window in this file. */
+      ebox(1.12, 0.13, 0.16, FARMHOUSE.frame, wx, wy + 0.735, -5.73, { rough: 0.9 });
       [-0.555, 0.555].forEach(function (dx) {
-        ebox(0.14, 1.60, 0.16, EXTC.trim, wx + dx, wy, -5.73, { rough: 0.9 });
+        ebox(0.14, 1.60, 0.16, FARMHOUSE.frame, wx + dx, wy, -5.73, { rough: 0.9 });
       });
-      ebox(1.28, 0.10, 0.30, EXTC.trim, wx, wy - 0.745, -5.68, { rough: 0.9 });
+      ebox(1.28, 0.10, 0.30, FARMHOUSE.frame, wx, wy - 0.745, -5.68, { rough: 0.9 });
       if (DETAIL >= 2) {
-        ebox(0.06, 1.34, 0.06, EXTC.trim, wx, wy, -5.752, { rough: 0.9 });
-        ebox(0.84, 0.06, 0.06, EXTC.trim, wx, wy, -5.752, { rough: 0.9 });
+        ebox(0.06, 1.34, 0.06, FARMHOUSE.frame, wx, wy, -5.752, { rough: 0.9 });
+        ebox(0.84, 0.06, 0.06, FARMHOUSE.frame, wx, wy, -5.752, { rough: 0.9 });
       }
     })();
     /* eaves trim */
@@ -3935,24 +4000,43 @@
        structurally, not by coincidence of three separate hand-typed
        numbers — every call below reads WIN_HEAD4, none re-states the top
        edge. */
-    var WIN_W4 = 1.0, WIN_H4 = 1.6, WIN_HEAD4 = 4.5;
+    /* spec 6b: street windows ENLARGE with near-floor sills — WIN_H4 3.7
+       (was 1.6) drops the sill (WIN_HEAD4 - WIN_H4) to 0.7, comfortably
+       clear of the interior baseboard's own top edge (y 0.2, the
+       baseboard strip a few lines below) with margin to spare; WIN_W4
+       1.6 (was 1.0) still leaves a clear 1.1-unit gap between the window
+       pair (cx -4.6/-1.9) and does not reach the porch posts (DOOR_X4
+       +-1.4) on the single window's own west side. WIN_HEAD4 4.4 (was
+       4.5, a hair lower) keeps every head comfortably under the new
+       flank eave (6.9) — "aligned heads" still holds structurally, one
+       constant, three calls. */
+    var WIN_W4 = 1.6, WIN_H4 = 3.7, WIN_HEAD4 = 4.4;
     function swWindow(cx) {
       var wy = WIN_HEAD4 - WIN_H4 / 2;
-      /* casing + sill: EXTC.trim, the same bucket every other exterior
-         trim call in the file already resolves to (mat()'s key reads
-         color+rough+metal+envInt+map+finish+thick; sharp()'s ch:0 also
-         matches) — a cache hit, not a new material. */
-      swtag(box(WIN_W4 + 0.24, 0.13, 0.16, EXTC.trim, cx, WIN_HEAD4 + 0.065,
-                SWZ1 + 0.02, southWallG, sharp()));
+      /* casing + sill: FARMHOUSE.frame (spec 6b: "BLACK window frames
+         and grilles" — was EXTC.trim/white). Still one shared cache
+         bucket: every call below passes the identical color+opts pair,
+         so this is one material for every black-framed casing on this
+         wall, not three. */
+      swtag(box(WIN_W4 + 0.24, 0.13, 0.16, FARMHOUSE.frame, cx,
+                WIN_HEAD4 + 0.065, SWZ1 + 0.02, southWallG, sharp()));
       [-(WIN_W4 / 2 + 0.07), (WIN_W4 / 2 + 0.07)].forEach(function (dx) {
-        swtag(box(0.14, WIN_H4 + 0.13, 0.16, EXTC.trim, cx + dx, wy,
+        swtag(box(0.14, WIN_H4 + 0.13, 0.16, FARMHOUSE.frame, cx + dx, wy,
                   SWZ1 + 0.02, southWallG, sharp()));
       });
-      swtag(box(WIN_W4 + 0.40, 0.10, 0.30, EXTC.trim, cx,
+      swtag(box(WIN_W4 + 0.40, 0.10, 0.30, FARMHOUSE.frame, cx,
                 wy - WIN_H4 / 2 - 0.05, SWZ1 + 0.05, southWallG, sharp()));
+      /* the grille (spec 6b: "gridded"): one vertical + two horizontal
+         bars, a 2x3 farmhouse light pattern sized for the now-larger
+         pane — was a single full-height vertical muntin (a 2x1 split)
+         sized for the old, narrower window. */
       if (DETAIL >= 2) {
-        swtag(box(0.06, WIN_H4, 0.06, EXTC.trim, cx, wy, SWZ1 + 0.022,
+        swtag(box(0.07, WIN_H4, 0.07, FARMHOUSE.frame, cx, wy, SWZ1 + 0.022,
                   southWallG, sharp()));
+        [wy - WIN_H4 / 6, wy + WIN_H4 / 6].forEach(function (my) {
+          swtag(box(WIN_W4, 0.07, 0.07, FARMHOUSE.frame, cx, my,
+                    SWZ1 + 0.022, southWallG, sharp()));
+        });
       }
       /* the glass: built DIRECTLY (not through the shared mat() cache),
          same as every prop the file keeps off the merge floor on
@@ -4007,7 +4091,7 @@
               SWZ0 + WALL_T4 / 4, southWallG, sharp(WALL_O)));
     swtag(box(SW_W, EXT_TOP4, WALL_T4 / 2, NICE ? 0xffffff : EXTC.siding,
               0, EXT_TOP4 / 2, SWZ0 + WALL_T4 * 3 / 4, southWallG,
-              sharp({ rough: 0.95, map: sidingT })));
+              sharp({ rough: 0.95, map: battenT })));
     swtag(box(SW_W - 0.3, 0.2, 0.08, 0xe4ddd1, 0, 0.1, SWZ0 - 0.02,
               southWallG, sharp()));
 
@@ -4094,7 +4178,11 @@
        3.2) and well below the main roofline (6.9 at the eave, 9.2 at the
        ridge) — a small subordinate structure, not competing with the
        house's own roof the way spec section 6 warns against. */
-    var PORCH_PITCH4 = Math.atan2(1.5, 2.95);
+    /* spec 6b: the pitch family steepens — PORCH_PITCH4 now reads the
+       ONE shared constant (PITCH_FAMILY) instead of its own independent
+       copy of the same literal, so this gable and the garage's own move
+       together from a single edit. */
+    var PORCH_PITCH4 = PITCH_FAMILY;
     var PORCH_EAVE4 = 4.2;
     var PORCH_RIDGE4 = PORCH_EAVE4 + (PORCH_W4 / 2) * Math.tan(PORCH_PITCH4);
     var PORCH_DEPTH4 = 0.9;                 /* wall face to the posts */
@@ -4102,18 +4190,23 @@
     var PORCH_ROOF_D4 = PORCH_DEPTH4 + 0.5;
     var PORCH_FRONT_Z4 = PORCH_ROOF_Z4 + PORCH_ROOF_D4 / 2;
     var STOOP_Y4 = 0.15, STEP_Y4 = 0.075;
+    /* spec 6b: "warm wood accents ... porch posts" — was EXTC.trim.
+       sharp(WOODM) keeps the posts' own crisp, unchamfered "square"
+       edges (sharp() only forces ch:0; WOODM's rough/metal ride along
+       unchanged) while giving them the same stained-wood roughness the
+       front door's own panels use. */
     [DOOR_X4 - 1.4, DOOR_X4 + 1.4].forEach(function (px) {
-      swtag(box(0.16, PORCH_EAVE4 - STOOP_Y4, 0.16, EXTC.trim, px,
+      swtag(box(0.16, PORCH_EAVE4 - STOOP_Y4, 0.16, FARMHOUSE.wood, px,
                 (PORCH_EAVE4 + STOOP_Y4) / 2, SWZ1 + PORCH_DEPTH4,
-                southWallG, sharp()));
+                southWallG, sharp(WOODM)));
     });
     /* stoop (at the door) + one step down to grade, per spec section 6 —
-       C.stone-toned slabs, matching the drip-edge/stone trim the main
-       roof's own front edge already uses. */
-    swtag(box(PORCH_W4 - 0.6, STOOP_Y4, PORCH_DEPTH4 * 0.7, C.stone,
+       FARMHOUSE.stoop (spec 6b: "masonry-tone stoop"; was C.stone, a
+       close but unnamed tone this table now owns explicitly). */
+    swtag(box(PORCH_W4 - 0.6, STOOP_Y4, PORCH_DEPTH4 * 0.7, FARMHOUSE.stoop,
               DOOR_X4, STOOP_Y4 / 2, SWZ1 + PORCH_DEPTH4 * 0.35, southWallG,
               { rough: 0.9 }));
-    swtag(box(PORCH_W4 - 0.6, STEP_Y4, PORCH_DEPTH4 * 0.35, C.stone,
+    swtag(box(PORCH_W4 - 0.6, STEP_Y4, PORCH_DEPTH4 * 0.35, FARMHOUSE.stoop,
               DOOR_X4, STEP_Y4 / 2, SWZ1 + PORCH_DEPTH4 * 0.875, southWallG,
               { rough: 0.9 }));
     /* the porch gable roof: ridge along x, centred on the door, sloped
@@ -4149,7 +4242,7 @@
       s.lineTo(PORCH_W4 / 2, PORCH_EAVE4); s.lineTo(-PORCH_W4 / 2, PORCH_EAVE4);
       var m = new T.Mesh(new T.ExtrudeGeometry(s, { depth: 0.10,
         bevelEnabled: false }), mat(NICE ? 0xffffff : EXTC.siding,
-        NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 }));
+        NICE ? { rough: 0.95, map: battenT } : { rough: 0.95 }));
       m.position.set(DOOR_X4, 0, PORCH_FRONT_Z4);
       swtag(m); finish(m); southWallG.add(m);
     })();
@@ -4218,7 +4311,7 @@
               EXT_TOP4 / 2, EW_CZ4, eastWallG, sharp(WALL_O)));
     ewtag(box(WALL_T4 / 2, EXT_TOP4, EW_LEN4, NICE ? 0xffffff : EXTC.siding,
               EWX0_4 + WALL_T4 * 3 / 4, EXT_TOP4 / 2, EW_CZ4, eastWallG,
-              sharp({ rough: 0.95, map: sidingT })));
+              sharp({ rough: 0.95, map: battenT })));
     ewtag(box(0.08, 0.2, EW_LEN4 - 0.3, 0xe4ddd1, EWX0_4 - 0.02, 0.1, EW_CZ4,
               eastWallG, sharp()));
     /* SHELL: east_wall is complete here. n is [1,0,0]: a true exterior
@@ -4226,92 +4319,169 @@
     regFabric(eastWallG, { name: 'east_wall', n: [1, 0, 0],
                            box: fabBox(eastWallG) });
 
-    /* ---- the roof completes (spec section 6): roof_south -------------
-       roof/roofStub (the architect pass's own back slope) was already
-       watertight over the kitchen's own back two-thirds; roofStub itself
-       is gone (see the comment at its own former call site, above) —
-       this ONE long slope off the SAME ridge replaces it and runs all
-       the way to the new south wall: a saltbox tail, not a second gable,
-       which keeps ONE roofline reading as "the roof" rather than adding
-       a visible step or kink partway down. Eave height matches the
-       EXISTING north eave exactly (6.9) — "one constant eave line all
-       around the house" — which is what makes this slope's own pitch
-       shallower than the back slope's (the SAME 2.3 rise now spans a run
-       of ~17 instead of ~4.4): a real, recognizable saltbox roofline,
-       not a design error. */
+    /* ---- the roof completes (spec section 6/6b): roof_south -----------
+       T4's own long saltbox slope — one continuous run off the main
+       ridge, shallow only because the SAME 2.3 rise had to span a
+       ~17-unit run — is GONE per the user's farmhouse redirect (spec
+       section 6b): "the saltbox street read is REPLACED by gable-forward
+       massing." In its place: a prominent, street-facing ENTRY GABLE
+       (ridge along z, the garage/porch family's own orientation) stands
+       over the porch/living mass, flanked on both sides by a flat cap
+       that closes the rest of the great room's own south portion at the
+       SAME eave line (6.9) every other exterior wall already resolves
+       to. All three pieces stay ONE registered fabric group
+       (roof_south) — the granularity law (spec section 3) asks for "the
+       unit that ghosts together," and flank+gable+flank are that one
+       unit: the roof over the great room's street-facing two-thirds,
+       same role the slope they replace had. */
     var SOUTH_EAVE_Y4 = 6.9;
     var SOUTH_EAVE_Z4 = SWZ1 + 0.6;
-    var rsRise4 = RIDGE_Y4 - SOUTH_EAVE_Y4;
-    var rsRun4 = SOUTH_EAVE_Z4 - RIDGE_Z4;
-    var rsSpan4 = Math.sqrt(rsRise4 * rsRise4 + rsRun4 * rsRun4);
-    var rsAngle4 = Math.atan2(rsRise4, rsRun4);
     var roofSouthG = new T.Group();
     extG.add(roofSouthG);
-    var roofSouth4 = box(ROOF_W4, 0.18, rsSpan4, NICE ? 0xffffff : EXTC.roof,
-                         ROOF_X4, (RIDGE_Y4 + SOUTH_EAVE_Y4) / 2,
-                         (RIDGE_Z4 + SOUTH_EAVE_Z4) / 2, roofSouthG,
-                         sharp(NICE ? { rough: 0.9, map: shingleT } : { rough: 0.9 }));
-    roofSouth4.rotation.x = rsAngle4;    /* POSITIVE: descends toward +z,
-      the same sign the removed roofStub's own comment already used ("the
-      stub... runs the other way and keeps its positive sign") */
-    box(ROOF_W4 + 0.1, 0.42, 0.12, EXTC.trim, ROOF_X4, SOUTH_EAVE_Y4 - 0.20,
-        SOUTH_EAVE_Z4, roofSouthG, sharp());
-    box(ROOF_W4 + 0.1, 0.10, 0.06, C.stone, ROOF_X4, SOUTH_EAVE_Y4 - 0.44,
-        SOUTH_EAVE_Z4 - 0.04, roofSouthG, sharp({ rough: 0.9 }));
-    (function () {
-      var ca = Math.cos(rsAngle4), sa = Math.sin(rsAngle4);
-      [-8.26, 8.26].forEach(function (dx) {
-        var m = box(0.12, 0.40, rsSpan4, EXTC.trim, ROOF_X4 + dx,
-                    (RIDGE_Y4 + SOUTH_EAVE_Y4) / 2 - 0.11 * ca,
-                    (RIDGE_Z4 + SOUTH_EAVE_Z4) / 2 - 0.11 * sa,
-                    roofSouthG, sharp());
-        m.rotation.x = rsAngle4;
-      });
-    })();
-    /* gable-end infill, east and west: closes the wedge between EXT_TOP4
-       (the wall height under this slope) and the sloped underside above
-       it — the first T4 attempt's own inherited finding, and the reason
-       EXT_TOP4 (not WALL_TOP4) is what these walls are built to. Each
-       panel is a flat triangle from the wall's own top, up to the ridge,
-       back down to the point where this slope's own underside RETURNS to
-       wall height (Z_CROSS4) — past that point the slope is already
-       below EXT_TOP4 and there is no gap left to fill. The EAST side also
-       closes the ORIGINAL back slope's own east gable end (never built:
-       only the west end ever got a matching triangle, because the
-       cutaway east of it was open sky with nothing behind it to reveal
-       before this task built a real east_wall under it) in the SAME
-       triangle, since both slopes meet at the one ridge point (RIDGE_Z4,
-       RIDGE_Y4) and the shape is a straight run from (-6.4, EXT_TOP4)
-       through the ridge to (Z_CROSS4, EXT_TOP4). The WEST side leaves the
-       existing original triangle (a few dozen lines above, y 6.9..9.2)
-       untouched — zero pixel change for that existing piece — and only
-       adds the NEW sliver for roof_south's own portion, ridge to
-       Z_CROSS4. */
-    var Z_CROSS4 = RIDGE_Z4 + (RIDGE_Y4 - EXT_TOP4) / Math.tan(rsAngle4);
+    /* the entry gable's own half-width is DERIVED, not hand-picked: the
+       SAME 2.3 rise the main roof's own ridge already carries (RIDGE_Y4
+       - SOUTH_EAVE_Y4 — this house's one eave line, minus its one ridge
+       height) spread over the family's own steeper run lands the
+       gable's own peak exactly on the main ridge's own height, so the
+       two read as one family meeting at one point rather than a
+       coincidence to re-tune by hand if either constant ever moves. */
+    var ENTRY_RISE4 = RIDGE_Y4 - SOUTH_EAVE_Y4;
+    var ENTRY_HALF4 = ENTRY_RISE4 / Math.tan(PITCH_FAMILY);
+    var ENTRY_RIDGE_Y4 = SOUTH_EAVE_Y4 + ENTRY_RISE4;      /* == RIDGE_Y4 */
+    var ENTRY_X0 = DOOR_X4 - ENTRY_HALF4, ENTRY_X1 = DOOR_X4 + ENTRY_HALF4;
+    var ENTRY_SPAN4 = Math.sqrt(ENTRY_HALF4 * ENTRY_HALF4 +
+                                ENTRY_RISE4 * ENTRY_RISE4) + 0.3;
+    /* the two flanks: FLAT caps — no slope worth the name — closing the
+       great room's own outer thirds at the standard eave height. A tall
+       forward gable over the entry with low flat-roofed wings either
+       side of it is a modern-farmhouse massing move in its own right,
+       not a fallback: the alternative (one shape stretched over the
+       whole width) is exactly the saltbox this task exists to remove.
+       Each flank spans from the main ridge's own south face (RIDGE_Z4)
+       to the south wall's own eave line (SOUTH_EAVE_Z4) — the same depth
+       the old slope ran — and a short overhang (WALL_T4) past the wall
+       face it caps, matching every other roofline's own overhang in
+       this file. */
+    var OUTER_W4 = SW_W / 2 + WALL_T4;
+    function flank4(x0, x1) {
+      var w = x1 - x0, xc = (x0 + x1) / 2;
+      var m = box(w, 0.16, SOUTH_EAVE_Z4 - RIDGE_Z4,
+                  NICE ? 0xffffff : EXTC.roof, xc, SOUTH_EAVE_Y4,
+                  (RIDGE_Z4 + SOUTH_EAVE_Z4) / 2, roofSouthG,
+                  sharp(NICE ? { rough: 0.9, map: shingleT } : { rough: 0.9 }));
+      box(w, 0.42, 0.12, EXTC.trim, xc, SOUTH_EAVE_Y4 - 0.20, SOUTH_EAVE_Z4,
+          roofSouthG, sharp());
+      box(w, 0.10, 0.06, C.stone, xc, SOUTH_EAVE_Y4 - 0.44,
+          SOUTH_EAVE_Z4 - 0.04, roofSouthG, sharp({ rough: 0.9 }));
+      /* the north seam: closes the gap between this flat cap and the
+         main ridge's own height (RIDGE_Y4), directly under the back
+         slope's own south-facing underside — the same "no daylight
+         wedge" law the gable-end triangles below satisfy, just
+         rectangular because a flat cap has no taper of its own to close
+         it. */
+      box(w, RIDGE_Y4 - SOUTH_EAVE_Y4, 0.20, NICE ? 0xffffff : EXTC.siding,
+          xc, (SOUTH_EAVE_Y4 + RIDGE_Y4) / 2, RIDGE_Z4 + 0.10, roofSouthG,
+          sharp(NICE ? { rough: 0.95, map: battenT } : { rough: 0.95 }));
+      return m;
+    }
+    var westFlank4 = flank4(-OUTER_W4, ENTRY_X0);
+    flank4(ENTRY_X1, OUTER_W4);
+    /* the entry gable itself: ridge along z, so its triangular end
+       presents to the street the way the covered porch's own small
+       gable already does, just at house-roof scale — spec section 6b's
+       own words, "garage gable, entry gable, porch gable, and main roof
+       move together." Same sign convention the porch's own loop just
+       above uses (sign -1 = west of the door, positive rotation.z, HIGH
+       at the ridge — the garage's own gw carries the identical rule). */
+    [-1, 1].forEach(function (sign) {
+      var eg = box(ENTRY_SPAN4, 0.18, SOUTH_EAVE_Z4 - RIDGE_Z4,
+                   NICE ? 0xffffff : EXTC.roof,
+                   DOOR_X4 + sign * ENTRY_HALF4 / 2,
+                   SOUTH_EAVE_Y4 + ENTRY_RISE4 / 2,
+                   (RIDGE_Z4 + SOUTH_EAVE_Z4) / 2, roofSouthG,
+                   sharp(NICE ? { rough: 0.9, map: shingleT } : { rough: 0.9 }));
+      eg.rotation.z = -sign * PITCH_FAMILY;
+    });
+    box(0.30, 0.26, SOUTH_EAVE_Z4 - RIDGE_Z4 + 0.1, EXTC.ridge, DOOR_X4,
+        ENTRY_RIDGE_Y4, (RIDGE_Z4 + SOUTH_EAVE_Z4) / 2, roofSouthG, sharp());
+    /* gable-end triangles, north AND south — the SAME shape at both
+       ends (a constant eave, a constant ridge: this gable does not
+       taper along its own length), unlike the covered porch's own
+       single street-facing triangle a few dozen lines above: the entry
+       gable's north end has no wall behind it to close the wedge the
+       way the porch's own north end (flush against south_wall's own
+       siding) does, so it earns a second triangle the porch never
+       needed. */
+    var entryEndMat4 = mat(NICE ? 0xffffff : EXTC.siding,
+      NICE ? { rough: 0.95, map: battenT } : { rough: 0.95 });
+    /* sign: +1 at the north end (RIDGE_Z4) extrudes further NORTH, -1 at
+       the south end (SOUTH_EAVE_Z4) extrudes further SOUTH — both push
+       the triangle OUTWARD, away from the gable's own roof volume,
+       rather than straddling the seam (a centered triangle overlapped
+       0.06 INTO the tilted slope surface on both ends, and a flat panel
+       poking through a tilted plane is exactly the thin-line z-fight
+       the compass shots caught: the slope and the panel agree only
+       exactly at ez, so a straddling panel diverges from the slope's
+       own surface everywhere else along the rake). Flush-and-outward
+       means the panel's own inner face sits exactly at the slope's own
+       end instead. */
+    [[RIDGE_Z4, 1], [SOUTH_EAVE_Z4, -1]].forEach(function (ezs) {
+      var ez = ezs[0], sign = ezs[1];
+      var s = new T.Shape();
+      s.moveTo(ENTRY_X0, SOUTH_EAVE_Y4); s.lineTo(DOOR_X4, ENTRY_RIDGE_Y4);
+      s.lineTo(ENTRY_X1, SOUTH_EAVE_Y4); s.lineTo(ENTRY_X0, SOUTH_EAVE_Y4);
+      var m = new T.Mesh(new T.ExtrudeGeometry(s, { depth: 0.12,
+        bevelEnabled: false }), entryEndMat4);
+      m.position.set(0, 0, sign > 0 ? ez - 0.12 : ez);
+      finish(m); roofSouthG.add(m);
+    });
+    /* gable-end infill, east (unchanged law, spec section 6): closes the
+       wedge between EXT_TOP4 (wall height) and the BACK slope's own
+       sloped underside above it — the first T4 attempt's own inherited
+       finding. Z_CROSS4 used to be a point partway down the old saltbox
+       slope; that slope is gone, so the point where "the roof above
+       returns to wall height" is now simply the ridge itself
+       (RIDGE_Z4) — everything south of the ridge is either the entry
+       gable (rising well clear of EXT_TOP4) or a flank whose own
+       north-seam panel, just above, already closes its own share of
+       this exact wedge. */
+    var Z_CROSS4 = RIDGE_Z4;
     function gableFillZY4(x0, z0) {
       var s = new T.Shape();
       s.moveTo(z0, EXT_TOP4); s.lineTo(RIDGE_Z4, RIDGE_Y4);
       s.lineTo(Z_CROSS4, EXT_TOP4); s.lineTo(z0, EXT_TOP4);
       var m = new T.Mesh(new T.ExtrudeGeometry(s, { depth: 0.22,
         bevelEnabled: false }), mat(NICE ? 0xffffff : EXTC.siding,
-        NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 }));
+        NICE ? { rough: 0.95, map: battenT } : { rough: 0.95 }));
       m.rotation.y = -Math.PI / 2;
       m.position.set(x0, 0, 0);
       finish(m); roofSouthG.add(m);
       return m;
     }
-    gableFillZY4(EWX1_4, -6.4);           /* east: wall-top to wall-top,
-                                              covers BOTH slopes' east end */
-    gableFillZY4(-7.0, RIDGE_Z4);          /* west: RIDGE_Z4 to wall-top —
-                                              just roof_south's own sliver;
-                                              the original west triangle
-                                              already covers -6.4..-2.0 */
+    gableFillZY4(EWX1_4, -6.4);           /* east: wall-top to ridge — the
+      back slope's own east gable end, never built until east_wall gave
+      it something to close against. Z_CROSS4 == RIDGE_Z4 collapses this
+      call's own shape to the simple three-point triangle described
+      above (the fourth moveTo/lineTo pair lands on the same point). */
+    /* the west end needs no second call: the ORIGINAL west triangle (a
+       few dozen lines above, y 6.9..9.2, x=-7.0) already covers the
+       SAME wall-top-to-ridge span the east call just built, and
+       Z_CROSS4 == RIDGE_Z4 leaves no separate southward sliver for a
+       second call to add — that sliver was roof_south's OLD shallow
+       slope's own overshoot, which no longer exists in this design. */
     /* SHELL: roof_south is complete here. Outward normal computed from
-       roofSouth4's own world quaternion (spec section 6: "computed from
-       its geometry at build, not hand-typed"). */
-    roofSouth4.updateMatrixWorld(true);
+       the WEST FLANK's own world quaternion (spec section 6: "computed
+       from its geometry at build, not hand-typed") — the flanks, not
+       the steeper entry gable, carry the old slope's own general
+       orientation (mostly up), so a flank is the representative mesh
+       for a group that is no longer one single plane. The entry gable's
+       own east/west-facing slopes have no single "outward" of their own
+       (they face each other across the ridge, not the street or the
+       yard) and would misrepresent the piece's actual occlusion role if
+       used instead. */
+    westFlank4.updateMatrixWorld(true);
     var rsN4 = new T.Vector3(0, 1, 0), rsQ4 = new T.Quaternion();
-    roofSouth4.getWorldQuaternion(rsQ4);
+    westFlank4.getWorldQuaternion(rsQ4);
     rsN4.applyQuaternion(rsQ4);
     regFabric(roofSouthG, { name: 'roof_south',
                             n: [rsN4.x, rsN4.y, rsN4.z],
@@ -4420,7 +4590,7 @@
     extG.add(westSkirtG);
     box(0.3, EXT_TOP4, SWZ1 - 6.0, NICE ? 0xffffff : EXTC.siding,
         -7.0, EXT_TOP4 / 2, (6.0 + SWZ1) / 2, westSkirtG,
-        sharp({ rough: 0.95, map: sidingT }));
+        sharp({ rough: 0.95, map: battenT }));
     box(0.35, EXT_TOP4, 0.1, EXTC.trim, -6.675, EXT_TOP4 / 2, SWZ1,
         westSkirtG, sharp());
     regFabric(westSkirtG, { name: 'west_skirt', n: [1, 0, 0],
@@ -4449,35 +4619,72 @@
         return m;
       }
       var gWallW = gtag(ebox(0.24, 4.6, 8.0, NICE ? 0xffffff : EXTC.garage,
-                -18.08, 2.3, 6.0, { rough: 0.95, map: sidingT }));
+                -18.08, 2.3, 6.0, { rough: 0.95, map: battenT }));
       var gWallE = gtag(ebox(0.24, 4.6, 8.0, NICE ? 0xffffff : EXTC.garage,
-                -12.72, 2.3, 6.0, { rough: 0.95, map: sidingT }));
+                -12.72, 2.3, 6.0, { rough: 0.95, map: battenT }));
       var garageBackWall = gtag(ebox(5.6, 4.6, 0.24,
                 NICE ? 0xffffff : EXTC.garage,
-                -15.4, 2.3, 2.12, { rough: 0.95, map: sidingT }));
+                -15.4, 2.3, 2.12, { rough: 0.95, map: battenT }));
       webgl_garageBackWall = garageBackWall;
       gtag(box(5.6, 1.1, 0.24, NICE ? 0xffffff : EXTC.garage,
                -15.4, 4.05, 9.88, garageDoorG,
-               sharp(NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 })));
+               sharp(NICE ? { rough: 0.95, map: battenT } : { rough: 0.95 })));
       /* the lintel: the header stopped at y 3.5 and the door at 3.1, so
          a 0.4 slot ran the width of the bay and the resting camera
          looked straight through it at the shelves */
       gtag(box(5.6, 0.46, 0.24, NICE ? 0xffffff : EXTC.garage,
                -15.4, 3.27, 9.88, garageDoorG,
-               sharp(NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 })));
+               sharp(NICE ? { rough: 0.95, map: battenT } : { rough: 0.95 })));
       gtag(box(3.9, 0.16, 0.16, EXTC.trim, -15.4, 3.16, 10.00, garageDoorG, sharp()));
       gtag(box(0.76, 3.5, 0.24, NICE ? 0xffffff : EXTC.garage,
                -17.58, 1.75, 9.88, garageDoorG,
-               sharp(NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 })));
+               sharp(NICE ? { rough: 0.95, map: battenT } : { rough: 0.95 })));
       gtag(box(0.76, 3.5, 0.24, NICE ? 0xffffff : EXTC.garage,
                -13.22, 1.75, 9.88, garageDoorG,
-               sharp(NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 })));
-      gtag(rbox(3.6, 3.0, 0.14, 0.05, EXTC.trim, -15.4, 1.6, 10.02,
-                garageDoorG, { rough: 0.85 }));
+               sharp(NICE ? { rough: 0.95, map: battenT } : { rough: 0.95 })));
+      /* spec 6b: "carriage-style wood — panel field, strap hardware,
+         one top-light row" on this existing openable garageDoorG (the
+         dollhouse trick untouched). The panel field's own leaf keeps its
+         geometry and its zone; only the color/finish moves, from
+         EXTC.trim (a painted-trim tone) to FARMHOUSE.wood — the SAME
+         warm-wood family the front door and porch posts now share
+         (WOODM, not a fourth hand-typed roughness). */
+      gtag(rbox(3.6, 3.0, 0.14, 0.05, FARMHOUSE.wood, -15.4, 1.6, 10.02,
+                garageDoorG, WOODM));
       if (DETAIL >= 2) {
-        gtag(box(3.4, 0.05, 0.06, 0xc4bcae, -15.4, 1.0, 10.1, garageDoorG));
-        gtag(box(3.4, 0.05, 0.06, 0xc4bcae, -15.4, 1.8, 10.1, garageDoorG));
-        gtag(box(3.4, 0.05, 0.06, 0xc4bcae, -15.4, 2.6, 10.1, garageDoorG));
+        /* board seams (were flat trim-colored dividers): C.wood2, a
+           darker wood tone already in this file's own palette, reading
+           as the shadow line between two stained boards rather than a
+           painted reveal. */
+        gtag(box(3.4, 0.05, 0.06, C.wood2, -15.4, 1.0, 10.1, garageDoorG));
+        gtag(box(3.4, 0.05, 0.06, C.wood2, -15.4, 1.8, 10.1, garageDoorG));
+        gtag(box(3.4, 0.05, 0.06, C.wood2, -15.4, 2.6, 10.1, garageDoorG));
+        /* strap hardware: two black wrought-iron diagonals crossing the
+           whole leaf corner-to-corner (an X-brace, the classic carriage-
+           door hardware silhouette) plus five bolt medallions at the
+           four corners and the centre where the straps cross. Both
+           diagonals share one centre point (a rectangle's two diagonals
+           always bisect at the same point) and one derived length/angle
+           — mirrored by sign, not hand-typed twice. */
+        (function () {
+          var SDX4 = 1.65, SDY4 = 1.45;    /* half-reach, inset from the
+            leaf's own 3.6 x 3.0 edges so the straps read as applied
+            hardware, not a frame running off the panel */
+          var SLEN4 = Math.sqrt((SDX4 * 2) * (SDX4 * 2) +
+                                (SDY4 * 2) * (SDY4 * 2));
+          var SANG4 = Math.atan2(SDX4 * 2, SDY4 * 2);
+          [1, -1].forEach(function (sign) {
+            var strap = gtag(box(0.09, SLEN4, 0.025, FARMHOUSE.frame,
+                                 -15.4, 1.6, 10.10, garageDoorG, { rough: 0.5 }));
+            strap.rotation.z = sign * SANG4;
+          });
+          [[-15.4 - SDX4, 1.6 - SDY4], [-15.4 + SDX4, 1.6 - SDY4],
+           [-15.4 - SDX4, 1.6 + SDY4], [-15.4 + SDX4, 1.6 + SDY4],
+           [-15.4, 1.6]].forEach(function (p) {
+            gtag(cyl(0.05, 0.05, 0.03, C.ink, p[0], p[1], 10.11,
+                     garageDoorG, 8, { rough: 0.4, metal: 0.6 }));
+          });
+        })();
       }
       /* the bay's daylight, and the only exterior windows the resting
          camera sees square on: real glazing in a real casing, left
@@ -4491,30 +4698,39 @@
           m.userData.glazing = true;      /* the lighting pass looks for this */
           return gtag(m);
         }
-        /* the window in the pier east of the door */
+        /* the window in the pier east of the door — spec 6b: "other
+           faces' windows recolor to the black-frame language at their
+           current sizes." Every w/h/x/y/z below is unchanged; only the
+           casing color moves, EXTC.trim -> FARMHOUSE.frame. */
         gGlass(0.58, 0.68, -13.22, 2.68, 10.02);
-        gtag(box(0.74, 0.09, 0.10, EXTC.trim, -13.22, 3.07, 10.03, garageDoorG));
-        gtag(box(0.80, 0.08, 0.18, EXTC.trim, -13.22, 2.29, 10.06, garageDoorG));
+        gtag(box(0.74, 0.09, 0.10, FARMHOUSE.frame, -13.22, 3.07, 10.03, garageDoorG));
+        gtag(box(0.80, 0.08, 0.18, FARMHOUSE.frame, -13.22, 2.29, 10.06, garageDoorG));
         [-0.345, 0.345].forEach(function (dx) {
-          gtag(box(0.09, 0.86, 0.10, EXTC.trim, -13.22 + dx, 2.68, 10.03,
+          gtag(box(0.09, 0.86, 0.10, FARMHOUSE.frame, -13.22 + dx, 2.68, 10.03,
                    garageDoorG));
         });
         if (DETAIL >= 3) {
-          gtag(box(0.05, 0.68, 0.05, EXTC.trim, -13.22, 2.68, 10.04, garageDoorG));
-          gtag(box(0.58, 0.05, 0.05, EXTC.trim, -13.22, 2.68, 10.04, garageDoorG));
+          gtag(box(0.05, 0.68, 0.05, FARMHOUSE.frame, -13.22, 2.68, 10.04, garageDoorG));
+          gtag(box(0.58, 0.05, 0.05, FARMHOUSE.frame, -13.22, 2.68, 10.04, garageDoorG));
         }
-        /* the row of lights every sectional door carries in its top panel */
+        /* the top-light row every sectional/carriage door carries —
+           spec 6b's own "one top-light row of small panes": the row
+           already existed (the architect pass built it); only its own
+           small frame board recolors, 0xd8d0c2 (a light painted tone)
+           -> FARMHOUSE.frame, to read as the same black grille language
+           as every other window on the house. */
         [-16.42, -15.74, -15.06, -14.38].forEach(function (lx) {
           gGlass(0.52, 0.30, lx, 2.86, 10.10);
-          gtag(box(0.60, 0.38, 0.05, 0xd8d0c2, lx, 2.86, 10.085, garageDoorG));
+          gtag(box(0.60, 0.38, 0.05, FARMHOUSE.frame, lx, 2.86, 10.085, garageDoorG));
         });
-        /* the gable's half-round, and a coach lamp beside the door */
+        /* the gable's half-round, and a coach lamp beside the door —
+           same black-frame recolor, same unchanged size/position. */
         gGlass(0.44, 0.44, -15.40, 5.36, 10.27);
-        gtag(cyl(0.34, 0.34, 0.09, EXTC.trim, -15.40, 5.36, 10.24,
+        gtag(cyl(0.34, 0.34, 0.09, FARMHOUSE.frame, -15.40, 5.36, 10.24,
                  garageDoorG, 16)).rotation.x = Math.PI / 2;
         if (DETAIL >= 3) {
-          gtag(box(0.05, 0.42, 0.05, EXTC.trim, -15.40, 5.36, 10.28, garageDoorG));
-          gtag(box(0.42, 0.05, 0.05, EXTC.trim, -15.40, 5.36, 10.28, garageDoorG));
+          gtag(box(0.05, 0.42, 0.05, FARMHOUSE.frame, -15.40, 5.36, 10.28, garageDoorG));
+          gtag(box(0.42, 0.05, 0.05, FARMHOUSE.frame, -15.40, 5.36, 10.28, garageDoorG));
         }
         gtag(box(0.10, 0.34, 0.09, C.ink, -17.58, 2.96, 10.02, garageDoorG,
                  { rough: 0.5 }));
@@ -4547,8 +4763,17 @@
       }
       /* the GABLE: ridge along z, slopes east/west, siding triangles
          front and back — a garage roof that matches the house */
-      var gSlope = Math.atan2(1.5, 2.95);
-      var gLen = Math.sqrt(1.5 * 1.5 + 2.95 * 2.95) + 0.5;
+      /* spec 6b: the pitch family steepens — gSlope now reads the ONE
+         shared constant instead of its own independent copy of the same
+         literal pair, and gLen (the slab's own sloping-direction length)
+         is re-derived from that SAME shared pair rather than kept at its
+         old fixed length: gLen and gSlope were always a matched pair (a
+         slab of THIS length, rotated by THIS angle, reaches the eave the
+         ridge cap already sits above), so changing the angle without
+         re-deriving the length would have the slab overshoot or
+         undershoot the eave it used to land on exactly. */
+      var gSlope = PITCH_FAMILY;
+      var gLen = Math.sqrt(PITCH_RISE4 * PITCH_RISE4 + PITCH_RUN4 * PITCH_RUN4) + 0.5;
       var gw = box(gLen, 0.16, 9.0, NICE ? 0xffffff : EXTC.roof,
                    -16.9, 5.6, 6.0, garageDoorG,
                    sharp(NICE ? { rough: 0.9, map: shingleT } : { rough: 0.9 }));
@@ -4577,7 +4802,7 @@
         [10.0, 1.98].forEach(function (tz) {
           var m = new T.Mesh(new T.ExtrudeGeometry(tri, { depth: 0.22,
             bevelEnabled: false }), mat(NICE ? 0xffffff : EXTC.siding,
-            NICE ? { rough: 0.95, map: sidingT } : { rough: 0.95 }));
+            NICE ? { rough: 0.95, map: battenT } : { rough: 0.95 }));
           m.position.set(0, 0, tz);
           gtag(m); finish(m); garageDoorG.add(m);
           gGableEnds.push(m);
@@ -6021,11 +6246,11 @@
       mfloor.position.set(-9.7, 0.03, 5.4);
       mtag(mfloor); finish(mfloor); extG.add(mfloor);
       mtag(ebox(5.6, 4.2, 0.24, NICE ? 0xffffff : EXTC.siding,
-                -9.8, 2.1, 2.48, { rough: 0.95, map: sidingT }));
+                -9.8, 2.1, 2.48, { rough: 0.95, map: battenT }));
       /* the street end is the mudroom's "garage door": hidden from the
          inside so the camera can look straight into the room */
       var mudFrontWall = mtag(ebox(5.6, 4.2, 0.24, NICE ? 0xffffff : EXTC.siding,
-                -9.8, 2.1, 8.32, { rough: 0.95, map: sidingT }));
+                -9.8, 2.1, 8.32, { rough: 0.95, map: battenT }));
       mudroomRoofG.add(mudFrontWall);
       var mroof = box(5.9, 0.14, 6.2, NICE ? 0xffffff : EXTC.roof,
                       -9.8, 4.5, 5.4, mudroomRoofG,
@@ -7427,9 +7652,25 @@
        reasoning — it is now a registered FABRIC group too (west_skirt,
        CRITICAL 2's fix, above). A no-op today (2 meshes, 2 different
        materials, under the 4-item floor either way), kept structural
-       rather than incidental like its siblings just above. */
+       rather than incidental like its siblings just above.
+
+       FOLD-IN (Task 6, routed by the final whole-branch review):
+       roofSouthG was registered FABRIC (roof_south) since Task 4 but
+       missing from this exact list — every one of its siblings above
+       earned a dedicated pass the moment it was registered; this one
+       did not, purely by omission, and every task since inherited the
+       gap unnoticed because no bucket inside roofSouthG ever reached
+       mergeStatic's 4-item floor to make the omission visible (the
+       review's own words: "no-op today, rediscovery trap tomorrow").
+       This task's own massing rewrite (the flanks + entry gable
+       replacing the old single saltbox slope) is the first roofSouthG
+       content with real repeated-material runs — the two flanks alone
+       share four same-material calls (roof deck, fascia, drip, north
+       infill) each — so the fold-in is no longer inert the way it was
+       when the review found it; see this task's own report for the
+       measured before/after bucket count this now produces. */
     [westWallG, garageDoorG, mudroomRoofG, yardG, southWallG, eastWallG,
-     garageShellG, westSkirtG].forEach(function (g) {
+     garageShellG, westSkirtG, roofSouthG].forEach(function (g) {
       mergeStatic(g, NO_MERGE);
     });
     var EXT_NO_MERGE = new Set(NO_MERGE);
@@ -9276,7 +9517,6 @@
                edgesVisible: f.edges ? f.edges.visible : null };
     });
   };
-
   function announceFocus(key) {
     if (webgl && state) applyState(state);   /* blank/restore the faces */
     var shape = (key && webgl) ? zoneFaceQuad(key) : null;
