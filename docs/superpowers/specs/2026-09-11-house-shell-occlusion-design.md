@@ -73,4 +73,83 @@ The street face must read as an ACTUAL HOUSE from the curb: a front elevation th
 
 ## 9. Results
 
-(appended at wrap)
+Shipped `79b76bc` (T1, v2.491.0) -> `4fab293`+comment-fix (T2, v2.492.0->v2.492.1) -> `1d63b88` (T3, v2.493.0) -> `511c2a2` (mid-arc user redirect, docs-only, v2.493.1) -> `69bcd43` (T4, v2.494.0) -> `5b37552` (T4 fix round 1, v2.494.1) -> this wrap, v2.494.2. All five tasks landed with a clean review (T2 needed one comment-only fix round; T4 needed one code fix round for two CRITICAL findings); no task required a second round beyond that. NOT device-verified, consistent with the rest of the house work.
+
+**Registration table — 12 fabric pieces, as shipped:**
+
+| piece | mode | n (outward normal) | box `[x0,x1,y0,y1,z0,z1]` | landed |
+|---|---|---|---|---|
+| west_wall | ghost | `[1,0,0]` (flipped from `[-1,0,0]`, T2 — see Deviations) | `[-6.86,-5.575,-0.03,5.6,-5.5,14.28]` | T1 |
+| garage_door | ghost | `[0,0,1]` | `[-18.2,-12.6,0,5.7,9.76,10.443]` (post-split, T4; the walls/roof it used to include went to garage_shell) | T1, split T4 |
+| mudroom_roof | ghost | `[0,1,0]` | `[-12.75,-6.85,0,4.57,2.3,8.5]` | T1 |
+| living_roof | ghost, inert | `[0,1,0]` | degenerate (Box3's own empty sentinel — the group still holds zero meshes through T4) | T1 |
+| yard | hide | `[0,1,0]` | `[-23.379,17,-0.384,7.43,-16.189,17.55]` | T1 |
+| north_wall | ghost | `[0,0,-1]` | `[-6.5,6.5,0,5.6,-5.725,-5.375]` | T4 |
+| south_wall | ghost | `[0,0,1]` | `[-6.5,6.5,-0.0,7,13.95,15.845]` | T4 |
+| east_wall | ghost | `[1,0,0]` | `[6.44,6.85,-0.0,7,-5.725,14.55]` | T4 |
+| roof_north | ghost | `[0,0.886,-0.463]` | `[-7.9,8.5,6.82,9.28,-6.442,-1.958]` | T4 |
+| roof_south | ghost | `[0,0.991,0.133]` | `[-8.02,8.62,6.41,9.289,-6.4,15.21]` | T4 |
+| garage_shell | ghost | `[1,0,0]` | `[-18.634,-12.166,0,6.54,1.4,10.6]` (the box garage_door held before the split) | T4 |
+| west_skirt | ghost | `[1,0,0]` (dispatch suggested `[-1,0,0]`; implementer derived + rejected it; re-reviewer independently re-derived and confirmed `[1,0,0]`) | `[-7.15,-6.5,0,7.0,6.0,14.6]` | T4 fix round 1 |
+
+Helper/registry code, current HEAD line numbers (grep-verified, not carried stale from a per-task report): `regFabric` `static/house.js:836`, `fabBox` `:847`, `boxOk` `:877`, `solveShell` `:890`, `GHOST_MAT` `:926`, per-room `ROOM_AABB` `:8471`, `window.chfShellFabric()` `:9271-9278` (shape `{name, mode, visible, verdict, edgesVisible}` — grown T1->T2->T3, unchanged since), `west_skirt`'s own `regFabric` call `:4426`.
+
+**Per-view verdict sets, as shipped:**
+
+| piece | mode | kitchen | living | mudroom | garage | exterior |
+|---|---|---|---|---|---|---|
+| north_wall | ghost | solid | solid | solid | solid | solid |
+| west_wall | ghost | solid | solid | **ghost** | solid | solid |
+| roof_north | ghost | solid | solid | solid | solid | solid |
+| south_wall | ghost | **ghost** | **ghost** | solid | solid | solid |
+| east_wall | ghost | **ghost** | solid | solid | solid | solid |
+| roof_south | ghost | **ghost** | **ghost** | solid | solid | solid |
+| garage_shell | ghost | solid | solid | solid | **ghost** | solid |
+| garage_door | ghost | solid | solid | solid | **ghost** | solid |
+| mudroom_roof | ghost | solid | solid | **ghost** | solid | solid |
+| living_roof | ghost (inert) | solid | solid | solid | solid | solid |
+| west_skirt | ghost | solid | solid | **ghost** | solid | solid |
+| yard | hide | **hide** | **hide** | **hide** | **hide** | solid |
+
+Non-solid summary per view (the shape every task's own LEGACY table used): exterior `[]` (sealed house, spec section 6: every piece SOLID); kitchen `[south_wall, east_wall, roof_south, yard]`; living `[south_wall, roof_south, yard]`; mudroom `[west_wall, mudroom_roof, west_skirt, yard]`; garage `[garage_shell, garage_door, yard]`. living/kitchen's asymmetry on east_wall (kitchen ghosts it, living doesn't — `LIV_POS.x 5.2 < 6.645`) is the proof the normal does real directional work, not just a same-room blanket ghost.
+
+**Budget: before/after per view, vs ceiling (quality-pass closing-gate baseline +10%):**
+
+| view | baseline (pre-arc) | ceiling | T1-T3 (bit-identical) | T4 original (69bcd43) | T4 fix round 1 (5b37552, HEAD) | this wrap's closing gate (live, 2026-09-11) |
+|---|---|---|---|---|---|---|
+| exterior | 1231 | 1354 | 1231 | 1262 | 1264 | **1264** |
+| kitchen | 418 | 459 | 418 | 416 | 417 | **417** |
+| living | 730 | 803 | 730 | 730 | 732 | **732** |
+| mudroom | 382 | 420 | 382 | 389 | 389 | **389** |
+| garage | 539 | 593 | 539 | 539 | 540 | **540** |
+
+`python tools/house_probe.py --views all --budget --quality high --day`, re-run for this wrap: every view's `inFrustum` reproduced the fix round's own recorded final number exactly — zero discrepancy, so the closing-gate column and the fix round's own column are identical (the constraint about disagreement-beyond-noise doesn't apply here). All five sit comfortably under ceiling. The T4-original->fix-round deltas (+0..+2) are `west_skirt`'s own two meshes leaving `extG`'s shared merge bucket for their own too-small-to-merge group (T4 report's own explanation, reproduced in Deviations); the door reposition in the same round contributed zero mesh-count change (same meshes, moved, not added).
+
+**buildMs trajectory** (quality=high, `--budget --day`, exterior unless noted; ceiling 1500ms throughout):
+
+T1 post-implementation 1227ms (control 1304ms — wall-clock jitter only, byte-identical content) -> T2-final / T3-pre-baseline 1256ms (single sample) -> T3 post-edges 1250/1289/1346ms (+1356ms on a `--views all` run) — the ~50-100ms delta over the T2 baseline is the added `EdgesGeometry` cost for that stage's 114 contributing merged-out survivor meshes -> T4 original 1216/1229/1333ms -> T4 fix round 1201/1281/1297ms -> this wrap's closing-gate re-run: **1262ms** (single boot, all 5 views share it). No lazy-edge fallback was ever needed.
+
+**Ghost-edge mechanics:** `GHOST_MAT` — one shared `THREE.LineBasicMaterial`, `color: 0x2d2018`, `transparent: true, opacity: 0.55` (`static/house.js:926-927`, grep-confirmed at HEAD). Built once, post-`mergeStatic`, from world-matrix-transformed (not naive property-copied — see Deviations) `EdgesGeometry` vertices, combined into exactly ONE `BufferGeometry`/`LineSegments` per fabric piece (not one per surviving merged-out mesh — also Deviations). Count: **10** real `LineSegments` objects for the 12 registered pieces — derived arithmetically (12 total minus 1 hide-mode piece that hides rather than ghosts [`yard`] minus 1 empty/degenerate piece with nothing to build edges from [`living_roof`] = 10), following T3's own verified method exactly (its measured, instrumented count of 3 at the 5-piece stage matched this identical arithmetic: 5-1-1=3). Not independently re-measured in-browser for T4's six additions or the fix round's `west_skirt` in this wrap — that would need new instrumentation, out of scope for a docs-only task; flagged rather than asserted as freshly measured. Every ghost `LineSegments` carries `ls.raycast = function () {}` (T3 finding — the vendored `Raycaster.intersectObject` never checks `.visible`, so an untagged edge-line hit could otherwise have landed ahead of a real tagged mesh and silently swallowed a tap meant for the room behind it).
+
+**Deleted legacy, and what replaced it:** the four hand `hide:` arrays in the `ROOMS` registry (`kitchen: ['yard']`, `garage: ['garage_door','yard']`, `mudroom: ['mudroom_roof','west_wall','yard']`, `living: ['living_roof','yard']` pre-arc — T2's controller ruling dropped `living_roof` from the living row before the arrays were even deleted, since hiding an empty group was already a no-op) and the show-all-then-hide dance in `enterRoom`/`goExterior` are **DELETED** (T2). Replaced by: the `FABRIC` registry (`regFabric`/`fabBox`) feeding `NO_MERGE`/`EXT_NO_MERGE` automatically; per-room `ROOM_AABB`s derived at build via one `scene.traverse()` with two exclusions (skip any mesh under a registered FABRIC group; skip any mesh above `ROOM_CEILING=6.0`, a tuned-not-derived constant — see Deviations); `solveShell(camPos, subject)`, the half-space-plus-corridor solver, called once per camera SETTLE (`enterRoom`, `goExterior`, `goHome`, `solveLeanIn`) and never per frame; a verdict applied as `f.g.visible` + `f.edges.visible` (ghost pieces) or the equivalent for `mode:'hide'`, plus one `shadowDirty()` per solve. `applyState`'s own face/prop logic is untouched — the solver owns SHELL visibility only, per spec section 4.
+
+**Screenshot directories:** `$LOCALAPPDATA/Temp/house_quality/shell-T4` (11 files — the elevation-sanity gate set: `exterior`, `exterior-south/-north/-east/-west`, `kitchen`, `living`, `mudroom`, `garage`, `lean_fridge`, `lean_radio`; sent to the user per the ledger's screenshot-gate ruling) and `$LOCALAPPDATA/Temp/house_quality/shell-T4/fix1` (9 files — re-shot after the two CRITICAL fixes; the three compass-orbit shots were deliberately not reproduced, no recorded camera params to match and neither finding touched them).
+
+**Deviations and rulings, recorded across the arc:**
+
+1. **Degenerate-box ruling** (controller, pre-T2): an empty/degenerate FABRIC box (`living_roof`, zero meshes) must never NaN the solver. `boxOk(b)` guards non-finite bounds and any `min > max` axis, forcing SOLID (inert) rather than risking an Infinity-driven verdict; the LEGACY test table's living row dropped `living_roof` (effective-behavior equality, not array-name equality). Still inert at HEAD.
+2. **T3 shipped three fixes to the brief's own literal code, none of them briefed:** (a) world-matrix decompose replaces a naive `position`/`rotation`/`scale` property copy — a real bug for one live case (`calG`, the wall calendar: a real translate plus a 90-degree yaw two levels under `westWallG`; a bare copy would have drawn its edges in the wrong place, facing the wrong way). (b) ONE combined `LineSegments` per fabric piece, not one per surviving merged-out mesh — the brief's literal code would have cost up to 100 draws for `west_wall` alone (100 measured survivors), against section 7's "at most one draw per ghosted piece." (c) `ls.raycast` made a permanent no-op — unbriefed, found by reading the vendored `Raycaster` source rather than trusting section 5's "no special casing" claim.
+3. **Mid-arc user redirect** (before T4's implementation proper): the street face had no front door that read as one (the real "front door" was decorative, on the west wall) and no coherent roofline. User picked an offset door under a covered gabled porch, an aligned-head window rhythm, and a roofline-coherence law (one pitch family, gable-end infill closing the wedge). Spec section 6 rewritten and committed docs-only (v2.493.1) before T4 built anything against it.
+4. **T4 fix round 1 — two CRITICAL findings, both fixed:** (a) the front door leaf sat at dead centre of the wall's own thickness (`DOOR_Z4 = SWZ0 + WALL_T4/2`), entombed between the opaque interior-plaster and exterior-siding halves and invisible from every exterior camera — fixed by reanchoring to `SWZ1 + 0.02`, reusing the exact epsilon the window casing already proved out. (b) an unregistered west-siding extension sat squarely in the mudroom camera's sightline, turning `mudroom.png` into a plank-texture closeup — fixed by registering it as its own new piece (`west_skirt`) rather than folding it into `south_wall` (folding would have shifted `south_wall`'s own registered box centre enough to flip its already-verified, already-tested mudroom verdict from solid to ghost as a side effect).
+5. **`garage_door`'s z-clamp deleted** (T4): Task 2's hand `z0=8.5` clamp (needed because the piece's honest box — spanning the whole gable assembly — tied exactly with the garage room's own AABB centre) is gone. Splitting the piece into `garage_shell` (walls+roof) and a narrower `garage_door` (the actual door cluster, z 9.76-10.443) gives the door a real off-centre box with no clamp needed — exactly what the clamp's own comment anticipated ("whoever registers the split should delete it rather than inherit it").
+6. **`west_wall` normal flip** (T2): `[-1,0,0] -> [1,0,0]`. `west_wall` is an interior partition (kitchen<->mudroom), not a true exterior boundary — "outward" has to mean "the side whose room stays solid by default" (kitchen), and every camera including the mudroom's own sits on the same physical side of this wall.
+7. **`west_skirt` normal, independently re-derived** (T4 fix round): the fix dispatch's own suggested `n=[-1,0,0]` ("true outward," matching genuine exterior siding) was checked and rejected by the implementer — that sign verdicts the piece SOLID in the mudroom, the one view the whole fix exists to clear. `[1,0,0]` earns the same flip `west_wall` did, for the identical reason. The re-reviewer independently re-derived the sign rather than trusting the rejection, and confirmed it.
+8. **Pre-existing glazing night-glow bug found, NOT fixed here** (T4, ruled out of this arc's scope): 6 garage glazing meshes merge past `mergeStatic`'s 4-item floor with no `transparent:true`/`NO_MERGE` guard; the merged survivor drops `userData.glazing`, so those lights stop glowing after dark. Live since the batching arc, unrelated to shell/occlusion. Classified pre-existing-real by review; ledgered as a new finding needing its own dedicated fix task (Open follow-ups, below).
+
+**Other deferred minors, non-blocking** (full detail in progress.md): T1 — the fence loop grants `westWallG` inert `EXT_NO_MERGE`/`NO_MERGE` membership (comment-durability note only, provably inert today); `TOP`'s hand list is now partially redundant post-feed. T2 — `solveShell`'s `if(webgl)` guard is unreachable-redundant; no graceful guard yet for a future room with no tagged floor mesh (`boxCentre(undefined)` would throw). T3 — the <=1-in-frustum-per-ghost check was a one-off script, never pinned as a real test; `bakeAO`'s own now-redundant `updateMatrixWorld` call was left untouched. T4 — a corridor comment overstates "fully inside on every axis" (overlap, not containment, on y; verdict unaffected); the door knob sits flush with the leaf face rather than proud (inherited from the legacy west-door idiom); skipping the compass re-shots in the fix round was ruled justified (no recorded camera params to reproduce, and the exterior verdicts SOLID regardless of angle).
+
+**Open follow-ups (none of them this arc's to fix):**
+
+- **Glazing night-glow task**: the pre-existing merge bug above needs a dedicated fix — exclude `userData.glazing` from `mergeStatic` eligibility (matching the lamp treatment) or copy the flag onto the merged survivor. Not device-verified either way; nobody has seen the garage glow at night since the batching arc.
+- **AO-occluder-from-registry unification — an arc-4 prerequisite.** `AO_OCCLUDERS` is still a hand-maintained list: T4 added `south_wall`/`east_wall` rows by hand (citing their own constants) and deliberately skipped `roof_south` (sloped, no honest axis-aligned box to cite without guessing). A future task should generate AO occluders FROM the `FABRIC` registry the same way `NO_MERGE`/`EXT_NO_MERGE` already are fed — arc 4's parametric wall generator has no hand-authored call site to add a fresh AO row at, so this needs solving before generated walls can occlude correctly.
+- **Dark yard prop**: a small dark rectangular prop stands alone in the yard between the great room and the mudroom. Confirmed pre-existing (byte-identical in the base commit, not introduced or moved by this arc) but unexplained and not investigated. Flagged as a possible unintentional leftover from an earlier arc.
