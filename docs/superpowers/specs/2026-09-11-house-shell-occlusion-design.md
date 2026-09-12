@@ -53,6 +53,20 @@ The street face must read as an ACTUAL HOUSE from the curb: a front elevation th
 
 **Roofline coherence law:** one pitch family across the whole silhouette. Exterior walls rise to the roof — gable ends get infill panels closing the wedge between interior wall height (5.6) and the eave/ridge line (~7.0); no daylight wedges under any slope (finding inherited from the first T4 attempt). Main roof both slopes complete over the great room; porch gable and garage gable share the pitch family; mudroom and living roof boxes are RE-CHECKED against the street read — if they float or fight the main roof from the compass shots, adjust pitch/eave to the family (composition change authorized in this task, and only this task).
 
+**6b. The modern farmhouse conversion (user-ratified 2026-09-11, reference image supplied at the T4 gate)**
+
+The user's bar is a modern farmhouse, and the whole exterior converts — every face, one language:
+
+- **Body:** board-and-batten WHITE — a new vertical-batten canvas painter (battenT) replaces clapboard on ALL exterior faces; the R5 height-to-normal derivation runs on the new canvas so the battens read in relief at PBR tier.
+- **Contrast scheme:** dark charcoal shingle roof (existing shingle painter, tone constant swap); BLACK window frames and grilles; warm WOOD accents — front door, garage doors, porch posts; minimal white trim; masonry-tone stoop.
+- **Windows:** street-face windows ENLARGE (near-floor sills where the interior allows), gridded, black-framed; other faces' windows recolor to the black-frame language at their current sizes.
+- **Garage doors:** carriage-style wood — panel field, strap hardware, one top-light row of small panes — on the existing openable garageDoorG (the dollhouse trick untouched).
+- **Massing:** the saltbox street read is REPLACED by gable-forward massing — a street-facing entry gable over the porch/living mass; the pitch family steepens to atan2(2.05, 2.95) (~35 deg) via the shared formula so garage gable, entry gable, porch gable, and main roof move together; gable-end infill and no-daylight-wedge laws hold; eave/fascia lines stay consistent.
+- **Palette as constants:** the whole scheme lands as one named table (FARMHOUSE = {body, roofTone, frame, wood, trim, stoop}) — arc 4 lifts this table to its style enums; nothing hand-scattered.
+- Planting/yard untouched; interiors untouched except the enlarged street-window openings in the south wall's interior face (decorative panes, no new zones).
+- Registry/solver/edges are deliberately untouched — restyled and reshaped fabric re-registers through the same build sites; this conversion is the arc's own zero-visibility-authoring claim exercised for real.
+- All gates re-run: verdict table (massing moves boxes/normals), AO, budget per view vs the same ceilings, buildMs <=1500, sweep; the compass + street set goes to the user as the closing screenshot gate.
+
 **Elevation sanity gate:** the compass exterior shots must read as one coherent house — door anchors the elevation, windows rhythmic, rooflines resolve into each other. The exterior composition changes: THIS TASK'S SCREENSHOT GATE GOES TO THE USER before the arc proceeds past it.
 
 ## 7. Guards

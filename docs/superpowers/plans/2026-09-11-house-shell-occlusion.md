@@ -245,6 +245,26 @@ Verify against the current sets: the loop must reproduce exactly the shell membe
 
 ---
 
+### Task 6: The modern farmhouse conversion (addendum, spec section 6b)
+
+**Files:**
+- Modify: `chauffeur/static/house.js` (exterior canvas painters, palette constants, window builders, garage door, roof massing, pitch-family constant)
+- Test: `chauffeur/tests/test_house_live.py` (verdict table re-derivation for moved boxes/normals; street pixel checks re-derived)
+
+**Interfaces:**
+- Consumes: everything Tasks 1-4 built (registry/solver/edges untouched by design); the shared pitch formula (both gables compute Math.atan2(1.5, 2.95) today); shingleT/sidingT painters + the R5 normal-map derivation; the window/pane idiom; garageDoorG's openable trick; FABRIC registrations at build sites.
+- Produces: `battenT` vertical-batten canvas painter; `FARMHOUSE = {body, roofTone, frame, wood, trim, stoop}` palette table (arc-4 enum-ready); pitch family at `Math.atan2(2.05, 2.95)` via the shared formula; entry-gable massing replacing the saltbox; enlarged black-framed street windows; carriage garage doors.
+
+- [ ] **Step 1:** Verdict-table RED first: the massing change moves roof_south/roof_north boxes + normals and may add an entry-gable piece — update expected sets with hand derivations; run to see the current table fail against the new expectations only after the build (table stays green until geometry moves; the RED proof is the re-derived expectations against post-build reality, per T4's precedent).
+- [ ] **Step 2:** battenT painter + FARMHOUSE table; swap every exterior face's siding material to the batten-mapped shared material (cache-key carries the new map uuid); normal map derived per R5 idiom; roof tone constant; black frames; wood accents (door/garage/posts) via the existing wood family.
+- [ ] **Step 3:** Massing: replace the saltbox south slope with gable-forward massing (entry gable over porch/living mass); steepen the family constant; re-verify gable infill (no daylight wedges) from a compass orbit; garage/porch/entry gables one family by the shared formula.
+- [ ] **Step 4:** Street windows enlarge (near-floor sills), gridded, black-framed; interior south face openings follow; other faces recolor frames only.
+- [ ] **Step 5:** Garage doors: carriage panel field + strap hardware + top-light row on garageDoorG; openable trick untouched.
+- [ ] **Step 6:** Verify: verdict table green (all views, updated derivations); tap tests green; budget per view vs the SAME ceilings (exterior 1354 / kitchen 459 / living 803 / mudroom 420 / garage 593), before/after recorded; buildMs x3 <=1500; leak scenarios green; zero-behavior-change for interiors (rooms probe crops); full sweep. Screenshot set: street + 4 compass + five rooms -> $LOCALAPPDATA/Temp/house_quality/shell-T6; controller sends the set to the user as the closing gate.
+- [ ] **Step 7:** Spec section 9 addendum (one block: what the conversion changed, new numbers) + capabilities Home line refresh. Commit v2.495.0 `'The house learns the farmhouse language (v2.495.0)'`, push.
+
+---
+
 ### Task 5: Wrap-up
 
 **Files:**
