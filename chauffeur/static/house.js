@@ -4025,8 +4025,38 @@
        casing and panels) for this wall's x/z, with the panels on the
        STREET-facing (+z) side rather than the room-facing side the west
        door's own panels use — that door is read from the living room;
-       this one is read from the curb. */
-    var DOOR_Z4 = SWZ0 + WALL_T4 / 2;
+       this one is read from the curb.
+
+       FIX (round 1, CRITICAL 1): DOOR_Z4 used to be SWZ0 + WALL_T4/2 —
+       dead centre of the wall's own thickness. The wall has no actual
+       opening cut into it (this file has no CSG); the interior plaster
+       half fills [SWZ0, SWZ0+WALL_T4/2] and the exterior siding half
+       fills [SWZ0+WALL_T4/2, SWZ1] — contiguous and opaque all the way
+       across WALL_T4. A leaf centred at the seam between those two
+       halves is entombed inside solid wall mass on both sides; the
+       siding half's own OUTER face at SWZ1 permanently occludes it from
+       every exterior camera, and the plaster half's own INNER face does
+       the same from the room side. No camera angle could ever see it.
+       The windows (swWindow, above) never had this bug because they are
+       built proud of SWZ1 from the start (casing/jambs/sill at
+       SWZ1+0.02..+0.05, glazing at SWZ1+0.03) — the door needs the same
+       treatment: anchor DOOR_Z4 itself proud of the EXTERIOR face,
+       reusing the exact epsilon (+0.02) the window casing already
+       proved out, rather than inventing a second one. Casing (:4037-
+       4042), panels (:4044-4051) and the knob (:4053-4056) below are
+       UNCHANGED by this fix — they already stack outward (+z, further
+       from the leaf, toward the street) from DOOR_Z4 exactly like the
+       legacy west-door idiom (house.js ~:2111-2122) stacks outward from
+       WX, so moving this one shared anchor clears the whole assembly at
+       once. The leaf's own back half still embeds slightly into the
+       siding (half-thickness 0.07 > epsilon 0.02, same as the window
+       casing's own 0.16-deep board embedding 0.06 into the wall at the
+       same epsilon) — invisible, harmless, matching the window idiom
+       exactly rather than a stricter zero-embed rule nothing else here
+       follows. The porch (posts/stoop/step/roof, below) is unaffected:
+       every one of its own constants is anchored off SWZ1 or DOOR_X4
+       directly, never off DOOR_Z4. */
+    var DOOR_Z4 = SWZ1 + 0.02;
     var fdoor4 = new T.Mesh(
       NICE ? chamferGeo(0.14, 3.2, 1.4, 0.04) : new T.BoxGeometry(0.14, 3.2, 1.4),
       PBR ? new T.MeshStandardMaterial({ map: woodDoor, roughness: 0.65 })
@@ -4301,14 +4331,100 @@
        small corner board (matching the existing NE corner-board idiom a
        hundred-odd lines above) bridges the remaining sliver out to
        south_wall's own west edge, exactly the way that corner already
-       closes the ORIGINAL siding's own north-east corner. Neither piece
-       is registered FABRIC (matching the ORIGINAL, still-unregistered
-       west/north facade siding this extends — cladding, not a shell
-       boundary any camera needs to see through: no room's own camera
-       approaches from due west or due south-west of the great room). */
-    ebox(0.3, EXT_TOP4, SWZ1 - 6.0, NICE ? 0xffffff : EXTC.siding,
-         -7.0, EXT_TOP4 / 2, (6.0 + SWZ1) / 2, { rough: 0.95, map: sidingT });
-    ebox(0.35, EXT_TOP4, 0.1, EXTC.trim, -6.675, EXT_TOP4 / 2, SWZ1);
+       closes the ORIGINAL siding's own north-east corner.
+
+       FIX (round 1, CRITICAL 2): this pair used to be two bare ebox()
+       calls — deliberately unregistered, matching the ORIGINAL,
+       still-unregistered west/north facade siding they extend. That
+       reasoning held for the ORIGINAL run (nothing ever looks at it from
+       due west). It does not hold HERE: this extension's own box
+       (x~[-7.15,-6.5], z[6.0,14.6], y[0,7]) sits square in MUD_POS ->
+       MUD_AT's own sightline (crossing x=-7.0 at y=4.175,z=8.05, well
+       inside the box), and solveShell can only ever ghost REGISTERED
+       fabric — an unregistered piece is either always drawn or never
+       drawn, with no camera-aware verdict at all. Left unregistered, it
+       permanently blocks the mudroom camera, turning mudroom.png into a
+       closeup of plank siding instead of the room.
+
+       ebox() cannot be reused here — it hardcodes extG as the parent of
+       every mesh it builds (see ebox's own definition, above; the
+       garage split hit the exact same wrinkle), and fabBox() needs a
+       group that holds ONLY these two meshes, not extG's whole loose
+       facade. So this is now a dedicated group, built the same way
+       south_wall/east_wall/garage_shell are: box() directly (bypassing
+       ebox()), passing the SAME sharp(opts) wrapping ebox() itself would
+       have applied (K1: ebox defaults every call to ch:0 unless opts.ch
+       is already set, which neither of these ever did), into a new
+       westSkirtG that is otherwise a pure reparent — no transform is set
+       on the group, so both meshes keep the exact absolute x/y/z they
+       had as bare extG children. Same siding material, same mat() cache
+       key (color + {rough,map:sidingT}) as before — inZoneGroup(g0)
+       (the only thing that could split the cache) only checks for a
+       userData.zone ancestor, and westSkirtG carries no .zone, so this
+       is still the same shared, already-batched siding material every
+       other facade run resolves to.
+
+       n = [1,0,0], NOT the naive "true outward" [-1,0,0] the finding
+       first suggested by analogy to south_wall/east_wall/north_wall
+       (real exterior boundaries with nothing but yard beyond them, so
+       THEIR true compass normal already IS the solver's "outward").
+       Checked by the same dot-product law those pieces use and REJECTED
+       for this one: with n=[-1,0,0], p=(-6.825,3.5,10.3) (fabBox-
+       measured centre), camOut = (cam.x < -6.825) is FALSE for MUD_POS
+       (x -3.4) — the mudroom view would verdict this piece SOLID,
+       failing the one behaviour this registration exists to produce.
+       The reason: unlike south_wall/east_wall, EVERY camera in this
+       dollhouse (including MUD_POS, the mudroom's own) is staged on the
+       kitchen/living side of the house — none is ever actually outdoors
+       to the west — while the mudroom ROOM's own AABB sits further west
+       STILL, past this skirt. That is exactly west_wall's own T2 shape
+       (a camera and its subject straddling the piece from the SAME
+       physical side an honest compass would call "the wrong one"), so
+       this piece needs west_wall's own flip, n=[1,0,0], for the same
+       reason, even though it is genuine ext siding and west_wall is an
+       interior partition. Re-derived, not copied on faith:
+         camOut = cam.x > -6.825; subIn = sub.x < -6.825.
+         kitchen (HOME_POS.x 14.6): camOut true; kitchen aabb x -2.785,
+           subIn false (-2.785 is NOT < -6.825). SOLID.
+         living (LIV_POS.x 5.2): camOut true; living aabb x 0, subIn
+           false. SOLID.
+         mudroom (MUD_POS.x -3.4): camOut true; mudroom aabb x -9.62,
+           subIn true (-9.62 < -6.825). Both true -> corridorHits(box,
+           MUD_POS, mudroomAabbCentre, 1.5): lo=(-11.12,0.6,3.885),
+           hi=(-1.9,7.7,12.7); box=[-7.15,-6.5,0,7,6.0,14.6] sits fully
+           inside on every axis. GHOST.
+         garage (GARAGE_POS.x -14.05): camOut false (-14.05 is NOT >
+           -6.825). SOLID.
+         exterior: subject is null -> solid unconditionally (the sealed-
+           house case every other piece already relies on). SOLID.
+       Matches the fix's own required set exactly: kitchen/exterior stay
+       SOLID, mudroom GHOSTs.
+
+       Registered here, at build time — this call executes while
+       buildRoom() is still running, hundreds of lines before the
+       mergeStatic passes and the FABRIC.forEach fence-feed
+       (`EXT_NO_MERGE.add(f.g); NO_MERGE.add(f.g)`) that read FABRIC
+       far below (house.js, the batching section). Landing the
+       regFabric() call HERE, before that feed ever runs, is what lets
+       it add westSkirtG to EXT_NO_MERGE/NO_MERGE in time to fence it
+       out of extG's own self-merge pass and the final scene-level pass
+       — the same ordering every other Task 3/4 fabric group already
+       depends on. westSkirtG also joins the dedicated per-group
+       mergeStatic pass list a few hundred lines below (alongside
+       south_wall/east_wall/garage_shell) for the same "structural, not
+       incidental" reason those three did: today it only holds 2 meshes
+       of 2 different materials (under mergeStatic's 4-item floor
+       either way, so this is a no-op today), but the next thing hung on
+       this group should not have to rediscover that omission. */
+    var westSkirtG = new T.Group();
+    extG.add(westSkirtG);
+    box(0.3, EXT_TOP4, SWZ1 - 6.0, NICE ? 0xffffff : EXTC.siding,
+        -7.0, EXT_TOP4 / 2, (6.0 + SWZ1) / 2, westSkirtG,
+        sharp({ rough: 0.95, map: sidingT }));
+    box(0.35, EXT_TOP4, 0.1, EXTC.trim, -6.675, EXT_TOP4 / 2, SWZ1,
+        westSkirtG, sharp());
+    regFabric(westSkirtG, { name: 'west_skirt', n: [1, 0, 0],
+                            box: fabBox(westSkirtG) });
     /* ================= END SHELL: the seal ============================ */
 
     /* garage: opened in H2, moved WEST in the architect pass so the
@@ -7305,9 +7421,15 @@
        spec section 7) rather than relying on the generalized FABRIC-fed
        fence a few lines below to do double duty as a merge pass, which
        it was never built to do (that fence only stops OTHER passes from
-       reaching IN; it does not merge anything itself). */
+       reaching IN; it does not merge anything itself).
+
+       SHELL (Task 4, fix round 1): westSkirtG joins the same list, same
+       reasoning — it is now a registered FABRIC group too (west_skirt,
+       CRITICAL 2's fix, above). A no-op today (2 meshes, 2 different
+       materials, under the 4-item floor either way), kept structural
+       rather than incidental like its siblings just above. */
     [westWallG, garageDoorG, mudroomRoofG, yardG, southWallG, eastWallG,
-     garageShellG].forEach(function (g) {
+     garageShellG, westSkirtG].forEach(function (g) {
       mergeStatic(g, NO_MERGE);
     });
     var EXT_NO_MERGE = new Set(NO_MERGE);

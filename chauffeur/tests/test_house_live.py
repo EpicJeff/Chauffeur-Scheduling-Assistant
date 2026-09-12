@@ -893,11 +893,18 @@ def scenario_shell_fabric_registry():
     with a new east wall, and registers the two pieces that already
     existed as bare meshes (north_wall == wallB, roof_north == the
     architect pass's own back slope) plus the garage's own walls+roof
-    split out of garage_door into garage_shell. This scenario still pins
-    the registry's SHAPE (now ELEVEN pieces, yard the one authored
-    mode:'hide' piece, everything solid at the sealed exterior boot),
-    then adds the verdict-equal proof: table-driven, view -> expected
-    non-solid set.
+    split out of garage_door into garage_shell. Fix round 1 (same task,
+    reviewer-found) adds a TWELFTH piece, west_skirt: the west siding
+    extension that closes the living room's own west wall under
+    roof_south's new gable-end infill (house.js, "west siding, extended")
+    shipped as two bare, unregistered ebox() meshes that sat squarely in
+    the mudroom camera's own sightline — solveShell can only ever ghost
+    REGISTERED fabric, so an unregistered piece in a camera's direct line
+    of sight is always drawn, permanently blocking the room behind it.
+    This scenario still pins the registry's SHAPE (now TWELVE pieces,
+    yard the one authored mode:'hide' piece, everything solid at the
+    sealed exterior boot), then adds the verdict-equal proof: table-
+    driven, view -> expected non-solid set.
 
     The five LEGACY rows below (kitchen/garage/mudroom/living's own
     'yard'/'garage_door'/'mudroom_roof'/'west_wall' membership) are
@@ -940,6 +947,36 @@ def scenario_shell_fabric_registry():
     regression; living (0, 0.994, 9.6624); mudroom (-9.62, ~2.1, 5.385);
     garage (-15.4, 2.33, 5.9875) -- all four x/z match west_wall's own T2
     citations to rounding.
+
+    Fix round 1's own new row, west_skirt (n [1,0,0], box centre measured
+    (-6.825, 3.5, 10.3) -- exact, from the literal constants at its build
+    site (SWZ1 = 14.55, EXT_TOP4 = 7.0), not an approximation):
+      n is [1,0,0], NOT the naive "true outward" [-1,0,0] a piece with
+      nothing but yard past it would normally get (south_wall/east_wall/
+      north_wall's own convention) -- checked against that guess and
+      REJECTED, because every camera in this dollhouse, including the
+      mudroom's own (MUD_POS), is staged on the kitchen/living side of
+      the house and never actually outdoors to the west, while the
+      mudroom ROOM's own aabb sits further west still. That is
+      west_wall's own T2 shape (camera and subject straddling the piece
+      from the same physical side an honest compass would call "wrong"),
+      so it earns west_wall's own flip, re-derived independently:
+        kitchen: HOME_POS.x 14.6 > -6.825 -> camOut; kitchen aabb x
+          -2.785 is NOT < -6.825 -> subIn fails. SOLID.
+        living: LIV_POS.x 5.2 > -6.825 -> camOut; living aabb x 0 is NOT
+          < -6.825 -> subIn fails. SOLID.
+        mudroom: MUD_POS.x -3.4 > -6.825 -> camOut; mudroom aabb x -9.62
+          < -6.825 -> subIn. Both true; corridor (pad 1.5) lo=(-11.12,
+          0.6,3.885) hi=(-1.9,7.7,12.7) fully contains the piece's own
+          box [-7.15,-6.5,0,7,6.0,14.6] on every axis. GHOST.
+        garage: GARAGE_POS.x -14.05 is NOT > -6.825 -> camOut fails.
+          SOLID.
+        exterior: subject null -> solid unconditionally (the sealed-
+          house case). SOLID.
+      Matches the fix's own required set exactly (kitchen/exterior
+      SOLID, mudroom GHOST); living/garage follow the same shape as
+      kitchen/garage respectively above and were not independently
+      required but are asserted below anyway, same as every other row.
     """
     served = live_app()
     if served is None:
@@ -969,10 +1006,11 @@ def scenario_shell_fabric_registry():
         check(names == ['east_wall', 'garage_door', 'garage_shell',
                         'living_roof', 'mudroom_roof', 'north_wall',
                         'roof_north', 'roof_south', 'south_wall',
-                        'west_wall', 'yard'],
-              'registry must hold exactly the eleven pieces (five legacy '
+                        'west_skirt', 'west_wall', 'yard'],
+              'registry must hold exactly the twelve pieces (five legacy '
               "+ Task 4's south_wall/east_wall/north_wall/roof_south/"
-              'roof_north/garage_shell): %r' % names)
+              "roof_north/garage_shell + fix round 1's west_skirt): %r"
+              % names)
         yard = [f for f in fab if f['name'] == 'yard'][0]
         check(yard['mode'] == 'hide', 'yard is the one authored hide piece')
         check(all(f['visible'] for f in fab),
@@ -1052,11 +1090,18 @@ def scenario_shell_fabric_registry():
         #   z 5.9875 < 10.1014 -> subIn. GHOST for garage, same as before
         #   the split. SOLID elsewhere via the same x-corridor argument
         #   garage_shell's own SOLID rows use.
+        # west_skirt (fix round 1, n [1,0,0], box centre (-6.825, 3.5,
+        #   10.3) -- full derivation in this function's own docstring,
+        #   above): GHOSTs for mudroom only (MUD_POS.x -3.4 > -6.825 ->
+        #   camOut; mudroom aabb x -9.62 < -6.825 -> subIn; corridor
+        #   contains the box). SOLID for kitchen/living (subIn fails --
+        #   neither aabb centre is west of -6.825) and garage (camOut
+        #   fails -- GARAGE_POS.x -14.05 is not east of -6.825).
         LEGACY = {
             'exterior': [],
             'kitchen':  ['east_wall', 'roof_south', 'south_wall', 'yard'],
             'garage':   ['garage_door', 'garage_shell', 'yard'],
-            'mudroom':  ['mudroom_roof', 'west_wall', 'yard'],
+            'mudroom':  ['mudroom_roof', 'west_skirt', 'west_wall', 'yard'],
             'living':   ['roof_south', 'south_wall', 'yard'],
         }
         for view, expected in LEGACY.items():
