@@ -265,6 +265,38 @@ Verify against the current sets: the loop must reproduce exactly the shell membe
 
 ---
 
+### Task 7: The navigation law (spec section 5 REVISED)
+
+**Files:**
+- Modify: `chauffeur/static/house.js` (regFabric room field + registration stamps; onTap interior/exterior branches; ZONE_ROOM consumers)
+- Test: `chauffeur/tests/test_house_live.py` (new REAL-MOUSE navigation scenario)
+
+**Interfaces:**
+- Consumes: FABRIC/regFabric (T1), solveShell + settle sites (T2), stamps idiom, zoneAt/zoneRoom/onTap (~:8060 area), roomsReg.
+- Produces: `regFabric` opts gain `room: '<name>'` (stamped onto the group at registration); onTap per spec section 5's five interior rules + shell-stamped exterior entry; scenario `scenario_navigation_real_mouse`.
+
+- [ ] **Step 1:** RED first: the real-mouse scenario (exterior tap on mudroom-roof region -> mode mudroom; kitchen radio tap -> mode living; kitchen fridge/board tap -> lean; island tap -> mode stays kitchen; sky tap -> exterior). Screen points derived from projected piece/zone boxes at runtime (evaluate a projector using the exported hooks), never hard-coded pixels.
+- [ ] **Step 2:** regFabric room field; registrations updated (south_wall/roofs-over-great-room -> kitchen, mudroom_roof -> mudroom, living_roof + east_wall -> living, garage_shell + garage_door -> garage, west_wall/west_skirt by adjacency); stamp at registration.
+- [ ] **Step 3:** onTap rewrite per section 5 rules 1-5; delete the cross-room null; own-room zoneless props inert; sky/yard exits; kitchen two-step stays.
+- [ ] **Step 4:** Verify: scenario GREEN; verdict table + budget + buildMs UNCHANGED (no geometry moved — bit-identical control run); leak scenarios green; full sweep. Commit v2.496.0 `'The house learns to be walked (v2.496.0)'`, push.
+
+---
+
+### Task 8: The back elevation (spec section 6c)
+
+**Files:**
+- Modify: `chauffeur/static/house.js` (the protruding gable-end window's placement; the patio-abutting wall gains a slider)
+- Test: extend the navigation scenario (patio-side exterior tap enters the room behind the slider)
+
+**Interfaces:**
+- Consumes: FARMHOUSE palette + pane idiom (T6), regFabric room stamps (T7), fabric groups for the affected walls.
+
+- [ ] **Step 1:** Locate the protruding window (gable-end wall, casing past the corner trim — user screenshot in ledger); re-seat INBOARD so casing clears the corner trim fully; nothing else moves; before/after crops.
+- [ ] **Step 2:** Sliding patio door in the wall the patio abuts: two wood/black-frame panes (farmhouse language), decorative, no new zone, stamped with its room (T7 field); part of that wall's fabric group; transparent panes unmerged inside the group.
+- [ ] **Step 3:** Verify: navigation scenario extended (patio-side tap -> that room) GREEN; verdict table re-derived only if the wall's box changed; budget/buildMs within ceilings; back-elevation shots day + night (--day off run for the night shot) -> $LOCALAPPDATA/Temp/house_quality/shell-T8; full sweep. Commit v2.497.0 `'The patio earns its door (v2.497.0)'`, push.
+
+---
+
 ### Task 5: Wrap-up
 
 **Files:**

@@ -37,9 +37,14 @@ solveShell(subject) runs on camera SETTLE only — enterRoom, goExterior, frameZ
 - Applying a verdict: fills .visible, ghost lines .visible, then webgl.shadowDirty() once per solve (visibility changes what the depth pass draws — the existing applyState law). applyState's own face/prop logic is untouched; the solver owns SHELL visibility only.
 - The four hide: arrays, the show-all loops in enterRoom/goExterior, and their per-room knowledge are DELETED. ROOMS keeps camera homes plus the new room AABBs.
 
-## 5. Tap law (unchanged, one addition)
+## 5. The navigation law — REVISED 2026-09-11 (user bug report: sealed house became unwalkable)
 
-Tap routing stays stamped-tag-only. The new south wall stamps room:kitchen (it fronts the great room) so the exterior tap-to-enter flow survives the closed front. A GHOSTED piece must NOT capture taps aimed at the room behind it: ghost lines carry no tags, and hidden fills are unhittable by construction — no special casing. Bus/curb stays inert; zone taps unchanged.
+Tap routing stays stamped-tag-only, but the seal changed what stamps must exist and what a tap means. Pre-seal, rooms were entered by tapping their interiors through the open front, and a mis-tap's ejection was cheap because the open dollhouse showed everything; sealed, the old law left the kitchen as the only reachable room and made every empty tap an ejection into a closed box (reproduced with real mouse clicks; hit-chain evidence in the arc ledger).
+
+- **Every shell piece stamps its fronting room** (regFabric gains a room field; registration stamps the group): south_wall/roof pieces over the great room -> kitchen, mudroom_roof -> mudroom, living_roof + east_wall -> living, garage_shell + garage_door -> garage, west_skirt/west_wall by adjacency. From the street you tap the part of the house where the room is — the pre-seal mental model, restored on the sealed shell.
+- **Interior taps navigate, never strand:** (1) a zone in the current room leans in (unchanged); (2) a zone belonging to ANOTHER room ENTERS that room (replaces the old cross-room null-and-eject); (3) another room's room-tagged fabric or props enter that room; (4) the current room's own zoneless props are INERT — no more ejection on an island mis-tap; (5) sky or yard exits (goExterior), and the kitchen's two-step walk-out (goHome from a lean) stays.
+- Ghost lines stay raycast-immune; ghosted fills stay tag-transparent for zone resolution (the hit-walk skips them — proven, not assumed).
+- **Tests are real-mouse:** page.mouse.click paths pin exterior->each room via shell taps, kitchen->living via the radio, a kitchen zone lean-in, an island mis-tap staying put, and a sky tap exiting. Programmatic chfKitchenFocus coverage stays but no longer stands in for pointer truth.
 
 ## 6. New fabric (the seal + the face) — REVISED 2026-09-11 per user redirect
 
@@ -66,6 +71,11 @@ The user's bar is a modern farmhouse, and the whole exterior converts — every 
 - Planting/yard untouched; interiors untouched except the enlarged street-window openings in the south wall's interior face (decorative panes, no new zones).
 - Registry/solver/edges are deliberately untouched — restyled and reshaped fabric re-registers through the same build sites; this conversion is the arc's own zero-visibility-authoring claim exercised for real.
 - All gates re-run: verdict table (massing moves boxes/normals), AO, budget per view vs the same ceilings, buildMs <=1500, sweep; the compass + street set goes to the user as the closing screenshot gate.
+
+**6c. The back elevation (user gate findings, 2026-09-11)**
+
+- The gable-end window that protrudes past the building corner re-seats INBOARD of its wall run — casing fully inside the corner trim, no other movement.
+- The patio gets its access: a sliding door in the farmhouse language (wood/black-frame slider, two panes) in the wall the patio abuts, decorative like the front door (no new zone), stamped with its room per section 5 — a natural back entry for the navigation law. Patio itself untouched.
 
 **Elevation sanity gate:** the compass exterior shots must read as one coherent house — door anchors the elevation, windows rhythmic, rooflines resolve into each other. The exterior composition changes: THIS TASK'S SCREENSHOT GATE GOES TO THE USER before the arc proceeds past it.
 
