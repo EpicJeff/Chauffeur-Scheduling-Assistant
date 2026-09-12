@@ -3905,22 +3905,43 @@
       m.position.set(-7.0, 0, 0);
       finish(m); extG.add(m);
     })();
-    /* R5: gutters along both eave lines, one downspout per gable end —
+    /* R5: gutter along the back eave line, one downspout per gable end —
        sweepAt runs in EXTC.trim with NO opts, the same bucket key most
        of this fabric's rake boards and ridge caps above already share
        (mat()'s key reads rough/metal/envInt/map/finish/thick, and none
        of those calls pass any of them either), so these fold into that
        bucket instead of opening a new one. Coordinates come off the
        roof's own literals: the back eave is the rake-board comment's
-       own (y=6.9, z=-6.4, four lines up); the front eave sits just
-       past the fascia (y=8.14) and drip edge (y=7.90, z=-0.315) built
-       above. Downspouts run to the two real wall corners (left
-       ~x=-7.15, right ~x=7.86 — the latter is where the corner boards
-       already stand) rather than hanging in open air under the
-       overhang. */
+       own (y=6.9, z=-6.4, four lines up). Downspouts run to the two real
+       wall corners (left ~x=-7.15, right ~x=7.86 — the latter is where
+       the corner boards already stand) rather than hanging in open air
+       under the overhang.
+       T6 fix round 1: the FRONT eave's own gutter (the second sweepAt
+       this block used to carry, y=7.82, z=-0.36 — "past the fascia
+       (y=8.14) and drip edge (y=7.90, z=-0.315)" of the ORIGINAL front
+       roof stub) is REMOVED, not just recolored: Task 4 tore out that
+       whole front stub and its own fascia/drip/rake-boards ("the FRONT
+       stub... is GONE", roof_south's own build comment above) but never
+       removed the gutter riding along its old eave line, so it has sat
+       disconnected from any real roof edge since Task 4 — never plugged
+       into the entry gable + flanks that replaced the stub, and never
+       registered as fabric (loose in extG, so its removal touches no
+       fabBox/verdict math). EXTC.trim was a duller tone before this
+       task's own farmhouse conversion; now it resolves to FARMHOUSE.trim
+       (near-white) and this orphaned rod, floating just past the entry
+       gable's own peak with nothing behind it to explain its silhouette,
+       reads as two bright diagonal streaks wherever the gable's own roof
+       deck doesn't fully occlude it — confirmed the actual (and ONLY)
+       cause by raycasting the exact streak pixels in compass-west.png
+       against the live scene (closest hit past the roof deck landed on
+       an EXTC.trim, no-map surface at this sweep's own coordinates) and
+       by re-rendering with this one call disabled: the streaks vanished
+       completely, byte-confirmed against the un-recolored render, with
+       nothing else in frame changed. No replacement gutter is owed here
+       — flank4() already builds its own fascia/drip trim at the real
+       current front eave (SOUTH_EAVE_Y4/SOUTH_EAVE_Z4), so this call had
+       no live edge left to serve. */
     sweepAt([[-7.85, 6.82, -6.30], [0.3, 6.82, -6.30], [8.45, 6.82, -6.30]],
-            0.045, EXTC.trim, extG);
-    sweepAt([[-7.85, 7.82, -0.36], [0.3, 7.82, -0.36], [8.45, 7.82, -0.36]],
             0.045, EXTC.trim, extG);
     sweepAt([[-7.85, 6.85, -6.30], [-7.20, 4.50, -6.05],
              [-7.15, -0.29, -5.95]], 0.035, EXTC.trim, extG);
@@ -4170,10 +4191,11 @@
     swtag(knob4);
 
     /* the covered gabled porch: two posts + a small gable sharing the
-       garage gable's own pitch angle (Math.atan2(1.5,2.95) — the ratio
-       gSlope resolves to inside the garage's own IIFE below; recomputed
-       here rather than imported because gSlope is scoped inside that
-       closure and does not exist yet at this point in the file).
+       garage gable's own pitch angle (PITCH_FAMILY, Math.atan2(2.05,2.95)
+       — the ratio gSlope resolves to inside the garage's own IIFE below;
+       read here via the shared PITCH_FAMILY constant rather than
+       imported from gSlope directly, because gSlope is scoped inside
+       that closure and does not exist yet at this point in the file).
        PORCH_EAVE4 sits comfortably above the door's own head (1.6+1.6 =
        3.2) and well below the main roofline (6.9 at the eave, 9.2 at the
        ridge) — a small subordinate structure, not competing with the
@@ -4434,6 +4456,50 @@
         bevelEnabled: false }), entryEndMat4);
       m.position.set(0, 0, sign > 0 ? ez - 0.12 : ez);
       finish(m); roofSouthG.add(m);
+    });
+    /* T6 fix round 1: rake boards along the entry gable's own two raked
+       edges — the diagonal roof-slab edges an outside elevation actually
+       sees. eg's own two slope boxes (just above) carry no trim of their
+       own on that edge; the garage and porch gables share the same gap
+       (neither carries rake-board trim either, per this task's own
+       self-review). This is a genuine finish, not the fix for the
+       compass-west.png streaks themselves — those turned out to be an
+       unrelated orphaned gutter (removed above, "R5: gutter along the
+       back eave line"), confirmed by raycasting the exact streak pixels
+       and by re-rendering with that one call disabled. Doing this board
+       too, per the brief's own instruction, closes the one real gap the
+       investigation surfaced along the way. Same board recipe the back
+       roof's own rake boards use near the top of this file (a thin
+       EXTC.trim board rotated to match the slope, offset clear of the
+       shingle plane, sized like a fascia board) — here rotated about Z
+       instead of X, because this gable's ridge runs along Z rather than
+       X (mirrors eg's own rotation.z = -sign * PITCH_FAMILY exactly,
+       same w = ENTRY_SPAN4 rake length and same x/y centre, so the board
+       tracks the slope it trims with no separate trig).
+       Only the SOUTH (street-facing, SOUTH_EAVE_Z4) end gets one — the
+       NORTH end (RIDGE_Z4) butts the great room's own roof volume and is
+       never in frame from any of this file's compass/street cameras, so
+       a matching board there would spend triangles nobody sees.
+       Positioned flush-and-outward against the south gable-end
+       triangle's own OUTER face (that triangle's extrude already ends at
+       SOUTH_EAVE_Z4 + 0.12, ezs above) rather than overlapping it or the
+       eg slab itself (which stops exactly at SOUTH_EAVE_Z4) — the same
+       flush-and-outward pattern the z-fight fix just above uses, so this
+       board can't reopen that exact bug one boundary further out.
+       Garage/porch NOT extended to match (deviation from the brief's own
+       "if cheap, extend" hedge): both gables sit inside ALREADY-
+       REGISTERED fabric boxes (garage_shell, south_wall) whose exact
+       numbers are hand-derived and cited throughout this file's own
+       LEGACY verdict table and docstring proofs; the real bug driving
+       this fix round was the orphaned gutter, not a missing garage/porch
+       rake board, so risking those two boxes for a purely cosmetic
+       parity pass was not a trade this round needed to make. */
+    [-1, 1].forEach(function (sign) {
+      var rb = box(ENTRY_SPAN4, 0.16, 0.12, EXTC.trim,
+                   DOOR_X4 + sign * ENTRY_HALF4 / 2,
+                   SOUTH_EAVE_Y4 + ENTRY_RISE4 / 2,
+                   SOUTH_EAVE_Z4 + 0.18, roofSouthG, sharp({ rough: 0.9 }));
+      rb.rotation.z = -sign * PITCH_FAMILY;
     });
     /* gable-end infill, east (unchanged law, spec section 6): closes the
        wedge between EXT_TOP4 (wall height) and the BACK slope's own

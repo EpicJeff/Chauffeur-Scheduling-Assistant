@@ -1237,20 +1237,58 @@ def scenario_shell_fabric_registry():
                 # variance in the other.
                 #
                 # RE-VERIFIED for Task 6 (out-of-scope finding, flagged
-                # not fixed): this task touches neither west_wall nor
-                # west_skirt, but re-measuring this exact box after the
-                # farmhouse conversion found 3736 pixels, not 466 -- a
-                # PRE-EXISTING drift from the T4 fix round (which added
-                # west_skirt to the mudroom's own ghost set after this
-                # box was chosen against a T3 boot with no west_skirt in
-                # it) that nobody had re-measured until this task's own
-                # due-diligence pass surfaced it. The assertion below
-                # only ever required n>=200, so no test broke and no
-                # code changed; the "466" and "under half that value"
-                # prose above is the stale part, left as a dated
-                # historical note rather than rewritten, since owning
-                # west_wall/west_skirt's own re-derivation is not this
-                # task's to do.
+                # not fixed at the time): this task touched neither
+                # west_wall nor west_skirt, but re-measuring this exact box
+                # after the farmhouse conversion was REPORTED to find 3736
+                # pixels, not 466 -- said to be a PRE-EXISTING drift from
+                # the T4 fix round (which added west_skirt to the
+                # mudroom's own ghost set after this box was chosen
+                # against a T3 boot with no west_skirt in it). The "466"
+                # and "under half that value" prose two paragraphs up was
+                # left as a dated historical note on that claim's strength.
+                #
+                # RETIGHTENED for Task 6 fix round 1 (2026-09-12) -- but
+                # the 3736 figure could NOT be reproduced. Re-ran `python
+                # tools/house_probe.py --views mudroom --quality high
+                # --day` against this exact box/tolerance/day-lock at HEAD
+                # (v2.495.0, commit 3db54fb, BEFORE any fix-round edit)
+                # three separate times: once through this very test
+                # harness, once through house_probe.py's own independent
+                # CLI/Playwright path with a hand-rolled pixel count using
+                # the identical box/target/tolerance, and once more after
+                # this fix round's own house.js edits landed (which touch
+                # neither west_wall nor west_skirt nor anything upstream
+                # of them). All three gave n=466 -- bit-for-bit identical
+                # to the STALE T3-era figure the prior report called
+                # superseded, not 3736. No code in this diff explains an
+                # 8x swing, and this task's own edits provably do not
+                # affect the number (identical before/after). Most likely
+                # explanation: the 3736 measurement depended on something
+                # about the ORIGINAL author's own machine/browser build
+                # (a software-WebGL/driver difference in exactly how a
+                # thin ghost-edge line rasterizes and anti-aliases) that
+                # does not carry over here, rather than a real change in
+                # what house.js draws -- both figures were independently
+                # reported as "bit-for-bit stable across repeat runs" in
+                # their own environment, which is consistent with an
+                # environment-fixed constant rather than noise. Flagging
+                # for the controller/user rather than silently trusting
+                # either number.
+                #
+                # Given that, retightening to a floor ABOVE the only value
+                # this environment can actually reproduce (1500 > 466)
+                # would make the assertion fail forever here regardless of
+                # correctness -- worse than the stale floor it replaces.
+                # Retightened to n>=350 instead: verified, reproducible
+                # headroom below this environment's own measured 466
+                # (roughly a 25% margin for ordinary rendering variance,
+                # none of which was observed across three identical runs),
+                # while catching any regression that erases more than
+                # ~25% of the ghost lines this box currently scores --
+                # meaningfully tighter than the old n>=200 (which only
+                # caught a >57% loss), grounded in a number this suite can
+                # actually measure rather than one carried over unverified
+                # from a different report.
                 png = page.screenshot()
                 im = Image.open(io.BytesIO(png)).convert('RGB')
                 box = (1000, 160, 1240, 240)
@@ -1262,10 +1300,13 @@ def scenario_shell_fabric_registry():
                         if max(abs(pix[cx, cy][0] - tgt[0]),
                                abs(pix[cx, cy][1] - tgt[1]),
                                abs(pix[cx, cy][2] - tgt[2])) <= tol)
-                check(n >= 200,
-                      'west_wall ghost edges must paint >= 200 dark-line '
+                check(n >= 350,
+                      'west_wall ghost edges must paint >= 350 dark-line '
                       'pixels in the wall crop %r (tolerance %d of '
-                      '#2d2018): got %d' % (box, tol, n))
+                      '#2d2018; this environment measures 466 here at '
+                      'v2.495.0, not the 3736 the prior report claimed -- '
+                      'see comment above; retightened 2026-09-12): '
+                      'got %d' % (box, tol, n))
 
         # Task 4 tap law (spec section 5's own addition): "the new south
         # wall stamps room:kitchen ... so the exterior tap-to-enter flow
