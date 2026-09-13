@@ -234,3 +234,22 @@ Net roughly count-neutral as the brief expects (textures/colors are free; the ma
 All four built rooms can be entered through their exterior fabric. Interior clicks navigate across rooms, retain own-room zone focus, and leave own-room props inert. Sky/yard exits preserve the kitchen's two-step return. Visible roomless shell pieces are inert even with an actionable zone behind them. Real mouse tests cover these paths; the porch test waits for camera completion.
 
 An identical-fixture high-quality comparison against `b2c3317` preserves room bounds, shell boxes/normals/verdicts, and mesh budgets in all five views. Fresh build times are 1212 / 1073 / 1149 ms. Exact comparison methods, limitations, regression evidence, and the expansion assessment are in [the recovery report](../reports/2026-09-12-house-navigation.md). Task 8's full-house expansion remains separate work.
+
+
+## 10. User-directed roof and porch revision (2026-09-12)
+
+The user revised Task 8 after inspecting the exterior: the main ridge should run across the house and mudroom/garage, a smaller porch gable should project toward the street, and a deeper setback should accommodate a real sitting porch. A second review rejected the elevated main eaves and the rear side gable that drained toward the main siding.
+
+The resulting layout uses a 5.6-unit eave height for the main house, service/garage roof, and front side wing. This is the existing great-room wall head, replacing the old 7-unit exterior extension. The wide main and service roofs use a 22.5-degree pitch; the smaller projecting gables retain the steep farmhouse pitch. The rear east wing uses a shed roof, high at the main house and low at its outside east edge. It has no inward-draining roof plane.
+
+The front porch is 8.4 by 4.6 world units, with two benches, four timber posts, central steps, and a clear approach. The street, curb, sidewalk, mailbox, and bus move eight units toward the front of the property; driveway, walk, lawn, and fence extend accordingly. Built room floor plans and room cameras remain fixed. Upper exterior cladding and the mudroom's above-crown return are lowered to the common eaves. The obsolete flat mudroom roof is removed under the new cross roof.
+
+These instructions supersede the earlier exterior-height, single-pitch-family, tiny-stoop, and fixed-setback assumptions. The architecture is a visual model, not a construction drawing.
+
+
+The next user review also matched the front-right gable's pitch to the main roof and requested a garage gable. The front-right roof now uses 22.5 degrees. A smaller street-facing gable intersects the service roof above the garage door, echoing the porch while keeping the shared 5.6-unit eaves.
+
+
+## 11. Expansion results (v2.497.0)
+
+Task 8 and the remaining wrap-up are complete. The [full-house report](../reports/2026-09-12-house-envelope.md) records all user revisions, footprint assumptions, registry ownership, solver derivations, final verdict sets, plant relocations, screenshots, and budget decisions. The shell has 42 registered pieces. High-quality meshes are 1367 / 445 / 751 / 407 / 553 for exterior / kitchen / living / mudroom / garage, with 0 / 14 / 5 / 6 / 8 separate ghost-line draws. The exterior ceiling is 1400; interior ceilings are unchanged. Idle builds are 1263 / 1123 / 1001 ms. All 222 test files pass; low/medium ghost checks pass. A delayed overlay-response race discovered during navigation validation is also fixed and regression-tested.

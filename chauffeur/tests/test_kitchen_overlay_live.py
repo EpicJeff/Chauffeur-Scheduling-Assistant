@@ -481,10 +481,56 @@ def scenario_a_mounted_card_still_polls():
         check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
 
 
+def scenario_late_card_response_cannot_restore_old_focus():
+    """A board response held until after blur must not reopen its card."""
+    served = live_app()
+    if served is None:
+        return
+    from services import storage
+    storage.shopping_lists_table.truncate()
+    storage.shopping_items_table.truncate()
+    storage.add_shopping_list({'id': 'grocery', 'name': 'Groceries', 'is_default': True})
+    storage.shopping_items_table.insert({'id': 'late-item', 'name': 'Oat milk',
+        'list_id': 'grocery', 'is_checked': False, 'created_at': 1})
+    with served.browser() as page:
+        # Exercise the page-layer consumer directly; 3D clicks are covered
+        # by test_house_live. Hold just the overlay's board request.
+        page.route('**/house.js*', lambda route: route.fulfill(
+            content_type='application/javascript', body=''))
+        page.add_init_script("""(() => {
+          const original = window.fetch;
+          window.fetch = function (url, opts) {
+            if (String(url).includes('api/home_board?widgets=')) {
+              return new Promise(resolve => {
+                window.__releaseBoard = body => resolve(new Response(body,
+                  {status:200, headers:{'Content-Type':'application/json'}}));
+              });
+            }
+            return original.apply(this, arguments);
+          };
+        })();""")
+        page.goto(served.url('house?quality=low'))
+        page.wait_for_function('window.Alpine && window.Alpine.$data(document.getElementById("overlay-tile"))')
+        payload = page.request.get(served.url('api/home_board?widgets=shopping_list')).text()
+        _focus(page, 'board')
+        page.wait_for_function('typeof window.__releaseBoard === "function"')
+        _focus(page, None)
+        page.evaluate('body => window.__releaseBoard(body)', payload)
+        page.evaluate('() => new Promise(resolve => setTimeout(resolve, 100))')
+        check(not page.is_visible('#focus-overlay'),
+              'a late board response must not restore a dismissed card')
+        _focus(page, 'board')
+        page.wait_for_selector('#focus-overlay', state='visible')
+        page.wait_for_function(
+            "document.getElementById('focus-overlay').innerText.includes('Oat milk')")
+        _focus(page, None)
+
+
 if __name__ == '__main__':
     scenario_overlay_lives_on_the_real_page()
     scenario_the_real_lean_in_wears_the_card()
     scenario_other_zones_wear_their_cards()
     scenario_leaning_out_stops_the_cards_polling()
     scenario_a_mounted_card_still_polls()
+    scenario_late_card_response_cannot_restore_old_focus()
     print("test_kitchen_overlay_live OK")

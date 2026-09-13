@@ -883,115 +883,13 @@ def scenario_garage_rebuild_does_not_touch_plaque_textures():
 
 
 def scenario_shell_fabric_registry():
-    """Task 6 (spec section 6b, the modern-farmhouse conversion): the
-    saltbox roof_south slope is replaced by a flat-flank + steep
-    street-facing entry-gable + flat-flank assembly, all still ONE
-    registered piece. Registry SHAPE (12 pieces), REGISTRATION SET
-    (LEGACY below), tap-law targets and the mudroom ghost-line pixel
-    crop are all UNCHANGED by this task -- re-verified live against the
-    new geometry, not carried over on faith -- because none of the
-    conversion's changes (batten siding, farmhouse colors, enlarged
-    street windows, the reshaped roof mass) alter where any of the
-    camera-facing surfaces this scenario probes actually sit. Only
-    roof_south's own box/normal numbers changed (see its own
-    re-derivation below, in place); every other piece's hand-derivation
-    in this docstring was independently re-measured and found
-    byte-identical.
+    """Expanded shell: authored verdicts, visible ghost lines, real entries.
 
-    Task 1 (shell/occlusion spec section 3) built the fabric registry;
-    Task 2 (spec section 4) replaces the hand-grown hide: arrays and the
-    show-all-then-hide dance with the half-space solver. Task 4 (spec
-    section 6, "the seal") builds the great room's own south wall (an
-    offset door under a covered gabled porch, a window pair + a single
-    window with aligned heads), closes the roof's cutaway with a new
-    south slope (roof_south), closes the dollhouse's sawn-open east side
-    with a new east wall, and registers the two pieces that already
-    existed as bare meshes (north_wall == wallB, roof_north == the
-    architect pass's own back slope) plus the garage's own walls+roof
-    split out of garage_door into garage_shell. Fix round 1 (same task,
-    reviewer-found) adds a TWELFTH piece, west_skirt: the west siding
-    extension that closes the living room's own west wall under
-    roof_south's new gable-end infill (house.js, "west siding, extended")
-    shipped as two bare, unregistered ebox() meshes that sat squarely in
-    the mudroom camera's own sightline — solveShell can only ever ghost
-    REGISTERED fabric, so an unregistered piece in a camera's direct line
-    of sight is always drawn, permanently blocking the room behind it.
-    This scenario still pins the registry's SHAPE (now TWELVE pieces,
-    yard the one authored mode:'hide' piece, everything solid at the
-    sealed exterior boot), then adds the verdict-equal proof: table-
-    driven, view -> expected non-solid set.
-
-    The five LEGACY rows below (kitchen/garage/mudroom/living's own
-    'yard'/'garage_door'/'mudroom_roof'/'west_wall' membership) are
-    UNCHANGED by Task 4 -- extending the registry must not move a single
-    existing verdict, which is exactly what "new fabric, zero pixel
-    change for existing fabric" (spec section 7) means at the solver
-    layer. 'living' expects only ['roof_south', 'south_wall', 'yard'] now
-    (Task 4 adds the great room's own new south-facing shell to living's
-    view; it never expected 'living_roof' even before Task 4 -- controller
-    ruling, kept below): livingRoofG has never carried a single mesh
-    (open-concept, "nothing to hide" -- see its own regFabric call site),
-    so fabBox(livingRoofG) is three.js's untouched empty-Box3 sentinel and
-    the legacy hide of it was always a visual no-op. solveShell's
-    degenerate-box guard forces such a piece 'solid' unconditionally,
-    which reproduces that no-op exactly.
-
-    Task 3 (spec section 3's ghost bullet + section 7 guards) changes what
-    a 'ghost' verdict actually draws: fills hidden + a prebuilt edge
-    outline shown, not dollhouse-hide. The mudroom row above already
-    exercises a 'ghost' verdict (west_wall) that used to render identically
-    to 'hide' (yard) -- same offed-set membership, opposite pixels once
-    edges exist -- so this scenario adds the pixel half of the proof
-    inside that same mudroom iteration, below.
-
-    The six Task 4 rows are hand-derived below, at the point each new
-    entry is added to a LEGACY row, against numbers read back from a live
-    run (base commit 511c2a2 / v2.493.1 plus this task's own house.js
-    edit, via a temporary window.chfDebug* introspection hook built,
-    used, and deleted before this commit -- the same "measured, then
-    explained" discipline west_wall's own registration comment (house.js,
-    T2) already uses, not a curve-fit to whatever the solver happened to
-    output. Camera homes: HOME_POS (14.6,11.2,17.0), GARAGE_POS
-    (-14.05,9.6,21.3), MUD_POS (-3.4,6.2,11.2), LIV_POS (5.2,13.6,26.5).
-    Room AABB centres (measured): kitchen (-2.785, 1.99, 5.8875) -- the
-    x matches west_wall's own T2 citation exactly; the z is wide because
-    a stray patio table+chairs in the yard falls through stampHouse's
-    'kitchen' fallback (bb.max.y>0.6, untagged) at z up to 17.6, a
-    pre-existing fact confirmed unchanged by diffing this task's own
-    house.js edit against a stash of the base commit, not a Task 4
-    regression; living (0, 0.994, 9.6624); mudroom (-9.62, ~2.1, 5.385);
-    garage (-15.4, 2.33, 5.9875) -- all four x/z match west_wall's own T2
-    citations to rounding.
-
-    Fix round 1's own new row, west_skirt (n [1,0,0], box centre measured
-    (-6.825, 3.5, 10.3) -- exact, from the literal constants at its build
-    site (SWZ1 = 14.55, EXT_TOP4 = 7.0), not an approximation):
-      n is [1,0,0], NOT the naive "true outward" [-1,0,0] a piece with
-      nothing but yard past it would normally get (south_wall/east_wall/
-      north_wall's own convention) -- checked against that guess and
-      REJECTED, because every camera in this dollhouse, including the
-      mudroom's own (MUD_POS), is staged on the kitchen/living side of
-      the house and never actually outdoors to the west, while the
-      mudroom ROOM's own aabb sits further west still. That is
-      west_wall's own T2 shape (camera and subject straddling the piece
-      from the same physical side an honest compass would call "wrong"),
-      so it earns west_wall's own flip, re-derived independently:
-        kitchen: HOME_POS.x 14.6 > -6.825 -> camOut; kitchen aabb x
-          -2.785 is NOT < -6.825 -> subIn fails. SOLID.
-        living: LIV_POS.x 5.2 > -6.825 -> camOut; living aabb x 0 is NOT
-          < -6.825 -> subIn fails. SOLID.
-        mudroom: MUD_POS.x -3.4 > -6.825 -> camOut; mudroom aabb x -9.62
-          < -6.825 -> subIn. Both true; corridor (pad 1.5) lo=(-11.12,
-          0.6,3.885) hi=(-1.9,7.7,12.7) fully contains the piece's own
-          box [-7.15,-6.5,0,7,6.0,14.6] on every axis. GHOST.
-        garage: GARAGE_POS.x -14.05 is NOT > -6.825 -> camOut fails.
-          SOLID.
-        exterior: subject null -> solid unconditionally (the sealed-
-          house case). SOLID.
-      Matches the fix's own required set exactly (kitchen/exterior
-      SOLID, mudroom GHOST); living/garage follow the same shape as
-      kitchen/garage respectively above and were not independently
-      required but are asserted below anyway, same as every other row.
+    The roof slopes now run north/south. Kitchen sees the south roof and
+    east gable between its camera and subject. Living sees the south roof
+    and all three porch faces; mudroom and garage see the service roof's
+    south slope. Exterior has no subject and keeps every piece solid.
+    See the Task 8 report for the geometry and corridor derivation.
     """
     served = live_app()
     if served is None:
@@ -1018,161 +916,65 @@ def scenario_shell_fabric_registry():
         page.wait_for_timeout(2200)
         fab = page.evaluate("window.chfShellFabric()")
         names = sorted(f['name'] for f in fab)
-        check(names == ['east_wall', 'garage_door', 'garage_shell',
-                        'living_roof', 'mudroom_roof', 'north_wall',
-                        'roof_north', 'roof_south', 'south_wall',
-                        'west_skirt', 'west_wall', 'yard'],
-              'registry must hold exactly the twelve pieces (five legacy '
-              "+ Task 4's south_wall/east_wall/north_wall/roof_south/"
-              "roof_north/garage_shell + fix round 1's west_skirt): %r"
-              % names)
+        expected_names = {
+            'east_wall', 'garage_door', 'garage_shell', 'living_roof',
+            'mudroom_roof', 'north_wall', 'north_cladding', 'south_wall',
+            'west_skirt', 'west_wall', 'yard', 'patio_slider',
+            'roof_main_north', 'roof_main_south',
+            'roof_main_end_west', 'roof_main_end_east',
+            'porch_roof_west', 'porch_roof_east', 'porch_roof_front',
+            'massing_east_front_south', 'massing_east_front_east',
+            'massing_east_front_patio', 'massing_front_roof_north',
+            'massing_front_roof_south', 'massing_front_roof_end_east',
+            'massing_east_back_north', 'massing_east_back_east',
+            'massing_east_back_patio', 'massing_back_roof_shed',
+            'massing_back_roof_back', 'mudroom_front_cladding', 'west_cladding',
+            'massing_back_roof_front', 'massing_service_north',
+            'massing_service_west', 'massing_service_south',
+            'massing_service_roof_north', 'massing_service_roof_south',
+            'massing_service_roof_end_west', 'garage_gable_west',
+            'garage_gable_east', 'garage_gable_front',
+        }
+        check(set(names) == expected_names,
+              'expanded registry must contain exactly the authored pieces: %r' % names)
+        by_name = {f['name']: f for f in fab}
+        # Equal main/service eaves and a side roof that drains east, away
+        # from the main wall: geometry regressions called out by the user.
+        check(abs(by_name['roof_main_end_east']['box'][2] -
+                  by_name['massing_service_roof_end_west']['box'][2]) < 0.02,
+              'main and service gables must start at the same eave height')
+        check(all(abs(a - b) < 0.001 for a, b in zip(
+                  by_name['roof_main_south']['normal'],
+                  by_name['massing_front_roof_south']['normal'])),
+              'front-right roof must match the main roof pitch')
+        shed_normal = by_name['massing_back_roof_shed']['normal']
+        check(shed_normal[0] > 0 and shed_normal[1] > 0 and
+              abs(shed_normal[2]) < 0.001,
+              'side shed must drain east, away from the main house')
         yard = [f for f in fab if f['name'] == 'yard'][0]
         check(yard['mode'] == 'hide', 'yard is the one authored hide piece')
         check(all(f['visible'] for f in fab),
               'exterior boot: every piece visible (solid): %r' % fab)
 
-        # Task 2 (spec section 4): the half-space solver replaces the
-        # hide: arrays. Table-driven, LOCKED to today's legacy behavior
-        # for the five pre-Task-4 rows (verdict-equal swap) -- 'living'
-        # adjusted per the controller ruling above.
-        #
-        # Task 4 additions, hand-derived from the solver's own law
-        # (solveShell: ghost iff camOut = dot(n, cam-p) > 0 AND subIn =
-        # dot(n, subject-p) < 0 AND the box overlaps the camera<->subject
-        # corridor; p = the piece's own box centre) against the camera
-        # homes and room-aabb centres cited in this function's own
-        # docstring, and each new piece's own measured box centre:
-        #
-        # south_wall (n [0,0,1], box centre (0, 3.5, 14.8975)):
-        #   kitchen: HOME_POS.z 17.0 > 14.8975 -> camOut; kitchen centre
-        #     z 5.8875 < 14.8975 -> subIn. Corridor overlaps (both
-        #     x-ranges span the great room). GHOST.
-        #   living: LIV_POS.z 26.5 > 14.8975 -> camOut; living centre
-        #     z 9.6624 < 14.8975 -> subIn. GHOST.
-        #   mudroom: MUD_POS.z 11.2 < 14.8975 -> camOut FAILS. SOLID.
-        #   garage: GARAGE_POS.z 21.3 > 14.8975 -> camOut; garage centre
-        #     z 5.9875 < 14.8975 -> subIn -- BOTH true, same as kitchen's
-        #     shape -- but the corridor check saves it: GARAGE_POS/garage
-        #     corridor x-range is [-16.9,-12.55], and south_wall's own
-        #     x-range [-6.5,6.5] never reaches it (the great room sits
-        #     entirely east of the garage). SOLID.
-        # east_wall (n [1,0,0], box centre (6.645, 3.5, 4.4125)):
-        #   kitchen: HOME_POS.x 14.6 > 6.645 -> camOut; kitchen centre
-        #     x -2.785 < 6.645 -> subIn. GHOST.
-        #   living: LIV_POS.x 5.2 < 6.645 -> camOut FAILS -- SOLID, the
-        #     asymmetry with south_wall that proves the normal is doing
-        #     real work, not defaulting to "always ghost near the great
-        #     room" (west_wall's own T2 comment makes the same point
-        #     about ITS flip).
-        #   mudroom/garage: MUD_POS.x -3.4 and GARAGE_POS.x -14.05 both
-        #     sit west of 6.645 -> camOut fails for both. SOLID.
-        # north_wall (== wallB, n [0,0,-1], box centre (0, 2.8, -5.55)):
-        #   every camera sits south of it (smallest is MUD_POS.z 11.2);
-        #   camOut needs cam.z < -5.55, true for none of the four. SOLID
-        #   everywhere, including kitchen (this is the wall BEHIND the
-        #   kitchen camera's own subject, not between it and anything).
-        # roof_north (== roof, n ~[0,0.886,-0.463], box centre
-        #   (0.3, 8.05, -4.2)): same shape as north_wall's own reasoning
-        #   (it is that same wall's own roofline) -- every camera's own
-        #   dot(n, cam-p) comes out negative (the -0.463*z term dominates
-        #   for every camera, all of which sit at z >= 11.2) -- SOLID
-        #   everywhere.
-        # roof_south -- RE-DERIVED for Task 6 (spec section 6b, the
-        #   modern-farmhouse conversion): the massing rewrite replaces
-        #   the one long saltbox slope this piece used to be with a flat
-        #   flank + a steep street-facing entry gable + a flat flank, all
-        #   still ONE registered group (house.js, "the roof over the
-        #   great room's street-facing two-thirds, same role the slope
-        #   they replace had" -- the granularity law, spec section 3,
-        #   does not require a second piece just because the SHAPE inside
-        #   one piece got more complex). Measured live via a temporary
-        #   window.chfDebugFabricBoxes() hook (built, used, and deleted
-        #   before this task's own commit, the same "measured, then
-        #   explained" discipline this docstring's own Task 4 rows
-        #   already use) at base commit 123bb7f + this task's own
-        #   house.js edit:
-        #     new box centre (0, 7.8924, 4.435); new n [0, 1, 0] exactly
-        #     -- the west flank (the mesh regFabric now reads its
-        #     quaternion from) is a flat, UNROTATED slab, so it carries
-        #     none of the old slab's small +z lean (that lean came from
-        #     roofSouth4's own shallow rotation.x, which no longer
-        #     exists). n=[0,1,0] collapses every dot product in this
-        #     piece's own verdict to a pure Y comparison -- simpler than
-        #     before, not a different LAW:
-        #       kitchen: HOME_POS.y 11.2 > 7.8924 -> camOut; kitchen aabb
-        #         centre y ~2.0 < 7.8924 -> subIn. Corridor: box x-range
-        #         [-6.85,6.85] overlaps the padded HOME_POS<->kitchen
-        #         segment (kitchen sits inside the great room). GHOST.
-        #       living: LIV_POS.y 13.6 > 7.8924 -> camOut; living aabb
-        #         centre y ~0.99 < 7.8924 -> subIn. GHOST.
-        #       mudroom: MUD_POS.y 6.2 < 7.8924 -> camOut FAILS (a low
-        #         camera looking at a piece whose box centre sits above
-        #         it) -- SOLID, the same shape the pre-T6 docstring's own
-        #         words already used ("mudroom's own subject sits behind
-        #         this piece"), just driven by Y instead of a mixed
-        #         Y/Z dot product now that n has no z component.
-        #       garage: GARAGE_POS.y 9.6 > 7.8924 -> camOut; garage aabb
-        #         centre y ~2.3 < 7.8924 -> subIn -- both true, same as
-        #         kitchen's own shape, but the corridor check saves it
-        #         exactly as before: box x-range [-6.85,6.85] (narrower
-        #         than the pre-T6 box's [-8.02,8.62] -- the old rake
-        #         boards this box no longer includes) never reaches the
-        #         garage corridor [-16.9,-12.55]. SOLID.
-        #   Verdict SET is UNCHANGED (ghost kitchen+living, solid
-        #   mudroom+garage+exterior) -- confirmed against the live solver
-        #   both before and after this re-derivation was written, not
-        #   assumed from the box/normal numbers alone.
-        #
-        #   The other five Task-4-derived rows above (south_wall,
-        #   east_wall, north_wall, roof_north, garage_shell/garage_door
-        #   below) were independently re-measured through the SAME
-        #   chfDebugFabricBoxes() hook and are BYTE-IDENTICAL to their
-        #   own numbers already written into this docstring -- south_wall
-        #   in particular because the conversion's enlarged windows and
-        #   the covered porch's own steeper pitch both stay well inside
-        #   the wall's existing [0,7] Y-range and [-6.5,6.5] X-range (the
-        #   wall itself, EXT_TOP4 and SW_W, is untouched code), and
-        #   roof_north because the conversion never touches the original
-        #   back-slope mesh at all (spec section 6b's own words: "the
-        #   pitch family steepens ... so garage gable, entry gable, porch
-        #   gable ... move together" names three gables sharing ONE
-        #   shared PITCH_FAMILY constant -- the ORIGINAL back roof keeps
-        #   its own separate, never-shared literal, atan2(2.3,4.4), and
-        #   this task does not touch it). None of these five needed a
-        #   single row edited.
-        # garage_shell (n [1,0,0], box centre (-15.4, 3.27, 6.0) -- see
-        #   its own build-site comment for the full derivation): SOLID
-        #   for kitchen/mudroom/living/exterior (every other room's own
-        #   subject sits east of it, defeating subIn -- e.g. kitchen:
-        #   subIn needs -2.785 < -15.4, false). For the garage's OWN view
-        #   the room's ROOM_AABB centre (x -15.4) coincides with this
-        #   piece's own box centre to the precision either is measured at
-        #   -- both are built symmetric around the same bay -- and the
-        #   measured verdict lands GHOST, the same outline treatment
-        #   garage_door's own (pre-split) piece already gave this exact
-        #   view. Not a new case: mudroom_roof and west_wall already
-        #   ghost for their OWN room's view (mudroom) today.
-        # garage_door (n [0,0,1], box centre (-15.4, 2.85, 10.1014) --
-        #   shrunk by the split, no longer the gable's own 1.4..10.6
-        #   depth): GARAGE_POS.z 21.3 > 10.1014 -> camOut; garage centre
-        #   z 5.9875 < 10.1014 -> subIn. GHOST for garage, same as before
-        #   the split. SOLID elsewhere via the same x-corridor argument
-        #   garage_shell's own SOLID rows use.
-        # west_skirt (fix round 1, n [1,0,0], box centre (-6.825, 3.5,
-        #   10.3) -- full derivation in this function's own docstring,
-        #   above): GHOSTs for mudroom only (MUD_POS.x -3.4 > -6.825 ->
-        #   camOut; mudroom aabb x -9.62 < -6.825 -> subIn; corridor
-        #   contains the box). SOLID for kitchen/living (subIn fails --
-        #   neither aabb centre is west of -6.825) and garage (camOut
-        #   fails -- GARAGE_POS.x -14.05 is not east of -6.825).
-        LEGACY = {
+        EXPECTED = {
             'exterior': [],
-            'kitchen':  ['east_wall', 'roof_south', 'south_wall', 'yard'],
-            'garage':   ['garage_door', 'garage_shell', 'yard'],
-            'mudroom':  ['mudroom_roof', 'west_skirt', 'west_wall', 'yard'],
-            'living':   ['roof_south', 'south_wall', 'yard'],
+            'kitchen': ['east_wall', 'south_wall', 'roof_main_south',
+                        'roof_main_end_east', 'porch_roof_east',
+                        'massing_east_front_south', 'massing_east_front_east',
+                        'massing_front_roof_north', 'massing_front_roof_south',
+                        'massing_front_roof_end_east', 'massing_back_roof_shed',
+                        'patio_slider', 'massing_back_roof_front',
+                        'massing_east_back_east', 'massing_east_back_patio', 'yard'],
+            'garage': ['garage_door', 'garage_shell', 'mudroom_roof',
+                       'garage_gable_west', 'garage_gable_east', 'garage_gable_front',
+                       'massing_service_roof_south', 'mudroom_front_cladding', 'yard'],
+            'mudroom': ['mudroom_roof', 'west_skirt', 'west_wall', 'west_cladding',
+                        'massing_service_roof_south', 'mudroom_front_cladding', 'yard'],
+            'living': ['south_wall', 'roof_main_south', 'porch_roof_west',
+                       'porch_roof_east', 'porch_roof_front',
+                       'massing_front_roof_north', 'massing_front_roof_south', 'yard'],
         }
-        for view, expected in LEGACY.items():
+        for view, expected in EXPECTED.items():
             if view == 'exterior':
                 page.evaluate("window.chfHouseExit && window.chfHouseExit()")
             elif view == 'kitchen':
@@ -1183,7 +985,7 @@ def scenario_shell_fabric_registry():
             fab = page.evaluate("window.chfShellFabric()")
             offed = sorted(f['name'] for f in fab if f['verdict'] != 'solid')
             check(offed == sorted(expected),
-                  '%s: solver must reproduce the legacy set, got %r'
+                  '%s: solver must match the authored expanded-shell set, got %r'
                   % (view, offed))
             # Task 4 sanity (spec section 3's own words: "the point of the
             # table is that a human wrote the expectation down") -- eleven
@@ -1214,81 +1016,8 @@ def scenario_shell_fabric_registry():
                       'west_wall edges group must be visible while its '
                       'verdict is ghost: %r' % west)
 
-                # Pixel proof: a crop of the plain wall panel the west
-                # wall's own ghost lines cross in this exact camera framing
-                # -- no window, trim, calendar or hero-card pixel enters
-                # this box (confirmed against the derivation screenshots).
-                #
-                # Derivation run (this task, base commit abe36e7 /
-                # v2.492.1, BEFORE this task's house.js edit landed):
-                #   python tools/house_probe.py --views mudroom
-                #     --quality high --day
-                # gave the CONTROL shot -- west_wall's fill hidden, no
-                # edges built yet. This exact box scored 0 pixels within
-                # tolerance 60 of #2d2018 (0 all the way up through
-                # tolerance 70). The SAME command run again straight
-                # after this task's implementation (identical seed,
-                # identical day-lock, identical camera) scored 466 at the
-                # same tolerance, bit-for-bit stable across two
-                # independent probe processes (this harness's software
-                # WebGL renders deterministically). N=200 sits under half
-                # that measured value -- clear margin over the control's
-                # exact 0 in one direction, and over ordinary rendering
-                # variance in the other.
-                #
-                # RE-VERIFIED for Task 6 (out-of-scope finding, flagged
-                # not fixed at the time): this task touched neither
-                # west_wall nor west_skirt, but re-measuring this exact box
-                # after the farmhouse conversion was REPORTED to find 3736
-                # pixels, not 466 -- said to be a PRE-EXISTING drift from
-                # the T4 fix round (which added west_skirt to the
-                # mudroom's own ghost set after this box was chosen
-                # against a T3 boot with no west_skirt in it). The "466"
-                # and "under half that value" prose two paragraphs up was
-                # left as a dated historical note on that claim's strength.
-                #
-                # RETIGHTENED for Task 6 fix round 1 (2026-09-12) -- but
-                # the 3736 figure could NOT be reproduced. Re-ran `python
-                # tools/house_probe.py --views mudroom --quality high
-                # --day` against this exact box/tolerance/day-lock at HEAD
-                # (v2.495.0, commit 3db54fb, BEFORE any fix-round edit)
-                # three separate times: once through this very test
-                # harness, once through house_probe.py's own independent
-                # CLI/Playwright path with a hand-rolled pixel count using
-                # the identical box/target/tolerance, and once more after
-                # this fix round's own house.js edits landed (which touch
-                # neither west_wall nor west_skirt nor anything upstream
-                # of them). All three gave n=466 -- bit-for-bit identical
-                # to the STALE T3-era figure the prior report called
-                # superseded, not 3736. No code in this diff explains an
-                # 8x swing, and this task's own edits provably do not
-                # affect the number (identical before/after). Most likely
-                # explanation: the 3736 measurement depended on something
-                # about the ORIGINAL author's own machine/browser build
-                # (a software-WebGL/driver difference in exactly how a
-                # thin ghost-edge line rasterizes and anti-aliases) that
-                # does not carry over here, rather than a real change in
-                # what house.js draws -- both figures were independently
-                # reported as "bit-for-bit stable across repeat runs" in
-                # their own environment, which is consistent with an
-                # environment-fixed constant rather than noise. Flagging
-                # for the controller/user rather than silently trusting
-                # either number.
-                #
-                # Given that, retightening to a floor ABOVE the only value
-                # this environment can actually reproduce (1500 > 466)
-                # would make the assertion fail forever here regardless of
-                # correctness -- worse than the stale floor it replaces.
-                # Retightened to n>=350 instead: verified, reproducible
-                # headroom below this environment's own measured 466
-                # (roughly a 25% margin for ordinary rendering variance,
-                # none of which was observed across three identical runs),
-                # while catching any regression that erases more than
-                # ~25% of the ghost lines this box currently scores --
-                # meaningfully tighter than the old n>=200 (which only
-                # caught a >57% loss), grounded in a number this suite can
-                # actually measure rather than one carried over unverified
-                # from a different report.
+                # Same mudroom camera and crop as v2.496.0 (466 pixels).
+                # Keep the existing 350-pixel floor through the expansion.
                 png = page.screenshot()
                 im = Image.open(io.BytesIO(png)).convert('RGB')
                 box = (1000, 160, 1240, 240)
@@ -1308,59 +1037,32 @@ def scenario_shell_fabric_registry():
                       'see comment above; retightened 2026-09-12): '
                       'got %d' % (box, tol, n))
 
-        # Task 4 tap law (spec section 5's own addition): "the new south
-        # wall stamps room:kitchen ... so the exterior tap-to-enter flow
-        # survives the closed front." The LEGACY loop above already left
-        # the page in the 'living' room; return to the sealed exterior
-        # explicitly (every piece solid, matching solveShell's own
-        # sealed-house case) before clicking, exactly like the loop's own
-        # 'exterior' iteration does.
-        page.evaluate("window.chfHouseExit && window.chfHouseExit()")
-        page.wait_for_timeout(1000)
-        page.wait_for_function("window.chfNavProbe({settled:true})",
-                               timeout=20000)
+        for piece in ['south_wall', 'porch_roof_front']:
+            page.evaluate("window.chfHouseExit()")
+            page.wait_for_function("window.chfNavProbe({settled:true})")
+            hit = page.evaluate("window.chfNavProbe({piece:%r})" % piece)
+            check(hit is not None, '%s must be reachable from exterior' % piece)
+            page.mouse.click(hit['cx'], hit['cy'])
+            page.wait_for_function("window.chfNavProbe({settled:true})")
+            check(page.evaluate("window.chfHouseMode()") == 'kitchen',
+                  '%s must enter the kitchen' % piece)
+
+        page.evaluate("window.chfHouseExit()")
+        page.wait_for_function("window.chfNavProbe({settled:true})")
+        hit = page.evaluate("window.chfNavProbe({piece:'massing_east_front_east'})")
+        check(hit is not None, 'unbuilt wing must have a reachable exterior surface')
+        page.mouse.click(hit['cx'], hit['cy'])
         check(page.evaluate("window.chfHouseMode()") == 'exterior',
-              'must be back at the sealed exterior before the tap check')
-        # Screen points, not world coordinates: onTap's exterior path
-        # raycasts from the CLIENT pixel the mouse is at (anyHit), so the
-        # only way to prove a tap actually lands on south_wall's own
-        # fabric is to click a pixel and read the mode back, not to trust
-        # the wall's own world position. Both points were located by
-        # screenshotting this exact camera framing (EXT_POS, the default
-        # boot camera) and confirming by crop which mesh sits under each
-        # pixel.
-        #
-        # RE-VERIFIED for Task 6 (spec section 6b): the same two points
-        # still land on southWallG fabric after the farmhouse conversion,
-        # but (320,610) no longer lands on bare siding -- the enlarged,
-        # gridded street windows (spec 6b) grew the window casing's own
-        # footprint enough that this exact pixel now lands on the middle
-        # window's own BLACK FRAME (still southWallG, still swtag'd
-        # 'kitchen' -- a cased window is as much "the wall" as the
-        # siding beside it) instead of the plank siding between the
-        # windows the pre-conversion screenshot showed there. (445,650)
-        # is unaffected -- still the covered porch's own gable roof
-        # underside (the porch belongs to southWallG per spec section 6
-        # -- "the porch ... belongs to the south_wall fabric GROUP" --
-        # so a hit there must route through the same group tag as a hit
-        # on the wall itself), unmoved because neither the porch's own
-        # position (DOOR_X4, PORCH_W4) nor its roof's footprint (only its
-        # PITCH steepened) changed.
-        page.mouse.click(320, 610)
-        page.wait_for_function("window.chfNavProbe({settled:true})",
-                               timeout=20000)
-        check(page.evaluate("window.chfHouseMode()") == 'kitchen',
-              'tapping the south wall siding must enter the kitchen '
-              '(south_wall stamps room:kitchen, spec section 6)')
-        page.evaluate("window.chfHouseExit && window.chfHouseExit()")
-        page.wait_for_function("window.chfNavProbe({settled:true})",
-                               timeout=20000)
-        page.mouse.click(445, 650)
-        page.wait_for_function("window.chfNavProbe({settled:true})",
-                               timeout=20000)
-        check(page.evaluate("window.chfHouseMode()") == 'kitchen',
-              'tapping the covered porch must ALSO enter the kitchen -- '
-              'the porch is part of southWallG, not a separate piece')
+              'unbuilt wing must stay inert')
+
+        page.evaluate("window.chfHouseCam(21,6.5,7,6.9,2,6)")
+        page.wait_for_function("window.chfNavProbe({settled:true})")
+        hit = page.evaluate("window.chfNavProbe({piece:'patio_slider'})")
+        check(hit is not None, 'slider must be reachable from the terrace')
+        page.mouse.click(hit['cx'], hit['cy'])
+        page.wait_for_function("window.chfNavProbe({settled:true})")
+        check(page.evaluate("window.chfHouseMode()") == 'living',
+              'patio slider must enter living')
 
         errs = [e for e in served.errors()
                 if 'WebGL' not in e and 'GroupMarker' not in e]
@@ -1376,8 +1078,8 @@ def scenario_navigation_real_mouse():
     this behavioral scenario quick. Both high and low explicitly force
     the quality tier and disable automatic demotion.
 
-    The default street view obscures mudroom_roof; west_skirt supplies a
-    visible mudroom entry. Garage supplies a sky pixel; the main room's
+    The service roof supplies the visible mudroom entry; the deeper porch
+    now obscures the old west-skirt target. Garage supplies a sky pixel; the main room's
     roof surrounds its camera. The high-quality registry scenario retains
     separate geometry, ghost-edge pixel, and exterior-entry checks.
     """
@@ -1410,19 +1112,17 @@ def scenario_navigation_real_mouse():
             page.wait_for_function(
                 "window.chfNavProbe({settled:true})", timeout=20000)
 
-        # spec section 5, bullet 1 + exterior branch: every shell piece
-        # stamps its fronting room (regFabric's `room` field, Task 7).
-        # (1) mudroom_roof itself is occluded today (see docstring) --
-        # west_skirt fronts the SAME room and IS reachable, so it carries
-        # the exterior->mudroom pin.
+        # The front service slope faces the built mudroom. Its back slope
+        # covers the unbuilt extension and remains inert. The garage has
+        # its own visible street-facing gable and door.
         enter('exterior')
         check(page.evaluate("window.chfHouseMode()") == 'exterior',
               'must start at the sealed exterior')
-        p = probe("{piece:'west_skirt'}")
+        p = probe("{piece:'massing_service_roof_south'}")
         page.mouse.click(p['cx'], p['cy'])
         page.wait_for_timeout(1200)
         check(page.evaluate("window.chfHouseMode()") == 'mudroom',
-              'exterior tap on west_skirt must enter the mudroom -- it '
+              'exterior tap on the service roof must enter the mudroom -- it '
               'fronts mudroom by the same street-adjacency rule as '
               'west_wall (spec section 5): %r' % p)
 
@@ -1449,11 +1149,11 @@ def scenario_navigation_real_mouse():
         # regression guard now that it also carries an explicit
         # regFabric room field).
         enter('exterior')
-        p = probe("{piece:'garage_shell'}")
+        p = probe("{piece:'garage_gable_front'}")
         page.mouse.click(p['cx'], p['cy'])
         page.wait_for_timeout(1200)
         check(page.evaluate("window.chfHouseMode()") == 'garage',
-              'exterior tap on garage_shell must enter the garage: %r' % p)
+              'exterior tap on the garage gable must enter the garage: %r' % p)
 
         # spec section 5, rule 2: a zone belonging to ANOTHER room
         # navigates there -- replaces the old cross-room null-and-eject

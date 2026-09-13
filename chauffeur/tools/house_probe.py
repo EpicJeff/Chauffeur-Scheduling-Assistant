@@ -74,8 +74,13 @@ BUDGET_JS = """() => {
     new T.Matrix4().multiplyMatrices(C.projectionMatrix, C.matrixWorldInverse));
   const mats = new Set(), geos = new Set(), rows = {};
   let total = 0, visible = 0, inFrustum = 0, tris = 0;
+  let ghostLines = 0, ghostDraws = 0;
   function vis(o) { for (let p = o; p; p = p.parent) if (!p.visible) return false; return true; }
   S.traverse(o => {
+    if (o.isLineSegments && o.userData.shellGhost && vis(o)) {
+      ghostLines += 1;
+      if (!o.frustumCulled || fr.intersectsObject(o)) ghostDraws += 1;
+    }
     if (!o.isMesh) return;
     total += 1;
     if (o.material && o.material.uuid) mats.add(o.material.uuid);
@@ -106,6 +111,7 @@ BUDGET_JS = """() => {
     rows[key] = (rows[key] || 0) + 1;
   });
   return { total, visible, inFrustum, tris: Math.round(tris),
+           ghostLines, ghostDraws, mainPassDraws: inFrustum + ghostDraws,
            materials: mats.size, geometries: geos.size,
            buildMs: window.__hpBuildMs,
            rows: Object.entries(rows).sort((a, b) => b[1] - a[1]).slice(0, 8) };
@@ -352,6 +358,8 @@ def main():
                           % (view, b['total'], b['visible'], b['inFrustum'],
                              b['tris'], b['materials'], b['geometries'],
                              b['buildMs']))
+                    print('    ghostLines=%d ghostDraws=%d mainPassDraws=%d'
+                          % (b['ghostLines'], b['ghostDraws'], b['mainPassDraws']))
                     for k, v in b['rows']:
                         print('    %5d  %s' % (v, k))
         if errors:

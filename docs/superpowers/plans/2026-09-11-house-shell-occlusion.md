@@ -292,12 +292,14 @@ Verify against the current sets: the loop must reproduce exactly the shell membe
 - Consumes: FARMHOUSE palette + battenT + pitch family (T6), regFabric room/inert stamps (T7), the reference-image proportions (massing template — derive footprint numbers from the built rooms' extents scaled to the reference's ratios, record the derivation).
 - Produces: the expanded registration set (each new piece named `massing_*` or by compass); the patio slider; the re-seated window.
 
-- [ ] **Step 1:** Derive the expanded footprint and connected pitched-roof sections together from the reference proportions against the built rooms' fixed positions. Record the derivation table (reference ratio -> world units), distinguishing approximate image proportions from architectural assumptions. Resolve ridge, valley, and eave intersections before authoring wall infill. Built rooms do not move.
-- [ ] **Step 2:** Build the massing: walls (battenT, farmhouse trim), full-house roofline (pitch family, gable infill, no wedges), exterior windows on unbuilt rooms (black frames; authored dark/curtain-glow panes — a couple glow at night, constants in FARMHOUSE); register every piece (regFabric, inert room stamp per T7's law); planting displaced by the footprint recorded and re-seated, never deleted.
-- [ ] **Step 3:** Absorbed fixes: re-seat the protruding gable-end window inboard (casing clears corner trim); patio slider in the post-expansion patio wall (farmhouse slider, decorative, stamped with its room).
+- [x] **Step 1:** Derive the expanded footprint and connected pitched-roof sections together from the reference proportions against the built rooms' fixed positions. Record the derivation table (reference ratio -> world units), distinguishing approximate image proportions from architectural assumptions. Resolve ridge, valley, and eave intersections before authoring wall infill. Built rooms do not move.
+- [x] **Step 2:** Build the massing: walls (battenT, farmhouse trim), full-house roofline (pitch family, gable infill, no wedges), exterior windows on unbuilt rooms (black frames; authored dark/curtain-glow panes — a couple glow at night, constants in FARMHOUSE); register every piece (regFabric, inert room stamp per T7's law); planting displaced by the footprint recorded and re-seated, never deleted.
+- [x] **Step 3:** Absorbed fixes: re-seat the protruding gable-end window inboard (casing clears corner trim); patio slider in the post-expansion patio wall (farmhouse slider, decorative, stamped with its room).
+
+**User revision (2026-09-12):** Main and service ridges run across the house; the sitting-porch gable faces the street. Align main/service eaves with the existing 5.6-unit room wall head. The marked rear east roof becomes a shed draining outward. Extend setback by eight world units and provide an 8.4 by 4.6 porch with seating and a clear walk. See spec section 10; it supersedes conflicting height/pitch/setback assumptions below.
 
 **Recovery review (2026-09-12):** Register each distinct new roof slope with its actual normal and make the registry drive its merge unit. Count ghost-line draws separately from mesh budgets: the existing probe only counts meshes. Inspect front, side, and back views against the recovered reference before closing this phase. See [the navigation recovery report](../reports/2026-09-12-house-navigation.md) for reference locations and the roof assessment.
-- [ ] **Step 4:** Verify: verdict table re-derived and green (expanded set; unbuilt massing ghosts when between camera and built rooms — hand-derive at least the kitchen and living cases); navigation scenario extended (unbuilt tap inert, patio tap enters) green; budget per view recorded with HONEST new ceilings proposed if the massing legitimately exceeds the old ones (state the arithmetic — the controller rules on the new ceilings); buildMs x3 <= 1500; leak scenarios green; full sweep. Day + night back/side/street shots -> $LOCALAPPDATA/Temp/house_quality/shell-T8. Commit v2.497.0 `'The house grows the rooms it keeps offstage (v2.497.0)'`, push.
+- [x] **Step 4:** Verify: verdict table re-derived and green (expanded set; unbuilt massing ghosts when between camera and built rooms — hand-derive at least the kitchen and living cases); navigation scenario extended (unbuilt tap inert, patio tap enters) green; budget per view recorded with HONEST new ceilings proposed if the massing legitimately exceeds the old ones (state the arithmetic — the controller rules on the new ceilings); buildMs x3 <= 1500; leak scenarios green; full sweep. Day + night back/side/street shots -> $LOCALAPPDATA/Temp/house_quality/shell-T8. Commit v2.497.0 `'The house grows the rooms it keeps offstage (v2.497.0)'`, push.
 
 ---
 
@@ -307,10 +309,10 @@ Verify against the current sets: the loop must reproduce exactly the shell membe
 - Modify: `docs/superpowers/specs/2026-09-11-house-shell-occlusion-design.md` (append results to `## 9. Results`)
 - Modify: `chauffeur/system_capabilities.md` (Home paragraph: one line — sealed shell, ghost-edge occlusion, registry+solver replace hide arrays, all tiers)
 
-- [ ] **Step 1:** Results: registration table (pieces, modes), per-view verdict sets, budget before/after vs ceilings per view, buildMs trajectory incl. edges cost, ghost line constant, screenshot directories, deviations ruled during the arc.
-- [ ] **Step 2:** Capabilities line (exact numbers from Step 1, not from memory).
-- [ ] **Step 3:** Closing gate: `python tools/house_probe.py --views all --budget --quality high --day` + full sweep.
-- [ ] **Step 4:** Commit `'Write down how the house closed (v2.494.1)'`, push.
+- [x] **Step 1:** Results: registration table (pieces, modes), per-view verdict sets, budget before/after vs ceilings per view, buildMs trajectory incl. edges cost, ghost line constant, screenshot directories, deviations ruled during the arc.
+- [x] **Step 2:** Capabilities line (exact numbers from Step 1, not from memory).
+- [x] **Step 3:** Closing gate: Final all-view probe using `house_probe.py`'s fixture, renderer capture and budget reader, plus street/rear/side/night shots and the full sweep; recorded in the Task 8 report.
+- [x] **Step 4:** Include wrap-up documentation in the v2.497.0 Task 8 release and push; do not downgrade to the obsolete planned version.
 
 ---
 

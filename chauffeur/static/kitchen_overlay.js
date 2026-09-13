@@ -316,7 +316,10 @@ window.kitchenTileIsland = function () {
     if (heroTick) { clearInterval(heroTick); heroTick = null; }
   }
 
+  /* A late fetch or Alpine tick cannot restore a superseded focus. */
+  var focusRevision = 0;
   window.addEventListener('chf-kitchen-focus', function (ev) {
+    var revision = ++focusRevision;
     var d = (ev && ev.detail) || {};
     /* set BEFORE the island renders (`c.t = tile` below is what draws it),
        not in `show`, which runs a tick later — a card asking `fillsHere` on
@@ -325,6 +328,7 @@ window.kitchenTileIsland = function () {
     if (!d.zone || !d.rect) { hide(); return; }
     if (d.zone === 'door') {
       fetchBoard(function (b) {
+        if (revision !== focusRevision) return;
         if (!b || !hero) { hide(); return; }   /* calm or unreachable: the tip answers */
         renderDoor();
         show('door', d);
@@ -348,6 +352,7 @@ window.kitchenTileIsland = function () {
     } else if (ZONE_TILES[d.zone]) {
       var want = ZONE_TILES[d.zone];
       fetchBoard(function (b) {
+        if (revision !== focusRevision) return;
         var tiles = (b && b.tiles) || [];
         var tile = null;
         for (var i = 0; i < tiles.length; i++) {
@@ -361,7 +366,9 @@ window.kitchenTileIsland = function () {
         c.t = tile;
         /* Alpine renders the island on its own tick; place after it, so a
            fit-mode zone measures real content instead of an empty div */
-        window.Alpine.nextTick(function () { show(d.zone, d); });
+        window.Alpine.nextTick(function () {
+          if (revision === focusRevision) show(d.zone, d);
+        });
       });
     } else {
       hide();   /* a zone without a card yet keeps today's tip-only lean-in */
