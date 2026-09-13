@@ -99,3 +99,9 @@ Room views could exit only through visible sky or yard. That target is unreliabl
 The room-return helper now accepts every registered room and restores that room's camera, subject box, shell verdicts, shadow aim, and overlay state. Blank taps while focused use it too, fixing the garage behavior without making ordinary furniture taps eject from the house. A real-browser regression enters through the garage gable, focuses the cars, presses the visible control twice, and verifies garage then exterior settled states.
 
 Verification: `python tools/test.py` passed **222/222 files in 315 seconds**. `test_screensaver.py` also passed 25/25 alone after one earlier parallel-load timeout, and `node --check static/house.js` plus `git diff --check` pass.
+
+### Background-exit correction (v2.497.2)
+
+The first back-control pass let focused detail consume every zoneless tap before the existing sky/lawn rule ran. Visible background now wins first and exits directly from any depth. The button and Escape retain the deliberate detail-to-room-to-exterior sequence; taps on ordinary room furniture remain inert. A real-mouse regression holds focus while restoring a room camera with a known sky pixel, then proves that pixel exits rather than merely stepping back.
+
+Verification: the affected sweep passed **63/63 files in 254 seconds**. The full sweep passed 221/222, with only the pre-existing parallel-load screensaver timeout; that file immediately passed **25/25** alone. `node --check static/house.js` and `git diff --check` pass.

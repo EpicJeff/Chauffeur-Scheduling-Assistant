@@ -9525,12 +9525,13 @@
          of. */
       if (kr !== mode) { enterRoom(kr, null); return; }
     } else {
-      /* A lean-in steps back to its room before leaving the house. */
-      if (focused) { goHome(mode); return; }
+      /* Visible background keeps the original direct walk-out gesture,
+         even from a lean-in. The button owns the deliberate two-step path. */
       if (!ihit || ihit === webgl.skyDome || inYard(ihit)) {
         goExterior();                          /* rule 5 */
         return;
       }
+      if (focused) { goHome(mode); return; }
       var iroom = roomTagOf(ihit);
       if (iroom && iroom !== mode && roomsReg()[iroom]) {
         enterRoom(iroom, null);                /* rule 3: another room's

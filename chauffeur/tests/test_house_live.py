@@ -1182,6 +1182,25 @@ def scenario_navigation_real_mouse():
         check(page.evaluate("window.chfHouseMode()") == 'exterior',
               'second back press must restore the exterior view')
 
+        # The button supplements the old background gesture. Even when a
+        # detail is focused, visible sky or lawn still exits directly.
+        enter('garage')
+        page.evaluate("window.chfKitchenFocus('garage')")
+        page.wait_for_function(
+            "window.chfNavProbe({settled:true}) && "
+            "window.chfNavProbe({settled:true}).focused === 'garage'",
+            timeout=20000)
+        # Put the focused state at the full-room camera so the garage's
+        # known sky pixel is visible; chfHouseCam changes only the eye.
+        page.evaluate("window.chfHouseCam(-14.05,9.6,21.3,-15.45,1.75,6.05)")
+        page.wait_for_timeout(100)
+        p = probe("{sky:true}")
+        page.mouse.click(p['cx'], p['cy'])
+        page.wait_for_function("window.chfNavProbe({settled:true})",
+                               timeout=20000)
+        check(page.evaluate("window.chfHouseMode()") == 'exterior',
+              'visible sky must exit directly even while detail is focused')
+
         # spec section 5, rule 2: a zone belonging to ANOTHER room
         # navigates there -- replaces the old cross-room null-and-eject
         # this task deletes. radio is ZONE_ROOM-mapped to living but
