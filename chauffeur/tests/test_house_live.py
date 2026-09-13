@@ -1155,6 +1155,33 @@ def scenario_navigation_real_mouse():
         check(page.evaluate("window.chfHouseMode()") == 'garage',
               'exterior tap on the garage gable must enter the garage: %r' % p)
 
+        # Every depth has an explicit way back. This matters most in the
+        # garage: its close car view contains almost no sky or yard to tap.
+        back = page.locator('#house-back')
+        check(back.is_visible(), 'room view must expose a back control')
+        check('Exterior' in back.inner_text(),
+              'room-level back control must name the exterior destination')
+        p = probe("{zone:'garage'}")
+        page.mouse.click(p['cx'], p['cy'])
+        page.wait_for_function("window.chfNavProbe({settled:true})",
+                               timeout=20000)
+        check(page.evaluate("window.chfNavProbe({settled:true})") ==
+              {'mode': 'garage', 'focused': 'garage'},
+              'car tap must reach the garage detail view')
+        check('Garage' in back.inner_text(),
+              'focused back control must name the room destination')
+        back.click()
+        page.wait_for_function("window.chfNavProbe({settled:true})",
+                               timeout=20000)
+        check(page.evaluate("window.chfNavProbe({settled:true})") ==
+              {'mode': 'garage', 'focused': None},
+              'first back press must restore the full garage view')
+        back.click()
+        page.wait_for_function("window.chfNavProbe({settled:true})",
+                               timeout=20000)
+        check(page.evaluate("window.chfHouseMode()") == 'exterior',
+              'second back press must restore the exterior view')
+
         # spec section 5, rule 2: a zone belonging to ANOTHER room
         # navigates there -- replaces the old cross-room null-and-eject
         # this task deletes. radio is ZONE_ROOM-mapped to living but

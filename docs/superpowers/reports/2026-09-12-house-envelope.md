@@ -91,3 +91,11 @@ All listed pieces ghost except `yard`, which hides. Exterior has no non-solid pi
 - **Living:** `south_wall`, `roof_main_south`, `porch_roof_west`, `porch_roof_east`, `porch_roof_front`, `massing_front_roof_north`, `massing_front_roof_south`, `yard`.
 - **Mudroom:** `west_wall`, `west_cladding`, `massing_service_roof_south`, `mudroom_front_cladding`, `west_skirt`, `mudroom_roof`, `yard`.
 - **Garage:** `massing_service_roof_south`, `garage_gable_west`, `garage_gable_east`, `garage_gable_front`, `mudroom_front_cladding`, `garage_shell`, `garage_door`, `mudroom_roof`, `yard`.
+
+## Navigation follow-up (v2.497.1)
+
+Room views could exit only through visible sky or yard. That target is unreliable once shell occlusion fills the view, and the garage's car detail leaves almost no outside pixels. A persistent back control now exposes the actual navigation stack: focused detail returns to its room camera, then room level returns to the exterior. Its label names the next destination (`Garage`, `Kitchen`, and so on, then `Exterior`). Escape uses the same path.
+
+The room-return helper now accepts every registered room and restores that room's camera, subject box, shell verdicts, shadow aim, and overlay state. Blank taps while focused use it too, fixing the garage behavior without making ordinary furniture taps eject from the house. A real-browser regression enters through the garage gable, focuses the cars, presses the visible control twice, and verifies garage then exterior settled states.
+
+Verification: `python tools/test.py` passed **222/222 files in 315 seconds**. `test_screensaver.py` also passed 25/25 alone after one earlier parallel-load timeout, and `node --check static/house.js` plus `git diff --check` pass.

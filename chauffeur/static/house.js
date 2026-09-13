@@ -33,6 +33,7 @@
   var WRAP = document.getElementById('kitchen-wrap');
   var TIP = document.getElementById('tip');
   var CHIP = document.getElementById('chip');
+  var BACK = document.getElementById('house-back');
   var FALLBACK = document.getElementById('fallback');
   var FALLROWS = document.getElementById('fallback-rows');
   if (!ROOT) return;
@@ -8590,6 +8591,17 @@
   var tween = null;          // {fromP,toP,fromA,toA,t0,ms,cb}
   var rafLive = false;
 
+  function updateBack() {
+    if (!BACK) return;
+    BACK.hidden = mode === 'exterior';
+    if (mode === 'exterior') return;
+    var roomName = mode.charAt(0).toUpperCase() + mode.slice(1);
+    BACK.textContent = focused ? '\u2190 ' + roomName : '\u2190 Exterior';
+    BACK.setAttribute('aria-label', focused
+      ? 'Return to the ' + roomName.toLowerCase()
+      : 'Return to the exterior');
+  }
+
   function requestFrame() {
     if (!rafLive && webgl) { rafLive = true; requestAnimationFrame(frame); }
   }
@@ -9038,19 +9050,20 @@
               toA: center, t0: performance.now(), ms: 650, cb: cb };
     requestFrame();
   }
-  function goHome() {
-    /* on-focus-return re-solve (spec section 4): goHome is the kitchen's
-       own "step back to room level" path (onTap's second-tap-out), so it
-       must undo whatever zone-level verdict the lean-in left behind —
-       exactly like enterRoom does for every other room, at the same
-       point relative to the tween (destination, before it starts). */
-    webgl.solveShell(webgl.HOME_POS, { box: roomsReg().kitchen.aabb });
-    tween = { fromP: webgl.cam.position.clone(), toP: webgl.HOME_POS.clone(),
-              fromA: (lookAt || webgl.HOME_AT).clone(), toA: webgl.HOME_AT.clone(),
+  function goHome(name) {
+    var room = roomsReg()[name || 'kitchen'];
+    if (!room) return;
+    /* A focused view steps back through its room before leaving the house.
+       This is essential in the garage, where cars fill the close view. */
+    webgl.solveShell(room.pos, { box: room.aabb });
+    webgl.aimShadow(name || 'kitchen');
+    tween = { fromP: webgl.cam.position.clone(), toP: room.pos.clone(),
+              fromA: (lookAt || room.at).clone(), toA: room.at.clone(),
               t0: performance.now(), ms: 650, cb: null };
     focused = null;
     TIP.style.opacity = 0;
     announceFocus(null);
+    updateBack();
     requestFrame();
   }
   /* ---- ROOMS: every room is a camera home, and carries the AABB
@@ -9093,6 +9106,7 @@
       announceFocus(null);
     }
     mode = name;
+    updateBack();
     /* spec section 4: solve against the DESTINATION at tween start (you
        fly through an outline, never a wall) — replaces the show-all-
        then-hide dance that used to run here. */
@@ -9107,6 +9121,7 @@
   function goExterior() {
     mode = 'exterior';
     focused = null;
+    updateBack();
     TIP.style.opacity = 0;
     /* spec section 4: the sealed house — every piece solid, destination
        subject null, solved before the tween exactly like enterRoom. */
@@ -9300,6 +9315,7 @@
     if (target === null) return;   /* exterior-only zones have no lean-in */
     enterRoom(target, function () {
       focused = key;
+      updateBack();
       announceFocus(null);
       frameZone(key, function () { announceFocus(key); solveLeanIn(key); });
     });
@@ -9509,12 +9525,8 @@
          of. */
       if (kr !== mode) { enterRoom(kr, null); return; }
     } else {
-      /* no zone under the tap: rules 3-5. The kitchen's own two-step
-         walk-out (a lean-in steps back to room level before it ever
-         exits the house) takes priority over all three, unchanged from
-         before this task — it already worked, and it is not the bug the
-         arc ledger's user report described. */
-      if (mode === 'kitchen' && focused) { goHome(); return; }
+      /* A lean-in steps back to its room before leaving the house. */
+      if (focused) { goHome(mode); return; }
       if (!ihit || ihit === webgl.skyDome || inYard(ihit)) {
         goExterior();                          /* rule 5 */
         return;
@@ -9535,6 +9547,7 @@
       return;
     }
     focused = key;
+    updateBack();
     announceFocus(null);   /* the old card must not ride the camera move */
     frameZone(key, function () {
       announceFocus(key);
@@ -9586,6 +9599,14 @@
     if (window.console && console.error) console.error('[house] buildRoom failed:', e);
   }
   if (webgl) {
+    if (BACK) BACK.addEventListener('click', function () {
+      if (focused) goHome(mode);
+      else if (mode !== 'exterior') goExterior();
+    });
+    window.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape' || mode === 'exterior') return;
+      if (focused) goHome(mode); else goExterior();
+    });
     webgl.R.domElement.addEventListener('webglcontextlost', function (e) {
       e.preventDefault();
       /* the graceful death: swap to the calm 2D room, stop asking the GPU */
