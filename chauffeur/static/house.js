@@ -1002,12 +1002,43 @@
       if (SHADOWS && !noShadow) { m.castShadow = true; m.receiveShadow = true; }
       return m;
     }
+    /* Exterior patterns use the main facade and main roof as their scale
+       references. BoxGeometry otherwise maps every face to 0..1, which puts
+       the same number of battens/shingles on a 3.5-unit wing and a 14-unit
+       wall. Scale UVs by local world dimensions; materials and textures stay
+       shared, so this adds no texture or material allocation. */
+    var BATTEN_UV_REF = [13, 5.6, 13];
+    var SHINGLE_UV_REF = [14.64, 5.6, 11.521];
+    function tiledBoxGeo(w, h, d, ref, key) {
+      return cgeo('bt|' + key + '|' + w + '|' + h + '|' + d, function () {
+        var g = new T.BoxGeometry(w, h, d);
+        var uv = g.attributes.uv, no = g.attributes.normal;
+        var scale = [w / ref[0], h / ref[1], d / ref[2]];
+        for (var i = 0; i < uv.count; i++) {
+          var ax = Math.abs(no.getX(i)), ay = Math.abs(no.getY(i));
+          var az = Math.abs(no.getZ(i)), su, sv;
+          if (ax >= ay && ax >= az) { su = scale[2]; sv = scale[1]; }
+          else if (ay >= az)       { su = scale[0]; sv = scale[2]; }
+          else                     { su = scale[0]; sv = scale[1]; }
+          uv.setXY(i, uv.getX(i) * su, uv.getY(i) * sv);
+        }
+        uv.needsUpdate = true;
+        return g;
+      });
+    }
     function box(w, h, d, c, x, y, z, group, opts) {
       var g0 = group || scene;
       var ch = opts && opts.ch !== undefined ? opts.ch
              : (NICE ? 0.022 : 0);
+      var uvRef = null, uvKey = '';
+      if (NICE && opts && battenT && opts.map === battenT) {
+        uvRef = BATTEN_UV_REF; uvKey = 'batten';
+      } else if (NICE && opts && shingleT && opts.map === shingleT) {
+        uvRef = SHINGLE_UV_REF; uvKey = 'shingle';
+      }
       var m = new T.Mesh(
         ch > 0 ? chamferGeo(w, h, d, ch)
+               : uvRef ? tiledBoxGeo(w, h, d, uvRef, uvKey)
                : cgeo('b|' + w + '|' + h + '|' + d, function () {
                    return new T.BoxGeometry(w, h, d);
                  }),

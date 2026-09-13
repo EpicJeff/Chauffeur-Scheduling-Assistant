@@ -111,3 +111,9 @@ Verification: the affected sweep passed **63/63 files in 254 seconds**. The full
 `massing_east_front_patio` remained solid in the kitchen view. Its north-facing exterior normal is correct, but the staged kitchen camera sits on the building side while the kitchen subject lies across the wall, the reverse of the solver's usual outside-to-inside ordering. The registry now supports a scoped bidirectional separation flag, enabled only for this courtyard face. Its normal stays physical, and the kitchen verdict table pins the wall as ghosted.
 
 Verification: the live high-quality probe reports `massing_east_front_patio: ghost`, and `scratch/kitchen-wall-probe.png` shows the formerly solid foreground wall reduced to its cutaway outline. The full suite passed **222/222 files in 318 seconds**; `node --check static/house.js` and `git diff --check` pass.
+
+### Exterior texture scale (v2.497.4)
+
+Exterior boxes previously mapped each face to the same normalized UV range while sharing global texture repeats. A narrow wall therefore received the same batten count as a broad wall, and the small front roof received the same shingle count as the main slope. Batten and shingle boxes now scale UVs from their local world dimensions. The 13-by-5.6 main facade and 14.64-by-11.521 main roof deck are the reference surfaces, so their established density stays unchanged while the front wing, rear wing, mudroom, and garage converge on it. The correction reuses the existing shared maps, normal maps, and materials; it adds no texture allocation.
+
+Verification: `scratch/texture-scale/exterior.png` confirms consistent batten and shingle density across the requested wings at high quality. The exterior budget remains below its ceiling at 1373 in-frustum meshes with a 1301 ms build. The full suite passed **222/222 files in 344 seconds**; `node --check static/house.js` and `git diff --check` pass.

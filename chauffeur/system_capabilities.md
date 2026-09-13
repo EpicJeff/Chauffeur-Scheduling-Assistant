@@ -7988,3 +7988,5 @@ Every agentic capability shipped before this one is a hand-wired pipeline — th
 **House background exit (v2.497.2).** Tapping visible sky or lawn exits directly from any interior depth, including a focused detail. The back control retains its deliberate detail-to-room-to-exterior path. Real mouse coverage distinguishes the two gestures. NOT device-verified.
 
 **Kitchen courtyard cutaway (v2.497.3).** The front wing's patio-facing wall now ghosts when it separates the staged kitchen camera from the room. The courtyard wall keeps its physically correct outward normal; a scoped bidirectional occlusion flag handles cameras staged on its building side without changing other shell verdicts. NOT device-verified.
+
+**Exterior material scale (v2.497.4).** Board-and-batten and shingle UVs now scale with each exterior mesh's world dimensions. The main facade and main roof define the retained reference density, so the small front wing, rear wing, mudroom, and garage no longer squeeze or stretch the same fixed tile count across differently sized surfaces. Textures and materials remain shared. NOT device-verified.
