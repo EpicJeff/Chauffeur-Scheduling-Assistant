@@ -105,3 +105,9 @@ Verification: `python tools/test.py` passed **222/222 files in 315 seconds**. `t
 The first back-control pass let focused detail consume every zoneless tap before the existing sky/lawn rule ran. Visible background now wins first and exits directly from any depth. The button and Escape retain the deliberate detail-to-room-to-exterior sequence; taps on ordinary room furniture remain inert. A real-mouse regression holds focus while restoring a room camera with a known sky pixel, then proves that pixel exits rather than merely stepping back.
 
 Verification: the affected sweep passed **63/63 files in 254 seconds**. The full sweep passed 221/222, with only the pre-existing parallel-load screensaver timeout; that file immediately passed **25/25** alone. `node --check static/house.js` and `git diff --check` pass.
+
+### Kitchen courtyard cutaway (v2.497.3)
+
+`massing_east_front_patio` remained solid in the kitchen view. Its north-facing exterior normal is correct, but the staged kitchen camera sits on the building side while the kitchen subject lies across the wall, the reverse of the solver's usual outside-to-inside ordering. The registry now supports a scoped bidirectional separation flag, enabled only for this courtyard face. Its normal stays physical, and the kitchen verdict table pins the wall as ghosted.
+
+Verification: the live high-quality probe reports `massing_east_front_patio: ghost`, and `scratch/kitchen-wall-probe.png` shows the formerly solid foreground wall reduced to its cutaway outline. The full suite passed **222/222 files in 318 seconds**; `node --check static/house.js` and `git diff --check` pass.

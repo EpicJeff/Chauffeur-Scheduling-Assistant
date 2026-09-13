@@ -854,7 +854,8 @@
       if (o.room) group.userData.room = o.room;
       FABRIC.push({ g: group, name: o.name,
                     n: new T.Vector3(o.n[0], o.n[1], o.n[2]).normalize(),
-                    box: o.box, mode: o.mode || 'ghost', edges: null });
+                    box: o.box, mode: o.mode || 'ghost', edges: null,
+                    twoSided: !!o.twoSided });
     }
     /* box helper for regFabric call sites: a plain Box3 does not survive
        structured-clone back to a test harness, and the spec wants six
@@ -912,9 +913,11 @@
         var v = 'solid';
         if (subPt && boxOk(f.box)) {
           var p = boxCentre(f.box);
-          var camOut = f.n.dot(new T.Vector3().subVectors(camPos, p)) > 0;
-          var subIn  = f.n.dot(new T.Vector3().subVectors(subPt,  p)) < 0;
-          if (camOut && subIn && corridorHits(f.box, camPos, subPt, 1.5)) {
+          var camSide = f.n.dot(new T.Vector3().subVectors(camPos, p));
+          var subSide = f.n.dot(new T.Vector3().subVectors(subPt, p));
+          var separates = f.twoSided ? camSide * subSide < 0
+                                     : camSide > 0 && subSide < 0;
+          if (separates && corridorHits(f.box, camPos, subPt, 1.5)) {
             v = f.mode === 'hide' ? 'hide' : 'ghost';
           }
         }
@@ -4218,9 +4221,10 @@
     function shellBox(g, w, h, d, c, x, y, z, opts) {
       return box(w, h, d, c, x, y, z, g, sharp(opts));
     }
-    function shellRegister(g, name, normal, room) {
+    function shellRegister(g, name, normal, room, twoSided) {
       g.updateMatrixWorld(true);
-      regFabric(g, { name: name, n: normal, box: fabBox(g), room: room });
+      regFabric(g, { name: name, n: normal, box: fabBox(g), room: room,
+                     twoSided: twoSided });
     }
     function shellWindow(g, x, y, z, angle, w, h, glow) {
       var frame = new T.Group(); frame.position.set(x, y, z);
@@ -4243,7 +4247,7 @@
                0, -(h + 0.22) / 2, 0.05);
       return frame;
     }
-    function shellWall(name, x0, z0, x1, z1, height, normal, windows) {
+    function shellWall(name, x0, z0, x1, z1, height, normal, windows, twoSided) {
       var g = shellGroup(), alongX = x0 !== x1;
       var length = alongX ? x1 - x0 : z1 - z0;
       var cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
@@ -4264,7 +4268,7 @@
                     2.80, alongX ? cz + normal[2] * (WALL_T4 / 2 + 0.05) : p,
                     angle, a[1] || 1.35, 2.70, a[2]);
       });
-      shellRegister(g, name, normal, null);
+      shellRegister(g, name, normal, null, twoSided);
       return g;
     }
     /* Each pitched plane has its own normal and merge/ghost unit. Gable
@@ -4347,7 +4351,7 @@
     shellWall('massing_east_front_east', FULL_HOUSE.wingEast, 9.8, FULL_HOUSE.wingEast, SWZ1,
               5.6, [1, 0, 0], [[12.10, 1.35, false]]);
     shellWall('massing_east_front_patio', EWX1_4, 9.8, FULL_HOUSE.wingEast, 9.8,
-              5.6, [0, 0, -1], []);
+              5.6, [0, 0, -1], [], true);
     shellGable('massing_front_roof', EWX1_4, FULL_HOUSE.wingEast, 9.8, SWZ1,
                5.6, false, null, [1], Math.PI / 8);
     shellWall('massing_east_back_north', EWX1_4, -6.1, FULL_HOUSE.wingEast, -6.1,
