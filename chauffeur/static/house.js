@@ -833,7 +833,24 @@
        (section 4, just below) reads FABRIC; mergeStatic and the fence
        sets read it so shell membership is declared exactly once. */
     var FABRIC = [];
+    /* SHELL (spec section 5, the navigation law): every registered piece
+       stamps the room it fronts onto its own group (`o.room`), exactly
+       the way south_wall/east_wall used to hand-stamp themselves at their
+       own build sites (that per-site convention is now generalized here,
+       the one place every piece already passes through). onTap's ancestor
+       walk (interior AND exterior branches) climbs looking for the first
+       userData.room, so this single line does the work every hand stamp
+       used to. `o.room` absent/undefined (a future massing piece with
+       nothing behind it yet, per T8) leaves userData.room unset —
+       deliberately NOT a fallback 'kitchen': userData.fabric marks the
+       group as a REGISTERED shell piece regardless, so stampHouse's own
+       y>0.6 fallback (below) can tell "a registered piece that chose no
+       room" apart from "ordinary untagged decor" and skip the guess
+       rather than mis-route a future inert massing piece into the
+       kitchen. */
     function regFabric(group, o) {
+      group.userData.fabric = true;
+      if (o.room) group.userData.room = o.room;
       FABRIC.push({ g: group, name: o.name,
                     n: new T.Vector3(o.n[0], o.n[1], o.n[2]).normalize(),
                     box: o.box, mode: o.mode || 'ghost', edges: null });
@@ -1314,7 +1331,8 @@
        exterior boundary (only yard beyond it), not an interior partition
        like west_wall, so no flip is needed (unlike west_wall's T2 flip,
        read at its own registration site far below). */
-    regFabric(wallB, { name: 'north_wall', n: [0, 0, -1], box: fabBox(wallB) });
+    regFabric(wallB, { name: 'north_wall', n: [0, 0, -1], box: fabBox(wallB),
+                       room: 'kitchen' });
     /* west wall in two pieces + header: an open doorway into the
        mudroom at z 2.8..4.4 (architect pass — the kitchen looks through
        to the bench) */
@@ -3544,8 +3562,19 @@
        only the mudroom's OWN aabb centre (x -9.62) sits west of -6.2175
        satisfying subIn; the kitchen's (x -2.785) and living's (x 0) sit
        east of it, same side as their cameras, same as before the flip. */
+    /* spec section 5: west_wall FRONTS the mudroom, not the kitchen it
+       sits inside of. Adjacency, not compass direction: the mudroom's
+       own footprint (fabBox measured centre x -9.62, per westWallG's own
+       T2 comment above) sits entirely WEST of this wall's inner face
+       (WXK -6.475), the kitchen's entirely east of it (floor centre x 0,
+       half-width 6.5) — so walking THROUGH this wall, from either room,
+       always lands in the mudroom. Matches the solver's own n=[1,0,0]
+       flip immediately above: this piece only ever ghosts for the
+       mudroom's own camera (subIn true only when the subject sits west
+       of the wall), i.e. it is the mudroom's fabric first and the
+       kitchen's boundary second — a tap on it belongs where it ghosts. */
     regFabric(westWallG, { name: 'west_wall', n: [1, 0, 0],
-                            box: fabBox(westWallG) });
+                            box: fabBox(westWallG), room: 'mudroom' });
 
     /* pendant lamps over the island: warm emissive shades. Grouped so a
        lean-in can hide them — a cord across a focused card breaks the
@@ -3870,7 +3899,7 @@
       roof.getWorldQuaternion(q);
       n.applyQuaternion(q);
       regFabric(roof, { name: 'roof_north', n: [n.x, n.y, n.z],
-                         box: fabBox(roof) });
+                         box: fabBox(roof), room: 'kitchen' });
     })();
     ebox(16.6, 0.26, 0.34, EXTC.ridge, 0.3, 9.24, -2.0);
     /* rake boards: the back slope's own cut edge, both gable ends,
@@ -3998,15 +4027,15 @@
     var SWZ0 = grFloorBox.max.z;                          /* ~14.2 */
     var SWZ1 = SWZ0 + WALL_T4;                             /* ~14.55 */
     var southWallG = new T.Group();
-    /* stamped on the GROUP, not per-mesh: every room-lookup in the file
-       (stampHouse, the ROOM_AABB traversal, onTap's ancestor walk) climbs
-       parents looking for the first userData.room, so one tag here
-       reaches every current and future child — the door casing, the
-       porch posts, a baseboard too short to clear stampHouse's own y>0.6
-       fallback — without a second per-mesh tag call anywhere in this
-       block. Spec section 6: the wall fronts the great room, so it stamps
-       'kitchen', matching the wall it lives in — no new zone. */
-    southWallG.userData.room = 'kitchen';
+    /* SHELL (spec section 5): this used to hand-stamp southWallG.userData
+       .room = 'kitchen' right here, at group creation — the FIRST such
+       stamp in the file, before regFabric grew its own `room` field
+       (Task 7). That stamp and regFabric's own (below, at this group's
+       registration) are the same group, the same value, both set well
+       before anything ever reads userData.room (stampHouse, ROOM_AABB,
+       onTap all run at the very end of buildRoom() / at tap time) —
+       provably identical either way, so the hand stamp is gone and
+       regFabric now does this once for every piece, not just this one. */
     extG.add(southWallG);
 
     /* elevation layout (spec section 6 revised): OFFSET door, a window
@@ -4305,7 +4334,7 @@
        physical compass direction — no flip needed, unlike west_wall's
        interior-partition flip (T2). */
     regFabric(southWallG, { name: 'south_wall', n: [0, 0, 1],
-                            box: fabBox(southWallG) });
+                            box: fabBox(southWallG), room: 'kitchen' });
 
     /* ---- the east wall (NEW): the dollhouse's sawn-open side, closed --
        Span comes off the floor union (east edge) and the two walls
@@ -4326,9 +4355,11 @@
     var EW_LEN4 = EWZ1_4 - EWZ0_4;
     var EW_CZ4 = (EWZ0_4 + EWZ1_4) / 2;
     var eastWallG = new T.Group();
-    eastWallG.userData.room = 'kitchen';
     extG.add(eastWallG);
-    function ewtag(m) { if (m) m.userData.room = 'kitchen'; return m; }
+    /* Navigation spec section 5 assigns this shared east elevation to
+       living. The wall spans both halves of the great room; this tag
+       chooses its entry destination without changing its geometry. */
+    function ewtag(m) { if (m) m.userData.room = 'living'; return m; }
     ewtag(box(WALL_T4 / 2, EXT_TOP4, EW_LEN4, C.wall, EWX0_4 + WALL_T4 / 4,
               EXT_TOP4 / 2, EW_CZ4, eastWallG, sharp(WALL_O)));
     ewtag(box(WALL_T4 / 2, EXT_TOP4, EW_LEN4, NICE ? 0xffffff : EXTC.siding,
@@ -4339,7 +4370,7 @@
     /* SHELL: east_wall is complete here. n is [1,0,0]: a true exterior
        boundary, its own physical outward compass direction. */
     regFabric(eastWallG, { name: 'east_wall', n: [1, 0, 0],
-                           box: fabBox(eastWallG) });
+                           box: fabBox(eastWallG), room: 'living' });
 
     /* ---- the roof completes (spec section 6/6b): roof_south -----------
        T4's own long saltbox slope — one continuous run off the main
@@ -4551,7 +4582,7 @@
     rsN4.applyQuaternion(rsQ4);
     regFabric(roofSouthG, { name: 'roof_south',
                             n: [rsN4.x, rsN4.y, rsN4.z],
-                            box: fabBox(roofSouthG) });
+                            box: fabBox(roofSouthG), room: 'kitchen' });
 
     /* ---- west siding, extended: the living room's own west wall
        (westWallG's wallL2) has had NO exterior cladding past z=6.0 since
@@ -4659,8 +4690,13 @@
         sharp({ rough: 0.95, map: battenT }));
     box(0.35, EXT_TOP4, 0.1, EXTC.trim, -6.675, EXT_TOP4 / 2, SWZ1,
         westSkirtG, sharp());
+    /* spec section 5: fronts mudroom, same adjacency shape as west_wall's
+       own T2/T7 flip immediately above this file's own west_skirt
+       derivation — this piece only ever ghosts for the mudroom's camera
+       (re-derived exhaustively in the comment above: mudroom GHOST,
+       every other view SOLID), so a tap on it belongs where it ghosts. */
     regFabric(westSkirtG, { name: 'west_skirt', n: [1, 0, 0],
-                            box: fabBox(westSkirtG) });
+                            box: fabBox(westSkirtG), room: 'mudroom' });
     /* ================= END SHELL: the seal ============================ */
 
     /* garage: opened in H2, moved WEST in the architect pass so the
@@ -4914,7 +4950,7 @@
          mudroom, not a new case). Verified against the extended verdict
          table below. */
       regFabric(garageShellG, { name: 'garage_shell', n: [1, 0, 0],
-                                box: fabBox(garageShellG) });
+                                box: fabBox(garageShellG), room: 'garage' });
       /* SHELL: garage_door is complete here — the door leaf/frame/
          window/hardware/coach lamp are all in, and the roof/walls just
          moved OUT above, so fabBox now measures only the door assembly
@@ -4931,7 +4967,7 @@
          still read it 'solid'. */
       var gdBox = fabBox(garageDoorG);
       regFabric(garageDoorG, { name: 'garage_door', n: [0, 0, 1],
-                                box: gdBox });
+                                box: gdBox, room: 'garage' });
       blobShadow(3.0, 4.2, -15.4, 6.0, extG);
       /* ================= THE BAY (style bible S7 garage) ================
          Plates 3, 4 and 5: a working garage, not a shed. A concrete slab
@@ -6327,7 +6363,7 @@
          over it) — the fence assembly's own comment records the same
          two-mesh count. Nothing else is ever added to this group. */
       regFabric(mudroomRoofG, { name: 'mudroom_roof', n: [0, 1, 0],
-                                 box: fabBox(mudroomRoofG) });
+                                 box: fabBox(mudroomRoofG), room: 'mudroom' });
       /* ============ the studio pass (docs/house_style_bible.md) =========
          The room inherited exterior siding from the architect pass and
          read as a covered porch. It is a finished room now: a shiplap
@@ -6921,7 +6957,7 @@
        here (the arc's own south-wall/roof work, spec section 6) to
        re-derive once there is something to measure. */
     regFabric(livingRoofG, { name: 'living_roof', n: [0, 1, 0],
-                              box: fabBox(livingRoofG) });
+                              box: fabBox(livingRoofG), room: 'living' });
     /* ============ THE YARD (docs/house_style_bible.md S7, exterior) =====
        The plinth was a bare green plane with two lollipop trees and one
        sphere of a bush, and half the resting frame was empty grass.
@@ -7537,6 +7573,11 @@
             if (zr) o.userData.room = zr;
             return;
           }
+          /* SHELL (spec section 5): a registered fabric group that chose
+             NO room (regFabric's o.room left absent/null, T8's future
+             inert massing) is a deliberate scenery decision, not a gap
+             this fallback should paper over with a guessed 'kitchen'. */
+          if (p.userData && p.userData.fabric) return;
         }
         bb.setFromObject(o);
         if (bb.max.y > 0.6) o.userData.room = 'kitchen';
@@ -9385,6 +9426,21 @@
     while (o) { if (o === webgl.yardG) return true; o = o.parent; }
     return false;
   }
+  /* SHELL (spec section 5): the vendored raycaster (Ou, three.min.js) never
+     checks .visible itself — every mesh under a ghosted (solveShell
+     verdict 'ghost', .visible=false) fabric group is still fully solid to
+     a ray, exactly as solid as a mesh that IS rendered. zoneAt's own loop
+     already accounts for this by walking every hit in distance order
+     until one resolves to a zone tag, silently stepping past a ghosted
+     wall that carries none — "ghosted fills are tag-transparent in the
+     hit walk" (arc ledger) describes THAT behavior, not raycaster
+     support. A single-hit reader has no such loop, so it would take the
+     ghosted wall itself as the answer the moment one sits nearer than
+     the room's real fabric behind it — which happens for exactly the
+     camera/room pairs solveShell ghosts things for, i.e. every room but
+     the sealed exterior. Skips to the first hit that is actually
+     visible (every ancestor's own .visible true), matching what the
+     eye sees rather than what merely blocks a ray. */
   function anyHit(clientX, clientY) {
     var rect = webgl.R.domElement.getBoundingClientRect();
     var v = new webgl.T.Vector2(((clientX - rect.left) / rect.width) * 2 - 1,
@@ -9392,7 +9448,12 @@
     var ray = new webgl.T.Raycaster();
     ray.setFromCamera(v, webgl.cam);
     var hits = ray.intersectObjects(webgl.scene.children, true);
-    return hits.length ? hits[0].object : null;
+    for (var i = 0; i < hits.length; i++) {
+      var o = hits[i].object, vis = true;
+      for (var p = o; p; p = p.parent) if (p.visible === false) { vis = false; break; }
+      if (vis) return o;
+    }
+    return null;
   }
 
   /* Where a zone sits on the SCREEN, so the page layer can lay the board's
@@ -9583,6 +9644,75 @@
                edgesVisible: f.edges ? f.edges.visible : null };
     });
   };
+  /* Read-only test hook: find a canvas pixel over actual geometry. Use
+     the production hit readers so candidate selection cannot drift from
+     pointer handling. Tests still assert the result of a real mouse click.
+     A missing candidate means the sampled view cannot reach the target. */
+  window.chfNavProbe = function (spec) {
+    if (!webgl || !spec) return null;
+    if (spec.settled) return tween ? null : { mode: mode, focused: focused };
+    webgl.cam.updateMatrixWorld();
+    var rect = webgl.R.domElement.getBoundingClientRect();
+    var w = rect.width, h = rect.height;
+    function project(x, y, z) {
+      var p = _project(new webgl.T.Vector3(x, y, z), w, h);
+      return { cx: p.x + rect.left, cy: p.y + rect.top, z: p.z };
+    }
+    function onCanvas(p) {
+      return document.elementFromPoint(p.cx, p.cy) === webgl.R.domElement;
+    }
+    if (spec.point) {
+      var pp = project(spec.point[0], spec.point[1], spec.point[2]);
+      return pp.z >= -1 && pp.z <= 1 && onCanvas(pp) ? pp : null;
+    }
+    var b = null, target = null;
+    if (spec.piece) {
+      webgl.FABRIC.forEach(function (f) {
+        if (f.name === spec.piece) { b = f.box; target = f.g; }
+      });
+      if (!b) return null;
+    } else if (spec.zone) {
+      target = webgl.groups[spec.zone];
+      if (!target) return null;
+      var box = new webgl.T.Box3().setFromObject(target);
+      if (box.isEmpty()) return null;
+      b = [box.min.x, box.max.x, box.min.y, box.max.y, box.min.z, box.max.z];
+    } else if (!spec.sky && !spec.empty) return null;
+    var minX = rect.left + 2, maxX = rect.right - 2;
+    var minY = rect.top + 2, maxY = rect.bottom - 2;
+    if (b) {
+      var x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (var i = 0; i < 2; i++) for (var j = 0; j < 2; j++) for (var k = 0; k < 2; k++) {
+        var p = project(b[i], b[2 + j], b[4 + k]);
+        if (p.z < -1 || p.z > 1) continue;
+        x0 = Math.min(x0, p.cx); x1 = Math.max(x1, p.cx);
+        y0 = Math.min(y0, p.cy); y1 = Math.max(y1, p.cy);
+      }
+      minX = Math.max(minX, x0); maxX = Math.min(maxX, x1);
+      minY = Math.max(minY, y0); maxY = Math.min(maxY, y1);
+    }
+    if (minX >= maxX || minY >= maxY) return null;
+    function matches(px, py) {
+      var p = { cx: px, cy: py };
+      if (!onCanvas(p)) return false;
+      if (spec.zone) return zoneAt(px, py) === spec.zone;
+      if (spec.empty) return !zoneAt(px, py);
+      if (spec.zoneless && zoneAt(px, py)) return false;
+      var hit = anyHit(px, py);
+      if (spec.sky) return !hit || hit === webgl.skyDome;
+      for (var o = hit; o; o = o.parent) if (o === target) return true;
+      return false;
+    }
+    var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    if (matches(cx, cy)) return { cx: cx, cy: cy };
+    var n = spec.sky || spec.empty ? 24 : 8;
+    for (var gx = 0; gx <= n; gx++) for (var gy = 0; gy <= n; gy++) {
+      var px = minX + (maxX - minX) * gx / n;
+      var py = minY + (maxY - minY) * gy / n;
+      if (matches(px, py)) return { cx: px, cy: py };
+    }
+    return null;
+  };
   function announceFocus(key) {
     if (webgl && state) applyState(state);   /* blank/restore the faces */
     var shape = (key && webgl) ? zoneFaceQuad(key) : null;
@@ -9612,32 +9742,81 @@
     return null;
   }
 
+  /* SHELL (spec section 5, the navigation law): the one ancestor-room walk
+     both onTap branches need — stamped, not guessed (regFabric's own room
+     field, registration time; stampHouse's zone-borrow/y>0.6 fallback,
+     build time). Climbs all the way to the scene root regardless of
+     extG membership: west_wall's own group sits at scene level, never
+     under extG (see its own build-site comment), so a walk that stopped
+     at extG would never find its stamp. */
+  function roomTagOf(obj) {
+    var o = obj;
+    while (o) {
+      if (o.userData && o.userData.room) return o.userData.room;
+      if (o.userData && o.userData.fabric) return null;
+      o = o.parent;
+    }
+    return null;
+  }
+
+  function inertFabric(obj) {
+    for (var o = obj; o; o = o.parent)
+      if (o.userData && o.userData.fabric) return !o.userData.room;
+    return false;
+  }
+
   function onTap(ev) {
     if (!webgl) return;
     if (mode === 'exterior') {
-      /* stamped, not guessed (stampHouse, build time): walk up for a
-         room tag; yard and sky stay a view; anything INTERIOR seen
-         through the open front is the kitchen. */
+      /* stamped, not guessed: walk up for a room tag; yard and sky stay
+         a view; anything INTERIOR seen through the open front is the
+         kitchen. */
       var hit = anyHit(ev.clientX, ev.clientY);
       if (!hit || hit === webgl.skyDome) return;
-      var o = hit, room = null;
-      while (o) {
-        if (o.userData && o.userData.room) { room = o.userData.room; break; }
-        o = o.parent;
-      }
+      var room = roomTagOf(hit);
       if (room && roomsReg()[room]) { enterRoom(room, null); return; }
+      if (inertFabric(hit)) return;
       if (inYard(hit)) return;                 /* scenery: look, do not enter */
       if (!inExterior(hit)) enterRoom('kitchen', null);
       return;
     }
+    var ihit = anyHit(ev.clientX, ev.clientY);
+    /* Shell-only rooms are scenery even when a zone lies behind them.
+       The yard retains its separate exit behavior. */
+    if (inertFabric(ihit) && !inYard(ihit)) return;
     var key = zoneAt(ev.clientX, ev.clientY);
-    /* a ray that slips past a wall must not lean into another room */
-    if (key && zoneRoom(key) !== mode) key = null;
-    if (!key) {
-      /* the kitchen keeps its two-step walk-out; small rooms exit direct */
+    if (key && !zoneRoom(key)) key = null;  /* curb belongs to the yard */
+    if (key) {
+      var kr = zoneRoom(key);
+      /* rule 2: a zone belonging to ANOTHER room navigates there — a ray
+         that slipped past a wall used to be silenced into `key = null`
+         (an ejection, the cross-room null this task deletes) instead of
+         the navigation it plainly asked for (the radio, visible from the
+         kitchen across the open great room, used to eject a tap that
+         should have walked into living). Rule 1 (own-room zone leans in)
+         is simply everything below that this `if` does not return out
+         of. */
+      if (kr !== mode) { enterRoom(kr, null); return; }
+    } else {
+      /* no zone under the tap: rules 3-5. The kitchen's own two-step
+         walk-out (a lean-in steps back to room level before it ever
+         exits the house) takes priority over all three, unchanged from
+         before this task — it already worked, and it is not the bug the
+         arc ledger's user report described. */
       if (mode === 'kitchen' && focused) { goHome(); return; }
-      goExterior();
-      return;
+      if (!ihit || ihit === webgl.skyDome || inYard(ihit)) {
+        goExterior();                          /* rule 5 */
+        return;
+      }
+      var iroom = roomTagOf(ihit);
+      if (iroom && iroom !== mode && roomsReg()[iroom]) {
+        enterRoom(iroom, null);                /* rule 3: another room's
+                                                    room-tagged fabric/props */
+        return;
+      }
+      return;   /* rule 4: the current room's own zoneless prop — INERT,
+                   no more ejecting an island mis-tap into the sealed
+                   exterior */
     }
     if (focused === key) {                                 // second tap: through
       var through = zoneUrl(key);

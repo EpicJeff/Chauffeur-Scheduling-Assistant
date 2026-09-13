@@ -71,7 +71,7 @@ def _seed():
     end = start + datetime.timedelta(hours=1)
     if end > late:
         start, end = now - datetime.timedelta(minutes=5), late
-    storage.add_driver({'id': 'd1', 'name': 'Alex', 'color': '#38bdf8'})
+    storage.add_driver({'id': 'd1', 'name': 'Alex', 'color_code': '#38bdf8'})
     # Pin the cache FUNCTION, not the row: the server's own boot refresh
     # rebuilds the cache from the (empty) calendars moments after boot and
     # would silently erase a seeded row mid-test (test_kitchen_state idiom).
@@ -1317,6 +1317,8 @@ def scenario_shell_fabric_registry():
         # 'exterior' iteration does.
         page.evaluate("window.chfHouseExit && window.chfHouseExit()")
         page.wait_for_timeout(1000)
+        page.wait_for_function("window.chfNavProbe({settled:true})",
+                               timeout=20000)
         check(page.evaluate("window.chfHouseMode()") == 'exterior',
               'must be back at the sealed exterior before the tap check')
         # Screen points, not world coordinates: onTap's exterior path
@@ -1345,14 +1347,17 @@ def scenario_shell_fabric_registry():
         # position (DOOR_X4, PORCH_W4) nor its roof's footprint (only its
         # PITCH steepened) changed.
         page.mouse.click(320, 610)
-        page.wait_for_timeout(1200)
+        page.wait_for_function("window.chfNavProbe({settled:true})",
+                               timeout=20000)
         check(page.evaluate("window.chfHouseMode()") == 'kitchen',
               'tapping the south wall siding must enter the kitchen '
               '(south_wall stamps room:kitchen, spec section 6)')
         page.evaluate("window.chfHouseExit && window.chfHouseExit()")
-        page.wait_for_timeout(1000)
+        page.wait_for_function("window.chfNavProbe({settled:true})",
+                               timeout=20000)
         page.mouse.click(445, 650)
-        page.wait_for_timeout(1200)
+        page.wait_for_function("window.chfNavProbe({settled:true})",
+                               timeout=20000)
         check(page.evaluate("window.chfHouseMode()") == 'kitchen',
               'tapping the covered porch must ALSO enter the kitchen -- '
               'the porch is part of southWallG, not a separate piece')
@@ -1362,10 +1367,239 @@ def scenario_shell_fabric_registry():
         check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
 
 
+def scenario_navigation_real_mouse():
+    """Real clicks cover all four exterior entries, cross-room zones and
+    fabric, a zone lean-in, two-step return, inert props, and sky exit.
+
+    Project geometry through the current camera; verify candidate pixels
+    with the production hit readers before clicking. Low quality keeps
+    this behavioral scenario quick. Both high and low explicitly force
+    the quality tier and disable automatic demotion.
+
+    The default street view obscures mudroom_roof; west_skirt supplies a
+    visible mudroom entry. Garage supplies a sky pixel; the main room's
+    roof surrounds its camera. The high-quality registry scenario retains
+    separate geometry, ghost-edge pixel, and exterior-entry checks.
+    """
+    served = live_app()
+    if served is None:
+        return
+    with served.browser() as page:
+        page.goto(served.url('house?quality=low'))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_timeout(1800)
+
+        check(page.evaluate("typeof window.chfNavProbe === 'function'"),
+              'chfNavProbe must exist for a real-mouse test to derive its '
+              'own pixels, never a hard-coded screen point')
+
+        def probe(spec_js):
+            page.wait_for_function("window.chfNavProbe({settled:true})",
+                                   timeout=20000)
+            p = page.evaluate('window.chfNavProbe(%s)' % spec_js)
+            check(p is not None, 'no reachable canvas pixel for %s' % spec_js)
+            return p
+
+        def enter(room):
+            if room == 'exterior':
+                page.evaluate("window.chfHouseExit && window.chfHouseExit()")
+            elif room == 'kitchen':
+                page.evaluate("window.chfHouseEnter()")
+            else:
+                page.evaluate("window.chfHouseEnterRoom(%r)" % room)
+            page.wait_for_function(
+                "window.chfNavProbe({settled:true})", timeout=20000)
+
+        # spec section 5, bullet 1 + exterior branch: every shell piece
+        # stamps its fronting room (regFabric's `room` field, Task 7).
+        # (1) mudroom_roof itself is occluded today (see docstring) --
+        # west_skirt fronts the SAME room and IS reachable, so it carries
+        # the exterior->mudroom pin.
+        enter('exterior')
+        check(page.evaluate("window.chfHouseMode()") == 'exterior',
+              'must start at the sealed exterior')
+        p = probe("{piece:'west_skirt'}")
+        page.mouse.click(p['cx'], p['cy'])
+        page.wait_for_timeout(1200)
+        check(page.evaluate("window.chfHouseMode()") == 'mudroom',
+              'exterior tap on west_skirt must enter the mudroom -- it '
+              'fronts mudroom by the same street-adjacency rule as '
+              'west_wall (spec section 5): %r' % p)
+
+        # (2) east_wall now fronts LIVING (Task 7 corrects the file's own
+        # prior 'kitchen' stamp -- east_wall closes the dollhouse's east
+        # SIDE, against living's own floor run, not the kitchen's).
+        enter('exterior')
+        p = probe("{piece:'east_wall'}")
+        page.mouse.click(p['cx'], p['cy'])
+        page.wait_for_timeout(1200)
+        check(page.evaluate("window.chfHouseMode()") == 'living',
+              'exterior tap on east_wall must enter living, not kitchen: '
+              '%r' % p)
+
+        enter('exterior')
+        p = probe("{piece:'south_wall'}")
+        page.mouse.click(p['cx'], p['cy'])
+        page.wait_for_timeout(1200)
+        check(page.evaluate("window.chfHouseMode()") == 'kitchen',
+              'exterior tap on south_wall must enter kitchen: %r' % p)
+
+        # (3) garage_shell fronts garage (already true pre-Task-7 via
+        # gtag's per-mesh stamps -- pinned here as a still-must-hold
+        # regression guard now that it also carries an explicit
+        # regFabric room field).
+        enter('exterior')
+        p = probe("{piece:'garage_shell'}")
+        page.mouse.click(p['cx'], p['cy'])
+        page.wait_for_timeout(1200)
+        check(page.evaluate("window.chfHouseMode()") == 'garage',
+              'exterior tap on garage_shell must enter the garage: %r' % p)
+
+        # spec section 5, rule 2: a zone belonging to ANOTHER room
+        # navigates there -- replaces the old cross-room null-and-eject
+        # this task deletes. radio is ZONE_ROOM-mapped to living but
+        # sits in the shared open great room, visible from the kitchen's
+        # own camera.
+        enter('kitchen')
+        p = probe("{zone:'radio'}")
+        page.mouse.click(p['cx'], p['cy'])
+        page.wait_for_timeout(1200)
+        check(page.evaluate("window.chfHouseMode()") == 'living',
+              "tapping the radio's zone from the kitchen must walk into "
+              'living, never eject to the exterior: %r' % p)
+
+        # Rule 3 must also work without a zone behind the tapped wall.
+        enter('kitchen')
+        p = probe("{piece:'west_wall',zoneless:true}")
+        page.mouse.click(p['cx'], p['cy'])
+        page.wait_for_timeout(1200)
+        check(page.evaluate("window.chfHouseMode()") == 'mudroom',
+              'a zoneless west-wall tap must enter mudroom: %r' % p)
+
+        # spec section 5, rule 1: a zone in the CURRENT room still leans
+        # in (unchanged) -- a real click on the board, not the
+        # programmatic chfKitchenFocus hand path, which stayed green
+        # through the whole bug this task fixes and so proves nothing
+        # about onTap.
+        enter('kitchen')
+        page.evaluate("window.__navEvents = []; "
+                       "window.addEventListener('chf-kitchen-focus', "
+                       "function (e) { window.__navEvents.push(e.detail); });")
+        p = probe("{zone:'board'}")
+        page.mouse.click(p['cx'], p['cy'])
+        page.wait_for_timeout(1200)
+        check(page.evaluate("window.chfHouseMode()") == 'kitchen',
+              'leaning into the board must stay in the kitchen: %r' % p)
+        events = page.evaluate("window.__navEvents")
+        check(any(e.get('zone') == 'board' for e in events),
+              "a real tap on the board must fire the SAME chf-kitchen-"
+              'focus event the card overlay listens for: %r' % events)
+
+        # A blank tap while leaned in first returns to the kitchen view.
+        p = probe("{empty:true}")
+        page.mouse.click(p['cx'], p['cy'])
+        page.wait_for_function("window.chfNavProbe({settled:true})",
+                               timeout=20000)
+        state = page.evaluate("window.chfNavProbe({settled:true})")
+        check(state == {'mode': 'kitchen', 'focused': None},
+              'blank lean-in tap must return to room level: %r' % state)
+        check(not page.is_visible('#focus-overlay'),
+              'returning to room level must dismiss the focused card')
+
+        # spec section 5, rule 4: the current room's OWN zoneless props
+        # are INERT -- the exact bug report's own reproduction (an island
+        # mis-tap no longer ejects to the sealed exterior). enterRoom
+        # no-ops when already in that room (mode === name), so the board
+        # lean-in just above would otherwise still be "focused" here --
+        # out to the exterior and back, guaranteeing unfocused, so this
+        # exercises rule 4 and not the kitchen's own (unrelated,
+        # unchanged) two-step walk-out.
+        enter('exterior')
+        enter('kitchen')
+        check(not page.is_visible('#focus-overlay'),
+              'must start this check unfocused, or a leftover lean-in '
+              'card would make the inert assertion below meaningless')
+        p = probe("{point:[-0.4,1.085,0.9]}")   # the island counter top
+        page.mouse.click(p['cx'], p['cy'])
+        page.wait_for_timeout(1200)
+        check(page.evaluate("window.chfHouseMode()") == 'kitchen',
+              'a mis-tap on the island must stay in the kitchen, not '
+              'eject to the sealed exterior (the reported bug): %r' % p)
+        check(not page.is_visible('#focus-overlay'),
+              'the island mis-tap must not mount a lean-in card either -- '
+              'truly inert, not an accidental lean')
+
+        # spec section 5, rule 5: sky (or yard) still exits, unchanged --
+        # living_roof carries no geometry (open-concept, never built) so
+        # its own room has no sky pixel today; garage does (see docstring).
+        enter('garage')
+        p = probe("{sky:true}")
+        page.mouse.click(p['cx'], p['cy'])
+        page.wait_for_timeout(1200)
+        check(page.evaluate("window.chfHouseMode()") == 'exterior',
+              'a sky tap must still exit to the exterior: %r' % p)
+
+        errs = [e for e in served.errors()
+                if 'WebGL' not in e and 'GroupMarker' not in e]
+        check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
+
+
+def scenario_shell_without_room_is_inert():
+    """Exercise an unbuilt shell using existing walls as fixture geometry.
+
+    Clear room tags before registration, so the real stamping, merging,
+    and pointer paths all run. A fixture zone behind the west wall proves
+    that the visible roomless shell blocks an otherwise actionable zone.
+    """
+    served = live_app()
+    if served is None:
+        return
+    with open('static/house.js', encoding='utf-8') as f:
+        source = f.read()
+    anchor = '    function regFabric(group, o) {'
+    check(source.count(anchor) == 1, 'fixture needs the registration entry')
+    source = source.replace(anchor, anchor + """
+      if (o.name === 'south_wall' || o.name === 'west_wall') {
+        o.room = null;
+        group.traverse(function (m) { delete m.userData.room; });
+      }
+      if (o.name === 'west_wall') {
+        var behind = new T.Mesh(new T.BoxGeometry(0.05, 12, 40),
+                                new T.MeshBasicMaterial());
+        behind.position.set(-7.5, 2.8, 4.4);
+        behind.userData.zone = 'radio';
+        scene.add(behind);
+      }
+    """)
+    with served.browser() as page:
+        page.route('**/house.js*', lambda route: route.fulfill(
+            content_type='application/javascript', body=source))
+        page.goto(served.url('house?quality=low'))
+        page.wait_for_function(
+            'window.chfNavProbe && window.chfNavProbe({settled:true})',
+            timeout=30000)
+        p = page.evaluate("window.chfNavProbe({piece:'south_wall'})")
+        check(p is not None, 'roomless south wall must have a street pixel')
+        page.mouse.click(p['cx'], p['cy'])
+        check(page.evaluate('window.chfHouseMode()') == 'exterior',
+              'roomless exterior shell must stay inert')
+        page.evaluate('window.chfHouseEnter()')
+        page.wait_for_function('window.chfNavProbe({settled:true})')
+        p = page.evaluate("window.chfNavProbe({piece:'west_wall'})")
+        check(p is not None, 'roomless west wall must have an interior pixel')
+        page.mouse.click(p['cx'], p['cy'])
+        page.wait_for_function('window.chfNavProbe({settled:true})')
+        check(page.evaluate('window.chfNavProbe({settled:true})') ==
+              {'mode': 'kitchen', 'focused': None},
+              'roomless shell must not open a room or zone behind it')
+
+
 if __name__ == '__main__':
     scenario_the_house_boots_enters_and_leans_in()
     scenario_leanin_focus_cycles_do_not_leak_textures()
     scenario_fridge_magnets_rebuild_shares_geometry()
     scenario_garage_rebuild_does_not_touch_plaque_textures()
     scenario_shell_fabric_registry()
+    scenario_navigation_real_mouse()
+    scenario_shell_without_room_is_inert()
     print("test_house_live OK")
