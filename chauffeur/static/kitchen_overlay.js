@@ -120,9 +120,7 @@ window.kitchenTileIsland = function () {
       .then(function (b) {
         payloadAt = Date.now();
         payload = b || {};
-        var h = payload.hero || {};
-        /* the screensaver's own test: a done day has no "next" */
-        hero = (!h.all_done && h.next) ? h.next : false;
+        hero = payload.hero || {};
         cb(payload);
       })
       .catch(function () {
@@ -138,11 +136,41 @@ window.kitchenTileIsland = function () {
   }
 
   function renderDoor() {
-    if (!hero || !window.HeroCard) { DOOR.innerHTML = ''; return; }
+    if (hero && hero.next && window.HeroCard) {
+      DOOR.innerHTML = HeroCard.html(hero.next, { isLight: true });
+      return;
+    }
+    var title = hero && hero.all_done ? "Everyone's home 🏠"
+              : hero && hero.unbuilt ? 'Building the schedule…'
+              : 'No drives today';
+    var detail = hero && hero.all_done ? 'Nothing left to drive today.'
+               : hero && hero.unbuilt ? 'Nothing has been worked out yet.'
+               : 'Nothing on the schedule needs a driver.';
     /* the BOARD's own band (not the screensaver's dark scrim): its inks are
        panel-text/panel-dim, which kitchen.html defines inside the overlay
        as the room's own paper-and-ink palette */
-    DOOR.innerHTML = HeroCard.html(hero, { isLight: true });
+    renderDoorMessage(title, detail);
+  }
+
+  function renderDoorMessage(title, detail) {
+    DOOR.textContent = '';
+    var box = document.createElement('div');
+    box.className = 'p-6 text-center';
+    var heading = document.createElement('div');
+    heading.className = 'text-2xl font-black panel-text';
+    heading.textContent = title;
+    box.appendChild(heading);
+    if (detail) {
+      var copy = document.createElement('div');
+      copy.className = 'panel-dim mt-1';
+      copy.textContent = detail;
+      box.appendChild(copy);
+    }
+    DOOR.appendChild(box);
+  }
+
+  function renderDoorLoading() {
+    renderDoorMessage('Checking what’s next…', '');
   }
 
   /* ---- pasting the card ONTO the surface -------------------------------
@@ -327,14 +355,19 @@ window.kitchenTileIsland = function () {
     chfOverlayFills = ((LAYOUT[d.zone] || {}).mode === 'fill');
     if (!d.zone || !d.rect) { hide(); return; }
     if (d.zone === 'door') {
+      renderDoorLoading();
+      show('door', d);
       fetchBoard(function (b) {
         if (revision !== focusRevision) return;
-        if (!b || !hero) { hide(); return; }   /* calm or unreachable: the tip answers */
+        if (!b) {
+          hero = { unbuilt: true };
+        }
         renderDoor();
         show('door', d);
         /* the countdown pill recomputes from the event's own times on each
            render — the screensaver redraws it the same way */
-        if (!heroTick) heroTick = setInterval(renderDoor, 1000);
+        if (hero && hero.next && !heroTick)
+          heroTick = setInterval(renderDoor, 1000);
       });
     } else if (d.zone === 'calendar') {
       try {

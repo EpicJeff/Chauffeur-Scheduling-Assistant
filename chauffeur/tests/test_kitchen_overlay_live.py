@@ -156,9 +156,33 @@ def scenario_the_real_lean_in_wears_the_card():
         if shots:
             page.screenshot(path=os.path.join(shots, 'kitchen_calendar_leanin.png'))
 
+        # A cold board request must still put an honest card on the door.
+        # Delay the first request; the loading state fills the gap instead of
+        # making a successful tap look broken on a busy wall panel.
+        page.evaluate("""() => {
+          window.__sawHeroLoading = false;
+          const door = document.getElementById('overlay-door');
+          new MutationObserver(() => {
+            if ((door.innerText || '').includes('Checking what'))
+              window.__sawHeroLoading = true;
+          }).observe(door, {childList:true, subtree:true, characterData:true});
+          const realFetch = window.fetch;
+          let firstBoard = true;
+          window.fetch = function (url) {
+            if (firstBoard && String(url).includes('api/home_board?widgets=')) {
+              firstBoard = false;
+              const args = arguments;
+              return new Promise(resolve => setTimeout(
+                () => resolve(realFetch.apply(window, args)), 700));
+            }
+            return realFetch.apply(window, arguments);
+          };
+        }""")
         page.evaluate("window.chfKitchenFocus('door')")
         page.wait_for_selector('#overlay-door >> text=Soccer practice',
                                timeout=8000)
+        check(page.evaluate('window.__sawHeroLoading'),
+              "the hero shows a loading card while its board request waits")
         page.wait_for_timeout(450)
         check(not page.is_visible('#overlay-calendar'),
               "switching zones swaps the card, never stacks them")

@@ -7914,7 +7914,13 @@
     var texCache = {};
     var FONT = 'Inter, system-ui, sans-serif';
     function mkTex(key, w, h, payload, draw) {
-      var e = texCache[key];
+      /* Focus temporarily replaces a live information face with a stable
+         blank face. Keep that blank beside the latest live payload so
+         revisiting an item does not allocate, upload, and dispose two large
+         canvas textures on every camera trip. Live payloads remain bounded
+         to one entry per surface as their data changes. */
+      var cacheKey = payload === 'blank' ? key + ':focus-blank' : key;
+      var e = texCache[cacheKey];
       if (e && e.payload === payload) return e.tex;
       var c = document.createElement('canvas'); c.width = w; c.height = h;
       draw(c.getContext('2d'), w, h);
@@ -7953,7 +7959,7 @@
          disposer, car plaques included, so there is no second call site
          left that could double-dispose against it. */
       if (e) e.tex.dispose();
-      texCache[key] = { payload: payload, tex: t };
+      texCache[cacheKey] = { payload: payload, tex: t };
       return t;
     }
     function rr(g, x, y, w, h, r) {
@@ -8292,7 +8298,12 @@
         }
       });
     }
-    function clearPaint() { texCache = {}; }
+    function clearPaint() {
+      Object.keys(texCache).forEach(function (key) {
+        texCache[key].tex.dispose();
+      });
+      texCache = {};
+    }
 
     /* ================= SCENERY RECESSION ==============================
        The knob at the top of the file, made real. Read that comment for
@@ -9038,7 +9049,7 @@
      looks east along +x — the street door's ['z', 1] would approach it
      through the wall */
   var FACE_AXIS_MAP = { fridge: ['z', 1], board: ['x', 1], counter: ['z', 1],
-                        pet: ['z', 1], radio: ['z', 1], door: ['x', 1] };
+                        pet: ['z', 1], radio: ['x', 1], door: ['x', 1] };
   /* How much of the approach a face actually needs. Every other zone's face
      IS its card — a calendar sheet, a cork board — so framing the whole
      mesh frames the card. The garage's is a five-and-a-half-unit WALL that

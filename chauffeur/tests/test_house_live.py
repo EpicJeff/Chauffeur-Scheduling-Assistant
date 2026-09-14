@@ -265,6 +265,19 @@ def scenario_the_house_boots_enters_and_leans_in():
 MEM_JS = ("() => ({t: window.__hpR.info.memory.textures, "
           "g: window.__hpR.info.memory.geometries})")
 
+CANVAS_TEXTURE_COUNT_WRAP = b"""
+;(function () {
+  var OriginalCanvasTexture = window.THREE.CanvasTexture;
+  function CountedCanvasTexture() {
+    window.__canvasTextureMints = (window.__canvasTextureMints || 0) + 1;
+    return Reflect.construct(OriginalCanvasTexture,
+      Array.prototype.slice.call(arguments), CountedCanvasTexture);
+  }
+  CountedCanvasTexture.prototype = OriginalCanvasTexture.prototype;
+  window.THREE.CanvasTexture = CountedCanvasTexture;
+})();
+"""
+
 # Fix round 1: shrinks any long-lived setInterval (house.js's poll() is
 # wired to POLL_MS=60000) down to a fraction of a second, browser-side
 # only -- house.js itself is untouched. Without this, driving a SECOND
@@ -454,12 +467,11 @@ def scenario_leanin_focus_cycles_do_not_leak_textures():
     12 -> 43 over 8 cycles while geometries stayed flat (the geometry
     side was already fixed, task 9b/55f4b25).
 
-    Two full focus cycles must settle to the SAME texture count. The
-    first cycle still mints: every face's blank/real payload pairing is
-    being created for the first time under focus. The second cycle must
-    find both payloads already cached and dispose-swapped rather than
-    minting a third and fourth copy — that steady-state equality is
-    exactly what the pre-fix code fails, by +4.
+    Two full focus cycles must settle to the SAME texture count, and the
+    second cycle must mint no CanvasTextures. The first cycle creates each
+    reusable blank variant. The second must find both blank and live faces
+    in the cache. Renderer memory alone cannot catch repeated replacement
+    churn because Three reports the same steady count after disposal.
     """
     served = live_app()
     if served is None:
@@ -475,7 +487,7 @@ def scenario_leanin_focus_cycles_do_not_leak_textures():
             'Date.prototype.getHours = function () { return 14; };')
         from house_probe import THREE_WRAP
         with open('static/vendor/three.min.js', 'rb') as fh:
-            _patched = fh.read() + THREE_WRAP
+            _patched = fh.read() + THREE_WRAP + CANVAS_TEXTURE_COUNT_WRAP
         page.route('**/three.min.js*', lambda route: route.fulfill(
             status=200, content_type='application/javascript', body=_patched))
         page.goto(served.url('house?quality=low'))
@@ -540,7 +552,9 @@ def scenario_leanin_focus_cycles_do_not_leak_textures():
             return page.evaluate(MEM_JS)
 
         c1 = cycle()
+        mints1 = page.evaluate('window.__canvasTextureMints')
         c2 = cycle()
+        mints2 = page.evaluate('window.__canvasTextureMints')
         check(c1['g'] == c2['g'],
               'geometries must stay flat across focus cycles: %r -> %r'
               % (c1, c2))
@@ -548,6 +562,9 @@ def scenario_leanin_focus_cycles_do_not_leak_textures():
               'mkTex leaks a texture per repaint: cycle1=%d cycle2=%d - '
               'every replaced CanvasTexture must be disposed on overwrite'
               % (c1['t'], c2['t']))
+        check(mints1 == mints2,
+              'focus revisits must reuse blank/live CanvasTextures: %d -> %d'
+              % (mints1, mints2))
 
         errs = [e for e in served.errors()
                 if 'WebGL' not in e and 'GroupMarker' not in e]
@@ -1040,6 +1057,20 @@ def scenario_shell_fabric_registry():
         page.wait_for_function("window.chfNavProbe({settled:true})")
         check(page.evaluate("window.chfHouseMode()") == 'kitchen',
               'rear patio slider must enter the kitchen')
+
+        # High quality chamfers the radio face. Its fallback projection must
+        # use the radio's world X face after the parent rotates 90 degrees;
+        # projecting the Z edge collapses the music card to a few pixels.
+        page.evaluate("window.chfHouseEnterRoom('living')")
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        radio_hit = page.evaluate("window.chfNavProbe({zone:'radio'})")
+        check(radio_hit is not None, 'high-tier radio must have a reachable face')
+        page.mouse.click(radio_hit['cx'], radio_hit['cy'])
+        page.wait_for_selector('#overlay-music', state='visible', timeout=20000)
+        music_box = page.locator('#focus-overlay').bounding_box()
+        check(music_box and music_box['width'] > 200,
+              'high-tier music card must use the radio face, got %r'
+              % music_box)
 
         errs = [e for e in served.errors()
                 if 'WebGL' not in e and 'GroupMarker' not in e]
