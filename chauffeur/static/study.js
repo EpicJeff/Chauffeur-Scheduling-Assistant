@@ -31,7 +31,9 @@
       return !!(c.getContext('webgl2') || c.getContext('webgl')); }
     catch (e) { return false; }
   }
-  const useRoom = webglOk() && Math.min(innerWidth, innerHeight) >= 560 && innerWidth >= 900;
+  const quality = new URLSearchParams(location.search).get('quality') || 'high';
+  const NICE = quality !== 'low';
+  const useRoom = quality !== '2d' && webglOk() && Math.min(innerWidth, innerHeight) >= 560 && innerWidth >= 900;
 
   // Every link this file follows is RELATIVE on purpose. Under Home Assistant
   // ingress the whole app is served beneath /api/hassio_ingress/<token>/, so
@@ -233,18 +235,22 @@
   });
 
   const floorTex = canvasTex((g, w, h) => {
-    g.fillStyle = '#8a6337'; g.fillRect(0, 0, w, h);
-    const pw = w / 4;
-    for (let p = 0; p < 4; p++) {
-      g.fillStyle = `rgb(${142 + rnd() * 22 | 0},${100 + rnd() * 14 | 0},${58 + rnd() * 10 | 0})`;
-      g.fillRect(p * pw + 1, 0, pw - 2, h);
-      for (let i = 0; i < 18; i++) {
-        g.strokeStyle = 'rgba(92,58,26,.25)'; g.lineWidth = 1; g.beginPath();
-        const y = rnd() * h; g.moveTo(p * pw, y); g.lineTo((p + 1) * pw, y + (rnd() - .5) * 8); g.stroke();
+    g.fillStyle = '#756551'; g.fillRect(0, 0, w, h);
+    const rows = 10, ph = h / rows;
+    for (let row = 0; row < rows; row++) {
+      const offset = row % 3 * w / 3;
+      for (let x = -w + offset; x < w; x += w / 2) {
+        const tone = rnd() * 14 | 0;
+        g.fillStyle = `rgb(${165+tone},${133+tone},${93+tone})`;
+        g.fillRect(x+1, row*ph+1, w/2-2, ph-2);
+        for (let j=0; j<8; j++) {
+          g.strokeStyle='rgba(75,53,30,.13)'; g.lineWidth=.7;
+          const y=row*ph+3+rnd()*(ph-6); g.beginPath();
+          g.moveTo(x+3,y); g.bezierCurveTo(x+80,y+2,x+140,y-2,x+w/2-3,y); g.stroke();
+        }
       }
-      g.fillStyle = 'rgba(58,36,16,.7)'; g.fillRect(p * pw, 0, 2, h);
     }
-  });
+  }, 512, 512);
 
   const corkTex = canvasTex((g, w, h) => {
     g.fillStyle = '#b8823f'; g.fillRect(0, 0, w, h);
@@ -255,7 +261,7 @@
   });
 
   const plasterTex = canvasTex((g, w, h) => {
-    g.fillStyle = '#9b7b57'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#ddd9cb'; g.fillRect(0, 0, w, h);
     for (let i = 0; i < 2600; i++) {
       g.fillStyle = `rgba(${rnd() > .5 ? 255 : 0},${rnd() > .5 ? 230 : 20},180,${.02 + rnd() * .035})`;
       g.fillRect(rnd() * w, rnd() * h, 1.4, 1.4);
@@ -281,13 +287,17 @@
       gr.addColorStop(0, top); gr.addColorStop(1, bot);
       g.fillStyle = gr; g.fillRect(0, 0, w, h);
       if (night) for (let i = 0; i < 40; i++) { g.fillStyle = '#e8ecf5'; g.fillRect(rnd() * w, rnd() * h * .5, 1.6, 1.6); }
-      for (let i = 0; i < 12; i++) {
-        const bw = 10 + rnd() * 16, bh = 30 + rnd() * 80, x = i * (w / 12);
-        g.fillStyle = night ? '#0e1c31' : '#2f6ba0'; g.fillRect(x, h - bh, bw, bh);
-        g.fillStyle = night ? 'rgba(255,214,120,.92)' : 'rgba(255,255,255,.55)';
-        for (let j = 0; j < 6; j++)
-          if (rnd() > .5) g.fillRect(x + 2 + rnd() * (bw - 6), h - bh + 3 + rnd() * (bh - 8), 2.4, 3);
+      // The same planted home outside this room, not an unrelated city.
+      g.fillStyle = night ? '#1b333b' : '#829b76';
+      g.beginPath(); g.moveTo(0,h*.72); g.bezierCurveTo(w*.3,h*.52,w*.55,h*.83,w,h*.65); g.lineTo(w,h);g.lineTo(0,h);g.fill();
+      for (let i=0;i<9;i++) {
+        const x=i*w/8, y=h*.70+(i%3)*8;
+        g.fillStyle=night?'#182c2d':(i%2?'#587653':'#688861');
+        g.beginPath();g.ellipse(x,y,22,30,0,0,7);g.fill();
       }
+      g.strokeStyle=night?'#586561':'#e6dec9';g.lineWidth=3;
+      for(let x=0;x<w;x+=17){g.beginPath();g.moveTo(x,h*.90);g.lineTo(x,h);g.stroke();}
+      g.beginPath();g.moveTo(0,h*.95);g.lineTo(w,h*.95);g.stroke();
       g.fillStyle = night ? '#f4f0e0' : 'rgba(255,252,225,.98)';
       g.beginPath(); g.arc(w * .78, h * .2, night ? 14 : 18, 0, 7); g.fill();
     }, 256, 200);
@@ -314,8 +324,85 @@
     good: 0x86cf88, cell: 0xd8cbad
   };
 
+  // Palette values are authored in sRGB, like the canvas maps. r150's
+  // material constructor otherwise treats these swatches as linear light.
   const M = (c, o) => new THREE.MeshStandardMaterial(
-    Object.assign({ color: c, roughness: .85, metalness: .04 }, o || {}));
+    Object.assign({ color: new THREE.Color(c).convertSRGBToLinear(), roughness: .85, metalness: .04 }, o || {}));
+
+    function chamferRaw(w, h, d, ch) {
+      var full = [w / 2, h / 2, d / 2];
+      var c = Math.max(1e-4, Math.min(ch, full[0] * 0.49, full[1] * 0.49,
+                                      full[2] * 0.49));
+      var inner = [full[0] - c, full[1] - c, full[2] - c];
+      var pos = [], uv = [];
+      function tri(a, b, e) {
+        var ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+        var vx = e[0] - a[0], vy = e[1] - a[1], vz = e[2] - a[2];
+        var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz,
+            nz = ux * vy - uy * vx;
+        var cx = (a[0] + b[0] + e[0]) / 3, cy = (a[1] + b[1] + e[1]) / 3,
+            cz = (a[2] + b[2] + e[2]) / 3;
+        if (nx * cx + ny * cy + nz * cz < 0) { var t = b; b = e; e = t; }
+        var an = Math.abs(nx), bn = Math.abs(ny), dn = Math.abs(nz);
+        var i0 = 0, i1 = 1;
+        if (an >= bn && an >= dn) { i0 = 2; i1 = 1; }
+        else if (bn >= dn) { i0 = 0; i1 = 2; }
+        [a, b, e].forEach(function (p) {
+          pos.push(p[0], p[1], p[2]);
+          uv.push((p[i0] + full[i0]) / (2 * full[i0]),
+                  (p[i1] + full[i1]) / (2 * full[i1]));
+        });
+      }
+      function quad(a, b, e, f) { tri(a, b, e); tri(a, e, f); }
+      function V() { return [0, 0, 0]; }
+      var a, b, e, sa, sb, sc;
+      for (a = 0; a < 3; a++) {
+        b = (a + 1) % 3; e = (a + 2) % 3;
+        for (sa = -1; sa <= 1; sa += 2) {
+          var q = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(function (s) {
+            var p = V(); p[a] = sa * full[a]; p[b] = s[0] * inner[b];
+            p[e] = s[1] * inner[e]; return p;
+          });
+          quad(q[0], q[1], q[2], q[3]);
+        }
+      }
+      for (a = 0; a < 3; a++) {
+        b = (a + 1) % 3; e = (a + 2) % 3;
+        for (sa = -1; sa <= 1; sa += 2) for (sb = -1; sb <= 1; sb += 2) {
+          var p1 = V(); p1[a] = sa * full[a]; p1[b] = sb * inner[b]; p1[e] = -inner[e];
+          var p2 = V(); p2[a] = sa * full[a]; p2[b] = sb * inner[b]; p2[e] = inner[e];
+          var p3 = V(); p3[a] = sa * inner[a]; p3[b] = sb * full[b]; p3[e] = inner[e];
+          var p4 = V(); p4[a] = sa * inner[a]; p4[b] = sb * full[b]; p4[e] = -inner[e];
+          quad(p1, p2, p3, p4);
+        }
+      }
+      for (sa = -1; sa <= 1; sa += 2) for (sb = -1; sb <= 1; sb += 2)
+        for (sc = -1; sc <= 1; sc += 2) {
+          tri([sa * full[0], sb * inner[1], sc * inner[2]],
+              [sa * inner[0], sb * full[1], sc * inner[2]],
+              [sa * inner[0], sb * inner[1], sc * full[2]]);
+        }
+      var g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      g.computeVertexNormals();
+      var na = g.attributes.normal, pa = g.attributes.position, acc = {}, k, i;
+      for (i = 0; i < pa.count; i++) {
+        k = (pa.getX(i) * 1e4 | 0) + '_' + (pa.getY(i) * 1e4 | 0) + '_' +
+            (pa.getZ(i) * 1e4 | 0);
+        var s2 = acc[k] || (acc[k] = [0, 0, 0]);
+        s2[0] += na.getX(i); s2[1] += na.getY(i); s2[2] += na.getZ(i);
+      }
+      for (i = 0; i < pa.count; i++) {
+        k = (pa.getX(i) * 1e4 | 0) + '_' + (pa.getY(i) * 1e4 | 0) + '_' +
+            (pa.getZ(i) * 1e4 | 0);
+        var v2 = acc[k], L2 = Math.sqrt(v2[0] * v2[0] + v2[1] * v2[1] +
+                                        v2[2] * v2[2]) || 1;
+        na.setXYZ(i, v2[0] / L2, v2[1] / L2, v2[2] / L2);
+      }
+      na.needsUpdate = true;
+      return g;
+    }
 
   function rbox(w, h, d, r, mat) {
     const s = new THREE.Shape(), x = -w / 2, y = -h / 2;
@@ -345,7 +432,7 @@
 
   function box(w, h, d, c, x, y, z, o) {
     o = o || {};
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), o.mat || M(c, o.mo));
+    const m = new THREE.Mesh((NICE && Math.max(w, h, d) < 8 ? chamferRaw(w, h, d, .018) : new THREE.BoxGeometry(w, h, d)), o.mat || M(c, o.mo));
     m.castShadow = !o.noCast; m.receiveShadow = true;
     return put(m, x, y, z, o);
   }
@@ -457,25 +544,31 @@
 
   const W = () => room.clientWidth || innerWidth, H = () => room.clientHeight || innerHeight;
   const cam = new THREE.PerspectiveCamera(36, W() / H(), .1, 100);
-  const CAM0 = new THREE.Vector3(10.5, 7.4, 11.9), LOOK0 = new THREE.Vector3(-.1, 3.0, -1.3);
+  const CAM0 = new THREE.Vector3(12.0, 8.15, 14.2), LOOK0 = new THREE.Vector3(-.1, 3.0, -1.3);
   cam.position.copy(CAM0); cam.lookAt(LOOK0);
 
   const R = new THREE.WebGLRenderer({ antialias: true });
   R.setSize(W(), H());
-  R.setPixelRatio(Math.min(devicePixelRatio || 1, 2));   // perf law: never above 2
-  R.shadowMap.enabled = true; R.shadowMap.type = THREE.PCFSoftShadowMap;
+  R.setPixelRatio(1); // Match the house: stable wall-panel fill rate.
+  R.shadowMap.enabled = quality !== 'low'; R.shadowMap.type = THREE.PCFSoftShadowMap;
   R.toneMapping = THREE.ACESFilmicToneMapping;
-  R.toneMappingExposure = .95;                            // the approved grade
+  R.toneMappingExposure = 1.02;                            // the approved grade
   R.outputEncoding = THREE.sRGBEncoding;
   room.appendChild(R.domElement);
+  let frameHandle = 0;
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function requestRender() {
+    if (!frameHandle && !document.hidden) frameHandle = requestAnimationFrame(frame);
+  }
+
 
   // Warm hemisphere fill + one cool key light coming in the window (the only
   // shadow caster in the room — one 2048 map, per the perf law), plus two
   // warm point lights that cast nothing.
-  scene.add(new THREE.HemisphereLight(0xffdca8, 0x3a2a1c, .52));
+  scene.add(new THREE.HemisphereLight(0xe5edf1, 0x736652, .83));
   const hour = new Date().getHours();
   let night = (hour < 7 || hour >= 19);
-  const sun = new THREE.DirectionalLight(night ? 0x8fa8d8 : 0xdce9ff, night ? .8 : 1.15);
+  const sun = new THREE.DirectionalLight(night ? 0x8fa8d8 : 0xdce9ff, night ? .55 : .9);
   sun.position.set(-8, 8.5, 4); sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.left = -11; sun.shadow.camera.right = 11;
@@ -564,6 +657,20 @@
   box(.3, 9.5, 17, 0, -7.3, 4.4, 0, { noCast: true, mat: wallMat.clone() });
   box(17, .38, .38, 0x5a4029, 0, .38, -6.11, { noCast: true });
   box(.38, .38, 17, 0x5a4029, -7.11, .38, 0, { noCast: true });
+  // A fitted room, in the house's ivory / sage / brass vocabulary. These
+  // architectural parts never carry live signals or become hit targets.
+  const joinery = M(0x536c5f, { roughness: .86 });
+  const ivory = M(0xeee7da, { roughness: .78 });
+  box(17, 1.8, .12, 0, 0, 1.05, -6.10, { mat: joinery, noCast: true });
+  box(.12, 1.8, 17, 0, -7.10, 1.05, 0, { mat: joinery, noCast: true });
+  [.32, 1.91, 2.04].forEach(y => {
+    box(17, .10, .20, 0, 0, y, -5.99, { mat: ivory, noCast: true });
+    box(.20, .10, 17, 0, -6.99, y, 0, { mat: ivory, noCast: true });
+  });
+  for (let x = -6.8; x < 8; x += 1.3)
+    box(.065, 1.45, .07, 0, x, 1.12, -6.01, { mat: ivory, noCast: true });
+  for (let z = -5.7; z < 8; z += 1.3)
+    box(.07, 1.45, .065, 0, -7.01, 1.12, z, { mat: ivory, noCast: true });
   rugTex.anisotropy = 4;
   box(7.8, .05, 5.6, 0, .6, .03, 2.2, { noCast: true, mat: M(0xffffff, { map: rugTex, roughness: 1 }) });
 
@@ -584,7 +691,7 @@
     c.visible = false; clouds.push(c); reg('window', c);
   }
   // The frame: rails derived from the glass rectangle, never hand-placed.
-  const frameMat = M(0x5a4029, { roughness: .8 });
+  const frameMat = M(0xeee6d7, { roughness: .8 });
   [1, -1].forEach(s => {
     box(.22, WIN.f, WIN.w + WIN.f * 2, 0, WIN.x, WIN.y + s * (WIN.h / 2 + WIN.f / 2), WIN.z,
       { mat: frameMat, noCast: true });
@@ -594,7 +701,7 @@
   box(.16, WIN.h, .14, 0, WIN.x + .01, WIN.y, WIN.z, { mat: frameMat, noCast: true });  // mullion
   box(.16, .14, WIN.w, 0, WIN.x + .01, WIN.y, WIN.z, { mat: frameMat, noCast: true });
   const SILL = { y: WIN.y - WIN.h / 2 - WIN.f, top: WIN.y - WIN.h / 2 - WIN.f + .06 };
-  box(.42, .12, WIN.w + WIN.f * 2, 0x6a4c31, WIN.x + .1, SILL.y, WIN.z, { noCast: true });
+  box(.62, .16, WIN.w + WIN.f * 2, 0xe8e0d0, WIN.x + .1, SILL.y, WIN.z, { noCast: true });
   // The card that stands on the sill when somebody leans in: the week's own
   // signs, said as levels. Hidden the rest of the time — an idle window is
   // weather, not a readout — and standing ON the sill, never hovering.
@@ -639,6 +746,7 @@
   reg('desk', box(1.5, 1.35, 2.2, 0, 3.05, .93, DESK.z, { mat: M(0x8f6743, { roughness: .75 }) }));
   [1.2, .72].forEach(y => {
     box(1.32, .42, .06, 0x7c5836, 3.05, y, 2.32, {});
+    box(1.12, .27, .025, 0x624731, 3.05, y, 2.36, {});
     box(.52, .06, .1, 0xd8c05a, 3.05, y + .11, 2.36, {});   // drawer pulls
   });
 
@@ -818,6 +926,13 @@
   // lifted the other into the air. Applied after the flip, `rz` is the yaw.
   put(rbox(1.42, .48, .07, .03, M(0x3a352e, { roughness: .6 })),
     .45, TOP + .045, 1.92, { rx: Math.PI / 2, rz: .1 });
+  if (NICE) {
+    const keycap = M(0xb9b9ac, { roughness: .72 });
+    for (let row = 0; row < 3; row++) for (let col = 0; col < 12; col++)
+      box(.082, .018, .074, 0, -.15 + col * .105, TOP + .095,
+        1.78 + row * .11, { mat: keycap, ry: -.1 });
+    box(.50, .018, .06, 0, .44, TOP + .095, 2.09, { mat: keycap });
+  }
   put(rbox(.28, .42, .1, .12, M(0x3a352e, { roughness: .6 })),
     1.36, TOP + .055, 2.36, { rx: Math.PI / 2, rz: .1 });
   box(.05, 1.0, .05, 0x1a1714, .12, 1.25, -.2, { rz: .34, noCast: true });
@@ -949,10 +1064,14 @@
   // The floor under the chair is the RUG, not the boards, so the legs stand
   // on the rug's own top face — a spoke set down at y = 0 is a spoke sunk
   // through the pile.
-  const chairMat = M(0x413a32, { roughness: .72 });
+  const chairMat = M(0x28534e, { roughness: .94 });
   const CHAIR = { x: .3, z: 3.62, floor: .055 };
   put(rbox(1.3, 1.25, .18, .26, chairMat), CHAIR.x, 1.18, 3.55, { rx: Math.PI / 2 });
   put(rbox(1.2, 1.45, .16, .3, chairMat), CHAIR.x, 2.1, 4.22, { rx: .17 });
+  [-1,1].forEach(sign => {
+    box(.07,.42,.07,0x303932,CHAIR.x+sign*.67,1.48,3.85,{});
+    put(rbox(.18,.12,.72,.045,chairMat),CHAIR.x+sign*.67,1.71,3.62,{});
+  });
   const baseMat = M(0x2c2823, { roughness: .5, metalness: .3 });
   const casterMat = M(0x1e1b18, { roughness: .6 });
   cyl(.1, .1, .98, 12, baseMat, CHAIR.x, CHAIR.floor + .65, CHAIR.z, {});   // gas column
@@ -1122,8 +1241,8 @@
   // =====================================================================
   const SHELF = { x: -4.3, y: 5.95, z: -5.72, w: 3.8, d: .95 };
   box(SHELF.w, .16, SHELF.d, 0, SHELF.x, SHELF.y, SHELF.z,
-    { mat: M(0x8a6440, { roughness: .8 }) });
-  [-1, 1].forEach(s => box(.22, .55, .34, 0x6b4c30, SHELF.x + s * (SHELF.w / 2 - .2), SHELF.y - .35, -5.98, {}));
+    { mat: M(0x8a6440, { roughness: .8 }), noCast: true });
+  [-1, 1].forEach(s => box(.22, .55, .34, 0x6b4c30, SHELF.x + s * (SHELF.w / 2 - .2), SHELF.y - .35, -5.98, { noCast: true }));
   const BINDER_C = [0xc25c37, 0x3f78c0, 0x4f9a4f, 0x8a5fa8, 0xd8a53a];
   const binders = [];
   for (let i = 0; i < 5; i++) {
@@ -1142,12 +1261,60 @@
   }
   ZONES.binders.parts = { binders: binders };
   ZONES.binders.detail = { on: binders.map(b => b.userData.spine), off: [] };
-  // plant on the shelf's free end
-  cyl(.26, .2, .42, 12, M(PAL.pot, { roughness: .9 }), SHELF.x + 1.3, SHELF.y + .3, SHELF.z, {});
-  for (let i = 0; i < 6; i++)
-    box(.09, .72 + rnd() * .4, .09, PAL.plant, SHELF.x + 1.3 + (rnd() - .5) * .34,
-      SHELF.y + .82 + rnd() * .2, SHELF.z + (rnd() - .5) * .3,
-      { rz: (rnd() - .5) * .55, rx: (rnd() - .5) * .35 });
+  // Turned pots and authored leaf silhouettes, rather than green sticks.
+  function studyPlant(x, y, z, scale) {
+    const g = new THREE.Group(); g.position.set(x, y, z); g.scale.setScalar(scale); scene.add(g);
+    const profile = [[.16,0],[.19,.025],[.24,.36],[.27,.38],[.27,.43],[.23,.44],[.21,.39]];
+    const pot = new THREE.Mesh(new THREE.LatheGeometry(profile.map(p => new THREE.Vector2(p[0], p[1])), NICE ? 16 : 8),
+      M(0xb5713c, { roughness: .55 })); g.add(pot); pot.castShadow = true;
+    cyl(.21,.21,.025,12,M(0x352a21),0,.39,0,{parent:g});
+    const leafGeo = new THREE.SphereGeometry(1, NICE ? 10 : 6, 6);
+    const leafMats = [M(0x536f4b), M(0x78905d), M(0x3d6245)];
+    for (let i = 0; i < 9; i++) {
+      const a=i*2.4, high=.54+(i%3)*.17;
+      const leaf=new THREE.Mesh(leafGeo,leafMats[i%3]);
+      leaf.scale.set(.13,.37,.065); leaf.position.set(Math.cos(a)*.19,high,Math.sin(a)*.18);
+      leaf.rotation.set(Math.sin(a)*.45, a, Math.cos(a)*.55); leaf.castShadow=true; g.add(leaf);
+    }
+  }
+  studyPlant(SHELF.x + 1.3, SHELF.y + .08, SHELF.z, 1);
+  studyPlant(-6.85, SILL.top + .04, 1.75, .75);
+  const libraryStart = scene.children.length;
+  // Low fitted library: household reference books are scenery, never fake
+  // active program binders. Its top stays below the existing key rail.
+  box(3.6, .16, 1.05, 0, -4.8, .23, -5.42, { mat: joinery });
+  box(3.7, .14, 1.15, 0, -4.8, 2.55, -5.42, { mat: ivory });
+  box(3.6, 2.22, .09, 0x58695f, -4.8, 1.37, -5.94, {});
+  [-6.58, -4.8, -3.02].forEach(x => box(.12, 2.25, 1.02, 0, x, 1.38, -5.42, { mat: joinery }));
+  [.88, 1.69].forEach(y => box(3.5, .10, 1.02, 0, -4.8, y, -5.42, { mat: ivory }));
+  const bookColors=[0x8f4038,0x526d65,0xc2ae83,0x39424d,0xa57e4d];
+  for (let bay=0; bay<2; bay++) for (let shelf=0; shelf<2; shelf++) {
+    const base=.94+shelf*.81;
+    for(let i=0;i<5;i++) {
+      const x=-6.36+bay*1.78+i*.23, h=.43+(i%3)*.09;
+      box(.17,h,.58,bookColors[(i+bay+shelf)%5],x,base+h/2,-5.31,{});
+      if(NICE) box(.125,.018,.008,0xc9a54e,x,base+h-.11,-5.014,{});
+    }
+  }
+  studyPlant(-3.45, 2.63, -5.39, .86);
+  // Keep the shelving visible beside the working desk, below the calendar.
+  scene.children.slice(libraryStart).forEach(o => { o.position.x += 9.1; });
+  const reading = new THREE.Group(); reading.position.set(5.8,0,-1.9);
+  reading.rotation.y=-.30; scene.add(reading);
+  const fabric=M(0x8f4038,{roughness:.98});
+  put(rbox(1.45,.28,1.5,.15,fabric),0,.80,0,{parent:reading});
+  put(rbox(1.5,1.48,.3,.18,fabric),0,1.56,-.66,{parent:reading,rx:.1});
+  [-1,1].forEach(sign=>{
+    put(rbox(.25,.73,1.65,.1,fabric),sign*.82,1.05,0,{parent:reading});
+    [-1,1].forEach(end=>box(.10,.60,.10,0x584232,sign*.65,.31,end*.59,{parent:reading}));
+  });
+  const cushion=M(0xbaaa78,{roughness:1});
+  put(rbox(.70,.62,.20,.09,cushion),.18,1.28,-.34,{parent:reading,rz:.13});
+  cyl(.52,.52,.12,20,M(0x805f3c,{roughness:.7}),7.05,1.10,-3.25,{});
+  cyl(.06,.08,1.0,12,M(0x3a403b),7.05,.55,-3.25,{});
+  cyl(.35,.39,.07,16,M(0x3a403b),7.05,.045,-3.25,{});
+  studyPlant(7.05,1.17,-3.25,.58);
+
   // photo frames: the free stretch of wall between the keys and the board,
   // plus one standing on the shelf beside the plant (the room is somebody's).
   //
@@ -1338,7 +1505,7 @@
     skyMat.map = night ? skyNight : skyDay;
     skyMat.needsUpdate = true;
     sun.color.setHex(night ? 0x8fa8d8 : 0xdce9ff);
-    sun.intensity = night ? .8 : 1.15;
+    sun.intensity = night ? .55 : .9;
   }
 
   // The payload the room is currently wearing — what the flying sheet asks
@@ -1387,7 +1554,7 @@
         const row = data[i];
         p.group.visible = !!row;
         if (!row) { p.sway = 0; return; }
-        p.card.material.color.setHex(row.bad ? PAL.pinBad : row.warn ? PAL.pinWarn : PAL.pin);
+        p.card.material.color.setHex(row.bad ? PAL.pinBad : row.warn ? PAL.pinWarn : PAL.pin).convertSRGBToLinear();
         // The hang the card settles at; the life loop sways stalled ones
         // around this, so the state lives here and the motion lives there.
         p.base = row.bad ? -.16 : row.warn ? -.1 : p.rest;
@@ -1442,7 +1609,7 @@
       const worst = { decide: PAL.pinBad, approve: PAL.pinWarn, fyi: 0xf2e07a }[d.worst] || 0xf2e07a;
       z.parts.notes.forEach((s, i) => {
         s.visible = i < n;
-        s.material.color.setHex(i === 0 ? worst : 0xf2e07a);
+        s.material.color.setHex(i === 0 ? worst : 0xf2e07a).convertSRGBToLinear();
         z.parts.faces[i].userData.want = i < n;
       });
       z.summary = d.count ? `${d.count} open finding${d.count === 1 ? '' : 's'}${d.worst ? ` · ${d.worst}` : ''}`
@@ -1455,7 +1622,7 @@
       const days = d.days || [];
       z.parts.cells.forEach((c, i) => {
         const day = days[i];
-        c.material.color.setHex(day && day.unassigned > 0 ? PAL.pinBad : PAL.cell);
+        c.material.color.setHex(day && day.unassigned > 0 ? PAL.pinBad : PAL.cell).convertSRGBToLinear();
         c.userData.day = day || null;
       });
       const holes = days.filter(x => x.unassigned > 0);
@@ -1532,7 +1699,7 @@
       };
       z.parts.needles[0].rotation.z = sweep(d.think, d.think_cap);
       z.parts.needles[1].rotation.z = sweep(d.research, d.research_cap);
-      z.parts.lamp.material.color.setHex(d.ingest_errors > 0 ? PAL.pinBad : PAL.good);
+      z.parts.lamp.material.color.setHex(d.ingest_errors > 0 ? PAL.pinBad : PAL.good).convertSRGBToLinear();
       const bits = [];
       if (d.think != null && d.think_cap) bits.push(`think ${d.think}/${d.think_cap}`);
       if (d.research != null && d.research_cap) bits.push(`research ${d.research}/${d.research_cap}`);
@@ -1573,7 +1740,7 @@
         const py = home.y + Math.sin(a) * MAP.h * .30 * rr;
         p.group.position.set(px, py, .055);
         p.group.scale.setScalar(t.upcoming ? 1.45 : 1);
-        p.head.material.color.setHex(t.upcoming ? PAL.pinWarn : PAL.pinBad);
+        p.head.material.color.setHex(t.upcoming ? PAL.pinWarn : PAL.pinBad).convertSRGBToLinear();
         p.head.material.emissive.setHex(t.upcoming ? 0x5a3204 : 0x000000);
         const dx = px - home.x, dy = py - home.y;
         p.string.position.set(home.x, home.y, .04);
@@ -1921,6 +2088,7 @@
     // the list can: every later poll lands there instead, unchanged.
     if (contextLost) { renderFallback(payload); return; }
     syncSky();                      // the hour turns even when nothing else does
+    requestRender();
     // Minimal diff: an unchanged payload touches nothing at all, so the
     // static room never flickers and the glows already lit stay lit. When
     // something HAS moved, the pin/sheet groups are rebuilt wholesale --
@@ -2144,6 +2312,7 @@
     chipEl.textContent = chipText(name);
     placeChip();
     chipEl.style.opacity = '1';
+    requestRender();
     return true;
   }
   function leanBack() {
@@ -2151,15 +2320,18 @@
     detailShow(leaned, false);
     leaned = null; camTo = CAM0; lookTo = LOOK0;
     chipEl.style.opacity = '0';
+    requestRender();
   }
 
   R.domElement.addEventListener('pointermove', e => {
     ptrX = e.clientX; ptrY = e.clientY; ptrIn = true; needPick = true;
     pnx = (ptrX / innerWidth) * 2 - 1;
     pny = -((ptrY / innerHeight) * 2 - 1);
+    requestRender();
   });
   R.domElement.addEventListener('pointerleave', () => {
     ptrIn = false; needPick = true; pnx = pny = 0;
+    requestRender();
   });
   R.domElement.addEventListener('click', e => {
     // A tap arrives with no preceding move, so take the position from the
@@ -2230,7 +2402,8 @@
 
   function frame(nowMs) {
     if (contextLost) return;        // no context, no loop — the list has it now
-    requestAnimationFrame(frame);
+    frameHandle = 0;
+    if (document.hidden) return;
     // Two clocks on purpose. `el` is the real elapsed time and drives the
     // exponential eases, which are frame-rate independent by construction and
     // only ever land closer to the target after a stall. `dt` is capped so the
@@ -2252,16 +2425,13 @@
       updateTip(z);
     }
 
-    // camera: a slow idle drift and a damped cursor parallax, laid on top of
-    // whichever pose the rig is lerping toward (home, or a lean-in preset).
+    // Camera motion settles completely; pointer parallax and lean-in keep
+    // their damping, but an unattended room no longer drifts perpetually.
     const k = 1 - Math.pow(.06, el), kp = 1 - Math.pow(.004, el);
     camAt.lerp(camTo, k); lookNow.lerp(lookTo, k);
     paraX += (pnx * .35 - paraX) * kp;
     paraY += (pny * .35 - paraY) * kp;
-    const amp = leaned ? .35 : 1;
-    cam.position.set(camAt.x + paraX + Math.sin(T * .17) * .16 * amp,
-                     camAt.y + paraY + Math.sin(T * .11) * .11 * amp,
-                     camAt.z + Math.cos(T * .13) * .13 * amp);
+    cam.position.set(camAt.x + paraX, camAt.y + paraY, camAt.z);
     cam.lookAt(lookNow);
 
     // the monitor breathes, and the desk lamp breathes with it
@@ -2314,13 +2484,24 @@
 
     // The flight is scheduled on the WALL clock, not on T: a slow renderer
     // makes the room breathe slower, but a sheet still files every ~90s.
-    maybeFly((ms - T0) / 1000); stepFly(dt);
+    if (!reducedMotion) maybeFly((ms - T0) / 1000);
+    stepFly(dt);
     R.render(scene, cam);
+    const moving = camAt.distanceToSquared(camTo) > 1e-7 || lookNow.distanceToSquared(lookTo) > 1e-7 ||
+      Math.abs(pnx * .35 - paraX) + Math.abs(pny * .35 - paraY) > .0001;
+    // Quiet means quiet for the GPU as well. A real sheet transfer and an
+    // explicitly focused animated graph are the only ongoing animations.
+    if (moving || flyT >= 0 || (leaned === 'monitor' && !reducedMotion)) requestRender();
   }
 
   // Before the first poll answers, the room is simply tidy.
   applyState(null);
-  requestAnimationFrame(frame);
+  requestRender();
+  setInterval(() => { if (!document.hidden) { syncSky(); requestRender(); } }, 60000);
+  setInterval(() => { if (!document.hidden && !reducedMotion) {
+    maybeFly((performance.now() - T0) / 1000); if (flyT >= 0) requestRender();
+  } }, 90000);
+  addEventListener('visibilitychange', () => { if (!document.hidden) requestRender(); });
 
   // Ten seconds after the room is up, this visit becomes the new "since".
   // The glows already on screen keep the OLD mark, so what was new when you
@@ -2333,10 +2514,11 @@
   addEventListener('resize', () => {
     cam.aspect = W() / H(); cam.updateProjectionMatrix(); R.setSize(W(), H());
     if (leaned) placeChip();
+    requestRender();
   });
 
   window.STUDY = { applyState: applyState, scene: scene, camera: cam, zones: ZONES,
-                   renderer: R, focusFor: focusFor,
+                   renderer: R, focusFor: focusFor, leanInto: leanInto, leanBack: leanBack,
                    leanedZone: () => leaned };
   poll(applyState);
 })();

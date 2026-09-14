@@ -1014,7 +1014,7 @@ def scenario_shell_fabric_registry():
                         'mudroom_east_finish', 'yard'],
             'living': ['south_wall', 'roof_main_south', 'porch_roof_west',
                        'porch_roof_east', 'porch_roof_front',
-                       'massing_front_roof_north', 'massing_front_roof_south', 'yard'],
+                       'yard'],
         }
         for view, expected in EXPECTED.items():
             if view == 'exterior':

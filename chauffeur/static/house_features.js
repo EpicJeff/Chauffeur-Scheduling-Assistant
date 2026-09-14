@@ -70,18 +70,31 @@
     cylinder(item,.08,.1,.37,ivory,-.16,.46,.06); box(item,.12,.05,.08,0x708ab1,-.14,.68,.06);
     cylinder(item,.07,.075,.28,0xc99763,.17,.44,.04);
 
-    item = entry('routines','Daily routine','mudroom',[-10.70,.06,4.70],'routines');
-    clipboard(item,0x699878);
-    item = entry('tasks','Household tasks','living',[-.50,.86,7.65],'tasks');
-    clipboard(item,0x55748a); item.rotation.y = Math.PI/2;
+    item = entry('routines','Family routine board','mudroom',[-12.45,1.10,6.15],'routines');
+    clipboard(item,0x699878); item.rotation.y = Math.PI/2;
+    // Household work lives in the home ledger on the living-room console.
+    item = entry('tasks','Home ledger','living',[-.50,.86,7.68],'tasks');
+    book(item,0x55748a,0,0,0);
+    box(item,.26,.025,.22,ivory,0,.10,.03);
+    box(item,.16,.018,.018,brass,0,.115,.15);
     item = entry('errands','Errand tote','garage',[-17.58,1.02,8.65],'errands');
     box(item,.65,.64,.4,0xb29265,0,.34,0);
     [-.18,.18].forEach(function(x){rod(item,[x,.58,-.1],[x,.92,-.1],.018,wood);});
     rod(item,[-.18,.92,-.1],[.18,.92,-.1],.018,wood); book(item,0x728d7f,0,.67,0);
-    item = entry('programs','Program book','living',[-.50,.86,9.10],'programs');
+    item = entry('programs','Program book','living',[-.50,.86,9.55],'programs');
     book(item,0x536e79,0,0,0);
-    item = entry('study','Study · Parent PIN','living',[-6.18,.97,12.03],'study');
-    book(item,0x765338,0,0,0); box(item,.16,.18,.045,brass,0,.17,.18); box(item,.09,.09,.052,ink,0,.15,.205);
+    // Study wing joins the east side of the living room. Its locked door
+    // belongs on that shared wall, across the room from the exterior door.
+    item = entry('study','Study · Parent PIN','living',[6.50,.02,12.10],'study');
+    item.rotation.y = -Math.PI / 2;
+    box(item,1.58,2.84,.14,wood,0,1.42,0);
+    box(item,1.22,1.02,.035,0x765338,0,2.13,.09);
+    box(item,1.22,1.02,.035,0x765338,0,.72,.09);
+    box(item,1.86,.15,.24,ivory,0,2.96,0);
+    [-1,1].forEach(function(side){box(item,.15,3.02,.24,ivory,side*.86,1.51,0);});
+    cylinder(item,.07,.07,.10,brass,.58,1.43,.16,true).rotation.x = Math.PI / 2;
+    box(item,.20,.24,.055,brass,.39,1.43,.15);
+    box(item,.10,.10,.062,ink,.39,1.40,.185);
 
     root.updateMatrixWorld(true);
     return {group:root, entries:entries, dispose:function () {

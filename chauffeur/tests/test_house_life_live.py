@@ -76,7 +76,22 @@ def scenario_house_life():
         page.evaluate("chfHouseFindFeature('study')")
         page.wait_for_function('chfNavProbe({settled:true})')
         point = page.evaluate("chfNavProbe({action:'study'})")
-        check(point, 'Study has a visible locked folio in the living room')
+        if not point:
+            raw = page.evaluate("""() => {
+              const original = document.elementFromPoint;
+              document.elementFromPoint = () => document.querySelector('#room canvas');
+              try { return chfNavProbe({action:'study'}); }
+              finally { document.elementFromPoint = original; }
+            }""")
+            covering = page.evaluate('(p) => p && document.elementFromPoint(p.cx,p.cy)?.className', raw)
+            check(point, 'Study door is not reachable; projected=' +
+                  str(raw) + ' covering=' + str(covering))
+        check(point['cx'] > page.viewport_size['width'] * .55,
+              'Study door appears on the room side opposite the exterior door')
+        check(point['cx'] < page.viewport_size['width'] * .92,
+              'Living-room framing keeps the Study door comfortably visible')
+        if shots:
+            page.screenshot(path=os.path.join(shots, 'study-door.png'))
         page.mouse.click(point['cx'], point['cy'])
         page.wait_for_selector('#cc-input-field', state='visible')
         page.fill('#cc-input-field', '1234')

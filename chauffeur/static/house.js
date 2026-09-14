@@ -319,8 +319,8 @@
     /* the living room: far enough back that the whole hearth wall, both
        built-ins and the reading corner sit inside the safe frame, high
        enough that the floor falls away to the lower right (bible S5.1) */
-    var LIV_POS = new T.Vector3(5.2, 13.6, 26.5);
-    var LIV_AT = new T.Vector3(-2.9, 2.35, 10.3);
+    var LIV_POS = new T.Vector3(0, 12.8, 26.5);
+    var LIV_AT = new T.Vector3(0, 2.35, 10.3);
     cam.position.copy(EXT_POS);
     cam.lookAt(EXT_AT);
 
@@ -9194,6 +9194,8 @@
   function goHome(name) {
     var room = roomsReg()[name || 'kitchen'];
     if (!room) return;
+    webgl.cam.fov = room.fov || 24;
+    webgl.cam.updateProjectionMatrix();
     /* A focused view steps back through its room before leaving the house.
        This is essential in the garage, where cars fill the close view. */
     webgl.solveShell(room.pos, { box: room.aabb });
@@ -9222,7 +9224,7 @@
                  aabb: webgl.ROOM_AABB.garage },
       mudroom: { pos: webgl.MUD_POS, at: webgl.MUD_AT,
                  aabb: webgl.ROOM_AABB.mudroom },
-      living:  { pos: webgl.LIV_POS, at: webgl.LIV_AT,
+      living:  { pos: webgl.LIV_POS, at: webgl.LIV_AT, fov: 36,
                  aabb: webgl.ROOM_AABB.living }
     };
     return rooms;
@@ -9249,6 +9251,8 @@
       announceFocus(null);
     }
     mode = name;
+    webgl.cam.fov = room.fov || 24;
+    webgl.cam.updateProjectionMatrix();
     updateBack();
     scheduleHint();
     /* spec section 4: solve against the DESTINATION at tween start (you
@@ -9264,6 +9268,8 @@
   }
   function goExterior() {
     mode = 'exterior';
+    webgl.cam.fov = 24;
+    webgl.cam.updateProjectionMatrix();
     focused = null;
     updateBack();
     scheduleHint();
