@@ -3,6 +3,7 @@ import urllib.request
 import urllib.error
 from typing import List, Tuple, Dict
 from models.schemas import Rule, PriorityRule
+from services import llm_budget
 
 def test_llm_connection(provider: str, url: str = None, api_key: str = None, model: str = None) -> Tuple[bool, str]:
     """
@@ -17,7 +18,7 @@ def test_llm_connection(provider: str, url: str = None, api_key: str = None, mod
                 f"{url.rstrip('/')}/api/tags",
                 method="GET"
             )
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with llm_budget.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 models = [m['name'] for m in data.get('models', [])]
                 if model and model not in models and f"{model}:latest" not in models:
@@ -47,7 +48,7 @@ def test_llm_connection(provider: str, url: str = None, api_key: str = None, mod
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            with llm_budget.urlopen(req, timeout=8) as resp:
                 if resp.status == 200:
                     return True, "Successfully connected to Gemini API!"
                 return False, f"Gemini API returned status code {resp.status}"
@@ -63,7 +64,7 @@ def test_llm_connection(provider: str, url: str = None, api_key: str = None, mod
             
     return False, "Invalid provider selected."
 
-def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None, timeout_s: int = 180, images: list = None) -> dict:
+def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None, timeout_s: int = 180, images: list = None, transient_retries: int = 2) -> dict:
     # images: [{'mime': 'image/jpeg', 'b64': '<base64>'}] — Gemini only
     # (attached as inline_data parts); the ollama branch ignores them.
     import json
@@ -91,7 +92,7 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            with llm_budget.urlopen(req, timeout=timeout_s) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
 
                 # Check if it returned a tool call
@@ -146,13 +147,13 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
             # Transient 5xx (e.g. 503 "model experiencing high demand") gets a
             # short backoff and retry before we give up on this model.
             data = None
-            for attempt in range(3):
+            for attempt in range(transient_retries + 1):
                 try:
-                    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+                    with llm_budget.urlopen(req, timeout=timeout_s) as resp:
                         data = json.loads(resp.read().decode('utf-8'))
                     break
                 except urllib.error.HTTPError as e:
-                    if e.code in (500, 502, 503, 504) and attempt < 2:
+                    if e.code in (500, 502, 503, 504) and attempt < transient_retries:
                         import time
                         wait_s = 2 * (attempt + 1)
                         print(f"Gemini API returned {e.code} for {gemini_model} "
@@ -182,6 +183,8 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
                 raw_response = text_resp
             except (KeyError, IndexError, TypeError):
                 raise RuntimeError("Unexpected response format from Gemini API")
+        except llm_budget.Deferred:
+            raise
         except urllib.error.HTTPError as e:
             error_body = e.read().decode('utf-8')
             if e.code == 429:
@@ -590,7 +593,7 @@ You can use update_memory to save persistent rules, preferences, or global instr
                 method="POST"
             )
             try:
-                with urllib.request.urlopen(req, timeout=180) as resp:
+                with llm_budget.urlopen(req, timeout=180) as resp:
                     data = json.loads(resp.read().decode('utf-8'))
                     msg_resp = data.get('message', {})
             except Exception as e:
@@ -667,7 +670,7 @@ You can use update_memory to save persistent rules, preferences, or global instr
                 method="POST"
             )
             try:
-                with urllib.request.urlopen(req, timeout=180) as resp:
+                with llm_budget.urlopen(req, timeout=180) as resp:
                     data = json.loads(resp.read().decode('utf-8'))
             except Exception as e:
                 err = f"Gemini request failed: {str(e)}"
@@ -741,7 +744,7 @@ def auto_name_conversation(conversation_id: str, first_message: str):
                 "options": {"temperature": 0.3}
             }
             req = urllib.request.Request(req_url, data=json.dumps(payload).encode('utf-8'), headers={"Content-Type": "application/json"}, method="POST")
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with llm_budget.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 title = data.get('message', {}).get('content', '')
         elif provider == 'gemini':
@@ -756,7 +759,7 @@ def auto_name_conversation(conversation_id: str, first_message: str):
                     "generationConfig": {"temperature": 0.3}
                 }
                 req = urllib.request.Request(req_url, data=json.dumps(payload).encode('utf-8'), headers={"Content-Type": "application/json"}, method="POST")
-                with urllib.request.urlopen(req, timeout=30) as resp:
+                with llm_budget.urlopen(req, timeout=30) as resp:
                     data = json.loads(resp.read().decode('utf-8'))
                     title = data['candidates'][0]['content']['parts'][0]['text']
 

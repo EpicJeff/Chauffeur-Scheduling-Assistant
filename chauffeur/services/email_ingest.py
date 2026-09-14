@@ -314,7 +314,7 @@ def extract_items(subject: str, from_addr: str, body: str, member_names: list,
     # pool free for interactive chat.
     res = model_pools.call_pool_json('background', api_key, EXTRACTION_SYSTEM, prompt,
                                      temperature=0.1, timeout_s=60, gemma_timeout_s=180,
-                                     settings=settings)
+                                     settings=settings, workflow='intake.email')
     if not isinstance(res, dict):
         return []
     if res.get('error'):

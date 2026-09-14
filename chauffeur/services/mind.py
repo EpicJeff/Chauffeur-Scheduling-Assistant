@@ -729,6 +729,9 @@ def sentinel_sweep(now: datetime.datetime = None) -> dict:
     now = now or datetime.datetime.now()
     settings = storage.get_settings() or {}
     api_key = settings.get('llm_gemini_api_key', '')
+    from services import llm_budget
+    if api_key and not llm_budget.workflow_ready(api_key, 'mind.sentinel'):
+        return {'status': 'deferred'}  # do not consume deltas while paused
     deltas = _gather_deltas(now)      # watermarks advance even without a key
     if not deltas:
         return {'status': 'no_deltas'}
@@ -740,7 +743,7 @@ def sentinel_sweep(now: datetime.datetime = None) -> dict:
     res = _pool_call('background', api_key, SENTINEL_SYSTEM,
                      f"Today is {now.strftime('%A %Y-%m-%d')}.\n"
                      "CHANGES SINCE LAST LOOK:\n" + '\n'.join(deltas[:60]),
-                     timeout_s=60, gemma_timeout_s=180)
+                     timeout_s=60, gemma_timeout_s=180, workflow='mind.sentinel')
     if not isinstance(res, dict) or res.get('error'):
         logger.warning(f"[mind] sentinel LLM failed: {res}")
         return {'status': 'error'}
@@ -836,8 +839,9 @@ def deep_think(now: datetime.datetime = None, force: bool = False) -> dict:
         return {'status': 'capped'}
 
     max_n = int(settings.get('mind_max_insights', MAX_INSIGHTS_DEFAULT))
-    res = _pool_call('heavy', api_key, THINK_SYSTEM.format(max_n=max_n), text,
-                     timeout_s=90, gemma_timeout_s=180)
+    res = _pool_call('mind', api_key, THINK_SYSTEM.format(max_n=max_n), text,
+                     timeout_s=90, background=not force,
+                     workflow='mind.think.manual' if force else 'mind.think')
     if not isinstance(res, dict) or res.get('error'):
         logger.warning(f"[mind] deep think failed: {res}")
         return {'status': 'error'}
@@ -929,7 +933,9 @@ def tick(now: datetime.datetime = None) -> dict:
         # heavy LLM call — every single tick. A promoted request may go
         # sooner; everything else waits the floor out.
         last_attempt = float(storage.get_app_state('mind_think_attempt_ts') or 0)
-        if requested or ts - last_attempt >= THINK_ATTEMPT_FLOOR_S:
+        from services import llm_budget
+        ready = llm_budget.workflow_ready(settings.get('llm_gemini_api_key', ''), 'mind.think')
+        if ready and (requested or ts - last_attempt >= THINK_ATTEMPT_FLOOR_S):
             storage.set_app_state('mind_think_attempt_ts', ts)  # marker FIRST
             out['think'] = deep_think(now)
     return out
@@ -944,12 +950,16 @@ def maybe_promote() -> dict:
     api_key = settings.get('llm_gemini_api_key', '')
     if not api_key:
         return {'status': 'no_key'}
+    from services import llm_budget
+    if not llm_budget.workflow_ready(api_key, 'mind.promote'):
+        return {'status': 'deferred'}
     cap = int(settings.get('mind_cap_promote', CAPS_DEFAULT['promote']))
     if not _bump_call('promote', cap):
         return {'status': 'capped'}
     storage.mark_mind_noticings_checked([r['id'] for r in urgent])
     res = _pool_call('interactive', api_key, PROMOTER_SYSTEM,
-                     '\n'.join(f"- {r['line']}" for r in urgent[:10]), timeout_s=30)
+                     '\n'.join(f"- {r['line']}" for r in urgent[:10]), timeout_s=30,
+                     background=True, workflow='mind.promote')
     if not isinstance(res, dict) or res.get('error'):
         return {'status': 'error'}
     if res.get('think_now'):

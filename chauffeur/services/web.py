@@ -291,7 +291,7 @@ def _gemini_grounded(question: str, api_key: str, model: str = None) -> Optional
     it, so the caller falls through to a search backend."""
     import urllib.request
     import urllib.error
-    from services import model_pools
+    from services import model_pools, llm_budget
     settings = storage.get_settings() or {}
     candidates = [model] if model else model_pools.models_for('heavy', settings)[:3]
     last_err = None
@@ -307,7 +307,7 @@ def _gemini_grounded(question: str, api_key: str, model: str = None) -> Optional
             data=json.dumps(payload).encode('utf-8'),
             headers={'Content-Type': 'application/json'}, method='POST')
         try:
-            with urllib.request.urlopen(req, timeout=SEARCH_TIMEOUT + 40) as resp:
+            with llm_budget.urlopen(req, timeout=SEARCH_TIMEOUT + 40) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
         except urllib.error.HTTPError as e:
             body = e.read().decode('utf-8', errors='replace')[:300]

@@ -49,6 +49,7 @@ DEFAULT_POOLS = {
 TIER_CHAINS = {
     'interactive': ['lite', 'gemma'],
     'background': ['gemma', 'lite'],
+    'mind': ['flash'],  # automated deep reasoning never silently downgrades
     'heavy': ['flash', 'lite', 'gemma'],
     # Image-input calls (intake vision capture). Gemma is text-only so it is
     # excluded; flash first because flyers/screenshots are the hard case and
@@ -162,27 +163,40 @@ def resolve_model(tier: str, settings: dict = None) -> str:
 def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str,
                    temperature: float = 0.1, timeout_s: int = 60,
                    gemma_timeout_s: int = None, max_models: int = 4,
-                   settings: dict = None, images: list = None) -> dict:
-    """JSON LLM call that walks the tier's pool chain: 429/5xx/parse failures
-    advance to the next model (marking quota cooldowns), success returns the
-    parsed dict with '_model' set. Gemini only — ollama callers keep their own
-    single-model path. Returns {'error': ..., 'transient': bool} when
-    max_models candidates all failed."""
+                   settings: dict = None, images: list = None,
+                   background: bool = None, workflow: str = None) -> dict:
+    """JSON call with one HTTP attempt per candidate and persistent admission.
+
+    Background work tries one candidate, then defers; foreground work may try
+    up to max_models candidates. Success includes '_model'; failures return
+    'error', with 'deferred'/'retry_at' when admission blocks background work.
+    Ollama callers keep their own single-model path.
+    """
     from services import llm as _llm
+    from services import llm_budget
+    background = tier in ('background', 'mind') if background is None else background
+    workflow = workflow or tier
     last_err = "no models available"
     transient = False
-    for model in models_for(tier, settings)[:max_models]:
+    for model in models_for(tier, settings)[:(1 if background else max_models)]:
         t = gemma_timeout_s if (gemma_timeout_s and is_gemma(model)) else timeout_s
         try:
-            res = _llm._call_llm_json('gemini', '', api_key, model, system_prompt,
-                                      user_prompt, temperature=temperature, timeout_s=t,
-                                      images=images)
+            with llm_budget.request_scope(workflow, background):
+                res = _llm._call_llm_json('gemini', '', api_key, model, system_prompt,
+                                          user_prompt, temperature=temperature, timeout_s=t,
+                                          images=images, transient_retries=0)
+        except llm_budget.Deferred as e:
+            if background:
+                return {'error': str(e), 'deferred': True, 'retry_at': e.retry_at}
+            last_err = str(e)
+            transient = True
+            continue
         except Exception as e:
             last_err = str(e)
             note_failure(model, last_err)
             transient = any(c in last_err for c in ("429", "500", "502", "503", "504",
                                                     "timed out", "timeout"))
-            logger.warning(f"[model-pools] {model} failed ({last_err[:160]}) — trying next")
+            logger.warning(f"[model-pools] {model} failed ({last_err[:160]}) — " + ('deferring background work' if background else 'trying next'))
             continue
         if isinstance(res, dict) and res.get("error") and "429" in str(res["error"]):
             last_err = str(res["error"])

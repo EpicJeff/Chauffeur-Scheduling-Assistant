@@ -39,7 +39,7 @@ def scenario_think_reconciles():
     ])
     res = mind.deep_think(NOON)
     check(res['status'] == 'thought', f"got {res}")
-    check(CALLS and CALLS[0]['tier'] == 'heavy', "heavy tier")
+    check(CALLS and CALLS[0]['tier'] == 'mind', "deep thinking stays on the Flash-only Mind tier")
     active = {r['slug']: r for r in storage.get_mind_insights(state='active')}
     check(set(active) == {'stays', 'fresh'}, f"reconciled to {set(active)}")
     check(active['stays']['line'] == 'new text', "kept slug updates in place")
@@ -193,6 +193,20 @@ def scenario_a_revived_slug_starts_clean():
           "so it is actually in the lane")
 
 
+def scenario_configured_operation_cap_still_applies():
+    _reset()
+    key = 'mind_calls:' + datetime.date.today().isoformat()
+    storage.set_app_state(key, {})
+    storage.get_settings = lambda: {'llm_gemini_api_key': 'k',
+                                    'mind_enabled': True, 'mind_cap_think': 1}
+    mind._pool_call = _fake_pool([])
+    first = mind.deep_think(NOON, force=True)
+    second = mind.deep_think(NOON, force=True)
+    check(first['status'] == 'thought' and second['status'] == 'capped',
+          'configured Mind cap remains enforced even for forced thinking')
+    check(len(CALLS) == 1, 'reaching operation cap prevents another pool call')
+
+
 if __name__ == '__main__':
     scenario_think_reconciles()
     scenario_unchanged_snapshot_skips()
@@ -203,4 +217,5 @@ if __name__ == '__main__':
     scenario_mid_think_chat_is_not_skipped()
     scenario_think_stores_approach_and_spares_parked_rows()
     scenario_a_revived_slug_starts_clean()
+    scenario_configured_operation_cap_still_applies()
     print("test_mind_think OK")

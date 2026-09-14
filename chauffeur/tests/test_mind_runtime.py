@@ -46,7 +46,7 @@ def scenario_full_cycle():
         if tier == 'background':
             return {'noticings': [{'line': 'sunscreen is out', 'source': 'chat',
                                    'urgency': 'low'}]}
-        if tier == 'heavy':
+        if tier == 'mind':
             check('sunscreen is out' in prompt,
                   "the noticing reached the deep think prompt")
             return {'insights': [
