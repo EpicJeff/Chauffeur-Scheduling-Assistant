@@ -44,23 +44,32 @@
         #house-back:hover, #house-back:focus-visible { background: rgba(54,43,29,.94);
           outline: 2px solid #e3d3ab; outline-offset: 2px; }
         #house-back[hidden] { display: none; }
-        #house-hint { position: fixed; z-index: 39; width: 58px; height: 58px;
+        #house-hints { position: fixed; inset: 0; z-index: 39; pointer-events: none; }
+        .house-hint { position: absolute; width: 62px; height: 62px;
           transform: translate(-50%,-50%); border: 2px solid rgba(240,184,110,.92);
-          border-radius: 50%; pointer-events: none; box-shadow: 0 0 0 1px rgba(28,23,16,.5); }
-        #house-hint::before { content: ''; position: absolute; inset: -2px;
+          border-radius: 50%; display: grid; place-items: center;
+          color: #fff4dc; background: rgba(28,23,16,.30);
+          box-shadow: 0 0 0 1px rgba(28,23,16,.55); }
+        .house-hint::before { content: ''; position: absolute; inset: -2px;
           border: 2px solid rgba(240,184,110,.72); border-radius: inherit;
-          animation: house-hint-wave 1.8s ease-out forwards; }
-        #house-hint span { position: absolute; left: 50%; top: calc(100% + 8px);
+          animation: house-hint-wave 3.6s ease-out var(--hint-delay, 0s) infinite; }
+        .house-hint-icons { width: 48px; display: flex; flex-wrap: wrap;
+          align-items: center; justify-content: center; gap: 2px; }
+        .house-hint svg { width: 19px; height: 19px; fill: none;
+          stroke: currentColor; stroke-width: 1.8; stroke-linecap: round;
+          stroke-linejoin: round; }
+        .house-hint.crowded svg { width: 14px; height: 14px; }
+        .house-hint-label { position: absolute; left: 50%; top: calc(100% + 8px);
           transform: translateX(-50%); white-space: nowrap; padding: 4px 8px;
           border-radius: 999px; background: rgba(28,23,16,.88); color: #f0e6cf;
           font: 600 12px system-ui; box-shadow: 0 1px 5px rgba(0,0,0,.35); }
-        #house-hint[hidden] { display: none; }
+        #house-hints[hidden] { display: none; }
         @keyframes house-hint-wave {
           from { opacity: .9; transform: scale(.72); }
           to { opacity: 0; transform: scale(1.85); }
         }
         @media (prefers-reduced-motion: reduce) {
-          #house-hint::before { animation: none; opacity: .35; transform: scale(1.2); }
+          .house-hint::before { animation: none; opacity: .35; transform: scale(1.2); }
         }
         .frow { display: block; background: #201a12; border: 1px solid #453a28;
           border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; color: inherit;
@@ -149,7 +158,7 @@
     <div id="kitchen-wrap" class="panel-page">
         <h1 id="kitchen-title" class="panel-page-title">The Home</h1>
         <button id="house-back" type="button" hidden aria-label="Go back"></button>
-        <div id="house-hint" hidden aria-hidden="true"><span></span></div>
+        <div id="house-hints" hidden aria-hidden="true"></div>
         <div id="room"></div>
         <div id="fallback"><div id="fallback-rows"></div></div>
         <div id="tip"></div><div id="chip"></div>

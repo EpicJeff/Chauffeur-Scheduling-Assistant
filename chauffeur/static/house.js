@@ -34,7 +34,7 @@
   var TIP = document.getElementById('tip');
   var CHIP = document.getElementById('chip');
   var BACK = document.getElementById('house-back');
-  var HINT = document.getElementById('house-hint');
+  var HINT = document.getElementById('house-hints');
   var FALLBACK = document.getElementById('fallback');
   var FALLROWS = document.getElementById('fallback-rows');
   if (!ROOT) return;
@@ -3931,7 +3931,7 @@
                                                              own ceiling line */
     /* Exterior eaves meet the existing 5.6-unit room wall head. */
     var EXT_TOP4 = WALL_TOP4;
-    function swtag(m) { if (m) m.userData.room = 'kitchen'; return m; }
+    function swtag(m) { if (m) m.userData.room = 'living'; return m; }
 
     /* ---- the south wall (NEW): the street face ------------------------
        Width and south edge come off the floor union, not a hand-typed
@@ -4067,9 +4067,9 @@
        its wide (1.4) axis runs along world Z, exactly backwards from
        what a door on THIS wall (which runs along X) needs; the rotation
        swaps the two rather than building a second geometry at the swapped
-       dimensions. Decorative like the west one (no new zone; the LEAVE
-       signal stays the mudroom door zone) — it stamps 'kitchen' from
-       southWallG's own group tag. Casing/trim below re-authors that same
+       dimensions. The LEAVE signal stays the mudroom door zone; this
+       exterior entrance and its trim are tagged for the front Living room.
+       Casing/trim below re-authors that same
        door's own casing/panel idiom (the decorative front door earns its
        casing and panels) for this wall's x/z, with the panels on the
        STREET-facing (+z) side rather than the room-facing side the west
@@ -4106,33 +4106,37 @@
        every one of its own constants is anchored off SWZ1 or DOOR_X4
        directly, never off DOOR_Z4. */
     var DOOR_Z4 = SWZ1 + 0.02;
+    function fdtag(m) {
+      if (m) { m.userData.room = 'living'; m.userData.entry = 'front_door'; }
+      return m;
+    }
     var fdoor4 = new T.Mesh(
       NICE ? chamferGeo(0.14, 3.2, 1.4, 0.04) : new T.BoxGeometry(0.14, 3.2, 1.4),
       PBR ? new T.MeshStandardMaterial({ map: woodDoor, roughness: 0.65 })
           : new T.MeshLambertMaterial({ color: 0xc9a06c, map: woodDoor || null }));
     fdoor4.rotation.y = Math.PI / 2;
     fdoor4.position.set(DOOR_X4, 1.6, DOOR_Z4);
-    swtag(fdoor4); finish(fdoor4); southWallG.add(fdoor4);
-    swtag(box(0.14, 3.44, 0.13, 0xe4ddd1, DOOR_X4 - 0.65, 1.72, DOOR_Z4,
+    fdtag(fdoor4); finish(fdoor4); southWallG.add(fdoor4);
+    fdtag(box(0.14, 3.44, 0.13, 0xe4ddd1, DOOR_X4 - 0.65, 1.72, DOOR_Z4,
               southWallG, sharp()));
-    swtag(box(0.14, 3.44, 0.13, 0xe4ddd1, DOOR_X4 + 0.65, 1.72, DOOR_Z4,
+    fdtag(box(0.14, 3.44, 0.13, 0xe4ddd1, DOOR_X4 + 0.65, 1.72, DOOR_Z4,
               southWallG, sharp()));
-    swtag(box(1.86, 0.14, 0.13, 0xe4ddd1, DOOR_X4, 3.37, DOOR_Z4,
+    fdtag(box(1.86, 0.14, 0.13, 0xe4ddd1, DOOR_X4, 3.37, DOOR_Z4,
               southWallG, sharp()));
     if (DETAIL >= 2) {
-      swtag(box(0.90, 1.20, 0.02, 0x6f5433, DOOR_X4, 2.14, DOOR_Z4 + 0.075,
+      fdtag(box(0.90, 1.20, 0.02, 0x6f5433, DOOR_X4, 2.14, DOOR_Z4 + 0.075,
                 southWallG, WOODM));
-      swtag(box(0.90, 0.98, 0.02, 0x6f5433, DOOR_X4, 0.82, DOOR_Z4 + 0.075,
+      fdtag(box(0.90, 0.98, 0.02, 0x6f5433, DOOR_X4, 0.82, DOOR_Z4 + 0.075,
                 southWallG, WOODM));
-      swtag(box(0.74, 1.04, 0.04, 0xc79b63, DOOR_X4, 2.14, DOOR_Z4 + 0.080,
+      fdtag(box(0.74, 1.04, 0.04, 0xc79b63, DOOR_X4, 2.14, DOOR_Z4 + 0.080,
                 southWallG, WOODM));
-      swtag(box(0.74, 0.82, 0.04, 0xc79b63, DOOR_X4, 0.82, DOOR_Z4 + 0.080,
+      fdtag(box(0.74, 0.82, 0.04, 0xc79b63, DOOR_X4, 0.82, DOOR_Z4 + 0.080,
                 southWallG, WOODM));
     }
     var knob4 = latheAt('knob', [0.06, 0.1, 0.06], 0xd8c48a, DOOR_X4 + 0.55,
                         1.6, DOOR_Z4 + 0.07, southWallG, CHROME);
     knob4.rotation.x = Math.PI / 2;
-    swtag(knob4);
+    fdtag(knob4);
 
     /* A sitting porch: a clear central approach with a bench to either
        side, beneath a smaller gable projecting toward the street. */
@@ -4207,7 +4211,7 @@
        physical compass direction — no flip needed, unlike west_wall's
        interior-partition flip (T2). */
     regFabric(southWallG, { name: 'south_wall', n: [0, 0, 1],
-                            box: fabBox(southWallG), room: 'kitchen' });
+                            box: fabBox(southWallG), room: 'living' });
 
     /* Close the great room's east side at the existing floor boundary.
        The registered patio slider below supplies its exterior opening. */
@@ -4221,10 +4225,9 @@
     var EW_CZ4 = (EWZ0_4 + EWZ1_4) / 2;
     var eastWallG = new T.Group();
     extG.add(eastWallG);
-    /* Navigation spec section 5 assigns this shared east elevation to
-       living. The wall spans both halves of the great room; this tag
-       chooses its entry destination without changing its geometry. */
-    function ewtag(m) { if (m) m.userData.room = 'living'; return m; }
+    /* This long side elevation reaches the rear kitchen. Its patio slider
+       below is the clearest exterior kitchen entrance. */
+    function ewtag(m) { if (m) m.userData.room = 'kitchen'; return m; }
     ewtag(box(WALL_T4 / 2, EXT_TOP4, EW_LEN4, C.wall, EWX0_4 + WALL_T4 / 4,
               EXT_TOP4 / 2, EW_CZ4, eastWallG, sharp(WALL_O)));
     ewtag(box(WALL_T4 / 2, EXT_TOP4, EW_LEN4, NICE ? 0xffffff : EXTC.siding,
@@ -4235,7 +4238,7 @@
     /* SHELL: east_wall is complete here. n is [1,0,0]: a true exterior
        boundary, its own physical outward compass direction. */
     regFabric(eastWallG, { name: 'east_wall', n: [1, 0, 0],
-                           box: fabBox(eastWallG), room: 'living' });
+                           box: fabBox(eastWallG), room: 'kitchen' });
 
     /* Full-house envelope. Built floor plans stay fixed. The east wings
        bracket the existing terrace; the rear service wing fills the void
@@ -4372,9 +4375,10 @@
       });
     }
     shellGable('roof_main', FULL_HOUSE.west, FULL_HOUSE.east,
-               FULL_HOUSE.north, FULL_HOUSE.south, EXT_TOP4, false, 'kitchen', null, Math.PI / 8);
+               FULL_HOUSE.north, FULL_HOUSE.south, EXT_TOP4, false, null,
+               null, Math.PI / 8, ['kitchen', 'living']);
     shellGable('porch_roof', DOOR_X4 - PORCH_W4 / 2, DOOR_X4 + PORCH_W4 / 2,
-               SWZ1 - 2.8, PORCH_FRONT_Z4, PORCH_EAVE4, true, 'kitchen', [1]);
+               SWZ1 - 2.8, PORCH_FRONT_Z4, PORCH_EAVE4, true, 'living', [1]);
 
     /* Side wings leave the complete terrace open between z=4.2 and 9.8. */
     shellWall('massing_east_front_south', EWX1_4, SWZ1, FULL_HOUSE.wingEast, SWZ1,
@@ -4457,7 +4461,7 @@
                                    Math.PI / 2, 2.65, 3.65, false);
     shellBox(sliderFrame, 0.08, 0.55, 0.10, FARMHOUSE.wood, 0.15, 0, 0.17);
     shellBox(sliderFrame, 2.95, 0.10, 0.32, FARMHOUSE.stoop, 0, -1.86, 0.02);
-    shellRegister(patioSliderG, 'patio_slider', [1, 0, 0], 'living');
+    shellRegister(patioSliderG, 'patio_slider', [1, 0, 0], 'kitchen');
 
 
     /* Continue west cladding along the living room to the south corner. */
@@ -9441,6 +9445,16 @@
       var box = new webgl.T.Box3().setFromObject(target);
       if (box.isEmpty()) return null;
       b = [box.min.x, box.max.x, box.min.y, box.max.y, box.min.z, box.max.z];
+    } else if (spec.entry) {
+      var entryBox = new webgl.T.Box3(), entryFound = false;
+      webgl.scene.traverse(function (o) {
+        if (o.userData && o.userData.entry === spec.entry) {
+          entryBox.expandByObject(o); entryFound = true;
+        }
+      });
+      if (!entryFound || entryBox.isEmpty()) return null;
+      b = [entryBox.min.x, entryBox.max.x, entryBox.min.y, entryBox.max.y,
+           entryBox.min.z, entryBox.max.z];
     } else if (!spec.sky && !spec.empty) return null;
     var minX = rect.left + 2, maxX = rect.right - 2;
     var minY = rect.top + 2, maxY = rect.bottom - 2;
@@ -9464,6 +9478,11 @@
       if (spec.zoneless && zoneAt(px, py)) return false;
       var hit = anyHit(px, py);
       if (spec.sky) return !hit || hit === webgl.skyDome;
+      if (spec.entry) {
+        for (var e = hit; e; e = e.parent)
+          if (e.userData && e.userData.entry === spec.entry) return true;
+        return false;
+      }
       for (var o = hit; o; o = o.parent) if (o === target) return true;
       return false;
     }
@@ -9478,50 +9497,76 @@
     return null;
   };
 
-  /* Touch-first discovery. One non-blocking pulse tours actual registered
-     room entrances outside and actual zone groups inside, then rests before
-     the next target. It reuses chfNavProbe's production raycasts, so a hint
-     is never placed over an occluded or inert surface. */
-  var hintTimer = null, hintIndex = 0;
+  /* Touch-first discovery. Persistent, non-blocking markers identify every
+     reachable registered entrance outside and zone group inside. Room icons
+     summarize the features waiting within; object markers carry one icon. */
+  var hintTimer = null;
+  var HINT_PATHS = {
+    moments: '<path d="M3 9a2 2 0 012-2h1l2-3h8l2 3h1a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="13" r="3"/>',
+    meals: '<path d="M3 4h2l2.2 10h10.6L21 7H6"/><circle cx="9" cy="19" r="1"/><circle cx="18" cy="19" r="1"/>',
+    lists: '<path d="M7 4h10a2 2 0 012 2v15H5V6a2 2 0 012-2h2"/><path d="M9 3h6v4H9zM9 12h6M9 16h6"/>',
+    schedule: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/>',
+    music: '<path d="M9 18V6l11-2v11M9 10l11-2"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="15" r="3"/>',
+    weather: '<path d="M7 18h11a3 3 0 000-6 6 6 0 00-11-2 4 4 0 000 8z"/><path d="M5 6L3 4M9 4V2M3 10H1"/>',
+    garage: '<path d="M4 12l2-5h12l2 5v7h-2v-2H6v2H4zM6 12h12"/><circle cx="8" cy="14" r="1"/><circle cx="16" cy="14" r="1"/>',
+    critters: '<path d="M8.5 11.5c-2.5 1.2-4 3.3-3.3 5.5.8 2.5 3.7 2.6 6.8 1.2 3.1 1.4 6 1.3 6.8-1.2.7-2.2-.8-4.3-3.3-5.5-2.1-1-4.9-1-7 0z"/><circle cx="5" cy="9" r="2"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="6" r="2"/><circle cx="19" cy="9" r="2"/>'
+  };
+  var ZONE_HINT_ICON = {
+    fridge: 'moments', counter: 'meals', board: 'lists', door: 'schedule',
+    calendar: 'calendar', radio: 'music', window: 'weather', garage: 'garage',
+    curb: 'schedule', pet: 'critters'
+  };
   var EXTERIOR_HINTS = [
-    ['south_wall', 'Kitchen'], ['east_wall', 'Living room'],
-    ['massing_service_roof_south', 'Mudroom'],
-    ['garage_gable_front', 'Garage']
+    ['patio_slider', 'Kitchen', ['moments', 'meals', 'lists', 'calendar', 'weather']],
+    ['front_door', 'Living room', ['music', 'critters'], 'entry'],
+    ['massing_service_roof_south', 'Mudroom', ['schedule']],
+    ['garage_gable_front', 'Garage', ['garage']]
   ];
   function hideHint() {
-    if (HINT) HINT.hidden = true;
+    if (HINT) { HINT.hidden = true; HINT.textContent = ''; }
   }
   function hintChoices() {
     if (mode === 'exterior') return EXTERIOR_HINTS.map(function (h) {
-      return { spec: { piece: h[0] }, label: h[1], key: h[0] };
+      var spec = {}; spec[h[3] || 'piece'] = h[0];
+      return { spec: spec, label: h[1], key: h[0], icons: h[2] };
     });
     return Object.keys(ZONES).filter(function (key) {
       return zoneRoom(key) === mode;
     }).map(function (key) {
-      return { spec: { zone: key }, label: ZONES[key].label, key: key };
+      return { spec: { zone: key }, label: ZONES[key].label, key: key,
+               icons: [ZONE_HINT_ICON[key]] };
     });
+  }
+  function hintIcon(name) {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+      (HINT_PATHS[name] || '') + '</svg>';
   }
   function showHint() {
     if (!HINT || !webgl || focused || tween ||
-        typeof window.chfNavProbe !== 'function') {
-      scheduleHint(4500); return;
-    }
-    var choices = hintChoices(), picked = null;
+        typeof window.chfNavProbe !== 'function') return;
+    HINT.textContent = '';
+    var choices = hintChoices(), shown = 0;
     for (var i = 0; i < choices.length; i++) {
-      var choice = choices[(hintIndex + i) % choices.length];
+      var choice = choices[i];
       var point = window.chfNavProbe(choice.spec);
-      if (point) { picked = choice; picked.point = point;
-                   hintIndex = (hintIndex + i + 1) % choices.length; break; }
+      if (!point) continue;
+      var marker = document.createElement('div');
+      marker.className = 'house-hint' + (choice.icons.length > 3 ? ' crowded' : '');
+      marker.dataset.target = choice.key;
+      marker.style.left = point.cx + 'px';
+      marker.style.top = point.cy + 'px';
+      marker.style.setProperty('--hint-delay', (shown * 0.45) + 's');
+      var icons = document.createElement('div');
+      icons.className = 'house-hint-icons';
+      icons.innerHTML = choice.icons.map(hintIcon).join('');
+      var label = document.createElement('span');
+      label.className = 'house-hint-label';
+      label.textContent = choice.label;
+      marker.appendChild(icons); marker.appendChild(label);
+      HINT.appendChild(marker); shown++;
     }
-    if (!picked) { scheduleHint(4500); return; }
-    HINT.style.left = picked.point.cx + 'px';
-    HINT.style.top = picked.point.cy + 'px';
-    HINT.dataset.target = picked.key;
-    HINT.querySelector('span').textContent = picked.label;
-    HINT.hidden = false;
-    hintTimer = setTimeout(function () {
-      hideHint(); hintTimer = setTimeout(showHint, 4800);
-    }, 1900);
+    HINT.hidden = shown === 0;
   }
   function scheduleHint(delay) {
     if (hintTimer) clearTimeout(hintTimer);

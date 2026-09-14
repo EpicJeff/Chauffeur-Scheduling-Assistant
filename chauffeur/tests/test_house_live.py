@@ -130,8 +130,8 @@ def scenario_the_house_boots_enters_and_leans_in():
         page.mouse.click(cbox['x'] + cbox['w'] * 0.5,
                          cbox['y'] + cbox['h'] * 0.55)
         page.wait_for_timeout(1100)
-        check(page.evaluate("window.chfHouseMode()") == 'kitchen',
-              'a tap on the house walks into the kitchen')
+        check(page.evaluate("window.chfHouseMode()") == 'living',
+              'a tap on the front of the house walks into the living room')
         page.evaluate("window.chfHouseExit()")
         page.wait_for_timeout(1100)
         page.mouse.click(cbox['x'] + 24, cbox['y'] + 24)
@@ -1021,8 +1021,8 @@ def scenario_shell_fabric_registry():
             check(hit is not None, '%s must be reachable from exterior' % piece)
             page.mouse.click(hit['cx'], hit['cy'])
             page.wait_for_function("window.chfNavProbe({settled:true})")
-            check(page.evaluate("window.chfHouseMode()") == 'kitchen',
-                  '%s must enter the kitchen' % piece)
+            check(page.evaluate("window.chfHouseMode()") == 'living',
+                  '%s on the front facade must enter living' % piece)
 
         page.evaluate("window.chfHouseExit()")
         page.wait_for_function("window.chfNavProbe({settled:true})")
@@ -1038,8 +1038,8 @@ def scenario_shell_fabric_registry():
         check(hit is not None, 'slider must be reachable from the terrace')
         page.mouse.click(hit['cx'], hit['cy'])
         page.wait_for_function("window.chfNavProbe({settled:true})")
-        check(page.evaluate("window.chfHouseMode()") == 'living',
-              'patio slider must enter living')
+        check(page.evaluate("window.chfHouseMode()") == 'kitchen',
+              'rear patio slider must enter the kitchen')
 
         errs = [e for e in served.errors()
                 if 'WebGL' not in e and 'GroupMarker' not in e]
@@ -1058,7 +1058,7 @@ def scenario_navigation_real_mouse():
     The service roof supplies the visible mudroom entry; the deeper porch
     now obscures the old west-skirt target. Garage supplies a sky pixel; the main room's
     roof surrounds its camera. The high-quality registry scenario retains
-    separate geometry, ghost-edge pixel, and exterior-entry checks.
+    separate geometry, cutaway, and exterior-entry checks.
     """
     served = live_app()
     if served is None:
@@ -1073,15 +1073,23 @@ def scenario_navigation_real_mouse():
               'own pixels, never a hard-coded screen point')
 
         page.wait_for_function(
-            "() => { const h=document.querySelector('#house-hint'); "
-            "return h && !h.hidden; }", timeout=10000)
-        hint = page.locator('#house-hint')
-        check(hint.get_attribute('data-target') in {
-            'south_wall', 'east_wall', 'massing_service_roof_south',
+            "() => document.querySelectorAll("
+            "'#house-hints:not([hidden]) .house-hint').length === 4",
+            timeout=10000)
+        hints = page.locator('#house-hints .house-hint')
+        exterior_targets = set(hints.evaluate_all(
+            "els => els.map(e => e.dataset.target)"))
+        check(exterior_targets == {
+            'patio_slider', 'front_door', 'massing_service_roof_south',
             'garage_gable_front'},
-              'exterior pulse must identify a registered room entrance')
-        check(hint.evaluate("e => getComputedStyle(e).pointerEvents") == 'none',
-              'discovery pulse must never intercept mouse or touch input')
+              'persistent exterior markers must identify every room entrance')
+        check(page.locator('#house-hints').evaluate(
+            "e => getComputedStyle(e).pointerEvents") == 'none',
+              'discovery markers must never intercept mouse or touch input')
+        living_hint = page.locator(
+            '#house-hints .house-hint[data-target="front_door"]')
+        check(living_hint.locator('svg').count() == 2,
+              'living-room marker must preview music and critters')
 
         def probe(spec_js):
             page.wait_for_function("window.chfNavProbe({settled:true})",
@@ -1102,11 +1110,17 @@ def scenario_navigation_real_mouse():
 
         enter('kitchen')
         page.wait_for_function(
-            "() => { const h=document.querySelector('#house-hint'); "
-            "return h && !h.hidden; }", timeout=10000)
-        check(page.locator('#house-hint').get_attribute('data-target') in {
-            'fridge', 'counter', 'board', 'calendar', 'window'},
-              'interior pulse must identify an actual kitchen zone')
+            "() => document.querySelectorAll("
+            "'#house-hints:not([hidden]) .house-hint').length === 5",
+            timeout=10000)
+        kitchen_hints = page.locator('#house-hints .house-hint')
+        check(set(kitchen_hints.evaluate_all(
+            "els => els.map(e => e.dataset.target)")) == {
+                'fridge', 'counter', 'board', 'calendar', 'window'},
+              'persistent kitchen markers must identify every actual zone')
+        check(all(n == 1 for n in kitchen_hints.locator('svg').evaluate_all(
+            "els => els.map(e => e.closest('.house-hint').querySelectorAll('svg').length)")),
+              'each interior item marker must carry one feature icon')
 
         # The front service slope faces the built mudroom. Its back slope
         # covers the unbuilt extension and remains inert. The garage has
@@ -1122,23 +1136,34 @@ def scenario_navigation_real_mouse():
               'fronts mudroom by the same street-adjacency rule as '
               'west_wall (spec section 5): %r' % p)
 
-        # (2) east_wall now fronts LIVING (Task 7 corrects the file's own
-        # prior 'kitchen' stamp -- east_wall closes the dollhouse's east
-        # SIDE, against living's own floor run, not the kitchen's).
+        # The side elevation and rear patio slider lead to the rear kitchen.
         enter('exterior')
         p = probe("{piece:'east_wall'}")
         page.mouse.click(p['cx'], p['cy'])
         page.wait_for_timeout(1200)
-        check(page.evaluate("window.chfHouseMode()") == 'living',
-              'exterior tap on east_wall must enter living, not kitchen: '
-              '%r' % p)
+        check(page.evaluate("window.chfHouseMode()") == 'kitchen',
+              'exterior tap on east_wall must enter the rear kitchen: %r' % p)
 
         enter('exterior')
         p = probe("{piece:'south_wall'}")
         page.mouse.click(p['cx'], p['cy'])
         page.wait_for_timeout(1200)
+        check(page.evaluate("window.chfHouseMode()") == 'living',
+              'exterior tap on the front facade must enter living: %r' % p)
+
+        enter('exterior')
+        p = probe("{entry:'front_door'}")
+        page.mouse.click(p['cx'], p['cy'])
+        page.wait_for_timeout(1200)
+        check(page.evaluate("window.chfHouseMode()") == 'living',
+              'exterior tap on the front door must enter living: %r' % p)
+
+        enter('exterior')
+        p = probe("{piece:'patio_slider'}")
+        page.mouse.click(p['cx'], p['cy'])
+        page.wait_for_timeout(1200)
         check(page.evaluate("window.chfHouseMode()") == 'kitchen',
-              'exterior tap on south_wall must enter kitchen: %r' % p)
+              'rear patio slider must enter the kitchen: %r' % p)
 
         # (3) garage_shell fronts garage (already true pre-Task-7 via
         # gtag's per-mesh stamps -- pinned here as a still-must-hold
