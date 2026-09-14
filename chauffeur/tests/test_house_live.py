@@ -998,45 +998,21 @@ def scenario_shell_fabric_registry():
             check(len(offed) < len(fab),
                   '%s: solver must not ghost EVERY registered piece: %r'
                   % (view, offed))
+            check(not any(f.get('edgesVisible') for f in fab),
+                  '%s: cutaway wireframes must stay hidden: %r' % (view, fab))
             if view == 'exterior':
                 check(offed == [], 'exterior must ghost NOTHING (the '
                       'sealed house, spec section 4): %r' % offed)
 
             if view == 'mudroom':
-                # Task 3: west_wall is this view's one 'ghost' piece (the
-                # LEGACY row above), so it carries both halves of the
-                # proof -- the verdict string, and the pixels that verdict
-                # is now supposed to cause. 'hide'/'ghost' both land in
-                # `offed` above; only a verdict-string and a pixel check
-                # tell them apart.
+                # west_wall still receives the ghost verdict, but the
+                # touch-first cutaway leaves its permanent edges hidden.
                 west = [f for f in fab if f['name'] == 'west_wall'][0]
                 check(west['verdict'] == 'ghost',
                       "west_wall must verdict 'ghost' in the mudroom, not "
                       "just non-solid: %r" % west)
-                check(west.get('edgesVisible') is True,
-                      'west_wall edges group must be visible while its '
-                      'verdict is ghost: %r' % west)
-
-                # Same mudroom camera and crop as v2.496.0 (466 pixels).
-                # Keep the existing 350-pixel floor through the expansion.
-                png = page.screenshot()
-                im = Image.open(io.BytesIO(png)).convert('RGB')
-                box = (1000, 160, 1240, 240)
-                tgt, tol = (0x2d, 0x20, 0x18), 60
-                crop = im.crop(box)
-                cw, ch = crop.size
-                pix = crop.load()
-                n = sum(1 for cy in range(ch) for cx in range(cw)
-                        if max(abs(pix[cx, cy][0] - tgt[0]),
-                               abs(pix[cx, cy][1] - tgt[1]),
-                               abs(pix[cx, cy][2] - tgt[2])) <= tol)
-                check(n >= 350,
-                      'west_wall ghost edges must paint >= 350 dark-line '
-                      'pixels in the wall crop %r (tolerance %d of '
-                      '#2d2018; this environment measures 466 here at '
-                      'v2.495.0, not the 3736 the prior report claimed -- '
-                      'see comment above; retightened 2026-09-12): '
-                      'got %d' % (box, tol, n))
+                check(west.get('edgesVisible') is False,
+                      'west_wall cutaway must not draw permanent wireframes')
 
         for piece in ['south_wall', 'porch_roof_front']:
             page.evaluate("window.chfHouseExit()")
@@ -1096,6 +1072,17 @@ def scenario_navigation_real_mouse():
               'chfNavProbe must exist for a real-mouse test to derive its '
               'own pixels, never a hard-coded screen point')
 
+        page.wait_for_function(
+            "() => { const h=document.querySelector('#house-hint'); "
+            "return h && !h.hidden; }", timeout=10000)
+        hint = page.locator('#house-hint')
+        check(hint.get_attribute('data-target') in {
+            'south_wall', 'east_wall', 'massing_service_roof_south',
+            'garage_gable_front'},
+              'exterior pulse must identify a registered room entrance')
+        check(hint.evaluate("e => getComputedStyle(e).pointerEvents") == 'none',
+              'discovery pulse must never intercept mouse or touch input')
+
         def probe(spec_js):
             page.wait_for_function("window.chfNavProbe({settled:true})",
                                    timeout=20000)
@@ -1112,6 +1099,14 @@ def scenario_navigation_real_mouse():
                 page.evaluate("window.chfHouseEnterRoom(%r)" % room)
             page.wait_for_function(
                 "window.chfNavProbe({settled:true})", timeout=20000)
+
+        enter('kitchen')
+        page.wait_for_function(
+            "() => { const h=document.querySelector('#house-hint'); "
+            "return h && !h.hidden; }", timeout=10000)
+        check(page.locator('#house-hint').get_attribute('data-target') in {
+            'fridge', 'counter', 'board', 'calendar', 'window'},
+              'interior pulse must identify an actual kitchen zone')
 
         # The front service slope faces the built mudroom. Its back slope
         # covers the unbuilt extension and remains inert. The garage has

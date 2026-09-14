@@ -34,6 +34,7 @@
   var TIP = document.getElementById('tip');
   var CHIP = document.getElementById('chip');
   var BACK = document.getElementById('house-back');
+  var HINT = document.getElementById('house-hint');
   var FALLBACK = document.getElementById('fallback');
   var FALLROWS = document.getElementById('fallback-rows');
   if (!ROOT) return;
@@ -922,13 +923,12 @@
           }
         }
         f.verdict = v;
-        /* Task 3 (spec section 4, "applying a verdict"): fills show only
-           on 'solid', ghost lines show only on 'ghost'. mode:'hide'
-           pieces (just the yard) never get an edges group built at all
-           (see the build step below), so f.edges is null for them and
-           this second line is simply a no-op. */
+        /* Fills show only on 'solid'. Ghost and hide verdicts both expose
+           the room cleanly; retained edge geometry stays dormant. */
         f.g.visible = (v === 'solid');
-        if (f.edges) f.edges.visible = (v === 'ghost');
+        /* Hidden shell fills make the cutaway. Permanent wireframes obscured
+           the room on touch panels, so ghost edges remain off. */
+        if (f.edges) f.edges.visible = false;
       });
       if (webgl) webgl.shadowDirty();
     }
@@ -9099,6 +9099,7 @@
     TIP.style.opacity = 0;
     announceFocus(null);
     updateBack();
+    scheduleHint();
     requestFrame();
   }
   /* ---- ROOMS: every room is a camera home, and carries the AABB
@@ -9142,6 +9143,7 @@
     }
     mode = name;
     updateBack();
+    scheduleHint();
     /* spec section 4: solve against the DESTINATION at tween start (you
        fly through an outline, never a wall) — replaces the show-all-
        then-hide dance that used to run here. */
@@ -9157,6 +9159,7 @@
     mode = 'exterior';
     focused = null;
     updateBack();
+    scheduleHint();
     TIP.style.opacity = 0;
     /* spec section 4: the sealed house — every piece solid, destination
        subject null, solved before the tween exactly like enterRoom. */
@@ -9391,12 +9394,11 @@
      siblings above — reports the registry, changes nothing. FABRIC
      itself lives inside buildRoom()'s closure (beside westWallG etc.),
      so it rides out on the same returned webgl object the other groups
-     already use to reach this outer scope. edgesVisible (Task 3): null
+     already use to reach this outer scope. edgesVisible is null
      for a piece with no edges object built at all (mode:'hide', or a
      merge-empty piece like living_roof — see the build step's own
-     comment), else the combined ghost-line LineSegments' own .visible,
-     so a pixel test can assert the solver actually flips it rather than
-     just trusting the verdict string. */
+     comment); retained edge geometry reports false, proving that
+     cutaways do not draw permanent wireframes. */
   window.chfShellFabric = function () {
     if (!webgl) return [];
     return webgl.FABRIC.map(function (f) {
@@ -9475,6 +9477,57 @@
     }
     return null;
   };
+
+  /* Touch-first discovery. One non-blocking pulse tours actual registered
+     room entrances outside and actual zone groups inside, then rests before
+     the next target. It reuses chfNavProbe's production raycasts, so a hint
+     is never placed over an occluded or inert surface. */
+  var hintTimer = null, hintIndex = 0;
+  var EXTERIOR_HINTS = [
+    ['south_wall', 'Kitchen'], ['east_wall', 'Living room'],
+    ['massing_service_roof_south', 'Mudroom'],
+    ['garage_gable_front', 'Garage']
+  ];
+  function hideHint() {
+    if (HINT) HINT.hidden = true;
+  }
+  function hintChoices() {
+    if (mode === 'exterior') return EXTERIOR_HINTS.map(function (h) {
+      return { spec: { piece: h[0] }, label: h[1], key: h[0] };
+    });
+    return Object.keys(ZONES).filter(function (key) {
+      return zoneRoom(key) === mode;
+    }).map(function (key) {
+      return { spec: { zone: key }, label: ZONES[key].label, key: key };
+    });
+  }
+  function showHint() {
+    if (!HINT || !webgl || focused || tween ||
+        typeof window.chfNavProbe !== 'function') {
+      scheduleHint(4500); return;
+    }
+    var choices = hintChoices(), picked = null;
+    for (var i = 0; i < choices.length; i++) {
+      var choice = choices[(hintIndex + i) % choices.length];
+      var point = window.chfNavProbe(choice.spec);
+      if (point) { picked = choice; picked.point = point;
+                   hintIndex = (hintIndex + i + 1) % choices.length; break; }
+    }
+    if (!picked) { scheduleHint(4500); return; }
+    HINT.style.left = picked.point.cx + 'px';
+    HINT.style.top = picked.point.cy + 'px';
+    HINT.dataset.target = picked.key;
+    HINT.querySelector('span').textContent = picked.label;
+    HINT.hidden = false;
+    hintTimer = setTimeout(function () {
+      hideHint(); hintTimer = setTimeout(showHint, 4800);
+    }, 1900);
+  }
+  function scheduleHint(delay) {
+    if (hintTimer) clearTimeout(hintTimer);
+    hideHint();
+    if (HINT) hintTimer = setTimeout(showHint, delay || 1600);
+  }
   function announceFocus(key) {
     if (webgl && state) applyState(state);   /* blank/restore the faces */
     var shape = (key && webgl) ? zoneFaceQuad(key) : null;
@@ -9529,6 +9582,7 @@
 
   function onTap(ev) {
     if (!webgl) return;
+    hideHint();
     if (mode === 'exterior') {
       /* stamped, not guessed: walk up for a room tag; yard and sky stay
          a view; anything INTERIOR seen through the open front is the
@@ -9584,6 +9638,7 @@
     }
     focused = key;
     updateBack();
+    scheduleHint();
     announceFocus(null);   /* the old card must not ride the camera move */
     frameZone(key, function () {
       announceFocus(key);
@@ -9652,7 +9707,8 @@
       drawFallback(state);
     });
     webgl.R.domElement.addEventListener('click', onTap);
-    window.addEventListener('resize', size);
+    window.addEventListener('resize', function () { size(); scheduleHint(); });
+    scheduleHint();
     size();
     benchmark();
     if (document.fonts && document.fonts.ready) {
