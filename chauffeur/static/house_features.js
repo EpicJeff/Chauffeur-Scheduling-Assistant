@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   window.HouseFeatures = { build: function (T, detail) {
-    var root = new T.Group(), entries = [], geometries = new Map(), materials = new Map();
+    var root = new T.Group(), entries = [], fabric = [], geometries = new Map(), materials = new Map();
     var nice = detail >= 2, high = detail >= 3;
     var wood = 0x926744, ivory = 0xeee5d3, ink = 0x292d30, brass = 0xb99a57;
     function material(color, metal) {
@@ -55,6 +55,11 @@
       group.userData.room = room; group.userData.houseFeatureKey = key;
       root.add(group); return group;
     }
+    function shellFixture(key, room, at, name, normal) {
+      var group = fixture(key, room, at);
+      fabric.push({group:group,name:name,normal:normal});
+      return group;
+    }
     function book(group, color, x, y, z) {
       box(group,.46,.07,.34,color,x,y,z); box(group,.42,.045,.31,ivory,x,y+.053,z);
       box(group,.46,.025,.34,color,x,y+.085,z);
@@ -103,7 +108,8 @@
 
     // Finish the living room's east wall with the two openings its plan needs:
     // the terrace slider and a separate door into the rear east room.
-    item = fixture('patio-door','living',[6.50,.02,5.80]);
+    item = shellFixture('patio-door','living',[6.50,.02,5.80],
+                        'living_patio_door',[1,0,0]);
     item.rotation.y = -Math.PI / 2;
     box(item,2.66,2.84,.13,0x40565c,0,1.42,0);
     box(item,2.96,.15,.25,ivory,0,2.96,0);
@@ -119,7 +125,8 @@
     cylinder(item,.055,.055,.28,brass,.18,1.35,.18,true).rotation.x = Math.PI / 2;
     box(item,2.95,.10,.32,0xb2a48f,0,-.01,.03);
 
-    item = fixture('back-room-door','living',[6.50,.02,2.45]);
+    item = shellFixture('back-room-door','living',[6.50,.02,2.45],
+                        'living_back_room_door',[1,0,0]);
     item.rotation.y = -Math.PI / 2;
     box(item,1.52,2.84,.14,0x657a75,0,1.42,0);
     box(item,1.16,1.02,.035,0x536a66,0,2.13,.09);
@@ -130,7 +137,7 @@
     box(item,.22,.08,.045,brass,-.55,1.43,.15);
 
     root.updateMatrixWorld(true);
-    return {group:root, entries:entries, dispose:function () {
+    return {group:root, entries:entries, fabric:fabric, dispose:function () {
       materials.forEach(function(m){m.dispose();}); geometries.forEach(function(g){g.dispose();});
     }};
   }};

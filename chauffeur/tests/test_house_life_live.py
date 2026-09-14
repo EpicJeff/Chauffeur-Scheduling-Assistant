@@ -73,6 +73,9 @@ def scenario_house_life():
             page.locator('.house-life-panel header button').click()
             page.wait_for_selector('.house-life-shade', state='hidden')
             check(page.evaluate('chfHouseMode()') != 'exterior', 'feature opens in its room context')
+        for fixture in ('patio-door', 'back-room-door'):
+            visible = page.evaluate('(key) => chfNavProbe({feature:key}) !== null', fixture)
+            check(not visible, fixture + ' hides during the kitchen cutaway')
         page.evaluate("chfHouseFindFeature('study')")
         page.wait_for_function('chfNavProbe({settled:true})')
         point = page.evaluate("chfNavProbe({action:'study'})")

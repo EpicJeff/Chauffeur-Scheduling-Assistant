@@ -8664,6 +8664,11 @@
       mudroomRoofG: mudroomRoofG, livingRoofG: livingRoofG,
       yardG: yardG, westWallG: westWallG, zoneExtra: zoneExtra,
       mudBagsG: mudBagsG, makeBag: makeBag, FABRIC: FABRIC,
+      registerFabric: function (group, spec) {
+        regFabric(group, {name:spec.name, n:spec.normal, box:fabBox(group),
+                          room:spec.room, mode:spec.mode, twoSided:spec.twoSided,
+                          pad:spec.pad});
+      },
       solveShell: solveShell, ROOM_AABB: ROOM_AABB
     };
   }
@@ -8920,6 +8925,12 @@
     if (world) { webgl.scene.remove(world.group); world.dispose(); }
     world = window.HouseFeatures.build(webgl.T, DETAIL);
     webgl.scene.add(world.group);
+    (world.fabric || []).forEach(function (fixture) {
+      webgl.registerFabric(fixture.group, {
+        name:fixture.name, normal:fixture.normal,
+        room:fixture.group.userData.room, mode:'hide', pad:.45
+      });
+    });
     if (mode !== 'exterior') {
       var room = roomsReg()[mode];
       if (room) webgl.solveShell(webgl.cam.position, {box:room.aabb});
