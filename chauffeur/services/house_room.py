@@ -33,12 +33,19 @@ def _garage() -> dict:
     return {'calm': (not any(c['warn'] for c in out)), 'cars': out}
 
 
-def _curb() -> dict:
-    from services import bus
+def _curb(now=None) -> dict:
+    """Show a bus at the curb only when a school bus is actually nearby."""
+    from services import bus, school
+    day = (now.date() if isinstance(now, datetime.datetime)
+           else datetime.date.today())
+    if not school.school_in_session(day):
+        return _calm(bus=False)
     near = False
     for m in storage.get_all_members() or []:
+        if (m.get('role') or '') != 'child':
+            continue
         try:
-            if bus.bus_active(m):
+            if bus.bus_active(m) and bus.bus_is_near(m):
                 near = True
                 break
         except Exception:
@@ -121,7 +128,7 @@ def _mudroom() -> dict:
 
 def state(since_ts: float = 0, now=None) -> dict:
     out = kitchen_room.state(since_ts=since_ts, now=now)
-    for name, build in (('garage', _garage), ('curb', _curb),
+    for name, build in (('garage', _garage), ('curb', lambda: _curb(now)),
                         ('mudroom', _mudroom)):
         try:
             out[name] = build()

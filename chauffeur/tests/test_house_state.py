@@ -4,6 +4,7 @@ join an already-lawed file.
 
 Spec: docs/superpowers/specs/2026-09-08-house-design.md.
 """
+import datetime
 import io
 import json
 import os
@@ -154,18 +155,36 @@ def scenario_curb_sees_the_bus():
     st = house_room.state(since_ts=0)
     check(st['curb'].get('calm') is True, "no bus out = calm curb")
     from services import bus as bus_svc
+    from services import school as school_svc
     orig_bus = bus_svc.bus_active
+    orig_near = bus_svc.bus_is_near
+    orig_school = school_svc.school_in_session
     orig_members = storage.get_all_members
     bus_svc.bus_active = lambda m: True
+    bus_svc.bus_is_near = lambda m: True
+    school_svc.school_in_session = lambda day: True
     storage.get_all_members = lambda **k: [{'id': 'kid1', 'name': 'Maya',
                                             'role': 'child', 'status': 'active'}]
     try:
         st = house_room.state(since_ts=0)
+        check(st['curb']['calm'] is False and st['curb']['bus'] is True,
+              "an active nearby bus on a school day lights the curb")
+
+        bus_svc.bus_is_near = lambda m: False
+        st = house_room.state(since_ts=0)
+        check(st['curb']['calm'] is True and st['curb']['bus'] is False,
+              "a running bus elsewhere must not appear at the curb")
+
+        bus_svc.bus_is_near = lambda m: True
+        school_svc.school_in_session = lambda day: False
+        sunday = house_room._curb(now=datetime.datetime(2026, 9, 13, 21, 30))
+        check(sunday['calm'] is True and sunday['bus'] is False,
+              "a bus must not appear at 9:30 PM on a Sunday")
     finally:
         bus_svc.bus_active = orig_bus
+        bus_svc.bus_is_near = orig_near
+        school_svc.school_in_session = orig_school
         storage.get_all_members = orig_members
-    check(st['curb']['calm'] is False and st['curb']['bus'] is True,
-          "the bus out lights the curb")
 
 
 def scenario_mudroom_counts_backpacks():
