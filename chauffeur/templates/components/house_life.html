@@ -6,29 +6,14 @@
      @chf-house-state.window="accept($event.detail)"
      @chf-house-open.window="open($event.detail)"
      @chf-house-study.window="study()">
-  <nav class="house-life-dock" aria-label="Household shortcuts">
-    <p class="house-life-status" x-text="statusLine()"></p>
-    <template x-for="item in items" :key="item.key">
-      <button type="button" :data-house-action="item.key" @click="open(item.key)"
-              :class="{ 'needs-attention': count(item.key) > 0 }">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="item.icon"></path></svg>
-        <span x-text="item.label"></span>
-        <span class="house-life-count" x-show="count(item.key) > 0" x-text="count(item.key)"></span>
-      </button>
-    </template>
-    <button type="button" data-house-action="study" @click="study()" :disabled="busy">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7l1 2 1-2h7v16h-7l-1 1-1-1H4zM12 6v15M8 9h1M15 9h2"></path></svg>
-      <span>Study</span><svg class="house-life-lock" viewBox="0 0 24 24" role="img" aria-label="Parent PIN required"><path d="M7 10V7a5 5 0 0110 0v3M5 10h14v12H5zM12 15v3"></path></svg>
-    </button>
-  </nav>
   <div x-show="active" x-cloak class="house-life-shade" @click.self="close()">
-  <section x-ref="drawer" class="house-life-drawer" role="dialog" aria-modal="true"
+  <section x-ref="panel" class="panel-modal house-life-panel" role="dialog" aria-modal="true"
            @keydown.escape.stop="close()" @keydown.tab="trap($event)" aria-labelledby="house-life-title">
     <header><div><h2 id="house-life-title" x-text="title()"></h2><p x-text="explanation()"></p></div>
       <button type="button" @click="close()" aria-label="Close and return to house">✕</button></header>
     <div class="house-life-body">
-      <template x-if="active === 'chores'"><div x-data="choresLanesCard({data:{interactive:true}}, apiBase)" x-init="startLanes()">{{ house_chores.lane_grid(interactive='lanesInteractive') }}</div></template>
-      <template x-if="active === 'routines'"><div x-data="routineLanesCard({data:{interactive:true}}, apiBase)" x-init="startRoutineLanes()">{{ house_routines.lane_grid(interactive='lanesInteractive') }}</div></template>
+      <template x-if="active === 'chores'"><div class="house-life-lanes" x-data="choresLanesCard({data:{interactive:true}}, apiBase)" x-init="startLanes()">{{ house_chores.lane_grid(interactive='lanesInteractive') }}</div></template>
+      <template x-if="active === 'routines'"><div class="house-life-lanes" x-data="routineLanesCard({data:{interactive:true}}, apiBase)" x-init="startRoutineLanes()">{{ house_routines.lane_grid(interactive='lanesInteractive') }}</div></template>
       <template x-if="active === 'programs'"><div x-data="programsCard({data:{}}, apiBase)" x-init="startPrograms()">{{ house_programs.rows() }}</div></template>
       <template x-if="active === 'packing'"><div x-data="packingCard({data:{interactive:true,days:1}}, apiBase)" x-init="startPacking()">{{ house_packing.rows() }}</div></template>
       <template x-if="(active === 'tasks' || active === 'errands') && t"><div>{% include 'components/board_tile_body.html' %}</div></template>

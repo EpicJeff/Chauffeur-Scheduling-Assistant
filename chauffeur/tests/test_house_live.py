@@ -1147,22 +1147,23 @@ def scenario_navigation_real_mouse():
 
         page.wait_for_function(
             "() => document.querySelectorAll("
-            "'#house-hints:not([hidden]) .house-hint').length === 5",
+            "'#house-hints:not([hidden]) .house-hint').length === 4",
             timeout=10000)
         hints = page.locator('#house-hints .house-hint')
         exterior_targets = set(hints.evaluate_all(
             "els => els.map(e => e.dataset.target)"))
         check(exterior_targets == {
             'patio_slider', 'front_door', 'mudroom_cross_roof_south',
-            'garage_gable_front', 'massing_east_front_east'},
+            'garage_gable_front'},
               'persistent exterior markers must identify every room entrance')
         check(page.locator('#house-hints').evaluate(
             "e => getComputedStyle(e).pointerEvents") == 'none',
               'discovery markers must never intercept mouse or touch input')
         living_hint = page.locator(
             '#house-hints .house-hint[data-target="front_door"]')
-        check(living_hint.locator('svg').count() == 2,
-              'living-room marker must preview music and critters')
+        check(living_hint.locator('svg').count() == 5,
+              'living-room marker must preview music, critters, tasks, '
+              'programs and the parent Study')
 
         def probe(spec_js):
             page.wait_for_function("window.chfNavProbe({settled:true})",

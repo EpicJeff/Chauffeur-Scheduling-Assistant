@@ -1,19 +1,22 @@
-.house-life-dock{position:absolute;left:16px;top:164px;z-index:14;display:grid;gap:7px;width:164px;padding:10px;border:1px solid #f6e8c53d;border-radius:20px;background:#242722db;box-shadow:0 8px 25px #0002;color:#fff6e1;backdrop-filter:blur(10px)}
-.house-life-status{font:600 11px/1.35 system-ui;color:#cfcbbd;margin:1px 5px 4px}
-.house-life-dock button{display:flex;align-items:center;gap:10px;min-height:42px;padding:8px 10px;border-radius:12px;background:transparent;color:inherit;font:600 13px system-ui;text-align:left;cursor:pointer;border:1px solid transparent}
-.house-life-dock button:hover,.house-life-dock button:focus-visible{background:#ffffff19;border-color:#fff6}
-.house-life-dock svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
-.house-life-dock button.needs-attention{background:#efbe6626;color:#ffe0a1;border-color:#efbe6666}
-.house-life-count{margin-left:auto;min-width:22px;padding:2px 5px;text-align:center;border-radius:12px;background:#efbe66;color:#31291c;font-weight:800}
-.house-life-lock{margin-left:auto;color:#b8bbae}
-.house-drawer-open .pack-dialog-backdrop{z-index:90}
+.house-card-open .pack-dialog-backdrop{z-index:90}
 .house-life-shade{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;background:#101820a6;backdrop-filter:blur(3px)}
-.house-life-drawer{width:min(1080px,94vw);max-height:84vh;overflow:auto;padding:0;border:1px solid #7a8177;border-radius:24px;background:#17212b;color:#f3f0e6;box-shadow:0 24px 100px #0008}
-.house-life-drawer header{position:sticky;top:0;z-index:2;display:flex;justify-content:space-between;align-items:flex-start;gap:20px;padding:22px 26px;background:#17212b;border-bottom:1px solid #ffffff20}
-.house-life-drawer h2{font:700 25px system-ui;margin:0}.house-life-drawer header p{font:14px/1.4 system-ui;color:#bbc9c9;margin:5px 0 0}
-.house-life-drawer header button{padding:8px 12px;border-radius:12px;background:#ffffff15;color:white;font:20px system-ui;cursor:pointer}
+.house-life-panel{width:min(1080px,94vw);max-height:84vh;overflow:auto;padding:0;border:1px solid #7a8177;border-radius:24px;background:#17212b;color:#f3f0e6;box-shadow:0 24px 100px #0008}
+.house-life-panel header{position:sticky;top:0;z-index:2;display:flex;justify-content:space-between;align-items:flex-start;gap:20px;padding:22px 26px;background:#17212b;border-bottom:1px solid #ffffff20}
+.house-life-panel h2{font:700 25px system-ui;margin:0}.house-life-panel header p{font:14px/1.4 system-ui;color:#bbc9c9;margin:5px 0 0}
+.house-life-panel header button{padding:8px 12px;border-radius:12px;background:#ffffff15;color:white;font:20px system-ui;cursor:pointer}
 .house-life-body{padding:24px;min-height:200px}.house-life-message{padding:20px;color:#d6e2e3}
 .house-life-manage{display:block;margin:20px 0 0;padding:12px 18px;border:1px solid #879a9e;border-radius:14px;color:#e0eded;background:#ffffff0a;cursor:pointer}
 .house-hint .house-attention-badge{position:absolute;right:-8px;top:-7px;padding:3px 7px;border-radius:12px;background:#efbe66;color:#332716;font:800 12px system-ui;box-shadow:0 2px 8px #0005}
+/* The house mounts the same panel cards; their surrounding surface must
+   use the same palette too, including light and custom panel themes. */
+.house-life-panel{width:min(1920px,calc(100vw - 48px));background:var(--panel-modal,#17212b);color:var(--panel-fg,#f3f0e6);border-color:var(--panel-line,#7a8177)}
+.house-life-panel header{background:var(--panel-modal,#17212b);border-color:var(--panel-line,#ffffff20)}
+.house-life-panel header p,.house-life-message{color:var(--panel-dim,#bbc9c9)}
+.house-life-panel header button,.house-life-manage{background:var(--panel-surface-2,#ffffff15);color:var(--panel-fg,#f3f0e6);border-color:var(--panel-line,#879a9e)}
+.house-card-open .pack-dialog{background:var(--panel-modal,#17212b)!important;color:var(--panel-fg,#f3f0e6)}
+.house-life-lanes > .grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr))!important;align-items:start}
+.house-life-lanes > .grid > div{min-width:0}
+.house-life-lanes [x-text="s.name"],.house-life-lanes [x-text="b.name"]{white-space:normal;overflow-wrap:anywhere}
+.house-life-lanes [x-text="it.title"]{min-width:0;overflow-wrap:anywhere}
 @media(max-width:700px){#house-glance .glance-clock{top:12px;bottom:auto}#house-glance .glance-next{left:16px;right:16px;top:84px;width:auto}}
-@media(max-width:700px){.house-life-dock{left:12px;right:12px;top:auto;bottom:180px;width:auto;grid-template-columns:repeat(4,1fr);gap:3px;padding:7px}.house-life-status{grid-column:1/-1}.house-life-dock button{gap:5px;padding:7px 3px;font-size:11px}.house-life-dock svg{width:15px;height:15px}.house-life-count{min-width:16px;padding:2px}.house-life-drawer{max-height:88vh}.house-life-body{padding:14px}}
+@media(max-width:700px){.house-life-panel{max-height:88vh}.house-life-body{padding:14px}}

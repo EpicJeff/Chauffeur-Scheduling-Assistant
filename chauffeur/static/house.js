@@ -8432,7 +8432,7 @@
         var u = p.userData;
         if (u) {
           if (u.scenery === true) return true;
-          if (u.zone) return false;
+          if (u.zone || u.houseAction) return false;
         }
         p = p.parent;
       }
@@ -8857,6 +8857,7 @@
        sizes with the small one half behind the big one */
     carPlates.forEach(function (p) { p.visible = focused !== 'garage'; });
     syncMudroom(s);
+    syncWorld(s);
 
     /* dusk and dawn ride the same tick the sky dome does */
     webgl.setNight(webgl.isNight());
@@ -8913,6 +8914,32 @@
      garage camera, the driveway's face the exterior one. Both are
      constants, so this is a lookAt done ONCE per payload change — never a
      billboard, which would be per-frame work the room does not do. ---- */
+  var world = null;
+  function syncWorld() {
+    if (!webgl || !window.HouseFeatures || world) return;
+    if (world) { webgl.scene.remove(world.group); world.dispose(); }
+    world = window.HouseFeatures.build(webgl.T, DETAIL);
+    webgl.scene.add(world.group);
+    if (mode !== 'exterior') {
+      var room = roomsReg()[mode];
+      if (room) webgl.solveShell(webgl.cam.position, {box:room.aabb});
+    }
+    scheduleHint();
+  }
+  window.chfHouseFindFeature = function(key) {
+    if (!world || !webgl) return false;
+    var entry = world.entries.filter(function(e){return e.action === key;})[0];
+    if (key === 'packing') {
+      if (!(((state || {}).mudroom || {}).packs || []).length) return false;
+      if (mode === 'kitchen' && !focused) return false;
+      enterRoom('kitchen', null); return true;
+    }
+    if (!entry) return false;
+    if (mode === entry.room && !focused) return false;
+    enterRoom(entry.room, null);
+    chip('Tap ' + entry.label.toLowerCase() + ' to open ' + key + '.');
+    return true;
+  };
   var garagePayload = null;
   /* the bay's two slots, and the apron's grid: two columns across the
      driveway's 4.6-unit width, rows 4.2 apart. The old single file at 4.6
@@ -9188,7 +9215,7 @@
      belong to the kitchen. The hide: arrays this registry used to carry
      are gone — solveShell (spec section 4) owns SHELL visibility now. */
   function roomsReg() {
-    return {
+    var rooms = {
       kitchen: { pos: webgl.HOME_POS, at: webgl.HOME_AT,
                  aabb: webgl.ROOM_AABB.kitchen },
       garage:  { pos: webgl.GARAGE_POS, at: webgl.GARAGE_AT,
@@ -9198,6 +9225,7 @@
       living:  { pos: webgl.LIV_POS, at: webgl.LIV_AT,
                  aabb: webgl.ROOM_AABB.living }
     };
+    return rooms;
   }
   var ZONE_ROOM = { garage: 'garage', curb: null,
                     door: 'mudroom', radio: 'living', pet: 'living' };
@@ -9514,10 +9542,10 @@
         if (f.name === spec.piece) { b = f.box; target = f.g; }
       });
       if (!b) return null;
-    } else if (spec.zone || spec.action) {
+    } else if (spec.zone || spec.action || spec.feature) {
       if (spec.zone) target = webgl.groups[spec.zone];
       else webgl.scene.traverse(function (o) {
-        if (!target && o.userData.houseAction === spec.action) target = o;
+        if (!target && (spec.action && o.userData.houseAction === spec.action || spec.feature && o.userData.houseFeatureKey === spec.feature)) target = o;
       });
       if (!target) return null;
       var box = new webgl.T.Box3().setFromObject(target);
@@ -9589,7 +9617,12 @@
     music: '<path d="M9 18V6l11-2v11M9 10l11-2"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="15" r="3"/>',
     weather: '<path d="M7 18h11a3 3 0 000-6 6 6 0 00-11-2 4 4 0 000 8z"/><path d="M5 6L3 4M9 4V2M3 10H1"/>',
     garage: '<path d="M4 12l2-5h12l2 5v7h-2v-2H6v2H4zM6 12h12"/><circle cx="8" cy="14" r="1"/><circle cx="16" cy="14" r="1"/>',
-    critters: '<path d="M8.5 11.5c-2.5 1.2-4 3.3-3.3 5.5.8 2.5 3.7 2.6 6.8 1.2 3.1 1.4 6 1.3 6.8-1.2.7-2.2-.8-4.3-3.3-5.5-2.1-1-4.9-1-7 0z"/><circle cx="5" cy="9" r="2"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="6" r="2"/><circle cx="19" cy="9" r="2"/>'
+    critters: '<path d="M8.5 11.5c-2.5 1.2-4 3.3-3.3 5.5.8 2.5 3.7 2.6 6.8 1.2 3.1 1.4 6 1.3 6.8-1.2.7-2.2-.8-4.3-3.3-5.5-2.1-1-4.9-1-7 0z"/><circle cx="5" cy="9" r="2"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="6" r="2"/><circle cx="19" cy="9" r="2"/>',
+    chores: '<path d="M5 4h14v17H5zM8 3h8v4H8zM8 12l2 2 5-5M8 18h8"/>',
+    routines: '<path d="M4 10a8 8 0 0114-5l2 2M20 3v4h-4M20 14A8 8 0 016 19l-2-2M4 21v-4h4"/>',
+    programs: '<path d="M5 4h6l1 2 1-2h6v16h-6l-1 1-1-1H5zM12 6v15"/>',
+    tasks: '<path d="M5 3h14v18H5zM8 7h8M8 12h8M8 17h5"/>',
+    errands: '<path d="M4 12l2-5h12l2 5v7h-2v-2H6v2H4zM6 12h12M7 14h2M15 14h2"/>'
   };
   var ZONE_HINT_ICON = {
     fridge: 'moments', counter: 'meals', board: 'lists', door: 'schedule',
@@ -9598,10 +9631,9 @@
   };
   var EXTERIOR_HINTS = [
     ['patio_slider', 'Kitchen', ['moments', 'meals', 'lists', 'calendar', 'weather']],
-    ['front_door', 'Living room', ['music', 'critters'], 'entry'],
-    ['mudroom_cross_roof_south', 'Mudroom', ['schedule']],
-    ['garage_gable_front', 'Garage', ['garage']],
-    ['massing_east_front_east', 'Study', ['study']]
+    ['front_door', 'Living room', ['music', 'critters', 'tasks', 'programs', 'study'], 'entry', ['tasks','programs']],
+    ['mudroom_cross_roof_south', 'Mudroom', ['schedule', 'chores', 'routines'], null, ['packing','chores','routines']],
+    ['garage_gable_front', 'Garage', ['garage', 'errands'], null, ['errands']]
   ];
   function packingAttention() {
     return (((state || {}).mudroom || {}).packs || []).reduce(function (n, p) {
@@ -9609,14 +9641,16 @@
     }, 0);
   }
   function hintAttention(key) {
+    var attention = ((state || {}).attention || {})[key];
+    if (attention) return attention.count || 0;
     if (key === 'mudroom_cross_roof_south' || key === 'calendar' || key === 'packing') return packingAttention();
-    if (key === 'patio_slider') return packingAttention();
     return 0;
   }
   function refreshAttentionBadges() {
     if (!HINT) return;
     HINT.querySelectorAll('.house-hint').forEach(function (marker) {
-      var count = hintAttention(marker.dataset.target);
+      var keys = marker.dataset.attention ? marker.dataset.attention.split(',') : [marker.dataset.target];
+      var count = keys.reduce(function (sum, key) { return sum + hintAttention(key); }, 0);
       var badge = marker.querySelector('.house-attention-badge');
       if (!count) { if (badge) badge.remove(); return; }
       if (!badge) { badge = document.createElement('span'); badge.className = 'house-attention-badge'; marker.appendChild(badge); }
@@ -9627,10 +9661,13 @@
     if (HINT) { HINT.hidden = true; HINT.textContent = ''; }
   }
   function hintChoices() {
-    if (mode === 'exterior') return EXTERIOR_HINTS.map(function (h) {
+    if (mode === 'exterior') {
+      var exterior = EXTERIOR_HINTS.map(function (h) {
       var spec = {}; spec[h[3] || 'piece'] = h[0];
-      return { spec: spec, label: h[1], key: h[0], icons: h[2] };
-    });
+      return { spec: spec, label: h[1], key: h[0], icons: h[2], attention: h[4] || [] };
+      });
+      return exterior;
+    }
     var choices = Object.keys(ZONES).filter(function (key) {
       return zoneRoom(key) === mode;
     }).map(function (key) {
@@ -9638,7 +9675,12 @@
                icons: [ZONE_HINT_ICON[key]] };
     });
     if (mode === 'kitchen' && (((state || {}).mudroom || {}).packs || []).length)
-      choices.push({ spec: { point: PACK_SPOTS[0] }, label: 'Packing', key: 'packing', icons: ['lists'] });
+      choices.push({ spec: { point: PACK_SPOTS[0] }, label: 'Packing', key: 'packing',
+        action:'packing', icons: ['lists'] });
+    if (world) world.entries.forEach(function(e) {
+      if (e.room === mode) choices.push({spec:{feature:e.key},label:e.label,key:e.action || e.key,
+        action:e.action,icons:[e.action || 'lists']});
+    });
     return choices;
   }
   function hintIcon(name) {
@@ -9657,6 +9699,8 @@
       var marker = document.createElement('div');
       marker.className = 'house-hint' + (choice.icons.length > 3 ? ' crowded' : '');
       marker.dataset.target = choice.key;
+      if (choice.action) marker.dataset.houseAction = choice.action;
+      if (choice.attention && choice.attention.length) marker.dataset.attention = choice.attention.join(',');
       marker.style.left = point.cx + 'px';
       marker.style.top = point.cy + 'px';
       marker.style.setProperty('--hint-delay', (shown * 0.45) + 's');
@@ -9856,7 +9900,7 @@
       else if (mode !== 'exterior') goExterior();
     });
     window.addEventListener('keydown', function (e) {
-      if (document.body.classList.contains('house-drawer-open')) return;
+      if (document.body.classList.contains('house-card-open')) return;
       if (e.key !== 'Escape' || mode === 'exterior') return;
       if (focused) goHome(mode); else goExterior();
     });
