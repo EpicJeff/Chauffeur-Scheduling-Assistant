@@ -90,8 +90,11 @@ def scenario_house_life():
               'Study door appears on the room side opposite the exterior door')
         check(point['cx'] < page.viewport_size['width'] * .92,
               'Living-room framing keeps the Study door comfortably visible')
+        for fixture in ('patio-door', 'back-room-door'):
+            fixture_point = page.evaluate('(key) => chfNavProbe({feature:key})', fixture)
+            check(fixture_point, fixture + ' is visible on the living-room east wall')
         if shots:
-            page.screenshot(path=os.path.join(shots, 'study-door.png'))
+            page.screenshot(path=os.path.join(shots, 'living-east-wall.png'))
         page.mouse.click(point['cx'], point['cy'])
         page.wait_for_selector('#cc-input-field', state='visible')
         page.fill('#cc-input-field', '1234')

@@ -50,6 +50,11 @@
       root.add(group); entries.push({key:key,label:label,room:room,group:group,action:action});
       return group;
     }
+    function fixture(key, room, at) {
+      var group = new T.Group(); group.position.set(at[0],at[1],at[2]);
+      group.userData.room = room; group.userData.houseFeatureKey = key;
+      root.add(group); return group;
+    }
     function book(group, color, x, y, z) {
       box(group,.46,.07,.34,color,x,y,z); box(group,.42,.045,.31,ivory,x,y+.053,z);
       box(group,.46,.025,.34,color,x,y+.085,z);
@@ -95,6 +100,34 @@
     cylinder(item,.07,.07,.10,brass,.58,1.43,.16,true).rotation.x = Math.PI / 2;
     box(item,.20,.24,.055,brass,.39,1.43,.15);
     box(item,.10,.10,.062,ink,.39,1.40,.185);
+
+    // Finish the living room's east wall with the two openings its plan needs:
+    // the terrace slider and a separate door into the rear east room.
+    item = fixture('patio-door','living',[6.50,.02,5.80]);
+    item.rotation.y = -Math.PI / 2;
+    box(item,2.66,2.84,.13,0x40565c,0,1.42,0);
+    box(item,2.96,.15,.25,ivory,0,2.96,0);
+    [-1,1].forEach(function(side){box(item,.15,3.02,.25,ivory,side*1.405,1.51,0);});
+    box(item,.12,2.84,.20,ivory,0,1.42,.02);
+    [-.69,.69].forEach(function(x){
+      box(item,1.15,1.76,.035,0x8ba6a7,x,1.80,.095);
+      box(item,1.15,.62,.045,wood,x,.43,.10);
+      box(item,1.22,.11,.12,ivory,x,.78,.10);
+      box(item,.055,1.58,.07,0xc8d9d5,x,1.80,.12);
+    });
+    cylinder(item,.055,.055,.28,brass,-.18,1.35,.18,true).rotation.x = Math.PI / 2;
+    cylinder(item,.055,.055,.28,brass,.18,1.35,.18,true).rotation.x = Math.PI / 2;
+    box(item,2.95,.10,.32,0xb2a48f,0,-.01,.03);
+
+    item = fixture('back-room-door','living',[6.50,.02,2.45]);
+    item.rotation.y = -Math.PI / 2;
+    box(item,1.52,2.84,.14,0x657a75,0,1.42,0);
+    box(item,1.16,1.02,.035,0x536a66,0,2.13,.09);
+    box(item,1.16,1.02,.035,0x536a66,0,.72,.09);
+    box(item,1.82,.15,.24,ivory,0,2.96,0);
+    [-1,1].forEach(function(side){box(item,.15,3.02,.24,ivory,side*.84,1.51,0);});
+    cylinder(item,.07,.07,.10,brass,-.55,1.43,.16,true).rotation.x = Math.PI / 2;
+    box(item,.22,.08,.045,brass,-.55,1.43,.15);
 
     root.updateMatrixWorld(true);
     return {group:root, entries:entries, dispose:function () {
