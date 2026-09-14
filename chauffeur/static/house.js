@@ -853,10 +853,15 @@
     function regFabric(group, o) {
       group.userData.fabric = true;
       if (o.room) group.userData.room = o.room;
+      /* Decor may enlarge the bounds without moving the physical wall.
+         An explicit plane keeps a card from hiding its own backing;
+         narrower padding keeps neighbouring room cutaways independent. */
       FABRIC.push({ g: group, name: o.name,
                     n: new T.Vector3(o.n[0], o.n[1], o.n[2]).normalize(),
                     box: o.box, mode: o.mode || 'ghost', edges: null,
-                    twoSided: !!o.twoSided });
+                    twoSided: !!o.twoSided,
+                    plane: o.plane ? new T.Vector3().fromArray(o.plane) : null,
+                    pad: o.pad === undefined ? 1.5 : o.pad });
     }
     /* box helper for regFabric call sites: a plain Box3 does not survive
        structured-clone back to a test harness, and the spec wants six
@@ -913,12 +918,12 @@
       FABRIC.forEach(function (f) {
         var v = 'solid';
         if (subPt && boxOk(f.box)) {
-          var p = boxCentre(f.box);
+          var p = f.plane || boxCentre(f.box);
           var camSide = f.n.dot(new T.Vector3().subVectors(camPos, p));
           var subSide = f.n.dot(new T.Vector3().subVectors(subPt, p));
           var separates = f.twoSided ? camSide * subSide < 0
                                      : camSide > 0 && subSide < 0;
-          if (separates && corridorHits(f.box, camPos, subPt, 1.5)) {
+          if (separates && corridorHits(f.box, camPos, subPt, f.pad)) {
             v = f.mode === 'hide' ? 'hide' : 'ghost';
           }
         }
@@ -3609,7 +3614,8 @@
        of the wall), i.e. it is the mudroom's fabric first and the
        kitchen's boundary second — a tap on it belongs where it ghosts. */
     regFabric(westWallG, { name: 'west_wall', n: [1, 0, 0],
-                            box: fabBox(westWallG), room: 'mudroom' });
+                            box: fabBox(westWallG), room: 'mudroom',
+                            plane: [WXK, 0, 0] });
 
     /* pendant lamps over the island: warm emissive shades. Grouped so a
        lean-in can hide them — a cord across a focused card breaks the
@@ -4255,10 +4261,10 @@
     function shellBox(g, w, h, d, c, x, y, z, opts) {
       return box(w, h, d, c, x, y, z, g, sharp(opts));
     }
-    function shellRegister(g, name, normal, room, twoSided) {
+    function shellRegister(g, name, normal, room, twoSided, pad) {
       g.updateMatrixWorld(true);
       regFabric(g, { name: name, n: normal, box: fabBox(g), room: room,
-                     twoSided: twoSided });
+                     twoSided: twoSided, pad: pad });
     }
     function shellWindow(g, x, y, z, angle, w, h, glow) {
       var frame = new T.Group(); frame.position.set(x, y, z);
@@ -4308,7 +4314,7 @@
     /* Each pitched plane has its own normal and merge/ghost unit. Gable
        infill is a separate vertical piece, so a front camera can see
        through the end without relying on a roof's half-space test. */
-    function shellGable(name, x0, x1, z0, z1, eave, alongZ, room, ends, pitch, slopeRooms) {
+    function shellGable(name, x0, x1, z0, z1, eave, alongZ, room, ends, pitch, slopeRooms, depthEnds) {
       pitch = pitch || PITCH_FAMILY;
       var half = (alongZ ? x1 - x0 : z1 - z0) / 2;
       var cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
@@ -4317,6 +4323,15 @@
       var run = half + FULL_HOUSE.overhang;
       var span = run / Math.cos(pitch);
       var depth = (alongZ ? z1 - z0 : x1 - x0) + 2 * FULL_HOUSE.overhang;
+      /* Adjacent roof sections meet at the partition without overlapping
+         decks, while keeping the same ridge height and texture scale. */
+      if (depthEnds) {
+        var before = depthEnds[0] ? FULL_HOUSE.overhang : 0;
+        var after = depthEnds[1] ? FULL_HOUSE.overhang : 0;
+        depth = (alongZ ? z1 - z0 : x1 - x0) + before + after;
+        if (alongZ) cz += (after - before) / 2;
+        else cx += (after - before) / 2;
+      }
       [-1, 1].forEach(function (sign) {
         var g = shellGroup();
         var deck = shellBox(g, alongZ ? span : depth, 0.18,
@@ -4342,8 +4357,10 @@
           deck.getWorldQuaternion(new T.Quaternion()));
         shellRegister(g, name + (alongZ ? (sign < 0 ? '_west' : '_east')
                                        : (sign < 0 ? '_north' : '_south')),
-                      n.toArray(), slopeRooms ? slopeRooms[sign < 0 ? 0 : 1] : room);
+                      n.toArray(), slopeRooms ? slopeRooms[sign < 0 ? 0 : 1] : room,
+                      false, depthEnds ? 0.5 : undefined);
       });
+      cx = (x0 + x1) / 2; cz = (z0 + z1) / 2;
       (ends || [-1, 1]).forEach(function (sign) {
         var g = shellGroup();
         var geo = cgeo('shell-gable|' + half + '|' + eave + '|' + pitch, function () {
@@ -4436,8 +4453,10 @@
     /* The mudroom starts at z=2.36; this short face closes its rear join. */
     shellWall('massing_service_south', -12.6, 2.12, -7.15, 2.12,
               5.6, [0, 0, 1], []);
-    shellGable('massing_service_roof', -18.2, -7.15, -6.1, 10.1,
-               5.6, false, null, [-1], Math.PI / 8, [null, 'mudroom']);
+    shellGable('massing_service_roof', -18.2, -12.6, -6.1, 10.1,
+               5.6, false, 'garage', [-1], Math.PI / 8, [null, 'garage'], [true, false]);
+    shellGable('mudroom_cross_roof', -12.6, -7.15, -6.1, 10.1,
+               5.6, false, 'mudroom', [], Math.PI / 8, [null, 'mudroom'], [false, true]);
 
     /* A street-facing garage gable intersects the lower cross roof,
        echoing the porch without changing the garage's eave height. */
@@ -4452,7 +4471,7 @@
     shellBox(mudFrontBandG, 5.45, mudBandTop - 4.2, 0.28,
              NICE ? 0xffffff : FARMHOUSE.body, -9.875,
              (mudBandTop + 4.2) / 2, 8.43, { rough: 0.95, map: battenT });
-    shellRegister(mudFrontBandG, 'mudroom_front_cladding', [0, 0, 1], 'mudroom');
+    shellRegister(mudFrontBandG, 'mudroom_front_cladding', [0, 0, 1], 'mudroom', false, 0.5);
 
     /* Slider uses the visible east face, clear of the terrace's bench.
        It is decorative fabric, not a new zone or an unbuilt-room entry. */
@@ -6156,9 +6175,8 @@
                 -9.8, 2.1, 8.32, { rough: 0.95, map: battenT }));
       mudroomRoofG.add(mudFrontWall);
       /* The cross roof replaces the old flat slab. This legacy registry
-         name now owns only the front wall, with its actual face normal. */
-      regFabric(mudroomRoofG, { name: 'mudroom_roof', n: [0, 0, 1],
-                                 box: fabBox(mudroomRoofG), room: 'mudroom' });
+         name owns the front wall, street door and trim. Register after
+         all those parts join the group, using the actual face normal. */
       /* ============ the studio pass (docs/house_style_bible.md) =========
          The room inherited exterior siding from the architect pass and
          read as a covered porch. It is a finished room now: a shiplap
@@ -6211,12 +6229,14 @@
       /* ---- one run of finished wall: plaster field, shiplap dado, cap
          rail, baseboard. axis 'z' = the north wall (face looks +z),
          axis 'x' = the west wall (face looks +x). One builder, both. */
-      function wallRun(axis, face, a0, a1, top, dado) {
+      function wallRun(axis, face, a0, a1, top, dado, parent) {
         var L = a1 - a0, mid = (a0 + a1) / 2;
         function plate(h, d0, d1, c, y, o) {
           var d = d1 - d0, ctr = face + (d0 + d1) / 2;
-          return axis === 'z' ? mb(L, h, d, c, mid, y, ctr, sharp(o))
+          var part = axis === 'z' ? mb(L, h, d, c, mid, y, ctr, sharp(o))
                               : mb(d, h, L, c, ctr, y, mid, sharp(o));
+          if (parent) parent.add(part);
+          return part;
         }
         plate(top, 0, 0.05, C.wall, top / 2, PLASTER);
         if (!dado) return;
@@ -6248,11 +6268,13 @@
          wears the room's finish; above it the wall runs on to the eaves,
          so a crown marks where the room stops and the rest goes quiet
          instead of standing there as a white cliff. */
-      wallRun('x', -6.85, 4.40, 6.02, 4.20, true);
-      mb(0.05, 1.40, 1.62, 0xdcd5c8, -6.825, 4.90, 5.21, PLASTER);
+      var mudEastG = shellGroup();
+      wallRun('x', -6.85, 4.40, 6.02, 4.20, true, mudEastG);
+      mudEastG.add(mb(0.05, 1.40, 1.62, 0xdcd5c8, -6.825, 4.90, 5.21, PLASTER));
       /* and its cut end wears the plates' wall-thickness band, or the
          camera reads raw clapboard down the frame's right edge */
-      mb(0.34, 5.60, 0.06, C.cabShade, -7.00, 2.80, 6.03, MATT);
+      mudEastG.add(mb(0.34, 5.60, 0.06, C.cabShade, -7.00, 2.80, 6.03, MATT));
+      shellRegister(mudEastG, 'mudroom_east_finish', [1, 0, 0], 'mudroom');
 
       /* ================= 1. the garage door (S7 mudroom.3) =============
          The west wall is the garage connection and was blank. A cased
@@ -6260,14 +6282,16 @@
          slate — the room's first dark anchor — a brass knob, a
          threshold, and a jamb the wall dies into.
 
-         It is also THE DOOR ZONE. The street door still carries the zone
-         too — both doors answer to it — but this camera crops that one to
-         a sliver at the frame's left edge, so nobody could tell it was
-         tappable. The door you can SEE is the door you can tap: every
-         piece here takes userData.zone, exactly as dpart() does for the
-         street door's face, and the next-leave hero card hangs on this
-         slab (below). */
-      function gd(m) { return zoneTag(m, 'door'); }
+         This is the door zone: its marker, tap target and next-leave
+         card all belong to this slab. The street door is ordinary shell
+         fabric and hides with the front wall when looking inside. */
+      var heroDoorG = shellGroup();
+      heroDoorG.userData.zone = 'door';
+      heroDoorG.userData.room = 'mudroom';
+      groups.door = heroDoorG;
+      doorG.traverse(function (o) { delete o.userData.zone; });
+      mudroomRoofG.add(doorG);
+      function gd(m) { heroDoorG.add(m); return zoneTag(m, 'door'); }
       [3.03, 4.37].forEach(function (cz) {
         gd(mb(0.06, 2.92, 0.14, TRIM, WWF + 0.03, 1.46, cz, MATT));
       });
@@ -6304,7 +6328,7 @@
       plaque.rotation.y = Math.PI / 2;         /* the face looks east, +x */
       zoneTag(plaque, 'door');
       mtag(plaque);
-      extG.add(plaque);                        /* reparented off doorG */
+      heroDoorG.add(plaque);                   /* reparented off street door */
 
       /* ================= 2. the bench (S7 mudroom.1) ===================
          It was a plank on four posts. Now it is casework: toe kick,
@@ -6612,7 +6636,7 @@
          The wall it hangs in is cut away for the camera, so the opening
          gets the plates' visible wall-thickness band (S7 exterior.2) —
          otherwise the slab is a plank floating in a gap. */
-      function jamb(m) { return zoneTag(m, 'door'); }
+      function jamb(m) { mudroomRoofG.add(m); return m; }
       [-10.71, -8.89].forEach(function (jx) {
         jamb(mb(0.12, 4.20, 0.26, C.cabShade, jx, 2.10, 8.21, sharp(MATT)));
       });
@@ -6622,11 +6646,11 @@
          a glazed upper light, two raised panels, a lockset and a kick
          plate. Everything stays inside the wall's 0.24 of thickness so
          the exterior view still reads as a solid clapboard wall. They
-         carry the door's zone, so the tap target is the whole door. */
+         hide with the front wall, including the jamb and hardware. */
       if (D2) {
         var dz0 = 8.235;
         function dpart(m) {
-          return zoneTag(m, 'door', 'mudroom');
+          mudroomRoofG.add(m); return m;
         }
         dpart(mb(1.44, 0.05, 0.05, 0x8a6d49, -9.80, 2.16, dz0, WOODM));
         [[2.98, 1.36], [1.44, 0.86], [0.66, 0.52]].forEach(function (pn) {
@@ -6657,6 +6681,9 @@
                   dz0 - 0.015, STEEL));
         });
       }
+
+      regFabric(mudroomRoofG, { name: 'mudroom_roof', n: [0, 0, 1],
+        box: fabBox(mudroomRoofG), room: 'mudroom', pad: 0.5 });
 
       /* ---- the backpacks syncMudroom deals onto the bench ------------
          One per PACKING GROUP the household has for the day, and the bag
@@ -7959,7 +7986,7 @@
          disposer, car plaques included, so there is no second call site
          left that could double-dispose against it. */
       if (e) e.tex.dispose();
-      texCache[cacheKey] = { payload: payload, tex: t };
+      texCache[cacheKey] = { payload: payload, tex: t, draw: draw };
       return t;
     }
     function rr(g, x, y, w, h, r) {
@@ -8299,10 +8326,17 @@
       });
     }
     function clearPaint() {
+      /* Fonts becoming ready changes lettering, not data or ownership.
+         Repaint each cached canvas in place: cars may skip rebuilding on
+         unchanged telemetry, so dropping their maps here leaves their
+         materials holding disposed textures until a later state change. */
       Object.keys(texCache).forEach(function (key) {
-        texCache[key].tex.dispose();
+        var entry = texCache[key], canvas = entry.tex.image;
+        var context = canvas.getContext('2d');
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        entry.draw(context, canvas.width, canvas.height);
+        entry.tex.needsUpdate = true;
       });
-      texCache = {};
     }
 
     /* ================= SCENERY RECESSION ==============================
@@ -8642,6 +8676,7 @@
   var rafLive = false;
 
   function updateBack() {
+    window.dispatchEvent(new CustomEvent('chf-house-view'));
     if (!BACK) return;
     BACK.hidden = mode === 'exterior';
     if (mode === 'exterior') return;
@@ -9531,7 +9566,7 @@
   var EXTERIOR_HINTS = [
     ['patio_slider', 'Kitchen', ['moments', 'meals', 'lists', 'calendar', 'weather']],
     ['front_door', 'Living room', ['music', 'critters'], 'entry'],
-    ['massing_service_roof_south', 'Mudroom', ['schedule']],
+    ['mudroom_cross_roof_south', 'Mudroom', ['schedule']],
     ['garage_gable_front', 'Garage', ['garage']]
   ];
   function hideHint() {

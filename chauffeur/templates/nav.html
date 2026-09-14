@@ -335,6 +335,7 @@
 </nav>
 
 {% include 'components/hero_card.html' %}
+{% include 'components/glance_clock.html' %}
 {% include 'components/panel_enrol.html' %}
 {# The board cards' shared teardown, on hero_card's own reasoning: one copy,
    from the one file every page already includes, so it is in place before
@@ -926,11 +927,7 @@
             const ssClock = () => {
                 const el = document.getElementById('panel-ss-clock');
                 if (!el) return;
-                const now = new Date();
-                el.querySelector('.ss-time').textContent =
-                    now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-                el.querySelector('.ss-date').textContent =
-                    now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+                window.chfGlanceClock(el);
                 ssRenderNext();
             };
 

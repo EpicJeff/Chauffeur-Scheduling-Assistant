@@ -1,0 +1,11 @@
+<script>
+    // One clock/date format for the screensaver and exterior house.
+    window.chfGlanceClock = function (el) {
+        if (!el) return;
+        const now = new Date();
+        el.querySelector('.ss-time').textContent =
+            now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        el.querySelector('.ss-date').textContent =
+            now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+    };
+</script>

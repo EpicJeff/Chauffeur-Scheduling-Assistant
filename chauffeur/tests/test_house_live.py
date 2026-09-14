@@ -119,6 +119,17 @@ def scenario_the_house_boots_enters_and_leans_in():
             print("  skip  no WebGL room here — the fallback owns the page")
             return
 
+        page.wait_for_selector('#house-glance .glance-next', state='visible')
+        check('Soccer practice' in page.inner_text('#house-glance'),
+              'exterior uses the next activity from the board hero')
+        check(page.inner_text('#house-glance .ss-time').strip(),
+              'exterior shows the screensaver clock')
+        check(page.inner_text('#house-glance .ss-date').strip(),
+              'exterior shows the screensaver date')
+        check(page.locator('#house-glance').evaluate(
+            "e => getComputedStyle(e).pointerEvents") == 'none',
+              'glance overlay must let house taps through')
+
         # L6 (batching spec): the house is stamped, not guessed. A tap on
         # the house walks in; a tap on the sky stays a view.
         check(page.evaluate("typeof window.chfHouseMode === 'function'"),
@@ -132,8 +143,12 @@ def scenario_the_house_boots_enters_and_leans_in():
         page.wait_for_timeout(1100)
         check(page.evaluate("window.chfHouseMode()") == 'living',
               'a tap on the front of the house walks into the living room')
+        check(not page.is_visible('#house-glance'),
+              'clock and hero hide inside the house')
         page.evaluate("window.chfHouseExit()")
         page.wait_for_timeout(1100)
+        check(page.is_visible('#house-glance .ss-time'),
+              'clock returns on exterior without reloading')
         page.mouse.click(cbox['x'] + 24, cbox['y'] + 24)
         page.wait_for_timeout(1100)
         check(page.evaluate("window.chfHouseMode()") == 'exterior',
@@ -951,10 +966,18 @@ def scenario_shell_fabric_registry():
             'massing_service_roof_north', 'massing_service_roof_south',
             'massing_service_roof_end_west', 'garage_gable_west',
             'garage_gable_east', 'garage_gable_front',
+            'mudroom_cross_roof_north', 'mudroom_cross_roof_south', 'mudroom_east_finish',
         }
         check(set(names) == expected_names,
               'expanded registry must contain exactly the authored pieces: %r' % names)
         by_name = {f['name']: f for f in fab}
+        garage_roof = by_name['massing_service_roof_south']['box']
+        mudroom_roof = by_name['mudroom_cross_roof_south']['box']
+        check(abs(garage_roof[1] - mudroom_roof[0]) < 0.001,
+              'roof sections must meet without a gap or overlapping decks')
+        check(all(abs(garage_roof[i] - mudroom_roof[i]) < 0.001
+                  for i in [2, 3, 4, 5]),
+              'separate service roof sections must retain the same profile')
         # Equal main/service eaves and a side roof that drains east, away
         # from the main wall: geometry regressions called out by the user.
         check(abs(by_name['roof_main_end_east']['box'][2] -
@@ -983,11 +1006,12 @@ def scenario_shell_fabric_registry():
                         'patio_slider', 'massing_back_roof_front',
                         'massing_east_back_east', 'massing_east_back_patio',
                         'massing_east_front_patio', 'yard'],
-            'garage': ['garage_door', 'garage_shell', 'mudroom_roof',
+            'garage': ['garage_door', 'garage_shell',
                        'garage_gable_west', 'garage_gable_east', 'garage_gable_front',
-                       'massing_service_roof_south', 'mudroom_front_cladding', 'yard'],
+                       'massing_service_roof_south', 'yard'],
             'mudroom': ['mudroom_roof', 'west_skirt', 'west_wall', 'west_cladding',
-                        'massing_service_roof_south', 'mudroom_front_cladding', 'yard'],
+                        'mudroom_cross_roof_south', 'mudroom_front_cladding',
+                        'mudroom_east_finish', 'yard'],
             'living': ['south_wall', 'roof_main_south', 'porch_roof_west',
                        'porch_roof_east', 'porch_roof_front',
                        'massing_front_roof_north', 'massing_front_roof_south', 'yard'],
@@ -1030,6 +1054,24 @@ def scenario_shell_fabric_registry():
                       "just non-solid: %r" % west)
                 check(west.get('edgesVisible') is False,
                       'west_wall cutaway must not draw permanent wireframes')
+
+        # The calendar's support stays visible just like the adjacent pantry.
+        # Decor must not move the partition's visibility plane past its card.
+        for zone in ['calendar', 'board']:
+            page.evaluate("window.chfKitchenFocus(%r)" % zone)
+            page.wait_for_function("window.chfNavProbe({settled:true})")
+            wall = next(f for f in page.evaluate('chfShellFabric()')
+                        if f['name'] == 'west_wall')
+            check(wall['visible'], zone + ' must keep its plaster backing')
+
+        page.evaluate("window.chfHouseEnterRoom('mudroom')")
+        page.wait_for_function("window.chfNavProbe({settled:true})")
+        door_hit = page.evaluate("window.chfNavProbe({zone:'door'})")
+        check(door_hit is not None, 'card-bearing door must be tappable')
+        page.mouse.click(door_hit['cx'], door_hit['cy'])
+        page.wait_for_function("window.chfNavProbe({settled:true})")
+        check(page.evaluate("window.chfNavProbe({settled:true}).focused") == 'door',
+              'tapping the visible garage connection must focus the hero')
 
         for piece in ['south_wall', 'porch_roof_front']:
             page.evaluate("window.chfHouseExit()")
@@ -1111,7 +1153,7 @@ def scenario_navigation_real_mouse():
         exterior_targets = set(hints.evaluate_all(
             "els => els.map(e => e.dataset.target)"))
         check(exterior_targets == {
-            'patio_slider', 'front_door', 'massing_service_roof_south',
+            'patio_slider', 'front_door', 'mudroom_cross_roof_south',
             'garage_gable_front'},
               'persistent exterior markers must identify every room entrance')
         check(page.locator('#house-hints').evaluate(
@@ -1159,7 +1201,7 @@ def scenario_navigation_real_mouse():
         enter('exterior')
         check(page.evaluate("window.chfHouseMode()") == 'exterior',
               'must start at the sealed exterior')
-        p = probe("{piece:'massing_service_roof_south'}")
+        p = probe("{piece:'mudroom_cross_roof_south'}")
         page.mouse.click(p['cx'], p['cy'])
         page.wait_for_timeout(1200)
         check(page.evaluate("window.chfHouseMode()") == 'mudroom',

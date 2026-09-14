@@ -295,7 +295,7 @@
         pointer-events: none;
     }
 
-    #panel-ss-clock {
+    #panel-ss-clock, #house-glance .glance-clock {
         position: absolute;
         left: 4vmin;
         bottom: 3.5vmin;
@@ -305,14 +305,14 @@
         font-family: Inter, system-ui, sans-serif;
     }
 
-    #panel-ss-clock .ss-time {
+    #panel-ss-clock .ss-time, #house-glance .ss-time {
         font-size: 9vmin;
         font-weight: 800;
         line-height: 1;
         letter-spacing: -0.02em;
     }
 
-    #panel-ss-clock .ss-date {
+    #panel-ss-clock .ss-date, #house-glance .ss-date {
         font-size: 3vmin;
         font-weight: 600;
         opacity: .85;
@@ -322,7 +322,7 @@
     /* "Next up" — opposite corner from the clock so neither crowds the
        photo's subject, which tends to live in the middle. The card body is
        components/hero_card.html in compact mode; this only places it. */
-    #panel-ss-next {
+    #panel-ss-next, #house-glance .glance-next {
         position: absolute;
         right: 4vmin;
         top: 3.5vmin;
@@ -695,30 +695,35 @@
     html[data-panel] #panel-ss-next .text-white,
     html[data-panel] #panel-ss-next .text-gray-50,
     html[data-panel] #panel-ss-next .text-gray-100,
-    html[data-panel] #panel-ss-next .text-gray-200 {
+    html[data-panel] #panel-ss-next .text-gray-200,
+    #house-glance :is(.text-white, .text-gray-50, .text-gray-100, .text-gray-200) {
         color: #fff !important;
     }
 
     html[data-panel] #panel-ss-next .text-gray-300,
     html[data-panel] #panel-ss-next .text-gray-400,
     html[data-panel] #panel-ss-next .text-gray-500,
-    html[data-panel] #panel-ss-next .text-gray-600 {
+    html[data-panel] #panel-ss-next .text-gray-600,
+    #house-glance :is(.text-gray-300, .text-gray-400, .text-gray-500, .text-gray-600) {
         color: rgb(255 255 255 / 0.72) !important;
     }
 
-    html[data-panel] #panel-ss-next .bg-gray-700\/60 {
+    html[data-panel] #panel-ss-next .bg-gray-700\/60,
+    #house-glance .bg-gray-700\/60 {
         background-color: rgb(55 65 81 / 0.6) !important;
     }
 
     /* The countdown pill's amber sits on the same fixed dark band — it keeps
        the dark-surface ink whatever the theme, like the greys above. */
-    html[data-panel] #panel-ss-next .text-amber-300 {
+    html[data-panel] #panel-ss-next .text-amber-300,
+    #house-glance .text-amber-300 {
         color: rgb(252 211 77) !important;
     }
 
     /* The "Next up" label follows --panel-accent, which light mode darkens
        to sit on paper — pin it to the dark-theme accent on the dark band. */
-    html[data-panel] #panel-ss-next .panel-label {
+    html[data-panel] #panel-ss-next .panel-label,
+    #house-glance .panel-label {
         color: #7dd3fc !important;
     }
 
