@@ -5468,6 +5468,12 @@ def study_state(request: Request = None):
     actor = _mind_actor(request, None)
     return _study.state(actor)
 
+
+@app.post("/api/house/session/end")
+def end_house_session(x_member_token: Optional[str] = Header(None)):
+    storage.delete_house_session(x_member_token or '')
+    return {'status': 'ok'}
+
 # --- Stages: the child that grows (load arc A4) ---
 
 @app.get("/api/stages")
@@ -7524,6 +7530,7 @@ def _valid_pin_format(pin: str) -> bool:
 
 class MemberAuthRequest(BaseModel):
     pin: Optional[str] = None
+    house_session: bool = False
 
 def _trusted_ground(request) -> bool:
     """Is this request standing somewhere the household has vouched for?
@@ -7607,6 +7614,10 @@ def member_auth(member_id: str, req: MemberAuthRequest, request: Request = None)
                        "After that your PIN will open it.")
         _auth.record_identity('untrusted-pin', member_id, None)
 
+    if req.house_session and (member.get('role') != 'parent' or not member.get('pin_hash')):
+        raise HTTPException(status_code=403, detail="A parent with a PIN is required")
+    if req.house_session and not _trusted_ground(request):
+        raise HTTPException(status_code=403, detail="Sign in on this device before using a parent PIN")
     if member.get('pin_hash'):
         _pin_rate_check(member_id, request)
         ok = storage.verify_member_pin(member_id, req.pin or '')
@@ -7615,8 +7626,10 @@ def member_auth(member_id: str, req: MemberAuthRequest, request: Request = None)
             raise HTTPException(status_code=403, detail="Wrong PIN")
     if device_id:
         storage.touch_device(device_id)
-    token = storage.create_member_token(member_id)
-    return {"token": token, "member": _public_member(member)}
+    token = (storage.create_member_token(member_id, house_session=True)
+             if req.house_session else storage.create_member_token(member_id))
+    return {"token": token, "member": _public_member(member),
+            **({'expires_in': 900} if req.house_session else {})}
 
 # --- Accounts: invite, verify, password (auth arc S3) ---
 # Adding a person IS creating a user. The credential that faces the public
@@ -19749,4 +19762,3 @@ def backfill_wikidata():
                 count += 1
                 
     return {"status": "success", "trips_updated": count}
-

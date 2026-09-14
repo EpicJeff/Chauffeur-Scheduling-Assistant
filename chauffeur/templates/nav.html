@@ -343,6 +343,7 @@
    script on purpose — test_nav_runtime executes the LAST script block on the
    page as nav's. #}
 {% include 'components/card_timers.html' %}
+<script src="{{ 'static/house_return.js'|ver }}"></script>
 <script>
     // Auth arc S6: a panel is a PLACE, not a person. It holds a device token
     // rather than a member session, because it has to come up after a power
@@ -360,14 +361,16 @@
                 const url = typeof input === 'string' ? input : (input && input.url) || '';
                 const foreign = /^[a-z]+:\/\//i.test(url) && !url.startsWith(window.location.origin);
                 if (!foreign) {
-                    const dt = localStorage.getItem('chauffeur_device_token');
+                    const parentVisit = window.chfHouseParent && window.chfHouseParent();
+                    const dt = parentVisit ? '' : localStorage.getItem('chauffeur_device_token');
                     const did = localStorage.getItem('chauffeur_device_id');
-                    if (dt || did) {
+                    if (dt || did || parentVisit) {
                         init = init || {};
                         const h = new Headers(init.headers
                             || (typeof input === 'object' && input.headers) || {});
                         if (dt && !h.has('X-Device-Token')) h.set('X-Device-Token', dt);
                         if (did && !h.has('X-Device-Id')) h.set('X-Device-Id', did);
+                        if (parentVisit) { h.delete('X-Device-Token'); h.set('X-Member-Token', parentVisit.token); }
                         init.headers = h;
                     }
                 }
@@ -413,7 +416,8 @@
     window.chfAuthUrl = function (url) {
         try {
             if (typeof localStorage === 'undefined') return url;
-            const t = localStorage.getItem('chauffeur_member_token');
+            const parentVisit = window.chfHouseParent && window.chfHouseParent();
+            const t = parentVisit ? parentVisit.token : localStorage.getItem('chauffeur_member_token');
             const d = localStorage.getItem('chauffeur_device_token');
             const q = t ? 'member_token=' + encodeURIComponent(t)
                         : (d ? 'device_token=' + encodeURIComponent(d) : '');

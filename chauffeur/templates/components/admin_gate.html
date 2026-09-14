@@ -137,6 +137,7 @@ function adminGate() {
     email: '', password: '', error: '', busy: false,
 
     async init() {
+      if (window.chfHouseParent && window.chfHouseParent()) { this.state = 'in'; return; }
       try {
         const r = await fetch('api/account/setup');
         const d = await r.json();

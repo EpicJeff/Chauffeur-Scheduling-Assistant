@@ -4400,8 +4400,9 @@
     /* Side wings leave the complete terrace open between z=4.2 and 9.8. */
     shellWall('massing_east_front_south', EWX1_4, SWZ1, FULL_HOUSE.wingEast, SWZ1,
               5.6, [0, 0, 1], [[8.62, 1.55, true]]);
-    shellWall('massing_east_front_east', FULL_HOUSE.wingEast, 9.8, FULL_HOUSE.wingEast, SWZ1,
+    var studyEntryG = shellWall('massing_east_front_east', FULL_HOUSE.wingEast, 9.8, FULL_HOUSE.wingEast, SWZ1,
               5.6, [1, 0, 0], [[12.10, 1.35, false]]);
+    studyEntryG.userData.room = 'study';
     shellWall('massing_east_front_patio', EWX1_4, 9.8, FULL_HOUSE.wingEast, 9.8,
               5.6, [0, 0, -1], [], true);
     shellGable('massing_front_roof', EWX1_4, FULL_HOUSE.wingEast, 9.8, SWZ1,
@@ -8797,6 +8798,8 @@
   /* ---- applyState: the sole data path ---------------------------------- */
   function applyState(s) {
     state = s;
+    window.dispatchEvent(new CustomEvent('chf-house-state', { detail: s }));
+    refreshAttentionBadges();
     if (!webgl) { drawFallback(s); return; }
 
     Object.keys(ZONES).forEach(function (key) {
@@ -8804,7 +8807,9 @@
       var extra = (webgl.zoneExtra || {})[key] || [];
       if (!g && !extra.length) return;
       var n = ZONES[key].num(s);
-      var lit = n > 0 && (s[key] || {}).calm === false;
+      var lit = (key === 'garage' || key === 'pet' || key === 'door') &&
+                n > 0 && (s[key] || {}).calm === false;
+      if (key === 'calendar') lit = packingAttention() > 0;
       function paint(o) {
         if (o.isMesh && o.material && o.material.emissive) {
           /* the live-zone glow. 0x2a1e08 was authored against ACES, which
@@ -9019,8 +9024,8 @@
      A bag is a kit group and not a child, because claims are filed against
      (outing, item) with no member read back: "1 of 2 packed" is sayable,
      "Maya's bottle is packed" is not, and the room does not pretend
-     otherwise. The bags stay untappable furniture — the DOOR is the
-     mudroom's zone. */
+     otherwise. Actual packing bags sit in front of the calendar bench
+     and open the packing drawer; fallback school bags remain decor. */
   var bagKey = null;         /* the old count guard, widened: a rebuild now
                                 also follows a pack flipping ready */
   /* the mudroom's own accents (sage, brass, oxblood, terracotta) plus
@@ -9030,18 +9035,28 @@
      floor (0.03) either side of the bench */
   var BAG_SPOTS = [[-12.00, 0.98, 3.14], [-10.86, 0.98, 3.14],
                    [-12.32, 0.26, 3.66], [-9.30, 0.26, 3.62]];
+  var PACK_SPOTS = [[-5.46, 0.40, 2.34], [-5.46, 0.40, 1.76],
+                    [-5.46, 0.40, 1.18], [-5.46, 0.40, 0.60]];
   function syncMudroom(s) {
     if (!webgl) return;
     var m = s.mudroom || {};
-    var packs = (m.packs || []).slice(0, 4);
+    var packs = (m.packs || []).slice().sort(function (a, b) {
+      return Number(!!b.attention) - Number(!!a.attention);
+    }).slice(0, 4);
     var n = packs.length || Math.min(4, m.bags || 0);
     var key = packs.length
-      ? packs.map(function (p) { return p && p.ready ? 'r' : 'o'; }).join('')
+      ? packs.map(function (p) { return (p.ready ? 'r' : 'o') + (p.attention ? 'a' : 'q'); }).join('')
       : 'n' + n;
     if (key === bagKey) return;
     bagKey = key;
-    while (webgl.mudBagsG.children.length)
-      webgl.mudBagsG.remove(webgl.mudBagsG.children[0]);
+    while (webgl.mudBagsG.children.length) {
+      var oldBag = webgl.mudBagsG.children[0];
+      oldBag.traverse(function (o) {
+        if (o.geometry && !o.geometry.userData.cached) o.geometry.dispose();
+        if (o.material && !o.material.userData.shared) o.material.dispose();
+      });
+      webgl.mudBagsG.remove(oldBag);
+    }
     for (var i = 0; i < n; i++) {
       /* no packing data = no claim about packing: a fallback bag is shut */
       var gaping = !!(packs[i] && !packs[i].ready);
@@ -9058,9 +9073,23 @@
         if (gaping) flap.rotation.x = -1.72;
         bag.add(body); bag.add(flap);
       }
-      bag.position.set(BAG_SPOTS[i][0], BAG_SPOTS[i][1], BAG_SPOTS[i][2]);
-      bag.rotation.y = (i % 2 ? 0.22 : -0.18);
-      bag.userData.room = 'mudroom';
+      var spot = packs.length ? PACK_SPOTS[i] : BAG_SPOTS[i];
+      bag.position.set(spot[0], spot[1], spot[2]);
+      bag.rotation.y = packs.length ? Math.PI / 2 : (i % 2 ? 0.22 : -0.18);
+      bag.userData.room = packs.length ? 'kitchen' : 'mudroom';
+      if (packs.length) {
+        bag.scale.setScalar(1.6);
+        bag.userData.houseAction = 'packing';
+        bag.traverse(function (o) {
+          o.userData.room = 'kitchen';
+          if (!o.isMesh || !o.material || !o.material.emissive || !packs[i].attention) return;
+          var material = o.material.userData.shared ? o.material.clone() : o.material;
+          material.userData = { houseBagOwned: true };
+          material.emissive.setHex(0xa65d13);
+          material.emissiveIntensity = 0.35;
+          o.material = material;
+        });
+      }
       webgl.mudBagsG.add(bag);
     }
   }
@@ -9485,8 +9514,11 @@
         if (f.name === spec.piece) { b = f.box; target = f.g; }
       });
       if (!b) return null;
-    } else if (spec.zone) {
-      target = webgl.groups[spec.zone];
+    } else if (spec.zone || spec.action) {
+      if (spec.zone) target = webgl.groups[spec.zone];
+      else webgl.scene.traverse(function (o) {
+        if (!target && o.userData.houseAction === spec.action) target = o;
+      });
       if (!target) return null;
       var box = new webgl.T.Box3().setFromObject(target);
       if (box.isEmpty()) return null;
@@ -9548,6 +9580,7 @@
      summarize the features waiting within; object markers carry one icon. */
   var hintTimer = null;
   var HINT_PATHS = {
+    study: '<path d="M4 4h7l1 2 1-2h7v16h-7l-1 1-1-1H4zM12 6v15"/>',
     moments: '<path d="M3 9a2 2 0 012-2h1l2-3h8l2 3h1a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="13" r="3"/>',
     meals: '<path d="M3 4h2l2.2 10h10.6L21 7H6"/><circle cx="9" cy="19" r="1"/><circle cx="18" cy="19" r="1"/>',
     lists: '<path d="M7 4h10a2 2 0 012 2v15H5V6a2 2 0 012-2h2"/><path d="M9 3h6v4H9zM9 12h6M9 16h6"/>',
@@ -9567,8 +9600,29 @@
     ['patio_slider', 'Kitchen', ['moments', 'meals', 'lists', 'calendar', 'weather']],
     ['front_door', 'Living room', ['music', 'critters'], 'entry'],
     ['mudroom_cross_roof_south', 'Mudroom', ['schedule']],
-    ['garage_gable_front', 'Garage', ['garage']]
+    ['garage_gable_front', 'Garage', ['garage']],
+    ['massing_east_front_east', 'Study', ['study']]
   ];
+  function packingAttention() {
+    return (((state || {}).mudroom || {}).packs || []).reduce(function (n, p) {
+      return n + (p.attention ? Math.max(0, p.needed - p.packed) : 0);
+    }, 0);
+  }
+  function hintAttention(key) {
+    if (key === 'mudroom_cross_roof_south' || key === 'calendar' || key === 'packing') return packingAttention();
+    if (key === 'patio_slider') return packingAttention();
+    return 0;
+  }
+  function refreshAttentionBadges() {
+    if (!HINT) return;
+    HINT.querySelectorAll('.house-hint').forEach(function (marker) {
+      var count = hintAttention(marker.dataset.target);
+      var badge = marker.querySelector('.house-attention-badge');
+      if (!count) { if (badge) badge.remove(); return; }
+      if (!badge) { badge = document.createElement('span'); badge.className = 'house-attention-badge'; marker.appendChild(badge); }
+      badge.textContent = count;
+    });
+  }
   function hideHint() {
     if (HINT) { HINT.hidden = true; HINT.textContent = ''; }
   }
@@ -9577,12 +9631,15 @@
       var spec = {}; spec[h[3] || 'piece'] = h[0];
       return { spec: spec, label: h[1], key: h[0], icons: h[2] };
     });
-    return Object.keys(ZONES).filter(function (key) {
+    var choices = Object.keys(ZONES).filter(function (key) {
       return zoneRoom(key) === mode;
     }).map(function (key) {
       return { spec: { zone: key }, label: ZONES[key].label, key: key,
                icons: [ZONE_HINT_ICON[key]] };
     });
+    if (mode === 'kitchen' && (((state || {}).mudroom || {}).packs || []).length)
+      choices.push({ spec: { point: PACK_SPOTS[0] }, label: 'Packing', key: 'packing', icons: ['lists'] });
+    return choices;
   }
   function hintIcon(name) {
     return '<svg viewBox="0 0 24 24" aria-hidden="true">' +
@@ -9613,6 +9670,7 @@
       HINT.appendChild(marker); shown++;
     }
     HINT.hidden = shown === 0;
+    refreshAttentionBadges();
   }
   function scheduleHint(delay) {
     if (hintTimer) clearTimeout(hintTimer);
@@ -9673,12 +9731,22 @@
 
   function onTap(ev) {
     if (!webgl) return;
+    var primaryHit = anyHit(ev.clientX, ev.clientY);
+    for (var actionPart = primaryHit; actionPart; actionPart = actionPart.parent) {
+      if (actionPart.userData.houseAction) {
+        window.dispatchEvent(new CustomEvent('chf-house-open', { detail: actionPart.userData.houseAction }));
+        return;
+      }
+    }
+    if (roomTagOf(primaryHit) === 'study') {
+      window.dispatchEvent(new CustomEvent('chf-house-study')); return;
+    }
     hideHint();
     if (mode === 'exterior') {
       /* stamped, not guessed: walk up for a room tag; yard and sky stay
          a view; anything INTERIOR seen through the open front is the
          kitchen. */
-      var hit = anyHit(ev.clientX, ev.clientY);
+      var hit = primaryHit;
       if (!hit || hit === webgl.skyDome) return;
       var room = roomTagOf(hit);
       if (room && roomsReg()[room]) { enterRoom(room, null); return; }
@@ -9687,7 +9755,7 @@
       if (!inExterior(hit)) enterRoom('kitchen', null);
       return;
     }
-    var ihit = anyHit(ev.clientX, ev.clientY);
+    var ihit = primaryHit;
     /* Shell-only rooms are scenery even when a zone lies behind them.
        The yard retains its separate exit behavior. */
     if (inertFabric(ihit) && !inYard(ihit)) return;
@@ -9780,12 +9848,15 @@
        silent — that is how a broken room masquerades as weak hardware */
     if (window.console && console.error) console.error('[house] buildRoom failed:', e);
   }
+  window.chfHouseState = function () { return state; };
+  window.chfHouseRefresh = poll;
   if (webgl) {
     if (BACK) BACK.addEventListener('click', function () {
       if (focused) goHome(mode);
       else if (mode !== 'exterior') goExterior();
     });
     window.addEventListener('keydown', function (e) {
+      if (document.body.classList.contains('house-drawer-open')) return;
       if (e.key !== 'Escape' || mode === 'exterior') return;
       if (focused) goHome(mode); else goExterior();
     });

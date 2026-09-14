@@ -81,7 +81,7 @@
         } catch (e) { /* private mode: the URL is still the source of truth */ }
         if (latched) {
             const q = p.toString();
-            history.replaceState(null, '', window.location.pathname
+            history.replaceState(history.state, '', window.location.pathname
                 + (q ? '?' + q : '') + window.location.hash);
         }
         // A DISPLAY SURFACE — a wall panel, a kiosk, or an explicitly
@@ -210,7 +210,7 @@
         } catch (e) { /* no cache yet: the picture simply fades in */ }
         if (p.get('kiosk') !== 'true') {
             p.set('kiosk', 'true');
-            history.replaceState(null, '',
+            history.replaceState(history.state, '',
                 window.location.pathname + '?' + p.toString() + window.location.hash);
         }
     })();

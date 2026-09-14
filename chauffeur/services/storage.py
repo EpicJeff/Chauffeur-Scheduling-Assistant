@@ -1890,15 +1890,18 @@ def invalidate_auth_links(member_id: str, kind: str = None) -> None:
         auth_links_table.update({'used_at': time.time()}, q)
 
 
-def create_member_token(member_id: str) -> str:
+def create_member_token(member_id: str, house_session: bool = False) -> str:
     import uuid as _uuid
     import time
     token = _uuid.uuid4().hex + _uuid.uuid4().hex
     with db_lock:
-        member_tokens_table.insert({
-            'token': token, 'member_id': member_id, 'created_at': time.time()})
+        row = {'token': token, 'member_id': member_id, 'created_at': time.time()}
+        if house_session:
+            row.update({'house_session': True, 'expires_at': time.time() + 900})
+        member_tokens_table.insert(row)
         # Housekeeping: keep the newest ~20 tokens per member.
-        rows = sorted(member_tokens_table.search(Query().member_id == member_id),
+        rows = sorted((r for r in member_tokens_table.search(Query().member_id == member_id)
+                       if bool(r.get('house_session')) == house_session),
                       key=lambda r: r.get('created_at', 0))
         if len(rows) > 20:
             member_tokens_table.remove(doc_ids=[r.doc_id for r in rows[:len(rows) - 20]])
@@ -1929,7 +1932,8 @@ def get_member_by_token(token: str) -> Optional[dict]:
             created = time.time()
             member_tokens_table.update({'created_at': created},
                                        doc_ids=[row.doc_id])
-        if time.time() - created > MEMBER_TOKEN_TTL_SECONDS:
+        if (time.time() - created > MEMBER_TOKEN_TTL_SECONDS or
+                (row.get('expires_at') and time.time() >= row['expires_at'])):
             # Expired means GONE, not merely refused — a dead token left in
             # the table would come back to life if the TTL were ever raised.
             member_tokens_table.remove(doc_ids=[row.doc_id])
@@ -1942,6 +1946,12 @@ def get_member_by_token(token: str) -> Optional[dict]:
     if member is not None and not member_has_access(member):
         return None
     return member
+
+def delete_house_session(token: str) -> None:
+    """Lock this shared-screen visit without signing out personal devices."""
+    with db_lock:
+        member_tokens_table.remove((Query().token == token) &
+                                   (Query().house_session == True))
 
 def delete_member_tokens(member_id: str) -> int:
     with db_lock:

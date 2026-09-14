@@ -1085,7 +1085,7 @@ def scenario_shell_fabric_registry():
 
         page.evaluate("window.chfHouseExit()")
         page.wait_for_function("window.chfNavProbe({settled:true})")
-        hit = page.evaluate("window.chfNavProbe({piece:'massing_east_front_east'})")
+        hit = page.evaluate("window.chfNavProbe({piece:'massing_east_back_east'})")
         check(hit is not None, 'unbuilt wing must have a reachable exterior surface')
         page.mouse.click(hit['cx'], hit['cy'])
         check(page.evaluate("window.chfHouseMode()") == 'exterior',
@@ -1147,14 +1147,14 @@ def scenario_navigation_real_mouse():
 
         page.wait_for_function(
             "() => document.querySelectorAll("
-            "'#house-hints:not([hidden]) .house-hint').length === 4",
+            "'#house-hints:not([hidden]) .house-hint').length === 5",
             timeout=10000)
         hints = page.locator('#house-hints .house-hint')
         exterior_targets = set(hints.evaluate_all(
             "els => els.map(e => e.dataset.target)"))
         check(exterior_targets == {
             'patio_slider', 'front_door', 'mudroom_cross_roof_south',
-            'garage_gable_front'},
+            'garage_gable_front', 'massing_east_front_east'},
               'persistent exterior markers must identify every room entrance')
         check(page.locator('#house-hints').evaluate(
             "e => getComputedStyle(e).pointerEvents") == 'none',

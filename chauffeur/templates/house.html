@@ -152,6 +152,7 @@
         #overlay-door .text-right { text-align: left; }
     </style>
     <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
+    <link rel="stylesheet" href="{{ 'static/house_life.css'|ver }}">
 </head>
 
 <body class="flex flex-col h-screen overflow-hidden">
@@ -168,6 +169,7 @@
         </div>
         <div id="fallback"><div id="fallback-rows"></div></div>
         <div id="tip"></div><div id="chip"></div>
+        {% include 'components/house_life.html' %}
         <!-- The lean-in detail, drawn by the board's own builders: the door
              wears the hero card (the screensaver's compact form), the wall
              calendar wears the Family Day card in the board's own read-only

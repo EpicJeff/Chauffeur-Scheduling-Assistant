@@ -74,6 +74,18 @@ def _packs(now, sched: dict):
         claims[k] = claims.get(k, 0) + 1
     out, due = [], False
     for o in outings.outings_for(target, sched, now):
+        # Once the outing is over, an old unclaimed kit is not today's work.
+        try:
+            ended = datetime.datetime.fromisoformat(o.get('end') or '')
+            local_now = now
+            if ended.tzinfo is not None and local_now.tzinfo is None:
+                local_now = local_now.astimezone()
+            elif ended.tzinfo is None and local_now.tzinfo is not None:
+                local_now = local_now.astimezone().replace(tzinfo=None)
+            if ended <= local_now:
+                continue
+        except (TypeError, ValueError):
+            pass
         # An unpacked bag for next Tuesday is not an alarm; tonight's is.
         # pack_window_opens is the same moment the Family Day card starts
         # wearing its own "N to pack" pill.
@@ -95,11 +107,12 @@ def _packs(now, sched: dict):
             ready = packed >= needed
             due = due or (open_now and not ready)
             out.append({'name': str(g.get('kit') or 'Bring'),
-                        'packed': packed, 'needed': needed, 'ready': ready})
+                        'packed': packed, 'needed': needed, 'ready': ready,
+                        'attention': open_now and not ready})
     return out, due
 
 
-def _mudroom() -> dict:
+def _mudroom(now=None) -> dict:
     """The bench: one backpack per packing group for the day in focus, OPEN
     while it is still short and closed once it is done. With no kits to
     match — most households, most days — the fallback is the old honest
@@ -114,22 +127,25 @@ def _mudroom() -> dict:
                     if (m.get('role') or '') == 'child'])
     except Exception:
         bags = 0
-    packs, due = [], False
+    packs, due, known = [], False, True
     try:
-        packs, due = _packs(datetime.datetime.now(),
+        packs, due = _packs(now or datetime.datetime.now(),
                             storage.get_cached_schedule() or {})
     except Exception as e:
         logger.debug(f"[house] mudroom packs fell back to the roster: {e}")
         packs, due = [], False
+        known = False
     if packs:
         bags = len(packs)
-    return {'calm': (not due), 'bags': bags, 'packs': packs}
+    return {'calm': (not due), 'bags': bags, 'packs': packs, 'packing_known': known}
 
 
 def state(since_ts: float = 0, now=None) -> dict:
+    from services import house_attention
     out = kitchen_room.state(since_ts=since_ts, now=now)
+    out['attention'] = house_attention.state(now)
     for name, build in (('garage', _garage), ('curb', lambda: _curb(now)),
-                        ('mudroom', _mudroom)):
+                        ('mudroom', lambda: _mudroom(now))):
         try:
             out[name] = build()
         except Exception as e:
