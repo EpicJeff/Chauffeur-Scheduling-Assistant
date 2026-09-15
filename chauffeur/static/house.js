@@ -3696,22 +3696,56 @@
        HERE — arc 4 lifts this exact table to its own style enums, so
        nothing about this conversion may scatter a second hand-typed hex
        for a role this table already owns. */
+    /* FACADE (arc 4, facade spec §3 + §6): PALETTE is that table lifted
+       to the spec's own style enums -- one row per role, palette NAMES
+       only, because the model and the stored spec never see hex. FARMHOUSE
+       is then REBUILT from the active style at build time, so all 68
+       existing FARMHOUSE.* read sites below keep working unchanged and
+       nothing has to learn the enum names. stoop/windowDark/curtainGlow/
+       curtainIntensity carry no enum (the spec gives no role for masonry
+       or curtain light), so they stay literal here. */
+    var PALETTE = {
+      body:  { white: 0xf4f1e9, greige: 0xd9d2c5, sage: 0xb7c2ad, slate: 0x6f7b85, navy: 0x2f3e55 },
+      roof:  { charcoal: 0x2b2f33, weathered: 0x7d7a72, brown: 0x5a4636 },
+      frame: { black: 0x1b1c1e, white: 0xf7f5ef },
+      door:  { wood: 0x6b4a30, black: 0x1b1c1e, red: 0x9b2f2a, sage: 0x7d8f74 },
+      trim:  { white: 0xf7f5ef, black: 0x1b1c1e }
+    };
+    /* The server injects the active facade before this file loads (spec
+       §3.1/§6: build-once, from the payload the page already fetched). A
+       page served without it -- only the 2D fallback path can reach that
+       -- falls back to the canonical style below and to CANONICAL_JS at
+       buildElevation(). */
+    var FACADE = (window.HOUSE_FACADE && window.HOUSE_FACADE.spec) ? window.HOUSE_FACADE : null;
+    var FSTYLE = FACADE ? FACADE.spec.style : { cladding: 'batten', body: 'white', roof: 'charcoal',
+                                                frame: 'black', door: 'wood', trim: 'white' };
+    function pal(role, name, fallback) {
+      var t = PALETTE[role];
+      return (t && t[name] !== undefined) ? t[name] : fallback;
+    }
     var FARMHOUSE = {
-      body:     0xf4f1e9,   // board-and-batten WHITE, every exterior face
-      roofTone: 0x2b2f33,   // dark charcoal shingle
-      frame:    0x1b1c1e,   // black window frames + grilles
-      wood:     0x6b4a30,   // warm wood: front door, garage doors, posts
-      trim:     0xf7f5ef,   // minimal white trim (fascia, corner, gutters)
+      body:     pal('body', FSTYLE.body, 0xf4f1e9),    // cladding, every exterior face
+      roofTone: pal('roof', FSTYLE.roof, 0x2b2f33),    // shingle tone
+      frame:    pal('frame', FSTYLE.frame, 0x1b1c1e),  // window frames + grilles
+      wood:     pal('door', FSTYLE.door, 0x6b4a30),    // front door, garage door, posts
+      trim:     pal('trim', FSTYLE.trim, 0xf7f5ef),    // fascia, corner boards, gutters
       stoop:    0x8a8175,   // masonry-tone stoop
       windowDark: 0x273438,
       curtainGlow: 0xd9ae73,
       curtainIntensity: 0.68
     };
+    /* The canvas painters below take CSS colour strings, not ints. */
+    function hex6(c) { return '#' + ('000000' + c.toString(16)).slice(-6); }
     /* Small projecting gables keep the steep farmhouse pitch. The broad
        main and service roofs use 22.5 degrees to stay subordinate to
        the overall elevation after rotating their ridges across the house. */
     var PITCH_RISE4 = 2.05, PITCH_RUN4 = 2.95;
-    var PITCH_FAMILY = Math.atan2(PITCH_RISE4, PITCH_RUN4);
+    /* FACADE (spec §3): pitch is the STREET FEATURE pitch -- every gable
+       and dormer the generator builds. The broad main/service roofs keep
+       their own Math.PI/8 rule at their own call sites. CANONICAL's
+       34.8 degrees IS atan2(2.05, 2.95) rounded to the spec's precision. */
+    var PITCH_FAMILY = FACADE ? FACADE.spec.pitch_deg * Math.PI / 180
+                              : Math.atan2(PITCH_RISE4, PITCH_RUN4);
     var EXTC = { grass: 0x8fae6e, siding: FARMHOUSE.body, trim: FARMHOUSE.trim,
                  roof: FARMHOUSE.roofTone, ridge: 0x24272a, drive: 0xb8b2a6,
                  garage: FARMHOUSE.body, trunk: 0x6e5539, leaf: 0x5f8f4e,
@@ -3757,7 +3791,7 @@
       grassT.wrapS = grassT.wrapT = T.RepeatWrapping;
       grassT.repeat.set(7, 5.5);
       sidingT = canvasTex(256, function (g, S) {
-        g.fillStyle = '#e7e0d5'; g.fillRect(0, 0, S, S);
+        g.fillStyle = hex6(FARMHOUSE.body); g.fillRect(0, 0, S, S);
         for (var y = 0; y < S; y += 21) {
           g.fillStyle = 'rgba(110,98,80,0.5)'; g.fillRect(0, y + 18, S, 3);
           g.fillStyle = 'rgba(255,255,255,0.5)'; g.fillRect(0, y, S, 2);
@@ -3766,7 +3800,7 @@
       sidingT.wrapS = sidingT.wrapT = T.RepeatWrapping;
       sidingT.repeat.set(4, 2);
       shingleT = canvasTex(256, function (g, S) {
-        g.fillStyle = '#2b2f33'; g.fillRect(0, 0, S, S);   // FARMHOUSE.roofTone
+        g.fillStyle = hex6(FARMHOUSE.roofTone); g.fillRect(0, 0, S, S);
                                                             // (spec 6b: dark
                                                             // charcoal shingle,
                                                             // tone constant
@@ -3794,7 +3828,7 @@
          file — arc 4 wants both painters as enum values — this is an
          ADDITION beside it, not a replacement of it. */
       battenT = canvasTex(256, function (g, S) {
-        g.fillStyle = '#f4f1e9'; g.fillRect(0, 0, S, S);   // FARMHOUSE.body
+        g.fillStyle = hex6(FARMHOUSE.body); g.fillRect(0, 0, S, S);
         var bw = 32;
         for (var bx = 0; bx < S; bx += bw) {
           g.fillStyle = 'rgba(255,255,255,0.5)'; g.fillRect(bx, 0, 3, S);
@@ -3817,6 +3851,11 @@
       driveT.wrapS = driveT.wrapT = T.RepeatWrapping;
       driveT.repeat.set(1, 3);
     }
+    /* FACADE (spec §3 style.cladding): ONE call decides which painter
+       every clad surface below maps. Both painters stay live in the file
+       -- the enum has two values -- and both are null at the !NICE tier,
+       where the map is dropped anyway. */
+    function CLAD() { return FSTYLE.cladding === 'clapboard' ? sidingT : battenT; }
     /* R5 (quality spec §4): a normal map derived from the SAME canvas
        sidingT/shingleT already painted — no second download, just a
        luminance-gradient read of the pixels canvasTex drew a moment
@@ -3904,21 +3943,21 @@
       return box(w, h, d, c, x, y, z, northCladdingG, sharp(opts));
     }
     nbox(14.0, 5.6, 0.3, NICE ? 0xffffff : EXTC.siding, -0.15, 2.8, -5.95,
-         { rough: 0.95, map: battenT });
+         { rough: 0.95, map: CLAD() });
     var westCladdingG = new T.Group(); extG.add(westCladdingG);
     function wbox(w, h, d, c, x, y, z, opts) {
       return box(w, h, d, c, x, y, z, westCladdingG, sharp(opts));
     }
     wbox(0.3, 5.6, 5.15, NICE ? 0xffffff : EXTC.siding, -7.0, 2.8, -4.025,
-         { rough: 0.95, map: battenT });
+         { rough: 0.95, map: CLAD() });
     wbox(0.3, 5.6, 2.55, NICE ? 0xffffff : EXTC.siding, -7.0, 2.8, 1.525,
-         { rough: 0.95, map: battenT });
+         { rough: 0.95, map: CLAD() });
     wbox(0.3, 2.4, 1.7, NICE ? 0xffffff : EXTC.siding, -7.0, 4.4, -0.6,
-         { rough: 0.95, map: battenT });
+         { rough: 0.95, map: CLAD() });
     wbox(0.3, 5.6, 1.6, NICE ? 0xffffff : EXTC.siding, -7.0, 2.8, 5.2,
-         { rough: 0.95, map: battenT });
+         { rough: 0.95, map: CLAD() });
     wbox(0.3, 2.2, 1.6, NICE ? 0xffffff : EXTC.siding, -7.0, 4.5, 3.6,
-         { rough: 0.95, map: battenT });
+         { rough: 0.95, map: CLAD() });
     regFabric(westCladdingG, { name: 'west_cladding', n: [1, 0, 0],
                                box: fabBox(westCladdingG), room: 'mudroom' });
     nbox(0.18, 5.6, 0.38, FARMHOUSE.trim, 6.76, 2.8, -5.95);
@@ -3989,92 +4028,17 @@
        regFabric now does this once for every piece, not just this one. */
     extG.add(southWallG);
 
-    /* elevation layout (spec section 6 revised): OFFSET door, a window
-       PAIR on one side, a single window (aligned head) on the other.
-       DOOR_X4 is offset east of the wall's own centre (x=0) rather than
-       centred — an offset door is the user's own explicit ask, and
-       centring it back would just be a second, unwritten redesign.
-       PORCH_W4 brackets the door with clearance for both posts. */
+    /* FACADE (arc 4): the elevation used to be authored here -- an
+       offset door, a window pair west of it and a single window east.
+       It is a SPEC now (see the facade block below): windows on slots 7,
+       9 and 12, the door on slot 10, the porch on slot 9 span 4. These
+       three constants stay because the landscaping far below still
+       anchors the front walk and the shrub line to them, and because
+       every main-face window still shares ONE head; the builders publish
+       the values they actually built into the first two. */
     var DOOR_X4 = 1.3;
     var PORCH_W4 = 8.4;
-    /* window heads share ONE y so "aligned heads" (spec section 6) holds
-       structurally, not by coincidence of three separate hand-typed
-       numbers — every call below reads WIN_HEAD4, none re-states the top
-       edge. */
-    /* spec 6b: street windows ENLARGE with near-floor sills — WIN_H4 3.7
-       (was 1.6) drops the sill (WIN_HEAD4 - WIN_H4) to 0.7, comfortably
-       clear of the interior baseboard's own top edge (y 0.2, the
-       baseboard strip a few lines below) with margin to spare; WIN_W4
-       1.6 (was 1.0) still leaves a clear 1.1-unit gap between the window
-       pair (cx -4.6/-1.9) and does not reach the porch posts (DOOR_X4
-       +-1.4) on the single window's own west side. WIN_HEAD4 4.4 (was
-       4.5, a hair lower) keeps every head comfortably under the new
-       flank eave (6.9) — "aligned heads" still holds structurally, one
-       constant, three calls. */
-    var WIN_W4 = 1.6, WIN_H4 = 3.7, WIN_HEAD4 = 4.4;
-    function swWindow(cx) {
-      var wy = WIN_HEAD4 - WIN_H4 / 2;
-      /* casing + sill: FARMHOUSE.frame (spec 6b: "BLACK window frames
-         and grilles" — was EXTC.trim/white). Still one shared cache
-         bucket: every call below passes the identical color+opts pair,
-         so this is one material for every black-framed casing on this
-         wall, not three. */
-      swtag(box(WIN_W4 + 0.24, 0.13, 0.16, FARMHOUSE.frame, cx,
-                WIN_HEAD4 + 0.065, SWZ1 + 0.02, southWallG, sharp()));
-      [-(WIN_W4 / 2 + 0.07), (WIN_W4 / 2 + 0.07)].forEach(function (dx) {
-        swtag(box(0.14, WIN_H4 + 0.13, 0.16, FARMHOUSE.frame, cx + dx, wy,
-                  SWZ1 + 0.02, southWallG, sharp()));
-      });
-      swtag(box(WIN_W4 + 0.40, 0.10, 0.30, FARMHOUSE.frame, cx,
-                wy - WIN_H4 / 2 - 0.05, SWZ1 + 0.05, southWallG, sharp()));
-      /* the grille (spec 6b: "gridded"): one vertical + two horizontal
-         bars, a 2x3 farmhouse light pattern sized for the now-larger
-         pane — was a single full-height vertical muntin (a 2x1 split)
-         sized for the old, narrower window. */
-      if (DETAIL >= 2) {
-        swtag(box(0.07, WIN_H4, 0.07, FARMHOUSE.frame, cx, wy, SWZ1 + 0.022,
-                  southWallG, sharp()));
-        [wy - WIN_H4 / 6, wy + WIN_H4 / 6].forEach(function (my) {
-          swtag(box(WIN_W4, 0.07, 0.07, FARMHOUSE.frame, cx, my,
-                    SWZ1 + 0.022, southWallG, sharp()));
-        });
-      }
-      /* the glass: built DIRECTLY (not through the shared mat() cache),
-         same as every prop the file keeps off the merge floor on
-         purpose — MeshStandardMaterial so it carries a real .emissive
-         (the night pass's `if (!m.material.emissive) return` guard does
-         not skip it: this pane glows like every other window after dark)
-         and transparent:true so mergeStatic's own
-         `if (o.material.transparent) return` exempts it from merging by
-         construction — belt-and-suspenders under the 4-item floor either
-         way (three of these exist total), but structural rather than a
-         count to keep re-verifying, the same principle the coach lamp's
-         own NO_MERGE entry below is written against. Panes stay IN
-         southWallG (spec section 6: "panes stay in the group") — the
-         exemption is from mergeStatic's own merge pass, not from the
-         piece's visibility grouping, which the solver still drives off
-         f.g.visible for the whole group regardless. */
-      var gl = new T.Mesh(new T.BoxGeometry(WIN_W4, WIN_H4, 0.03),
-        new T.MeshStandardMaterial({ color: 0x9fc4dc, transparent: true,
-                                     opacity: 0.9, roughness: 0.16,
-                                     metalness: 0.0 }));
-      gl.position.set(cx, wy, SWZ1 + 0.03);
-      gl.userData.glazing = true;      /* the night pass looks for this */
-      swtag(gl); finish(gl, true); southWallG.add(gl);
-      /* interior sill, matching the kitchen window's own idiom */
-      if (DETAIL >= 3) {
-        swtag(box(WIN_W4 + 0.10, 0.07, 0.30, C.cab, cx,
-                  wy - WIN_H4 / 2 - 0.10, SWZ0 - 0.10, southWallG,
-                  { rough: 0.9 }));
-      }
-    }
-    swWindow(-4.6); swWindow(-1.9);       /* the pair: west of the porch,
-                                             the living-room half of the
-                                             elevation */
-    swWindow(4.6);                         /* the single: east of the
-                                             porch, same WIN_HEAD4 — the
-                                             aligned head spec section 6
-                                             calls for */
+    var WIN_HEAD4 = 4.4;
 
     /* the wall itself: interior plaster half + exterior siding half, the
        same two-material-per-thickness idiom every ORIGINAL exterior wall
@@ -4092,160 +4056,27 @@
               SWZ0 + WALL_T4 / 4, southWallG, sharp(WALL_O)));
     swtag(box(SW_W, EXT_TOP4, WALL_T4 / 2, NICE ? 0xffffff : EXTC.siding,
               0, EXT_TOP4 / 2, SWZ0 + WALL_T4 * 3 / 4, southWallG,
-              sharp({ rough: 0.95, map: battenT })));
+              sharp({ rough: 0.95, map: CLAD() })));
     swtag(box(SW_W - 0.3, 0.2, 0.08, 0xe4ddd1, 0, 0.1, SWZ0 - 0.02,
               southWallG, sharp()));
 
-    /* the door: SAME leaf geometry as the existing decorative front door
-       (chamferGeo(0.14,3.2,1.4,0.04), a few hundred lines above) — a
-       cache hit — rotated 90 degrees about Y: that door's thin (0.14)
-       axis runs along world X (mounted on a wall that runs along Z) and
-       its wide (1.4) axis runs along world Z, exactly backwards from
-       what a door on THIS wall (which runs along X) needs; the rotation
-       swaps the two rather than building a second geometry at the swapped
-       dimensions. The LEAVE signal stays the mudroom door zone; this
-       exterior entrance and its trim are tagged for the front Living room.
-       Casing/trim below re-authors that same
-       door's own casing/panel idiom (the decorative front door earns its
-       casing and panels) for this wall's x/z, with the panels on the
-       STREET-facing (+z) side rather than the room-facing side the west
-       door's own panels use — that door is read from the living room;
-       this one is read from the curb.
-
-       FIX (round 1, CRITICAL 1): DOOR_Z4 used to be SWZ0 + WALL_T4/2 —
-       dead centre of the wall's own thickness. The wall has no actual
-       opening cut into it (this file has no CSG); the interior plaster
-       half fills [SWZ0, SWZ0+WALL_T4/2] and the exterior siding half
-       fills [SWZ0+WALL_T4/2, SWZ1] — contiguous and opaque all the way
-       across WALL_T4. A leaf centred at the seam between those two
-       halves is entombed inside solid wall mass on both sides; the
-       siding half's own OUTER face at SWZ1 permanently occludes it from
-       every exterior camera, and the plaster half's own INNER face does
-       the same from the room side. No camera angle could ever see it.
-       The windows (swWindow, above) never had this bug because they are
-       built proud of SWZ1 from the start (casing/jambs/sill at
-       SWZ1+0.02..+0.05, glazing at SWZ1+0.03) — the door needs the same
-       treatment: anchor DOOR_Z4 itself proud of the EXTERIOR face,
-       reusing the exact epsilon (+0.02) the window casing already
-       proved out, rather than inventing a second one. Casing (:4037-
-       4042), panels (:4044-4051) and the knob (:4053-4056) below are
-       UNCHANGED by this fix — they already stack outward (+z, further
-       from the leaf, toward the street) from DOOR_Z4 exactly like the
-       legacy west-door idiom (house.js ~:2111-2122) stacks outward from
-       WX, so moving this one shared anchor clears the whole assembly at
-       once. The leaf's own back half still embeds slightly into the
-       siding (half-thickness 0.07 > epsilon 0.02, same as the window
-       casing's own 0.16-deep board embedding 0.06 into the wall at the
-       same epsilon) — invisible, harmless, matching the window idiom
-       exactly rather than a stricter zero-embed rule nothing else here
-       follows. The porch (posts/stoop/step/roof, below) is unaffected:
-       every one of its own constants is anchored off SWZ1 or DOOR_X4
-       directly, never off DOOR_Z4. */
-    var DOOR_Z4 = SWZ1 + 0.02;
-    function fdtag(m) {
-      if (m) { m.userData.room = 'living'; m.userData.entry = 'front_door'; }
-      return m;
-    }
-    var fdoor4 = new T.Mesh(
-      NICE ? chamferGeo(0.14, 3.2, 1.4, 0.04) : new T.BoxGeometry(0.14, 3.2, 1.4),
-      PBR ? new T.MeshStandardMaterial({ map: woodDoor, roughness: 0.65 })
-          : new T.MeshLambertMaterial({ color: 0xc9a06c, map: woodDoor || null }));
-    fdoor4.rotation.y = Math.PI / 2;
-    fdoor4.position.set(DOOR_X4, 1.6, DOOR_Z4);
-    fdtag(fdoor4); finish(fdoor4); southWallG.add(fdoor4);
-    fdtag(box(0.14, 3.44, 0.13, 0xe4ddd1, DOOR_X4 - 0.65, 1.72, DOOR_Z4,
-              southWallG, sharp()));
-    fdtag(box(0.14, 3.44, 0.13, 0xe4ddd1, DOOR_X4 + 0.65, 1.72, DOOR_Z4,
-              southWallG, sharp()));
-    fdtag(box(1.86, 0.14, 0.13, 0xe4ddd1, DOOR_X4, 3.37, DOOR_Z4,
-              southWallG, sharp()));
-    if (DETAIL >= 2) {
-      fdtag(box(0.90, 1.20, 0.02, 0x6f5433, DOOR_X4, 2.14, DOOR_Z4 + 0.075,
-                southWallG, WOODM));
-      fdtag(box(0.90, 0.98, 0.02, 0x6f5433, DOOR_X4, 0.82, DOOR_Z4 + 0.075,
-                southWallG, WOODM));
-      fdtag(box(0.74, 1.04, 0.04, 0xc79b63, DOOR_X4, 2.14, DOOR_Z4 + 0.080,
-                southWallG, WOODM));
-      fdtag(box(0.74, 0.82, 0.04, 0xc79b63, DOOR_X4, 0.82, DOOR_Z4 + 0.080,
-                southWallG, WOODM));
-    }
-    var knob4 = latheAt('knob', [0.06, 0.1, 0.06], 0xd8c48a, DOOR_X4 + 0.55,
-                        1.6, DOOR_Z4 + 0.07, southWallG, CHROME);
-    knob4.rotation.x = Math.PI / 2;
-    fdtag(knob4);
-
-    /* A sitting porch: a clear central approach with a bench to either
-       side, beneath a smaller gable projecting toward the street. */
+    /* FACADE (arc 4): the door, the porch and the second coach lamp all
+       stood here, hand-placed into southWallG. They are spec features
+       now -- doorAt(), porchAt() and the lamp doorAt() carries -- each
+       built into its OWN registered piece so the solver, the AO
+       derivation and the merge fence reach them without new code. The
+       porch's depth and eave stay constants: the walk, the shrub line
+       and any gable roofing a porch all read them. */
     var PORCH_EAVE4 = 4.8, PORCH_DEPTH4 = 4.6;
     var PORCH_FRONT_Z4 = SWZ1 + PORCH_DEPTH4;
-    swtag(box(PORCH_W4, 0.28, PORCH_DEPTH4, FARMHOUSE.stoop,
-              DOOR_X4, -0.02, SWZ1 + PORCH_DEPTH4 / 2, southWallG, sharp()));
-    swtag(box(2.4, 0.14, 0.65, FARMHOUSE.stoop,
-              DOOR_X4, -0.16, PORCH_FRONT_Z4 + 0.325, southWallG, sharp()));
-    [-1, 1].forEach(function (side) {
-      var px = DOOR_X4 + side * (PORCH_W4 / 2 - 0.22);
-      [SWZ1 + 0.35, PORCH_FRONT_Z4 - 0.20].forEach(function (pz) {
-        swtag(box(0.24, PORCH_EAVE4 - 0.12, 0.24, FARMHOUSE.wood,
-                  px, (PORCH_EAVE4 + 0.12) / 2, pz, southWallG, sharp(WOODM)));
-      });
-      swtag(box(0.24, 0.28, PORCH_DEPTH4, FARMHOUSE.wood,
-                px, PORCH_EAVE4 - 0.14, SWZ1 + PORCH_DEPTH4 / 2,
-                southWallG, sharp(WOODM)));
-      var bx = DOOR_X4 + side * 2.65, bz = SWZ1 + 1.5;
-      swtag(box(1.95, 0.14, 0.72, FARMHOUSE.wood,
-                bx, 0.73, bz, southWallG, sharp(WOODM)));
-      [-0.78, 0.78].forEach(function (dx) {
-        [-0.25, 0.25].forEach(function (dz) {
-          swtag(box(0.12, 0.54, 0.12, FARMHOUSE.frame,
-                    bx + dx, 0.40, bz + dz, southWallG, sharp()));
-        });
-        swtag(box(0.12, 0.7, 0.12, FARMHOUSE.frame,
-                  bx + dx, 1.00, bz - 0.27, southWallG, sharp()));
-      });
-      [0.99, 1.23].forEach(function (by) {
-        swtag(box(1.95, 0.18, 0.10, FARMHOUSE.wood,
-                  bx, by, bz - 0.30, southWallG, sharp(WOODM)));
-      });
-    });
-    swtag(box(PORCH_W4, 0.28, 0.24, FARMHOUSE.wood,
-              DOOR_X4, PORCH_EAVE4 - 0.14, PORCH_FRONT_Z4 - 0.20,
-              southWallG, sharp(WOODM)));
 
-    /* the second coach lamp: beside the door, same shade/finial/cap
-       lathe-and-cyl language as the garage's own lamp (its own IIFE,
-       below — this reuses PROFILES.shade/finial from that same profile
-       table via latheGeo's cgeo cache, a geometry cache hit too), same
-       relative y-offsets from its own base. A SEPARATE
-       webgl_coachLampGlass2 reference (not reusing the garage's own
-       webgl_coachLampGlass variable) because the fencing this needs is
-       additive, not a replacement — see its own NO_MERGE comment far
-       below for why a second explicit entry is still the right call even
-       though piece-level fencing (southWallG is itself a registered
-       FABRIC piece, fenced out of every cross-piece merge pass already)
-       already makes a cross-GROUP fold with the garage's lamp
-       structurally impossible. */
-    var lampX4 = DOOR_X4 - 0.85, lampZ4 = SWZ1 + 0.05;
-    var lamp4 = swtag(latheAt('shade', [0.37, 0.34, 0.37], 0xf7e8c2,
-                              lampX4, 2.59, lampZ4, southWallG, GLOSS));
-    lamp4.userData.lamp = true;        /* geometry only: the night pass
-                                           lights it */
-    lamp4.userData.glazing = true;
-    var webgl_coachLampGlass2 = lamp4;
-    swtag(latheAt('finial', [0.22, 0.06, 0.22], C.ink, lampX4, 2.93,
-                  lampZ4, southWallG, { rough: 0.5 }));
-    swtag(cyl(0.20, 0.20, 0.05, C.ink, lampX4, 2.57, lampZ4, southWallG,
-             4, { rough: 0.5 })).rotation.y = Math.PI / 4;
-    swtag(box(0.10, 0.34, 0.09, C.ink, lampX4, 2.96, lampZ4 - 0.05,
-              southWallG, { rough: 0.5 }));
-    swtag(box(0.34, 0.09, 0.05, C.ink, lampX4, 3.16, lampZ4 - 0.02,
-              southWallG, { rough: 0.5 }));
-
-    /* SHELL: south_wall is complete here — door, porch, both windows,
-       trim and the second lamp are all in, and nothing later in this
-       file ever adds to southWallG. n is [0,0,1]: a true exterior
-       boundary (nothing but yard beyond it), so "outward" is its own
-       physical compass direction — no flip needed, unlike west_wall's
-       interior-partition flip (T2). */
+    /* SHELL: south_wall is the street FACE itself -- the slab, its
+       siding skin and its baseboard. Its windows, door, porch and lamp
+       are the facade's own registered pieces (arc 4), built below, and
+       nothing later in this file ever adds to southWallG. n is [0,0,1]:
+       a true exterior boundary (nothing but yard beyond it), so
+       "outward" is its own physical compass direction -- no flip needed,
+       unlike west_wall's interior-partition flip (T2). */
     regFabric(southWallG, { name: 'south_wall', n: [0, 0, 1],
                             box: fabBox(southWallG), room: 'living' });
 
@@ -4268,7 +4099,7 @@
               EXT_TOP4 / 2, EW_CZ4, eastWallG, sharp(WALL_O)));
     ewtag(box(WALL_T4 / 2, EXT_TOP4, EW_LEN4, NICE ? 0xffffff : EXTC.siding,
               EWX0_4 + WALL_T4 * 3 / 4, EXT_TOP4 / 2, EW_CZ4, eastWallG,
-              sharp({ rough: 0.95, map: battenT })));
+              sharp({ rough: 0.95, map: CLAD() })));
     ewtag(box(0.08, 0.2, EW_LEN4 - 0.3, 0xe4ddd1, EWX0_4 - 0.02, 0.1, EW_CZ4,
               eastWallG, sharp()));
     /* SHELL: east_wall is complete here. n is [1,0,0]: a true exterior
@@ -4325,7 +4156,7 @@
       var cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
       shellBox(g, alongX ? length : WALL_T4, height,
                alongX ? WALL_T4 : length, NICE ? 0xffffff : FARMHOUSE.body,
-               cx, height / 2, cz, { rough: 0.95, map: battenT });
+               cx, height / 2, cz, { rough: 0.95, map: CLAD() });
       shellBox(g, alongX ? length : WALL_T4 + 0.06, 0.20,
                alongX ? WALL_T4 + 0.06 : length, FARMHOUSE.stoop,
                cx, 0.10, cz);
@@ -4403,7 +4234,7 @@
           return new T.ExtrudeGeometry(shape, { depth: 0.14, bevelEnabled: false });
         });
         var m = new T.Mesh(geo, mat(NICE ? 0xffffff : FARMHOUSE.body,
-                                   { rough: 0.95, map: battenT }));
+                                   { rough: 0.95, map: CLAD() }));
         if (alongZ) m.position.set(cx, 0, sign < 0 ? z0 - 0.14 : z1);
         else { m.rotation.y = -Math.PI / 2;
                m.position.set(sign < 0 ? x0 : x1 + 0.14, 0, cz); }
@@ -4424,15 +4255,461 @@
                       false, undefined, cutawayRoom);
       });
     }
+    /* ================= FACADE: the street elevation ===================
+       Arc 4, spec docs/superpowers/specs/2026-09-15-house-facade-
+       generator-design.md (sections 2, 2.2, 3 and 6). Everything from
+       here to buildElevation() REPLACES the hand-authored street face:
+       the south wall's three windows, its door, porch and second coach
+       lamp; massing_east_front_south's two hard-coded windows; the
+       porch and garage gables; and the garage door's own style block.
+       The wall SLABS stay exactly where they are (a face is not a
+       feature) and so does every interior, camera, room and zone.
+
+       Build-once: the spec arrives in window.HOUSE_FACADE before this
+       file loads and nothing re-reads it at runtime (the lifecycle law
+       forbids a rebuild and nothing here needs one). */
+    var SLOT_W = 1.85;
+    /* Slots are DERIVED from the envelope, never chosen (spec section
+       2): four street faces, n = max(1, round(width / SLOT_W)) slots
+       each, every slot on a face the same width. services/
+       house_facade.py's FACES mirrors these four rows and its
+       slot_table() the loop below; the live pin test asserts the two
+       tables equal, slot by slot, so they cannot drift. */
+    var FACES = [
+      { face: 'garage',  x0: -18.20, x1: -12.60, z: 10.10, eave: 4.7, room: 'garage',  roof: 'massing_service_roof' },
+      { face: 'mudroom', x0: -12.60, x1: FULL_HOUSE.west, z: 10.10, eave: 5.6, room: 'mudroom', roof: 'mudroom_cross_roof' },
+      { face: 'main',    x0: FULL_HOUSE.west, x1: FULL_HOUSE.east, z: SWZ1, eave: EXT_TOP4, room: 'living', roof: 'roof_main' },
+      { face: 'wing',    x0: FULL_HOUSE.east, x1: FULL_HOUSE.studyEast, z: FULL_HOUSE.studySouth, eave: 5.6, room: 'study', roof: 'massing_front_roof' }
+    ];
+    function facadeSlots() {
+      var out = [], i = 0;
+      FACES.forEach(function (f) {
+        var width = f.x1 - f.x0, n = Math.max(1, Math.round(width / SLOT_W)), w = width / n;
+        for (var k = 0; k < n; k++) {
+          var x0 = f.x0 + k * w;
+          out.push({ i: i++, face: f.face, x0: x0, x1: x0 + w, cx: x0 + w / 2, z: f.z,
+                     eave: f.eave, room: f.room, roof: f.roof });
+        }
+      });
+      return out;
+    }
+    var SLOTS = facadeSlots();
+    /* The canonical facade, field for field services/house_facade.py's
+       own CANONICAL (spec section 2.2: today's elevation, snapped onto
+       the slot grid). Only a page served WITHOUT the injection --
+       nothing but the 2D fallback path can reach that -- ever builds
+       from this literal; the pin test asserts chfFacade() equals the
+       Python dict, which is what keeps the copy honest. */
+    var CANONICAL_JS = {
+      version: 1,
+      pitch_deg: 34.8,
+      style: { cladding: 'batten', body: 'white', roof: 'charcoal',
+               frame: 'black', door: 'wood', trim: 'white' },
+      ground: [
+        { slot: 0, span: 3, kind: 'garage_door', style: 'carriage', leaves: 1 },
+        { slot: 7, span: 1, kind: 'window', size: 'tall' },
+        { slot: 9, span: 4, kind: 'porch', type: 'sitting' },
+        { slot: 9, span: 1, kind: 'window', size: 'tall' },
+        { slot: 10, span: 1, kind: 'door' },
+        { slot: 12, span: 1, kind: 'window', size: 'tall' },
+        { slot: 15, span: 1, kind: 'window', size: 'standard' },
+        { slot: 16, span: 1, kind: 'window', size: 'standard' }
+      ],
+      roof: [
+        { slot: 0, span: 3, kind: 'gable' },
+        { slot: 9, span: 4, kind: 'gable' }
+      ]
+    };
+    var SPEC = FACADE ? FACADE.spec : null;
+    /* A feature's extent: its own slot's west edge to its last slot's
+       east edge. Spans never cross a face (normalize truncates at the
+       boundary), so one z, one eave and one room serve the whole span. */
+    function spanX(feat) {
+      var a = SLOTS[feat.slot], b = SLOTS[feat.slot + feat.span - 1] || a;
+      return { x0: a.x0, x1: b.x1, cx: (a.x0 + b.x1) / 2, w: b.x1 - a.x0, slot: a };
+    }
+    var WINDOW_SIZES = { tall: [1.6, 3.7], standard: [1.55, 2.7], small: [1.0, 1.2] };
+    /* The west-most door on the main face carries the front_door entry
+       marker (spec section 4.4); PORCH_SPANS lets a gable find the porch
+       it roofs; and DOOR_X4 / PORCH_W4 / PORCH_FRONT_Z4 (declared with
+       the south wall above, where the landscaping below still reads
+       them) are published BY the builders, so a moved door moves its own
+       front walk instead of stranding it at the old hand-typed x. */
+    var FRONT_DOOR_SLOT = -1;
+    var PORCH_SPANS = [];
+    var webgl_coachLampGlass2 = null;   /* R5 NO_MERGE anchor, far below */
+    /* The bay's own glazing opts, identical to the garage block's GLZ
+       (declared inside that closure, out of reach here). Identical
+       VALUES are what matter: mat() keys on them, so both resolve to the
+       same cached material rather than a second one. */
+    var FGLZ = { rough: 0.16, metal: 0.0, envInt: 0.6 };
+
+    /* ---- builders: one per kind, each its own registered piece -------
+       Every builder makes a shellGroup(), fills it through the existing
+       helpers (so materials and geometries stay cache hits) and ends at
+       shellRegister() with the slot's fronting room. That registration
+       is what gives a generated piece the navigation law, the ghost and
+       cutaway verdicts, AO occlusion and NO_MERGE fencing with no new
+       solver code at all (shell spec sections 4-5). */
+    function windowAt(feat) {
+      var e = spanX(feat), slot = e.slot, g = shellGroup();
+      var size = WINDOW_SIZES[feat.size] || WINDOW_SIZES.standard;
+      var w = size[0], h = size[1], cx = e.cx, z = slot.z;
+      function wtag(m) { if (m) m.userData.room = slot.room; return m; }
+      if (slot.face === 'main') {
+        /* the old swWindow, parameterised: casing, jambs and sill in
+           FARMHOUSE.frame (one shared cache bucket), a 2x3 grille at
+           DETAIL 2, a directly-built transparent pane the merge pass
+           exempts by construction, and the interior sill at DETAIL 3 on
+           the room side of the wall's own thickness. */
+        var wy = WIN_HEAD4 - h / 2;
+        wtag(box(w + 0.24, 0.13, 0.16, FARMHOUSE.frame, cx,
+                 WIN_HEAD4 + 0.065, z + 0.02, g, sharp()));
+        [-(w / 2 + 0.07), (w / 2 + 0.07)].forEach(function (dx) {
+          wtag(box(0.14, h + 0.13, 0.16, FARMHOUSE.frame, cx + dx, wy,
+                   z + 0.02, g, sharp()));
+        });
+        wtag(box(w + 0.40, 0.10, 0.30, FARMHOUSE.frame, cx,
+                 wy - h / 2 - 0.05, z + 0.05, g, sharp()));
+        if (DETAIL >= 2) {
+          wtag(box(0.07, h, 0.07, FARMHOUSE.frame, cx, wy, z + 0.022, g, sharp()));
+          [wy - h / 6, wy + h / 6].forEach(function (my) {
+            wtag(box(w, 0.07, 0.07, FARMHOUSE.frame, cx, my, z + 0.022, g, sharp()));
+          });
+        }
+        var gl = new T.Mesh(new T.BoxGeometry(w, h, 0.03),
+          new T.MeshStandardMaterial({ color: 0x9fc4dc, transparent: true,
+                                       opacity: 0.9, roughness: 0.16,
+                                       metalness: 0.0 }));
+        gl.position.set(cx, wy, z + 0.03);
+        gl.userData.glazing = true;      /* the night pass looks for this */
+        wtag(gl); finish(gl, true); g.add(gl);
+        if (DETAIL >= 3) {
+          wtag(box(w + 0.10, 0.07, 0.30, C.cab, cx, wy - h / 2 - 0.10,
+                   z - WALL_T4 - 0.10, g, { rough: 0.9 }));
+        }
+      } else {
+        /* every other face takes the shell's own window idiom (dark pane
+           behind a frame, glow at night), proud of the wall's outer skin
+           exactly where shellWall placed its own. Head 4.15: today's
+           wing head, centre 2.80 plus half of a 2.70 pane. */
+        shellWindow(g, cx, 4.15 - h / 2, slot.z + WALL_T4 / 2 + 0.05,
+                    0, w, h, true);
+      }
+      /* cutawayRoom, like every roof piece: a window is a hole in a
+         wall, so when its own room's cutaway takes the wall away the
+         window has to go with it -- otherwise a black frame stands
+         floating in the opening (measured: the living cutaway). */
+      shellRegister(g, 'facade_' + slot.face + '_window_' + feat.slot,
+                    [0, 0, 1], slot.room, false, undefined, slot.room);
+    }
+
+    function doorAt(feat) {
+      var e = spanX(feat), slot = e.slot, g = shellGroup();
+      var x = e.cx, z = slot.z + 0.02;   /* proud of the exterior face:
+        the wall carries no cut opening, so a leaf at the wall's own mid-
+        thickness would be entombed in solid mass. Casing, panels and
+        knob all stack outward from this one anchor. */
+      var entry = (feat.slot === FRONT_DOOR_SLOT);
+      function dtag(m) {
+        if (m) { m.userData.room = slot.room;
+                 if (entry) m.userData.entry = 'front_door'; }
+        return m;
+      }
+      /* the leaf: the decorative front door's own chamfered geometry
+         rotated 90 degrees (a cache hit, not a second geometry at the
+         swapped dimensions). style.door 'wood' keeps the wood map; every
+         other door colour drops the map and takes the palette hex,
+         because a red door mapped with oak reads as neither. */
+      var woodMap = (FSTYLE.door === 'wood') ? woodDoor : null;
+      var leaf = new T.Mesh(
+        NICE ? chamferGeo(0.14, 3.2, 1.4, 0.04) : new T.BoxGeometry(0.14, 3.2, 1.4),
+        PBR ? new T.MeshStandardMaterial(woodMap
+                ? { map: woodMap, roughness: 0.65 }
+                : { color: FARMHOUSE.wood, roughness: 0.65 })
+            : new T.MeshLambertMaterial(woodMap
+                ? { color: 0xc9a06c, map: woodMap }
+                : { color: FARMHOUSE.wood }));
+      leaf.rotation.y = Math.PI / 2;
+      leaf.position.set(x, 1.6, z);
+      dtag(leaf); finish(leaf); g.add(leaf);
+      dtag(box(0.14, 3.44, 0.13, 0xe4ddd1, x - 0.65, 1.72, z, g, sharp()));
+      dtag(box(0.14, 3.44, 0.13, 0xe4ddd1, x + 0.65, 1.72, z, g, sharp()));
+      dtag(box(1.86, 0.14, 0.13, 0xe4ddd1, x, 3.37, z, g, sharp()));
+      if (DETAIL >= 2) {
+        dtag(box(0.90, 1.20, 0.02, 0x6f5433, x, 2.14, z + 0.075, g, WOODM));
+        dtag(box(0.90, 0.98, 0.02, 0x6f5433, x, 0.82, z + 0.075, g, WOODM));
+        dtag(box(0.74, 1.04, 0.04, 0xc79b63, x, 2.14, z + 0.080, g, WOODM));
+        dtag(box(0.74, 0.82, 0.04, 0xc79b63, x, 0.82, z + 0.080, g, WOODM));
+      }
+      var knob = latheAt('knob', [0.06, 0.1, 0.06], 0xd8c48a, x + 0.55,
+                         1.6, z + 0.07, g, CHROME);
+      knob.rotation.x = Math.PI / 2;
+      dtag(knob);
+      /* the coach lamp beside the door: the garage lamp's own shade,
+         finial and cap language (a geometry cache hit through latheAt),
+         and the only mesh carrying userData.lamp inside THIS piece's own
+         merge pass -- webgl_coachLampGlass2 fences it, far below. Room
+         tagged but never entry tagged: a lamp is not a door. */
+      var lampX = x - 0.85, lampZ = slot.z + 0.05;
+      var lamp = latheAt('shade', [0.37, 0.34, 0.37], 0xf7e8c2,
+                         lampX, 2.59, lampZ, g, GLOSS);
+      lamp.userData.room = slot.room;
+      lamp.userData.lamp = true;         /* geometry only: the night pass
+                                            lights it */
+      lamp.userData.glazing = true;
+      if (entry) webgl_coachLampGlass2 = lamp;
+      latheAt('finial', [0.22, 0.06, 0.22], C.ink, lampX, 2.93, lampZ, g,
+              { rough: 0.5 }).userData.room = slot.room;
+      var cap = cyl(0.20, 0.20, 0.05, C.ink, lampX, 2.57, lampZ, g, 4,
+                    { rough: 0.5 });
+      cap.rotation.y = Math.PI / 4; cap.userData.room = slot.room;
+      box(0.10, 0.34, 0.09, C.ink, lampX, 2.96, lampZ - 0.05, g,
+          { rough: 0.5 }).userData.room = slot.room;
+      box(0.34, 0.09, 0.05, C.ink, lampX, 3.16, lampZ - 0.02, g,
+          { rough: 0.5 }).userData.room = slot.room;
+      if (entry) DOOR_X4 = x;            /* the front walk follows */
+      shellRegister(g, 'facade_' + slot.face + '_door_' + feat.slot,
+                    [0, 0, 1], slot.room, false, undefined, slot.room);
+    }
+
+    function porchAt(feat) {
+      var e = spanX(feat), slot = e.slot, g = shellGroup();
+      var type = feat.type || 'covered';
+      var W = e.w, X = e.cx, z0 = slot.z;
+      /* a stoop is a slab and a step; sitting and covered keep today's
+         depth and eave. */
+      var depth = (type === 'stoop') ? 1.6 : PORCH_DEPTH4;
+      var frontZ = z0 + depth, eave = PORCH_EAVE4;
+      function ptag(m) { if (m) m.userData.room = slot.room; return m; }
+      ptag(box(W, 0.28, depth, FARMHOUSE.stoop, X, -0.02, z0 + depth / 2, g, sharp()));
+      ptag(box(2.4, 0.14, 0.65, FARMHOUSE.stoop, X, -0.16, frontZ + 0.325, g, sharp()));
+      if (type !== 'stoop') {
+        /* the approach stays clear of whatever door shares this span.
+           The porch is no longer centred ON the door the way the hand
+           block was (slot 9 span 4 against a door at slot 10), so each
+           bench takes the room left on its own side of the door and is
+           dropped when there is not enough of it. */
+        var doorX = null;
+        (((SPEC || CANONICAL_JS).ground) || []).forEach(function (f) {
+          if (f.kind === 'door' && f.slot >= feat.slot &&
+              f.slot < feat.slot + feat.span) doorX = SLOTS[f.slot].cx;
+        });
+        var A = (doorX === null) ? X : doorX;
+        [-1, 1].forEach(function (side) {
+          var px = X + side * (W / 2 - 0.22);
+          [z0 + 0.35, frontZ - 0.20].forEach(function (pz) {
+            ptag(box(0.24, eave - 0.12, 0.24, FARMHOUSE.wood,
+                     px, (eave + 0.12) / 2, pz, g, sharp(WOODM)));
+          });
+          ptag(box(0.24, 0.28, depth, FARMHOUSE.wood,
+                   px, eave - 0.14, z0 + depth / 2, g, sharp(WOODM)));
+          if (type !== 'sitting') return;
+          var inner = A + side * 1.0, outer = X + side * (W / 2 - 0.34);
+          var bw = Math.min(1.95, Math.abs(outer - inner));
+          if (bw < 1.0) return;          /* no room: no bench, no stub */
+          var bx = inner + side * bw / 2, bz = z0 + 1.5, dxe = bw / 2 - 0.195;
+          ptag(box(bw, 0.14, 0.72, FARMHOUSE.wood, bx, 0.73, bz, g, sharp(WOODM)));
+          [-dxe, dxe].forEach(function (dx) {
+            [-0.25, 0.25].forEach(function (dz) {
+              ptag(box(0.12, 0.54, 0.12, FARMHOUSE.frame,
+                       bx + dx, 0.40, bz + dz, g, sharp()));
+            });
+            ptag(box(0.12, 0.7, 0.12, FARMHOUSE.frame,
+                     bx + dx, 1.00, bz - 0.27, g, sharp()));
+          });
+          [0.99, 1.23].forEach(function (by) {
+            ptag(box(bw, 0.18, 0.10, FARMHOUSE.wood,
+                     bx, by, bz - 0.30, g, sharp(WOODM)));
+          });
+        });
+        ptag(box(W, 0.28, 0.24, FARMHOUSE.wood, X, eave - 0.14,
+                 frontZ - 0.20, g, sharp(WOODM)));
+      }
+      PORCH_SPANS.push({ slot: feat.slot, span: feat.span, frontZ: frontZ });
+      if (slot.face === 'main') { PORCH_W4 = W; PORCH_FRONT_Z4 = frontZ; }
+      shellRegister(g, 'facade_' + slot.face + '_porch_' + feat.slot,
+                    [0, 0, 1], slot.room, false, undefined, slot.room);
+    }
+
+    function garageDoorAt(feat) {
+      /* The one builder that does NOT make its own group: the leaf rides
+         garageDoorG so the dollhouse's openable-door trick (the whole
+         group hides from inside the bay) keeps working, and that group's
+         own regFabric call below still registers it as 'garage_door'. */
+      var e = spanX(feat), slot = e.slot, cx = e.cx;
+      /* leaves set the width (spec section 2.2). 4.4 is today's bay --
+         the pier-CENTRE span -- and the leaf field it frames is 0.8
+         narrower, which is today's 3.6 exactly. Every applied detail
+         scales with the field, so a two-leaf door is one wider door and
+         not a stretched texture. */
+      var DW = (feat.leaves === 2) ? 5.0 : 4.4;
+      var lw = DW - 0.8, k = lw / 3.6, y = 1.6, z = 10.02, dh = 3.0;
+      var style = feat.style || 'carriage';
+      function gtag(m) { if (m) m.userData.room = slot.room; return m; }
+      function gGlass(w, h, gx, gy, gz, o) {
+        var m = box(w, h, 0.03, 0x9fc4dc, gx, gy, gz, garageDoorG, o || FGLZ);
+        m.userData.glazing = true;       /* the lighting pass looks for this */
+        return gtag(m);
+      }
+      if (style === 'glass') {
+        /* an aluminium-framed glazed door: the field takes the frame
+           tone and four frosted panes run across the top half. */
+        gtag(rbox(lw, dh, 0.14, 0.05, FARMHOUSE.frame, cx, y, z,
+                  garageDoorG, { rough: 0.35, metal: 0.25 }));
+        for (var q = 0; q < 4; q++) {
+          gGlass(lw / 4 - 0.16, dh / 2 - 0.22,
+                 cx - lw / 2 + lw / 8 + q * lw / 4, y + dh / 4, z + 0.05,
+                 { rough: 0.5, metal: 0.0, envInt: 0.3, opacity: 0.55 });
+        }
+      } else {
+        gtag(rbox(lw, dh, 0.14, 0.05, FARMHOUSE.wood, cx, y, z,
+                  garageDoorG, WOODM));
+      }
+      if (DETAIL >= 2 && style === 'carriage') {
+        /* board seams, then the strap hardware: two black diagonals
+           crossing the leaf corner to corner plus five bolt medallions
+           at the corners and the crossing. Both diagonals share one
+           centre, one derived length and one angle, mirrored by sign. */
+        [1.0, 1.8, 2.6].forEach(function (sy) {
+          gtag(box(3.4 * k, 0.05, 0.06, C.wood2, cx, sy, z + 0.08, garageDoorG));
+        });
+        var SDX = 1.65 * k, SDY = 1.45;
+        var SLEN = Math.sqrt(SDX * SDX * 4 + SDY * SDY * 4);
+        var SANG = Math.atan2(SDX * 2, SDY * 2);
+        [1, -1].forEach(function (sign) {
+          var strap = gtag(box(0.09, SLEN, 0.025, FARMHOUSE.frame,
+                               cx, y, z + 0.08, garageDoorG, { rough: 0.5 }));
+          strap.rotation.z = sign * SANG;
+        });
+        [[cx - SDX, y - SDY], [cx + SDX, y - SDY], [cx - SDX, y + SDY],
+         [cx + SDX, y + SDY], [cx, y]].forEach(function (p) {
+          gtag(cyl(0.05, 0.05, 0.03, C.ink, p[0], p[1], z + 0.09,
+                   garageDoorG, 8, { rough: 0.4, metal: 0.6 }));
+        });
+        /* the top-light row every carriage door carries. */
+        for (var li = 0; li < 4; li++) {
+          var lx = cx + (li - 1.5) * 0.68 * k;
+          gGlass(0.52 * k, 0.30, lx, 2.86, z + 0.08);
+          gtag(box(0.60 * k, 0.38, 0.05, FARMHOUSE.frame, lx, 2.86,
+                   z + 0.065, garageDoorG));
+        }
+      } else if (DETAIL >= 2 && style === 'panel') {
+        /* four raised panels in a 2x2 grid: no brace, no lights. */
+        [-1, 1].forEach(function (sx) {
+          [-1, 1].forEach(function (sy) {
+            gtag(box(lw / 2 - 0.42, dh / 2 - 0.42, 0.04, C.wood2,
+                     cx + sx * lw / 4, y + sy * dh / 4, z + 0.08,
+                     garageDoorG, WOODM));
+          });
+        });
+      }
+      if (feat.leaves === 2) {
+        gtag(box(0.12, dh, 0.06, FARMHOUSE.frame, cx, y, z + 0.08, garageDoorG));
+      }
+    }
+
+    function gableAt(feat) {
+      var e = spanX(feat), slot = e.slot;
+      var name = 'facade_' + slot.face + '_gable_' + feat.slot;
+      if (slot.face === 'garage') {
+        /* the street-facing garage gable (spec section 2.1: today's
+           garage_gable, reproduced from the spec instead of by hand) --
+           it intersects the lower cross roof rather than sitting on the
+           bay's own eave, so it keeps that call's z range and eave. */
+        shellGable(name, e.x0, e.x1, 4.0, 10.1, 5.6, true, slot.room, [1],
+                   PITCH_FAMILY, null, null, false, slot.room);
+        return;
+      }
+      /* a porch sharing the span carries the gable out to its own front
+         edge (today's porch_roof); otherwise the gable projects a fixed
+         2.2 from the face. */
+      var front = slot.z + 2.2;
+      PORCH_SPANS.forEach(function (p) {
+        if (p.slot < feat.slot + feat.span && feat.slot < p.slot + p.span)
+          front = Math.max(front, p.frontZ);
+      });
+      shellGable(name, e.x0, e.x1, slot.z - 2.8, front, slot.eave - 0.8,
+                 true, slot.room, [1], PITCH_FAMILY, null, null, false, slot.room);
+    }
+
+    function dormerAt(feat) {
+      /* a box on the face's roof plane with its own mini gable and, by
+         default, a window. All four street planes are the subordinate
+         Math.PI/8 slopes, so one plane pitch places every dormer. */
+      var e = spanX(feat), slot = e.slot, g = shellGroup();
+      var plane = Math.PI / 8, w = Math.max(1.2, e.w - 0.4);
+      var zc = slot.z - 1.6;
+      var y = slot.eave + 0.18 + (slot.z - zc) * Math.tan(plane);
+      shellBox(g, w, 1.9, 1.6, NICE ? 0xffffff : FARMHOUSE.body,
+               e.cx, y, zc, { rough: 0.95, map: CLAD() });
+      if (feat.window !== false) {
+        shellWindow(g, e.cx, y, zc + 0.85, 0, Math.min(1.1, w - 0.5), 1.1, true);
+      }
+      shellRegister(g, 'facade_' + slot.face + '_dormer_' + feat.slot,
+                    [0, 0, 1], slot.room, false, undefined, slot.room);
+      shellGable('facade_' + slot.face + '_dormerroof_' + feat.slot,
+                 e.cx - w / 2, e.cx + w / 2, zc - 0.8, zc + 0.8,
+                 y + 0.95, true, slot.room, [1], PITCH_FAMILY,
+                 null, null, false, slot.room);
+    }
+
+    function hipEndAt(feat) {
+      /* a clipped triangular return closing the span's ends on the roof
+         plane -- the hipped alternative to a gable end. */
+      var e = spanX(feat), slot = e.slot, g = shellGroup();
+      var plane = Math.PI / 8, depth = 2.2, rise = depth * Math.tan(plane);
+      var geo = cgeo('hip|' + depth + '|' + rise, function () {
+        var s = new T.Shape();
+        s.moveTo(0, 0); s.lineTo(depth, 0); s.lineTo(0, rise); s.lineTo(0, 0);
+        return new T.ExtrudeGeometry(s, { depth: 0.14, bevelEnabled: false });
+      });
+      [-1, 1].forEach(function (sign) {
+        var m = new T.Mesh(geo, mat(NICE ? 0xffffff : FARMHOUSE.roofTone,
+                                    { rough: 0.9, map: shingleT }));
+        m.rotation.y = -Math.PI / 2;
+        m.position.set(sign < 0 ? e.x0 : e.x1, slot.eave + 0.18, slot.z);
+        finish(m); g.add(m);
+      });
+      shellRegister(g, 'facade_' + slot.face + '_hip_end_' + feat.slot,
+                    [0, 0, 1], slot.room, false, undefined, slot.room);
+    }
+
+    /* The elevation itself: ground layer west to east, then roof. The
+       spec is already normalized (services/house_facade.py owns every
+       law in section 4), so this loop only dispatches. */
+    function buildElevation() {
+      var spec = SPEC || CANONICAL_JS;
+      SPEC = spec;                       /* chfFacade() reports what BUILT */
+      var byKind = { window: windowAt, door: doorAt, porch: porchAt,
+                     garage_door: garageDoorAt };
+      var roofKind = { gable: gableAt, dormer: dormerAt, hip_end: hipEndAt };
+      (spec.ground || []).forEach(function (f) {
+        if (f.kind !== 'door') return;
+        var s = SLOTS[f.slot];
+        if (s && s.face === 'main' && (FRONT_DOOR_SLOT < 0 || f.slot < FRONT_DOOR_SLOT))
+          FRONT_DOOR_SLOT = f.slot;
+      });
+      (spec.ground || []).forEach(function (f) {
+        if (byKind[f.kind] && SLOTS[f.slot]) byKind[f.kind](f);
+      });
+      (spec.roof || []).forEach(function (f) {
+        if (roofKind[f.kind] && SLOTS[f.slot]) roofKind[f.kind](f);
+      });
+    }
+    /* ================= END FACADE ===================================== */
+
     shellGable('roof_main', FULL_HOUSE.west, FULL_HOUSE.east,
                FULL_HOUSE.north, FULL_HOUSE.south, EXT_TOP4, false, null,
                null, Math.PI / 8, ['kitchen', 'living'], null, false, 'study');
-    shellGable('porch_roof', DOOR_X4 - PORCH_W4 / 2, DOOR_X4 + PORCH_W4 / 2,
-               SWZ1 - 2.8, PORCH_FRONT_Z4, PORCH_EAVE4, true, 'living', [1]);
 
     /* Side wings leave the complete terrace open between z=4.2 and 9.8. */
+    /* FACADE (arc 4): this face's two windows were hand-typed here. They
+       are spec features now (slots 15 and 16, size 'standard' -- the same
+       1.55 x 2.70 pane), each its own registered piece, so the wall takes
+       an empty window list. */
     shellWall('massing_east_front_south', EWX1_4, FULL_HOUSE.studySouth, FULL_HOUSE.studyEast, FULL_HOUSE.studySouth,
-              5.6, [0, 0, 1], [[9.10, 1.55, true], [12.60, 1.55, true]]);
+              5.6, [0, 0, 1], []);
     shellWall('massing_east_front_east', FULL_HOUSE.studyEast, 9.8, FULL_HOUSE.studyEast, FULL_HOUSE.studySouth,
               5.6, [1, 0, 0], [[11.20, 1.05, true], [13.20, 1.05, true]]);
     shellWall('massing_east_front_patio', EWX1_4, 9.8, FULL_HOUSE.studyEast, 9.8,
@@ -4466,7 +4743,7 @@
         shape.lineTo(x1, low); shape.lineTo(x1, 4.6); shape.closePath();
         var fill = new T.Mesh(new T.ExtrudeGeometry(shape,
           { depth: 0.14, bevelEnabled: false }), mat(NICE ? 0xffffff : FARMHOUSE.body,
-          { rough: 0.95, map: battenT }));
+          { rough: 0.95, map: CLAD() }));
         fill.position.z = sign < 0 ? z0 - 0.14 : z1;
         finish(fill); end.add(fill);
         var rake = shellBox(end, run / Math.cos(pitch), 0.20, 0.16,
@@ -4491,11 +4768,6 @@
     shellGable('mudroom_cross_roof', -12.6, -7.15, -6.1, 10.1,
                5.6, false, 'mudroom', [], Math.PI / 8, [null, 'mudroom'], [false, true]);
 
-    /* A street-facing garage gable intersects the lower cross roof,
-       echoing the porch without changing the garage's eave height. */
-    shellGable('garage_gable', -18.2, -12.6, 4.0, 10.1,
-               5.6, true, 'garage', [1]);
-
     /* Close the band above the mudroom's existing door wall to the
        underside of the cross roof; its subject remains the mudroom. */
     var mudFrontBandG = shellGroup();
@@ -4503,7 +4775,7 @@
     var mudBandTop = serviceRidge - 6.42 * Math.tan(Math.PI / 8) - 0.10;
     shellBox(mudFrontBandG, 5.45, mudBandTop - 4.2, 0.28,
              NICE ? 0xffffff : FARMHOUSE.body, -9.875,
-             (mudBandTop + 4.2) / 2, 8.43, { rough: 0.95, map: battenT });
+             (mudBandTop + 4.2) / 2, 8.43, { rough: 0.95, map: CLAD() });
     shellRegister(mudFrontBandG, 'mudroom_front_cladding', [0, 0, 1], 'mudroom', false, 0.5);
 
     /* Slider uses the visible east face, clear of the terrace's bench.
@@ -4602,7 +4874,7 @@
     extG.add(westSkirtG);
     box(0.3, EXT_TOP4, SWZ1 - 6.0, NICE ? 0xffffff : EXTC.siding,
         -7.0, EXT_TOP4 / 2, (6.0 + SWZ1) / 2, westSkirtG,
-        sharp({ rough: 0.95, map: battenT }));
+        sharp({ rough: 0.95, map: CLAD() }));
     box(0.35, EXT_TOP4, 0.1, EXTC.trim, -6.675, EXT_TOP4 / 2, SWZ1,
         westSkirtG, sharp());
     /* spec section 5: fronts mudroom, same adjacency shape as west_wall's
@@ -4629,6 +4901,12 @@
     extG.add(garageDoorG);
     var garageInterior = new T.Group();
     extG.add(garageInterior);
+    /* FACADE (arc 4, spec section 6): the street elevation builds
+       HERE. Every helper it uses exists (the shell helpers above,
+       garageDoorG just above), and garage_door's own fabBox below is
+       measured with the generated leaf already in the group. */
+    buildElevation();
+
     (function () {
       function gtag(m) { if (m) m.userData.room = 'garage'; return m; }
       function itag(m) {
@@ -4636,73 +4914,34 @@
         return m;
       }
       var gWallW = gtag(ebox(0.24, 4.6, 8.0, NICE ? 0xffffff : EXTC.garage,
-                -18.08, 2.3, 6.0, { rough: 0.95, map: battenT }));
+                -18.08, 2.3, 6.0, { rough: 0.95, map: CLAD() }));
       var gWallE = gtag(ebox(0.24, 4.6, 8.0, NICE ? 0xffffff : EXTC.garage,
-                -12.72, 2.3, 6.0, { rough: 0.95, map: battenT }));
+                -12.72, 2.3, 6.0, { rough: 0.95, map: CLAD() }));
       var garageBackWall = gtag(ebox(5.6, 4.6, 0.24,
                 NICE ? 0xffffff : EXTC.garage,
-                -15.4, 2.3, 2.12, { rough: 0.95, map: battenT }));
+                -15.4, 2.3, 2.12, { rough: 0.95, map: CLAD() }));
       webgl_garageBackWall = garageBackWall;
       gtag(box(5.6, 1.1, 0.24, NICE ? 0xffffff : EXTC.garage,
                -15.4, 4.05, 9.88, garageDoorG,
-               sharp(NICE ? { rough: 0.95, map: battenT } : { rough: 0.95 })));
+               sharp(NICE ? { rough: 0.95, map: CLAD() } : { rough: 0.95 })));
       /* the lintel: the header stopped at y 3.5 and the door at 3.1, so
          a 0.4 slot ran the width of the bay and the resting camera
          looked straight through it at the shelves */
       gtag(box(5.6, 0.46, 0.24, NICE ? 0xffffff : EXTC.garage,
                -15.4, 3.27, 9.88, garageDoorG,
-               sharp(NICE ? { rough: 0.95, map: battenT } : { rough: 0.95 })));
+               sharp(NICE ? { rough: 0.95, map: CLAD() } : { rough: 0.95 })));
       gtag(box(3.9, 0.16, 0.16, EXTC.trim, -15.4, 3.16, 10.00, garageDoorG, sharp()));
       gtag(box(0.76, 3.5, 0.24, NICE ? 0xffffff : EXTC.garage,
                -17.58, 1.75, 9.88, garageDoorG,
-               sharp(NICE ? { rough: 0.95, map: battenT } : { rough: 0.95 })));
+               sharp(NICE ? { rough: 0.95, map: CLAD() } : { rough: 0.95 })));
       gtag(box(0.76, 3.5, 0.24, NICE ? 0xffffff : EXTC.garage,
                -13.22, 1.75, 9.88, garageDoorG,
-               sharp(NICE ? { rough: 0.95, map: battenT } : { rough: 0.95 })));
-      /* spec 6b: "carriage-style wood — panel field, strap hardware,
-         one top-light row" on this existing openable garageDoorG (the
-         dollhouse trick untouched). The panel field's own leaf keeps its
-         geometry and its zone; only the color/finish moves, from
-         EXTC.trim (a painted-trim tone) to FARMHOUSE.wood — the SAME
-         warm-wood family the front door and porch posts now share
-         (WOODM, not a fourth hand-typed roughness). */
-      gtag(rbox(3.6, 3.0, 0.14, 0.05, FARMHOUSE.wood, -15.4, 1.6, 10.02,
-                garageDoorG, WOODM));
-      if (DETAIL >= 2) {
-        /* board seams (were flat trim-colored dividers): C.wood2, a
-           darker wood tone already in this file's own palette, reading
-           as the shadow line between two stained boards rather than a
-           painted reveal. */
-        gtag(box(3.4, 0.05, 0.06, C.wood2, -15.4, 1.0, 10.1, garageDoorG));
-        gtag(box(3.4, 0.05, 0.06, C.wood2, -15.4, 1.8, 10.1, garageDoorG));
-        gtag(box(3.4, 0.05, 0.06, C.wood2, -15.4, 2.6, 10.1, garageDoorG));
-        /* strap hardware: two black wrought-iron diagonals crossing the
-           whole leaf corner-to-corner (an X-brace, the classic carriage-
-           door hardware silhouette) plus five bolt medallions at the
-           four corners and the centre where the straps cross. Both
-           diagonals share one centre point (a rectangle's two diagonals
-           always bisect at the same point) and one derived length/angle
-           — mirrored by sign, not hand-typed twice. */
-        (function () {
-          var SDX4 = 1.65, SDY4 = 1.45;    /* half-reach, inset from the
-            leaf's own 3.6 x 3.0 edges so the straps read as applied
-            hardware, not a frame running off the panel */
-          var SLEN4 = Math.sqrt((SDX4 * 2) * (SDX4 * 2) +
-                                (SDY4 * 2) * (SDY4 * 2));
-          var SANG4 = Math.atan2(SDX4 * 2, SDY4 * 2);
-          [1, -1].forEach(function (sign) {
-            var strap = gtag(box(0.09, SLEN4, 0.025, FARMHOUSE.frame,
-                                 -15.4, 1.6, 10.10, garageDoorG, { rough: 0.5 }));
-            strap.rotation.z = sign * SANG4;
-          });
-          [[-15.4 - SDX4, 1.6 - SDY4], [-15.4 + SDX4, 1.6 - SDY4],
-           [-15.4 - SDX4, 1.6 + SDY4], [-15.4 + SDX4, 1.6 + SDY4],
-           [-15.4, 1.6]].forEach(function (p) {
-            gtag(cyl(0.05, 0.05, 0.03, C.ink, p[0], p[1], 10.11,
-                     garageDoorG, 8, { rough: 0.4, metal: 0.6 }));
-          });
-        })();
-      }
+               sharp(NICE ? { rough: 0.95, map: CLAD() } : { rough: 0.95 })));
+      /* FACADE (arc 4): the door leaf, its board seams, strap hardware
+         and top-light row used to be authored here. garageDoorAt() (the
+         facade block above) builds them into this same garageDoorG from
+         the spec's own style enum, so the openable-door trick and this
+         group's registration below are untouched. */
       /* the bay's daylight, and the only exterior windows the resting
          camera sees square on: real glazing in a real casing, left
          emissive-capable for the lighting pass (bible S7.3). All of it
@@ -4730,16 +4969,6 @@
           gtag(box(0.05, 0.68, 0.05, FARMHOUSE.frame, -13.22, 2.68, 10.04, garageDoorG));
           gtag(box(0.58, 0.05, 0.05, FARMHOUSE.frame, -13.22, 2.68, 10.04, garageDoorG));
         }
-        /* the top-light row every sectional/carriage door carries —
-           spec 6b's own "one top-light row of small panes": the row
-           already existed (the architect pass built it); only its own
-           small frame board recolors, 0xd8d0c2 (a light painted tone)
-           -> FARMHOUSE.frame, to read as the same black grille language
-           as every other window on the house. */
-        [-16.42, -15.74, -15.06, -14.38].forEach(function (lx) {
-          gGlass(0.52, 0.30, lx, 2.86, 10.10);
-          gtag(box(0.60, 0.38, 0.05, FARMHOUSE.frame, lx, 2.86, 10.085, garageDoorG));
-        });
         /* the gable's half-round, and a coach lamp beside the door —
            same black-frame recolor, same unchanged size/position. */
         gGlass(0.44, 0.44, -15.40, 5.36, 10.27);
@@ -4781,7 +5010,7 @@
       [5.10].forEach(function (y) {
         gtag(box(5.60, 1.0, 0.30, NICE ? 0xffffff : EXTC.siding,
                   -15.4, y, 10.02, garageDoorG,
-                  sharp({ rough: 0.95, map: battenT })));
+                  sharp({ rough: 0.95, map: CLAD() })));
       });
       /* The lower cross roof spans both garage and mudroom. The bay
          keeps its original walls and door as separate navigation fabric. */
@@ -4790,7 +5019,7 @@
       [gWallW, gWallE, garageBackWall].forEach(function (m) { garageShellG.add(m); });
       [-18.08, -12.72].forEach(function (x) {
         box(0.30, 1.0, 8.0, NICE ? 0xffffff : EXTC.siding,
-            x, 5.10, 6.0, garageShellG, sharp({ rough: 0.95, map: battenT }));
+            x, 5.10, 6.0, garageShellG, sharp({ rough: 0.95, map: CLAD() }));
       });
       /* n [1,0,0]: no single physical face works for a piece that is
          three walls plus a roof wrapped around one room — but the garage
@@ -6235,11 +6464,11 @@
       mfloor.position.set(-9.7, 0.03, 5.4);
       mtag(mfloor); finish(mfloor); extG.add(mfloor);
       mtag(ebox(5.6, 4.2, 0.24, NICE ? 0xffffff : EXTC.siding,
-                -9.8, 2.1, 2.48, { rough: 0.95, map: battenT }));
+                -9.8, 2.1, 2.48, { rough: 0.95, map: CLAD() }));
       /* the street end is the mudroom's "garage door": hidden from the
          inside so the camera can look straight into the room */
       var mudFrontWall = mtag(ebox(5.6, 4.2, 0.24, NICE ? 0xffffff : EXTC.siding,
-                -9.8, 2.1, 8.32, { rough: 0.95, map: battenT }));
+                -9.8, 2.1, 8.32, { rough: 0.95, map: CLAD() }));
       mudroomRoofG.add(mudFrontWall);
       /* The cross roof replaces the old flat slab. This legacy registry
          name owns the front wall, street door and trim. Register after
@@ -8786,7 +9015,11 @@
                           room:spec.room, mode:spec.mode, twoSided:spec.twoSided,
                           pad:spec.pad, cutawayRoom:spec.cutawayRoom});
       },
-      solveShell: solveShell, ROOM_AABB: ROOM_AABB, AO_OCCLUDERS: AO_OCCLUDERS
+      solveShell: solveShell, ROOM_AABB: ROOM_AABB, AO_OCCLUDERS: AO_OCCLUDERS,
+      /* FACADE (arc 4): the spec the elevation was BUILT from (never the
+         raw injection -- buildElevation() falls back to CANONICAL_JS)
+         and the slot table it derived, for chfFacade/chfFacadeSlots. */
+      SPEC: SPEC, SLOTS: SLOTS
     };
   }
 
@@ -9714,6 +9947,13 @@
   window.chfAoOccluders = function () {
     return webgl && webgl.AO_OCCLUDERS ? webgl.AO_OCCLUDERS.map(function (b) { return b.slice(); }) : [];
   };
+  /* FACADE/arc 4 (facade spec section 6, "hand path parity"): read-only
+     like the two above -- the spec the scene was actually built from and
+     the slot table it derived from the envelope. The live pin test reads
+     both and asserts them against services/house_facade.py, which is
+     what keeps the JS and Python slot tables from ever drifting. */
+  window.chfFacade = function () { return webgl ? webgl.SPEC : null; };
+  window.chfFacadeSlots = function () { return webgl ? webgl.SLOTS : []; };
   /* Read-only test hook: find a canvas pixel over actual geometry. Use
      the production hit readers so candidate selection cannot drift from
      pointer handling. Tests still assert the result of a real mouse click.
@@ -9739,6 +9979,22 @@
     if (spec.piece) {
       webgl.FABRIC.forEach(function (f) {
         if (f.name === spec.piece) { b = f.box; target = f.g; }
+      });
+      if (!b) return null;
+    } else if (spec.front) {
+      /* FACADE (arc 4): a FACE, not a piece. The generator names its
+         pieces facade_<face>_<kind>_<slot>, so an exterior marker on a
+         face can no longer hard-code one name. Take the first street-
+         facing (n.z > 0.5) generated piece on that face; a face whose
+         spec generated nothing street-facing falls back to the garage
+         door, registered by hand and always present. */
+      var face = String(spec.front).replace(/_front$/, '');
+      webgl.FABRIC.forEach(function (f) {
+        if (b || f.name.indexOf('facade_' + face + '_') !== 0 || f.n.z <= 0.5) return;
+        b = f.box; target = f.g;
+      });
+      if (!b) webgl.FABRIC.forEach(function (f) {
+        if (!b && f.name === 'garage_door') { b = f.box; target = f.g; }
       });
       if (!b) return null;
     } else if (spec.zone || spec.action || spec.feature) {
@@ -9837,7 +10093,7 @@
     ['patio_slider', 'Kitchen', ['moments', 'meals', 'lists', 'calendar', 'weather']],
     ['front_door', 'Living room', ['music', 'critters', 'tasks', 'programs', 'study'], 'entry', ['tasks','programs']],
     ['mudroom_cross_roof_south', 'Mudroom', ['schedule', 'chores', 'routines'], null, ['packing','chores','routines']],
-    ['garage_gable_front', 'Garage', ['garage', 'errands'], null, ['errands']]
+    ['garage_front', 'Garage', ['garage', 'errands'], 'front', ['errands']]
   ];
   function packingAttention() {
     return (((state || {}).mudroom || {}).packs || []).reduce(function (n, p) {

@@ -948,7 +948,11 @@ def scenario_shell_fabric_registry():
         page.wait_for_timeout(2200)
         fab = page.evaluate("window.chfShellFabric()")
         names = sorted(f['name'] for f in fab)
-        expected_names = {
+        # arc 4 (facade spec section 6): the authored pieces are now the
+        # ones the elevation does NOT generate -- the porch gable, the
+        # garage gable and the south wall's own openings left this set
+        # and came back as facade_* pieces from the spec.
+        hand_names = {
             'east_wall', 'garage_door', 'garage_shell', 'living_roof',
             'living_back_room_door',
             'living_study_door',
@@ -956,7 +960,6 @@ def scenario_shell_fabric_registry():
             'west_skirt', 'west_wall', 'yard', 'patio_slider',
             'roof_main_north', 'roof_main_south',
             'roof_main_end_west', 'roof_main_end_east',
-            'porch_roof_west', 'porch_roof_east', 'porch_roof_front',
             'massing_east_front_south', 'massing_east_front_east',
             'massing_east_front_patio', 'massing_front_roof_north',
             'massing_front_roof_south', 'massing_front_roof_end_east',
@@ -966,12 +969,34 @@ def scenario_shell_fabric_registry():
             'massing_back_roof_front', 'massing_service_north',
             'massing_service_west', 'massing_service_south',
             'massing_service_roof_north', 'massing_service_roof_south',
-            'massing_service_roof_end_west', 'garage_gable_west',
-            'garage_gable_east', 'garage_gable_front',
+            'massing_service_roof_end_west',
             'mudroom_cross_roof_north', 'mudroom_cross_roof_south', 'mudroom_east_finish',
         }
-        check(set(names) == expected_names,
-              'expanded registry must contain exactly the authored pieces: %r' % names)
+        check(hand_names <= set(names),
+              'every hand-authored piece must still register: %r'
+              % sorted(hand_names - set(names)))
+        generated = sorted(n for n in names if n.startswith('facade_'))
+        check(set(names) == hand_names | set(generated),
+              'nothing registers that is neither hand-authored nor generated: %r'
+              % sorted(set(names) - hand_names - set(generated)))
+        # Every generated piece traces back to a CANONICAL feature: the
+        # name carries its own face, kind and slot, and shellGable's
+        # _west/_east/_front suffixes ride on the end.
+        import re as _re
+        from services import house_facade as _hf
+        canon = {(f['slot'], f['kind'])
+                 for f in _hf.CANONICAL['ground'] + _hf.CANONICAL['roof']}
+        slots = _hf.slot_table()
+        check(generated, 'the elevation must register generated pieces')
+        for gen in generated:
+            m = _re.match(r'^facade_([a-z]+)_([a-z_]+?)_(\d+)(_[a-z_]+)?$', gen)
+            check(m is not None,
+                  'generated name must read facade_<face>_<kind>_<slot>: ' + gen)
+            face, kind, slot = m.group(1), m.group(2), int(m.group(3))
+            check(slots[slot]['face'] == face,
+                  '%s names slot %d, which is on the %s face' % (gen, slot, slots[slot]['face']))
+            check((slot, kind) in canon,
+                  '%s must come from a CANONICAL feature' % gen)
         # arc 4 prerequisite (spec §6): AO occluders come FROM the registry.
         # south_wall/east_wall's registered box is fabBox() of the WHOLE
         # group, which may run larger than the old hand row once porch/trim
@@ -1019,10 +1044,19 @@ def scenario_shell_fabric_registry():
         check(all(f['visible'] for f in fab),
               'exterior boot: every piece visible (solid): %r' % fab)
 
+        # arc 4: the generated pieces take their own verdicts. Every
+        # facade_* piece carries cutawayRoom = the room it fronts, so a
+        # room's own cutaway takes its whole street face with it -- the
+        # wall AND its openings -- exactly as one southWallG did before
+        # the elevation was split into features (a window left standing
+        # in a ghosted wall is a frame floating in the opening).
         EXPECTED = {
             'exterior': [],
             'kitchen': ['east_wall', 'south_wall', 'roof_main_south',
-                        'roof_main_end_east', 'porch_roof_east',
+                        'roof_main_end_east', 'facade_main_gable_9_east',
+                        'facade_main_door_10', 'facade_main_window_9',
+                        'facade_main_window_12',
+                        'facade_wing_window_15', 'facade_wing_window_16',
                         'massing_east_front_south',
                         'massing_front_roof_north', 'massing_front_roof_south',
                         'massing_back_roof_shed',
@@ -1031,15 +1065,21 @@ def scenario_shell_fabric_registry():
                         'massing_east_front_patio',
                         'living_back_room_door', 'living_study_door', 'yard'],
             'garage': ['garage_door', 'garage_shell',
-                       'garage_gable_west', 'garage_gable_east', 'garage_gable_front',
+                       'facade_garage_gable_0_west', 'facade_garage_gable_0_east',
+                       'facade_garage_gable_0_front',
                        'massing_service_roof_south', 'yard'],
             'mudroom': ['mudroom_roof', 'west_skirt', 'west_wall', 'west_cladding',
                         'mudroom_cross_roof_south', 'mudroom_front_cladding',
                         'mudroom_east_finish', 'yard'],
-            'living': ['south_wall', 'roof_main_south', 'porch_roof_west',
-                       'porch_roof_east', 'porch_roof_front',
+            'living': ['south_wall', 'roof_main_south',
+                       'facade_main_gable_9_west', 'facade_main_gable_9_east',
+                       'facade_main_gable_9_front', 'facade_main_porch_9',
+                       'facade_main_door_10', 'facade_main_window_7',
+                       'facade_main_window_9', 'facade_main_window_12',
                        'yard'],
             'study': ['east_wall', 'living_study_door',
+                      'facade_main_porch_9', 'facade_main_window_12',
+                      'facade_wing_window_15', 'facade_wing_window_16',
                       'massing_east_front_patio', 'massing_east_front_south',
                       'massing_front_roof_end_east',
                       'massing_front_roof_south', 'massing_front_roof_north',
@@ -1104,7 +1144,7 @@ def scenario_shell_fabric_registry():
         check(page.evaluate("window.chfNavProbe({settled:true}).focused") == 'door',
               'tapping the visible garage connection must focus the hero')
 
-        for piece in ['south_wall', 'porch_roof_front']:
+        for piece in ['south_wall', 'facade_main_gable_9_front']:
             page.evaluate("window.chfHouseExit()")
             page.wait_for_function("window.chfNavProbe({settled:true})")
             hit = page.evaluate("window.chfNavProbe({piece:%r})" % piece)
@@ -1150,6 +1190,82 @@ def scenario_shell_fabric_registry():
         check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
 
 
+# The facade spec §2.2 pins the canonical facade to the elevation it
+# replaces. Exterior boot, quality=high, INVARIANT_JS `meshes` (the
+# never-merged survivors only), counted where this scenario runs in the
+# file -- so the two cars, two backpacks and hero card the earlier
+# scenarios seeded into the shared temp data dir are in the scene too,
+# identically before and after. Measured on a bare server (nothing
+# seeded) the same build counts 1732, against 1724 at HEAD 34dcf7c
+# before buildElevation() existed.
+#
+# The canonical build lands at 1732, +8, and every one of the eight is
+# the SAME mesh standing unmerged rather than a new or a lost one.
+# mergeStatic merges within one registered piece and needs four items on
+# one material; two buckets only ever reached that floor because a
+# feature shared its wall's group, and spec §6 puts every generated
+# feature in a registered piece of its own:
+#   +4  south_wall's baseboard and the front door's three casing boards
+#       (all 0xe4ddd1 sharp) were one 4-item bucket; the door is
+#       facade_main_door_10 now, so 1 + 3 survivors stand instead.
+#   +4  massing_east_front_south's two corner boards and its two window
+#       sill boards (FARMHOUSE.trim sharp) were one 4-item bucket; the
+#       windows are facade_wing_window_15/16 now, so 2 + 1 + 1 survive.
+# Nothing else moved: the three main-face window frame buckets (7 items
+# each) still merge inside their own pieces, the porch's 13 wood and 12
+# frame pieces still merge, and the garage door's leaf/straps/lights are
+# the same meshes in the same garageDoorG.
+CANONICAL_EXTERIOR_MESHES = 1873
+
+
+def scenario_canonical_facade_pins_the_hand_built_elevation():
+    """The canonical facade builds the elevation it replaced.
+
+    Facade spec §2.2: CANONICAL is today's street face, snapped onto the
+    slot grid. Pixel positions move (no slot width reproduces the old
+    hand-typed x values); the mesh count and the spec the scene was built
+    from do not. §2 also makes the slot table single-source: house.js
+    computes it in JS, services/house_facade.py in Python, and this pins
+    the two against each other slot by slot so they can never drift.
+    """
+    served = live_app()
+    if served is None:
+        return
+    with served.browser() as page:
+        # INVARIANT_JS reads window.__hpScene, which only the probe's
+        # THREE_WRAP captures -- same route idiom as the boot scenario.
+        from house_probe import THREE_WRAP
+        with open('static/vendor/three.min.js', 'rb') as fh:
+            _patched = fh.read() + THREE_WRAP
+        page.route('**/three.min.js*', lambda route: route.fulfill(
+            status=200, content_type='application/javascript', body=_patched))
+        page.add_init_script(DAY_LOCK_JS)
+        page.goto(served.url('house?quality=high'))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_timeout(2200)
+        inv = page.evaluate(INVARIANT_JS)
+        check(not inv.get('err'), 'mesh probe captured the scene: %r' % inv)
+        check(inv['meshes'] == CANONICAL_EXTERIOR_MESHES,
+              'canonical facade builds the same exterior mesh count: '
+              '%d != %d' % (inv['meshes'], CANONICAL_EXTERIOR_MESHES))
+        from services import house_facade as hf
+        check(page.evaluate('window.chfFacade()') == hf.CANONICAL,
+              'the scene is built from CANONICAL, not a hand literal')
+        js_slots = page.evaluate('window.chfFacadeSlots()')
+        py_slots = hf.slot_table()
+        check(len(js_slots) == len(py_slots),
+              'same slot count: %d vs %d' % (len(js_slots), len(py_slots)))
+        for a, b in zip(js_slots, py_slots):
+            for k in ('x0', 'x1', 'cx', 'z'):
+                check(abs(a[k] - b[k]) < 1e-6,
+                      'slot %d %s: %r vs %r' % (b['i'], k, a[k], b[k]))
+            check(a['face'] == b['face'] and a['room'] == b['room'],
+                  'slot %d face/room: %r vs %r' % (b['i'], a, b))
+        errs = [e for e in served.errors()
+                if 'WebGL' not in e and 'GroupMarker' not in e]
+        check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
+
+
 def scenario_navigation_real_mouse():
     """Real clicks cover all four exterior entries, cross-room zones and
     fabric, a zone lean-in, two-step return, inert props, and sky exit.
@@ -1185,7 +1301,7 @@ def scenario_navigation_real_mouse():
             "els => els.map(e => e.dataset.target)"))
         check(exterior_targets == {
             'patio_slider', 'front_door', 'mudroom_cross_roof_south',
-            'garage_gable_front'},
+            'garage_front'},
               'persistent exterior markers must identify every room entrance')
         check(page.locator('#house-hints').evaluate(
             "e => getComputedStyle(e).pointerEvents") == 'none',
@@ -1275,7 +1391,7 @@ def scenario_navigation_real_mouse():
         # regression guard now that it also carries an explicit
         # regFabric room field).
         enter('exterior')
-        p = probe("{piece:'garage_gable_front'}")
+        p = probe("{front:'garage_front'}")
         page.mouse.click(p['cx'], p['cy'])
         page.wait_for_timeout(1200)
         check(page.evaluate("window.chfHouseMode()") == 'garage',
@@ -1472,6 +1588,7 @@ if __name__ == '__main__':
     scenario_fridge_magnets_rebuild_shares_geometry()
     scenario_garage_rebuild_does_not_touch_plaque_textures()
     scenario_shell_fabric_registry()
+    scenario_canonical_facade_pins_the_hand_built_elevation()
     scenario_navigation_real_mouse()
     scenario_shell_without_room_is_inert()
     print("test_house_live OK")
