@@ -76,8 +76,8 @@ def scenario_house_life():
         for fixture in ('back-room-door',):
             visible = page.evaluate('(key) => chfNavProbe({feature:key}) !== null', fixture)
             check(not visible, fixture + ' hides during the kitchen cutaway')
-        check(page.evaluate("chfShellFabric().find(f => f.name === 'patio_slider').verdict === 'solid'"),
-              'the shared patio slider remains visible inside the kitchen cutaway')
+        check(page.evaluate("chfShellFabric().find(f => f.name === 'patio_slider').verdict !== 'solid'"),
+              'the shared patio slider hides with the kitchen wall')
         page.evaluate("chfHouseFindFeature('study')")
         page.wait_for_function('chfNavProbe({settled:true})')
         point = page.evaluate("chfNavProbe({action:'study'})")
@@ -100,6 +100,8 @@ def scenario_house_life():
             check(fixture_point, fixture + ' is visible on the living-room east wall')
         check(page.evaluate("chfShellFabric().find(f => f.name === 'patio_slider').verdict === 'solid'"),
               'the same patio slider is visible from the living room')
+        check(page.evaluate("chfShellFabric().find(f => f.name === 'patio_slider').interiorGlow === 0"),
+              'the patio slider interior glass does not emit the exterior night glow')
         if shots:
             page.screenshot(path=os.path.join(shots, 'living-east-wall.png'))
         page.mouse.click(point['cx'], point['cy'])

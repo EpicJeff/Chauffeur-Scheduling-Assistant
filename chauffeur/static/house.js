@@ -897,7 +897,6 @@
                     box: o.box, mode: o.mode || 'ghost', edges: null,
                     twoSided: !!o.twoSided,
                     cutawayRoom: o.cutawayRoom || null,
-                    alwaysSolid: !!o.alwaysSolid,
                     plane: o.plane ? new T.Vector3().fromArray(o.plane) : null,
                     pad: o.pad === undefined ? 1.5 : o.pad });
     }
@@ -958,9 +957,7 @@
         /* A roof encloses its room rather than separating camera and subject
            along a vertical wall plane. Declare that ownership at its build
            site so both pitches leave together in the room cutaway. */
-        if (f.alwaysSolid) {
-          v = 'solid';
-        } else if (subject && subject.room && f.cutawayRoom === subject.room) {
+        if (subject && subject.room && f.cutawayRoom === subject.room) {
           v = 'hide';
         } else if (subPt && boxOk(f.box)) {
           var p = f.plane || boxCentre(f.box);
@@ -3094,42 +3091,21 @@
 
     /* ---- CORKBOARD (zone: board) on the left wall ---------------------- */
     var board = zoneGroup('board', -6.42, 0, -0.6);
-    /* the PANTRY (architect pass): a REAL closet. A paneled door hangs
-       in the kitchen wall where the corkboard once was; lean in and the
-       door steps aside (micro dollhouse trick) showing the shelves and
-       the honest jars — a long list still means bare shelves. */
+    /* The pantry is an open, cased doorway like the mudroom transition.
+       Its shelves stay legible in the room view; the invisible face keeps
+       the whole opening as the pantry tap target. */
     var boardFace = new T.Mesh(new T.PlaneGeometry(1.6, 3.0),
       new T.MeshBasicMaterial({ visible: false }));
     boardFace.rotation.y = Math.PI / 2;
     boardFace.position.set(0.26, 1.7, 0);
     board.add(boardFace);
-    var pantryDoor = new T.Mesh(
-      NICE ? chamferGeo(0.12, 3.1, 1.6, 0.04) : new T.BoxGeometry(0.12, 3.1, 1.6),
-      PBR ? new T.MeshStandardMaterial({ map: woodDoor, roughness: 0.65 })
-          : new T.MeshLambertMaterial({ color: 0xc9a06c,
-                                        map: woodDoor || null }));
-    pantryDoor.position.set(0.2, 1.6, 0);
-    zoneTag(pantryDoor, 'board');
-    finish(pantryDoor); board.add(pantryDoor);
+    var pantryDoor = null;
     if (DETAIL >= 2) {
-      /* a door is stiles, rails and two panels (S3.1). These are CHILDREN
-         of the slab so they step aside with it on the board lean-in. */
-      [[0.62, 1.10], [-0.72, 1.26]].forEach(function (pn) {
-        zoneTag(box(0.02, pn[1], 1.12, 0x6f5433, 0.07, pn[0], 0, pantryDoor,
-            { rough: 0.8 }), 'board');
-        zoneTag(box(0.04, pn[1] - 0.18, 0.94, 0xc79b63, 0.085, pn[0], 0, pantryDoor,
-            PBR ? { rough: 0.7, map: woodDoor } : { rough: 0.75 }), 'board');
-      });
-      zoneTag(box(0.03, 0.12, 1.22, 0x6f5433, 0.075, -0.02, 0, pantryDoor,
-          { rough: 0.8 }), 'board');
-      /* casing stays on the wall: it frames the card when the door opens */
+      /* Casing grounds the opening even when the pantry card is absent. */
       box(0.22, 3.36, 0.14, 0xe4ddd1, 0.16, 1.68, -0.87, board);
       box(0.22, 3.36, 0.14, 0xe4ddd1, 0.16, 1.68, 0.87, board);
       box(0.22, 0.14, 1.88, 0xe4ddd1, 0.16, 3.29, 0, board);
     }
-    var pknob = cyl(0.055, 0.055, 0.09, 0xd8c48a, 0.3, 1.55, 0.55, board, 10,
-                    CHROME);
-    zoneTag(pknob, 'board');
     /* the closet itself: a bump-out behind the wall */
     (function () {
       function cmat() {
@@ -4526,14 +4502,20 @@
     var patioSliderG = shellGroup();
     var sliderFrame = shellWindow(patioSliderG, EWX1_4 + 0.23, 1.95, 5.80,
                                    Math.PI / 2, 2.65, 3.65, false);
-    [-0.17, 0.17].forEach(function (face) {
-      shellBox(sliderFrame, 0.08, 0.55, 0.10, FARMHOUSE.wood, 0.15, 0, face);
-    });
+    shellBox(sliderFrame, 0.08, 0.55, 0.10, FARMHOUSE.wood, 0.15, 0, 0.17);
     shellBox(sliderFrame, 2.95, 0.10, 0.32, FARMHOUSE.stoop, 0, -1.86, 0.02);
-    patioSliderG.updateMatrixWorld(true);
-    regFabric(patioSliderG, { name: 'patio_slider', n: [1, 0, 0],
-                              box: fabBox(patioSliderG), room: 'kitchen',
-                              alwaysSolid: true });
+    /* The wall is intentionally solid rather than boolean-cut. Give the
+       same registered assembly a room-side face just inside the lining;
+       otherwise the exterior face is occluded when viewed from living. */
+    var sliderInside = shellWindow(patioSliderG,
+                                    EWX1_4 - WALL_T4 - 0.08, 1.95, 5.80,
+                                    -Math.PI / 2, 2.65, 3.65, false);
+    sliderInside.traverse(function (m) {
+      if (m.userData && m.userData.shellWindow) m.userData.interiorWindow = true;
+    });
+    shellBox(sliderInside, 0.08, 0.55, 0.10, FARMHOUSE.wood, 0.15, 0, 0.17);
+    shellBox(sliderInside, 2.95, 0.10, 0.32, FARMHOUSE.stoop, 0, -1.86, 0.02);
+    shellRegister(patioSliderG, 'patio_slider', [1, 0, 0], 'kitchen');
 
 
     /* Continue west cladding along the living room to the south corner. */
@@ -7579,7 +7561,7 @@
        their maps, toggles their visibility, or rebuilds them wholesale. */
     var NO_MERGE = new Set([carsG, busG, mudBagsG, magnets, skyDome,
       calFace, boardFace, critFace, radioFace, paneMesh, plaque, needle,
-      steam, steam2, pendants, fridgeDoorTop, pantryDoor]);
+      steam, steam2, pendants, fridgeDoorTop]);
     (pantryJars || []).forEach(function (j) { NO_MERGE.add(j); });
     /* R3: lids ride jar.visible via three's own parent-visibility cascade
        (they're children of the jar mesh, not the merge-eligible `board`
@@ -8366,8 +8348,9 @@
       shellWindows.forEach(function (m) {
         if (!m.material || !m.material.emissive) return;
         if (m.material.color) m.material.color.setHex(FARMHOUSE.windowDark);
-        m.material.emissive.setHex(n ? FARMHOUSE.curtainGlow : 0x000000);
-        m.material.emissiveIntensity = n ? FARMHOUSE.curtainIntensity : 0;
+        var glow = n && !m.userData.interiorWindow;
+        m.material.emissive.setHex(glow ? FARMHOUSE.curtainGlow : 0x000000);
+        m.material.emissiveIntensity = glow ? FARMHOUSE.curtainIntensity : 0;
       });
       lampGlass.forEach(function (m) {
         if (!m.material || !m.material.emissive) return;
@@ -8939,8 +8922,6 @@
     swap(webgl.plaque, webgl.heroTex(s.door || {}));
     swap(webgl.calFace, webgl.calendarTex(
       focused === 'calendar' ? { __blank: true } : (s.calendar || {})));
-    /* leaned in, the pantry door steps aside to show the shelves */
-    if (webgl.pantryDoor) webgl.pantryDoor.visible = focused !== 'board';
     /* the pantry's honesty: a long list empties the shelves */
     var stocked = Math.max(0, 8 - Math.min(8, (s.board || {}).items || 0));
     webgl.pantryJars.forEach(function (jar, ji) {
@@ -9657,9 +9638,14 @@
   window.chfShellFabric = function () {
     if (!webgl) return [];
     return webgl.FABRIC.map(function (f) {
+      var interiorGlow = null;
+      f.g.traverse(function (m) {
+        if (m.userData && m.userData.interiorWindow && m.material)
+          interiorGlow = m.material.emissiveIntensity;
+      });
       return { name: f.name, mode: f.mode, visible: f.g.visible,
                room: f.g.userData.room || null, normal: f.n.toArray(), box: f.box,
-               verdict: f.verdict,
+               verdict: f.verdict, interiorGlow: interiorGlow,
                edgesVisible: f.edges ? f.edges.visible : null };
     });
   };
