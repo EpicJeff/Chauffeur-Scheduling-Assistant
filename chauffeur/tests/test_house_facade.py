@@ -340,6 +340,19 @@ def scenario_photo_failures_are_answers():
         model_pools.call_pool_json = orig
 
 
+def scenario_home_section_pins():
+    import io, os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    tpl = io.open(os.path.join(root, 'templates', 'config.html'), encoding='utf-8').read()
+    check('id="home"' in tpl and 'house_facades' in tpl and 'house_facade_active' in tpl, 'the Home section exists')
+    for needle in ('facadePhoto(', 'facadeSaveNew(', 'facadeOverwrite(', 'facadeActivate(', 'facadeDelete(', 'facadeRename(', 'facadePreview('):
+        check(needle in tpl, f'hand path method {needle}')
+    check('From your photo' in tpl, 'the draft banner names its source')
+    for bad in ('alert(', 'confirm(', 'prompt('):
+        sec = tpl[tpl.index('id="home"'):tpl.index('id="home"') + 20000]
+        check(bad not in sec.replace('promptConfirm(', '').replace('promptInput(', ''), f'no browser dialogs: {bad}')
+
+
 if __name__ == '__main__':
     for fn in (scenario_slot_table_is_derived_from_the_faces,
                scenario_canonical_is_normal_and_idempotent,
@@ -358,6 +371,7 @@ if __name__ == '__main__':
                scenario_routes_and_template,
                scenario_route_wrappers_map_errors,
                scenario_photo_becomes_a_draft_never_a_save,
-               scenario_photo_failures_are_answers):
+               scenario_photo_failures_are_answers,
+               scenario_home_section_pins):
         fn()
         print('  ok ', fn.__name__)
