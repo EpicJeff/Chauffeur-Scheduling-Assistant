@@ -27,16 +27,16 @@ Out (declined on record, do not re-propose inside this arc):
 
 ## 2. Slots: derived from the envelope
 
-The street elevation is one strip of slots, west to east. Slot width `SLOT_W = 1.85` (a `tall` window 1.6 wide plus a 0.25 reveal; today's features do not share a pitch, so the canonical facade is the snapped one — see 2.2). Slots are derived from the four street faces in `FULL_HOUSE` and the shell constants, in this order:
+The street elevation is one strip of slots, west to east. Slot width `SLOT_W = 1.85` (a `tall` window 1.6 wide plus a 0.25 reveal; today's features do not share a pitch, so the canonical facade is the snapped one — see 2.2). Per face, the slot count is `n = max(1, round(width / SLOT_W))` and every slot on that face is `width / n` wide (uniform per face, no remainder slot). Slots are derived from the four street faces in `FULL_HOUSE` and the shell constants, in this order:
 
-| face | x range (current values) | z (street face) | eave | fronting room | slots |
-|---|---|---|---|---|---|
-| `garage` | -18.20 .. -12.60 | 10.10 | 4.7 | garage | 3 |
-| `mudroom` | -12.60 .. -7.15 | 10.10 | 5.6 | mudroom | 3 |
-| `main` | -7.15 .. 6.85 | SWZ1 = 14.55 | EXT_TOP4 = 5.6 | living (west half kitchen behind) | 7 |
-| `wing` | 6.85 .. 14.65 | studySouth = 16.72 | 5.6 | study | 4 |
+| face | x range (current values) | z (street face) | eave | fronting room | slots (global index) | slot width |
+|---|---|---|---|---|---|---|
+| `garage` | -18.20 .. -12.60 | 10.10 | 4.7 | garage | 3 (0–2) | 1.867 |
+| `mudroom` | -12.60 .. -7.15 | 10.10 | 5.6 | mudroom | 3 (3–5) | 1.817 |
+| `main` | -7.15 .. 6.85 | SWZ1 = 14.55 | EXT_TOP4 = 5.6 | living (west half kitchen behind) | 8 (6–13) | 1.75 |
+| `wing` | 6.85 .. 14.65 | studySouth = 16.72 | 5.6 | study | 4 (14–17) | 1.95 |
 
-Seventeen slots. Each slot record: `{i, face, x0, x1, cx, z, normal:[0,0,1], eave, room, roofPlane}`. The slot table is computed in ONE place — `services/house_facade.py` (`slot_table()`) — from a `FACES` constant that mirrors the JS constants, and a pinned test asserts the JS-side table (exposed as `window.chfFacadeSlots()`) equals the Python one, so the two never drift. Width remainders (a face is not an exact multiple of `SLOT_W`) go to the last slot of that face; no slot is narrower than `0.6 * SLOT_W`.
+Eighteen slots. `slot` in a spec is the GLOBAL index. Each slot record: `{i, face, x0, x1, cx, z, eave, room, roof}`. The slot table is computed in ONE place — `services/house_facade.py` (`slot_table()`) — from a `FACES` constant that mirrors the JS constants, and a pinned live test asserts the JS-side table (`window.chfFacadeSlots()`) equals the Python one, so the two never drift.
 
 Faces sit at different depths, so a slot strip is one-dimensional in x but each slot knows its own z. A feature never spans across a face boundary (see 4.3).
 
@@ -46,12 +46,12 @@ Each face has one street-facing roof plane: `main` -> `roof_main` south pitch; `
 
 ### 2.2 The canonical facade is the current elevation, snapped
 
-Today's positions (windows at x -4.6 / -1.9 / 4.6, door at 1.3, porch 8.4 wide) share no common pitch, so no slot width reproduces them exactly. `CANONICAL` is therefore the **snapped** elevation: every feature lands on the nearest slot, and no feature moves more than 0.8 units. The mesh count and the registered fabric names are pinned to the pre-arc build; pixel positions are not. Slot centres, main face (x0 -7.15, `SLOT_W` 1.85, seven slots, the last takes the 1.05 remainder): -6.225, -4.375, -2.525, -0.675, 1.175, 3.025, 5.45.
+Today's positions (windows at x -4.6 / -1.9 / 4.6, door at 1.3, porch 8.4 wide) share no common pitch, so no slot width reproduces them exactly. `CANONICAL` is therefore the **snapped** elevation: every feature lands on the nearest slot, and no feature moves more than 0.9 units. The mesh count and the registered fabric names are pinned to the pre-arc build; pixel positions are not. Slot centres, main face (slots 6–13, width 1.75): -6.275, -4.525, -2.775, -1.025, 0.725, 2.475, 4.225, 5.975. Wing (14–17, width 1.95): 7.825, 9.775, 11.725, 13.675.
 
-- `main`: windows at slots 1, 2 (the pair, was -4.6/-1.9 -> -4.375/-2.525) and 6 (the single, was 4.6 -> 5.45), size `tall`; door at slot 4 (was 1.3 -> 1.175); porch `sitting` at slot 2 span 4 (x -3.45..3.95, 7.4 wide; was -2.9..5.5) — the builder centres posts and step on the span's extent; roof: `gable` at slot 2 span 4 (today's `porch_roof`, over the porch). The single window at slot 6 stands east of the porch, as the pair stands west of it.
-- `wing` (x0 6.85, four slots, centres 7.775, 9.625, 11.475, 13.525): windows at slots 1 and 3 (were 9.10/12.60 -> 9.625/13.525), size `standard` (1.55 x 2.70 today; the table's `standard` is 1.55 x 2.70 so the wing is unchanged in size), roof `eave`.
-- `garage` (x0 -18.2, three slots): `garage_door {style: carriage, leaves: 1}` — a garage door always spans its whole face (slot 0, span 3, forced by normalize), and its leaf count sets the width: one leaf 4.4 (today's, centred on the face at -15.4 exactly), two leaves 5.0. Roof: `gable` at slot 0 span 3 (today's `garage_gable`).
-- `mudroom`: all `wall`, roof `eave`.
+- `main`: windows at slots 7 (was -4.6 → -4.525) and 9 (was -1.9 → -1.025; equidistant to slot 8, slot 9 chosen so the pair keeps a reveal between them) and 12 (the single, was 4.6 → 4.225), size `tall`; door at slot 10 (was 1.3 → 0.725); porch `sitting` at slot 9 span 4 (x -1.9..5.1, 7.0 wide; was -2.9..5.5) — the builder centres posts and step on the span's extent; roof: `gable` at slot 9 span 4 (today's `porch_roof`). The window at slot 9 sits under the porch's west end and the single at slot 12 under its east end — both allowed, a porch is an overlay (4.5).
+- `wing`: windows at slots 15 and 16 (were 9.10/12.60 → 9.775/11.725), size `standard` (1.55 x 2.70, today's wing size, unchanged), roof `eave`.
+- `garage` (slots 0–2): `garage_door {style: carriage, leaves: 1}` — a garage door always spans its whole face (slot 0, span 3, forced by normalize), and its leaf count sets the width: one leaf 4.4 (today's, centred on the face at -15.4 exactly), two leaves 5.0. Roof: `gable` at slot 0 span 3 (today's `garage_gable`).
+- `mudroom` (slots 3–5): all `wall`, roof `eave`.
 - `pitch_deg`: the current `PITCH_FAMILY` value (atan2(2.05, 2.95) = 34.8 degrees); style `cladding: batten, body: white, roof: charcoal, frame: black, door: wood, trim: white`.
 
 A pinned live test asserts that building the canonical spec yields the same registered fabric names and the same exterior mesh count as the hand-authored build it replaces (count recorded RED-first from HEAD before the hand blocks are deleted).
@@ -70,7 +70,7 @@ A pinned live test asserts that building the canonical spec yields the same regi
     "door":  "wood" | "black" | "red" | "sage",
     "trim":  "white" | "black"
   },
-  "ground": [ { "slot": 0..16, "span": 1..N, "kind": "window", "size": "tall"|"standard"|"small" },
+  "ground": [ { "slot": 0..17, "span": 1..N, "kind": "window", "size": "tall"|"standard"|"small" },
               { "slot", "span", "kind": "door" },
               { "slot", "span", "kind": "garage_door", "style": "carriage"|"panel"|"glass", "leaves": 1|2 },
               { "slot", "span", "kind": "porch", "type": "sitting"|"stoop"|"covered" },
@@ -147,7 +147,7 @@ Faces are at different depths (10.10 / 14.55 / 16.72), so a porch spanning `main
 ## 7. Hand path: config.html "Home" section (beside Cars)
 
 - **List**: every saved facade plus Canonical; an "active" radio; rename; delete (Canonical has neither). Switching active is immediate (one PUT).
-- **Editor**: a strip of seventeen slot cells grouped under four face labels. Tapping a cell opens its ground feature (kind + size/type/style) and roof feature (kind + dormer window) with a span stepper; spans render as a wider cell. Pitch slider (22.5–35). Six style pickers showing palette swatches by name. Notes from `normalize` show under the strip after every edit (the editor normalizes through `POST /api/house/facades/preview`, a pure round-trip that stores nothing).
+- **Editor**: a strip of eighteen slot cells grouped under four face labels. Tapping a cell opens its ground feature (kind + size/type/style) and roof feature (kind + dormer window) with a span stepper; spans render as a wider cell. Pitch slider (22.5–35). Six style pickers showing palette swatches by name. Notes from `normalize` show under the strip after every edit (the editor normalizes through `POST /api/house/facades/preview`, a pure round-trip that stores nothing).
 - **Photo**: "Match a photo" file input -> `POST .../photo` -> the draft loads into the editor with a banner "From your photo — not saved yet". Save as new (name prompt via `promptInput`) or Overwrite the currently loaded saved facade. Nothing saves without one of those two taps.
 - **Preview** link opens `/house` in a new tab (the panel builds from the active facade, so preview = activate + open; the banner says so).
 - No browser dialogs; `showGlobalAlert`/`promptConfirm`/`promptInput` per the standing rule. Tailwind rebuilt after template edits.
