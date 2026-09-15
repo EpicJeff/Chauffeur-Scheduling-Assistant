@@ -128,6 +128,27 @@ prop a role, not an arbitrary hex.
 reads as plastic. Default `mat()` roughness 0.86 is correct for wall, fabric
 and matte paint. **Fabric must never take `GLOSS`.**
 
+### The exterior: `PALETTE`, not `FARMHOUSE` literals (facade generator, v2.499.x)
+
+The modern-farmhouse conversion (v2.495.0) gave the exterior one named table,
+`FARMHOUSE`, and every restyled surface read from it. The facade generator
+arc turned that into a real palette: `PALETTE` in `house.js` holds one row
+per style role — `body`, `roof`, `frame`, `door`, `trim` — each row a small
+set of named hexes (`body.white`, `roof.charcoal`, `door.wood`, and so on).
+`FARMHOUSE` is now *rebuilt from the active facade's style at build time*
+(`FARMHOUSE.body = PALETTE.body[style.body]` etc.), so every existing
+`FARMHOUSE.*` read site keeps working unchanged while the actual colour
+comes from whichever facade — canonical or a saved one — the house was
+built from. Cladding fill (`battenT`/`sidingT`) and roof fill (`shingleT`)
+take their base tone from the chosen body/roof role the same way.
+
+The rule this cements for exterior work: **a new exterior colour is a
+`PALETTE` row, never a literal hex dropped into a builder.** The model
+behind the photo path and the hand editor on Config → Home both choose by
+palette NAME only — hex lives in exactly one place. This does not touch
+the interior neutrals/anchors/accent tables above; those still take a role
+the ordinary way, `PALETTE` governs the street face only.
+
 ---
 
 ## 3. Prop vocabulary — what a thing IS

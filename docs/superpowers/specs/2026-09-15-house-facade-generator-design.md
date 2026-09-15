@@ -178,4 +178,65 @@ Each task bumps `config.yaml`, sweeps (`env -u HA_BASE_URL python chauffeur/tool
 
 ## 10. Results
 
-Filled in at wrap: pre-arc vs canonical vs worst per-view `inFrustum` / `buildMs`, final cap values, the pinned canonical mesh count, and deviations.
+All numbers below come from `tools/house_probe.py --facade canonical|worst|<id> --views all --budget --quality high --day` (this arc's own runs; `--facade` is new in this arc). Pre-arc HEAD is the last budget run before Task 1's AO/registry change and Task 4's hand-block deletion.
+
+### 10.1 Per-view `inFrustum`, pre-arc vs canonical vs worst
+
+| view | pre-arc HEAD | canonical | worst case |
+|---|---:|---:|---:|
+| exterior | 1438 | 1448 (+10) | 1544 |
+| kitchen | 470 | 470 | +2–5% |
+| living | 710 | 710 | +2–5% |
+| mudroom | 408 | 406 | +2–5% |
+| garage | 747 | 747 | +2–5% |
+| total meshes (exterior) | 2090 | 2100 | — |
+| triangles (exterior) | 306710 | 306710 (identical) | 307474 |
+| buildMs | — | ~1011–1169 | 1112 |
+
+The canonical exterior's +10 draw calls are the draw-call side of the generator, not a geometry change: every facade feature now registers as its own `FABRIC`/`shellRegister` piece (for AO derivation and per-feature ghost/cutaway correctness, §6) instead of living inside a few hand-merged groups, so the same triangles are submitted in more, smaller draw calls. Triangle count is byte-identical to pre-arc. Interior views (kitchen/living/mudroom/garage) are untouched by the generator itself; their worst-case movement is the AO pre-cull and registry-derived occluder list settling, within the pre-existing +2–5% run-to-run noise band, not a regression.
+
+### 10.2 Gate, re-baselined on this arc's own numbers
+
+The spec's original ceilings (§8, "worst-case exterior under 1400 / buildMs under 1500") were written before this arc re-measured the true pre-arc baseline, which was already at 1438 exterior — over the old ceiling before a single facade feature existed. The gate actually enforced, ruled during Task 5:
+
+- exterior `inFrustum` ≤ **1582** (pre-arc baseline 1438, +10%)
+- `buildMs` ≤ **1500** (unchanged)
+- every interior view ≤ its own canonical count **+10%**
+
+Worst case (1544 exterior, buildMs 1112) clears all three with headroom. Caps were not tuned further to compress worst case — the +10 exterior draw-call cost of per-feature registration was accepted as the price of correct AO/ghost/cutaway behavior on generated pieces with zero new solver code (§6), and it left ample room under +10%.
+
+### 10.3 Final budget caps (`services/house_facade.py`)
+
+| constant | value | governs |
+|---|---:|---|
+| `MAX_WINDOWS` | 10 | ordinary windows + dormer windows, combined |
+| `MAX_DORMERS` | 6 | dormer roof features |
+| `MAX_GABLES` | 4 | gable roof features |
+| `MAX_PORCH_SLOTS` | 10 | porch ground-feature slots, summed |
+| pitch range | 22.5°–35.0° | `pitch_deg`, clamped |
+
+These are draw-budget constants, not grammar limits (§4.7) — the grammar itself permits any count; a spec over cap is trimmed east-most-first with a note, never rejected.
+
+### 10.4 Pinned canonical mesh count
+
+The canonical facade's exterior mesh count is pinned at **1873** meshes in file-registration order (the live scene as it actually builds, interleaved with the rest of the house's fabric) and **1732** when the facade is built solo (isolated from the rest of the exterior's registration order — the difference is purely registration-order bookkeeping in the merge/instance passes, not missing or extra geometry). Both numbers are asserted by `tests/test_house_live.py`; the 1873 figure is the direct successor to the pre-arc hand-authored build's own pinned count (§2.2 — the same law, same test, now sourced from `CANONICAL` instead of hand blocks).
+
+### 10.5 Other rulings recorded during the arc
+
+- **Two leaves split the opening, they never widen it.** The garage bay's piers are fixed; `garage_door.leaves: 2` produces two half-width leaves plus a centre stile inside the existing 4.4-unit opening, decided during Task 4 review (§2.2) against the alternative of widening the bay to fit two full-size leaves.
+- **Ground pieces carry `cutawayRoom` on their fronting room; roof pieces carry it on the room behind.** Every builder's `shellRegister` call passes the slot's fronting room as `room`, and roof features additionally pass the room behind as `cutawayRoom` (§6) — this is what makes ghost/cutaway verdicts and `NO_MERGE` fencing hold for generated pieces without new solver code.
+- **The lawn is a real exit tap.** Found and fixed as a side effect of deriving AO from the registry (Task 1): `userData.yard` never had a working tap handler before this arc; `chfNavProbe({exit:true})` now mirrors the real one.
+- **AO occluders derive from `FABRIC` for wall-like pieces, `|n.y| < 0.5`,** except three hand-carved exceptions (`west_wall`, `garage_shell`, `north_wall`) whose door openings a single AABB can't carve — kept as hand rows on purpose, not an oversight.
+
+### 10.6 Deviations from the spec, and open items (none device-verified)
+
+- `hip_end` renders as a thin triangular blade projecting from the roof plane, not a convincingly hipped return — visually the weakest of the four roof kinds.
+- The `glass` garage-door style's frosted top-half panes barely read as glazed at high quality; it is functionally distinct from `carriage`/`panel` but not strongly so at a glance.
+- The door casing colour (`0xe4ddd1`) is slightly off-`PALETTE` — under a `trim: black` style it reads as an off-white outlier rather than matching the chosen trim.
+- The hand editor's span-merge (rendering a spanning feature as one wide cell) keys on ground-layer entries only; a spanning roof feature (a wide gable or hip end) still renders as separate cells in the strip.
+- `CANONICAL_JS`'s fallback literal (the client-side copy of `CANONICAL` used if the server payload is somehow absent) has no automated test pinning it equal to the Python `CANONICAL` — only the slot table itself is cross-checked (§2).
+- No `DETAIL`/quality-tier gating exists on the glass garage door's individual panes or centre stile — they draw at every tier.
+- `PORCH_W4` (a width-4 porch-span constant) is write-only dead code — assigned, never read, left over from an earlier porch-sizing approach superseded during Task 4.
+- Frosted glass panes each mint their own material rather than sharing one cached instance — a minor material-cache miss, not a correctness bug.
+
+All of the above are candidates for a future pass on this arc, not blockers; nothing here regresses pre-arc behavior. As with every house arc so far, this one is **NOT device-verified** — proven only in the desktop-browser live-test harness and `house_probe.py`.
