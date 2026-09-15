@@ -244,6 +244,45 @@ def scenario_routes_and_template():
     check(len(hf.list_facades()) == 1, 'preview stored nothing')
 
 
+def scenario_route_wrappers_map_errors():
+    """The GET/preview wrappers are exercised above; this covers the rest —
+    create/activate/update/delete, and their try/except -> HTTPException
+    (404 for unknown, 409 for canonical) mapping. Calls the FastAPI route
+    functions directly, the same way FastAPI would after routing."""
+    import main
+    from fastapi import HTTPException
+    _fresh()
+    out = main.house_facade_create({'name': 'Ours', 'spec': hf.worst_case()})
+    fid = out['facade']['id']
+    check(bool(fid) and out['active'] == 'canonical', 'create returns the facade, never activates unasked')
+
+    act = main.house_facade_activate({'id': fid})
+    check(act['active'] == fid, 'activate wrapper sets the active id')
+
+    upd = main.house_facade_update(fid, {'name': 'Ours 2'})
+    check(upd['facade']['name'] == 'Ours 2', 'update wrapper renames')
+
+    for fn, args in ((main.house_facade_update, ('nope', {'name': 'x'})),
+                     (main.house_facade_activate, ({'id': 'nope'},)),
+                     (main.house_facade_delete, ('nope',))):
+        try:
+            fn(*args)
+            check(False, f'{fn.__name__} on an unknown id should 404')
+        except HTTPException as e:
+            check(e.status_code == 404, f'{fn.__name__} unknown id -> 404, got {e.status_code}')
+
+    for fn, args in ((main.house_facade_update, ('canonical', {'name': 'x'})),
+                     (main.house_facade_delete, ('canonical',))):
+        try:
+            fn(*args)
+            check(False, f'{fn.__name__} on canonical should 409')
+        except HTTPException as e:
+            check(e.status_code == 409, f'{fn.__name__} canonical -> 409, got {e.status_code}')
+
+    done = main.house_facade_delete(fid)
+    check(done == {'status': 'ok', 'active': 'canonical'}, f'delete wrapper falls back to canonical: {done}')
+
+
 if __name__ == '__main__':
     for fn in (scenario_slot_table_is_derived_from_the_faces,
                scenario_canonical_is_normal_and_idempotent,
@@ -259,6 +298,7 @@ if __name__ == '__main__':
                scenario_garbage_in_never_raises,
                scenario_worst_case_is_within_caps,
                scenario_storage_laws,
-               scenario_routes_and_template):
+               scenario_routes_and_template,
+               scenario_route_wrappers_map_errors):
         fn()
         print('  ok ', fn.__name__)
