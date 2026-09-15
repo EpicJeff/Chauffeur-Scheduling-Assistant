@@ -2629,7 +2629,7 @@
                                 <label>Ground
                                     <select class="w-full bg-gray-800" x-model="facadeCell.ground.kind" @change="facadeCellApply()">
                                         <option value="wall">wall</option><option value="window">window</option><option value="door">door</option>
-                                        <option value="garage_door">garage door</option><option value="porch">porch</option>
+                                        <option value="garage_door">garage door</option>
                                     </select></label>
                                 <label>Roof
                                     <select class="w-full bg-gray-800" x-model="facadeCell.roof.kind" @change="facadeCellApply()">
@@ -2638,9 +2638,6 @@
                                 <label x-show="facadeCell.ground.kind === 'window'">Size
                                     <select class="w-full bg-gray-800" x-model="facadeCell.ground.size" @change="facadeCellApply()">
                                         <option>tall</option><option>standard</option><option>small</option></select></label>
-                                <label x-show="facadeCell.ground.kind === 'porch'">Porch
-                                    <select class="w-full bg-gray-800" x-model="facadeCell.ground.type" @change="facadeCellApply()">
-                                        <option>sitting</option><option>stoop</option><option>covered</option></select></label>
                                 <label x-show="facadeCell.ground.kind === 'garage_door'">Door
                                     <select class="w-full bg-gray-800" x-model="facadeCell.ground.style" @change="facadeCellApply()">
                                         <option>carriage</option><option>panel</option><option>glass</option></select></label>
@@ -2650,6 +2647,11 @@
                                 <label x-show="facadeCell.roof.kind === 'dormer'"><input type="checkbox" x-model="facadeCell.roof.window" @change="facadeCellApply()"> dormer window</label>
                                 <label>Ground span <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.ground.span" @change="facadeCellApply()"></label>
                                 <label>Roof span <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.roof.span" @change="facadeCellApply()"></label>
+                                <label>Porch here
+                                    <select class="w-full bg-gray-800" x-model="facadeCell.porch.type" @change="facadeCellApply()">
+                                        <option value="none">none</option><option value="sitting">sitting</option><option value="stoop">stoop</option><option value="covered">covered</option>
+                                    </select></label>
+                                <label x-show="facadeCell.porch.type !== 'none'">Porch span <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.porch.span" @change="facadeCellApply()"></label>
                             </div>
                             <template x-if="facadeDraft">
                                 <div class="grid grid-cols-3 gap-2 text-sm">
@@ -2668,7 +2670,7 @@
                             <div class="flex gap-2">
                                 <button class="px-3 py-1 rounded bg-teal-600" @click="facadeSaveNew()">Save as new</button>
                                 <button class="px-3 py-1 rounded bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed" :disabled="!facadeDraftId || facadeDraftId === 'canonical'" @click="facadeOverwrite()">Overwrite</button>
-                                <button class="px-3 py-1 rounded bg-gray-700" @click="facadeLoad(facades[0])">Reset to canonical</button>
+                                <button class="px-3 py-1 rounded bg-gray-700" @click="facades[0] && facadeLoad(facades[0])">Reset to canonical</button>
                             </div>
                         </div>
                     </div>
@@ -4616,7 +4618,7 @@
                 facadeDraftId: null,
                 facadeDraftSource: 'hand',
                 facadeSlot: null,
-                facadeCell: { ground: { kind: 'wall', span: 1 }, roof: { kind: 'eave', span: 1 } },
+                facadeCell: { ground: { kind: 'wall', span: 1 }, roof: { kind: 'eave', span: 1 }, porch: { type: 'none', span: 1 } },
                 facadeNotes: [],
                 facadeStyleOptions: {
                     cladding: ['batten', 'clapboard'],
@@ -4636,8 +4638,13 @@
                     await this.loadFacades();
                     this.$watch('facadeSlot', i => {
                         if (i === null) return;
-                        const g = this.facadeEntry('ground', i), r = this.facadeEntry('roof', i);
-                        this.facadeCell = { ground: g ? { ...g } : { kind: 'wall', span: 1 }, roof: r ? { ...r } : { kind: 'eave', span: 1 } };
+                        const g = this.facadeEntry('ground', i), r = this.facadeEntry('roof', i), p = this.facadePorch(i);
+                        this.facadeCell = {
+                            ground: g ? { ...g } : { kind: 'wall', span: 1 },
+                            roof: r ? { ...r } : { kind: 'eave', span: 1 },
+                            porch: p ? { type: p.type, span: p.span } : { type: 'none', span: 1 }
+                        };
+                        this._origPorch = JSON.stringify(this.facadeCell.porch);
                     });
                     this.loadIcsFeeds();  // not awaited: feeds are a side panel
                     await this.loadMembers();
@@ -5589,7 +5596,15 @@
                     }
                 },
                 facadeLoad(f) { this.facadeDraft = JSON.parse(JSON.stringify(f.spec)); this.facadeDraftId = f.id; this.facadeDraftSource = 'hand'; this.facadeNotes = []; this.facadeSlot = null; },
-                facadeEntry(layer, i) { return (this.facadeDraft[layer] || []).find(e => i >= e.slot && i < e.slot + e.span); },
+                facadeEntry(layer, i) {
+                    // A porch is an overlay (spec 4.5): it shares slots with the door/window
+                    // underneath, so the "entry at this slot" is always the non-porch one.
+                    const covering = e => i >= e.slot && i < e.slot + e.span;
+                    return (this.facadeDraft[layer] || []).filter(covering).find(e => e.kind !== 'porch');
+                },
+                facadePorch(i) {
+                    return (this.facadeDraft.ground || []).find(e => e.kind === 'porch' && i >= e.slot && i < e.slot + e.span);
+                },
                 facadeCellSelect(i) { const g = this.facadeEntry('ground', i); this.facadeSlot = g ? g.slot : i; },
                 facadeCellText(i) {
                     const g = this.facadeEntry('ground', i);
@@ -5606,26 +5621,34 @@
                     if (isStart && isEnd) cls += 'rounded';
                     else if (isStart) cls += 'rounded-l';
                     else if (isEnd) cls += 'rounded-r';
+                    if (this.facadePorch(i)) cls += ' border-b-2 border-b-teal-700';  // porch marker (side-scoped color: a bare border-{color} would repaint every side)
                     return cls;
                 },
                 facadeCellApply() {
                     const i = this.facadeSlot; if (i === null) return;
                     ['ground', 'roof'].forEach(layer => {
                         const cell = this.facadeCell[layer];
-                        this.facadeDraft[layer] = (this.facadeDraft[layer] || []).filter(e => !(i >= e.slot && i < e.slot + e.span));
+                        this.facadeDraft[layer] = (this.facadeDraft[layer] || []).filter(e => e.kind === 'porch' || !(i >= e.slot && i < e.slot + e.span));
                         if (cell.kind !== 'wall' && cell.kind !== 'eave') this.facadeDraft[layer].push({ ...cell, slot: i, span: Math.max(1, cell.span || 1) });
                     });
+                    if (JSON.stringify(this.facadeCell.porch) !== this._origPorch) {
+                        this.facadeDraft.ground = (this.facadeDraft.ground || []).filter(e => !(e.kind === 'porch' && i >= e.slot && i < e.slot + e.span));
+                        if (this.facadeCell.porch.type !== 'none') {
+                            this.facadeDraft.ground.push({ slot: i, span: Math.max(1, this.facadeCell.porch.span || 1), kind: 'porch', type: this.facadeCell.porch.type });
+                        }
+                        this._origPorch = JSON.stringify(this.facadeCell.porch);
+                    }
                     this.facadePreview();
                 },
                 async facadePreview() {
                     try {
                         const res = await fetch(`${this.apiBase}api/house/facades/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spec: this.facadeDraft }) });
                         const data = await res.json();
-                        if (!res.ok) { showGlobalAlert(data.detail || 'Could not save the facade'); return; }
+                        if (!res.ok) { showGlobalAlert(data.detail || 'Could not check the facade'); return; }
                         this.facadeDraft = data.spec; this.facadeNotes = data.notes;
                     } catch (e) {
                         console.error("Failed to preview facade", e);
-                        showGlobalAlert('Could not save the facade');
+                        showGlobalAlert('Could not check the facade');
                     }
                 },
                 async facadePhoto(ev) {
@@ -5634,7 +5657,7 @@
                     try {
                         const res = await fetch(`${this.apiBase}api/house/facades/photo`, { method: 'POST', body: fd });
                         const data = await res.json(); ev.target.value = '';
-                        if (!res.ok) { showGlobalAlert(data.detail || 'Could not save the facade'); return; }
+                        if (!res.ok) { showGlobalAlert(data.detail || 'Could not read the photo'); return; }
                         if (!data.draft) { showGlobalAlert(data.error || 'Could not read the photo'); return; }
                         this.facadeDraft = data.draft; this.facadeNotes = data.notes || []; this.facadeDraftSource = 'photo'; this.facadeSlot = null;
                     } catch (e) {
@@ -5672,11 +5695,11 @@
                     try {
                         const res = await fetch(`${this.apiBase}api/house/facades/active`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
                         const data = await res.json();
-                        if (!res.ok) { showGlobalAlert(data.detail || 'Could not save the facade'); return; }
+                        if (!res.ok) { showGlobalAlert(data.detail || 'Could not switch facades'); return; }
                         this.facadeActive = id;
                     } catch (e) {
                         console.error("Failed to activate facade", e);
-                        showGlobalAlert('Could not save the facade');
+                        showGlobalAlert('Could not switch facades');
                     }
                 },
                 async facadeRename(f) {
@@ -5685,23 +5708,23 @@
                     try {
                         const res = await fetch(`${this.apiBase}api/house/facades/${f.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
                         const data = await res.json();
-                        if (!res.ok) { showGlobalAlert(data.detail || 'Could not save the facade'); return; }
+                        if (!res.ok) { showGlobalAlert(data.detail || 'Could not rename'); return; }
                         await this.loadFacades();
                     } catch (e) {
                         console.error("Failed to rename facade", e);
-                        showGlobalAlert('Could not save the facade');
+                        showGlobalAlert('Could not rename');
                     }
                 },
                 async facadeDelete(f) {
                     if (!(await promptConfirm('Delete facade', `Delete "${f.name}"?`, 'Delete'))) return;
                     try {
                         const res = await fetch(`${this.apiBase}api/house/facades/${f.id}`, { method: 'DELETE' });
-                        if (!res.ok) { const data = await res.json(); showGlobalAlert(data.detail || 'Could not save the facade'); return; }
+                        if (!res.ok) { const data = await res.json(); showGlobalAlert(data.detail || 'Could not delete'); return; }
                         if (this.facadeDraftId === f.id) this.facadeDraft = null;
                         await this.loadFacades();
                     } catch (e) {
                         console.error("Failed to delete facade", e);
-                        showGlobalAlert('Could not save the facade');
+                        showGlobalAlert('Could not delete');
                     }
                 },
 

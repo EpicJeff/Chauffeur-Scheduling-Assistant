@@ -4039,12 +4039,11 @@
        offset door, a window pair west of it and a single window east.
        It is a SPEC now (see the facade block below): windows on slots 7,
        9 and 12, the door on slot 10, the porch on slot 9 span 4. These
-       three constants stay because the landscaping far below still
+       two constants stay because the landscaping far below still
        anchors the front walk and the shrub line to them, and because
        every main-face window still shares ONE head; the builders publish
-       the values they actually built into the first two. */
+       the value they actually built into the first one. */
     var DOOR_X4 = 1.3;
-    var PORCH_W4 = 8.4;
     var WIN_HEAD4 = 4.4;
 
     /* the wall itself: interior plaster half + exterior siding half, the
@@ -4075,7 +4074,12 @@
        porch's depth and eave stay constants: the walk, the shrub line
        and any gable roofing a porch all read them. */
     var PORCH_EAVE4 = 4.8, PORCH_DEPTH4 = 4.6;
-    var PORCH_FRONT_Z4 = SWZ1 + PORCH_DEPTH4;
+    /* porchAt() is the only writer of this (below): a main-face porch
+       moves it out to its own front edge. Defaults to SWZ1 -- the wall
+       itself -- so a facade with no main-face porch gets a front walk
+       that starts at the wall, not 4.6 units out in the grass where a
+       porch that was never built would have ended. */
+    var PORCH_FRONT_Z4 = SWZ1;
 
     /* SHELL: south_wall is the street FACE itself -- the slab, its
        siding skin and its baseboard. Its windows, door, porch and lamp
@@ -4338,10 +4342,10 @@
     var WINDOW_SIZES = { tall: [1.6, 3.7], standard: [1.55, 2.7], small: [1.0, 1.2] };
     /* The west-most door on the main face carries the front_door entry
        marker (spec section 4.4); PORCH_SPANS lets a gable find the porch
-       it roofs; and DOOR_X4 / PORCH_W4 / PORCH_FRONT_Z4 (declared with
-       the south wall above, where the landscaping below still reads
-       them) are published BY the builders, so a moved door moves its own
-       front walk instead of stranding it at the old hand-typed x. */
+       it roofs; and DOOR_X4 / PORCH_FRONT_Z4 (declared with the south
+       wall above, where the landscaping below still reads them) are
+       published BY the builders, so a moved door moves its own front
+       walk instead of stranding it at the old hand-typed x. */
     var FRONT_DOOR_SLOT = -1;
     var PORCH_SPANS = [];
     var webgl_coachLampGlass2 = null;   /* R5 NO_MERGE anchor, far below */
@@ -4550,7 +4554,7 @@
                  frontZ - 0.20, g, sharp(WOODM)));
       }
       PORCH_SPANS.push({ slot: feat.slot, span: feat.span, frontZ: frontZ });
-      if (slot.face === 'main') { PORCH_W4 = W; PORCH_FRONT_Z4 = frontZ; }
+      if (slot.face === 'main') PORCH_FRONT_Z4 = frontZ;
       shellRegister(g, 'facade_' + slot.face + '_porch_' + feat.slot,
                     [0, 0, 1], slot.room, false, undefined, slot.room);
     }
@@ -7904,6 +7908,14 @@
        finish), matching the file's own stated principle: NO_MERGE is
        what keeps the night glow honest, not an object's rarity today. */
     NO_MERGE.add(webgl_coachLampGlass2);
+    /* grassSlab: carries userData.yard, which inYard() reads for the
+       navigation law (spec section 5, rule 5). A fold into extG's
+       siding/ground material bucket would delete that flag along with
+       the mesh's own identity. grassSlab is a plain buildRoom-scope
+       var (declared far above, ~3943, at the function's own top
+       level — not inside a nested IIFE), so it resolves here directly,
+       the same as any other single-mesh anchor in this list. */
+    NO_MERGE.add(grassSlab);
     /* Each registered piece owns one merge pass. No roof can be omitted
        from batching when the envelope grows. Groups are sibling merge
        boundaries; the registry also fences the later exterior pass. */

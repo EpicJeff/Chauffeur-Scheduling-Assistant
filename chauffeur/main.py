@@ -1724,7 +1724,12 @@ def house_page(request: Request):
     state fetch, so build-once means the spec arrives with the HTML."""
     import json as _json
     from services import house_facade as _hf
-    facade_json = _json.dumps(_hf.active_bundle()).replace('</', '<\\/')
+    try:
+        bundle = _hf.active_bundle()
+    except Exception:
+        bundle = {'id': 'canonical', 'name': 'Canonical', 'spec': _hf.CANONICAL,
+                  'slots': _hf.slot_table()}
+    facade_json = _json.dumps(bundle).replace('</', '<\\/')
     return templates.TemplateResponse(request=request, name="house.html",
                                       context={'facade_json': facade_json})
 

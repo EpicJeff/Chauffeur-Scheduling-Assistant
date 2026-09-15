@@ -220,6 +220,22 @@ def scenario_storage_laws():
     check(hf.active_bundle()['id'] == 'canonical', 'a dangling active id never breaks the house')
 
 
+def scenario_active_bundle_survives_a_missing_name():
+    from services import storage
+    _fresh()
+    rec = hf.save_facade('Temp', hf.CANONICAL)
+    hf.set_active(rec['id'])
+    cur = dict(storage.get_settings() or {})
+    for r in cur.get('house_facades') or []:
+        if r.get('id') == rec['id']:
+            r.pop('name', None)
+    storage.update_settings(cur)
+    bundle = hf.active_bundle()
+    check(bundle['id'] == rec['id'] and bundle['name'] == 'Saved facade',
+          'a stored row missing name still yields a bundle with a name')
+    hf.delete_facade(rec['id'])  # leave storage as scenario_routes_and_template expects it
+
+
 def scenario_routes_and_template():
     import io, os
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -368,6 +384,7 @@ if __name__ == '__main__':
                scenario_garbage_in_never_raises,
                scenario_worst_case_is_within_caps,
                scenario_storage_laws,
+               scenario_active_bundle_survives_a_missing_name,
                scenario_routes_and_template,
                scenario_route_wrappers_map_errors,
                scenario_photo_becomes_a_draft_never_a_save,

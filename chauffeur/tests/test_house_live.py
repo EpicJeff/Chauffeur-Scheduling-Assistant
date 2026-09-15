@@ -1257,8 +1257,7 @@ def scenario_canonical_facade_pins_the_hand_built_elevation():
         # and the scene was built from THAT object.
         check(page.evaluate("!!(window.HOUSE_FACADE && window.HOUSE_FACADE.spec)"),
               'the server injected the facade')
-        check(page.evaluate("JSON.stringify(window.chfFacade()) === "
-                            "JSON.stringify(window.HOUSE_FACADE.spec)"),
+        check(page.evaluate("window.chfFacade() === window.HOUSE_FACADE.spec"),
               'the scene built from the injected spec, not the fallback')
         js_slots = page.evaluate('window.chfFacadeSlots()')
         py_slots = hf.slot_table()

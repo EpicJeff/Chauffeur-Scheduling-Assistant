@@ -317,9 +317,7 @@ def _settings():
 
 def _write(patch):
     from services import storage
-    cur = dict(storage.get_settings() or {})
-    cur.update(patch)
-    storage.update_settings(cur)
+    storage.patch_settings(patch)
 
 
 def _saved():
@@ -433,4 +431,4 @@ def active_bundle():
     if rec is None:
         return {'id': CANONICAL_ID, 'name': 'Canonical', 'spec': copy.deepcopy(CANONICAL), 'slots': slot_table()}
     spec, _ = normalize(rec.get('spec'))
-    return {'id': rec['id'], 'name': rec['name'], 'spec': spec, 'slots': slot_table()}
+    return {'id': rec['id'], 'name': rec.get('name') or 'Saved facade', 'spec': spec, 'slots': slot_table()}
