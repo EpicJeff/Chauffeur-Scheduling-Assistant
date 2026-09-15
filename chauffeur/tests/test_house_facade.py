@@ -283,6 +283,42 @@ def scenario_route_wrappers_map_errors():
     check(done == {'status': 'ok', 'active': 'canonical'}, f'delete wrapper falls back to canonical: {done}')
 
 
+def scenario_photo_becomes_a_draft_never_a_save():
+    from services import storage, model_pools
+    _fresh()
+    storage.update_settings({'calendar_ids': [], 'llm_gemini_api_key': 'k'})
+    seen = {}
+    def fake_pool(tier, key, system, user, **kw):
+        seen.update(tier=tier, images=kw.get('images'), strict=kw.get('strict_json'))
+        return {'pitch_deg': 30, 'style': {'body': 'sage', 'roof': 'brown'},
+                'ground': [{'slot': 9, 'span': 1, 'kind': 'door'},
+                           {'slot': 7, 'span': 1, 'kind': 'window', 'size': 'tall'},
+                           {'slot': 0, 'span': 3, 'kind': 'garage_door', 'style': 'panel', 'leaves': 2}],
+                'roof': [{'slot': 8, 'span': 3, 'kind': 'gable'}]}
+    model_pools.call_pool_json = fake_pool
+    draft, err = hf.from_photo('AAAA', 'image/jpeg')
+    check(err is None and draft['style']['body'] == 'sage' and draft['pitch_deg'] == 30.0, f'draft: {draft} {err}')
+    check(seen['tier'] == 'vision' and seen['images'][0]['b64'] == 'AAAA' and seen['strict'], 'vision tier, inline image, strict JSON')
+    check(len(hf.list_facades()) == 1 and hf.active_bundle()['id'] == 'canonical', 'nothing saved, nothing activated')
+
+
+def scenario_photo_failures_are_answers():
+    from services import storage, model_pools
+    _fresh()
+    check(hf.from_photo('AAAA', 'image/jpeg') == (None, 'no LLM API key configured'), 'no key')
+    storage.update_settings({'calendar_ids': [], 'llm_gemini_api_key': 'k'})
+    model_pools.call_pool_json = lambda *a, **k: {'error': '429 Too Many Requests'}
+    d, e = hf.from_photo('AAAA', 'image/jpeg')
+    check(d is None and '429' in e, 'pool error surfaces')
+    def boom(*a, **k): raise RuntimeError('socket')
+    model_pools.call_pool_json = boom
+    d, e = hf.from_photo('AAAA', 'image/jpeg')
+    check(d is None and 'socket' in e, 'transport error surfaces')
+    model_pools.call_pool_json = lambda *a, **k: 'not a dict'
+    d, e = hf.from_photo('AAAA', 'image/jpeg')
+    check(d is None and e, 'bad shape surfaces')
+
+
 if __name__ == '__main__':
     for fn in (scenario_slot_table_is_derived_from_the_faces,
                scenario_canonical_is_normal_and_idempotent,
@@ -299,6 +335,8 @@ if __name__ == '__main__':
                scenario_worst_case_is_within_caps,
                scenario_storage_laws,
                scenario_routes_and_template,
-               scenario_route_wrappers_map_errors):
+               scenario_route_wrappers_map_errors,
+               scenario_photo_becomes_a_draft_never_a_save,
+               scenario_photo_failures_are_answers):
         fn()
         print('  ok ', fn.__name__)

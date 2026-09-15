@@ -5484,6 +5484,26 @@ def house_facade_preview(body: dict = Body(default={})):
     return {'spec': spec, 'notes': notes}
 
 
+@app.post("/api/house/facades/photo")
+async def house_facade_photo(photo: UploadFile = File(...)):
+    """Photo -> DRAFT facade. Returned, never stored: the parent reviews it
+    in the editor and saves on purpose (spec 2026-09-15 §5). The bytes live
+    in this request only."""
+    import base64
+    from services import house_facade as _hf
+    data = await photo.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty upload")
+    if len(data) > _PHOTO_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Image too large (8MB max)")
+    mime = (photo.content_type or '').lower()
+    if not mime.startswith('image/'):
+        raise HTTPException(status_code=400, detail="Only images are supported")
+    draft, err = _hf.from_photo(base64.b64encode(data).decode('ascii'), mime)
+    notes = _hf.normalize(draft)[1] if draft else []
+    return {'draft': draft, 'notes': notes, 'error': err}
+
+
 @app.post("/api/house/facades")
 def house_facade_create(body: dict = Body(default={})):
     from services import house_facade as _hf

@@ -164,7 +164,8 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
                    temperature: float = 0.1, timeout_s: int = 60,
                    gemma_timeout_s: int = None, max_models: int = 4,
                    settings: dict = None, images: list = None,
-                   background: bool = None, workflow: str = None) -> dict:
+                   background: bool = None, workflow: str = None,
+                   strict_json: bool = False) -> dict:
     """JSON call with one HTTP attempt per candidate and persistent admission.
 
     Background work tries one candidate, then defers; foreground work may try
@@ -184,7 +185,8 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
             with llm_budget.request_scope(workflow, background):
                 res = _llm._call_llm_json('gemini', '', api_key, model, system_prompt,
                                           user_prompt, temperature=temperature, timeout_s=t,
-                                          images=images, transient_retries=0)
+                                          images=images, transient_retries=0,
+                                          strict_json=strict_json)
         except llm_budget.Deferred as e:
             if background:
                 return {'error': str(e), 'deferred': True, 'retry_at': e.retry_at}

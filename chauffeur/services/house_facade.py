@@ -382,6 +382,50 @@ def set_active(fid):
     return fid
 
 
+PHOTO_SYSTEM = """You describe the STREET-FACING elevation of a house from one photo, as JSON only.
+The house is drawn on a fixed strip of {n} slots, west to east (left to right as seen from the street):
+{faces}
+Slot numbers are global (0..{last}). Report only what is on the street face.
+Return exactly this shape:
+{{"pitch_deg": number between 22.5 and 35, "style": {{"cladding": "batten"|"clapboard", "body": one of {body}, "roof": one of {roof}, "frame": one of {frame}, "door": one of {door}, "trim": one of {trim}}},
+  "ground": [{{"slot": int, "span": int, "kind": "window", "size": "tall"|"standard"|"small"}} | {{"slot","span","kind":"door"}} | {{"slot","span","kind":"garage_door","style":"carriage"|"panel"|"glass","leaves":1|2}} | {{"slot","span","kind":"porch","type":"sitting"|"stoop"|"covered"}}],
+  "roof": [{{"slot": int, "span": int, "kind": "gable"|"dormer"|"hip_end", "window": bool}}]}}
+Rules: colours are the NEAREST palette name, never hex. If the garage is not visible, omit it. If unsure of a count, prefer fewer windows. The front door goes on the main face. No prose."""
+
+
+def _photo_prompt():
+    faces = '\n'.join(f"- {f['face']}: slots {_face_range(f['face'])[0]}..{_face_range(f['face'])[1]}"
+                      for f in FACES)
+    n = len(slot_table())
+    return PHOTO_SYSTEM.format(n=n, last=n - 1, faces=faces,
+                               body=list(STYLE['body']), roof=list(STYLE['roof']),
+                               frame=list(STYLE['frame']), door=list(STYLE['door']),
+                               trim=list(STYLE['trim']))
+
+
+def from_photo(image_b64, mime):
+    """One photo -> a DRAFT facade (normalized) or an error. Never stores."""
+    from services import model_pools
+    settings = _settings()
+    api_key = settings.get('llm_gemini_api_key', '')
+    if not api_key:
+        return None, 'no LLM API key configured'
+    try:
+        res = model_pools.call_pool_json(
+            'vision', api_key, _photo_prompt(),
+            'Describe the street-facing elevation of the house in the attached photo.',
+            temperature=0.1, timeout_s=90, settings=settings, strict_json=True,
+            images=[{'mime': mime or 'image/jpeg', 'b64': image_b64}])
+    except Exception as e:
+        return None, f'could not read the photo ({e})'
+    if not isinstance(res, dict):
+        return None, 'could not read the photo (bad response)'
+    if res.get('error'):
+        return None, f"could not read the photo ({res['error']})"
+    spec, _ = normalize(res)
+    return spec, None
+
+
 def active_bundle():
     fid = _settings().get('house_facade_active') or CANONICAL_ID
     rec = next((r for r in _saved() if r['id'] == fid), None)
