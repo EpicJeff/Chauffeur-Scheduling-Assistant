@@ -5499,8 +5499,7 @@ async def house_facade_photo(photo: UploadFile = File(...)):
     mime = (photo.content_type or '').lower()
     if not mime.startswith('image/'):
         raise HTTPException(status_code=400, detail="Only images are supported")
-    draft, err = _hf.from_photo(base64.b64encode(data).decode('ascii'), mime)
-    notes = _hf.normalize(draft)[1] if draft else []
+    draft, notes, err = _hf.from_photo(base64.b64encode(data).decode('ascii'), mime)
     return {'draft': draft, 'notes': notes, 'error': err}
 
 

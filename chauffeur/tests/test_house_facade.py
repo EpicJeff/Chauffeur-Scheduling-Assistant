@@ -287,36 +287,57 @@ def scenario_photo_becomes_a_draft_never_a_save():
     from services import storage, model_pools
     _fresh()
     storage.update_settings({'calendar_ids': [], 'llm_gemini_api_key': 'k'})
-    seen = {}
-    def fake_pool(tier, key, system, user, **kw):
-        seen.update(tier=tier, images=kw.get('images'), strict=kw.get('strict_json'))
-        return {'pitch_deg': 30, 'style': {'body': 'sage', 'roof': 'brown'},
-                'ground': [{'slot': 9, 'span': 1, 'kind': 'door'},
-                           {'slot': 7, 'span': 1, 'kind': 'window', 'size': 'tall'},
-                           {'slot': 0, 'span': 3, 'kind': 'garage_door', 'style': 'panel', 'leaves': 2}],
-                'roof': [{'slot': 8, 'span': 3, 'kind': 'gable'}]}
-    model_pools.call_pool_json = fake_pool
-    draft, err = hf.from_photo('AAAA', 'image/jpeg')
-    check(err is None and draft['style']['body'] == 'sage' and draft['pitch_deg'] == 30.0, f'draft: {draft} {err}')
-    check(seen['tier'] == 'vision' and seen['images'][0]['b64'] == 'AAAA' and seen['strict'], 'vision tier, inline image, strict JSON')
-    check(len(hf.list_facades()) == 1 and hf.active_bundle()['id'] == 'canonical', 'nothing saved, nothing activated')
+    orig = model_pools.call_pool_json
+    try:
+        seen = {}
+        def fake_pool(tier, key, system, user, **kw):
+            seen.update(tier=tier, images=kw.get('images'), strict=kw.get('strict_json'),
+                        max_out=kw.get('max_output_tokens'))
+            return {'pitch_deg': 30, 'style': {'body': 'sage', 'roof': 'brown'},
+                    'ground': [{'slot': 9, 'span': 1, 'kind': 'door'},
+                               {'slot': 7, 'span': 1, 'kind': 'window', 'size': 'tall'},
+                               {'slot': 0, 'span': 3, 'kind': 'garage_door', 'style': 'panel', 'leaves': 2}],
+                    'roof': [{'slot': 8, 'span': 3, 'kind': 'gable'}]}
+        model_pools.call_pool_json = fake_pool
+        draft, notes, err = hf.from_photo('AAAA', 'image/jpeg')
+        check(err is None and draft['style']['body'] == 'sage' and draft['pitch_deg'] == 30.0, f'draft: {draft} {err}')
+        check(seen['tier'] == 'vision' and seen['images'][0]['b64'] == 'AAAA' and seen['strict'],
+              'vision tier, inline image, strict JSON')
+        check(seen['max_out'] == 2048, f"max_output_tokens 2048 per spec 5: {seen['max_out']}")
+        check(len(hf.list_facades()) == 1 and hf.active_bundle()['id'] == 'canonical', 'nothing saved, nothing activated')
+
+        # two garage doors in the raw response -> normalize's note travels back
+        model_pools.call_pool_json = lambda *a, **k: {
+            'pitch_deg': 30, 'style': {},
+            'ground': [{'slot': 0, 'span': 3, 'kind': 'garage_door', 'style': 'panel', 'leaves': 1},
+                       {'slot': 0, 'span': 3, 'kind': 'garage_door', 'style': 'glass', 'leaves': 2}],
+            'roof': []}
+        draft2, notes2, err2 = hf.from_photo('AAAA', 'image/jpeg')
+        check(err2 is None and notes2 and any('garage' in n for n in notes2),
+              f'the draft keeps its own normalize notes: {notes2}')
+    finally:
+        model_pools.call_pool_json = orig
 
 
 def scenario_photo_failures_are_answers():
     from services import storage, model_pools
     _fresh()
-    check(hf.from_photo('AAAA', 'image/jpeg') == (None, 'no LLM API key configured'), 'no key')
-    storage.update_settings({'calendar_ids': [], 'llm_gemini_api_key': 'k'})
-    model_pools.call_pool_json = lambda *a, **k: {'error': '429 Too Many Requests'}
-    d, e = hf.from_photo('AAAA', 'image/jpeg')
-    check(d is None and '429' in e, 'pool error surfaces')
-    def boom(*a, **k): raise RuntimeError('socket')
-    model_pools.call_pool_json = boom
-    d, e = hf.from_photo('AAAA', 'image/jpeg')
-    check(d is None and 'socket' in e, 'transport error surfaces')
-    model_pools.call_pool_json = lambda *a, **k: 'not a dict'
-    d, e = hf.from_photo('AAAA', 'image/jpeg')
-    check(d is None and e, 'bad shape surfaces')
+    orig = model_pools.call_pool_json
+    try:
+        check(hf.from_photo('AAAA', 'image/jpeg') == (None, [], 'no LLM API key configured'), 'no key')
+        storage.update_settings({'calendar_ids': [], 'llm_gemini_api_key': 'k'})
+        model_pools.call_pool_json = lambda *a, **k: {'error': '429 Too Many Requests'}
+        d, n, e = hf.from_photo('AAAA', 'image/jpeg')
+        check(d is None and n == [] and '429' in e, 'pool error surfaces')
+        def boom(*a, **k): raise RuntimeError('socket')
+        model_pools.call_pool_json = boom
+        d, n, e = hf.from_photo('AAAA', 'image/jpeg')
+        check(d is None and n == [] and 'socket' in e, 'transport error surfaces')
+        model_pools.call_pool_json = lambda *a, **k: 'not a dict'
+        d, n, e = hf.from_photo('AAAA', 'image/jpeg')
+        check(d is None and n == [] and e, 'bad shape surfaces')
+    finally:
+        model_pools.call_pool_json = orig
 
 
 if __name__ == '__main__':

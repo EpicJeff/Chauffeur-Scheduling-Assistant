@@ -409,21 +409,22 @@ def from_photo(image_b64, mime):
     settings = _settings()
     api_key = settings.get('llm_gemini_api_key', '')
     if not api_key:
-        return None, 'no LLM API key configured'
+        return None, [], 'no LLM API key configured'
     try:
         res = model_pools.call_pool_json(
             'vision', api_key, _photo_prompt(),
             'Describe the street-facing elevation of the house in the attached photo.',
             temperature=0.1, timeout_s=90, settings=settings, strict_json=True,
+            max_output_tokens=2048,
             images=[{'mime': mime or 'image/jpeg', 'b64': image_b64}])
     except Exception as e:
-        return None, f'could not read the photo ({e})'
+        return None, [], f'could not read the photo ({e})'
     if not isinstance(res, dict):
-        return None, 'could not read the photo (bad response)'
+        return None, [], 'could not read the photo (bad response)'
     if res.get('error'):
-        return None, f"could not read the photo ({res['error']})"
-    spec, _ = normalize(res)
-    return spec, None
+        return None, [], f"could not read the photo ({res['error']})"
+    spec, notes = normalize(res)
+    return spec, notes, None
 
 
 def active_bundle():
