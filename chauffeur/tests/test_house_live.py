@@ -972,6 +972,27 @@ def scenario_shell_fabric_registry():
         }
         check(set(names) == expected_names,
               'expanded registry must contain exactly the authored pieces: %r' % names)
+        # arc 4 prerequisite (spec §6): AO occluders come FROM the registry.
+        # south_wall/east_wall's registered box is fabBox() of the WHOLE
+        # group, which may run larger than the old hand row once porch/trim
+        # decor is folded in (measured: south_wall's registered z-range
+        # runs 13.95-19.8 against the hand row's tight 14.2-14.55, and
+        # east_wall's x-min sits 0.06 outside the old exact-match
+        # tolerance) -- so this asserts CONTAINMENT (the registered box
+        # covers the hand row's old footprint within tol), not equality.
+        occ = page.evaluate("window.chfAoOccluders()")
+        def contains_box(b, tol=0.05):
+            return any(o[0] <= b[0] + tol and o[1] >= b[1] - tol and
+                       o[2] <= b[2] + tol and o[3] >= b[3] - tol and
+                       o[4] <= b[4] + tol and o[5] >= b[5] - tol
+                       for o in occ)
+        check(contains_box([-6.5, 6.5, 0.0, 5.6, 14.2, 14.55]),
+              'south_wall must occlude via its registered box')
+        check(contains_box([6.5, 6.85, 0.0, 5.6, -5.725, 14.55]),
+              'east_wall must occlude via its registered box')
+        wallish = [f for f in fab if abs(f['n'][1]) < 0.5]
+        check(len(occ) >= len(wallish),
+              f'every wall-like piece contributes an occluder: {len(occ)} < {len(wallish)}')
         by_name = {f['name']: f for f in fab}
         garage_roof = by_name['massing_service_roof_south']['box']
         mudroom_roof = by_name['mudroom_cross_roof_south']['box']
@@ -1380,15 +1401,15 @@ def scenario_navigation_real_mouse():
               'the island mis-tap must not mount a lean-in card either -- '
               'truly inert, not an accidental lean')
 
-        # spec section 5, rule 5: sky (or yard) still exits, unchanged --
-        # living_roof carries no geometry (open-concept, never built) so
-        # its own room has no sky pixel today; garage does (see docstring).
+        # spec section 5, rule 5: sky OR yard exits. The garage camera sees
+        # no sky since the envelope arc (its frame is interior, roofs and
+        # lawn), so probe for any exit pixel -- the same test onTap runs.
         enter('garage')
-        p = probe("{sky:true}")
+        p = probe("{exit:true}")
         page.mouse.click(p['cx'], p['cy'])
         page.wait_for_timeout(1200)
         check(page.evaluate("window.chfHouseMode()") == 'exterior',
-              'a sky tap must still exit to the exterior: %r' % p)
+              'a sky or yard tap must still exit to the exterior: %r' % p)
 
         errs = [e for e in served.errors()
                 if 'WebGL' not in e and 'GroupMarker' not in e]

@@ -3885,9 +3885,18 @@
       roofMat.normalScale.set(0.35, 0.35);
       roofMat.needsUpdate = true;
     }
-    /* yard: a grass slab whose top sits just under the kitchen plinth */
-    ebox(50, 0.4, 44, NICE ? 0xffffff : EXTC.grass, 0.5, -0.49, 4,
-         { rough: 1.0, map: grassT });
+    /* yard: a grass slab whose top sits just under the kitchen plinth.
+       Built here, in extG, before yardG exists (~6863) -- it cannot live
+       IN yardG (that group is a mode:'hide' fabric piece; the lawn must
+       stay visible from inside rooms, not vanish with the rest of the
+       yard's decor). inYard() needs some way to know this ground is
+       still "the yard" for the navigation law (spec section 5, rule 5:
+       sky OR yard exits), so it carries the same userData.yard tag
+       inYard() now also checks -- grass only, never the driveway/street
+       ebox calls elsewhere, which stay ordinary solid exterior fabric. */
+    var grassSlab = ebox(50, 0.4, 44, NICE ? 0xffffff : EXTC.grass, 0.5, -0.49, 4,
+                         { rough: 1.0, map: grassT });
+    grassSlab.userData.yard = true;
     /* Rear cladding is registered with its window, so neither can
        escape the shell's visibility or navigation rules. */
     var northCladdingG = new T.Group(); extG.add(northCladdingG);
@@ -7798,18 +7807,16 @@
                                                        whichever car model is parked there */
       [-15.05, -13.15, 0.0, 1.9, 3.6, 7.6],        /* parked-car envelope, east bay */
       [-8.75, -6.85, -0.52, 3.57, -1.9, 0.7],      /* the pantry closet shell */
-      /* SHELL (Task 4): south_wall/east_wall's own structural mass —
-         literals cited from their own build-site constants (SW_W=13,
-         EXT_TOP4=7.0, SWZ0/SWZ1=~14.2/14.55, WALL_T4=0.35), the same
-         "read off the builder's own authored literals" law every row
-         above already follows. The roof is a sloped plane and does not
-         fit this list's axis-aligned convention without a hand-guessed
-         bounding box, so it is left out rather than adding a number this
-         file's own "derived, not guessed" rule would flag. */
-      [-6.5, 6.5, 0.0, 5.6, 14.2, 14.55],           /* south_wall */
-      [6.5, 6.85, 0.0, 5.6, -5.725, 14.55],         /* east_wall */
       [-24.5, 25.5, -0.69, -0.29, -18, 26]         /* exterior grade (the yard's grass slab) */
     ];
+
+    /* SHELL/arc 4 (facade spec §6): wall-like fabric occludes by its own
+       registered box, so a generated wall needs no hand row. Sloped
+       pieces (roof decks, |n.y| >= 0.5) still skip: no honest AABB. */
+    FABRIC.forEach(function (f) {
+      if (Math.abs(f.n.y) >= 0.5 || !boxOk(f.box)) return;
+      AO_OCCLUDERS.push(f.box.slice());
+    });
 
     /* ---- K4 (quality spec §3): vertex AO, baked once ------------------
        10 hemisphere directions per vertex, marched against authored
@@ -7834,6 +7841,11 @@
       }
       var STEPS = [0.05, 0.15, 0.35, 0.70];
       var STR = 0.62;                       /* max darkening at a corner */
+      var MAX_STEP = STEPS[STEPS.length - 1];  /* longest march a sample
+         point can travel from a vertex, so a per-mesh occluder pre-cull
+         (below) only has to expand that mesh's own AABB by this much to
+         stay bit-identical to marching against the full AO_OCCLUDERS list */
+      var meshBox = new T.Box3();
       var tmp = new T.Vector3(), nrm = new T.Vector3();
       var up = new T.Vector3(), tx = new T.Vector3(), tz = new T.Vector3();
       var nm = new T.Matrix3();
@@ -7936,6 +7948,25 @@
             col = new T.BufferAttribute(new Float32Array(p.count * 3), 3);
             geo.setAttribute('color', col);
           }
+          /* per-mesh occluder pre-cull (facade spec §6 buildMs ruling): a
+             march sample point can never land more than MAX_STEP from the
+             vertex it started at, so any occluder box that does not reach
+             within MAX_STEP of this mesh's own world AABB could never be
+             hit by ANY of its vertices — filtering AO_OCCLUDERS down to
+             just the boxes that can is bit-identical to marching the full
+             ~94-entry list every time, just cheaper. Recomputed per mesh
+             (not hoisted higher) since each wearer has its own transform. */
+          meshBox.setFromObject(mesh);
+          var mbx0 = meshBox.min.x - MAX_STEP, mbx1 = meshBox.max.x + MAX_STEP;
+          var mby0 = meshBox.min.y - MAX_STEP, mby1 = meshBox.max.y + MAX_STEP;
+          var mbz0 = meshBox.min.z - MAX_STEP, mbz1 = meshBox.max.z + MAX_STEP;
+          var localOcc = [];
+          for (var oc = 0; oc < AO_OCCLUDERS.length; oc++) {
+            var OB = AO_OCCLUDERS[oc];
+            if (OB[1] >= mbx0 && OB[0] <= mbx1 && OB[3] >= mby0 &&
+                OB[2] <= mby1 && OB[5] >= mbz0 && OB[4] <= mbz1)
+              localOcc.push(OB);
+          }
           for (var v = 0; v < p.count; v++) {
             tmp.fromBufferAttribute(p, v).applyMatrix4(mesh.matrixWorld);
             nrm.fromBufferAttribute(n, v).applyMatrix3(nm).normalize();
@@ -7954,8 +7985,8 @@
                 var qx = tmp.x + dx * L3, qy = tmp.y + dy * L3,
                     qz = tmp.z + dz * L3;
                 var blocked = false;
-                for (var ob = 0; ob < AO_OCCLUDERS.length; ob++) {
-                  var B = AO_OCCLUDERS[ob];
+                for (var ob = 0; ob < localOcc.length; ob++) {
+                  var B = localOcc[ob];
                   if (qx > B[0] && qx < B[1] && qy > B[2] && qy < B[3] &&
                       qz > B[4] && qz < B[5]) { blocked = true; break; }
                 }
@@ -8741,7 +8772,7 @@
                           room:spec.room, mode:spec.mode, twoSided:spec.twoSided,
                           pad:spec.pad, cutawayRoom:spec.cutawayRoom});
       },
-      solveShell: solveShell, ROOM_AABB: ROOM_AABB
+      solveShell: solveShell, ROOM_AABB: ROOM_AABB, AO_OCCLUDERS: AO_OCCLUDERS
     };
   }
 
@@ -9397,10 +9428,19 @@
      standing above y 0.2 walk you into the kitchen, which two blob trees
      already broke and ~700 yard meshes would break constantly: a tap meant
      for a shrub opened a room. Anything under yardG is now inert, so the
-     spec's "sky and flat yard stay a view" holds for the planting too. */
+     spec's "sky and flat yard stay a view" holds for the planting too.
+     The grass ground slab is the one exception to "yard means yardG":
+     it is built in extG, before yardG exists, and cannot move into a
+     mode:'hide' group without vanishing along with the rest of the
+     yard's decor when a room view hides it -- so it stamps its own
+     userData.yard instead, checked here alongside the yardG ancestry
+     walk (facade spec, the garage exit-tap ruling). */
   function inYard(obj) {
     var o = obj;
-    while (o) { if (o === webgl.yardG) return true; o = o.parent; }
+    while (o) {
+      if (o === webgl.yardG || (o.userData && o.userData.yard)) return true;
+      o = o.parent;
+    }
     return false;
   }
   /* SHELL (spec section 5): the vendored raycaster (Ou, three.min.js) never
@@ -9645,9 +9685,20 @@
       });
       return { name: f.name, mode: f.mode, visible: f.g.visible,
                room: f.g.userData.room || null, normal: f.n.toArray(), box: f.box,
+               n: [f.n.x, f.n.y, f.n.z], /* arc 4 (facade spec §6): the AO
+                    derivation's own wall-like test, |n.y| < 0.5, reads
+                    this same shape from FABRIC -- exposed here too so the
+                    test can assert against exactly what the derivation saw */
                verdict: f.verdict, interiorGlow: interiorGlow,
                edgesVisible: f.edges ? f.edges.visible : null };
     });
+  };
+  /* SHELL/arc 4 (facade spec §6): read-only like chfShellFabric above --
+     reports the AO occluder list buildRoom() already derived from the
+     registry, changes nothing. Sliced so a test mutating the result
+     cannot touch the live array. */
+  window.chfAoOccluders = function () {
+    return webgl && webgl.AO_OCCLUDERS ? webgl.AO_OCCLUDERS.map(function (b) { return b.slice(); }) : [];
   };
   /* Read-only test hook: find a canvas pixel over actual geometry. Use
      the production hit readers so candidate selection cannot drift from
@@ -9695,7 +9746,7 @@
       if (!entryFound || entryBox.isEmpty()) return null;
       b = [entryBox.min.x, entryBox.max.x, entryBox.min.y, entryBox.max.y,
            entryBox.min.z, entryBox.max.z];
-    } else if (!spec.sky && !spec.empty) return null;
+    } else if (!spec.sky && !spec.empty && !spec.exit) return null;
     var minX = rect.left + 2, maxX = rect.right - 2;
     var minY = rect.top + 2, maxY = rect.bottom - 2;
     if (b) {
@@ -9718,6 +9769,7 @@
       if (spec.zoneless && zoneAt(px, py)) return false;
       var hit = anyHit(px, py);
       if (spec.sky) return !hit || hit === webgl.skyDome;
+      if (spec.exit) return !hit || hit === webgl.skyDome || inYard(hit);
       if (spec.entry) {
         for (var e = hit; e; e = e.parent)
           if (e.userData && e.userData.entry === spec.entry) return true;
@@ -9728,7 +9780,7 @@
     }
     var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
     if (matches(cx, cy)) return { cx: cx, cy: cy };
-    var n = spec.sky || spec.empty ? 24 : 8;
+    var n = spec.sky || spec.empty || spec.exit ? 24 : 8;
     for (var gx = 0; gx <= n; gx++) for (var gy = 0; gy <= n; gy++) {
       var px = minX + (maxX - minX) * gx / n;
       var py = minY + (maxY - minY) * gy / n;
