@@ -951,6 +951,7 @@ def scenario_shell_fabric_registry():
         expected_names = {
             'east_wall', 'garage_door', 'garage_shell', 'living_roof',
             'living_patio_door', 'living_back_room_door',
+            'living_study_door',
             'mudroom_roof', 'north_wall', 'north_cladding', 'south_wall',
             'west_skirt', 'west_wall', 'yard', 'patio_slider',
             'roof_main_north', 'roof_main_south',
@@ -1001,13 +1002,13 @@ def scenario_shell_fabric_registry():
             'exterior': [],
             'kitchen': ['east_wall', 'south_wall', 'roof_main_south',
                         'roof_main_end_east', 'porch_roof_east',
-                        'massing_east_front_south', 'massing_east_front_east',
+                        'massing_east_front_south',
                         'massing_front_roof_north', 'massing_front_roof_south',
-                        'massing_front_roof_end_east', 'massing_back_roof_shed',
+                        'massing_back_roof_shed',
                         'patio_slider', 'massing_back_roof_front',
                         'massing_east_back_east', 'massing_east_back_patio',
                         'massing_east_front_patio', 'living_patio_door',
-                        'living_back_room_door', 'yard'],
+                        'living_back_room_door', 'living_study_door', 'yard'],
             'garage': ['garage_door', 'garage_shell',
                        'garage_gable_west', 'garage_gable_east', 'garage_gable_front',
                        'massing_service_roof_south', 'yard'],
@@ -1017,6 +1018,13 @@ def scenario_shell_fabric_registry():
             'living': ['south_wall', 'roof_main_south', 'porch_roof_west',
                        'porch_roof_east', 'porch_roof_front',
                        'yard'],
+            'study': ['east_wall', 'living_study_door',
+                      'massing_east_front_patio', 'massing_east_front_south',
+                      'massing_front_roof_end_east',
+                      'massing_front_roof_south', 'massing_front_roof_north',
+                      'roof_main_end_east', 'roof_main_end_west',
+                      'roof_main_north', 'roof_main_south',
+                      'south_wall', 'yard'],
         }
         for view, expected in EXPECTED.items():
             if view == 'exterior':

@@ -231,6 +231,38 @@
                   }).join(', ');
                 } }
   };
+  var studyFurniture = {};
+  var STUDY_ZONE_META = {
+    study_board:     ['Connections board','mind'],
+    study_desk:      ['Plans in hand','mind'],
+    study_tray:      ['Intake tray','intake'],
+    study_stickies:  ['Findings','dashboard'],
+    study_calendar:  ['Coverage calendar','dashboard'],
+    study_window:    ['Family baseline','mind'],
+    study_contracts: ['Agreements','dashboard'],
+    study_binders:   ['Program binders','programs'],
+    study_gauges:    ['Argyle gauges','mind'],
+    study_monitor:   ['Household monitor','mind'],
+    study_map:       ['Travel map','trips']
+  };
+  function studyZoneCount(key) {
+    return webgl && webgl.studyWorld ? webgl.studyWorld.count(studyFurniture,key) : 0;
+  }
+  function studyZoneHeadline(key) {
+    var n = studyZoneCount(key), label = STUDY_ZONE_META[key][0];
+    if (!n) return label + ' is quiet.';
+    if (key === 'study_map') return n + ' upcoming trip' + (n === 1 ? '' : 's') + '.';
+    if (key === 'study_binders') return n + ' program' + (n === 1 ? '' : 's') + ' needs a look.';
+    if (key === 'study_monitor') return n + ' household cluster' + (n === 1 ? '' : 's') + '.';
+    if (key === 'study_window') return n + ' baseline change' + (n === 1 ? '' : 's') + '.';
+    if (key === 'study_calendar') return n + ' uncovered item' + (n === 1 ? '' : 's') + '.';
+    return n + ' item' + (n === 1 ? '' : 's') + ' needs attention.';
+  }
+  Object.keys(STUDY_ZONE_META).forEach(function (key) {
+    ZONES[key] = {label:STUDY_ZONE_META[key][0],url:STUDY_ZONE_META[key][1],
+      num:function(){return studyZoneCount(key);},
+      headline:function(){return studyZoneHeadline(key);}};
+  });
   var ZONE_ORDER = ['door', 'window', 'calendar', 'counter', 'fridge', 'board', 'radio', 'pet', 'garage', 'curb'];
 
   var PANEL = /[?&]panel=true/.test(window.location.search);
@@ -321,6 +353,8 @@
        enough that the floor falls away to the lower right (bible S5.1) */
     var LIV_POS = new T.Vector3(0, 12.8, 26.5);
     var LIV_AT = new T.Vector3(0, 2.35, 10.3);
+    var STUDY_POS = new T.Vector3(5.85, 3.65, 18.00);
+    var STUDY_AT = new T.Vector3(12.30, 1.45, 12.85);
     cam.position.copy(EXT_POS);
     cam.lookAt(EXT_AT);
 
@@ -498,7 +532,8 @@
       kitchen: [0.0, 1.5, 13],
       living: [-1.4, 8.6, 13],
       mudroom: [-11.0, 5.6, 12],
-      garage: [-15.4, 6.2, 22]
+      garage: [-15.4, 6.2, 22],
+      study: [10.7, 12.1, 10]
     };
     function aimShadow(name) {
       var b = SHADOW_BOX[name] || SHADOW_BOX.exterior;
@@ -571,6 +606,7 @@
        [-2.4, 4.35, 9.6, 13.0, 0.40],       /* the living room's own corner */
        [-9.9, 3.45, 5.3, 8.5, 0.34],        /* the mudroom's wall light */
        [-15.4, 3.95, 6.3, 10.0, 0.36],      /* the garage's strip light */
+       [10.6, 3.85, 12.1, 9.0, 0.40],       /* the Study's reading lamp */
        [-17.55, 2.80, 10.4, 7.0, 0.00]      /* the coach lamp: dark by day */
       ].forEach(function (p) {
         var lamp = new T.PointLight(POOL, (PBR ? 1 : 0.72) * p[4], p[3]);
@@ -860,6 +896,7 @@
                     n: new T.Vector3(o.n[0], o.n[1], o.n[2]).normalize(),
                     box: o.box, mode: o.mode || 'ghost', edges: null,
                     twoSided: !!o.twoSided,
+                    cutawayRoom: o.cutawayRoom || null,
                     plane: o.plane ? new T.Vector3().fromArray(o.plane) : null,
                     pad: o.pad === undefined ? 1.5 : o.pad });
     }
@@ -917,7 +954,12 @@
                 : subject ? boxCentre(subject.box) : null;
       FABRIC.forEach(function (f) {
         var v = 'solid';
-        if (subPt && boxOk(f.box)) {
+        /* A roof encloses its room rather than separating camera and subject
+           along a vertical wall plane. Declare that ownership at its build
+           site so both pitches leave together in the room cutaway. */
+        if (subject && subject.room && f.cutawayRoom === subject.room) {
+          v = 'hide';
+        } else if (subPt && boxOk(f.box)) {
           var p = f.plane || boxCentre(f.box);
           var camSide = f.n.dot(new T.Vector3().subVectors(camPos, p));
           var subSide = f.n.dot(new T.Vector3().subVectors(subPt, p));
@@ -2204,7 +2246,7 @@
        longer a band that stops short but a tile field running the whole
        run, counter line to the underside of the uppers (bible S7.4) */
 
-    var groups = {};
+    var groups = {}, studyWorld = null;
     function zoneGroup(key, x, y, z) {
       var g = new T.Group();
       g.position.set(x, y, z);
@@ -4244,14 +4286,16 @@
     /* SHELL: east_wall is complete here. n is [1,0,0]: a true exterior
        boundary, its own physical outward compass direction. */
     regFabric(eastWallG, { name: 'east_wall', n: [1, 0, 0],
-                           box: fabBox(eastWallG), room: 'kitchen' });
+                           box: fabBox(eastWallG), room: 'kitchen', twoSided:true,
+                           cutawayRoom:'study' });
 
     /* Full-house envelope. Built floor plans stay fixed. The east wings
        bracket the existing terrace; the rear service wing fills the void
        behind the garage and mudroom. See the Task 8 derivation report. */
     var FULL_HOUSE = {
       west: -7.15, east: EWX1_4, north: -6.10, south: SWZ1,
-      wingEast: 10.40, patioNorth: 4.20, patioSouth: 9.80,
+      wingEast: 10.40, studyEast: 14.65, studySouth: 16.72,
+      patioNorth: 4.20, patioSouth: 9.80,
       serviceWest: -18.20, serviceSouth: 2.12,
       eave: EXT_TOP4, wingEave: 5.60, serviceEave: 5.60,
       overhang: 0.32
@@ -4261,10 +4305,10 @@
     function shellBox(g, w, h, d, c, x, y, z, opts) {
       return box(w, h, d, c, x, y, z, g, sharp(opts));
     }
-    function shellRegister(g, name, normal, room, twoSided, pad) {
+    function shellRegister(g, name, normal, room, twoSided, pad, cutawayRoom) {
       g.updateMatrixWorld(true);
       regFabric(g, { name: name, n: normal, box: fabBox(g), room: room,
-                     twoSided: twoSided, pad: pad });
+                     twoSided: twoSided, pad: pad, cutawayRoom: cutawayRoom });
     }
     function shellWindow(g, x, y, z, angle, w, h, glow) {
       var frame = new T.Group(); frame.position.set(x, y, z);
@@ -4287,7 +4331,7 @@
                0, -(h + 0.22) / 2, 0.05);
       return frame;
     }
-    function shellWall(name, x0, z0, x1, z1, height, normal, windows, twoSided) {
+    function shellWall(name, x0, z0, x1, z1, height, normal, windows, twoSided, cutawayRoom) {
       var g = shellGroup(), alongX = x0 !== x1;
       var length = alongX ? x1 - x0 : z1 - z0;
       var cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
@@ -4308,13 +4352,13 @@
                     2.80, alongX ? cz + normal[2] * (WALL_T4 / 2 + 0.05) : p,
                     angle, a[1] || 1.35, 2.70, a[2]);
       });
-      shellRegister(g, name, normal, null, twoSided);
+      shellRegister(g, name, normal, null, twoSided, null, cutawayRoom);
       return g;
     }
     /* Each pitched plane has its own normal and merge/ghost unit. Gable
        infill is a separate vertical piece, so a front camera can see
        through the end without relying on a roof's half-space test. */
-    function shellGable(name, x0, x1, z0, z1, eave, alongZ, room, ends, pitch, slopeRooms, depthEnds) {
+    function shellGable(name, x0, x1, z0, z1, eave, alongZ, room, ends, pitch, slopeRooms, depthEnds, twoSidedRoof, cutawayRoom) {
       pitch = pitch || PITCH_FAMILY;
       var half = (alongZ ? x1 - x0 : z1 - z0) / 2;
       var cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
@@ -4358,7 +4402,7 @@
         shellRegister(g, name + (alongZ ? (sign < 0 ? '_west' : '_east')
                                        : (sign < 0 ? '_north' : '_south')),
                       n.toArray(), slopeRooms ? slopeRooms[sign < 0 ? 0 : 1] : room,
-                      false, depthEnds ? 0.5 : undefined);
+                      !!twoSidedRoof, depthEnds ? 0.5 : undefined, cutawayRoom);
       });
       cx = (x0 + x1) / 2; cz = (z0 + z1) / 2;
       (ends || [-1, 1]).forEach(function (sign) {
@@ -4388,25 +4432,25 @@
         });
         shellRegister(g, name + (alongZ ? (sign < 0 ? '_back' : '_front')
                                        : (sign < 0 ? '_end_west' : '_end_east')),
-                      alongZ ? [0, 0, sign] : [sign, 0, 0], room);
+                      alongZ ? [0, 0, sign] : [sign, 0, 0], room,
+                      false, undefined, cutawayRoom);
       });
     }
     shellGable('roof_main', FULL_HOUSE.west, FULL_HOUSE.east,
                FULL_HOUSE.north, FULL_HOUSE.south, EXT_TOP4, false, null,
-               null, Math.PI / 8, ['kitchen', 'living']);
+               null, Math.PI / 8, ['kitchen', 'living'], null, false, 'study');
     shellGable('porch_roof', DOOR_X4 - PORCH_W4 / 2, DOOR_X4 + PORCH_W4 / 2,
                SWZ1 - 2.8, PORCH_FRONT_Z4, PORCH_EAVE4, true, 'living', [1]);
 
     /* Side wings leave the complete terrace open between z=4.2 and 9.8. */
-    shellWall('massing_east_front_south', EWX1_4, SWZ1, FULL_HOUSE.wingEast, SWZ1,
-              5.6, [0, 0, 1], [[8.62, 1.55, true]]);
-    var studyEntryG = shellWall('massing_east_front_east', FULL_HOUSE.wingEast, 9.8, FULL_HOUSE.wingEast, SWZ1,
-              5.6, [1, 0, 0], [[12.10, 1.35, false]]);
-    studyEntryG.userData.room = 'study';
-    shellWall('massing_east_front_patio', EWX1_4, 9.8, FULL_HOUSE.wingEast, 9.8,
-              5.6, [0, 0, -1], [], true);
-    shellGable('massing_front_roof', EWX1_4, FULL_HOUSE.wingEast, 9.8, SWZ1,
-               5.6, false, null, [1], Math.PI / 8);
+    shellWall('massing_east_front_south', EWX1_4, FULL_HOUSE.studySouth, FULL_HOUSE.studyEast, FULL_HOUSE.studySouth,
+              5.6, [0, 0, 1], [[9.10, 1.55, true], [12.60, 1.55, true]]);
+    shellWall('massing_east_front_east', FULL_HOUSE.studyEast, 9.8, FULL_HOUSE.studyEast, FULL_HOUSE.studySouth,
+              5.6, [1, 0, 0], [[11.20, 1.05, true], [13.20, 1.05, true]]);
+    shellWall('massing_east_front_patio', EWX1_4, 9.8, FULL_HOUSE.studyEast, 9.8,
+              5.6, [0, 0, -1], [[11.60, 2.60, true]], true, 'study');
+    shellGable('massing_front_roof', EWX1_4, FULL_HOUSE.studyEast, 9.8, FULL_HOUSE.studySouth,
+               5.6, false, null, [1], Math.PI / 8, null, null, true, 'study');
     shellWall('massing_east_back_north', EWX1_4, -6.1, FULL_HOUSE.wingEast, -6.1,
               4.6, [0, 0, -1], [[8.62, 1.35, false]]);
     shellWall('massing_east_back_east', FULL_HOUSE.wingEast, -6.1, FULL_HOUSE.wingEast, 4.2,
@@ -8515,6 +8559,18 @@
                materials: scenSlots.length, clones: scenClones };
     }
 
+    /* Study occupies the authored east-front wing and joins this scene's
+       room/zone registries before footprints and scenery are indexed. */
+    if (window.HouseStudy) {
+      studyWorld = window.HouseStudy.build(T, DETAIL, R);
+      scene.add(studyWorld.group);
+      if (studyWorld.architecture) scene.add(studyWorld.architecture);
+      if (studyWorld.proxies) scene.add(studyWorld.proxies);
+      Object.keys(studyWorld.zones).forEach(function (key) {
+        groups[key] = studyWorld.zones[key];
+      });
+    }
+
     /* on BUILD: the room boots at the exterior, where nothing recedes, so
        this is a k = 0 pass. It is not a no-op — it is what caches every
        authored colour, so the first room entered tints from the original
@@ -8661,13 +8717,14 @@
       EXT_POS: EXT_POS, EXT_AT: EXT_AT,
       GARAGE_POS: GARAGE_POS, GARAGE_AT: GARAGE_AT,
       MUD_POS: MUD_POS, MUD_AT: MUD_AT, LIV_POS: LIV_POS, LIV_AT: LIV_AT,
+      STUDY_POS: STUDY_POS, STUDY_AT: STUDY_AT, studyWorld: studyWorld,
       mudroomRoofG: mudroomRoofG, livingRoofG: livingRoofG,
       yardG: yardG, westWallG: westWallG, zoneExtra: zoneExtra,
       mudBagsG: mudBagsG, makeBag: makeBag, FABRIC: FABRIC,
       registerFabric: function (group, spec) {
         regFabric(group, {name:spec.name, n:spec.normal, box:fabBox(group),
                           room:spec.room, mode:spec.mode, twoSided:spec.twoSided,
-                          pad:spec.pad});
+                          pad:spec.pad, cutawayRoom:spec.cutawayRoom});
       },
       solveShell: solveShell, ROOM_AABB: ROOM_AABB
     };
@@ -8687,6 +8744,11 @@
     BACK.hidden = mode === 'exterior';
     if (mode === 'exterior') return;
     var roomName = mode.charAt(0).toUpperCase() + mode.slice(1);
+    if (!focused && mode === 'study') {
+      BACK.textContent = '\u2190 Living room';
+      BACK.setAttribute('aria-label', 'Return to the living room');
+      return;
+    }
     BACK.textContent = focused ? '\u2190 ' + roomName : '\u2190 Exterior';
     BACK.setAttribute('aria-label', focused
       ? 'Return to the ' + roomName.toLowerCase()
@@ -8928,12 +8990,13 @@
     (world.fabric || []).forEach(function (fixture) {
       webgl.registerFabric(fixture.group, {
         name:fixture.name, normal:fixture.normal,
-        room:fixture.group.userData.room, mode:'hide', pad:.45
+        room:fixture.group.userData.room, mode:'hide', pad:.45,
+        twoSided:fixture.twoSided, cutawayRoom:fixture.cutawayRoom
       });
     });
     if (mode !== 'exterior') {
       var room = roomsReg()[mode];
-      if (room) webgl.solveShell(webgl.cam.position, {box:room.aabb});
+      if (room) webgl.solveShell(webgl.cam.position, {box:room.aabb, room:mode});
     }
     scheduleHint();
   }
@@ -9209,7 +9272,7 @@
     webgl.cam.updateProjectionMatrix();
     /* A focused view steps back through its room before leaving the house.
        This is essential in the garage, where cars fill the close view. */
-    webgl.solveShell(room.pos, { box: room.aabb });
+    webgl.solveShell(room.pos, { box: room.aabb, room:name || 'kitchen' });
     webgl.aimShadow(name || 'kitchen');
     tween = { fromP: webgl.cam.position.clone(), toP: room.pos.clone(),
               fromA: (lookAt || room.at).clone(), toA: room.at.clone(),
@@ -9236,12 +9299,15 @@
       mudroom: { pos: webgl.MUD_POS, at: webgl.MUD_AT,
                  aabb: webgl.ROOM_AABB.mudroom },
       living:  { pos: webgl.LIV_POS, at: webgl.LIV_AT, fov: 36,
-                 aabb: webgl.ROOM_AABB.living }
+                 aabb: webgl.ROOM_AABB.living },
+      study:   { pos: webgl.STUDY_POS, at: webgl.STUDY_AT, fov: 36,
+                 aabb: webgl.ROOM_AABB.study }
     };
     return rooms;
   }
   var ZONE_ROOM = { garage: 'garage', curb: null,
                     door: 'mudroom', radio: 'living', pet: 'living' };
+  Object.keys(STUDY_ZONE_META).forEach(function (key) { ZONE_ROOM[key] = 'study'; });
   function zoneRoom(key) {
     var r = ZONE_ROOM[key];
     return r === undefined ? 'kitchen' : r;
@@ -9262,6 +9328,11 @@
       announceFocus(null);
     }
     mode = name;
+    if (webgl.studyWorld) {
+      webgl.studyWorld.group.visible = name === 'study';
+      if (webgl.studyWorld.architecture) webgl.studyWorld.architecture.visible = name === 'study';
+      if (webgl.studyWorld.proxies) webgl.studyWorld.proxies.visible = name === 'study';
+    }
     webgl.cam.fov = room.fov || 24;
     webgl.cam.updateProjectionMatrix();
     updateBack();
@@ -9269,7 +9340,7 @@
     /* spec section 4: solve against the DESTINATION at tween start (you
        fly through an outline, never a wall) — replaces the show-all-
        then-hide dance that used to run here. */
-    webgl.solveShell(room.pos, { box: room.aabb });
+    webgl.solveShell(room.pos, { box: room.aabb, room:name });
     webgl.aimShadow(name);        /* the sun's shadow box follows the camera */
     syncScenery();                /* inside a room the set dressing steps back */
     tween = { fromP: webgl.cam.position.clone(), toP: room.pos.clone(),
@@ -9278,7 +9349,13 @@
     requestFrame();
   }
   function goExterior() {
+    if (mode === 'study' && window.chfHouseEndParent) window.chfHouseEndParent();
     mode = 'exterior';
+    if (webgl.studyWorld) {
+      webgl.studyWorld.group.visible = false;
+      if (webgl.studyWorld.architecture) webgl.studyWorld.architecture.visible = false;
+      if (webgl.studyWorld.proxies) webgl.studyWorld.proxies.visible = false;
+    }
     webgl.cam.fov = 24;
     webgl.cam.updateProjectionMatrix();
     focused = null;
@@ -9466,7 +9543,7 @@
   function solveLeanIn(key) {
     var shape = zoneFaceQuad(key);
     if (shape && shape.centre) webgl.solveShell(webgl.cam.position,
-                                                { point: shape.centre });
+                                                { point: shape.centre, room:mode });
   }
   /* The tap's own lean-in, callable by zone name — the hand path a
      deep-link or a harness needs. Read-only: it moves the camera and
@@ -9486,6 +9563,28 @@
   window.chfHouseEnterGarage = function () { if (webgl) enterRoom('garage', null); };
   window.chfHouseEnterRoom = function (name) { if (webgl) enterRoom(name, null); };
   window.chfHouseExit = function () { if (webgl) goExterior(); };
+  window.chfHouseUnlockStudy = function () {
+    if (!webgl || !webgl.studyWorld) return Promise.resolve(false);
+    var visit = window.chfHouseParent && window.chfHouseParent();
+    if (!visit) return Promise.resolve(false);
+    return fetch(BASE + 'api/study/state', {
+      credentials:'same-origin', headers:{'X-Member-Token':visit.token}
+    }).then(function (response) {
+      if (!response.ok) throw new Error('http ' + response.status);
+      return response.json();
+    }).then(function (payload) {
+      studyFurniture = payload.furniture || {};
+      webgl.studyWorld.update(studyFurniture);
+      if (state) applyState(state);
+      enterRoom('study', null);
+      return true;
+    }).catch(function () {
+      if (window.chfHouseEndParent) window.chfHouseEndParent();
+      if (window.showGlobalAlert)
+        showGlobalAlert('Could not open the Study. Check the connection and try again.');
+      return false;
+    });
+  };
   /* read-only, the chfHouseScenery stance: reports, never moves */
   window.chfHouseMode = function () { return mode; };
   /* the studio's viewfinder: snap the camera anywhere and repaint once.
@@ -9644,7 +9743,11 @@
   var ZONE_HINT_ICON = {
     fridge: 'moments', counter: 'meals', board: 'lists', door: 'schedule',
     calendar: 'calendar', radio: 'music', window: 'weather', garage: 'garage',
-    curb: 'schedule', pet: 'critters'
+    curb: 'schedule', pet: 'critters',
+    study_board: 'study', study_desk: 'tasks', study_tray: 'lists',
+    study_stickies: 'tasks', study_calendar: 'calendar', study_window: 'weather',
+    study_contracts: 'tasks', study_binders: 'programs',
+    study_gauges: 'schedule', study_monitor: 'study', study_map: 'schedule'
   };
   var EXTERIOR_HINTS = [
     ['patio_slider', 'Kitchen', ['moments', 'meals', 'lists', 'calendar', 'weather']],
@@ -9799,9 +9902,6 @@
         return;
       }
     }
-    if (roomTagOf(primaryHit) === 'study') {
-      window.dispatchEvent(new CustomEvent('chf-house-study')); return;
-    }
     hideHint();
     if (mode === 'exterior') {
       /* stamped, not guessed: walk up for a room tag; yard and sky stay
@@ -9912,14 +10012,29 @@
   window.chfHouseState = function () { return state; };
   window.chfHouseRefresh = poll;
   if (webgl) {
+    if (webgl.studyWorld) {
+      webgl.studyWorld.group.visible = false;
+      if (webgl.studyWorld.architecture) webgl.studyWorld.architecture.visible = false;
+      if (webgl.studyWorld.proxies) webgl.studyWorld.proxies.visible = false;
+    }
     if (BACK) BACK.addEventListener('click', function () {
       if (focused) goHome(mode);
+      else if (mode === 'study') {
+        if (window.chfHouseEndParent) window.chfHouseEndParent();
+        studyFurniture = {}; webgl.studyWorld.update(studyFurniture);
+        enterRoom('living', null);
+      }
       else if (mode !== 'exterior') goExterior();
     });
     window.addEventListener('keydown', function (e) {
       if (document.body.classList.contains('house-card-open')) return;
       if (e.key !== 'Escape' || mode === 'exterior') return;
-      if (focused) goHome(mode); else goExterior();
+      if (focused) goHome(mode);
+      else if (mode === 'study') {
+        if (window.chfHouseEndParent) window.chfHouseEndParent();
+        studyFurniture = {}; webgl.studyWorld.update(studyFurniture);
+        enterRoom('living', null);
+      } else goExterior();
     });
     webgl.R.domElement.addEventListener('webglcontextlost', function (e) {
       e.preventDefault();

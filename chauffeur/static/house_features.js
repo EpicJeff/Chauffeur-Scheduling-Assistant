@@ -105,6 +105,8 @@
     cylinder(item,.07,.07,.10,brass,.58,1.43,.16,true).rotation.x = Math.PI / 2;
     box(item,.20,.24,.055,brass,.39,1.43,.15);
     box(item,.10,.10,.062,ink,.39,1.40,.185);
+    fabric.push({group:item,name:'living_study_door',normal:[1,0,0],twoSided:true,
+                 cutawayRoom:'study'});
 
     // Finish the living room's east wall with the two openings its plan needs:
     // the terrace slider and a separate door into the rear east room.

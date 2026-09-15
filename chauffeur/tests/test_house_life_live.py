@@ -102,12 +102,30 @@ def scenario_house_life():
         page.wait_for_selector('#cc-input-field', state='visible')
         page.fill('#cc-input-field', '1234')
         page.click('#cc-input-ok-btn')
-        page.wait_for_url(lambda url: urlparse(url).path.endswith('/study'))
-        page.wait_for_selector('#house-return')
-        check('panel' not in parse_qs(urlparse(page.url).query), 'PIN unlock releases panel latch for admin controls')
+        page.wait_for_function("chfHouseMode() === 'study' && chfNavProbe({settled:true})")
+        check(urlparse(page.url).path.endswith('/house'),
+              'Study opens inside the house without loading a separate world')
         visit = page.evaluate('chfHouseParent().token')
         check(storage.get_member_by_token(visit)['id'] == 'house-parent', 'temporary visit carries parent identity')
-        page.goto(served.url('errands'))
+        study_zones = ('study_board', 'study_desk', 'study_tray',
+                       'study_stickies', 'study_calendar', 'study_window',
+                       'study_contracts', 'study_binders',
+                       'study_gauges', 'study_monitor', 'study_map')
+        for zone in study_zones:
+            check(page.evaluate('(key) => chfNavProbe({zone:key})', zone),
+                  zone + ' uses the house interaction registry')
+        page.wait_for_selector('.house-hint[data-target="study_monitor"]', state='visible')
+        check('Living room' in page.locator('#house-back').inner_text(),
+              'Study uses the house back affordance')
+        if shots:
+            page.screenshot(path=os.path.join(shots, 'integrated-study.png'))
+        target = page.evaluate("chfNavProbe({zone:'study_monitor'})")
+        page.mouse.click(target['cx'], target['cy'])
+        page.wait_for_function("(() => { const p=chfNavProbe({settled:true}); return p && p.focused === 'study_monitor'; })()")
+        target = page.evaluate("chfNavProbe({zone:'study_monitor'})")
+        page.mouse.click(target['cx'], target['cy'])
+        page.wait_for_url(lambda url: urlparse(url).path.endswith('/mind'))
+        page.wait_for_selector('#house-return')
         page.locator('#house-return').click()
         page.wait_for_url(lambda url: urlparse(url).path.endswith('/house') and 'panel=true' in url)
         check(parse_qs(urlparse(page.url).query).get('quality') == ['low'], 'return preserves house preferences')

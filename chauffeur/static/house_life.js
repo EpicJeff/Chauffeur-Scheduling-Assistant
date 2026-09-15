@@ -54,6 +54,9 @@ window.houseLife = function () {
       // Return focus to the house before opening the shared PIN prompt.
       if (this.active) this.close();
       try {
+        if (destination !== 'errands' && window.chfHouseParent && window.chfHouseParent()) {
+          await window.chfHouseUnlockStudy(); return;
+        }
         var response = await fetch(this.apiBase + 'api/members');
         if (!response.ok) throw new Error();
         var parents = (await response.json()).filter(m => m.role === 'parent' && m.has_pin);
@@ -70,7 +73,8 @@ window.houseLife = function () {
         var result = await response.json();
         if (!response.ok) { showGlobalAlert(result.detail || 'Could not unlock the Study.'); return; }
         window.chfHouseStartParent(result);
-        location.href = this.apiBase + (destination === 'errands' ? 'errands' : 'study') + '?panel=false';
+        if (destination === 'errands') location.href = this.apiBase + 'errands?panel=false';
+        else await window.chfHouseUnlockStudy();
       } catch (_) { showGlobalAlert('Could not open the Study. Check the connection and try again.'); }
       finally { this.busy = false; }
     }

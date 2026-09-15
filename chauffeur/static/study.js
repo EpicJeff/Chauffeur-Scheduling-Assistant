@@ -23,17 +23,19 @@
 */
 (function () {
   'use strict';
-  const room = document.getElementById('room');
-  const fallback = document.getElementById('fallback');
+  function buildStudy(EMBED) {
+  const THREE = (EMBED && EMBED.THREE) || window.THREE;
+  const room = EMBED ? null : document.getElementById('room');
+  const fallback = EMBED ? null : document.getElementById('fallback');
 
   function webglOk() {
     try { const c = document.createElement('canvas');
       return !!(c.getContext('webgl2') || c.getContext('webgl')); }
     catch (e) { return false; }
   }
-  const quality = new URLSearchParams(location.search).get('quality') || 'high';
+  const quality = (EMBED && EMBED.quality) || new URLSearchParams(location.search).get('quality') || 'high';
   const NICE = quality !== 'low';
-  const useRoom = quality !== '2d' && webglOk() && Math.min(innerWidth, innerHeight) >= 560 && innerWidth >= 900;
+  const useRoom = !!EMBED || (quality !== '2d' && webglOk() && Math.min(innerWidth, innerHeight) >= 560 && innerWidth >= 900);
 
   // Every link this file follows is RELATIVE on purpose. Under Home Assistant
   // ingress the whole app is served beneath /api/hassio_ingress/<token>/, so
@@ -538,26 +540,30 @@
   // =====================================================================
   // scene / camera / renderer
   // =====================================================================
-  const scene = new THREE.Scene();
+  const scene = EMBED ? new THREE.Group() : new THREE.Scene();
   scene.background = new THREE.Color(PAL.bg);
   scene.fog = new THREE.Fog(PAL.bg, 22, 46);
 
-  const W = () => room.clientWidth || innerWidth, H = () => room.clientHeight || innerHeight;
+  const W = () => EMBED ? (EMBED.width || innerWidth) : (room.clientWidth || innerWidth);
+  const H = () => EMBED ? (EMBED.height || innerHeight) : (room.clientHeight || innerHeight);
   const cam = new THREE.PerspectiveCamera(36, W() / H(), .1, 100);
   const CAM0 = new THREE.Vector3(12.0, 8.15, 14.2), LOOK0 = new THREE.Vector3(-.1, 3.0, -1.3);
   cam.position.copy(CAM0); cam.lookAt(LOOK0);
 
-  const R = new THREE.WebGLRenderer({ antialias: true });
-  R.setSize(W(), H());
-  R.setPixelRatio(1); // Match the house: stable wall-panel fill rate.
-  R.shadowMap.enabled = quality !== 'low'; R.shadowMap.type = THREE.PCFSoftShadowMap;
-  R.toneMapping = THREE.ACESFilmicToneMapping;
-  R.toneMappingExposure = 1.02;                            // the approved grade
-  R.outputEncoding = THREE.sRGBEncoding;
-  room.appendChild(R.domElement);
+  const R = EMBED ? EMBED.renderer : new THREE.WebGLRenderer({ antialias: true });
+  if (!EMBED) {
+    R.setSize(W(), H());
+    R.setPixelRatio(1); // Match the house: stable wall-panel fill rate.
+    R.shadowMap.enabled = quality !== 'low'; R.shadowMap.type = THREE.PCFSoftShadowMap;
+    R.toneMapping = THREE.ACESFilmicToneMapping;
+    R.toneMappingExposure = 1.02;                            // the approved grade
+    R.outputEncoding = THREE.sRGBEncoding;
+    room.appendChild(R.domElement);
+  }
   let frameHandle = 0;
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   function requestRender() {
+    if (EMBED) { if (EMBED.requestRender) EMBED.requestRender(); return; }
     if (!frameHandle && !document.hidden) frameHandle = requestAnimationFrame(frame);
   }
 
@@ -649,30 +655,32 @@
   // =====================================================================
   // room shell
   // =====================================================================
+  const shellG = new THREE.Group();
+  scene.add(shellG);
   floorTex.repeat.set(3, 3);
-  box(17, .3, 17, 0, 0, -.15, 0, { noCast: true, mat: M(0xffffff, { map: floorTex, roughness: .88 }) });
+  box(17, .3, 17, 0, 0, -.15, 0, { parent:shellG, noCast: true, mat: M(0xffffff, { map: floorTex, roughness: .88 }) });
   plasterTex.repeat.set(4, 2);
   const wallMat = M(0xffffff, { map: plasterTex, roughness: .96 });
-  box(17, 9.5, .3, 0, 0, 4.4, -6.3, { noCast: true, mat: wallMat });
-  box(.3, 9.5, 17, 0, -7.3, 4.4, 0, { noCast: true, mat: wallMat.clone() });
-  box(17, .38, .38, 0x5a4029, 0, .38, -6.11, { noCast: true });
-  box(.38, .38, 17, 0x5a4029, -7.11, .38, 0, { noCast: true });
+  box(17, 9.5, .3, 0, 0, 4.4, -6.3, { parent:shellG, noCast: true, mat: wallMat });
+  box(.3, 9.5, 17, 0, -7.3, 4.4, 0, { parent:shellG, noCast: true, mat: wallMat.clone() });
+  box(17, .38, .38, 0x5a4029, 0, .38, -6.11, { parent:shellG, noCast: true });
+  box(.38, .38, 17, 0x5a4029, -7.11, .38, 0, { parent:shellG, noCast: true });
   // A fitted room, in the house's ivory / sage / brass vocabulary. These
   // architectural parts never carry live signals or become hit targets.
   const joinery = M(0x536c5f, { roughness: .86 });
   const ivory = M(0xeee7da, { roughness: .78 });
-  box(17, 1.8, .12, 0, 0, 1.05, -6.10, { mat: joinery, noCast: true });
-  box(.12, 1.8, 17, 0, -7.10, 1.05, 0, { mat: joinery, noCast: true });
+  box(17, 1.8, .12, 0, 0, 1.05, -6.10, { parent:shellG, mat: joinery, noCast: true });
+  box(.12, 1.8, 17, 0, -7.10, 1.05, 0, { parent:shellG, mat: joinery, noCast: true });
   [.32, 1.91, 2.04].forEach(y => {
-    box(17, .10, .20, 0, 0, y, -5.99, { mat: ivory, noCast: true });
-    box(.20, .10, 17, 0, -6.99, y, 0, { mat: ivory, noCast: true });
+    box(17, .10, .20, 0, 0, y, -5.99, { parent:shellG, mat: ivory, noCast: true });
+    box(.20, .10, 17, 0, -6.99, y, 0, { parent:shellG, mat: ivory, noCast: true });
   });
   for (let x = -6.8; x < 8; x += 1.3)
-    box(.065, 1.45, .07, 0, x, 1.12, -6.01, { mat: ivory, noCast: true });
+    box(.065, 1.45, .07, 0, x, 1.12, -6.01, { parent:shellG, mat: ivory, noCast: true });
   for (let z = -5.7; z < 8; z += 1.3)
-    box(.07, 1.45, .065, 0, -7.01, 1.12, z, { mat: ivory, noCast: true });
+    box(.07, 1.45, .065, 0, -7.01, 1.12, z, { parent:shellG, mat: ivory, noCast: true });
   rugTex.anisotropy = 4;
-  box(7.8, .05, 5.6, 0, .6, .03, 2.2, { noCast: true, mat: M(0xffffff, { map: rugTex, roughness: 1 }) });
+  box(7.8, .05, 5.6, 0, .6, .03, 2.2, { parent:shellG, noCast: true, mat: M(0xffffff, { map: rugTex, roughness: 1 }) });
 
   // =====================================================================
   // window — frame computed from the glass, sky swapped day/night
@@ -1511,6 +1519,7 @@
   // The payload the room is currently wearing — what the flying sheet asks
   // before it decides whether there is anything honest to carry.
   let LAST = null, lastJson = '';
+  let hoverZone = null, leaned = null;
 
   // =====================================================================
   // 5. FURNITURE — the whole of the room's data behaviour, one row per
@@ -2132,6 +2141,10 @@
   // wearing the last payload this page actually held (or the calm rows, if
   // the first poll never answered). Every later poll keeps the list fed.
   let contextLost = false;
+  if (EMBED) {
+    applyState(null);
+    return { group: scene, zones: ZONES, shell: shellG, update: applyState };
+  }
   R.domElement.addEventListener('webglcontextlost', e => {
     if (contextLost) return;
     e.preventDefault();
@@ -2173,8 +2186,6 @@
   let ptrX = 0, ptrY = 0, ptrIn = false, needPick = false;
   let pnx = 0, pny = 0;                       // pointer in -1..1, for parallax
   let paraX = 0, paraY = 0;                   // the damped camera offset it feeds
-  let hoverZone = null, leaned = null;
-
   function pick() {
     if (!ptrIn) return null;
     const b = R.domElement.getBoundingClientRect();
@@ -2521,4 +2532,7 @@
                    renderer: R, focusFor: focusFor, leanInto: leanInto, leanBack: leanBack,
                    leanedZone: () => leaned };
   poll(applyState);
+  }
+  window.StudyFactory = buildStudy;
+  if (!window.STUDY_EMBED_MODE) buildStudy(null);
 })();

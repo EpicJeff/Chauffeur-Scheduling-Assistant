@@ -42,6 +42,7 @@
     save(parentKey, { token: result.token, member: result.member,
       expires: Date.now() + result.expires_in * 1000, active: Date.now() });
   };
+  window.chfHouseEndParent = function () { lock(false); };
   window.chfHouseReturn = function () { lock(true); };
   if (onHouse) lock(false);
   // History entries remember that this was a parent visit even if Back
