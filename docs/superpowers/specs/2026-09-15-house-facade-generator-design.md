@@ -42,7 +42,7 @@ Faces sit at different depths, so a slot strip is one-dimensional in x but each 
 
 ### 2.1 Roof planes
 
-Each face has one street-facing roof plane: `main` -> `roof_main` south pitch; `wing` -> `massing_front_roof` south pitch; `garage` -> `garage_gable` (already a street-facing gable end); `mudroom` -> `mudroom_cross_roof` south pitch. Roof features attach to the slot's face plane. The garage face's roof is already a gable end, so `gable` there is a no-op and `dormer` attaches to the flank pitch above the gable end's eave line.
+Each face has one street-facing roof plane: `main` -> `roof_main` south pitch; `wing` -> `massing_front_roof` south pitch; `garage` -> `massing_service_roof` south pitch; `mudroom` -> `mudroom_cross_roof` south pitch. Roof features attach to the slot's face plane. Today's `garage_gable` (house.js:4487, a street-facing gable projecting from the service roof over the garage door) is exactly the `gable` roof feature on the garage face — the generator reproduces it from the spec instead of the hand call.
 
 ### 2.2 The canonical facade is the current elevation, snapped
 
@@ -50,7 +50,7 @@ Today's positions (windows at x -4.6 / -1.9 / 4.6, door at 1.3, porch 8.4 wide) 
 
 - `main`: windows at slots 1, 2 (the pair, was -4.6/-1.9 -> -4.375/-2.525) and 6 (the single, was 4.6 -> 5.45), size `tall`; door at slot 4 (was 1.3 -> 1.175); porch `sitting` at slot 2 span 4 (x -3.45..3.95, 7.4 wide; was -2.9..5.5) — the builder centres posts and step on the span's extent; roof: `gable` at slot 2 span 4 (today's `porch_roof`, over the porch). The single window at slot 6 stands east of the porch, as the pair stands west of it.
 - `wing` (x0 6.85, four slots, centres 7.775, 9.625, 11.475, 13.525): windows at slots 1 and 3 (were 9.10/12.60 -> 9.625/13.525), size `standard` (1.55 x 2.70 today; the table's `standard` is 1.55 x 2.70 so the wing is unchanged in size), roof `eave`.
-- `garage` (x0 -18.2, three slots): `garage_door {style: carriage, leaves: 1}` — a garage door always spans its whole face (slot 0, span 3, forced by normalize), and its leaf count sets the width: one leaf 4.4 (today's, centred on the face at -15.4 exactly), two leaves 5.0. Roof `eave` (the gable end is the face's own roof).
+- `garage` (x0 -18.2, three slots): `garage_door {style: carriage, leaves: 1}` — a garage door always spans its whole face (slot 0, span 3, forced by normalize), and its leaf count sets the width: one leaf 4.4 (today's, centred on the face at -15.4 exactly), two leaves 5.0. Roof: `gable` at slot 0 span 3 (today's `garage_gable`).
 - `mudroom`: all `wall`, roof `eave`.
 - `pitch_deg`: the current `PITCH_FAMILY` value (atan2(2.05, 2.95) = 34.8 degrees); style `cladding: batten, body: white, roof: charcoal, frame: black, door: wood, trim: white`.
 
@@ -115,7 +115,7 @@ The canonical facade is not stored; `house_facade.list_facades()` prepends it as
 3. **Spans clamp** to `[1, slots_remaining_on_face]`; a span crossing a face boundary is **truncated at the boundary** (4.3), never rejected.
 4. **Openings with interior meaning pin to their room's face**: `garage_door` is forced onto the `garage` face at slot 0 span 3 (the whole face; `leaves` sets its width) — never more than one; `door` entries are moved into the `main` face — any number; at least one always exists (a spec without one gets the canonical door). The west-most door on the main face carries the `front_door` marker/entry; every door tap-navigates to living through its room stamp. The study's patio slider is not a street feature and is untouched.
 5. **Overlap priority** on the ground layer, exclusive kinds only: `garage_door > door > window > wall`. When two entries overlap, the lower-priority one is trimmed to the free slots (split into up to two pieces if the winner sits inside it) and dropped if nothing is left. `porch` is an **overlay**: it shares slots with a door and with windows (a window under a covered porch is ordinary, and the canonical single window stands beside the porch today), so it never trims and is never trimmed; it is clamped to one face, and never placed on the `garage` face (the garage door spans that face and cars drive through it — a porch there would stand in the driveway). Any number of porches; abutting spans simply abut.
-6. **Roof layer priority**: `gable > dormer > hip_end > eave`, same trim rule. A `gable` on the `garage` face is dropped with a note (the face is already a gable end).
+6. **Roof layer priority**: `gable > dormer > hip_end > eave`, same trim rule.
 7. **Budget caps** (constants, tuned in 7.2): `MAX_WINDOWS` (windows + dormer windows, initial 10), `MAX_DORMERS` (initial 6), `MAX_GABLES` (initial 4), `MAX_PORCH_SLOTS` (porch slots summed, initial 10). These are draw-budget constants, not grammar: the grammar itself has no count limits. Excess entries drop east-most first; a note names what was dropped.
 8. **Sorting and dedupe**: output lists are sorted by slot; the same slot never appears twice per layer.
 9. **Idempotence**: `normalize(normalize(x)) == normalize(x)`; `normalize(CANONICAL) == CANONICAL`.
