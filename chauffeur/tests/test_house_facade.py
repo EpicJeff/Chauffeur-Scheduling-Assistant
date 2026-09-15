@@ -182,6 +182,68 @@ def scenario_worst_case_is_within_caps():
     check(gd['style'] == 'glass' and gd['leaves'] == 2, 'heaviest garage door')
 
 
+def _fresh():
+    # harness.py replaces storage.get_settings with a constant lambda; the
+    # storage laws need the real table, so read it directly.
+    from services import storage
+    storage.get_settings = lambda: dict((storage.settings_table.all() or [{}])[0])
+    storage.update_settings({'calendar_ids': []})
+
+
+def scenario_storage_laws():
+    from services import storage
+    _fresh()
+    lst = hf.list_facades()
+    check(lst[0]['id'] == 'canonical' and lst[0]['readonly'] and len(lst) == 1, 'canonical always listed first')
+    check(hf.active_bundle()['id'] == 'canonical', 'canonical active by default')
+    rec = hf.save_facade('Ours', hf.worst_case())
+    check(rec['id'] and rec['source'] == 'hand' and rec['spec'] == hf.worst_case(), 'saved normalized')
+    check(hf.active_bundle()['id'] == 'canonical', 'saving never activates unless asked')
+    check(hf.set_active(rec['id']) == rec['id'] and hf.active_bundle()['spec'] == hf.worst_case(), 'activated')
+    up = hf.update_facade(rec['id'], name='Ours 2', spec={'ground': []})
+    check(up['name'] == 'Ours 2' and any(g['kind'] == 'door' for g in up['spec']['ground']), 'update normalizes')
+    try:
+        hf.update_facade('canonical', name='x'); check(False, 'canonical is readonly')
+    except ValueError:
+        pass
+    try:
+        hf.delete_facade('canonical'); check(False, 'canonical cannot be deleted')
+    except ValueError:
+        pass
+    check(hf.delete_facade(rec['id']) and hf.active_bundle()['id'] == 'canonical', 'deleting the active one falls back')
+    check(hf.delete_facade('nope') is False, 'unknown delete is False')
+    try:
+        hf.set_active('nope'); check(False, 'unknown activate raises')
+    except KeyError:
+        pass
+    storage.update_settings({'calendar_ids': [], 'house_facade_active': 'ghost'})
+    check(hf.active_bundle()['id'] == 'canonical', 'a dangling active id never breaks the house')
+
+
+def scenario_routes_and_template():
+    import io, os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    auth = io.open(os.path.join(root, 'services', 'auth.py'), encoding='utf-8').read()
+    for line in ("('GET', '/api/house/facades', WALL_OR_SERVICE, None)",
+                 "('POST', '/api/house/facades', PARENTS, None)",
+                 "('POST', '/api/house/facades/preview', PARENTS, None)",
+                 "('POST', '/api/house/facades/photo', PARENTS, None)",
+                 "('PUT', '/api/house/facades/active', PARENTS, None)",
+                 "('PUT', '/api/house/facades/{fid}', PARENTS, None)",
+                 "('DELETE', '/api/house/facades/{fid}', PARENTS, None)"):
+        check(line in auth, f'auth rule present: {line}')
+    tpl = io.open(os.path.join(root, 'templates', 'house.html'), encoding='utf-8').read()
+    check('window.HOUSE_FACADE = ' in tpl and tpl.index('window.HOUSE_FACADE') < tpl.index("static/house.js"),
+          'the facade is injected before house.js loads (build-once)')
+    import main
+    out = main.house_facades_api()
+    check(out['active'] == 'canonical' and out['facades'][0]['id'] == 'canonical' and len(out['slots']) == 18,
+          'GET lists canonical + slots')
+    prev = main.house_facade_preview({'spec': {'ground': []}})
+    check(any(g['kind'] == 'door' for g in prev['spec']['ground']) and prev['notes'], 'preview normalizes, stores nothing')
+    check(len(hf.list_facades()) == 1, 'preview stored nothing')
+
+
 if __name__ == '__main__':
     for fn in (scenario_slot_table_is_derived_from_the_faces,
                scenario_canonical_is_normal_and_idempotent,
@@ -195,6 +257,8 @@ if __name__ == '__main__':
                scenario_sorted_and_deduped,
                scenario_wall_and_eave_entries_are_dropped,
                scenario_garbage_in_never_raises,
-               scenario_worst_case_is_within_caps):
+               scenario_worst_case_is_within_caps,
+               scenario_storage_laws,
+               scenario_routes_and_template):
         fn()
         print('  ok ', fn.__name__)

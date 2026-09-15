@@ -145,6 +145,11 @@ def state(since_ts: float = 0, now=None) -> dict:
     from services import house_programs
     out = kitchen_room.state(since_ts=since_ts, now=now)
     out['attention'] = house_attention.state(now)
+    from services import house_facade
+    try:
+        out['facade'] = house_facade.active_bundle()
+    except Exception:
+        out['facade'] = None
     try:
         out['program_objects'] = house_programs.objects()
     except Exception:

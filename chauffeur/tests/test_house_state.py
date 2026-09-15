@@ -221,6 +221,14 @@ def scenario_body_type_rides_the_car_record():
         check(f'value="{t}"' in src, f"picker offers {t}")
 
 
+def scenario_state_carries_the_facade():
+    _reset()
+    storage.get_cached_schedule = lambda: {}
+    st = house_room.state(since_ts=0)
+    check(st['facade']['id'] == 'canonical' and len(st['facade']['slots']) == 18,
+          'state carries the active facade bundle, canonical by default')
+
+
 if __name__ == '__main__':
     scenario_h1_house_speaks_with_the_kitchens_voice()
     scenario_the_house_never_draws_a_private_list()
@@ -232,4 +240,5 @@ if __name__ == '__main__':
     scenario_body_type_rides_the_car_record()
     scenario_curb_sees_the_bus()
     scenario_mudroom_counts_backpacks()
+    scenario_state_carries_the_facade()
     print("test_house_state OK")

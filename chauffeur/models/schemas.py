@@ -1370,6 +1370,11 @@ class Settings(BaseModel):
     # needed this to not strand the wall: the designation moves, and hiding
     # becomes an ordinary toggle with no special case.
     panel_home_board: str = ''
+    # The Home's street elevation (facade generator, spec 2026-09-15). Saved
+    # facades are whole specs; the active id selects one, 'canonical' = the
+    # built-in elevation. Never edited by hand outside services/house_facade.
+    house_facades: List[dict] = Field(default_factory=list)
+    house_facade_active: str = 'canonical'
     # Untouched for this long, any panel page returns to the home board. This
     # is what makes the panel an appliance rather than a browser: whatever
     # somebody wandered off into, the wall goes back to being the wall.

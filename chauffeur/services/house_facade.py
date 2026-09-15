@@ -303,3 +303,89 @@ def worst_case():
                                    'frame': 'white', 'door': 'red', 'trim': 'black'},
                          'ground': ground, 'roof': roof})
     return spec
+
+
+# --- storage ---
+
+CANONICAL_ID = 'canonical'
+
+
+def _settings():
+    from services import storage
+    return storage.get_settings() or {}
+
+
+def _write(patch):
+    from services import storage
+    cur = dict(storage.get_settings() or {})
+    cur.update(patch)
+    storage.update_settings(cur)
+
+
+def _saved():
+    rows = _settings().get('house_facades') or []
+    return [r for r in rows if isinstance(r, dict) and r.get('id')]
+
+
+def list_facades():
+    return [{'id': CANONICAL_ID, 'name': 'Canonical', 'readonly': True,
+             'source': 'builtin', 'spec': copy.deepcopy(CANONICAL)}] + copy.deepcopy(_saved())
+
+
+def save_facade(name, spec, activate=False, source='hand'):
+    clean, _ = normalize(spec)
+    now = time.time()
+    rec = {'id': uuid.uuid4().hex[:12], 'name': (str(name or '').strip() or 'My house')[:60],
+           'spec': clean, 'source': source if source in ('hand', 'photo') else 'hand',
+           'created_at': now, 'updated_at': now}
+    patch = {'house_facades': _saved() + [rec]}
+    if activate:
+        patch['house_facade_active'] = rec['id']
+    _write(patch)
+    return rec
+
+
+def update_facade(fid, name=None, spec=None):
+    if fid == CANONICAL_ID:
+        raise ValueError('readonly')
+    rows = _saved()
+    for r in rows:
+        if r['id'] == fid:
+            if name is not None:
+                r['name'] = (str(name).strip() or r['name'])[:60]
+            if spec is not None:
+                r['spec'], _ = normalize(spec)
+            r['updated_at'] = time.time()
+            _write({'house_facades': rows})
+            return r
+    return None
+
+
+def delete_facade(fid):
+    if fid == CANONICAL_ID:
+        raise ValueError('readonly')
+    rows = _saved()
+    keep = [r for r in rows if r['id'] != fid]
+    if len(keep) == len(rows):
+        return False
+    patch = {'house_facades': keep}
+    if _settings().get('house_facade_active') == fid:
+        patch['house_facade_active'] = CANONICAL_ID
+    _write(patch)
+    return True
+
+
+def set_active(fid):
+    if fid != CANONICAL_ID and not any(r['id'] == fid for r in _saved()):
+        raise KeyError(fid)
+    _write({'house_facade_active': fid})
+    return fid
+
+
+def active_bundle():
+    fid = _settings().get('house_facade_active') or CANONICAL_ID
+    rec = next((r for r in _saved() if r['id'] == fid), None)
+    if rec is None:
+        return {'id': CANONICAL_ID, 'name': 'Canonical', 'spec': copy.deepcopy(CANONICAL), 'slots': slot_table()}
+    spec, _ = normalize(rec.get('spec'))
+    return {'id': rec['id'], 'name': rec['name'], 'spec': spec, 'slots': slot_table()}

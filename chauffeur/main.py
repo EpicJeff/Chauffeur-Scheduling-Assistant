@@ -1719,8 +1719,14 @@ def kitchen_page(request: Request):
 @app.get("/house")
 def house_page(request: Request):
     """The Home: the dollhouse the panel lives in (spec
-    2026-09-08-house-design.md). URL-only until H4 flips the panel home."""
-    return templates.TemplateResponse(request=request, name="house.html")
+    2026-09-08-house-design.md). URL-only until H4 flips the panel home.
+    The active facade rides the page: the scene builds before its first
+    state fetch, so build-once means the spec arrives with the HTML."""
+    import json as _json
+    from services import house_facade as _hf
+    facade_json = _json.dumps(_hf.active_bundle()).replace('</', '<\\/')
+    return templates.TemplateResponse(request=request, name="house.html",
+                                      context={'facade_json': facade_json})
 
 @app.get("/threads")
 def threads_page(request: Request):
@@ -5457,6 +5463,68 @@ def house_state_api(since: float = 0, request: Request = None):
     (pinned in test_house_state)."""
     from services import house_room as _house
     return _house.state(since_ts=float(since or 0))
+
+
+# --- The facade generator (spec 2026-09-15 §3.2) ---
+# Declaration order matters: /active and /preview must precede /{fid} so
+# FastAPI matches the literal route before the parameterized one.
+
+@app.get("/api/house/facades")
+def house_facades_api():
+    from services import house_facade as _hf
+    return {'active': _hf.active_bundle()['id'], 'facades': _hf.list_facades(),
+            'slots': _hf.slot_table()}
+
+
+@app.post("/api/house/facades/preview")
+def house_facade_preview(body: dict = Body(default={})):
+    """Pure round-trip for the editor: normalize + notes, stores nothing."""
+    from services import house_facade as _hf
+    spec, notes = _hf.normalize((body or {}).get('spec'))
+    return {'spec': spec, 'notes': notes}
+
+
+@app.post("/api/house/facades")
+def house_facade_create(body: dict = Body(default={})):
+    from services import house_facade as _hf
+    body = body or {}
+    rec = _hf.save_facade(body.get('name'), body.get('spec'), activate=bool(body.get('activate')),
+                          source=body.get('source') or 'hand')
+    return {'facade': rec, 'active': _hf.active_bundle()['id']}
+
+
+@app.put("/api/house/facades/active")
+def house_facade_activate(body: dict = Body(default={})):
+    from services import house_facade as _hf
+    try:
+        fid = _hf.set_active(str((body or {}).get('id') or ''))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such facade")
+    return {'active': fid}
+
+
+@app.put("/api/house/facades/{fid}")
+def house_facade_update(fid: str, body: dict = Body(default={})):
+    from services import house_facade as _hf
+    try:
+        rec = _hf.update_facade(fid, name=(body or {}).get('name'), spec=(body or {}).get('spec'))
+    except ValueError:
+        raise HTTPException(status_code=409, detail="The canonical facade is read-only")
+    if rec is None:
+        raise HTTPException(status_code=404, detail="No such facade")
+    return {'facade': rec}
+
+
+@app.delete("/api/house/facades/{fid}")
+def house_facade_delete(fid: str):
+    from services import house_facade as _hf
+    try:
+        ok = _hf.delete_facade(fid)
+    except ValueError:
+        raise HTTPException(status_code=409, detail="The canonical facade is read-only")
+    if not ok:
+        raise HTTPException(status_code=404, detail="No such facade")
+    return {'status': 'ok', 'active': _hf.active_bundle()['id']}
 
 
 @app.get("/api/study/state")

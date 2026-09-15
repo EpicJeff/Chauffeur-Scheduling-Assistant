@@ -366,6 +366,15 @@ RULES = [
     (ANY, '/api/kitchen/state', WALL_OR_SERVICE, None),
     # The Home: the dollhouse (H1) — same family-safe-by-construction read.
     (ANY, '/api/house/state', WALL_OR_SERVICE, None),
+    # The facade generator (spec 2026-09-15 §3.2): reads are family-safe
+    # (a wall builds from the active facade); every write is a parent's.
+    ('GET', '/api/house/facades', WALL_OR_SERVICE, None),
+    ('POST', '/api/house/facades', PARENTS, None),
+    ('POST', '/api/house/facades/preview', PARENTS, None),
+    ('POST', '/api/house/facades/photo', PARENTS, None),
+    ('PUT', '/api/house/facades/active', PARENTS, None),
+    ('PUT', '/api/house/facades/{fid}', PARENTS, None),
+    ('DELETE', '/api/house/facades/{fid}', PARENTS, None),
     ('GET', '/api/house/programs/{program_id}/session', WALL, None),
     # Possession of this one short-lived token permits only revoking it.
     ('POST', '/api/house/session/end', ANYONE, None),

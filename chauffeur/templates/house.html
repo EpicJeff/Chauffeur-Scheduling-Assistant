@@ -206,7 +206,8 @@
     {% include 'components/pet_editor.html' %}
     {% include 'components/pet_battle.html' %}
 
-    <script>window.HOUSE_STATE_URL = (window.chfBase !== undefined ? window.chfBase : '') + 'api/house/state';</script>
+    <script>window.HOUSE_STATE_URL = (window.chfBase !== undefined ? window.chfBase : '') + 'api/house/state';
+            window.HOUSE_FACADE = {{ facade_json|safe }};</script>
     <script src="{{ 'static/vendor/three.min.js'|ver }}"></script>
     <script src="{{ 'static/house_features.js'|ver }}"></script>
     <script>window.STUDY_EMBED_MODE = true;</script>

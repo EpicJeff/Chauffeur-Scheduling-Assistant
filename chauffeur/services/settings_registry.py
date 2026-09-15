@@ -84,6 +84,11 @@ ENTRIES: List[dict] = [
        'Event hashtags that mark something as a trip rather than a normal day.'),
     _e('route_cache_duration_mins', 'household', 'Route cache',
        'How long a computed travel time is reused before being looked up again.'),
+    _e('house_facades', 'household', 'Saved house facades',
+       'Street elevations of the Home you have saved: from a photo or drawn by hand.',
+       anchor='home'),
+    _e('house_facade_active', 'household', 'Active house facade',
+       'Which saved facade the Home builds its street face from.', anchor='home'),
 
     # --- the wall panel (owned by the home board, which is the thing being
     # configured — you pick the tiles while looking at them)
