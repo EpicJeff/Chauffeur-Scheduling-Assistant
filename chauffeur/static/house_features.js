@@ -72,6 +72,15 @@
         box(group,.24,.014,.012,0x8a897d,.045,.91-i*.13,.052);
       }
     }
+    function interiorDoor(group, hand) {
+      var leaf = 0x39424d, panel = 0x4a5460;
+      box(group,1.58,2.84,.14,leaf,0,1.42,0);
+      box(group,1.22,1.02,.035,panel,0,2.13,.09);
+      box(group,1.22,1.02,.035,panel,0,.72,.09);
+      box(group,1.86,.15,.24,ivory,0,2.96,0);
+      [-1,1].forEach(function(side){box(group,.15,3.02,.24,ivory,side*.86,1.51,0);});
+      cylinder(group,.07,.07,.10,brass,hand*.58,1.43,.16,true).rotation.x = Math.PI / 2;
+    }
 
     var item = entry('chores','Chore caddy','mudroom',[-11.6,.06,4.7],'chores');
     box(item,.68,.32,.40,0x6d9187,0,.16,0); box(item,.62,.06,.36,ink,0,.34,0);
@@ -97,46 +106,17 @@
     // belongs on that shared wall, across the room from the exterior door.
     item = entry('study','Study · Parent PIN','living',[6.50,.02,12.10],'study');
     item.rotation.y = -Math.PI / 2;
-    box(item,1.58,2.84,.14,wood,0,1.42,0);
-    box(item,1.22,1.02,.035,0x765338,0,2.13,.09);
-    box(item,1.22,1.02,.035,0x765338,0,.72,.09);
-    box(item,1.86,.15,.24,ivory,0,2.96,0);
-    [-1,1].forEach(function(side){box(item,.15,3.02,.24,ivory,side*.86,1.51,0);});
-    cylinder(item,.07,.07,.10,brass,.58,1.43,.16,true).rotation.x = Math.PI / 2;
-    box(item,.20,.24,.055,brass,.39,1.43,.15);
-    box(item,.10,.10,.062,ink,.39,1.40,.185);
+    interiorDoor(item,1);
     fabric.push({group:item,name:'living_study_door',normal:[1,0,0],twoSided:true,
                  cutawayRoom:'study'});
 
-    // Finish the living room's east wall with the two openings its plan needs:
-    // the terrace slider and a separate door into the rear east room.
-    item = shellFixture('patio-door','living',[6.50,.02,5.80],
-                        'living_patio_door',[1,0,0]);
-    item.rotation.y = -Math.PI / 2;
-    box(item,2.66,2.84,.13,0x40565c,0,1.42,0);
-    box(item,2.96,.15,.25,ivory,0,2.96,0);
-    [-1,1].forEach(function(side){box(item,.15,3.02,.25,ivory,side*1.405,1.51,0);});
-    box(item,.12,2.84,.20,ivory,0,1.42,.02);
-    [-.69,.69].forEach(function(x){
-      box(item,1.15,1.76,.035,0x8ba6a7,x,1.80,.095);
-      box(item,1.15,.62,.045,wood,x,.43,.10);
-      box(item,1.22,.11,.12,ivory,x,.78,.10);
-      box(item,.055,1.58,.07,0xc8d9d5,x,1.80,.12);
-    });
-    cylinder(item,.055,.055,.28,brass,-.18,1.35,.18,true).rotation.x = Math.PI / 2;
-    cylinder(item,.055,.055,.28,brass,.18,1.35,.18,true).rotation.x = Math.PI / 2;
-    box(item,2.95,.10,.32,0xb2a48f,0,-.01,.03);
-
+    // The two-sided patio slider is part of the house shell, so its inside
+    // and outside views are the same physical assembly. This module adds
+    // only the separate hinged door into the rear east room.
     item = shellFixture('back-room-door','living',[6.50,.02,2.45],
                         'living_back_room_door',[1,0,0]);
     item.rotation.y = -Math.PI / 2;
-    box(item,1.52,2.84,.14,0x657a75,0,1.42,0);
-    box(item,1.16,1.02,.035,0x536a66,0,2.13,.09);
-    box(item,1.16,1.02,.035,0x536a66,0,.72,.09);
-    box(item,1.82,.15,.24,ivory,0,2.96,0);
-    [-1,1].forEach(function(side){box(item,.15,3.02,.24,ivory,side*.84,1.51,0);});
-    cylinder(item,.07,.07,.10,brass,-.55,1.43,.16,true).rotation.x = Math.PI / 2;
-    box(item,.22,.08,.045,brass,-.55,1.43,.15);
+    interiorDoor(item,-1);
 
     root.updateMatrixWorld(true);
     return {group:root, entries:entries, fabric:fabric, dispose:function () {

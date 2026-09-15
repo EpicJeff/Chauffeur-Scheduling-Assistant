@@ -337,8 +337,8 @@
        bay, the whole room fits: the back wall with its plaques clear of
        the nav bar, the long wall down the left, and the floor in front
        of the cars where the clutter lives (bible S5.1) */
-    var GARAGE_POS = new T.Vector3(-14.05, 9.6, 21.3);
-    var GARAGE_AT = new T.Vector3(-15.45, 1.75, 6.05);
+    var GARAGE_POS = new T.Vector3(-18.0, 10.5, 21.3);
+    var GARAGE_AT = new T.Vector3(-14.3, 1.7, 4.8);
     /* the mudroom: the old pose put the street door's BACK across the
        left third of the frame (the wall it hangs in is cut away, the
        slab is not) and showed no west wall at all. Swung east and in,
@@ -3639,7 +3639,7 @@
        every camera: with n east, camOut is true for HOME_POS/LIV_POS/
        MUD_POS (all sit east of the wall's box centre x -6.2175, itself
        pulled east of the physical -6.65 wall panel by the TV/sconce/
-       calendar it carries) and false for GARAGE_POS (x -14.05, further
+       calendar it carries) and false for GARAGE_POS (x -18.0, further
        west than the wall itself) — of the three where camOut clears,
        only the mudroom's OWN aabb centre (x -9.62) sits west of -6.2175
        satisfying subIn; the kitchen's (x -2.785) and living's (x 0) sit
@@ -3726,7 +3726,7 @@
       stoop:    0x8a8175,   // masonry-tone stoop
       windowDark: 0x273438,
       curtainGlow: 0xd9ae73,
-      curtainIntensity: 0.22
+      curtainIntensity: 0.68
     };
     /* Small projecting gables keep the steep farmhouse pitch. The broad
        main and service roofs use 22.5 degrees to stay subordinate to
@@ -4523,7 +4523,9 @@
     var patioSliderG = shellGroup();
     var sliderFrame = shellWindow(patioSliderG, EWX1_4 + 0.23, 1.95, 5.80,
                                    Math.PI / 2, 2.65, 3.65, false);
-    shellBox(sliderFrame, 0.08, 0.55, 0.10, FARMHOUSE.wood, 0.15, 0, 0.17);
+    [-0.17, 0.17].forEach(function (face) {
+      shellBox(sliderFrame, 0.08, 0.55, 0.10, FARMHOUSE.wood, 0.15, 0, face);
+    });
     shellBox(sliderFrame, 2.95, 0.10, 0.32, FARMHOUSE.stoop, 0, -1.86, 0.02);
     shellRegister(patioSliderG, 'patio_slider', [1, 0, 0], 'kitchen');
 
@@ -4576,7 +4578,7 @@
            MUD_POS, mudroomAabbCentre, 1.5): lo=(-11.12,0.6,3.885),
            hi=(-1.9,7.7,12.7); box=[-7.15,-6.5,0,7,6.0,14.6] sits fully
            inside on every axis. GHOST.
-         garage (GARAGE_POS.x -14.05): camOut false (-14.05 is NOT >
+         garage (GARAGE_POS.x -18.0): camOut false (-18.0 is NOT >
            -6.825). SOLID.
          exterior: subject is null -> solid unconditionally (the sealed-
            house case every other piece already relies on). SOLID.
@@ -4814,7 +4816,8 @@
          mudroom, not a new case). Verified against the extended verdict
          table below. */
       regFabric(garageShellG, { name: 'garage_shell', n: [1, 0, 0],
-                                box: fabBox(garageShellG), room: 'garage' });
+                                box: fabBox(garageShellG), room: 'garage',
+                                cutawayRoom: 'garage' });
       /* SHELL: garage_door is complete here — the door leaf/frame/
          window/hardware/coach lamp are all in, and the roof/walls just
          moved OUT above, so fabBox now measures only the door assembly
@@ -5029,6 +5032,28 @@
       gWall('z', GZ0, 1, GX0, GX1, true);        /* the back wall */
       gWall('x', GX0, 1, GZ0, GZ1, true);        /* the long west wall */
       gWall('x', GX1, -1, GZ0, GZ1, false);      /* the east wall, edge-on */
+
+      /* The mudroom connection was authored only from the mudroom side;
+         the garage lining consequently covered its back and read as a
+         blank wall. Give the same physical opening its garage-facing leaf,
+         casing, two-panel relief, brass knob, and threshold. */
+      [3.03, 4.37].forEach(function (cz) {
+        gb(0.14, 2.92, 0.15, C.cab, -12.97, 1.46, cz, GMATT);
+      });
+      gb(0.14, 0.15, 1.62, C.cab, -12.97, 2.85, 3.70, GMATT);
+      if (GD2) gb(0.09, 0.09, 1.80, C.cab, -13.01, 2.97, 3.70, GMATT);
+      gb(0.10, 2.72, 1.18, C.slate, -12.94, 1.38, 3.70, { rough: 0.62 });
+      if (GD2) {
+        [[0.86, 1.02], [1.94, 0.94]].forEach(function (pn) {
+          gb(0.025, pn[1], 0.86, 0x4a5460, -13.00, pn[0], 3.70,
+             { rough: 0.60 });
+          if (GD3) gb(0.018, pn[1] - 0.14, 0.72, C.slate, -13.02, pn[0],
+                      3.70, { rough: 0.60 });
+        });
+        gc(0.05, 0.05, 0.10, C.brass, -13.04, 1.36, 4.16, 10, CHROME)
+          .rotation.z = Math.PI / 2;
+        gb(0.30, 0.05, 1.20, gWoodK, -12.98, GFY + 0.025, 3.70, gWoodO);
+      }
 
       /* ---- 2. the workbench (plate 4: a bench that reads as used) ------
          Six parts like the casework: steel legs, a stretcher shelf, an
@@ -8327,15 +8352,16 @@
       });
       glazing.forEach(function (m) {
         if (!m.material || !m.material.emissive) return;
-        m.material.emissive.setHex(n ? 0xffb35a : 0x000000);
-        m.material.emissiveIntensity = n ? 0.92 : 0;
+        if (m.material.color) m.material.color.setHex(FARMHOUSE.windowDark);
+        m.material.emissive.setHex(n ? FARMHOUSE.curtainGlow : 0x000000);
+        m.material.emissiveIntensity = n ? FARMHOUSE.curtainIntensity : 0;
         m.material.needsUpdate = true;
       });
       shellWindows.forEach(function (m) {
         if (!m.material || !m.material.emissive) return;
-        m.material.emissive.setHex(FARMHOUSE.curtainGlow);
-        m.material.emissiveIntensity = n && m.userData.shellGlow
-          ? FARMHOUSE.curtainIntensity : 0;
+        if (m.material.color) m.material.color.setHex(FARMHOUSE.windowDark);
+        m.material.emissive.setHex(n ? FARMHOUSE.curtainGlow : 0x000000);
+        m.material.emissiveIntensity = n ? FARMHOUSE.curtainIntensity : 0;
       });
       lampGlass.forEach(function (m) {
         if (!m.material || !m.material.emissive) return;

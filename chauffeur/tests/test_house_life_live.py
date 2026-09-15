@@ -73,9 +73,11 @@ def scenario_house_life():
             page.locator('.house-life-panel header button').click()
             page.wait_for_selector('.house-life-shade', state='hidden')
             check(page.evaluate('chfHouseMode()') != 'exterior', 'feature opens in its room context')
-        for fixture in ('patio-door', 'back-room-door'):
+        for fixture in ('back-room-door',):
             visible = page.evaluate('(key) => chfNavProbe({feature:key}) !== null', fixture)
             check(not visible, fixture + ' hides during the kitchen cutaway')
+        check(page.evaluate("chfShellFabric().find(f => f.name === 'patio_slider').verdict !== 'solid'"),
+              'the shared patio slider hides during the kitchen cutaway')
         page.evaluate("chfHouseFindFeature('study')")
         page.wait_for_function('chfNavProbe({settled:true})')
         point = page.evaluate("chfNavProbe({action:'study'})")
@@ -93,9 +95,11 @@ def scenario_house_life():
               'Study door appears on the room side opposite the exterior door')
         check(point['cx'] < page.viewport_size['width'] * .92,
               'Living-room framing keeps the Study door comfortably visible')
-        for fixture in ('patio-door', 'back-room-door'):
+        for fixture in ('back-room-door',):
             fixture_point = page.evaluate('(key) => chfNavProbe({feature:key})', fixture)
             check(fixture_point, fixture + ' is visible on the living-room east wall')
+        check(page.evaluate("chfShellFabric().find(f => f.name === 'patio_slider').verdict === 'solid'"),
+              'the same patio slider is visible from the living room')
         if shots:
             page.screenshot(path=os.path.join(shots, 'living-east-wall.png'))
         page.mouse.click(point['cx'], point['cy'])

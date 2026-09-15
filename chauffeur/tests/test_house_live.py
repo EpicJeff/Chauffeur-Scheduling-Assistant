@@ -950,7 +950,7 @@ def scenario_shell_fabric_registry():
         names = sorted(f['name'] for f in fab)
         expected_names = {
             'east_wall', 'garage_door', 'garage_shell', 'living_roof',
-            'living_patio_door', 'living_back_room_door',
+            'living_back_room_door',
             'living_study_door',
             'mudroom_roof', 'north_wall', 'north_cladding', 'south_wall',
             'west_skirt', 'west_wall', 'yard', 'patio_slider',
@@ -1007,7 +1007,7 @@ def scenario_shell_fabric_registry():
                         'massing_back_roof_shed',
                         'patio_slider', 'massing_back_roof_front',
                         'massing_east_back_east', 'massing_east_back_patio',
-                        'massing_east_front_patio', 'living_patio_door',
+                        'massing_east_front_patio',
                         'living_back_room_door', 'living_study_door', 'yard'],
             'garage': ['garage_door', 'garage_shell',
                        'garage_gable_west', 'garage_gable_east', 'garage_gable_front',
