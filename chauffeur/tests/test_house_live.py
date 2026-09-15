@@ -1311,7 +1311,8 @@ def scenario_worst_case_facade_builds_clean():
                     check(f"facade_{face}_{g['kind']}_{g['slot']}" in names, f'registered: {g}')
             for r in spec['roof']:
                 face = hf.slot_table()[r['slot']]['face']
-                check(any(n.startswith(f"facade_{face}_{r['kind']}_{r['slot']}") for n in names), f'registered: {r}')
+                prefix = f"facade_{face}_{r['kind']}_{r['slot']}"
+                check(any(n == prefix or n.startswith(prefix + '_') for n in names), f'registered: {r}')
             page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
             p = page.evaluate("window.chfNavProbe({entry:'front_door'})")
             check(p is not None, 'the generated front door is tappable')

@@ -127,10 +127,13 @@ def _seed_facade_from_env():
     fac = os.environ.get('HOUSE_PROBE_FACADE', '')
     if fac == 'worst':
         from services import house_facade as hf
-        rec = hf.save_facade('Probe worst case', hf.worst_case(), activate=True)
+        hf.save_facade('Probe worst case', hf.worst_case(), activate=True)
     elif fac and fac != 'canonical':
         from services import house_facade as hf
-        hf.set_active(fac)
+        try:
+            hf.set_active(fac)
+        except KeyError:
+            raise SystemExit(f'unknown facade id: {fac}')
 
 
 def _facade_only_seed():
