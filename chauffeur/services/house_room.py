@@ -142,8 +142,13 @@ def _mudroom(now=None) -> dict:
 
 def state(since_ts: float = 0, now=None) -> dict:
     from services import house_attention
+    from services import house_programs
     out = kitchen_room.state(since_ts=since_ts, now=now)
     out['attention'] = house_attention.state(now)
+    try:
+        out['program_objects'] = house_programs.objects()
+    except Exception:
+        out['program_objects'] = None
     for name, build in (('garage', _garage), ('curb', lambda: _curb(now)),
                         ('mudroom', lambda: _mudroom(now))):
         try:

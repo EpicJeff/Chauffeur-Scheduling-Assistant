@@ -5474,6 +5474,15 @@ def end_house_session(x_member_token: Optional[str] = Header(None)):
     storage.delete_house_session(x_member_token or '')
     return {'status': 'ok'}
 
+
+@app.get("/api/house/programs/{program_id}/session")
+def house_program_session(program_id: str):
+    from services import house_programs
+    session = house_programs.session(program_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="This program is no longer active")
+    return {'window': session}
+
 # --- Stages: the child that grows (load arc A4) ---
 
 @app.get("/api/stages")

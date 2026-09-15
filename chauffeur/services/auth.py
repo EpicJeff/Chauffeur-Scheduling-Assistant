@@ -366,6 +366,7 @@ RULES = [
     (ANY, '/api/kitchen/state', WALL_OR_SERVICE, None),
     # The Home: the dollhouse (H1) — same family-safe-by-construction read.
     (ANY, '/api/house/state', WALL_OR_SERVICE, None),
+    ('GET', '/api/house/programs/{program_id}/session', WALL, None),
     # Possession of this one short-lived token permits only revoking it.
     ('POST', '/api/house/session/end', ANYONE, None),
     # Threads: open loops with somebody outside the family. Same discipline —

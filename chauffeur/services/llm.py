@@ -64,7 +64,7 @@ def test_llm_connection(provider: str, url: str = None, api_key: str = None, mod
             
     return False, "Invalid provider selected."
 
-def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None, timeout_s: int = 180, images: list = None, transient_retries: int = 2) -> dict:
+def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None, timeout_s: int = 180, images: list = None, metrics: dict = None, max_output_tokens: int = None, transient_retries: int = 2, thinking_level: str = None, strict_json: bool = False) -> dict:
     # images: [{'mime': 'image/jpeg', 'b64': '<base64>'}] — Gemini only
     # (attached as inline_data parts); the ollama branch ignores them.
     import json
@@ -137,6 +137,12 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
             
             if tools:
                 payload["tools"] = [{"functionDeclarations": tools}]
+            if max_output_tokens is not None:
+                payload['generationConfig']['maxOutputTokens'] = max_output_tokens
+            if thinking_level is not None:
+                payload['generationConfig']['thinkingConfig'] = {'thinkingLevel': thinking_level}
+            if strict_json:
+                payload['generationConfig']['responseMimeType'] = 'application/json'
                 
             req = urllib.request.Request(
                 req_url,
@@ -161,6 +167,12 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
                         time.sleep(wait_s)
                         continue
                     raise
+            if metrics is not None:
+                metrics.update(data.get('usageMetadata') or {})
+                metrics['modelVersion'] = data.get('modelVersion', gemini_model)
+                metrics['finish_reason'] = (data.get('candidates') or [{}])[0].get('finishReason')
+            if strict_json and (data.get('candidates') or [{}])[0].get('finishReason') != 'STOP':
+                raise RuntimeError('Incomplete Gemini JSON response')
             try:
                 parts = data['candidates'][0]['content']['parts']
 
@@ -187,6 +199,8 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
             raise
         except urllib.error.HTTPError as e:
             error_body = e.read().decode('utf-8')
+            if metrics is not None:
+                metrics['http_status'] = e.code
             if e.code == 429:
                 return {"error": f"429 Too Many Requests: {error_body}"}
             raise RuntimeError(f"Gemini API request failed: {str(e)}\nDetails: {error_body}")
@@ -196,6 +210,8 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
         raise ValueError(f"Unknown provider: {provider}")
         
     try:
+        if strict_json:
+            return json.loads(raw_response.strip())
         import re
         match = re.search(r'```+(?:json)?\s*\n?([\s\S]*?)\n?\s*```+', raw_response)
         if match:
