@@ -1276,6 +1276,54 @@ def scenario_canonical_facade_pins_the_hand_built_elevation():
         check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
 
 
+def scenario_worst_case_facade_builds_clean():
+    """Spec §8: the heaviest spec the caps allow builds with no console
+    errors, registers every feature, and the generated front door still
+    navigates.
+
+    The saved 'worst' record and the active-facade setting are process-wide
+    state living in the module's shared CHAUFFEUR_DATA_DIR (every scenario
+    in this file serves its own app against the same temp data dir), so a
+    `finally` restores canonical and deletes the saved record no matter how
+    the browser half of this scenario ends -- later scenarios (the
+    canonical pin, in particular) must still see canonical.
+    """
+    from services import house_facade as hf
+    served = live_app(lambda: (_seed(), hf.save_facade('worst', hf.worst_case(), activate=True)))
+    if served is None:
+        return
+    try:
+        with served.browser() as page:
+            errors = []
+            page.on('console', lambda m: errors.append(m.text) if m.type == 'error' else None)
+            page.add_init_script(DAY_LOCK_JS)
+            page.goto(served.url('house?quality=high'))
+            page.wait_for_selector('#room canvas', timeout=20000)
+            page.wait_for_timeout(2600)
+            check(not errors, f'worst case builds clean: {errors[:3]}')
+            spec = page.evaluate('window.chfFacade()')
+            check(spec == hf.worst_case(), 'built from the worst case')
+            fab = page.evaluate('window.chfShellFabric()')
+            names = {f['name'] for f in fab}
+            for g in spec['ground']:
+                if g['kind'] in ('window', 'door', 'porch'):
+                    face = hf.slot_table()[g['slot']]['face']
+                    check(f"facade_{face}_{g['kind']}_{g['slot']}" in names, f'registered: {g}')
+            for r in spec['roof']:
+                face = hf.slot_table()[r['slot']]['face']
+                check(any(n.startswith(f"facade_{face}_{r['kind']}_{r['slot']}") for n in names), f'registered: {r}')
+            page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+            p = page.evaluate("window.chfNavProbe({entry:'front_door'})")
+            check(p is not None, 'the generated front door is tappable')
+            page.mouse.click(p['cx'], p['cy'])
+            page.wait_for_function("window.chfNavProbe({settled:true}) && window.chfHouseMode() === 'living'", timeout=20000)
+    finally:
+        for r in hf.list_facades():
+            if r.get('id') != hf.CANONICAL_ID and r.get('name') == 'worst':
+                hf.delete_facade(r['id'])
+        hf.set_active(hf.CANONICAL_ID)
+
+
 def scenario_navigation_real_mouse():
     """Real clicks cover all four exterior entries, cross-room zones and
     fabric, a zone lean-in, two-step return, inert props, and sky exit.
@@ -1601,4 +1649,5 @@ if __name__ == '__main__':
     scenario_canonical_facade_pins_the_hand_built_elevation()
     scenario_navigation_real_mouse()
     scenario_shell_without_room_is_inert()
+    scenario_worst_case_facade_builds_clean()
     print("test_house_live OK")

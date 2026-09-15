@@ -118,6 +118,26 @@ BUDGET_JS = """() => {
 }"""
 
 
+def _seed_facade_from_env():
+    """HOUSE_PROBE_FACADE (set by main() from --facade) picks which street
+    elevation the served house builds from: 'worst' saves and activates the
+    heaviest spec the caps allow, a saved id activates that record, and
+    'canonical' (or unset) leaves the setting alone — the house's own
+    no-injection fallback is CANONICAL."""
+    fac = os.environ.get('HOUSE_PROBE_FACADE', '')
+    if fac == 'worst':
+        from services import house_facade as hf
+        rec = hf.save_facade('Probe worst case', hf.worst_case(), activate=True)
+    elif fac and fac != 'canonical':
+        from services import house_facade as hf
+        hf.set_active(fac)
+
+
+def _facade_only_seed():
+    """The --no-seed companion: seed only the facade, nothing else."""
+    _seed_facade_from_env()
+
+
 def _seed():
     from services import storage
     from models.schemas import Car
@@ -161,6 +181,7 @@ def _seed():
                         color_code='#9aa2a9', seat_capacity=5,
                         ha_device_tracker='device_tracker.hatch',
                         ha_battery_entity='sensor.hatch_battery').model_dump())
+    _seed_facade_from_env()
     # No Home Assistant here, so the entities above read as nothing and every
     # car would come back "resting" — the same hole the weather stub below
     # fills. Patch the two readers the fleet is built from (the idiom
@@ -250,6 +271,9 @@ def main():
     ap.add_argument('--clip', default='',
                     help='x,y,w,h crop of the 1400x1000 page')
     ap.add_argument('--no-seed', action='store_true')
+    ap.add_argument('--facade', default='',
+                    help='canonical | worst | <saved id>: seed the active '
+                         'facade before the page loads')
     ap.add_argument('--cam', default='',
                     help='px,py,pz,ax,ay,az camera override, applied after '
                          'the view is entered (studio viewfinder)')
@@ -273,12 +297,14 @@ def main():
                          'flag existed.')
     args = ap.parse_args()
 
+    os.environ['HOUSE_PROBE_FACADE'] = args.facade
+
     views = ROOM_VIEWS[:] if args.views == 'all' else [
         v.strip() for v in args.views.split(',') if v.strip()]
     os.makedirs(args.out, exist_ok=True)
 
     from live_app import live_app
-    served = live_app(None if args.no_seed else _seed)
+    served = live_app(_facade_only_seed if args.no_seed else _seed)
     if served is None:
         print('SKIP: playwright not installed')
         return 0
