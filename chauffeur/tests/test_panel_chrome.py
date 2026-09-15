@@ -145,6 +145,20 @@ def scenario_the_skin_maps_the_greys_the_pages_are_written_in():
           "the tokens moved out of the shared skin")
 
 
+def scenario_panel_scrollbars_follow_the_panel_palette():
+    """Panel mode suppresses `.ha-theme`, so HA's scrollbar selectors cannot
+    style the long drawers introduced on the house. The panel skin owns that
+    chrome and must keep both Chromium and Firefox on panel tokens."""
+    check('html[data-panel] *::-webkit-scrollbar-thumb' in SKIN,
+          "panel descendants have fallen back to native Chromium scrollbars")
+    check('scrollbar-color: color-mix(in srgb, var(--panel-fg)' in SKIN,
+          "Firefox scrollbars no longer follow the panel palette")
+    block = SKIN[SKIN.index('html[data-panel]::-webkit-scrollbar-thumb,'):]
+    block = block[:block.index('}')]
+    check('border-radius: 999px' in block and 'border: 3px solid transparent' in block,
+          "the panel scrollbar thumb lost its inset rounded treatment")
+
+
 def scenario_a_card_with_no_panel_behind_it_gets_a_denser_surface():
     """`--panel-card-lo` is a card sitting ON a tile's panel: two translucent
     layers stacked, and the pair reads solid enough. Turn the tile's panel off

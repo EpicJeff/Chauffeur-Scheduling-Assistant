@@ -236,6 +236,42 @@
         }
     }
 
+    /* Panel mode deliberately does not wear `.ha-theme`, so it cannot inherit
+       the HA-only scrollbar rules in ha_theme.html. Keep scroll affordances
+       visible for long drawers and wide family lanes, but make their chrome
+       follow the panel palette in both light and dark modes. Transparent
+       tracks preserve the photographic surface. */
+    html[data-panel],
+    html[data-panel] * {
+        scrollbar-color: color-mix(in srgb, var(--panel-fg) 28%, transparent)
+                         transparent;
+    }
+
+    html[data-panel]::-webkit-scrollbar,
+    html[data-panel] *::-webkit-scrollbar {
+        width: 12px;
+        height: 12px;
+    }
+
+    html[data-panel]::-webkit-scrollbar-track,
+    html[data-panel] *::-webkit-scrollbar-track {
+        background: transparent;
+    }
+
+    html[data-panel]::-webkit-scrollbar-thumb,
+    html[data-panel] *::-webkit-scrollbar-thumb {
+        background: color-mix(in srgb, var(--panel-fg) 28%, transparent);
+        background-clip: padding-box;
+        border: 3px solid transparent;
+        border-radius: 999px;
+    }
+
+    html[data-panel]::-webkit-scrollbar-thumb:hover,
+    html[data-panel] *::-webkit-scrollbar-thumb:hover {
+        background: color-mix(in srgb, var(--panel-fg) 46%, transparent);
+        background-clip: padding-box;
+    }
+
     /* ── The photograph, on every page. Two fixed layers under everything:
        the picture, then a scrim that keeps text legible over an image nobody
        vetted. Injected by nav.html so no page template has to carry them. */
