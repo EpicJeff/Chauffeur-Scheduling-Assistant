@@ -1,6 +1,7 @@
 # The Home — Style Bible
 
 **Written:** 2026-09-09 (art-director pass, studio pipeline v2.467.0)
+**Reviewed:** 2026-09-14 against the integrated house and Study in v2.499.4.
 **Binding on:** every set builder, the vehicle artist, the lighting artist.
 **Graded against:** the ten reference plates transcribed below.
 
@@ -12,6 +13,13 @@ build it from the nearest class that is, and add a section describing what you
 did.
 
 Nothing in a room is "done" until it passes the checklist at the end.
+
+Current architectural additions follow the same vocabulary: the Study is part
+of the east room, patio and interior doors share one family, the pantry is an
+open cased doorway, and the garage has a visible mudroom connection. Exterior
+window glass may glow warmly at night; interior faces must not emit light.
+Cutaway ownership is explicit per wall, roof, opening, and attached prop so an
+adjacent room does not disappear with the active room.
 
 ---
 

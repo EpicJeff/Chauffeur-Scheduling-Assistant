@@ -1,5 +1,9 @@
 # Home Assistant Voice Integration ("Hey Argyle")
 
+**Living integration guide. Reviewed with Chauffeur v2.499.4 on 2026-09-14.**
+For product-wide setup and document status, see
+[`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
 This folder contains the HA-side glue that lets you talk to the Chauffeur agent
 through Home Assistant Assist, while normal smart-home commands ("open the main
 garage") keep working via HA's built-in intents.

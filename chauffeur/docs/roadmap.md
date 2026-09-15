@@ -1,11 +1,19 @@
 # Chauffeur Family-Hub Roadmap
 
-Status of the family-network pivot and the backlog for future phases.
-Shipped-feature details live in `system_capabilities.md` (the live spec) —
-this file tracks what is NOT built yet, with enough context to pick any item
-up cold. Last updated: 2026-08-15 (v2.245.0 — the music arc SHIPPED, closing
-the queued slice; covered rides reached the wall and grew a "be ready at",
-finishing the visible half of load-arc A1).
+> **Current reading note (2026-09-14, v2.499.4):** Shipped truth lives in
+> [`../system_capabilities.md`](../system_capabilities.md). Current architecture,
+> active personalized-house authoring work, and next priorities live in
+> [`../../docs/current_implementation.md`](../../docs/current_implementation.md). Material
+> below is preserved as detailed backlog and decision history from the
+> family-hub expansion. Items marked “SHIPPED” are historical milestones; old
+> “next” wording does not override the current priority list.
+
+This file began as the family-network backlog and became a detailed decision
+log. It retains old candidate lists and milestone notes so later work can be
+picked up with their original context.
+Shipped-feature details live in `system_capabilities.md` (the live spec).
+Check the current priority list before treating any old candidate as open.
+The last full backlog reconciliation was 2026-08-15 at v2.245.0.
 
 **Verification status (2026-08-15): everything shipped through v2.245.0 has
 been exercised on device or on the live add-on instance.** Every arc in this

@@ -1,5 +1,8 @@
 # Running a real Home Assistant card in a Chauffeur tile
 
+**Living architecture note. Reviewed with v2.499.4 on 2026-09-14.** Shipped
+details remain canonical in [`../system_capabilities.md`](../system_capabilities.md).
+
 The `ha_dashboard` tile frames Home Assistant's own page, and its comments make
 the flat claim that a Lovelace card cannot run outside HA's frontend. That claim
 was too strong. This is what replaced it, what it actually costs, and where it

@@ -1,5 +1,8 @@
 # Chauffeur UI design guide
 
+**Living standard. Reviewed against v2.499.4 on 2026-09-14.** See
+[`../../docs/README.md`](../../docs/README.md) for documentation status.
+
 *This file is handed verbatim to any agent building or touching UI. It is not
 advice; it is the house style, extracted from the shipped surfaces. Where this
 guide and a shipped sibling disagree, read the sibling — then fix whichever of
@@ -65,6 +68,31 @@ events — you are not designing anything. You are calling these.
   `showGlobalAlert` / `promptConfirm` / `promptInput`.
 - **Tailwind is precompiled:** any new class needs
   `python tools/build_tailwind.py` or it silently does nothing.
+- **Scrollable panel surfaces:** use the shared `panel_skin.html` scrollbar
+  treatment. Drawers, overlays, cards, and per-person lanes must not fall back
+  to browser-default tracks or thumbs.
+- **Per-person lanes:** preserve a readable minimum lane width. Let the dialog
+  widen to its viewport limit, then scroll horizontally. Never squeeze names,
+  controls, or task labels until they overlap.
+
+## Spatial house surfaces
+
+- Put an affordance on the object or room it opens. Its label and icon must
+  describe the resulting feature.
+- Keep room markers visible at rest. Use a restrained pulse for discovery;
+  do not cycle markers through temporary visibility.
+- Tapping empty scenery backs out one level. Keep the explicit back control for
+  accessibility and recovery.
+- A cutaway hides the wall, door, trim, and attached objects registered to that
+  room. Openings visible from an adjacent room need an interior face and an
+  independent visibility group.
+- Exterior windows may carry warm emissive night light. Interior-facing panes
+  use room lighting and remain non-emissive.
+- Use the clock and compact next-activity card on the exterior for ten-foot
+  glanceability. Attention objects inside the house supplement that overlay;
+  they do not replace it.
+- Prefer grounded physical objects over floating boards. When a board is the
+  correct real-world metaphor, mount it above wall trim with visible clearance.
 
 ## Process contract for UI agents
 

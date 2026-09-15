@@ -1,5 +1,10 @@
 # Gemini request accounting
 
+**Living operational reference. Current through v2.499.4 (2026-09-14).**
+These limits cover existing automated workflows and the Mind. Personalized
+house authoring is still experimental and must use the same admission ledger;
+it has no separate or unlimited request path.
+
 Mind's existing `mind_cap_*` settings count high-level operations. They remain
 in effect. Previously, one deep-think operation could issue twelve HTTP
 attempts: four fallback models with three attempts each. The operation counter
