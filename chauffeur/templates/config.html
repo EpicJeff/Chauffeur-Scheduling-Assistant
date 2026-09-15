@@ -2609,7 +2609,7 @@
 
                         <div class="md:col-span-2 space-y-3">
                             <div x-show="facadeDraftSource === 'photo'" class="bg-amber-900/40 border border-amber-600 rounded-lg p-2 text-amber-200 text-sm">
-                                From your photo — not saved yet. Review, then Save as new or Overwrite.
+                                From your photo — not saved yet. Review, then Save as new or Overwrite; /house shows only the active facade.
                             </div>
                             <div class="flex flex-wrap gap-1" id="facade-strip">
                                 <template x-for="face in facadeFaces" :key="face.face">
@@ -2617,8 +2617,8 @@
                                         <span class="text-xs text-gray-500 uppercase" x-text="face.face"></span>
                                         <div class="flex gap-0.5">
                                             <template x-for="s in face.slots" :key="s.i">
-                                                <button class="w-9 h-14 rounded text-[10px] leading-tight border"
-                                                        :class="facadeCellClass(s.i)" @click="facadeSlot = s.i"
+                                                <button class="w-9 h-14 text-[10px] leading-tight border"
+                                                        :class="facadeCellClass(s.i)" @click="facadeCellSelect(s.i)"
                                                         x-text="facadeCellText(s.i)"></button>
                                             </template>
                                         </div>
@@ -2667,7 +2667,7 @@
                             </ul>
                             <div class="flex gap-2">
                                 <button class="px-3 py-1 rounded bg-teal-600" @click="facadeSaveNew()">Save as new</button>
-                                <button class="px-3 py-1 rounded bg-gray-600" :disabled="!facadeDraftId || facadeDraftId === 'canonical'" @click="facadeOverwrite()">Overwrite</button>
+                                <button class="px-3 py-1 rounded bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed" :disabled="!facadeDraftId || facadeDraftId === 'canonical'" @click="facadeOverwrite()">Overwrite</button>
                                 <button class="px-3 py-1 rounded bg-gray-700" @click="facadeLoad(facades[0])">Reset to canonical</button>
                             </div>
                         </div>
@@ -5575,18 +5575,39 @@
 
                 // --- Home (facade generator) ---
                 async loadFacades() {
-                    const res = await fetch(`${this.apiBase}api/house/facades`);
-                    const data = await res.json();
-                    this.facades = data.facades; this.facadeActive = data.active; this.facadeSlots = data.slots;
-                    const faces = [];
-                    data.slots.forEach(s => { let f = faces.find(x => x.face === s.face); if (!f) { f = { face: s.face, slots: [] }; faces.push(f); } f.slots.push(s); });
-                    this.facadeFaces = faces;
-                    if (!this.facadeDraft) this.facadeLoad(this.facades.find(f => f.id === this.facadeActive) || this.facades[0]);
+                    try {
+                        const res = await fetch(`${this.apiBase}api/house/facades`);
+                        const data = await res.json();
+                        this.facades = data.facades; this.facadeActive = data.active; this.facadeSlots = data.slots;
+                        const faces = [];
+                        data.slots.forEach(s => { let f = faces.find(x => x.face === s.face); if (!f) { f = { face: s.face, slots: [] }; faces.push(f); } f.slots.push(s); });
+                        this.facadeFaces = faces;
+                        if (!this.facadeDraft) this.facadeLoad(this.facades.find(f => f.id === this.facadeActive) || this.facades[0]);
+                    } catch (e) {
+                        console.error("Failed to load facades", e);
+                        this.facades = []; this.facadeSlots = []; this.facadeFaces = [];
+                    }
                 },
                 facadeLoad(f) { this.facadeDraft = JSON.parse(JSON.stringify(f.spec)); this.facadeDraftId = f.id; this.facadeDraftSource = 'hand'; this.facadeNotes = []; this.facadeSlot = null; },
                 facadeEntry(layer, i) { return (this.facadeDraft[layer] || []).find(e => i >= e.slot && i < e.slot + e.span); },
-                facadeCellText(i) { const g = this.facadeEntry('ground', i), r = this.facadeEntry('roof', i); return (g ? g.kind.replace('_', ' ') : '') + '\n' + (r ? r.kind : ''); },
-                facadeCellClass(i) { return (this.facadeSlot === i ? 'border-teal-400 ' : 'border-gray-700 ') + (this.facadeEntry('ground', i) ? 'bg-gray-700' : 'bg-gray-900'); },
+                facadeCellSelect(i) { const g = this.facadeEntry('ground', i); this.facadeSlot = g ? g.slot : i; },
+                facadeCellText(i) {
+                    const g = this.facadeEntry('ground', i);
+                    if (g && g.slot < i) return '';  // continuation cell: the label lives on the span's start cell
+                    const r = this.facadeEntry('roof', i);
+                    return (g ? g.kind.replace('_', ' ') : '') + '\n' + (r ? r.kind : '');
+                },
+                facadeCellClass(i) {
+                    const g = this.facadeEntry('ground', i);
+                    const start = g ? g.slot : i, end = g ? g.slot + g.span - 1 : i;
+                    const isStart = i === start, isEnd = i === end;
+                    let cls = (this.facadeSlot === start ? 'border-teal-400 ' : 'border-gray-700 ') + (g ? 'bg-gray-700 ' : 'bg-gray-900 ');
+                    if (!isStart) cls += 'border-l-0 -ml-0.5 ';
+                    if (isStart && isEnd) cls += 'rounded';
+                    else if (isStart) cls += 'rounded-l';
+                    else if (isEnd) cls += 'rounded-r';
+                    return cls;
+                },
                 facadeCellApply() {
                     const i = this.facadeSlot; if (i === null) return;
                     ['ground', 'roof'].forEach(layer => {
@@ -5597,30 +5618,92 @@
                     this.facadePreview();
                 },
                 async facadePreview() {
-                    const res = await fetch(`${this.apiBase}api/house/facades/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spec: this.facadeDraft }) });
-                    const data = await res.json(); this.facadeDraft = data.spec; this.facadeNotes = data.notes;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/house/facades/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spec: this.facadeDraft }) });
+                        const data = await res.json();
+                        if (!res.ok) { showGlobalAlert(data.detail || 'Could not save the facade'); return; }
+                        this.facadeDraft = data.spec; this.facadeNotes = data.notes;
+                    } catch (e) {
+                        console.error("Failed to preview facade", e);
+                        showGlobalAlert('Could not save the facade');
+                    }
                 },
                 async facadePhoto(ev) {
                     const file = ev.target.files && ev.target.files[0]; if (!file) return;
                     const fd = new FormData(); fd.append('photo', file);
-                    const res = await fetch(`${this.apiBase}api/house/facades/photo`, { method: 'POST', body: fd });
-                    const data = await res.json(); ev.target.value = '';
-                    if (!data.draft) { showGlobalAlert(data.error || 'Could not read the photo'); return; }
-                    this.facadeDraft = data.draft; this.facadeNotes = data.notes || []; this.facadeDraftSource = 'photo'; this.facadeSlot = null;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/house/facades/photo`, { method: 'POST', body: fd });
+                        const data = await res.json(); ev.target.value = '';
+                        if (!res.ok) { showGlobalAlert(data.detail || 'Could not save the facade'); return; }
+                        if (!data.draft) { showGlobalAlert(data.error || 'Could not read the photo'); return; }
+                        this.facadeDraft = data.draft; this.facadeNotes = data.notes || []; this.facadeDraftSource = 'photo'; this.facadeSlot = null;
+                    } catch (e) {
+                        console.error("Failed to read facade photo", e);
+                        ev.target.value = '';
+                        showGlobalAlert('Could not read the photo');
+                    }
                 },
                 async facadeSaveNew() {
-                    const name = await promptInput('Name this facade', 'My house'); if (!name) return;
-                    await fetch(`${this.apiBase}api/house/facades`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, spec: this.facadeDraft, source: this.facadeDraftSource }) });
-                    this.facadeDraft = null; await this.loadFacades();
+                    const name = await promptInput('Name this facade', 'Shown in the list on this page.', { value: 'My house', placeholder: 'My house' });
+                    if (!name) return;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/house/facades`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, spec: this.facadeDraft, source: this.facadeDraftSource }) });
+                        const data = await res.json();
+                        if (!res.ok) { showGlobalAlert(data.detail || 'Could not save the facade'); return; }
+                        this.facadeDraft = null; await this.loadFacades();
+                    } catch (e) {
+                        console.error("Failed to save facade", e);
+                        showGlobalAlert('Could not save the facade');
+                    }
                 },
                 async facadeOverwrite() {
                     if (!this.facadeDraftId || this.facadeDraftId === 'canonical') return;
-                    await fetch(`${this.apiBase}api/house/facades/${this.facadeDraftId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spec: this.facadeDraft }) });
-                    this.facadeDraftSource = 'hand'; await this.loadFacades();
+                    try {
+                        const res = await fetch(`${this.apiBase}api/house/facades/${this.facadeDraftId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spec: this.facadeDraft }) });
+                        const data = await res.json();
+                        if (!res.ok) { showGlobalAlert(data.detail || 'Could not save the facade'); return; }
+                        this.facadeDraftSource = 'hand'; await this.loadFacades();
+                    } catch (e) {
+                        console.error("Failed to overwrite facade", e);
+                        showGlobalAlert('Could not save the facade');
+                    }
                 },
-                async facadeActivate(id) { await fetch(`${this.apiBase}api/house/facades/active`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }); this.facadeActive = id; },
-                async facadeRename(f) { const name = await promptInput('Rename facade', f.name); if (!name) return; await fetch(`${this.apiBase}api/house/facades/${f.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }); await this.loadFacades(); },
-                async facadeDelete(f) { if (!(await promptConfirm('Delete facade', `Delete "${f.name}"?`, 'Delete'))) return; await fetch(`${this.apiBase}api/house/facades/${f.id}`, { method: 'DELETE' }); if (this.facadeDraftId === f.id) this.facadeDraft = null; await this.loadFacades(); },
+                async facadeActivate(id) {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/house/facades/active`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+                        const data = await res.json();
+                        if (!res.ok) { showGlobalAlert(data.detail || 'Could not save the facade'); return; }
+                        this.facadeActive = id;
+                    } catch (e) {
+                        console.error("Failed to activate facade", e);
+                        showGlobalAlert('Could not save the facade');
+                    }
+                },
+                async facadeRename(f) {
+                    const name = await promptInput('Rename facade', 'Shown in the list on this page.', { value: f.name });
+                    if (!name) return;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/house/facades/${f.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+                        const data = await res.json();
+                        if (!res.ok) { showGlobalAlert(data.detail || 'Could not save the facade'); return; }
+                        await this.loadFacades();
+                    } catch (e) {
+                        console.error("Failed to rename facade", e);
+                        showGlobalAlert('Could not save the facade');
+                    }
+                },
+                async facadeDelete(f) {
+                    if (!(await promptConfirm('Delete facade', `Delete "${f.name}"?`, 'Delete'))) return;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/house/facades/${f.id}`, { method: 'DELETE' });
+                        if (!res.ok) { const data = await res.json(); showGlobalAlert(data.detail || 'Could not save the facade'); return; }
+                        if (this.facadeDraftId === f.id) this.facadeDraft = null;
+                        await this.loadFacades();
+                    } catch (e) {
+                        console.error("Failed to delete facade", e);
+                        showGlobalAlert('Could not save the facade');
+                    }
+                },
 
                 // --- ICS calendar feeds ---
                 async loadIcsFeeds() {
