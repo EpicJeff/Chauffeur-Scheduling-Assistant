@@ -1251,16 +1251,26 @@ def scenario_canonical_facade_pins_the_hand_built_elevation():
         from services import house_facade as hf
         check(page.evaluate('window.chfFacade()') == hf.CANONICAL,
               'the scene is built from CANONICAL, not a hand literal')
+        # CANONICAL_JS (house.js's no-injection fallback) also equals
+        # CANONICAL, so the check above passes either way. These two say
+        # which one the scene actually used: the server injected a spec,
+        # and the scene was built from THAT object.
+        check(page.evaluate("!!(window.HOUSE_FACADE && window.HOUSE_FACADE.spec)"),
+              'the server injected the facade')
+        check(page.evaluate("JSON.stringify(window.chfFacade()) === "
+                            "JSON.stringify(window.HOUSE_FACADE.spec)"),
+              'the scene built from the injected spec, not the fallback')
         js_slots = page.evaluate('window.chfFacadeSlots()')
         py_slots = hf.slot_table()
         check(len(js_slots) == len(py_slots),
               'same slot count: %d vs %d' % (len(js_slots), len(py_slots)))
         for a, b in zip(js_slots, py_slots):
-            for k in ('x0', 'x1', 'cx', 'z'):
+            for k in ('x0', 'x1', 'cx', 'z', 'eave'):
                 check(abs(a[k] - b[k]) < 1e-6,
                       'slot %d %s: %r vs %r' % (b['i'], k, a[k], b[k]))
-            check(a['face'] == b['face'] and a['room'] == b['room'],
-                  'slot %d face/room: %r vs %r' % (b['i'], a, b))
+            for k in ('face', 'room', 'roof'):
+                check(a[k] == b[k],
+                      'slot %d %s: %r vs %r' % (b['i'], k, a[k], b[k]))
         errs = [e for e in served.errors()
                 if 'WebGL' not in e and 'GroupMarker' not in e]
         check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
