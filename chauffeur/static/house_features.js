@@ -89,7 +89,7 @@
     cylinder(item,.08,.1,.37,ivory,-.16,.46,.06); box(item,.12,.05,.08,0x708ab1,-.14,.68,.06);
     cylinder(item,.07,.075,.28,0xc99763,.17,.44,.04);
 
-    item = entry('routines','Family routine board','mudroom',[-12.45,1.10,6.15],'routines');
+    item = entry('routines','Family routine board','mudroom',[-12.45,1.82,6.15],'routines');
     clipboard(item,0x699878); item.rotation.y = Math.PI/2;
     // Household work lives in the home ledger on the living-room console.
     item = entry('tasks','Home ledger','living',[-.50,.86,7.68],'tasks');

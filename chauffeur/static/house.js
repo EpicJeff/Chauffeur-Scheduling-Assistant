@@ -897,6 +897,7 @@
                     box: o.box, mode: o.mode || 'ghost', edges: null,
                     twoSided: !!o.twoSided,
                     cutawayRoom: o.cutawayRoom || null,
+                    alwaysSolid: !!o.alwaysSolid,
                     plane: o.plane ? new T.Vector3().fromArray(o.plane) : null,
                     pad: o.pad === undefined ? 1.5 : o.pad });
     }
@@ -957,7 +958,9 @@
         /* A roof encloses its room rather than separating camera and subject
            along a vertical wall plane. Declare that ownership at its build
            site so both pitches leave together in the room cutaway. */
-        if (subject && subject.room && f.cutawayRoom === subject.room) {
+        if (f.alwaysSolid) {
+          v = 'solid';
+        } else if (subject && subject.room && f.cutawayRoom === subject.room) {
           v = 'hide';
         } else if (subPt && boxOk(f.box)) {
           var p = f.plane || boxCentre(f.box);
@@ -4527,7 +4530,10 @@
       shellBox(sliderFrame, 0.08, 0.55, 0.10, FARMHOUSE.wood, 0.15, 0, face);
     });
     shellBox(sliderFrame, 2.95, 0.10, 0.32, FARMHOUSE.stoop, 0, -1.86, 0.02);
-    shellRegister(patioSliderG, 'patio_slider', [1, 0, 0], 'kitchen');
+    patioSliderG.updateMatrixWorld(true);
+    regFabric(patioSliderG, { name: 'patio_slider', n: [1, 0, 0],
+                              box: fabBox(patioSliderG), room: 'kitchen',
+                              alwaysSolid: true });
 
 
     /* Continue west cladding along the living room to the south corner. */

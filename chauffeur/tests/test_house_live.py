@@ -1005,7 +1005,7 @@ def scenario_shell_fabric_registry():
                         'massing_east_front_south',
                         'massing_front_roof_north', 'massing_front_roof_south',
                         'massing_back_roof_shed',
-                        'patio_slider', 'massing_back_roof_front',
+                        'massing_back_roof_front',
                         'massing_east_back_east', 'massing_east_back_patio',
                         'massing_east_front_patio',
                         'living_back_room_door', 'living_study_door', 'yard'],

@@ -76,8 +76,8 @@ def scenario_house_life():
         for fixture in ('back-room-door',):
             visible = page.evaluate('(key) => chfNavProbe({feature:key}) !== null', fixture)
             check(not visible, fixture + ' hides during the kitchen cutaway')
-        check(page.evaluate("chfShellFabric().find(f => f.name === 'patio_slider').verdict !== 'solid'"),
-              'the shared patio slider hides during the kitchen cutaway')
+        check(page.evaluate("chfShellFabric().find(f => f.name === 'patio_slider').verdict === 'solid'"),
+              'the shared patio slider remains visible inside the kitchen cutaway')
         page.evaluate("chfHouseFindFeature('study')")
         page.wait_for_function('chfNavProbe({settled:true})')
         point = page.evaluate("chfNavProbe({action:'study'})")
