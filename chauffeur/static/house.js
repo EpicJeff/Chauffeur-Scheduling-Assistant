@@ -7810,10 +7810,24 @@
       [-24.5, 25.5, -0.69, -0.29, -18, 26]         /* exterior grade (the yard's grass slab) */
     ];
 
+    /* SHELL/arc 4 (facade spec §6): these three pieces keep their hand
+       rows above rather than deriving from fabBox() -- west_wall and
+       garage_shell each carve real door openings (west_wall's two
+       doorways, garage_shell's garage door) out of their own mass, and
+       one AABB cannot represent an L-shaped cutout: a derived box would
+       claim occlusion straight through the opening, darkening the
+       walk-through threshold. north_wall's hand row already equals its
+       own box (no opening to lose), so excluding it changes nothing —
+       it is named here anyway so the exclusion list matches the file's
+       actual hand-carved masses, not just the ones that would visibly
+       break. A generated facade wall has no cut openings (this file has
+       no CSG), so it never needs to join this set. */
+    var AO_HAND_CARVED = new Set(['west_wall', 'garage_shell', 'north_wall']);
     /* SHELL/arc 4 (facade spec §6): wall-like fabric occludes by its own
        registered box, so a generated wall needs no hand row. Sloped
        pieces (roof decks, |n.y| >= 0.5) still skip: no honest AABB. */
     FABRIC.forEach(function (f) {
+      if (AO_HAND_CARVED.has(f.name)) return;
       if (Math.abs(f.n.y) >= 0.5 || !boxOk(f.box)) return;
       AO_OCCLUDERS.push(f.box.slice());
     });
