@@ -268,6 +268,47 @@ def _settle(page, quiet_frames=30, timeout=25000):
               'was on screen, and may be mid-load')
 
 
+def _settle_room(page, quiet_frames=30, timeout=25000):
+    """Hold a ROOM (or the exterior) until it has stopped deciding.
+
+    The old flat 1500 ms nap was shorter than ONE software-WebGL frame of
+    this scene at --quality high (~2.3 s), so a screenshot queued behind
+    that frame was serviced before the room's zone markers had been
+    placed: measured, cutaway-after/kitchen.png photographed with ZERO
+    markers where the same view shows six (the live file's own marker pin
+    waits ten seconds and is green). Same trick as _settle() above, same
+    reason: FRAMES, not milliseconds, so thirty ticks is half a second of
+    genuinely free main thread, which cannot be accumulated while the
+    camera is still tweening or a fetch's continuation is still queued.
+
+    Two conditions, because either alone lies: chfNavProbe({settled:true})
+    says the camera arrived and nothing is focused (what every live
+    scenario in tests/ waits for before it reads the scene), and the hint
+    COUNT holding still says the markers this view is going to draw have
+    all been drawn. A view that legitimately draws no markers still
+    settles -- zero, held for thirty quiet frames, is an answer.
+    """
+    page.evaluate("window.__chfRoomSettle = null")
+    try:
+        page.wait_for_function(
+            """(want) => {
+                 if (typeof window.chfNavProbe !== 'function') return false;
+                 if (!window.chfNavProbe({ settled: true })) return false;
+                 const now = document.querySelectorAll('.house-hint').length;
+                 const s = window.__chfRoomSettle;
+                 if (!s || s.seen !== now) {
+                     window.__chfRoomSettle = { seen: now, ticks: 0 };
+                     return false;
+                 }
+                 s.ticks += 1;
+                 return s.ticks >= want;
+               }""",
+            arg=quiet_frames, timeout=timeout)
+    except Exception:
+        print('  note: room never settled inside the budget - the shot is '
+              'whatever was on screen, and may be missing its markers')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--views', default='exterior')
@@ -414,7 +455,7 @@ def main():
             if view.startswith('lean_'):
                 _settle(page)
             else:
-                page.wait_for_timeout(1500)
+                _settle_room(page)
             if args.cam:
                 page.evaluate('window.chfHouseCam(' + args.cam + ')')
                 page.wait_for_timeout(400)

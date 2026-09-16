@@ -317,12 +317,26 @@
     var scene = new T.Scene();
     scene.background = new T.Color(0xbdb3c7);          // the soft lilac of the reference
     var cam = new T.PerspectiveCamera(24, 1, 0.1, 200); // narrow FOV = near-isometric diorama; far covers the yard dome
-    /* the kitchen: pulled in and centred on the run after the studio
-       pass filled the room — the old pose spent a third of the frame on
-       the living room's edge and the yard (bible S5.1, S7.1) */
-    /* swung west once the calendar moved onto the wall between the pantry
-       and mudroom doors: the old pose put that wall at the frame's edge,
-       which is the opposite of making the calendar visible */
+    /* the kitchen. SUPERSEDED, both of them, by the cutaway-ownership
+       note below -- kept as the record of what this pose used to be
+       bought with, not as a description of what it is now:
+         - "pulled in and centred on the run after the studio pass
+           filled the room: the old pose spent a third of the frame on
+           the living room's edge and the yard (bible S5.1, S7.1)".
+         - "swung west once the calendar moved onto the wall between the
+           pantry and mudroom doors: the old pose put that wall at the
+           frame's edge, which is the opposite of making the calendar
+           visible".
+       The street pose re-creates BOTH conditions, and knowingly: the
+       living room stands in the foreground again (it is the only
+       direction the kitchen can be seen from now, see below), and the
+       calendar wall runs back along the left edge, small and oblique
+       instead of square to the eye. Ruled acceptable -- the calendar
+       has its own lean-in (chfKitchenFocus('calendar'), which did not
+       move) and the wall is still tappable at this pose, so what is
+       lost is prominence, not reach. If a later pass wants the calendar
+       square to the camera again it has to come from the room's own
+       south side, which is where the wall the calendar hangs on faces. */
     /* CUTAWAY OWNERSHIP (fix, 2026-09-16): moved SOUTH, from x 14.6 to
        the great room's own x-range. The old pose stood EAST of the main
        block and looked north-west through what used to be the patio

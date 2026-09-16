@@ -487,6 +487,46 @@ study — `south_wall_east`, `roof_main_east_north/_south/_end_east`, windows 15
 Budgets are flat (buildMs ~1.1s, exterior in-frustum 1403 unchanged); the canonical exterior mesh
 pin moves 1840 → 1849 (+6 roof, +3 wall, derived box by box).
 
+**Broken by the split, and knowingly (fix round 1, v2.499.43): the main roof's non-canonical
+`form`/`ridge` values.** §3 made every block roof `{form, ridge}`; splitting `roof_main` into two
+`shellGable` calls only holds for the canonical `gable` + ridge `x`, which is what ships and what
+the registry pin asserts.
+
+- `form: 'hip'` — `shellGable` insets a hip's ridge by one `run` at each END of the block it is
+  given. Numbers, not a hunch: unsplit, `depth` 22.44 against `run` 10.645 leaves `depth/2` 11.22
+  > `run`, so the block hips properly with a 1.15-long ridge. Split, the west half's `depth` is
+  14.32 (`depth/2` 7.16) and the east half's 8.12 (`depth/2` 4.06), both **below** the same
+  unchanged `run` — so `inset = min(run, depth/2)` **clamps on both halves** and each collapses to
+  a pyramid with `capLen 0`, i.e. no ridge cap at all. Worse, each half is given only its OUTER end
+  (`ends [-1]` west, `[1]` east, which is right for a gable), so neither builds the hipped end
+  plane that would close it at x 6.85: two pyramids nose to nose with an open triangular hole
+  between them.
+- `ridge: 'z'` — `half` is measured across the ridge, so halving the block in x halves each half's
+  `half`, and the two halves come out at **different ridge heights** with a step at 6.85. The deck
+  suffixes also collide: with ridge `z` a deck is named `_west`/`_east`, so the west half's west
+  deck registers as `roof_main_west_west` and its east deck as `roof_main_west_east` — readable,
+  but the pair no longer reads as "the west half of the roof" at all.
+
+Neither is reachable from any user path: `ROOF_FORMS` is canonical in the source and only
+`window.HOUSE_ROOF_FORMS` (a probe/init-script hook) or `tools/house_probe.py --roof` overrides it,
+so nothing a person can tap changes them. The brief's own `--roof hip` check was skipped in
+v2.499.41; this is that check, run late and written down rather than left to be found. **The real
+fix is one roof computed for the WHOLE block with its deck polygons clipped at x = 6.85 — one
+ridge, one inset, one cap, two registered owners — and it lands with the roof-valley work queued
+next**, not by patching `shellGable` per-half. Until then, treat `ROOF_FORMS.main` as gable/ridge-x
+only; the garage block is unsplit and both of its values still work.
+
+**Also on the kitchen camera (fix round 1).** The street pose knowingly re-creates the two
+conditions the older `HOME_POS` comments were written against, and those comments are annotated as
+superseded in `house.js` rather than left to contradict the code: the living room stands in the
+foreground again (it is the only direction the kitchen can be seen from now), and **the wall
+calendar loses prominence** — the wall it hangs on runs back along the left edge of the frame,
+small and oblique, where the old east-side pose put it square to the eye. Ruled acceptable: the
+calendar keeps its own lean-in (`chfKitchenFocus('calendar')`, unmoved) and its marker is still on
+canvas and tappable at the room pose (`scratch/cutaway-after2/kitchen.png`), so what is lost is
+prominence, not reach. Squaring it up again means viewing the kitchen from the room's own south
+side, which is the wall the calendar faces.
+
 
 ### 10.11 Post-ship refit — the study faces east, and the glass doors move (v2.499.42)
 
