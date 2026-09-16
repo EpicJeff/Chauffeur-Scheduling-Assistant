@@ -353,8 +353,8 @@
        enough that the floor falls away to the lower right (bible S5.1) */
     var LIV_POS = new T.Vector3(0, 12.8, 26.5);
     var LIV_AT = new T.Vector3(0, 2.35, 10.3);
-    var STUDY_POS = new T.Vector3(5.85, 3.65, 18.00);
-    var STUDY_AT = new T.Vector3(12.30, 1.45, 12.85);
+    var STUDY_POS = new T.Vector3(5.85, 3.65, 15.83);
+    var STUDY_AT = new T.Vector3(12.30, 1.45, 10.68);
     cam.position.copy(EXT_POS);
     cam.lookAt(EXT_AT);
 
@@ -10021,6 +10021,39 @@
      cannot touch the live array. */
   window.chfAoOccluders = function () {
     return webgl && webgl.AO_OCCLUDERS ? webgl.AO_OCCLUDERS.map(function (b) { return b.slice(); }) : [];
+  };
+  /* Massing arc 1 (task 1): read-only like chfShellFabric above -- reports
+     the study's own world bounding box, changes nothing. Unions the
+     furniture root, the house-scale architecture (walls/wainscot, built
+     directly off NORTH/SOUTH/EAST/WEST in house_study.js), and the zone
+     proxies -- three separate top-level scene children, so no single
+     Box3.setFromObject call reaches all of them. Walks visibility
+     manually rather than delegating to Box3.expandByObject's own
+     recursion: house_study.js parents the StudyFactory's standalone-page
+     shell under the furniture root and turns it invisible
+     (`built.shell.visible = false`), and Box3 does not consult .visible,
+     so a plain setFromObject on the root pulls in that hidden shell's
+     17x17 floor plate -- authored for the standalone /study page, wider
+     than this room -- and reports a box the size of THAT page, not the
+     one actually on screen here. */
+  window.chfStudyBox = function () {
+    if (!webgl || !webgl.studyWorld) return null;
+    var sw = webgl.studyWorld, box = new webgl.T.Box3(), any = false;
+    function walk(o) {
+      if (!o.visible) return;
+      if (o.isMesh && o.geometry) {
+        if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+        box.union(o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld));
+        any = true;
+      }
+      (o.children || []).forEach(walk);
+    }
+    [sw.group, sw.architecture, sw.proxies].forEach(function (o) {
+      if (!o) return;
+      o.updateWorldMatrix(true, false);
+      walk(o);
+    });
+    return any ? [box.min.x, box.max.x, box.min.y, box.max.y, box.min.z, box.max.z] : null;
   };
   /* FACADE/arc 4 (facade spec section 6, "hand path parity"): read-only
      like the two above -- the spec the scene was actually built from and

@@ -9,9 +9,9 @@ playwright probes:
     python tools/house_probe.py --views garage --clip 300,60,900,600
     python tools/house_probe.py --views kitchen --scenery 0.5
 
-Views: exterior, kitchen, living, mudroom, garage, and lean_<zone> for any
-zone (lean_board, lean_door, lean_radio, lean_calendar, ...). `all` = the
-five room views. Seeds a standard fixture set (two children, a driver, an
+Views: exterior, kitchen, living, mudroom, garage, study, and lean_<zone> for
+any zone (lean_board, lean_door, lean_radio, lean_calendar, ...). `all` = the
+six room views. Seeds a standard fixture set (two children, a driver, an
 event today, three shopping items, three cars of different bodies, two prep
 kits with only one of them claimed) so every signal has something honest to
 show - including the mudroom bench, which needs a packed AND an unpacked
@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault('CHAUFFEUR_DATA_DIR',
                       tempfile.mkdtemp(prefix='chauffeur_house_probe_'))
 
-ROOM_VIEWS = ['exterior', 'kitchen', 'living', 'mudroom', 'garage']
+ROOM_VIEWS = ['exterior', 'kitchen', 'living', 'mudroom', 'garage', 'study']
 
 # The renderer wrapper the --budget flag appends to the vendored three
 # bundle via route interception. three assigns render as an INSTANCE

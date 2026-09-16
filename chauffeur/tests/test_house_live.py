@@ -1077,10 +1077,16 @@ def scenario_shell_fabric_registry():
                        'facade_main_door_10', 'facade_main_window_7',
                        'facade_main_window_9', 'facade_main_window_12',
                        'yard'],
+            # Task 1: the study's camera/subject pair slid north 2.17 with
+            # the room, away from the street. facade_main_porch_9 (the
+            # front entry porch) and massing_east_front_south (the old
+            # wing's own south face) no longer sit between camera and
+            # subject, so the solver now reports them SOLID for this view
+            # instead of ghosting them -- both dropped out of this list.
             'study': ['east_wall', 'living_study_door',
-                      'facade_main_porch_9', 'facade_main_window_12',
+                      'facade_main_window_12',
                       'facade_wing_window_15', 'facade_wing_window_16',
-                      'massing_east_front_patio', 'massing_east_front_south',
+                      'massing_east_front_patio',
                       'massing_front_roof_end_east',
                       'massing_front_roof_south', 'massing_front_roof_north',
                       'roof_main_end_east', 'roof_main_end_west',
@@ -1188,6 +1194,39 @@ def scenario_shell_fabric_registry():
         errs = [e for e in served.errors()
                 if 'WebGL' not in e and 'GroupMarker' not in e]
         check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
+
+
+def scenario_study_sits_inside_the_main_block():
+    """Regular house + orbit, task 1: the study lives inside the main
+    rectangle (x 6.85..14.65, z 7.65..14.55), not in the old front wing
+    that used to project past it. chfStudyBox() unions the study's
+    furniture root, its house-scale architecture, and its zone proxies
+    into one world Box3, exactly as scenario_shell_fabric_registry
+    already reads chfShellFabric() for the shell -- a read-only debug
+    hook, not a new gameplay surface.
+    """
+    served = live_app()
+    if served is None:
+        return
+    with served.browser() as page:
+        page.goto(served.url('house?quality=high'))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_timeout(2200)
+        page.evaluate("window.chfHouseEnterRoom('study')")
+        page.wait_for_timeout(1400)
+
+        check(page.evaluate("typeof window.chfStudyBox === 'function'"),
+              'chfStudyBox must exist so a test can pin the study to its '
+              'own world bounding box without guessing at scene internals')
+        box = page.evaluate("window.chfStudyBox()")
+        check(box is not None, 'chfStudyBox must report a box once the '
+              'study has been entered')
+        check(box[5] <= 14.56,
+              'the study must not reach past the main block\'s street '
+              'face (z 14.55): max z %r' % (box[5],))
+        check(box[4] >= 7.5,
+              'the study must sit south of the future rooms (z 7.65 is '
+              'its new north wall): min z %r' % (box[4],))
 
 
 # The facade spec §2.2 pins the canonical facade to the elevation it
@@ -1646,6 +1685,7 @@ if __name__ == '__main__':
     scenario_fridge_magnets_rebuild_shares_geometry()
     scenario_garage_rebuild_does_not_touch_plaque_textures()
     scenario_shell_fabric_registry()
+    scenario_study_sits_inside_the_main_block()
     scenario_canonical_facade_pins_the_hand_built_elevation()
     scenario_navigation_real_mouse()
     scenario_shell_without_room_is_inert()

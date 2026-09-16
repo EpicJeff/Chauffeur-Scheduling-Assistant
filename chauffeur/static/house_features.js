@@ -104,7 +104,8 @@
     book(item,0x536e79,0,0,0);
     // Study wing joins the east side of the living room. Its locked door
     // belongs on that shared wall, across the room from the exterior door.
-    item = entry('study','Study · Parent PIN','living',[6.50,.02,12.10],'study');
+    // z translated north 2.17 with the study (task 1): 12.10 -> 9.93.
+    item = entry('study','Study · Parent PIN','living',[6.50,.02,9.93],'study');
     item.rotation.y = -Math.PI / 2;
     interiorDoor(item,1);
     fabric.push({group:item,name:'living_study_door',normal:[1,0,0],twoSided:true,

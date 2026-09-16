@@ -8,7 +8,7 @@
     var quality = detail >= 3 ? 'high' : detail >= 2 ? 'medium' : 'low';
     var built = window.StudyFactory({THREE:T, quality:quality, renderer:renderer});
     var root = built.group, zones = {}, proxies = new T.Group();
-    var SCALE = .42, EAST = 14.52, NORTH = 9.88, SOUTH = 16.62, WEST = 6.92;
+    var SCALE = .42, EAST = 14.52, NORTH = 7.71, SOUTH = 14.45, WEST = 6.92;
     root.rotation.y = -Math.PI / 2;
     root.scale.setScalar(SCALE);
     root.position.set(EAST - 6.3 * SCALE, .12, NORTH + 7.09 * SCALE);
