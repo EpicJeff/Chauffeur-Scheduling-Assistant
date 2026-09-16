@@ -230,12 +230,21 @@ comments excepted): `massing_east_back_north/east/patio`, `massing_east_front_ea
 `massing_front_roof` (+ its `_end_east`/`_north`/`_south` pieces), `massing_back_roof_back/front`
 and `massing_back_roof_shed`, `massing_service_north/west/south` and `massing_service_roof` (+ its
 `_end_west`/`_north`/`_south` pieces), `mudroom_cross_roof` (+ its `_north`/`_south` pieces),
-`living_roof` (registered, always empty since H3), the terrace slab and its furniture (table, three
-chairs, planter, bench, watering can, three pots) and their now-dead `gChair`/`gTable`/`planter`
-builders. `mudroom_front_cladding` and `mudroom_east_finish` fold into the garage block's walls
-(`mudroom_front`, `west_wall`); `mudroom_roof`'s geometry (the mudroom's street wall, its glazed
-door, and that door's jamb/hardware) folds into `mudroom_front` rather than being deleted — only the
-registry name retires.
+`mudroom_front_cladding` (`mudFrontBandG`), `living_roof` (registered, always empty since H3), the
+terrace slab and its furniture (table, three chairs, planter, bench, watering can, three pots) and
+their now-dead `gChair`/`gTable`/`planter` builders.
+
+Two of the three pieces spec §2 calls out as folding do fold, one does not — checked against the
+actual commit (`git show 5d907b2 -- chauffeur/static/house.js`), not assumed: `mudroom_east_finish`
+folds unchanged into `west_wall` (same plane, same room, same `[1,0,0]` flip), and `mudroom_roof`'s
+geometry (the mudroom's street wall, its glazed door, and that door's jamb/hardware) folds unchanged
+into `mudroom_front` — only the registry name retires. `mudroom_front_cladding` does not: its own
+group (`mudFrontBandG`, a single box closing the gap above the mudroom's door wall up to the
+underside of the now-deleted `mudroom_cross_roof`) is deleted outright, along with its registration.
+The gap it used to close is now covered by the new `mudroom_front` wall — a fresh `shellWall` call
+building the mudroom's whole street face from scratch, not the old band reparented — which the
+commit's own comment describes as "that band re-authored as the face itself." See 10.7.9 for the
+resulting spec-wording deviation.
 
 ### 10.6 The canonical facade mesh-count pin
 
@@ -302,8 +311,28 @@ left it unchanged and green at every stop.
    pitches, since the latter would make a block's height depend on which roof form it's wearing.
    Flagged as an open design question for spec 2, where ridge axis becomes a per-block user choice
    rather than a probe-only variant.
+9. **§2's "fold" wording is loose for `mudroom_front_cladding`.** §2 groups it with
+   `mudroom_east_finish` under "fold into the garage block's walls." Checked against the commit
+   (10.5): `mudroom_east_finish` does fold (reparented unchanged), but `mudroom_front_cladding`'s own
+   geometry is deleted outright — the new `mudroom_front` wall is fresh geometry covering the same
+   visual gap, not the old band moved into a new parent. **Ruling: no code changed** (task 2 built it
+   this way and review found no defect in the result — the street face is continuous either way); the
+   deviation is purely that §2's text describes two different mechanisms with one word. Cost if the
+   wording had been read literally: none — the geometry is correct regardless of which word describes
+   how it got there.
 
 ### 10.8 Parked / deferred (not fixed in this arc; none blocking)
+
+- The canonical facade mesh-count pin's own derivation comment miscounts the deleted pieces
+  (`test_house_live.py` ~1325-1333: the comment says 17, lists 19 names, and the true count is 24).
+  The pinned number itself (1840, see 10.6) is correct and verified by running the suite; only the
+  comment explaining it is wrong.
+- `north_wall_east` inherits `shellWall`'s plinth and corner boards, but the pre-existing
+  `north_cladding` half of the same street run has neither — flagged in task 2 for an eyeball at the
+  north orbit stops in task 4. Checked: task 4's report does not mention this seam, so it was not
+  looked at and remains open, not resolved.
+- `test_house_facade.py:127`'s comment still says "garage face" — a name retired when task 3 merged
+  the garage and mudroom faces into `garage_block`.
 
 - A ridge-`z` block renames its four roof pieces (`_north/_south/_end_west/_end_east` →
   `_west/_east/_back/_front`) by `shellGable`'s existing compass-suffix convention; `EXTERIOR_HINTS`'

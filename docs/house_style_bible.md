@@ -159,8 +159,13 @@ behind it. Each block owns one roof, and every block roof is a triple --
 canonical read is `gable`, ridge `x`, on both blocks; a block roof may also
 be built `hip` (`shellGable`'s `form` parameter grows two trapezoid decks
 along the ridge plus two triangular decks on the ends, same eave and pitch,
-no gable-end infill) or ridge `z` (the street face reads as a gable end
-instead of an eave line -- the tract-house garage look). A block short on its
+no gable-end infill) or ridge `z`, which turns the street face into a gable
+end instead of an eave line -- the tract-house garage look. This was
+screenshot-verified for `hip` ridge `z` on the garage block (the block's
+street face reads as a hipped, sloped-back end above the garage door,
+exactly the look this note describes); a plain `gable` roof with ridge `z`
+was never separately probed, so treat that combination's read as inferred
+from the mechanism until someone looks at it. A block short on its
 ridge axis clamps its hip inset rather than self-intersecting, and degenerates
 cleanly to a pyramid with steeper end planes once the inset reaches the
 block's half-depth; treat that as correct roof behaviour on a short block, not
