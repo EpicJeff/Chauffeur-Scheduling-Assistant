@@ -2559,6 +2559,46 @@ def scenario_shell_without_room_is_inert():
               'roomless shell must not open a room or zone behind it')
 
 
+def scenario_clipper_cuts_convex_meshes():
+    """Spec 2026-09-16 masking §3: the clipper is exact on a unit cube."""
+    served = live_app(_seed)
+    if served is None:
+        return
+    with served.browser() as page:
+        page.goto(served.url('house?quality=low'))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        r = page.evaluate("""() => {
+          const C = window.HouseClip;
+          if (!C) return {missing: true};
+          const v = (x,y,z,u=0,w=0) => ({p:[x,y,z], uv:[u,w]});
+          // unit cube 0..1, twelve triangles, slot 0, outward winding
+          const q = (a,b,c,d) => [{a,b,c,slot:0},{a,b:c,c:d,slot:0}];
+          const P = [v(0,0,0),v(1,0,0),v(1,1,0),v(0,1,0),v(0,0,1),v(1,0,1),v(1,1,1),v(0,1,1)];
+          const tris = [].concat(
+            q(P[0],P[3],P[2],P[1]), q(P[4],P[5],P[6],P[7]),   // z=0 (facing -z), z=1
+            q(P[0],P[1],P[5],P[4]), q(P[3],P[7],P[6],P[2]),   // y=0, y=1
+            q(P[0],P[4],P[7],P[3]), q(P[1],P[2],P[6],P[5]));  // x=0, x=1
+          const area0 = C.triArea(tris, 0);
+          const half = C.clipTris(tris, {n:[1,0,0], d:0.5}, 1);   // keep x >= 0.5
+          const kept0 = C.triArea(half, 0), cap = C.triArea(half, 1);
+          const out = C.subtractTris(tris, [{n:[1,0,0], d:0.5}, {n:[0,1,0], d:0.5}], 1);
+          const outArea = C.triArea(out, 0);
+          const m = C.maskPlanes([0, 10, 10], [-1, 1, 0, 2, -1, 1]);
+          return {area0, kept0, cap, outArea, nP: m.P.length, nW: m.W.length,
+                  inside: C.pointMasked([0, 5, 5], m), behind: C.pointMasked([0, 1, -3], m),
+                  outsideCone: C.pointMasked([8, 5, 5], m)};
+        }""")
+        check(not r.get('missing'), 'window.HouseClip is loaded on /house')
+        check(abs(r['area0'] - 6.0) < 1e-6, f"unit cube area 6, got {r['area0']}")
+        check(abs(r['kept0'] - 3.0) < 1e-6, f"half cube keeps 3 of the original faces' area, got {r['kept0']}")
+        check(abs(r['cap'] - 1.0) < 1e-6, f"one unit cap, got {r['cap']}")
+        check(abs(r['outArea'] - 4.5) < 1e-6, f"cube minus its +x+y quarter keeps 4.5 original area, got {r['outArea']}")
+        check(r['nP'] >= 4 and r['nW'] >= 1, f"mask planes built: P {r['nP']} W {r['nW']}")
+        check(r['inside'] is True, 'a point between the camera and the box is masked')
+        check(r['behind'] is False, 'a point beyond the box is kept')
+        check(r['outsideCone'] is False, 'a point outside the silhouette is kept')
+
+
 if __name__ == '__main__':
     scenario_the_house_boots_enters_and_leans_in()
     scenario_leanin_focus_cycles_do_not_leak_textures()
@@ -2576,4 +2616,5 @@ if __name__ == '__main__':
     scenario_idle_return_snaps_the_orbit_home()
     scenario_shell_without_room_is_inert()
     scenario_worst_case_facade_builds_clean()
+    scenario_clipper_cuts_convex_meshes()
     print("test_house_live OK")
