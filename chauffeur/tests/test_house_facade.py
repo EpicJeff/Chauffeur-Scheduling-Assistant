@@ -132,6 +132,24 @@ def scenario_roof_priority_and_no_bans():
     check(g == [(0, 3), (8, 2)], f'both gables kept: {g}')
 
 
+def scenario_garage_bay_is_a_hard_boundary_for_roof_too():
+    # a gable starting inside the garage bay (slots 0-2 of the six-slot
+    # garage_block face) must not bleed into the mudroom's ordinary roof
+    # slots (3-5): the bay is a hard boundary for roof features exactly
+    # as it already is for the garage door itself (spec 4.4).
+    raw = _spec(roof=[{'slot': 1, 'span': 4, 'kind': 'gable'}])
+    spec, notes = hf.normalize(raw)
+    g = next(r for r in spec['roof'] if r['kind'] == 'gable' and r['slot'] == 1)
+    check(g['span'] == 2, f'gable clipped to the garage bay, not the whole face: {g}')
+    check(any('face' in n for n in notes), 'truncation noted')
+    # a gable fully inside the bay is untouched
+    raw2 = _spec(roof=[{'slot': 0, 'span': 3, 'kind': 'gable'}])
+    spec2, notes2 = hf.normalize(raw2)
+    g2 = next(r for r in spec2['roof'] if r['kind'] == 'gable')
+    check(g2 == {'slot': 0, 'span': 3, 'kind': 'gable'} and notes2 == [],
+          f'a gable already inside the bay is unchanged: {g2} {notes2}')
+
+
 def scenario_budget_caps_drop_east_most_first():
     ground = [{'slot': i, 'span': 1, 'kind': 'window', 'size': 'tall'} for i in range(6, 14)]
     ground += [{'slot': i, 'span': 1, 'kind': 'window', 'size': 'tall'} for i in range(14, 18)]
@@ -379,6 +397,7 @@ if __name__ == '__main__':
                scenario_openings_pin_to_their_room_face,
                scenario_overlap_priority_trims_the_loser,
                scenario_roof_priority_and_no_bans,
+               scenario_garage_bay_is_a_hard_boundary_for_roof_too,
                scenario_budget_caps_drop_east_most_first,
                scenario_sorted_and_deduped,
                scenario_wall_and_eave_entries_are_dropped,

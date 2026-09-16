@@ -159,10 +159,19 @@ def _entries(raw_list, kinds, notes, layer):
 
 
 def _clip_to_face(item, notes):
-    """Spans never cross a face (spec 4.3)."""
+    """Spans never cross a face (spec 4.3). The garage BAY is a hard
+    boundary too (spec 4.4: the garage door always spans its own bay) --
+    task 3 merged the old 3-slot 'garage' face into the 6-slot
+    garage_block face, so without this a feature starting in the bay
+    (slots 0-2) could otherwise run on into the mudroom's ordinary roof
+    slots (3-5). A feature starting in the bay is clipped to the bay,
+    not the whole face."""
     slots = slot_table()
     face = slots[item['slot']]['face']
     lo, hi = _face_range(face)
+    bay_lo, bay_hi = GARAGE_BAY_SLOTS
+    if bay_lo <= item['slot'] <= bay_hi:
+        hi = min(hi, bay_hi)
     end = min(item['slot'] + item['span'] - 1, hi)
     if end != item['slot'] + item['span'] - 1:
         notes.append(f"{item['kind']} at slot {item['slot']} truncated at the {face} face boundary")

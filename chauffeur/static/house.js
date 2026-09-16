@@ -4881,7 +4881,8 @@
     function gableAt(feat) {
       var e = spanX(feat), slot = e.slot;
       var name = 'facade_' + slot.face + '_gable_' + feat.slot;
-      if (feat.slot >= GARAGE_BAY_SLOTS[0] && feat.slot <= GARAGE_BAY_SLOTS[1]) {
+      if (feat.slot >= GARAGE_BAY_SLOTS[0] && feat.slot <= GARAGE_BAY_SLOTS[1] &&
+          feat.slot + feat.span - 1 <= GARAGE_BAY_SLOTS[1]) {
         /* the street-facing garage gable (spec section 2.1: today's
            garage_gable, reproduced from the spec instead of by hand) --
            it intersects the lower cross roof rather than sitting on the
@@ -4889,7 +4890,12 @@
            on the BAY's own slots, not the face: garage_block also carries
            the mudroom now, and a gable further east on that face (over
            the mudroom) is an ordinary street gable, not this special
-           case. */
+           case. The full-span check is defensive: services/house_facade.py's
+           normalize() already clips a bay-starting roof feature's span to
+           the bay (_clip_to_face), so every spec this actually renders is
+           pre-clipped, but a feature that somehow reached here spanning
+           past the bay falls through to the ordinary gable below rather
+           than stretching the bay's fixed z range over the mudroom. */
         shellGable(name, e.x0, e.x1, 4.0, 10.1, roofPlaneEave(slot), 'z',
                    slot.room, [1], PITCH_FAMILY, null, null, false, slot.room);
         return;
