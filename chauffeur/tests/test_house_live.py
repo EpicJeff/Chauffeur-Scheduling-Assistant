@@ -2601,36 +2601,46 @@ def scenario_clipper_cuts_convex_meshes():
 
 def scenario_every_fabric_mesh_is_convex_or_a_kit():
     """Task 2 (view-volume masking spec section 3): solids come from the
-    builders. chfFabricConvexity() reports the PRE-merge snapshot (taken
-    immediately before the per-fabric mergeStatic loop) -- the same point
-    in the build where Task 3's buildRoomShells() will clip -- so a
-    windowed wall built from ordinary box() meshes is expected to be
-    fully convex, never a kit: merging those boxes into one composite is
-    a later step neither this check nor Task 3's clip ever sees.
+    builders. chfFabricConvexity() reads each row's `convexity`, scanned
+    at registration time (regFabric(), refreshed by refabConvexity() for
+    west_wall/mudroom_front/yard's own late folds) -- not a live
+    traversal, and not a single bulk pass over FABRIC either, since
+    house_features.js's door fixtures register even later than that
+    (through syncWorld()'s first call). Registration always happens
+    while a row's own meshes are still individual box()/extrude meshes,
+    before any merge pass fuses them -- the same population Task 3's
+    buildRoomShells() clips -- so a windowed wall built from ordinary
+    box() meshes is expected to be fully convex, never a kit: merging
+    those boxes into one composite happens later and neither this check
+    nor Task 3's clip ever sees it.
 
     A non-kit row's unstamped meshes (`nonconvex`, a list of geometry
     type names) must all be a recognized non-box primitive -- a lathe,
-    torus, cylinder, sphere, swept tube or an instanced prop -- that
-    Task 3 keeps or drops WHOLE by its own bounding box rather than
-    clipping; a plain BoxGeometry/tiledBoxGeo mesh (or a hand-built
-    convex BufferGeometry, e.g. a chamfered box built directly instead
-    of through box()) that simply missed its stamp is a bug, not an
-    allowed shape. A kit row (a door, window, porch, garage door or the
-    coach lamp) is kept or dropped WHOLE regardless of what is inside
-    it.
+    torus, cylinder, sphere, swept tube, or an InstancedMesh (exempt from
+    the mask outright: kept whole, never even considered for a per-mesh
+    keep/drop) -- never a plain BoxGeometry/tiledBoxGeo mesh (or a
+    hand-built convex BufferGeometry, e.g. a chamfered box built directly
+    instead of through box()) that simply missed its stamp, which is a
+    bug, not an allowed shape. A kit row (a door, window, porch, garage
+    door or the coach lamp) is kept or dropped WHOLE regardless of what
+    is inside it, and the exact set of kit rows is pinned below -- this
+    is the regression v2.499.50 actually shipped (nine ordinary windowed
+    walls wrongly marked kit), so "at least one row is a kit" alone is
+    not enough.
     """
-    # ExtrudeGeometry and ShapeGeometry are here even though every
-    # in-repo ExtrudeGeometry site inside a non-kit row is stamped
-    # directly by this task (shellGable's decks/ends, vaultSection) --
-    # ExtrudeGeometry only reaches `nonconvex` at all through a NEW
-    # extrude site nobody has stamped yet, and a plain ShapeGeometry
-    # never appears in this build today. Both are convex/non-convex on
-    # a case-by-case basis (a Shape with a hole is not convex), so
-    # leaving them off would silently mask a future missed stamp as
-    # "unknown, allow it" -- they are listed for documentation, not
-    # because either is unconditionally safe; TorusGeometry and
-    # TubeGeometry are always non-convex (a revolved or swept curve),
-    # so those two are always safe to allow.
+    # ExtrudeGeometry and ShapeGeometry are deliberately ABSENT from this
+    # set, not an oversight: every in-repo ExtrudeGeometry site inside a
+    # non-kit row is already stamped directly by this task (shellGable's
+    # decks/ends, vaultSection), so the only way either name reaches
+    # `nonconvex` at all is a NEW extrude/shape site nobody has stamped
+    # yet -- and unlike a lathe or a swept tube, an extrude or a shape is
+    # not unconditionally non-convex (a Shape with a hole is not convex,
+    # but a plain one is). Allowing them here would let a future missed
+    # stamp on a genuinely convex (and clippable) mesh quietly pass as
+    # "unknown non-box shape, fine" instead of failing loudly. Only
+    # TorusGeometry and TubeGeometry are always non-convex (a revolved or
+    # swept curve can never be a flat-sided polytope), so only those two
+    # join the primitives already seen in this build.
     ALLOWED_NONCONVEX = {'LatheGeometry', 'TorusGeometry', 'CylinderGeometry',
                          'SphereGeometry', 'TubeGeometry', 'InstancedMesh'}
     served = live_app()
@@ -2671,6 +2681,23 @@ def scenario_every_fabric_mesh_is_convex_or_a_kit():
             row = by_name.get(name)
             check(row is not None and not row['kit'],
                   f"{name} clips pre-merge, not a kit: {row}")
+        # Fix round 1 (v2.499.52): pin the kit SET exactly, not just "at
+        # least one exists" -- v2.499.50's regression was nine ordinary
+        # windowed walls wrongly marked kit, and a test that only checks
+        # "some row is a kit" would never have caught that. Generated
+        # kits are named 'facade_<face>_<window|door|porch>_<slot>'
+        # (windowAt/doorAt/porchAt); dormerAt/gableAt/hipEndAt generate
+        # facade_ names too but are never kits, so the kind is matched
+        # explicitly rather than accepting every facade_ name.
+        import re as _re3
+        kits = {r['name'] for r in rows if r['kit']}
+        expected = {n for n in by_name
+                    if _re3.match(r'^facade_.*_(window|door|porch)_\d+$', n)}
+        expected |= {'garage_door', 'back_door', 'living_study_door',
+                     'east_room_door', 'living_back_room_door'}
+        check(kits == expected,
+              f"kit set is exactly the door/window/porch/lamp list: "
+              f"extra={sorted(kits - expected)} missing={sorted(expected - kits)}")
 
 
 if __name__ == '__main__':

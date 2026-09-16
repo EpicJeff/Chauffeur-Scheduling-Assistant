@@ -973,7 +973,22 @@
        mudroom_front grow more content hundreds of lines after they
        register) and already solves it by re-measuring explicitly at the
        point the fold happens; `refabConvexity` below is the same fix for
-       this new field, called at the same two sites. */
+       this new field, called at those same two sites AND at `yard`,
+       whose own late fold is instanceYard() replacing hundreds of
+       individual props with a couple dozen InstancedMesh objects right
+       after yard's own regFabric() call.
+
+       INSTANCEDMESH (fix round 1) is never counted convex and is never
+       expected to be: the controller ruling exempts every InstancedMesh
+       from the mask outright (planting decor; no room camera looks
+       through a bush at its own room), so Task 3 keeps each one whole in
+       every room shell rather than trying to keep/drop it individually
+       by its own bounding box -- worldTris() (above) would need
+       instanceMatrix to build a per-copy solid and does not have it, so
+       it throws if ever called on one instead of returning a silently
+       wrong triangle list. `nonconvex` still reports 'InstancedMesh' by
+       name so the inventory stays honest about what is in a row, not
+       because Task 3 is expected to do anything per-instance with it. */
     function scanConvexity(g) {
       var meshes = 0, convex = 0, nonconvex = [];
       g.traverse(function (m) {
@@ -1033,8 +1048,30 @@
        solids already speak (position, uv, slot 0 -- ao is the vault's
        to add, task 3 does not read it here). Task 3 calls this on every
        fabric mesh stamped userData.convex to build the solid it clips.
-       Handles indexed and non-indexed geometry alike. */
+       Handles indexed and non-indexed geometry alike.
+
+       INSTANCEDMESH (task 2, fix round 1): NEVER a valid argument here.
+       This function reads only `mesh.matrixWorld` -- one transform for
+       the whole draw call -- and has no notion of `instanceMatrix`, the
+       per-instance transform an InstancedMesh actually draws each copy
+       with; the vendored three's own Box3.expandByObject has the same
+       blind spot (fabBox's own comment above, on yardG, already
+       verified this against the vendored r150 build). An InstancedMesh
+       is therefore never stamped userData.convex (scanConvexity below
+       reports its type as 'InstancedMesh', never convex) and the
+       controller ruling exempts every InstancedMesh from the mask
+       outright -- Task 3 keeps it whole in every room shell, the same
+       way it keeps a kit whole, and so is never supposed to reach this
+       function with one. Throws rather than silently returning `[]`:
+       a caller that reaches here with an InstancedMesh has a bug (it
+       would otherwise silently clip a bush by its single base-geometry
+       transform, not its planted copies), and a loud failure is safer
+       than a quietly wrong triangle list. */
     function worldTris(mesh) {
+      if (mesh.isInstancedMesh)
+        throw new Error('worldTris: InstancedMesh has no single ' +
+          'matrixWorld solid -- instanced props are exempt from the ' +
+          'mask and must be kept whole, never clipped');
       var g = mesh.geometry, pos = g.getAttribute('position'), uv = g.getAttribute('uv');
       mesh.updateWorldMatrix(true, false);
       var M = mesh.matrixWorld, tris = [], tmp = new T.Vector3();
@@ -8143,6 +8180,12 @@
         m.scale.set(rx, rz, 1);
         m.position.set(x, GY + 0.009, z);
         m.renderOrder = -1;
+        /* VIEW-VOLUME MASKING (task 2, fix round 1): a circle (any
+           regular-polygon approximation of one) is a flat convex
+           polygon, same reasoning as calFace's PlaneGeometry -- stamped
+           so the yard's convexity inventory does not depend on the
+           SHADOWS tier these discs only exist below. */
+        m.userData.convex = true;
         yardG.add(m); return m;
       }
       var YUP = new T.Vector3(0, 1, 0);
@@ -8577,6 +8620,16 @@
     regFabric(yardG, { name: 'yard', mode: 'hide', n: [0, 1, 0],
                         box: fabBox(yardG) });
     instanceYard();
+    /* VIEW-VOLUME MASKING (task 2, fix round 1): instanceYard() just
+       replaced hundreds of individual props with a couple dozen
+       InstancedMesh objects -- the row's `convexity` scanned above at
+       regFabric() time describes the population BEFORE that swap, same
+       staleness refabConvexity already fixes for west_wall/mudroom_front.
+       Re-scan now so chfFabricConvexity()/Task 3 see the real, final
+       yard population (every InstancedMesh, none carrying
+       userData.convex, all exempt from the mask per scanConvexity's own
+       comment below). */
+    refabConvexity('yard', yardG);
     /* sky dome: weather-painted from the inside, swapped by applyState.
        The dome IS the background now, so the flat clear color retires. */
     var skyDome = new T.Mesh(new T.SphereGeometry(80, 24, 12),
