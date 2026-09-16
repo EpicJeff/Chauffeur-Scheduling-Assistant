@@ -10795,9 +10795,23 @@
     window.addEventListener('keydown', function (e) {
       if (document.body.classList.contains('house-card-open')) return;
       /* ORBIT (spec section 4): the arrows step the ring at the exterior
-         and mean nothing inside a room, where the camera is fixed. */
+         and mean nothing inside a room, where the camera is fixed.
+
+         They also mean nothing while somebody is typing. This page
+         carries the Argyle textarea and command field (control_center)
+         and the music widget's search box and volume slider; none of
+         them set `house-card-open`, and none of their own handlers stop
+         an arrow bubbling up to window -- so without this guard "move
+         the caret back one character" became an 850 ms tween plus a
+         solveShell, and every further caret move spun the house another
+         45 degrees. defaultPrevented covers the same ground for any
+         handler that has already claimed the key. */
       if (mode === 'exterior' &&
           (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        var t = e.target;
+        if (e.defaultPrevented ||
+            (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) ||
+                   t.isContentEditable))) return;
         orbitStep(e.key === 'ArrowRight' ? 1 : -1);
         return;
       }

@@ -1835,6 +1835,32 @@ def scenario_orbit_eight_stops():
         page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
         check(page.evaluate('window.chfOrbitStop()') == before,
               'the left chevron steps back')
+        # The arrows belong to the HOUSE, not to whatever the person is
+        # typing into on top of it. /house carries the Argyle textarea
+        # (control_center.html #chat-input) and the music widget's search
+        # box and volume slider, none of which set `house-card-open`, and
+        # none of whose own handlers stop an arrow key from bubbling to
+        # window -- so an unguarded branch turns "move the caret back one
+        # character" into an 850 ms camera tween plus a solveShell.
+        page.focus('#chat-input')
+        page.keyboard.type('what time is soccer')
+        page.keyboard.press('ArrowLeft')
+        page.wait_for_timeout(1200)
+        check(page.evaluate('window.chfOrbitStop()') == before,
+              'an arrow key inside a text field must not turn the house')
+        check(page.evaluate("document.getElementById('chat-input').value")
+              == 'what time is soccer',
+              'the text field keeps what was typed into it')
+        page.evaluate("document.getElementById('chat-input').value = '';"
+                      "document.getElementById('chat-input').blur()")
+        page.keyboard.press('ArrowRight')
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        check(page.evaluate('window.chfOrbitStop()') == (before + 1) % 8,
+              'and with nothing focused the same key still steps the ring')
+        page.keyboard.press('ArrowLeft')
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        check(page.evaluate('window.chfOrbitStop()') == before,
+              'back to where the chevrons left it')
         # entering a room and leaving returns to the CURRENT stop
         page.evaluate("window.chfOrbitTo(5)")
         page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
