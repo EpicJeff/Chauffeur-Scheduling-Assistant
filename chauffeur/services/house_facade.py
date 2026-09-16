@@ -12,10 +12,10 @@ import uuid
 SLOT_W = 1.85
 # West to east. Mirrors house.js: FULL_HOUSE, SWZ1, EXT_TOP4, the garage IIFE.
 FACES = [
-    {'face': 'garage',  'x0': -18.20, 'x1': -12.60, 'z': 10.10, 'eave': 4.7, 'room': 'garage',  'roof': 'massing_service_roof'},
-    {'face': 'mudroom', 'x0': -12.60, 'x1': -7.15,  'z': 10.10, 'eave': 5.6, 'room': 'mudroom', 'roof': 'mudroom_cross_roof'},
+    {'face': 'garage',  'x0': -18.20, 'x1': -12.60, 'z': 10.10, 'eave': 4.7, 'room': 'garage',  'roof': 'garage_block_roof'},
+    {'face': 'mudroom', 'x0': -12.60, 'x1': -7.15,  'z': 10.10, 'eave': 5.6, 'room': 'mudroom', 'roof': 'garage_block_roof'},
     {'face': 'main',    'x0': -7.15,  'x1': 6.85,   'z': 14.55, 'eave': 5.6, 'room': 'living',  'roof': 'roof_main'},
-    {'face': 'wing',    'x0': 6.85,   'x1': 14.65,  'z': 16.72, 'eave': 5.6, 'room': 'study',   'roof': 'massing_front_roof'},
+    {'face': 'wing',    'x0': 6.85,   'x1': 14.65,  'z': 14.55, 'eave': 5.6, 'room': 'study',   'roof': 'roof_main'},
 ]
 
 GROUND_KINDS = ('wall', 'window', 'door', 'garage_door', 'porch')

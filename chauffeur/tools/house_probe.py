@@ -21,6 +21,7 @@ without it, exit 0 — the same bargain live_app makes).
 Run from chauffeur/. Screenshots land as <out>/<view>.png, 1400x1000.
 """
 import argparse
+import json
 import datetime
 import os
 import sys
@@ -285,6 +286,14 @@ def main():
                          'trialled without editing house.js. 0 = nothing '
                          'recedes; 1 = maximum. Applies to room views only '
                          '(the exterior is always 0).')
+    ap.add_argument('--roof', default='',
+                    help='block roof forms, so a variant can be budgeted '
+                         'and looked at without editing house.js. Shorthand '
+                         '"hip"/"gable" sets both blocks; otherwise a JSON '
+                         'object in the ROOF_FORMS shape, e.g. '
+                         '{\"main\":{\"form\":\"hip\"}}. '
+                         'Injected as window.HOUSE_ROOF_FORMS before the '
+                         'page loads; absent, the canonical forms build.')
     ap.add_argument('--budget', action='store_true',
                     help='wrap the renderer and print per-view draw-budget '
                          'numbers (meshes, in-frustum, tris, unique '
@@ -321,6 +330,15 @@ def main():
         errors = []
         page.on('console', lambda m: errors.append(m.text)
                 if m.type == 'error' else None)
+        if args.roof:
+            if args.roof in ('hip', 'gable'):
+                forms = {'main': {'form': args.roof},
+                         'garage': {'form': args.roof}}
+            else:
+                forms = json.loads(args.roof)
+            page.add_init_script(
+                'window.HOUSE_ROOF_FORMS = %s;' % json.dumps(forms))
+            print('roof forms: %s' % json.dumps(forms))
         if args.day:
             # Promoted from a session scratchpad (Task 11 fix round 1,
             # finding 2): house.js's isNight() reads `new Date().getHours()`

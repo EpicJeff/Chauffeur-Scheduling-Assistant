@@ -911,6 +911,16 @@
       var b = new T.Box3().setFromObject(g);
       return [b.min.x, b.max.x, b.min.y, b.max.y, b.min.z, b.max.z];
     }
+    /* Massing arc 1: two pieces the arc FOLDED into an already-registered
+       group (the mudroom's east finish into west_wall, its street door
+       and jamb into mudroom_front) are built hundreds of lines after
+       those registrations, so their group's box was measured without
+       them. Re-measure rather than leave a stale row: the solver's
+       corridor test reads f.box, and a fold that grows a piece must grow
+       the box it is solved with. */
+    function refabBox(name, g) {
+      FABRIC.forEach(function (f) { if (f.name === name) f.box = fabBox(g); });
+    }
     /* ---- SHELL (spec section 4): the half-space solver ------------------
        Camera-settle only (enterRoom, goExterior, frameZone's lean-in) —
        never per frame; render-on-demand law intact. A piece ghosts when
@@ -924,11 +934,10 @@
       return new T.Vector3((b[0]+b[1])/2, (b[2]+b[3])/2, (b[4]+b[5])/2);
     }
     /* Controller ruling: a piece registered before its group ever grows
-       real geometry (today, only livingRoofG — open-concept, "nothing to
-       hide", see its own regFabric call site) carries three.js's
-       untouched Box3-empty sentinel: min=(+Inf,+Inf,+Inf),
-       max=(-Inf,-Inf,-Inf). That box is unusable for centre/dot math
-       (an Infinity centre only ever produces NaN dot products, which
+       real geometry carries three.js's untouched Box3-empty sentinel:
+       min=(+Inf,+Inf,+Inf), max=(-Inf,-Inf,-Inf). That box is unusable
+       for centre/dot math (an Infinity centre only ever produces NaN
+       dot products, which
        compare false either way and would leave the piece SOLID by
        accident rather than by contract) and geometrically means "no
        fabric exists yet to occlude anything" — so it verdicts solid on
@@ -4016,11 +4025,17 @@
     function swtag(m) { if (m) m.userData.room = 'living'; return m; }
 
     /* ---- the south wall (NEW): the street face ------------------------
-       Width and south edge come off the floor union, not a hand-typed
-       span — one room, one derivation, matching every T4 box below. SWZ0
-       is the inner (room-side) face; SWZ1 is the outer (street-side)
-       face, WALL_T4 further out. */
-    var SW_W = grFloorBox.max.x - grFloorBox.min.x;      /* 13 */
+       SWZ0 is the inner (room-side) face; SWZ1 is the outer (street-side)
+       face, WALL_T4 further out.
+       MASSING ARC 1 (spec section 2): the street face is the WHOLE main
+       block now, x -7.15 .. 14.65 — the study's own street face is part
+       of this wall, not a separate wing front 2.17 further south — so
+       the width comes off the envelope (FULL_HOUSE, declared just below
+       this block for exactly this reason) and not off the great room's
+       floor union, which only ever measured the two rooms it was built
+       for. SWZ0/SWZ1 are unchanged: the front line never moved. */
+    var SW_W = 21.8;              /* FULL_HOUSE.east - FULL_HOUSE.west */
+    var SW_CX = 3.75;             /* (FULL_HOUSE.west + FULL_HOUSE.east)/2 */
     var SWZ0 = grFloorBox.max.z;                          /* ~14.2 */
     var SWZ1 = SWZ0 + WALL_T4;                             /* ~14.55 */
     var southWallG = new T.Group();
@@ -4058,12 +4073,12 @@
        (6.9, chosen below to match the existing eave line) is barely
        above WALL_TOP4 — a 5.6-tall wall would leave a gap under that
        eave, the exact wedge bug this whole block exists to avoid. */
-    swtag(box(SW_W, EXT_TOP4, WALL_T4 / 2, C.wall, 0, EXT_TOP4 / 2,
+    swtag(box(SW_W, EXT_TOP4, WALL_T4 / 2, C.wall, SW_CX, EXT_TOP4 / 2,
               SWZ0 + WALL_T4 / 4, southWallG, sharp(WALL_O)));
     swtag(box(SW_W, EXT_TOP4, WALL_T4 / 2, NICE ? 0xffffff : EXTC.siding,
-              0, EXT_TOP4 / 2, SWZ0 + WALL_T4 * 3 / 4, southWallG,
+              SW_CX, EXT_TOP4 / 2, SWZ0 + WALL_T4 * 3 / 4, southWallG,
               sharp({ rough: 0.95, map: CLAD() })));
-    swtag(box(SW_W - 0.3, 0.2, 0.08, 0xe4ddd1, 0, 0.1, SWZ0 - 0.02,
+    swtag(box(SW_W - 0.3, 0.2, 0.08, 0xe4ddd1, SW_CX, 0.1, SWZ0 - 0.02,
               southWallG, sharp()));
 
     /* FACADE (arc 4): the door, the porch and the second coach lamp all
@@ -4091,45 +4106,110 @@
     regFabric(southWallG, { name: 'south_wall', n: [0, 0, 1],
                             box: fabBox(southWallG), room: 'living' });
 
-    /* Close the great room's east side at the existing floor boundary.
-       The registered patio slider below supplies its exterior opening. */
-    var EWX0_4 = grFloorBox.max.x;                 /* ~6.5 */
-    var EWX1_4 = EWX0_4 + WALL_T4;                  /* ~6.85 */
+    /* ---- MASSING ARC 1 (spec sections 2 and 3): two rectangles --------
+       The hand-drawn massing (an east wing past the front, a patio
+       notch, a rear room, a rear service block, eleven roof pieces) is
+       gone. What is left is two blocks and two block roofs a generator
+       can dress. Declared BEFORE the walls that read them: the south
+       wall above, the east wall below and every massing call further
+       down all measure themselves off these two rows. */
+    var FULL_HOUSE = {
+      west: -7.15, east: 14.65, north: -6.10, south: SWZ1,
+      eave: EXT_TOP4, overhang: 0.32
+    };
+    /* the second block: garage (x -18.2..-12.6) + mudroom (-12.6..-7.15),
+       set back 4.45 behind the main front. Its own eave is the main's:
+       one eave line across both blocks, which is what lets a roof
+       feature run coplanar across the old garage/mudroom boundary. */
+    var GARAGE_BLOCK = { west: -18.20, east: -7.15, north: -6.10,
+                         south: 10.10, eave: EXT_TOP4 };
+    /* Every block roof is {form, ridge}: nothing about ridge direction
+       is fixed (spec section 3). Canonical is today's look — both blocks
+       gabled with the ridge running east/west. window.HOUSE_ROOF_FORMS
+       overrides at build time (a probe/init-script hook, and the seam
+       spec 2's block model feeds); absent, the canonical row stands. */
+    var ROOF_FORMS = { main: { form: 'gable', ridge: 'x' },
+                       garage: { form: 'gable', ridge: 'x' } };
+    (function () {
+      var o = window.HOUSE_ROOF_FORMS;
+      if (!o) return;
+      Object.keys(ROOF_FORMS).forEach(function (k) {
+        if (!o[k]) return;
+        if (o[k].form) ROOF_FORMS[k].form = o[k].form;
+        if (o[k].ridge) ROOF_FORMS[k].ridge = o[k].ridge;
+      });
+    })();
+
+    /* ---- the east PARTITION (was east_wall) ---------------------------
+       The wall at x 6.85 stopped being an exterior side elevation the
+       moment the main block grew east to 14.65: the study and the two
+       future rooms are behind it now, so it is the interior partition
+       between the great room and them. Plain wall plaster on BOTH faces
+       (no siding half, no exterior baseboard) and three segments rather
+       than one run, so the kitchen's slider and the living room's study
+       door read as real openings instead of assemblies stuck onto a
+       solid slab. The back-room door at z 2.45 keeps the older idiom (a
+       leaf proud of an uncut wall): it is the one opening whose leaf
+       was authored that way and nothing in this arc asks it to move. */
+    var EPX0_4 = grFloorBox.max.x;                 /* ~6.5 */
+    var EPX1_4 = EPX0_4 + WALL_T4;                  /* ~6.85 */
     var EWZ0_4 = wallB.position.z - WALL_T4 / 2;    /* wallB's own outer
                                                         (north) face */
+    /* house_features.js (living_study_door) hangs the study's locked
+       door at this z; the gap below is cut around it, so the two must
+       stay in step. */
+    var STUDY_DOOR_Z4 = 9.93;
+    var eastPartG = new T.Group();
+    extG.add(eastPartG);
+    [[EWZ0_4, 4.50],                                 /* kitchen + back room */
+     [7.10, STUDY_DOOR_Z4 - 0.90],                    /* slider gap above */
+     [STUDY_DOOR_Z4 + 0.90, SWZ1]].forEach(function (seg) {
+      var len = seg[1] - seg[0], cz = (seg[0] + seg[1]) / 2;
+      box(WALL_T4, EXT_TOP4, len, C.wall, EPX0_4 + WALL_T4 / 2,
+          EXT_TOP4 / 2, cz, eastPartG, sharp(WALL_O));
+      box(0.08, 0.2, len - 0.20, 0xe4ddd1, EPX0_4 - 0.02, 0.1, cz,
+          eastPartG, sharp());
+    });
+    /* room: null — it fronts the kitchen on one face and the future
+       rooms/study on the other, so no single room owns a tap on it.
+       twoSided: an interior partition ghosts from whichever side the
+       camera stands on (the kitchen camera is east of it, the study's
+       west of it, and both need it out of the way). */
+    regFabric(eastPartG, { name: 'east_partition', n: [1, 0, 0],
+                           box: fabBox(eastPartG), twoSided: true });
+
+    /* ---- the east WALL: the main block's own side elevation -----------
+       x 14.65, from the north wall to the street face, fronting the back
+       room, the east room and the study. One window each (spec section
+       4's "what orbit exposes"), so the orbit's east stops do not read
+       as a blank slab. room: null — three rooms stand behind it and two
+       of them are unbuilt, so a tap on it is inert, exactly like the
+       unbuilt massing it replaces. */
+    var EWX1_4 = FULL_HOUSE.east;                   /* 14.65 */
+    var EWX0_4 = EWX1_4 - WALL_T4;                  /* 14.30 */
     var EWZ1_4 = SWZ1;                              /* south_wall's own
                                                         outer face */
     var EW_LEN4 = EWZ1_4 - EWZ0_4;
     var EW_CZ4 = (EWZ0_4 + EWZ1_4) / 2;
     var eastWallG = new T.Group();
     extG.add(eastWallG);
-    /* This long side elevation reaches the rear kitchen. Its patio slider
-       below is the clearest exterior kitchen entrance. */
-    function ewtag(m) { if (m) m.userData.room = 'kitchen'; return m; }
-    ewtag(box(WALL_T4 / 2, EXT_TOP4, EW_LEN4, C.wall, EWX0_4 + WALL_T4 / 4,
-              EXT_TOP4 / 2, EW_CZ4, eastWallG, sharp(WALL_O)));
-    ewtag(box(WALL_T4 / 2, EXT_TOP4, EW_LEN4, NICE ? 0xffffff : EXTC.siding,
-              EWX0_4 + WALL_T4 * 3 / 4, EXT_TOP4 / 2, EW_CZ4, eastWallG,
-              sharp({ rough: 0.95, map: CLAD() })));
-    ewtag(box(0.08, 0.2, EW_LEN4 - 0.3, 0xe4ddd1, EWX0_4 - 0.02, 0.1, EW_CZ4,
-              eastWallG, sharp()));
+    box(WALL_T4 / 2, EXT_TOP4, EW_LEN4, C.wall, EWX0_4 + WALL_T4 / 4,
+        EXT_TOP4 / 2, EW_CZ4, eastWallG, sharp(WALL_O));
+    box(WALL_T4 / 2, EXT_TOP4, EW_LEN4, NICE ? 0xffffff : EXTC.siding,
+        EWX0_4 + WALL_T4 * 3 / 4, EXT_TOP4 / 2, EW_CZ4, eastWallG,
+        sharp({ rough: 0.95, map: CLAD() }));
+    box(0.08, 0.2, EW_LEN4 - 0.3, 0xe4ddd1, EWX0_4 - 0.02, 0.1, EW_CZ4,
+        eastWallG, sharp());
+    /* study first (a lived room glows at night), then the two future
+       rooms, which are empty and stay dark. */
+    [[11.10, true], [4.60, false], [-2.30, false]].forEach(function (w) {
+      shellWindow(eastWallG, EWX1_4 + 0.05, 2.80, w[0], Math.PI / 2,
+                  1.35, 2.70, w[1]);
+    });
     /* SHELL: east_wall is complete here. n is [1,0,0]: a true exterior
        boundary, its own physical outward compass direction. */
     regFabric(eastWallG, { name: 'east_wall', n: [1, 0, 0],
-                           box: fabBox(eastWallG), room: 'kitchen', twoSided:true,
-                           cutawayRoom:'study' });
-
-    /* Full-house envelope. Built floor plans stay fixed. The east wings
-       bracket the existing terrace; the rear service wing fills the void
-       behind the garage and mudroom. See the Task 8 derivation report. */
-    var FULL_HOUSE = {
-      west: -7.15, east: EWX1_4, north: -6.10, south: SWZ1,
-      wingEast: 10.40, studyEast: 14.65, studySouth: 16.72,
-      patioNorth: 4.20, patioSouth: 9.80,
-      serviceWest: -18.20, serviceSouth: 2.12,
-      eave: EXT_TOP4, wingEave: 5.60, serviceEave: 5.60,
-      overhang: 0.32
-    };
+                           box: fabBox(eastWallG) });
 
     function shellGroup() { var g = new T.Group(); extG.add(g); return g; }
     function shellBox(g, w, h, d, c, x, y, z, opts) {
@@ -4161,7 +4241,12 @@
                0, -(h + 0.22) / 2, 0.05);
       return frame;
     }
-    function shellWall(name, x0, z0, x1, z1, height, normal, windows, twoSided, cutawayRoom) {
+    /* `room` (massing arc 1): a shell wall used to register roomless
+       without exception — every caller was unbuilt massing. The garage
+       block's street face fronts a REAL room (the mudroom), so the
+       argument exists rather than a second hand-rolled wall builder; it
+       defaults to null, which is exactly what every older caller got. */
+    function shellWall(name, x0, z0, x1, z1, height, normal, windows, twoSided, cutawayRoom, room) {
       var g = shellGroup(), alongX = x0 !== x1;
       var length = alongX ? x1 - x0 : z1 - z0;
       var cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
@@ -4182,13 +4267,26 @@
                     2.80, alongX ? cz + normal[2] * (WALL_T4 / 2 + 0.05) : p,
                     angle, a[1] || 1.35, 2.70, a[2]);
       });
-      shellRegister(g, name, normal, null, twoSided, null, cutawayRoom);
+      shellRegister(g, name, normal, room || null, twoSided, null, cutawayRoom);
       return g;
     }
     /* Each pitched plane has its own normal and merge/ghost unit. Gable
        infill is a separate vertical piece, so a front camera can see
-       through the end without relying on a roof's half-space test. */
-    function shellGable(name, x0, x1, z0, z1, eave, alongZ, room, ends, pitch, slopeRooms, depthEnds, twoSidedRoof, cutawayRoom) {
+       through the end without relying on a roof's half-space test.
+
+       MASSING ARC 1 (spec section 3): `ridge` replaces the old boolean
+       `alongZ` ('z' is what `true` meant) because a block roof's ridge
+       direction is a PARAMETER now, not a fact about one hand-placed
+       roof — and `form` grows the hip alongside the gable. A hip keeps
+       every other number: same eave, same pitch, same overhang, same
+       four registered pieces under the same four names. Only the shapes
+       change — the two ridge decks become trapezoids inset by one `run`
+       at each end, and the two ends become triangular decks of the same
+       pitch instead of vertical clapboard infill (so all four planes
+       meet at the same ridge point and no batten infill is needed). */
+    function shellGable(name, x0, x1, z0, z1, eave, ridgeAxis, room, ends, pitch, slopeRooms, depthEnds, twoSidedRoof, cutawayRoom, form) {
+      var alongZ = (ridgeAxis === 'z' || ridgeAxis === true);
+      var hip = (form === 'hip');
       pitch = pitch || PITCH_FAMILY;
       var half = (alongZ ? x1 - x0 : z1 - z0) / 2;
       var cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
@@ -4206,14 +4304,48 @@
         if (alongZ) cz += (after - before) / 2;
         else cx += (after - before) / 2;
       }
+      /* the hip's ridge is shorter than the block by one `run` at each
+         end -- that is exactly what makes the end planes take the same
+         pitch as the sides. Derived, never typed: the apex sits `run`
+         in from the eave because it rises `run * tan(pitch)`, the same
+         rise the side decks make over their own `run`. */
+      var capLen = hip ? Math.max(0.28, depth - 2 * run) : depth;
       [-1, 1].forEach(function (sign) {
-        var g = shellGroup();
-        var deck = shellBox(g, alongZ ? span : depth, 0.18,
-                            alongZ ? depth : span, NICE ? 0xffffff : FARMHOUSE.roofTone,
-                            cx + (alongZ ? sign * run / 2 : 0),
+        var g = shellGroup(), deck;
+        if (hip) {
+          /* the deck's own local frame is the box deck's: (along-ridge,
+             thickness, slope) for a ridge on x, (slope, thickness,
+             along-ridge) for a ridge on z. The shape is authored in
+             (local x, local z) and rotated a quarter turn about x, so
+             the extrusion's depth becomes the 0.18 deck thickness. */
+          var gt = cgeo('shell-hipdeck|' + half + '|' + depth + '|' + eave +
+                        '|' + pitch + '|' + alongZ + '|' + sign, function () {
+            var u0 = -depth / 2, u1 = depth / 2;
+            var vEave = sign * span / 2, vRidge = -sign * span / 2;
+            var s = new T.Shape();
+            function pt(u, v) { return alongZ ? [v, u] : [u, v]; }
+            var a = pt(u0, vEave), b = pt(u1, vEave),
+                c = pt(u1 - run, vRidge), d = pt(u0 + run, vRidge);
+            s.moveTo(a[0], a[1]); s.lineTo(b[0], b[1]);
+            s.lineTo(c[0], c[1]); s.lineTo(d[0], d[1]); s.closePath();
+            var geo = new T.ExtrudeGeometry(s, { depth: 0.18, bevelEnabled: false });
+            geo.translate(0, 0, -0.09); geo.rotateX(Math.PI / 2);
+            return geo;
+          });
+          deck = new T.Mesh(gt, mat(NICE ? 0xffffff : FARMHOUSE.roofTone,
+                                    { rough: 0.9, map: shingleT }));
+          deck.position.set(cx + (alongZ ? sign * run / 2 : 0),
                             ridge - run * Math.tan(pitch) / 2,
-                            cz + (alongZ ? 0 : sign * run / 2),
-                            { rough: 0.9, map: shingleT });
+                            cz + (alongZ ? 0 : sign * run / 2));
+          finish(deck); g.add(deck);
+        } else {
+          deck = shellBox(g, alongZ ? span : depth, 0.18,
+                          alongZ ? depth : span, NICE ? 0xffffff : FARMHOUSE.roofTone,
+                          cx + (alongZ ? sign * run / 2 : 0),
+                          ridge - run * Math.tan(pitch) / 2,
+                          cz + (alongZ ? 0 : sign * run / 2),
+                          { rough: 0.9, map: shingleT });
+        }
         if (alongZ) deck.rotation.z = -sign * pitch;
         else deck.rotation.x = sign * pitch;
         var edgeY = ridge - run * Math.tan(pitch) - 0.10;
@@ -4222,8 +4354,8 @@
                  cx + (alongZ ? sign * run : 0), edgeY,
                  cz + (alongZ ? 0 : sign * run));
         /* Thin dark ridge halves meet without a white seam. */
-        shellBox(g, alongZ ? 0.14 : depth, 0.12,
-                 alongZ ? depth : 0.14, EXTC.ridge,
+        shellBox(g, alongZ ? 0.14 : capLen, 0.12,
+                 alongZ ? capLen : 0.14, EXTC.ridge,
                  cx + (alongZ ? sign * 0.065 : 0), ridge + 0.065,
                  cz + (alongZ ? 0 : sign * 0.065));
         g.updateMatrixWorld(true);
@@ -4237,6 +4369,44 @@
       cx = (x0 + x1) / 2; cz = (z0 + z1) / 2;
       (ends || [-1, 1]).forEach(function (sign) {
         var g = shellGroup();
+        if (hip) {
+          /* the hipped end: one triangular deck, eave-eave-apex, rising
+             `run * tan(pitch)` over its own `run` so it matches the two
+             side decks exactly. Local frame (slope, thickness,
+             along-eave), same quarter-turn idiom as the trapezoids. */
+          var spanEnd = run / Math.cos(pitch);
+          var ge = cgeo('shell-hipend|' + half + '|' + eave + '|' + pitch +
+                        '|' + sign, function () {
+            var s = new T.Shape();
+            s.moveTo(0, -run); s.lineTo(0, run);
+            s.lineTo(-sign * spanEnd, 0); s.closePath();
+            var geo = new T.ExtrudeGeometry(s, { depth: 0.18, bevelEnabled: false });
+            geo.translate(0, 0, -0.09); geo.rotateX(Math.PI / 2);
+            return geo;
+          });
+          var hm = new T.Mesh(ge, mat(NICE ? 0xffffff : FARMHOUSE.roofTone,
+                                      { rough: 0.9, map: shingleT }));
+          var eaveY = ridge - run * Math.tan(pitch);
+          hm.rotation.y = alongZ ? -Math.PI / 2 : 0;
+          hm.rotation.z = -sign * pitch;
+          if (alongZ) hm.position.set(cx, eaveY,
+            sign < 0 ? z0 - FULL_HOUSE.overhang : z1 + FULL_HOUSE.overhang);
+          else hm.position.set(
+            sign < 0 ? x0 - FULL_HOUSE.overhang : x1 + FULL_HOUSE.overhang,
+            eaveY, cz);
+          finish(hm); g.add(hm);
+          shellBox(g, alongZ ? 2 * run : 0.14, 0.28, alongZ ? 0.14 : 2 * run,
+                   FARMHOUSE.trim, alongZ ? cx : (sign < 0 ? x0 : x1) +
+                   sign * FULL_HOUSE.overhang, eaveY - 0.10,
+                   alongZ ? (sign < 0 ? z0 : z1) + sign * FULL_HOUSE.overhang : cz);
+          g.updateMatrixWorld(true);
+          var hn = new T.Vector3(0, 1, 0).applyQuaternion(
+            hm.getWorldQuaternion(new T.Quaternion()));
+          shellRegister(g, name + (alongZ ? (sign < 0 ? '_back' : '_front')
+                                         : (sign < 0 ? '_end_west' : '_end_east')),
+                        hn.toArray(), room, false, undefined, cutawayRoom);
+          return;
+        }
         var geo = cgeo('shell-gable|' + half + '|' + eave + '|' + pitch, function () {
           var shape = new T.Shape();
           shape.moveTo(-half, eave); shape.lineTo(-half, roofEave);
@@ -4286,11 +4456,17 @@
        house_facade.py's FACES mirrors these four rows and its
        slot_table() the loop below; the live pin test asserts the two
        tables equal, slot by slot, so they cannot drift. */
+    /* MASSING ARC 1: the roof column names the two block roofs now, and
+       the wing face sits on the street line (z SWZ1) with the rest of
+       the front -- the wing wall 2.17 further south is gone. The four
+       faces and their eighteen slots are UNCHANGED otherwise; spec
+       section 5 (task 3) merges them into two faces and re-snaps
+       CANONICAL, which is a slot-table change this task must not make. */
     var FACES = [
-      { face: 'garage',  x0: -18.20, x1: -12.60, z: 10.10, eave: 4.7, room: 'garage',  roof: 'massing_service_roof' },
-      { face: 'mudroom', x0: -12.60, x1: FULL_HOUSE.west, z: 10.10, eave: 5.6, room: 'mudroom', roof: 'mudroom_cross_roof' },
-      { face: 'main',    x0: FULL_HOUSE.west, x1: FULL_HOUSE.east, z: SWZ1, eave: EXT_TOP4, room: 'living', roof: 'roof_main' },
-      { face: 'wing',    x0: FULL_HOUSE.east, x1: FULL_HOUSE.studyEast, z: FULL_HOUSE.studySouth, eave: 5.6, room: 'study', roof: 'massing_front_roof' }
+      { face: 'garage',  x0: -18.20, x1: -12.60, z: 10.10, eave: 4.7, room: 'garage',  roof: 'garage_block_roof' },
+      { face: 'mudroom', x0: -12.60, x1: FULL_HOUSE.west, z: 10.10, eave: 5.6, room: 'mudroom', roof: 'garage_block_roof' },
+      { face: 'main',    x0: FULL_HOUSE.west, x1: EPX1_4, z: SWZ1, eave: EXT_TOP4, room: 'living', roof: 'roof_main' },
+      { face: 'wing',    x0: EPX1_4, x1: FULL_HOUSE.east, z: SWZ1, eave: EXT_TOP4, room: 'study', roof: 'roof_main' }
     ];
     function facadeSlots() {
       var out = [], i = 0;
@@ -4357,7 +4533,7 @@
 
     /* The street ROOF PLANE's eave -- which is not always the face's own
        eave. The garage bay's wall head is 4.7, but the plane its street
-       roof features sit on is massing_service_roof at 5.6 (the hand-built
+       roof features sit on is garage_block_roof at 5.6 (the hand-built
        garage gable intersected that plane, not the bay's eave). Every
        roof builder reads this one function so a dormer cannot end up
        buried in the wall below its own deck. */
@@ -4675,7 +4851,7 @@
            garage_gable, reproduced from the spec instead of by hand) --
            it intersects the lower cross roof rather than sitting on the
            bay's own eave, so it keeps that call's z range and eave. */
-        shellGable(name, e.x0, e.x1, 4.0, 10.1, roofPlaneEave(slot), true,
+        shellGable(name, e.x0, e.x1, 4.0, 10.1, roofPlaneEave(slot), 'z',
                    slot.room, [1], PITCH_FAMILY, null, null, false, slot.room);
         return;
       }
@@ -4688,7 +4864,7 @@
           front = Math.max(front, p.frontZ);
       });
       shellGable(name, e.x0, e.x1, slot.z - 2.8, front,
-                 roofPlaneEave(slot) - 0.8, true, slot.room, [1],
+                 roofPlaneEave(slot) - 0.8, 'z', slot.room, [1],
                  PITCH_FAMILY, null, null, false, slot.room);
     }
 
@@ -4712,7 +4888,7 @@
          the same dormer feature. */
       shellGable('facade_' + slot.face + '_dormer_' + feat.slot + '_roof',
                  e.cx - w / 2, e.cx + w / 2, zc - 0.8, zc + 0.8,
-                 y + 0.95, true, slot.room, [1], PITCH_FAMILY,
+                 y + 0.95, 'z', slot.room, [1], PITCH_FAMILY,
                  null, null, false, slot.room);
     }
 
@@ -4766,89 +4942,130 @@
     }
     /* ================= END FACADE ===================================== */
 
+    /* ---- the two block roofs (spec section 3) -------------------------
+       Eleven hand-placed roof pieces became these two calls plus the
+       facade's own features. Both read ROOF_FORMS, so form and ridge
+       direction are parameters a later arc sets rather than facts baked
+       into this line. roof_main keeps cutawayRoom 'study': the study
+       sits under it now, so the whole roof leaves together when that
+       room is the subject. */
     shellGable('roof_main', FULL_HOUSE.west, FULL_HOUSE.east,
-               FULL_HOUSE.north, FULL_HOUSE.south, EXT_TOP4, false, null,
-               null, Math.PI / 8, ['kitchen', 'living'], null, false, 'study');
+               FULL_HOUSE.north, FULL_HOUSE.south, EXT_TOP4,
+               ROOF_FORMS.main.ridge, null, null, Math.PI / 8,
+               ['kitchen', 'living'], null, false, 'study',
+               ROOF_FORMS.main.form);
 
-    /* Side wings leave the complete terrace open between z=4.2 and 9.8. */
-    /* FACADE (arc 4): this face's two windows were hand-typed here. They
-       are spec features now (slots 15 and 16, size 'standard' -- the same
-       1.55 x 2.70 pane), each its own registered piece, so the wall takes
-       an empty window list. */
-    shellWall('massing_east_front_south', EWX1_4, FULL_HOUSE.studySouth, FULL_HOUSE.studyEast, FULL_HOUSE.studySouth,
-              5.6, [0, 0, 1], []);
-    shellWall('massing_east_front_east', FULL_HOUSE.studyEast, 9.8, FULL_HOUSE.studyEast, FULL_HOUSE.studySouth,
-              5.6, [1, 0, 0], [[11.20, 1.05, true], [13.20, 1.05, true]]);
-    shellWall('massing_east_front_patio', EWX1_4, 9.8, FULL_HOUSE.studyEast, 9.8,
-              5.6, [0, 0, -1], [[11.60, 2.60, true]], true, 'study');
-    shellGable('massing_front_roof', EWX1_4, FULL_HOUSE.studyEast, 9.8, FULL_HOUSE.studySouth,
-               5.6, false, null, [1], Math.PI / 8, null, null, true, 'study');
-    shellWall('massing_east_back_north', EWX1_4, -6.1, FULL_HOUSE.wingEast, -6.1,
-              4.6, [0, 0, -1], [[8.62, 1.35, false]]);
-    shellWall('massing_east_back_east', FULL_HOUSE.wingEast, -6.1, FULL_HOUSE.wingEast, 4.2,
-              4.6, [1, 0, 0], [[-3.50, 1.35, false], [1.40, 1.35, false]]);
-    shellWall('massing_east_back_patio', EWX1_4, 4.2, FULL_HOUSE.wingEast, 4.2,
-              4.6, [0, 0, 1], []);
-    (function () {
-      var x0 = EWX1_4, x1 = FULL_HOUSE.wingEast, z0 = -6.1, z1 = 4.2;
-      var high = EXT_TOP4 + 0.18, low = 4.6 + 0.18;
-      var pitch = Math.atan2(high - low, x1 - x0);
-      var g = shellGroup(), run = x1 - x0 + FULL_HOUSE.overhang;
-      var deck = shellBox(g, run / Math.cos(pitch), 0.18,
-                          z1 - z0 + 2 * FULL_HOUSE.overhang,
-                          NICE ? 0xffffff : FARMHOUSE.roofTone,
-                          x0 + run / 2, high - run * Math.tan(pitch) / 2,
-                          (z0 + z1) / 2, { rough: 0.9, map: shingleT });
-      deck.rotation.z = -pitch;
-      shellBox(g, 0.16, 0.26, z1 - z0 + 0.64, FARMHOUSE.trim,
-               x1 + FULL_HOUSE.overhang, low - 0.20, (z0 + z1) / 2);
-      shellRegister(g, 'massing_back_roof_shed',
-                    [Math.sin(pitch), Math.cos(pitch), 0], null);
-      [-1, 1].forEach(function (sign) {
-        var end = shellGroup(), shape = new T.Shape();
-        shape.moveTo(x0, 4.6); shape.lineTo(x0, high);
-        shape.lineTo(x1, low); shape.lineTo(x1, 4.6); shape.closePath();
-        var fill = new T.Mesh(new T.ExtrudeGeometry(shape,
-          { depth: 0.14, bevelEnabled: false }), mat(NICE ? 0xffffff : FARMHOUSE.body,
-          { rough: 0.95, map: CLAD() }));
-        fill.position.z = sign < 0 ? z0 - 0.14 : z1;
-        finish(fill); end.add(fill);
-        var rake = shellBox(end, run / Math.cos(pitch), 0.20, 0.16,
-                            FARMHOUSE.trim, x0 + run / 2,
-                            high - run * Math.tan(pitch) / 2 - 0.10,
-                            sign < 0 ? z0 - 0.40 : z1 + 0.40);
-        rake.rotation.z = -pitch;
-        shellRegister(end, 'massing_back_roof_' + (sign < 0 ? 'back' : 'front'),
-                      [0, 0, sign], null);
-      });
-    })();
+    /* ---- the garage block (spec section 2) ----------------------------
+       The garage's own three walls (garage_shell) and the mudroom's own
+       room walls stay exactly where they are; these are the BLOCK's
+       outer faces, 0.12 outboard of them, and the old rear service void
+       becomes garage/mudroom depth behind the garage's back wall. No
+       floor back there and no camera ever sees it. */
+    shellWall('garage_block_north', GARAGE_BLOCK.west, GARAGE_BLOCK.north,
+              GARAGE_BLOCK.east, GARAGE_BLOCK.north, GARAGE_BLOCK.eave,
+              [0, 0, -1], []);
+    shellWall('garage_block_west', GARAGE_BLOCK.west, GARAGE_BLOCK.north,
+              GARAGE_BLOCK.west, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
+              [-1, 0, 0], [[2.0, 1.35, true]]);
+    /* the mudroom's street face, full height to the block's own eave.
+       The old front band (mudroom_front_cladding) closed the gap above
+       the room's door wall to the underside of a cross roof that no
+       longer exists; this is that band re-authored as the face itself,
+       and the mudroom's own walls, door and window stay inside it. */
+    var mudroomFrontG = shellWall('mudroom_front', -12.60, GARAGE_BLOCK.south,
+              GARAGE_BLOCK.east, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
+              [0, 0, 1], [], false, null, 'mudroom');
+    shellGable('garage_block_roof', GARAGE_BLOCK.west, GARAGE_BLOCK.east,
+               GARAGE_BLOCK.north, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
+               ROOF_FORMS.garage.ridge, null, null, Math.PI / 8,
+               ['garage', 'mudroom'], null, false, null,
+               ROOF_FORMS.garage.form);
 
-    shellWall('massing_service_north', -18.2, -6.1, -7.15, -6.1,
-              5.6, [0, 0, -1], [[-15.20, 1.35, true], [-10.10, 1.35, false]]);
-    shellWall('massing_service_west', -18.2, -6.1, -18.2, 2.12,
-              5.6, [-1, 0, 0], [[-3.60, 1.35, false]]);
-    /* The mudroom starts at z=2.36; this short face closes its rear join. */
-    shellWall('massing_service_south', -12.6, 2.12, -7.15, 2.12,
-              5.6, [0, 0, 1], []);
-    shellGable('massing_service_roof', -18.2, -12.6, -6.1, 10.1,
-               5.6, false, 'garage', [-1], Math.PI / 8, [null, 'garage'], [true, false]);
-    shellGable('mudroom_cross_roof', -12.6, -7.15, -6.1, 10.1,
-               5.6, false, 'mudroom', [], Math.PI / 8, [null, 'mudroom'], [false, true]);
+    /* ---- the main block's north side ----------------------------------
+       The kitchen's own north wall (wallB / north_wall) and its cladding
+       run to x 6.85; this carries the same face on to the east wall,
+       with one window centred on the back room. Its OUTER face sits on
+       FULL_HOUSE.north so it is flush with the cladding beside it --
+       the window would otherwise be buried inside that cladding. */
+    shellWall('north_wall_east', EPX1_4, FULL_HOUSE.north + WALL_T4 / 2,
+              FULL_HOUSE.east, FULL_HOUSE.north + WALL_T4 / 2, EXT_TOP4,
+              [0, 0, -1], [[10.75, 1.35, true]]);
 
-    /* Close the band above the mudroom's existing door wall to the
-       underside of the cross roof; its subject remains the mudroom. */
-    var mudFrontBandG = shellGroup();
-    var serviceRidge = 5.6 + 0.18 + 8.1 * Math.tan(Math.PI / 8);
-    var mudBandTop = serviceRidge - 6.42 * Math.tan(Math.PI / 8) - 0.10;
-    shellBox(mudFrontBandG, 5.45, mudBandTop - 4.2, 0.28,
-             NICE ? 0xffffff : FARMHOUSE.body, -9.875,
-             (mudBandTop + 4.2) / 2, 8.43, { rough: 0.95, map: CLAD() });
-    shellRegister(mudFrontBandG, 'mudroom_front_cladding', [0, 0, 1], 'mudroom', false, 0.5);
+    /* ---- the back door (spec section 2) -------------------------------
+       The exterior Kitchen marker used to be the patio slider, which is
+       an interior opening now. This is the kitchen's own back door on
+       the north wall, with the back patio slab outside it. doorAt()'s
+       leaf/casing/knob idiom, built into a group that is then turned to
+       face -z; no coach lamp (that belongs to the street elevation the
+       facade generator owns). */
+    (function backDoorAt(x) {
+      var g = shellGroup();
+      g.position.set(x, 0, FULL_HOUSE.north);
+      g.rotation.y = Math.PI;
+      var z = 0.02;                    /* proud of the face, as doorAt */
+      function dtag(m) {
+        if (m) { m.userData.room = 'kitchen';
+                 m.userData.entry = 'back_door'; }
+        return m;
+      }
+      var woodMap = (FSTYLE.door === 'wood') ? woodDoor : null;
+      var leaf = new T.Mesh(
+        NICE ? chamferGeo(0.14, 3.2, 1.4, 0.04) : new T.BoxGeometry(0.14, 3.2, 1.4),
+        PBR ? new T.MeshStandardMaterial(woodMap
+                ? { map: woodMap, roughness: 0.65 }
+                : { color: FARMHOUSE.wood, roughness: 0.65 })
+            : new T.MeshLambertMaterial(woodMap
+                ? { color: 0xc9a06c, map: woodMap }
+                : { color: FARMHOUSE.wood }));
+      leaf.rotation.y = Math.PI / 2;
+      leaf.position.set(0, 1.6, z);
+      dtag(leaf); finish(leaf); g.add(leaf);
+      dtag(box(0.14, 3.44, 0.13, 0xe4ddd1, -0.65, 1.72, z, g, sharp()));
+      dtag(box(0.14, 3.44, 0.13, 0xe4ddd1, 0.65, 1.72, z, g, sharp()));
+      dtag(box(1.86, 0.14, 0.13, 0xe4ddd1, 0, 3.37, z, g, sharp()));
+      if (DETAIL >= 2) {
+        dtag(box(0.90, 1.20, 0.02, 0x6f5433, 0, 2.14, z + 0.075, g, WOODM));
+        dtag(box(0.90, 0.98, 0.02, 0x6f5433, 0, 0.82, z + 0.075, g, WOODM));
+        dtag(box(0.74, 1.04, 0.04, 0xc79b63, 0, 2.14, z + 0.080, g, WOODM));
+        dtag(box(0.74, 0.82, 0.04, 0xc79b63, 0, 0.82, z + 0.080, g, WOODM));
+      }
+      var knob = latheAt('knob', [0.06, 0.1, 0.06], 0xd8c48a, 0.55,
+                         1.6, z + 0.07, g, CHROME);
+      knob.rotation.x = Math.PI / 2;
+      dtag(knob);
+      shellRegister(g, 'back_door', [0, 0, -1], 'kitchen');
+    })(-2.0);
 
-    /* Slider uses the visible east face, clear of the terrace's bench.
-       It is decorative fabric, not a new zone or an unbuilt-room entry. */
+    /* ---- the two future rooms (spec section 2) ------------------------
+       The old patio notch and the old rear room, enclosed inside the
+       main block: floors, the partition between them, and the openings
+       the great room already had into both. No props, no zones, no
+       cameras -- the user's own ruling ("no purpose other than
+       visual"). The roof closes them overhead, so no ceilings either. */
+    [[1.50, 7.65], [FULL_HOUSE.north, 1.50]].forEach(function (seg) {
+      var d = seg[1] - seg[0];
+      box(FULL_HOUSE.east - EPX1_4, 0.1, d, NICE ? 0xffffff : C.wood,
+          (EPX1_4 + FULL_HOUSE.east) / 2, -0.05, (seg[0] + seg[1]) / 2,
+          extG, sharp(NICE ? { rough: 0.55, map: woodLight } : { rough: 0.55 }));
+    });
+    var futurePartG = shellGroup();
+    shellBox(futurePartG, FULL_HOUSE.east - EPX1_4, EXT_TOP4, WALL_T4,
+             C.wall, (EPX1_4 + FULL_HOUSE.east) / 2, EXT_TOP4 / 2, 1.50,
+             WALL_O);
+    regFabric(futurePartG, { name: 'future_room_partition', n: [0, 0, 1],
+                             box: fabBox(futurePartG), twoSided: true });
+    /* the back patio: the slab outside the back door, in the yard. Not
+       registered -- it is ground, like the drive and the front walk. */
+    box(5.2, 0.16, 5.5, EXTC.drive, -2.0, -0.08, -9.0, extG,
+        sharp({ rough: 0.95, map: driveT }));
+
+    /* The kitchen's slider, unmoved at x 6.85 / z 5.80 -- an INTERIOR
+       opening into the east room now (spec section 2), registered the
+       way living_study_door is: twoSided, room 'kitchen'. Both panes
+       carry interiorWindow, so neither takes the exterior night glow:
+       there is no outdoors on either side of it any more. */
     var patioSliderG = shellGroup();
-    var sliderFrame = shellWindow(patioSliderG, EWX1_4 + 0.23, 1.95, 5.80,
+    var sliderFrame = shellWindow(patioSliderG, EPX1_4 + 0.23, 1.95, 5.80,
                                    Math.PI / 2, 2.65, 3.65, false);
     shellBox(sliderFrame, 0.08, 0.55, 0.10, FARMHOUSE.wood, 0.15, 0, 0.17);
     shellBox(sliderFrame, 2.95, 0.10, 0.32, FARMHOUSE.stoop, 0, -1.86, 0.02);
@@ -4856,14 +5073,14 @@
        same registered assembly a room-side face just inside the lining;
        otherwise the exterior face is occluded when viewed from living. */
     var sliderInside = shellWindow(patioSliderG,
-                                    EWX1_4 - WALL_T4 - 0.08, 1.95, 5.80,
+                                    EPX1_4 - WALL_T4 - 0.08, 1.95, 5.80,
                                     -Math.PI / 2, 2.65, 3.65, false);
-    sliderInside.traverse(function (m) {
-      if (m.userData && m.userData.shellWindow) m.userData.interiorWindow = true;
-    });
     shellBox(sliderInside, 0.08, 0.55, 0.10, FARMHOUSE.wood, 0.15, 0, 0.17);
     shellBox(sliderInside, 2.95, 0.10, 0.32, FARMHOUSE.stoop, 0, -1.86, 0.02);
-    shellRegister(patioSliderG, 'patio_slider', [1, 0, 0], 'kitchen');
+    patioSliderG.traverse(function (m) {
+      if (m.userData && m.userData.shellWindow) m.userData.interiorWindow = true;
+    });
+    shellRegister(patioSliderG, 'patio_slider', [1, 0, 0], 'kitchen', true);
 
 
     /* Continue west cladding along the living room to the south corner. */
@@ -6631,13 +6848,23 @@
          wears the room's finish; above it the wall runs on to the eaves,
          so a crown marks where the room stops and the rest goes quiet
          instead of standing there as a white cliff. */
-      var mudEastG = shellGroup();
+      /* MASSING ARC 1 (spec section 2): mudroom_east_finish FOLDS into
+         west_wall. This is the mudroom's face of the very wall west_wall
+         already registers -- same plane, same room, same [1,0,0] flip,
+         same verdict in every view -- so the block boundary is one
+         registered piece instead of two stacked on each other. The group
+         is parented to westWallG (which sits at identity under scene, so
+         every absolute coordinate below is unchanged) and west_wall's
+         registered box is re-measured to include it. */
+      var mudEastG = new T.Group();
+      westWallG.add(mudEastG);
       wallRun('x', -6.85, 4.40, 6.02, 4.20, true, mudEastG);
       mudEastG.add(mb(0.05, 1.40, 1.62, 0xdcd5c8, -6.825, 4.90, 5.21, PLASTER));
       /* and its cut end wears the plates' wall-thickness band, or the
          camera reads raw clapboard down the frame's right edge */
       mudEastG.add(mb(0.34, 5.60, 0.06, C.cabShade, -7.00, 2.80, 6.03, MATT));
-      shellRegister(mudEastG, 'mudroom_east_finish', [1, 0, 0], 'mudroom');
+      mudEastG.traverse(function (m) { m.userData.room = 'mudroom'; });
+      refabBox('west_wall', westWallG);
 
       /* ================= 1. the garage door (S7 mudroom.3) =============
          The west wall is the garage connection and was blank. A cased
@@ -7045,8 +7272,18 @@
         });
       }
 
-      regFabric(mudroomRoofG, { name: 'mudroom_roof', n: [0, 0, 1],
-        box: fabBox(mudroomRoofG), room: 'mudroom', pad: 0.5 });
+      /* MASSING ARC 1 (spec section 2): mudroom_roof is gone as a
+         registry name. The geometry it owned -- the mudroom's own street
+         wall, its door and that door's jamb and hardware -- is the
+         INNER layer of the garage block's street face now, 1.78 behind
+         it, so it FOLDS into mudroom_front rather than registering
+         beside it: both must leave together or the mudroom's camera
+         (which stands south of both) looks at a blank clapboard wall
+         instead of into the room. Reparenting into a group that sits at
+         identity under extG keeps every absolute coordinate; the
+         registered box is re-measured to cover both layers. */
+      mudroomFrontG.add(mudroomRoofG);
+      refabBox('mudroom_front', mudroomFrontG);
 
       /* ---- the backpacks syncMudroom deals onto the bench ------------
          One per PACKING GROUP the household has for the day, and the bag
@@ -7127,22 +7364,6 @@
         return g;
       };
     })();
-    var livingRoofG = new T.Group();   /* open-concept: nothing to hide */
-    extG.add(livingRoofG);
-    /* SHELL: living_roof registers empty on purpose — this room is still
-       open-concept (no meshes ever ride this group today), so fabBox
-       below returns Box3's own untouched empty sentinel
-       (min=(Infinity,Infinity,Infinity), max=(-Infinity,-Infinity,
-       -Infinity)): three.js's Box3.expandByObject only unions a
-       descendant mesh's geometry.boundingBox, never a bare group's own
-       position, and this group has no descendant meshes to union. A
-       hand-typed placeholder box was rejected on purpose (the brief
-       forbids guessing); this is an honest snapshot of "nothing built
-       yet", flagged for whichever task first hangs real roof geometry
-       here (the arc's own south-wall/roof work, spec section 6) to
-       re-derive once there is something to measure. */
-    regFabric(livingRoofG, { name: 'living_roof', n: [0, 1, 0],
-                              box: fabBox(livingRoofG), room: 'living' });
     /* ============ THE YARD (docs/house_style_bible.md S7, exterior) =====
        The plinth was a bare green plane with two lollipop trees and one
        sphere of a bush, and half the resting frame was empty grass.
@@ -7407,70 +7628,6 @@
         }
       }
 
-      /* ---- terrace furniture: plate 2 stands a chair on the lawn ----- */
-      function gChair(x, z, rot, body, cush) {
-        var g = new T.Group();
-        g.position.set(x, GY, z); g.rotation.y = rot;
-        yardG.add(g);
-        var WD = { rough: 0.66 }, dk = shadeHex(body, 0.80),
-            lt = shadeHex(body, 1.14);
-        [[-0.26, -0.24], [0.26, -0.24], [-0.26, 0.24], [0.26, 0.24]]
-          .forEach(function (lg) {
-            yb(0.09, 0.44, 0.09, dk, lg[0], 0.22, lg[1], WD, g);
-          });
-        yb(0.62, 0.08, 0.58, body, 0, 0.48, 0, WD, g);      /* the seat deck */
-        if (Y3) [-0.19, 0.00, 0.19].forEach(function (dz) {
-          yb(0.60, 0.035, 0.13, lt, 0, 0.535, dz, WD, g);
-        });
-        yr(0.56, 0.15, 0.52, 0.06, cush, 0, 0.585, 0.01, { rough: 0.98 }, g);
-        [-0.26, 0.26].forEach(function (dx) {               /* raked back */
-          var u = yb(0.09, 0.80, 0.09, dk, dx, 0.86, -0.29, WD, g);
-          u.rotation.x = -0.13;
-        });
-        [0.76, 1.00, 1.22].forEach(function (yy, i) {
-          if (!Y2 && i) return;
-          var b2 = yb(0.54, 0.15, 0.05, body, 0, yy, -0.29 + (yy - 0.86) * 0.13,
-                      WD, g);
-          b2.rotation.x = -0.13;
-        });
-        if (Y2) [-0.32, 0.32].forEach(function (dx) {       /* arms */
-          yb(0.08, 0.07, 0.54, body, dx, 0.74, -0.03, WD, g);
-          yb(0.08, 0.28, 0.08, dk, dx, 0.60, 0.22, WD, g);
-        });
-        ysh(0.48, 0.48, x, z);
-        return g;
-      }
-      function gTable(x, z, r) {
-        yl(r, r, 0.09, C.wood2, x, GY + 0.60, z, Y3 ? 20 : 10, { rough: 0.62 });
-        if (Y3) yl(r - 0.05, r - 0.05, 0.03, shadeHex(C.wood2, 1.16),
-                   x, GY + 0.655, z, 20, { rough: 0.62 });
-        yl(0.075, 0.095, 0.56, C.graphite, x, GY + 0.28, z, 8, { rough: 0.55 });
-        yl(0.30, 0.34, 0.06, C.graphite, x, GY + 0.03, z, Y3 ? 14 : 8,
-           { rough: 0.55 });
-        ysh(0.46, 0.44, x, z);
-      }
-      /* a planter box: the long green mass a terrace needs at its edge */
-      function planter(x, z, len, rot) {
-        var g = new T.Group();
-        g.position.set(x, GY, z); g.rotation.y = rot || 0;
-        yardG.add(g);
-        yr(len, 0.44, 0.52, 0.03, C.wood2, 0, 0.22, 0, { rough: 0.66 }, g);
-        if (Y2) {
-          yr(len + 0.06, 0.06, 0.58, 0.02, shadeHex(C.wood2, 1.2), 0, 0.47, 0,
-             { rough: 0.66 }, g);
-          yb(len - 0.10, 0.06, 0.42, MULCH, 0, 0.45, 0, MATT, g);
-        }
-        var n = Math.max(2, Math.round(len / 0.62));
-        for (var i = 0; i < n; i++) {
-          var px = -len / 2 + len * (i + 0.5) / n;
-          ysph((0.20 + (i % 3) * 0.05), shadeHex(LEAF[(i + 2) % 6], 1 + (i % 2) * 0.12),
-               px, 0.56 + (i % 2) * 0.07, (i % 2 ? 0.07 : -0.06), 0.88, g);
-          if (Y3) ysph(0.13, shadeHex(LEAF[(i + 4) % 6], 0.9), px + 0.14,
-                       0.52, 0.12, 0.9, g);
-        }
-        ysh(len * 0.52, 0.34, x, z);
-        return g;
-      }
       /* a pot: the kitchen's plant, dropped on the lawn without its
          shadow (blobShadow is quiet at tier 3; ysh is not) */
       function pot(x, z, s, potC, kind) {
@@ -7495,16 +7652,19 @@
       pave(-9.62, 12.16, -7.02, 13.04, 0.66);
       pave(-9.66, 13.04, -8.74, 24.35, 0.62);
       pave(DOOR_X4 - 1.2, PORCH_FRONT_Z4 + 0.65, DOOR_X4 + 1.2, 24.35, 0.80);
-      /* the terrace off the great room's open east side */
-      pave(6.86, 4.20, 10.30, 9.80, 0.80, true);
-
       /* foundation beds: they wrap the corner the camera looks at */
       bed(-8.70, 14.24, -3.10, 16.00, 'SEW');
       bed(5.70, 14.24, 11.85, 16.00, 'SEW');
       bed(-3.10, 19.30, -0.10, 20.80, 'SEW');
       bed(2.70, 19.30, 5.70, 20.80, 'SEW');
-      bed(10.39, -6.10, 11.85, 4.14, 'NES');
-      bed(10.39, 9.86, 11.85, 14.12, 'NE');
+      /* MASSING ARC 1: the side garden moves out with the wall. The main
+         block's east face went from x 10.40 to 14.65, so every east-side
+         planting, the birdbath, the fence's north/south run, the hedge
+         beyond it and the two side trees all shift by that same 4.25 --
+         one translation, so the composition (bed against the wall, lawn,
+         fence, hedge past it) is exactly the one plate 2 set. */
+      bed(14.64, -6.10, 16.10, 4.14, 'NES');
+      bed(14.64, 9.86, 16.10, 14.12, 'NE');
       /* the front bed, three groups with nothing further than 0.6 from a
          neighbour (S1) and a skyline that rises and falls */
       planting([
@@ -7544,16 +7704,16 @@
         [7.52, -2.10, 0.72, 'ball', 0, 0],    [7.50, -2.82, 0.88, 'mound', 3, 0],
         [7.54, -3.54, 0.66, 'tuft', 1, 0],    [7.46, -4.26, 1.04, 'column', 0, 0],
         [7.52, -5.00, 0.84, 'mound', 2, 3],   [7.50, -5.70, 0.70, 'low', 1, 0]
-      ].map(function (p) { p[0] += 3.55; return p; }));
+      ].map(function (p) { p[0] += 7.80; return p; }));
       /* the lawn groups: three specimens and their skirts, so the grass
          reads as a garden and not as a mat */
       planting([
-        [11.70, 14.30, 1.06, 'mound', 0, 0],  [12.44, 14.90, 0.62, 'low', 2, 1],
-        [12.20, 13.60, 0.80, 'ball', 1, 0],   [11.20, 13.55, 0.66, 'tuft', 3, 0],
-        [12.50, 6.10, 1.16, 'mound', 5, 0],   [12.10, 6.86, 0.60, 'low', 4, 3],
-        [12.30, 5.32, 0.82, 'ball', 2, 0],    [11.62, 6.02, 0.64, 'tuft', 0, 0],
-        [12.05, 9.90, 0.92, 'mound', 3, 0],   [12.60, 10.55, 0.58, 'low', 0, 1],
-        [11.55, 10.45, 0.70, 'ball', 4, 0],
+        [15.95, 14.30, 1.06, 'mound', 0, 0],  [16.69, 14.90, 0.62, 'low', 2, 1],
+        [16.45, 13.60, 0.80, 'ball', 1, 0],   [15.45, 13.55, 0.66, 'tuft', 3, 0],
+        [16.75, 6.10, 1.16, 'mound', 5, 0],   [16.35, 6.86, 0.60, 'low', 4, 3],
+        [16.55, 5.32, 0.82, 'ball', 2, 0],    [15.87, 6.02, 0.64, 'tuft', 0, 0],
+        [16.30, 9.90, 0.92, 'mound', 3, 0],   [16.85, 10.55, 0.58, 'low', 0, 1],
+        [15.80, 10.45, 0.70, 'ball', 4, 0],
         [-11.40, 13.60, 1.00, 'mound', 2, 0], [-11.95, 14.20, 0.62, 'low', 0, 1],
         [-10.85, 14.25, 0.74, 'ball', 3, 0],  [-12.15, 13.10, 0.66, 'tuft', 1, 0]
       ]);
@@ -7561,10 +7721,10 @@
       /* the neighbour's hedge, beyond the fence: the far corner of the
          frame is a boundary, not a void */
       planting([
-        [15.20, 15.30, 1.10, 'mound', 1, 0], [15.60, 14.10, 1.20, 'mound', 3, 0],
-        [15.30, 12.90, 1.06, 'mound', 0, 0], [15.70, 11.70, 1.16, 'mound', 1, 0],
-        [15.40, 10.50, 1.02, 'mound', 3, 0], [15.80, 9.30, 1.14, 'mound', 0, 0],
-        [15.50, 8.10, 1.08, 'mound', 1, 0],  [15.85, 6.90, 1.18, 'mound', 3, 0]
+        [19.45, 15.30, 1.10, 'mound', 1, 0], [19.85, 14.10, 1.20, 'mound', 3, 0],
+        [19.55, 12.90, 1.06, 'mound', 0, 0], [19.95, 11.70, 1.16, 'mound', 1, 0],
+        [19.65, 10.50, 1.02, 'mound', 3, 0], [20.05, 9.30, 1.14, 'mound', 0, 0],
+        [19.75, 8.10, 1.08, 'mound', 1, 0],  [20.10, 6.90, 1.18, 'mound', 3, 0]
       ]);
       /* the drive's east edge and the mailbox foot: the left of the
          frame was a driveway and a mown void */
@@ -7581,27 +7741,27 @@
 
       /* the fence: an L round the side garden, clear of the bus (which
          stands at x -8.3..-2.7, z 18.8..20.8) and of the path */
-      fence('x', 2.70, 13.20, 24.30);
-      fence('z', 3.00, 24.30, 13.20);
+      fence('x', 2.70, 17.45, 24.30);
+      fence('z', 3.00, 24.30, 17.45);
       /* R5: hinge + latch at the gate coordinates — the fence's own
          literals name exactly one distinguished point, the corner post
-         both runs share (13.20, 24.30), so that reads as the gate.
+         both runs share (17.45, 24.30), so that reads as the gate.
          These are small hardware bits mounted ON that EXISTING post,
          not a new swinging panel: the picket run itself (yb, folded
          into InstancedMesh by instanceYard below) is untouched, and
          these ride extG directly so instanceYard's own yardG-scoped
          traversal never reaches them. */
-      sweepAt([[13.20, GY + 0.72, 24.40], [13.20, GY + 0.72, 24.34],
-               [13.20, GY + 0.60, 24.34]], 0.014, C.brass, extG, STEEL);
-      sweepAt([[13.20, GY + 0.38, 24.40], [13.20, GY + 0.38, 24.34],
-               [13.20, GY + 0.26, 24.34]], 0.014, C.brass, extG, STEEL);
-      latheAt('knob', [0.030, 0.05, 0.030], C.brass, 13.275, GY + 0.55,
+      sweepAt([[17.45, GY + 0.72, 24.40], [17.45, GY + 0.72, 24.34],
+               [17.45, GY + 0.60, 24.34]], 0.014, C.brass, extG, STEEL);
+      sweepAt([[17.45, GY + 0.38, 24.40], [17.45, GY + 0.38, 24.34],
+               [17.45, GY + 0.26, 24.34]], 0.014, C.brass, extG, STEEL);
+      latheAt('knob', [0.030, 0.05, 0.030], C.brass, 17.525, GY + 0.55,
               24.30, extG, CHROME).rotation.z = -Math.PI / 2;
-      ysh(5.50, 0.24, 7.75, 24.44);       /* nothing floats, S4 */
-      ysh(0.24, 10.70, 13.34, 13.62);
+      ysh(7.73, 0.24, 9.88, 24.44);       /* nothing floats, S4 */
+      ysh(0.24, 10.70, 17.59, 13.62);
       /* a birdbath on the side lawn: the vertical the grass wanted */
       (function () {
-        var bx = 10.90, bz = 5.60;   /* the lawn's vertical */
+        var bx = 15.15, bz = 5.60;   /* the lawn's vertical */
         yl(0.13, 0.20, 0.86, EDGE, bx, GY + 0.43, bz, Y3 ? 14 : 8, STONEO);
         yl(0.30, 0.30, 0.06, EDGE, bx, GY + 0.03, bz, Y3 ? 14 : 8, STONEO);
         yl(0.42, 0.30, 0.16, EDGE, bx, GY + 0.92, bz, Y3 ? 16 : 8, STONEO);
@@ -7610,61 +7770,18 @@
         ysh(0.34, 0.32, bx + 0.05, bz + 0.04);
       })();
 
-      /* the terrace: a chair that faces another chair (S8) */
-      gTable(8.52, 6.70, 0.56);
-      gChair(8.50, 5.58, Math.PI, C.wood2, C.linen);
-      gChair(8.54, 7.82, 0, C.wood2, C.linen);
-      gChair(9.60, 6.66, Math.PI / 2, C.wood2, C.linen);
-      planter(9.86, 8.30, 2.30, Math.PI / 2);
-      /* a bench along the plinth, and the two things every garden owns */
-      (function () {
-        var bx = 7.42, bz = 8.60, WD = { rough: 0.66 };
-        var g = new T.Group();
-        g.position.set(bx, GY, bz); g.rotation.y = -Math.PI / 2;
-        yardG.add(g);
-        [-0.66, 0.66].forEach(function (dx) {
-          yb(0.10, 0.42, 0.44, shadeHex(C.wood2, 0.82), dx, 0.21, 0, WD, g);
-        });
-        yb(1.56, 0.09, 0.50, C.wood2, 0, 0.465, 0, WD, g);
-        if (Y3) [-0.16, 0.16].forEach(function (dz) {
-          yb(1.52, 0.035, 0.15, shadeHex(C.wood2, 1.14), 0, 0.52, dz, WD, g);
-        });
-        if (Y2) {
-          [-0.66, 0.66].forEach(function (dx) {
-            var u = yb(0.09, 0.62, 0.09, shadeHex(C.wood2, 0.82), dx, 0.80,
-                       -0.20, WD, g);
-            u.rotation.x = -0.12;
-          });
-          [0.78, 1.00].forEach(function (yy) {
-            var b2 = yb(1.44, 0.14, 0.05, C.wood2, 0, yy, -0.22, WD, g);
-            b2.rotation.x = -0.12;
-          });
-          yr(0.42, 0.14, 0.36, 0.06, C.terracotta, -0.42, 0.58, 0.03,
-             { rough: 0.98 }, g);
-        }
-        ysh(0.90, 0.42, bx, bz);
-      })();
-      if (Y2) {                          /* a watering can by the pots */
-        yl(0.15, 0.17, 0.30, C.steel, 9.34, GY + 0.15, 4.75, 10, STEEL);
-        yb(0.05, 0.05, 0.30, C.steel, 9.34, GY + 0.26, 4.57, STEEL)
-          .rotation.x = 0.5;
-        if (Y3) {
-          var sp = yl(0.035, 0.06, 0.42, C.steel, 9.44, GY + 0.24, 4.97, 8,
-                      STEEL);
-          sp.rotation.x = -0.9; sp.rotation.z = -0.3;
-        }
-        ysh(0.20, 0.20, 9.34, 4.77);
-      }
-      pot(7.22, 4.94, 0.92, C.terracotta, 'spray');
-      pot(9.94, 4.72, 0.80, C.terracotta, 'fiddle');
-      pot(11.10, 9.42, 0.86, C.cream, 'mound');
+      /* MASSING ARC 1 (spec section 2): the terrace, its table, chairs,
+         planter, bench, watering can and pots all stood on ground that
+         is the main block's east room and study now. Deleted with the
+         massing they furnished; nothing here was interactive. The three
+         pots' own kPlant/yl/yr builders stay in use elsewhere. */
 
       /* four trees, three silhouettes (S7.4). The old pair were two
          spheres on a stick, and one of them stood at x 17.5 - entirely
          outside the frame. */
       tree(-19.60, 13.90, 1.45, 'broad', 0.5);
-      tree(13.60, 4.60, 1.12, 'open', 2.2);
-      tree(14.00, 12.70, 1.05, 'gold', 1.1);
+      tree(17.85, 4.60, 1.12, 'open', 2.2);
+      tree(18.25, 12.70, 1.05, 'gold', 1.1);
       /* the back line: four crowns that break the skyline, so the roofs
          sit against something instead of floating in a quarter-frame of
          empty sky */
@@ -7924,7 +8041,7 @@
     /* SHELL (shell spec section 3): the registry feeds both fence sets
        so shell membership is declared exactly once, replacing the four
        hand adds this loop used to be. EFFECTIVE membership is unchanged:
-       yardG, garageDoorG, mudroomRoofG and livingRoofG land in
+       yardG, garageDoorG and mudroomRoofG land in
        EXT_NO_MERGE exactly as the hand adds did (fencing them out of
        extG's own self-merge pass, two comments above). westWallG's new
        presence in EXT_NO_MERGE is inert — scene.add(westWallG), never
@@ -7945,7 +8062,7 @@
        would defeat onTap's !inExterior(hit) fallback (a street tap
        would open the kitchen). */
     var TOP = new Set(NO_MERGE);
-    [westWallG, garageDoorG, mudroomRoofG, livingRoofG, yardG, extG]
+    [westWallG, garageDoorG, mudroomRoofG, yardG, extG]
       .forEach(function (g) { TOP.add(g); });
     mergeStatic(scene, TOP);
 
@@ -7954,9 +8071,9 @@
        a handful of meshes (mergeStatic's own output) instead of the dozens
        it started with. mode:'hide' (the yard) is skipped outright --
        outlined scenery is still noise, section 3's own words -- and a
-       piece whose traversal turns up zero meshes (living_roof: open-
-       concept, never carried geometry; see its own regFabric call site
-       and boxOk's comment above) gets no edges object at all rather than
+       piece whose traversal turns up zero meshes (none today; living_roof
+       was the one, deleted with the massing arc -- see boxOk's comment
+       above) gets no edges object at all rather than
        an empty one added for nothing: f.edges is left null for it, the
        same as a piece that was never registered.
 
@@ -9082,7 +9199,7 @@
       GARAGE_POS: GARAGE_POS, GARAGE_AT: GARAGE_AT,
       MUD_POS: MUD_POS, MUD_AT: MUD_AT, LIV_POS: LIV_POS, LIV_AT: LIV_AT,
       STUDY_POS: STUDY_POS, STUDY_AT: STUDY_AT, studyWorld: studyWorld,
-      mudroomRoofG: mudroomRoofG, livingRoofG: livingRoofG,
+      mudroomRoofG: mudroomRoofG,
       yardG: yardG, westWallG: westWallG, zoneExtra: zoneExtra,
       mudBagsG: mudBagsG, makeBag: makeBag, FABRIC: FABRIC,
       registerFabric: function (group, spec) {
@@ -9994,7 +10111,7 @@
      so it rides out on the same returned webgl object the other groups
      already use to reach this outer scope. edgesVisible is null
      for a piece with no edges object built at all (mode:'hide', or a
-     merge-empty piece like living_roof — see the build step's own
+     merge-empty piece — see the build step's own
      comment); retained edge geometry reports false, proving that
      cutaways do not draw permanent wireframes. */
   window.chfShellFabric = function () {
@@ -10198,9 +10315,16 @@
     study_gauges: 'schedule', study_monitor: 'study', study_map: 'schedule'
   };
   var EXTERIOR_HINTS = [
-    ['patio_slider', 'Kitchen', ['moments', 'meals', 'lists', 'calendar', 'weather']],
+    ['back_door', 'Kitchen', ['moments', 'meals', 'lists', 'calendar', 'weather'], 'entry'],
     ['front_door', 'Living room', ['music', 'critters', 'tasks', 'programs', 'study'], 'entry', ['tasks','programs']],
-    ['mudroom_cross_roof_south', 'Mudroom', ['schedule', 'chores', 'routines'], null, ['packing','chores','routines']],
+    /* MASSING ARC 1: mudroom_cross_roof_south became the south deck of
+       the one garage-block roof, under the same room ownership
+       (slopeRooms[1] = 'mudroom'), so the Mudroom marker follows the
+       deck across the rename. NOT mudroom_front: that face sits at
+       z 10.10 behind the porch and the main block and chfNavProbe
+       returns null for it from the street view -- the same reason this
+       marker has always ridden the roof rather than the wall. */
+    ['garage_block_roof_south', 'Mudroom', ['schedule', 'chores', 'routines'], null, ['packing','chores','routines']],
     ['garage_front', 'Garage', ['garage', 'errands'], 'front', ['errands']]
   ];
   function packingAttention() {
@@ -10211,7 +10335,8 @@
   function hintAttention(key) {
     var attention = ((state || {}).attention || {})[key];
     if (attention) return attention.count || 0;
-    if (key === 'mudroom_cross_roof_south' || key === 'calendar' || key === 'packing') return packingAttention();
+    if (key === 'garage_block_roof_south' || key === 'calendar' ||
+        key === 'packing') return packingAttention();
     return 0;
   }
   function refreshAttentionBadges() {

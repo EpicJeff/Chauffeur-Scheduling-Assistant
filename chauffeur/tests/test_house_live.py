@@ -915,13 +915,18 @@ def scenario_garage_rebuild_does_not_touch_plaque_textures():
 
 
 def scenario_shell_fabric_registry():
-    """Expanded shell: authored verdicts, visible ghost lines, real entries.
+    """Two rectangles, two block roofs: the footprint pin and the
+    authored verdict table.
 
-    The roof slopes now run north/south. Kitchen sees the south roof and
-    east gable between its camera and subject. Living sees the south roof
-    and all three porch faces; mudroom and garage see the service roof's
-    south slope. Exterior has no subject and keeps every piece solid.
-    See the Task 8 report for the geometry and corridor derivation.
+    MASSING ARC 1 (spec 2026-09-16-regular-house-orbit-design.md,
+    sections 2 and 3). The registered set is the spec's kept+new lists
+    and nothing else; the deleted massing may not survive under any
+    name. The roof slopes still run north/south on both blocks. Kitchen
+    sees the east partition, the east wall and the south roof between
+    its camera and subject; living sees the south roof and the porch
+    faces; mudroom and garage both see the ONE block roof's south deck.
+    Exterior has no subject and keeps every piece solid. Every verdict
+    below carries its own derivation from solveShell's rule.
     """
     served = live_app()
     if served is None:
@@ -948,33 +953,32 @@ def scenario_shell_fabric_registry():
         page.wait_for_timeout(2200)
         fab = page.evaluate("window.chfShellFabric()")
         names = sorted(f['name'] for f in fab)
-        # arc 4 (facade spec section 6): the authored pieces are now the
-        # ones the elevation does NOT generate -- the porch gable, the
-        # garage gable and the south wall's own openings left this set
-        # and came back as facade_* pieces from the spec.
-        hand_names = {
-            'east_wall', 'garage_door', 'garage_shell', 'living_roof',
-            'living_back_room_door',
-            'living_study_door',
-            'mudroom_roof', 'north_wall', 'north_cladding', 'south_wall',
-            'west_skirt', 'west_wall', 'yard', 'patio_slider',
-            'roof_main_north', 'roof_main_south',
-            'roof_main_end_west', 'roof_main_end_east',
-            'massing_east_front_south', 'massing_east_front_east',
-            'massing_east_front_patio', 'massing_front_roof_north',
-            'massing_front_roof_south', 'massing_front_roof_end_east',
-            'massing_east_back_north', 'massing_east_back_east',
-            'massing_east_back_patio', 'massing_back_roof_shed',
-            'massing_back_roof_back', 'mudroom_front_cladding', 'west_cladding',
-            'massing_back_roof_front', 'massing_service_north',
-            'massing_service_west', 'massing_service_south',
-            'massing_service_roof_north', 'massing_service_roof_south',
-            'massing_service_roof_end_west',
-            'mudroom_cross_roof_north', 'mudroom_cross_roof_south', 'mudroom_east_finish',
-        }
-        check(hand_names <= set(names),
-              'every hand-authored piece must still register: %r'
-              % sorted(hand_names - set(names)))
+        # MASSING ARC 1 (spec section 2): the footprint pin. KEPT is the
+        # spec's own "kept as-is" list, NEW its "new pieces" list, and
+        # DELETED_PREFIXES every name the spec deletes -- so a piece that
+        # quietly survives the massing cull fails here by name.
+        KEPT = {'north_wall', 'north_cladding', 'west_wall', 'west_skirt',
+                'west_cladding', 'south_wall', 'garage_shell', 'garage_door',
+                'patio_slider', 'living_back_room_door', 'living_study_door',
+                'yard', 'roof_main_north', 'roof_main_south',
+                'roof_main_end_west', 'roof_main_end_east'}
+        NEW = {'east_wall', 'east_partition', 'north_wall_east',
+               'garage_block_north', 'garage_block_west', 'mudroom_front',
+               'garage_block_roof_north', 'garage_block_roof_south',
+               'garage_block_roof_end_west', 'garage_block_roof_end_east',
+               'back_door', 'future_room_partition'}
+        DELETED_PREFIXES = ('massing_', 'mudroom_cross_roof', 'mudroom_roof',
+                            'living_roof', 'mudroom_front_cladding',
+                            'mudroom_east_finish')
+        hand_names = KEPT | NEW
+        hand = {n for n in names if not n.startswith('facade_')}
+        check(KEPT <= hand, f'kept pieces missing: {sorted(KEPT - hand)}')
+        check(NEW <= hand, f'new pieces missing: {sorted(NEW - hand)}')
+        check(not [n for n in hand if n.startswith(DELETED_PREFIXES)],
+              'deleted pieces still registered: '
+              f'{[n for n in hand if n.startswith(DELETED_PREFIXES)]}')
+        check(hand == hand_names,
+              f'unexpected hand pieces: {sorted(hand - hand_names)}')
         generated = sorted(n for n in names if n.startswith('facade_'))
         check(set(names) == hand_names | set(generated),
               'nothing registers that is neither hand-authored nor generated: %r'
@@ -1011,34 +1015,44 @@ def scenario_shell_fabric_registry():
                        o[2] <= b[2] + tol and o[3] >= b[3] - tol and
                        o[4] <= b[4] + tol and o[5] >= b[5] - tol
                        for o in occ)
+        # MASSING ARC 1: the south wall is the whole main front now
+        # (x -7.15..14.65) and the piece at x 6.5..6.85 is east_partition,
+        # the interior wall the old east_wall became; the main's own east
+        # side stands out at x 14.65. All three still occlude.
         check(contains_box([-6.5, 6.5, 0.0, 5.6, 14.2, 14.55]),
               'south_wall must occlude via its registered box')
         check(contains_box([6.5, 6.85, 0.0, 5.6, -5.725, 14.55]),
+              'east_partition must occlude via its registered box')
+        check(contains_box([14.30, 14.65, 0.0, 5.6, -5.725, 14.55]),
               'east_wall must occlude via its registered box')
         wallish = [f for f in fab if abs(f['n'][1]) < 0.5]
         check(len(occ) >= len(wallish),
               f'every wall-like piece contributes an occluder: {len(occ)} < {len(wallish)}')
         by_name = {f['name']: f for f in fab}
-        garage_roof = by_name['massing_service_roof_south']['box']
-        mudroom_roof = by_name['mudroom_cross_roof_south']['box']
-        check(abs(garage_roof[1] - mudroom_roof[0]) < 0.001,
-              'roof sections must meet without a gap or overlapping decks')
-        check(all(abs(garage_roof[i] - mudroom_roof[i]) < 0.001
-                  for i in [2, 3, 4, 5]),
-              'separate service roof sections must retain the same profile')
-        # Equal main/service eaves and a side roof that drains east, away
-        # from the main wall: geometry regressions called out by the user.
-        check(abs(by_name['roof_main_end_east']['box'][2] -
-                  by_name['massing_service_roof_end_west']['box'][2]) < 0.02,
-              'main and service gables must start at the same eave height')
-        check(all(abs(a - b) < 0.001 for a, b in zip(
-                  by_name['roof_main_south']['normal'],
-                  by_name['massing_front_roof_south']['normal'])),
-              'front-right roof must match the main roof pitch')
-        shed_normal = by_name['massing_back_roof_shed']['normal']
-        check(shed_normal[0] > 0 and shed_normal[1] > 0 and
-              abs(shed_normal[2]) < 0.001,
-              'side shed must drain east, away from the main house')
+        # MASSING ARC 1 (spec section 3): two block roofs, both at the
+        # same eave (GARAGE_BLOCK.eave IS EXT_TOP4 = 5.6), so their south
+        # decks share one eave line -- what makes a roof feature run
+        # coplanar across the old garage/mudroom boundary. shellGable's
+        # deck box bottom is the eave edge of that deck, so comparing the
+        # two boxes' y-min is comparing the two eave lines.
+        check(abs(by_name['garage_block_roof_south']['box'][2] -
+                  by_name['roof_main_south']['box'][2]) < 0.02,
+              'both block roofs must start at the same eave height: %r vs %r'
+              % (by_name['garage_block_roof_south']['box'][2],
+                 by_name['roof_main_south']['box'][2]))
+        # roof_main reaches the main block's own east wall: the east
+        # gable end sits one overhang past FULL_HOUSE.east (14.65) and
+        # its rake board 0.08 further still.
+        check(14.65 <= by_name['roof_main_end_east']['box'][1] <= 14.65 + 0.32 + 0.20,
+              'roof_main must reach the east wall + one overhang: %r'
+              % by_name['roof_main_end_east']['box'][1])
+        # The two side decks of one block roof share a ridge and a pitch:
+        # mirrored normals, same |y|.
+        north = by_name['roof_main_north']['normal']
+        south = by_name['roof_main_south']['normal']
+        check(abs(north[1] - south[1]) < 0.001 and
+              abs(north[2] + south[2]) < 0.001 and north[2] < 0 < south[2],
+              'the main roof must be two mirrored slopes: %r %r' % (north, south))
         yard = [f for f in fab if f['name'] == 'yard'][0]
         check(yard['mode'] == 'hide', 'yard is the one authored hide piece')
         check(all(f['visible'] for f in fab),
@@ -1052,43 +1066,87 @@ def scenario_shell_fabric_registry():
         # in a ghosted wall is a frame floating in the opening).
         EXPECTED = {
             'exterior': [],
-            'kitchen': ['east_wall', 'south_wall', 'roof_main_south',
-                        'roof_main_end_east', 'facade_main_gable_9_east',
+            # MASSING ARC 1 verdict derivation (solveShell's own rule:
+            # camSide = n . (cam - boxCentre) > 0, subSide < 0, and the
+            # piece's box overlapping the camera-subject corridor;
+            # twoSided pieces take camSide * subSide < 0 instead;
+            # cutawayRoom == subject.room hides outright).
+            #
+            # kitchen -- HOME_POS (14.6, 11.2, 17.0), subject the kitchen
+            # aabb (centre x -2.8, z ~0):
+            #   east_partition (x 6.675, twoSided): cam east, subject
+            #     west -> product < 0, corridor covers it. GHOST.
+            #   east_wall (x ~14.5): camSide +0.1 -- the camera stands
+            #     just OUTSIDE the main block's own east face, edge on to
+            #     it -- subject far west. GHOST.
+            #   patio_slider (x 6.85, twoSided now): same straddle as the
+            #     partition it sits in. GHOST.
+            #   future_room_partition (z 1.5, twoSided): camera south of
+            #     it, kitchen centre north of it. GHOST.
+            #   south_wall, roof_main_south and the street features on
+            #     them: unchanged from the hand-massing era.
+            #   roof_main_end_east LEFT this list: it used to sit at
+            #     x 7.17, east of the camera; the main block reaches
+            #     14.65 now, so the gable end is at x ~14.9 and the
+            #     camera (14.6) is on its INNER side. SOLID.
+            'kitchen': ['east_partition', 'east_wall', 'patio_slider',
+                        'future_room_partition',
+                        'living_back_room_door', 'living_study_door',
+                        'south_wall', 'roof_main_south',
+                        'facade_main_gable_9_east',
                         'facade_main_door_10', 'facade_main_window_9',
                         'facade_main_window_12',
                         'facade_wing_window_15', 'facade_wing_window_16',
-                        'massing_east_front_south',
-                        'massing_front_roof_north', 'massing_front_roof_south',
-                        'massing_back_roof_shed',
-                        'patio_slider', 'massing_back_roof_front',
-                        'massing_east_back_east', 'massing_east_back_patio',
-                        'massing_east_front_patio',
-                        'living_back_room_door', 'living_study_door', 'yard'],
+                        'yard'],
+            # garage -- GARAGE_POS (-18.0, 10.5, 21.3), subject the garage
+            # aabb (centre x -15.4, z ~6). The block roof's south deck is
+            # the service roof's south deck at the same eave, pitch and z
+            # extent, only wider in x: same GHOST. Its north deck faces
+            # away (camSide < 0) and its west end sits at x ~-18.4, just
+            # WEST of the camera (camSide < 0): both SOLID.
             'garage': ['garage_door', 'garage_shell',
                        'facade_garage_gable_0_west', 'facade_garage_gable_0_east',
                        'facade_garage_gable_0_front',
-                       'massing_service_roof_south', 'yard'],
-            'mudroom': ['mudroom_roof', 'west_skirt', 'west_wall', 'west_cladding',
-                        'mudroom_cross_roof_south', 'mudroom_front_cladding',
-                        'mudroom_east_finish', 'yard'],
+                       'garage_block_roof_south', 'yard'],
+            # mudroom -- MUD_POS (-3.4, 6.2, 11.2), subject the mudroom
+            # aabb (centre x -9.62, z ~5.4):
+            #   mudroom_front (z centre ~9.2 with the old door wall
+            #     folded in): camera south, subject north. GHOST -- and
+            #     the fold is what keeps the inner door wall leaving with
+            #     the face instead of standing as a blank backdrop.
+            #   garage_block_roof_south: the cross roof's south deck by
+            #     another name, same GHOST.
+            #   garage_block_roof_end_east (x ~-6.9, n [1,0,0]): NEW --
+            #     the block roof gets an east gable end where the cross
+            #     roof had none (ends []), and it straddles this camera
+            #     and subject exactly as west_wall beside it does. GHOST.
+            #   mudroom_east_finish LEFT this list: folded into west_wall,
+            #     which is already here.
+            'mudroom': ['mudroom_front', 'west_skirt', 'west_wall',
+                        'west_cladding', 'garage_block_roof_south',
+                        'garage_block_roof_end_east', 'yard'],
+            # living -- LIV_POS (0, 12.8, 26.5), subject the living aabb.
+            # Nothing east of x 6.5 is in this corridor and the camera is
+            # west of every new piece, so this list is unchanged.
             'living': ['south_wall', 'roof_main_south',
                        'facade_main_gable_9_west', 'facade_main_gable_9_east',
                        'facade_main_gable_9_front', 'facade_main_porch_9',
                        'facade_main_door_10', 'facade_main_window_7',
                        'facade_main_window_9', 'facade_main_window_12',
                        'yard'],
-            # Task 1: the study's camera/subject pair slid north 2.17 with
-            # the room, away from the street. facade_main_porch_9 (the
-            # front entry porch) and massing_east_front_south (the old
-            # wing's own south face) no longer sit between camera and
-            # subject, so the solver now reports them SOLID for this view
-            # instead of ghosting them -- both dropped out of this list.
-            'study': ['east_wall', 'living_study_door',
+            # study -- STUDY_POS (5.85, 3.65, 15.83) after task 1, subject
+            # the study aabb (centre x ~10.7, z ~11):
+            #   east_partition: camera WEST of it, subject east -> the
+            #     twoSided straddle again. GHOST (this is the old
+            #     east_wall's verdict under its new name).
+            #   all four roof_main pieces: cutawayRoom 'study'.
+            #   south_wall + the wing windows now ON it: the study's
+            #     street face is part of the main front.
+            #   east_wall: camera west of x 14.5, not twoSided. SOLID --
+            #     it is the backdrop behind the room, not between.
+            'study': ['east_partition', 'living_study_door',
                       'facade_main_window_12',
                       'facade_wing_window_15', 'facade_wing_window_16',
-                      'massing_east_front_patio',
-                      'massing_front_roof_end_east',
-                      'massing_front_roof_south', 'massing_front_roof_north',
                       'roof_main_end_east', 'roof_main_end_west',
                       'roof_main_north', 'roof_main_south',
                       'south_wall', 'yard'],
@@ -1160,22 +1218,29 @@ def scenario_shell_fabric_registry():
             check(page.evaluate("window.chfHouseMode()") == 'living',
                   '%s on the front facade must enter living' % piece)
 
+        # MASSING ARC 1: east_wall is the roomless piece now -- the main
+        # block's own east elevation fronts the study and two UNBUILT
+        # rooms, so no single room owns a tap on it and it stays inert,
+        # exactly as the massing it replaced did.
         page.evaluate("window.chfHouseExit()")
         page.wait_for_function("window.chfNavProbe({settled:true})")
-        hit = page.evaluate("window.chfNavProbe({piece:'massing_east_back_east'})")
-        check(hit is not None, 'unbuilt wing must have a reachable exterior surface')
+        hit = page.evaluate("window.chfNavProbe({piece:'east_wall'})")
+        check(hit is not None, 'the east elevation must have a reachable surface')
         page.mouse.click(hit['cx'], hit['cy'])
         check(page.evaluate("window.chfHouseMode()") == 'exterior',
-              'unbuilt wing must stay inert')
+              'the roomless east elevation must stay inert')
 
-        page.evaluate("window.chfHouseCam(21,6.5,7,6.9,2,6)")
+        # The slider is an INTERIOR opening into the east room now, so
+        # its own side of it is that room, not the terrace. A camera
+        # standing in the east room still taps through to the kitchen.
+        page.evaluate("window.chfHouseCam(12,2.6,5.6,6.9,2,5.8)")
         page.wait_for_function("window.chfNavProbe({settled:true})")
         hit = page.evaluate("window.chfNavProbe({piece:'patio_slider'})")
-        check(hit is not None, 'slider must be reachable from the terrace')
+        check(hit is not None, 'slider must be reachable from the east room')
         page.mouse.click(hit['cx'], hit['cy'])
         page.wait_for_function("window.chfNavProbe({settled:true})")
         check(page.evaluate("window.chfHouseMode()") == 'kitchen',
-              'rear patio slider must enter the kitchen')
+              'the patio slider must enter the kitchen')
 
         # High quality chamfers the radio face. Its fallback projection must
         # use the radio's world X face after the parent rotates 90 degrees;
@@ -1247,14 +1312,31 @@ def scenario_study_sits_inside_the_main_block():
 #   +4  south_wall's baseboard and the front door's three casing boards
 #       (all 0xe4ddd1 sharp) were one 4-item bucket; the door is
 #       facade_main_door_10 now, so 1 + 3 survivors stand instead.
-#   +4  massing_east_front_south's two corner boards and its two window
-#       sill boards (FARMHOUSE.trim sharp) were one 4-item bucket; the
+#   +4  the old wing wall's two corner boards and its two window sill
+#       boards (FARMHOUSE.trim sharp) were one 4-item bucket; the
 #       windows are facade_wing_window_15/16 now, so 2 + 1 + 1 survive.
-# Nothing else moved: the three main-face window frame buckets (7 items
-# each) still merge inside their own pieces, the porch's 13 wood and 12
-# frame pieces still merge, and the garage door's leaf/straps/lights are
-# the same meshes in the same garageDoorG.
-CANONICAL_EXTERIOR_MESHES = 1873
+#
+# MASSING ARC 1 re-records this RED-first: 1873 -> 1840, a net -33 in
+# the same in-file position (standalone, with only this scenario's own
+# seed, the same build counts 1699 -- the 141-mesh gap is the seeded
+# cars/backpacks/hero card the earlier scenarios leave in the shared
+# temp data dir, exactly as before).
+#
+# -33 NET, not -33 pieces: this counts UNMERGED SURVIVORS, and both
+# sides of the change merge well. Gone: seventeen registered shell
+# pieces (massing_east_front_* x3, massing_front_roof x3,
+# massing_east_back_* x3, massing_back_roof_* x3, massing_service_* x3,
+# mudroom_cross_roof x2, mudroom_front_cladding, living_roof) plus the
+# terrace slab and its furniture -- but a shell piece is a handful of
+# same-material boxes that mergeStatic already collapsed inside its own
+# group, and the yard furniture was mostly folded into instanceYard's
+# InstancedMeshes, so neither was ever costing survivors in proportion
+# to its size. Added: east_wall's three windows, north_wall_east and
+# its window, the back door, the garage block's three walls, the block
+# roof's two end pieces, two future-room floors, future_room_partition
+# and the back patio slab. The pin's job is to catch the NEXT
+# unintended change; the direction (fewer) is the arc's own thesis.
+CANONICAL_EXTERIOR_MESHES = 1840
 
 
 def scenario_canonical_facade_pins_the_hand_built_elevation():
@@ -1364,17 +1446,21 @@ def scenario_worst_case_facade_builds_clean():
 
 
 def scenario_navigation_real_mouse():
-    """Real clicks cover all four exterior entries, cross-room zones and
-    fabric, a zone lean-in, two-step return, inert props, and sky exit.
+    """Real clicks cover every exterior entry the street view can see,
+    cross-room zones and fabric, a zone lean-in, two-step return, inert
+    props, and sky exit.
 
     Project geometry through the current camera; verify candidate pixels
     with the production hit readers before clicking. Low quality keeps
     this behavioral scenario quick. Both high and low explicitly force
     the quality tier and disable automatic demotion.
 
-    The service roof supplies the visible mudroom entry; the deeper porch
-    now obscures the old west-skirt target. Garage supplies a sky pixel; the main room's
-    roof surrounds its camera. The high-quality registry scenario retains
+    The garage block roof's south deck supplies the visible mudroom
+    entry; the deeper porch now obscures the old west-skirt target.
+    Garage supplies a sky pixel; the main room's roof surrounds its
+    camera. The kitchen's own exterior entry is the back door on the
+    north wall, which this one stop cannot see (massing arc 1; task 4's
+    orbit reaches it). The high-quality registry scenario retains
     separate geometry, cutaway, and exterior-entry checks.
     """
     served = live_app()
@@ -1389,17 +1475,25 @@ def scenario_navigation_real_mouse():
               'chfNavProbe must exist for a real-mouse test to derive its '
               'own pixels, never a hard-coded screen point')
 
+        # MASSING ARC 1 (spec sections 2 and 4): the Kitchen marker moved
+        # off the patio slider (interior now) onto the new back door, and
+        # the Mudroom marker follows its deck's rename
+        # (mudroom_cross_roof_south -> garage_block_roof_south). The
+        # back door is on the main's NORTH wall, which stop 0 -- the only
+        # exterior view until the orbit lands -- cannot see, so three
+        # markers draw here and the Kitchen one is asserted ABSENT
+        # below; task 4 turns that into a per-stop positive.
         page.wait_for_function(
             "() => document.querySelectorAll("
-            "'#house-hints:not([hidden]) .house-hint').length === 4",
+            "'#house-hints:not([hidden]) .house-hint').length === 3",
             timeout=10000)
         hints = page.locator('#house-hints .house-hint')
         exterior_targets = set(hints.evaluate_all(
             "els => els.map(e => e.dataset.target)"))
         check(exterior_targets == {
-            'patio_slider', 'front_door', 'mudroom_cross_roof_south',
-            'garage_front'},
-              'persistent exterior markers must identify every room entrance')
+            'front_door', 'garage_block_roof_south', 'garage_front'},
+              'persistent exterior markers must identify every room entrance '
+              'the street view can see')
         check(page.locator('#house-hints').evaluate(
             "e => getComputedStyle(e).pointerEvents") == 'none',
               'discovery markers must never intercept mouse or touch input')
@@ -1446,21 +1540,20 @@ def scenario_navigation_real_mouse():
         enter('exterior')
         check(page.evaluate("window.chfHouseMode()") == 'exterior',
               'must start at the sealed exterior')
-        p = probe("{piece:'mudroom_cross_roof_south'}")
+        p = probe("{piece:'garage_block_roof_south'}")
         page.mouse.click(p['cx'], p['cy'])
         page.wait_for_timeout(1200)
         check(page.evaluate("window.chfHouseMode()") == 'mudroom',
-              'exterior tap on the service roof must enter the mudroom -- it '
-              'fronts mudroom by the same street-adjacency rule as '
-              'west_wall (spec section 5): %r' % p)
-
-        # The side elevation and rear patio slider lead to the rear kitchen.
+              'exterior tap on the block roof south deck must enter the '
+              'mudroom -- slopeRooms gives that deck to the mudroom, the '
+              'same street-adjacency rule as west_wall (spec section 5): '
+              '%r' % p)
+        # the mudroom's own street FACE is behind the porch and the main
+        # block from here, exactly as its predecessor band was: the probe
+        # says so, which is why the marker rides the deck above it.
         enter('exterior')
-        p = probe("{piece:'east_wall'}")
-        page.mouse.click(p['cx'], p['cy'])
-        page.wait_for_timeout(1200)
-        check(page.evaluate("window.chfHouseMode()") == 'kitchen',
-              'exterior tap on east_wall must enter the rear kitchen: %r' % p)
+        check(page.evaluate("window.chfNavProbe({piece:'mudroom_front'})") is None,
+              'the mudroom street face is not visible from the street view')
 
         enter('exterior')
         p = probe("{piece:'south_wall'}")
@@ -1476,12 +1569,18 @@ def scenario_navigation_real_mouse():
         check(page.evaluate("window.chfHouseMode()") == 'living',
               'exterior tap on the front door must enter living: %r' % p)
 
+        # The kitchen's exterior entry is the back door on the north
+        # wall. Stop 0 looks at the house from the south-east, so the
+        # north face is behind the sealed shell: the probe returns null
+        # and the marker is not drawn (a hint whose target is occluded is
+        # not drawn -- spec section 4). Task 4's orbit stops see it.
         enter('exterior')
-        p = probe("{piece:'patio_slider'}")
-        page.mouse.click(p['cx'], p['cy'])
-        page.wait_for_timeout(1200)
-        check(page.evaluate("window.chfHouseMode()") == 'kitchen',
-              'rear patio slider must enter the kitchen: %r' % p)
+        check(page.evaluate("window.chfNavProbe({entry:'back_door'})") is None,
+              'the back door must be unreachable from the street view')
+        check(page.evaluate(
+            "[...document.querySelectorAll('#house-hints .house-hint')]"
+            ".some(e => e.dataset.target === 'back_door')") is False,
+              'no Kitchen marker is drawn where the back door cannot be seen')
 
         # (3) garage_shell fronts garage (already true pre-Task-7 via
         # gtag's per-mesh stamps -- pinned here as a still-must-hold
