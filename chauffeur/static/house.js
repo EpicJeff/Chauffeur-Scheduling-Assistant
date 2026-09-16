@@ -4304,12 +4304,28 @@
         if (alongZ) cz += (after - before) / 2;
         else cx += (after - before) / 2;
       }
-      /* the hip's ridge is shorter than the block by one `run` at each
-         end -- that is exactly what makes the end planes take the same
-         pitch as the sides. Derived, never typed: the apex sits `run`
-         in from the eave because it rises `run * tan(pitch)`, the same
-         rise the side decks make over their own `run`. */
-      var capLen = hip ? Math.max(0.28, depth - 2 * run) : depth;
+      /* the hip's ridge is inset from each end by one `run` -- that is
+         exactly what makes the end planes take the same pitch as the
+         sides. Derived, never typed: the apex sits `run` in from the
+         eave because it rises `run * tan(pitch)`, the same rise the
+         side decks make over their own `run`.
+
+         THE CLAMP: a block SHORTER along its ridge axis than it is wide
+         has no room for that inset -- run past the middle and the
+         trapezoid's ridge edge runs backwards against its eave edge, a
+         bowtie. `inset` is therefore capped at depth/2, where the two
+         ridge corners meet in the middle: the trapezoids collapse to
+         triangles, there is no ridge LEFT to cap (capLen 0, so the
+         ridge cap is skipped rather than stubbed), and the end planes
+         come in steeper than the sides -- their rise is still the
+         block's own `run * tan(pitch)`, now over a shorter run. That is
+         a pyramid, which is the honest answer to "hip a block whose
+         ridge axis is its short one". The canonical garage block with
+         ridge 'x' is exactly that case: depth 11.69 against run 8.42.
+         Give it ridge 'z' (depth 16.84, the same run) and it hips
+         properly, with a 5.15-long ridge. */
+      var inset = hip ? Math.min(run, depth / 2) : 0;
+      var capLen = hip ? depth - 2 * inset : depth;
       [-1, 1].forEach(function (sign) {
         var g = shellGroup(), deck;
         if (hip) {
@@ -4318,16 +4334,20 @@
              along-ridge) for a ridge on z. The shape is authored in
              (local x, local z) and rotated a quarter turn about x, so
              the extrusion's depth becomes the 0.18 deck thickness. */
-          var gt = cgeo('shell-hipdeck|' + half + '|' + depth + '|' + eave +
-                        '|' + pitch + '|' + alongZ + '|' + sign, function () {
+          var gt = cgeo('shell-hipdeck|' + half + '|' + depth + '|' + inset +
+                        '|' + span + '|' + alongZ + '|' + sign, function () {
             var u0 = -depth / 2, u1 = depth / 2;
             var vEave = sign * span / 2, vRidge = -sign * span / 2;
             var s = new T.Shape();
             function pt(u, v) { return alongZ ? [v, u] : [u, v]; }
             var a = pt(u0, vEave), b = pt(u1, vEave),
-                c = pt(u1 - run, vRidge), d = pt(u0 + run, vRidge);
+                c = pt(u1 - inset, vRidge), d = pt(u0 + inset, vRidge);
             s.moveTo(a[0], a[1]); s.lineTo(b[0], b[1]);
-            s.lineTo(c[0], c[1]); s.lineTo(d[0], d[1]); s.closePath();
+            s.lineTo(c[0], c[1]);
+            /* capLen 0 means c and d are the same point: emit the
+               triangle rather than a four-point shape with a repeat. */
+            if (capLen > 0.02) s.lineTo(d[0], d[1]);
+            s.closePath();
             var geo = new T.ExtrudeGeometry(s, { depth: 0.18, bevelEnabled: false });
             geo.translate(0, 0, -0.09); geo.rotateX(Math.PI / 2);
             return geo;
@@ -4353,11 +4373,14 @@
                  alongZ ? depth : 0.14, FARMHOUSE.trim,
                  cx + (alongZ ? sign * run : 0), edgeY,
                  cz + (alongZ ? 0 : sign * run));
-        /* Thin dark ridge halves meet without a white seam. */
-        shellBox(g, alongZ ? 0.14 : capLen, 0.12,
-                 alongZ ? capLen : 0.14, EXTC.ridge,
-                 cx + (alongZ ? sign * 0.065 : 0), ridge + 0.065,
-                 cz + (alongZ ? 0 : sign * 0.065));
+        /* Thin dark ridge halves meet without a white seam. A clamped
+           hip has no ridge at all, so it gets no cap. */
+        if (capLen > 0.02) {
+          shellBox(g, alongZ ? 0.14 : capLen, 0.12,
+                   alongZ ? capLen : 0.14, EXTC.ridge,
+                   cx + (alongZ ? sign * 0.065 : 0), ridge + 0.065,
+                   cz + (alongZ ? 0 : sign * 0.065));
+        }
         g.updateMatrixWorld(true);
         var n = new T.Vector3(0, 1, 0).applyQuaternion(
           deck.getWorldQuaternion(new T.Quaternion()));
@@ -4370,12 +4393,19 @@
       (ends || [-1, 1]).forEach(function (sign) {
         var g = shellGroup();
         if (hip) {
-          /* the hipped end: one triangular deck, eave-eave-apex, rising
-             `run * tan(pitch)` over its own `run` so it matches the two
-             side decks exactly. Local frame (slope, thickness,
-             along-eave), same quarter-turn idiom as the trapezoids. */
-          var spanEnd = run / Math.cos(pitch);
-          var ge = cgeo('shell-hipend|' + half + '|' + eave + '|' + pitch +
+          /* the hipped end: one triangular deck, eave-eave-apex. It
+             rises the block's own `run * tan(pitch)` -- the same apex
+             the two side decks reach -- over the CLAMPED `inset`. On an
+             unclamped block inset === run, so endPitch === pitch and the
+             four planes share one slope; on a clamped one the end comes
+             in steeper, which is what keeps the apex on the ridge line
+             instead of tearing the pyramid open. Local frame (slope,
+             thickness, along-eave), same quarter-turn idiom as the
+             trapezoids. */
+          var endRise = run * Math.tan(pitch);
+          var endPitch = Math.atan2(endRise, inset);
+          var spanEnd = Math.sqrt(inset * inset + endRise * endRise);
+          var ge = cgeo('shell-hipend|' + run + '|' + inset + '|' + endRise +
                         '|' + sign, function () {
             var s = new T.Shape();
             s.moveTo(0, -run); s.lineTo(0, run);
@@ -4388,7 +4418,7 @@
                                       { rough: 0.9, map: shingleT }));
           var eaveY = ridge - run * Math.tan(pitch);
           hm.rotation.y = alongZ ? -Math.PI / 2 : 0;
-          hm.rotation.z = -sign * pitch;
+          hm.rotation.z = -sign * endPitch;
           if (alongZ) hm.position.set(cx, eaveY,
             sign < 0 ? z0 - FULL_HOUSE.overhang : z1 + FULL_HOUSE.overhang);
           else hm.position.set(
@@ -9202,6 +9232,7 @@
       mudroomRoofG: mudroomRoofG,
       yardG: yardG, westWallG: westWallG, zoneExtra: zoneExtra,
       mudBagsG: mudBagsG, makeBag: makeBag, FABRIC: FABRIC,
+      ROOF_FORMS: ROOF_FORMS,
       registerFabric: function (group, spec) {
         regFabric(group, {name:spec.name, n:spec.normal, box:fabBox(group),
                           room:spec.room, mode:spec.mode, twoSided:spec.twoSided,
@@ -10114,6 +10145,14 @@
      merge-empty piece — see the build step's own
      comment); retained edge geometry reports false, proving that
      cutaways do not draw permanent wireframes. */
+  /* MASSING ARC 1 (spec section 3): what the two block roofs were
+     actually BUILT from, after window.HOUSE_ROOF_FORMS had its say --
+     read-only, like chfShellFabric below. Spec 2's block model feeds
+     the same rows, so a later arc can pin what it asked for against
+     what was built without reading the source. */
+  window.chfRoofForms = function () {
+    return webgl ? webgl.ROOF_FORMS : null;
+  };
   window.chfShellFabric = function () {
     if (!webgl) return [];
     return webgl.FABRIC.map(function (f) {

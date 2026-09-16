@@ -1053,6 +1053,14 @@ def scenario_shell_fabric_registry():
         check(abs(north[1] - south[1]) < 0.001 and
               abs(north[2] + south[2]) < 0.001 and north[2] < 0 < south[2],
               'the main roof must be two mirrored slopes: %r %r' % (north, south))
+        # MASSING ARC 1 (spec section 3): the canonical row is what the
+        # scene reports building from, and window.HOUSE_ROOF_FORMS is
+        # absent here, so both blocks must read gable / ridge x.
+        check(page.evaluate('window.chfRoofForms()') ==
+              {'main': {'form': 'gable', 'ridge': 'x'},
+               'garage': {'form': 'gable', 'ridge': 'x'}},
+              'the canonical block roofs are gables with an east-west '
+              'ridge: %r' % page.evaluate('window.chfRoofForms()'))
         yard = [f for f in fab if f['name'] == 'yard'][0]
         check(yard['mode'] == 'hide', 'yard is the one authored hide piece')
         check(all(f['visible'] for f in fab),
