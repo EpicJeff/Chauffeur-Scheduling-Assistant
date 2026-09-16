@@ -149,6 +149,37 @@ palette NAME only — hex lives in exactly one place. This does not touch
 the interior neutrals/anchors/accent tables above; those still take a role
 the ordinary way, `PALETTE` governs the street face only.
 
+### Massing: two blocks, block roofs (regular house + orbit arc, v2.499.31-v2.499.37)
+
+The house is two rectangles now, not a hand-drawn footprint of wings and
+notches: a **main block** (kitchen, living, pantry, the study, and two
+enclosed future rooms) and a **garage block** (garage, mudroom), set back
+behind it. Each block owns one roof, and every block roof is a triple --
+`{form: 'gable' | 'hip', ridge: 'x' | 'z', pitch}` -- never a fixed shape. The
+canonical read is `gable`, ridge `x`, on both blocks; a block roof may also
+be built `hip` (`shellGable`'s `form` parameter grows two trapezoid decks
+along the ridge plus two triangular decks on the ends, same eave and pitch,
+no gable-end infill) or ridge `z` (the street face reads as a gable end
+instead of an eave line -- the tract-house garage look). A block short on its
+ridge axis clamps its hip inset rather than self-intersecting, and degenerates
+cleanly to a pyramid with steeper end planes once the inset reaches the
+block's half-depth; treat that as correct roof behaviour on a short block, not
+a defect to square away.
+
+The panel can now **orbit** the house in eight 45-degree-apart stops instead
+of seeing it from one fixed angle, so faces that used to be reference-only
+(the garage block's west wall, the main block's north and east walls) are
+now on screen and must hold the same density/anchor/accent standard as the
+street face -- a blank clapboard wall at a north stop reads exactly like a
+blank wall in any plate. The three north-facing stops sit in hemisphere/fill
+light rather than direct sun (the sun rig itself is unchanged), which is the
+honest read for a fixed light source; do not chase daylight contrast into a
+north wall's own materials to compensate for the camera angle, and do not add
+a second fill light without the same kitchen-ratio gate the quality pass
+uses. A marker whose target wall or roof plane is occluded from a given
+stop still returns null and draws nothing -- that is the existing rule doing
+its job, not a bug to fix per-stop.
+
 ---
 
 ## 3. Prop vocabulary — what a thing IS

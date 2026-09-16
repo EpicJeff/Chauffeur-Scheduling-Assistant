@@ -79,4 +79,263 @@ Each task bumps `config.yaml`, sweeps (`env -u HA_BASE_URL python chauffeur/tool
 
 ## 10. Results
 
-Filled at wrap: per-view and per-stop in-frustum/buildMs before/after (canonical, and ridge-z for each block), the new registered-piece list, the re-recorded canonical mesh pin, deviations.
+Shipped as commits 2fb22a4..cdf334f, v2.499.31–v2.499.37, across four implementation tasks (task
+reports: `.superpowers/sdd/2026-09-16-regular-house-orbit/task-{1,2,3,4}-report.md`). None of it is
+device-verified.
+
+### 10.1 Per-view budget, before/after (quality=high, `--day`)
+
+BASE = 2fb22a4 (pre-arc). AFTER = canonical after task 2's fix round (v2.499.33), which is what
+tasks 3 and 4 build on; task 3's facade re-derivation shifted a few window positions by less than
+one slot width, which moves the exterior's own tris slightly further (see 10.1.1) without changing
+which pieces are in frustum.
+
+| view | in-frustum before | in-frustum after | Δ | tris before | tris after |
+|---|---|---|---|---|---|
+| exterior | 1448 | 1403 | -45 | 306710 | 298126 |
+| kitchen | 470 | 476 | +6 | 116664 | 116852 |
+| living | 710 | 700 | -10 | 135880 | 135972 |
+| mudroom | 406 | 400 | -6 | 46746 | 46506 |
+| garage | 747 | 753 | +6 | 109774 | 110022 |
+| study | 321 | 318 | -3 | 26644 | 26476 |
+
+`buildMs` 1156 → 946-1058 across runs; cap 1500. Scene meshes 2100 → 2055; materials 1475/1481 →
+1462/1468; geometries 1522 → 1488. Every Δ is traced to specific pieces in task 2's report: kitchen
++6 and garage +6 are new geometry (`north_wall_east`, the future-room floors/partition, the back
+patio slab; `garage_block_west/north`, the block roof's new `_end_east`) now standing in a camera's
+existing frustum, not noise.
+
+### 10.1.1 Exterior after task 3 (facade faces re-derived)
+
+Re-deriving the facade grammar onto the two blocks re-snapped a few features by up to one slot
+width (see 10.4), which moved a handful of window boxes without adding or removing any:
+
+| build | in-frustum | tris | meshes | buildMs |
+|---|---|---|---|---|
+| canonical, after task 2 | 1403 | 298126 | 2055 | 946-1058 |
+| canonical, after task 3 (faces re-derived) | 1403 | 298214 | 2055 | 934 |
+| worst case (`--facade worst`) | 1496 | 298782 | 2148 | 1014 |
+
+### 10.2 Roof-form variants (task 2; `--roof` on `tools/house_probe.py`)
+
+Both blocks canonically build `{form:'gable', ridge:'x'}`. The brief's hip variant was budgeted for
+both blocks and for the mixed form the spec names in §3 (main hip ridge `x`, garage hip ridge `z` —
+the tract-house garage look):
+
+| build | in-frustum | tris | meshes | buildMs |
+|---|---|---|---|---|
+| canonical (gable, ridge x, both blocks) | 1403 | 298126 | 2055 | 946 |
+| hip, ridge x, both blocks (garage clamps to a pyramid — its ridge-x depth is short) | 1397 | 298014 | 2049 | 976 |
+| hip, main ridge x + garage ridge z (spec §3's variant) | 1399 | 298046 | 2051 | 932 |
+
+The hip form costs nothing over gable (four extruded decks replace four boxes plus two clapboard
+infills); the pyramid case is two meshes lighter than the ridge-z hip (a pyramid has no ridge cap).
+**Not recorded:** a plain gable-ridge-z budget for either block in isolation — only the hip variants
+were probed, since ridge direction only visibly changes shape under `hip` (a gable roof's silhouette
+is the same regardless of which axis the ridge runs along; the mechanism was still exercised, and
+`chfRoofForms()` confirms `ROOF_FORMS` reports whichever form/ridge pair a given build used).
+
+### 10.3 Per-stop budget, the eight-stop orbit (task 4; quality=high, `--day`, canonical roofs)
+
+| stop | bearing | meshes | visible | in-frustum | tris | materials | geometries | buildMs |
+|---|---|---|---|---|---|---|---|---|
+| orbit0 | SE 43.6° (the resting view) | 2055 | 1403 | 1403 | 298214 | 1462 | 1489 | 1135 |
+| orbit1 | S 88.6° | 2055 | 1403 | 1403 | 298214 | 1462 | 1489 | 1135 |
+| orbit2 | SW 133.6° | 2055 | 1403 | 1400 | 297062 | 1462 | 1489 | 1135 |
+| orbit3 | W 178.6° | 2055 | 1403 | 1403 | 298214 | 1462 | 1489 | 1135 |
+| orbit4 | NW 223.6° | 2055 | 1403 | 1403 | 298214 | 1462 | 1489 | 1135 |
+| orbit5 | N 268.6° | 2055 | 1403 | 1403 | 298214 | 1462 | 1489 | 1135 |
+| orbit6 | NE 313.6° | 2055 | 1403 | 1400 | 297062 | 1462 | 1489 | 1135 |
+| orbit7 | E 358.6° | 2055 | 1403 | 1403 | 298214 | 1462 | 1489 | 1135 |
+
+`ghostLines=0 ghostDraws=0` at every stop (ghost edges stay OFF per the shell-occlusion law).
+`buildMs` is one number (1135, ≤1500) because one build serves all eight stops. The worst stop is
+1403 in-frustum / 298214 tris, shared by six of the eight (0, 1, 3, 4, 5, 7) — stops 2 and 6 each
+drop three meshes. **1403 in-frustum is the exterior gate for later massing arcs.**
+
+Stop 0 vs. task 3's plain exterior view, itemised (isolates the cost of the look-at pivot change,
+deviation 1 below):
+
+| | task 3 exterior | task 4 orbit0 | Δ |
+|---|---|---|---|
+| meshes | 2055 | 2055 | 0 |
+| visible | 1403 | 1403 | 0 |
+| in-frustum | 1403 | 1403 | **0** |
+| tris | 298214 | 298214 | 0 |
+| materials | 1462 | 1462 | 0 |
+| geometries | 1489 | 1489 | 0 |
+| buildMs | 934 | 1135 | +201 (run-to-run jitter on software WebGL — nothing was added to the build) |
+
+The ~2.4° aim rotation from moving the look-at target to the shared pivot cost nothing: not one mesh
+crossed the frustum boundary.
+
+### 10.4 The computed facade slot table (task 3)
+
+Both `FACES` (eave 5.6 on both):
+
+| face | x0 | x1 | width | slots | slot width |
+|---|---|---|---|---|---|
+| `garage_block` | -18.20 | -7.15 | 11.05 | 6 (0-5) | 1.841667 |
+| `main` | -7.15 | 14.65 | 21.80 | 12 (6-17) | 1.816667 |
+
+Full 18-slot table (index, face, x0, x1, centre):
+
+```
+0  garage_block  -18.2000  -16.3583  -17.2792
+1  garage_block  -16.3583  -14.5167  -15.4375
+2  garage_block  -14.5167  -12.6750  -13.5958
+3  garage_block  -12.6750  -10.8333  -11.7542
+4  garage_block  -10.8333   -8.9917   -9.9125
+5  garage_block   -8.9917   -7.1500   -8.0708
+6  main            -7.1500   -5.3333   -6.2417
+7  main            -5.3333   -3.5167   -4.4250
+8  main            -3.5167   -1.7000   -2.6083
+9  main            -1.7000    0.1167   -0.7917
+10 main             0.1167    1.9333    1.0250
+11 main             1.9333    3.7500    2.8417
+12 main             3.7500    5.5667    4.6583
+13 main             5.5667    7.3833    6.4750
+14 main             7.3833    9.2000    8.2917
+15 main             9.2000   11.0167   10.1083
+16 main            11.0167   12.8333   11.9250
+17 main            12.8333   14.6500   13.7417
+```
+
+`GARAGE_BAY_SLOTS = (0, 2)`, derived from the garage room's own x range (-18.2..-12.6) snapped to
+the nearest slot **boundary** — reproduces the old 3-slot 'garage' face exactly, so `worst_case()`'s
+dormer-exclusion zone and window-placement loop are numerically unchanged.
+
+Canonical re-snap (nearest slot centre for a point feature, nearest slot boundary for an extent's
+own edges; every element moved ≤ 1 slot):
+
+```
+ground: garage_door(0, span 3)  window(7)  porch(8, span 4)  window(9)  door(10)
+        window(12)  window(15)  window(16)
+roof:   gable(0, span 3)  gable(8, span 4)
+```
+
+### 10.5 Registered hand pieces
+
+**KEPT (16), unchanged registration:** `north_wall`, `north_cladding`, `west_wall`, `west_skirt`,
+`west_cladding`, `south_wall`, `garage_shell`, `garage_door`, `patio_slider`,
+`living_back_room_door`, `living_study_door`, `yard`, `roof_main_north`, `roof_main_south`,
+`roof_main_end_west`, `roof_main_end_east`.
+
+**NEW (12):** `east_wall`, `east_partition`, `north_wall_east`, `garage_block_north`,
+`garage_block_west`, `mudroom_front`, `garage_block_roof_north`, `garage_block_roof_south`,
+`garage_block_roof_end_west`, `garage_block_roof_end_east`, `back_door`, `future_room_partition`.
+
+**DELETED** (shell only, always empty of props/zones — grep-confirmed zero live references,
+comments excepted): `massing_east_back_north/east/patio`, `massing_east_front_east/patio/south`,
+`massing_front_roof` (+ its `_end_east`/`_north`/`_south` pieces), `massing_back_roof_back/front`
+and `massing_back_roof_shed`, `massing_service_north/west/south` and `massing_service_roof` (+ its
+`_end_west`/`_north`/`_south` pieces), `mudroom_cross_roof` (+ its `_north`/`_south` pieces),
+`living_roof` (registered, always empty since H3), the terrace slab and its furniture (table, three
+chairs, planter, bench, watering can, three pots) and their now-dead `gChair`/`gTable`/`planter`
+builders. `mudroom_front_cladding` and `mudroom_east_finish` fold into the garage block's walls
+(`mudroom_front`, `west_wall`); `mudroom_roof`'s geometry (the mudroom's street wall, its glazed
+door, and that door's jamb/hardware) folds into `mudroom_front` rather than being deleted — only the
+registry name retires.
+
+### 10.6 The canonical facade mesh-count pin
+
+**Changed.** Before this arc (the facade-generator arc's own pin): **1873** in-file. After task 2's
+deletions: **1840** (-33 — seventeen shell pieces plus the terrace's furniture merge well with what
+survives; the yard furniture they might have overlapped was already folded into `instanceYard`'s
+InstancedMeshes). Task 3's facade re-derivation (renaming/repositioning features inside their own
+per-feature `shellGroup()`s) did **not** move the count — confirmed by running the pin standalone
+before the production edits landed. The count is camera-independent (`INVARIANT_JS` counts unmerged
+survivors by scene-graph traversal, not frustum), so task 4's orbit — which only moves the camera —
+left it unchanged and green at every stop.
+
+### 10.7 Deviations from this spec's text, with the ruling for each
+
+1. **Stop-0 look-at.** §4 states both that stop 0 is pixel-identical to today's resting view and
+   that `EXT_AT` becomes the shared pivot for every stop; those cannot both hold, since today's
+   `EXT_AT` (-3.9, 4.0, 7.0) and the pivot (-1.8, 4.0, 4.2) differ. **Ruling: the pivot wins** — one
+   look-at for every stop keeps the orbit a true orbit. Stop 0's camera *position* is bit-for-bit
+   `EXT_POS`; only the aim rotates, ~2.4°, so the house sits about 200px further left in the frame
+   than before. Cost: none in the frustum (10.3); reversible with a stop-0 look-at special case if
+   the shifted framing is disliked on device.
+2. **One north window, not two.** §4 says "the main's north wall gets two windows + the back door";
+   §2 already specifies `north_wall_east` (the only *new* north-wall piece) with **one** window.
+   **Ruling: the plan's reading stands** — the "two windows" in §4 counts the whole north side,
+   including the kitchen's own pre-existing north window on `north_wall`, not two new windows on the
+   new piece. Cost if wrong: one window box to add later.
+3. **Mudroom marker target.** §4's marker table implies `mudroom_front` is a valid marker target;
+   measured, `chfNavProbe({piece:'mudroom_front'})` returns null from every exterior stop (that face
+   sits behind the porch and, now, behind the main block). **Ruling: the marker rides
+   `garage_block_roof_south`** (the same deck plane, carrying `room:'mudroom'`) instead — identical
+   behaviour to the pre-arc marker, which rode the equivalent roof piece under its old name. Required
+   by §8's "every marker keeps working."
+4. **`mudroom_roof`'s geometry folds rather than deletes.** §2 deletes the registry *name*
+   `mudroom_roof`; the geometry it owned is a real, visible assembly (the mudroom's street wall, its
+   glazed door, the door's jamb and hardware), not roof decking. **Ruling: fold the geometry into
+   `mudroom_front`** (both at identity, so every absolute coordinate is unchanged) rather than delete
+   it — deleting it would have left the mudroom behind a blank wall with no door, which no other part
+   of the spec asks for and which §8 ("nothing a person could do is removed") forbids.
+5. **A yard tree moved.** Not named anywhere in the spec. Orbit stop 5 looks straight up the main
+   block's north wall, and the largest tree in the back planting line stood exactly in the sightline
+   to the back door, so `chfNavProbe({entry:'back_door'})` returned null and stop 5 drew zero
+   markers — failing §7's "at least one marker drawn per stop." **Ruling: slide the one tree 2.45
+   units west** (same z, same size, same silhouette from the street) to clear the sightline by
+   roughly 3.8 units against its own ~3.5-unit crown half-width, verified per stop rather than by
+   arithmetic alone. Warranted by §4's own "authored in this arc because the camera now sees it."
+6. **Car plaques re-aim per landed stop.** Not addressed by the spec, which only describes the
+   camera. A driveway plaque billboards toward the exterior eye at build time; with that eye now a
+   ring, it would go edge-on (invisible) at seven of eight stops — a capability silently dropped.
+   **Ruling: re-aim on landing** (`aimCarPlates()`, called from the tween callback, never per frame),
+   preserving the existing behaviour without adding per-frame cost. Bay plaques keep facing their own
+   fixed garage camera.
+7. **Idle-return timer shortened via the real setting, not an init script.** §7's test list says
+   "timer shortened via an init script." Measured: `nav.html`'s `chfIdleRemaining` floors *every*
+   period at three seconds, so an init-script route (seeding a stale `chfPanelLastInput` in
+   localStorage) also collapses the **screensaver's** own period to three seconds and races it — a
+   screensaver that wins defers the return entirely. **Ruling (controller-approved, "the cheapest
+   honest way"): seed `panel_idle_return_seconds` through the real settings path** instead
+   (`storage.update_settings`, restored after), and use an init script only for the snap's own
+   sessionStorage recorder.
+8. **Hip end-plane pitch on a clamped block.** §3 does not specify what a clamped hip's end planes
+   should do; the mechanism (inset clamp, degenerate to a pyramid) was built to keep the block's
+   ridge height — and therefore its silhouette — independent of roof form. **Ruling: hold the ridge
+   height fixed and let the end pitch steepen** rather than lowering the apex to equalize all four
+   pitches, since the latter would make a block's height depend on which roof form it's wearing.
+   Flagged as an open design question for spec 2, where ridge axis becomes a per-block user choice
+   rather than a probe-only variant.
+
+### 10.8 Parked / deferred (not fixed in this arc; none blocking)
+
+- A ridge-`z` block renames its four roof pieces (`_north/_south/_end_west/_end_east` →
+  `_west/_east/_back/_front`) by `shellGable`'s existing compass-suffix convention; `EXTERIOR_HINTS`'
+  `garage_block_roof_south` row and the registry pin are canonical-only. Needs a ridge-relative
+  suffix (or a `slopeRooms`-derived hint) before spec 2 makes ridge a per-block setting.
+- A tap on the garage block's roof over the bay opens the mudroom — the shared south deck belongs to
+  both rooms by the solver's existing half-space + corridor rule; pre-existing behaviour, recorded
+  here per the brief.
+- Hip form + `depthEnds` are untested together; the end triangles ignore the `depthEnds` shift
+  (latent — needs a guard or a comment for spec 2).
+- At orbit stops 3 and 7 the Garage/Mudroom markers project onto open sky, because their target deck
+  (`garage_block_roof_south`) sits on the far block from those angles — the pre-existing marker rule,
+  newly visible now that those stops exist.
+- `get EXT_AT()` returns the live `ORBIT.pivot`, not a defensive clone (`house.js` ~9299);
+  `orbitTo` accepts `NaN` and writes it straight into `ORBIT.stop` (`house.js` ~9993); `var EXT_AT`
+  (`house.js` ~334) is dead code.
+- The exterior chevrons (56px, `bottom:16px`) sit under the Argyle chat bar below roughly 816px
+  viewport width; swipe and the arrow keys still work there.
+- `nav.html`'s idle-snap tween is only observable on the slideshow path (the page navigates away
+  immediately otherwise) — the comment beside it should say so.
+- The arrow-key text-field guard is pinned live only against `#chat-input`; `#mw-volume`,
+  `#cc-input-field` and `#mw-search` are covered by the same tag-based check but not individually
+  exercised by a scenario.
+- `scenario_study_sits_inside_the_main_block` does not assert `page.errors()` is empty
+  (`test_house_live.py` ~221-251).
+- `SHADOW_BOX.study` and the study reading-lamp's literal position are off-centre against the
+  translated study span; visually fine per probe, left alone as a quality nicety rather than a
+  correctness fix.
+- Nothing pins `patio_slider`'s `twoSided` interior registration directly.
+- `STUDY_DOOR_Z4` (`house.js` ~4161) duplicates `house_features.js:108`'s z value with only a
+  comment binding the two together.
+- A stale test comment still names `facade_wing_window_15/16` (`test_house_live.py` ~1337) after the
+  face rename to `main`.
+- The "no porch in the driveway" rule now spans slots 0-5 (garage + mudroom together); only slot 0 is
+  exercised by a test.
