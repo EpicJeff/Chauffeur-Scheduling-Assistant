@@ -2601,12 +2601,38 @@ def scenario_clipper_cuts_convex_meshes():
 
 def scenario_every_fabric_mesh_is_convex_or_a_kit():
     """Task 2 (view-volume masking spec section 3): solids come from the
-    builders. Every registered fabric row is either fully convex (every
-    mesh in the group -- the post-merge population task 3 will actually
-    clip -- is stamped userData.convex) or a kit (a door, window, porch
-    or lamp assembly the mask keeps or drops WHOLE). Nothing may be
-    partially convex: a row task 3 cannot handle either way.
+    builders. chfFabricConvexity() reports the PRE-merge snapshot (taken
+    immediately before the per-fabric mergeStatic loop) -- the same point
+    in the build where Task 3's buildRoomShells() will clip -- so a
+    windowed wall built from ordinary box() meshes is expected to be
+    fully convex, never a kit: merging those boxes into one composite is
+    a later step neither this check nor Task 3's clip ever sees.
+
+    A non-kit row's unstamped meshes (`nonconvex`, a list of geometry
+    type names) must all be a recognized non-box primitive -- a lathe,
+    torus, cylinder, sphere, swept tube or an instanced prop -- that
+    Task 3 keeps or drops WHOLE by its own bounding box rather than
+    clipping; a plain BoxGeometry/tiledBoxGeo mesh (or a hand-built
+    convex BufferGeometry, e.g. a chamfered box built directly instead
+    of through box()) that simply missed its stamp is a bug, not an
+    allowed shape. A kit row (a door, window, porch, garage door or the
+    coach lamp) is kept or dropped WHOLE regardless of what is inside
+    it.
     """
+    # ExtrudeGeometry and ShapeGeometry are here even though every
+    # in-repo ExtrudeGeometry site inside a non-kit row is stamped
+    # directly by this task (shellGable's decks/ends, vaultSection) --
+    # ExtrudeGeometry only reaches `nonconvex` at all through a NEW
+    # extrude site nobody has stamped yet, and a plain ShapeGeometry
+    # never appears in this build today. Both are convex/non-convex on
+    # a case-by-case basis (a Shape with a hole is not convex), so
+    # leaving them off would silently mask a future missed stamp as
+    # "unknown, allow it" -- they are listed for documentation, not
+    # because either is unconditionally safe; TorusGeometry and
+    # TubeGeometry are always non-convex (a revolved or swept curve),
+    # so those two are always safe to allow.
+    ALLOWED_NONCONVEX = {'LatheGeometry', 'TorusGeometry', 'CylinderGeometry',
+                         'SphereGeometry', 'TubeGeometry', 'InstancedMesh'}
     served = live_app()
     if served is None:
         return
@@ -2617,10 +2643,16 @@ def scenario_every_fabric_mesh_is_convex_or_a_kit():
         rows = page.evaluate("window.chfFabricConvexity()")
         check(rows, 'chfFabricConvexity reports at least one fabric row')
         by_name = {r['name']: r for r in rows}
-        bad = [r for r in rows if not (r['kit'] or r['convex'] == r['meshes'])]
+        bad = []
+        for r in rows:
+            if r['kit']:
+                continue
+            disallowed = [t for t in r['nonconvex'] if t not in ALLOWED_NONCONVEX]
+            if disallowed:
+                bad.append((r['name'], r['convex'], r['meshes'], disallowed))
         check(not bad,
-              'every non-kit row must be fully convex: %r' %
-              [(r['name'], r['convex'], r['meshes']) for r in bad])
+              'every non-kit row must be convex or a recognized non-box '
+              'primitive: %r' % bad)
         check(any(r['kit'] for r in rows),
               'at least one row is a kit (a door/window/porch/lamp assembly)')
         door = by_name.get('living_study_door')
@@ -2630,6 +2662,15 @@ def scenario_every_fabric_mesh_is_convex_or_a_kit():
         check(wall is not None and not wall['kit'] and
               wall['meshes'] > 0 and wall['convex'] == wall['meshes'],
               f"south_wall is fully convex: {wall}")
+        # Corrected (v2.499.51): a windowed wall is NOT a kit -- its
+        # boxes clip pre-merge like any other box, exactly what the
+        # first version of this scenario got wrong.
+        for name in ('east_wall', 'east_partition', 'north_cladding',
+                     'north_wall_east', 'garage_block_west', 'west_cladding',
+                     'garage_shell', 'yard', 'mudroom_front', 'west_wall'):
+            row = by_name.get(name)
+            check(row is not None and not row['kit'],
+                  f"{name} clips pre-merge, not a kit: {row}")
 
 
 if __name__ == '__main__':
