@@ -4377,9 +4377,31 @@
        local +z into world -x, so `face` is the wall's EAST face and the
        section extrudes back through its thickness; axis 'x' needs no
        turn at all and `face` is the wall's NORTH face. */
-    function vaultSection(group, pts, yBase, axis, face, thick, colour, opts) {
+    function vaultSection(group, pts, yBase, axis, face, thick, colour, opts,
+                          vFrom) {
       var u0 = pts[0][0], u1 = pts[pts.length - 1][0];
-      var key = 'vault|' + axis + '|' + thick + '|' + yBase + '|' +
+      /* WHICH MAPPING THIS SECTION OWES THE WALL BELOW IT. box() picks a
+         UV reference for the three TILED exterior maps and leaves every
+         other box on BoxGeometry's own 0..1-per-face mapping; a section
+         continuing one of those walls owes it the SAME choice, so this
+         is box()'s own detection block, not a second opinion about it.
+         Getting it wrong is not a crash, it is siding at the wrong scale
+         above the eave -- which is exactly what shipped in v2.499.45 and
+         what this reads off `opts.map` to prevent. */
+      var uvRef = null, uvKey = '';
+      if (NICE && opts && battenT && opts.map === battenT) {
+        uvRef = BATTEN_UV_REF; uvKey = 'batten';
+      } else if (NICE && opts && sidingT && opts.map === sidingT) {
+        uvRef = SIDING_UV_REF; uvKey = 'siding';
+      } else if (NICE && opts && shingleT && opts.map === shingleT) {
+        uvRef = SHINGLE_UV_REF; uvKey = 'shingle';
+      }
+      /* the y at which the run BELOW this section started its own
+         courses, so the section carries their phase across the joint
+         instead of restarting them. Only a tiled map can see it. */
+      vFrom = vFrom || 0;
+      var key = 'vault|' + axis + '|' + thick + '|' + yBase + '|' + uvKey +
+                '|' + vFrom + '|' +
                 pts.map(function (p) {
                   return p[0].toFixed(4) + ',' + p[1].toFixed(4);
                 }).join(';');
@@ -4389,18 +4411,35 @@
         for (var i = 1; i < pts.length; i++) s.lineTo(pts[i][0], pts[i][1]);
         s.closePath();
         var g2 = new T.ExtrudeGeometry(s, { depth: thick, bevelEnabled: false });
-        /* BoxGeometry maps every face 0..1, so the plaster gradient runs
-           the full height of the wall BELOW this section; ExtrudeGeometry
-           maps in world units, which would clamp the whole section to the
-           gradient's dark end and draw a band across the partition. Carry
-           the wall's own mapping up instead, off the POSITION attribute
-           (the generated uv means something different on the extruded
-           side faces): v = y / yBase is exactly 1 where the box below
-           ends and clamps above it -- every texture here is a
-           CanvasTexture, so ClampToEdge -- to the gradient's cream top. */
+        /* ExtrudeGeometry maps uv in WORLD units; neither wall below a
+           section is mapped that way, so both cases below re-map off the
+           POSITION attribute (the generated uv means something different
+           again on the extruded side faces).
+
+           TILED (siding, battens, shingle): tiledBoxGeo scales a face's
+           0..1 by its own world size over the reference, so one world
+           unit is 1/ref. The section takes the same unit -- ref[1] up
+           the wall, and across it ref[2] when the wall faces +-x (axis
+           'z', where the profile's u is world z, tiledBoxGeo's own `d`)
+           or ref[0] when it faces +-z. `vFrom` carries the courses'
+           phase across the joint. u's phase is arbitrary here in the
+           same way it is on a box face, whose two sides already run
+           their u in opposite directions; only the DENSITY is a fact
+           about the material, and that is what this fixes.
+
+           PLAIN (the interior plaster): BoxGeometry maps every face
+           0..1, so the gradient runs the full height of the wall below.
+           v = y / yBase is exactly 1 where that box ends and clamps
+           above it -- every texture here is a CanvasTexture, so
+           ClampToEdge -- to the gradient's cream top. Left in world
+           units instead, the whole section would clamp to the
+           gradient's DARK end and draw a band across the partition. */
         var pos = g2.attributes.position, uv = g2.attributes.uv;
+        var su = uvRef ? 1 / uvRef[axis === 'z' ? 2 : 0] : 1 / (u1 - u0);
+        var sv = uvRef ? 1 / uvRef[1] : 1 / yBase;
+        var v0 = uvRef ? vFrom : 0;
         for (var j = 0; j < uv.count; j++)
-          uv.setXY(j, (pos.getX(j) - u0) / (u1 - u0), pos.getY(j) / yBase);
+          uv.setXY(j, (pos.getX(j) - u0) * su, (pos.getY(j) - v0) * sv);
         uv.needsUpdate = true;
         return g2;
       });
@@ -4413,15 +4452,30 @@
        `roof_main` measures itself off this. */
     var MAIN_VAULT = roofVault(FULL_HOUSE, ROOF_FORMS.main, Math.PI / 8);
     /* ROOF_FORMS is a build-time PARAMETER (house_probe injects it, and
-       spec 2's block model feeds it). Under the canonical ridge on x the
-       main deck slopes along z and every partition below can follow it.
-       Give the block a ridge on z instead and `roof_main`'s two halves
+       spec 2's block model feeds it), and BOTH of its fields change the
+       deck a partition has to meet. A vault is built only for the
+       canonical gable on a ridge running x.
+
+       RIDGE. Give the block a ridge on z and `roof_main`'s two halves
        take DIFFERENT ridge heights -- each half's own width becomes its
-       span -- so there is no single deck over the partition to meet: the
-       walls then stay at the eave, exactly where they stood before this
-       arc, rather than wearing a section that pokes through one of them.
-       Every vault below is gated on this one flag. */
-    var VAULTED = (MAIN_VAULT.axis === 'z');
+       span -- so there is no single deck over the partition to meet.
+
+       FORM. Give it a HIP and the deck stops being a single plane that
+       falls only along z: shellGable's hipped trapezoids pull in from
+       each end by `inset`, and on this block that inset CLAMPS
+       (min(run, depth/2) = 7.16 against a run of 10.645), which is the
+       pyramid case -- roof_main_west's deck over x 6.85 has already
+       fallen to about 5.65 by the time it reaches the partition line
+       while the gable profile below would still be rising to 9.94. That
+       is a four-metre wall standing out of the roof in every exterior
+       and orbit frame. `--roof hip` leaves `ridge` at 'x', so reading
+       the ridge alone does not see this at all.
+
+       Under either variant the walls stay at the eave, exactly where
+       they stood before this arc, rather than wearing a section that
+       pokes through a deck. Every vault below is gated on this flag;
+       the garage block reads its OWN row the same way. */
+    var VAULTED = (MAIN_VAULT.axis === 'z' && ROOF_FORMS.main.form === 'gable');
 
     /* ---- the east PARTITION (was east_wall) ---------------------------
        The wall at x 6.85 stopped being an exterior side elevation the
@@ -5795,12 +5849,16 @@
          street. The WEST band needs nothing: `garage_block_west` stands
          outboard of it and `garage_block_roof_end_west`'s gable infill
          closes the block above. */
-      if (roofVault(GARAGE_BLOCK, ROOF_FORMS.garage, Math.PI / 8).axis === 'z')
+      var gVault = roofVault(GARAGE_BLOCK, ROOF_FORMS.garage, Math.PI / 8);
+      if (gVault.axis === 'z' && ROOF_FORMS.garage.form === 'gable')
+        /* vFrom 4.6: the band just above starts ITS courses at its own
+           bottom edge, so the section continues them from there rather
+           than opening a fresh course at the eave. */
         vaultSection(garageShellG,
-                     vaultRidgePts(roofVault(GARAGE_BLOCK, ROOF_FORMS.garage,
-                                             Math.PI / 8), 2.0, 10.0, EXT_TOP4),
+                     vaultRidgePts(gVault, 2.0, 10.0, EXT_TOP4),
                      EXT_TOP4, 'z', -12.57, 0.30,
-                     NICE ? 0xffffff : EXTC.siding, { rough: 0.95, map: CLAD() });
+                     NICE ? 0xffffff : EXTC.siding, { rough: 0.95, map: CLAD() },
+                     4.6);
       /* n [1,0,0]: no single physical face works for a piece that is
          three walls plus a roof wrapped around one room — but the garage
          is the westmost structure on the whole property, so every OTHER
