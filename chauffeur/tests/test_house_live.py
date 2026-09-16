@@ -2599,6 +2599,39 @@ def scenario_clipper_cuts_convex_meshes():
         check(r['outsideCone'] is False, 'a point outside the silhouette is kept')
 
 
+def scenario_every_fabric_mesh_is_convex_or_a_kit():
+    """Task 2 (view-volume masking spec section 3): solids come from the
+    builders. Every registered fabric row is either fully convex (every
+    mesh in the group -- the post-merge population task 3 will actually
+    clip -- is stamped userData.convex) or a kit (a door, window, porch
+    or lamp assembly the mask keeps or drops WHOLE). Nothing may be
+    partially convex: a row task 3 cannot handle either way.
+    """
+    served = live_app()
+    if served is None:
+        return
+    with served.browser() as page:
+        page.goto(served.url('house?quality=high'))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_timeout(2200)
+        rows = page.evaluate("window.chfFabricConvexity()")
+        check(rows, 'chfFabricConvexity reports at least one fabric row')
+        by_name = {r['name']: r for r in rows}
+        bad = [r for r in rows if not (r['kit'] or r['convex'] == r['meshes'])]
+        check(not bad,
+              'every non-kit row must be fully convex: %r' %
+              [(r['name'], r['convex'], r['meshes']) for r in bad])
+        check(any(r['kit'] for r in rows),
+              'at least one row is a kit (a door/window/porch/lamp assembly)')
+        door = by_name.get('living_study_door')
+        check(door is not None and door['kit'],
+              f"living_study_door is a kit: {door}")
+        wall = by_name.get('south_wall')
+        check(wall is not None and not wall['kit'] and
+              wall['meshes'] > 0 and wall['convex'] == wall['meshes'],
+              f"south_wall is fully convex: {wall}")
+
+
 if __name__ == '__main__':
     scenario_the_house_boots_enters_and_leans_in()
     scenario_leanin_focus_cycles_do_not_leak_textures()
@@ -2617,4 +2650,5 @@ if __name__ == '__main__':
     scenario_shell_without_room_is_inert()
     scenario_worst_case_facade_builds_clean()
     scenario_clipper_cuts_convex_meshes()
+    scenario_every_fabric_mesh_is_convex_or_a_kit()
     print("test_house_live OK")

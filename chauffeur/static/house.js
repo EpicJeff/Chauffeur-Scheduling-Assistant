@@ -979,7 +979,14 @@
                        alone governs me", exactly as before. */
                     owners: o.owners || [],
                     plane: o.plane ? new T.Vector3().fromArray(o.plane) : null,
-                    pad: o.pad === undefined ? 1.5 : o.pad });
+                    pad: o.pad === undefined ? 1.5 : o.pad,
+                    /* VIEW-VOLUME MASKING (task 2, design spec section 3):
+                       a kit is non-convex fabric (a door, window, porch or
+                       lamp assembly) that the mask keeps or drops WHOLE
+                       rather than clipping mesh by mesh -- task 3 reads
+                       this flag exactly where it reads userData.convex on
+                       a fabric mesh. */
+                    kit: !!o.kit });
     }
     /* box helper for regFabric call sites: a plain Box3 does not survive
        structured-clone back to a test harness, and the spec wants six
@@ -991,6 +998,27 @@
       g.updateMatrixWorld(true);
       var b = new T.Box3().setFromObject(g);
       return [b.min.x, b.max.x, b.min.y, b.max.y, b.min.z, b.max.z];
+    }
+    /* VIEW-VOLUME MASKING (task 2, design spec section 3): the world-
+       space triangle list of ONE mesh, in the shape house_clip.js's
+       solids already speak (position, uv, slot 0 -- ao is the vault's
+       to add, task 3 does not read it here). Task 3 calls this on every
+       fabric mesh stamped userData.convex to build the solid it clips.
+       Handles indexed and non-indexed geometry alike. */
+    function worldTris(mesh) {
+      var g = mesh.geometry, pos = g.getAttribute('position'), uv = g.getAttribute('uv');
+      mesh.updateWorldMatrix(true, false);
+      var M = mesh.matrixWorld, tris = [], tmp = new T.Vector3();
+      function vert(i) {
+        tmp.fromBufferAttribute(pos, i).applyMatrix4(M);
+        return { p: [tmp.x, tmp.y, tmp.z], uv: uv ? [uv.getX(i), uv.getY(i)] : [0, 0] };
+      }
+      var n = g.index ? g.index.count : pos.count;
+      for (var i = 0; i < n; i += 3) {
+        var i0 = g.index ? g.index.getX(i) : i, i1 = g.index ? g.index.getX(i + 1) : i + 1, i2 = g.index ? g.index.getX(i + 2) : i + 2;
+        tris.push({ a: vert(i0), b: vert(i1), c: vert(i2), slot: 0 });
+      }
+      return tris;
     }
     /* Massing arc 1: two pieces the arc FOLDED into an already-registered
        group (the mudroom's east finish into west_wall, its street door
@@ -1205,6 +1233,13 @@
                    return new T.BoxGeometry(w, h, d);
                  }),
         mat(c, opts, inZoneGroup(g0)));
+      /* VIEW-VOLUME MASKING (task 2): every shape box() can hand back --
+         a plain BoxGeometry, the UV-remapped tiledBoxGeo (same box, only
+         its uv attribute differs) or chamferGeo's chamfered corners -- is
+         a convex polyhedron. Task 3's clipper reads this to decide
+         whether a fabric mesh is clipped in place (convex) or kept/
+         dropped whole (a kit, see regFabric). */
+      m.userData.convex = true;
       m.position.set(x, y, z); finish(m); g0.add(m); return m;
     }
     /* ---- K1 (quality spec §3): the chamfered box ----------------------
@@ -3761,7 +3796,16 @@
                                cameras still keep it (the half-space test
                                already said solid for both). */
                             owners: ['mudroom', 'kitchen', 'living'],
-                            plane: [WXK, 0, 0] });
+                            plane: [WXK, 0, 0],
+                            /* VIEW-VOLUME MASKING (task 2): west_wall is
+                               the mudroom's whole wall-plane prop shelf --
+                               the front door, coat hooks, picture grid,
+                               cubby bench, calendar mount, TV bracket --
+                               dozens of same-material meshes mergeStatic
+                               fuses into non-convex composites, plus
+                               several lathe/cylinder/direct-Mesh parts
+                               never routed through box(). A kit. */
+                            kit: true });
 
     /* pendant lamps over the island: warm emissive shades. Grouped so a
        lean-in can hide them — a cord across a focused card breaks the
@@ -4083,9 +4127,13 @@
          { rough: 0.95, map: CLAD() });
     wbox(0.3, 2.2, 1.6, NICE ? 0xffffff : EXTC.siding, -7.0, 4.5, 3.6,
          { rough: 0.95, map: CLAD() });
+    /* VIEW-VOLUME MASKING (task 2): five same-material siding slabs at
+       different sizes/positions (the mudroom's stepped west profile) --
+       mergeStatic fuses them into one non-convex composite. A kit. */
     regFabric(westCladdingG, { name: 'west_cladding', n: [1, 0, 0],
                                box: fabBox(westCladdingG), room: 'mudroom',
-                               owners: ['mudroom', 'kitchen', 'living'] });
+                               owners: ['mudroom', 'kitchen', 'living'],
+                               kit: true });
     /* MASSING ARC 1 fix wave: the trim board that used to stand here
        (x 6.76, full height, proud of the siding) was the kitchen's own
        NORTH-EAST CORNER back when the north face ended at x 6.85.
@@ -4115,9 +4163,12 @@
         nbox(0.84, 0.06, 0.06, FARMHOUSE.frame, wx, wy, -6.18, { rough: 0.9 });
       }
     })();
+    /* VIEW-VOLUME MASKING (task 2): carries its own window (casing,
+       jambs, sill in one shared material) -- mergeStatic fuses that
+       into a non-convex frame. A kit. */
     regFabric(northCladdingG, { name: 'north_cladding', n: [0, 0, -1],
                                 box: fabBox(northCladdingG), room: 'kitchen',
-                                owners: ['kitchen'] });
+                                owners: ['kitchen'], kit: true });
 
     /* ================= SHELL (Task 4, spec section 6): THE SEAL =========
        The great room (kitchen `floor` + living `floor2`) has never had a
@@ -4444,6 +4495,10 @@
         return g2;
       });
       var m = new T.Mesh(geo, mat(colour, sharp(opts)));
+      /* VIEW-VOLUME MASKING (task 2): `pts` is a pentagon or trapezoid
+         (vaultRidgePts) or a rectangle (vaultFlatPts), extruded straight
+         through `thick` -- a convex prism either way. */
+      m.userData.convex = true;
       if (axis === 'z') { m.rotation.y = -Math.PI / 2; m.position.set(face, 0, 0); }
       else m.position.set(0, 0, face);
       finish(m); group.add(m); return m;
@@ -4557,7 +4612,11 @@
                               room stand on its other side, and a
                               cutaway that took it away opened both of
                               them straight into the east rooms. */
-                           owners: ['study'] });
+                           owners: ['study'],
+                           /* VIEW-VOLUME MASKING (task 2): carries its own
+                              window, same fused-frame reasoning as
+                              north_cladding above. A kit. */
+                           kit: true });
 
     /* ---- the east WALL: the main block's own side elevation -----------
        x 14.65, from the north wall to the street face, fronting the back
@@ -4603,17 +4662,21 @@
                            box: fabBox(eastWallG),
                            /* the side elevation of the three rooms
                               behind it, and of nothing else. */
-                           owners: ['study', 'east_room', 'back_room'] });
+                           owners: ['study', 'east_room', 'back_room'],
+                           /* VIEW-VOLUME MASKING (task 2): carries three
+                              windows, same fused-frame reasoning as
+                              north_cladding above. A kit. */
+                           kit: true });
 
     function shellGroup() { var g = new T.Group(); extG.add(g); return g; }
     function shellBox(g, w, h, d, c, x, y, z, opts) {
       return box(w, h, d, c, x, y, z, g, sharp(opts));
     }
-    function shellRegister(g, name, normal, room, twoSided, pad, cutawayRoom, owners) {
+    function shellRegister(g, name, normal, room, twoSided, pad, cutawayRoom, owners, kit) {
       g.updateMatrixWorld(true);
       regFabric(g, { name: name, n: normal, box: fabBox(g), room: room,
                      twoSided: twoSided, pad: pad, cutawayRoom: cutawayRoom,
-                     owners: owners });
+                     owners: owners, kit: kit });
     }
     function shellWindow(g, x, y, z, angle, w, h, glow) {
       var frame = new T.Group(); frame.position.set(x, y, z);
@@ -4623,6 +4686,10 @@
       }), mat(FARMHOUSE.windowDark, { rough: 0.55 }, true));
       pane.userData.shellWindow = true;
       pane.userData.shellGlow = !!glow;
+      /* VIEW-VOLUME MASKING (task 2): a plain box, built directly (not
+         through box()) because its material is forced unique for the
+         night-glow toggle -- still convex. */
+      pane.userData.convex = true;
       finish(pane); frame.add(pane);
       [-1, 1].forEach(function (s) {
         shellBox(frame, 0.11, h + 0.22, 0.14, FARMHOUSE.frame,
@@ -4641,7 +4708,7 @@
        block's street face fronts a REAL room (the mudroom), so the
        argument exists rather than a second hand-rolled wall builder; it
        defaults to null, which is exactly what every older caller got. */
-    function shellWall(name, x0, z0, x1, z1, height, normal, windows, twoSided, cutawayRoom, room, owners) {
+    function shellWall(name, x0, z0, x1, z1, height, normal, windows, twoSided, cutawayRoom, room, owners, kit) {
       var g = shellGroup(), alongX = x0 !== x1;
       var length = alongX ? x1 - x0 : z1 - z0;
       var cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
@@ -4662,7 +4729,15 @@
                     2.80, alongX ? cz + normal[2] * (WALL_T4 / 2 + 0.05) : p,
                     angle, a[1] || 1.35, 2.70, a[2]);
       });
-      shellRegister(g, name, normal, room || null, twoSided, null, cutawayRoom, owners);
+      /* VIEW-VOLUME MASKING (task 2): a wall carrying a window is a
+         kit -- shellWindow's casing/jamb/sill boxes share one material
+         and mergeStatic fuses them into a single non-convex frame
+         (a hole in the middle), so the row can never be fully convex
+         post-merge. `kit` also lets a caller declare a wall a kit for a
+         reason worldTris can't see (mudroom_front folds a whole door-
+         zone group into itself hundreds of lines below this call). */
+      shellRegister(g, name, normal, room || null, twoSided, null, cutawayRoom,
+                    owners, kit || !!(windows && windows.length));
       return g;
     }
     /* Each pitched plane has its own normal and merge/ghost unit. Gable
@@ -4749,6 +4824,10 @@
           });
           deck = new T.Mesh(gt, mat(NICE ? 0xffffff : FARMHOUSE.roofTone,
                                     { rough: 0.9, map: shingleT }));
+          /* VIEW-VOLUME MASKING (task 2): the shape above is a trapezoid
+             (eave edge, two slanted sides, an inset ridge edge) or, when
+             capLen clamps to zero, a triangle -- either way convex. */
+          deck.userData.convex = true;
           deck.position.set(cx + (alongZ ? sign * run / 2 : 0),
                             ridge - run * Math.tan(pitch) / 2,
                             cz + (alongZ ? 0 : sign * run / 2));
@@ -4812,6 +4891,9 @@
           });
           var hm = new T.Mesh(ge, mat(NICE ? 0xffffff : FARMHOUSE.roofTone,
                                       { rough: 0.9, map: shingleT }));
+          /* VIEW-VOLUME MASKING (task 2): a hip end is one triangular
+             deck (eave, eave, apex) -- convex. */
+          hm.userData.convex = true;
           var eaveY = ridge - run * Math.tan(pitch);
           hm.rotation.y = alongZ ? -Math.PI / 2 : 0;
           hm.rotation.z = -sign * endPitch;
@@ -4842,6 +4924,12 @@
         });
         var m = new T.Mesh(geo, mat(NICE ? 0xffffff : FARMHOUSE.body,
                                    { rough: 0.95, map: CLAD() }));
+        /* VIEW-VOLUME MASKING (task 2): the gable-end shape above is a
+           symmetric "house" pentagon -- a rectangle (eave to roofEave)
+           with a triangular peak (roofEave to the ridge apex) -- and
+           every one of its five interior turns bends the same way, so
+           it is convex. */
+        m.userData.convex = true;
         if (alongZ) m.position.set(cx, 0, sign < 0 ? z0 - 0.14 : z1);
         else { m.rotation.y = -Math.PI / 2;
                m.position.set(sign < 0 ? x0 : x1 + 0.14, 0, cz); }
@@ -5075,9 +5163,13 @@
          wall, so when its own room's cutaway takes the wall away the
          window has to go with it -- otherwise a black frame stands
          floating in the opening (measured: the living cutaway). */
+      /* VIEW-VOLUME MASKING (task 2): a window is a frame -- casing,
+         jambs and sill boxes arranged around a hole, and on 'main' faces
+         a grille -- non-convex as the composite mergeStatic will make of
+         it. Kept or dropped whole, never clipped mesh by mesh. */
       shellRegister(g, 'facade_' + slot.face + '_window_' + feat.slot,
                     [0, 0, 1], slot.room, false, undefined, slot.room,
-                    spanOwners(feat));
+                    spanOwners(feat), true);
     }
 
     function doorAt(feat) {
@@ -5145,9 +5237,12 @@
       box(0.34, 0.09, 0.05, C.ink, lampX, 3.16, lampZ - 0.02, g,
           { rough: 0.5 }).userData.room = slot.room;
       if (entry) DOOR_X4 = x;            /* the front walk follows */
+      /* VIEW-VOLUME MASKING (task 2): a door is a leaf, casing, panels,
+         a lathe knob and a coach lamp (lathe + cylinder cap) -- a kit,
+         never a single convex solid. */
       shellRegister(g, 'facade_' + slot.face + '_door_' + feat.slot,
                     [0, 0, 1], slot.room, false, undefined, slot.room,
-                    spanOwners(feat));
+                    spanOwners(feat), true);
     }
 
     function porchAt(feat) {
@@ -5209,9 +5304,11 @@
       }
       PORCH_SPANS.push({ slot: feat.slot, span: feat.span, frontZ: frontZ });
       if (slot.face === 'main') PORCH_FRONT_Z4 = frontZ;
+      /* VIEW-VOLUME MASKING (task 2): a porch is a slab, a step, posts,
+         rails and (sitting) a bench -- a kit assembly, never one solid. */
       shellRegister(g, 'facade_' + slot.face + '_porch_' + feat.slot,
                     [0, 0, 1], slot.room, false, undefined, slot.room,
-                    spanOwners(feat));
+                    spanOwners(feat), true);
     }
 
     function garageDoorAt(feat) {
@@ -5372,9 +5469,13 @@
       if (feat.window !== false) {
         shellWindow(g, e.cx, y, zc + 0.85, 0, Math.min(1.1, w - 0.5), 1.1, true);
       }
+      /* VIEW-VOLUME MASKING (task 2): the dormer box itself is convex,
+         but its window (built when feat.window !== false) is the same
+         fused-frame shellWindow assembly as north_cladding above, so a
+         windowed dormer is a kit; a windowless one stays fully convex. */
       shellRegister(g, 'facade_' + slot.face + '_dormer_' + feat.slot,
                     [0, 0, 1], slot.room, false, undefined, slot.room,
-                    spanOwners(feat));
+                    spanOwners(feat), feat.window !== false);
       /* _dormer_<slot>_roof, not _dormerroof_<slot>: the registry reads
          kind and slot straight out of the name, and a dormer's roof is
          the same dormer feature. */
@@ -5398,6 +5499,9 @@
       [-1, 1].forEach(function (sign) {
         var m = new T.Mesh(geo, mat(NICE ? 0xffffff : FARMHOUSE.roofTone,
                                     { rough: 0.9, map: shingleT }));
+        /* VIEW-VOLUME MASKING (task 2): the shape above is a right
+           triangle (0,0 / depth,0 / 0,rise) -- convex. */
+        m.userData.convex = true;
         m.rotation.y = -Math.PI / 2;
         /* the extrusion's 0.14 runs toward -x from where it is placed, so
            the east fin is offset by its own thickness to sit OUTBOARD of
@@ -5497,9 +5601,14 @@
        the room's door wall to the underside of a cross roof that no
        longer exists; this is that band re-authored as the face itself,
        and the mudroom's own walls, door and window stay inside it. */
+    /* VIEW-VOLUME MASKING (task 2): kit forced true -- the mudroom's own
+       street door/roof group folds into mudroomFrontG hundreds of lines
+       below (mudroomRoofG.add, near refabBox('mudroom_front', ...)),
+       long after this row registers, so no mesh-level scan here could
+       see it coming. */
     var mudroomFrontG = shellWall('mudroom_front', -12.60, GARAGE_BLOCK.south,
               GARAGE_BLOCK.east, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
-              [0, 0, 1], [], false, null, 'mudroom', ['mudroom']);
+              [0, 0, 1], [], false, null, 'mudroom', ['mudroom'], true);
     shellGable('garage_block_roof', GARAGE_BLOCK.west, GARAGE_BLOCK.east,
                GARAGE_BLOCK.north, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
                ROOF_FORMS.garage.ridge, null, null, Math.PI / 8,
@@ -5559,7 +5668,11 @@
                          1.6, z + 0.07, g, CHROME);
       knob.rotation.x = Math.PI / 2;
       dtag(knob);
-      shellRegister(g, 'back_door', [0, 0, -1], 'kitchen');
+      /* VIEW-VOLUME MASKING (task 2): the same door-plus-coach-lamp kit
+         doorAt() builds, hand-authored here instead of through the
+         facade generator -- a kit for the same reason. */
+      shellRegister(g, 'back_door', [0, 0, -1], 'kitchen', undefined,
+                    undefined, undefined, undefined, true);
     })(-2.0);
 
     /* ---- the two future rooms (spec section 2) ------------------------
@@ -5881,9 +5994,14 @@
          that shell matches mudroom_roof/west_wall's own pattern for
          mudroom, not a new case). Verified against the extended verdict
          table below. */
+      /* VIEW-VOLUME MASKING (task 2): three walls wrapped around one
+         room -- an open U, non-convex as a whole -- and mergeStatic
+         fuses the shared-material siding into one composite mesh
+         regardless. A kit. */
       regFabric(garageShellG, { name: 'garage_shell', n: [1, 0, 0],
                                 box: fabBox(garageShellG), room: 'garage',
-                                cutawayRoom: 'garage', owners: ['garage'] });
+                                cutawayRoom: 'garage', owners: ['garage'],
+                                kit: true });
       /* SHELL: garage_door is complete here — the door leaf/frame/
          window/hardware/coach lamp are all in, and the roof/walls just
          moved OUT above, so fabBox now measures only the door assembly
@@ -5899,9 +6017,12 @@
          garage_door as 'ghost'; kitchen/mudroom/living/exterior all
          still read it 'solid'. */
       var gdBox = fabBox(garageDoorG);
+      /* VIEW-VOLUME MASKING (task 2): the leaves, header, glazing,
+         lights and coach lamp are a kit, same reasoning as the facade's
+         own doors. */
       regFabric(garageDoorG, { name: 'garage_door', n: [0, 0, 1],
                                 box: gdBox, room: 'garage',
-                                owners: ['garage'] });
+                                owners: ['garage'], kit: true });
       blobShadow(3.0, 4.2, -15.4, 6.0, extG);
       /* ================= THE BAY (style bible S7 garage) ================
          Plates 3, 4 and 5: a working garage, not a shed. A concrete slab
@@ -8422,8 +8543,12 @@
        verdict today, but recording the real one now costs nothing and
        avoids yet another registration-data mystery for whoever wires
        the solver up next. */
+    /* VIEW-VOLUME MASKING (task 2): the grass slab plus every shrub,
+       tree and landscaping prop instanceYard() (below) is about to add
+       -- wildly non-convex as a population, and never one solid to
+       begin with. A kit: masked or kept as the whole yard. */
     regFabric(yardG, { name: 'yard', mode: 'hide', n: [0, 1, 0],
-                        box: fabBox(yardG) });
+                        box: fabBox(yardG), kit: true });
     instanceYard();
     /* sky dome: weather-painted from the inside, swapped by applyState.
        The dome IS the background now, so the flat clear color retires. */
@@ -9797,9 +9922,10 @@
         regFabric(group, {name:spec.name, n:spec.normal, box:fabBox(group),
                           room:spec.room, mode:spec.mode, twoSided:spec.twoSided,
                           pad:spec.pad, cutawayRoom:spec.cutawayRoom,
-                          owners:spec.owners});
+                          owners:spec.owners, kit:spec.kit});
       },
       solveShell: solveShell, ROOM_AABB: ROOM_AABB, AO_OCCLUDERS: AO_OCCLUDERS,
+      worldTris: worldTris,
       /* FACADE (arc 4): the spec the elevation was BUILT from (never the
          raw injection -- buildElevation() falls back to CANONICAL_JS)
          and the slot table it derived, for chfFacade/chfFacadeSlots. */
@@ -10067,7 +10193,8 @@
       webgl.registerFabric(fixture.group, {
         name:fixture.name, normal:fixture.normal,
         room:fixture.group.userData.room, mode:'hide', pad:.45,
-        twoSided:fixture.twoSided, cutawayRoom:fixture.cutawayRoom
+        twoSided:fixture.twoSided, cutawayRoom:fixture.cutawayRoom,
+        kit:fixture.kit
       });
     });
     if (mode !== 'exterior') {
@@ -10814,6 +10941,25 @@
                     test can assert against exactly what the derivation saw */
                verdict: f.verdict, interiorGlow: interiorGlow,
                edgesVisible: f.edges ? f.edges.visible : null };
+    });
+  };
+  /* VIEW-VOLUME MASKING (task 2, design spec section 3): read-only like
+     chfShellFabric above -- for every registered fabric row, how many of
+     its meshes (post-merge, the population task 3 will actually see) are
+     stamped userData.convex, against how many meshes the row has at all.
+     A non-kit row is only safe for task 3's per-mesh clip when every one
+     of its meshes is convex (meshes === convex); a kit row is kept or
+     dropped whole regardless. */
+  window.chfFabricConvexity = function () {
+    if (!webgl) return [];
+    return webgl.FABRIC.map(function (f) {
+      var meshes = 0, convex = 0;
+      f.g.traverse(function (m) {
+        if (!m.isMesh) return;
+        meshes += 1;
+        if (m.userData && m.userData.convex) convex += 1;
+      });
+      return { name: f.name, meshes: meshes, convex: convex, kit: !!f.kit };
     });
   };
   /* SHELL/arc 4 (facade spec §6): read-only like chfShellFabric above --

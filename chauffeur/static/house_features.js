@@ -55,9 +55,9 @@
       group.userData.room = room; group.userData.houseFeatureKey = key;
       root.add(group); return group;
     }
-    function shellFixture(key, room, at, name, normal) {
+    function shellFixture(key, room, at, name, normal, kit) {
       var group = fixture(key, room, at);
-      fabric.push({group:group,name:name,normal:normal});
+      fabric.push({group:group,name:name,normal:normal,kit:!!kit});
       return group;
     }
     function book(group, color, x, y, z) {
@@ -180,8 +180,11 @@
     item = entry('study','Study · Parent PIN','living',[6.675,.02,9.93],'study');
     item.rotation.y = -Math.PI / 2;
     glassDoors(item);
+    // VIEW-VOLUME MASKING (task 2): a glazed double-door assembly --
+    // leaves, stiles, rails, casing, handles -- is a kit, never one
+    // convex solid; kept or dropped whole.
     fabric.push({group:item,name:'living_study_door',normal:[1,0,0],twoSided:true,
-                 cutawayRoom:'study'});
+                 cutawayRoom:'study',kit:true});
 
     // STUDY REFIT: "then use the study's regular interior door on that
     // other room". The east room's opening at z 5.80 -- the retired
@@ -201,12 +204,17 @@
     });
     box(item,.35,.15,1.90,ivory,0,3.02,0);
     [-1,1].forEach(function (side) { box(item,.35,3.02,.10,ivory,0,1.51,side * .85); });
-    fabric.push({group:item,name:'east_room_door',normal:[1,0,0],twoSided:true});
+    // VIEW-VOLUME MASKING (task 2): two interior-door leaves plus lining
+    // -- a kit, same reasoning as living_study_door above.
+    fabric.push({group:item,name:'east_room_door',normal:[1,0,0],twoSided:true,
+                 kit:true});
 
     // The back room's door: a leaf proud of the uncut partition, the one
     // opening in this wall that was authored that way.
+    // VIEW-VOLUME MASKING (task 2): a kit, same reasoning as the other
+    // two door fixtures above.
     item = shellFixture('back-room-door','living',[6.50,.02,2.45],
-                        'living_back_room_door',[1,0,0]);
+                        'living_back_room_door',[1,0,0],true);
     item.rotation.y = -Math.PI / 2;
     interiorDoor(item,-1);
 
