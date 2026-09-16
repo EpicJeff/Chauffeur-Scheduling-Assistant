@@ -34,18 +34,20 @@
        rail, where the north wall carries all three.) Moving the window
        onto this wall is what made it impossible to leave alone.
 
-       So the room is placed by its WALLS now. EFACE is the slab's own
-       inner face, and the study scene's east wall plane (local z =
-       -6.10) lands EGAP clear of it: 0.12, the clearance the deepest
-       thing on this wall needs, which is the window sill -- it reaches
-       .088 behind its own plane, because in the room this scene was
-       authored for the wall behind it is .05 thick with nothing beyond.
-       NFACE is the same idea on the north: that wall box is built BEHIND
-       its own face rather than centred on it, so the face is the floor's
-       own north edge and everything the room hangs there -- the wall
-       map, and now the whole turned shelf wall -- stands in front of
-       it. */
-    var EFACE = 14.30, EGAP = .12, NFACE = NORTH;
+       So the room is placed by its WALLS now, and this room gets its OWN
+       east wall (below) rather than borrowing the block's: a 0.12 box
+       with its back on the slab's face, so what you see on both sides of
+       this room is the study's own plaster and not the house's. EWF is
+       that wall's room-facing side; EGAP is half its thickness, which is
+       what puts the study scene's own east wall plane -- the plane the
+       window, the calendar and the clock are hung on -- in the MIDDLE of
+       the box, exactly where the north wall used to carry the window.
+       NFACE is the mirror of EWF on the north: that box is built BEHIND
+       its own face rather than centred on it (nothing is hung IN it any
+       more, the window having left), so the face is the floor's own
+       north edge and everything the room hangs there -- the wall map,
+       and the whole turned shelf wall -- stands in front of it. */
+    var EFACE = 14.30, EGAP = .06, NFACE = NORTH, EWF = EFACE - .12;
     root.rotation.y = -Math.PI / 2;
     root.scale.setScalar(SCALE);
     root.position.set(EFACE - EGAP - 6.10 * SCALE, .12, NORTH + 7.09 * SCALE);
@@ -55,6 +57,23 @@
     var lights = [];
     root.traverse(function (o) { if (o.isLight) lights.push(o); });
     lights.forEach(function (o) { if (o.parent) o.parent.remove(o); });
+    /* No car keys hang in the house's study -- this family's keys live in
+       the garage and on the mudroom hooks. study.js hands the whole key
+       wall over as ONE tagged group now: only its ZONE meshes used to be
+       switched off, and the top rail, the four hooks and every key's own
+       shaft and teeth are decoration rather than signal, so they are not
+       in that list. They survived, invisible only because they were
+       buried in the block's wall slab -- and the moment the room was
+       placed clear of it they read as a stick with four rings floating
+       beside the window. The group ends the whole class of bug: anything
+       hung on that rail later is inside it. The zone meshes are switched
+       off as well, here and on every update, so the hiding does not
+       depend on the group alone. */
+    var keysG = null;
+    root.children.forEach(function (o) {
+      if (o.userData && o.userData.studyGroup === 'keys') keysG = o;
+    });
+    if (keysG) keysG.visible = false;
     (built.zones.keys.meshes || []).forEach(function (m) { m.visible = false; });
 
     // The house chair rail is higher than the standalone Study's. Lift the
@@ -115,39 +134,44 @@
     var wall=0xd8d0c2,trim=0xeee7da,sage=0x71877d,floor=0xa9784d;
     box('floor',EAST-WEST,.10,SOUTH-NORTH,floor,(WEST+EAST)/2,.05,(NORTH+SOUTH)/2,.82);
     for(var p=0;p<8;p++)box('joint',EAST-WEST-.12,.018,.025,0x65452f,(WEST+EAST)/2,.105,NORTH+.43+p*.80,.9);
-    // STUDY REFIT: the window turned onto the EAST wall, so the wall
-    // finish turned with it. The NORTH wall is one solid run now -- it
-    // is the interior wall shared with the east room, and it carries the
-    // shelves, the library and the board -- and the EAST wall's sage
-    // band and chair rail split around the window, because the glass
-    // reaches below the rail. Both are built at EFACE, on the room side
-    // of the house's own slab, where they can be seen.
+    // STUDY REFIT: the window turned onto the EAST wall, so the wall it
+    // is cut into turned with it. The NORTH wall is one solid run now --
+    // it is the interior wall shared with the east room, and it carries
+    // the shelves, the library and the board -- and the EAST wall is the
+    // four boxes around the glass, with the sage band and the chair rail
+    // splitting around it as well, because the glass reaches below the
+    // rail.
     //
-    // There is no wall box to cut a hole in on the east: the slab behind
-    // (house.js `east_wall`) IS this wall, and the window's own sky
-    // plane covers the glass against it, exactly the way the wall
-    // calendar and the clock cover their own patch of it. `east` below
-    // stays where it always was, inside the slab -- a belt-and-braces
-    // enclosure that costs one box and is never seen.
+    // This room has its OWN east wall now (the four boxes below, at
+    // EWF + .06). It used to have one too, but out at EAST, entirely
+    // inside the block's `east_wall` slab: dead geometry, and what the
+    // room actually showed on that side was the block's own plaster --
+    // cream on the north wall, charcoal on the east. The pattern is the
+    // north wall's, and it is the same both ways now.
     //
     // The window is read back off the study itself (built.windowAt is
     // study.js's own window centre AFTER its turn, in study units), so
     // this adapter and that scene cannot drift apart. wz lands on world
     // z 11.10, which is where the house's exterior pane on this
-    // elevation already is.
-    var wc=built.windowAt||{x:.98},ws=built.windowSize||{w:4.8};
+    // elevation already is; wy/wh are the sill and the glass height, the
+    // same derivation the north wall used to carry.
+    var wc=built.windowAt||{x:.98,y:4.35},ws=built.windowSize||{w:4.8,h:3.2};
     var wz=root.position.z+wc.x*SCALE,ww=ws.w*SCALE;
+    var wy=.12+wc.y*SCALE,wh=ws.h*SCALE,EW=EWF+.06;
     var northW=wz-ww/2-NORTH,southW=SOUTH-(wz+ww/2);
     box('north',EAST-WEST,4.45,.12,wall,(WEST+EAST)/2,2.225,NFACE-.06,.94);
-    box('east',.12,4.45,SOUTH-NORTH,wall,EAST,2.225,(NORTH+SOUTH)/2,.94);
+    box('east-north',.12,4.45,northW+.06,wall,EW,2.225,NORTH+(northW+.06)/2,.94);
+    box('east-south',.12,4.45,southW+.06,wall,EW,2.225,wz+ww/2+(southW+.06)/2-.06,.94);
+    box('east-low',.12,wy-wh/2,ww-.04,wall,EW,(wy-wh/2)/2,wz,.94);
+    box('east-high',.12,4.45-(wy+wh/2),ww-.04,wall,EW,(4.45+wy+wh/2)/2,wz,.94);
     box('north-wainscot',EAST-WEST,1.55,.05,sage,(WEST+EAST)/2,.83,NFACE+.025,.9);
-    box('east-wainscot-north',.05,1.55,northW,sage,EFACE-.025,.83,NORTH+northW/2,.9);
-    box('east-wainscot-south',.05,1.55,southW,sage,EFACE-.025,.83,wz+ww/2+southW/2,.9);
+    box('east-wainscot-north',.05,1.55,northW,sage,EWF-.025,.83,NORTH+northW/2,.9);
+    box('east-wainscot-south',.05,1.55,southW,sage,EWF-.025,.83,wz+ww/2+southW/2,.9);
     box('north-base',EAST-WEST,.13,.18,trim,(WEST+EAST)/2,.16,NFACE+.09,.8);
-    box('east-base',.18,.13,SOUTH-NORTH,trim,EFACE-.09,.16,(NORTH+SOUTH)/2,.8);
+    box('east-base',.18,.13,SOUTH-NORTH,trim,EWF-.09,.16,(NORTH+SOUTH)/2,.8);
     box('north-rail',EAST-WEST,.11,.17,trim,(WEST+EAST)/2,1.62,NFACE+.085,.8);
-    box('east-rail-north',.17,.11,northW,trim,EFACE-.085,1.62,NORTH+northW/2,.8);
-    box('east-rail-south',.17,.11,southW,trim,EFACE-.085,1.62,wz+ww/2+southW/2,.8);
+    box('east-rail-north',.17,.11,northW,trim,EWF-.085,1.62,NORTH+northW/2,.8);
+    box('east-rail-south',.17,.11,southW,trim,EWF-.085,1.62,wz+ww/2+southW/2,.8);
 
     function count(f,key){
       f=f||{};var gauges=f.gauges||{};

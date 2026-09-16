@@ -1702,12 +1702,21 @@ def scenario_the_study_faces_east_behind_glass_doors():
 #       each door opening), and four on one material inside one
 #       registered piece is exactly what mergeStatic folds: three
 #       survivors become none.
-#    -3 house_study's own walls. The window's four-box opening (left,
-#       right, under, over) left the north wall, which is one solid run
-#       now, and the east wall did NOT gain one: the house's own
-#       east_wall slab is that wall, so the window is mounted on it the
-#       way the calendar and the clock are. Four boxes became one.
-CANONICAL_EXTERIOR_MESHES = 1865
+#    -3 house_study's north wall. The window's four-box opening (left,
+#       right, under, over) left it; it is one solid run now, because it
+#       is the interior wall the shelves and the board hang on.
+#
+# FIX ROUND 1 (v2.499.44) re-records it RED-first once more, 1865 -> 1868,
+# +3, and the exterior elevation's own count still has not moved: every
+# piece in both passes is interior.
+#    +3 house_study's EAST wall. The first cut gave the room no east wall
+#       of its own -- it let the block's `east_wall` slab stand in for
+#       one and left the old `box('east', ...)` dead inside that slab,
+#       which is why the room read cream on the north and charcoal on
+#       the east. The room has its own again, built the way the north
+#       wall is: the four boxes around the window (east-north, -south,
+#       -low, -high) where one dead box used to be.
+CANONICAL_EXTERIOR_MESHES = 1868
 
 
 def scenario_canonical_facade_pins_the_hand_built_elevation():

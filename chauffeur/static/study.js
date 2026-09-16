@@ -1194,6 +1194,7 @@
   // wall calendar — seven day cells, one per day the solver answered for
   // =====================================================================
   const CAL = { x: 5.2, y: 4.85, z: -6.14, w: 2.05, h: 2.35 };
+  const calStart = scene.children.length;
   reg('calendar', box(CAL.w, CAL.h, .07, PAL.cream, CAL.x, CAL.y, CAL.z, { noCast: true }));
   box(CAL.w, .46, .09, 0xc25c37, CAL.x, CAL.y + CAL.h / 2 - .23, CAL.z + .01, { noCast: true });
   cyl(.05, .05, .12, 8, M(0x8a8478, { roughness: .5 }), CAL.x, CAL.y + CAL.h / 2 + .1, CAL.z + .02, { rx: Math.PI / 2 });
@@ -1219,11 +1220,17 @@
   reg('calendar', calFace);
   ZONES.calendar.parts = { cells: cells, face: calFace };
   ZONES.calendar.detail = { on: [calFace], off: cells.concat(calRules) };
+  // Everything the wall calendar is made of. It and the clock are the two
+  // things that STAY on this wall when the house turns the room, so they
+  // are the two that have to be stood off a wall twelve times thicker
+  // than the one they were authored flush with. See the turn below.
+  const CAL_PARTS = scene.children.slice(calStart);
 
   // =====================================================================
   // key hooks — a real board, real hooks, keys with a readable silhouette
   // =====================================================================
   const KEY = { x: -5.3, y: 4.62, z: -6.13, w: 2.0, h: .8 };
+  const keyStart = scene.children.length;
   reg('keys', put(rbox(KEY.w, KEY.h, .1, .06, M(0x8a6440, { roughness: .8 })), KEY.x, KEY.y, KEY.z + .06, {}));
   box(KEY.w + .12, .07, .15, 0x6b4c30, KEY.x, KEY.y + KEY.h / 2 - .02, KEY.z + .08, { noCast: true });
   const keySlots = [];
@@ -1269,6 +1276,19 @@
   ZONES.keys.detail = {
     on: keySlots.map(k => k.readCard).concat(keySlots.map(k => k.readout)), off: []
   };
+  // The whole key wall as ONE tagged group. The house has no car keys on
+  // its study wall and hides this rail -- but only the ZONE meshes were
+  // ever hidden, and the top rail, the four hooks and every key's shaft
+  // and teeth are decoration, not signal, so they are not in that list.
+  // They were buried in the house's east wall slab and invisible by
+  // accident until the room was placed properly; then they read as a
+  // stick with four rings floating beside the window. A group the
+  // adapter can switch off in one line ends that whole class of bug:
+  // anything added to this wall later is inside it.
+  const keysG = new THREE.Group();
+  keysG.userData.studyGroup = 'keys';
+  scene.add(keysG);
+  scene.children.slice(keyStart, -1).forEach(o => keysG.add(o));
 
   // =====================================================================
   // shelf + binders (programs), plant, photos, clock, lamp
@@ -1446,6 +1466,7 @@
   }
 
   // clock — hands set from the wall clock's own time (Task 4 makes them tick)
+  const clockStart = scene.children.length;
   cyl(.52, .52, .09, 24, M(PAL.cream, { roughness: .4 }), 4.15, 6.8, -6.12, { rx: Math.PI / 2 });
   put(new THREE.Mesh(new THREE.TorusGeometry(.52, .05, 8, 24), M(0x5a4029, { roughness: .6 })),
     4.15, 6.8, -6.1, {});
@@ -1457,6 +1478,36 @@
     m.rotation.z = -frac * Math.PI * 2;
     return put(m, 4.15, 6.8, -6.06, {});
   });
+  const CLOCK_PARTS = scene.children.slice(clockStart);
+  // The wall calendar and the clock STAY on the east wall when the house
+  // turns this room -- they are wall-hung, small, and a clock and a
+  // calendar either side of a window is the natural read of that wall;
+  // the north wall is full. Two translations, no rotation, and only in
+  // the house's fitting:
+  //   .28 out into the room, because the house's east wall is a 0.12
+  //     WORLD box (0.29 in these units) where the wall these two were
+  //     authored flush with is 0.12 of THESE -- flush with the thin one
+  //     is a hand's width inside the thick one.
+  //   the clock also steps to the window's NORTH side. It was authored
+  //     above the calendar's corner, on a wall that had neither a window
+  //     nor a sill; here that left its rim .017 off the window's frame,
+  //     and the stretch north of the window is empty now that the key
+  //     rail is switched off. Flanking reads better than stacked. In
+  //     house units the clock then clears the frame by .45 on its side
+  //     and the calendar clears it by .23 on the other, with the clock
+  //     1.35 off the north wall -- nothing touches anything.
+  if (WINDOW_WALL === 'east') {
+    const stand = (parts, dx, tag) => {
+      const g = new THREE.Group();
+      g.userData.studyGroup = tag;
+      g.position.set(dx, 0, .28);
+      scene.add(g);
+      parts.forEach(o => g.add(o));
+      return g;
+    };
+    stand(CAL_PARTS, 0, 'calendar');
+    stand(CLOCK_PARTS, -7.45, 'clock');
+  }
   // floor lamp
   cyl(.42, .5, .07, 14, M(0x2c2823, { roughness: .5 }), 6.2, .05, -4.4, {});
   cyl(.06, .06, 3.5, 8, M(0x2c2823, { roughness: .5 }), 6.2, 1.8, -4.4, {});

@@ -415,7 +415,16 @@
        enough that the floor falls away to the lower right (bible S5.1) */
     var LIV_POS = new T.Vector3(0, 12.8, 26.5);
     var LIV_AT = new T.Vector3(0, 2.35, 10.3);
-    var STUDY_POS = new T.Vector3(7.90, 4.20, 17.46);
+    /* STUDY REFIT fix round 1: pulled back 20% along its OWN axis
+       (STUDY_AT unchanged, so the desk stays the centre of the shot).
+       The shelf wall turned onto the north wall is 5.19 units wide
+       and its west end -- the shelf, its binders and the photograph
+       frame under it -- ran off the left of the old frame. The room
+       cannot shift east: the board's east end meets the wall map.
+       Still east of x 6.85, the great-room/east-rooms line, so the
+       only street face between the camera and the study is the
+       study's own (v2.499.41's reason for moving it here at all). */
+    var STUDY_POS = new T.Vector3(7.02, 4.75, 18.82);
     var STUDY_AT = new T.Vector3(12.30, 1.45, 10.68);
     cam.position.copy(orbitPos(ORBIT.stop));
     cam.lookAt(ORBIT.pivot);

@@ -15,11 +15,11 @@ This arc makes the house **two rectangles with two block roofs** and lets the pa
 | **main** | -7.15 .. 14.65 | -6.10 .. 14.55 | 21.8 × 20.65 | kitchen (north-west), living (south-west), pantry closet, the **study** (south-east, x 6.85..14.65, z 7.65..14.55 — translated north by 2.17: `house_study.js` `NORTH 9.88 → 7.71`, `SOUTH 16.62 → 14.45`, `EAST`/`WEST` unchanged, plus `STUDY_POS/AT` by the same 2.17), and two **future rooms** north of the study: the *east room* (x 6.85..14.65, z 1.5..7.65, the old patio notch) and the *back room* (x 6.85..14.65, z -6.1..1.5, the old rear room) — floors, walls and their existing openings only; no props, no zones, no cameras | 14.55 (unchanged) |
 | **garage block** | -18.20 .. -7.15 | -6.10 .. 10.10 | 11.05 × 16.20 | garage (x -18.2..-12.6), mudroom (x -12.6..-7.15); the old rear service void becomes garage/mudroom depth | 10.10 (unchanged) — set back 4.45 behind the main; the first block with a `depth` a later arc varies |
 
-The main rectangle is the whole east side now; nothing projects past the front and nothing is notched. The kitchen's `patio_slider` (x 6.85, z 5.80) becomes an INTERIOR opening into the east room, registered like `living_study_door` (twoSided, `room: 'kitchen'`), and `living_back_room_door` stays as the living room's opening into the back room. The exterior "Kitchen" marker moves to a new **back door** on the main's north wall (x ≈ -2.0, `entry: 'back_door'`), with a back patio slab outside it in the yard. The future rooms get one exterior window each on the east wall so the orbit's east stops do not read as blank.
+The main rectangle is the whole east side now; nothing projects past the front and nothing is notched. The kitchen's `patio_slider` (retired v2.499.42 → `east_room_door`) (x 6.85, z 5.80) becomes an INTERIOR opening into the east room, registered like `living_study_door` (twoSided, `room: 'kitchen'`), and `living_back_room_door` stays as the living room's opening into the back room. The exterior "Kitchen" marker moves to a new **back door** on the main's north wall (x ≈ -2.0, `entry: 'back_door'`), with a back patio slab outside it in the yard. The future rooms get one exterior window each on the east wall so the orbit's east stops do not read as blank.
 
 **Deleted** (shell only, no props, no zones): `massing_east_back_north/east/patio`, `massing_east_front_east/patio/south`, `massing_front_roof`, `massing_back_roof_*` and `massing_back_roof_shed`, `massing_service_north/south/west/roof`, `mudroom_cross_roof`, `mudroom_roof`, the terrace slab and its furniture, `living_roof` (registered, empty, inert since H3). `mudroom_front_cladding` / `mudroom_east_finish` fold into the garage block's walls.
 
-**Kept as-is**: `north_wall` (grows east to x 14.65), `north_cladding`, `west_wall`, `west_skirt`, `west_cladding`, `south_wall` (grows east to x 14.65 — the study's street face is part of it now), `garage_shell`, `garage_door`, `patio_slider` (re-registered as interior), `living_back_room_door`, `yard`, every interior zone, every camera except the study's.
+**Kept as-is**: `north_wall` (grows east to x 14.65), `north_cladding`, `west_wall`, `west_skirt`, `west_cladding`, `south_wall` (grows east to x 14.65 — the study's street face is part of it now), `garage_shell`, `garage_door`, `patio_slider` (re-registered as interior;retired v2.499.42 → `east_room_door`), `living_back_room_door`, `yard`, every interior zone, every camera except the study's.
 
 **New pieces**: `north_wall_east` (the main's north wall from x 6.85 to 14.65, one window), `mudroom_front` (the mudroom's full-height street face on the garage block, `room: 'mudroom'` — the old front band folded in), `east_wall` (rebuilt: the main's full east side at x 14.65, -6.1..14.55, exterior; the old east wall at x 6.85 becomes the interior partition between kitchen/living and the future rooms/study, registered as `east_partition` for cutaways), `garage_block_north`, `garage_block_west` (one window), `garage_block_roof_*`, `roof_main_*` (re-extended to the full main), `back_door` (north wall, `room: 'kitchen'`, `entry: 'back_door'`), `future_room_partition` (between east room and back room, `room: null` — inert), `back_patio` (slab, not registered).
 
@@ -45,7 +45,7 @@ Coplanar-run roof features across the old garage/mudroom boundary are now trivia
 - **Idle return**: the panel's `panel_idle_return_seconds` timer already returns to the home board; at the exterior level it also snaps the orbit to stop 0 (one tween) so the wall always rests on the street view.
 - **Lighting**: the sun rig is unchanged (SUN_OFF, shadows, fillN). From the north stops the facades read in hemisphere/fill light — honest for a fixed sun, and it keeps the interior lighting laws untouched. If the north read is too flat in the probe, a second static fill aimed at the back wall is the ONE permitted lighting change, gated by the same kitchen-ratio gate the quality pass used.
 - **What orbit exposes** (authored in this arc because the camera now sees it): the main's north wall gets two windows + the back door; the main's east wall gets three windows (study, east room, back room); the garage block's west wall gets one window; the back patio slab; nothing else. The street, curb, bus, driveway and front walk stay south.
-- **Markers**: `EXTERIOR_HINTS` already derive pixels from world boxes via `chfNavProbe`; a hint whose target is occluded at the current stop returns null and is not drawn. `back_door` replaces `patio_slider` as the Kitchen entry (the slider is interior now).
+- **Markers**: `EXTERIOR_HINTS` already derive pixels from world boxes via `chfNavProbe`; a hint whose target is occluded at the current stop returns null and is not drawn. `back_door` replaces `patio_slider` (retired v2.499.42 → `east_room_door`) as the Kitchen entry (the slider is interior now).
 
 ## 5. Facade slot table re-derivation
 
@@ -217,7 +217,7 @@ roof:   gable(0, span 3)  gable(8, span 4)
 ### 10.5 Registered hand pieces
 
 **KEPT (16), unchanged registration:** `north_wall`, `north_cladding`, `west_wall`, `west_skirt`,
-`west_cladding`, `south_wall`, `garage_shell`, `garage_door`, `patio_slider`,
+`west_cladding`, `south_wall`, `garage_shell`, `garage_door`, `patio_slider` (retired v2.499.42 → `east_room_door`),
 `living_back_room_door`, `living_study_door`, `yard`, `roof_main_north`, `roof_main_south`,
 `roof_main_end_west`, `roof_main_end_east`.
 
@@ -371,7 +371,7 @@ left it unchanged and green at every stop.
 - `SHADOW_BOX.study` and the study reading-lamp's literal position are off-centre against the
   translated study span; visually fine per probe, left alone as a quality nicety rather than a
   correctness fix.
-- Nothing pins `patio_slider`'s `twoSided` interior registration directly.
+- Nothing pins `patio_slider`'s (retired v2.499.42 → `east_room_door`) `twoSided` interior registration directly.
 - `STUDY_DOOR_Z4` (`house.js` ~4161) duplicates `house_features.js:108`'s z value with only a
   comment binding the two together.
 - A stale test comment still names `facade_wing_window_15/16` (`test_house_live.py` ~1337) after the
@@ -455,7 +455,7 @@ enclosed east room, so it reached the kitchen only by ghosting `east_partition`,
      `['mudroom','kitchen','living']`; `north_cladding` `['kitchen']`; `garage_block_north`/`_west`
      and all four `garage_block_roof_*` `['garage','mudroom']`; `mudroom_front` `['mudroom']`;
      `garage_shell`/`garage_door` `['garage']`. `'east_room'`/`'back_room'` are legal owner names
-     and never a subject, so those pieces are always solid. Openings stay ownerless: `patio_slider`,
+     and never a subject, so those pieces are always solid. Openings stay ownerless: `patio_slider` (retired v2.499.42 → `east_room_door`),
      `living_back_room_door`, `living_study_door`, `back_door`, `yard`.
    - Facade features take the owners of the slot they sit on (`slotOwners`/`slot_owners`, mirrored
      in `services/house_facade.py`, pinned by the existing JS↔Python slot parity check): main-face
@@ -483,7 +483,7 @@ identical — `south_wall`, `roof_main_west_south`, `facade_main_porch_8`, the p
 pieces, `facade_main_door_10`, windows 7/9/12, `yard`; garage and mudroom unchanged from the arc;
 study — `south_wall_east`, `roof_main_east_north/_south/_end_east`, windows 15/16,
 `living_study_door`, `yard`. `east_partition`, `east_wall`, `north_wall_east`,
-`future_room_partition`, `patio_slider` and `living_back_room_door` are now solid in every view.
+`future_room_partition`, `patio_slider` (retired v2.499.42 → `east_room_door`) and `living_back_room_door` are now solid in every view.
 Budgets are flat (buildMs ~1.1s, exterior in-frustum 1403 unchanged); the canonical exterior mesh
 pin moves 1840 → 1849 (+6 roof, +3 wall, derived box by box).
 
@@ -612,3 +612,47 @@ flat. NOT device-verified.
 binders" marker label clips. Moving `STUDY_POS` west to widen the frame walks back toward the great
 room's street face, which 10.10 moved it off; the shelf's own marker is still on canvas and
 tappable, so the camera stayed put.
+
+
+**Fix round 1 (v2.499.44).** Four findings from the review of c8ee2f1, all inside this room.
+
+1. **The study has its own east wall again.** The first cut argued there was "nothing to cut a
+   hole in" on the east and left the block's `east_wall` slab standing in for the room's wall.
+   That conflated two layers: the north wall proves the pattern — the room's own 0.12 box, built
+   behind its own face — and without it the study read cream on the north and the block's
+   charcoal on the east, with `box('east', …, EAST, …)` dead inside the slab. The east wall is
+   now the same four boxes the north wall used to carry (`east-north`, `east-south`, `east-low`,
+   `east-high` at `EWF + .06`, around `wz`/`ww` with the same `wy`/`wh` derivation), their back
+   on the slab's face, and `EGAP` is half the wall's thickness — which is exactly what lands the
+   scene's own east wall plane in the MIDDLE of the box, where the north wall used to carry the
+   window. The dead box is gone.
+2. **No orphan key rail.** `house_study.js` hid `built.zones.keys.meshes`, but the top rail, the
+   four hooks and every key's own shaft and teeth are decoration rather than signal and were
+   never in that list. They were invisible only because they sat inside the slab; the moment the
+   room was placed clear of it they read as a stick with four rings beside the window. `study.js`
+   now hands the whole key wall over as one tagged group (`userData.studyGroup === 'keys'`) and
+   the adapter switches the group off in one line — anything hung on that rail later is inside
+   it. The zone meshes are still hidden as well, so the hiding does not depend on the group alone.
+3. **What stays on the east wall, and why (controller ruling).** The **wall calendar** (world
+   z 12.44..13.30, south of the window) and the **clock** (world z 9.06..9.54, north of it) STAY,
+   flanking the glass. They are wall-hung and small; the north wall is full (the turned set is
+   5.19 of a 7.26 wall); and a clock and a calendar either side of a window is the natural read of
+   that wall. Two translations, in the house's fitting only: **.28 study units out into the room**,
+   because both were authored flush with a wall 0.05 world thick and the house's is 0.12; and the
+   clock **crosses to the window's north side**, because it was authored above the calendar's
+   corner on a wall with neither a window nor a sill and that left its rim .017 off the frame,
+   while the stretch north of the window is empty now that the key rail is off. Closest approach
+   after: .23 (calendar to frame), .45 (clock to frame), 1.35 (clock to the north wall).
+4. **The study camera pulls back 20% along its own axis.** `STUDY_POS` (7.90, 4.20, 17.46) →
+   **(7.02, 4.75, 18.82)**; `STUDY_AT` unchanged, so the desk stays the centre of the shot. The
+   turned shelf wall is 5.19 wide and its west end — the shelf, its binders and the photograph
+   frame under it — ran off the left of the old frame, and the room cannot shift east (the
+   board's east end meets the wall map). Still east of x 6.85, the great-room/east-rooms line
+   v2.499.41 moved this camera across, so the only street face between camera and study is the
+   study's own.
+
+The **mesh pin moves 1865 → 1868**, RED-first: −1 the dead `east` box, +4 the opening it is
+replaced by. Interior pieces only — the exterior elevation's own count never moved. Covering
+tests: `tests/test_house_live.py` and `tests/test_study_live.py` (the standalone is untouched:
+every change above is inside `if (WINDOW_WALL === 'east')` or in the adapter). No Python under
+`services/` changed, so no full sweep. Probes: `scratch/refit-after2/{study,living}.png`.
