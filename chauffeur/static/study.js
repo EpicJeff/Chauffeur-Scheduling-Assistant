@@ -34,6 +34,16 @@
     catch (e) { return false; }
   }
   const quality = (EMBED && EMBED.quality) || new URLSearchParams(location.search).get('quality') || 'high';
+  // STUDY REFIT (2026-09-16). Which wall the window is on. The standalone
+  // /study page keeps the authored NORTH window -- that scene has its own
+  // quality pass and its own pins, and nothing about it changed. The HOUSE
+  // fits this room with an exterior EAST wall and an interior north wall
+  // shared with the east room, so house_study.js asks for 'east': the
+  // window turns onto the wall that actually faces outdoors, and the wall
+  // of shelves, books, photographs and the evidence board turns onto the
+  // north. Both are ONE rigid turn of a group each (see the turn below),
+  // so nothing is re-authored and no runtime write has to learn a new frame.
+  const WINDOW_WALL = (EMBED && EMBED.windowWall) === 'east' ? 'east' : 'north';
   const NICE = quality !== 'low';
   const useRoom = !!EMBED || (quality !== '2d' && webglOk() && Math.min(innerWidth, innerHeight) >= 560 && innerWidth >= 900);
 
@@ -686,6 +696,12 @@
   // window — frame computed from the glass, sky swapped day/night
   // =====================================================================
   const WIN = { x: -7.09, y: 4.35, z: .2, w: 4.8, h: 3.2, f: .24 };
+  // Where the window's own centre ends up, in scene coordinates. The house
+  // reads it back (house_study.js) and splits that wall's sage band and
+  // chair rail around exactly this window, rather than around a number
+  // copied out of here by hand.
+  const WIN_AT = new THREE.Vector3(WIN.x, WIN.y, WIN.z);
+  const winStart = scene.children.length;
   const skyMat = new THREE.MeshBasicMaterial({ map: night ? skyNight : skyDay });
   const sky = put(new THREE.Mesh(new THREE.PlaneGeometry(WIN.w, WIN.h), skyMat),
     WIN.x - .04, WIN.y, WIN.z, { ry: Math.PI / 2 });
@@ -734,6 +750,11 @@
       color: night ? 0x4a6a9a : 0xfff0cc, transparent: true, opacity: .06,
       side: THREE.DoubleSide, depthWrite: false
     })), -4.5, 3.3, .6, { ry: Math.PI / 2.5, rz: .5 });
+  // Everything authored against WIN above -- sky, cloud banks, the four
+  // frame rails, both mullions, the sill, the card that stands on it and
+  // the soft patch of daylight the window leans into the room. Light
+  // included: a glow off a wall with no window in it is a lie.
+  const WIN_PARTS = scene.children.slice(winStart);
 
   // =====================================================================
   // desk
@@ -1101,6 +1122,7 @@
   // corkboard — frame rails computed from the board's own rectangle
   // =====================================================================
   const BD = { x: .5, y: 4.6, z: -6.13, w: 5.4, h: 3.3, d: .12, rail: .2 };
+  const boardStart = scene.children.length;
   corkTex.repeat.set(2, 1);
   reg('board', box(BD.w, BD.h, BD.d, 0, BD.x, BD.y, BD.z,
     { noCast: true, mat: M(0xffffff, { map: corkTex, roughness: 1 }) }));
@@ -1163,6 +1185,10 @@
   }
   ZONES.board.parts = { pins: pins, face: pinFace };
   ZONES.board.detail = { on: pins.map(p => p.note), off: boardRules };
+  // The corkboard, its four rails and all fourteen pin groups. Held apart
+  // from the rest of the wall because the house lifts the board assembly
+  // (and only it) clear of its taller chair rail -- house_study.js.
+  const BOARD_PARTS = scene.children.slice(boardStart);
 
   // =====================================================================
   // wall calendar — seven day cells, one per day the solver answered for
@@ -1248,16 +1274,20 @@
   // shelf + binders (programs), plant, photos, clock, lamp
   // =====================================================================
   const SHELF = { x: -4.3, y: 5.95, z: -5.72, w: 3.8, d: .95 };
-  box(SHELF.w, .16, SHELF.d, 0, SHELF.x, SHELF.y, SHELF.z,
-    { mat: M(0x8a6440, { roughness: .8 }), noCast: true });
-  [-1, 1].forEach(s => box(.22, .55, .34, 0x6b4c30, SHELF.x + s * (SHELF.w / 2 - .2), SHELF.y - .35, -5.98, { noCast: true }));
+  // The shelf wall: everything hung on or standing against this wall that
+  // is NOT the board, the calendar, the keys, the clock or the map. The
+  // house turns this whole set onto its north wall in one piece.
+  const WALL_PARTS = [];
+  WALL_PARTS.push(box(SHELF.w, .16, SHELF.d, 0, SHELF.x, SHELF.y, SHELF.z,
+    { mat: M(0x8a6440, { roughness: .8 }), noCast: true }));
+  [-1, 1].forEach(s => WALL_PARTS.push(box(.22, .55, .34, 0x6b4c30, SHELF.x + s * (SHELF.w / 2 - .2), SHELF.y - .35, -5.98, { noCast: true })));
   const BINDER_C = [0xc25c37, 0x3f78c0, 0x4f9a4f, 0x8a5fa8, 0xd8a53a];
   const binders = [];
   for (let i = 0; i < 5; i++) {
     const b = put(rbox(.38, .98, .74, .05, M(BINDER_C[i], { roughness: .8 })),
       SHELF.x - 1.4 + i * .44, SHELF.y + .57, SHELF.z, {});
     b.userData.homeZ = SHELF.z;
-    b.visible = false; binders.push(reg('binders', b));
+    b.visible = false; binders.push(reg('binders', b)); WALL_PARTS.push(b);
     // The spine, read the way a spine is read: bottom to top, title first
     // and the week under it. Parented to the binder, so a pulled-out one
     // carries its own label out with it.
@@ -1272,6 +1302,7 @@
   // Turned pots and authored leaf silhouettes, rather than green sticks.
   function studyPlant(x, y, z, scale) {
     const g = new THREE.Group(); g.position.set(x, y, z); g.scale.setScalar(scale); scene.add(g);
+    // returned, so a caller can put the plant in a group that moves
     const profile = [[.16,0],[.19,.025],[.24,.36],[.27,.38],[.27,.43],[.23,.44],[.21,.39]];
     const pot = new THREE.Mesh(new THREE.LatheGeometry(profile.map(p => new THREE.Vector2(p[0], p[1])), NICE ? 16 : 8),
       M(0xb5713c, { roughness: .55 })); g.add(pot); pot.castShadow = true;
@@ -1284,9 +1315,10 @@
       leaf.scale.set(.13,.37,.065); leaf.position.set(Math.cos(a)*.19,high,Math.sin(a)*.18);
       leaf.rotation.set(Math.sin(a)*.45, a, Math.cos(a)*.55); leaf.castShadow=true; g.add(leaf);
     }
+    return g;
   }
-  studyPlant(SHELF.x + 1.3, SHELF.y + .08, SHELF.z, 1);
-  studyPlant(-6.85, SILL.top + .04, 1.75, .75);
+  WALL_PARTS.push(studyPlant(SHELF.x + 1.3, SHELF.y + .08, SHELF.z, 1));
+  WIN_PARTS.push(studyPlant(-6.85, SILL.top + .04, 1.75, .75));   // on the sill
   const libraryStart = scene.children.length;
   // Low fitted library: household reference books are scenery, never fake
   // active program binders. Its top stays below the existing key rail.
@@ -1306,7 +1338,7 @@
   }
   studyPlant(-3.45, 2.63, -5.39, .86);
   // Keep the shelving visible beside the working desk, below the calendar.
-  scene.children.slice(libraryStart).forEach(o => { o.position.x += 9.1; });
+  scene.children.slice(libraryStart).forEach(o => { o.position.x += 9.1; WALL_PARTS.push(o); });
   const reading = new THREE.Group(); reading.position.set(5.8,0,-1.9);
   reading.rotation.y=-.30; scene.add(reading);
   const fabric=M(0x8f4038,{roughness:.98});
@@ -1332,8 +1364,8 @@
   // saw was a picture frame hanging in mid-air against the baseboard. The
   // shelf gives it a surface that reads AS a surface from where the room is
   // actually looked at.
-  box(.55, .66, .05, 0x5a4029, -3.9, 5.3, -6.14, { noCast: true });
-  box(.42, .53, .02, 0xd8a05a, -3.9, 5.3, -6.1, { noCast: true });
+  WALL_PARTS.push(box(.55, .66, .05, 0x5a4029, -3.9, 5.3, -6.14, { noCast: true }));
+  WALL_PARTS.push(box(.42, .53, .02, 0xd8a05a, -3.9, 5.3, -6.1, { noCast: true }));
   const frameGrp = new THREE.Group();
   frameGrp.position.set(SHELF.x + .80, SHELF.y + .08 + .25, SHELF.z + .04);
   frameGrp.rotation.y = .22;
@@ -1342,6 +1374,77 @@
   put(new THREE.Mesh(new THREE.PlaneGeometry(.26, .34), M(0x6f9ad0, { roughness: .8 })),
     0, 0, .046, { parent: frameGrp });
   box(.06, .26, .05, 0x5a4029, 0, -.16, -.12, { parent: frameGrp, rx: -.4 });
+  WALL_PARTS.push(frameGrp);
+
+  // =====================================================================
+  // the house's fitting: the window turns east, the shelf wall turns north
+  // =====================================================================
+  // Two rigid quarter turns, and nothing else. Each group is assembled at
+  // identity -- so putting a piece into it changes no world position --
+  // and then rotated about a pivot chosen to land the wall the set was
+  // authored on exactly onto the wall it is moving to. Rigid means every
+  // piece keeps its distance from its wall, its height, its spacing along
+  // the wall and its relation to every other piece in the set: the shelf
+  // still stands the same hand's width off the plaster, a binder still
+  // pulls out along its own local +z, a stalled card still sags around
+  // the point it is pinned at. Nothing is re-authored and no runtime
+  // write is touched, because the group carries the rotation, not the
+  // meshes.
+  //
+  // Each pivot is SOLVED from the two things its turn has to land, never
+  // tuned. Writing P' = p + R(P - p), a quarter turn maps one coordinate
+  // of P to the other coordinate of P', so two numbers fix the pivot:
+  // `gap` (p.z - p.x) fixes the PLANE the set lands on, and `along`
+  // (p.x + p.z) fixes where it sits along that plane.
+  //
+  //   WINDOW, -90deg. Plane: the authored north wall x = -7.09 lands on
+  //     the east wall's z = -6.09, the same tenth of a unit proud of its
+  //     own wall that it was authored at. Along: the window's centre
+  //     z = .2 lands on x = .98, because .98 at the house's 0.42 fitting
+  //     is world z 11.10 -- the z the house already carries an exterior
+  //     pane at on this elevation, and the two are one window seen from
+  //     two sides.
+  //   SHELF AND BOARD, +90deg. Plane: the authored east wall z = -6.10
+  //     lands on x = -6.90, twenty hundredths PROUD of the north wall's
+  //     own -7.10 rather than on it. On purpose: the house's north wall
+  //     is a 0.12-WORLD slab where this scene's is a 0.12-STUDY one
+  //     (0.05 world), and the corkboard hangs .09 behind its own wall
+  //     plane -- flush in the room it was authored for, two finger
+  //     widths inside a house wall. The set stands clear of the face the
+  //     house actually presents instead.
+  //     Along: the board's own centre x = .50 lands at z = .55, which
+  //     pushes the set as far EAST along the north wall as it goes --
+  //     world x 8.57..13.76 of a 6.92..14.18 wall. That keeps it away
+  //     from the study door in the west partition and clear of the wall
+  //     map, the one other thing hanging on this wall. (The set is 5.19
+  //     world units wide on a 7.26 wall, so it cannot fit in the east
+  //     HALF of it; east-biased is the whole of what the wall allows.)
+  //
+  // The turn reverses the order of the set along its wall, which is what
+  // a quarter turn of a real wall of furniture does: what stood at the
+  // north end of the east wall stands at the west end of the north one.
+  if (WINDOW_WALL === 'east') {
+    const pivotOf = (gap, along) => ({ x: (along - gap) / 2, z: (along + gap) / 2 });
+    const winP = pivotOf((-6.09) - (-7.09), .98 + .20);     // ( .09,  1.09)
+    const wallP = pivotOf((-6.10) - (-6.90), .55 + .50);    // ( .125,  .925)
+    const turn = (parts, angle, px, pz, tag) => {
+      const g = new THREE.Group();
+      g.userData.studyGroup = tag;
+      scene.add(g);
+      parts.forEach(o => g.add(o));
+      const q = new THREE.Quaternion()
+        .setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+      const pivot = new THREE.Vector3(px, 0, pz);
+      g.quaternion.copy(q);
+      g.position.copy(pivot).sub(pivot.clone().applyQuaternion(q));
+      g.updateMatrix();
+      return g;
+    };
+    WIN_AT.applyMatrix4(turn(WIN_PARTS, -Math.PI / 2, winP.x, winP.z, 'window').matrix);
+    turn(WALL_PARTS, Math.PI / 2, wallP.x, wallP.z, 'shelf');
+    turn(BOARD_PARTS, Math.PI / 2, wallP.x, wallP.z, 'board');
+  }
+
   // clock — hands set from the wall clock's own time (Task 4 makes them tick)
   cyl(.52, .52, .09, 24, M(PAL.cream, { roughness: .4 }), 4.15, 6.8, -6.12, { rx: Math.PI / 2 });
   put(new THREE.Mesh(new THREE.TorusGeometry(.52, .05, 8, 24), M(0x5a4029, { roughness: .6 })),
@@ -2143,7 +2246,9 @@
   let contextLost = false;
   if (EMBED) {
     applyState(null);
-    return { group: scene, zones: ZONES, shell: shellG, update: applyState };
+    return { group: scene, zones: ZONES, shell: shellG, update: applyState,
+             windowWall: WINDOW_WALL, windowAt: WIN_AT,
+             windowSize: { w: WIN.w, h: WIN.h } };
   }
   R.domElement.addEventListener('webglcontextlost', e => {
     if (contextLost) return;

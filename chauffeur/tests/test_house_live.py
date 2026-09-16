@@ -963,9 +963,13 @@ def scenario_shell_fabric_registry():
         # its own two slope decks and gets only its OWN outer gable end
         # (the split is an interior line, so neither half gets a gable
         # there) -- and south_wall gains south_wall_east.
+        # STUDY REFIT (2026-09-16): patio_slider is retired. Its glass
+        # moved to the study's own opening (living_study_door, unchanged
+        # by name) and the opening it used to fill at z 5.80 wears the
+        # plain interior door the study gave up -- east_room_door.
         KEPT = {'north_wall', 'north_cladding', 'west_wall', 'west_skirt',
                 'west_cladding', 'south_wall', 'garage_shell', 'garage_door',
-                'patio_slider', 'living_back_room_door', 'living_study_door',
+                'east_room_door', 'living_back_room_door', 'living_study_door',
                 'yard', 'roof_main_west_north', 'roof_main_west_south',
                 'roof_main_west_end_west', 'roof_main_east_north',
                 'roof_main_east_south', 'roof_main_east_end_east'}
@@ -1142,10 +1146,10 @@ def scenario_shell_fabric_registry():
             # future_room_partition, south_wall_east, roof_main_east_*
             # and the study's own windows 15/16 all declare owners that
             # do not include 'kitchen'. SOLID.
-            # patio_slider and living_back_room_door left it too, on
+            # east_room_door and living_back_room_door left it too, on
             # geometry alone: both sit at x 6.85 EAST of the new camera
             # AND east of the subject, so neither separates them any
-            # more -- from the street you look AT the slider, not
+            # more -- from the street you look AT the door, not
             # through it. SOLID.
             'kitchen': ['south_wall', 'roof_main_west_south',
                         'facade_main_gable_8_west', 'facade_main_gable_8_east',
@@ -1310,17 +1314,20 @@ def scenario_shell_fabric_registry():
         check(page.evaluate("window.chfHouseMode()") == 'exterior',
               'the roomless east elevation must stay inert')
 
-        # The slider is an INTERIOR opening into the east room now, so
-        # its own side of it is that room, not the terrace. A camera
-        # standing in the east room still taps through to the kitchen.
+        # The opening at z 5.80 is the east room's plain interior door
+        # now (STUDY REFIT: the glass went to the study). It keeps the
+        # slider's registration semantics exactly -- room 'kitchen',
+        # twoSided -- so a camera standing in the east room still taps
+        # through to the kitchen.
         page.evaluate("window.chfHouseCam(12,2.6,5.6,6.9,2,5.8)")
         page.wait_for_function("window.chfNavProbe({settled:true})")
-        hit = page.evaluate("window.chfNavProbe({piece:'patio_slider'})")
-        check(hit is not None, 'slider must be reachable from the east room')
+        hit = page.evaluate("window.chfNavProbe({piece:'east_room_door'})")
+        check(hit is not None,
+              "the east room's door must be reachable from that room")
         page.mouse.click(hit['cx'], hit['cy'])
         page.wait_for_function("window.chfNavProbe({settled:true})")
         check(page.evaluate("window.chfHouseMode()") == 'kitchen',
-              'the patio slider must enter the kitchen')
+              "the east room's door must enter the kitchen")
 
         # High quality chamfers the radio face. Its fallback projection must
         # use the radio's world X face after the parent rotates 90 degrees;
@@ -1375,7 +1382,7 @@ def scenario_a_room_cutaway_leaves_other_rooms_enclosed():
         # deliberately ownerless, the corridor rule alone governs them)
         # must declare at least one owner -- an un-owned wall is one the
         # corridor rule can still strip from a room that does not own it.
-        OWNERLESS = {'patio_slider', 'living_back_room_door',
+        OWNERLESS = {'east_room_door', 'living_back_room_door',
                      'living_study_door', 'back_door', 'yard'}
         missing = sorted(f['name'] for f in fab
                          if not f.get('owners') and f['name'] not in OWNERLESS)
@@ -1471,6 +1478,124 @@ def scenario_study_sits_inside_the_main_block():
               'its new north wall): min z %r' % (box[4],))
 
 
+def scenario_the_study_faces_east_behind_glass_doors():
+    """STUDY REFIT (2026-09-16, .superpowers/sdd/2026-09-16-study-refit).
+
+    Two user requests in one pass.
+
+    (A) DOORS. "The patio door is still there even though the patio
+    turned into a regular inside room. That door might actually make a
+    good door for the study as those commonly have double glass doors.
+    And then use the study's regular interior door on that other room."
+    So the glazing moved to the study's own opening at z 9.93 -- which
+    keeps the name `living_study_door`, its registration, its room
+    stamping and its parent-PIN gate -- and the opening at z 5.80 wears
+    the plain interior door, registered `east_room_door` with the
+    slider's old semantics (normal [1,0,0], room 'kitchen', twoSided,
+    ownerless). `patio_slider` is retired by name.
+
+    (B) THE STUDY FACES EAST. "The study layout doesn't make sense now
+    that the patio is gone. The window needs to be on the east wall and
+    the items on the east wall need to move to the north wall." The
+    east wall is the only EXTERIOR wall the room has, and the house
+    already carries a pane on it at z 11.10, so the window lines up
+    with it; the shelf/library/board wall turns onto the north wall,
+    which is the interior one it shares with the east room.
+
+    Both halves are asserted from the scene itself -- the fabric
+    registry for the doors, the study's own zone proxies for the window
+    and the board -- never from a constant the code also reads.
+    """
+    served = live_app()
+    if served is None:
+        return
+    with served.browser() as page:
+        page.add_init_script(DAY_LOCK_JS)
+        page.goto(served.url('house?quality=high'))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_timeout(2200)
+
+        # ---- A: the doors swapped -------------------------------------
+        fab = {f['name']: f for f in page.evaluate("window.chfShellFabric()")}
+        check('patio_slider' not in fab,
+              'patio_slider must be retired by name, not left registered '
+              'beside its replacement')
+        door = fab.get('east_room_door')
+        check(door is not None,
+              "the east room's opening must register as east_room_door; "
+              'registered: %r' % sorted(fab))
+        check(door and door['room'] == 'kitchen',
+              "east_room_door keeps the slider's room stamping so a tap "
+              'on it still enters the kitchen, got %r'
+              % (door and door['room'],))
+        check(door and door['twoSided'] is True,
+              'east_room_door is an interior opening: twoSided, like the '
+              'slider it replaces, got %r' % (door and door.get('twoSided'),))
+        check(door and not door['owners'],
+              'an opening encloses nothing and stays ownerless, got %r'
+              % (door and door['owners'],))
+
+        glass = fab.get('living_study_door')
+        check(glass is not None,
+              'the study door keeps its name through the glazing swap')
+        check(glass and glass['interiorGlow'] == 0,
+              "the study's glass is INTERIOR glazing -- both sides of it "
+              'are indoors -- so it never takes the exterior night glow, '
+              'got %r' % (glass and glass['interiorGlow'],))
+        span = glass['box'][5] - glass['box'][4] if glass else 0
+        check(span > 2.6,
+              'the double doors must fill the widened 2.65 opening at '
+              'z 9.93, got a %.2f span' % span)
+
+        # the entry survived the builder swap: the doors are still the
+        # study's own tap, and test_house_life_live walks the PIN behind it.
+        page.evaluate("window.chfHouseEnterRoom('living')")
+        page.wait_for_function("window.chfNavProbe({settled:true})")
+        check(page.evaluate("window.chfNavProbe({action:'study'})") is not None,
+              'the glass doors must still carry the study entry')
+
+        # ---- B: the study faces east ----------------------------------
+        page.evaluate("window.chfHouseEnterRoom('study')")
+        page.wait_for_timeout(1400)
+        check(page.evaluate("typeof window.chfStudyZone === 'function'"),
+              'chfStudyZone must exist so a test can pin which wall a '
+              "study signal hangs on, read off the room's own zone proxy")
+        win = page.evaluate("window.chfStudyZone('study_window')")
+        check(win is not None, 'the study window zone must report a box')
+        wx = (win[0] + win[1]) / 2 if win else 0
+        wz = (win[4] + win[5]) / 2 if win else 0
+        check(wx > 14.0,
+              'the study window must hang on the EAST wall (x 14.52), '
+              'got centre x %r' % wx)
+        check(abs(wz - 11.10) < .35,
+              "the study window must line up with the house's own east "
+              'pane at z 11.10, got centre z %r' % wz)
+        for key in ('study_board', 'study_binders'):
+            zb = page.evaluate("window.chfStudyZone(%r)" % key)
+            check(zb is not None, '%s must report a box' % key)
+            cz = (zb[4] + zb[5]) / 2 if zb else 0
+            check(7.6 < cz < 8.6,
+                  '%s must have turned onto the NORTH wall (z 7.71), got '
+                  'centre z %r' % (key, cz))
+            cx = (zb[0] + zb[1]) / 2 if zb else 0
+            # east of the study door's corner (the west partition is at
+            # x 6.85): the turned set runs world x 8.57..13.76 of a
+            # 6.92..14.18 wall, biased as far east as the wall map --
+            # the one other thing hanging on the north wall -- allows.
+            check(cx > 8.4,
+                  '%s must sit on the north wall east of the study door '
+                  'corner, got centre x %r' % (key, cx))
+
+        # the room itself did not grow: a rigid turn moves nothing out.
+        box = page.evaluate("window.chfStudyBox()")
+        check(box is not None and box[1] <= 14.60 and box[0] >= 6.80,
+              'the refit must stay between the partition and the east '
+              'wall: x %r' % (box and [box[0], box[1]],))
+        check(box is not None and box[5] <= 14.56 and box[4] >= 7.5,
+              'the refit must stay inside the study: z %r'
+              % (box and [box[4], box[5]],))
+
+
 # The facade spec §2.2 pins the canonical facade to the elevation it
 # replaces. Exterior boot, quality=high, INVARIANT_JS `meshes` (the
 # never-merged survivors only), counted where this scenario runs in the
@@ -1547,7 +1672,42 @@ def scenario_study_sits_inside_the_main_block():
 # needs four items on one material inside ONE registered piece, and
 # every one of these boxes is a different material or a lone member of
 # its bucket on both sides of the change.
-CANONICAL_EXTERIOR_MESHES = 1849
+#
+# STUDY REFIT (2026-09-16) re-records it RED-first again: 1849 -> 1865,
+# +16. This pin counts every never-merged mesh in the SCENE, not only
+# the elevation, so interior pieces do move it -- and this pass swaps
+# two interior doors and rebuilds two of the study's own walls. The
+# exterior elevation itself is untouched in COUNT: the study's own east
+# pane changed SIZE (1.35 x 2.70 at y 2.80 -> 2.02 x 1.34 at y 1.95, to
+# be the same window the room has behind it) and shellWindow builds the
+# same eight meshes at any size.
+# Standalone (only this scenario's own seed) the same build counts 1724
+# against 1708 before the refit -- the same +16, and the same 141-mesh
+# seeded gap, which is what says the delta is this pass and nothing else.
+#   +13 living_study_door: the plain interiorDoor's 7 meshes (leaf, two
+#       panels, head casing, two side casings, knob) become the glazed
+#       pair's 20 -- 2 lites, 2 hanging stiles, 4 rails, the meeting
+#       stile, 8 handle parts (a plate and a knob per leaf per face)
+#       and 3 casing/lining boxes.
+#   +17 east_room_door is new: two interiorDoor leaves, one per face of
+#       a cut opening (7 each), plus the cut's own head and two jambs.
+#       Both doors are house_features fixtures, added to the scene after
+#       the build's mergeStatic pass, so every one of them survives.
+#    -8 patio_slider is retired. Its twelve frame-coloured boxes were
+#       already ONE merged mesh, which this pin does not count; the
+#       survivors that leave with it are 2 unique panes (forceUnique
+#       glass), 2 trim sills, 2 wood pulls and 2 stoop sills.
+#    -3 east_partition crosses the merge threshold. Its C.wall boxes go
+#       from three (the three wall segments) to five (plus a header over
+#       each door opening), and four on one material inside one
+#       registered piece is exactly what mergeStatic folds: three
+#       survivors become none.
+#    -3 house_study's own walls. The window's four-box opening (left,
+#       right, under, over) left the north wall, which is one solid run
+#       now, and the east wall did NOT gain one: the house's own
+#       east_wall slab is that wall, so the window is mounted on it the
+#       way the calendar and the clock are. Four boxes became one.
+CANONICAL_EXTERIOR_MESHES = 1865
 
 
 def scenario_canonical_facade_pins_the_hand_built_elevation():
@@ -2254,6 +2414,7 @@ if __name__ == '__main__':
     scenario_shell_fabric_registry()
     scenario_a_room_cutaway_leaves_other_rooms_enclosed()
     scenario_study_sits_inside_the_main_block()
+    scenario_the_study_faces_east_behind_glass_doors()
     scenario_canonical_facade_pins_the_hand_built_elevation()
     scenario_navigation_real_mouse()
     scenario_orbit_eight_stops()

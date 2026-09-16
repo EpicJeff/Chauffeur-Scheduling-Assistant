@@ -6,12 +6,49 @@
   window.HouseStudy = { build: function (T, detail, renderer) {
     if (!window.StudyFactory) return null;
     var quality = detail >= 3 ? 'high' : detail >= 2 ? 'medium' : 'low';
-    var built = window.StudyFactory({THREE:T, quality:quality, renderer:renderer});
+    // STUDY REFIT (2026-09-16): the house's study has an EXTERIOR east
+    // wall (the main block's own side elevation, already carrying a pane
+    // at z 11.10) and an INTERIOR north wall shared with the east room.
+    // A window on the north wall looked into another room; the shelves
+    // and the evidence board were on the only wall that could hold a
+    // window. So the factory turns them: window east, shelf wall north.
+    // The standalone /study page keeps the authored north window.
+    var built = window.StudyFactory({THREE:T, quality:quality, renderer:renderer,
+                                     windowWall:'east'});
     var root = built.group, zones = {}, proxies = new T.Group();
     var SCALE = .42, EAST = 14.52, NORTH = 7.71, SOUTH = 14.45, WEST = 6.92;
+    /* EFACE: what the room's east wall actually IS, as opposed to where
+       this module nominally ends. house.js's `east_wall` slab presents
+       its inner plaster face at x 14.30 and is SOLID from the study --
+       the study owns it, so no cutaway ever takes it away -- which means
+       everything the study hangs on this wall has to stand in front of
+       14.30 or it is buried inside a wall slab.
+
+       Until this refit nothing did. The room was placed off its nominal
+       EAST (14.52), so the study's own east wall plane landed at 14.44
+       and the wainscot, the base, the chair rail, the wall calendar, the
+       clock and the evidence board were all built east of the slab's
+       face: none of them has been visible from inside this room since
+       the study moved into the main block. (Look at the east wall in any
+       study shot before v2.499.42 -- bare plaster, no sage band, no
+       rail, where the north wall carries all three.) Moving the window
+       onto this wall is what made it impossible to leave alone.
+
+       So the room is placed by its WALLS now. EFACE is the slab's own
+       inner face, and the study scene's east wall plane (local z =
+       -6.10) lands EGAP clear of it: 0.12, the clearance the deepest
+       thing on this wall needs, which is the window sill -- it reaches
+       .088 behind its own plane, because in the room this scene was
+       authored for the wall behind it is .05 thick with nothing beyond.
+       NFACE is the same idea on the north: that wall box is built BEHIND
+       its own face rather than centred on it, so the face is the floor's
+       own north edge and everything the room hangs there -- the wall
+       map, and now the whole turned shelf wall -- stands in front of
+       it. */
+    var EFACE = 14.30, EGAP = .12, NFACE = NORTH;
     root.rotation.y = -Math.PI / 2;
     root.scale.setScalar(SCALE);
-    root.position.set(EAST - 6.3 * SCALE, .12, NORTH + 7.09 * SCALE);
+    root.position.set(EFACE - EGAP - 6.10 * SCALE, .12, NORTH + 7.09 * SCALE);
     root.userData.room = 'study';
     built.shell.visible = false;
 
@@ -23,21 +60,18 @@
     // The house chair rail is higher than the standalone Study's. Lift the
     // entire evidence-board assembly together so no frame, pin, or string
     // crosses the moulding after the scene is scaled into this room.
-    var boardParts = new Set();
-    (built.zones.board.meshes || []).forEach(function (m) {
-      var p = m;
-      while (p.parent && p.parent !== root) p = p.parent;
-      if (p.parent === root) boardParts.add(p);
-    });
-    // The authored frame rails are intentionally decorative and therefore
-    // are not zone meshes. Include every root-level part inside the board's
-    // authored envelope so the face, frame, pins, and notes move as one.
+    //
+    // STUDY REFIT: study.js hands the assembly over as one tagged group
+    // now -- the corkboard, its four decorative rails and all fourteen
+    // pin groups, gathered where they are built. This used to pick them
+    // out of the scene by where they happened to sit (a z on the east
+    // wall, plus an x/y envelope), which after the turn would have
+    // selected nothing at all and left the board crossing the moulding.
+    var boardG = null;
     root.children.forEach(function (o) {
-      var p = o.position;
-      if (o !== built.shell && p.z < -5.75 && p.x > -2.6 && p.x < 3.6 &&
-          p.y > 2.55 && p.y < 6.65) boardParts.add(o);
+      if (o.userData && o.userData.studyGroup === 'board') boardG = o;
     });
-    boardParts.forEach(function (o) { o.position.y += .72 / SCALE; });
+    if (boardG) boardG.position.y += .72 / SCALE;
 
     var zoneMaterials = new Map();
     root.updateMatrixWorld(true);
@@ -81,21 +115,39 @@
     var wall=0xd8d0c2,trim=0xeee7da,sage=0x71877d,floor=0xa9784d;
     box('floor',EAST-WEST,.10,SOUTH-NORTH,floor,(WEST+EAST)/2,.05,(NORTH+SOUTH)/2,.82);
     for(var p=0;p<8;p++)box('joint',EAST-WEST-.12,.018,.025,0x65452f,(WEST+EAST)/2,.105,NORTH+.43+p*.80,.9);
-    var wx=root.position.x-.20*SCALE,ww=4.8*SCALE,wy=.12+4.35*SCALE,wh=3.2*SCALE;
-    var leftW=wx-ww/2-WEST,rightW=EAST-(wx+ww/2);
-    box('north-left',leftW+.06,4.45,.12,wall,WEST+(leftW+.06)/2,2.225,NORTH,.94);
-    box('north-right',rightW+.06,4.45,.12,wall,wx+ww/2+(rightW+.06)/2-.06,2.225,NORTH,.94);
-    box('north-low',ww-.04,wy-wh/2,.12,wall,wx,(wy-wh/2)/2,NORTH,.94);
-    box('north-high',ww-.04,4.45-(wy+wh/2),.12,wall,wx,(4.45+wy+wh/2)/2,NORTH,.94);
+    // STUDY REFIT: the window turned onto the EAST wall, so the wall
+    // finish turned with it. The NORTH wall is one solid run now -- it
+    // is the interior wall shared with the east room, and it carries the
+    // shelves, the library and the board -- and the EAST wall's sage
+    // band and chair rail split around the window, because the glass
+    // reaches below the rail. Both are built at EFACE, on the room side
+    // of the house's own slab, where they can be seen.
+    //
+    // There is no wall box to cut a hole in on the east: the slab behind
+    // (house.js `east_wall`) IS this wall, and the window's own sky
+    // plane covers the glass against it, exactly the way the wall
+    // calendar and the clock cover their own patch of it. `east` below
+    // stays where it always was, inside the slab -- a belt-and-braces
+    // enclosure that costs one box and is never seen.
+    //
+    // The window is read back off the study itself (built.windowAt is
+    // study.js's own window centre AFTER its turn, in study units), so
+    // this adapter and that scene cannot drift apart. wz lands on world
+    // z 11.10, which is where the house's exterior pane on this
+    // elevation already is.
+    var wc=built.windowAt||{x:.98},ws=built.windowSize||{w:4.8};
+    var wz=root.position.z+wc.x*SCALE,ww=ws.w*SCALE;
+    var northW=wz-ww/2-NORTH,southW=SOUTH-(wz+ww/2);
+    box('north',EAST-WEST,4.45,.12,wall,(WEST+EAST)/2,2.225,NFACE-.06,.94);
     box('east',.12,4.45,SOUTH-NORTH,wall,EAST,2.225,(NORTH+SOUTH)/2,.94);
-    box('north-wainscot-left',leftW,1.55,.05,sage,WEST+leftW/2,.83,NORTH+.08,.9);
-    box('north-wainscot-right',rightW,1.55,.05,sage,wx+ww/2+rightW/2,.83,NORTH+.08,.9);
-    box('east-wainscot',.05,1.55,SOUTH-NORTH,sage,EAST-.08,.83,(NORTH+SOUTH)/2,.9);
-    box('north-base',EAST-WEST,.13,.18,trim,(WEST+EAST)/2,.16,NORTH+.10,.8);
-    box('east-base',.18,.13,SOUTH-NORTH,trim,EAST-.10,.16,(NORTH+SOUTH)/2,.8);
-    box('north-rail-left',leftW,.11,.17,trim,WEST+leftW/2,1.62,NORTH+.09,.8);
-    box('north-rail-right',rightW,.11,.17,trim,wx+ww/2+rightW/2,1.62,NORTH+.09,.8);
-    box('east-rail',.17,.11,SOUTH-NORTH,trim,EAST-.09,1.62,(NORTH+SOUTH)/2,.8);
+    box('north-wainscot',EAST-WEST,1.55,.05,sage,(WEST+EAST)/2,.83,NFACE+.025,.9);
+    box('east-wainscot-north',.05,1.55,northW,sage,EFACE-.025,.83,NORTH+northW/2,.9);
+    box('east-wainscot-south',.05,1.55,southW,sage,EFACE-.025,.83,wz+ww/2+southW/2,.9);
+    box('north-base',EAST-WEST,.13,.18,trim,(WEST+EAST)/2,.16,NFACE+.09,.8);
+    box('east-base',.18,.13,SOUTH-NORTH,trim,EFACE-.09,.16,(NORTH+SOUTH)/2,.8);
+    box('north-rail',EAST-WEST,.11,.17,trim,(WEST+EAST)/2,1.62,NFACE+.085,.8);
+    box('east-rail-north',.17,.11,northW,trim,EFACE-.085,1.62,NORTH+northW/2,.8);
+    box('east-rail-south',.17,.11,southW,trim,EFACE-.085,1.62,wz+ww/2+southW/2,.8);
 
     function count(f,key){
       f=f||{};var gauges=f.gauges||{};

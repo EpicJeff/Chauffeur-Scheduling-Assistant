@@ -82,6 +82,73 @@
       cylinder(group,.07,.07,.10,brass,hand*.58,1.43,.16,true).rotation.x = Math.PI / 2;
     }
 
+    // STUDY REFIT (2026-09-16). The user: "That door might actually make
+    // a good door for the study as those commonly have double glass
+    // doors." So the study's opening wears a pair of glazed doors at the
+    // size the retired patio slider's glass was -- 2.65 wide, 3.65 tall
+    // -- built here rather than in house.js so the door keeps the
+    // `living_study_door` fixture whole: its entry group, its room
+    // stamping, its registration and its parent-PIN tap are untouched,
+    // and only the leaf it draws changed. One assembly centred in the
+    // 0.35 partition with casings on both faces, because the wall is CUT
+    // at this opening: a one-sided leaf would leave the reveal open.
+    //
+    // No new palette: the frame is the same `ivory` every casing in this
+    // module is painted with, the glass is `ink`, the handles `brass`.
+    function studyGlass() {
+      // The glazing gets its OWN material rather than the shared `ink`
+      // one. chfShellFabric reports emissiveIntensity off exactly the
+      // meshes marked interiorWindow, and the rule it pins -- both sides
+      // of this glass are indoors, so it never takes the exterior night
+      // glow -- belongs to this door alone. Kept in `materials` so
+      // dispose() still frees it.
+      if (!materials.has('study-glass')) {
+        var glass = high
+          ? new T.MeshStandardMaterial({color:ink, roughness:.30, metalness:.12})
+          : new T.MeshLambertMaterial({color:ink});
+        glass.emissiveIntensity = 0;
+        materials.set('study-glass', glass);
+      }
+      return materials.get('study-glass');
+    }
+    function glassDoors(group) {
+      var W = 2.65, H = 3.65, st = .13, ms = .195, rail = .17, leafT = .14;
+      // one lite per leaf, from the meeting stile to the hanging one
+      var paneW = W / 2 - st - ms, paneH = H - rail * 2.6;
+      var paneX = (ms + W / 2 - st) / 2;
+      [-1, 1].forEach(function (side) {
+        var cx = side * W / 4;
+        var pane = new T.Mesh(geo(['glass',paneW,paneH].join('|'), function () {
+          return new T.BoxGeometry(paneW, paneH, .05);
+        }), studyGlass());
+        pane.position.set(side * paneX, H / 2 + rail * .3, 0);
+        pane.receiveShadow = high;
+        pane.userData.interiorWindow = true;
+        group.add(pane);
+        // the hanging stile on the outside edge, and the leaf's rails
+        box(group,st,H,leafT,ivory,side * (W / 2 - st / 2),H / 2,0);
+        box(group,W / 2,rail,leafT,ivory,cx,H - rail / 2,0);
+        box(group,W / 2,rail * 1.6,leafT,ivory,cx,rail * .8,0);
+      });
+      // the meeting stile the two leaves close on, proud of both leaves
+      box(group,ms * 2,H,leafT + .03,ivory,0,H / 2,0);
+      // a handle per leaf, on each face, ON the meeting stile where a
+      // pair of doors is actually opened from: both rooms get a handle.
+      [-1, 1].forEach(function (side) {
+        [-1, 1].forEach(function (face) {
+          box(group,.09,.34,.04,brass,side * .13,1.34,face * (leafT / 2 + .04));
+          cylinder(group,.045,.045,.10,brass,side * .13,1.34,
+                   face * (leafT / 2 + .09),true).rotation.x = Math.PI / 2;
+        });
+      });
+      // casing and reveal lining in one: 0.50 deep plugs the 0.35 cut and
+      // stands .075 proud on each face, and W + .40 laps both gap edges.
+      box(group,W + .40,.16,.50,ivory,0,H + .08,0);
+      [-1, 1].forEach(function (side) {
+        box(group,.16,H + .16,.50,ivory,side * (W / 2 + .08),(H + .16) / 2,0);
+      });
+    }
+
     var item = entry('chores','Chore caddy','mudroom',[-11.6,.06,4.7],'chores');
     box(item,.68,.32,.40,0x6d9187,0,.16,0); box(item,.62,.06,.36,ink,0,.34,0);
     rod(item,[-.25,.3,0],[-.25,.65,0],.028,brass); rod(item,[.25,.3,0],[.25,.65,0],.028,brass);
@@ -105,15 +172,39 @@
     // Study wing joins the east side of the living room. Its locked door
     // belongs on that shared wall, across the room from the exterior door.
     // z translated north 2.17 with the study (task 1): 12.10 -> 9.93.
-    item = entry('study','Study · Parent PIN','living',[6.50,.02,9.93],'study');
+    // STUDY REFIT: glazed double doors, centred in the 0.35 partition
+    // (x 6.675) instead of hung on its west face, because house.js cuts
+    // the opening right through. Everything else about this fixture is
+    // untouched -- the same entry group, the same 'study' action behind
+    // the parent PIN, the same name, normal, twoSided and cutawayRoom.
+    item = entry('study','Study · Parent PIN','living',[6.675,.02,9.93],'study');
     item.rotation.y = -Math.PI / 2;
-    interiorDoor(item,1);
+    glassDoors(item);
     fabric.push({group:item,name:'living_study_door',normal:[1,0,0],twoSided:true,
                  cutawayRoom:'study'});
 
-    // The two-sided patio slider is part of the house shell, so its inside
-    // and outside views are the same physical assembly. This module adds
-    // only the separate hinged door into the rear east room.
+    // STUDY REFIT: "then use the study's regular interior door on that
+    // other room". The east room's opening at z 5.80 -- the retired
+    // patio slider's -- takes the plain interior door, keeping the
+    // slider's own registration semantics: normal [1,0,0], room
+    // 'kitchen' (so a tap from the east room still walks through to the
+    // kitchen), twoSided, and ownerless like every opening. Unlike the
+    // back room's door below -- a leaf proud of an UNCUT wall -- this
+    // opening is a real hole through the slab, so it wears a leaf on
+    // each face with the cut's own lining between them.
+    item = fixture('east-room-door','kitchen',[6.675,.02,5.80]);
+    [[-.175,-Math.PI / 2,1],[.175,Math.PI / 2,-1]].forEach(function (face) {
+      var leafG = new T.Group();
+      leafG.position.x = face[0]; leafG.rotation.y = face[1];
+      item.add(leafG);
+      interiorDoor(leafG,face[2]);
+    });
+    box(item,.35,.15,1.90,ivory,0,3.02,0);
+    [-1,1].forEach(function (side) { box(item,.35,3.02,.10,ivory,0,1.51,side * .85); });
+    fabric.push({group:item,name:'east_room_door',normal:[1,0,0],twoSided:true});
+
+    // The back room's door: a leaf proud of the uncut partition, the one
+    // opening in this wall that was authored that way.
     item = shellFixture('back-room-door','living',[6.50,.02,2.45],
                         'living_back_room_door',[1,0,0]);
     item.rotation.y = -Math.PI / 2;

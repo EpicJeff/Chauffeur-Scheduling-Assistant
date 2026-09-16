@@ -4311,20 +4311,41 @@
     var EPX1_4 = EPX0_4 + WALL_T4;                  /* ~6.85 */
     var EWZ0_4 = wallB.position.z - WALL_T4 / 2;    /* wallB's own outer
                                                         (north) face */
-    /* house_features.js (living_study_door) hangs the study's locked
-       door at this z; the gap below is cut around it, so the two must
-       stay in step. */
-    var STUDY_DOOR_Z4 = 9.93;
+    /* house_features.js hangs BOTH doors in this wall; every gap below
+       is cut around one of them, so the two files must stay in step.
+
+       STUDY REFIT (2026-09-16): the two openings swapped doors. The
+       patio slider's glass belongs on the study (a study is where a
+       pair of glazed doors belongs, and the patio is an inside room
+       now), so the study's opening widened 1.80 -> 2.65 to take the
+       slider's own 2.65 leaf pair; the opening at z 5.80 narrowed
+       2.60 -> 1.80 to take the plain interior door the study gave up. */
+    var STUDY_DOOR_Z4 = 9.93, STUDY_DOOR_W4 = 2.65;
+    var EAST_ROOM_DOOR_Z4 = 5.80, EAST_ROOM_DOOR_W4 = 1.80;
     var eastPartG = new T.Group();
     extG.add(eastPartG);
-    [[EWZ0_4, 4.50],                                 /* kitchen + back room */
-     [7.10, STUDY_DOOR_Z4 - 0.90],                    /* slider gap above */
-     [STUDY_DOOR_Z4 + 0.90, SWZ0]].forEach(function (seg) {
+    [[EWZ0_4, EAST_ROOM_DOOR_Z4 - EAST_ROOM_DOOR_W4 / 2],  /* 4.90 */
+     [EAST_ROOM_DOOR_Z4 + EAST_ROOM_DOOR_W4 / 2,           /* 6.70 */
+      STUDY_DOOR_Z4 - STUDY_DOOR_W4 / 2],                  /* 8.605 */
+     [STUDY_DOOR_Z4 + STUDY_DOOR_W4 / 2, SWZ0]].forEach(function (seg) { /* 11.255 */
       var len = seg[1] - seg[0], cz = (seg[0] + seg[1]) / 2;
       box(WALL_T4, EXT_TOP4, len, C.wall, EPX0_4 + WALL_T4 / 2,
           EXT_TOP4 / 2, cz, eastPartG, sharp(WALL_O));
       box(0.08, 0.2, len - 0.20, 0xe4ddd1, EPX0_4 - 0.02, 0.1, cz,
           eastPartG, sharp());
+    });
+    /* HEADERS. A gap cut for a door is a DOORWAY, not a hole: without
+       the wall above the head you look over each door into the room
+       behind it. Each header starts just BELOW the head of what
+       house_features.js actually builds in that opening -- the glass
+       doors' casing spans y 3.67..3.83 and plugs the full 0.35 cut, the
+       plain door's lining 2.97..3.12 -- so the joint is hidden behind
+       the casing instead of leaving a lit slot above it. */
+    [[EAST_ROOM_DOOR_Z4, EAST_ROOM_DOOR_W4, 3.05],
+     [STUDY_DOOR_Z4, STUDY_DOOR_W4, 3.75]].forEach(function (op) {
+      var h = EXT_TOP4 - op[2];
+      box(WALL_T4, h, op[1], C.wall, EPX0_4 + WALL_T4 / 2,
+          op[2] + h / 2, op[0], eastPartG, sharp(WALL_O));
     });
     /* room: null — it fronts the kitchen on one face and the future
        rooms/study on the other, so no single room owns a tap on it.
@@ -4363,10 +4384,20 @@
     box(0.08, 0.2, EW_LEN4 - 0.3, 0xe4ddd1, EWX0_4 - 0.02, 0.1, EW_CZ4,
         eastWallG, sharp());
     /* study first (a lived room glows at night), then the two future
-       rooms, which are empty and stay dark. */
-    [[11.10, true], [4.60, false], [-2.30, false]].forEach(function (w) {
-      shellWindow(eastWallG, EWX1_4 + 0.05, 2.80, w[0], Math.PI / 2,
-                  1.35, 2.70, w[1]);
+       rooms, which are empty and stay dark.
+       STUDY REFIT (2026-09-16): the study's window turned onto this
+       wall, so the pane at z 11.10 is now the STREET SIDE of a window
+       the room actually has -- and a window cannot be two sizes
+       depending on which side of the wall you stand on. The study's own
+       glass is 4.8 x 3.2 at y 4.35 in study units, which at the room's
+       0.42 fitting scale is 2.02 x 1.34 centred at y 1.95. The two
+       future rooms keep the 1.35 x 2.70 pane at y 2.80: nothing is
+       built behind them to disagree with. */
+    [[11.10, true, 2.02, 1.34, 1.95],
+     [4.60, false, 1.35, 2.70, 2.80],
+     [-2.30, false, 1.35, 2.70, 2.80]].forEach(function (w) {
+      shellWindow(eastWallG, EWX1_4 + 0.05, w[4], w[0], Math.PI / 2,
+                  w[2], w[3], w[1]);
     });
     /* SHELL: east_wall is complete here. n is [1,0,0]: a true exterior
        boundary, its own physical outward compass direction. */
@@ -5365,29 +5396,16 @@
     box(5.2, 0.16, 5.5, EXTC.drive, -2.0, -0.08, -9.0, extG,
         sharp({ rough: 0.95, map: driveT }));
 
-    /* The kitchen's slider, unmoved at x 6.85 / z 5.80 -- an INTERIOR
-       opening into the east room now (spec section 2), registered the
-       way living_study_door is: twoSided, room 'kitchen'. Both panes
-       carry interiorWindow, so neither takes the exterior night glow:
-       there is no outdoors on either side of it any more. */
-    var patioSliderG = shellGroup();
-    var sliderFrame = shellWindow(patioSliderG, EPX1_4 + 0.23, 1.95, 5.80,
-                                   Math.PI / 2, 2.65, 3.65, false);
-    shellBox(sliderFrame, 0.08, 0.55, 0.10, FARMHOUSE.wood, 0.15, 0, 0.17);
-    shellBox(sliderFrame, 2.95, 0.10, 0.32, FARMHOUSE.stoop, 0, -1.86, 0.02);
-    /* The wall is intentionally solid rather than boolean-cut. Give the
-       same registered assembly a room-side face just inside the lining;
-       otherwise the exterior face is occluded when viewed from living. */
-    var sliderInside = shellWindow(patioSliderG,
-                                    EPX1_4 - WALL_T4 - 0.08, 1.95, 5.80,
-                                    -Math.PI / 2, 2.65, 3.65, false);
-    shellBox(sliderInside, 0.08, 0.55, 0.10, FARMHOUSE.wood, 0.15, 0, 0.17);
-    shellBox(sliderInside, 2.95, 0.10, 0.32, FARMHOUSE.stoop, 0, -1.86, 0.02);
-    patioSliderG.traverse(function (m) {
-      if (m.userData && m.userData.shellWindow) m.userData.interiorWindow = true;
-    });
-    shellRegister(patioSliderG, 'patio_slider', [1, 0, 0], 'kitchen', true);
-
+    /* STUDY REFIT (2026-09-16): `patio_slider` is retired. The user's
+       reading -- "the patio door is still there even though the patio
+       turned into a regular inside room. That door might actually make
+       a good door for the study" -- is the whole of it: the glass
+       moved to the study's opening at z 9.93 and this one wears the
+       plain interior door the study gave up. BOTH doors are built and
+       registered in house_features.js now (east_room_door and
+       living_study_door), beside living_back_room_door, so the three
+       interior doors in this partition share one builder and one set
+       of colours instead of one of them being shell and two fixtures. */
 
     /* Continue west cladding along the living room to the south corner. */
     /* ebox() cannot be reused here — it hardcodes extG as the parent of
@@ -10545,6 +10563,10 @@
                   law ("no owned piece ever leaves for a non-owner") over
                   the whole registry instead of piece by piece */
                owners: f.owners.slice(), cutawayRoom: f.cutawayRoom,
+               /* an interior opening ghosts from whichever side the
+                  camera stands on; the registry is the only place that
+                  fact is written down, so a test can read it here */
+               twoSided: f.twoSided,
                n: [f.n.x, f.n.y, f.n.z], /* arc 4 (facade spec §6): the AO
                     derivation's own wall-like test, |n.y| < 0.5, reads
                     this same shape from FABRIC -- exposed here too so the
@@ -10592,6 +10614,20 @@
       walk(o);
     });
     return any ? [box.min.x, box.max.x, box.min.y, box.max.y, box.min.z, box.max.z] : null;
+  };
+  /* STUDY REFIT (2026-09-16): read-only, like chfStudyBox above -- the
+     world box of ONE of the study's zone proxies, so a test can pin
+     which wall a study signal actually hangs on. The proxy is the union
+     of that zone's real meshes (house_study.js builds it that way), so
+     this reads the scene rather than a constant the scene also reads. */
+  window.chfStudyZone = function (key) {
+    var sw = webgl && webgl.studyWorld;
+    var g = sw && sw.zones ? sw.zones[key] : null;
+    if (!g) return null;
+    g.updateWorldMatrix(true, true);
+    var b = new webgl.T.Box3().setFromObject(g);
+    return b.isEmpty() ? null
+      : [b.min.x, b.max.x, b.min.y, b.max.y, b.min.z, b.max.z];
   };
   /* FACADE/arc 4 (facade spec section 6, "hand path parity"): read-only
      like the two above -- the spec the scene was actually built from and

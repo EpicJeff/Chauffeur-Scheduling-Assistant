@@ -12,6 +12,12 @@ staggered floorboards establish scale. The camera fits the calendar and floor
 lamp; a library and reading chair/table give the lamp a reason to be there.
 Reference books are scenery, physically separate from live program binders.
 The window looks onto planting and a fence rather than an unrelated city.
+It is on the room's NORTH wall here and stays there: the house's copy of
+this room (`static/house_study.js`) asks the factory for
+`windowWall: 'east'` because that is the only exterior wall it has in the
+main block, and the shelf wall turns onto the north to make room. That
+option is the house's alone (v2.499.42, spec section 10.11) — this page
+is untouched by it, and the ruling is the user's to revisit.
 
 An independent screenshot judge reviewed the baseline, rejected the first
 pass (hidden library, empty floor, weak material separation), and passed the

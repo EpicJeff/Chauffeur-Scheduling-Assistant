@@ -486,3 +486,89 @@ study — `south_wall_east`, `roof_main_east_north/_south/_end_east`, windows 15
 `future_room_partition`, `patio_slider` and `living_back_room_door` are now solid in every view.
 Budgets are flat (buildMs ~1.1s, exterior in-frustum 1403 unchanged); the canonical exterior mesh
 pin moves 1840 → 1849 (+6 roof, +3 wall, derived box by box).
+
+
+### 10.11 Post-ship refit — the study faces east, and the glass doors move (v2.499.42)
+
+Two reads the user made of the finished house, done in one pass. Brief:
+`.superpowers/sdd/2026-09-16-study-refit/brief.md`.
+
+**A. The doors swapped.** "The patio door is still there even though the patio turned into a
+regular inside room. That door might actually make a good door for the study as those commonly have
+double glass doors. And then use the study's regular interior door on that other room."
+
+- `patio_slider` is **retired by name**. Registry: `KEPT` loses it and gains **`east_room_door`**.
+- The study's opening at z 9.93 widened **1.80 → 2.65** and wears **glazed french doors** — two
+  lites, a hanging stile and three rails per leaf, a meeting stile, a handle per leaf per face, and
+  a casing 0.50 deep that plugs the 0.35 cut and stands .075 proud on each face. The glazing is
+  `ink` on its own material, marked `interiorWindow` with `emissiveIntensity` 0: both of its sides
+  are indoors, so it never takes the exterior night glow (the pin that used to say this about the
+  slider's glass moved onto it).
+- The opening at z 5.80 narrowed **2.60 → 1.80** and wears the plain interior door the study gave
+  up, registered `east_room_door` with the slider's own semantics — normal [1,0,0], room 'kitchen',
+  twoSided, ownerless. Two leaves, one per face, plus the cut's own head and jambs: unlike the back
+  room's door (a leaf proud of an UNCUT wall) this opening goes right through the slab.
+- **Both doors are `house_features.js` fixtures now**, beside `living_back_room_door`, so the three
+  interior doors in that partition share one builder and one set of colours. Chosen over building
+  the glass in `house.js` because `living_study_door` is an `entry()` group carrying the study's tap
+  and its parent-PIN gate: keeping the fixture whole keeps the name, the registration, the room
+  stamping and `houseAction: 'study'` untouched, and changes only the leaf it draws. Cost: the
+  french doors are authored with the fixture module's own cached box/cylinder helpers rather than
+  literally reusing `shellWindow`, which is not reachable from that file.
+- `east_partition` segments end 4.90 / 6.70 / 8.605 / 11.255, and each opening gained a **header**
+  (y 3.05 and 3.75 to the wall top), joints hidden behind each door's own casing. A gap cut for a
+  door is a doorway, not a hole you look over.
+
+**B. The study faces east.** "The study layout doesn't make sense now that the patio is gone. The
+window needs to be on the east wall and the items on the east wall need to move to the north wall."
+
+- `StudyFactory` takes **`windowWall: 'north' | 'east'`**, default `'north'`. **Controller ruling:**
+  the standalone `/study` page keeps its authored north window — that scene has its own quality
+  brief (`docs/study_quality_brief.md`) and its own pins, the request is about the HOUSE's study,
+  and the option cost about twenty lines. The user can flip it.
+- Under `'east'`, three sets are gathered where they are built and each given **one rigid quarter
+  turn of one group**: the window and everything authored against it (sky, clouds, frame rails,
+  mullions, sill, the card that stands on the sill, the sill plant, the patch of daylight it leans
+  into the room); the shelf wall (shelf, binders, plants, the fitted library and its books, the
+  photographs, the picture frame); and the evidence board. Rigid keeps every distance from the wall,
+  every height and every spacing along it, and every runtime write — a binder pulling out along its
+  own local +z, a card sagging around its pin — keeps working, because the group carries the
+  rotation and the meshes are untouched.
+- Each pivot is **solved, not tuned**, from the two things its turn has to land: the plane
+  (`p.z - p.x`) and the position along it (`p.x + p.z`). The window's puts its centre at world
+  **z 11.10**; the shelf wall's lands the set as far east along the north wall as the wall map — the
+  one other thing hanging there — allows (world x 8.57..13.76 of a 6.92..14.18 wall). The set is
+  5.19 wide on a 7.26 wall, so it cannot sit in the east HALF; east-biased is what the wall allows.
+- The house's **exterior east pane at z 11.10 was resized** 1.35 × 2.70 at y 2.80 → **2.02 × 1.34 at
+  y 1.95**: the study's own glass at the room's 0.42 fitting. A window cannot be two sizes depending
+  on which side of the wall you stand on. The two future rooms keep the old pane — nothing is built
+  behind them to disagree.
+- The board assembly reaches `house_study.js` as a **tagged group**, so the chair-rail lift takes it
+  whole; the old selector picked it out by an east-wall z and would have selected nothing.
+
+**The defect this uncovered.** Everything the study hung on its east wall was built EAST of x 14.30,
+where the house's own `east_wall` slab presents its inner plaster face — and that slab is SOLID from
+the study, because the study owns it (10.10). The sage wainscot, the base, the chair rail, the wall
+calendar and the clock have been invisible from inside this room since the study moved into the main
+block, and so had the corkboard's cork face: what showed was its frame with wall inside it. Moving
+the window onto that wall made it impossible to leave alone. The room is placed by its WALLS now —
+the study scene's own east wall plane lands 0.12 clear of the slab (the clearance the window sill
+needs, since it reaches .088 behind its own plane), the north wall box is built BEHIND its own face
+rather than centred on it, and both walls' finish runs sit on the face they belong to, the east
+wall's split around the window because the glass reaches below the rail.
+
+**Pins.** New live scenario `scenario_the_study_faces_east_behind_glass_doors` (doors from the
+registry, window and board from the study's own zone proxies via the new read-only
+`window.chfStudyZone(key)`); `chfShellFabric()` reports `twoSided`; `test_house_life_live.py`'s
+slider rows become `east_room_door`, and its night-glow row moves onto the study's glass. The
+canonical mesh pin moves **1849 → 1865**, derived: +13 the glazed pair over the plain leaf, +17 the
+new two-faced east room door, −8 the retired slider's never-merged survivors, −3 the partition's
+`C.wall` boxes crossing mergeStatic's four-on-one-material threshold, −3 the window's four-box
+opening becoming one solid wall run (the east wall did not gain one — the house's own slab is it). Cameras unchanged; budgets
+flat. NOT device-verified.
+
+**Known, not fixed.** The turned shelf wall is 5.19 world units wide on a 7.26 wall, so its west end
+(the shelf and its binders) sits at the left edge of the study camera's frame and the "Program
+binders" marker label clips. Moving `STUDY_POS` west to widen the frame walks back toward the great
+room's street face, which 10.10 moved it off; the shelf's own marker is still on canvas and
+tappable, so the camera stayed put.

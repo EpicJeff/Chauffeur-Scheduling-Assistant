@@ -84,7 +84,9 @@ def scenario_house_life():
         # slider, not through it. Asserted as the verdict rather than as
         # a screen probe -- the back-room door sits at the very edge of
         # this frame, which is a framing fact, not a cutaway one.
-        for piece in ('patio_slider', 'living_back_room_door', 'east_partition'):
+        # STUDY REFIT (2026-09-16): the slider is east_room_door now --
+        # a plain interior door in the same opening, same registration.
+        for piece in ('east_room_door', 'living_back_room_door', 'east_partition'):
             check(page.evaluate(
                 "(n) => chfShellFabric().find(f => f.name === n).verdict", piece) == 'solid',
                 piece + " must stand from the kitchen: the east partition is "
@@ -109,10 +111,13 @@ def scenario_house_life():
         for fixture in ('back-room-door',):
             fixture_point = page.evaluate('(key) => chfNavProbe({feature:key})', fixture)
             check(fixture_point, fixture + ' is visible on the living-room east wall')
-        check(page.evaluate("chfShellFabric().find(f => f.name === 'patio_slider').verdict === 'solid'"),
-              'the same patio slider is visible from the living room')
-        check(page.evaluate("chfShellFabric().find(f => f.name === 'patio_slider').interiorGlow === 0"),
-              'the patio slider interior glass does not emit the exterior night glow')
+        check(page.evaluate("chfShellFabric().find(f => f.name === 'east_room_door').verdict === 'solid'"),
+              "the east room's door is visible from the living room")
+        # STUDY REFIT: the glazing this used to pin moved to the study's
+        # own doors, and the rule moved with it -- both sides of that
+        # glass are indoors, so it never takes the exterior night glow.
+        check(page.evaluate("chfShellFabric().find(f => f.name === 'living_study_door').interiorGlow === 0"),
+              "the study's glass doors do not emit the exterior night glow")
         if shots:
             page.screenshot(path=os.path.join(shots, 'living-east-wall.png'))
         page.mouse.click(point['cx'], point['cy'])
