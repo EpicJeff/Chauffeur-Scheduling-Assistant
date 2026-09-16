@@ -73,11 +73,22 @@ def scenario_house_life():
             page.locator('.house-life-panel header button').click()
             page.wait_for_selector('.house-life-shade', state='hidden')
             check(page.evaluate('chfHouseMode()') != 'exterior', 'feature opens in its room context')
-        for fixture in ('back-room-door',):
-            visible = page.evaluate('(key) => chfNavProbe({feature:key}) !== null', fixture)
-            check(not visible, fixture + ' hides during the kitchen cutaway')
-        check(page.evaluate("chfShellFabric().find(f => f.name === 'patio_slider').verdict !== 'solid'"),
-              'the shared patio slider hides with the kitchen wall')
+        # CUTAWAY OWNERSHIP (v2.499.41): these two used to be asserted
+        # ABSENT here. They were absent for one reason -- the kitchen
+        # camera stood EAST of the main block at x 14.6 and reached the
+        # room by ghosting the east partition, taking the slider and the
+        # back-room door in that wall with it. The kitchen is viewed
+        # from the STREET now (HOME_POS 4.64, 13.8, 23.0) and
+        # east_partition is owned by the study, so the wall stands and
+        # its two openings stand on it: from the kitchen you look AT the
+        # slider, not through it. Asserted as the verdict rather than as
+        # a screen probe -- the back-room door sits at the very edge of
+        # this frame, which is a framing fact, not a cutaway one.
+        for piece in ('patio_slider', 'living_back_room_door', 'east_partition'):
+            check(page.evaluate(
+                "(n) => chfShellFabric().find(f => f.name === n).verdict", piece) == 'solid',
+                piece + " must stand from the kitchen: the east partition is "
+                "the study's enclosure, not the kitchen's")
         page.evaluate("chfHouseFindFeature('study')")
         page.wait_for_function('chfNavProbe({settled:true})')
         point = page.evaluate("chfNavProbe({action:'study'})")

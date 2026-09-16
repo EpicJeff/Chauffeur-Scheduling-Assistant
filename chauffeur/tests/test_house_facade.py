@@ -35,6 +35,39 @@ def scenario_slot_table_is_derived_from_the_faces():
     main = [s for s in slots if s['face'] == 'main']
     check(abs(main[0]['cx'] - (-6.241667)) < 1e-6 and abs(main[4]['cx'] - 1.025) < 1e-6,
           f"main centres per spec section 5: {[round(s['cx'], 6) for s in main]}")
+    # Cutaway-ownership fix: every slot carries the OWNERS of the wall
+    # segment it sits on -- the rooms whose cutaway may take a feature
+    # built there. The main face carries the great room's street
+    # elevation AND the study's, split at x 6.85 (the same great-room /
+    # east-rooms line the south wall and the main roof are split on).
+    # Slot 13's centre is 6.475, still the great room's; slot 14's is
+    # 8.291667, the first at or beyond 6.85 -- so slots 14..17 sit on
+    # south_wall_east and are owned by the study alone.
+    #
+    # The FRONTING ROOM is deliberately NOT split: it still comes off
+    # the face, so every tap behaves exactly as it did and the study
+    # stays behind its parent PIN. Ownership decides what a cutaway may
+    # remove; the room decides where a tap goes.
+    check([s['room'] for s in slots if s['face'] == 'main'] == ['living'] * 12,
+          'the whole main face still FRONTS the living room')
+    check([s['room'] for s in slots if s['face'] == 'garage_block'] ==
+          ['garage'] * 6, 'the whole garage block face still fronts the garage')
+    check([s['i'] for s in slots if s['owners'] == ['study']] == [14, 15, 16, 17],
+          f"slots 14..17 are the study's: "
+          f"{[(s['i'], s['owners']) for s in main]}")
+    for s_ in main:
+        beyond = s_['cx'] >= 6.85
+        want = ['study'] if beyond else ['kitchen', 'living']
+        check(s_['owners'] == want,
+              f"slot {s_['i']} centre {s_['cx']} vs the 6.85 split: {s_['owners']}")
+    # the garage block splits on its own bay, the same way
+    for s_ in (x for x in slots if x['face'] == 'garage_block'):
+        want = ['garage'] if s_['i'] <= hf.GARAGE_BAY_SLOTS[1] else ['mudroom']
+        check(s_['owners'] == want,
+              f"slot {s_['i']} owners: {s_['owners']}")
+    check(hf.slot_owners(13, 'main') == ['kitchen', 'living'] and
+          hf.slot_owners(14, 'main') == ['study'],
+          'slot_owners is the one derivation house.js mirrors')
 
 
 def scenario_canonical_is_normal_and_idempotent():

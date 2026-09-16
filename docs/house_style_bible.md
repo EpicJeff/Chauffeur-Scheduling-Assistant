@@ -477,7 +477,12 @@ south-east through the street wall, which hides with the roof.
    1 lines the whole plinth with planting.
 2. The cutaway edge is a raw wall section. Give it a visible wall thickness
    band in `cabShade`, as the plates do.
-3. Warm interior light does not read from outside. That is the lighting pass,
+3. A room's cutaway takes only that room's OWN enclosure. Every shell piece
+   declares the rooms it encloses (`owners`), and a wall or roof spanning two
+   rooms is built as two pieces split on the line between them — you should
+   only ever be seeing the room you are looking at, never through a third
+   room whose walls happened to be in the way.
+4. Warm interior light does not read from outside. That is the lighting pass,
    but the geometry must leave the windows glazed and emissive-capable.
 
 ---

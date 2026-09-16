@@ -323,7 +323,17 @@
     /* swung west once the calendar moved onto the wall between the pantry
        and mudroom doors: the old pose put that wall at the frame's edge,
        which is the opposite of making the calendar visible */
-    var HOME_POS = new T.Vector3(14.6, 11.2, 17.0);
+    /* CUTAWAY OWNERSHIP (fix, 2026-09-16): moved SOUTH, from x 14.6 to
+       the great room's own x-range. The old pose stood EAST of the main
+       block and looked north-west through what used to be the patio
+       notch -- massing arc 1 enclosed that notch as the east room, so
+       the only way that view still worked was by ghosting the east
+       rooms' own walls and roof, which is exactly the bug. From the
+       street, inside the great room's own x span, the only fabric
+       between this camera and the kitchen is the great room's OWN: the
+       south wall, the west half of the main roof and the facade
+       features on them. HOME_AT is unchanged. */
+    var HOME_POS = new T.Vector3(4.64, 13.8, 23.0);
     var HOME_AT = new T.Vector3(-1.3, 1.7, -0.2);
     /* the house from the yard: the panel's resting view. The old pose
        aimed a metre off the ground and spent the bottom-left fifth of
@@ -391,7 +401,7 @@
        enough that the floor falls away to the lower right (bible S5.1) */
     var LIV_POS = new T.Vector3(0, 12.8, 26.5);
     var LIV_AT = new T.Vector3(0, 2.35, 10.3);
-    var STUDY_POS = new T.Vector3(5.85, 3.65, 15.83);
+    var STUDY_POS = new T.Vector3(7.90, 4.20, 17.46);
     var STUDY_AT = new T.Vector3(12.30, 1.45, 10.68);
     cam.position.copy(orbitPos(ORBIT.stop));
     cam.lookAt(ORBIT.pivot);
@@ -935,6 +945,16 @@
                     box: o.box, mode: o.mode || 'ghost', edges: null,
                     twoSided: !!o.twoSided,
                     cutawayRoom: o.cutawayRoom || null,
+                    /* CUTAWAY OWNERSHIP: the rooms whose OWN enclosure
+                       this piece is. Massing arc 1 merged per-room walls
+                       and roofs into whole-block pieces, and the corridor
+                       rule below hides a WHOLE piece -- so the living
+                       room's cutaway was taking the study's street face
+                       and roof with it. A piece only ever leaves for a
+                       room that owns it. Empty (the default, and what
+                       every opening keeps) means "the corridor rule
+                       alone governs me", exactly as before. */
+                    owners: o.owners || [],
                     plane: o.plane ? new T.Vector3().fromArray(o.plane) : null,
                     pad: o.pad === undefined ? 1.5 : o.pad });
     }
@@ -1004,7 +1024,25 @@
         /* A roof encloses its room rather than separating camera and subject
            along a vertical wall plane. Declare that ownership at its build
            site so both pitches leave together in the room cutaway. */
-        if (subject && subject.room && f.cutawayRoom === subject.room) {
+        if (subject && subject.room && f.owners.length &&
+            f.owners.indexOf(subject.room) < 0) {
+          /* CUTAWAY OWNERSHIP: another room's enclosure never leaves.
+             FIRST, ahead of cutawayRoom and the corridor rule both --
+             the two later rules each answer "is this piece in the way?",
+             and this one answers "is it mine to take?", which has to win
+             or a piece can still be stripped from a room that does not
+             own it. (It matters in practice: a facade feature carries
+             cutawayRoom = the room its FACE fronts, which for the
+             study's own street windows is the living room, so with
+             cutawayRoom checked first the living cutaway would hide the
+             study's windows off a wall that is still standing.) The
+             later rules still govern (a) ownerless pieces -- every
+             opening, the yard -- and (b) owned pieces when the subject
+             IS an owner, so the wall between the camera and its own room
+             still ghosts and the backdrop wall behind that room still
+             stays, because the half-space test says so. */
+          v = 'solid';
+        } else if (subject && subject.room && f.cutawayRoom === subject.room) {
           v = 'hide';
         } else if (subPt && boxOk(f.box)) {
           var p = f.plane || boxCentre(f.box);
@@ -1468,7 +1506,7 @@
        like west_wall, so no flip is needed (unlike west_wall's T2 flip,
        read at its own registration site far below). */
     regFabric(wallB, { name: 'north_wall', n: [0, 0, -1], box: fabBox(wallB),
-                       room: 'kitchen' });
+                       room: 'kitchen', owners: ['kitchen'] });
     /* west wall in two pieces + header: an open doorway into the
        mudroom at z 2.8..4.4 (architect pass — the kitchen looks through
        to the bench) */
@@ -3670,7 +3708,10 @@
        solid by default", which LEGACY says is the kitchen (only the
        mudroom's own hide: array ever listed this wall). Checked against
        every camera: with n east, camOut is true for HOME_POS/LIV_POS/
-       MUD_POS (all sit east of the wall's box centre x -6.2175, itself
+       MUD_POS (x 4.64 / 0 / -3.4 -- HOME_POS moved south and west in the
+       cutaway-ownership fix and is still east of the wall's box centre,
+       so this derivation stands unchanged) (all sit east of the wall's
+       box centre x -6.2175, itself
        pulled east of the physical -6.65 wall panel by the TV/sconce/
        calendar it carries) and false for GARAGE_POS (x -18.0, further
        west than the wall itself) — of the three where camOut clears,
@@ -3690,6 +3731,13 @@
        kitchen's boundary second — a tap on it belongs where it ghosts. */
     regFabric(westWallG, { name: 'west_wall', n: [1, 0, 0],
                             box: fabBox(westWallG), room: 'mudroom',
+                            /* the partition between the mudroom and the
+                               great room: all three rooms it separates
+                               own it, so the mudroom camera still ghosts
+                               it by corridor and the kitchen/living
+                               cameras still keep it (the half-space test
+                               already said solid for both). */
+                            owners: ['mudroom', 'kitchen', 'living'],
                             plane: [WXK, 0, 0] });
 
     /* pendant lamps over the island: warm emissive shades. Grouped so a
@@ -4013,7 +4061,8 @@
     wbox(0.3, 2.2, 1.6, NICE ? 0xffffff : EXTC.siding, -7.0, 4.5, 3.6,
          { rough: 0.95, map: CLAD() });
     regFabric(westCladdingG, { name: 'west_cladding', n: [1, 0, 0],
-                               box: fabBox(westCladdingG), room: 'mudroom' });
+                               box: fabBox(westCladdingG), room: 'mudroom',
+                               owners: ['mudroom', 'kitchen', 'living'] });
     /* MASSING ARC 1 fix wave: the trim board that used to stand here
        (x 6.76, full height, proud of the siding) was the kitchen's own
        NORTH-EAST CORNER back when the north face ended at x 6.85.
@@ -4044,7 +4093,8 @@
       }
     })();
     regFabric(northCladdingG, { name: 'north_cladding', n: [0, 0, -1],
-                                box: fabBox(northCladdingG), room: 'kitchen' });
+                                box: fabBox(northCladdingG), room: 'kitchen',
+                                owners: ['kitchen'] });
 
     /* ================= SHELL (Task 4, spec section 6): THE SEAL =========
        The great room (kitchen `floor` + living `floor2`) has never had a
@@ -4083,8 +4133,24 @@
        this block for exactly this reason) and not off the great room's
        floor union, which only ever measured the two rooms it was built
        for. SWZ0/SWZ1 are unchanged: the front line never moved. */
-    var SW_W = 21.8;              /* FULL_HOUSE.east - FULL_HOUSE.west */
-    var SW_CX = 3.75;             /* (FULL_HOUSE.west + FULL_HOUSE.east)/2 */
+    /* CUTAWAY OWNERSHIP (fix, 2026-09-16): the street face is built in
+       TWO segments now, split on the great-room / east-rooms line. One
+       wall spanning both is one wall the solver can only ever ghost
+       WHOLE -- which is exactly how the living room's cutaway took the
+       study's own street face away with it, and the user's rule is that
+       you only ever see the room you are looking at. Same three-box
+       idiom, same planes, same height, same materials; only the x-range
+       and the OWNERS differ. The split line is EPX1_4 (the east
+       partition's outer face, declared below off the same grFloorBox)
+       derived here rather than typed, so the wall and the partition can
+       never drift apart. */
+    var SW_SPLIT4 = grFloorBox.max.x + WALL_T4;   /* 6.85 === EPX1_4 */
+    var SW_X0 = -7.15;            /* FULL_HOUSE.west, declared just below */
+    var SW_X1 = 14.65;            /* FULL_HOUSE.east */
+    var SW_W = SW_SPLIT4 - SW_X0;              /* 14.0: the great room's */
+    var SW_CX = (SW_X0 + SW_SPLIT4) / 2;        /* -0.15 */
+    var SWE_W = SW_X1 - SW_SPLIT4;             /* 7.8: the study's */
+    var SWE_CX = (SW_SPLIT4 + SW_X1) / 2;       /* 10.75 */
     var SWZ0 = grFloorBox.max.z;                          /* ~14.2 */
     var SWZ1 = SWZ0 + WALL_T4;                             /* ~14.55 */
     var southWallG = new T.Group();
@@ -4098,6 +4164,19 @@
        provably identical either way, so the hand stamp is gone and
        regFabric now does this once for every piece, not just this one. */
     extG.add(southWallG);
+    /* the study's own segment of the same face. Its own group so it can
+       take its own verdict; its own room ('study') so a street tap on it
+       enters the room it actually fronts. */
+    var southWallEastG = new T.Group();
+    extG.add(southWallEastG);
+    /* room 'living', NOT 'study': this is the wall south_wall splits
+       out of, and a tap on the front of the house has always walked
+       into the living room. The study is PIN-gated (its own door runs
+       chfHouseUnlockStudy), and a shell tap is not a door -- routing
+       one straight into the room would be a way past the PIN, not a
+       feature. Ownership, not the fronting room, is what this split is
+       for. */
+    function swetag(m) { if (m) m.userData.room = 'living'; return m; }
 
     /* FACADE (arc 4): the elevation used to be authored here -- an
        offset door, a window pair west of it and a single window east.
@@ -4127,8 +4206,20 @@
     swtag(box(SW_W, EXT_TOP4, WALL_T4 / 2, NICE ? 0xffffff : EXTC.siding,
               SW_CX, EXT_TOP4 / 2, SWZ0 + WALL_T4 * 3 / 4, southWallG,
               sharp({ rough: 0.95, map: CLAD() })));
-    swtag(box(SW_W - 0.3, 0.2, 0.08, 0xe4ddd1, SW_CX, 0.1, SWZ0 - 0.02,
-              southWallG, sharp()));
+    /* the baseboard's 0.3 was one board's two ends inset 0.15 each.
+       Split, each segment insets only its OUTER end, so the run still
+       reads as one continuous board across the split instead of opening
+       a 0.3 hole in the middle of the front elevation. */
+    swtag(box(SW_W - 0.15, 0.2, 0.08, 0xe4ddd1, SW_CX + 0.075, 0.1,
+              SWZ0 - 0.02, southWallG, sharp()));
+    /* the study's segment: the same three boxes, 6.85..14.65. */
+    swetag(box(SWE_W, EXT_TOP4, WALL_T4 / 2, C.wall, SWE_CX, EXT_TOP4 / 2,
+               SWZ0 + WALL_T4 / 4, southWallEastG, sharp(WALL_O)));
+    swetag(box(SWE_W, EXT_TOP4, WALL_T4 / 2, NICE ? 0xffffff : EXTC.siding,
+               SWE_CX, EXT_TOP4 / 2, SWZ0 + WALL_T4 * 3 / 4, southWallEastG,
+               sharp({ rough: 0.95, map: CLAD() })));
+    swetag(box(SWE_W - 0.15, 0.2, 0.08, 0xe4ddd1, SWE_CX - 0.075, 0.1,
+               SWZ0 - 0.02, southWallEastG, sharp()));
 
     /* FACADE (arc 4): the door, the porch and the second coach lamp all
        stood here, hand-placed into southWallG. They are spec features
@@ -4153,7 +4244,16 @@
        "outward" is its own physical compass direction -- no flip needed,
        unlike west_wall's interior-partition flip (T2). */
     regFabric(southWallG, { name: 'south_wall', n: [0, 0, 1],
-                            box: fabBox(southWallG), room: 'living' });
+                            box: fabBox(southWallG), room: 'living',
+                            owners: ['kitchen', 'living'] });
+    /* SHELL: the study's half of the same face. NO cutawayRoom -- the
+       study's camera stands south of it and the corridor rule already
+       ghosts it. owners ['study'] is what keeps it standing through the
+       kitchen's and the living room's cutaways, which is the whole
+       point of the split. */
+    regFabric(southWallEastG, { name: 'south_wall_east', n: [0, 0, 1],
+                                box: fabBox(southWallEastG), room: 'living',
+                                owners: ['study'] });
 
     /* ---- MASSING ARC 1 (spec sections 2 and 3): two rectangles --------
        The hand-drawn massing (an east wing past the front, a patio
@@ -4232,7 +4332,13 @@
        camera stands on (the kitchen camera is east of it, the study's
        west of it, and both need it out of the way). */
     regFabric(eastPartG, { name: 'east_partition', n: [1, 0, 0],
-                           box: fabBox(eastPartG), twoSided: true });
+                           box: fabBox(eastPartG), twoSided: true,
+                           /* the study's own west wall. Owned by the
+                              STUDY alone: the kitchen and the living
+                              room stand on its other side, and a
+                              cutaway that took it away opened both of
+                              them straight into the east rooms. */
+                           owners: ['study'] });
 
     /* ---- the east WALL: the main block's own side elevation -----------
        x 14.65, from the north wall to the street face, fronting the back
@@ -4265,16 +4371,20 @@
     /* SHELL: east_wall is complete here. n is [1,0,0]: a true exterior
        boundary, its own physical outward compass direction. */
     regFabric(eastWallG, { name: 'east_wall', n: [1, 0, 0],
-                           box: fabBox(eastWallG) });
+                           box: fabBox(eastWallG),
+                           /* the side elevation of the three rooms
+                              behind it, and of nothing else. */
+                           owners: ['study', 'east_room', 'back_room'] });
 
     function shellGroup() { var g = new T.Group(); extG.add(g); return g; }
     function shellBox(g, w, h, d, c, x, y, z, opts) {
       return box(w, h, d, c, x, y, z, g, sharp(opts));
     }
-    function shellRegister(g, name, normal, room, twoSided, pad, cutawayRoom) {
+    function shellRegister(g, name, normal, room, twoSided, pad, cutawayRoom, owners) {
       g.updateMatrixWorld(true);
       regFabric(g, { name: name, n: normal, box: fabBox(g), room: room,
-                     twoSided: twoSided, pad: pad, cutawayRoom: cutawayRoom });
+                     twoSided: twoSided, pad: pad, cutawayRoom: cutawayRoom,
+                     owners: owners });
     }
     function shellWindow(g, x, y, z, angle, w, h, glow) {
       var frame = new T.Group(); frame.position.set(x, y, z);
@@ -4302,7 +4412,7 @@
        block's street face fronts a REAL room (the mudroom), so the
        argument exists rather than a second hand-rolled wall builder; it
        defaults to null, which is exactly what every older caller got. */
-    function shellWall(name, x0, z0, x1, z1, height, normal, windows, twoSided, cutawayRoom, room) {
+    function shellWall(name, x0, z0, x1, z1, height, normal, windows, twoSided, cutawayRoom, room, owners) {
       var g = shellGroup(), alongX = x0 !== x1;
       var length = alongX ? x1 - x0 : z1 - z0;
       var cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
@@ -4323,7 +4433,7 @@
                     2.80, alongX ? cz + normal[2] * (WALL_T4 / 2 + 0.05) : p,
                     angle, a[1] || 1.35, 2.70, a[2]);
       });
-      shellRegister(g, name, normal, room || null, twoSided, null, cutawayRoom);
+      shellRegister(g, name, normal, room || null, twoSided, null, cutawayRoom, owners);
       return g;
     }
     /* Each pitched plane has its own normal and merge/ghost unit. Gable
@@ -4340,7 +4450,7 @@
        at each end, and the two ends become triangular decks of the same
        pitch instead of vertical clapboard infill (so all four planes
        meet at the same ridge point and no batten infill is needed). */
-    function shellGable(name, x0, x1, z0, z1, eave, ridgeAxis, room, ends, pitch, slopeRooms, depthEnds, twoSidedRoof, cutawayRoom, form) {
+    function shellGable(name, x0, x1, z0, z1, eave, ridgeAxis, room, ends, pitch, slopeRooms, depthEnds, twoSidedRoof, cutawayRoom, form, owners) {
       var alongZ = (ridgeAxis === 'z' || ridgeAxis === true);
       var hip = (form === 'hip');
       pitch = pitch || PITCH_FAMILY;
@@ -4443,7 +4553,8 @@
         shellRegister(g, name + (alongZ ? (sign < 0 ? '_west' : '_east')
                                        : (sign < 0 ? '_north' : '_south')),
                       n.toArray(), slopeRooms ? slopeRooms[sign < 0 ? 0 : 1] : room,
-                      !!twoSidedRoof, depthEnds ? 0.5 : undefined, cutawayRoom);
+                      !!twoSidedRoof, depthEnds ? 0.5 : undefined, cutawayRoom,
+                      owners);
       });
       cx = (x0 + x1) / 2; cz = (z0 + z1) / 2;
       (ends || [-1, 1]).forEach(function (sign) {
@@ -4490,7 +4601,7 @@
             hm.getWorldQuaternion(new T.Quaternion()));
           shellRegister(g, name + (alongZ ? (sign < 0 ? '_back' : '_front')
                                          : (sign < 0 ? '_end_west' : '_end_east')),
-                        hn.toArray(), room, false, undefined, cutawayRoom);
+                        hn.toArray(), room, false, undefined, cutawayRoom, owners);
           return;
         }
         var geo = cgeo('shell-gable|' + half + '|' + eave + '|' + pitch, function () {
@@ -4519,7 +4630,7 @@
         shellRegister(g, name + (alongZ ? (sign < 0 ? '_back' : '_front')
                                        : (sign < 0 ? '_end_west' : '_end_east')),
                       alongZ ? [0, 0, sign] : [sign, 0, 0], room,
-                      false, undefined, cutawayRoom);
+                      false, undefined, cutawayRoom, owners);
       });
     }
     /* ================= FACADE: the street elevation ===================
@@ -4554,25 +4665,51 @@
       { face: 'garage_block', x0: GARAGE_BLOCK.west, x1: GARAGE_BLOCK.east, z: GARAGE_BLOCK.south, eave: GARAGE_BLOCK.eave, room: 'garage', roof: 'garage_block_roof' },
       { face: 'main',         x0: FULL_HOUSE.west,   x1: FULL_HOUSE.east,   z: SWZ1,               eave: EXT_TOP4,         room: 'living', roof: 'roof_main' }
     ];
+    /* Mirrors services/house_facade.py's GARAGE_BAY_SLOTS: the garage
+       ROOM's own x range (-18.2..-12.6) nearest-slot-boundary snapped
+       onto the garage_block face's six slots. gableAt's garage special
+       case, the door's own bay (SLOTS[0..2]) and slotOwners() below all
+       key off this, not the whole face, which now also carries the
+       mudroom. Declared HERE, above facadeSlots(), because that loop
+       reads it while it builds the table. */
+    var GARAGE_BAY_SLOTS = [0, 2];
+    /* CUTAWAY OWNERSHIP: which WALL SEGMENT each slot sits on, and so
+       which rooms' cutaways may take a feature built there. Mirrors
+       services/house_facade.py's STUDY_SLOTS/slot_owners(), derived the
+       way GARAGE_BAY_SLOTS is: the study's own x-range (6.85..14.65)
+       against the main face's twelve 1.816667-wide slots. Slot k's
+       centre is -7.15 + (k - 6 + 0.5) * 21.8/12, so slot 13's centre is
+       6.475 (still the great room's) and 14's is 8.291667, the first at
+       or beyond 6.85 -- slots 14..17 sit on south_wall_east.
+
+       This is NOT the fronting room: `room` still comes off the FACE,
+       so every tap behaves exactly as it did -- a street tap on the
+       study's own face still walks into the living room, and the study
+       stays behind its parent PIN. Ownership decides what a cutaway may
+       remove; the room decides where a tap goes. */
+    var STUDY_SLOTS = [14, 17];
+    function slotOwners(i, face) {
+      if (face === 'main') {
+        return (i >= STUDY_SLOTS[0] && i <= STUDY_SLOTS[1])
+          ? ['study'] : ['kitchen', 'living'];
+      }
+      return (i >= GARAGE_BAY_SLOTS[0] && i <= GARAGE_BAY_SLOTS[1])
+        ? ['garage'] : ['mudroom'];
+    }
     function facadeSlots() {
       var out = [], i = 0;
       FACES.forEach(function (f) {
         var width = f.x1 - f.x0, n = Math.max(1, Math.round(width / SLOT_W)), w = width / n;
         for (var k = 0; k < n; k++) {
-          var x0 = f.x0 + k * w;
-          out.push({ i: i++, face: f.face, x0: x0, x1: x0 + w, cx: x0 + w / 2, z: f.z,
-                     eave: f.eave, room: f.room, roof: f.roof });
+          var x0 = f.x0 + k * w, gi = i++;
+          out.push({ i: gi, face: f.face, x0: x0, x1: x0 + w, cx: x0 + w / 2, z: f.z,
+                     eave: f.eave, room: f.room, roof: f.roof,
+                     owners: slotOwners(gi, f.face) });
         }
       });
       return out;
     }
     var SLOTS = facadeSlots();
-    /* Mirrors services/house_facade.py's GARAGE_BAY_SLOTS: the garage
-       ROOM's own x range (-18.2..-12.6) nearest-slot-boundary snapped
-       onto the garage_block face's six slots. gableAt's garage special
-       case and the door's own bay (SLOTS[0..2]) key off this, not the
-       whole face, which now also carries the mudroom. */
-    var GARAGE_BAY_SLOTS = [0, 2];
     /* The canonical facade, field for field services/house_facade.py's
        own CANONICAL (spec section 2.2: today's elevation, snapped onto
        the slot grid). Only a page served WITHOUT the injection --
@@ -4633,6 +4770,25 @@
       var pe = ROOF_PLANE_EAVE[slot.face];
       return pe === undefined ? slot.eave : pe;
     }
+    /* CUTAWAY OWNERSHIP: a facade feature is part of the wall segment
+       it sits on, so it takes that segment's owners -- otherwise the
+       great room's cutaway strips the study's own street windows off a
+       wall that is still standing. A feature covering slots on BOTH
+       sides of a split takes the UNION: it really does sit on both
+       walls, and leaving with either is the honest answer for a feature
+       surface-mounted on an uncut wall, which leaves no opening behind
+       it. Canonical has no straddler; normalize() does not forbid one. */
+    function spanOwners(feat) {
+      var out = [];
+      for (var k = feat.slot; k < feat.slot + (feat.span || 1); k++) {
+        var sl = SLOTS[k];
+        if (!sl) break;
+        sl.owners.forEach(function (o) {
+          if (out.indexOf(o) < 0) out.push(o);
+        });
+      }
+      return out;
+    }
 
     /* ---- builders: one per kind, each its own registered piece -------
        Every builder makes a shellGroup(), fills it through the existing
@@ -4691,7 +4847,8 @@
          window has to go with it -- otherwise a black frame stands
          floating in the opening (measured: the living cutaway). */
       shellRegister(g, 'facade_' + slot.face + '_window_' + feat.slot,
-                    [0, 0, 1], slot.room, false, undefined, slot.room);
+                    [0, 0, 1], slot.room, false, undefined, slot.room,
+                    spanOwners(feat));
     }
 
     function doorAt(feat) {
@@ -4760,7 +4917,8 @@
           { rough: 0.5 }).userData.room = slot.room;
       if (entry) DOOR_X4 = x;            /* the front walk follows */
       shellRegister(g, 'facade_' + slot.face + '_door_' + feat.slot,
-                    [0, 0, 1], slot.room, false, undefined, slot.room);
+                    [0, 0, 1], slot.room, false, undefined, slot.room,
+                    spanOwners(feat));
     }
 
     function porchAt(feat) {
@@ -4823,7 +4981,8 @@
       PORCH_SPANS.push({ slot: feat.slot, span: feat.span, frontZ: frontZ });
       if (slot.face === 'main') PORCH_FRONT_Z4 = frontZ;
       shellRegister(g, 'facade_' + slot.face + '_porch_' + feat.slot,
-                    [0, 0, 1], slot.room, false, undefined, slot.room);
+                    [0, 0, 1], slot.room, false, undefined, slot.room,
+                    spanOwners(feat));
     }
 
     function garageDoorAt(feat) {
@@ -4953,7 +5112,8 @@
            past the bay falls through to the ordinary gable below rather
            than stretching the bay's fixed z range over the mudroom. */
         shellGable(name, e.x0, e.x1, 4.0, 10.1, roofPlaneEave(slot), 'z',
-                   slot.room, [1], PITCH_FAMILY, null, null, false, slot.room);
+                   slot.room, [1], PITCH_FAMILY, null, null, false, slot.room,
+                   undefined, spanOwners(feat));
         return;
       }
       /* a porch sharing the span carries the gable out to its own front
@@ -4966,7 +5126,8 @@
       });
       shellGable(name, e.x0, e.x1, slot.z - 2.8, front,
                  roofPlaneEave(slot) - 0.8, 'z', slot.room, [1],
-                 PITCH_FAMILY, null, null, false, slot.room);
+                 PITCH_FAMILY, null, null, false, slot.room,
+                 undefined, spanOwners(feat));
     }
 
     function dormerAt(feat) {
@@ -4983,14 +5144,16 @@
         shellWindow(g, e.cx, y, zc + 0.85, 0, Math.min(1.1, w - 0.5), 1.1, true);
       }
       shellRegister(g, 'facade_' + slot.face + '_dormer_' + feat.slot,
-                    [0, 0, 1], slot.room, false, undefined, slot.room);
+                    [0, 0, 1], slot.room, false, undefined, slot.room,
+                    spanOwners(feat));
       /* _dormer_<slot>_roof, not _dormerroof_<slot>: the registry reads
          kind and slot straight out of the name, and a dormer's roof is
          the same dormer feature. */
       shellGable('facade_' + slot.face + '_dormer_' + feat.slot + '_roof',
                  e.cx - w / 2, e.cx + w / 2, zc - 0.8, zc + 0.8,
                  y + 0.95, 'z', slot.room, [1], PITCH_FAMILY,
-                 null, null, false, slot.room);
+                 null, null, false, slot.room, undefined,
+                 spanOwners(feat));
     }
 
     function hipEndAt(feat) {
@@ -5016,7 +5179,8 @@
         finish(m); g.add(m);
       });
       shellRegister(g, 'facade_' + slot.face + '_hip_end_' + feat.slot,
-                    [0, 0, 1], slot.room, false, undefined, slot.room);
+                    [0, 0, 1], slot.room, false, undefined, slot.room,
+                    spanOwners(feat));
     }
 
     /* The elevation itself: ground layer west to east, then roof. The
@@ -5044,17 +5208,47 @@
     /* ================= END FACADE ===================================== */
 
     /* ---- the two block roofs (spec section 3) -------------------------
-       Eleven hand-placed roof pieces became these two calls plus the
+       Eleven hand-placed roof pieces became these calls plus the
        facade's own features. Both read ROOF_FORMS, so form and ridge
        direction are parameters a later arc sets rather than facts baked
-       into this line. roof_main keeps cutawayRoom 'study': the study
-       sits under it now, so the whole roof leaves together when that
-       room is the subject. */
-    shellGable('roof_main', FULL_HOUSE.west, FULL_HOUSE.east,
+       into this line.
+
+       CUTAWAY OWNERSHIP (fix, 2026-09-16): roof_main was ONE deck over
+       the whole main block carrying cutawayRoom 'study' -- so the
+       study's cutaway took the great room's roof with it, and the great
+       room's own corridor ghost took the study's. A roof is an
+       enclosure; an enclosure belongs to the room under it. So the main
+       block's roof is TWO shellGable calls split on the same
+       great-room / east-rooms line the street face splits on (6.85),
+       each owning only what it covers.
+
+       `depthEnds` is exactly what this was built for: the west half
+       overhangs only at its WEST end ([true,false]) and the east half
+       only at its EAST end ([false,true]), so the two decks butt at
+       6.85 with no overlap and no double eave. Same eave, same pitch,
+       same run -> the same ridge height, and each half's ridge cap runs
+       to the split, so the caps meet without a seam. `ends` gives each
+       half only its own outer gable ([-1] west, [1] east): the split is
+       an interior line, not an end of the building, and a gable infill
+       there would be a wall through the middle of the attic. Both read
+       ROOF_FORMS.main, so form and ridge stay one parameter. */
+    var RM_SPLIT = SW_SPLIT4;                  /* 6.85 === EPX1_4 */
+    shellGable('roof_main_west', FULL_HOUSE.west, RM_SPLIT,
                FULL_HOUSE.north, FULL_HOUSE.south, EXT_TOP4,
-               ROOF_FORMS.main.ridge, null, null, Math.PI / 8,
-               ['kitchen', 'living'], null, false, 'study',
-               ROOF_FORMS.main.form);
+               ROOF_FORMS.main.ridge, null, [-1], Math.PI / 8,
+               ['kitchen', 'living'], [true, false], false, null,
+               ROOF_FORMS.main.form, ['kitchen', 'living']);
+    /* slopeRooms/room are the WHOLE roof's own, unchanged by the split
+       (north deck kitchen, south deck living, the gable end roomless):
+       a tap on the roof over the study has always walked into the room
+       the deck faces, and the study's PIN is not something a roof tap
+       may step around. cutawayRoom 'study' and owners ['study'] are
+       what make this half the study's enclosure. */
+    shellGable('roof_main_east', RM_SPLIT, FULL_HOUSE.east,
+               FULL_HOUSE.north, FULL_HOUSE.south, EXT_TOP4,
+               ROOF_FORMS.main.ridge, null, [1], Math.PI / 8,
+               ['kitchen', 'living'], [false, true], false, 'study',
+               ROOF_FORMS.main.form, ['study']);
 
     /* ---- the garage block (spec section 2) ----------------------------
        The garage's own three walls (garage_shell) and the mudroom's own
@@ -5064,10 +5258,11 @@
        floor back there and no camera ever sees it. */
     shellWall('garage_block_north', GARAGE_BLOCK.west, GARAGE_BLOCK.north,
               GARAGE_BLOCK.east, GARAGE_BLOCK.north, GARAGE_BLOCK.eave,
-              [0, 0, -1], []);
+              [0, 0, -1], [], false, null, null, ['garage', 'mudroom']);
     shellWall('garage_block_west', GARAGE_BLOCK.west, GARAGE_BLOCK.north,
               GARAGE_BLOCK.west, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
-              [-1, 0, 0], [[2.0, 1.35, true]]);
+              [-1, 0, 0], [[2.0, 1.35, true]], false, null, null,
+              ['garage', 'mudroom']);
     /* the mudroom's street face, full height to the block's own eave.
        The old front band (mudroom_front_cladding) closed the gap above
        the room's door wall to the underside of a cross roof that no
@@ -5075,12 +5270,12 @@
        and the mudroom's own walls, door and window stay inside it. */
     var mudroomFrontG = shellWall('mudroom_front', -12.60, GARAGE_BLOCK.south,
               GARAGE_BLOCK.east, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
-              [0, 0, 1], [], false, null, 'mudroom');
+              [0, 0, 1], [], false, null, 'mudroom', ['mudroom']);
     shellGable('garage_block_roof', GARAGE_BLOCK.west, GARAGE_BLOCK.east,
                GARAGE_BLOCK.north, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
                ROOF_FORMS.garage.ridge, null, null, Math.PI / 8,
                ['garage', 'mudroom'], null, false, null,
-               ROOF_FORMS.garage.form);
+               ROOF_FORMS.garage.form, ['garage', 'mudroom']);
 
     /* ---- the main block's north side ----------------------------------
        The kitchen's own north wall (wallB / north_wall) and its cladding
@@ -5090,7 +5285,8 @@
        the window would otherwise be buried inside that cladding. */
     shellWall('north_wall_east', EPX1_4, FULL_HOUSE.north + WALL_T4 / 2,
               FULL_HOUSE.east, FULL_HOUSE.north + WALL_T4 / 2, EXT_TOP4,
-              [0, 0, -1], [[10.75, 1.35, true]]);
+              [0, 0, -1], [[10.75, 1.35, true]], false, null, null,
+              ['back_room']);
 
     /* ---- the back door (spec section 2) -------------------------------
        The exterior Kitchen marker used to be the patio slider, which is
@@ -5160,7 +5356,10 @@
              C.wall, (EPX1_4 + EWX0_4) / 2, EXT_TOP4 / 2, 1.50,
              WALL_O);
     regFabric(futurePartG, { name: 'future_room_partition', n: [0, 0, 1],
-                             box: fabBox(futurePartG), twoSided: true });
+                             box: fabBox(futurePartG), twoSided: true,
+                             /* between the two future rooms; neither is
+                                ever a subject, so this is always solid. */
+                             owners: ['east_room', 'back_room'] });
     /* the back patio: the slab outside the back door, in the yard. Not
        registered -- it is ground, like the drive and the front walk. */
     box(5.2, 0.16, 5.5, EXTC.drive, -2.0, -0.08, -9.0, extG,
@@ -5229,9 +5428,11 @@
        reason, even though it is genuine ext siding and west_wall is an
        interior partition. Re-derived, not copied on faith:
          camOut = cam.x > -6.825; subIn = sub.x < -6.825.
-         kitchen (HOME_POS.x 14.6): camOut true; kitchen aabb x -2.785,
-           subIn false (-2.785 is NOT < -6.825). SOLID.
-         living (LIV_POS.x 5.2): camOut true; living aabb x 0, subIn
+         kitchen (HOME_POS.x 4.64, moved south/west by the cutaway-
+           ownership fix; 14.6 before): camOut true either way (both are
+           > -6.825); kitchen aabb x -2.785, subIn false (-2.785 is NOT
+           < -6.825). SOLID, unchanged.
+         living (LIV_POS.x 0): camOut true; living aabb x 0, subIn
            false. SOLID.
          mudroom (MUD_POS.x -3.4): camOut true; mudroom aabb x -9.62,
            subIn true (-9.62 < -6.825). Both true -> corridorHits(box,
@@ -5274,7 +5475,8 @@
        (re-derived exhaustively in the comment above: mudroom GHOST,
        every other view SOLID), so a tap on it belongs where it ghosts. */
     regFabric(westSkirtG, { name: 'west_skirt', n: [1, 0, 0],
-                            box: fabBox(westSkirtG), room: 'mudroom' });
+                            box: fabBox(westSkirtG), room: 'mudroom',
+                            owners: ['mudroom', 'kitchen', 'living'] });
     /* ================= END SHELL: the seal ============================ */
 
     /* garage: opened in H2, moved WEST in the architect pass so the
@@ -5418,8 +5620,10 @@
          room's own subject centre (kitchen x -2.785, living x 0, mudroom
          x -9.62 — read off their own ROOM_AABB) sits EAST of
          garage_shell's own box centre (x -15.4), and so does every
-         camera except the garage's own (HOME_POS 14.6, LIV_POS 5.2,
-         MUD_POS -3.4). With n=[1,0,0], camOut is therefore true for those
+         camera except the garage's own (HOME_POS 4.64 -- 14.6 before
+         the cutaway-ownership fix moved it south, still far east of
+         -15.4 -- LIV_POS 0, MUD_POS -3.4). With n=[1,0,0], camOut is
+         therefore true for those
          three and subIn (subject.x < box centre.x) false for all three —
          never ghosts for kitchen, mudroom or living. The garage's OWN
          subject is the one case that ghosts: its ROOM_AABB centre lands
@@ -5434,7 +5638,7 @@
          table below. */
       regFabric(garageShellG, { name: 'garage_shell', n: [1, 0, 0],
                                 box: fabBox(garageShellG), room: 'garage',
-                                cutawayRoom: 'garage' });
+                                cutawayRoom: 'garage', owners: ['garage'] });
       /* SHELL: garage_door is complete here — the door leaf/frame/
          window/hardware/coach lamp are all in, and the roof/walls just
          moved OUT above, so fabBox now measures only the door assembly
@@ -5451,7 +5655,8 @@
          still read it 'solid'. */
       var gdBox = fabBox(garageDoorG);
       regFabric(garageDoorG, { name: 'garage_door', n: [0, 0, 1],
-                                box: gdBox, room: 'garage' });
+                                box: gdBox, room: 'garage',
+                                owners: ['garage'] });
       blobShadow(3.0, 4.2, -15.4, 6.0, extG);
       /* ================= THE BAY (style bible S7 garage) ================
          Plates 3, 4 and 5: a working garage, not a shed. A concrete slab
@@ -9332,7 +9537,8 @@
       registerFabric: function (group, spec) {
         regFabric(group, {name:spec.name, n:spec.normal, box:fabBox(group),
                           room:spec.room, mode:spec.mode, twoSided:spec.twoSided,
-                          pad:spec.pad, cutawayRoom:spec.cutawayRoom});
+                          pad:spec.pad, cutawayRoom:spec.cutawayRoom,
+                          owners:spec.owners});
       },
       solveShell: solveShell, ROOM_AABB: ROOM_AABB, AO_OCCLUDERS: AO_OCCLUDERS,
       /* FACADE (arc 4): the spec the elevation was BUILT from (never the
@@ -10335,6 +10541,10 @@
       });
       return { name: f.name, mode: f.mode, visible: f.g.visible,
                room: f.g.userData.room || null, normal: f.n.toArray(), box: f.box,
+               /* the ownership rule's own input, so a test can assert the
+                  law ("no owned piece ever leaves for a non-owner") over
+                  the whole registry instead of piece by piece */
+               owners: f.owners.slice(), cutawayRoom: f.cutawayRoom,
                n: [f.n.x, f.n.y, f.n.z], /* arc 4 (facade spec §6): the AO
                     derivation's own wall-like test, |n.y| < 0.5, reads
                     this same shape from FABRIC -- exposed here too so the

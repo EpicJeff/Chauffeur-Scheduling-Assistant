@@ -31,6 +31,30 @@ FACES = [
 # only its own bay (spec section 5).
 GARAGE_BAY_SLOTS = (0, 2)
 
+# The STUDY's own x-range (6.85..14.65) within the merged main face,
+# derived the way GARAGE_BAY_SLOTS is derived from the garage bay.
+# Main face -7.15..14.65 is 21.8 wide over 12 slots of 1.816667, so
+# slot k (global 6..17) has centre -7.15 + (k - 6 + 0.5) * 21.8 / 12:
+# slot 13's centre is 6.475 (still the great room's) and slot 14's is
+# 8.291667, the first at or beyond 6.85. So slots 14..17 sit on the
+# study's own segment of the street face.
+#
+# Cutaway-ownership fix: the street face is TWO wall segments split on
+# that line (house.js south_wall / south_wall_east), and a feature
+# belongs to the segment it sits on -- which is what stops the living
+# room's cutaway from taking the study's windows off a wall that is
+# still standing. This is NOT the fronting room: `room` still comes off
+# the FACE, so every tap behaves exactly as before and the study stays
+# behind its parent PIN. house.js's slotOwners() mirrors this function.
+STUDY_SLOTS = (14, 17)
+
+
+def slot_owners(i, face):
+    """The rooms whose cutaway may take a feature built on slot `i`."""
+    if face == 'main':
+        return ['study'] if STUDY_SLOTS[0] <= i <= STUDY_SLOTS[1] else ['kitchen', 'living']
+    return ['garage'] if GARAGE_BAY_SLOTS[0] <= i <= GARAGE_BAY_SLOTS[1] else ['mudroom']
+
 GROUND_KINDS = ('wall', 'window', 'door', 'garage_door', 'porch')
 ROOF_KINDS = ('eave', 'gable', 'dormer', 'hip_end')
 WINDOW_SIZES = ('tall', 'standard', 'small')
@@ -65,7 +89,8 @@ def slot_table():
             x0 = f['x0'] + k * w
             out.append({'i': i, 'face': f['face'], 'x0': round(x0, 6), 'x1': round(x0 + w, 6),
                         'cx': round(x0 + w / 2, 6), 'z': f['z'], 'eave': f['eave'],
-                        'room': f['room'], 'roof': f['roof']})
+                        'room': f['room'], 'roof': f['roof'],
+                        'owners': slot_owners(i, f['face'])})
             i += 1
     return out
 

@@ -957,16 +957,23 @@ def scenario_shell_fabric_registry():
         # spec's own "kept as-is" list, NEW its "new pieces" list, and
         # DELETED_PREFIXES every name the spec deletes -- so a piece that
         # quietly survives the massing cull fails here by name.
+        # CUTAWAY OWNERSHIP (fix 2026-09-16): the two shared pieces are
+        # each TWO pieces now, split on the great-room / east-rooms line
+        # (x 6.85). roof_main's four names become six -- each half keeps
+        # its own two slope decks and gets only its OWN outer gable end
+        # (the split is an interior line, so neither half gets a gable
+        # there) -- and south_wall gains south_wall_east.
         KEPT = {'north_wall', 'north_cladding', 'west_wall', 'west_skirt',
                 'west_cladding', 'south_wall', 'garage_shell', 'garage_door',
                 'patio_slider', 'living_back_room_door', 'living_study_door',
-                'yard', 'roof_main_north', 'roof_main_south',
-                'roof_main_end_west', 'roof_main_end_east'}
+                'yard', 'roof_main_west_north', 'roof_main_west_south',
+                'roof_main_west_end_west', 'roof_main_east_north',
+                'roof_main_east_south', 'roof_main_east_end_east'}
         NEW = {'east_wall', 'east_partition', 'north_wall_east',
                'garage_block_north', 'garage_block_west', 'mudroom_front',
                'garage_block_roof_north', 'garage_block_roof_south',
                'garage_block_roof_end_west', 'garage_block_roof_end_east',
-               'back_door', 'future_room_partition'}
+               'back_door', 'future_room_partition', 'south_wall_east'}
         DELETED_PREFIXES = ('massing_', 'mudroom_cross_roof', 'mudroom_roof',
                             'living_roof', 'mudroom_front_cladding',
                             'mudroom_east_finish')
@@ -1023,8 +1030,12 @@ def scenario_shell_fabric_registry():
         # (x -7.15..14.65) and the piece at x 6.5..6.85 is east_partition,
         # the interior wall the old east_wall became; the main's own east
         # side stands out at x 14.65. All three still occlude.
+        # the west segment only: the study's own street face is
+        # south_wall_east now (checked just below).
         check(contains_box([-6.5, 6.5, 0.0, 5.6, 14.2, 14.55]),
               'south_wall must occlude via its registered box')
+        check(contains_box([6.85, 14.5, 0.0, 5.6, 14.2, 14.55]),
+              'south_wall_east must occlude via its registered box')
         # 14.20, not 14.55: the fix wave stopped the partition at SWZ0,
         # the south wall's INNER face, so its end stops being coplanar
         # with the street siding (a coplanar plaster end draws a pale
@@ -1045,20 +1056,37 @@ def scenario_shell_fabric_registry():
         # deck box bottom is the eave edge of that deck, so comparing the
         # two boxes' y-min is comparing the two eave lines.
         check(abs(by_name['garage_block_roof_south']['box'][2] -
-                  by_name['roof_main_south']['box'][2]) < 0.02,
+                  by_name['roof_main_west_south']['box'][2]) < 0.02,
               'both block roofs must start at the same eave height: %r vs %r'
               % (by_name['garage_block_roof_south']['box'][2],
-                 by_name['roof_main_south']['box'][2]))
+                 by_name['roof_main_west_south']['box'][2]))
+        # CUTAWAY OWNERSHIP: the two halves of the main roof are ONE
+        # roof, split only for the solver. Same eave (deck box y-min),
+        # same ridge (deck box y-max), and their decks BUTT at the split
+        # rather than overlapping -- depthEnds gives the west half its
+        # overhang only at the west end and the east half only at the
+        # east end, so the west deck ends at 6.85 and the east one
+        # starts there.
+        for side in ('north', 'south'):
+            w = by_name['roof_main_west_' + side]['box']
+            e = by_name['roof_main_east_' + side]['box']
+            check(abs(w[2] - e[2]) < 0.02 and abs(w[3] - e[3]) < 0.02,
+                  'the two halves of the main roof share one eave and one '
+                  'ridge (%s): %r vs %r' % (side, w, e))
+            check(abs(w[1] - 6.85) < 0.05 and abs(e[0] - 6.85) < 0.05,
+                  'the main roof decks must meet at the split with no '
+                  'overlap (%s): west ends %r, east starts %r'
+                  % (side, w[1], e[0]))
         # roof_main reaches the main block's own east wall: the east
         # gable end sits one overhang past FULL_HOUSE.east (14.65) and
         # its rake board 0.08 further still.
-        check(14.65 <= by_name['roof_main_end_east']['box'][1] <= 14.65 + 0.32 + 0.20,
+        check(14.65 <= by_name['roof_main_east_end_east']['box'][1] <= 14.65 + 0.32 + 0.20,
               'roof_main must reach the east wall + one overhang: %r'
-              % by_name['roof_main_end_east']['box'][1])
+              % by_name['roof_main_east_end_east']['box'][1])
         # The two side decks of one block roof share a ridge and a pitch:
         # mirrored normals, same |y|.
-        north = by_name['roof_main_north']['normal']
-        south = by_name['roof_main_south']['normal']
+        north = by_name['roof_main_west_north']['normal']
+        south = by_name['roof_main_west_south']['normal']
         check(abs(north[1] - south[1]) < 0.001 and
               abs(north[2] + south[2]) < 0.001 and north[2] < 0 < south[2],
               'the main roof must be two mirrored slopes: %r %r' % (north, south))
@@ -1083,98 +1111,125 @@ def scenario_shell_fabric_registry():
         # in a ghosted wall is a frame floating in the opening).
         EXPECTED = {
             'exterior': [],
-            # MASSING ARC 1 verdict derivation (solveShell's own rule:
-            # camSide = n . (cam - boxCentre) > 0, subSide < 0, and the
-            # piece's box overlapping the camera-subject corridor;
-            # twoSided pieces take camSide * subSide < 0 instead;
-            # cutawayRoom == subject.room hides outright).
+            # CUTAWAY OWNERSHIP verdict derivation (solveShell's rule in
+            # order: cutawayRoom == subject.room hides outright; then a
+            # piece with `owners` that do NOT include the subject's room
+            # is SOLID, whatever the geometry says -- another room's
+            # enclosure never leaves; then the half-space corridor test,
+            # camSide = n . (cam - boxCentre) > 0 with subSide < 0, or
+            # camSide * subSide < 0 for a twoSided piece, AND the box
+            # overlapping the camera-subject corridor).
             #
-            # kitchen -- HOME_POS (14.6, 11.2, 17.0), subject the kitchen
-            # aabb (centre x -2.8, z ~0):
-            #   east_partition (x 6.675, twoSided): cam east, subject
-            #     west -> product < 0, corridor covers it. GHOST.
-            #   east_wall (x ~14.5): camSide +0.1 -- the camera stands
-            #     just OUTSIDE the main block's own east face, edge on to
-            #     it -- subject far west. GHOST.
-            #   patio_slider (x 6.85, twoSided now): same straddle as the
-            #     partition it sits in. GHOST.
-            #   future_room_partition (z 1.5, twoSided): camera south of
-            #     it, kitchen centre north of it. GHOST.
-            #   south_wall, roof_main_south and the street features on
-            #     them: unchanged from the hand-massing era.
-            #   roof_main_end_east LEFT this list: it used to sit at
-            #     x 7.17, east of the camera; the main block reaches
-            #     14.65 now, so the gable end is at x ~14.9 and the
-            #     camera (14.6) is on its INNER side. SOLID.
-            #   facade_main_window_7 JOINS this list (task 3): the merged
-            #     main face's uniform 1.816667 slot width re-snaps this
-            #     window from x -4.525 to cx -4.425, just far enough into
-            #     the kitchen's own camera-subject corridor to flip GHOST.
-            'kitchen': ['east_partition', 'east_wall', 'patio_slider',
-                        'future_room_partition',
-                        'living_back_room_door', 'living_study_door',
-                        'south_wall', 'roof_main_south',
-                        'facade_main_gable_8_east',
+            # kitchen -- HOME_POS moved SOUTH to (4.64, 13.8, 23.0),
+            # HOME_AT unchanged (-1.3, 1.7, -0.2); subject the kitchen
+            # aabb (centre x -2.8, z ~0). The old pose stood EAST of the
+            # main block at x 14.6 and reached the kitchen only by
+            # ghosting the east rooms' own walls and roof, which is the
+            # bug this fix exists for. From the street, inside the great
+            # room's own x span, the ONLY fabric between camera and
+            # subject is the great room's own:
+            #   south_wall (z centre ~14.37, n [0,0,1]): camera z 23 is
+            #     south of it, kitchen north. Owner. GHOST.
+            #   roof_main_west_south (the south deck of the great room's
+            #     own half of the main roof): same straddle. GHOST.
+            #   the street features WEST of the split -- porch 8 with its
+            #     three gable pieces, door 10, windows 7, 9 and 12 --
+            #     all owners ['kitchen','living'], all in the corridor.
+            #     GHOST.
+            #   yard: mode 'hide', ownerless, always. HIDE.
+            # Everything east of 6.85 LEFT this list, which is the fix:
+            # east_partition, east_wall, north_wall_east,
+            # future_room_partition, south_wall_east, roof_main_east_*
+            # and the study's own windows 15/16 all declare owners that
+            # do not include 'kitchen'. SOLID.
+            # patio_slider and living_back_room_door left it too, on
+            # geometry alone: both sit at x 6.85 EAST of the new camera
+            # AND east of the subject, so neither separates them any
+            # more -- from the street you look AT the slider, not
+            # through it. SOLID.
+            'kitchen': ['south_wall', 'roof_main_west_south',
+                        'facade_main_gable_8_west', 'facade_main_gable_8_east',
+                        'facade_main_gable_8_front', 'facade_main_porch_8',
                         'facade_main_door_10', 'facade_main_window_7',
                         'facade_main_window_9', 'facade_main_window_12',
-                        'facade_main_window_15', 'facade_main_window_16',
                         'yard'],
             # garage -- GARAGE_POS (-18.0, 10.5, 21.3), subject the garage
-            # aabb (centre x -15.4, z ~6). The block roof's south deck is
-            # the service roof's south deck at the same eave, pitch and z
-            # extent, only wider in x: same GHOST. Its north deck faces
-            # away (camSide < 0) and its west end sits at x ~-18.4, just
-            # WEST of the camera (camSide < 0): both SOLID.
+            # aabb (centre x -15.4, z ~6). Unchanged by this fix: every
+            # piece here is owned by the garage (garage_shell,
+            # garage_door, the bay's own gable, garage_block_roof_*) or
+            # ownerless (yard), so the ownership gate never fires and the
+            # corridor rule decides exactly as before.
             'garage': ['garage_door', 'garage_shell',
                        'facade_garage_block_gable_0_west', 'facade_garage_block_gable_0_east',
                        'facade_garage_block_gable_0_front',
                        'garage_block_roof_south', 'yard'],
             # mudroom -- MUD_POS (-3.4, 6.2, 11.2), subject the mudroom
-            # aabb (centre x -9.62, z ~5.4):
-            #   mudroom_front (z centre ~9.2 with the old door wall
-            #     folded in): camera south, subject north. GHOST -- and
-            #     the fold is what keeps the inner door wall leaving with
-            #     the face instead of standing as a blank backdrop.
-            #   garage_block_roof_south: the cross roof's south deck by
-            #     another name, same GHOST.
-            #   garage_block_roof_end_east (x ~-6.9, n [1,0,0]): NEW --
-            #     the block roof gets an east gable end where the cross
-            #     roof had none (ends []), and it straddles this camera
-            #     and subject exactly as west_wall beside it does. GHOST.
-            #   mudroom_east_finish LEFT this list: folded into west_wall,
-            #     which is already here.
+            # aabb (centre x -9.62, z ~5.4). Also unchanged: mudroom_front
+            # is owned by the mudroom, the garage block's roof by
+            # ['garage','mudroom'], and west_wall/west_skirt/west_cladding
+            # by ['mudroom','kitchen','living'] -- the mudroom is an owner
+            # of every one, so each still ghosts by corridor exactly as
+            # it did, and the kitchen/living cameras still keep them
+            # (their half-space test already said solid).
             'mudroom': ['mudroom_front', 'west_skirt', 'west_wall',
                         'west_cladding', 'garage_block_roof_south',
                         'garage_block_roof_end_east', 'yard'],
             # living -- LIV_POS (0, 12.8, 26.5), subject the living aabb.
-            # The camera is west of every generated piece and the corridor
-            # covers the whole front now that main and wing are one face,
-            # so the old wing windows join this list too (task 3):
-            # facade_main_window_15/16, GHOST like every other street
-            # feature between this camera and the subject.
-            'living': ['south_wall', 'roof_main_south',
+            # The same street-side set as the kitchen now (both cameras
+            # stand south of the great room's own front), minus nothing
+            # and plus nothing: identical lists are the point, because
+            # both rooms own exactly the same enclosure.
+            #   facade_main_window_15/16 LEFT this list: slots 14..17
+            #     sit on south_wall_east, so their slot owners are
+            #     ['study']. They are the study's windows on the study's
+            #     own wall, and the living room's cutaway has no business
+            #     taking them. SOLID. (Their cutawayRoom is still
+            #     'living' -- a facade feature takes its FACE's fronting
+            #     room, which is what keeps the tap where it always was
+            #     -- so this is also the case that forces the ownership
+            #     gate to run AHEAD of cutawayRoom in solveShell.)
+            #   roof_main_south became roof_main_west_south, and its east
+            #     half stays up. SOLID.
+            'living': ['south_wall', 'roof_main_west_south',
                        'facade_main_gable_8_west', 'facade_main_gable_8_east',
                        'facade_main_gable_8_front', 'facade_main_porch_8',
                        'facade_main_door_10', 'facade_main_window_7',
                        'facade_main_window_9', 'facade_main_window_12',
-                       'facade_main_window_15', 'facade_main_window_16',
                        'yard'],
-            # study -- STUDY_POS (5.85, 3.65, 15.83) after task 1, subject
-            # the study aabb (centre x ~10.7, z ~11):
-            #   east_partition: camera WEST of it, subject east -> the
-            #     twoSided straddle again. GHOST (this is the old
-            #     east_wall's verdict under its new name).
-            #   all four roof_main pieces: cutawayRoom 'study'.
-            #   south_wall + the wing windows now ON it: the study's
-            #     street face is part of the main front.
+            # study -- STUDY_POS moved EAST of the split to
+            # (7.90, 4.20, 17.46), STUDY_AT unchanged; subject the study
+            # aabb (centre x ~10.7, z ~11). The old pose stood at x 5.85,
+            # in the front yard in front of the GREAT ROOM's street face:
+            # with ownership in force that wall is solid from here and
+            # stood across a third of the frame, so the camera moved to
+            # the study's own street side (same distance and tilt,
+            # swung south -- measured against scratch/cutaway-before/
+            # study.png, which it matches or beats).
+            #   south_wall_east: camera south of it, subject north, owner.
+            #     GHOST -- the study's own street face, and only it.
+            #   roof_main_east_north/_south/_end_east: cutawayRoom
+            #     'study'. HIDE. roof_main_west_* are owned by
+            #     ['kitchen','living']: SOLID, the great room keeps its
+            #     roof while you look at the study.
+            #   facade_main_window_15/16: on south_wall_east, owned by
+            #     ['study'], so the gate lets them through and the same
+            #     corridor that ghosts the wall ghosts them. GHOST (a
+            #     window left standing in a ghosted wall would be a frame
+            #     floating in an opening).
+            #   living_study_door: ownerless, cutawayRoom 'study'. HIDE.
+            #   east_partition LEFT this list: the camera stands EAST of
+            #     it now, on the same side as the subject, so it no
+            #     longer separates the two at all. SOLID -- the study
+            #     keeps its own west wall as a backdrop.
+            #   south_wall, facade_main_window_12: owned by the great
+            #     room, which the study is not. SOLID.
             #   east_wall: camera west of x 14.5, not twoSided. SOLID --
-            #     it is the backdrop behind the room, not between.
-            'study': ['east_partition', 'living_study_door',
-                      'facade_main_window_12',
+            #     the backdrop behind the room, not between.
+            'study': ['living_study_door',
                       'facade_main_window_15', 'facade_main_window_16',
-                      'roof_main_end_east', 'roof_main_end_west',
-                      'roof_main_north', 'roof_main_south',
-                      'south_wall', 'yard'],
+                      'roof_main_east_north', 'roof_main_east_south',
+                      'roof_main_east_end_east',
+                      'south_wall_east', 'yard'],
         }
         for view, expected in EXPECTED.items():
             if view == 'exterior':
@@ -1286,6 +1341,103 @@ def scenario_shell_fabric_registry():
         check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
 
 
+def scenario_a_room_cutaway_leaves_other_rooms_enclosed():
+    """A room's cutaway removes only that room's OWN enclosure.
+
+    Cutaway-ownership fix (brief .superpowers/sdd/2026-09-16-cutaway-
+    ownership/brief.md). Massing arc 1 merged per-room enclosure into
+    whole-block pieces, so the living room's cutaway took the study's
+    street face and roof with it and the kitchen camera (east of the
+    block) ghosted the east rooms' own walls. Every registered piece
+    now declares `owners` -- the rooms whose enclosure it actually is --
+    and solveShell refuses to ghost a piece for a subject that is not
+    one of its owners. The user's rule: "Those rooms should remain and
+    their walls and roofs should remain. You should only be seeing the
+    thing you are looking at."
+
+    The general law is asserted over the WHOLE registry (no owned piece
+    ever leaves for a non-owner), then the specific pieces the bug was
+    reported on are pinned by name from the living AND the kitchen.
+    """
+    served = live_app()
+    if served is None:
+        return
+    with served.browser() as page:
+        page.add_init_script(DAY_LOCK_JS)
+        page.goto(served.url('house?quality=high'))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_timeout(2200)
+        fab = page.evaluate("window.chfShellFabric()")
+        check(any(f.get('owners') for f in fab),
+              'every fabric row must report its owners; none did: %r'
+              % sorted(f['name'] for f in fab)[:6])
+        # Every piece that encloses a room (openings and the yard are
+        # deliberately ownerless, the corridor rule alone governs them)
+        # must declare at least one owner -- an un-owned wall is one the
+        # corridor rule can still strip from a room that does not own it.
+        OWNERLESS = {'patio_slider', 'living_back_room_door',
+                     'living_study_door', 'back_door', 'yard'}
+        missing = sorted(f['name'] for f in fab
+                         if not f.get('owners') and f['name'] not in OWNERLESS)
+        check(not missing, 'these enclosure pieces declare no owners: %r' % missing)
+
+        # The general law, per room view.
+        for view in ('kitchen', 'living', 'study', 'garage', 'mudroom'):
+            if view == 'kitchen':
+                page.evaluate("window.chfHouseEnter()")
+            else:
+                page.evaluate("window.chfHouseEnterRoom(%r)" % view)
+            page.wait_for_timeout(1400)
+            rows = page.evaluate("window.chfShellFabric()")
+            stolen = sorted(f['name'] for f in rows
+                            if f.get('owners') and view not in f['owners']
+                            and f['verdict'] != 'solid')
+            check(not stolen,
+                  "%s: another room's enclosure must never leave: %r"
+                  % (view, stolen))
+
+        # The reported pieces, pinned by name. From the living room and
+        # from the kitchen the study and the two future rooms keep their
+        # street face, their roof and their walls.
+        EAST_ENCLOSURE = ['south_wall_east', 'roof_main_east_south',
+                          'roof_main_east_north', 'east_partition',
+                          'east_wall', 'future_room_partition',
+                          'north_wall_east']
+        for view in ('living', 'kitchen'):
+            if view == 'kitchen':
+                page.evaluate("window.chfHouseEnter()")
+            else:
+                page.evaluate("window.chfHouseEnterRoom(%r)" % view)
+            page.wait_for_timeout(1400)
+            by = {f['name']: f for f in page.evaluate("window.chfShellFabric()")}
+            for name in EAST_ENCLOSURE:
+                check(name in by, '%s must be registered' % name)
+                check(by[name]['verdict'] == 'solid',
+                      "%s: %s must stay solid, got %r"
+                      % (view, name, by[name]['verdict']))
+
+        # The study's OWN cutaway still works: its half of the roof
+        # hides (cutawayRoom), its half of the street face ghosts, and
+        # the great room's halves of both stay put.
+        page.evaluate("window.chfHouseEnterRoom('study')")
+        page.wait_for_timeout(1400)
+        by = {f['name']: f for f in page.evaluate("window.chfShellFabric()")}
+        for name in ('roof_main_east_north', 'roof_main_east_south',
+                     'roof_main_east_end_east'):
+            check(by[name]['verdict'] == 'hide',
+                  "study: %s must hide, got %r" % (name, by[name]['verdict']))
+        for name in ('roof_main_west_north', 'roof_main_west_south',
+                     'roof_main_west_end_west'):
+            check(by[name]['verdict'] == 'solid',
+                  "study: %s must stay solid, got %r" % (name, by[name]['verdict']))
+        check(by['south_wall_east']['verdict'] == 'ghost',
+              "study: south_wall_east must ghost, got %r"
+              % by['south_wall_east']['verdict'])
+        check(by['south_wall']['verdict'] == 'solid',
+              "study: the great room's south_wall must stay solid, got %r"
+              % by['south_wall']['verdict'])
+
+
 def scenario_study_sits_inside_the_main_block():
     """Regular house + orbit, task 1: the study lives inside the main
     rectangle (x 6.85..14.65, z 7.65..14.55), not in the old front wing
@@ -1374,7 +1526,28 @@ def scenario_study_sits_inside_the_main_block():
 # roof's two end pieces, two future-room floors, future_room_partition
 # and the back patio slab. The pin's job is to catch the NEXT
 # unintended change; the direction (fewer) is the arc's own thesis.
-CANONICAL_EXTERIOR_MESHES = 1840
+#
+# CUTAWAY OWNERSHIP (fix 2026-09-16) re-records it RED-first once more:
+# 1840 -> 1849, +9, every one of the nine derived from the two splits
+# rather than measured and accepted. Standalone (only this scenario's
+# own seed) the same build counts 1708 against 1699 before the fix --
+# the same +9, and the same 141-mesh seeded gap as before, which is
+# what says the delta is the split and nothing else.
+#   +6  roof_main becomes roof_main_west + roof_main_east. Each half
+#       still builds 2 slope decks + 2 eave trims + 2 ridge caps (6),
+#       so the pair costs 12 where one roof cost 6: +6 there. The GABLE
+#       ENDS are a wash: the one roof built two (each a gable infill
+#       plus two rake boards, 3 meshes), and the two halves build one
+#       outer end each -- `ends [-1]` west, `ends [1]` east -- because
+#       the split is an interior line and a gable there would be a wall
+#       through the middle of the attic. 2 x 3 before, 2 x 3 after.
+#   +3  south_wall becomes south_wall + south_wall_east: the same
+#       three-box idiom (plaster half, siding half, baseboard) twice.
+# Neither split adds a merge survivor beyond its own boxes: mergeStatic
+# needs four items on one material inside ONE registered piece, and
+# every one of these boxes is a different material or a lone member of
+# its bucket on both sides of the change.
+CANONICAL_EXTERIOR_MESHES = 1849
 
 
 def scenario_canonical_facade_pins_the_hand_built_elevation():
@@ -1426,7 +1599,7 @@ def scenario_canonical_facade_pins_the_hand_built_elevation():
             for k in ('x0', 'x1', 'cx', 'z', 'eave'):
                 check(abs(a[k] - b[k]) < 1e-6,
                       'slot %d %s: %r vs %r' % (b['i'], k, a[k], b[k]))
-            for k in ('face', 'room', 'roof'):
+            for k in ('face', 'room', 'roof', 'owners'):
                 check(a[k] == b[k],
                       'slot %d %s: %r vs %r' % (b['i'], k, a[k], b[k]))
         errs = [e for e in served.errors()
@@ -2079,6 +2252,7 @@ if __name__ == '__main__':
     scenario_fridge_magnets_rebuild_shares_geometry()
     scenario_garage_rebuild_does_not_touch_plaque_textures()
     scenario_shell_fabric_registry()
+    scenario_a_room_cutaway_leaves_other_rooms_enclosed()
     scenario_study_sits_inside_the_main_block()
     scenario_canonical_facade_pins_the_hand_built_elevation()
     scenario_navigation_real_mouse()

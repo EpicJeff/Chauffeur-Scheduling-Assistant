@@ -407,3 +407,82 @@ the spec does not already name.
 Minors folded in: `orbitTo` refuses a non-finite stop (`chfOrbitTo('x')` no longer writes `NaN` into
 `ORBIT.stop`); the canonical-pin derivation comment in `tests/test_house_live.py` recounts the
 retired registry names — twenty-four, not seventeen (see 10.6).
+
+### 10.10 Post-ship fix — cutaway ownership (v2.499.41)
+
+**The bug (user report, 2026-09-16, screenshot of the living view).** From the living room and the
+kitchen, the study and the two future rooms lost their roof and their street wall, and from the
+kitchen you looked straight into the east rooms. The user's rule: *"Those rooms should remain and
+their walls and roofs should remain. You should only be seeing the thing you are looking at."*
+
+**Root cause.** This arc merged per-room enclosure into whole-block pieces — `south_wall` spans
+x -7.15..14.65 (the great room's street face AND the study's) and `roof_main` was one deck over the
+whole main block. `solveShell` hides WHOLE pieces: `cutawayRoom === subject.room` hides outright,
+and otherwise the corridor rule ghosts any piece standing between the camera and its subject,
+regardless of which room that piece encloses. The kitchen's own camera made it worse: it stood EAST
+of the block at x 14.6 and looked north-west through what used to be the patio notch and is now the
+enclosed east room, so it reached the kitchen only by ghosting `east_partition`, `east_wall`,
+`future_room_partition` and the slider as well.
+
+**The fix, three parts.**
+
+1. **Ownership protects.** `regFabric` gains `owners` (rooms this piece encloses; empty by default).
+   `solveShell` checks it FIRST — ahead of `cutawayRoom` and the corridor rule both: a piece whose
+   `owners` do not contain the subject's room verdicts `solid`, whatever the geometry says. The
+   later rules still govern ownerless pieces (every opening, the yard) and owned pieces seen from
+   an owner, so a wall between a camera and its own room still ghosts and the backdrop wall behind
+   that room still stays. `shellRegister`/`shellWall`/`shellGable` take `owners` last;
+   `chfShellFabric()` reports `owners` and `cutawayRoom`.
+
+   *Ahead of `cutawayRoom`, not after*: a facade feature carries `cutawayRoom` = the room its FACE
+   fronts, which for the study's own street windows is the living room, so with `cutawayRoom` first
+   the living cutaway would still hide the study's windows off a wall that is standing.
+
+2. **The two shared pieces are split at x 6.85** (the great-room / east-rooms line `east_partition`
+   already stands on) and every registered piece declares owners.
+   - `south_wall` (x -7.15..6.85, owners `['kitchen','living']`) + new `south_wall_east`
+     (6.85..14.65, owners `['study']`) — the same three-box idiom; the baseboard insets only at its
+     outer end so the run still reads as one board across the split.
+   - `roof_main` becomes `roof_main_west` (`depthEnds [true,false]`, `ends [-1]`, owners
+     `['kitchen','living']`) and `roof_main_east` (`depthEnds [false,true]`, `ends [1]`,
+     `cutawayRoom 'study'`, owners `['study']`). Same eave, pitch and run, so the decks butt at 6.85
+     with one ridge line and the caps meet without a seam; neither half gets a gable at the split,
+     which is an interior line. Six registered names where there were four:
+     `roof_main_west_north/_south/_end_west`, `roof_main_east_north/_south/_end_east`.
+   - `north_wall` `['kitchen']`; `north_wall_east` `['back_room']`; `east_wall`
+     `['study','east_room','back_room']`; `east_partition` `['study']`; `future_room_partition`
+     `['east_room','back_room']`; `west_wall`/`west_skirt`/`west_cladding`
+     `['mudroom','kitchen','living']`; `north_cladding` `['kitchen']`; `garage_block_north`/`_west`
+     and all four `garage_block_roof_*` `['garage','mudroom']`; `mudroom_front` `['mudroom']`;
+     `garage_shell`/`garage_door` `['garage']`. `'east_room'`/`'back_room'` are legal owner names
+     and never a subject, so those pieces are always solid. Openings stay ownerless: `patio_slider`,
+     `living_back_room_door`, `living_study_door`, `back_door`, `yard`.
+   - Facade features take the owners of the slot they sit on (`slotOwners`/`slot_owners`, mirrored
+     in `services/house_facade.py`, pinned by the existing JS↔Python slot parity check): main-face
+     slots 14..17 (centre ≥ 6.85) are the study's, 6..13 the great room's, garage-block slots 0-2
+     the garage's and 3-5 the mudroom's. A feature spanning a split takes the union.
+
+3. **Two cameras move.** `HOME_POS` 14.6,11.2,17.0 → **4.64,13.8,23.0** (`HOME_AT` unchanged): the
+   kitchen is viewed from the street, inside the great room's own x span, so the only fabric between
+   camera and room is the great room's own. `STUDY_POS` 5.85,3.65,15.83 → **7.90,4.20,17.46**
+   (`STUDY_AT` unchanged): the old pose stood in the front yard in front of the GREAT ROOM's street
+   face, which ownership correctly keeps solid — it stood across a third of the study frame — so the
+   camera moved to the study's own street side at the same distance and tilt, swung south. Both were
+   tuned with `tools/house_probe.py` against the arc's own shots.
+
+**Not done, on purpose.** The brief asked for the FRONTING ROOM of main-face slots 14..17 and of
+`south_wall_east` to become `'study'`, so a street tap there would enter the study. Measured: it
+does — `chfHouseMode()` returned `'study'` from a plain exterior tap, with no parent PIN and no
+`chfHouseUnlockStudy` call. A shell tap is not a door, so that is a way past the PIN rather than a
+feature. The fronting room is therefore untouched everywhere (the street tap still walks into the
+living room, exactly as before), and ownership is derived from the slot index instead. Same for
+`roof_main_east`, which keeps the whole roof's own `slopeRooms`.
+
+**Results.** Per-view non-solid sets after (`chfShellFabric()`): exterior none; kitchen and living
+identical — `south_wall`, `roof_main_west_south`, `facade_main_porch_8`, the porch's three gable
+pieces, `facade_main_door_10`, windows 7/9/12, `yard`; garage and mudroom unchanged from the arc;
+study — `south_wall_east`, `roof_main_east_north/_south/_end_east`, windows 15/16,
+`living_study_door`, `yard`. `east_partition`, `east_wall`, `north_wall_east`,
+`future_room_partition`, `patio_slider` and `living_back_room_door` are now solid in every view.
+Budgets are flat (buildMs ~1.1s, exterior in-frustum 1403 unchanged); the canonical exterior mesh
+pin moves 1840 → 1849 (+6 roof, +3 wall, derived box by box).
