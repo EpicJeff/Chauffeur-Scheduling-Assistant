@@ -114,11 +114,54 @@ def scenario_overlap_priority_trims_the_loser():
     spec, _ = hf.normalize(raw)
     kinds = sorted(g['kind'] for g in spec['ground'])
     check(kinds == ['door', 'porch', 'window'], f'porch overlays: {kinds}')
-    # but never on the garage face (the driveway)
+    # but never in the garage BAY (the driveway) -- slots 0-2 of the
+    # merged garage_block face; see the scenario below for the mudroom
+    # half of that same face, where a porch is legal.
     spec, notes = hf.normalize(_spec(ground=[{'slot': 10, 'span': 1, 'kind': 'door'},
                                              {'slot': 0, 'span': 2, 'kind': 'porch', 'type': 'stoop'}]))
     check(not any(g['kind'] == 'porch' for g in spec['ground']), 'no porch in the driveway')
     check(any('driveway' in n or 'garage' in n for n in notes), 'noted')
+
+
+def scenario_porch_is_barred_from_the_bay_not_the_whole_block():
+    """MASSING ARC 1 fix wave (ruling 2026-09-16, ledger "Final: Ruling"):
+    the no-porch rule keys on GARAGE_BAY_SLOTS, not on the garage_block
+    FACE.
+
+    Before this arc the driveway side was a 3-slot 'garage' face and the
+    mudroom had a face of its own; a porch in front of the mudroom door
+    was legal and a saved facade could carry one. Task 3 merged the two
+    faces into the 6-slot garage_block, and the rule -- still keyed on
+    the face name -- silently widened to cover the mudroom's slots 3-5,
+    dropping a porch a person had placed. The driveway is the BAY."""
+    bay_lo, bay_hi = hf.GARAGE_BAY_SLOTS
+    # a porch in front of the MUDROOM (slots 3-5) survives
+    spec, notes = hf.normalize(_spec(ground=[{'slot': 10, 'span': 1, 'kind': 'door'},
+                                             {'slot': 4, 'span': 2, 'kind': 'porch',
+                                              'type': 'covered'}]))
+    pch = [g for g in spec['ground'] if g['kind'] == 'porch']
+    check([(p['slot'], p['span']) for p in pch] == [(4, 2)],
+          f'a porch on the mudroom half of garage_block survives: {pch}')
+    check(not any('driveway' in n for n in notes), f'and is not noted away: {notes}')
+    # a porch in the BAY is still dropped, and still says why
+    spec, notes = hf.normalize(_spec(ground=[{'slot': 10, 'span': 1, 'kind': 'door'},
+                                             {'slot': 1, 'span': 1, 'kind': 'porch',
+                                              'type': 'stoop'}]))
+    check(not any(g['kind'] == 'porch' for g in spec['ground']),
+          'a porch in the garage bay is still dropped')
+    check(any('driveway' in n for n in notes), f'and still noted: {notes}')
+    # the boundary itself: the first slot past the bay is legal
+    spec, _ = hf.normalize(_spec(ground=[{'slot': 10, 'span': 1, 'kind': 'door'},
+                                         {'slot': bay_hi + 1, 'span': 1,
+                                          'kind': 'porch', 'type': 'stoop'}]))
+    check(any(g['kind'] == 'porch' for g in spec['ground']),
+          f'slot {bay_hi + 1} is the mudroom, not the driveway')
+    # ...and the last slot of the bay is not
+    spec, _ = hf.normalize(_spec(ground=[{'slot': 10, 'span': 1, 'kind': 'door'},
+                                         {'slot': bay_hi, 'span': 1,
+                                          'kind': 'porch', 'type': 'stoop'}]))
+    check(not any(g['kind'] == 'porch' for g in spec['ground']),
+          f'slot {bay_hi} is still the driveway')
 
 
 def scenario_roof_priority_and_no_bans():
@@ -396,6 +439,7 @@ if __name__ == '__main__':
                scenario_spans_truncate_at_face_boundaries,
                scenario_openings_pin_to_their_room_face,
                scenario_overlap_priority_trims_the_loser,
+               scenario_porch_is_barred_from_the_bay_not_the_whole_block,
                scenario_roof_priority_and_no_bans,
                scenario_garage_bay_is_a_hard_boundary_for_roof_too,
                scenario_budget_caps_drop_east_most_first,

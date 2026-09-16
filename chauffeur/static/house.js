@@ -4014,7 +4014,18 @@
          { rough: 0.95, map: CLAD() });
     regFabric(westCladdingG, { name: 'west_cladding', n: [1, 0, 0],
                                box: fabBox(westCladdingG), room: 'mudroom' });
-    nbox(0.18, 5.6, 0.38, FARMHOUSE.trim, 6.76, 2.8, -5.95);
+    /* MASSING ARC 1 fix wave: the trim board that used to stand here
+       (x 6.76, full height, proud of the siding) was the kitchen's own
+       NORTH-EAST CORNER back when the north face ended at x 6.85.
+       `north_wall_east` carries the face on to 14.65 now, so that board
+       stood mid-elevation on a flat wall -- a full-height seam with
+       nothing behind it, read at orbit stops 4-6. Deleted. In its place
+       the plinth continues: `shellWall` gives north_wall_east a stoop
+       band at its base and this half of the same run had none, so the
+       north face's base band stopped dead at 6.85. One box, same
+       height/colour/front plane as shellWall's own, and the whole north
+       elevation now reads as one wall. */
+    nbox(14.0, 0.20, 0.36, FARMHOUSE.stoop, -0.15, 0.10, -5.95);
     /* The rear window stays inside the casing clearance at x=6.67.
        Glazing and frames sit on the exterior (north) face. */
     (function () {
@@ -4188,7 +4199,14 @@
        door read as real openings instead of assemblies stuck onto a
        solid slab. The back-room door at z 2.45 keeps the older idiom (a
        leaf proud of an uncut wall): it is the one opening whose leaf
-       was authored that way and nothing in this arc asks it to move. */
+       was authored that way and nothing in this arc asks it to move.
+
+       The south end stops at SWZ0, the south wall's INNER face, not
+       SWZ1: an interior partition that ran to the OUTER face would put
+       a 0.35-wide band of `C.wall` plaster in the plane of the street
+       siding, and a coplanar end face reads as a pale stripe down the
+       front elevation (orbit1). The same rule governs the east end of
+       `future_room_partition` below. */
     var EPX0_4 = grFloorBox.max.x;                 /* ~6.5 */
     var EPX1_4 = EPX0_4 + WALL_T4;                  /* ~6.85 */
     var EWZ0_4 = wallB.position.z - WALL_T4 / 2;    /* wallB's own outer
@@ -4201,7 +4219,7 @@
     extG.add(eastPartG);
     [[EWZ0_4, 4.50],                                 /* kitchen + back room */
      [7.10, STUDY_DOOR_Z4 - 0.90],                    /* slider gap above */
-     [STUDY_DOOR_Z4 + 0.90, SWZ1]].forEach(function (seg) {
+     [STUDY_DOOR_Z4 + 0.90, SWZ0]].forEach(function (seg) {
       var len = seg[1] - seg[0], cz = (seg[0] + seg[1]) / 2;
       box(WALL_T4, EXT_TOP4, len, C.wall, EPX0_4 + WALL_T4 / 2,
           EXT_TOP4 / 2, cz, eastPartG, sharp(WALL_O));
@@ -5131,9 +5149,15 @@
           (EPX1_4 + FULL_HOUSE.east) / 2, -0.05, (seg[0] + seg[1]) / 2,
           extG, sharp(NICE ? { rough: 0.55, map: woodLight } : { rough: 0.55 }));
     });
+    /* the partition stops at EWX0_4 (14.30), the east wall's INNER
+       face, not at FULL_HOUSE.east: run it to the outer face and its
+       0.35-wide `C.wall` end is coplanar with the east siding, which
+       draws a full-height plaster stripe down that elevation between
+       the second and third east windows (orbit7). Same rule as
+       `east_partition`'s south end above. */
     var futurePartG = shellGroup();
-    shellBox(futurePartG, FULL_HOUSE.east - EPX1_4, EXT_TOP4, WALL_T4,
-             C.wall, (EPX1_4 + FULL_HOUSE.east) / 2, EXT_TOP4 / 2, 1.50,
+    shellBox(futurePartG, EWX0_4 - EPX1_4, EXT_TOP4, WALL_T4,
+             C.wall, (EPX1_4 + EWX0_4) / 2, EXT_TOP4 / 2, 1.50,
              WALL_O);
     regFabric(futurePartG, { name: 'future_room_partition', n: [0, 0, 1],
                              box: fabBox(futurePartG), twoSided: true });
@@ -9990,7 +10014,13 @@
   function orbitStop() { return webgl ? webgl.ORBIT.stop : 0; }
   function orbitTo(k, cb) {
     if (!webgl || mode !== 'exterior') return false;
-    k = ((Math.round(k) % 8) + 8) % 8;
+    k = Math.round(k);
+    /* chfOrbitTo('x') / chfOrbitTo(undefined) must not write NaN into
+       ORBIT.stop -- NaN survives ((NaN % 8) + 8) % 8 and poisons every
+       later orbitPos()/orbitStep() read. Refuse it the way a wrong mode
+       is refused. */
+    if (!isFinite(k)) return false;
+    k = ((k % 8) + 8) % 8;
     webgl.ORBIT.stop = k;
     var to = webgl.orbitPos(k);
     /* the sealed house at every stop: subject null, every piece solid,
@@ -10840,6 +10870,15 @@
     webgl.R.domElement.addEventListener('pointerdown', function (e) {
       swipeStart = { x: e.clientX, y: e.clientY, t: performance.now() };
       swiped = false;
+    });
+    /* touch: the browser can take the gesture away mid-drag (a pan or a
+       zoom wins the slop race) and then `pointerup` never fires on this
+       element at all. house.html sets `touch-action: none` on the canvas
+       so that should not happen on a touch panel -- this is the belt to
+       that brace: a cancelled pointer drops the stored point instead of
+       leaving it to pair with whatever pointerup comes next. */
+    webgl.R.domElement.addEventListener('pointercancel', function () {
+      swipeStart = null;
     });
     webgl.R.domElement.addEventListener('pointerup', function (e) {
       if (!swipeStart) return;

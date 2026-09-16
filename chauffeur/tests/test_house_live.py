@@ -1025,7 +1025,12 @@ def scenario_shell_fabric_registry():
         # side stands out at x 14.65. All three still occlude.
         check(contains_box([-6.5, 6.5, 0.0, 5.6, 14.2, 14.55]),
               'south_wall must occlude via its registered box')
-        check(contains_box([6.5, 6.85, 0.0, 5.6, -5.725, 14.55]),
+        # 14.20, not 14.55: the fix wave stopped the partition at SWZ0,
+        # the south wall's INNER face, so its end stops being coplanar
+        # with the street siding (a coplanar plaster end draws a pale
+        # stripe down the front elevation). It still occludes the whole
+        # run; only the last 0.35 of it belongs to south_wall now.
+        check(contains_box([6.5, 6.85, 0.0, 5.6, -5.725, 14.20]),
               'east_partition must occlude via its registered box')
         check(contains_box([14.30, 14.65, 0.0, 5.6, -5.725, 14.55]),
               'east_wall must occlude via its registered box')
@@ -1343,15 +1348,28 @@ def scenario_study_sits_inside_the_main_block():
 # temp data dir, exactly as before).
 #
 # -33 NET, not -33 pieces: this counts UNMERGED SURVIVORS, and both
-# sides of the change merge well. Gone: seventeen registered shell
-# pieces (massing_east_front_* x3, massing_front_roof x3,
-# massing_east_back_* x3, massing_back_roof_* x3, massing_service_* x3,
-# mudroom_cross_roof x2, mudroom_front_cladding, living_roof) plus the
-# terrace slab and its furniture -- but a shell piece is a handful of
-# same-material boxes that mergeStatic already collapsed inside its own
-# group, and the yard furniture was mostly folded into instanceYard's
-# InstancedMeshes, so neither was ever costing survivors in proportion
-# to its size. Added: east_wall's three windows, north_wall_east and
+# sides of the change merge well. Gone: TWENTY-FOUR registered names,
+# recounted name by name against the pre-arc registry pin at 2fb22a4
+# (its own expected-name list, 41 hand pieces) minus the 16 this arc
+# keeps minus east_wall, which is rebuilt in a new plane but keeps its
+# name -- 41 - 17 = 24:
+#   massing_east_front_south/east/patio                          3
+#   massing_front_roof_north/south/end_east                      3
+#   massing_east_back_north/east/patio                           3
+#   massing_back_roof_shed/back/front                            3
+#   massing_service_north/west/south                             3
+#   massing_service_roof_north/south/end_west                    3
+#   mudroom_cross_roof_north/south                               2
+#   mudroom_roof, mudroom_front_cladding, mudroom_east_finish,
+#   living_roof                                                  4
+# plus the terrace slab and its furniture. Two of the 24 retire the
+# NAME only -- mudroom_roof's street wall/door folds into mudroom_front
+# and mudroom_east_finish folds into west_wall, both at identity -- so
+# 22 pieces of geometry actually left the scene. But a shell piece is a
+# handful of same-material boxes that mergeStatic already collapsed
+# inside its own group, and the yard furniture was mostly folded into
+# instanceYard's InstancedMeshes, so neither was ever costing survivors
+# in proportion to its size. Added: east_wall's three windows, north_wall_east and
 # its window, the back door, the garage block's three walls, the block
 # roof's two end pieces, two future-room floors, future_room_partition
 # and the back patio slab. The pin's job is to catch the NEXT
@@ -1878,6 +1896,83 @@ def scenario_orbit_eight_stops():
         check(not errors, 'zero console errors across the orbit: %r' % (errors[:3],))
 
 
+def scenario_orbit_swipe_works_under_a_real_finger():
+    """MASSING ARC 1 fix wave: the swipe on a TOUCH surface.
+
+    `scenario_orbit_eight_stops` drives the swipe with `page.mouse`, which
+    never exercises the gesture the wall panel actually gets. On a touch
+    surface the browser owns the drag first: past its pan slop it claims
+    the gesture, fires `pointercancel`, and `pointerup` never arrives on
+    the canvas at all -- so a swipe handler built on pointerdown/pointerup
+    alone is inert on the one surface that has no mouse. house.html's
+    `#room canvas { touch-action: none }` is what stops the browser
+    claiming it (the page cannot scroll anyway); house.js's
+    `pointercancel` listener is the belt to that brace.
+
+    Driven through CDP `Input.dispatchTouchEvent` rather than
+    `page.touchscreen.tap` (which can only tap) in a context built with
+    `has_touch=True`, so the events carry `pointerType: 'touch'` and the
+    real touch-action machinery runs.
+    """
+    served = live_app(_seed)
+    if served is None:
+        return
+    with served.browser(has_touch=True) as page:
+        errors = []
+        page.on('console', lambda m: errors.append(m.text) if m.type == 'error' else None)
+        page.add_init_script(DAY_LOCK_JS)
+        page.goto(served.url('house?quality=low&angle=2'))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        check(page.evaluate('window.chfOrbitStop()') == 2, '?angle=2 boots at stop 2')
+        # the canvas must actually refuse the browser's own gestures, or the
+        # drag below is a pan and the handler never hears its end.
+        ta = page.evaluate(
+            "getComputedStyle(document.querySelector('#room canvas')).touchAction")
+        check(ta == 'none', "the canvas takes the gesture itself: touch-action %r" % ta)
+        cdp = page.context.new_cdp_session(page)
+        box = page.locator('#room canvas').bounding_box()
+        y = box['y'] + box['height'] * 0.5
+        x0 = box['x'] + box['width'] * 0.7
+        x1 = box['x'] + box['width'] * 0.3
+        check(abs(x1 - x0) >= 60, 'the drag clears the 60px threshold')
+
+        def touch(kind, x=None):
+            pts = [] if x is None else [{'x': x, 'y': y}]
+            cdp.send('Input.dispatchTouchEvent',
+                     {'type': kind, 'touchPoints': pts})
+
+        before = page.evaluate('window.chfOrbitStop()')
+        touch('touchStart', x0)
+        for i in range(1, 9):                     # eight moves, past the slop
+            touch('touchMove', x0 + (x1 - x0) * i / 8.0)
+        touch('touchEnd')
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        check(page.evaluate('window.chfOrbitStop()') == (before + 1) % 8,
+              'a finger dragged left advances one stop (was %d, now %d)'
+              % (before, page.evaluate('window.chfOrbitStop()')))
+        check(page.evaluate('window.chfHouseMode()') == 'exterior',
+              'a swipe must not double as a tap into a room')
+        # and back the other way, so direction is pinned too
+        touch('touchStart', x1)
+        for i in range(1, 9):
+            touch('touchMove', x1 + (x0 - x1) * i / 8.0)
+        touch('touchEnd')
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        check(page.evaluate('window.chfOrbitStop()') == before,
+              'a finger dragged right steps back')
+        # a cancelled gesture leaves nothing armed: the next plain tap must
+        # still read as a tap, not pair with the abandoned start point.
+        touch('touchStart', x0)
+        touch('touchMove', x1)
+        touch('touchCancel')
+        page.wait_for_timeout(200)
+        check(page.evaluate('window.chfOrbitStop()') == before,
+              'a cancelled drag turns nothing')
+        check(not errors, 'zero console errors across the touch swipe: %r'
+              % (errors[:3],))
+
+
 def scenario_idle_return_snaps_the_orbit_home():
     """Spec 2026-09-16 sections 4/7: the panel's idle-return timer snaps the
     orbit back to stop 0, so the wall always rests on the street view.
@@ -1988,6 +2083,7 @@ if __name__ == '__main__':
     scenario_canonical_facade_pins_the_hand_built_elevation()
     scenario_navigation_real_mouse()
     scenario_orbit_eight_stops()
+    scenario_orbit_swipe_works_under_a_real_finger()
     scenario_idle_return_snaps_the_orbit_home()
     scenario_shell_without_room_is_inert()
     scenario_worst_case_facade_builds_clean()

@@ -244,12 +244,21 @@ def normalize(raw):
         ground.append(dict(next(g for g in CANONICAL['ground'] if g['kind'] == 'door')))
         notes.append('a house needs a front door: the canonical one was added')
 
-    # faces are hard boundaries; porch never in the driveway (spec 4.3, 4.5)
+    # faces are hard boundaries; porch never in the driveway (spec 4.3, 4.5).
+    # THE DRIVEWAY IS THE BAY, not the whole block face (ruling 2026-09-16,
+    # massing arc 1 fix wave): task 3 merged the old 3-slot 'garage' face
+    # and the mudroom's own face into one 6-slot garage_block, and keying
+    # the rule on the face name silently widened it over the mudroom's
+    # slots 3-5 -- where a porch was legal before the arc and a saved
+    # facade could already carry one. Key it on GARAGE_BAY_SLOTS, exactly
+    # as the garage door's own pinning above does. _clip_to_face has
+    # already clamped anything starting in the bay to the bay, so a porch
+    # that begins at slot 1 cannot reach the mudroom to escape this.
     kept = []
     for g in ground:
-        face = _clip_to_face(g, notes)
-        if g['kind'] == 'porch' and face == 'garage_block':
-            notes.append('no porch in the driveway (garage_block face)')
+        _clip_to_face(g, notes)
+        if g['kind'] == 'porch' and g_lo <= g['slot'] <= g_hi:
+            notes.append('no porch in the driveway (the garage bay)')
             continue
         kept.append(g)
     ground = kept

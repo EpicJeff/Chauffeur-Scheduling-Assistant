@@ -20,6 +20,14 @@
         #kitchen-wrap::after { content: ''; position: absolute; inset: 0; pointer-events: none;
           background: radial-gradient(ellipse at 50% 42%, transparent 52%, rgba(28,18,42,0.28) 100%); }
         #room, #room canvas { position: absolute; inset: 0; display: block; }
+        /* ORBIT (spec 2026-09-16 section 4): the swipe. This page never
+           scrolls -- the scene is fixed to the viewport -- so the browser's
+           default touch gestures have nothing to do here except steal the
+           horizontal drag the orbit reads (past the pan slop Chromium/WebKit
+           fire `pointercancel` and no `pointerup` ever arrives, which would
+           leave the swipe inert on the wall panel, the one surface that is
+           all touch). */
+        #room canvas { touch-action: none; }
         #house-glance { position: absolute; inset: 76px 0 100px; z-index: 12; pointer-events: none; }
         #house-glance[hidden] { display: none; }
         #tip { position: fixed; pointer-events: none; background: rgba(28,23,16,.94);

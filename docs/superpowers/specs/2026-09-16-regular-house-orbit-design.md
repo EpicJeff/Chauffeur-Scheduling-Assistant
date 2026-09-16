@@ -272,11 +272,12 @@ left it unchanged and green at every stop.
    including the kitchen's own pre-existing north window on `north_wall`, not two new windows on the
    new piece. Cost if wrong: one window box to add later.
 3. **Mudroom marker target.** §4's marker table implies `mudroom_front` is a valid marker target;
-   measured, `chfNavProbe({piece:'mudroom_front'})` returns null from every exterior stop (that face
-   sits behind the porch and, now, behind the main block). **Ruling: the marker rides
-   `garage_block_roof_south`** (the same deck plane, carrying `room:'mudroom'`) instead — identical
-   behaviour to the pre-arc marker, which rode the equivalent roof piece under its old name. Required
-   by §8's "every marker keeps working."
+   measured, `chfNavProbe({piece:'mudroom_front'})` returns null at the RESTING stop 0 — the main
+   block stands between that face and the street eye — and is non-null only at stops 1 and 2 (the
+   table in 10.9 below). A marker that vanishes at the view the wall rests on is not a marker.
+   **Ruling: the marker rides `garage_block_roof_south`** (the same deck plane, carrying
+   `room:'mudroom'`) instead — identical behaviour to the pre-arc marker, which rode the equivalent
+   roof piece under its old name. Required by §8's "every marker keeps working.
 4. **`mudroom_roof`'s geometry folds rather than deletes.** §2 deletes the registry *name*
    `mudroom_roof`; the geometry it owned is a real, visible assembly (the mudroom's street wall, its
    glazed door, the door's jamb and hardware), not roof decking. **Ruling: fold the geometry into
@@ -321,18 +322,28 @@ left it unchanged and green at every stop.
    wording had been read literally: none — the geometry is correct regardless of which word describes
    how it got there.
 
+10. **The no-porch rule keys on the garage BAY, not the garage_block face.** Task 3 merged the old
+    3-slot `garage` face and the mudroom's own face into one 6-slot `garage_block`, and
+    `services/house_facade.py`'s "porch never in the driveway" rule — still keyed on the face NAME —
+    silently widened from slots 0–2 to slots 0–5, so a saved facade carrying a porch in front of the
+    mudroom would lose it on the next normalize. Nothing in this spec asks for that: §5 says every
+    normalize law holds unchanged, and the standing repo rule forbids removing anything a person
+    could do without approval first. **Ruling (fix wave, on record): the rule keys on
+    `GARAGE_BAY_SLOTS`**, exactly the way the garage door's own pinning does — a porch on the
+    mudroom's slots 3–5 was legal before the arc and is legal again; a porch starting in the bay is
+    still dropped and still noted ("no porch in the driveway (the garage bay)"), and `_clip_to_face`
+    already clamps anything starting in the bay to the bay so it cannot reach slot 3 to escape.
+    Pinned by `scenario_porch_is_barred_from_the_bay_not_the_whole_block`. Cost if wrong: a porch can
+    stand in front of the mudroom door, which is physically plausible anyway.
+
 ### 10.8 Parked / deferred (not fixed in this arc; none blocking)
 
-- The canonical facade mesh-count pin's own derivation comment miscounts the deleted pieces
-  (`test_house_live.py` ~1325-1333: the comment says 17, lists 19 names, and the true count is 24).
-  The pinned number itself (1840, see 10.6) is correct and verified by running the suite; only the
-  comment explaining it is wrong.
-- `north_wall_east` inherits `shellWall`'s plinth and corner boards, but the pre-existing
-  `north_cladding` half of the same street run has neither — flagged in task 2 for an eyeball at the
-  north orbit stops in task 4. Checked: task 4's report does not mention this seam, so it was not
-  looked at and remains open, not resolved.
-- `test_house_facade.py:127`'s comment still says "garage face" — a name retired when task 3 merged
-  the garage and mudroom faces into `garage_block`.
+- ~~The canonical facade mesh-count pin's derivation comment miscounts the deleted pieces.~~ FIXED
+  in the fix wave (10.9): recounted to 24, name by name against the pre-arc pin.
+- ~~`north_wall_east` inherits `shellWall`'s plinth and corner boards, the `north_cladding` half of
+  the same run has neither.~~ FIXED in the fix wave (10.9): the stray corner board is gone and the
+  plinth continues across the whole north face.
+- ~~`test_house_facade.py:127`'s comment still says "garage face".~~ FIXED in the fix wave (10.9).
 
 - A ridge-`z` block renames its four roof pieces (`_north/_south/_end_west/_end_east` →
   `_west/_east/_back/_front`) by `shellGable`'s existing compass-suffix convention; `EXTERIOR_HINTS`'
@@ -346,9 +357,8 @@ left it unchanged and green at every stop.
 - At orbit stops 3 and 7 the Garage/Mudroom markers project onto open sky, because their target deck
   (`garage_block_roof_south`) sits on the far block from those angles — the pre-existing marker rule,
   newly visible now that those stops exist.
-- `get EXT_AT()` returns the live `ORBIT.pivot`, not a defensive clone (`house.js` ~9299);
-  `orbitTo` accepts `NaN` and writes it straight into `ORBIT.stop` (`house.js` ~9993); `var EXT_AT`
-  (`house.js` ~334) is dead code.
+- `get EXT_AT()` returns the live `ORBIT.pivot`, not a defensive clone (`house.js` ~9299); `var
+  EXT_AT` (`house.js` ~334) is dead code. (`orbitTo` accepting `NaN` was FIXED in the fix wave.)
 - The exterior chevrons (56px, `bottom:16px`) sit under the Argyle chat bar below roughly 816px
   viewport width; swipe and the arrow keys still work there.
 - `nav.html`'s idle-snap tween is only observable on the slideshow path (the page navigates away
@@ -366,5 +376,34 @@ left it unchanged and green at every stop.
   comment binding the two together.
 - A stale test comment still names `facade_wing_window_15/16` (`test_house_live.py` ~1337) after the
   face rename to `main`.
-- The "no porch in the driveway" rule now spans slots 0-5 (garage + mudroom together); only slot 0 is
-  exercised by a test.
+- ~~The "no porch in the driveway" rule now spans slots 0-5 (garage + mudroom together); only slot 0
+  is exercised by a test.~~ FIXED in the fix wave (10.7 item 10, 10.9): re-keyed onto
+  `GARAGE_BAY_SLOTS`, with both halves of the face and both bay boundaries exercised.
+
+### 10.9 Fix wave (v2.499.40, after the whole-branch review)
+
+One commit on top of 6f94013. Six review findings plus two minors; no new capability, no geometry
+the spec does not already name.
+
+| # | finding | fix |
+|---|---|---|
+| 1 | `east_partition` ran to `SWZ1` and `future_room_partition` to `FULL_HOUSE.east` — both OUTER faces, so a 0.35-wide band of interior plaster was coplanar with the exterior siding and drew a pale full-height stripe on the street (orbit1) and east (orbit7) elevations | the partitions stop at the INNER faces (`SWZ0`, `EWX0_4` = 14.30); the occluder pin's east_partition row moves 14.55 → 14.20 |
+| 2 | the kitchen's old north-east CORNER board (`house.js` ~4017) stood mid-elevation once `north_wall_east` carried the north face on past x 6.85, and the base band started abruptly beside it at 6.85 | the corner board is deleted and the plinth continues: one `FARMHOUSE.stoop` box across the `north_cladding` run, same height/colour/front plane as `shellWall`'s own, so the north elevation reads as one wall (net mesh change 0) |
+| 3 | the no-porch rule widened from the garage bay to the whole `garage_block` face | see 10.7 item 10 |
+| 4 | the swipe was pinned only under `page.mouse`; `#room canvas` had no `touch-action`, so on a touch surface the browser claimed the drag past its pan slop and `pointerup` never fired — measured inert | `#room canvas { touch-action: none }` in house.html, a `pointercancel` listener that drops the stored start point, and `scenario_orbit_swipe_works_under_a_real_finger` (a `has_touch=True` context driven by CDP `Input.dispatchTouchEvent`) |
+| 5 | this spec's 10.7 item 3 and the capabilities entry both said `mudroom_front` "is never visible from any exterior stop" | corrected: null at the resting stop 0, reachable at stops 1 and 2 (the table below) |
+| 6 | HEAD had never been swept (cdf334f ran the live file only; the two commits after it were docs) | the fix wave's own full sweep covers cdf334f..HEAD |
+
+`chfNavProbe` reach across the ring, measured in task 4 and unchanged by this wave — the numbers
+10.7 item 3 refers to:
+
+| probe | stops where it is non-null |
+|---|---|
+| `{entry:'front_door'}` | 0, 1, 2, 3 |
+| `{entry:'back_door'}` | 4, 5, 6 |
+| `{piece:'mudroom_front'}` | 1, 2 |
+| `{front:'garage'}` | 0, 1, 2, 3 |
+
+Minors folded in: `orbitTo` refuses a non-finite stop (`chfOrbitTo('x')` no longer writes `NaN` into
+`ORBIT.stop`); the canonical-pin derivation comment in `tests/test_house_live.py` recounts the
+retired registry names — twenty-four, not seventeen (see 10.6).
