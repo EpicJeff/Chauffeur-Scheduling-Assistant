@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Every code task ends with: read `chauffeur/config.yaml` `version:`, bump the patch, verify with `grep ^version chauffeur/config.yaml`; ONE full sweep from the repo root in the FOREGROUND (`env -u HA_BASE_URL python chauffeur/tools/test.py`, Bash timeout 600000, never background, never two concurrent runs, never piped); commit with the version in the subject `(vX.Y.Z)`; push. Known parallel-load flakes (re-run solo only if they are the only reds): `test_screensaver`, `test_study_live`, `test_negotiation_cost`, `test_trip_scheduler`. Commit messages in prose, via a Bash heredoc, ending `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
+- Every code task ends with: read `chauffeur/config.yaml` `version:`, bump the patch, verify with `grep ^version chauffeur/config.yaml`; the COMMIT GATE (user ruling 2026-09-16): `env -u HA_BASE_URL python chauffeur/tools/test.py --focus` from the repo root PLUS the live file(s) the task touched (`cd chauffeur && env -u HA_BASE_URL python tests/test_house_live.py` etc.), foreground, never two concurrent runs, never piped; commit with the version in the subject `(vX.Y.Z)`; push. The FULL sweep (`env -u HA_BASE_URL python chauffeur/tools/test.py`, timeout 600000) runs once, at Task 7's commit. Known parallel-load flakes (re-run solo only if they are the only reds): `test_screensaver`, `test_study_live`, `test_negotiation_cost`, `test_trip_scheduler`. Commit messages in prose, via a Bash heredoc, ending `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`.
 - house.js laws: every geometry through `cgeo` (keys carry every input), every material through `mat()`/`box()` opts, `mkTex` owns textures (the file's only texture dispose lives in mkTex), no per-frame work, render-on-demand; every shell piece registers through `shellRegister`/`regFabric`; ghost edges stay OFF; palette hex only in `PALETTE`; the cap material is ONE shared `MeshStandardMaterial` created once (`CAP_MAT`, colour from the palette table as `PALETTE.section` / `pal('section', …)`).
 - Mask definition (spec §2): B = room AABB, footprint × floor-to-EAVE (`EXT_TOP4` = 5.6); front faces = outward normal toward the camera; P = pyramid through the camera and B's silhouette edges; W = intersection of half-spaces behind each front-face plane; masked = P ∩ ¬W. Shell only. Caps one neutral tone. Lean-ins keep the room mask. Exterior/orbit = full shell.
 - Never drop functionality: every `regFabric` name and `room` stays for taps; markers and `chfNavProbe` keep working; the kitchen camera `(4.64, 13.8, 23.0)` and the study camera `(7.02, 4.75, 18.82)` stay.
@@ -543,3 +543,21 @@ Add to the runner. Run → RED (`chfRoofPlane` missing; then vertices metres bel
 - [ ] **Step 1:** capabilities entry in the file's voice: the mask (definition, choices A/A/A), the clipper, room shells and the swap, what was retired (owners, splits, verdict tables, corridor rule), roof valleys + height rule, budgets before/after per view and per stop, the pins. Ends **NOT device-verified.**
 - [ ] **Step 2:** spec §9 tables + deviations; style bible note; fold in the two pending docs nits (the study's east wall plane is 0.06 clear of the slab, not 0.12, at the capabilities massing paragraph and spec §10.11; the missing space at the regular-house spec line 22 "interior;retired").
 - [ ] **Step 3:** bump, commit (docs-only, no sweep), push — `docs: view-volume masking + roof valleys wrap (vX.Y.Z)`.
+
+---
+
+### Task 7: Split the house live file so the sweep parallelises
+
+**Files:**
+- Modify: `chauffeur/tests/test_house_live.py` (becomes the lifecycle + boot file)
+- Create: `chauffeur/tests/test_house_shell_live.py` (masking/shell/vault/clipper scenarios), `chauffeur/tests/test_house_nav_live.py` (navigation, orbit, swipe, idle), `chauffeur/tests/test_house_facade_live.py` (canonical pin, worst case, valleys)
+- Create: `chauffeur/tests/house_live_common.py` (shared: `_seed`, `DAY_LOCK_JS`, `CANONICAL_EXTERIOR_MESHES`, `_deck_underside`, any helper two files need)
+- Modify: `chauffeur/tools/test.py` only if it enumerates test files by an explicit list (read it; if it globs `tests/test_*.py`, nothing to do)
+
+**Interfaces:** every scenario keeps its name and body; the runner block at the bottom of each file lists only its own scenarios; `house_live_common.py` is imported, never run.
+
+- [ ] **Step 1:** Measure: `cd chauffeur && time env -u HA_BASE_URL python tests/test_house_live.py` (record the wall time).
+- [ ] **Step 2:** Move scenarios by concern (read each scenario's docstring; the split is: lifecycle/boot/leak scenarios stay; `scenario_shell_*`, `scenario_a_room_*`, `scenario_room_masks_*`, `scenario_clipper_*`, `scenario_interior_walls_*`, `scenario_every_fabric_*`, `scenario_study_*` → shell file; `scenario_navigation_*`, `scenario_orbit_*`, `scenario_idle_*` → nav file; `scenario_canonical_*`, `scenario_worst_case_*`, `scenario_roof_features_*` → facade file). Shared constants and helpers move to `house_live_common.py` with a one-line docstring each. No scenario is edited beyond its imports.
+- [ ] **Step 3:** Run each new file solo (all green, same scenario count as before: count `def scenario_` across the four files and compare with the original 17+N). Then the FULL sweep once: `env -u HA_BASE_URL python chauffeur/tools/test.py` — record the wall time before/after in the report and the commit body.
+- [ ] **Step 4:** Update `docs/superpowers` references and `system_capabilities.md` lines that name `tests/test_house_live.py` for a moved scenario (grep); the memory note about fast test runs is the controller's.
+- [ ] **Step 5:** bump, commit, push — `test: the house live file splits four ways so the sweep parallelises (vX.Y.Z)` with the before/after wall times.
