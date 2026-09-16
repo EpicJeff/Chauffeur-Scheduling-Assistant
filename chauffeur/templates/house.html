@@ -46,6 +46,26 @@
         #house-back:hover, #house-back:focus-visible { background: rgba(54,43,29,.94);
           outline: 2px solid #e3d3ab; outline-offset: 2px; }
         #house-back[hidden] { display: none; }
+        /* ORBIT (massing arc 1, spec §4): the exterior's two chevrons. Same
+           tokens as #house-back above — the same ink, the same parchment
+           border, the same pill — sized to the 56px touch target the spec
+           asks for and parked in the bottom corners, where the Argyle orb
+           (centred) and the panel shelf (full width, --panel-shelf-h) are
+           not. The variable is only declared on a panel, so the fallback
+           puts them 16px off the bottom everywhere else. */
+        .house-orbit { position: fixed; z-index: 46;
+          bottom: calc(var(--panel-shelf-h, 0px) + 16px);
+          width: 56px; height: 56px; display: grid; place-items: center;
+          border: 1px solid rgba(227,211,171,.45); border-radius: 999px;
+          background: rgba(28,23,16,.82); color: #f0e6cf; cursor: pointer; }
+        .house-orbit[data-dir="-1"] { left: 16px; }
+        .house-orbit[data-dir="1"] { right: 16px; }
+        .house-orbit svg { width: 26px; height: 26px; fill: none;
+          stroke: currentColor; stroke-width: 2.2; stroke-linecap: round;
+          stroke-linejoin: round; }
+        .house-orbit:hover, .house-orbit:focus-visible { background: rgba(54,43,29,.94);
+          outline: 2px solid #e3d3ab; outline-offset: 2px; }
+        .house-orbit[hidden] { display: none; }
         #house-hints { position: fixed; inset: 0; z-index: 39; pointer-events: none; }
         .house-hint { position: absolute; width: 62px; height: 62px;
           transform: translate(-50%,-50%); border: 2px solid rgba(240,184,110,.92);
@@ -162,6 +182,18 @@
         <h1 id="kitchen-title" class="panel-page-title">The Home</h1>
         <button id="house-back" type="button" hidden aria-label="Go back"></button>
         <div id="house-hints" hidden aria-hidden="true"></div>
+        <!-- ORBIT (spec §4): the hand path for the eight stops. house.js
+             shows them at the exterior and hides them in a room, and wires
+             both to chfOrbitStep. Swipe, the arrow keys and ?angle= reach
+             the same call. -->
+        <button class="house-orbit" data-dir="-1" type="button" hidden
+                aria-label="Rotate left">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <button class="house-orbit" data-dir="1" type="button" hidden
+                aria-label="Rotate right">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+        </button>
         <div id="room"></div>
         <div id="house-glance" hidden>
             <div class="glance-clock"><div class="ss-time"></div><div class="ss-date"></div></div>

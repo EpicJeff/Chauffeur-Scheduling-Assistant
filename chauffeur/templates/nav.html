@@ -1112,6 +1112,15 @@
                         if (!secs) return;
                         let timer;
                         const goHome = () => {
+                            // The Home's orbit (massing arc 1, spec §4): at
+                            // the exterior the wall always rests on the
+                            // street view, so the ring snaps back to stop 0
+                            // when the room goes idle. Before the
+                            // screensaver check on purpose — a slideshow
+                            // that comes up over a side-on house should
+                            // still lift on the street view. Feature-
+                            // detected: no other page defines it.
+                            if (window.chfOrbitTo) window.chfOrbitTo(0);
                             // Mid-slideshow, going home would tear the photos
                             // down for a page nobody is looking at. Note it,
                             // and let wake-up do the navigating.

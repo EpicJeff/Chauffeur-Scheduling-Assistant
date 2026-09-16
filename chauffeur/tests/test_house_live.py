@@ -1479,9 +1479,10 @@ def scenario_navigation_real_mouse():
     entry; the deeper porch now obscures the old west-skirt target.
     Garage supplies a sky pixel; the main room's roof surrounds its
     camera. The kitchen's own exterior entry is the back door on the
-    north wall, which this one stop cannot see (massing arc 1; task 4's
-    orbit reaches it). The high-quality registry scenario retains
-    separate geometry, cutaway, and exterior-entry checks.
+    north wall, which stop 0 cannot see, so this scenario orbits to stop
+    5 to click it (massing arc 1, spec section 4). The high-quality
+    registry scenario retains separate geometry, cutaway, and
+    exterior-entry checks.
     """
     served = live_app()
     if served is None:
@@ -1499,10 +1500,9 @@ def scenario_navigation_real_mouse():
         # off the patio slider (interior now) onto the new back door, and
         # the Mudroom marker follows its deck's rename
         # (mudroom_cross_roof_south -> garage_block_roof_south). The
-        # back door is on the main's NORTH wall, which stop 0 -- the only
-        # exterior view until the orbit lands -- cannot see, so three
-        # markers draw here and the Kitchen one is asserted ABSENT
-        # below; task 4 turns that into a per-stop positive.
+        # back door is on the main's NORTH wall, which stop 0 cannot see,
+        # so three markers draw at the resting view; the Kitchen one
+        # arrives further down, at the orbit stop that can see it.
         page.wait_for_function(
             "() => document.querySelectorAll("
             "'#house-hints:not([hidden]) .house-hint').length === 3",
@@ -1570,7 +1570,9 @@ def scenario_navigation_real_mouse():
               '%r' % p)
         # the mudroom's own street FACE is behind the porch and the main
         # block from here, exactly as its predecessor band was: the probe
-        # says so, which is why the marker rides the deck above it.
+        # says so, which is why the marker rides the deck above it. The
+        # orbit's south-west stops (1 and 2) do see the face -- that is
+        # scenario_orbit_eight_stops' mudroom_front probe.
         enter('exterior')
         check(page.evaluate("window.chfNavProbe({piece:'mudroom_front'})") is None,
               'the mudroom street face is not visible from the street view')
@@ -1589,18 +1591,39 @@ def scenario_navigation_real_mouse():
         check(page.evaluate("window.chfHouseMode()") == 'living',
               'exterior tap on the front door must enter living: %r' % p)
 
-        # The kitchen's exterior entry is the back door on the north
-        # wall. Stop 0 looks at the house from the south-east, so the
-        # north face is behind the sealed shell: the probe returns null
-        # and the marker is not drawn (a hint whose target is occluded is
-        # not drawn -- spec section 4). Task 4's orbit stops see it.
+        # The kitchen's exterior entry is the back door on the main's NORTH
+        # wall, which the street view cannot see (the marker set pinned
+        # above is the whole proof: back_door is not in it). The orbit is
+        # what reaches it. Stop 5 is the one used here: with a0 = 43.55
+        # degrees measured from +x toward +z, stop 5 sits at 268.55
+        # degrees -- within a degree and a half of straight off the north
+        # wall -- so the door is as face-on as this house ever gets it,
+        # and the garage block (all of it west of x -7.15) stands clear of
+        # the sight line to a door at x -2.0. Stops 4 and 6 also see it;
+        # 5 sees it squarest. scenario_orbit_eight_stops walks all eight.
         enter('exterior')
-        check(page.evaluate("window.chfNavProbe({entry:'back_door'})") is None,
-              'the back door must be unreachable from the street view')
+        page.evaluate('window.chfOrbitTo(5)')
+        page.wait_for_function("window.chfNavProbe({settled:true})",
+                               timeout=20000)
+        page.wait_for_function(
+            "() => [...document.querySelectorAll('#house-hints .house-hint')]"
+            ".some(e => e.dataset.target === 'back_door')", timeout=10000)
         check(page.evaluate(
             "[...document.querySelectorAll('#house-hints .house-hint')]"
-            ".some(e => e.dataset.target === 'back_door')") is False,
-              'no Kitchen marker is drawn where the back door cannot be seen')
+            ".some(e => e.dataset.target === 'back_door')"),
+              'the Kitchen marker is drawn at the stop that can see the '
+              'back door')
+        p = probe("{entry:'back_door'}")
+        page.mouse.click(p['cx'], p['cy'])
+        page.wait_for_timeout(1200)
+        check(page.evaluate("window.chfHouseMode()") == 'kitchen',
+              'a real click on the back door must enter the kitchen: %r' % p)
+        enter('exterior')
+        check(page.evaluate('window.chfOrbitStop()') == 5,
+              'leaving a room returns to the stop it was entered from')
+        page.evaluate('window.chfOrbitTo(0)')
+        page.wait_for_function("window.chfNavProbe({settled:true})",
+                               timeout=20000)
 
         # (3) garage_shell fronts garage (already true pre-Task-7 via
         # gtag's per-mesh stamps -- pinned here as a still-must-hold
@@ -1748,6 +1771,137 @@ def scenario_navigation_real_mouse():
         check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
 
 
+
+def scenario_orbit_eight_stops():
+    """Spec 2026-09-16 section 4: eight tweened stops around the pivot; every
+    stop settles clean, draws at least one marker, and every entrance is
+    reachable from some stop."""
+    served = live_app(_seed)
+    if served is None:
+        return
+    with served.browser() as page:
+        errors = []
+        page.on('console', lambda m: errors.append(m.text) if m.type == 'error' else None)
+        page.add_init_script(DAY_LOCK_JS)
+        page.goto(served.url('house?quality=high&angle=3'))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        check(page.evaluate('window.chfOrbitStop()') == 3, '?angle=3 boots at stop 3')
+        seen = {}
+        for k in range(8):
+            page.evaluate('window.chfOrbitTo(%d)' % k)
+            page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+            # the markers are DEFERRED (scheduleHint, 1600 ms) so they cannot
+            # flicker mid-tween: settle alone is 850 ms too early to count them.
+            try:
+                page.wait_for_function(
+                    "() => document.querySelectorAll("
+                    "'#house-hints:not([hidden]) .house-hint').length >= 1",
+                    timeout=6000)
+            except Exception:
+                pass
+            check(page.evaluate('window.chfHouseMode()') == 'exterior',
+                  'orbit never leaves the exterior')
+            n = page.locator('#house-hints:not([hidden]) .house-hint').count()
+            check(n >= 1, 'stop %d draws at least one marker (got %d)' % (k, n))
+            for spec in ("{entry:'front_door'}", "{entry:'back_door'}",
+                         "{piece:'mudroom_front'}", "{front:'garage'}"):
+                if page.evaluate('window.chfNavProbe(%s)' % spec):
+                    seen.setdefault(spec, k)
+        check(len(seen) == 4,
+              'every entrance reachable from some stop: %r' % (seen,))
+        # a swipe steps once
+        before = page.evaluate('window.chfOrbitStop()')
+        box = page.locator('#room canvas').bounding_box()
+        page.mouse.move(box['x'] + box['width'] * 0.7, box['y'] + box['height'] * 0.5)
+        page.mouse.down()
+        page.mouse.move(box['x'] + box['width'] * 0.3, box['y'] + box['height'] * 0.5, steps=8)
+        page.mouse.up()
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        check(page.evaluate('window.chfOrbitStop()') == (before + 1) % 8,
+              'a left swipe advances one stop')
+        check(page.evaluate('window.chfHouseMode()') == 'exterior',
+              'a swipe must not double as a tap into a room')
+        page.keyboard.press('ArrowLeft')
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        check(page.evaluate('window.chfOrbitStop()') == before, 'ArrowLeft steps back')
+        # the chevrons are the hand path: exterior only, and they step
+        page.wait_for_selector('.house-orbit[data-dir="1"]:not([hidden])', timeout=10000)
+        page.click('.house-orbit[data-dir="1"]')
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        check(page.evaluate('window.chfOrbitStop()') == (before + 1) % 8,
+              'the right chevron steps one stop')
+        page.click('.house-orbit[data-dir="-1"]')
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        check(page.evaluate('window.chfOrbitStop()') == before,
+              'the left chevron steps back')
+        # entering a room and leaving returns to the CURRENT stop
+        page.evaluate("window.chfOrbitTo(5)")
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        page.evaluate("window.chfHouseEnter()")
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        check(page.evaluate('window.chfOrbitTo(2)') is False,
+              'a room ignores orbit input (spec section 4: rooms stay fixed '
+              'dioramas)')
+        check(page.locator('.house-orbit[data-dir="1"]').is_hidden(),
+              'the chevrons belong to the exterior only')
+        page.evaluate("window.chfHouseExit()")
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        check(page.evaluate('window.chfOrbitStop()') == 5,
+              'exit returns to the stop you left from')
+        check(not errors, 'zero console errors across the orbit: %r' % (errors[:3],))
+
+
+def scenario_idle_return_snaps_the_orbit_home():
+    """Spec 2026-09-16 sections 4/7: the panel's idle-return timer snaps the
+    orbit back to stop 0, so the wall always rests on the street view.
+
+    The timer is shortened through the setting the panel actually reads
+    (`panel_idle_return_seconds`, served on /api/panel/profile as
+    `idle_seconds`) rather than by stubbing the fetch: nav.html's
+    `chfIdleRemaining` floors every period at three seconds, so the
+    alternative -- a stale `chfPanelLastInput` written by an init script --
+    would collapse the SCREENSAVER's period to the same three seconds and
+    race it, and a screensaver that wins defers the return entirely
+    (`_chfSsPendingHome`). The init script here carries the recorder instead.
+
+    /house is not the home board, so nav.html's `goHome` navigates the panel
+    away after the snap; the snap is caught on its way out through the
+    house's own `chf-house-orbit` event (parked in sessionStorage, which
+    survives the navigation) and the navigation itself is asserted after it.
+    """
+    from services import storage
+    served = live_app(_seed)
+    if served is None:
+        return
+    before = dict(storage.get_settings())
+    storage.update_settings(dict(before, panel_idle_return_seconds=10))
+    try:
+        with served.browser() as page:
+            page.add_init_script(DAY_LOCK_JS)
+            page.add_init_script(
+                "window.addEventListener('chf-house-orbit', function (e) {"
+                "  try { sessionStorage.setItem('chfOrbitSeen',"
+                "    String(e.detail.stop)); } catch (err) {}"
+                "});")
+            page.goto(served.url('house?quality=low&panel=true&angle=5'))
+            page.wait_for_selector('#room canvas', timeout=20000)
+            page.wait_for_function("window.chfNavProbe({settled:true})",
+                                   timeout=20000)
+            check(page.evaluate('window.chfOrbitStop()') == 5,
+                  'the panel starts the idle wait off the street view')
+            check(page.evaluate("sessionStorage.getItem('chfOrbitSeen')") is None,
+                  'nothing has moved the orbit yet')
+            # No input of any kind from here: every listener nav.html arms
+            # (pointerdown/keydown/wheel/touchstart) would restart the clock.
+            page.wait_for_url('**/home*', timeout=40000)
+            check(page.evaluate("sessionStorage.getItem('chfOrbitSeen')") == '0',
+                  'the idle return snapped the orbit to stop 0 before the '
+                  'panel went home')
+    finally:
+        storage.update_settings(before)
+
+
 def scenario_shell_without_room_is_inert():
     """Exercise an unbuilt shell using existing walls as fixture geometry.
 
@@ -1807,6 +1961,8 @@ if __name__ == '__main__':
     scenario_study_sits_inside_the_main_block()
     scenario_canonical_facade_pins_the_hand_built_elevation()
     scenario_navigation_real_mouse()
+    scenario_orbit_eight_stops()
+    scenario_idle_return_snaps_the_orbit_home()
     scenario_shell_without_room_is_inert()
     scenario_worst_case_facade_builds_clean()
     print("test_house_live OK")

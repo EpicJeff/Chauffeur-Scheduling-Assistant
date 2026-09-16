@@ -11,7 +11,8 @@ playwright probes:
 
 Views: exterior, kitchen, living, mudroom, garage, study, and lean_<zone> for
 any zone (lean_board, lean_door, lean_radio, lean_calendar, ...). `all` = the
-six room views. Seeds a standard fixture set (two children, a driver, an
+six room views; `orbit` = all eight orbit stops (orbit0..orbit7), and a single
+`orbit<k>` works on its own. `--angle N` settles the page on stop N first. Seeds a standard fixture set (two children, a driver, an
 event today, three shopping items, three cars of different bodies, two prep
 kits with only one of them claimed) so every signal has something honest to
 show - including the mudroom bench, which needs a packed AND an unpacked
@@ -35,6 +36,8 @@ os.environ.setdefault('CHAUFFEUR_DATA_DIR',
                       tempfile.mkdtemp(prefix='chauffeur_house_probe_'))
 
 ROOM_VIEWS = ['exterior', 'kitchen', 'living', 'mudroom', 'garage', 'study']
+# MASSING ARC 1 (spec section 4): the eight orbit stops, `--views orbit`.
+ORBIT_VIEWS = ['orbit%d' % k for k in range(8)]
 
 # The renderer wrapper the --budget flag appends to the vendored three
 # bundle via route interception. three assigns render as an INSTANCE
@@ -294,6 +297,11 @@ def main():
                          '{\"main\":{\"form\":\"hip\"}}. '
                          'Injected as window.HOUSE_ROOF_FORMS before the '
                          'page loads; absent, the canonical forms build.')
+    ap.add_argument('--angle', default=0, type=int,
+                    help='orbit stop 0..7 to settle on before the views are '
+                         'walked (massing arc 1, spec section 4). 0 = the '
+                         'resting street view, which is what every probe '
+                         'before the orbit existed photographed.')
     ap.add_argument('--budget', action='store_true',
                     help='wrap the renderer and print per-view draw-budget '
                          'numbers (meshes, in-frustum, tris, unique '
@@ -313,6 +321,10 @@ def main():
 
     views = ROOM_VIEWS[:] if args.views == 'all' else [
         v.strip() for v in args.views.split(',') if v.strip()]
+    # `orbit` is the whole ring: eight exterior shots, one per stop
+    # (massing arc 1, spec section 4). The exterior gate for later arcs is
+    # the WORST of these, so the eight have to be one command.
+    views = sum([ORBIT_VIEWS[:] if v == 'orbit' else [v] for v in views], [])
     os.makedirs(args.out, exist_ok=True)
 
     from live_app import live_app
@@ -364,8 +376,22 @@ def main():
             # how much of the scene actually stepped back.
             print('scenery', page.evaluate(
                 'window.chfHouseScenery(' + str(float(args.scenery)) + ')'))
+        if args.angle:
+            # After the exterior has settled, so the orbit tween starts from
+            # the pose the page booted with rather than mid-build.
+            page.evaluate('window.chfOrbitTo(%d)' % args.angle)
+            page.wait_for_timeout(1500)
+            print('angle: stop %d' % args.angle)
         for view in views:
-            if view == 'exterior':
+            if view.startswith('orbit'):
+                # An orbit stop is the exterior seen from one of eight
+                # places, so a view that walked into a room first has to
+                # come back out: orbitTo is exterior-only by design.
+                page.evaluate(
+                    "(k => { if (window.chfHouseMode() !== 'exterior') "
+                    "window.chfHouseExit(); window.chfOrbitTo(k); })(%d)"
+                    % int(view[5:]))
+            elif view == 'exterior':
                 page.evaluate("window.chfHouseExit && window.chfHouseExit()")
             elif view == 'kitchen':
                 page.evaluate("window.chfHouseEnter()")

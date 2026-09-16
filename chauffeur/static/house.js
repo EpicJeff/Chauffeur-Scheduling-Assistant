@@ -35,6 +35,8 @@
   var CHIP = document.getElementById('chip');
   var BACK = document.getElementById('house-back');
   var HINT = document.getElementById('house-hints');
+  /* ORBIT (spec section 4): the two chevrons, the exterior's own hand path */
+  var ORBIT_BTNS = document.querySelectorAll('.house-orbit');
   var FALLBACK = document.getElementById('fallback');
   var FALLROWS = document.getElementById('fallback-rows');
   if (!ROOT) return;
@@ -330,6 +332,42 @@
        (bible S5.1). */
     var EXT_POS = new T.Vector3(59.0, 31.0, 62.0);
     var EXT_AT = new T.Vector3(-3.9, 4.0, 7.0);
+    /* MASSING ARC 1 (orbit spec section 4): the exterior is eight stops at
+       45 degrees around one pivot, not one fixed pose. The pivot is the
+       TWO-BLOCK bounding box centre in x/z (main -7.15..14.65 / garage
+       block -18.20..-7.15 gives -1.8; -6.10..14.55 gives 4.2) with
+       EXT_AT's own height kept, so the house sits in the middle of the
+       frame from every side rather than swinging around a corner.
+
+       radius and a0 are MEASURED off EXT_POS above rather than typed, so
+       stop 0 stands exactly where the resting view always stood and a
+       future change to the resting pose carries the whole ring with it.
+       The look target does move at stop 0 (EXT_AT -> the pivot, 2.1 west
+       and 2.8 north): a ring cannot keep a per-stop aim point and stay a
+       ring, and the spec ruled the pivot for every stop. */
+    var ORBIT = {
+      pivot: new T.Vector3(-1.8, 4.0, 4.2),
+      height: 31.0,
+      radius: 0, a0: 0,
+      /* the CURRENT stop, 0..7. ?angle=N boots here; chfOrbitTo moves it. */
+      stop: 0
+    };
+    ORBIT.radius = Math.sqrt(Math.pow(EXT_POS.x - ORBIT.pivot.x, 2) +
+                             Math.pow(EXT_POS.z - ORBIT.pivot.z, 2));
+    ORBIT.a0 = Math.atan2(EXT_POS.z - ORBIT.pivot.z, EXT_POS.x - ORBIT.pivot.x);
+    function orbitPos(k) {
+      var a = ORBIT.a0 + k * Math.PI / 4;
+      return new T.Vector3(ORBIT.pivot.x + ORBIT.radius * Math.cos(a),
+                           ORBIT.height,
+                           ORBIT.pivot.z + ORBIT.radius * Math.sin(a));
+    }
+    ORBIT.stop = (function () {
+      var raw = null;
+      try { raw = new URLSearchParams(location.search).get('angle'); }
+      catch (e) { raw = null; }
+      var n = parseInt(raw || '0', 10);
+      return isFinite(n) ? ((n % 8) + 8) % 8 : 0;
+    })();
     /* the garage from its own doorway (roof + front hidden inside).
        The old pose spent half the frame's width on grass and the
        neighbouring roof and cut the bay off at the cars' noses. Lower
@@ -355,8 +393,8 @@
     var LIV_AT = new T.Vector3(0, 2.35, 10.3);
     var STUDY_POS = new T.Vector3(5.85, 3.65, 15.83);
     var STUDY_AT = new T.Vector3(12.30, 1.45, 10.68);
-    cam.position.copy(EXT_POS);
-    cam.lookAt(EXT_AT);
+    cam.position.copy(orbitPos(ORBIT.stop));
+    cam.lookAt(ORBIT.pivot);
 
     var R = new T.WebGLRenderer({ antialias: DETAIL >= 2 });
     R.setPixelRatio(1);                                // the Pi law: never a retina multiplier
@@ -7830,7 +7868,17 @@
       /* the back line: four crowns that break the skyline, so the roofs
          sit against something instead of floating in a quarter-frame of
          empty sky */
-      tree(-3.50, -12.20, 1.85, 'broad', 1.9);
+      /* MASSING ARC 1 (orbit spec section 4): the big one stood at x
+         -3.50, which was a skyline crown while the back of the house
+         could only ever be a silhouette. Orbit stop 5 looks straight up
+         the north wall, and that sight line passes x ~ -2.2 at this
+         tree's own z -- so the tree stood in the BACK DOOR, hiding the
+         kitchen's only exterior entry behind a canopy and leaving that
+         stop with no marker at all. Slid west to the middle of the gap
+         between the stop-4 and stop-5 sight lines (x -9.75 and -2.16 at
+         z -12.20), which clears both by ~3.8 against a ~3.5 crown
+         half-width. Same z, same size, same silhouette from the street. */
+      tree(-5.95, -12.20, 1.85, 'broad', 1.9);
       tree(-22.60, -7.00, 1.60, 'broad', 2.7);
       tree(8.60, -12.60, 1.75, 'open', 0.8);
       tree(-11.60, -13.20, 1.50, 'broad', 0.3);
@@ -9240,7 +9288,16 @@
       carsG: carsG, busG: busG, buildCar: buildCar, carTex: carTex,
       cgeo: cgeo,
       HOME_POS: HOME_POS, HOME_AT: HOME_AT,
-      EXT_POS: EXT_POS, EXT_AT: EXT_AT,
+      /* ORBIT (spec section 4): EXT_POS/EXT_AT stay the names every caller
+         already uses — the probe, chfHouseCam's neighbours, goExterior, the
+         car plaques that turn to face the eye — but they now REPORT the
+         current stop instead of naming one pose. Nothing outside this file
+         has to learn the ring, and goExterior gets "exit to the stop you
+         left from" for free. Each read hands back a fresh vector; nothing
+         in the app has ever mutated these. */
+      get EXT_POS() { return orbitPos(ORBIT.stop); },
+      get EXT_AT() { return ORBIT.pivot; },
+      ORBIT: ORBIT, orbitPos: orbitPos,
       GARAGE_POS: GARAGE_POS, GARAGE_AT: GARAGE_AT,
       MUD_POS: MUD_POS, MUD_AT: MUD_AT, LIV_POS: LIV_POS, LIV_AT: LIV_AT,
       STUDY_POS: STUDY_POS, STUDY_AT: STUDY_AT, studyWorld: studyWorld,
@@ -9271,6 +9328,7 @@
 
   function updateBack() {
     window.dispatchEvent(new CustomEvent('chf-house-view'));
+    updateOrbitControls();   /* the chevrons belong to the exterior only */
     if (!BACK) return;
     BACK.hidden = mode === 'exterior';
     if (mode === 'exterior') return;
@@ -9557,6 +9615,16 @@
      is the honest answer — you cannot see the car there either. */
   var BAY_X = [-16.7, -14.1], DRIVE_X = [-16.55, -14.25];
   var carPlates = [];        /* the plaques, so the lean-in can blank them */
+  /* ORBIT (spec section 4): turn the driveway plaques to the stop the
+     camera has arrived at. Called once per landed orbit step — never per
+     frame, and never for a bay plaque, which faces its own fixed camera. */
+  function aimCarPlates() {
+    if (!webgl) return;
+    var eye = webgl.EXT_POS;
+    carPlates.forEach(function (p) {
+      if (p.userData.orbitAimed) p.lookAt(eye);
+    });
+  }
   function syncGarage(s) {
     if (!webgl) return;
     var g = s.garage || {};
@@ -9604,7 +9672,7 @@
       cars.forEach(function (c) {
         if (!c.present) return;
         var grp = webgl.buildCar(c);
-        var eye;
+        var eye, extAim = false;
         if (inside < 2) {
           /* the garage boards sit at 0.035 and the driveway apron at
              -0.21: a car parked at y 0 sinks into one and floats over
@@ -9616,6 +9684,7 @@
           grp.position.set(DRIVE_X[outside % 2], -0.206,
                            13.4 + Math.floor(outside / 2) * 4.2);
           eye = webgl.EXT_POS;
+          extAim = true;
           outside++;
         }
         webgl.carsG.add(grp);
@@ -9635,6 +9704,13 @@
         plate.position.set(grp.position.x, box.max.y + 0.86,
                            grp.position.z);
         plate.lookAt(eye);
+        /* ORBIT (spec section 4): a driveway plaque faces the EXTERIOR
+           eye, and that eye is a ring of eight now — so it has to be
+           re-aimed when the ring moves or it goes edge-on (invisible)
+           at seven stops out of eight. Marked here, turned by
+           aimCarPlates() when an orbit step lands; a bay plaque faces
+           its own fixed garage camera and never moves. */
+        plate.userData.orbitAimed = extAim;
         /* fresh material every rebuild: never cache-shared (L1) */
         plate.userData.zone = 'garage';
         plate.userData.room = 'garage';
@@ -9904,6 +9980,51 @@
               t0: performance.now(), ms: 850, cb: null };
     requestFrame();
   }
+  /* ---- ORBIT (massing arc 1, spec section 4) ---------------------------
+     Eight stops, one tween per step, through the SAME tween slot and the
+     same easing goExterior uses — so render-on-demand is untouched: the
+     scene renders while the tween runs and idles the moment it lands.
+     Interiors ignore all of it (rooms are fixed dioramas); the back
+     control exits to whichever stop you left from, which falls out of
+     webgl.EXT_POS/EXT_AT reporting the current stop. */
+  function orbitStop() { return webgl ? webgl.ORBIT.stop : 0; }
+  function orbitTo(k, cb) {
+    if (!webgl || mode !== 'exterior') return false;
+    k = ((Math.round(k) % 8) + 8) % 8;
+    webgl.ORBIT.stop = k;
+    var to = webgl.orbitPos(k);
+    /* the sealed house at every stop: subject null, every piece solid,
+       solved once BEFORE the tween exactly as goExterior does. */
+    webgl.solveShell(to, null);
+    /* the markers are derived from the camera, so they cannot survive the
+       move: drop them now, and arm the deferred redraw from the tween's
+       OWN callback rather than beside it. scheduleHint's timer is wall
+       clock and showHint refuses to draw mid-tween without rescheduling,
+       so on a slow tier — a Pi, or software WebGL, where one frame of
+       this scene costs seconds — a timer armed here fires while the tween
+       is still live and that stop silently draws no markers at all.
+       Armed at the landing, the delay is the delay it means. */
+    hideHint();
+    tween = { fromP: webgl.cam.position.clone(), toP: to,
+              fromA: (lookAt || webgl.ORBIT.pivot).clone(),
+              toA: webgl.ORBIT.pivot.clone(),
+              t0: performance.now(), ms: 850,
+              cb: function () { aimCarPlates(); scheduleHint();
+                                if (cb) cb(); } };
+    requestFrame();
+    /* the one thing outside this file that has to know the ring moved:
+       the panel's idle return, which snaps the wall back to stop 0. */
+    try {
+      window.dispatchEvent(new CustomEvent('chf-house-orbit',
+                                           { detail: { stop: k } }));
+    } catch (e) { /* an ancient browser without CustomEvent just orbits */ }
+    return true;
+  }
+  function orbitStep(d) { return orbitTo(orbitStop() + d); }
+  function updateOrbitControls() {
+    for (var i = 0; i < ORBIT_BTNS.length; i++)
+      ORBIT_BTNS[i].hidden = mode !== 'exterior';
+  }
   function inExterior(obj) {
     var o = obj;
     while (o) { if (o === webgl.extG) return true; o = o.parent; }
@@ -10125,6 +10246,12 @@
   };
   /* read-only, the chfHouseScenery stance: reports, never moves */
   window.chfHouseMode = function () { return mode; };
+  /* ORBIT (spec section 4). chfOrbitStop reports; chfOrbitTo/chfOrbitStep
+     move the eye and nothing else — the same read-only-about-the-house
+     stance chfHouseCam takes. Both return false inside a room. */
+  window.chfOrbitStop = function () { return orbitStop(); };
+  window.chfOrbitTo = function (k, cb) { return orbitTo(k, cb); };
+  window.chfOrbitStep = function (d) { return orbitStep(d); };
   /* the studio's viewfinder: snap the camera anywhere and repaint once.
      Read-only like its siblings — it moves the eye, nothing else. Set
      builders frame a room through this before they hard-code the pose. */
@@ -10520,8 +10647,15 @@
     return false;
   }
 
+  /* ORBIT (spec section 4): a horizontal drag across the canvas steps the
+     ring, and the click the browser synthesises at its release must not
+     ALSO walk into whatever room the finger happened to lift over. The
+     pointerup handler sets this; onTap spends it. */
+  var swipeStart = null, swiped = false;
+
   function onTap(ev) {
     if (!webgl) return;
+    if (swiped) { swiped = false; return; }
     var primaryHit = anyHit(ev.clientX, ev.clientY);
     for (var actionPart = primaryHit; actionPart; actionPart = actionPart.parent) {
       if (actionPart.userData.houseAction) {
@@ -10653,8 +10787,20 @@
       }
       else if (mode !== 'exterior') goExterior();
     });
+    for (var ob = 0; ob < ORBIT_BTNS.length; ob++)
+      ORBIT_BTNS[ob].addEventListener('click', function () {
+        orbitStep(parseInt(this.dataset.dir, 10) || 1);
+      });
+    updateOrbitControls();
     window.addEventListener('keydown', function (e) {
       if (document.body.classList.contains('house-card-open')) return;
+      /* ORBIT (spec section 4): the arrows step the ring at the exterior
+         and mean nothing inside a room, where the camera is fixed. */
+      if (mode === 'exterior' &&
+          (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        orbitStep(e.key === 'ArrowRight' ? 1 : -1);
+        return;
+      }
       if (e.key !== 'Escape' || mode === 'exterior') return;
       if (focused) goHome(mode);
       else if (mode === 'study') {
@@ -10670,6 +10816,28 @@
       try { ROOT.style.display = 'none'; } catch (err) {}
       webgl = null;
       drawFallback(state);
+    });
+    /* ORBIT (spec section 4): the swipe. A gesture only counts as one at
+       the exterior, past 60px of horizontal travel, more across than down
+       (so a scroll-ish drag is never mistaken for a turn) and inside
+       800ms (so a slow drag that ends where a tap would have landed is
+       still a tap). Two listeners and a stored point — no per-frame work,
+       nothing in the ticker. */
+    webgl.R.domElement.addEventListener('pointerdown', function (e) {
+      swipeStart = { x: e.clientX, y: e.clientY, t: performance.now() };
+      swiped = false;
+    });
+    webgl.R.domElement.addEventListener('pointerup', function (e) {
+      if (!swipeStart) return;
+      var dx = e.clientX - swipeStart.x, dy = e.clientY - swipeStart.y,
+          dt = performance.now() - swipeStart.t;
+      swipeStart = null;
+      if (mode !== 'exterior') return;
+      if (Math.abs(dx) < 60 || Math.abs(dy) >= Math.abs(dx) || dt >= 800) return;
+      /* drag the house to the LEFT and the camera walks clockwise around
+         it, the same direction the right chevron goes. */
+      swiped = true;
+      orbitStep(dx < 0 ? 1 : -1);
     });
     webgl.R.domElement.addEventListener('click', onTap);
     window.addEventListener('resize', function () { size(); scheduleHint(); });
