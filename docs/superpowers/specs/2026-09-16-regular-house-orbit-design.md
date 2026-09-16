@@ -656,3 +656,79 @@ replaced by. Interior pieces only — the exterior elevation's own count never m
 tests: `tests/test_house_live.py` and `tests/test_study_live.py` (the standalone is untouched:
 every change above is inside `if (WINDOW_WALL === 'east')` or in the adapter). No Python under
 `services/` changed, so no full sweep. Probes: `scratch/refit-after2/{study,living}.png`.
+
+### 10.12 Post-ship fix — vaulted partitions, and wall above every interior door (v2.499.45)
+
+The user, reading the living view: "Look at the left side vs the right side. There isn't any
+geometry on the right side to cover the top part. In a real house there would either be dropped
+ceilings with attic space above or vaulted ceilings where the walls go all the way up. Assume
+vaulted ceilings, so the walls should go all the way up. Also, even without that assumption, there
+are sections of the wall above two of the doors that are missing." Brief:
+`.superpowers/sdd/2026-09-16-vaulted-partitions/brief.md`.
+
+**The maths, reproduced from `shellGable` (section 3's roofs).** A block roof's deck is a 0.18-thick
+plane whose CENTRE crosses the wall line at `eave + 0.18` and climbs `tan(pitch)` per unit toward
+the ridge. Its LOWER face — what a wall below has to meet — sits half that thickness under the
+centre plane measured **down the vertical**, `0.09 / cos(pitch)`, not 0.09:
+
+```
+half   = 20.65 / 2 = 10.325            main block, z -6.10..14.55, ridge on x at z 4.225
+rise   = 10.325 * tan(pi/8) = 4.2767
+ridge  = 5.6 + 0.18 + 4.2767 = 10.0567   the deck's centre plane at the ridge
+under  = ridge - d*tan(pi/8) - 0.09/cos(pi/8)     0.09/cos(pi/8) = 0.0974
+```
+
+`house.js` holds every wall top a further `VAULT_GAP` = 0.02 below that face: exactly coplanar and
+the two surfaces z-fight down the whole partition. Resulting tops, measured off the registry:
+
+| wall | was | now | derivation |
+|---|---|---|---|
+| `east_partition` (z -5.725..14.20, x 6.50..6.85) | 5.60 | **9.939** | gable profile; apex = `under(0)` − gap = 9.959 − 0.02, falling to 5.82/5.81 at its two ends |
+| `future_room_partition` (z 1.50, x 6.85..14.30) | 5.60 | **8.738** | runs ACROSS the slope, so one height along its length: `under(1.325)` − gap, the lower of its two faces |
+| garage/mudroom wall in `garage_shell` (x -12.87..-12.57, z 2.0..10.0) | 5.60 | **9.018** | garage block half 8.10, ridge z 2.00 → ridge under 9.038; trapezoid falling to 5.70 at the street |
+| `house_study.js` north wall (z 7.59..7.71) | 4.45 | **8.496** | `under(7.71)` − gap |
+| `house_study.js` east wall (x 14.18..14.30) | 4.45 | **5.60** | the eave: `east_wall` stands behind it to 5.6 and `roof_main_east_end_east` closes above |
+
+**How.** Five helpers in `house.js` — `roofVault(block, forms, pitch)` (the block's ridge line and
+underside height), `vaultTop(v, u)`, `vaultRidgePts` (a wall that runs ALONG the slope axis: a
+pentagon when the ridge crosses its run, a trapezoid when it does not), `vaultFlatPts` (a wall that
+runs ACROSS it) and `vaultSection` (`Shape` → `ExtrudeGeometry` through `cgeo`, keyed on every
+dimension, placed by `shellGable`'s own quarter-turn idiom). `ExtrudeGeometry` maps uv in world
+units where `BoxGeometry` maps every face 0..1, which would have clamped each section to the plaster
+gradient's dark end and drawn a band across the partition; the sections re-map uv off the POSITION
+attribute so `v = y / eave` is exactly 1 where the box below ends and clamps to the gradient's cream
+top above it. Every section grows an **already-registered** group — same name, same
+`owners`/`twoSided`/`room` — so the cutaway law of section 10.10 is untouched; the registry's
+KEPT/NEW tables are unchanged and the arc registers nothing of its own.
+
+**The gate.** `ROOF_FORMS` is a build-time parameter (`house_probe --roof`, and section 3's block
+model). The vault is built only under the canonical ridge on x: give the main block a ridge on z and
+`roof_main`'s two halves take DIFFERENT ridge heights — each half's own width becomes its span — so
+there is no single deck over `east_partition` to meet, and the walls stay at the eave exactly where
+they stood before this arc rather than poking through one of them.
+
+**Headers.** The two door headers in `east_partition` (the study's glass doors at z 9.93, head 3.75;
+the east room's plain door at z 5.80, head 3.05) shipped in v2.499.44. They are now PINNED rather
+than merely present, by a ray rather than by a box: new read-only exposure
+**`window.chfRayFabric(from, dir)`** reports the nearest registered fabric piece a ray hits. A
+piece's box can only say the group grew somewhere; a ray says there is plaster at a named point.
+
+**Tests.** `scenario_interior_walls_rise_to_the_roof` in `tests/test_house_live.py` re-derives the
+deck arithmetic a third time from this section's own dimensions (never read back out of the scene)
+and pins four wall tops plus six rays. RED first with the vault switched off: 9 of its 11 checks
+failed (every box top read 5.600, `chfStudyBox` read None at the exterior, and each vault ray hit
+`roof_main_east_end_east` / `roof_main_east_south` / `facade_garage_block_gable_0_east` behind the
+missing wall) — the two v2.499.44 header rays passed both before and after, which is the point of
+keeping them. GREEN after, with `tests/test_house_live.py`, `tests/test_house_life_live.py` and
+`tests/test_study_live.py` all green.
+
+**Mesh pin 1868 → 1869.** `east_partition`'s section folds into that group's existing five-box
+plaster bucket and the garage's into the shell's five-box siding bucket (this pin skips merged
+output by design), and the study's two walls grew in HEIGHT, not in number; only
+`future_room_partition`'s section stays its own draw, its group holding two boxes against
+`mergeStatic`'s four-item floor. The exterior elevation's own count never moved: every piece here is
+interior. Budgets (quality=high, `--day`): `buildMs` 969 → 1037 (cap 1500); living 728 in-frustum /
+136880 tris, kitchen 519 / 115190 (+16 tris), study 322 / 26040 (+1 / +28), garage 754 / 110034
+(unchanged — `garage_shell` ghosts for its own room), mudroom 400 / 46518 (+12); the eight orbit
+stops are unchanged at 1432 visible. Probes: `scratch/vault-before/` and `scratch/vault-after/`
+(rooms plus `orbit0..7`); stops 0 and 4 show unbroken roof planes with nothing poking through.

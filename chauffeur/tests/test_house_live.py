@@ -11,6 +11,7 @@ Set HOUSE_SHOTS=<dir> to also save exterior/kitchen/lean-in screenshots.
 """
 import datetime
 import io
+import math as _math
 import os
 import sys
 import tempfile
@@ -1716,7 +1717,150 @@ def scenario_the_study_faces_east_behind_glass_doors():
 #       the east. The room has its own again, built the way the north
 #       wall is: the four boxes around the window (east-north, -south,
 #       -low, -high) where one dead box used to be.
-CANONICAL_EXTERIOR_MESHES = 1868
+#    +1 VAULTED PARTITIONS (2026-09-16). Four interior wall sections
+#       rise from the eave to the roof deck, and only ONE of them shows
+#       up here: mergeStatic folds east_partition's section into that
+#       group's existing five-box plaster bucket and the garage's into
+#       the garage shell's five-box siding bucket (this count skips
+#       merged output by design), and the study's two walls grew in
+#       HEIGHT rather than in number. future_room_partition's group
+#       holds two boxes now, under mergeStatic's four-item floor, so its
+#       section stays its own draw. The exterior elevation itself has
+#       not moved a millimetre: every piece in this arc is interior.
+CANONICAL_EXTERIOR_MESHES = 1869
+
+
+# ---- VAULTED PARTITIONS (2026-09-16) ---------------------------------
+# The roof's own arithmetic, re-derived HERE from the spec's dimensions
+# (docs/superpowers/specs/2026-09-16-regular-house-orbit-design.md section
+# 2: the main block x -7.15..14.65, z -6.10..14.55, eave 5.6; the garage
+# block z -6.10..10.10, same eave; family pitch pi/8 on both) rather than
+# read back out of the scene that also uses it. house.js's roofVault()
+# and shellGable() each derive the same numbers a third and a second
+# time, so a change to any one of the three fails a pin here.
+#
+#   ridge = eave + 0.18 + half * tan(pitch)        the deck's CENTRE plane
+#   under = ridge - d * tan(pitch) - 0.09/cos(pitch)    its LOWER face,
+#           measured down the vertical, d from the ridge line
+_VAULT_PITCH = _math.pi / 8
+_VAULT_GAP = 0.02          # house.js holds every wall top this far under
+_MAIN_BLOCK = (-6.10, 14.55, 5.6)
+_GARAGE_BLOCK = (-6.10, 10.10, 5.6)
+
+
+def _deck_underside(block, at):
+    north, south, eave = block
+    half = (south - north) / 2.0
+    ridge_y = eave + 0.18 + half * _math.tan(_VAULT_PITCH)
+    return (ridge_y - abs(at - (north + south) / 2.0) * _math.tan(_VAULT_PITCH)
+            - 0.09 / _math.cos(_VAULT_PITCH))
+
+
+def scenario_interior_walls_rise_to_the_roof():
+    """Vaulted partitions, and wall above every interior door.
+
+    User report (2026-09-16, a screenshot of the living view): "Look at
+    the left side vs the right side. There isn't any geometry on the
+    right side to cover the top part. In a real house there would either
+    be dropped ceilings with attic space above or vaulted ceilings where
+    the walls go all the way up. Assume vaulted ceilings, so the walls
+    should go all the way up. Also, even without that assumption, there
+    are sections of the wall above two of the doors that are missing."
+
+    Two pins, because the two halves of that report are two different
+    facts. A registered piece's BOX says the group grew to the deck --
+    that is the vault. Only a RAY says there is plaster at a particular
+    point -- that is the header, and the wall between a door head and
+    the roof above it. Both are read at the exterior, where the cutaway
+    solver leaves every piece solid.
+    """
+    served = live_app()
+    if served is None:
+        return
+    with served.browser() as page:
+        page.add_init_script(DAY_LOCK_JS)
+        page.goto(served.url('house?quality=high'))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_timeout(2200)
+        fab = {f['name']: f for f in page.evaluate("window.chfShellFabric()")}
+
+        # ---- the vault: every partition tops out at the deck ----------
+        ridge_y = _deck_underside(_MAIN_BLOCK, (-6.10 + 14.55) / 2.0)
+        tops = [
+            # east_partition runs ALONG the main block's slope axis and
+            # crosses the ridge at z 4.225, so its own top IS the ridge.
+            ('east_partition', ridge_y, 0.05),
+            # future_room_partition runs ACROSS it at z 1.50; its top is
+            # cut square at the lower of its two faces (z 1.325).
+            ('future_room_partition', _deck_underside(_MAIN_BLOCK, 1.325), 0.05),
+            # the garage/mudroom wall: the garage block's ridge (z 2.00)
+            # crosses its north end, so that end is its tallest point.
+            ('garage_shell', _deck_underside(_GARAGE_BLOCK, 2.00), 0.05),
+        ]
+        for name, want, tol in tops:
+            f = fab.get(name)
+            check(f is not None, 'missing fabric piece %r' % name)
+            got = f['box'][3]
+            check(abs(got - (want - _VAULT_GAP)) <= tol,
+                  '%s must rise to the roof underside %.3f (less the %.2f '
+                  'no-z-fight gap), got a box topping out at %.3f'
+                  % (name, want, _VAULT_GAP, got))
+        check(fab['east_partition']['box'][3] >= ridge_y - 0.2,
+              'the east partition reaches the ridge, not merely higher '
+              'than it was: %.3f' % fab['east_partition']['box'][3])
+
+        # ---- the ray: wall where a wall belongs -----------------------
+        # Every ray starts in the great room (or in the garage) and is
+        # fired at the partition; EAST rays go +x, NORTH rays +z.
+        EAST, NORTH = [1, 0, 0], [0, 0, 1]
+        rays = [
+            # the two door headers (shipped v2.499.44, pinned here so the
+            # vault above them cannot be built by deleting them)
+            ([0, 4.60, 9.93], EAST, 'east_partition',
+             "wall above the study's glass doors (head 3.75)"),
+            ([0, 3.60, 5.80], EAST, 'east_partition',
+             "wall above the east room's plain door (head 3.05)"),
+            # the vault itself: over each door, and over the ridge
+            ([0, 7.00, 9.93], EAST, 'east_partition',
+             'the vault over the study door, 1.4 above the old wall head'),
+            ([0, 9.50, 4.225], EAST, 'east_partition',
+             'the vault at the ridge line'),
+            ([10.0, 6.50, -1.0], NORTH, 'future_room_partition',
+             'the vault over the back-room partition'),
+            # fired from the MUDROOM side, westward: the garage's own
+            # half of this wall is behind `facade_garage_block_gable_0`,
+            # a generated roof feature that reaches back into the bay.
+            ([-10.0, 7.00, 6.0], [-1, 0, 0], 'garage_shell',
+             'the vault over the garage/mudroom wall'),
+        ]
+        for origin, direction, want_name, why in rays:
+            hit = page.evaluate('([o, d]) => window.chfRayFabric(o, d)',
+                                [origin, direction])
+            check(hit and hit['name'] == want_name,
+                  'a ray from %r toward %r must hit %s -- %s -- got %r'
+                  % (origin, direction, want_name, why, hit))
+
+        # No new registered names: the arc GREW four groups, it did not
+        # add a piece. (scenario_shell_fabric_registry owns the full
+        # KEPT/NEW table; this is the one-line statement of the law.)
+        names = sorted(fab)
+        check(not [n for n in names if 'vault' in n],
+              'the vault registers nothing of its own: %r' % names)
+
+        # ---- the study's own north wall -------------------------------
+        # INTERIOR (the east room is on the far side of it) and authored
+        # 4.45 tall for a standalone page with its own shell. It is not
+        # registered fabric -- house_study.js builds the room's
+        # architecture itself -- so it is read from the study's own world
+        # box, which chfStudyBox only reports once the room is visible.
+        # After this arc that wall is the tallest thing in the room.
+        page.evaluate("window.chfHouseEnterRoom('study')")
+        page.wait_for_timeout(1600)
+        want = _deck_underside(_MAIN_BLOCK, 7.71) - _VAULT_GAP
+        got = page.evaluate('window.chfStudyBox()')
+        check(got and abs(got[3] - want) <= 0.06,
+              "the study's north wall must rise to the deck at z 7.71 "
+              '(%.3f), the study box tops out at %r' % (want, got and got[3]))
 
 
 def scenario_canonical_facade_pins_the_hand_built_elevation():
@@ -2424,6 +2568,7 @@ if __name__ == '__main__':
     scenario_a_room_cutaway_leaves_other_rooms_enclosed()
     scenario_study_sits_inside_the_main_block()
     scenario_the_study_faces_east_behind_glass_doors()
+    scenario_interior_walls_rise_to_the_roof()
     scenario_canonical_facade_pins_the_hand_built_elevation()
     scenario_navigation_real_mouse()
     scenario_orbit_eight_stops()

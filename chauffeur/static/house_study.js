@@ -3,7 +3,7 @@
    the same room/zone contracts used by every other house object. */
 (function () {
   'use strict';
-  window.HouseStudy = { build: function (T, detail, renderer) {
+  window.HouseStudy = { build: function (T, detail, renderer, ceiling) {
     if (!window.StudyFactory) return null;
     var quality = detail >= 3 ? 'high' : detail >= 2 ? 'medium' : 'low';
     // STUDY REFIT (2026-09-16): the house's study has an EXTERIOR east
@@ -155,15 +155,38 @@
     // z 11.10, which is where the house's exterior pane on this
     // elevation already is; wy/wh are the sill and the glass height, the
     // same derivation the north wall used to carry.
+    // VAULTED PARTITIONS (2026-09-16). User report: "In a real house
+    // there would either be dropped ceilings with attic space above or
+    // vaulted ceilings where the walls go all the way up. Assume vaulted
+    // ceilings, so the walls should go all the way up."
+    //
+    // This room was authored 4.45 tall for a standalone page with its
+    // own shell. In the house it has neither: the eave is 5.6 and the
+    // main block's roof clears 8.5 over this room's north wall, so above
+    // 4.45 the NORTH wall -- the interior one, shared with the east room
+    // -- opened straight into that room's roof space, and the EAST wall
+    // showed the block's own `east_wall` plaster (a different cream) for
+    // its last 1.15.
+    //
+    // So the north wall rises to the deck and the east wall to the eave,
+    // where the block's `east_wall` ends and `roof_main_east_end_east`'s
+    // gable infill takes over. Both heights are the HOUSE's, handed in
+    // by house.js off FULL_HOUSE and the same shellGable arithmetic the
+    // roof itself is built from -- this file never re-derives them, so
+    // it cannot drift from the roof. No ceiling (the standalone /study
+    // page, which calls the factory directly) keeps the authored 4.45.
+    var WALL_H=4.45;
+    var NTOP=ceiling?ceiling.underside(NORTH):WALL_H;
+    var ETOP=ceiling?ceiling.eave:WALL_H;
     var wc=built.windowAt||{x:.98,y:4.35},ws=built.windowSize||{w:4.8,h:3.2};
     var wz=root.position.z+wc.x*SCALE,ww=ws.w*SCALE;
     var wy=.12+wc.y*SCALE,wh=ws.h*SCALE,EW=EWF+.06;
     var northW=wz-ww/2-NORTH,southW=SOUTH-(wz+ww/2);
-    box('north',EAST-WEST,4.45,.12,wall,(WEST+EAST)/2,2.225,NFACE-.06,.94);
-    box('east-north',.12,4.45,northW+.06,wall,EW,2.225,NORTH+(northW+.06)/2,.94);
-    box('east-south',.12,4.45,southW+.06,wall,EW,2.225,wz+ww/2+(southW+.06)/2-.06,.94);
+    box('north',EAST-WEST,NTOP,.12,wall,(WEST+EAST)/2,NTOP/2,NFACE-.06,.94);
+    box('east-north',.12,ETOP,northW+.06,wall,EW,ETOP/2,NORTH+(northW+.06)/2,.94);
+    box('east-south',.12,ETOP,southW+.06,wall,EW,ETOP/2,wz+ww/2+(southW+.06)/2-.06,.94);
     box('east-low',.12,wy-wh/2,ww-.04,wall,EW,(wy-wh/2)/2,wz,.94);
-    box('east-high',.12,4.45-(wy+wh/2),ww-.04,wall,EW,(4.45+wy+wh/2)/2,wz,.94);
+    box('east-high',.12,ETOP-(wy+wh/2),ww-.04,wall,EW,(ETOP+wy+wh/2)/2,wz,.94);
     box('north-wainscot',EAST-WEST,1.55,.05,sage,(WEST+EAST)/2,.83,NFACE+.025,.9);
     box('east-wainscot-north',.05,1.55,northW,sage,EWF-.025,.83,NORTH+northW/2,.9);
     box('east-wainscot-south',.05,1.55,southW,sage,EWF-.025,.83,wz+ww/2+southW/2,.9);

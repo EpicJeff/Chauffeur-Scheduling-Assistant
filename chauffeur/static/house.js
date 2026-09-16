@@ -4312,6 +4312,117 @@
       });
     })();
 
+    /* ---- VAULTED PARTITIONS: where the roof deck actually is -----------
+       User report (2026-09-16, a screenshot of the living view): "There
+       isn't any geometry on the right side to cover the top part. In a
+       real house there would either be dropped ceilings with attic space
+       above or vaulted ceilings where the walls go all the way up.
+       Assume vaulted ceilings, so the walls should go all the way up."
+
+       Every interior partition stopped at the eave (EXT_TOP4), so from
+       the great room you looked OVER `east_partition` into the east
+       rooms' own roof space -- while the west side of the same view is
+       closed, because the block's west end carries a gable infill. Same
+       for `future_room_partition`, the study's own north wall and the
+       wall between the garage and the mudroom.
+
+       These three lines are shellGable's own deck arithmetic, reproduced
+       here because every partition is built HUNDREDS of lines before the
+       roof that covers it: `eave + 0.18` is the deck's CENTRE plane
+       where it crosses the wall line, the deck climbs tan(pitch) per
+       unit toward the ridge, and its lower face sits half the 0.18 deck
+       thickness below that centre plane -- measured down the VERTICAL,
+       so 0.09 / cos(pitch), not 0.09. tests/test_house_live.py derives
+       the same numbers a third time, from the spec's own dimensions, so
+       moving shellGable's deck fails a pin here rather than quietly
+       leaving a wall in mid-air.
+
+       VAULT_GAP holds every wall top just BELOW that face: exactly
+       coplanar and the two surfaces z-fight the whole length of the
+       partition. */
+    var VAULT_GAP = 0.02;
+    function roofVault(block, forms, pitch) {
+      /* a ridge on 'x' runs east/west, so the deck SLOPES along z. */
+      var alongZ = (forms.ridge === 'z');
+      var half = (alongZ ? block.east - block.west
+                         : block.south - block.north) / 2;
+      return { axis: alongZ ? 'x' : 'z', slope: Math.tan(pitch),
+               at: alongZ ? (block.west + block.east) / 2
+                          : (block.north + block.south) / 2,
+               y: block.eave + 0.18 + half * Math.tan(pitch)
+                    - 0.09 / Math.cos(pitch) - VAULT_GAP };
+    }
+    /* the deck underside at `u` on the vault's own slope axis */
+    function vaultTop(v, u) { return v.y - Math.abs(u - v.at) * v.slope; }
+    /* the profile of a wall that RUNS along the slope axis: a pentagon
+       when the ridge crosses its run, a trapezoid when it does not. */
+    function vaultRidgePts(v, u0, u1, yBase) {
+      var pts = [[u0, yBase], [u0, vaultTop(v, u0)]];
+      if (v.at > u0 && v.at < u1) pts.push([v.at, v.y]);
+      pts.push([u1, vaultTop(v, u1)], [u1, yBase]);
+      return pts;
+    }
+    /* the profile of a wall that runs ACROSS the slope axis: the deck is
+       at ONE height over the whole run, so the top is cut square at the
+       lower of the wall's two faces (`f0`/`f1`). Both faces are inside
+       the house and the deck is above the wall either way. */
+    function vaultFlatPts(v, u0, u1, yBase, f0, f1) {
+      var y = Math.min(vaultTop(v, f0), vaultTop(v, f1));
+      return [[u0, yBase], [u0, y], [u1, y], [u1, yBase]];
+    }
+    /* The section itself: a Shape -> ExtrudeGeometry through cgeo (keyed
+       on every dimension), the way the gable-end infills are authored,
+       placed by the same quarter-turn idiom shellGable uses. axis 'z' --
+       the profile's u is world z -- turns local +x into world +z and
+       local +z into world -x, so `face` is the wall's EAST face and the
+       section extrudes back through its thickness; axis 'x' needs no
+       turn at all and `face` is the wall's NORTH face. */
+    function vaultSection(group, pts, yBase, axis, face, thick, colour, opts) {
+      var u0 = pts[0][0], u1 = pts[pts.length - 1][0];
+      var key = 'vault|' + axis + '|' + thick + '|' + yBase + '|' +
+                pts.map(function (p) {
+                  return p[0].toFixed(4) + ',' + p[1].toFixed(4);
+                }).join(';');
+      var geo = cgeo(key, function () {
+        var s = new T.Shape();
+        s.moveTo(pts[0][0], pts[0][1]);
+        for (var i = 1; i < pts.length; i++) s.lineTo(pts[i][0], pts[i][1]);
+        s.closePath();
+        var g2 = new T.ExtrudeGeometry(s, { depth: thick, bevelEnabled: false });
+        /* BoxGeometry maps every face 0..1, so the plaster gradient runs
+           the full height of the wall BELOW this section; ExtrudeGeometry
+           maps in world units, which would clamp the whole section to the
+           gradient's dark end and draw a band across the partition. Carry
+           the wall's own mapping up instead, off the POSITION attribute
+           (the generated uv means something different on the extruded
+           side faces): v = y / yBase is exactly 1 where the box below
+           ends and clamps above it -- every texture here is a
+           CanvasTexture, so ClampToEdge -- to the gradient's cream top. */
+        var pos = g2.attributes.position, uv = g2.attributes.uv;
+        for (var j = 0; j < uv.count; j++)
+          uv.setXY(j, (pos.getX(j) - u0) / (u1 - u0), pos.getY(j) / yBase);
+        uv.needsUpdate = true;
+        return g2;
+      });
+      var m = new T.Mesh(geo, mat(colour, sharp(opts)));
+      if (axis === 'z') { m.rotation.y = -Math.PI / 2; m.position.set(face, 0, 0); }
+      else m.position.set(0, 0, face);
+      finish(m); group.add(m); return m;
+    }
+    /* the main block's own vault, read once: every partition under
+       `roof_main` measures itself off this. */
+    var MAIN_VAULT = roofVault(FULL_HOUSE, ROOF_FORMS.main, Math.PI / 8);
+    /* ROOF_FORMS is a build-time PARAMETER (house_probe injects it, and
+       spec 2's block model feeds it). Under the canonical ridge on x the
+       main deck slopes along z and every partition below can follow it.
+       Give the block a ridge on z instead and `roof_main`'s two halves
+       take DIFFERENT ridge heights -- each half's own width becomes its
+       span -- so there is no single deck over the partition to meet: the
+       walls then stay at the eave, exactly where they stood before this
+       arc, rather than wearing a section that pokes through one of them.
+       Every vault below is gated on this one flag. */
+    var VAULTED = (MAIN_VAULT.axis === 'z');
+
     /* ---- the east PARTITION (was east_wall) ---------------------------
        The wall at x 6.85 stopped being an exterior side elevation the
        moment the main block grew east to 14.65: the study and the two
@@ -4370,6 +4481,16 @@
       box(WALL_T4, h, op[1], C.wall, EPX0_4 + WALL_T4 / 2,
           op[2] + h / 2, op[0], eastPartG, sharp(WALL_O));
     });
+    /* THE VAULT. The partition runs along the main block's slope axis,
+       so its top is a gable profile that follows the deck from the north
+       wall, over the ridge at z 4.225, down to the street face -- ONE
+       section over the whole run, which is also what finally puts wall
+       above BOTH door headers all the way to the roof. Plain plaster on
+       both faces, like the segments below it: the gable-end infills'
+       battens belong to an OUTSIDE face and this one has none. */
+    if (VAULTED)
+      vaultSection(eastPartG, vaultRidgePts(MAIN_VAULT, EWZ0_4, SWZ0, EXT_TOP4),
+                   EXT_TOP4, 'z', EPX1_4, WALL_T4, C.wall, WALL_O);
     /* room: null — it fronts the kitchen on one face and the future
        rooms/study on the other, so no single room owns a tap on it.
        twoSided: an interior partition ghosts from whichever side the
@@ -5409,6 +5530,15 @@
     shellBox(futurePartG, EWX0_4 - EPX1_4, EXT_TOP4, WALL_T4,
              C.wall, (EPX1_4 + EWX0_4) / 2, EXT_TOP4 / 2, 1.50,
              WALL_O);
+    /* THE VAULT (see roofVault above). This one runs ACROSS the slope
+       axis: z 1.50 is north of the ridge at 4.225, the deck is at one
+       height over the wall's whole length, and the top is cut square at
+       the lower of its two faces. */
+    if (VAULTED)
+      vaultSection(futurePartG,
+                   vaultFlatPts(MAIN_VAULT, EPX1_4, EWX0_4, EXT_TOP4,
+                                1.50 - WALL_T4 / 2, 1.50 + WALL_T4 / 2),
+                   EXT_TOP4, 'x', 1.50 - WALL_T4 / 2, WALL_T4, C.wall, WALL_O);
     regFabric(futurePartG, { name: 'future_room_partition', n: [0, 0, 1],
                              box: fabBox(futurePartG), twoSided: true,
                              /* between the two future rooms; neither is
@@ -5655,6 +5785,22 @@
         box(0.30, 1.0, 8.0, NICE ? 0xffffff : EXTC.siding,
             x, 5.10, 6.0, garageShellG, sharp({ rough: 0.95, map: CLAD() }));
       });
+      /* THE VAULT (see roofVault, way above). The two bands just above
+         carry these walls to the block's eave; the EAST one is the wall
+         between the garage and the mudroom, and above the eave it used
+         to stop dead -- so the mudroom's own shelf wall read over the
+         top of it. It runs along the garage block's slope axis, whose
+         ridge (z 2.00) crosses this wall's north end, so the profile is
+         a trapezoid falling from 9.04 at the ridge to the eave at the
+         street. The WEST band needs nothing: `garage_block_west` stands
+         outboard of it and `garage_block_roof_end_west`'s gable infill
+         closes the block above. */
+      if (roofVault(GARAGE_BLOCK, ROOF_FORMS.garage, Math.PI / 8).axis === 'z')
+        vaultSection(garageShellG,
+                     vaultRidgePts(roofVault(GARAGE_BLOCK, ROOF_FORMS.garage,
+                                             Math.PI / 8), 2.0, 10.0, EXT_TOP4),
+                     EXT_TOP4, 'z', -12.57, 0.30,
+                     NICE ? 0xffffff : EXTC.siding, { rough: 0.95, map: CLAD() });
       /* n [1,0,0]: no single physical face works for a piece that is
          three walls plus a roof wrapped around one room — but the garage
          is the westmost structure on the whole property, so every OTHER
@@ -9406,7 +9552,21 @@
     /* Study occupies the authored east-front wing and joins this scene's
        room/zone registries before footprints and scenery are indexed. */
     if (window.HouseStudy) {
-      studyWorld = window.HouseStudy.build(T, DETAIL, R);
+      /* VAULTED PARTITIONS: the study's own architecture is authored
+         4.45 tall, against a house whose eave is 5.6 and whose roof
+         clears 8.5 over this room's north wall -- so from the east room
+         you looked straight over it, and between 4.45 and 5.6 the room
+         showed the block's plaster rather than its own. Hand the adapter
+         the house's OWN arithmetic rather than let it copy the numbers:
+         `underside` is the deck this file builds, `eave` the line every
+         exterior wall already reaches. The standalone /study page calls
+         the same factory with no ceiling and keeps its authored 4.45. */
+      studyWorld = window.HouseStudy.build(T, DETAIL, R, {
+        eave: EXT_TOP4,
+        underside: function (z) {
+          return VAULTED ? vaultTop(MAIN_VAULT, z) : EXT_TOP4;
+        }
+      });
       scene.add(studyWorld.group);
       if (studyWorld.architecture) scene.add(studyWorld.architecture);
       if (studyWorld.proxies) scene.add(studyWorld.proxies);
@@ -10604,6 +10764,30 @@
      cannot touch the live array. */
   window.chfAoOccluders = function () {
     return webgl && webgl.AO_OCCLUDERS ? webgl.AO_OCCLUDERS.map(function (b) { return b.slice(); }) : [];
+  };
+  /* VAULTED PARTITIONS (2026-09-16): read-only, like chfShellFabric
+     above -- fires ONE raycast against the registered fabric and reports
+     the nearest piece it hits. A registered piece's box says only that
+     the group grew somewhere; it cannot say whether there is plaster
+     above a particular door, or between a wall head and a roof deck, and
+     that is the whole of what this arc had to fix. Nothing is cached and
+     nothing is mutated; the raycast reads the same build-time geometry
+     solveShell already reads. */
+  window.chfRayFabric = function (from, dir) {
+    if (!webgl || !webgl.FABRIC) return null;
+    var T3 = webgl.T;
+    var rc = new T3.Raycaster(
+      new T3.Vector3(from[0], from[1], from[2]),
+      new T3.Vector3(dir[0], dir[1], dir[2]).normalize(), 0.01, 400);
+    var best = null;
+    webgl.FABRIC.forEach(function (f) {
+      var hits = rc.intersectObject(f.g, true);
+      if (!hits.length) return;
+      if (!best || hits[0].distance < best.distance)
+        best = { name: f.name, distance: hits[0].distance,
+                 point: hits[0].point.toArray() };
+    });
+    return best;
   };
   /* Massing arc 1 (task 1): read-only like chfShellFabric above -- reports
      the study's own world bounding box, changes nothing. Unions the
