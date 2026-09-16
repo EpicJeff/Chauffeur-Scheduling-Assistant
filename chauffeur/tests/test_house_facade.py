@@ -16,10 +16,8 @@ def _spec(**over):
 
 def scenario_slot_table_is_derived_from_the_faces():
     slots = hf.slot_table()
-    check([s['face'] for s in slots].count('garage') == 3, 'garage face: 3 slots')
-    check([s['face'] for s in slots].count('mudroom') == 3, 'mudroom face: 3 slots')
-    check([s['face'] for s in slots].count('main') == 8, 'main face: 8 slots')
-    check([s['face'] for s in slots].count('wing') == 4, 'wing face: 4 slots')
+    check([s['face'] for s in slots].count('garage_block') == 6, 'garage_block face: 6 slots')
+    check([s['face'] for s in slots].count('main') == 12, 'main face: 12 slots')
     check(len(slots) == 18 and [s['i'] for s in slots] == list(range(18)),
           'eighteen slots, indexed west to east')
     for a, b in zip(slots, slots[1:]):
@@ -31,9 +29,12 @@ def scenario_slot_table_is_derived_from_the_faces():
               f"{f['face']} slots span exactly the face")
         widths = {round(s['x1'] - s['x0'], 5) for s in own}
         check(len(widths) == 1, f"{f['face']} slots are uniform: {widths}")
+    # MASSING ARC 1 task 3: main is the merged main+wing front (-7.15..14.65,
+    # 21.8 wide / 12 slots = 1.816667 each); centres computed, not guessed
+    # (task-3-report.md shows the `python -c` derivation).
     main = [s for s in slots if s['face'] == 'main']
-    check(abs(main[0]['cx'] - (-6.275)) < 1e-6 and abs(main[4]['cx'] - 0.725) < 1e-6,
-          f"main centres per spec 2.2: {[round(s['cx'], 3) for s in main]}")
+    check(abs(main[0]['cx'] - (-6.241667)) < 1e-6 and abs(main[4]['cx'] - 1.025) < 1e-6,
+          f"main centres per spec section 5: {[round(s['cx'], 6) for s in main]}")
 
 
 def scenario_canonical_is_normal_and_idempotent():
@@ -70,19 +71,19 @@ def scenario_pitch_clamps():
 
 
 def scenario_spans_truncate_at_face_boundaries():
-    # slot 12 is main's east-most (6..13 are main); a span of 4 would cross into the wing
+    # slot 5 is garage_block's east-most (0..5 are garage_block, 6..17 main);
+    # a window spanning 4 from slot 4 would cross into main.
     raw = _spec(ground=[{'slot': 10, 'span': 1, 'kind': 'door'},
-                        {'slot': 12, 'span': 4, 'kind': 'porch', 'type': 'stoop'}])
-    # NOTE: slots are global indices; main face = 6..13 in the 18-slot table
+                        {'slot': 4, 'span': 4, 'kind': 'window', 'size': 'small'}])
     spec, notes = hf.normalize(raw)
-    porch = next(g for g in spec['ground'] if g['kind'] == 'porch')
-    check(porch['slot'] == 12 and porch['span'] == 2,
-          f'porch truncated at the wing boundary: {porch}')
+    win = next(g for g in spec['ground'] if g['kind'] == 'window')
+    check(win['slot'] == 4 and win['span'] == 2,
+          f'window truncated at the garage_block boundary: {win}')
     check(any('face' in n for n in notes), 'truncation noted')
 
 
 def scenario_openings_pin_to_their_room_face():
-    raw = _spec(ground=[{'slot': 15, 'span': 1, 'kind': 'door'},                       # on the wing
+    raw = _spec(ground=[{'slot': 2, 'span': 1, 'kind': 'door'},                       # on the garage block
                         {'slot': 8, 'span': 2, 'kind': 'garage_door', 'style': 'glass', 'leaves': 2}])
     spec, notes = hf.normalize(raw)
     door = [g for g in spec['ground'] if g['kind'] == 'door']
@@ -90,7 +91,7 @@ def scenario_openings_pin_to_their_room_face():
     slots = hf.slot_table()
     check(len(door) == 1 and slots[door[0]['slot']]['face'] == 'main', f'door moved to main: {door}')
     check(len(gd) == 1 and gd[0]['slot'] == 0 and gd[0]['span'] == 3 and gd[0]['leaves'] == 2,
-          f'garage door forced onto the garage face, whole face: {gd}')
+          f'garage door forced onto its own bay (slots 0-2), not the whole garage_block face: {gd}')
     # no door at all -> the canonical door
     spec2, _ = hf.normalize(_spec(ground=[]))
     check(any(g['kind'] == 'door' for g in spec2['ground']), 'at least one door always')

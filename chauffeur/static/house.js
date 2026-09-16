@@ -4481,22 +4481,22 @@
        forbids a rebuild and nothing here needs one). */
     var SLOT_W = 1.85;
     /* Slots are DERIVED from the envelope, never chosen (spec section
-       2): four street faces, n = max(1, round(width / SLOT_W)) slots
-       each, every slot on a face the same width. services/
-       house_facade.py's FACES mirrors these four rows and its
-       slot_table() the loop below; the live pin test asserts the two
-       tables equal, slot by slot, so they cannot drift. */
-    /* MASSING ARC 1: the roof column names the two block roofs now, and
-       the wing face sits on the street line (z SWZ1) with the rest of
-       the front -- the wing wall 2.17 further south is gone. The four
-       faces and their eighteen slots are UNCHANGED otherwise; spec
-       section 5 (task 3) merges them into two faces and re-snaps
-       CANONICAL, which is a slot-table change this task must not make. */
+       2): street faces, n = max(1, round(width / SLOT_W)) slots each,
+       every slot on a face the same width. services/house_facade.py's
+       FACES mirrors these rows and its slot_table() the loop below; the
+       live pin test asserts the two tables equal, slot by slot, so they
+       cannot drift. */
+    /* MASSING ARC 1 task 3 (spec section 5): the old four-face table
+       (garage/mudroom/main/wing) collapses onto the two blocks task 2
+       built -- garage_block fronts the whole driveway side (garage +
+       mudroom, one eave, one z) and main absorbs the wing now that it
+       sits on the same street line (z SWZ1) as the rest of the front.
+       Eighteen slots still (6 + 12), re-snapped: CANONICAL_JS below and
+       services/house_facade.py's CANONICAL carry the same numbers
+       (task-3-report.md shows the derivation). */
     var FACES = [
-      { face: 'garage',  x0: -18.20, x1: -12.60, z: 10.10, eave: 4.7, room: 'garage',  roof: 'garage_block_roof' },
-      { face: 'mudroom', x0: -12.60, x1: FULL_HOUSE.west, z: 10.10, eave: 5.6, room: 'mudroom', roof: 'garage_block_roof' },
-      { face: 'main',    x0: FULL_HOUSE.west, x1: EPX1_4, z: SWZ1, eave: EXT_TOP4, room: 'living', roof: 'roof_main' },
-      { face: 'wing',    x0: EPX1_4, x1: FULL_HOUSE.east, z: SWZ1, eave: EXT_TOP4, room: 'study', roof: 'roof_main' }
+      { face: 'garage_block', x0: GARAGE_BLOCK.west, x1: GARAGE_BLOCK.east, z: GARAGE_BLOCK.south, eave: GARAGE_BLOCK.eave, room: 'garage', roof: 'garage_block_roof' },
+      { face: 'main',         x0: FULL_HOUSE.west,   x1: FULL_HOUSE.east,   z: SWZ1,               eave: EXT_TOP4,         room: 'living', roof: 'roof_main' }
     ];
     function facadeSlots() {
       var out = [], i = 0;
@@ -4511,6 +4511,12 @@
       return out;
     }
     var SLOTS = facadeSlots();
+    /* Mirrors services/house_facade.py's GARAGE_BAY_SLOTS: the garage
+       ROOM's own x range (-18.2..-12.6) nearest-slot-boundary snapped
+       onto the garage_block face's six slots. gableAt's garage special
+       case and the door's own bay (SLOTS[0..2]) key off this, not the
+       whole face, which now also carries the mudroom. */
+    var GARAGE_BAY_SLOTS = [0, 2];
     /* The canonical facade, field for field services/house_facade.py's
        own CANONICAL (spec section 2.2: today's elevation, snapped onto
        the slot grid). Only a page served WITHOUT the injection --
@@ -4525,7 +4531,7 @@
       ground: [
         { slot: 0, span: 3, kind: 'garage_door', style: 'carriage', leaves: 1 },
         { slot: 7, span: 1, kind: 'window', size: 'tall' },
-        { slot: 9, span: 4, kind: 'porch', type: 'sitting' },
+        { slot: 8, span: 4, kind: 'porch', type: 'sitting' },
         { slot: 9, span: 1, kind: 'window', size: 'tall' },
         { slot: 10, span: 1, kind: 'door' },
         { slot: 12, span: 1, kind: 'window', size: 'tall' },
@@ -4534,7 +4540,7 @@
       ],
       roof: [
         { slot: 0, span: 3, kind: 'gable' },
-        { slot: 9, span: 4, kind: 'gable' }
+        { slot: 8, span: 4, kind: 'gable' }
       ]
     };
     var SPEC = FACADE ? FACADE.spec : null;
@@ -4561,13 +4567,12 @@
        same cached material rather than a second one. */
     var FGLZ = { rough: 0.16, metal: 0.0, envInt: 0.6 };
 
-    /* The street ROOF PLANE's eave -- which is not always the face's own
-       eave. The garage bay's wall head is 4.7, but the plane its street
-       roof features sit on is garage_block_roof at 5.6 (the hand-built
-       garage gable intersected that plane, not the bay's eave). Every
-       roof builder reads this one function so a dormer cannot end up
-       buried in the wall below its own deck. */
-    var ROOF_PLANE_EAVE = { garage: 5.6, mudroom: 5.6, main: EXT_TOP4, wing: 5.6 };
+    /* The street ROOF PLANE's eave for each face. Both blocks share one
+       eave line (GARAGE_BLOCK.eave IS EXT_TOP4), so this table is
+       degenerate today, but every roof builder still reads it -- not
+       slot.eave directly -- so a later arc's per-block eave (spec 2)
+       has one place to diverge without hunting down every call site. */
+    var ROOF_PLANE_EAVE = { garage_block: GARAGE_BLOCK.eave, main: EXT_TOP4 };
     function roofPlaneEave(slot) {
       var pe = ROOF_PLANE_EAVE[slot.face];
       return pe === undefined ? slot.eave : pe;
@@ -4876,11 +4881,15 @@
     function gableAt(feat) {
       var e = spanX(feat), slot = e.slot;
       var name = 'facade_' + slot.face + '_gable_' + feat.slot;
-      if (slot.face === 'garage') {
+      if (feat.slot >= GARAGE_BAY_SLOTS[0] && feat.slot <= GARAGE_BAY_SLOTS[1]) {
         /* the street-facing garage gable (spec section 2.1: today's
            garage_gable, reproduced from the spec instead of by hand) --
            it intersects the lower cross roof rather than sitting on the
-           bay's own eave, so it keeps that call's z range and eave. */
+           bay's own eave, so it keeps that call's z range and eave. Keyed
+           on the BAY's own slots, not the face: garage_block also carries
+           the mudroom now, and a gable further east on that face (over
+           the mudroom) is an ordinary street gable, not this special
+           case. */
         shellGable(name, e.x0, e.x1, 4.0, 10.1, roofPlaneEave(slot), 'z',
                    slot.room, [1], PITCH_FAMILY, null, null, false, slot.room);
         return;

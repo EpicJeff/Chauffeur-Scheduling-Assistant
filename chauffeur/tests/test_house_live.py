@@ -992,8 +992,12 @@ def scenario_shell_fabric_registry():
                  for f in _hf.CANONICAL['ground'] + _hf.CANONICAL['roof']}
         slots = _hf.slot_table()
         check(generated, 'the elevation must register generated pieces')
+        # face names can themselves carry an underscore now (garage_block),
+        # so the alternation is built from the actual faces rather than a
+        # bare [a-z]+ that would stop at the first one.
+        faces_pat = '|'.join(sorted({s['face'] for s in slots}, key=len, reverse=True))
         for gen in generated:
-            m = _re.match(r'^facade_([a-z]+)_([a-z_]+?)_(\d+)(_[a-z_]+)?$', gen)
+            m = _re.match(r'^facade_(' + faces_pat + r')_([a-z_]+?)_(\d+)(_[a-z_]+)?$', gen)
             check(m is not None,
                   'generated name must read facade_<face>_<kind>_<slot>: ' + gen)
             face, kind, slot = m.group(1), m.group(2), int(m.group(3))
@@ -1097,14 +1101,18 @@ def scenario_shell_fabric_registry():
             #     x 7.17, east of the camera; the main block reaches
             #     14.65 now, so the gable end is at x ~14.9 and the
             #     camera (14.6) is on its INNER side. SOLID.
+            #   facade_main_window_7 JOINS this list (task 3): the merged
+            #     main face's uniform 1.816667 slot width re-snaps this
+            #     window from x -4.525 to cx -4.425, just far enough into
+            #     the kitchen's own camera-subject corridor to flip GHOST.
             'kitchen': ['east_partition', 'east_wall', 'patio_slider',
                         'future_room_partition',
                         'living_back_room_door', 'living_study_door',
                         'south_wall', 'roof_main_south',
-                        'facade_main_gable_9_east',
-                        'facade_main_door_10', 'facade_main_window_9',
-                        'facade_main_window_12',
-                        'facade_wing_window_15', 'facade_wing_window_16',
+                        'facade_main_gable_8_east',
+                        'facade_main_door_10', 'facade_main_window_7',
+                        'facade_main_window_9', 'facade_main_window_12',
+                        'facade_main_window_15', 'facade_main_window_16',
                         'yard'],
             # garage -- GARAGE_POS (-18.0, 10.5, 21.3), subject the garage
             # aabb (centre x -15.4, z ~6). The block roof's south deck is
@@ -1113,8 +1121,8 @@ def scenario_shell_fabric_registry():
             # away (camSide < 0) and its west end sits at x ~-18.4, just
             # WEST of the camera (camSide < 0): both SOLID.
             'garage': ['garage_door', 'garage_shell',
-                       'facade_garage_gable_0_west', 'facade_garage_gable_0_east',
-                       'facade_garage_gable_0_front',
+                       'facade_garage_block_gable_0_west', 'facade_garage_block_gable_0_east',
+                       'facade_garage_block_gable_0_front',
                        'garage_block_roof_south', 'yard'],
             # mudroom -- MUD_POS (-3.4, 6.2, 11.2), subject the mudroom
             # aabb (centre x -9.62, z ~5.4):
@@ -1134,13 +1142,17 @@ def scenario_shell_fabric_registry():
                         'west_cladding', 'garage_block_roof_south',
                         'garage_block_roof_end_east', 'yard'],
             # living -- LIV_POS (0, 12.8, 26.5), subject the living aabb.
-            # Nothing east of x 6.5 is in this corridor and the camera is
-            # west of every new piece, so this list is unchanged.
+            # The camera is west of every generated piece and the corridor
+            # covers the whole front now that main and wing are one face,
+            # so the old wing windows join this list too (task 3):
+            # facade_main_window_15/16, GHOST like every other street
+            # feature between this camera and the subject.
             'living': ['south_wall', 'roof_main_south',
-                       'facade_main_gable_9_west', 'facade_main_gable_9_east',
-                       'facade_main_gable_9_front', 'facade_main_porch_9',
+                       'facade_main_gable_8_west', 'facade_main_gable_8_east',
+                       'facade_main_gable_8_front', 'facade_main_porch_8',
                        'facade_main_door_10', 'facade_main_window_7',
                        'facade_main_window_9', 'facade_main_window_12',
+                       'facade_main_window_15', 'facade_main_window_16',
                        'yard'],
             # study -- STUDY_POS (5.85, 3.65, 15.83) after task 1, subject
             # the study aabb (centre x ~10.7, z ~11):
@@ -1154,7 +1166,7 @@ def scenario_shell_fabric_registry():
             #     it is the backdrop behind the room, not between.
             'study': ['east_partition', 'living_study_door',
                       'facade_main_window_12',
-                      'facade_wing_window_15', 'facade_wing_window_16',
+                      'facade_main_window_15', 'facade_main_window_16',
                       'roof_main_end_east', 'roof_main_end_west',
                       'roof_main_north', 'roof_main_south',
                       'south_wall', 'yard'],
@@ -1216,7 +1228,7 @@ def scenario_shell_fabric_registry():
         check(page.evaluate("window.chfNavProbe({settled:true}).focused") == 'door',
               'tapping the visible garage connection must focus the hero')
 
-        for piece in ['south_wall', 'facade_main_gable_9_front']:
+        for piece in ['south_wall', 'facade_main_gable_8_front']:
             page.evaluate("window.chfHouseExit()")
             page.wait_for_function("window.chfNavProbe({settled:true})")
             hit = page.evaluate("window.chfNavProbe({piece:%r})" % piece)

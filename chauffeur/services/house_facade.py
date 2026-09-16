@@ -10,13 +10,26 @@ import time
 import uuid
 
 SLOT_W = 1.85
-# West to east. Mirrors house.js: FULL_HOUSE, SWZ1, EXT_TOP4, the garage IIFE.
+# West to east. Mirrors house.js: FULL_HOUSE, GARAGE_BLOCK, EXT_TOP4.
+# MASSING ARC 1 task 3 (spec 2026-09-16-regular-house-orbit-design.md
+# section 5): the old four-face table (garage/mudroom/main/wing)
+# collapses onto the two blocks task 2 built -- garage and mudroom now
+# share one driveway-facing block front, and the wing merges into the
+# main front now that it sits on the same street line (task 1).
 FACES = [
-    {'face': 'garage',  'x0': -18.20, 'x1': -12.60, 'z': 10.10, 'eave': 4.7, 'room': 'garage',  'roof': 'garage_block_roof'},
-    {'face': 'mudroom', 'x0': -12.60, 'x1': -7.15,  'z': 10.10, 'eave': 5.6, 'room': 'mudroom', 'roof': 'garage_block_roof'},
-    {'face': 'main',    'x0': -7.15,  'x1': 6.85,   'z': 14.55, 'eave': 5.6, 'room': 'living',  'roof': 'roof_main'},
-    {'face': 'wing',    'x0': 6.85,   'x1': 14.65,  'z': 14.55, 'eave': 5.6, 'room': 'study',   'roof': 'roof_main'},
+    {'face': 'garage_block', 'x0': -18.20, 'x1': -7.15, 'z': 10.10, 'eave': 5.6, 'room': 'garage',  'roof': 'garage_block_roof'},
+    {'face': 'main',         'x0': -7.15,  'x1': 14.65, 'z': 14.55, 'eave': 5.6, 'room': 'living',  'roof': 'roof_main'},
 ]
+
+# The garage ROOM's own x range within the garage_block face (task 2:
+# garage x -18.2..-12.6, mudroom -12.6..-7.15). Nearest-slot-boundary
+# snap of -12.6 onto the 6-slot face (width 11.05/6 = 1.8417): slot 2
+# ends at -12.675, nearer -12.6 than slot 3's end at -10.833, so the
+# bay is slots 0-2 of the six -- not the whole face, which now also
+# carries the mudroom. normalize()/worst_case() key off this constant
+# instead of _face_range('garage_block') so the garage door still spans
+# only its own bay (spec section 5).
+GARAGE_BAY_SLOTS = (0, 2)
 
 GROUND_KINDS = ('wall', 'window', 'door', 'garage_door', 'porch')
 ROOF_KINDS = ('eave', 'gable', 'dormer', 'hip_end')
@@ -67,10 +80,19 @@ CANONICAL = {
     'pitch_deg': round(math.degrees(math.atan2(2.05, 2.95)), 1),   # 34.8, PITCH_FAMILY
     'style': {'cladding': 'batten', 'body': 'white', 'roof': 'charcoal',
               'frame': 'black', 'door': 'wood', 'trim': 'white'},
+    # Re-snapped for the two-face table (task 3, spec section 5): each
+    # element's own world position/extent nearest-slot-snapped onto the
+    # new 18-slot grid (task-3-report.md shows the `python -c`
+    # derivation). Windows -4.525/-1.025/4.225 -> slots 7/9/12; door
+    # 0.725 -> slot 10; the old wing windows 9.775/11.725 -> slots
+    # 15/16 (unchanged numbers, now on the merged main face); porch
+    # centre 0.1 width 7.0 -> slot 8 span 4 (edges -3.4/3.6 snap to the
+    # slot 7/8 and 11/12 boundaries); garage door -15.4 falls inside
+    # GARAGE_BAY_SLOTS, which forces it to slot 0 span 3 regardless.
     'ground': [
         {'slot': 0, 'span': 3, 'kind': 'garage_door', 'style': 'carriage', 'leaves': 1},
         {'slot': 7, 'span': 1, 'kind': 'window', 'size': 'tall'},
-        {'slot': 9, 'span': 4, 'kind': 'porch', 'type': 'sitting'},   # sorted by (slot, kind): porch < window
+        {'slot': 8, 'span': 4, 'kind': 'porch', 'type': 'sitting'},
         {'slot': 9, 'span': 1, 'kind': 'window', 'size': 'tall'},
         {'slot': 10, 'span': 1, 'kind': 'door'},
         {'slot': 12, 'span': 1, 'kind': 'window', 'size': 'tall'},
@@ -79,7 +101,7 @@ CANONICAL = {
     ],
     'roof': [
         {'slot': 0, 'span': 3, 'kind': 'gable'},
-        {'slot': 9, 'span': 4, 'kind': 'gable'},
+        {'slot': 8, 'span': 4, 'kind': 'gable'},
     ],
 }
 
@@ -191,7 +213,7 @@ def normalize(raw):
     roof = _entries(raw.get('roof'), ROOF_KINDS, notes, 'roof')
 
     # pin openings to their room's face (spec 4.4)
-    g_lo, g_hi = _face_range('garage')
+    g_lo, g_hi = GARAGE_BAY_SLOTS
     m_lo, m_hi = _face_range('main')
     gds = [g for g in ground if g['kind'] == 'garage_door']
     ground = [g for g in ground if g['kind'] != 'garage_door']
@@ -217,8 +239,8 @@ def normalize(raw):
     kept = []
     for g in ground:
         face = _clip_to_face(g, notes)
-        if g['kind'] == 'porch' and face == 'garage':
-            notes.append('no porch in the driveway (garage face)')
+        if g['kind'] == 'porch' and face == 'garage_block':
+            notes.append('no porch in the driveway (garage_block face)')
             continue
         kept.append(g)
     ground = kept
@@ -271,14 +293,14 @@ def normalize(raw):
 def worst_case():
     """The heaviest spec the caps allow — the budget probe's input."""
     slots = slot_table()
-    g_lo, g_hi = _face_range('garage')
+    g_lo, g_hi = GARAGE_BAY_SLOTS
     m_lo, m_hi = _face_range('main')
     ground = [{'slot': g_lo, 'span': g_hi - g_lo + 1, 'kind': 'garage_door', 'style': 'glass', 'leaves': 2},
               {'slot': m_lo, 'span': 1, 'kind': 'door'}]
     roof = []
     dormers = 0
     for s in slots:
-        if s['face'] != 'garage' and dormers < MAX_DORMERS:
+        if not (g_lo <= s['i'] <= g_hi) and dormers < MAX_DORMERS:
             roof.append({'slot': s['i'], 'span': 1, 'kind': 'dormer', 'window': True})
             dormers += 1
     windows = MAX_WINDOWS - dormers
