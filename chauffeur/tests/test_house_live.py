@@ -963,12 +963,14 @@ def scenario_shell_fabric_registry():
         # spec's own "kept as-is" list, NEW its "new pieces" list, and
         # DELETED_PREFIXES every name the spec deletes -- so a piece that
         # quietly survives the massing cull fails here by name.
-        # CUTAWAY OWNERSHIP (fix 2026-09-16): the two shared pieces are
-        # each TWO pieces now, split on the great-room / east-rooms line
-        # (x 6.85). roof_main's four names become six -- each half keeps
-        # its own two slope decks and gets only its OWN outer gable end
-        # (the split is an interior line, so neither half gets a gable
-        # there) -- and south_wall gains south_wall_east.
+        # VIEW-VOLUME MASKING (task 4, spec section 5): the x 6.85 splits
+        # the cutaway-ownership fix made (v2.499.41: roof_main_west /
+        # roof_main_east, south_wall / south_wall_east) are folded back.
+        # The mask cuts a piece only where it stands between a room
+        # camera and that room's box, so one street wall and one roof
+        # over the whole main block are exactly what the regular-house
+        # spec named: roof_main's four pieces, south_wall in one run
+        # x -7.15..14.65.
         # STUDY REFIT (2026-09-16): patio_slider is retired. Its glass
         # moved to the study's own opening (living_study_door, unchanged
         # by name) and the opening it used to fill at z 5.80 wears the
@@ -976,14 +978,13 @@ def scenario_shell_fabric_registry():
         KEPT = {'north_wall', 'north_cladding', 'west_wall', 'west_skirt',
                 'west_cladding', 'south_wall', 'garage_shell', 'garage_door',
                 'east_room_door', 'living_back_room_door', 'living_study_door',
-                'yard', 'roof_main_west_north', 'roof_main_west_south',
-                'roof_main_west_end_west', 'roof_main_east_north',
-                'roof_main_east_south', 'roof_main_east_end_east'}
+                'yard', 'roof_main_north', 'roof_main_south',
+                'roof_main_end_west', 'roof_main_end_east'}
         NEW = {'east_wall', 'east_partition', 'north_wall_east',
                'garage_block_north', 'garage_block_west', 'mudroom_front',
                'garage_block_roof_north', 'garage_block_roof_south',
                'garage_block_roof_end_west', 'garage_block_roof_end_east',
-               'back_door', 'future_room_partition', 'south_wall_east'}
+               'back_door', 'future_room_partition'}
         DELETED_PREFIXES = ('massing_', 'mudroom_cross_roof', 'mudroom_roof',
                             'living_roof', 'mudroom_front_cladding',
                             'mudroom_east_finish')
@@ -1040,12 +1041,10 @@ def scenario_shell_fabric_registry():
         # (x -7.15..14.65) and the piece at x 6.5..6.85 is east_partition,
         # the interior wall the old east_wall became; the main's own east
         # side stands out at x 14.65. All three still occlude.
-        # the west segment only: the study's own street face is
-        # south_wall_east now (checked just below).
-        check(contains_box([-6.5, 6.5, 0.0, 5.6, 14.2, 14.55]),
+        # one run again (task 4): the great room's front AND the study's
+        # street face are the same registered box.
+        check(contains_box([-6.5, 14.5, 0.0, 5.6, 14.2, 14.55]),
               'south_wall must occlude via its registered box')
-        check(contains_box([6.85, 14.5, 0.0, 5.6, 14.2, 14.55]),
-              'south_wall_east must occlude via its registered box')
         # 14.20, not 14.55: the fix wave stopped the partition at SWZ0,
         # the south wall's INNER face, so its end stops being coplanar
         # with the street siding (a coplanar plaster end draws a pale
@@ -1066,37 +1065,31 @@ def scenario_shell_fabric_registry():
         # deck box bottom is the eave edge of that deck, so comparing the
         # two boxes' y-min is comparing the two eave lines.
         check(abs(by_name['garage_block_roof_south']['box'][2] -
-                  by_name['roof_main_west_south']['box'][2]) < 0.02,
+                  by_name['roof_main_south']['box'][2]) < 0.02,
               'both block roofs must start at the same eave height: %r vs %r'
               % (by_name['garage_block_roof_south']['box'][2],
-                 by_name['roof_main_west_south']['box'][2]))
-        # CUTAWAY OWNERSHIP: the two halves of the main roof are ONE
-        # roof, split only for the solver. Same eave (deck box y-min),
-        # same ridge (deck box y-max), and their decks BUTT at the split
-        # rather than overlapping -- depthEnds gives the west half its
-        # overhang only at the west end and the east half only at the
-        # east end, so the west deck ends at 6.85 and the east one
-        # starts there.
+                 by_name['roof_main_south']['box'][2]))
+        # VIEW-VOLUME MASKING (task 4): the main roof is ONE roof again.
+        # Each slope deck runs the whole block plus one overhang at each
+        # end (x -7.15 - 0.32 .. 14.65 + 0.32; the deck box also holds
+        # the eave trim, which is the same length), and nothing of it
+        # ends or starts at the old 6.85 split.
         for side in ('north', 'south'):
-            w = by_name['roof_main_west_' + side]['box']
-            e = by_name['roof_main_east_' + side]['box']
-            check(abs(w[2] - e[2]) < 0.02 and abs(w[3] - e[3]) < 0.02,
-                  'the two halves of the main roof share one eave and one '
-                  'ridge (%s): %r vs %r' % (side, w, e))
-            check(abs(w[1] - 6.85) < 0.05 and abs(e[0] - 6.85) < 0.05,
-                  'the main roof decks must meet at the split with no '
-                  'overlap (%s): west ends %r, east starts %r'
-                  % (side, w[1], e[0]))
+            d = by_name['roof_main_' + side]['box']
+            check(abs(d[0] - (-7.15 - 0.32)) < 0.05 and
+                  abs(d[1] - (14.65 + 0.32)) < 0.05,
+                  'the main roof deck runs the whole block plus its '
+                  'overhangs (%s): %r' % (side, d))
         # roof_main reaches the main block's own east wall: the east
         # gable end sits one overhang past FULL_HOUSE.east (14.65) and
         # its rake board 0.08 further still.
-        check(14.65 <= by_name['roof_main_east_end_east']['box'][1] <= 14.65 + 0.32 + 0.20,
+        check(14.65 <= by_name['roof_main_end_east']['box'][1] <= 14.65 + 0.32 + 0.20,
               'roof_main must reach the east wall + one overhang: %r'
-              % by_name['roof_main_east_end_east']['box'][1])
+              % by_name['roof_main_end_east']['box'][1])
         # The two side decks of one block roof share a ridge and a pitch:
         # mirrored normals, same |y|.
-        north = by_name['roof_main_west_north']['normal']
-        south = by_name['roof_main_west_south']['normal']
+        north = by_name['roof_main_north']['normal']
+        south = by_name['roof_main_south']['normal']
         check(abs(north[1] - south[1]) < 0.001 and
               abs(north[2] + south[2]) < 0.001 and north[2] < 0 < south[2],
               'the main roof must be two mirrored slopes: %r %r' % (north, south))
@@ -1108,8 +1101,14 @@ def scenario_shell_fabric_registry():
                'garage': {'form': 'gable', 'ridge': 'x'}},
               'the canonical block roofs are gables with an east-west '
               'ridge: %r' % page.evaluate('window.chfRoofForms()'))
-        yard = [f for f in fab if f['name'] == 'yard'][0]
-        check(yard['mode'] == 'hide', 'yard is the one authored hide piece')
+        # VIEW-VOLUME MASKING (task 4, spec section 5): the verdict
+        # machinery is retired -- no row carries an owners table, a
+        # cutaway room, a two-sided flag, a hide/ghost mode, a plane or
+        # a pad any more. The yard's hide is a mask fact now (fraction 1
+        # in every room view, pinned per view below), not a mode.
+        RETIRED = ('owners', 'cutawayRoom', 'twoSided', 'mode', 'plane', 'pad')
+        leftovers = sorted('%s.%s' % (f['name'], k) for f in fab for k in RETIRED if k in f)
+        check(not leftovers, 'retired verdict fields still reported: %r' % leftovers[:6])
         check(all(f['visible'] for f in fab),
               'exterior boot: every piece visible (solid): %r' % fab)
 
@@ -1141,16 +1140,20 @@ def scenario_shell_fabric_registry():
             # main roof's west gable end, the mudroom's east gable end,
             # the west wall's living-room run and its exterior skirt all
             # stand between the street camera and that nook.
-            'kitchen': {'masked': ['roof_main_west_south', 'roof_main_west_end_west',
+            # TASK 4 (un-split): roof_main_south is the whole block's
+            # deck now, so the kitchen's cut (0.47 of the old west half,
+            # 14.32 of the deck's 22.44 run) reads ~0.30 of the one deck
+            # -- still > 0.1; the north deck takes a hairline at its west
+            # end (0.006 of the old half), so it is neither list.
+            'kitchen': {'masked': ['roof_main_south', 'roof_main_end_west',
                                    'garage_block_roof_end_east', 'west_wall',
                                    'west_skirt', 'facade_main_gable_8_west',
                                    'facade_main_gable_8_east'],
-                        'whole': ['south_wall', 'south_wall_east', 'facade_main_window_7',
+                        'whole': ['south_wall', 'facade_main_window_7',
                                   'facade_main_window_9', 'facade_main_window_12',
                                   'facade_main_door_10', 'facade_main_porch_8',
                                   'east_partition', 'east_wall', 'north_wall',
                                   'north_wall_east', 'future_room_partition',
-                                  'roof_main_east_south', 'roof_main_east_north',
                                   'facade_main_window_15', 'facade_main_window_16',
                                   'garage_door', 'garage_block_west']},
             # living -- LIV_POS (0, 12.8, 26.5). The box reaches the
@@ -1164,20 +1167,23 @@ def scenario_shell_fabric_registry():
             # its slab, steps and rails lie under the pyramid's floor
             # plane (a ray to the room's floor passes 2.9 above the porch
             # at z 17) and stay; its eave beam and post tops stand in the
-            # cone and are cut (0.13 of the row). The study's windows,
-            # wall and roof half are east of
-            # the pyramid's x span; the kitchen's north wall is behind
-            # the box, inside W.
-            'living': {'masked': ['south_wall', 'roof_main_west_south',
+            # cone and are cut (0.13 of the row). The study's windows
+            # are east of the pyramid's x span; its street face and its
+            # roof are the EAST PARTS of south_wall and roof_main_south
+            # (task 4, one wall and one deck again), which the pyramid
+            # cuts only over the great room -- the study's own run of
+            # both stands, pinned by remnant vertex in
+            # scenario_a_room_cutaway_leaves_other_rooms_enclosed. The
+            # kitchen's north wall is behind the box, inside W.
+            'living': {'masked': ['south_wall', 'roof_main_south',
                                   'facade_main_window_7', 'facade_main_window_9',
                                   'facade_main_window_12', 'facade_main_door_10',
                                   'facade_main_gable_8_west', 'facade_main_gable_8_east',
                                   'facade_main_gable_8_front', 'facade_main_porch_8'],
-                       'whole': ['south_wall_east',
-                                 'facade_main_window_15', 'facade_main_window_16',
+                       'whole': ['facade_main_window_15', 'facade_main_window_16',
                                  'east_partition', 'east_wall', 'north_wall',
                                  'north_wall_east', 'future_room_partition',
-                                 'roof_main_east_south', 'roof_main_west_north',
+                                 'roof_main_north',
                                  'garage_door', 'mudroom_front']},
             # garage -- GARAGE_POS (-18.0, 10.5, 21.3), 0.04 west of the
             # box's west face: south, top and (a sliver of) west faces
@@ -1193,7 +1199,7 @@ def scenario_shell_fabric_registry():
                                   'garage_block_roof_south'],
                        'whole': ['garage_block_north', 'garage_block_west',
                                  'mudroom_front', 'west_wall', 'south_wall',
-                                 'north_wall', 'roof_main_west_south']},
+                                 'north_wall', 'roof_main_south']},
             # mudroom -- MUD_POS (-3.4, 6.2, 11.2), in the great room
             # east of the box, just above the eave, south of it. The
             # great room's west wall (slab x -7.15..-6.8) touches the
@@ -1208,24 +1214,29 @@ def scenario_shell_fabric_registry():
                                    'mudroom_front'],
                         'whole': ['garage_door', 'garage_block_north',
                                   'garage_block_west', 'south_wall', 'north_wall',
-                                  'roof_main_west_south', 'east_partition']},
-            # study -- STUDY_POS (7.02, 4.75, 18.82), east of the split
-            # and below the eave: the south face is the only front face.
-            # The street face (south_wall_east) straddles it (the study
-            # floor reaches z 14.45, the wall's inner face is 14.20) and
-            # is cut by P alone; windows 15/16 are kits in it, whole.
-            # east_partition is beside the camera (x 6.44..6.85 < 6.92),
-            # not between it and the room: the study keeps its own west
-            # wall as a backdrop. The roof is above a camera that looks
-            # level into the room: the top face is not front, it stays.
-            # The great room's own street wall, windows and roof are
-            # outside the pyramid's x span.
-            'study': {'masked': ['south_wall_east', 'facade_main_window_15',
+                                  'roof_main_south', 'east_partition']},
+            # study -- STUDY_POS (7.02, 4.75, 18.82), east of the old
+            # split line and below the eave: the south face is the only
+            # front face. The street face straddles it (the study floor
+            # reaches z 14.45, the wall's inner face is 14.20) and is cut
+            # by P alone -- TASK 4: that face is the east 7.8 of the one
+            # 21.8-wide south_wall, so 0.97 of the old south_wall_east
+            # reads ~0.35 of the whole wall (> 0.1; the great room's run
+            # of it stands, pinned by remnant vertex in
+            # scenario_a_room_cutaway_leaves_other_rooms_enclosed).
+            # Windows 15/16 are kits in it, whole. east_partition is
+            # beside the camera (x 6.44..6.85 < 6.92), not between it and
+            # the room: the study keeps its own west wall as a backdrop.
+            # The roof is above a camera that looks level into the room:
+            # the top face is not front; the north deck stays whole and
+            # the south deck is grazed at its overhang only (0.013 of the
+            # old east half, ~0.005 of the one deck -- neither list). The
+            # great room's windows are outside the pyramid's x span.
+            'study': {'masked': ['south_wall', 'facade_main_window_15',
                                  'facade_main_window_16'],
-                      'whole': ['east_partition', 'south_wall', 'facade_main_window_7',
+                      'whole': ['east_partition', 'facade_main_window_7',
                                 'facade_main_window_12', 'north_wall', 'north_wall_east',
-                                'roof_main_east_north', 'roof_main_west_south',
-                                'roof_main_west_north', 'living_study_door',
+                                'roof_main_north', 'living_study_door',
                                 'east_room_door', 'garage_door']},
         }
         for view in EXPECTED:
@@ -1326,9 +1337,9 @@ def scenario_shell_fabric_registry():
 
         # The opening at z 5.80 is the east room's plain interior door
         # now (STUDY REFIT: the glass went to the study). It keeps the
-        # slider's registration semantics exactly -- room 'kitchen',
-        # twoSided -- so a camera standing in the east room still taps
-        # through to the kitchen.
+        # slider's registration semantics exactly -- room 'kitchen', a
+        # leaf on each face -- so a camera standing in the east room
+        # still taps through to the kitchen.
         page.evaluate("window.chfHouseCam(12,2.6,5.6,6.9,2,5.8)")
         page.wait_for_function("window.chfNavProbe({settled:true})")
         hit = page.evaluate("window.chfNavProbe({piece:'east_room_door'})")
@@ -1375,9 +1386,11 @@ def scenario_a_room_cutaway_leaves_other_rooms_enclosed():
     every piece with maskedFraction > 0 is 'masked', and no kept vertex
     of the room's shell lies inside the mask (chfRoomShellLeak 0). The
     specific pieces the bug was reported on are then pinned by name from
-    the living AND the kitchen, exactly as before. The `owners` rows
-    still report until Task 4 retires them, but nothing reads them for a
-    verdict any more.
+    the living AND the kitchen, exactly as before. Task 4 retired the
+    `owners` rows and folded the x 6.85 splits back (one south_wall, one
+    roof_main), so the east rooms' street face and roof are now the EAST
+    PARTS of pieces the great room's cameras also cut -- the enclosure
+    law is pinned there by remnant vertex, not by a whole-piece 0.
     """
     served = live_app()
     if served is None:
@@ -1414,13 +1427,24 @@ def scenario_a_room_cutaway_leaves_other_rooms_enclosed():
 
         # The reported pieces, pinned by name. From the living room and
         # from the kitchen the study and the two future rooms keep their
-        # street face, their roof and their walls: every one is east of
-        # the pyramid's x span from both street cameras (the great room's
-        # boxes end at x 6.5; the split is at 6.85).
-        EAST_ENCLOSURE = ['south_wall_east', 'roof_main_east_south',
-                          'roof_main_east_north', 'east_partition',
-                          'east_wall', 'future_room_partition',
-                          'north_wall_east']
+        # own walls: every one is east of the pyramid's x span from both
+        # street cameras (the great room's boxes end at x 6.5).
+        EAST_ENCLOSURE = ['east_partition', 'east_wall',
+                          'future_room_partition', 'north_wall_east']
+        # TASK 4: their street face and their roof are the east parts of
+        # ONE south_wall (x -7.15..14.65) and ONE roof_main_south, so a
+        # whole-piece 0 cannot say they stand any more. Two pins say it
+        # instead. (1) The living's cut of south_wall cannot exceed the
+        # great room's share of the wall: the wall's three boxes are the
+        # same height and thickness the whole run, so area goes with
+        # width, and the pyramid's x span at the wall is the box's own
+        # (-6.5..6.5, 13 of 21.8 = 0.596); the old 14-wide segment read
+        # 0.871, which is 0.559 of the one wall. Pinned 0.5 < f < 0.6.
+        # (2) The study's run of the wall (x > 6.85) and of the south
+        # deck leave remnant vertices in the living shell -- the piece
+        # stands there, cut only over the great room. The north deck
+        # is not cut from the living at all (0), and from the kitchen
+        # only at a hairline (< 0.01; its old west half read 0.006).
         for view in ('living', 'kitchen'):
             if view == 'kitchen':
                 page.evaluate("window.chfHouseEnter()")
@@ -1433,35 +1457,50 @@ def scenario_a_room_cutaway_leaves_other_rooms_enclosed():
                 check(by[name]['maskedFraction'][view] == 0 and by[name]['verdict'] == 'solid',
                       "%s: %s must stay whole, got %r / %r"
                       % (view, name, by[name]['maskedFraction'][view], by[name]['verdict']))
+            check(by['roof_main_north']['maskedFraction'][view] < 0.01,
+                  '%s: the north deck is not between a street camera and '
+                  'the great room, got %r' % (view, by['roof_main_north']['maskedFraction'][view]))
+            for piece in ('south_wall', 'roof_main_south'):
+                verts = page.evaluate("window.chfRoomShellVerts(%r, %r, 4000)" % (view, piece))
+                east = [p for p in verts if p[0] > 6.85]
+                check(by[piece]['maskedFraction'][view] == 0 or east,
+                      "%s: the study's run of %s (x > 6.85) must stand in the "
+                      'shell, got fraction %r and %d remnant vertices east of '
+                      'the old split' % (view, piece, by[piece]['maskedFraction'][view], len(east)))
+            if view == 'living':
+                check(0.5 < by['south_wall']['maskedFraction']['living'] < 0.6,
+                      "living: south_wall is cut over the great room's run only "
+                      '(0.559 derived), got %r' % by['south_wall']['maskedFraction']['living'])
 
-        # The study's OWN cutaway: its street face (south_wall_east) is
-        # cut along the room's silhouette and the great room's street
-        # wall stays. Its roof is NOT cut any more: STUDY_POS (y 4.75)
-        # stands below the eave looking level into the room, so the box's
-        # top face is not a front face and no ray to the walled volume
-        # passes through the roof -- the old solver hid the whole east
-        # half of the roof by cutawayRoom, which is exactly the kind of
-        # whole-piece surgery the mask retires. The great room's roof
-        # halves stay too.
+        # The study's OWN cutaway: its street face -- the east 7.8 of the
+        # one south_wall -- is cut along the room's silhouette and the
+        # great room's run of the same wall stays (remnant vertices west
+        # of x 6.5). Its roof is NOT cut: STUDY_POS (y 4.75) stands below
+        # the eave looking level into the room, so the box's top face is
+        # not a front face and no ray to the walled volume passes through
+        # the roof -- the old solver hid the whole east half of the roof
+        # by cutawayRoom, which is exactly the kind of whole-piece surgery
+        # the mask retires. The one south deck is grazed at its overhang
+        # at most (0.013 of the old east half, 8.12 of 22.44 = ~0.005).
         page.evaluate("window.chfHouseEnterRoom('study')")
         page.wait_for_timeout(1400)
         by = {f['name']: f for f in page.evaluate("window.chfShellFabric()")}
-        for name in ('roof_main_east_north', 'roof_main_east_end_east',
-                     'roof_main_west_north', 'roof_main_west_south',
-                     'roof_main_west_end_west'):
+        for name in ('roof_main_north', 'roof_main_end_east', 'roof_main_end_west'):
             check(by[name]['maskedFraction']['study'] < 0.01,
                   "study: %s must stay (whole or a hairline), got %r"
                   % (name, by[name]['maskedFraction']['study']))
-        check(by['roof_main_east_south']['maskedFraction']['study'] < 0.05,
+        check(by['roof_main_south']['maskedFraction']['study'] < 0.05,
               "study: the deck over the study is grazed at most, got %r"
-              % by['roof_main_east_south']['maskedFraction']['study'])
-        check(by['south_wall_east']['verdict'] == 'masked' and
-              by['south_wall_east']['maskedFraction']['study'] > 0.5,
-              "study: south_wall_east must be cut, got %r"
-              % by['south_wall_east']['maskedFraction']['study'])
-        check(by['south_wall']['verdict'] == 'solid',
-              "study: the great room's south_wall must stay solid, got %r"
-              % by['south_wall']['verdict'])
+              % by['roof_main_south']['maskedFraction']['study'])
+        # 0.97 of the old 7.8-wide segment is 0.347 of the 21.8 wall;
+        # the cut cannot exceed the study's share (7.8 / 21.8 = 0.358).
+        check(by['south_wall']['verdict'] == 'masked' and
+              0.3 < by['south_wall']['maskedFraction']['study'] < 0.36,
+              "study: its street face (the east run of south_wall) must be "
+              'cut, got %r' % by['south_wall']['maskedFraction']['study'])
+        west = [p for p in page.evaluate("window.chfRoomShellVerts('study', 'south_wall', 4000)")
+                if p[0] < 6.5]
+        check(west, "study: the great room's run of south_wall must stand in the shell")
 
 
 def scenario_study_sits_inside_the_main_block():
@@ -1510,8 +1549,10 @@ def scenario_the_study_faces_east_behind_glass_doors():
     keeps the name `living_study_door`, its registration, its room
     stamping and its parent-PIN gate -- and the opening at z 5.80 wears
     the plain interior door, registered `east_room_door` with the
-    slider's old semantics (normal [1,0,0], room 'kitchen', twoSided,
-    ownerless). `patio_slider` is retired by name.
+    slider's old semantics (normal [1,0,0], room 'kitchen'; it was
+    twoSided and ownerless under the verdict solver, which task 4 of the
+    masking arc retired -- a kit now, whole or nothing by its box).
+    `patio_slider` is retired by name.
 
     (B) THE STUDY FACES EAST. "The study layout doesn't make sense now
     that the patio is gone. The window needs to be on the east wall and
@@ -1547,12 +1588,13 @@ def scenario_the_study_faces_east_behind_glass_doors():
               "east_room_door keeps the slider's room stamping so a tap "
               'on it still enters the kitchen, got %r'
               % (door and door['room'],))
-        check(door and door['twoSided'] is True,
-              'east_room_door is an interior opening: twoSided, like the '
-              'slider it replaces, got %r' % (door and door.get('twoSided'),))
-        check(door and not door['owners'],
-              'an opening encloses nothing and stays ownerless, got %r'
-              % (door and door['owners'],))
+        check(door and door['normal'] == [1, 0, 0],
+              "east_room_door keeps the slider's normal (it stands in the "
+              'east partition, facing x), got %r' % (door and door['normal'],))
+        check(door and 'twoSided' not in door and 'owners' not in door,
+              'the verdict fields are retired (masking task 4): an opening '
+              'is a kit the mask keeps or drops whole, got %r'
+              % (door and sorted(door),))
 
         glass = fab.get('living_study_door')
         check(glass is not None,
@@ -1764,7 +1806,29 @@ def scenario_the_study_faces_east_behind_glass_doors():
 # shells count all the same: this pin walks the scene, not the frustum.
 # (Standalone -- only this scenario's own seed -- the same build counts
 # 1885, the same 141-mesh seeded gap as every earlier entry.)
-CANONICAL_EXTERIOR_MESHES = 2026
+#
+# VIEW-VOLUME MASKING task 4 (v2.499.55) re-records it RED-first,
+# 2026 -> 2017, -9: the x 6.85 splits are folded back, so the exterior
+# elevation's own count MOVES for the first time since the facade arc
+# -- fewer pieces, the arc's own thesis. Derived first (-9), then
+# measured: 2017 here, and standalone (only this scenario's own seed)
+# 1876 against 1885 before -- the same -9 and the same 141-mesh seeded
+# gap, which is what says the delta is the un-split and nothing else:
+#   -3  south_wall_east's three boxes (plaster half, siding half,
+#       baseboard) fold into south_wall's own three: the same three
+#       materials, each still a lone member of its bucket (under
+#       mergeStatic's four-item floor), so three survivors become none.
+#   -6  roof_main_west + roof_main_east become roof_main. Each half
+#       built 2 slope decks + 2 eave trims + 2 ridge caps (6), all on
+#       different materials inside their own registered groups; one
+#       roof builds 6 where the pair built 12. The gable ends are a
+#       wash: one outer end per half before, two ends on the one roof
+#       after (3 meshes each, either way).
+#    0  the room shells' remnants and caps (merged per mirrored row,
+#       loose under the four-item floor): the one wall's and the one
+#       deck's remnants per room merge into the same number of
+#       composites the two halves' did -- measured, not assumed.
+CANONICAL_EXTERIOR_MESHES = 2017
 
 
 # ---- VAULTED PARTITIONS (2026-09-16) ---------------------------------
@@ -1949,9 +2013,13 @@ def scenario_canonical_facade_pins_the_hand_built_elevation():
             for k in ('x0', 'x1', 'cx', 'z', 'eave'):
                 check(abs(a[k] - b[k]) < 1e-6,
                       'slot %d %s: %r vs %r' % (b['i'], k, a[k], b[k]))
-            for k in ('face', 'room', 'roof', 'owners'):
+            for k in ('face', 'room', 'roof'):
                 check(a[k] == b[k],
                       'slot %d %s: %r vs %r' % (b['i'], k, a[k], b[k]))
+            # masking task 4: the slot table carries no owners any more
+            # on either side (the mask decides what a room view removes)
+            check('owners' not in a and 'owners' not in b,
+                  'slot %d: owners retired, got %r / %r' % (b['i'], sorted(a), sorted(b)))
         errs = [e for e in served.errors()
                 if 'WebGL' not in e and 'GroupMarker' not in e]
         check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
@@ -2767,9 +2835,15 @@ def scenario_room_masks_cut_only_what_blocks_the_room():
     "mostly cut"; study: east_partition "cut"), the geometry says
     otherwise and the pin follows the geometry -- see each comment.
 
-    Names: the main roof and the street wall are STILL split at x 6.85
-    here (roof_main_west_south / roof_main_east_south, south_wall /
-    south_wall_east); Task 4 un-splits them and updates these pins.
+    Names (task 4): the main roof and the street wall are ONE piece
+    each again (roof_main_south over the whole block, south_wall x
+    -7.15..14.65), so every fraction pinned on them is the old split
+    piece's fraction scaled by that piece's share of the whole -- area
+    goes with width for the wall (same height and thickness the whole
+    run) and for the deck (same span the whole run): the old west half
+    of the roof was 14.32 of the deck's 22.44 (0.638), the east 8.12
+    (0.362); the old south_wall 14.0 of 21.8 (0.642), south_wall_east
+    7.8 (0.358). Each pin below carries its own derivation.
     """
     served = live_app(_seed)
     if served is None:
@@ -2803,10 +2877,16 @@ def scenario_room_masks_cut_only_what_blocks_the_room():
         # RULING 2 (fix round 1): the street wall straddles the box's
         # south face (inner face 14.20, box 14.22); the straddle rule
         # moves W to the wall's own depth so the cut is P alone -- the
-        # silhouette of a 13 x 5.6 box on a 14 x 5.6 wall, 0.87. A raw
-        # plane would keep the inner sliver and read ~0.5; pinned > 0.8.
-        check(frac('south_wall', 'living') > 0.8, f"living: south_wall cut on its silhouette, got {frac('south_wall', 'living')}")
-        check(frac('roof_main_west_south', 'living') > 0.2, 'living: roof_main_west_south cut over the room')
+        # silhouette of a 13 x 5.6 box on the wall. TASK 4: the wall is
+        # the whole 21.8 run, so the old 0.87 of the 14-wide great-room
+        # segment is 0.87 * 0.642 = 0.56 of the one wall; a raw plane
+        # would keep the inner sliver and read ~0.3. Pinned > 0.5 (and
+        # < 0.6: the pyramid's x span at the wall is the box's 13 of
+        # 21.8 = 0.596, the most the living can ever take).
+        check(0.5 < frac('south_wall', 'living') < 0.6, f"living: south_wall cut on its silhouette over the great room's run, got {frac('south_wall', 'living')}")
+        # the south deck: the old west half's 0.33 is 0.33 * 0.638 = 0.21
+        # of the one deck; pinned > 0.1
+        check(frac('roof_main_south', 'living') > 0.1, f"living: roof_main_south cut over the room, got {frac('roof_main_south', 'living')}")
         for kit in ('facade_main_window_7', 'facade_main_window_9', 'facade_main_window_12', 'facade_main_door_10'):
             check(frac(kit, 'living') == 1, f'living: {kit} goes whole with the wall it sits in')
         # PORCH (fix round 1 ruling): not a kit -- its boxes clip per
@@ -2842,13 +2922,18 @@ def scenario_room_masks_cut_only_what_blocks_the_room():
         #   5.6) crosses the south deck at z ~7.9, so the deck comes off
         #   from the eave to there (measured 0.47).
         check(frac('south_wall', 'kitchen') == 0, f"kitchen: south_wall clears every ray to the kitchen box, got {frac('south_wall', 'kitchen')}")
-        check(frac('roof_main_west_south', 'kitchen') > 0.2, 'kitchen: roof_main_west_south cut over the room')
+        # the old west half's 0.47 is 0.47 * 0.638 = 0.30 of the one
+        # deck; pinned > 0.1
+        check(frac('roof_main_south', 'kitchen') > 0.1, f"kitchen: roof_main_south cut over the room, got {frac('roof_main_south', 'kitchen')}")
         for kit in ('facade_main_window_7', 'facade_main_window_9', 'facade_main_window_12', 'facade_main_door_10'):
             check(frac(kit, 'kitchen') == 0, f'kitchen: {kit} is not between the street camera and the kitchen')
-        # Nothing east of the split is between either camera and either
-        # room: the study's enclosure and windows, the east wall, the
-        # future rooms' partitions and the kitchen's own north wall
-        # (behind the box, inside W) all stay whole.
+        # Nothing east of the great room is between either camera and
+        # either room: the study's own walls and windows, the east wall,
+        # the future rooms' partitions and the kitchen's own north wall
+        # (behind the box, inside W) all stay whole. (The study's street
+        # face and roof are the east parts of south_wall / roof_main_south
+        # now -- pinned standing by remnant vertex in
+        # scenario_a_room_cutaway_leaves_other_rooms_enclosed.)
         for room in ('kitchen', 'living'):
             for whole in ('east_partition', 'east_wall', 'north_wall_east', 'future_room_partition',
                           'facade_main_window_15', 'facade_main_window_16', 'north_wall'):
@@ -2859,30 +2944,35 @@ def scenario_room_masks_cut_only_what_blocks_the_room():
         # when it drew. Fraction 1 everywhere, like a dropped kit.
         for room in ROOMS:
             check(frac('yard', room) == 1, f'{room}: the yard hides whole, got {frac("yard", room)}')
-        # THE STUDY. STUDY_POS stands EAST of the split (x 7.02 > 6.92,
-        # the box's west face) and low (y 4.75 < the eave), so the only
-        # front face is the south one: masked = inside the pyramid
-        # through the south face's four edges, south of the box. Its
-        # street face (south_wall_east) straddles that face (the study
-        # floor reaches z 14.45, the wall's inner face is 14.20) and is
-        # cut by P alone (measured 0.97); its two windows 15/16 are kits
-        # in that wall, dropped whole. east_partition (x 6.44..6.85) is
-        # beside the camera, west of the box's west face: NOT between
-        # camera and room, whole -- the brief's draft pinned it "cut",
-        # which was the pre-refit camera at x 5.85. The great room's
-        # street wall, window 7 and the kitchen's north wall are outside
+        # THE STUDY. STUDY_POS stands east of the old split line (x 7.02
+        # > 6.92, the box's west face) and low (y 4.75 < the eave), so
+        # the only front face is the south one: masked = inside the
+        # pyramid through the south face's four edges, south of the box.
+        # Its street face -- TASK 4: the east 7.8 of the one south_wall
+        # -- straddles that face (the study floor reaches z 14.45, the
+        # wall's inner face is 14.20) and is cut by P alone: 0.97 of the
+        # old segment, 0.97 * 0.358 = 0.35 of the whole wall; its two
+        # windows 15/16 are kits in that wall, dropped whole.
+        # east_partition (x 6.44..6.85) is beside the camera, west of the
+        # box's west face: NOT between camera and room, whole -- the
+        # brief's draft pinned it "cut", which was the pre-refit camera
+        # at x 5.85. Window 7 and the kitchen's north wall are outside
         # the pyramid's x span. The roof is above a camera that looks
-        # level into the room: the top face is not front, the roof stays.
+        # level into the room: the top face is not front; the north deck
+        # stays and the south deck is grazed at its overhang only (0.013
+        # of the old east half, 0.013 * 0.362 = 0.005 of the one deck).
         # RULING 2: the study floor reaches 0.25 into the street wall;
-        # the straddle rule cuts the wall by P alone -- the whole box
-        # silhouette on the wall's 8 x 5.6 study run, 0.97; a raw plane
-        # would keep the inner 0.25 and read ~0.3. Pinned > 0.9.
-        check(frac('south_wall_east', 'study') > 0.9, f"study: its street face is cut on its silhouette, got {frac('south_wall_east', 'study')}")
+        # the straddle rule cuts the wall by P alone; a raw plane would
+        # keep the inner 0.25 and read ~0.1 of the whole wall. Pinned
+        # > 0.3, and < 0.36 (the study's share, 7.8 / 21.8 = 0.358, is
+        # the most the study can ever take).
+        check(0.3 < frac('south_wall', 'study') < 0.36, f"study: its street face is cut on its silhouette, got {frac('south_wall', 'study')}")
         for kit in ('facade_main_window_15', 'facade_main_window_16'):
             check(frac(kit, 'study') == 1, f'study: {kit} goes whole with the street face')
-        for whole in ('east_partition', 'south_wall', 'facade_main_window_7', 'north_wall',
-                      'roof_main_east_north', 'roof_main_west_south', 'living_study_door'):
+        for whole in ('east_partition', 'facade_main_window_7', 'north_wall',
+                      'roof_main_north', 'living_study_door'):
             check(frac(whole, 'study') == 0, f'study: {whole} whole, got {frac(whole, "study")}')
+        check(frac('roof_main_south', 'study') < 0.05, f"study: the south deck is grazed at most, got {frac('roof_main_south', 'study')}")
         # THE MUDROOM. MUD_POS stands in the great room, east of the
         # mudroom's east face (x -3.4 > -6.8), just above the eave (y 6.2)
         # and south of the box (z 11.2 > 8.3): three front faces. The
@@ -2930,7 +3020,7 @@ def scenario_room_masks_cut_only_what_blocks_the_room():
         def inside_P(mask, p, eps=1e-3):
             return all(pl['n'][0]*p[0] + pl['n'][1]*p[1] + pl['n'][2]*p[2] - pl['d'] > eps
                        for pl in mask['P'])
-        for room, wall in (('living', 'south_wall'), ('study', 'south_wall_east')):
+        for room, wall in (('living', 'south_wall'), ('study', 'south_wall')):
             mask = page.evaluate(f"window.chfRoomMask('{room}')")
             verts = page.evaluate(f"window.chfRoomShellVerts('{room}', '{wall}', 4000)")
             check(verts, f'{room}: the near wall leaves remnants in the shell')

@@ -176,22 +176,21 @@
     // (x 6.675) instead of hung on its west face, because house.js cuts
     // the opening right through. Everything else about this fixture is
     // untouched -- the same entry group, the same 'study' action behind
-    // the parent PIN, the same name, normal, twoSided and cutawayRoom.
+    // the parent PIN, the same name and normal.
     item = entry('study','Study · Parent PIN','living',[6.675,.02,9.93],'study');
     item.rotation.y = -Math.PI / 2;
     glassDoors(item);
     // VIEW-VOLUME MASKING (task 2): a glazed double-door assembly --
     // leaves, stiles, rails, casing, handles -- is a kit, never one
     // convex solid; kept or dropped whole.
-    fabric.push({group:item,name:'living_study_door',normal:[1,0,0],twoSided:true,
-                 cutawayRoom:'study',kit:true});
+    fabric.push({group:item,name:'living_study_door',normal:[1,0,0],kit:true});
 
     // STUDY REFIT: "then use the study's regular interior door on that
     // other room". The east room's opening at z 5.80 -- the retired
     // patio slider's -- takes the plain interior door, keeping the
     // slider's own registration semantics: normal [1,0,0], room
     // 'kitchen' (so a tap from the east room still walks through to the
-    // kitchen), twoSided, and ownerless like every opening. Unlike the
+    // kitchen). Unlike the
     // back room's door below -- a leaf proud of an UNCUT wall -- this
     // opening is a real hole through the slab, so it wears a leaf on
     // each face with the cut's own lining between them.
@@ -206,8 +205,7 @@
     [-1,1].forEach(function (side) { box(item,.35,3.02,.10,ivory,0,1.51,side * .85); });
     // VIEW-VOLUME MASKING (task 2): two interior-door leaves plus lining
     // -- a kit, same reasoning as living_study_door above.
-    fabric.push({group:item,name:'east_room_door',normal:[1,0,0],twoSided:true,
-                 kit:true});
+    fabric.push({group:item,name:'east_room_door',normal:[1,0,0],kit:true});
 
     // The back room's door: a leaf proud of the uncut partition, the one
     // opening in this wall that was authored that way.

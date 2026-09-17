@@ -169,7 +169,7 @@
     // its last 1.15.
     //
     // So the north wall rises to the deck and the east wall to the eave,
-    // where the block's `east_wall` ends and `roof_main_east_end_east`'s
+    // where the block's `east_wall` ends and `roof_main_end_east`'s
     // gable infill takes over. Both heights are the HOUSE's, handed in
     // by house.js off FULL_HOUSE and the same shellGable arithmetic the
     // roof itself is built from -- this file never re-derives them, so
