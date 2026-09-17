@@ -9,6 +9,7 @@ out — with zero console errors, the live-app harness's whole point.
 Run from chauffeur/:  python tests/test_house_live.py
 Set HOUSE_SHOTS=<dir> to also save exterior/kitchen/lean-in screenshots.
 """
+import copy
 import datetime
 import io
 import math as _math
@@ -1828,7 +1829,35 @@ def scenario_the_study_faces_east_behind_glass_doors():
 #       loose under the four-item floor): the one wall's and the one
 #       deck's remnants per room merge into the same number of
 #       composites the two halves' did -- measured, not assumed.
-CANONICAL_EXTERIOR_MESHES = 2017
+#
+# ROOF VALLEYS, masking task 5 (v2.499.56) re-records it RED-first,
+# 2017 -> 2015, -2: the two facade gables lose what was buried under
+# the block roofs (clipBuried, at build), so the pieces the exterior
+# draws and the remnants the room shells cut both change. Derived from
+# a per-row census (scratch/valley-shellrows-{before,after}.txt), then
+# measured: 2015 here.
+#   +6  exterior: each gable SIDE group was deck + eave trim + ridge cap,
+#       three materials, three survivors. After the clip the porch
+#       gable's deck and trim are each two convex pieces (above the
+#       main deck; below it in front of the wall) and its ridge cap one
+#       (its buried back gone) -- 5 face meshes on the same three
+#       materials plus 5 section caps, which reach mergeStatic's floor
+#       and fold into one composite: 5 survivors, +2 per side, +4. The
+#       bay gable's deck splits the same way, its trim keeps only its
+#       front stub and its cap its front: 4 survivors, +1 per side, +2.
+#       The two front groups (infill + rakes) stand in front of the
+#       wall and are untouched.
+#   -8  kitchen shell: the porch gable's two side rows each left 6 loose
+#       remnants (three faces, three caps); the buried back that stood
+#       in the kitchen's cone is gone, so each row leaves two face
+#       remnants and its caps merge (4 -> a composite): 2 + 1 merged.
+#   +4  garage shell: the bay gable's two side rows each leave 4
+#       remnants where they left 2 (the above-deck piece and the cap
+#       are cut separately now).
+#   -4  mudroom shell: the bay gable's east deck was grazed (0.09) at
+#       its buried back only; nothing of it stands in the mudroom's
+#       cone now (fraction 0), so its 4 remnants are gone.
+CANONICAL_EXTERIOR_MESHES = 2015
 
 
 # ---- VAULTED PARTITIONS (2026-09-16) ---------------------------------
@@ -2905,9 +2934,15 @@ def scenario_room_masks_cut_only_what_blocks_the_room():
         # as floating shards outside the pyramid -- and clipped normally
         # otherwise (its front kept 30%, the kitchen keeps a quarter of
         # each deck).
+        # ROOF VALLEYS (task 5): the decks no longer carry their buried
+        # back under the main roof; what stood in the kitchen's cone was
+        # mostly that back (the cone's floor crosses z 12 at y 4.97, the
+        # buried deck reached 6.84 there), so the kitchen's cut of what
+        # remains reads 0.20 where it read 0.25 -- measured, the pin
+        # widened to hold it.
         for deck in ('facade_main_gable_8_west', 'facade_main_gable_8_east'):
             check(frac(deck, 'living') == 1, f'living: {deck} drops whole below a fifth kept, got {frac(deck, "living")}')
-            check(0.2 < frac(deck, 'kitchen') < 0.3, f'kitchen: {deck} keeps its clipped quarter, got {frac(deck, "kitchen")}')
+            check(0.15 < frac(deck, 'kitchen') < 0.3, f'kitchen: {deck} keeps its clipped part, got {frac(deck, "kitchen")}')
         check(0.5 < frac('facade_main_gable_8_front', 'living') < 0.8,
               f"living: the porch gable front is clipped, not dropped, got {frac('facade_main_gable_8_front', 'living')}")
         #   kitchen: the box's near face is z 5.8, INSIDE the open great
@@ -3060,6 +3095,150 @@ def scenario_room_masks_cut_only_what_blocks_the_room():
         check(not served.errors(), f'console clean: {served.errors()[:3]}')
 
 
+# ---- ROOF VALLEYS (masking spec section 6) ----------------------------
+# A facade gable or dormer is built on a block roof deck. Nothing of it
+# may exist UNDER that deck inside the house: the part below the parent
+# deck's centre plane and behind the street face is cut at build (the
+# valley clip), so the mask, which keeps everything inside a room's own
+# volume, has nothing buried left to draw. The plane comes from the
+# scene (chfRoofPlane: deckPlane, the one derivation shellGable places
+# its own decks by); the face line from the slot table.
+FEATURE_JS = r"""() => {
+  const out = [];
+  window.chfShellFabric().forEach(f => {
+    const m = /^facade_(garage_block|main)_(gable|dormer|hip_end)_(\d+)/.exec(f.name);
+    if (m) out.push({ name: f.name, face: m[1], kind: m[2], slot: +m[3] });
+  });
+  return out;
+}"""
+# `proudAtWall`: a gable's ridge cap is level, so its top is as high at
+# the wall line as anywhere; the piece's highest vertex against the deck
+# plane's height at the wall (ridge x: the same across the face) is the
+# ridge's stand over the deck there, plus the cap's 0.125 over the ridge
+# line.
+VERTEX_AUDIT_JS = """(arg) => {
+  const pl = window.chfRoofPlane(arg.face), vs = window.chfFabricVertices(arg.name);
+  const faceZ = window.chfFacadeSlots().find(s => s.face === arg.face).z;
+  const wallY = (pl.d - pl.n[2] * faceZ) / pl.n[1];
+  let buried = 0, worst = 1e9, top = -1e9, n = vs.length;
+  vs.forEach(p => {
+    const s = pl.n[0]*p[0] + pl.n[1]*p[1] + pl.n[2]*p[2] - pl.d;
+    if (p[2] < faceZ - 0.05) { if (s < worst) worst = s; if (s < -0.05) buried++; }
+    if (p[1] > top) top = p[1];
+  });
+  return { n, buried, worst, proudAtWall: top - wallY };
+}"""
+
+
+def _audit_roof_features(page):
+    feats = page.evaluate(FEATURE_JS)
+    check(feats, 'the facade has roof features')
+    seen = {}
+    for f in feats:
+        if f['kind'] == 'hip_end':
+            continue          # a fin standing on the wall line, in front of it
+        a = page.evaluate(VERTEX_AUDIT_JS, f)
+        check(a['n'] > 0, f"{f['name']}: has vertices")
+        check(a['buried'] == 0,
+              f"{f['name']}: {a['buried']} of {a['n']} vertices below the "
+              f"{f['face']} deck plane behind the face (lowest {a['worst']:.3f})")
+        seen[f['name']] = a
+    return seen
+
+
+def scenario_roof_features_stop_at_the_roof_line():
+    """Spec 2026-09-16 masking section 6: every vertex of a facade gable or
+    dormer behind the street face sits at or above the block deck it sits
+    on; a gable's ridge stands proud of that deck at the wall.
+
+    The porch gable (canonical gable_8) keeps the porch's own eave (4.8:
+    it IS the porch roof, on the porch posts), so in FRONT of the wall its
+    low eaves pass under the main eave as they always have -- the audit
+    is 'nothing buried behind the face', not 'nothing below the plane
+    anywhere'. Its ridge still stands proud at the wall: 7.505 against
+    the deck plane's 5.78 there, 1.725 (its rise 2.525 less the 0.8 the
+    porch eave sits under the block eave). The garage bay gable's eave is
+    the block eave, so it stands proud by its whole rise (1.92)."""
+    served = live_app(_seed)
+    if served is None:
+        return
+    with served.browser() as page:
+        page.add_init_script(DAY_LOCK_JS)
+        page.goto(served.url('house?quality=high'))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        pl = page.evaluate("window.chfRoofPlane('main')")
+        check(pl and abs(pl['n'][1] - _math.cos(_VAULT_PITCH)) < 1e-6
+              and abs(pl['n'][2] - _math.sin(_VAULT_PITCH)) < 1e-6,
+              f'the main street deck plane tilts up and south at pi/8: {pl}')
+        # the plane's height at the wall line is the block eave + 0.18
+        y_wall = (pl['d'] - pl['n'][2] * 14.55) / pl['n'][1]
+        check(abs(y_wall - 5.78) < 1e-3, f'main deck plane at the wall: {y_wall:.3f} != 5.78')
+        seen = _audit_roof_features(page)
+        for name, proud in (('facade_main_gable_8_west', 1.725),
+                            ('facade_main_gable_8_east', 1.725),
+                            ('facade_garage_block_gable_0_west', 1.92),
+                            ('facade_garage_block_gable_0_east', 1.92)):
+            check(name in seen, f'{name} audited')
+            # the ridge cap's top adds 0.125 over the ridge line
+            got = seen[name]['proudAtWall']
+            check(proud - 0.05 < got < proud + 0.2,
+                  f'{name}: stands {got:.3f} proud of the deck at the wall, want ~{proud}')
+        check(not served.errors(), f'console clean: {served.errors()[:3]}')
+
+
+def scenario_a_saved_gable_over_the_study_stays_outside():
+    """User report (2026-09-16): a SAVED facade with a gable over the study
+    put a shingled wedge with white battens beside the study's glass
+    doors, inside the house, in the living view. The gable's decks and
+    eave trims ran back and down under the main roof; the mask keeps
+    everything inside the room, so it drew them. Reproduced at HEAD with
+    a span-3 gable at slot 13 (x 5.57..11.02: it straddles the study
+    partition at 6.85, so its buried west deck stood in the great room
+    beside the study doors -- scratch/valley-before-13/study-gable-
+    living.png); a gable wholly over the study (slot 14) buries the same
+    way but the partition hides it from the living camera. After the
+    valley clip no vertex of that gable is below the main deck behind
+    the wall, and the gable takes the height rule (eave = the block
+    eave: ridge = plane + its own rise, 1.894 on a span of 3)."""
+    from services import house_facade as hf
+    spec = copy.deepcopy(hf.CANONICAL)
+    spec['roof'].append({'slot': 13, 'span': 3, 'kind': 'gable'})
+    served = live_app(lambda: (_seed(), hf.save_facade('study gable', hf.normalize(spec)[0], activate=True)))
+    if served is None:
+        return
+    try:
+        with served.browser() as page:
+            page.add_init_script(DAY_LOCK_JS)
+            page.goto(served.url('house?quality=high'))
+            page.wait_for_selector('#room canvas', timeout=20000)
+            page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+            built = page.evaluate('window.chfFacade()')
+            check(any(r['slot'] == 13 and r['kind'] == 'gable' for r in built['roof']),
+                  'the saved facade with the study gable is what built')
+            seen = _audit_roof_features(page)
+            for side in ('west', 'east'):
+                a = seen.get(f'facade_main_gable_13_{side}')
+                check(a, f'the study gable {side} deck is registered')
+                check(1.894 - 0.05 < a['proudAtWall'] < 1.894 + 0.2,
+                      f"study gable {side}: stands {a['proudAtWall']:.3f} proud at the wall, want ~1.894")
+            # LOOKED at from the living (HOUSE_SHOTS): nothing of the
+            # gable lies in the house (behind the wall, under the deck);
+            # the audit above is the same statement vertex by vertex
+            page.evaluate("window.chfHouseEnterRoom('living')")
+            page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+            shots = os.environ.get('HOUSE_SHOTS')
+            if shots:
+                os.makedirs(shots, exist_ok=True)
+                page.screenshot(path=os.path.join(shots, 'study-gable-living.png'))
+            check(not served.errors(), f'console clean: {served.errors()[:3]}')
+    finally:
+        for r in hf.list_facades():
+            if r.get('id') != hf.CANONICAL_ID and r.get('name') == 'study gable':
+                hf.delete_facade(r['id'])
+        hf.set_active(hf.CANONICAL_ID)
+
+
 if __name__ == '__main__':
     scenario_the_house_boots_enters_and_leans_in()
     scenario_leanin_focus_cycles_do_not_leak_textures()
@@ -3080,4 +3259,6 @@ if __name__ == '__main__':
     scenario_clipper_cuts_convex_meshes()
     scenario_every_fabric_mesh_is_convex_or_a_kit()
     scenario_room_masks_cut_only_what_blocks_the_room()
+    scenario_roof_features_stop_at_the_roof_line()
+    scenario_a_saved_gable_over_the_study_stays_outside()
     print("test_house_live OK")

@@ -4391,34 +4391,99 @@
        for `future_room_partition`, the study's own north wall and the
        wall between the garage and the mudroom.
 
-       These three lines are shellGable's own deck arithmetic, reproduced
-       here because every partition is built HUNDREDS of lines before the
-       roof that covers it: `eave + 0.18` is the deck's CENTRE plane
-       where it crosses the wall line, the deck climbs tan(pitch) per
-       unit toward the ridge, and its lower face sits half the 0.18 deck
-       thickness below that centre plane -- measured down the VERTICAL,
-       so 0.09 / cos(pitch), not 0.09. tests/test_house_live.py derives
-       the same numbers a third time, from the spec's own dimensions, so
-       moving shellGable's deck fails a pin here rather than quietly
-       leaving a wall in mid-air.
+       Every partition is built HUNDREDS of lines before the roof that
+       covers it, so the vault reads the deck off deckPlane (just below:
+       the one derivation shellGable itself places its decks by, masking
+       task 5) -- `eave + 0.18` is the deck's CENTRE plane where it
+       crosses the wall line, the deck climbs tan(pitch) per unit toward
+       the ridge, and its lower face sits half the 0.18 deck thickness
+       below that centre plane -- measured down the VERTICAL, so
+       0.09 / cos(pitch), not 0.09. tests/test_house_live.py derives the
+       same numbers from the spec's own dimensions, so moving the deck
+       fails a pin there rather than quietly leaving a wall in mid-air.
 
        VAULT_GAP holds every wall top just BELOW that face: exactly
        coplanar and the two surfaces z-fight the whole length of the
        partition. */
     var VAULT_GAP = 0.02;
+    /* ---- THE DECK PLANE: one derivation (masking spec section 6) ------
+       A block roof's slope deck is a 0.18-thick slab whose CENTRE plane
+       crosses the wall line at `eave + 0.18` and climbs tan(pitch) per
+       unit toward the ridge: ridge = eave + 0.18 + half * tan(pitch);
+       the deck runs `run = half + overhang` down the slope and is
+       centred at ridge - run * tan(pitch) / 2, half a run out from the
+       ridge line. shellGable places its decks by this, roofVault reads
+       every vaulted partition's head off it, the facade's roof features
+       (gableAt / dormerAt / hipEndAt) stand on it and clip their buried
+       parts against it, and chfRoofPlane hands it to the tests -- the
+       three copies that used to agree by hand (the paragraph above was
+       one of them) are this ONE function now. `sign` is -1 for the
+       north deck (ridge on x) / the west deck (ridge on z), +1 for the
+       south / east one. {n, d} follows the clipper's convention: n is
+       the deck's UPWARD normal, and n.p - d >= 0 is above the deck. `c`
+       is the deck's centre point; the rest are the numbers a caller
+       places its trims and caps by. */
+    function deckPlane(x0, x1, z0, z1, eave, ridgeAxis, pitch, sign) {
+      var alongZ = (ridgeAxis === 'z' || ridgeAxis === true);
+      var half = (alongZ ? x1 - x0 : z1 - z0) / 2;
+      var cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+      var rise = half * Math.tan(pitch), roofEave = eave + 0.18;
+      var ridge = roofEave + rise, run = half + FULL_HOUSE.overhang;
+      var c = [cx + (alongZ ? sign * run / 2 : 0),
+               ridge - run * Math.tan(pitch) / 2,
+               cz + (alongZ ? 0 : sign * run / 2)];
+      var n = alongZ ? [sign * Math.sin(pitch), Math.cos(pitch), 0]
+                     : [0, Math.cos(pitch), sign * Math.sin(pitch)];
+      return { n: n, d: n[0] * c[0] + n[1] * c[1] + n[2] * c[2], c: c,
+               half: half, rise: rise, roofEave: roofEave, ridge: ridge,
+               run: run, alongZ: alongZ, pitch: pitch };
+    }
+    /* the hipped END deck's centre plane, same convention: it rises the
+       side decks' own `run * tan(pitch)` over the (clamped) `inset`, from
+       an eave line one overhang past the block end -- see shellGable's
+       hip paragraph for why the inset clamps at depth / 2. */
+    function hipEndPlane(x0, x1, z0, z1, eave, ridgeAxis, pitch, sign) {
+      var P = deckPlane(x0, x1, z0, z1, eave, ridgeAxis, pitch, sign);
+      var depth = (P.alongZ ? z1 - z0 : x1 - x0) + 2 * FULL_HOUSE.overhang;
+      var inset = Math.min(P.run, depth / 2);
+      var endRise = P.run * Math.tan(pitch);
+      var endPitch = Math.atan2(endRise, inset);
+      var eaveY = P.ridge - P.run * Math.tan(pitch);
+      var c = P.alongZ
+        ? [(x0 + x1) / 2, eaveY, sign < 0 ? z0 - FULL_HOUSE.overhang : z1 + FULL_HOUSE.overhang]
+        : [sign < 0 ? x0 - FULL_HOUSE.overhang : x1 + FULL_HOUSE.overhang, eaveY, (z0 + z1) / 2];
+      var n = P.alongZ ? [0, Math.cos(endPitch), sign * Math.sin(endPitch)]
+                       : [sign * Math.sin(endPitch), Math.cos(endPitch), 0];
+      return { n: n, d: n[0] * c[0] + n[1] * c[1] + n[2] * c[2], c: c,
+               inset: inset, endRise: endRise, endPitch: endPitch,
+               spanEnd: Math.sqrt(inset * inset + endRise * endRise),
+               eaveY: eaveY, depth: depth };
+    }
+    /* the plane's own height over (x, z): its centre line there */
+    function planeY(pl, x, z) {
+      return (pl.d - pl.n[0] * x - pl.n[2] * z) / pl.n[1];
+    }
     function roofVault(block, forms, pitch) {
-      /* a ridge on 'x' runs east/west, so the deck SLOPES along z. */
+      /* a ridge on 'x' runs east/west, so the deck SLOPES along z. Both
+         decks are read (min of the two centre planes is the roof line
+         either side of the ridge), each dropped by half the deck's
+         thickness measured down the vertical and the gap. */
       var alongZ = (forms.ridge === 'z');
-      var half = (alongZ ? block.east - block.west
-                         : block.south - block.north) / 2;
-      return { axis: alongZ ? 'x' : 'z', slope: Math.tan(pitch),
+      var pl = [-1, 1].map(function (sign) {
+        return deckPlane(block.west, block.east, block.north, block.south,
+                         block.eave, forms.ridge, pitch, sign);
+      });
+      return { axis: alongZ ? 'x' : 'z', pl: pl,
+               under: 0.09 / Math.cos(pitch) + VAULT_GAP,
                at: alongZ ? (block.west + block.east) / 2
                           : (block.north + block.south) / 2,
-               y: block.eave + 0.18 + half * Math.tan(pitch)
-                    - 0.09 / Math.cos(pitch) - VAULT_GAP };
+               y: pl[1].ridge - 0.09 / Math.cos(pitch) - VAULT_GAP };
     }
     /* the deck underside at `u` on the vault's own slope axis */
-    function vaultTop(v, u) { return v.y - Math.abs(u - v.at) * v.slope; }
+    function vaultTop(v, u) {
+      var x = v.axis === 'x' ? u : 0, z = v.axis === 'z' ? u : 0;
+      return Math.min(planeY(v.pl[0], x, z), planeY(v.pl[1], x, z)) - v.under;
+    }
     /* the profile of a wall that RUNS along the slope axis: a pentagon
        when the ridge crosses its run, a trapezoid when it does not. */
     function vaultRidgePts(v, u0, u1, yBase) {
@@ -4673,10 +4738,89 @@
     function shellBox(g, w, h, d, c, x, y, z, opts) {
       return box(w, h, d, c, x, y, z, g, sharp(opts));
     }
+    /* ROOF VALLEYS (masking spec section 6): every facade row's world
+       vertices, snapshotted at registration -- BEFORE mergeStatic folds
+       its meshes -- so chfFabricVertices can hand a test the piece as
+       built (not the composites it became). Facade rows only: a few
+       hundred vertices each. */
+    var FEATURE_VERTS = {};
     function shellRegister(g, name, normal, room, kit) {
       g.updateMatrixWorld(true);
+      if (name.indexOf('facade_') === 0) {
+        var verts = [], v = new T.Vector3();
+        g.traverse(function (m) {
+          if (!m.isMesh || m.isInstancedMesh) return;
+          var p = m.geometry.getAttribute('position');
+          for (var i = 0; i < p.count; i++) {
+            v.fromBufferAttribute(p, i).applyMatrix4(m.matrixWorld);
+            verts.push([v.x, v.y, v.z]);
+          }
+        });
+        FEATURE_VERTS[name] = verts;
+      }
       regFabric(g, { name: name, n: normal, box: fabBox(g), room: room,
                      kit: kit });
+    }
+    /* the one cap material every cut face wears: the room shells'
+       remnants (buildRoomShells, far below) and the valley clip here.
+       Declared HERE because the facade builds -- and clips -- hundreds
+       of lines before the mask code runs; mat() caches by look, so the
+       later reader gets this same object. */
+    var CAP_MAT = mat(FARMHOUSE.section, { rough: 0.95 });
+    /* ---- THE VALLEY CLIP (masking spec section 6) ---------------------
+       A facade gable or dormer is a whole solid -- decks, trims, cap,
+       infill, box -- that runs back and DOWN under the block roof it
+       sits on, into the house. The old whole-piece ghost hid that; the
+       mask keeps everything inside a room's own volume, so it drew the
+       buried part (a shingled wedge with white battens beside the
+       study's glass doors, user report 2026-09-16). This removes it at
+       the source, at build, before the row is registered, so the row's
+       box, its convexity scan and every room mask see only what stands
+       above the roof.
+
+       `region` is the BURIED region as a convex solid: planes whose
+       kept side (n.p - d >= 0) is INSIDE it -- under every deck plane
+       of the block roof, behind the street face, forward of the
+       block's back (buriedRegion, below). Each mesh loses what lies
+       inside; what remains is emitted as at most one CONVEX mesh per
+       plane (outside plane 1; inside 1 and outside 2; ...), the
+       clipper's subtractTris partition kept as separate meshes rather
+       than concatenated, because a convex solid cut by a plane is
+       convex and the room masks clip convex meshes in place but keep
+       or drop a non-convex one whole. Each cut face is capped in
+       CAP_MAT; the caps at the deck plane lie inside the parent deck
+       (0.09 under its top surface) and the cap at the face line 0.02
+       inside the wall slab, so no section ever shows. A mesh nothing
+       of which is buried is left exactly as built; one wholly buried
+       is removed. The pieces are world-space, at identity under the
+       row group (a source under a transformed sub-group -- a dormer
+       window's frame -- is re-parented to the row: the frame's own
+       transform is already baked into the world triangles). */
+    function clipBuried(g, region) {
+      var C = window.HouseClip;
+      g.updateMatrixWorld(true);
+      var meshes = [];
+      g.traverse(function (m) { if (m.isMesh && !m.isInstancedMesh) meshes.push(m); });
+      meshes.forEach(function (m) {
+        var rest = worldTris(m), pieces = [];
+        region.forEach(function (pl) {
+          var out = C.clipTris(rest, C.flip(pl), 1);
+          if (C.triArea(out, 0) > 1e-6) pieces.push(out);
+          rest = C.clipTris(rest, pl, 1);
+        });
+        if (C.triArea(rest, 0) <= 1e-6) return;     /* nothing buried: as built */
+        m.parent.remove(m);
+        pieces.forEach(function (tris) {
+          [trisToMesh(tris, 0, m.material, m, null),
+           trisToMesh(tris, 1, CAP_MAT, m, null)].forEach(function (pm) {
+            if (!pm) return;
+            pm.userData.convex = true;          /* a convex solid cut by planes */
+            delete pm.userData.remnant;         /* not a room shell's stand-in */
+            g.add(pm);
+          });
+        });
+      });
+      g.updateMatrixWorld(true);
     }
     function shellWindow(g, x, y, z, angle, w, h, glow) {
       var frame = new T.Group(); frame.position.set(x, y, z);
@@ -4751,15 +4895,16 @@
        at each end, and the two ends become triangular decks of the same
        pitch instead of vertical clapboard infill (so all four planes
        meet at the same ridge point and no batten infill is needed). */
-    function shellGable(name, x0, x1, z0, z1, eave, ridgeAxis, room, ends, pitch, slopeRooms, depthEnds, form) {
+    function shellGable(name, x0, x1, z0, z1, eave, ridgeAxis, room, ends, pitch, slopeRooms, depthEnds, form, buried) {
       var alongZ = (ridgeAxis === 'z' || ridgeAxis === true);
       var hip = (form === 'hip');
       pitch = pitch || PITCH_FAMILY;
-      var half = (alongZ ? x1 - x0 : z1 - z0) / 2;
+      /* the deck arithmetic is deckPlane's (one derivation, masking task
+         5); the +1 plane carries the numbers both signs share */
+      var P1 = deckPlane(x0, x1, z0, z1, eave, ridgeAxis, pitch, 1);
+      var half = P1.half, rise = P1.rise, roofEave = P1.roofEave;
+      var ridge = P1.ridge, run = P1.run;
       var cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
-      var rise = half * Math.tan(pitch), roofEave = eave + 0.18;
-      var ridge = roofEave + rise;
-      var run = half + FULL_HOUSE.overhang;
       var span = run / Math.cos(pitch);
       var depth = (alongZ ? z1 - z0 : x1 - x0) + 2 * FULL_HOUSE.overhang;
       /* Adjacent roof sections meet at the partition without overlapping
@@ -4795,6 +4940,10 @@
       var capLen = hip ? depth - 2 * inset : depth;
       [-1, 1].forEach(function (sign) {
         var g = shellGroup(), deck;
+        /* the deck sits on its own centre plane; a depthEnds shift moves
+           it along the ridge only, which the plane does not see */
+        var P = deckPlane(x0, x1, z0, z1, eave, ridgeAxis, pitch, sign);
+        var at = [alongZ ? P.c[0] : cx, P.c[1], alongZ ? cz : P.c[2]];
         if (hip) {
           /* the deck's own local frame is the box deck's: (along-ridge,
              thickness, slope) for a ridge on x, (slope, thickness,
@@ -4825,17 +4974,12 @@
              (eave edge, two slanted sides, an inset ridge edge) or, when
              capLen clamps to zero, a triangle -- either way convex. */
           deck.userData.convex = true;
-          deck.position.set(cx + (alongZ ? sign * run / 2 : 0),
-                            ridge - run * Math.tan(pitch) / 2,
-                            cz + (alongZ ? 0 : sign * run / 2));
+          deck.position.set(at[0], at[1], at[2]);
           finish(deck); g.add(deck);
         } else {
           deck = shellBox(g, alongZ ? span : depth, 0.18,
                           alongZ ? depth : span, NICE ? 0xffffff : FARMHOUSE.roofTone,
-                          cx + (alongZ ? sign * run / 2 : 0),
-                          ridge - run * Math.tan(pitch) / 2,
-                          cz + (alongZ ? 0 : sign * run / 2),
-                          { rough: 0.9, map: shingleT });
+                          at[0], at[1], at[2], { rough: 0.9, map: shingleT });
         }
         if (alongZ) deck.rotation.z = -sign * pitch;
         else deck.rotation.x = sign * pitch;
@@ -4855,6 +4999,7 @@
         g.updateMatrixWorld(true);
         var n = new T.Vector3(0, 1, 0).applyQuaternion(
           deck.getWorldQuaternion(new T.Quaternion()));
+        if (buried) clipBuried(g, buried);
         shellRegister(g, name + (alongZ ? (sign < 0 ? '_west' : '_east')
                                        : (sign < 0 ? '_north' : '_south')),
                       n.toArray(), slopeRooms ? slopeRooms[sign < 0 ? 0 : 1] : room);
@@ -4872,9 +5017,8 @@
              instead of tearing the pyramid open. Local frame (slope,
              thickness, along-eave), same quarter-turn idiom as the
              trapezoids. */
-          var endRise = run * Math.tan(pitch);
-          var endPitch = Math.atan2(endRise, inset);
-          var spanEnd = Math.sqrt(inset * inset + endRise * endRise);
+          var E = hipEndPlane(x0, x1, z0, z1, eave, ridgeAxis, pitch, sign);
+          var endRise = E.endRise, endPitch = E.endPitch, spanEnd = E.spanEnd;
           var ge = cgeo('shell-hipend|' + run + '|' + inset + '|' + endRise +
                         '|' + sign, function () {
             var s = new T.Shape();
@@ -4889,14 +5033,10 @@
           /* VIEW-VOLUME MASKING (task 2): a hip end is one triangular
              deck (eave, eave, apex) -- convex. */
           hm.userData.convex = true;
-          var eaveY = ridge - run * Math.tan(pitch);
+          var eaveY = E.eaveY;
           hm.rotation.y = alongZ ? -Math.PI / 2 : 0;
           hm.rotation.z = -sign * endPitch;
-          if (alongZ) hm.position.set(cx, eaveY,
-            sign < 0 ? z0 - FULL_HOUSE.overhang : z1 + FULL_HOUSE.overhang);
-          else hm.position.set(
-            sign < 0 ? x0 - FULL_HOUSE.overhang : x1 + FULL_HOUSE.overhang,
-            eaveY, cz);
+          hm.position.set(E.c[0], E.c[1], E.c[2]);
           finish(hm); g.add(hm);
           shellBox(g, alongZ ? 2 * run : 0.14, 0.28, alongZ ? 0.14 : 2 * run,
                    FARMHOUSE.trim, alongZ ? cx : (sign < 0 ? x0 : x1) +
@@ -4905,6 +5045,7 @@
           g.updateMatrixWorld(true);
           var hn = new T.Vector3(0, 1, 0).applyQuaternion(
             hm.getWorldQuaternion(new T.Quaternion()));
+          if (buried) clipBuried(g, buried);
           shellRegister(g, name + (alongZ ? (sign < 0 ? '_back' : '_front')
                                          : (sign < 0 ? '_end_west' : '_end_east')),
                         hn.toArray(), room);
@@ -4939,6 +5080,7 @@
           if (alongZ) rake.rotation.z = -side * pitch;
           else rake.rotation.x = side * pitch;
         });
+        if (buried) clipBuried(g, buried);
         shellRegister(g, name + (alongZ ? (sign < 0 ? '_back' : '_front')
                                        : (sign < 0 ? '_end_west' : '_end_east')),
                       alongZ ? [0, 0, sign] : [sign, 0, 0], room);
@@ -5053,15 +5195,69 @@
        same cached material rather than a second one. */
     var FGLZ = { rough: 0.16, metal: 0.0, envInt: 0.6 };
 
-    /* The street ROOF PLANE's eave for each face. Both blocks share one
-       eave line (GARAGE_BLOCK.eave IS EXT_TOP4), so this table is
-       degenerate today, but every roof builder still reads it -- not
-       slot.eave directly -- so a later arc's per-block eave (spec 2)
-       has one place to diverge without hunting down every call site. */
-    var ROOF_PLANE_EAVE = { garage_block: GARAGE_BLOCK.eave, main: EXT_TOP4 };
-    function roofPlaneEave(slot) {
-      var pe = ROOF_PLANE_EAVE[slot.face];
-      return pe === undefined ? slot.eave : pe;
+    /* ROOF VALLEYS (masking spec section 6): the block behind each face
+       and the roof it was built with -- the same rows and forms the
+       roof_main / garage_block_roof shellGable calls below read, at the
+       block roofs' own Math.PI / 8 -- so a street feature can find the
+       deck it stands on from the slot table alone. This replaces the
+       ROOF_PLANE_EAVE / roofPlaneEave table (the per-face eave, kept so
+       a later per-block eave had one place to diverge): the block row's
+       own `eave` IS that place now, read through its deck planes. */
+    var FACE_BLOCKS = {
+      main:         { block: FULL_HOUSE,   forms: ROOF_FORMS.main },
+      garage_block: { block: GARAGE_BLOCK, forms: ROOF_FORMS.garage }
+    };
+    var BLOCK_PITCH = Math.PI / 8;
+    /* every deck plane of the block's roof: the two slope decks, plus
+       the two hipped ends when the form is a hip. The roof surface is
+       the LOWEST of them at any (x, z). */
+    function blockDeckPlanes(face) {
+      var B = FACE_BLOCKS[face], b = B.block, out = [];
+      [-1, 1].forEach(function (sign) {
+        out.push(deckPlane(b.west, b.east, b.north, b.south, b.eave,
+                           B.forms.ridge, BLOCK_PITCH, sign));
+      });
+      if (B.forms.form === 'hip') [-1, 1].forEach(function (sign) {
+        out.push(hipEndPlane(b.west, b.east, b.north, b.south, b.eave,
+                             B.forms.ridge, BLOCK_PITCH, sign));
+      });
+      return out;
+    }
+    /* the STREET deck of the block: the south slope when the ridge runs
+       x; a ridge on z puts a gable end on the street, so there is no
+       one deck under a street feature (null) and the callers below fall
+       back to the roof line. */
+    function faceDeckPlane(face) {
+      var B = FACE_BLOCKS[face];
+      if (B.forms.ridge === 'z') return null;
+      var b = B.block;
+      return deckPlane(b.west, b.east, b.north, b.south, b.eave,
+                       B.forms.ridge, BLOCK_PITCH, 1);
+    }
+    /* the roof line over (x, z) on that block: its centre planes' minimum */
+    function roofY(face, x, z) {
+      return blockDeckPlanes(face).reduce(function (y, pl) {
+        return Math.min(y, planeY(pl, x, z));
+      }, Infinity);
+    }
+    /* the buried region behind a face (clipBuried's `region`): under
+       every deck plane (flipped: kept side below), behind the face --
+       0.02 inside its outer plane, so the cut face lands inside the
+       wall slab and never coplanar with the siding -- and forward of
+       the block's back. No bound at the block's ENDS: a feature spans
+       slots of its face and overhangs them by the block roof's own
+       0.32, so it never leaves the roof's footprint, and the one thing
+       an end bound would have kept is a deck's outer strip poking out
+       through the block's gable-end wall under the rake (the bay gable
+       at slot 0 did, 0.18 past the garage's west infill) -- which is
+       exactly a feature running on where the block roof already is. */
+    var FACE_INSET = 0.02;
+    function buriedRegion(face) {
+      var b = FACE_BLOCKS[face].block, C = window.HouseClip;
+      var region = blockDeckPlanes(face).map(function (pl) { return C.flip(pl); });
+      region.push({ n: [0, 0, -1], d: -(b.south - FACE_INSET) });
+      region.push({ n: [0, 0, 1], d: b.north });
+      return region;
     }
     /* ---- builders: one per kind, each its own registered piece -------
        Every builder makes a shellGroup(), fills it through the existing
@@ -5383,9 +5579,52 @@
         gtag(box(STILE, dh, 0.06, FARMHOUSE.frame, cx, y, z + 0.08, garageDoorG));
       }
     }
+    /* ROOF VALLEYS (masking spec section 6): where a street feature's
+       ridge stands and how far back it runs.
+
+       THE HEIGHT RULE. A feature's eave is set from the roof line at the
+       street wall: `eave = roofY(face, cx, face z) - 0.18`, so its own
+       roofEave (eave + 0.18, shellGable's deck centre at the wall line)
+       IS the parent deck's centre plane there and its ridge stands proud
+       of that plane at the wall by exactly its own rise, half * tan
+       (PITCH_FAMILY). On a block with ridge x that is the block eave,
+       which the bay gable already used; the ordinary street gable used
+       to sit 0.8 lower (the block eave - 0.8: the porch beam's height)
+       whether or not there was a porch under it.
+
+       THE PORCH EXCEPTION. A gable sharing a span with a porch IS that
+       porch's roof, on the porch's posts and beam (PORCH_EAVE4, 4.8),
+       and stays there: raised 0.8 to the rule it would float clear of
+       the posts it rests on. Its ridge still stands proud at the wall
+       -- canonical gable_8: 7.505 against the plane's 5.78, 1.725, its
+       rise 2.525 less the 0.8 -- and in FRONT of the wall its low eaves
+       pass under the main eave as the porch roof always has; only what
+       is behind the wall and under the deck is buried, and that is what
+       the clip removes.
+
+       THE BACK. The feature runs back at least the old 2.8 and, when
+       its ridge meets the parent deck further back than that (the ridge
+       line rises no further; the deck keeps climbing), to 0.6 past the
+       meet point -- so the ridge cap (0.125 over the ridge line) and the
+       deck's own top face close at a point on the parent roof, the two
+       valleys meeting there, instead of a square cut end hanging above
+       it. Everything behind the meet is under the deck and clipped
+       away; the 0.6 is what the cap's height and the deck's thickness
+       need. A ridge on z has no meet point along z (the roof line does
+       not change with z), so the old depth stands. */
+    function featureEave(slot, cx) {
+      return roofY(slot.face, cx, slot.z) - 0.18;
+    }
+    function featureBack(slot, cx, ridge) {
+      var pl = faceDeckPlane(slot.face), back = slot.z - 2.8;
+      if (!pl || Math.abs(pl.n[2]) < 1e-6) return back;
+      var meet = (pl.d - pl.n[0] * cx - pl.n[1] * ridge) / pl.n[2];
+      return Math.min(back, meet - 0.6);
+    }
     function gableAt(feat) {
       var e = spanX(feat), slot = e.slot;
       var name = 'facade_' + slot.face + '_gable_' + feat.slot;
+      var region = buriedRegion(slot.face);
       if (feat.slot >= GARAGE_BAY_SLOTS[0] && feat.slot <= GARAGE_BAY_SLOTS[1] &&
           feat.slot + feat.span - 1 <= GARAGE_BAY_SLOTS[1]) {
         /* the street-facing garage gable (spec section 2.1: today's
@@ -5401,31 +5640,48 @@
            pre-clipped, but a feature that somehow reached here spanning
            past the bay falls through to the ordinary gable below rather
            than stretching the bay's fixed z range over the mudroom. */
-        shellGable(name, e.x0, e.x1, 4.0, 10.1, roofPlaneEave(slot), 'z',
-                   slot.room, [1], PITCH_FAMILY, null, null);
+        /* the bay's eave IS the block eave (featureEave gives the same
+           5.6 on a ridge-x block); its z range 4.0..10.1 already reaches
+           past the meet point (5.47 for the canonical bay), so the
+           valley closes on its own */
+        shellGable(name, e.x0, e.x1, 4.0, 10.1, featureEave(slot, e.cx), 'z',
+                   slot.room, [1], PITCH_FAMILY, null, null, null, region);
         return;
       }
       /* a porch sharing the span carries the gable out to its own front
-         edge (today's porch_roof); otherwise the gable projects a fixed
-         2.2 from the face. */
-      var front = slot.z + 2.2;
+         edge (today's porch_roof) and hands it the porch's eave;
+         otherwise the gable projects a fixed 2.2 from the face at the
+         height rule's eave. */
+      var front = slot.z + 2.2, porch = false;
       PORCH_SPANS.forEach(function (p) {
-        if (p.slot < feat.slot + feat.span && feat.slot < p.slot + p.span)
-          front = Math.max(front, p.frontZ);
+        if (p.slot < feat.slot + feat.span && feat.slot < p.slot + p.span) {
+          front = Math.max(front, p.frontZ); porch = true;
+        }
       });
-      shellGable(name, e.x0, e.x1, slot.z - 2.8, front,
-                 roofPlaneEave(slot) - 0.8, 'z', slot.room, [1],
-                 PITCH_FAMILY, null, null);
+      var eave = porch ? PORCH_EAVE4 : featureEave(slot, e.cx);
+      var ridge = eave + 0.18 + (e.w / 2) * Math.tan(PITCH_FAMILY);
+      shellGable(name, e.x0, e.x1, featureBack(slot, e.cx, ridge), front,
+                 eave, 'z', slot.room, [1], PITCH_FAMILY, null, null, null,
+                 region);
     }
 
     function dormerAt(feat) {
       /* a box on the face's roof plane with its own mini gable and, by
-         default, a window. All four street planes are the subordinate
-         Math.PI/8 slopes, so one plane pitch places every dormer. */
+         default, a window. The roof line under it is the block's own
+         deck planes (roofY), whatever form and ridge the block has. */
       var e = spanX(feat), slot = e.slot, g = shellGroup();
-      var plane = Math.PI / 8, w = Math.max(1.2, e.w - 0.4);
-      var zc = slot.z - 1.6;
-      var y = roofPlaneEave(slot) + 0.18 + (slot.z - zc) * Math.tan(plane);
+      var w = Math.max(1.2, e.w - 0.4);
+      var zc = slot.z - 1.6, region = buriedRegion(slot.face);
+      /* ROOF VALLEYS (masking spec section 6): the box STANDS on the
+         roof -- its bottom edge at its front face (zc + 0.8) is the
+         roof line there (roofY: the block's own deck planes, no longer
+         an assumed Math.PI / 8), so the whole 1.9 of its front, window
+         included, is out of the roof; the back of the flat-bottomed box
+         is under the deck (the plane climbs 0.66 over the box's 1.6)
+         and the clip takes it. It used to be CENTRED on the plane at
+         zc, its front face 0.62 buried and the window's sill 0.22 into
+         the shingles. */
+      var y = roofY(slot.face, e.cx, zc + 0.8) + 0.95;
       shellBox(g, w, 1.9, 1.6, NICE ? 0xffffff : FARMHOUSE.body,
                e.cx, y, zc, { rough: 0.95, map: CLAD() });
       if (feat.window !== false) {
@@ -5434,15 +5690,17 @@
       /* VIEW-VOLUME MASKING (task 2, corrected): not a kit -- the box and
          the window's boxes are all stamped convex; Task 3 clips them
          pre-merge, same as any other windowed wall. */
+      clipBuried(g, region);
       shellRegister(g, 'facade_' + slot.face + '_dormer_' + feat.slot,
                     [0, 0, 1], slot.room);
       /* _dormer_<slot>_roof, not _dormerroof_<slot>: the registry reads
          kind and slot straight out of the name, and a dormer's roof is
-         the same dormer feature. */
+         the same dormer feature. Its eave is the box top, as before
+         (the height rule's own form: ridge = box top + 0.18 + rise). */
       shellGable('facade_' + slot.face + '_dormer_' + feat.slot + '_roof',
                  e.cx - w / 2, e.cx + w / 2, zc - 0.8, zc + 0.8,
                  y + 0.95, 'z', slot.room, [1], PITCH_FAMILY,
-                 null, null);
+                 null, null, null, region);
     }
 
     function hipEndAt(feat) {
@@ -5466,8 +5724,14 @@
            the east fin is offset by its own thickness to sit OUTBOARD of
            the span exactly as the west one does -- shellGable's own end
            fills mirror themselves the same way. */
-        m.position.set(sign < 0 ? e.x0 : e.x1 + 0.14,
-                       roofPlaneEave(slot) + 0.18, slot.z);
+        /* ROOF VALLEYS (masking spec section 6): the fin stands ON the
+           roof line at the wall (roofY, the deck's own centre plane
+           there: block eave + 0.18 on a ridge-x block, as before) and
+           runs 2.2 FORWARD of the face (local +x is world +z after the
+           quarter turn), so nothing of it is behind the wall or under
+           the deck -- no clip. */
+        var fx = sign < 0 ? e.x0 : e.x1 + 0.14;
+        m.position.set(fx, roofY(slot.face, fx, slot.z), slot.z);
         finish(m); g.add(m);
       });
       shellRegister(g, 'facade_' + slot.face + '_hip_end_' + feat.slot,
@@ -8875,7 +9139,8 @@
        band off every such wall (recorded in the report). P is never
        moved, so the cut edge still projects onto the room's own
        silhouette. */
-    var CAP_MAT = mat(FARMHOUSE.section, { rough: 0.95 });
+    /* CAP_MAT is declared with shellRegister (the valley clip uses it
+       at facade-build time, long before this runs) */
     var STRADDLE_TOL = WALL_T4 + 0.25;
     var ROOF_FEATURE = /^facade_.*_(gable|dormer|hip_end)_\d+/;   /* ruling 1 */
     var ROOF_FEATURE_MIN_KEPT = 0.2;
@@ -10375,6 +10640,11 @@
       },
       solveShell: solveShell, ROOM_AABB: ROOM_AABB, AO_OCCLUDERS: AO_OCCLUDERS,
       worldTris: worldTris,
+      /* ROOF VALLEYS (masking task 5): the street deck plane under a
+         face's features and the facade rows' as-built vertices, for the
+         read-only window.chfRoofPlane / chfFabricVertices hooks */
+      faceDeckPlane: faceDeckPlane, blockDeckPlanes: blockDeckPlanes,
+      FEATURE_VERTS: FEATURE_VERTS,
       /* VIEW-VOLUME MASKING (task 3): the five room shells, their masks
          (P, W, box, cam) and the one cap material, for the read-only
          window.chfRoomShell* hooks below */
@@ -11603,6 +11873,28 @@
      both and asserts them against services/house_facade.py, which is
      what keeps the JS and Python slot tables from ever drifting. */
   window.chfFacade = function () { return webgl ? webgl.SPEC : null; };
+  /* ROOF VALLEYS (masking spec section 6): the block deck plane under a
+     street face's features, {n, d} with n the deck's upward normal
+     (n.p - d >= 0 is above the deck), derived by deckPlane exactly as
+     shellGable placed the deck; null for a ridge on z (a gable end on
+     the street: no one deck). chfRoofPlanes lists every deck plane of
+     the block roof (two, four for a hip). */
+  window.chfRoofPlane = function (face) {
+    if (!webgl) return null;
+    var pl = webgl.faceDeckPlane(face);
+    return pl ? { n: pl.n, d: pl.d } : null;
+  };
+  window.chfRoofPlanes = function (face) {
+    if (!webgl) return [];
+    return webgl.blockDeckPlanes(face).map(function (pl) { return { n: pl.n, d: pl.d }; });
+  };
+  /* the world vertices of one facade row's meshes as BUILT (after the
+     valley clip, before mergeStatic), [[x, y, z], ...]; null for a row
+     that is not a facade piece */
+  window.chfFabricVertices = function (name) {
+    if (!webgl) return null;
+    return webgl.FEATURE_VERTS[name] || null;
+  };
   window.chfFacadeSlots = function () { return webgl ? webgl.SLOTS : []; };
   /* Read-only test hook: find a canvas pixel over actual geometry. Use
      the production hit readers so candidate selection cannot drift from
