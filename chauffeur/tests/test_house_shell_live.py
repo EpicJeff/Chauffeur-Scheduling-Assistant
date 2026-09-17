@@ -1400,8 +1400,128 @@ def scenario_block_roof_forms_register_and_audit():
                     continue
                 a = page.evaluate(VERTEX_AUDIT_ALL_JS, f)
                 check(a['buried'] == 0, f"{label}: {f['name']} has {a['buried']} vertices under the block roof")
+            # The alias's one production consumer: the Mudroom marker is
+            # placed from chfNavProbe({piece: ...}) with the CANONICAL
+            # name, so the probe has to resolve it the way hintChoices
+            # does. A marker is only drawn at a stop that can SEE its
+            # piece, so the orbit is walked until one can -- a null at
+            # every stop is a marker the ridge setting stranded.
+            hit, stop = None, None
+            for k in range(8):
+                page.evaluate('window.chfOrbitTo(%d)' % k)
+                page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+                hit = page.evaluate("window.chfNavProbe({piece:'garage_block_roof_south'})")
+                if hit:
+                    stop = k
+                    break
+            check(hit is not None,
+                  f'{label}: the Mudroom marker reaches its aliased piece '
+                  f'({street!r}) from no orbit stop')
+            print(f'    {label}: Mudroom marker reachable at orbit stop {stop}')
             errs = [e for e in served.errors() if 'WebGL' not in e]
             check(not errs, f'{label}: console clean: {errs[:3]}')
+
+
+# BLOCKS (spec 2026-09-17 section 0): hipEndAt's fin reads PITCH_FAMILY
+# (the STREET feature pitch, 34.8 degrees on CANONICAL) rather than the
+# block roofs' own pitch, and no spec any test builds had ever asked for
+# a hip_end -- CANONICAL has none and worst_case() builds none, and both
+# vertex audits skip the kind. This is that missing pin: the fin's rise
+# over its 2.2 depth IS tan(the facade's own pitch), it stands ON the
+# roof line at the wall, it stops short of the ridge, and nothing of it
+# is behind the face (it runs FORWARD, over the overhang, so unlike a
+# gable it has nothing to clip).
+HIP_END_JS = """(arg) => {
+  const vs = window.chfFabricVertices(arg.name);
+  if (!vs || !vs.length) return null;
+  const planes = window.chfRoofPlanes(arg.face);
+  const faceZ = window.chfFacadeSlots().find(s => s.face === arg.face).z;
+  const roofAt = (x, z) => {
+    let y = 1e9;
+    planes.forEach(pl => {
+      const h = (pl.d - pl.n[0]*x - pl.n[2]*z) / pl.n[1];
+      if (h < y) y = h;             // the roof line: the lowest deck
+    });
+    return y;
+  };
+  let low = 1e9, lowX = 0, top = -1e9, topX = 0, behind = 0, minZ = 1e9, maxZ = -1e9;
+  vs.forEach(p => {
+    if (p[1] < low) { low = p[1]; lowX = p[0]; }
+    if (p[1] > top) { top = p[1]; topX = p[0]; }
+    if (p[2] < faceZ - 0.05) behind++;
+    if (p[2] < minZ) minZ = p[2];
+    if (p[2] > maxZ) maxZ = p[2];
+  });
+  // the ridge is where the roof surface stands highest, whichever way
+  // the ridge runs -- sampled rather than solved, so a hip or a ridge
+  // on z would read the same way.
+  let ridge = -1e9;
+  for (let z = -14; z <= 20; z += 0.02) {
+    const y = roofAt(topX, z);
+    if (y > ridge) ridge = y;
+  }
+  return { n: vs.length, low: low, top: top, behind: behind, minZ: minZ,
+           maxZ: maxZ, roofAtWall: roofAt(lowX, faceZ), ridge: ridge,
+           rise: top - low };
+}"""
+
+
+def scenario_a_hip_end_stands_on_the_roof_line():
+    """Spec 2026-09-17 blocks section 0: a hip_end is a STREET feature, so
+    its fin is built at the facade's own pitch -- the one roof kind no
+    canonical or saved spec had ever asked for, and so the one kind that
+    had never been built in a browser at all."""
+    from services import house_facade as hf
+    served = live_app(_seed)
+    if served is None:
+        return
+    # slot 15 span 2 on the main face: clear of CANONICAL's two gables, so
+    # _resolve_exclusive (which ranks a hip_end last) cannot drop it.
+    spec = hf.normalize({**hf.CANONICAL,
+                         'roof': hf.CANONICAL['roof'] +
+                                 [{'slot': 15, 'span': 2, 'kind': 'hip_end'}]})[0]
+    rec = hf.save_facade('hip end pin', spec, activate=True)
+    try:
+        with served.browser() as page:
+            page.add_init_script(DAY_LOCK_JS)
+            page.goto(served.url('house?quality=high'))
+            page.wait_for_selector('#room canvas', timeout=20000)
+            page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+            built = page.evaluate('window.chfFacade()')
+            check(any(f['kind'] == 'hip_end' for f in built['roof']),
+                  f"the built spec carries the hip end: {built['roof']}")
+            names = {r['name'] for r in page.evaluate('window.chfShellFabric()')}
+            check('facade_main_hip_end_15' in names,
+                  f'the hip end registers: {sorted(n for n in names if "hip" in n)}')
+            a = page.evaluate(HIP_END_JS, {'name': 'facade_main_hip_end_15',
+                                           'face': 'main'})
+            check(a and a['n'] > 0, 'the hip end has vertices')
+            # the fin's own pitch is the FAMILY's, not the block's: 2.2 of
+            # depth rises 2.2 x tan(pitch) -- 0.91 at the block's own
+            # pi/8, 1.53 at CANONICAL's 34.8 degrees.
+            want = 2.2 * _math.tan(_math.radians(built['pitch_deg']))
+            check(abs(a['rise'] - want) < 0.02,
+                  f"the fin stands at the facade pitch: rise {a['rise']:.3f} "
+                  f"!= {want:.3f} (2.2 x tan({built['pitch_deg']}))")
+            check(abs(a['low'] - a['roofAtWall']) < 0.1,
+                  f"the fin stands ON the roof line at the wall: "
+                  f"{a['low']:.3f} vs {a['roofAtWall']:.3f}")
+            check(a['low'] > a['roofAtWall'] - 0.05,
+                  f"the fin never sinks under the roof line: "
+                  f"{a['low']:.3f} vs {a['roofAtWall']:.3f}")
+            check(a['top'] < a['ridge'],
+                  f"the fin stops short of the ridge: {a['top']:.3f} "
+                  f">= {a['ridge']:.3f}")
+            check(a['behind'] == 0,
+                  f"nothing of the fin is behind the face: {a['behind']} vertices")
+            print(f"    hip end: rise {a['rise']:.3f} over 2.2, low {a['low']:.3f} "
+                  f"on roof {a['roofAtWall']:.3f}, top {a['top']:.3f} under "
+                  f"ridge {a['ridge']:.3f}, z {a['minZ']:.2f}..{a['maxZ']:.2f}")
+            errs = [e for e in served.errors() if 'WebGL' not in e]
+            check(not errs, f'console clean: {errs[:3]}')
+    finally:
+        hf.delete_facade(rec['id'])
+        hf.set_active(hf.CANONICAL_ID)
 
 
 if __name__ == '__main__':
@@ -1415,4 +1535,5 @@ if __name__ == '__main__':
     scenario_every_fabric_mesh_is_convex_or_a_kit()
     scenario_room_masks_cut_only_what_blocks_the_room()
     scenario_block_roof_forms_register_and_audit()
+    scenario_a_hip_end_stands_on_the_roof_line()
     print("test_house_shell_live OK")

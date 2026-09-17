@@ -11970,8 +11970,16 @@
     }
     var b = null, target = null, targetName = null;
     if (spec.piece) {
+      /* BLOCKS (spec 2026-09-17 section 0): a caller names the CANONICAL
+         piece (the Mudroom marker asks for garage_block_roof_south), and
+         roofAlias hands back the piece that stands there under this
+         block's form and ridge -- on a ridge z that is the block's own
+         street-facing end, under a different registered name. Resolved
+         here, beside hintChoices, so the marker the hint places and the
+         probe that places it cannot disagree. */
+      var pieceName = webgl.roofAlias(spec.piece);
       webgl.FABRIC.forEach(function (f) {
-        if (f.name === spec.piece) { b = f.box; target = f.g; targetName = f.name; }
+        if (f.name === pieceName) { b = f.box; target = f.g; targetName = f.name; }
       });
       if (!b) return null;
     } else if (spec.front) {
@@ -12132,8 +12140,8 @@
          CANONICAL roof piece; roofAlias hands back the piece that
          actually stands there under this block's form and ridge. `key`
          stays canonical, so hintAttention still matches. */
-      var spec = {};
-      spec[h[3] || 'piece'] = h[3] ? h[0] : webgl.roofAlias(h[0]);
+      var spec = {}, kind = h[3] || 'piece';
+      spec[kind] = kind === 'piece' ? webgl.roofAlias(h[0]) : h[0];
       return { spec: spec, label: h[1], key: h[0], icons: h[2], attention: h[4] || [] };
       });
       return exterior;

@@ -126,8 +126,7 @@ VERTEX_AUDIT_JS = """(arg) => {
 VERTEX_AUDIT_ALL_JS = """(arg) => {
   const planes = window.chfRoofPlanes(arg.face), vs = window.chfFabricVertices(arg.name);
   const faceZ = window.chfFacadeSlots().find(s => s.face === arg.face).z;
-  const yAt = (pl, x, z) => (pl.d - pl.n[0]*x - pl.n[2]*z) / pl.n[1];
-  let buried = 0, worst = 1e9, top = -1e9, topX = 0, n = vs.length;
+  let buried = 0, worst = 1e9, n = vs.length;
   vs.forEach(p => {
     let over = -1e9;
     planes.forEach(pl => {
@@ -139,11 +138,11 @@ VERTEX_AUDIT_ALL_JS = """(arg) => {
     // run the full height of the cut piece, so a threshold AT the cut
     // plane counts the cut itself as buried geometry.
     if (p[2] < faceZ - 0.05) { if (over < worst) worst = over; if (over < -0.05) buried++; }
-    if (p[1] > top) { top = p[1]; topX = p[0]; }
   });
-  let wallY = 1e9;
-  planes.forEach(pl => { const y = yAt(pl, topX, faceZ); if (y < wallY) wallY = y; });
-  return { n, buried, worst, proudAtWall: top - wallY };
+  // no proudAtWall: the single-deck audit measures a gable's stand over
+  // its one street deck, and this audit's callers ask only whether
+  // anything sank under the roof.
+  return { n, buried, worst };
 }"""
 
 
