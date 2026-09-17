@@ -42,7 +42,7 @@
 **Files:**
 - Create: `chauffeur/static/house_clip.js`
 - Modify: `chauffeur/templates/house.html` (script tag before `house.js`; find the existing `house_study.js`/`house_features.js` tags and add beside them)
-- Test: `chauffeur/tests/test_house_live.py` (new `scenario_clipper_cuts_convex_meshes`, evaluated in the browser)
+- Test: `chauffeur/tests/test_house_live.py` (new `scenario_clipper_cuts_convex_meshes`, evaluated in the browser; now in `test_house_shell_live.py`, Task 7)
 
 **Interfaces:**
 - Produces `window.HouseClip` with:
@@ -258,7 +258,7 @@ The `ring` orders were chosen so each face's ring is counter-clockwise seen from
 
 **Files:**
 - Modify: `chauffeur/static/house.js` — `box()` (~1189-1208), `shellBox` (~4609), the extrude sites in `shellGable` (hip decks ~4700-4750, hip ends ~4795, gable-end infill ~4789-4806), `vaultSection` (~4380-4430), any other `ExtrudeGeometry`/`ShapeGeometry` inside a fabric group (grep `ExtrudeGeometry` and `ShapeGeometry` between the first `shellGroup()` and `mergeStatic`).
-- Test: `chauffeur/tests/test_house_live.py` (`scenario_every_fabric_mesh_is_convex_or_a_kit`)
+- Test: `chauffeur/tests/test_house_live.py` (`scenario_every_fabric_mesh_is_convex_or_a_kit`; now in `test_house_shell_live.py`, Task 7)
 
 **Interfaces:**
 - Produces: `mesh.userData.convex === true` on every convex fabric mesh; `regFabric(group, o)` accepts `o.kit === true` (doors, windows, porch, lamp kits — treated whole); a house.js helper `worldTris(mesh)` → `tris` (world-space, `uv` from the geometry's `uv` attribute, `slot 0`) for indexed and non-indexed geometry; exposure `window.chfFabricConvexity()` → `[{name, meshes, convex, kit}]`.
@@ -297,7 +297,7 @@ function worldTris(mesh) {
 
 **Files:**
 - Modify: `chauffeur/static/house.js` — `regFabric` (~957), `solveShell` (~1042), the build tail (after the last `regFabric`/`refabBox` and BEFORE `FABRIC.forEach(function (f) { mergeStatic(f.g, NO_MERGE); })` ~8606; `bakeAO` ~8830), `ROOM_AABB` (~9732-9757), `chfShellFabric` (~10793-10816), exposures.
-- Test: `chauffeur/tests/test_house_live.py` (`scenario_room_masks_cut_only_what_blocks_the_room`), `chauffeur/tests/test_house_life_live.py:91` (`verdict` → `maskedFraction`)
+- Test: `chauffeur/tests/test_house_live.py` (`scenario_room_masks_cut_only_what_blocks_the_room`; now in `test_house_shell_live.py`, Task 7), `chauffeur/tests/test_house_life_live.py:91` (`verdict` → `maskedFraction`)
 
 **Interfaces:**
 - Consumes: `HouseClip` (Task 1), `userData.convex`, `kit`, `worldTris` (Task 2).
@@ -471,7 +471,7 @@ function solveShell(camPos, subject) {
 **Files:**
 - Modify: `chauffeur/static/house.js` — `regFabric` fields (`owners`, `cutawayRoom`, `twoSided`, `mode`, `plane`, `pad`), `shellRegister`/`shellWall`/`shellGable` signatures, `south_wall`+`south_wall_east` (~4147-4260), `roof_main_west`/`roof_main_east` (~5235-5256 → one `shellGable('roof_main', …)`), `STUDY_SLOTS`/`slotOwners`/`spanOwners` (~4678-4790), `VAULTED`/`roofVault` (reads the single roof again), every call site (grep each retired name).
 - Modify: `chauffeur/services/house_facade.py` (`STUDY_SLOTS` :49, `slot_owners` :52, `slot_table` :82-93), `chauffeur/tests/test_house_facade.py:55-70`.
-- Test: `chauffeur/tests/test_house_live.py` (registry KEPT set, mesh pin, roof pins, Task 3's scenario names), `chauffeur/tests/test_house_life_live.py`.
+- Test: `chauffeur/tests/test_house_live.py` (registry KEPT set, mesh pin, roof pins, Task 3's scenario names — Task 7 later split these into `test_house_shell_live.py`/`test_house_facade_live.py`), `chauffeur/tests/test_house_life_live.py`.
 
 **Interfaces:**
 - Produces: `regFabric(group, {name, n, box, room, kit})`; `shellRegister(g, name, normal, room, kit)`; `shellWall(name, x0, z0, x1, z1, height, normal, windows, room)`; `shellGable(name, x0, x1, z0, z1, eave, ridge, room, ends, pitch, slopeRooms, depthEnds, form)`; registered names `roof_main_north/_south/_end_west/_end_east`, `south_wall` (one piece x -7.15..14.65).

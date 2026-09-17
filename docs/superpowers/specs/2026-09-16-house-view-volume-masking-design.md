@@ -335,7 +335,8 @@ In ruling order (Task 2's two precede Task 3's, chronologically):
   marked retired-solver history comments, a `porchAt`/test-comment naming mismatch
   ("roof deck"/"rails" for what are now gable_8 rows), and a study `south_wall`
   pin ceiling (0.36) slightly looser than the physical number (0.358).
-- `test_house_live.py`'s `scenario_clipper_cuts_convex_meshes` doesn't assert `nW`
+- `test_house_live.py`'s `scenario_clipper_cuts_convex_meshes` (now in
+  `test_house_shell_live.py`, Task 7) doesn't assert `nW`
   exactly (only ≥ 1); crossing de-dup uses 1e-6 against an `EPS` of 1e-7 at house
   scale (progress.md Task 1 minor).
 - `house_features.js`'s `box()` helper doesn't stamp `userData.convex` (inert: all

@@ -713,7 +713,8 @@ than merely present, by a ray rather than by a box: new read-only exposure
 **`window.chfRayFabric(from, dir)`** reports the nearest registered fabric piece a ray hits. A
 piece's box can only say the group grew somewhere; a ray says there is plaster at a named point.
 
-**Tests.** `scenario_interior_walls_rise_to_the_roof` in `tests/test_house_live.py` re-derives the
+**Tests.** `scenario_interior_walls_rise_to_the_roof` in `tests/test_house_live.py` (now in
+`tests/test_house_shell_live.py`, Task 7) re-derives the
 deck arithmetic a third time from this section's own dimensions (never read back out of the scene)
 and pins four wall tops plus six rays. RED first with the vault switched off: 9 of its 11 checks
 failed (every box top read 5.600, `chfStudyBox` read None at the exterior, and each vault ray hit

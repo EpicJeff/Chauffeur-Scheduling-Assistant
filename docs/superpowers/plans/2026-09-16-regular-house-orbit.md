@@ -31,7 +31,7 @@
 | `chauffeur/templates/house.html` | orbit chevrons markup + CSS; `?angle=` read |
 | `chauffeur/services/house_facade.py` | `FACES` two faces; `CANONICAL` re-snapped |
 | `chauffeur/tests/test_house_facade.py` | slot/canonical expectations |
-| `chauffeur/tests/test_house_live.py` | registry tables, footprint pin, orbit scenario, canonical mesh pin |
+| `chauffeur/tests/test_house_live.py` | registry tables, footprint pin, orbit scenario, canonical mesh pin (Task 7 later split this file four ways: registry/footprint → `test_house_shell_live.py`, orbit → `test_house_nav_live.py`, canonical mesh pin → `test_house_facade_live.py`) |
 | `chauffeur/tests/test_house_life_live.py` | `patio_slider` verdict expectations (now interior) |
 | `chauffeur/tools/house_probe.py` | `--angle N`, `--views orbit` |
 | `chauffeur/system_capabilities.md`, `docs/house_style_bible.md`, spec §10 | wrap |
@@ -61,7 +61,7 @@
 **Files:**
 - Modify: `chauffeur/static/house.js` — `FULL_HOUSE` (~4127), the shell block (~4090-4900: east wall, `shellGable`, the massing calls 4769-4846, `mudFrontBandG`), `mudEastG` (~6640), `mudroomRoofG` (~7048), terrace furniture (~7410-7620), `EXTERIOR_HINTS` (~10167), `AO_HAND_CARVED`
 - Modify: `chauffeur/static/house_features.js:117` (keep `living_back_room_door`; verify its wall position x 6.5 z 2.45 is on the new `east_partition`)
-- Test: `chauffeur/tests/test_house_live.py` (`scenario_shell_fabric_registry` ~917-1100, `scenario_navigation_real_mouse` ~1132+, `scenario_shell_without_room_is_inert` ~1398, the `massing_east_back_east` probe ~1159), `chauffeur/tests/test_house_life_live.py:79-103`
+- Test: `chauffeur/tests/test_house_live.py` (`scenario_shell_fabric_registry` ~917-1100, `scenario_navigation_real_mouse` ~1132+, `scenario_shell_without_room_is_inert` ~1398, the `massing_east_back_east` probe ~1159 — now in `test_house_shell_live.py` (the first and third) and `test_house_nav_live.py` (the second), Task 7), `chauffeur/tests/test_house_life_live.py:79-103`
 
 **Interfaces:**
 - Consumes: Task 1's study placement.
@@ -111,7 +111,7 @@ Delete the roof-geometry checks that cite `massing_service_roof_*`, `massing_fro
 
 - [ ] **Step 5: Markers.** `EXTERIOR_HINTS`: `['back_door', 'Kitchen', [...same icons...], 'entry']` replaces the `patio_slider` row; `['mudroom_front', 'Mudroom', ...]` replaces `mudroom_cross_roof_south`; `front_door` and `garage_front` unchanged. Update `scenario_navigation_real_mouse`'s `exterior_targets` to `{'back_door', 'front_door', 'mudroom_front', 'garage_front'}` and its entry clicks (the Kitchen entry via `{entry:'back_door'}` needs an orbit stop that sees the north wall — until Task 4 lands, assert the marker is ABSENT at stop 0 and reachable via `chfNavProbe({entry:'back_door'})` returning null there; Task 4 turns that into a positive check).
 
-- [ ] **Step 6: Live file green; budget re-baseline.** `tests/test_house_live.py` all ok (the canonical facade mesh pin `CANONICAL_EXTERIOR_MESHES` WILL change — re-record RED-first with the new number and update the comment's derivation); `tests/test_house_life_live.py` ok; `tests/test_study_live.py` ok. Probe `--views all --budget --quality high --day` → table (expect exterior to drop); also `--views exterior` with the hip init script for both blocks → record.
+- [ ] **Step 6: Live file green; budget re-baseline.** `tests/test_house_live.py` all ok (the canonical facade mesh pin `CANONICAL_EXTERIOR_MESHES` WILL change — re-record RED-first with the new number and update the comment's derivation; both now live in `test_house_facade_live.py`, Task 7); `tests/test_house_life_live.py` ok; `tests/test_study_live.py` ok. Probe `--views all --budget --quality high --day` → table (expect exterior to drop); also `--views exterior` with the hip init script for both blocks → record.
 
 - [ ] **Step 7: Sweep, bump, commit, push** — `feat: the regular house — two rectangles, two block roofs, hip form, ridge parameter (vX.Y.Z)` with the before/after table and the deleted/new piece lists in the body.
 
@@ -122,7 +122,7 @@ Delete the roof-geometry checks that cite `massing_service_roof_*`, `massing_fro
 **Files:**
 - Modify: `chauffeur/services/house_facade.py` (`FACES`, `CANONICAL`, `worst_case` if slot indices are hard-coded)
 - Modify: `chauffeur/static/house.js` (`FACES` JS mirror; `roofPlaneEave`/`ROOF_PLANE_EAVE`; `gableAt`'s garage special case now reads the garage block extents)
-- Test: `chauffeur/tests/test_house_facade.py`, `chauffeur/tests/test_house_live.py` (parity pin, registry facade names)
+- Test: `chauffeur/tests/test_house_facade.py`, `chauffeur/tests/test_house_live.py` (parity pin, registry facade names — now `test_house_facade_live.py` and `test_house_shell_live.py` respectively, Task 7)
 
 **Interfaces:**
 - Produces: `FACES = [garage_block (-18.20..-7.15, z 10.10, eave 5.6, room 'garage', roof 'garage_block_roof'), main (-7.15..14.65, z 14.55, eave 5.6, room 'living', roof 'roof_main')]`; 18 slots (0–5, 6–17); `CANONICAL` re-snapped by the rule.
@@ -140,7 +140,7 @@ Delete the roof-geometry checks that cite `massing_service_roof_*`, `massing_fro
 - Modify: `chauffeur/static/house.js` (camera constants ~324-357; `goExterior` ~9717; `tween` ticker ~9150-9165; keydown ~10444; pointer handling around `onTap`; exposure block; idle hook)
 - Modify: `chauffeur/templates/house.html` (chevrons markup + CSS beside `#house-back`; `?angle=` param)
 - Modify: `chauffeur/tools/house_probe.py` (`--angle`, `--views orbit`)
-- Test: `chauffeur/tests/test_house_live.py` (new `scenario_orbit_eight_stops`; `scenario_navigation_real_mouse` back-door entry)
+- Test: `chauffeur/tests/test_house_live.py` (new `scenario_orbit_eight_stops`; `scenario_navigation_real_mouse` back-door entry — both now in `test_house_nav_live.py`, Task 7)
 
 **Interfaces:**
 - Produces: `ORBIT = { pivot: T.Vector3(-1.8, 4.0, 4.2), radius, height: 31, a0 }` with `radius = hypot(EXT_POS.x - pivot.x, EXT_POS.z - pivot.z)` and `a0 = atan2(EXT_POS.z - pivot.z, EXT_POS.x - pivot.x)`; `orbitPos(k) = pivot + (r cos(a0 + k·π/4), 31, r sin(a0 + k·π/4))`; `orbitAt = pivot`; `window.chfOrbitStop()` → current k; `window.chfOrbitTo(k)` (tweened, exterior only, returns false inside a room); `window.chfOrbitStep(±1)`; URL `?angle=N` boots at stop N; keys ← → at the exterior; a horizontal swipe ≥ 60px on the canvas at the exterior steps; idle-return snaps to 0.
