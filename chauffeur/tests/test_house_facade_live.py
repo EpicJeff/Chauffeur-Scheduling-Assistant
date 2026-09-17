@@ -291,10 +291,14 @@ def scenario_canonical_facade_pins_the_hand_built_elevation():
         from services import house_facade as hf
         check(page.evaluate('window.chfFacade()') == hf.CANONICAL,
               'the scene is built from CANONICAL, not a hand literal')
-        # CANONICAL_JS (house.js's no-injection fallback) also equals
-        # CANONICAL, so the check above passes either way. These two say
-        # which one the scene actually used: the server injected a spec,
-        # and the scene was built from THAT object.
+        # MASSING ARC 2 (spec 2026-09-17): CANONICAL_JS (house.js's
+        # no-injection fallback) is still the VERSION-1 literal and no
+        # longer equals CANONICAL directly -- it only equals it THROUGH
+        # normalize()'s V1 upgrade table. So the check above no longer
+        # passes either way, which makes these two more load-bearing,
+        # not less: they say which object the scene actually used --
+        # the server injected a spec, and the scene was built from THAT.
+        # Task 5 makes CANONICAL_JS the V2 literal again.
         check(page.evaluate("!!(window.HOUSE_FACADE && window.HOUSE_FACADE.spec)"),
               'the server injected the facade')
         check(page.evaluate("window.chfFacade() === window.HOUSE_FACADE.spec"),

@@ -3940,8 +3940,31 @@
        -- falls back to the canonical style below and to CANONICAL_JS at
        buildElevation(). */
     var FACADE = (window.HOUSE_FACADE && window.HOUSE_FACADE.spec) ? window.HOUSE_FACADE : null;
-    var FSTYLE = FACADE ? FACADE.spec.style : { cladding: 'batten', body: 'white', roof: 'charcoal',
-                                                frame: 'black', door: 'wood', trim: 'white' };
+    /* TASK 3+4 BRIDGE (massing arc 2, spec 2026-09-17 section 2), OWNED
+       BY TASK 5. The V2 block model moved `body` and `cladding` off
+       `style` and onto each block, and `style` now carries only the four
+       roles that are not a block's own skin. This file still paints ONE
+       body colour and ONE cladding for the whole house (task 5 gives it
+       cladTex per block, the six materials and the base band), so until
+       then it reads the MAIN block's pair and maps the V2 cladding name
+       back onto the two painters it has. Without this a saved facade
+       with body 'sage' or cladding 'lap' would silently render white
+       batten -- functionality V1 already shipped. `lap` IS the V1
+       'clapboard' (the upgrade table renames it); the four new materials
+       have no painter yet and fall to batten, which task 5 fixes.
+       DELETE THIS when FSTYLE stops being one global style. */
+    function _fstyle(spec) {
+      if (!spec) {
+        return { cladding: 'batten', body: 'white', roof: 'charcoal',
+                 frame: 'black', door: 'wood', trim: 'white' };
+      }
+      if (!spec.blocks || !spec.blocks.main) return spec.style;   /* V1 */
+      var st = spec.style || {};
+      return { body: spec.blocks.main.body,
+               cladding: spec.blocks.main.cladding === 'lap' ? 'clapboard' : 'batten',
+               roof: st.roof, frame: st.frame, door: st.door, trim: st.trim };
+    }
+    var FSTYLE = _fstyle(FACADE ? FACADE.spec : null);
     function pal(role, name, fallback) {
       var t = PALETTE[role];
       return (t && t[name] !== undefined) ? t[name] : fallback;
@@ -5155,12 +5178,20 @@
       return out;
     }
     var SLOTS = facadeSlots();
-    /* The canonical facade, field for field services/house_facade.py's
-       own CANONICAL (spec section 2.2: today's elevation, snapped onto
-       the slot grid). Only a page served WITHOUT the injection --
+    /* The canonical facade (spec section 2.2: today's elevation, snapped
+       onto the slot grid). Only a page served WITHOUT the injection --
        nothing but the 2D fallback path can reach that -- ever builds
-       from this literal; the pin test asserts chfFacade() equals the
-       Python dict, which is what keeps the copy honest. */
+       from this literal.
+
+       MASSING ARC 2 (spec 2026-09-17): this literal is still the
+       VERSION-1 shape and is NOT field for field the Python CANONICAL
+       any more -- that one is version 2, with per-block cladding/body,
+       the porch owning its gable and no free gable at slot 8. It is
+       still equivalent, but only THROUGH normalize()'s V1 upgrade
+       table: normalize(CANONICAL_JS) == CANONICAL. Task 5 replaces this
+       literal with the V2 one and the pin test goes back to a direct
+       comparison. The injected-spec pin (chfFacade() === the injected
+       object) is what keeps the scene honest in the meantime. */
     var CANONICAL_JS = {
       version: 1,
       pitch_deg: 34.8,

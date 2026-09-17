@@ -620,6 +620,44 @@ def scenario_side_garage_and_shed_and_unexpressed():
     check(spec['blocks']['main']['base'] == {'material': 'stone', 'height': 1.8, 'body': 'stone_grey'}, 'base height clamped')
 
 
+def scenario_the_two_v2_bridges_are_declared():
+    """MASSING ARC 2, tasks 3+4. house.js still speaks V1 in two places,
+    and each has a bridge so a V2 spec keeps working until task 5/8
+    replace them properly. Pin the bridge TEXT, not the behaviour (the
+    live tests own the behaviour): task 5 and task 8 have to delete
+    these deliberately, and this scenario is what tells them to."""
+    import io, os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    js = io.open(os.path.join(root, 'static', 'house.js'), encoding='utf-8').read()
+    check('spec.blocks.main.body' in js and 'spec.blocks.main.cladding' in js,
+          "the style bridge: FSTYLE reads the MAIN block's body/cladding, "
+          'so a saved facade never silently renders white batten')
+    check("f.roof === 'gable'" in js and 'gableAt({ slot: f.slot' in js,
+          "the porch-roof bridge: a gabled porch's own gable is built until "
+          'task 8 moves it inside porchAt')
+    check(js.count('TASK 3+4 BRIDGE') == 2,
+          f"both bridges say they are bridges: {js.count('TASK 3+4 BRIDGE')}")
+    # The V1 literal house.js still falls back to is only EQUIVALENT to
+    # the V2 canonical through the upgrade table -- the comments beside
+    # it say so now, and this is the claim they make.
+    v1_literal = {'version': 1, 'pitch_deg': 34.8,
+                  'style': {'cladding': 'batten', 'body': 'white', 'roof': 'charcoal',
+                            'frame': 'black', 'door': 'wood', 'trim': 'white'},
+                  'ground': [{'slot': 0, 'span': 3, 'kind': 'garage_door', 'style': 'carriage', 'leaves': 1},
+                             {'slot': 7, 'span': 1, 'kind': 'window', 'size': 'tall'},
+                             {'slot': 8, 'span': 4, 'kind': 'porch', 'type': 'sitting'},
+                             {'slot': 9, 'span': 1, 'kind': 'window', 'size': 'tall'},
+                             {'slot': 10, 'span': 1, 'kind': 'door'},
+                             {'slot': 12, 'span': 1, 'kind': 'window', 'size': 'tall'},
+                             {'slot': 15, 'span': 1, 'kind': 'window', 'size': 'standard'},
+                             {'slot': 16, 'span': 1, 'kind': 'window', 'size': 'standard'}],
+                  'roof': [{'slot': 0, 'span': 3, 'kind': 'gable'},
+                           {'slot': 8, 'span': 4, 'kind': 'gable'}]}
+    spec, _ = hf.normalize(v1_literal)
+    check(spec == hf.CANONICAL,
+          'CANONICAL_JS is the V1 canonical: equal to CANONICAL only through the upgrade')
+
+
 def scenario_home_section_pins():
     import io, os
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -661,6 +699,7 @@ if __name__ == '__main__':
                scenario_route_wrappers_map_errors,
                scenario_photo_becomes_a_draft_never_a_save,
                scenario_photo_failures_are_answers,
+               scenario_the_two_v2_bridges_are_declared,
                scenario_home_section_pins):
         fn()
         print('  ok ', fn.__name__)
