@@ -13,6 +13,7 @@ test_house_facade_live.py. Shared helpers live in house_live_common.py
 
 Run from chauffeur/:  python tests/test_house_shell_live.py
 """
+import json
 import os
 import math as _math
 import sys
@@ -26,7 +27,8 @@ os.environ.setdefault('CHAUFFEUR_DATA_DIR',
                       tempfile.mkdtemp(prefix='chauffeur_house_shell_live_'))
 
 from live_app import live_app
-from house_live_common import check, _seed, DAY_LOCK_JS, _VAULT_PITCH
+from house_live_common import (check, _seed, DAY_LOCK_JS, _VAULT_PITCH,
+                               roof_piece_names)
 
 
 def scenario_shell_fabric_registry():
@@ -92,13 +94,15 @@ def scenario_shell_fabric_registry():
         KEPT = {'north_wall', 'north_cladding', 'west_wall', 'west_skirt',
                 'west_cladding', 'south_wall', 'garage_shell', 'garage_door',
                 'east_room_door', 'living_back_room_door', 'living_study_door',
-                'yard', 'roof_main_north', 'roof_main_south',
-                'roof_main_end_west', 'roof_main_end_east'}
+                'yard'} | roof_piece_names('roof_main', 'gable', 'x')
+        # BLOCKS (spec 2026-09-17 section 0): the four names per block roof
+        # come from roof_piece_names(), which encodes shellGable's own
+        # naming -- so when form and ridge become settings this pin reads
+        # the default (gable, ridge x) rather than four frozen literals.
         NEW = {'east_wall', 'east_partition', 'north_wall_east',
                'garage_block_north', 'garage_block_west', 'mudroom_front',
-               'garage_block_roof_north', 'garage_block_roof_south',
-               'garage_block_roof_end_west', 'garage_block_roof_end_east',
-               'back_door', 'future_room_partition'}
+               'back_door', 'future_room_partition'} | roof_piece_names(
+                   'garage_block_roof', 'gable', 'x')
         DELETED_PREFIXES = ('massing_', 'mudroom_cross_roof', 'mudroom_roof',
                             'living_roof', 'mudroom_front_cladding',
                             'mudroom_east_finish')
@@ -1359,6 +1363,47 @@ def scenario_room_masks_cut_only_what_blocks_the_room():
         check(not served.errors(), f'console clean: {served.errors()[:3]}')
 
 
+def scenario_block_roof_forms_register_and_audit():
+    """Spec 2026-09-17 blocks section 0: hip and ridge-z block roofs become
+    settings in this arc, so they get live pins first. Each variant boots
+    clean, the registry holds the four pieces roof_piece_names() predicts,
+    the Mudroom marker's alias resolves to the STREET-facing garage roof
+    piece, and no facade roof feature is buried under any block deck."""
+    from house_live_common import FEATURE_JS, VERTEX_AUDIT_ALL_JS
+    variants = [
+        ({'main': {'form': 'hip', 'ridge': 'x'}, 'garage': {'form': 'gable', 'ridge': 'x'}}, 'main hip/x'),
+        ({'main': {'form': 'gable', 'ridge': 'z'}, 'garage': {'form': 'gable', 'ridge': 'x'}}, 'main gable/z'),
+        ({'main': {'form': 'gable', 'ridge': 'x'}, 'garage': {'form': 'hip', 'ridge': 'z'}}, 'garage hip/z'),
+    ]
+    served = live_app(_seed)
+    if served is None:
+        return
+    for forms, label in variants:
+        with served.browser() as page:
+            page.add_init_script(DAY_LOCK_JS)
+            page.add_init_script('window.HOUSE_ROOF_FORMS = %s;' % json.dumps(forms))
+            page.goto(served.url('house?quality=high'))
+            page.wait_for_selector('#room canvas', timeout=20000)
+            page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+            fabric = page.evaluate('window.chfShellFabric()')
+            names = {r['name'] for r in fabric}
+            want = (roof_piece_names('roof_main', forms['main']['form'], forms['main']['ridge']) |
+                    roof_piece_names('garage_block_roof', forms['garage']['form'], forms['garage']['ridge']))
+            check(want <= names, f'{label}: roof pieces registered; missing {sorted(want - names)}')
+            alias = page.evaluate('window.chfRoofAlias()')
+            street = alias.get('garage_block_roof_south')
+            check(street in names, f'{label}: Mudroom alias {street!r} is a registered piece')
+            nrm = next(r['n'] for r in fabric if r['name'] == street)
+            check(nrm[2] > 0.3, f'{label}: the alias faces the street: n={nrm}')
+            for f in page.evaluate(FEATURE_JS):
+                if f['kind'] == 'hip_end':
+                    continue
+                a = page.evaluate(VERTEX_AUDIT_ALL_JS, f)
+                check(a['buried'] == 0, f"{label}: {f['name']} has {a['buried']} vertices under the block roof")
+            errs = [e for e in served.errors() if 'WebGL' not in e]
+            check(not errs, f'{label}: console clean: {errs[:3]}')
+
+
 if __name__ == '__main__':
     scenario_shell_fabric_registry()
     scenario_a_room_cutaway_leaves_other_rooms_enclosed()
@@ -1369,4 +1414,5 @@ if __name__ == '__main__':
     scenario_clipper_cuts_convex_meshes()
     scenario_every_fabric_mesh_is_convex_or_a_kit()
     scenario_room_masks_cut_only_what_blocks_the_room()
+    scenario_block_roof_forms_register_and_audit()
     print("test_house_shell_live OK")

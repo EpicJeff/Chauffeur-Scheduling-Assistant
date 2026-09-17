@@ -5718,7 +5718,12 @@
       /* a clipped triangular return closing the span's ends on the roof
          plane -- the hipped alternative to a gable end. */
       var e = spanX(feat), slot = e.slot, g = shellGroup();
-      var plane = Math.PI / 8, depth = 2.2, rise = depth * Math.tan(plane);
+      /* Spec 2026-09-17 blocks section 0: the fin's own plane is the
+         FACADE's pitch (PITCH_FAMILY), like every other roof feature
+         on this elevation -- it was a second copy of the block pitch's
+         literal. The cgeo key already carries depth and rise, so a new
+         pitch is a new cached geometry rather than a stale one. */
+      var plane = PITCH_FAMILY, depth = 2.2, rise = depth * Math.tan(plane);
       var geo = cgeo('hip|' + depth + '|' + rise, function () {
         var s = new T.Shape();
         s.moveTo(0, 0); s.lineTo(depth, 0); s.lineTo(0, rise); s.lineTo(0, 0);
@@ -5830,6 +5835,27 @@
                GARAGE_BLOCK.north, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
                ROOF_FORMS.garage.ridge, null, null, BLOCK_PITCH,
                ['garage', 'mudroom'], null, ROOF_FORMS.garage.form);
+
+    /* Spec 2026-09-17 blocks section 0: a block roof's pieces are named by
+       geometric side (shellGable: _north/_south + _end_west/_end_east on a
+       ridge x; _west/_east + _back/_front on a ridge z). Markers and tests
+       name the CANONICAL pieces; this map says which registered piece
+       stands where the canonical one stood, so a ridge setting never
+       strands the Mudroom marker. FABRIC's own `n` is a Vector3 (regFabric
+       normalizes the array it was handed), so the picks read .z. */
+    var ROOF_ALIAS = {};
+    function aliasRoof(base) {
+      var rows = FABRIC.filter(function (f) { return f.name.indexOf(base + '_') === 0; });
+      function pick(sel) {
+        var best = null;
+        rows.forEach(function (f) { if (!best || sel(f.n) > sel(best.n)) best = f; });
+        return best ? best.name : null;
+      }
+      ROOF_ALIAS[base + '_south'] = pick(function (n) { return n.z; });
+      ROOF_ALIAS[base + '_north'] = pick(function (n) { return -n.z; });
+    }
+    aliasRoof('roof_main'); aliasRoof('garage_block_roof');
+    function roofAlias(name) { return ROOF_ALIAS[name] || name; }
 
     /* ---- the main block's north side ----------------------------------
        The kitchen's own north wall (wallB / north_wall) and its cladding
@@ -6179,7 +6205,7 @@
          street. The WEST band needs nothing: `garage_block_west` stands
          outboard of it and `garage_block_roof_end_west`'s gable infill
          closes the block above. */
-      var gVault = roofVault(GARAGE_BLOCK, ROOF_FORMS.garage, Math.PI / 8);
+      var gVault = roofVault(GARAGE_BLOCK, ROOF_FORMS.garage, BLOCK_PITCH);
       if (gVault.axis === 'z' && ROOF_FORMS.garage.form === 'gable')
         /* vFrom 4.6: the band just above starts ITS courses at its own
            bottom edge, so the section continues them from there rather
@@ -10647,6 +10673,7 @@
       yardG: yardG, westWallG: westWallG, zoneExtra: zoneExtra,
       mudBagsG: mudBagsG, makeBag: makeBag, FABRIC: FABRIC,
       ROOF_FORMS: ROOF_FORMS,
+      ROOF_ALIAS: ROOF_ALIAS, roofAlias: roofAlias,
       registerFabric: function (group, spec) {
         regFabric(group, {name:spec.name, n:spec.normal, box:fabBox(group),
                           room:spec.room, kit:spec.kit});
@@ -11655,6 +11682,13 @@
   window.chfRoofForms = function () {
     return webgl ? webgl.ROOF_FORMS : null;
   };
+  /* BLOCKS (spec 2026-09-17 section 0): which registered roof piece stands
+     where each canonical one stood, after form and ridge had their say --
+     read-only like chfRoofForms above. A test reads it to follow a marker
+     across a ridge setting without reading the source. */
+  window.chfRoofAlias = function () {
+    return webgl ? webgl.ROOF_ALIAS : null;
+  };
   window.chfShellFabric = function () {
     if (!webgl) return [];
     return webgl.FABRIC.map(function (f) {
@@ -12094,7 +12128,12 @@
   function hintChoices() {
     if (mode === 'exterior') {
       var exterior = EXTERIOR_HINTS.map(function (h) {
-      var spec = {}; spec[h[3] || 'piece'] = h[0];
+      /* BLOCKS (spec 2026-09-17 section 0): a `piece` hint names the
+         CANONICAL roof piece; roofAlias hands back the piece that
+         actually stands there under this block's form and ridge. `key`
+         stays canonical, so hintAttention still matches. */
+      var spec = {};
+      spec[h[3] || 'piece'] = h[3] ? h[0] : webgl.roofAlias(h[0]);
       return { spec: spec, label: h[1], key: h[0], icons: h[2], attention: h[4] || [] };
       });
       return exterior;

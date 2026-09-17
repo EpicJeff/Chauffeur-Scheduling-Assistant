@@ -71,6 +71,82 @@ SEED_RNG_JS = ('Math.random = (function () { var s = 20260917; return function (
 _VAULT_PITCH = _math.pi / 8
 
 
+def roof_piece_names(base, form, ridge):
+    """shellGable's registered names for one block roof (house.js ~5013/~5095):
+    decks _north/_south + ends _end_west/_end_east on a ridge x; decks
+    _west/_east + ends _back/_front on a ridge z. Same four for a hip."""
+    if ridge == 'x':
+        return {base + '_north', base + '_south', base + '_end_west', base + '_end_east'}
+    return {base + '_west', base + '_east', base + '_back', base + '_front'}
+
+
+# ---- ROOF VALLEYS (masking spec section 6) ----------------------------
+# A facade gable or dormer is built on a block roof deck. Nothing of it
+# may exist UNDER that deck inside the house: the part below the parent
+# deck's centre plane and behind the street face is cut at build (the
+# valley clip), so the mask, which keeps everything inside a room's own
+# volume, has nothing buried left to draw. The plane comes from the
+# scene (chfRoofPlane: deckPlane, the one derivation shellGable places
+# its own decks by); the face line from the slot table.
+# Moved here from test_house_facade_live.py (blocks spec section 0) so
+# the shell file's hip / ridge-z pin reads the same audit.
+FEATURE_JS = r"""() => {
+  const out = [];
+  window.chfShellFabric().forEach(f => {
+    const m = /^facade_(garage_block|main)_(gable|dormer|hip_end)_(\d+)/.exec(f.name);
+    if (m) out.push({ name: f.name, face: m[1], kind: m[2], slot: +m[3] });
+  });
+  return out;
+}"""
+
+# `proudAtWall`: a gable's ridge cap is level, so its top is as high at
+# the wall line as anywhere; the piece's highest vertex against the deck
+# plane's height at the wall (ridge x: the same across the face) is the
+# ridge's stand over the deck there, plus the cap's 0.125 over the ridge
+# line.
+VERTEX_AUDIT_JS = """(arg) => {
+  const pl = window.chfRoofPlane(arg.face), vs = window.chfFabricVertices(arg.name);
+  const faceZ = window.chfFacadeSlots().find(s => s.face === arg.face).z;
+  const wallY = (pl.d - pl.n[2] * faceZ) / pl.n[1];
+  let buried = 0, worst = 1e9, top = -1e9, n = vs.length;
+  vs.forEach(p => {
+    const s = pl.n[0]*p[0] + pl.n[1]*p[1] + pl.n[2]*p[2] - pl.d;
+    if (p[2] < faceZ - 0.05) { if (s < worst) worst = s; if (s < -0.05) buried++; }
+    if (p[1] > top) top = p[1];
+  });
+  return { n, buried, worst, proudAtWall: top - wallY };
+}"""
+
+# Blocks spec section 0: the same audit against EVERY deck of the block
+# (chfRoofPlanes: the two slopes, plus a hip's two ends) rather than the
+# one street deck, because a ridge on z puts a gable end on the street
+# and chfRoofPlane is null there. The roof surface over (x, z) is the
+# LOWEST of the centre planes, so a vertex is buried only when it lies
+# below every one of them -- the same rule clipBuried's own region uses.
+VERTEX_AUDIT_ALL_JS = """(arg) => {
+  const planes = window.chfRoofPlanes(arg.face), vs = window.chfFabricVertices(arg.name);
+  const faceZ = window.chfFacadeSlots().find(s => s.face === arg.face).z;
+  const yAt = (pl, x, z) => (pl.d - pl.n[0]*x - pl.n[2]*z) / pl.n[1];
+  let buried = 0, worst = 1e9, top = -1e9, topX = 0, n = vs.length;
+  vs.forEach(p => {
+    let over = -1e9;
+    planes.forEach(pl => {
+      const s = pl.n[0]*p[0] + pl.n[1]*p[1] + pl.n[2]*p[2] - pl.d;
+      if (s > over) over = s;      // the nearest plane ABOVE it: the roof line
+    });
+    // faceZ - 0.05, like the single-deck audit above: the valley clip's
+    // own cut face stands at faceZ - FACE_INSET (0.02), and its vertices
+    // run the full height of the cut piece, so a threshold AT the cut
+    // plane counts the cut itself as buried geometry.
+    if (p[2] < faceZ - 0.05) { if (over < worst) worst = over; if (over < -0.05) buried++; }
+    if (p[1] > top) { top = p[1]; topX = p[0]; }
+  });
+  let wallY = 1e9;
+  planes.forEach(pl => { const y = yAt(pl, topX, faceZ); if (y < wallY) wallY = y; });
+  return { n, buried, worst, proudAtWall: top - wallY };
+}"""
+
+
 def _seed():
     """An event TODAY whatever the clock says (the overlay-live idiom), so
     the wall calendar's card has something to show on the lean-in."""

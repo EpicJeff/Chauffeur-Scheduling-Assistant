@@ -30,7 +30,8 @@ os.environ.setdefault('CHAUFFEUR_DATA_DIR',
                       tempfile.mkdtemp(prefix='chauffeur_house_facade_live_'))
 
 from live_app import live_app
-from house_live_common import check, _seed, DAY_LOCK_JS, INVARIANT_JS, _VAULT_PITCH
+from house_live_common import (check, _seed, DAY_LOCK_JS, INVARIANT_JS,
+                               _VAULT_PITCH, FEATURE_JS, VERTEX_AUDIT_JS)
 
 
 # The facade spec §2.2 pins the canonical facade to the elevation it
@@ -365,42 +366,6 @@ def scenario_worst_case_facade_builds_clean():
             if r.get('id') != hf.CANONICAL_ID and r.get('name') == 'worst':
                 hf.delete_facade(r['id'])
         hf.set_active(hf.CANONICAL_ID)
-
-
-# ---- ROOF VALLEYS (masking spec section 6) ----------------------------
-# A facade gable or dormer is built on a block roof deck. Nothing of it
-# may exist UNDER that deck inside the house: the part below the parent
-# deck's centre plane and behind the street face is cut at build (the
-# valley clip), so the mask, which keeps everything inside a room's own
-# volume, has nothing buried left to draw. The plane comes from the
-# scene (chfRoofPlane: deckPlane, the one derivation shellGable places
-# its own decks by); the face line from the slot table.
-FEATURE_JS = r"""() => {
-  const out = [];
-  window.chfShellFabric().forEach(f => {
-    const m = /^facade_(garage_block|main)_(gable|dormer|hip_end)_(\d+)/.exec(f.name);
-    if (m) out.push({ name: f.name, face: m[1], kind: m[2], slot: +m[3] });
-  });
-  return out;
-}"""
-
-# `proudAtWall`: a gable's ridge cap is level, so its top is as high at
-# the wall line as anywhere; the piece's highest vertex against the deck
-# plane's height at the wall (ridge x: the same across the face) is the
-# ridge's stand over the deck there, plus the cap's 0.125 over the ridge
-# line.
-VERTEX_AUDIT_JS = """(arg) => {
-  const pl = window.chfRoofPlane(arg.face), vs = window.chfFabricVertices(arg.name);
-  const faceZ = window.chfFacadeSlots().find(s => s.face === arg.face).z;
-  const wallY = (pl.d - pl.n[2] * faceZ) / pl.n[1];
-  let buried = 0, worst = 1e9, top = -1e9, n = vs.length;
-  vs.forEach(p => {
-    const s = pl.n[0]*p[0] + pl.n[1]*p[1] + pl.n[2]*p[2] - pl.d;
-    if (p[2] < faceZ - 0.05) { if (s < worst) worst = s; if (s < -0.05) buried++; }
-    if (p[1] > top) top = p[1];
-  });
-  return { n, buried, worst, proudAtWall: top - wallY };
-}"""
 
 
 def _audit_roof_features(page):
