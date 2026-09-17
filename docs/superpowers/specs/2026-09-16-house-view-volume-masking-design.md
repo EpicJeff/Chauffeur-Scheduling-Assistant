@@ -83,8 +83,10 @@ Filled at wrap (Task 6, v2.499.57). Sources: task-1..5 reports and progress.md i
 | study | 2084/322/26040 | 2286/411/135457 | 2287/343/26585 | —/342/26588 | (not re-probed; carries v2.499.55's 342/26588) |
 
 `buildMs`: pre-arc 1002–1020; v2.499.53 1180–1213; v2.499.54 1113–1162; v2.499.55
-934–1213 (1075 canonical, 1213 hip probe, 1172 ridge-z probe); v2.499.56 1050–1283
-(1283 canonical exterior, ≤1283 everywhere probed). Ceiling 1500 throughout — never
+1075 canonical, 1167 hip probe, 1172 ridge-z probe (task-4-report.md "Probe" —
+1213 there is the still-split "unsplit-before-hip" number, not this version's);
+v2.499.56 1050–1283 (1283 canonical exterior, ≤1283 everywhere probed, per
+task-5-report.md "Probes"/"Roof variants"). Ceiling 1500 throughout — never
 approached. Geometry count: 1502 (pre-arc) → 1704 (v2.499.53) → 1705 (v2.499.54) →
 1693 (v2.499.55) → 1713 (v2.499.56).
 
@@ -196,71 +198,98 @@ reproduction, after the fix (RED at HEAD/e89b4be: 36 of 72 vertices of
 
 ### Deviations and their rulings
 
-1. **Room shells hold remnants only** (stamped `maskPattern`/`maskOnly`, toggled at
+In ruling order (Task 2's two precede Task 3's, chronologically):
+
+1. **Convexity is snapshotted pre-merge, and the kit list is the brief's four
+   builders plus `back_door` only.** Task 2's first pass measured convexity
+   POST-merge (after `mergeStatic` had already fused same-material meshes
+   into composites), which wrongly condemned nine ordinary windowed
+   walls/cladding rows to whole-piece `kit` status — an ordinary wall with
+   one window is several individually-convex boxes at the point Task 3
+   actually clips, and only becomes a non-convex composite later, when
+   `mergeStatic` fuses its frame boxes together. Ruling: convexity is
+   scanned inside `regFabric()`/`refabConvexity()` itself, at registration,
+   always before any merge pass; kits are exactly the brief's four builders
+   (`windowAt`/`doorAt`/`porchAt`/`garageDoorAt`) plus the three
+   `house_features.js` door fixtures plus the hand-built `back_door`
+   (structurally identical to `doorAt`'s output, never routed through the
+   facade generator so the brief's list didn't name it) — every other row
+   is measured pre-merge and is provably convex per-mesh. Cost if wrong:
+   one extra commit (progress.md Task 2, ~line 30; the correction shipped
+   as v2.499.51).
+2. **`TubeGeometry` stays in the allowed non-convex kinds.** Found unstamped
+   in `west_wall` (4 instances, swept fireplace tools) and `yard` (1), and
+   not in the coordinator's original allowed-kinds list. Ruling:
+   `TubeGeometry` (built by `sweepGeo`/`sweepAt`, a `CatmullRomCurve3` swept
+   into a tube) is a swept curved surface, the same structural class as a
+   lathe or torus revolution, never convex — it belongs in the recognized
+   non-box-primitive set a non-kit row may still carry (progress.md Task 2,
+   ~line 36). Cost if wrong: not recorded in the ledger.
+3. **Room shells hold remnants only** (stamped `maskPattern`/`maskOnly`, toggled at
    settle, merged per mirrored row), not a full cut copy of every fabric row —
    budget-driven (five full copies would have added a merge+bake per room against a
    1500 ms ceiling with ~500 ms headroom); the brief's named interface
    (`f.shells[room]`, `roomShellGroups`, `CAP_MAT`, `chfRoomShellShown`,
    `chfRoomMask`, `chfRoomShellLeak`, `maskedFraction`) is preserved. Ruling:
    accepted (task-3-report.md).
-2. **Box top SET to the eave**, not `min(top, eave)` — `ROOF_AABB` is measured from
+4. **Box top SET to the eave**, not `min(top, eave)` — `ROOF_AABB` is measured from
    props and floor only, so a literal `min` would cut the roof only where a ray
    reaches a sofa. Ruling: read the spec's stated intent ("footprint ×
    floor-to-eave") over its literal formula (task-3-report.md).
-3. **Per-mesh W-plane shift for straddling enclosure** (`STRADDLE_TOL` = 0.60) — not
+5. **Per-mesh W-plane shift for straddling enclosure** (`STRADDLE_TOL` = 0.60) — not
    in the brief; needed because `ROOM_AABB`'s footprint runs into the enclosure
    itself in four places. Ruling: pin strengthened in the fix round
    (task-3-report.md, progress.md Task 3 ruling 2).
-4. **Kit rule is spec §3's** (box centre or ≥5 of 8 corners), not the brief's draft
+6. **Kit rule is spec §3's** (box centre or ≥5 of 8 corners), not the brief's draft
    `hits < 5` of nine points — the draft rule kept the garage door visible in its
    own room. Ruling: spec wins (task-3-report.md).
-5. **Hairline clips** (< 0.1% of a mesh's area) count as untouched — no remnant, no
+7. **Hairline clips** (< 0.1% of a mesh's area) count as untouched — no remnant, no
    toggle. Ruling: accepted, undisputed (task-3-report.md).
-6. **Roof features drop whole below a fifth kept**, rather than always clipping —
+8. **Roof features drop whole below a fifth kept**, rather than always clipping —
    controller ruling made after the first room-shell build showed floating
    porch/bay-gable shards. Cost accepted: a feature vanishes at a view where 20%
    of it would have been honest (progress.md Task 3 ruling 1).
-7. **The yard hides whole in every room view**, reversing the spec's literal "yard
+9. **The yard hides whole in every room view**, reversing the spec's literal "yard
    is maskable fabric" — masking bought nothing a room camera sees and doubled
    per-room draw cost. Ruling: yard exempted, old per-room cost restored
    (progress.md Task 3 ruling 3).
-8. **`facade_main_porch_8` is no longer a kit** — its roof decks are separate rows
-   already covered by ruling 6; the row itself (slab/step/posts/rails/beam) is all
+10. **`facade_main_porch_8` is no longer a kit** — its roof decks are separate rows
+   already covered by ruling 8; the row itself (slab/step/posts/rails/beam) is all
    `box()`, clipped per mesh like a wall. Found and fixed after a user screenshot
    showed the whole porch roof standing across the living view (progress.md, Task 3
    fix round 1).
-9. **Spec §7's "roof over the room > 0.5" is not met** for four of five rooms
+11. **Spec §7's "roof over the room > 0.5" is not met** for four of five rooms
    (measured: living 0.329, kitchen 0.469, garage 0.145, mudroom 0.003, study
    0.013, at the first room-shell build) — a direct consequence of the eave-high
    box (choice A) plus each room's low camera. Ruling: accepted as the honest
    consequence of the ratified choice; recorded here rather than chasing the
    number with a camera change this arc (progress.md Task 3 ruling 4).
-10. **The mudroom view reads darker.** Its own roof now stays (the camera sits 0.6
+12. **The mudroom view reads darker.** Its own roof now stays (the camera sits 0.6
     above the eave and looks level through the wall, so the roof is never between
     it and the walled volume) where the old verdict removed the roof and let the
     sun in. Geometrically correct; a mood change, not fixed this arc.
-11. **Porch exception to the height rule** (roof valleys): a gable sharing a span
+13. **Porch exception to the height rule** (roof valleys): a gable sharing a span
     with the porch keeps the porch's own eave and stands proud by rise − 0.8, not
     its whole rise — the literal height rule would float the porch roof clear of
     its own posts (task-5-report.md).
-12. **Dormer rule**: box bottom stands on the roof at its front face, not
+14. **Dormer rule**: box bottom stands on the roof at its front face, not
     `parentY − 0.18` for the mini gable's eave, which would bury the box
     (task-5-report.md).
-13. **Buried region, not a single plane**: `shellGable(..., buried)` takes a convex
+15. **Buried region, not a single plane**: `shellGable(..., buried)` takes a convex
     region (below every block deck plane, behind the face, forward of the block's
     back), emitted as one convex mesh per surviving piece — a single plane would
     also have cut the porch roof's own overhang in open air (task-5-report.md).
-14. **No end bounds in the buried region** — the first draft had them and they kept
+16. **No end bounds in the buried region** — the first draft had them and they kept
     the bay gable's west strip poking through the garage's gable-end wall under the
     rake; dropped (task-5-report.md).
-15. **The saved-facade reproduction uses slot 13, not 14** — slot 13 straddles the
+17. **The saved-facade reproduction uses slot 13, not 14** — slot 13 straddles the
     partition and reproduces the user's own wedge from the living camera; slot 14
     buries identically but the partition hides it from that camera. Both shot
     before/after (task-5-report.md).
 
 ### Parked / known items (progress.md `minor (deferred)` lines and Task 3 look items)
 
-- The mudroom is darker under its own kept roof (deviation 10 above) — the roof
+- The mudroom is darker under its own kept roof (deviation 12 above) — the roof
   stays under choice A; not moved this arc, the user's mood call to make.
 - The kitchen's mask box reaches the pantry nook behind the great room's west wall
   (tagged `kitchen`), which is why the kitchen view opens the mudroom's east gable
@@ -282,6 +311,23 @@ reproduction, after the fix (RED at HEAD/e89b4be: 36 of 72 vertices of
 - `FEATURE_VERTS` holds every facade row's vertices for the page's life — a few
   thousand floats per row, ~30 rows in the worst-case facade (task-5-report.md
   concerns).
+- The `facade_main_gable_8` kitchen fraction pin's comment says the band was
+  "widened to hold it" — the widening is margin around the measured number, not a
+  correction to it (progress.md Task 5 review minors).
+- `VERTEX_AUDIT_JS` (the audit script, not the shipped render path) dereferences a
+  null plane when probed against a ridge-z roof (progress.md Task 5 review
+  minors).
+- `featuresDropped` counting 3 in the garage view also silently drops
+  `facade_garage_block_gable_0_front` — no visible cost, nothing of it would have
+  shown regardless (progress.md Task 3 fix-round-1 minor).
+- The yard's world-space triangles are computed once before the mask's own
+  early-exit check — pure build-time waste, not a correctness bug (progress.md
+  Task 3 fix-round-1 minor).
+- A shell's remnant geometry is stamped `userData.cached = true` but never keyed
+  into `cgeo` (a world-positioned remnant has no second caller to share with
+  today, so this is inert rather than wrong) (progress.md Task 3 minor).
+- `pal('section')` is called twice for the same hex where once would do
+  (progress.md Task 3 minor).
 - The vault is still gated off for a ridge-z main roof (pre-existing, task-4
   concern) — `vaultSection` would need to become axis-generic.
 - Several stale comments flagged for a later prune, none load-bearing: a
