@@ -5364,11 +5364,18 @@
       }
       PORCH_SPANS.push({ slot: feat.slot, span: feat.span, frontZ: frontZ });
       if (slot.face === 'main') PORCH_FRONT_Z4 = frontZ;
-      /* VIEW-VOLUME MASKING (task 2): a porch is a slab, a step, posts,
-         rails and (sitting) a bench -- a kit assembly, never one solid. */
+      /* VIEW-VOLUME MASKING (task 3, fix round 1 ruling): a porch is NOT
+         a kit. Every piece of it is a box() -- slab, step, posts, beam,
+         roof deck, rails, the sitting bench -- each convex on its own,
+         so it clips per mesh like a wall: a post outside the pyramid
+         stays, the roof deck inside it is cut with a cap. Task 2 had it
+         a kit, and the kit test (box centre) put the porch's centre
+         (~y 2.4, ground to roof) under the room box's floor line, so
+         the whole porch -- roof deck included -- stood across the
+         living view. */
       shellRegister(g, 'facade_' + slot.face + '_porch_' + feat.slot,
                     [0, 0, 1], slot.room, false, undefined, slot.room,
-                    spanOwners(feat), true);
+                    spanOwners(feat), false);
     }
 
     function garageDoorAt(feat) {
@@ -8995,6 +9002,8 @@
        silhouette. */
     var CAP_MAT = mat(FARMHOUSE.section, { rough: 0.95 });
     var STRADDLE_TOL = WALL_T4 + 0.25;
+    var ROOF_FEATURE = /^facade_.*_(gable|dormer|hip_end)_\d+/;   /* ruling 1 */
+    var ROOF_FEATURE_MIN_KEPT = 0.2;
     var ROOM_CAMS = { kitchen: HOME_POS, living: LIV_POS, study: STUDY_POS,
                       garage: GARAGE_POS, mudroom: MUD_POS };
     var ROOM_MASKS = {};        /* room -> {P, W, box, cam} */
@@ -9058,7 +9067,7 @@
       delete mesh.userData.maskPattern;
       if (room) mesh.userData.room = room;
       mesh.castShadow = like.castShadow; mesh.receiveShadow = like.receiveShadow;
-      mesh.renderOrder = like.renderOrder;
+      mesh.renderOrder = like.renderOrder; mesh.visible = like.visible;
       return mesh;
     }
     function boxCorners(b) {
@@ -9117,7 +9126,8 @@
     }
     function buildRoomShells() {
       var C = window.HouseClip, t0 = performance.now();
-      var stats = { rooms: 0, clipped: 0, dropped: 0, kitsDropped: 0, remnantTris: 0, ms: 0 };
+      var stats = { rooms: 0, clipped: 0, dropped: 0, kitsDropped: 0, featuresDropped: 0,
+                    remnantTris: 0, ms: 0 };
       Object.keys(ROOM_CAMS).forEach(function (room) {
         if (!ROOM_AABB[room]) return;
         ROOM_MASKS[room] = roomMask(room);
@@ -9150,6 +9160,18 @@
             f.shells[room] = { group: null, fraction: gone ? 1 : 0 };
             return;
           }
+          /* RULING 3 (fix round 1): the yard -- the one registered row
+             whose mode is 'hide', yardG whole -- hides in every room view
+             and shows at the exterior and the orbit, exactly as the old
+             verdict did. Its instanced planting is exempt from the mask
+             and was drawing in every room view where it never had (the
+             kitchen's triangles doubled); the same toggle mechanism as a
+             dropped kit, fraction 1 in every room, no remnants. */
+          if (f.g === yardG) {
+            stampPattern(f.g, room);
+            f.shells[room] = { group: null, fraction: 1 };
+            return;
+          }
           /* the mirrored ancestor chain: every group between f.g and a
              cut mesh is re-created (at identity -- remnants are world-
              space) with the same userData, so the merge bucket (L4: a
@@ -9178,35 +9200,61 @@
             mirror[g.id] = mg;
             return mg;
           }
-          row.meshes.forEach(function (e) {
-            var mm = meshMask(m, e.box), cls = boxClass(e.box, mm);
-            if (cls === 'out' || cls === 'keep') { area1 += e.area; return; }
-            if (!e.m.userData.convex) {
-              if (cls === 'drop' || boxMasked(e.box, mm)) { stampPattern(e.m, room); stats.dropped++; }
-              else area1 += e.area;
+          /* one pass over the row's meshes: `commit` false only measures
+             (area1), true also stamps the patterns and builds remnants */
+          function cutRow(commit) {
+            area1 = 0;
+            row.meshes.forEach(function (e) {
+              var mm = meshMask(m, e.box), cls = boxClass(e.box, mm);
+              if (cls === 'out' || cls === 'keep') { area1 += e.area; return; }
+              if (!e.m.userData.convex) {
+                if (cls === 'drop' || boxMasked(e.box, mm)) {
+                  if (commit) { stampPattern(e.m, room); stats.dropped++; }
+                } else area1 += e.area;
+                return;
+              }
+              if (cls === 'drop') { if (commit) { stampPattern(e.m, room); stats.dropped++; } return; }
+              var kept = keepTris(e.tris, mm);
+              var a1 = C.triArea(kept, 0);
+              /* untouched when the clip took nothing, or next to nothing:
+                 a sliver under 0.1% of the mesh's own area (a gable end's
+                 far tip grazing a pyramid plane) is a hairline either way
+                 and is not worth a remnant, a toggle and a 'masked'
+                 verdict for a piece that is whole to the eye */
+              if (a1 >= e.area * (1 - 1e-3)) { area1 += e.area; return; }
+              area1 += a1;
+              if (!commit) return;
+              stampPattern(e.m, room);
+              if (a1 <= 1e-9) { stats.dropped++; return; }
+              stats.clipped++; stats.remnantTris += kept.length;
+              /* a row registered as a bare mesh (north_wall) IS its own
+                 f.g; its remnant hangs off the mirrored row group directly */
+              var parent = mirrorOf(e.m === f.g ? f.g : e.m.parent), rm = roomOfMesh(e.m, f.g);
+              var ka = trisToMesh(kept, 0, e.m.material, e.m, rm);
+              var kb = trisToMesh(kept, 1, CAP_MAT, e.m, rm);
+              if (ka) parent.add(ka);
+              if (kb) parent.add(kb);
+            });
+          }
+          /* RULING 1 (fix round 1): a facade ROOF FEATURE row -- every
+             piece gableAt/dormerAt/hipEndAt register (facade_*_gable_*,
+             facade_*_dormer_*, facade_*_hip_end_*) -- is dropped WHOLE
+             when the mask would keep less than a fifth of it, and
+             clipped normally otherwise. The living view left the porch
+             gable's two decks as floating shards outside the pyramid
+             (0.86 cut); the kitchen keeps its clipped quarter. Not the
+             kit rule: a kit judged by its box would keep a quarter-deck
+             standing in the kitchen's cone. Measured first (no stamps,
+             no remnants), then committed one way or the other. */
+          if (ROOF_FEATURE.test(f.name)) {
+            cutRow(false);
+            if (row.area0 && area1 < row.area0 * ROOF_FEATURE_MIN_KEPT) {
+              stampPattern(f.g, room); stats.featuresDropped++;
+              f.shells[room] = { group: null, fraction: 1 };
               return;
             }
-            if (cls === 'drop') { stampPattern(e.m, room); stats.dropped++; return; }
-            var kept = keepTris(e.tris, mm);
-            var a1 = C.triArea(kept, 0);
-            /* untouched when the clip took nothing, or next to nothing:
-               a sliver under 0.1% of the mesh's own area (a gable end's
-               far tip grazing a pyramid plane) is a hairline either way
-               and is not worth a remnant, a toggle and a 'masked'
-               verdict for a piece that is whole to the eye */
-            if (a1 >= e.area * (1 - 1e-3)) { area1 += e.area; return; }
-            area1 += a1;
-            stampPattern(e.m, room);
-            if (a1 <= 1e-9) { stats.dropped++; return; }
-            stats.clipped++; stats.remnantTris += kept.length;
-            /* a row registered as a bare mesh (north_wall) IS its own
-               f.g; its remnant hangs off the mirrored row group directly */
-            var parent = mirrorOf(e.m === f.g ? f.g : e.m.parent), rm = roomOfMesh(e.m, f.g);
-            var ka = trisToMesh(kept, 0, e.m.material, e.m, rm);
-            var kb = trisToMesh(kept, 1, CAP_MAT, e.m, rm);
-            if (ka) parent.add(ka);
-            if (kb) parent.add(kb);
-          });
+          }
+          cutRow(true);
           var fr = row.area0 ? Math.max(0, Math.min(1, 1 - area1 / row.area0)) : 0;
           if (fr < 1e-6) fr = 0;   /* the two sums differ by an ulp when nothing was cut */
           f.shells[room] = { group: mirror[f.g.id] || null, fraction: fr };
@@ -9214,10 +9262,14 @@
         scene.add(group);
         group.updateMatrixWorld(true);
         /* the same per-group merge every fabric row gets (batching
-           contract unchanged), BEFORE the group is fenced: the fence
-           below keeps the exterior/scene passes from ever folding a
-           shell's remnants across rows or into anything else */
-        mergeStatic(group, NO_MERGE);
+           contract unchanged), run per MIRRORED ROW so a merged remnant
+           composite lands under its row group and keeps the shellOf
+           ancestry chfNavProbe({piece}) and chfRoomShellVerts read (a
+           shell-wide pass parked every composite at the shell root and
+           lost the row -- fix round 1); BEFORE the group is fenced: the
+           fence below keeps the exterior/scene passes from ever folding
+           a shell's remnants across rows or into anything else */
+        group.children.slice().forEach(function (rowG) { mergeStatic(rowG, NO_MERGE); });
         NO_MERGE.add(group);
       });
       stats.ms = Math.round(performance.now() - t0);
@@ -9235,7 +9287,7 @@
         if (gone) stampPattern(f.g, room);
         f.shells[room] = { group: null, fraction: gone ? 1 : 0 };
       });
-      if (f.g.userData.maskPattern) MASK_TOGGLES.push(f.g);
+      if (f.g.userData.maskPattern && MASK_TOGGLES.indexOf(f.g) < 0) MASK_TOGGLES.push(f.g);
     }
     buildRoomShells();
 
@@ -9257,7 +9309,13 @@
        above), an unmerged survivor keeps its own pattern, and a
        whole-or-nothing kit carries it on the row group itself. */
     FABRIC.forEach(function (f) {
-      if (f.g.userData.maskPattern) { MASK_TOGGLES.push(f.g); return; }
+      /* the row group itself (a kit, the yard, or a roof feature dropped
+         whole in some views) AND its members: a roof feature dropped
+         whole in the living view is still clipped mesh by mesh in the
+         kitchen's, so both levels toggle (fix round 1: an early return
+         here left the porch deck's source mesh standing in the kitchen
+         cone, in front of the packing bags) */
+      if (f.g.userData.maskPattern) MASK_TOGGLES.push(f.g);
       f.g.traverse(function (o) {
         if (o !== f.g && o.userData && (o.userData.maskPattern || o.userData.maskOnly))
           MASK_TOGGLES.push(o);
@@ -11506,6 +11564,50 @@
      clipped edge and every cap lies on one) are skipped, since a cap
      vertex sits exactly on the boundary between kept and masked and
      rounds either way. */
+  /* RULING 2 (fix round 1): up to n world-space vertices of ONE piece's
+     remnants in a room shell (the mirrored row group carries shellOf),
+     so a test can pin the straddle rule directly: none of the near
+     wall's kept vertices may lie inside P behind the box's near face. */
+  window.chfRoomShellVerts = function (room, piece, n) {
+    if (!webgl || !webgl.roomShellGroups[room]) return null;
+    var verts = [], v = new webgl.T.Vector3();
+    webgl.roomShellGroups[room].updateMatrixWorld(true);
+    webgl.roomShellGroups[room].traverse(function (o) {
+      if (!o.isMesh || !o.geometry) return;
+      var mine = false;
+      for (var q = o; q; q = q.parent) if (q.userData && q.userData.shellOf === piece) { mine = true; break; }
+      if (!mine) return;
+      var p = o.geometry.getAttribute('position');
+      for (var i = 0; i < p.count; i++) {
+        v.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld);
+        verts.push([v.x, v.y, v.z]);
+      }
+    });
+    var step = Math.max(1, Math.floor(verts.length / (n || 2000))), out = [];
+    for (var k = 0; k < verts.length; k += step) out.push(verts[k]);
+    return out;
+  };
+  /* fix round 1: the swap's own audit -- how many toggled objects are in
+     the WRONG state for the view: a source (maskPattern) still visible in
+     a room its pattern names, a stand-in (maskOnly) visible anywhere but
+     its rooms, or, at the exterior (room null), any source hidden or any
+     stand-in shown. 0 is the only right answer. */
+  window.chfMaskLeak = function (room) {
+    if (!webgl) return null;
+    var tag = room ? '|' + room + '|' : null, bad = 0;
+    /* walks the fabric groups themselves, NOT MASK_TOGGLES: an object
+       the collection missed is exactly the bug this audit exists for */
+    webgl.FABRIC.forEach(function (f) {
+      f.g.traverse(function (o) {
+        var ud = o.userData;
+        if (!ud || !(ud.maskPattern || ud.maskOnly)) return;
+        var want = ud.maskOnly ? (!!tag && ud.maskOnly.indexOf(tag) >= 0)
+                               : (!tag || ud.maskPattern.indexOf(tag) < 0);
+        if (o.visible !== want) bad++;
+      });
+    });
+    return bad;
+  };
   window.chfRoomShellLeak = function (room, n) {
     if (!webgl || !webgl.roomShellGroups[room]) return null;
     var m = webgl.ROOM_MASKS[room], C = window.HouseClip;

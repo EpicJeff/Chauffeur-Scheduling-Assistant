@@ -1122,6 +1122,10 @@ def scenario_shell_fabric_registry():
         EXPECTED = {
             # the sealed house: no mask at all
             'exterior': {'masked': [], 'whole': []},
+            # RULING 3 (fix round 1): the yard (yardG whole) hides in every
+            # room view, fraction 1, as the old mode:'hide' verdict did.
+            # RULING 1: a facade roof feature drops whole below a fifth
+            # kept -- the porch gable's decks in the living view.
             # kitchen -- HOME_POS (4.64, 13.8, 23.0), high in the street.
             # The box's near face (z 5.8) is INSIDE the open great room:
             # the pyramid's floor plane, through the camera and the box's
@@ -1148,7 +1152,7 @@ def scenario_shell_fabric_registry():
                                   'north_wall_east', 'future_room_partition',
                                   'roof_main_east_south', 'roof_main_east_north',
                                   'facade_main_window_15', 'facade_main_window_16',
-                                  'garage_door', 'garage_block_west', 'yard']},
+                                  'garage_door', 'garage_block_west']},
             # living -- LIV_POS (0, 12.8, 26.5). The box reaches the
             # street wall's inner face (14.22 vs 14.20), so the wall
             # straddles the box's south face and is cut by P alone: the
@@ -1156,23 +1160,25 @@ def scenario_shell_fabric_registry():
             # windows 7/9/12 and door 10 are kits in that wall (centre
             # masked, whole). The south deck comes off from the eave to
             # z ~10; the porch gable's decks and front stand in the cone.
-            # The porch itself (kit): its slab, steps and rails lie under
-            # the pyramid's floor plane (a ray to the room's floor passes
-            # 2.9 above the porch at z 17), its box centre with them --
-            # kept. The study's windows, wall and roof half are east of
+            # The porch itself (fix round 1: NOT a kit, clipped per mesh):
+            # its slab, steps and rails lie under the pyramid's floor
+            # plane (a ray to the room's floor passes 2.9 above the porch
+            # at z 17) and stay; its eave beam and post tops stand in the
+            # cone and are cut (0.13 of the row). The study's windows,
+            # wall and roof half are east of
             # the pyramid's x span; the kitchen's north wall is behind
             # the box, inside W.
             'living': {'masked': ['south_wall', 'roof_main_west_south',
                                   'facade_main_window_7', 'facade_main_window_9',
                                   'facade_main_window_12', 'facade_main_door_10',
                                   'facade_main_gable_8_west', 'facade_main_gable_8_east',
-                                  'facade_main_gable_8_front'],
-                       'whole': ['facade_main_porch_8', 'south_wall_east',
+                                  'facade_main_gable_8_front', 'facade_main_porch_8'],
+                       'whole': ['south_wall_east',
                                  'facade_main_window_15', 'facade_main_window_16',
                                  'east_partition', 'east_wall', 'north_wall',
                                  'north_wall_east', 'future_room_partition',
                                  'roof_main_east_south', 'roof_main_west_north',
-                                 'garage_door', 'mudroom_front', 'yard']},
+                                 'garage_door', 'mudroom_front']},
             # garage -- GARAGE_POS (-18.0, 10.5, 21.3), 0.04 west of the
             # box's west face: south, top and (a sliver of) west faces
             # are front. The garage door fills the south face: kit,
@@ -1187,7 +1193,7 @@ def scenario_shell_fabric_registry():
                                   'garage_block_roof_south'],
                        'whole': ['garage_block_north', 'garage_block_west',
                                  'mudroom_front', 'west_wall', 'south_wall',
-                                 'north_wall', 'roof_main_west_south', 'yard']},
+                                 'north_wall', 'roof_main_west_south']},
             # mudroom -- MUD_POS (-3.4, 6.2, 11.2), in the great room
             # east of the box, just above the eave, south of it. The
             # great room's west wall (slab x -7.15..-6.8) touches the
@@ -1202,7 +1208,7 @@ def scenario_shell_fabric_registry():
                                    'mudroom_front'],
                         'whole': ['garage_door', 'garage_block_north',
                                   'garage_block_west', 'south_wall', 'north_wall',
-                                  'roof_main_west_south', 'east_partition', 'yard']},
+                                  'roof_main_west_south', 'east_partition']},
             # study -- STUDY_POS (7.02, 4.75, 18.82), east of the split
             # and below the eave: the south face is the only front face.
             # The street face (south_wall_east) straddles it (the study
@@ -1221,11 +1227,10 @@ def scenario_shell_fabric_registry():
                                 'roof_main_east_north', 'roof_main_west_south',
                                 'roof_main_west_north', 'living_study_door',
                                 'east_room_door', 'garage_door']},
-            # (the yard is not on the study's whole list on purpose: one
-            # small planting prop by the study's street face stands in
-            # the pyramid and is dropped whole -- a hairline of the row's
-            # area, measured 0.0003 -- so the row reads 'masked' there.)
         }
+        for view in EXPECTED:
+            if view != 'exterior':
+                EXPECTED[view]['masked'].append('yard')
         for view, expected in EXPECTED.items():
             if view == 'exterior':
                 page.evaluate("window.chfHouseExit && window.chfHouseExit()")
@@ -1741,23 +1746,25 @@ def scenario_the_study_faces_east_behind_glass_doors():
 #       section stays its own draw. The exterior elevation itself has
 #       not moved a millimetre: every piece in this arc is interior.
 #
-# VIEW-VOLUME MASKING (task 3, v2.499.53) re-records it RED-first,
-# 1869 -> 1993, +124, and the exterior elevation's own count has still
-# not moved: the full shell is merged exactly as before (its patterned
-# buckets keep their one full composite; the per-room stand-ins are
-# merged output, which this count skips), and the exterior draws the
-# same 1432 meshes it did (probe --budget, before/after). The +124 are
-# the five room shells' unmerged REMNANTS -- the cut-off pieces of
-# fabric meshes whose material bucket inside that shell stays under
-# mergeStatic's four-item floor: kitchen 46, living 10, study 9, garage
-# 8, mudroom 51. Most are west_wall's own props (a picture frame, a
-# shelf, a sconce part -- each on its own material, 25 in the kitchen
-# shell and 34 in the mudroom's) cut where they stand between the
-# street camera and the pantry nook, or between the mudroom camera and
-# the mudroom. Every cap merged (one shared CAP_MAT per shell), so none
-# is counted here. Hidden shells count all the same: this pin walks the
-# scene, not the frustum.
-CANONICAL_EXTERIOR_MESHES = 1993
+# VIEW-VOLUME MASKING (task 3, v2.499.53 / fix round 1 v2.499.54)
+# re-records it RED-first, 1869 -> 2026, +157, and the exterior
+# elevation's own count has still not moved: the full shell is merged
+# exactly as before (its patterned buckets keep their one full composite;
+# the per-room stand-ins are merged output, which this count skips), and
+# the exterior draws the same 1432 meshes it did (probe --budget,
+# before/after). The +157 are the five room shells' unmerged REMNANTS --
+# the cut-off faces of fabric meshes and their caps, merged per mirrored
+# ROW (so a composite keeps its row's shellOf ancestry) and therefore
+# loose wherever a row's remnants or caps stay under mergeStatic's
+# four-item floor: kitchen 57, living 20, study 14, garage 8, mudroom 58.
+# Most are west_wall's own props (a picture frame, a shelf, a sconce part
+# -- each on its own material, 25 in the kitchen shell and 34 in the
+# mudroom's) cut where they stand between the street camera and the
+# pantry nook, or between the mudroom camera and the mudroom. Hidden
+# shells count all the same: this pin walks the scene, not the frustum.
+# (Standalone -- only this scenario's own seed -- the same build counts
+# 1885, the same 141-mesh seeded gap as every earlier entry.)
+CANONICAL_EXTERIOR_MESHES = 2026
 
 
 # ---- VAULTED PARTITIONS (2026-09-16) ---------------------------------
@@ -2715,14 +2722,23 @@ def scenario_every_fabric_mesh_is_convex_or_a_kit():
         # least one exists" -- v2.499.50's regression was nine ordinary
         # windowed walls wrongly marked kit, and a test that only checks
         # "some row is a kit" would never have caught that. Generated
-        # kits are named 'facade_<face>_<window|door|porch>_<slot>'
-        # (windowAt/doorAt/porchAt); dormerAt/gableAt/hipEndAt generate
-        # facade_ names too but are never kits, so the kind is matched
-        # explicitly rather than accepting every facade_ name.
+        # kits are named 'facade_<face>_<window|door>_<slot>' (windowAt/
+        # doorAt); dormerAt/gableAt/hipEndAt generate facade_ names too
+        # but are never kits, so the kind is matched explicitly rather
+        # than accepting every facade_ name. The PORCH (porchAt) is not
+        # a kit either (task 3 fix round 1 ruling): every piece of it is
+        # a box(), so it clips per mesh -- the kit test's box centre sat
+        # under the room's floor line and kept the porch roof standing
+        # across the living view.
         import re as _re3
         kits = {r['name'] for r in rows if r['kit']}
         expected = {n for n in by_name
-                    if _re3.match(r'^facade_.*_(window|door|porch)_\d+$', n)}
+                    if _re3.match(r'^facade_.*_(window|door)_\d+$', n)}
+        porches = [by_name[n] for n in by_name if _re3.match(r'^facade_.*_porch_\d+$', n)]
+        check(porches, 'the canonical elevation has a porch')
+        for row in porches:
+            check(not row['kit'] and row['meshes'] > 0 and row['convex'] == row['meshes'],
+                  f"the porch clips per mesh -- every piece a convex box: {row}")
         expected |= {'garage_door', 'back_door', 'living_study_door',
                      'east_room_door', 'living_back_room_door'}
         check(kits == expected,
@@ -2784,10 +2800,36 @@ def scenario_room_masks_cut_only_what_blocks_the_room():
         #   the box's far-top edge (z 5.1, y 5.6) crosses the deck, z ~10
         #   (measured 0.33). The street windows 7/9/12 and door 10 sit in
         #   the cut wall: kits, box centre masked, dropped whole (1.0).
-        check(frac('south_wall', 'living') > 0.3, f"living: south_wall mostly cut, got {frac('south_wall', 'living')}")
+        # RULING 2 (fix round 1): the street wall straddles the box's
+        # south face (inner face 14.20, box 14.22); the straddle rule
+        # moves W to the wall's own depth so the cut is P alone -- the
+        # silhouette of a 13 x 5.6 box on a 14 x 5.6 wall, 0.87. A raw
+        # plane would keep the inner sliver and read ~0.5; pinned > 0.8.
+        check(frac('south_wall', 'living') > 0.8, f"living: south_wall cut on its silhouette, got {frac('south_wall', 'living')}")
         check(frac('roof_main_west_south', 'living') > 0.2, 'living: roof_main_west_south cut over the room')
         for kit in ('facade_main_window_7', 'facade_main_window_9', 'facade_main_window_12', 'facade_main_door_10'):
             check(frac(kit, 'living') == 1, f'living: {kit} goes whole with the wall it sits in')
+        # PORCH (fix round 1 ruling): not a kit -- its boxes clip per
+        # mesh. The porch ROW is the slab, step, posts, rails and the
+        # eave beam; its roof decks are the facade_main_gable_8_* rows
+        # (dropped whole above). What stands in the pyramid is the beam
+        # and the tops of the posts -- 13% of the row's surface (the
+        # slab, step and rails under the pyramid's floor plane are most
+        # of it) -- so the row reads 0.13, not the > 0.4 a roof deck in
+        # the row would have given. Pinned > 0.1 with remnants present.
+        check(frac('facade_main_porch_8', 'living') > 0.1,
+              f"living: the porch beam and post tops are cut, got {frac('facade_main_porch_8', 'living')}")
+        # RULING 1 (fix round 1): a facade roof feature (gable/dormer/hip
+        # end piece) is dropped WHOLE when the mask would keep less than
+        # a fifth of it -- the porch gable's two decks kept 14% and stood
+        # as floating shards outside the pyramid -- and clipped normally
+        # otherwise (its front kept 30%, the kitchen keeps a quarter of
+        # each deck).
+        for deck in ('facade_main_gable_8_west', 'facade_main_gable_8_east'):
+            check(frac(deck, 'living') == 1, f'living: {deck} drops whole below a fifth kept, got {frac(deck, "living")}')
+            check(0.2 < frac(deck, 'kitchen') < 0.3, f'kitchen: {deck} keeps its clipped quarter, got {frac(deck, "kitchen")}')
+        check(0.5 < frac('facade_main_gable_8_front', 'living') < 0.8,
+              f"living: the porch gable front is clipped, not dropped, got {frac('facade_main_gable_8_front', 'living')}")
         #   kitchen: the box's near face is z 5.8, INSIDE the open great
         #   room. The pyramid's floor plane runs from HOME_POS through
         #   the box's bottom-south edge (y 0, z 5.8) and crosses the
@@ -2801,17 +2843,22 @@ def scenario_room_masks_cut_only_what_blocks_the_room():
         #   from the eave to there (measured 0.47).
         check(frac('south_wall', 'kitchen') == 0, f"kitchen: south_wall clears every ray to the kitchen box, got {frac('south_wall', 'kitchen')}")
         check(frac('roof_main_west_south', 'kitchen') > 0.2, 'kitchen: roof_main_west_south cut over the room')
-        for kit in ('facade_main_window_7', 'facade_main_window_9', 'facade_main_window_12', 'facade_main_door_10', 'facade_main_porch_8'):
+        for kit in ('facade_main_window_7', 'facade_main_window_9', 'facade_main_window_12', 'facade_main_door_10'):
             check(frac(kit, 'kitchen') == 0, f'kitchen: {kit} is not between the street camera and the kitchen')
         # Nothing east of the split is between either camera and either
         # room: the study's enclosure and windows, the east wall, the
-        # future rooms' partitions, the kitchen's own north wall (behind
-        # the box, inside W) and the yard (outside P or behind W; the
-        # planting is InstancedMesh, exempt outright) all stay whole.
+        # future rooms' partitions and the kitchen's own north wall
+        # (behind the box, inside W) all stay whole.
         for room in ('kitchen', 'living'):
             for whole in ('east_partition', 'east_wall', 'north_wall_east', 'future_room_partition',
-                          'facade_main_window_15', 'facade_main_window_16', 'north_wall', 'yard'):
+                          'facade_main_window_15', 'facade_main_window_16', 'north_wall'):
                 check(frac(whole, room) == 0, f'{room}: {whole} untouched, got {frac(whole, room)}')
+        # RULING 3 (fix round 1): the yard (yardG, the registered row) is
+        # hidden whole in every room view and shown at the exterior --
+        # its exempt instanced planting doubled every room's triangles
+        # when it drew. Fraction 1 everywhere, like a dropped kit.
+        for room in ROOMS:
+            check(frac('yard', room) == 1, f'{room}: the yard hides whole, got {frac("yard", room)}')
         # THE STUDY. STUDY_POS stands EAST of the split (x 7.02 > 6.92,
         # the box's west face) and low (y 4.75 < the eave), so the only
         # front face is the south one: masked = inside the pyramid
@@ -2826,7 +2873,11 @@ def scenario_room_masks_cut_only_what_blocks_the_room():
         # street wall, window 7 and the kitchen's north wall are outside
         # the pyramid's x span. The roof is above a camera that looks
         # level into the room: the top face is not front, the roof stays.
-        check(frac('south_wall_east', 'study') > 0.5, f"study: its street face is cut, got {frac('south_wall_east', 'study')}")
+        # RULING 2: the study floor reaches 0.25 into the street wall;
+        # the straddle rule cuts the wall by P alone -- the whole box
+        # silhouette on the wall's 8 x 5.6 study run, 0.97; a raw plane
+        # would keep the inner 0.25 and read ~0.3. Pinned > 0.9.
+        check(frac('south_wall_east', 'study') > 0.9, f"study: its street face is cut on its silhouette, got {frac('south_wall_east', 'study')}")
         for kit in ('facade_main_window_15', 'facade_main_window_16'):
             check(frac(kit, 'study') == 1, f'study: {kit} goes whole with the street face')
         for whole in ('east_partition', 'south_wall', 'facade_main_window_7', 'north_wall',
@@ -2867,7 +2918,32 @@ def scenario_room_masks_cut_only_what_blocks_the_room():
         fab = page.evaluate('window.chfShellFabric()')
         check(all(f['verdict'] == 'solid' for f in fab), 'exterior: every piece solid')
         check(page.evaluate('window.chfRoomShellShown()') is None, 'exterior: no room shell shown')
+        check(page.evaluate('window.chfMaskLeak(null)') == 0, 'exterior: every source shown, every stand-in hidden')
         check(all(f['visible'] for f in fab), 'exterior: every row visible')
+        # RULING 2, the direct pin: in the living and study shells no kept
+        # vertex of the near wall lies inside P behind the box's near
+        # face (z > near face - WALL_T4): the inner sliver a raw W plane
+        # would leave is gone. Sampled the way chfRoomShellLeak samples.
+        # RULING 1, the direct pin: the living shell holds no remnant of
+        # the dropped porch decks; the kitchen shell holds their quarter.
+        WALL_T4 = 0.35
+        def inside_P(mask, p, eps=1e-3):
+            return all(pl['n'][0]*p[0] + pl['n'][1]*p[1] + pl['n'][2]*p[2] - pl['d'] > eps
+                       for pl in mask['P'])
+        for room, wall in (('living', 'south_wall'), ('study', 'south_wall_east')):
+            mask = page.evaluate(f"window.chfRoomMask('{room}')")
+            verts = page.evaluate(f"window.chfRoomShellVerts('{room}', '{wall}', 4000)")
+            check(verts, f'{room}: the near wall leaves remnants in the shell')
+            near = mask['box'][5] - WALL_T4
+            sliver = [p for p in verts if inside_P(mask, p) and p[2] > near]
+            check(not sliver, f'{room}: {len(sliver)} kept {wall} vertices inside P behind the near face (inner sliver survived): {sliver[:3]}')
+        check(page.evaluate("window.chfRoomShellVerts('living', 'facade_main_porch_8', 100)"),
+              'living shell: the porch leaves remnants (its posts and cut deck)')
+        for deck in ('facade_main_gable_8_west', 'facade_main_gable_8_east'):
+            check(page.evaluate(f"window.chfRoomShellVerts('living', '{deck}', 100)") == [],
+                  f'living shell: no {deck} remnant')
+            check(page.evaluate(f"window.chfRoomShellVerts('kitchen', '{deck}', 100)"),
+                  f'kitchen shell: {deck} clipped quarter present')
         # each room view shows its shell; the swap happened
         for room in ROOMS:
             page.evaluate(f"window.chfHouseEnterRoom('{room}')")
@@ -2877,6 +2953,14 @@ def scenario_room_masks_cut_only_what_blocks_the_room():
             # sampled kept vertices lie outside the mask
             bad = page.evaluate(f"window.chfRoomShellLeak('{room}', 2000)")
             check(bad == 0, f'{room}: no kept vertex inside the mask (got {bad})')
+            # fix round 1: every toggled object is in the state this view
+            # wants -- a source mesh whose pattern names the room is hidden
+            # even when its ROW group is toggled too (a roof feature
+            # dropped whole in one view and clipped in another: the early
+            # return that skipped such a row's members left the porch
+            # deck's source standing in the kitchen cone)
+            check(page.evaluate(f"window.chfMaskLeak('{room}')") == 0,
+                  f'{room}: no toggled object in the wrong state')
             rows = page.evaluate('window.chfShellFabric()')
             for f in rows:
                 want = 'masked' if f['maskedFraction'][room] > 0 else 'solid'
