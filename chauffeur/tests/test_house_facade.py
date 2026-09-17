@@ -682,41 +682,59 @@ def scenario_side_garage_and_shed_and_unexpressed():
 
 
 def scenario_the_two_v2_bridges_are_declared():
-    """MASSING ARC 2, tasks 3+4. house.js still speaks V1 in two places,
-    and each has a bridge so a V2 spec keeps working until task 5/8
-    replace them properly. Pin the bridge TEXT, not the behaviour (the
-    live tests own the behaviour): task 5 and task 8 have to delete
-    these deliberately, and this scenario is what tells them to."""
+    """MASSING ARC 2. house.js spoke V1 in two places and each got a bridge
+    so a V2 spec kept working until tasks 5/8 replaced them properly.
+
+    TASK 5 CLOSED THE FIRST ONE: FSTYLE is `SPEC0.style` (roof/frame/door/
+    trim) and body/cladding are read per BLOCK through BLOCKS/CLAD(block),
+    so the _fstyle() style bridge is gone and CANONICAL_JS is the V2
+    literal -- equal to CANONICAL directly, no upgrade table in between.
+    One bridge is left, the porch-gable replay, and TASK 8 owns it."""
     import io, os
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     js = io.open(os.path.join(root, 'static', 'house.js'), encoding='utf-8').read()
-    check('spec.blocks.main.body' in js and 'spec.blocks.main.cladding' in js,
-          "the style bridge: FSTYLE reads the MAIN block's body/cladding, "
-          'so a saved facade never silently renders white batten')
+    check('spec.blocks.main.body' not in js and '_fstyle' not in js,
+          'TASK 5: the style bridge is GONE -- house.js reads the block '
+          'model itself, not the main block mapped back onto one style')
+    for needle in ('var BLOCKS = SPEC0.blocks', 'function blockPitch(',
+                   'function cladTex(', 'function baseBand('):
+        check(needle in js, f'the block model is read in JS: {needle}')
     check("f.roof === 'gable'" in js and 'gableAt({ slot: f.slot' in js,
           "the porch-roof bridge: a gabled porch's own gable is built until "
           'task 8 moves it inside porchAt')
-    check(js.count('TASK 3+4 BRIDGE') == 2,
-          f"both bridges say they are bridges: {js.count('TASK 3+4 BRIDGE')}")
-    # The V1 literal house.js still falls back to is only EQUIVALENT to
-    # the V2 canonical through the upgrade table -- the comments beside
-    # it say so now, and this is the claim they make.
-    v1_literal = {'version': 1, 'pitch_deg': 34.8,
-                  'style': {'cladding': 'batten', 'body': 'white', 'roof': 'charcoal',
-                            'frame': 'black', 'door': 'wood', 'trim': 'white'},
-                  'ground': [{'slot': 0, 'span': 3, 'kind': 'garage_door', 'style': 'carriage', 'leaves': 1},
-                             {'slot': 7, 'span': 1, 'kind': 'window', 'size': 'tall'},
-                             {'slot': 8, 'span': 4, 'kind': 'porch', 'type': 'sitting'},
-                             {'slot': 9, 'span': 1, 'kind': 'window', 'size': 'tall'},
-                             {'slot': 10, 'span': 1, 'kind': 'door'},
-                             {'slot': 12, 'span': 1, 'kind': 'window', 'size': 'tall'},
-                             {'slot': 15, 'span': 1, 'kind': 'window', 'size': 'standard'},
-                             {'slot': 16, 'span': 1, 'kind': 'window', 'size': 'standard'}],
-                  'roof': [{'slot': 0, 'span': 3, 'kind': 'gable'},
-                           {'slot': 8, 'span': 4, 'kind': 'gable'}]}
-    spec, _ = hf.normalize(v1_literal)
-    check(spec == hf.CANONICAL,
-          'CANONICAL_JS is the V1 canonical: equal to CANONICAL only through the upgrade')
+    check(js.count('TASK 3+4 BRIDGE') == 1,
+          f'exactly the ONE remaining bridge says so: {js.count("TASK 3+4 BRIDGE")}')
+    # CANONICAL_JS is now field for field hf.CANONICAL. Parse the literal
+    # out of the file rather than retyping it here: a retyped copy is a
+    # third canonical that can drift from both.
+    check(_js_object(js, 'CANONICAL_JS') == hf.CANONICAL,
+          'CANONICAL_JS IS CANONICAL, no upgrade table in between')
+
+
+def _js_object(js, name):
+    """The object literal assigned to `var <name>` in house.js, as a dict.
+
+    house.js's literals are plain data -- identifier keys, single-quoted
+    strings, numbers, booleans, null, arrays, /* */ comments -- so
+    stripping the comments and re-quoting is enough to hand it to json.
+    """
+    import json, re
+    src = re.sub(r'/\*.*?\*/', '', js, flags=re.S)
+    i = src.index('var %s = ' % name) + len('var %s = ' % name)
+    depth, j = 0, i
+    while True:
+        if src[j] == '{':
+            depth += 1
+        elif src[j] == '}':
+            depth -= 1
+            if depth == 0:
+                j += 1
+                break
+        j += 1
+    body = src[i:j]
+    body = re.sub(r"'([^']*)'", r'"\1"', body)
+    body = re.sub(r'([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:', r'\1"\2":', body)
+    return json.loads(body)
 
 
 def scenario_home_section_pins():

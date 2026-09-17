@@ -1235,15 +1235,23 @@
        the same number of battens/shingles on a 3.5-unit wing and a 14-unit
        wall. Scale UVs by local world dimensions; materials and textures stay
        shared, so this adds no texture or material allocation. */
+    /* MASSING ARC 2 (spec 2026-09-17 section 3.1): ALL SIX claddings
+       share this one body reference -- it is the main facade's own
+       dimensions, and every wall tile is authored at that scale, so a
+       lap course, a brick and a stone read the same size on a 3.5-unit
+       wing as on the 14-unit wall. cladTex stamps it on every tile it
+       builds (arc 4's separate SIDING_UV_REF said the same numbers
+       twice and is gone). */
     var BATTEN_UV_REF = [13, 5.6, 13];
-    /* FACADE (arc 4): clapboard is the cladding enum's other value, so it
-       needs the same reference the batten it replaces had -- without it
-       every clad box falls back to BoxGeometry's 0..1 mapping and the
-       boards change size from wall to wall. Same facade, same numbers. */
-    var SIDING_UV_REF = [13, 5.6, 13];
     var SHINGLE_UV_REF = [14.64, 5.6, 11.521];
+    /* MASSING ARC 2 (spec 2026-09-17 section 3.1): `key` is the MATERIAL
+       name now, and two materials can share a name across two references
+       -- the roof's own shingle tile (SHINGLE_UV_REF) and the wall
+       cladding called 'shingle' (the body reference). So the reference
+       itself is part of the cache key: a geometry cached for one must
+       never be handed to the other. */
     function tiledBoxGeo(w, h, d, ref, key) {
-      return cgeo('bt|' + key + '|' + w + '|' + h + '|' + d, function () {
+      return cgeo('bt|' + key + '|' + ref.join(',') + '|' + w + '|' + h + '|' + d, function () {
         var g = new T.BoxGeometry(w, h, d);
         var uv = g.attributes.uv, no = g.attributes.normal;
         var scale = [w / ref[0], h / ref[1], d / ref[2]];
@@ -1263,13 +1271,13 @@
       var g0 = group || scene;
       var ch = opts && opts.ch !== undefined ? opts.ch
              : (NICE ? 0.022 : 0);
+      /* MASSING ARC 2 (spec 2026-09-17 section 3.1): the tile CARRIES its
+         own world reference (cladTex stamps userData.uvRef/uvKey), so
+         this is one read rather than a three-way identity test that only
+         ever knew the three tiles this file happened to build. */
       var uvRef = null, uvKey = '';
-      if (NICE && opts && battenT && opts.map === battenT) {
-        uvRef = BATTEN_UV_REF; uvKey = 'batten';
-      } else if (NICE && opts && sidingT && opts.map === sidingT) {
-        uvRef = SIDING_UV_REF; uvKey = 'siding';
-      } else if (NICE && opts && shingleT && opts.map === shingleT) {
-        uvRef = SHINGLE_UV_REF; uvKey = 'shingle';
+      if (NICE && opts && opts.map && opts.map.userData && opts.map.userData.uvRef) {
+        uvRef = opts.map.userData.uvRef; uvKey = opts.map.userData.uvKey;
       }
       var m = new T.Mesh(
         ch > 0 ? chamferGeo(w, h, d, ch)
@@ -1600,6 +1608,12 @@
     scene.add(floor);
 
     var wallB = box(13, 5.6, 0.35, C.wall, 0, 2.8, -5.55, null, sharp(WALL_O));
+    /* the shell's wall thickness, read off the one wall that defines it.
+       Declared HERE rather than beside WALL_H4/WALL_Y4 further down
+       (massing arc 2): baseBand() is called at the north cladding, which
+       is built before that line, and `var` hoisting lifts only the
+       declaration -- the VALUE has to be assigned above every reader. */
+    var WALL_T4 = wallB.geometry.parameters.depth;      /* 0.35 */
     /* SHELL (Task 4, spec section 3): north_wall registers wallB directly
        — a bare mesh needs no wrapping group (fabBox/regFabric both accept
        any Object3D, and nothing is ever added to a Mesh the way things
@@ -3929,7 +3943,12 @@
        curtainIntensity carry no enum (the spec gives no role for masonry
        or curtain light), so they stay literal here. */
     var PALETTE = {
-      body:  { white: 0xf4f1e9, greige: 0xd9d2c5, sage: 0xb7c2ad, slate: 0x6f7b85, navy: 0x2f3e55 },
+      /* MASSING ARC 2 (spec 2026-09-17 section 3.1): the five masonry/
+         render tones the six claddings need -- services/house_facade.py's
+         STYLE.body carries the same ten names. */
+      body:  { white: 0xf4f1e9, greige: 0xd9d2c5, sage: 0xb7c2ad, slate: 0x6f7b85, navy: 0x2f3e55,
+               brick_red: 0x8e3b2f, tan: 0xcbb69a, cream_brick: 0xe3d5b8,
+               stone_grey: 0x8b8a84, painted_brick: 0xece6dc },
       roof:  { charcoal: 0x2b2f33, weathered: 0x7d7a72, brown: 0x5a4636 },
       frame: { black: 0x1b1c1e, white: 0xf7f5ef },
       door:  { wood: 0x6b4a30, black: 0x1b1c1e, red: 0x9b2f2a, sage: 0x7d8f74 },
@@ -3945,40 +3964,82 @@
     /* The server injects the active facade before this file loads (spec
        §3.1/§6: build-once, from the payload the page already fetched). A
        page served without it -- only the 2D fallback path can reach that
-       -- falls back to the canonical style below and to CANONICAL_JS at
-       buildElevation(). */
+       -- falls back to CANONICAL_JS, the V2 literal just below. */
     var FACADE = (window.HOUSE_FACADE && window.HOUSE_FACADE.spec) ? window.HOUSE_FACADE : null;
-    /* TASK 3+4 BRIDGE (massing arc 2, spec 2026-09-17 section 2), OWNED
-       BY TASK 5. The V2 block model moved `body` and `cladding` off
-       `style` and onto each block, and `style` now carries only the four
-       roles that are not a block's own skin. This file still paints ONE
-       body colour and ONE cladding for the whole house (task 5 gives it
-       cladTex per block, the six materials and the base band), so until
-       then it reads the MAIN block's pair and maps the V2 cladding name
-       back onto the two painters it has. Without this a saved facade
-       with body 'sage' or cladding 'lap' would silently render white
-       batten -- functionality V1 already shipped. `lap` IS the V1
-       'clapboard' (the upgrade table renames it); the four new materials
-       have no painter yet and fall to batten, which task 5 fixes.
-       DELETE THIS when FSTYLE stops being one global style. */
-    function _fstyle(spec) {
-      if (!spec) {
-        return { cladding: 'batten', body: 'white', roof: 'charcoal',
-                 frame: 'black', door: 'wood', trim: 'white' };
-      }
-      if (!spec.blocks || !spec.blocks.main) return spec.style;   /* V1 */
-      var st = spec.style || {};
-      return { body: spec.blocks.main.body,
-               cladding: spec.blocks.main.cladding === 'lap' ? 'clapboard' : 'batten',
-               roof: st.roof, frame: st.frame, door: st.door, trim: st.trim };
+    /* THE CANONICAL FACADE, field for field services/house_facade.py's
+       own CANONICAL (spec 2026-09-17 section 2: the VERSION-2 block
+       model -- per-block depth/stories/roof/cladding/base/body, the
+       porch owning its gable, and `style` down to the four roles that
+       are not a block's own skin). Only a page served WITHOUT the
+       injection -- nothing but the 2D fallback path can reach that --
+       ever builds from this literal; the pure test parses it out of this
+       file and asserts it EQUALS CANONICAL, no upgrade table in between.
+
+       DECLARED HERE, far above buildElevation()'s own fallback read,
+       because `var` hoisting lifts the DECLARATION only: the VALUE is
+       whatever was last assigned when a reader runs, and SPEC0 three
+       lines below is the earliest reader. */
+    var CANONICAL_JS = {
+      version: 2,
+      mirror: false,
+      pitch_deg: 34.8,
+      blocks: {
+        main:   { depth: 0.0, stories: 1,
+                  roof: { form: 'gable', ridge: 'x', pitch_deg: 22.5 },
+                  cladding: 'batten', base: null, body: 'white' },
+        garage: { depth: 0.0, stories: 1,
+                  roof: { form: 'gable', ridge: 'x', pitch_deg: 22.5 },
+                  cladding: 'batten', base: null, body: 'white',
+                  orientation: 'front' }
+      },
+      style: { roof: 'charcoal', frame: 'black', door: 'wood', trim: 'white' },
+      ground: [
+        { slot: 0, span: 3, kind: 'garage_door', style: 'carriage', leaves: 1 },
+        { slot: 7, span: 1, kind: 'window', size: 'tall', shutters: false, story: 1 },
+        /* the porch OWNS its roof: the old free gable at slot 8 is this */
+        { slot: 8, span: 4, kind: 'porch', type: 'sitting', roof: 'gable' },
+        { slot: 9, span: 1, kind: 'window', size: 'tall', shutters: false, story: 1 },
+        { slot: 10, span: 1, kind: 'door' },
+        { slot: 12, span: 1, kind: 'window', size: 'tall', shutters: false, story: 1 },
+        { slot: 15, span: 1, kind: 'window', size: 'standard', shutters: false, story: 1 },
+        { slot: 16, span: 1, kind: 'window', size: 'standard', shutters: false, story: 1 }
+      ],
+      roof: [
+        { slot: 0, span: 3, kind: 'gable' }
+      ],
+      unexpressed: []
+    };
+    /* MASSING ARC 2 (spec 2026-09-17 section 2): THE BLOCK MODEL. The
+       house is no longer one body colour and one cladding -- each block
+       carries its own depth, stories, roof {form, ridge, pitch_deg},
+       cladding, base band and body, and `style` keeps only roof/frame/
+       door/trim. A spec reaches this file already normalized (the store
+       upgrades a V1 save before it is ever served), so `blocks` is
+       always there; the canonical row is the belt-and-braces fallback
+       for a hand-built payload that skipped normalize. */
+    var SPEC0 = FACADE ? FACADE.spec : CANONICAL_JS;
+    var BLOCKS = SPEC0.blocks || CANONICAL_JS.blocks;
+    var BLOCK_OF_FACE = { garage_block: 'garage', main: 'main' };
+    var FSTYLE = SPEC0.style || CANONICAL_JS.style;   /* roof, frame, door, trim */
+    function blockPitch(name) {
+      return BLOCKS[name].roof.pitch_deg * Math.PI / 180;
     }
-    var FSTYLE = _fstyle(FACADE ? FACADE.spec : null);
+    /* which block's skin a registered piece wears. The garage BLOCK
+       carries both the garage bay and the mudroom (massing arc 1); every
+       other piece is the main block's. */
+    function blockOfName(name) {
+      return (name.indexOf('garage') === 0 || name.indexOf('mudroom') === 0 ||
+              name.indexOf('facade_garage_block') === 0) ? 'garage' : 'main';
+    }
     function pal(role, name, fallback) {
       var t = PALETTE[role];
       return (t && t[name] !== undefined) ? t[name] : fallback;
     }
     var FARMHOUSE = {
-      body:     pal('body', FSTYLE.body, 0xf4f1e9),    // cladding, every exterior face
+      /* the MAIN block's body is the house's default body tone wherever
+         one colour is wanted (spec 2026-09-17 section 3.1); a block with
+         its own body paints through CLAD()/cladColour() instead. */
+      body:     pal('body', BLOCKS.main.body, 0xf4f1e9), // cladding, every exterior face
       roofTone: pal('roof', FSTYLE.roof, 0x2b2f33),    // shingle tone
       frame:    pal('frame', FSTYLE.frame, 0x1b1c1e),  // window frames + grilles
       wood:     pal('door', FSTYLE.door, 0x6b4a30),    // front door, garage door, posts
@@ -4003,7 +4064,9 @@
                               : Math.atan2(PITCH_RISE4, PITCH_RUN4);
     var EXTC = { grass: 0x8fae6e, siding: FARMHOUSE.body, trim: FARMHOUSE.trim,
                  roof: FARMHOUSE.roofTone, ridge: 0x24272a, drive: 0xb8b2a6,
-                 garage: FARMHOUSE.body, trunk: 0x6e5539, leaf: 0x5f8f4e,
+                 /* the GARAGE block's own body (spec 2026-09-17 section 2) */
+                 garage: pal('body', BLOCKS.garage.body, 0xf4f1e9),
+                 trunk: 0x6e5539, leaf: 0x5f8f4e,
                  leafB: 0x527f44 };
     var extG = new T.Group();
     scene.add(extG);
@@ -4022,6 +4085,102 @@
        2026-09-08): mottled grass, clapboard, offset shingles, jointed
        concrete — canvas-procedural, zero downloads, NICE-gated like the
        wood and marble inside. */
+    /* Spec 2026-09-17 blocks section 3.1: one tile per (material, body),
+       world-scaled through userData.uvRef so seams and phase hold across
+       pieces. Build-time textures, never disposed (lifecycle law -- mkTex
+       owns the runtime ones, these are canvasTex tiles like every other
+       build-time surface in this file). */
+    var CLAD_CACHE = {};
+    var CLAD_PAINT = {
+      batten: function (g, S, body) {
+        g.fillStyle = body; g.fillRect(0, 0, S, S);
+        for (var bx = 0; bx < S; bx += 32) {
+          g.fillStyle = 'rgba(255,255,255,0.5)'; g.fillRect(bx, 0, 3, S);
+          g.fillStyle = 'rgba(110,98,80,0.5)'; g.fillRect(bx + 3, 0, 4, S);
+        }
+      },
+      lap: function (g, S, body) {
+        g.fillStyle = body; g.fillRect(0, 0, S, S);
+        for (var y = 0; y < S; y += 21) {
+          g.fillStyle = 'rgba(110,98,80,0.5)'; g.fillRect(0, y + 18, S, 3);
+          g.fillStyle = 'rgba(255,255,255,0.5)'; g.fillRect(0, y, S, 2);
+        }
+      },
+      brick: function (g, S, body) {
+        g.fillStyle = '#b9b2a6'; g.fillRect(0, 0, S, S);           /* mortar */
+        var ch = 16, bw = 64;
+        for (var r = 0; r < S / ch; r++) {
+          var off = (r % 2) ? bw / 2 : 0;
+          for (var x = -bw; x < S + bw; x += bw) {
+            var j = ((r * 7 + x / bw) % 5) * 6 - 12;                  /* per-brick tone jitter, deterministic */
+            g.fillStyle = shade(body, j);
+            g.fillRect(x + off + 1, r * ch + 1, bw - 3, ch - 3);
+          }
+        }
+      },
+      stone: function (g, S, body) {
+        g.fillStyle = '#a9a49b'; g.fillRect(0, 0, S, S);
+        var y = 0, r = 0;
+        while (y < S) {
+          var h = 24 + ((r * 5) % 3) * 8, x = -((r * 13) % 40);
+          while (x < S) {
+            var w = 40 + ((x / 7 + r) % 4) * 16;
+            g.fillStyle = shade(body, ((r + x / 8) % 4) * 5 - 8);
+            g.fillRect(x + 2, y + 2, w - 4, h - 4);
+            x += w;
+          }
+          y += h; r += 1;
+        }
+      },
+      stucco: function (g, S, body) {
+        g.fillStyle = body; g.fillRect(0, 0, S, S);
+        for (var i = 0; i < 1400; i++) {
+          g.fillStyle = 'rgba(0,0,0,' + (0.03 + ((i * 31) % 7) * 0.01) + ')';
+          g.fillRect((i * 97) % S, (i * 57) % S, 2, 2);
+          g.fillStyle = 'rgba(255,255,255,0.06)';
+          g.fillRect((i * 61) % S, (i * 89) % S, 1, 1);
+        }
+      },
+      shingle: function (g, S, body) {                          /* wall shingle: staggered short courses */
+        g.fillStyle = body; g.fillRect(0, 0, S, S);
+        var ch = 24, sw = 20;
+        for (var r = 0; r < S / ch; r++) {
+          var off = (r % 2) ? sw / 2 : 0;
+          g.fillStyle = 'rgba(60,50,40,0.45)'; g.fillRect(0, r * ch + ch - 3, S, 3);
+          for (var x = -sw; x < S + sw; x += sw) {
+            g.fillStyle = 'rgba(60,50,40,0.35)'; g.fillRect(x + off, r * ch, 2, ch);
+          }
+        }
+      }
+    };
+    /* darken/lighten a '#rrggbb' by `d` per channel */
+    function shade(css, d) {
+      var n = parseInt(css.slice(1), 16);
+      function c(v) { return Math.max(0, Math.min(255, v + d)); }
+      return '#' + ('000000' + ((c(n >> 16) << 16) | (c((n >> 8) & 255) << 8) | c(n & 255)).toString(16)).slice(-6);
+    }
+    function cladTex(material, bodyHex) {
+      if (!NICE) return null;
+      var key = material + '|' + bodyHex;
+      if (CLAD_CACHE[key]) return CLAD_CACHE[key];
+      var paint = CLAD_PAINT[material] || CLAD_PAINT.batten;
+      var t = canvasTex(256, function (g, S) { paint(g, S, hex6(bodyHex)); });
+      t.wrapS = t.wrapT = T.RepeatWrapping;
+      t.repeat.set(4, 2);
+      t.userData = { uvRef: BATTEN_UV_REF, uvKey: material };
+      CLAD_CACHE[key] = t;
+      return t;
+    }
+    /* the tile a BLOCK's walls wear, and the flat colour behind it at the
+       tiers that drop maps (!NICE): the block's own body, not the house's. */
+    function CLAD(block) {
+      var b = BLOCKS[block || 'main'];
+      return cladTex(b.cladding, pal('body', b.body, 0xf4f1e9));
+    }
+    function cladColour(block) {
+      return NICE ? 0xffffff
+                  : pal('body', BLOCKS[block || 'main'].body, 0xf4f1e9);
+    }
     var grassT = null, sidingT = null, shingleT = null, driveT = null,
         battenT = null;
     if (NICE) {
@@ -4045,15 +4204,12 @@
       });
       grassT.wrapS = grassT.wrapT = T.RepeatWrapping;
       grassT.repeat.set(7, 5.5);
-      sidingT = canvasTex(256, function (g, S) {
-        g.fillStyle = hex6(FARMHOUSE.body); g.fillRect(0, 0, S, S);
-        for (var y = 0; y < S; y += 21) {
-          g.fillStyle = 'rgba(110,98,80,0.5)'; g.fillRect(0, y + 18, S, 3);
-          g.fillStyle = 'rgba(255,255,255,0.5)'; g.fillRect(0, y, S, 2);
-        }
-      });
-      sidingT.wrapS = sidingT.wrapT = T.RepeatWrapping;
-      sidingT.repeat.set(4, 2);
+      /* MASSING ARC 2: the lap painter moved into CLAD_PAINT (one tile per
+         (material, body), cached). sidingT is that cache's `lap` entry at
+         the MAIN block's body -- the same 256px canvas, the same course
+         pitch, the same repeat -- kept as a named local because the R5
+         normal-map derivation below reads it by name. */
+      sidingT = cladTex('lap', FARMHOUSE.body);
       shingleT = canvasTex(256, function (g, S) {
         g.fillStyle = hex6(FARMHOUSE.roofTone); g.fillRect(0, 0, S, S);
                                                             // (spec 6b: dark
@@ -4074,24 +4230,21 @@
       });
       shingleT.wrapS = shingleT.wrapT = T.RepeatWrapping;
       shingleT.repeat.set(5, 2);
+      /* the ROOF's shingle: its own world reference, stamped on the tile
+         itself now that box()/vaultSection read the map rather than test
+         three identities. `uvKey` collides by name with the WALL cladding
+         called 'shingle'; tiledBoxGeo's cache key carries the reference
+         too, so the two never share a geometry. */
+      shingleT.userData = { uvRef: SHINGLE_UV_REF, uvKey: 'shingle' };
       /* battenT (spec section 6b): board-and-batten, the farmhouse
          conversion's own body cladding — vertical battens over a flat
-         board, painted the SAME way sidingT paints horizontal clapboard
-         (an alternating highlight/shadow band pair, just turned 90
-         degrees) so the two share one visual family and one derivation
-         path below. sidingT itself is UNTOUCHED and stays live in the
-         file — arc 4 wants both painters as enum values — this is an
-         ADDITION beside it, not a replacement of it. */
-      battenT = canvasTex(256, function (g, S) {
-        g.fillStyle = hex6(FARMHOUSE.body); g.fillRect(0, 0, S, S);
-        var bw = 32;
-        for (var bx = 0; bx < S; bx += bw) {
-          g.fillStyle = 'rgba(255,255,255,0.5)'; g.fillRect(bx, 0, 3, S);
-          g.fillStyle = 'rgba(110,98,80,0.5)'; g.fillRect(bx + 3, 0, 4, S);
-        }
-      });
-      battenT.wrapS = battenT.wrapT = T.RepeatWrapping;
-      battenT.repeat.set(4, 2);
+         board, painted the SAME way the lap painter paints horizontal
+         clapboard (an alternating highlight/shadow band pair, just turned
+         90 degrees) so the two share one visual family and one derivation
+         path below. MASSING ARC 2: both painters live in CLAD_PAINT now
+         and both tiles come out of one cache, so a block asking for
+         'batten' at the main body resolves to THIS object. */
+      battenT = cladTex('batten', FARMHOUSE.body);
       driveT = canvasTex(256, function (g, S) {
         g.fillStyle = '#b8b2a6'; g.fillRect(0, 0, S, S);
         for (var i = 0; i < 500; i++) {
@@ -4106,11 +4259,6 @@
       driveT.wrapS = driveT.wrapT = T.RepeatWrapping;
       driveT.repeat.set(1, 3);
     }
-    /* FACADE (spec §3 style.cladding): ONE call decides which painter
-       every clad surface below maps. Both painters stay live in the file
-       -- the enum has two values -- and both are null at the !NICE tier,
-       where the map is dropped anyway. */
-    function CLAD() { return FSTYLE.cladding === 'clapboard' ? sidingT : battenT; }
     /* R5 (quality spec §4): a normal map derived from the SAME canvas
        sidingT/shingleT already painted — no second download, just a
        luminance-gradient read of the pixels canvasTex drew a moment
@@ -4227,6 +4375,10 @@
        height/colour/front plane as shellWall's own, and the whole north
        elevation now reads as one wall. */
     nbox(14.0, 0.20, 0.36, FARMHOUSE.stoop, -0.15, 0.10, -5.95);
+    /* spec 2026-09-17 section 2: the main block's base band on its rear
+       skin, in the band's own material/height/colour. Built BEFORE
+       north_cladding registers, so the piece's fabric box carries it. */
+    baseBand(northCladdingG, -7.15, -5.95, 6.85, -5.95, [0, 0, -1], 'main');
     /* The rear window stays inside the casing clearance at x=6.67.
        Glazing and frames sit on the exterior (north) face. */
     (function () {
@@ -4265,7 +4417,9 @@
        block above builds it. */
     var grFloorBox = new T.Box3().setFromObject(floor)
                         .union(new T.Box3().setFromObject(floor2));
-    var WALL_T4 = wallB.geometry.parameters.depth;      /* 0.35 */
+    /* WALL_T4 is assigned at wallB's own build site far above (massing
+       arc 2: baseBand() runs at the north cladding, which is built
+       before this line and needs the thickness). */
     var WALL_H4 = wallB.geometry.parameters.height;     /* 5.6 */
     var WALL_Y4 = wallB.position.y;                     /* 2.8 */
     var WALL_TOP4 = WALL_Y4 + WALL_H4 / 2;               /* 5.6: the room's
@@ -4353,6 +4507,10 @@
     /* the baseboard: one board, its two ends inset 0.15 each. */
     swtag(box(SW_W - 0.3, 0.2, 0.08, 0xe4ddd1, SW_CX, 0.1,
               SWZ0 - 0.02, southWallG, sharp()));
+    /* spec 2026-09-17 section 2: the main block's base band on the
+       street face itself. Nothing is built when the block has no base. */
+    swtag(baseBand(southWallG, FULL_HOUSE.west, SWZ1 - WALL_T4 / 2,
+                   FULL_HOUSE.east, SWZ1 - WALL_T4 / 2, [0, 0, 1], 'main'));
 
     /* FACADE (arc 4): the door, the porch and the second coach lamp all
        stood here, hand-placed into southWallG. They are spec features
@@ -4396,8 +4554,12 @@
        gabled with the ridge running east/west. window.HOUSE_ROOF_FORMS
        overrides at build time (a probe/init-script hook, and the seam
        spec 2's block model feeds); absent, the canonical row stands. */
-    var ROOF_FORMS = { main: { form: 'gable', ridge: 'x' },
-                       garage: { form: 'gable', ridge: 'x' } };
+    /* MASSING ARC 2 (spec 2026-09-17 section 2): the rows come from the
+       BLOCK MODEL now -- each block's own roof {form, ridge} -- and
+       window.HOUSE_ROOF_FORMS still overrides on top of them, so a probe
+       or an init script can still drive a form/ridge without a spec. */
+    var ROOF_FORMS = { main:   { form: BLOCKS.main.roof.form,   ridge: BLOCKS.main.roof.ridge },
+                       garage: { form: BLOCKS.garage.roof.form, ridge: BLOCKS.garage.roof.ridge } };
     (function () {
       var o = window.HOUSE_ROOF_FORMS;
       if (!o) return;
@@ -4550,19 +4712,15 @@
          above the eave -- which is exactly what shipped in v2.499.45 and
          what this reads off `opts.map` to prevent. */
       var uvRef = null, uvKey = '';
-      if (NICE && opts && battenT && opts.map === battenT) {
-        uvRef = BATTEN_UV_REF; uvKey = 'batten';
-      } else if (NICE && opts && sidingT && opts.map === sidingT) {
-        uvRef = SIDING_UV_REF; uvKey = 'siding';
-      } else if (NICE && opts && shingleT && opts.map === shingleT) {
-        uvRef = SHINGLE_UV_REF; uvKey = 'shingle';
+      if (NICE && opts && opts.map && opts.map.userData && opts.map.userData.uvRef) {
+        uvRef = opts.map.userData.uvRef; uvKey = opts.map.userData.uvKey;
       }
       /* the y at which the run BELOW this section started its own
          courses, so the section carries their phase across the joint
          instead of restarting them. Only a tiled map can see it. */
       vFrom = vFrom || 0;
       var key = 'vault|' + axis + '|' + thick + '|' + yBase + '|' + uvKey +
-                '|' + vFrom + '|' +
+                '|' + (uvRef ? uvRef.join(',') : '') + '|' + vFrom + '|' +
                 pts.map(function (p) {
                   return p[0].toFixed(4) + ',' + p[1].toFixed(4);
                 }).join(';');
@@ -4621,8 +4779,15 @@
        runs, so the assignment itself has to sit above all four reads
        (this one, the two shellGable('roof_main'/'garage_block_roof', ...)
        calls, and blockDeckPlanes/faceDeckPlane's own copy below) for
-       every one of them to see pi/8 rather than undefined. */
-    var BLOCK_PITCH = Math.PI / 8;
+       every one of them to see pi/8 rather than undefined.
+
+       MASSING ARC 2 (spec 2026-09-17 section 2): the pitch is a BLOCK's
+       own setting now. The name stays -- every main-block reader below
+       means "the main block's pitch" -- and the GARAGE block's readers
+       (its roofVault and its shellGable) take blockPitch('garage')
+       instead. Canonical is 22.5 degrees on both, which is the pi/8 this
+       line has always been, to the bit. */
+    var BLOCK_PITCH = blockPitch('main');
     /* the main block's own vault, read once: every partition under
        `roof_main` measures itself off this. */
     var MAIN_VAULT = roofVault(FULL_HOUSE, ROOF_FORMS.main, BLOCK_PITCH);
@@ -4754,6 +4919,9 @@
         sharp({ rough: 0.95, map: CLAD() }));
     box(0.08, 0.2, EW_LEN4 - 0.3, 0xe4ddd1, EWX0_4 - 0.02, 0.1, EW_CZ4,
         eastWallG, sharp());
+    /* spec 2026-09-17 section 2: the main block's base band, east face */
+    baseBand(eastWallG, EWX0_4 + WALL_T4 / 2, EWZ0_4,
+             EWX0_4 + WALL_T4 / 2, EWZ1_4, [1, 0, 0], 'main');
     /* study first (a lived room glows at night), then the two future
        rooms, which are empty and stay dark.
        STUDY REFIT (2026-09-16): the study's window turned onto this
@@ -4888,21 +5056,47 @@
                0, -(h + 0.22) / 2, 0.05);
       return frame;
     }
+    /* Spec 2026-09-17 section 2: a band at the block's foot in its own
+       material, height and colour. A second box run 0.06 proud of the
+       wall, added to the wall's OWN group (same registered piece, same
+       room) so it masks, ghosts and merges with the wall it belongs to.
+       A block with no base (the canonical, both blocks) builds nothing.
+
+       x0/z0..x1/z1 are the wall's CENTRE LINE, exactly as shellWall takes
+       them -- a band placed on a wall's OUTER face would stand 0.2 proud
+       of it and bury the bottom of any door in that wall. */
+    function baseBand(g, x0, z0, x1, z1, normal, block) {
+      var b = BLOCKS[block || 'main']; if (!b || !b.base) return;
+      var h = b.base.height, alongX = x0 !== x1;
+      var length = alongX ? x1 - x0 : z1 - z0;
+      var cx = (x0 + x1) / 2 + (alongX ? 0 : normal[0] * 0.03);
+      var cz = (z0 + z1) / 2 + (alongX ? normal[2] * 0.03 : 0);
+      return shellBox(g, alongX ? length : WALL_T4 + 0.06, h, alongX ? WALL_T4 + 0.06 : length,
+               NICE ? 0xffffff : pal('body', b.base.body, 0x8b8a84), cx, h / 2, cz,
+               { rough: 0.95, map: cladTex(b.base.material,
+                                           pal('body', b.base.body, 0x8b8a84)) });
+    }
     /* `room` (massing arc 1): a shell wall used to register roomless
        without exception — every caller was unbuilt massing. The garage
        block's street face fronts a REAL room (the mudroom), so the
        argument exists rather than a second hand-rolled wall builder; it
-       defaults to null, which is exactly what every older caller got. */
-    function shellWall(name, x0, z0, x1, z1, height, normal, windows, room) {
+       defaults to null, which is exactly what every older caller got.
+
+       `block` (massing arc 2): which block's skin this wall wears --
+       cladding, body and base band. Defaults to the block its NAME says
+       (the garage block carries the garage bay and the mudroom). */
+    function shellWall(name, x0, z0, x1, z1, height, normal, windows, room, block) {
       var g = shellGroup(), alongX = x0 !== x1;
       var length = alongX ? x1 - x0 : z1 - z0;
       var cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+      block = block || blockOfName(name);
       shellBox(g, alongX ? length : WALL_T4, height,
-               alongX ? WALL_T4 : length, NICE ? 0xffffff : FARMHOUSE.body,
-               cx, height / 2, cz, { rough: 0.95, map: CLAD() });
+               alongX ? WALL_T4 : length, cladColour(block),
+               cx, height / 2, cz, { rough: 0.95, map: CLAD(block) });
       shellBox(g, alongX ? length : WALL_T4 + 0.06, 0.20,
                alongX ? WALL_T4 + 0.06 : length, FARMHOUSE.stoop,
                cx, 0.10, cz);
+      baseBand(g, x0, z0, x1, z1, normal, block);
       [0, 1].forEach(function (end) {
         shellBox(g, 0.18, height, 0.18, FARMHOUSE.trim,
                  end ? x1 : x0, height / 2, end ? z1 : z0);
@@ -5099,8 +5293,8 @@
           shape.lineTo(half, eave); shape.lineTo(-half, eave);
           return new T.ExtrudeGeometry(shape, { depth: 0.14, bevelEnabled: false });
         });
-        var m = new T.Mesh(geo, mat(NICE ? 0xffffff : FARMHOUSE.body,
-                                   { rough: 0.95, map: CLAD() }));
+        var m = new T.Mesh(geo, mat(cladColour(blockOfName(name)),
+                                   { rough: 0.95, map: CLAD(blockOfName(name)) }));
         /* VIEW-VOLUME MASKING (task 2): the gable-end shape above is a
            symmetric "house" pentagon -- a rectangle (eave to roofEave)
            with a triangular peak (roofEave to the ridge apex) -- and
@@ -5152,7 +5346,7 @@
        built -- garage_block fronts the whole driveway side (garage +
        mudroom, one eave, one z) and main absorbs the wing now that it
        sits on the same street line (z SWZ1) as the rest of the front.
-       Eighteen slots still (6 + 12), re-snapped: CANONICAL_JS below and
+       Eighteen slots still (6 + 12), re-snapped: CANONICAL_JS above and
        services/house_facade.py's CANONICAL carry the same numbers
        (task-3-report.md shows the derivation). */
     var FACES = [
@@ -5187,39 +5381,11 @@
     }
     var SLOTS = facadeSlots();
     /* The canonical facade (spec section 2.2: today's elevation, snapped
-       onto the slot grid). Only a page served WITHOUT the injection --
-       nothing but the 2D fallback path can reach that -- ever builds
-       from this literal.
-
-       MASSING ARC 2 (spec 2026-09-17): this literal is still the
-       VERSION-1 shape and is NOT field for field the Python CANONICAL
-       any more -- that one is version 2, with per-block cladding/body,
-       the porch owning its gable and no free gable at slot 8. It is
-       still equivalent, but only THROUGH normalize()'s V1 upgrade
-       table: normalize(CANONICAL_JS) == CANONICAL. Task 5 replaces this
-       literal with the V2 one and the pin test goes back to a direct
-       comparison. The injected-spec pin (chfFacade() === the injected
-       object) is what keeps the scene honest in the meantime. */
-    var CANONICAL_JS = {
-      version: 1,
-      pitch_deg: 34.8,
-      style: { cladding: 'batten', body: 'white', roof: 'charcoal',
-               frame: 'black', door: 'wood', trim: 'white' },
-      ground: [
-        { slot: 0, span: 3, kind: 'garage_door', style: 'carriage', leaves: 1 },
-        { slot: 7, span: 1, kind: 'window', size: 'tall' },
-        { slot: 8, span: 4, kind: 'porch', type: 'sitting' },
-        { slot: 9, span: 1, kind: 'window', size: 'tall' },
-        { slot: 10, span: 1, kind: 'door' },
-        { slot: 12, span: 1, kind: 'window', size: 'tall' },
-        { slot: 15, span: 1, kind: 'window', size: 'standard' },
-        { slot: 16, span: 1, kind: 'window', size: 'standard' }
-      ],
-      roof: [
-        { slot: 0, span: 3, kind: 'gable' },
-        { slot: 8, span: 4, kind: 'gable' }
-      ]
-    };
+       onto the slot grid) is CANONICAL_JS, declared with the block model
+       far above -- SPEC0 reads it there, and `var` hoisting means the
+       VALUE has to be assigned above its earliest reader. It is the V2
+       literal now, field for field services/house_facade.py's CANONICAL:
+       no upgrade table in between (massing arc 2, task 5). */
     var SPEC = FACADE ? FACADE.spec : null;
     /* A feature's extent: its own slot's west edge to its last slot's
        east edge. Spans never cross a face (normalize truncates at the
@@ -5253,11 +5419,12 @@
        a later per-block eave had one place to diverge): the block row's
        own `eave` IS that place now, read through its deck planes. */
     var FACE_BLOCKS = {
-      main:         { block: FULL_HOUSE,   forms: ROOF_FORMS.main },
-      garage_block: { block: GARAGE_BLOCK, forms: ROOF_FORMS.garage }
+      main:         { block: FULL_HOUSE,   forms: ROOF_FORMS.main,   pitch: blockPitch('main') },
+      garage_block: { block: GARAGE_BLOCK, forms: ROOF_FORMS.garage, pitch: blockPitch('garage') }
     };
-    /* BLOCK_PITCH is declared once, above MAIN_VAULT, so this and every
-       other reader see the same value. */
+    /* MASSING ARC 2: each row carries its OWN block's pitch (the model's
+       roof.pitch_deg), so a deck plane is derived at the pitch the roof
+       was actually built with rather than one shared constant. */
     /* every deck plane of the block's roof: the two slope decks, plus
        the two hipped ends when the form is a hip. The roof surface is
        the LOWEST of them at any (x, z). */
@@ -5265,11 +5432,11 @@
       var B = FACE_BLOCKS[face], b = B.block, out = [];
       [-1, 1].forEach(function (sign) {
         out.push(deckPlane(b.west, b.east, b.north, b.south, b.eave,
-                           B.forms.ridge, BLOCK_PITCH, sign));
+                           B.forms.ridge, B.pitch, sign));
       });
       if (B.forms.form === 'hip') [-1, 1].forEach(function (sign) {
         out.push(hipEndPlane(b.west, b.east, b.north, b.south, b.eave,
-                             B.forms.ridge, BLOCK_PITCH, sign));
+                             B.forms.ridge, B.pitch, sign));
       });
       return out;
     }
@@ -5282,7 +5449,7 @@
       if (B.forms.ridge === 'z') return null;
       var b = B.block;
       return deckPlane(b.west, b.east, b.north, b.south, b.eave,
-                       B.forms.ridge, BLOCK_PITCH, 1);
+                       B.forms.ridge, B.pitch, 1);
     }
     /* the roof line over (x, z) on that block: its centre planes' minimum */
     function roofY(face, x, z) {
@@ -5732,8 +5899,8 @@
          zc, its front face 0.62 buried and the window's sill 0.22 into
          the shingles. */
       var y = roofY(slot.face, e.cx, zc + 0.8) + 0.95;
-      shellBox(g, w, 1.9, 1.6, NICE ? 0xffffff : FARMHOUSE.body,
-               e.cx, y, zc, { rough: 0.95, map: CLAD() });
+      shellBox(g, w, 1.9, 1.6, cladColour(BLOCK_OF_FACE[slot.face]),
+               e.cx, y, zc, { rough: 0.95, map: CLAD(BLOCK_OF_FACE[slot.face]) });
       if (feat.window !== false) {
         shellWindow(g, e.cx, y, zc + 0.85, 0, Math.min(1.1, w - 0.5), 1.1, true);
       }
@@ -5887,7 +6054,7 @@
               [0, 0, 1], [], 'mudroom');
     shellGable('garage_block_roof', GARAGE_BLOCK.west, GARAGE_BLOCK.east,
                GARAGE_BLOCK.north, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
-               ROOF_FORMS.garage.ridge, null, null, BLOCK_PITCH,
+               ROOF_FORMS.garage.ridge, null, null, blockPitch('garage'),
                ['garage', 'mudroom'], null, ROOF_FORMS.garage.form);
 
     /* Spec 2026-09-17 blocks section 0: a block roof's pieces are named by
@@ -6105,6 +6272,9 @@
         sharp({ rough: 0.95, map: CLAD() }));
     box(0.35, EXT_TOP4, 0.1, EXTC.trim, -6.675, EXT_TOP4 / 2, SWZ1,
         westSkirtG, sharp());
+    /* spec 2026-09-17 section 2: the main block's base band, west face
+       south of the garage block (the one stretch of it the street sees) */
+    baseBand(westSkirtG, -7.0, 6.0, -7.0, SWZ1, [-1, 0, 0], 'main');
     /* spec section 5: fronts mudroom, same adjacency shape as west_wall's
        own T2/T7 flip immediately above this file's own west_skirt
        derivation — this piece only ever ghosts for the mudroom's camera
@@ -6141,30 +6311,30 @@
         if (m) { zoneTag(m, 'garage', 'garage'); }
         return m;
       }
-      var gWallW = gtag(ebox(0.24, 4.6, 8.0, NICE ? 0xffffff : EXTC.garage,
-                -18.08, 2.3, 6.0, { rough: 0.95, map: CLAD() }));
-      var gWallE = gtag(ebox(0.24, 4.6, 8.0, NICE ? 0xffffff : EXTC.garage,
-                -12.72, 2.3, 6.0, { rough: 0.95, map: CLAD() }));
+      var gWallW = gtag(ebox(0.24, 4.6, 8.0, cladColour('garage'),
+                -18.08, 2.3, 6.0, { rough: 0.95, map: CLAD('garage') }));
+      var gWallE = gtag(ebox(0.24, 4.6, 8.0, cladColour('garage'),
+                -12.72, 2.3, 6.0, { rough: 0.95, map: CLAD('garage') }));
       var garageBackWall = gtag(ebox(5.6, 4.6, 0.24,
-                NICE ? 0xffffff : EXTC.garage,
-                -15.4, 2.3, 2.12, { rough: 0.95, map: CLAD() }));
+                cladColour('garage'),
+                -15.4, 2.3, 2.12, { rough: 0.95, map: CLAD('garage') }));
       webgl_garageBackWall = garageBackWall;
-      gtag(box(5.6, 1.1, 0.24, NICE ? 0xffffff : EXTC.garage,
+      gtag(box(5.6, 1.1, 0.24, cladColour('garage'),
                -15.4, 4.05, 9.88, garageDoorG,
-               sharp(NICE ? { rough: 0.95, map: CLAD() } : { rough: 0.95 })));
+               sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
       /* the lintel: the header stopped at y 3.5 and the door at 3.1, so
          a 0.4 slot ran the width of the bay and the resting camera
          looked straight through it at the shelves */
-      gtag(box(5.6, 0.46, 0.24, NICE ? 0xffffff : EXTC.garage,
+      gtag(box(5.6, 0.46, 0.24, cladColour('garage'),
                -15.4, 3.27, 9.88, garageDoorG,
-               sharp(NICE ? { rough: 0.95, map: CLAD() } : { rough: 0.95 })));
+               sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
       gtag(box(3.9, 0.16, 0.16, EXTC.trim, -15.4, 3.16, 10.00, garageDoorG, sharp()));
-      gtag(box(0.76, 3.5, 0.24, NICE ? 0xffffff : EXTC.garage,
+      gtag(box(0.76, 3.5, 0.24, cladColour('garage'),
                -17.58, 1.75, 9.88, garageDoorG,
-               sharp(NICE ? { rough: 0.95, map: CLAD() } : { rough: 0.95 })));
-      gtag(box(0.76, 3.5, 0.24, NICE ? 0xffffff : EXTC.garage,
+               sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
+      gtag(box(0.76, 3.5, 0.24, cladColour('garage'),
                -13.22, 1.75, 9.88, garageDoorG,
-               sharp(NICE ? { rough: 0.95, map: CLAD() } : { rough: 0.95 })));
+               sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
       /* FACADE (arc 4): the door leaf, its board seams, strap hardware
          and top-light row used to be authored here. garageDoorAt() (the
          facade block above) builds them into this same garageDoorG from
@@ -6236,9 +6406,9 @@
                  4, { rough: 0.5 })).rotation.y = Math.PI / 4;
       }
       [5.10].forEach(function (y) {
-        gtag(box(5.60, 1.0, 0.30, NICE ? 0xffffff : EXTC.siding,
+        gtag(box(5.60, 1.0, 0.30, cladColour('garage'),
                   -15.4, y, 10.02, garageDoorG,
-                  sharp({ rough: 0.95, map: CLAD() })));
+                  sharp({ rough: 0.95, map: CLAD('garage') })));
       });
       /* The lower cross roof spans both garage and mudroom. The bay
          keeps its original walls and door as separate navigation fabric. */
@@ -6246,8 +6416,8 @@
       extG.add(garageShellG);
       [gWallW, gWallE, garageBackWall].forEach(function (m) { garageShellG.add(m); });
       [-18.08, -12.72].forEach(function (x) {
-        box(0.30, 1.0, 8.0, NICE ? 0xffffff : EXTC.siding,
-            x, 5.10, 6.0, garageShellG, sharp({ rough: 0.95, map: CLAD() }));
+        box(0.30, 1.0, 8.0, cladColour('garage'),
+            x, 5.10, 6.0, garageShellG, sharp({ rough: 0.95, map: CLAD('garage') }));
       });
       /* THE VAULT (see roofVault, way above). The two bands just above
          carry these walls to the block's eave; the EAST one is the wall
@@ -6259,7 +6429,7 @@
          street. The WEST band needs nothing: `garage_block_west` stands
          outboard of it and `garage_block_roof_end_west`'s gable infill
          closes the block above. */
-      var gVault = roofVault(GARAGE_BLOCK, ROOF_FORMS.garage, BLOCK_PITCH);
+      var gVault = roofVault(GARAGE_BLOCK, ROOF_FORMS.garage, blockPitch('garage'));
       if (gVault.axis === 'z' && ROOF_FORMS.garage.form === 'gable')
         /* vFrom 4.6: the band just above starts ITS courses at its own
            bottom edge, so the section continues them from there rather
@@ -6267,8 +6437,8 @@
         vaultSection(garageShellG,
                      vaultRidgePts(gVault, 2.0, 10.0, EXT_TOP4),
                      EXT_TOP4, 'z', -12.57, 0.30,
-                     NICE ? 0xffffff : EXTC.siding, { rough: 0.95, map: CLAD() },
-                     4.6);
+                     cladColour('garage'),
+                     { rough: 0.95, map: CLAD('garage') }, 4.6);
       /* VIEW-VOLUME MASKING (task 4): the garage camera's mask grazes
          this row (0.04) and no other room's touches it; `n` is read by
          the AO derivation and the registry report only. The paragraph
@@ -7719,12 +7889,12 @@
       mfloor.rotation.x = -Math.PI / 2;
       mfloor.position.set(-9.7, 0.03, 5.4);
       mtag(mfloor); finish(mfloor); extG.add(mfloor);
-      mtag(ebox(5.6, 4.2, 0.24, NICE ? 0xffffff : EXTC.siding,
-                -9.8, 2.1, 2.48, { rough: 0.95, map: CLAD() }));
+      mtag(ebox(5.6, 4.2, 0.24, cladColour('garage'),
+                -9.8, 2.1, 2.48, { rough: 0.95, map: CLAD('garage') }));
       /* the street end is the mudroom's "garage door": hidden from the
          inside so the camera can look straight into the room */
-      var mudFrontWall = mtag(ebox(5.6, 4.2, 0.24, NICE ? 0xffffff : EXTC.siding,
-                -9.8, 2.1, 8.32, { rough: 0.95, map: CLAD() }));
+      var mudFrontWall = mtag(ebox(5.6, 4.2, 0.24, cladColour('garage'),
+                -9.8, 2.1, 8.32, { rough: 0.95, map: CLAD('garage') }));
       mudroomRoofG.add(mudFrontWall);
       /* The cross roof replaces the old flat slab. This legacy registry
          name owns the front wall, street door and trim. Register after
@@ -10747,6 +10917,9 @@
          (P, W, box, cam) and the one cap material, for the read-only
          window.chfRoomShell* hooks below */
       roomShellGroups: roomShellGroups, ROOM_MASKS: ROOM_MASKS, CAP_MAT: CAP_MAT,
+      /* MASSING ARC 2 (spec 2026-09-17 section 2): the block model the
+         scene was built from, for window.chfBlocks */
+      BLOCKS: BLOCKS,
       /* FACADE (arc 4): the spec the elevation was BUILT from (never the
          raw injection -- buildElevation() falls back to CANONICAL_JS)
          and the slot table it derived, for chfFacade/chfFacadeSlots. */
@@ -11978,6 +12151,10 @@
      both and asserts them against services/house_facade.py, which is
      what keeps the JS and Python slot tables from ever drifting. */
   window.chfFacade = function () { return webgl ? webgl.SPEC : null; };
+  /* MASSING ARC 2 (spec 2026-09-17 section 2): the BLOCK MODEL the scene
+     was built from -- each block's depth, stories, roof {form, ridge,
+     pitch_deg}, cladding, base band and body. Read-only, like chfFacade. */
+  window.chfBlocks = function () { return webgl ? webgl.BLOCKS : null; };
   /* ROOF VALLEYS (masking spec section 6): the block deck plane under a
      street face's features, {n, d} with n the deck's upward normal
      (n.p - d >= 0 is above the deck), derived by deckPlane exactly as

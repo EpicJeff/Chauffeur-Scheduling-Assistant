@@ -30,8 +30,30 @@ os.environ.setdefault('CHAUFFEUR_DATA_DIR',
                       tempfile.mkdtemp(prefix='chauffeur_house_facade_live_'))
 
 from live_app import live_app
-from house_live_common import (check, _seed, DAY_LOCK_JS, INVARIANT_JS,
-                               _VAULT_PITCH, FEATURE_JS, VERTEX_AUDIT_JS)
+from house_live_common import (check, _seed, DAY_LOCK_JS, SEED_RNG_JS,
+                               INVARIANT_JS, _VAULT_PITCH, FEATURE_JS,
+                               VERTEX_AUDIT_JS)
+
+# Spec 2026-09-17 blocks section 2, the compatibility pin's window: the
+# rectangle of the B0 frame that is the HOUSE and nothing else.
+#
+# The fixture (tools/house_probe.py --views exterior, Task 1) is a whole
+# 1400x1000 VIEWPORT, so it also carries the nav bar, the wall clock (a
+# different minute every run and a different date every day), the hero
+# card, the Ask-Argyle bar, the sky (whose tint follows the weather stub
+# the probe's own --seed installs and this file's live_app does not) and
+# the driveway cars (four in the probe's seed). None of those is what
+# "the canonical still renders the same house" means, and none of them
+# can be held still from here.
+#
+# MEASURED, not guessed: with house.js at the V1 head this window's mean
+# channel difference against the fixture is [0.016, 0.094, 0.125] (max
+# pixel 22) -- the same house, to within the sky sliver above the ridge --
+# while the whole frame reads [7.9, 13.6, 16.4]. What is inside it is the
+# main roof's south deck, the east gable end, the street elevation east
+# of the porch, six windows, the fascia and rake trim, the fence and the
+# planting: every surface the block model repaints.
+B0_HOUSE_CLIP = {'x': 600, 'y': 430, 'width': 660, 'height': 470}
 
 
 # The facade spec §2.2 pins the canonical facade to the elevation it
@@ -280,6 +302,10 @@ def scenario_canonical_facade_pins_the_hand_built_elevation():
         page.route('**/three.min.js*', lambda route: route.fulfill(
             status=200, content_type='application/javascript', body=_patched))
         page.add_init_script(DAY_LOCK_JS)
+        # MASSING ARC 2 task 5: the same seeded Math.random the B0 capture
+        # ran under (tools/house_probe.py --seed-rng), so grass, drive and
+        # planting paint the same picture the fixture below holds.
+        page.add_init_script(SEED_RNG_JS)
         page.goto(served.url('house?quality=high'))
         page.wait_for_selector('#room canvas', timeout=20000)
         page.wait_for_timeout(2200)
@@ -318,9 +344,91 @@ def scenario_canonical_facade_pins_the_hand_built_elevation():
             # on either side (the mask decides what a room view removes)
             check('owners' not in a and 'owners' not in b,
                   'slot %d: owners retired, got %r / %r' % (b['i'], sorted(a), sorted(b)))
+        # Spec 2026-09-17 blocks section 2 compatibility pin: the canonical
+        # V2 model renders the same picture as B0 (Task 1, same seed, same
+        # day lock). Mean absolute difference over the house window,
+        # 8-bit channels.
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        png = page.screenshot(clip=B0_HOUSE_CLIP)
+        from PIL import Image, ImageChops, ImageStat
+        import io as _io
+        a = Image.open(_io.BytesIO(png)).convert('RGB')
+        b = Image.open(os.path.join(os.path.dirname(__file__), 'fixtures',
+                                    'house_photo', 'b0-exterior.png')).convert('RGB')
+        b = b.crop((B0_HOUSE_CLIP['x'], B0_HOUSE_CLIP['y'],
+                    B0_HOUSE_CLIP['x'] + B0_HOUSE_CLIP['width'],
+                    B0_HOUSE_CLIP['y'] + B0_HOUSE_CLIP['height']))
+        diff = ImageStat.Stat(ImageChops.difference(a, b)).mean
+        check(max(diff) < 1.5,
+              'canonical V2 renders B0 within tolerance: mean channel diff %r' % (diff,))
+        check(page.evaluate('window.chfBlocks().main.cladding') == 'batten',
+              'the scene built from the block model')
+        check(page.evaluate('window.chfBlocks()') == hf.CANONICAL['blocks'],
+              'and the block model IS the canonical one, block for block')
         errs = [e for e in served.errors()
                 if 'WebGL' not in e and 'GroupMarker' not in e]
         check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
+
+
+def scenario_claddings_and_base_band():
+    """Spec section 3.1: six claddings, world-scaled UVs carried on the
+    texture, a base band in its own material and colour. Each variant
+    boots clean and the draw count stays within the measured rule.
+
+    The spec rides in on a DRAFT TOKEN, not an init script: house.html
+    assigns window.HOUSE_FACADE inline AFTER every init script has run,
+    so add_init_script cannot inject a facade (task 10's finding). live_app
+    runs uvicorn on a thread of THIS interpreter, so a token minted here
+    is a token the served /house resolves.
+    """
+    from services import house_facade as hf
+    served = live_app(_seed)
+    if served is None:
+        return
+    from house_probe import THREE_WRAP, BUDGET_JS
+    with open('static/vendor/three.min.js', 'rb') as fh:
+        patched = fh.read() + THREE_WRAP
+
+    def boot(page, spec):
+        page.route('**/three.min.js*', lambda route: route.fulfill(
+            status=200, content_type='application/javascript', body=patched))
+        page.add_init_script(DAY_LOCK_JS)
+        page.add_init_script(SEED_RNG_JS)
+        page.goto(served.url('house?quality=high&draft=' + hf.issue_draft(spec)))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        return page.evaluate(BUDGET_JS)
+
+    with served.browser() as page:
+        base = boot(page, copy.deepcopy(hf.CANONICAL))
+        check(page.evaluate("window.chfBlocks().main.base") is None,
+              'the canonical block model carries no base band')
+    for clad in ('lap', 'brick', 'stone', 'stucco', 'shingle'):
+        spec = copy.deepcopy(hf.CANONICAL)
+        spec['blocks']['main']['cladding'] = clad
+        spec['blocks']['main']['body'] = 'brick_red' if clad == 'brick' else 'tan'
+        spec['blocks']['garage']['base'] = {'material': 'stone', 'height': 1.0,
+                                            'body': 'stone_grey'}
+        spec, _notes = hf.normalize(spec)
+        with served.browser() as page:
+            r = boot(page, spec)
+            # MEASURED, every one of the six identical (task-5-report.md):
+            # +3 meshes -- the garage block's three base-band runs, one per
+            # shellWall -- and +6 draws: those three, plus the two new
+            # material buckets (the main block's own tile, now a different
+            # (material, body) pair from the garage's, and the stone base)
+            # splitting merges the canonical could make. Nothing else.
+            check(r['calls'] <= base['calls'] + 6,
+                  '%s: draws %s vs canonical %s (+2 material buckets, '
+                  '+ three unmerged band runs)' % (clad, r['calls'], base['calls']))
+            check(r['inFrustum'] <= base['inFrustum'] + 3,
+                  '%s: meshes %s vs %s (the three base bands and nothing else)'
+                  % (clad, r['inFrustum'], base['inFrustum']))
+            u = page.evaluate("(() => { const b = window.chfBlocks();"
+                              " return b.main.cladding + '|' + b.garage.base.material; })()")
+            check(u == clad + '|stone', 'built from the model: %s' % u)
+            errs = [e for e in served.errors() if 'WebGL' not in e]
+            check(not errs, '%s: console clean: %s' % (clad, errs[:3]))
 
 
 def scenario_worst_case_facade_builds_clean():
@@ -590,4 +698,7 @@ if __name__ == '__main__':
     scenario_a_saved_gable_over_the_study_stays_outside()
     scenario_a_draft_token_renders_day_locked_and_captures()
     scenario_a_bad_draft_token_is_not_an_error()
+    # Last: it boots six browsers of its own, and every scenario above
+    # reads mesh counts out of the shared temp data dir this one seeds.
+    scenario_claddings_and_base_band()
     print("test_house_facade_live OK")
