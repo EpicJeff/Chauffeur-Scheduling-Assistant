@@ -1689,8 +1689,13 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                         // not "Rachel Stern (Emma's mom)" - same rule as the phone.
                         const _assistLabel = c => (c && (c.relation_label || c.name)) || 'Outside hands';
                         function _coveringContact(ev, baseId) {
+                            const leg = String(ev.id || '').match(/_(dropoff|pickup)$/);
+                            const recurringLeg = leg && ev.recurring_event_id
+                                ? String(ev.recurring_event_id).replace(/_(dropoff|pickup)$/, '') + '_' + leg[1]
+                                : null;
                             const cid = assistAssignments[ev.id]
                                 || (baseId && assistAssignments[baseId])
+                                || (recurringLeg && assistAssignments[recurringLeg])
                                 || (ev.recurring_event_id && assistAssignments[ev.recurring_event_id]);
                             if (!cid) return null;
                             // Contact deleted mid-flight: still covered, just nameless.

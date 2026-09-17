@@ -7265,16 +7265,18 @@ def _assist_event_context(event_id: str):
     server resolves the series key and the date itself rather than trusting a
     client to compute them — otherwise the dashboard, the phone and the agent
     each get their own chance to key coverage differently."""
-    base = str(event_id or '')
-    for suffix in ('_dropoff', '_pickup'):
-        if base.endswith(suffix):
-            base = base[:-len(suffix)]
-            break
+    requested = str(event_id or '')
+    base, leg = _assist_svc.split_leg(requested)
     sched = storage.get_cached_schedule() or {}
+    # Prefer the selected leg: it carries the right time and may carry the
+    # recurring id even when the unsplit source event is absent.
     for ev in sched.get('events', []):
-        if ev.get('id') == base:
-            return base, ev
-    return base, None
+        if str(ev.get('id') or '') == requested:
+            return requested, base, leg, ev
+    for ev in sched.get('events', []):
+        if str(ev.get('id') or '') == base:
+            return requested, base, leg, ev
+    return requested, base, leg, None
 
 
 @app.post("/api/assist-coverage")
@@ -7286,18 +7288,22 @@ def set_assist_coverage(req: AssistCoverageRequest, background_tasks: Background
     event in front of the solver again. force_refresh, because the events
     themselves did not change — only who is covering them.
 
-    Scope mirrors event configs and overrides: 'series' writes against the bare
-    `recurring_event_id` so future occurrences — including ones not yet fetched
-    into the sync window — are covered by the same row, and an instance row
-    still wins over it.
+    Scope mirrors event configs and overrides. Whole-drive series rows use the
+    bare `recurring_event_id`; split drives retain `_dropoff` or `_pickup`, so
+    future occurrences of either leg can have their own outside hand. Instance
+    rows still win over series rows.
     """
     if not req.event_id:
         raise HTTPException(status_code=400, detail="event_id is required")
-    base_id, ev = _assist_event_context(req.event_id)
+    event_id, _base_id, leg, ev = _assist_event_context(req.event_id)
     rec = (ev or {}).get('recurring_event_id')
     scope = 'series' if (req.scope == 'series' and rec) else 'instance'
-    key = str(rec) if scope == 'series' else base_id
-    span = 'every time it comes round' if scope == 'series' else 'this one'
+    key = _assist_svc.scoped_key(event_id, rec, scope)
+    leg_label = leg.replace('dropoff', 'drop-off') if leg else None
+    if scope == 'series':
+        span = f"every {leg_label}" if leg_label else 'every time it comes round'
+    else:
+        span = f"this {leg_label}" if leg_label else 'this one'
 
     if req.contact_id:
         contact = storage.get_assist_contact(req.contact_id)
@@ -7310,15 +7316,11 @@ def set_assist_coverage(req: AssistCoverageRequest, background_tasks: Background
             event_title=(ev or {}).get('title') or '', actor=req.actor)
         msg = f"{contact.get('relation_label') or contact.get('name')} is covering {span}."
     else:
-        # Clearing takes BOTH keys: the family means "we're driving it", and
-        # leaving the series row behind would silently re-cover the occurrence
-        # on the next solve.
-        storage.clear_assist_assignment(base_id, actor=req.actor)
-        if rec:
-            storage.clear_assist_assignment(str(rec), actor=req.actor)
+        _assist_svc.clear_coverage(event_id, rec, actor=req.actor)
         msg = "Back on the family's plate."
     background_tasks.add_task(trigger_background_refresh, None, None, True)
-    return {"status": "success", "message": msg, "scope": scope}
+    return {"status": "success", "message": msg, "scope": scope,
+            "event_id": event_id, "leg": leg}
 
 
 @app.get("/api/assist-history")

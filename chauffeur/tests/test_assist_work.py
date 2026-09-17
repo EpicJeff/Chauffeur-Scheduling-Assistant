@@ -38,6 +38,8 @@ TPL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 def _reset():
     with storage.db_lock:
         storage.assist_contacts_table.truncate()
+        storage.assist_assignments_table.truncate()
+        storage.assist_history_table.truncate()
         storage.household_tasks_table.truncate()
         storage.members_table.truncate()
 
@@ -91,6 +93,49 @@ def scenario_the_filter_is_not_a_gate():
     check(res['status'] == 'success',
           f"a housework-tagged contact can still be given a drive if the family "
           f"says so — the tag shapes the list, not the rules: {res}")
+
+
+def scenario_split_drive_legs_can_go_to_different_outside_hands():
+    """The selected drop-off/pickup card must retain its own coverage key."""
+    import main
+    from fastapi import BackgroundTasks
+    _reset()
+    drop = _contact("Sarah Whitfield", relation_label="Emma's mom")
+    pick = _contact("Dan Reyes", relation_label="Coach Dan")
+    storage.set_cached_schedule({'events': [
+        {'id': 'soccer_dropoff', 'original_event_id': 'soccer',
+         'recurring_event_id': 'rec_soccer', 'title': 'Soccer',
+         'start': '2026-09-17T16:00:00'},
+        {'id': 'soccer_pickup', 'original_event_id': 'soccer',
+         'recurring_event_id': 'rec_soccer', 'title': 'Soccer',
+         'start': '2026-09-17T18:00:00'},
+    ]})
+
+    main.set_assist_coverage(main.AssistCoverageRequest(
+        event_id='soccer_dropoff', contact_id=drop['id']), BackgroundTasks())
+    main.set_assist_coverage(main.AssistCoverageRequest(
+        event_id='soccer_pickup', contact_id=pick['id']), BackgroundTasks())
+    amap = storage.get_assist_assignment_map()
+    check(amap.get('soccer_dropoff') == drop['id']
+          and amap.get('soccer_pickup') == pick['id']
+          and 'soccer' not in amap,
+          f"each selected leg keeps its own person: {amap}")
+    events = storage.get_cached_schedule()['events']
+    check(assist.coverage_for(amap, events[0]) == drop['id']
+          and assist.coverage_for(amap, events[1]) == pick['id'],
+          "the solver resolves the two legs independently")
+
+    main.set_assist_coverage(main.AssistCoverageRequest(
+        event_id='soccer_pickup', contact_id=pick['id'], scope='series'),
+        BackgroundTasks())
+    amap = storage.get_assist_assignment_map()
+    check(amap.get('rec_soccer_pickup') == pick['id']
+          and 'rec_soccer' not in amap,
+          f"recurrence keeps the selected leg too: {amap}")
+
+    app = open(os.path.join(TPL, 'app.html'), encoding='utf-8').read()
+    check("function assistEventId" in app and "function baseEventId" not in app,
+          "the phone posts the selected card's exact leg id")
 
 
 def scenario_both_hand_overs_are_reachable():

@@ -62,6 +62,32 @@ ID_PREFIX = 'assist:'
 #
 # Resolution is instance-first, which is the rule that makes the useful
 # sentence expressible: "Emma's mom has Tuesdays, except she can't this one."
+# Split drives keep that model at leg granularity: `X_dropoff` and `X_pickup`
+# are independent instance keys, while `SERIES_dropoff` and `SERIES_pickup`
+# are independent standing arrangements. Existing X/SERIES rows remain
+# whole-drive fallbacks.
+
+LEG_SUFFIXES = ('_dropoff', '_pickup')
+
+
+def split_leg(event_id):
+    """Return (parent id, leg name or None) for a schedule event id."""
+    value = str(event_id or '')
+    for suffix in LEG_SUFFIXES:
+        if value.endswith(suffix):
+            return value[:-len(suffix)], suffix[1:]
+    return value, None
+
+
+def scoped_key(event_id, recurring_event_id=None, scope='instance'):
+    """Storage key for this occurrence/series without losing its drive leg."""
+    event_id = str(event_id or '')
+    _, leg = split_leg(event_id)
+    if scope == 'series' and recurring_event_id:
+        recurring_base, recurring_leg = split_leg(recurring_event_id)
+        chosen_leg = leg or recurring_leg
+        return f"{recurring_base}_{chosen_leg}" if chosen_leg else recurring_base
+    return event_id
 
 def coverage_keys(event) -> list:
     """The keys a coverage row for this event may be stored under, most
@@ -71,17 +97,18 @@ def coverage_keys(event) -> list:
     eid = get('id')
     if eid:
         keys.append(str(eid))
-    # The refresh SPLITS one event into ids the family never sees: a
-    # dropoff/pickup pair, or one copy per passenger-time group. Coverage is
-    # always keyed by the whole event -- `_assist_event_context` strips the leg
-    # suffix on the way in, because "Emma's mom has the drive" means both legs
-    # and every copy -- so a leg that only knew its own id matched nothing,
-    # stayed in the solve, and came back out wearing "Needs driver" over a ride
-    # that was handled. `original_event_id` is the event the family pointed at.
+    # `original_event_id` is the unsplit occurrence. It stays ahead of series
+    # keys so a one-off whole-drive decision overrides a standing arrangement.
+    # It also preserves old whole-drive assignments and unrolled copies.
     orig = get('original_event_id')
     if orig and str(orig) not in keys:
         keys.append(str(orig))
     rec = get('recurring_event_id')
+    _, leg = split_leg(eid)
+    if rec and leg:
+        leg_series = scoped_key(eid, rec, 'series')
+        if leg_series not in keys:
+            keys.append(leg_series)
     if rec and str(rec) not in keys:
         keys.append(str(rec))
     return keys
@@ -97,6 +124,49 @@ def coverage_for(assist_map: dict, event):
         if got:
             return got
     return None
+
+
+def clear_coverage(event_id, recurring_event_id=None, actor=None):
+    """Take one drive (or one leg) back without changing its sibling leg.
+
+    A legacy whole-drive row is split onto the sibling before removal. That
+    makes "Emma's mom had both; we will pick up" behave as spoken instead of
+    letting the parent fallback silently cover the pickup again.
+    """
+    from services import storage
+    event_id = str(event_id or '')
+    base, leg = split_leg(event_id)
+    rec_base, _ = split_leg(recurring_event_id)
+    rows = {str(r.get('event_id') or ''): r
+            for r in storage.get_assist_assignments()}
+
+    if leg:
+        sibling = 'pickup' if leg == 'dropoff' else 'dropoff'
+        moves = [(base, f"{base}_{sibling}")]
+        if rec_base:
+            moves.append((rec_base, f"{rec_base}_{sibling}"))
+        for source, target in moves:
+            row = rows.get(source)
+            if row and target not in rows:
+                storage.set_assist_assignment(
+                    target, row.get('contact_id'), row.get('note') or '',
+                    scope=row.get('scope') or 'instance',
+                    event_date=row.get('event_date') or '',
+                    event_title=row.get('event_title') or '', actor=actor)
+            if row:
+                storage.clear_assist_assignment(source, actor=actor)
+
+    if leg:
+        targets = [event_id]
+        if rec_base:
+            targets.append(scoped_key(event_id, rec_base, 'series'))
+    else:
+        # A parent/whole-drive take-back means every stored shape of it.
+        targets = [base, f"{base}_dropoff", f"{base}_pickup"]
+        if rec_base:
+            targets.extend([rec_base, f"{rec_base}_dropoff", f"{rec_base}_pickup"])
+    for target in dict.fromkeys(targets):
+        storage.clear_assist_assignment(target, actor=actor)
 
 
 def is_assist_id(value) -> bool:

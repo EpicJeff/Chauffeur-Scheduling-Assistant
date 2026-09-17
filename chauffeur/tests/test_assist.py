@@ -344,6 +344,23 @@ def scenario_the_agent_can_hand_a_drive_over_and_take_it_back():
         res = agent_tools_v2.cover_with_assist('badminton', "Emma's mom")
         check(res['status'] == 'error' and 'Soccer Practice' in res['message'],
               f"an unknown event lists what IS on, got {res}")
+
+        coach = _contact(name='Dan Reyes', label='Coach Dan')
+        sched['events'] = [
+            {'id': 'soccer_dropoff', 'original_event_id': 'soccer',
+             'title': 'Soccer Practice', 'start': start},
+            {'id': 'soccer_pickup', 'original_event_id': 'soccer',
+             'title': 'Soccer Practice', 'start': start},
+        ]
+        agent_tools_v2.cover_with_assist('soccer', "Emma's mom", leg='dropoff')
+        agent_tools_v2.cover_with_assist('soccer', 'Coach Dan', leg='pickup')
+        amap = storage.get_assist_assignment_map()
+        check(amap.get('soccer_dropoff') == c['id']
+              and amap.get('soccer_pickup') == coach['id'],
+              f"the agent can name different hands for each leg: {amap}")
+        agent_tools_v2.cover_with_assist('soccer', clear=True)
+        check(storage.get_assist_assignment_map() == {},
+              "a whole-drive take-back clears both leg-specific rows")
     finally:
         storage.get_cached_schedule = orig
 
@@ -440,6 +457,45 @@ def scenario_a_split_drive_is_covered_on_every_leg_and_copy():
         amap, {'id': 'cal::guitar_dropoff',
                'original_event_id': 'cal::guitar'}) is None,
         "a leg of somebody else's drive is still nobody's business")
+
+
+def scenario_split_drive_legs_resolve_independently():
+    """Exact leg coverage wins while legacy whole-drive rows remain valid."""
+    from services import assist as assist_svc
+    _reset()
+    drop = _contact(name='Sarah Whitfield', label="Emma's mom")
+    pick = _contact(name='Dan Reyes', label='Coach Dan')
+    storage.set_assist_assignment('soccer_dropoff', drop['id'], scope='instance')
+    storage.set_assist_assignment('soccer_pickup', pick['id'], scope='instance')
+    amap = storage.get_assist_assignment_map()
+    common = {'original_event_id': 'soccer', 'recurring_event_id': 'rec_soccer'}
+    check(assist_svc.coverage_for(amap, {**common, 'id': 'soccer_dropoff'}) == drop['id'],
+          "the drop-off can belong to one outside hand")
+    check(assist_svc.coverage_for(amap, {**common, 'id': 'soccer_pickup'}) == pick['id'],
+          "while the pickup belongs to another")
+
+    _reset()
+    drop = _contact(name='Sarah Whitfield', label="Emma's mom")
+    pick = _contact(name='Dan Reyes', label='Coach Dan')
+    storage.set_assist_assignment('rec_soccer_dropoff', drop['id'], scope='series')
+    storage.set_assist_assignment('rec_soccer_pickup', pick['id'], scope='series')
+    amap = storage.get_assist_assignment_map()
+    check(assist_svc.coverage_for(amap, {**common, 'id': 'soccer_dropoff'}) == drop['id']
+          and assist_svc.coverage_for(amap, {**common, 'id': 'soccer_pickup'}) == pick['id'],
+          "standing arrangements retain their leg too")
+
+    _reset()
+    drop = _contact(name='Sarah Whitfield', label="Emma's mom")
+    storage.set_assist_assignment('soccer', drop['id'], scope='instance')
+    storage.set_assist_assignment('rec_soccer', drop['id'], scope='series')
+    assist_svc.clear_coverage('soccer_pickup', 'rec_soccer')
+    amap = storage.get_assist_assignment_map()
+    check(amap.get('soccer_dropoff') == drop['id']
+          and amap.get('rec_soccer_dropoff') == drop['id']
+          and 'soccer' not in amap and 'rec_soccer' not in amap,
+          f"taking back pickup preserves only the sibling drop-off: {amap}")
+    check(assist_svc.coverage_for(amap, {**common, 'id': 'soccer_pickup'}) is None,
+          "the whole-drive fallback cannot silently reclaim a cleared leg")
 
 
 def scenario_the_calendar_says_who_is_covering_it():

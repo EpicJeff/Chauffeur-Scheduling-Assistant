@@ -1067,7 +1067,7 @@ def _find_assist_contact(name: str):
 
 def cover_with_assist(event_name: str, contact_name: str = None,
                       target_date: str = None, clear: bool = False,
-                      scope: str = 'instance') -> Dict[str, Any]:
+                      scope: str = 'instance', leg: str = None) -> Dict[str, Any]:
     """Hand a drive to somebody outside the household, or take it back.
 
     Deliberately not an override: an override says "this driver, whatever the
@@ -1079,7 +1079,7 @@ def cover_with_assist(event_name: str, contact_name: str = None,
     covering one day and reporting the season handled.
     """
     import datetime
-    from services import storage
+    from services import assist as _assist, storage
     day = _parse_fuzzy_date(target_date or 'today')
     sched = storage.get_cached_schedule() or {}
     todays = []
@@ -1094,24 +1094,37 @@ def cover_with_assist(event_name: str, contact_name: str = None,
                 "message": f"Nothing is on the schedule for {day.strftime('%A %d %b')}."}
 
     q = (event_name or '').strip().lower()
-    match = next((e for e in todays if q and q in (e.get('title') or '').lower()), None)
+    matches = [e for e in todays if q and q in (e.get('title') or '').lower()]
+    leg = str(leg or '').strip().lower().replace('-', '')
+    if leg in ('dropoff', 'pickup'):
+        match = next((e for e in matches
+                      if str(e.get('id') or '').endswith(f'_{leg}')), None)
+    else:
+        leg = None
+        match = next((e for e in matches
+                      if not _assist.split_leg(e.get('id'))[1]), None)
+        match = match or next(iter(matches), None)
     if not match:
         titles = ', '.join(sorted({e.get('title') or '?' for e in todays})[:8])
+        wanted = f" {leg}" if leg else ''
         return {"status": "error",
-                "message": f"I couldn't find '{event_name}' that day. On the schedule: {titles}."}
+                "message": f"I couldn't find the{wanted} drive for '{event_name}' that day. "
+                           f"On the schedule: {titles}."}
 
     rec = match.get('recurring_event_id')
     use_series = (scope == 'series' and bool(rec))
-    key = str(rec) if use_series else match['id']
+    match_id = str(match.get('id') or '')
+    parent_id, _matched_leg = _assist.split_leg(match_id)
+    selected_id = match_id if leg else parent_id
+    key = _assist.scoped_key(selected_id, rec, 'series' if use_series else 'instance')
 
     if clear or not contact_name:
         # Both keys: "we're driving it after all" must not leave a standing
         # series row behind to re-cover the occurrence on the next solve.
-        storage.clear_assist_assignment(match['id'])
-        if rec:
-            storage.clear_assist_assignment(str(rec))
+        _assist.clear_coverage(selected_id, rec)
+        what = f" {leg.replace('dropoff', 'drop-off')}" if leg else ''
         return {"status": "success", "schedule_dirty": True,
-                "message": f"{match.get('title')} is back on the family's plate — "
+                "message": f"{match.get('title')}{what} is back on the family's plate — "
                            f"I'll work out who drives."}
 
     contact = _find_assist_contact(contact_name)
@@ -1126,10 +1139,11 @@ def cover_with_assist(event_name: str, contact_name: str = None,
         event_date=('' if use_series else str(match.get('start') or '')[:10]),
         event_title=match.get('title') or '')
     who = contact.get('relation_label') or contact.get('name')
+    what = f" {leg.replace('dropoff', 'drop-off')}" if leg else ''
     span = (" every time it comes round" if use_series
             else f" on {day.strftime('%A %d %b')}")
     return {"status": "success", "schedule_dirty": True,
-            "message": f"{who} is covering {match.get('title')}{span} — "
+            "message": f"{who} is covering {match.get('title')}{what}{span} — "
                        f"I've taken it off the family's plate."}
 
 
@@ -3913,13 +3927,14 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "cover_with_assist",
-            "description": "Records that somebody OUTSIDE the family is handling a drive — a carpool parent, a neighbour ('Emma's mom is taking them to soccer today', 'the Kellys have soccer from now on'). The event leaves the solver entirely: no family driver is scheduled and nobody is chased about it. Use clear=true to take it back ('actually we're driving after all'), which ends a standing arrangement as well as a one-off.",
+            "description": "Records that somebody OUTSIDE the family is handling a drive or one leg of it — a carpool parent, a neighbour ('Emma's mom is taking them to soccer today', 'Coach Dan is picking them up'). The covered work leaves the solver entirely: no family driver is scheduled and nobody is chased about it. Use leg for separate drop-off/pickup coverage. Use clear=true to take the selected work back.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "event_name": {"type": "string", "description": "The event being covered, as spoken ('soccer', 'the dance class')."},
                     "contact_name": {"type": "string", "description": "Who is covering it — their name OR what the family calls them ('Emma's mom'). Omit when clearing."},
                     "target_date": {"type": "string", "description": "Which day (default today). Accepts 'tomorrow', 'Friday'. For scope=series this is just the occurrence used to find the event."},
+                    "leg": {"type": "string", "enum": ["dropoff", "pickup"], "description": "Which leg to hand over for a split drive. Omit only when the same person covers the whole drive."},
                     "clear": {"type": "boolean", "description": "True to hand the drive back to the family."},
                     "scope": {"type": "string", "enum": ["instance", "series"], "description": "instance (default) = only the occurrence on target_date. series = every occurrence of a recurring event, the standing arrangement ('Emma's mom has Tuesdays', 'they're taking soccer this season'). Do NOT use instance for an ongoing arrangement — it covers one day only."}
                 },

@@ -728,7 +728,8 @@ sending or claiming, and never pass from_member/member_name for them.
                                             contact_name=args.get("contact_name"),
                                             target_date=args.get("target_date"),
                                             clear=bool(args.get("clear")),
-                                            scope=args.get("scope") or 'instance')
+                                            scope=args.get("scope") or 'instance',
+                                            leg=args.get("leg"))
                     # Coverage changes what the solver may do with the day, so
                     # the client has to re-solve exactly as for an override.
                     if res.get("schedule_dirty"):

@@ -8228,11 +8228,10 @@
         }
 
         // --- Outside hands on a drive (load arc A1) -----------------------
-        // Coverage is keyed by the EVENT, while the phone opens legs — the
-        // dropoff and the pickup are two cards over one soccer practice, and
-        // handing away "the drive" means both.
-        function baseEventId(id) {
-            return String(id || '').replace(/_(dropoff|pickup)$/, '');
+        // The phone opens a specific leg card, so retain `_dropoff`/`_pickup`.
+        // Whole-event coverage still resolves server-side as a fallback.
+        function assistEventId(id) {
+            return String(id || '');
         }
 
         function assistContactById(cid) {
@@ -8251,7 +8250,7 @@
             const row = document.getElementById('em-assist-row');
             const btn = document.getElementById('em-assist-btn');
             if (!row || !btn) return;
-            const evId = baseEventId(ev.id);
+            const evId = assistEventId(ev.id);
             const coveringId = ((scheduleData && scheduleData.assist_assignments) || {})[evId];
             const covering = coveringId ? assistContactById(coveringId) : null;
 
@@ -8282,7 +8281,7 @@
         const ASSIST_NOBODY = '__nobody__';
 
         async function handDriveToOutsideHand(ev) {
-            const evId = baseEventId(ev.id);
+            const evId = assistEventId(ev.id);
             const current = ((scheduleData && scheduleData.assist_assignments) || {})[evId] || '';
             // Fetched rather than read off `scheduleData`: that payload is a
             // cached solve, so somebody who added a carpool parent a minute ago
