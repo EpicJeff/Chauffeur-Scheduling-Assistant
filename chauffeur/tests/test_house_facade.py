@@ -14,6 +14,10 @@ def _spec(**over):
     return s
 
 
+def _v2():
+    return copy.deepcopy(hf.CANONICAL)
+
+
 def scenario_slot_table_is_derived_from_the_faces():
     slots = hf.slot_table()
     check([s['face'] for s in slots].count('garage_block') == 6, 'garage_block face: 6 slots')
@@ -62,27 +66,46 @@ def scenario_canonical_is_normal_and_idempotent():
 
 
 def scenario_unknown_enums_fall_to_defaults():
-    raw = _spec(style={'cladding': 'stucco', 'body': 'pink', 'roof': 'x',
-                       'frame': 'y', 'door': 'z', 'trim': 'w'},
+    # V2: cladding/body/roof form live on the BLOCK, style keeps four roles.
+    raw = _spec(style={'roof': 'x', 'frame': 'y', 'door': 'z', 'trim': 'w'},
                 ground=[{'slot': 9, 'span': 1, 'kind': 'window', 'size': 'huge'},
                         {'slot': 10, 'span': 1, 'kind': 'porch', 'type': 'wraparound'},
                         {'slot': 11, 'span': 1, 'kind': 'skylight'}])
+    raw['blocks']['main'].update(cladding='vinyl', body='pink', stories=3,
+                                 roof={'form': 'mansard', 'ridge': 'q', 'pitch_deg': 'steep'},
+                                 base='yes', depth='deep')
+    raw['blocks']['garage']['orientation'] = 'rear'
     spec, notes = hf.normalize(raw)
     check(spec['style'] == hf.CANONICAL['style'], f"style defaults: {spec['style']}")
+    main = spec['blocks']['main']
+    check(main['cladding'] == 'batten' and main['body'] == 'white' and main['base'] is None,
+          f'unknown block materials fall to the canonical ones: {main}')
+    check(main['roof'] == {'form': 'gable', 'ridge': 'x', 'pitch_deg': hf.BLOCK_PITCH_DEG},
+          f'unknown roof form/ridge/pitch -> the canonical block roof: {main["roof"]}')
+    check(main['stories'] == 1 and main['depth'] == 0.0, f'garbage stories/depth -> 1 and 0: {main}')
+    check(spec['blocks']['garage']['orientation'] == 'front', 'unknown orientation -> front')
     kinds = {(g['slot'], g['kind']) for g in spec['ground']}
     check((9, 'window') in kinds and (11, 'skylight') not in kinds, 'unknown kind dropped')
-    win = next(g for g in spec['ground'] if g['slot'] == 9)
+    win = next(g for g in spec['ground'] if g['slot'] == 9 and g['kind'] == 'window')
     check(win['size'] == 'standard', 'unknown window size -> standard')
     porch = next(g for g in spec['ground'] if g['kind'] == 'porch')
-    check(porch['type'] == 'covered', 'unknown porch type -> covered')
+    check(porch['type'] == 'covered' and porch['roof'] == 'flat',
+          f'unknown porch type -> covered, absent porch roof -> flat: {porch}')
     check(any('skylight' in n for n in notes), 'the drop is noted')
 
 
 def scenario_pitch_clamps():
+    # The top-level pitch is the FEATURE pitch, as in V1; the block roofs
+    # carry their own and never take this one (spec 2026-09-17 section 2).
     check(hf.normalize(_spec(pitch_deg=50))[0]['pitch_deg'] == 35.0, 'high clamps')
     check(hf.normalize(_spec(pitch_deg=5))[0]['pitch_deg'] == 22.5, 'low clamps')
     check(hf.normalize(_spec(pitch_deg='steep'))[0]['pitch_deg'] == hf.CANONICAL['pitch_deg'],
           'garbage -> canonical')
+    spec = hf.normalize(_spec(pitch_deg=50))[0]
+    check(all(b['roof']['pitch_deg'] == hf.BLOCK_PITCH_DEG for b in spec['blocks'].values()),
+          'the feature pitch never leaks into the block pitch')
+    m = _v2(); m['blocks']['main']['roof']['pitch_deg'] = 90
+    check(hf.normalize(m)[0]['blocks']['main']['roof']['pitch_deg'] == 35.0, 'block pitch clamps too')
 
 
 def scenario_spans_truncate_at_face_boundaries():
@@ -183,6 +206,12 @@ def scenario_roof_priority_and_no_bans():
     raw = _spec(roof=[{'slot': 6, 'span': 4, 'kind': 'dormer', 'window': True},
                       {'slot': 8, 'span': 2, 'kind': 'gable'},
                       {'slot': 0, 'span': 3, 'kind': 'gable'}])          # garage face gable is fine
+    # V2: a gabled porch OWNS its roof, so a free gable over it is dropped
+    # (spec 2026-09-17 section 2: never both). This scenario is about
+    # feature-vs-feature priority, so the canonical porch here is flat.
+    for g in raw['ground']:
+        if g['kind'] == 'porch':
+            g['roof'] = 'flat'
     spec, _ = hf.normalize(raw)
     d = [r for r in spec['roof'] if r['kind'] == 'dormer']
     g = sorted((r['slot'], r['span']) for r in spec['roof'] if r['kind'] == 'gable')
@@ -240,8 +269,10 @@ def scenario_garbage_in_never_raises():
     for raw in (None, 3, 'x', [], {}, {'ground': 'no'}, {'ground': [None, 3, {'kind': 'door'}]},
                 {'roof': [{'slot': 'a', 'span': -2, 'kind': 'gable'}]}):
         spec, _ = hf.normalize(raw)
-        check(spec['version'] == 1 and any(g['kind'] == 'door' for g in spec['ground']),
+        check(spec['version'] == 2 and any(g['kind'] == 'door' for g in spec['ground']),
               f'{raw!r} -> a valid spec')
+        check(hf.validate_block_model(spec) == [],
+              f'{raw!r} -> a spec that passes the structural validator')
 
 
 def scenario_worst_case_is_within_caps():
@@ -257,6 +288,19 @@ def scenario_worst_case_is_within_caps():
           'porch slots at the cap')
     gd = next(g for g in spec['ground'] if g['kind'] == 'garage_door')
     check(gd['style'] == 'glass' and gd['leaves'] == 2, 'heaviest garage door')
+    # V2: the heaviest BLOCK model too (spec 2026-09-17 section 2/7).
+    check(w['version'] == 2 and hf.validate_block_model(w) == [], f'worst case is a valid V2 model: {hf.validate_block_model(w)}')
+    b = w['blocks']
+    check(b['main']['stories'] == 2 and b['garage']['stories'] == 2, 'two stories on both blocks')
+    check(b['main']['cladding'] == 'brick' and b['garage']['cladding'] == 'stone',
+          f"brick main, stone garage: {b['main']['cladding']}/{b['garage']['cladding']}")
+    check(b['main']['base'] and b['garage']['base'], 'a base band on each block')
+    check(b['main']['depth'] == hf.DEPTH_MAX_WITH_PORCH and b['garage']['depth'] == hf.DEPTH_MAX,
+          f"main at the porch clamp, garage at DEPTH_MAX: {b['main']['depth']}/{b['garage']['depth']}")
+    check(b['garage']['orientation'] == 'front',
+          'a side garage is NOT the worst case: it removes the garage door')
+    porch = next(g for g in spec['ground'] if g['kind'] == 'porch')
+    check(porch['roof'] == 'gable', 'the worst-case porch carries its own gable')
 
 
 def _fresh():
@@ -386,25 +430,29 @@ def scenario_photo_becomes_a_draft_never_a_save():
         def fake_pool(tier, key, system, user, **kw):
             seen.update(tier=tier, images=kw.get('images'), strict=kw.get('strict_json'),
                         max_out=kw.get('max_output_tokens'))
-            return {'pitch_deg': 30, 'style': {'body': 'sage', 'roof': 'brown'},
-                    'ground': [{'slot': 9, 'span': 1, 'kind': 'door'},
-                               {'slot': 7, 'span': 1, 'kind': 'window', 'size': 'tall'},
-                               {'slot': 0, 'span': 3, 'kind': 'garage_door', 'style': 'panel', 'leaves': 2}],
-                    'roof': [{'slot': 8, 'span': 3, 'kind': 'gable'}]}
+            # V2: the model now answers with a whole block model (task 11
+            # rewrites this scenario against the recorded fixtures).
+            m = copy.deepcopy(hf.CANONICAL)
+            m['pitch_deg'] = 30
+            for blk in m['blocks'].values():
+                blk['body'] = 'sage'
+            return m
         model_pools.call_pool_json = fake_pool
         draft, notes, err = hf.from_photo('AAAA', 'image/jpeg')
-        check(err is None and draft['style']['body'] == 'sage' and draft['pitch_deg'] == 30.0, f'draft: {draft} {err}')
+        check(err is None and draft['blocks']['main']['body'] == 'sage' and draft['pitch_deg'] == 30.0,
+              f'draft: {draft} {err}')
         check(seen['tier'] == 'vision' and seen['images'][0]['b64'] == 'AAAA' and seen['strict'],
               'vision tier, inline image, strict JSON')
         check(seen['max_out'] == 2048, f"max_output_tokens 2048 per spec 5: {seen['max_out']}")
         check(len(hf.list_facades()) == 1 and hf.active_bundle()['id'] == 'canonical', 'nothing saved, nothing activated')
 
         # two garage doors in the raw response -> normalize's note travels back
-        model_pools.call_pool_json = lambda *a, **k: {
-            'pitch_deg': 30, 'style': {},
-            'ground': [{'slot': 0, 'span': 3, 'kind': 'garage_door', 'style': 'panel', 'leaves': 1},
-                       {'slot': 0, 'span': 3, 'kind': 'garage_door', 'style': 'glass', 'leaves': 2}],
-            'roof': []}
+        two = copy.deepcopy(hf.CANONICAL)
+        two['ground'] = [{'slot': 0, 'span': 3, 'kind': 'garage_door', 'style': 'panel', 'leaves': 1},
+                         {'slot': 0, 'span': 3, 'kind': 'garage_door', 'style': 'glass', 'leaves': 2},
+                         {'slot': 10, 'span': 1, 'kind': 'door'}]
+        two['roof'] = []
+        model_pools.call_pool_json = lambda *a, **k: copy.deepcopy(two)
         draft2, notes2, err2 = hf.from_photo('AAAA', 'image/jpeg')
         check(err2 is None and notes2 and any('garage' in n for n in notes2),
               f'the draft keeps its own normalize notes: {notes2}')
@@ -433,6 +481,145 @@ def scenario_photo_failures_are_answers():
         model_pools.call_pool_json = orig
 
 
+def scenario_validate_rejects_structurally_bad_models():
+    """Spec 2026-09-17 blocks section 4: validation is not normalization.
+    normalize manufactures defaults; validate must refuse first."""
+    check(hf.validate_block_model(_v2()) == [], 'the canonical V2 model validates clean')
+    check(hf.validate_block_model({}) != [], 'an empty object is rejected')
+    m = _v2(); del m['blocks']['garage']
+    check(any('garage' in e for e in hf.validate_block_model(m)), 'a missing block is named')
+    m = _v2(); m['ground'].append({'slot': 3, 'kind': 'window', 'size': 'tall', 'shutters': False, 'story': 1})
+    check(any('span' in e for e in hf.validate_block_model(m)), 'an incomplete feature is named')
+    m = _v2(); m['blocks']['main']['cladding'] = 'vinyl'
+    check(any('cladding' in e for e in hf.validate_block_model(m)), 'an out-of-enum cladding is named')
+    m = _v2(); m['blocks']['main']['depth'] = 9
+    check(any('depth' in e for e in hf.validate_block_model(m)), 'an out-of-range depth is named')
+    m = _v2(); m['unexpressed'] = ['x'] * 9
+    check(any('unexpressed' in e for e in hf.validate_block_model(m)), 'too many unexpressed strings is named')
+    m = _v2(); m['blocks']['main']['base'] = {'material': 'stone', 'height': 1.0}
+    check(any('base' in e for e in hf.validate_block_model(m)), 'a base band without its body colour is named')
+    m = _v2(); m['ground'] = 'nope'
+    check(any('ground' in e for e in hf.validate_block_model(m)), 'a non-list layer is named')
+    before = json.dumps(m, sort_keys=True)
+    hf.validate_block_model(m)
+    check(json.dumps(m, sort_keys=True) == before, 'validate never mutates')
+
+
+def scenario_canonical_v2_is_the_old_house():
+    c = hf.CANONICAL
+    check(c['version'] == 2 and c['mirror'] is False, 'canonical is version 2, unmirrored')
+    for name in ('main', 'garage'):
+        b = c['blocks'][name]
+        check(b['depth'] == 0 and b['stories'] == 1 and b['roof'] == {'form': 'gable', 'ridge': 'x', 'pitch_deg': 22.5}
+              and b['cladding'] == 'batten' and b['base'] is None and b['body'] == 'white',
+              f'{name} block is today\'s house: {b}')
+    check(c['blocks']['garage']['orientation'] == 'front', 'garage faces the street')
+    check(c['pitch_deg'] == 34.8, 'feature pitch stays PITCH_FAMILY')
+    porch = next(g for g in c['ground'] if g['kind'] == 'porch')
+    check(porch['roof'] == 'gable' and not any(r['slot'] == 8 for r in c['roof']),
+          'the canonical porch gable is the porch\'s own roof now, not a free feature')
+    check(all(g.get('story') == 1 and g.get('shutters') is False for g in c['ground'] if g['kind'] == 'window'),
+          'windows carry story 1, no shutters')
+    check(hf.block_face('main') == 'main' and hf.block_face('garage') == 'garage_block',
+          'a block names the street face it fronts')
+    spec, notes = hf.normalize(c)
+    check(spec == c and notes == [], f'canonical v2 is normal and idempotent: {notes}')
+
+
+def scenario_v1_upgrade_is_the_mapping_table():
+    v1 = {'version': 1, 'pitch_deg': 30.0,
+          'style': {'cladding': 'clapboard', 'body': 'sage', 'roof': 'brown', 'frame': 'white', 'door': 'red', 'trim': 'black'},
+          'ground': [{'slot': 0, 'span': 3, 'kind': 'garage_door', 'style': 'panel', 'leaves': 2},
+                     {'slot': 8, 'span': 4, 'kind': 'porch', 'type': 'covered'},
+                     {'slot': 10, 'span': 1, 'kind': 'door'},
+                     {'slot': 12, 'span': 1, 'kind': 'window', 'size': 'tall'}],
+          'roof': [{'slot': 8, 'span': 4, 'kind': 'gable'},          # covers the porch fully
+                   {'slot': 15, 'span': 1, 'kind': 'hip_end'}]}
+    spec, notes = hf.normalize(v1)
+    for name in ('main', 'garage'):
+        b = spec['blocks'][name]
+        check(b['cladding'] == 'lap' and b['body'] == 'sage' and b['base'] is None, f'{name}: clapboard->lap, body copied, no base')
+        check(b['roof']['pitch_deg'] == 22.5, f'{name}: block pitch stays 22.5, never the feature pitch')
+    check(spec['pitch_deg'] == 30.0, 'the V1 pitch is the FEATURE pitch')
+    check(spec['style'] == {'roof': 'brown', 'frame': 'white', 'door': 'red', 'trim': 'black'}, 'style keeps the four roles')
+    porch = next(g for g in spec['ground'] if g['kind'] == 'porch')
+    check(porch['roof'] == 'gable' and not any(r['kind'] == 'gable' for r in spec['roof']),
+          'a gable covering the porch becomes the porch roof and the feature is removed')
+    check(any(r['kind'] == 'hip_end' for r in spec['roof']), 'hip_end survives')
+    win = next(g for g in spec['ground'] if g['kind'] == 'window')
+    check(win['story'] == 1 and win['shutters'] is False, 'window defaults')
+    check(spec['mirror'] is False and spec['unexpressed'] == [], 'mirror false, nothing unexpressed')
+    check(any('porch' in n and 'gable' in n for n in notes), f'the pairing is noted: {notes}')
+    # partial overlap under half: the feature stays and the porch is flat
+    v1b = copy.deepcopy(v1); v1b['roof'][0] = {'slot': 11, 'span': 3, 'kind': 'gable'}   # covers slot 11 of porch 8..11 = 1/4
+    spec_b, _ = hf.normalize(v1b)
+    check(next(g for g in spec_b['ground'] if g['kind'] == 'porch')['roof'] == 'flat'
+          and any(r['kind'] == 'gable' and r['slot'] == 11 for r in spec_b['roof']), 'under half: gable stays, porch flat')
+    # exactly half pairs (>= half)
+    v1c = copy.deepcopy(v1); v1c['roof'][0] = {'slot': 10, 'span': 2, 'kind': 'gable'}
+    spec_c, _ = hf.normalize(v1c)
+    check(next(g for g in spec_c['ground'] if g['kind'] == 'porch')['roof'] == 'gable', 'half pairs')
+    # two porches: the gable goes to the larger overlap, tie -> lower slot
+    v1d = copy.deepcopy(v1)
+    v1d['ground'].append({'slot': 14, 'span': 2, 'kind': 'porch', 'type': 'stoop'})
+    v1d['roof'][0] = {'slot': 10, 'span': 6, 'kind': 'gable'}      # porch 8..11 gets 2, porch 14..15 gets 2 -> tie -> slot 8
+    spec_d, _ = hf.normalize(v1d)
+    roofs = {g['slot']: g['roof'] for g in spec_d['ground'] if g['kind'] == 'porch'}
+    check(roofs.get(8) == 'gable' and roofs.get(14) == 'flat', f'tie goes to the lower slot: {roofs}')
+    # the V1 raw itself is never mutated by the upgrade
+    check(v1['ground'][1] == {'slot': 8, 'span': 4, 'kind': 'porch', 'type': 'covered'},
+          f'_upgrade_v1 never writes back into the caller\'s object: {v1["ground"][1]}')
+
+
+def scenario_depth_clamps_against_the_curb():
+    m = _v2(); m['blocks']['main']['depth'] = 6
+    spec, notes = hf.normalize(m)
+    check(spec['blocks']['main']['depth'] == 2.0 and any('curb' in n for n in notes),
+          f'a face with a porch clamps to {hf.DEPTH_MAX_WITH_PORCH}: {notes}')
+    m = _v2(); m['blocks']['garage']['depth'] = 6
+    spec, notes = hf.normalize(m)
+    check(spec['blocks']['garage']['depth'] == 6.0, 'no porch on the garage face: 6 stands')
+    m = _v2(); m['blocks']['garage']['depth'] = 7.5
+    check(hf.normalize(m)[0]['blocks']['garage']['depth'] == 6.0, 'clamped to DEPTH_MAX')
+    slots = hf.slot_table(hf.normalize(m)[0]['blocks'])
+    check(abs(slots[0]['z'] - 16.10) < 1e-6 and abs(slots[6]['z'] - 14.55) < 1e-6, 'the slot table follows depth per face')
+    check(hf.slot_table() == hf.slot_table(hf.CANONICAL['blocks']), 'no argument means the canonical blocks')
+
+
+def scenario_stories_and_per_story_overlap():
+    m = _v2(); m['blocks']['main']['stories'] = 2
+    m['ground'].append({'slot': 10, 'span': 1, 'kind': 'window', 'size': 'standard', 'shutters': True, 'story': 2})
+    spec, notes = hf.normalize(m)
+    kinds = [(g['kind'], g['slot'], g.get('story')) for g in spec['ground']]
+    check(('door', 10, None) in kinds or ('door', 10, 1) in kinds, 'the ground-floor door at slot 10 stays')
+    check(('window', 10, 2) in kinds, 'an upstairs window over the door is kept: overlap is per story')
+    slots = hf.slot_table(spec['blocks'])
+    check(abs(slots[6]['eave'] - 11.2) < 1e-6 and abs(slots[0]['eave'] - 5.6) < 1e-6, 'eaves follow stories per face')
+    m = _v2()
+    m['ground'].append({'slot': 12, 'span': 1, 'kind': 'window', 'size': 'small', 'shutters': False, 'story': 2})
+    spec, notes = hf.normalize(m)
+    check(not any(g.get('story') == 2 for g in spec['ground']) and any('story' in n for n in notes),
+          f'a story-2 window on a one-story block is dropped with a note: {notes}')
+
+
+def scenario_side_garage_and_shed_and_unexpressed():
+    m = _v2(); m['blocks']['garage']['orientation'] = 'side'
+    spec, notes = hf.normalize(m)
+    check(spec['blocks']['garage']['orientation'] == 'side', 'orientation kept')
+    check(not any(g['kind'] == 'garage_door' for g in spec['ground']), 'a side garage carries no street garage door entry')
+    check(any(g['kind'] == 'window' and 0 <= g['slot'] <= 2 for g in spec['ground']), 'the bay\'s street face gets one window')
+    m = _v2(); m['roof'].append({'slot': 13, 'span': 2, 'kind': 'shed', 'window': True, 'cladding': 'shingle'})
+    spec, _ = hf.normalize(m)
+    shed = next(r for r in spec['roof'] if r['kind'] == 'shed')
+    check(shed['window'] is True and shed['cladding'] == 'shingle', 'shed keeps window + cladding override')
+    m = _v2(); m['unexpressed'] = ['x' * 200] * 12
+    spec, _ = hf.normalize(m)
+    check(len(spec['unexpressed']) == 8 and all(len(s) == 80 for s in spec['unexpressed']), 'unexpressed capped 8 x 80')
+    m = _v2(); m['blocks']['main']['base'] = {'material': 'stone', 'height': 5, 'body': 'stone_grey'}
+    spec, _ = hf.normalize(m)
+    check(spec['blocks']['main']['base'] == {'material': 'stone', 'height': 1.8, 'body': 'stone_grey'}, 'base height clamped')
+
+
 def scenario_home_section_pins():
     import io, os
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -448,6 +635,12 @@ def scenario_home_section_pins():
 
 if __name__ == '__main__':
     for fn in (scenario_slot_table_is_derived_from_the_faces,
+               scenario_validate_rejects_structurally_bad_models,
+               scenario_canonical_v2_is_the_old_house,
+               scenario_v1_upgrade_is_the_mapping_table,
+               scenario_depth_clamps_against_the_curb,
+               scenario_stories_and_per_story_overlap,
+               scenario_side_garage_and_shed_and_unexpressed,
                scenario_canonical_is_normal_and_idempotent,
                scenario_unknown_enums_fall_to_defaults,
                scenario_pitch_clamps,
