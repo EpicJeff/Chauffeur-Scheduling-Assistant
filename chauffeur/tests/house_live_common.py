@@ -56,6 +56,12 @@ INVARIANT_JS = """() => {
 DAY_LOCK_JS = 'Date.prototype.getHours = function () { return 14; };'
 
 
+# Textures (grass, drive, wood) paint with Math.random; a pixel pin needs
+# the same picture every run. Seeded LCG, installed by init script.
+SEED_RNG_JS = ('Math.random = (function () { var s = 20260917; return function () {'
+               ' s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; }; })();')
+
+
 # The roof's own vault pitch (pi/8): shared by test_house_shell_live.py's
 # vault-height pin (via _deck_underside) and test_house_facade_live.py's
 # roof-plane pin. Mirrors house.js's own BLOCK_PITCH constant (hoisted to

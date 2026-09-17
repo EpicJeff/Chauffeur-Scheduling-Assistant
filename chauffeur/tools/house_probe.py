@@ -61,7 +61,10 @@ THREE_WRAP = b"""
           s.children.length > 8)
         window.__hpBuildMs = Math.round(performance.now() - window.__hpT0);
       window.__hpScene = s; window.__hpCam = c; window.__hpR = r;
-      return o(s, c);
+      var out = o(s, c);
+      if (s && s.isScene && s.children.length > 8)
+        window.__hpCalls = r.info.render.calls;
+      return out;
     };
     return r;
   }
@@ -117,7 +120,7 @@ BUDGET_JS = """() => {
   return { total, visible, inFrustum, tris: Math.round(tris),
            ghostLines, ghostDraws, mainPassDraws: inFrustum + ghostDraws,
            materials: mats.size, geometries: geos.size,
-           buildMs: window.__hpBuildMs,
+           buildMs: window.__hpBuildMs, calls: window.__hpCalls,
            rows: Object.entries(rows).sort((a, b) => b[1] - a[1]).slice(0, 8) };
 }"""
 
@@ -347,6 +350,8 @@ def main():
                     help='wrap the renderer and print per-view draw-budget '
                          'numbers (meshes, in-frustum, tris, unique '
                          'materials/geometries, build ms)')
+    ap.add_argument('--seed-rng', action='store_true',
+                    help='deterministic Math.random for pixel pins')
     ap.add_argument('--day', action='store_true',
                     help='lock the scene\'s own clock to midday before the '
                          'page loads, so isNight() always resolves false. '
@@ -402,6 +407,10 @@ def main():
             page.add_init_script(
                 'Date.prototype.getHours = function () { return 14; };')
             print('day-lock: on (getHours() -> 14, isNight() -> false)')
+        if args.seed_rng:
+            from house_live_common import SEED_RNG_JS
+            page.add_init_script(SEED_RNG_JS)
+            print('seed-rng: on (Math.random -> seeded LCG)')
         if args.budget:
             with open('static/vendor/three.min.js', 'rb') as fh:
                 patched = fh.read() + THREE_WRAP
@@ -468,10 +477,11 @@ def main():
                     print('budget', view, 'ERR', b['err'])
                 else:
                     print('budget %-9s meshes=%d visible=%d inFrustum=%d '
-                          'tris=%d materials=%d geometries=%d buildMs=%s'
+                          'tris=%d materials=%d geometries=%d buildMs=%s '
+                          'calls=%s'
                           % (view, b['total'], b['visible'], b['inFrustum'],
                              b['tris'], b['materials'], b['geometries'],
-                             b['buildMs']))
+                             b['buildMs'], b['calls']))
                     print('    ghostLines=%d ghostDraws=%d mainPassDraws=%d'
                           % (b['ghostLines'], b['ghostDraws'], b['mainPassDraws']))
                     for k, v in b['rows']:

@@ -131,3 +131,25 @@ Free block placement; interior refit; arched openings; metal roofs; stone accent
 ## 9. Results
 
 Filled at wrap: the two acceptance photos before/after (canonical draft vs the pipeline's draft and revision, all renders, the recorded structural gaps), the per-variant budgets against their ceilings, the mirror/story/side-garage/combined pins, the request count per photo, deviations with rulings, parked list.
+
+### B0 (Task 1, 2026-09-17)
+
+Recorded at HEAD `c5c4e42` (v2.499.66), bare server, canonical facade, `--seed-rng` for deterministic textures. Command run from `chauffeur/`:
+
+```
+env -u HA_BASE_URL python tools/house_probe.py --views exterior,orbit --budget --quality high --day --seed-rng --out ../scratch/b0
+```
+
+Exterior row (stop 0):
+
+```
+budget exterior  meshes=2286 visible=1433 inFrustum=1433 tris=299285 materials=1450 geometries=1713 buildMs=1090 calls=2819
+```
+
+Worst orbit row (highest `inFrustum`, tied at 1433 across stops 0/1/3/4/5/7; stops 2 and 6 came in at `inFrustum=1430`/`tris=298133`/`calls=2813`, everything else unchanged — the far side of the ring drops three roof-ridge meshes out of frustum). Representative worst row (`orbit0`, identical to the exterior since stop 0 *is* the exterior pose):
+
+```
+budget orbit0    meshes=2286 visible=1433 inFrustum=1433 tris=299285 materials=1450 geometries=1713 buildMs=1090 calls=2819
+```
+
+So **B0 = inFrustum 1433, tris 299285, calls 2819, buildMs 1090, materials 1450, geometries 1713** (meshes 2286, visible 1433, ghostLines 0, ghostDraws 0, mainPassDraws 1433). Every later ceiling in this spec is this row plus the stated per-variant delta. The exterior PNG from this run is `chauffeur/tests/fixtures/house_photo/b0-exterior.png` (Task 5's pixel reference) — confirmed the daytime canonical exterior at stop 0 (Garage/Mudroom/Living room lean-in markers visible, no night rig).
