@@ -4582,9 +4582,19 @@
       else m.position.set(0, 0, face);
       finish(m); group.add(m); return m;
     }
+    /* the block roofs' shared family pitch (spec 2026-09-16-regular-house-
+       orbit-design.md section 2). Declared here, above every reader --
+       roofVault(FULL_HOUSE, ...) below is the earliest -- because `var`
+       hoisting only lifts the DECLARATION to the top of this function;
+       the VALUE is whatever was last assigned at the point a reader
+       runs, so the assignment itself has to sit above all four reads
+       (this one, the two shellGable('roof_main'/'garage_block_roof', ...)
+       calls, and blockDeckPlanes/faceDeckPlane's own copy below) for
+       every one of them to see pi/8 rather than undefined. */
+    var BLOCK_PITCH = Math.PI / 8;
     /* the main block's own vault, read once: every partition under
        `roof_main` measures itself off this. */
-    var MAIN_VAULT = roofVault(FULL_HOUSE, ROOF_FORMS.main, Math.PI / 8);
+    var MAIN_VAULT = roofVault(FULL_HOUSE, ROOF_FORMS.main, BLOCK_PITCH);
     /* ROOF_FORMS is a build-time PARAMETER (house_probe injects it, and
        spec 2's block model feeds it), and BOTH of its fields change the
        deck a partition has to meet. A vault is built only for the
@@ -5198,7 +5208,7 @@
     /* ROOF VALLEYS (masking spec section 6): the block behind each face
        and the roof it was built with -- the same rows and forms the
        roof_main / garage_block_roof shellGable calls below read, at the
-       block roofs' own Math.PI / 8 -- so a street feature can find the
+       block roofs' own BLOCK_PITCH -- so a street feature can find the
        deck it stands on from the slot table alone. This replaces the
        ROOF_PLANE_EAVE / roofPlaneEave table (the per-face eave, kept so
        a later per-block eave had one place to diverge): the block row's
@@ -5207,7 +5217,8 @@
       main:         { block: FULL_HOUSE,   forms: ROOF_FORMS.main },
       garage_block: { block: GARAGE_BLOCK, forms: ROOF_FORMS.garage }
     };
-    var BLOCK_PITCH = Math.PI / 8;
+    /* BLOCK_PITCH is declared once, above MAIN_VAULT, so this and every
+       other reader see the same value. */
     /* every deck plane of the block's roof: the two slope decks, plus
        the two hipped ends when the form is a hip. The roof surface is
        the LOWEST of them at any (x, z). */
@@ -5785,7 +5796,7 @@
        form and ridge stay one parameter. */
     shellGable('roof_main', FULL_HOUSE.west, FULL_HOUSE.east,
                FULL_HOUSE.north, FULL_HOUSE.south, EXT_TOP4,
-               ROOF_FORMS.main.ridge, null, null, Math.PI / 8,
+               ROOF_FORMS.main.ridge, null, null, BLOCK_PITCH,
                ['kitchen', 'living'], null, ROOF_FORMS.main.form);
 
     /* ---- the garage block (spec section 2) ----------------------------
@@ -5817,7 +5828,7 @@
               [0, 0, 1], [], 'mudroom');
     shellGable('garage_block_roof', GARAGE_BLOCK.west, GARAGE_BLOCK.east,
                GARAGE_BLOCK.north, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
-               ROOF_FORMS.garage.ridge, null, null, Math.PI / 8,
+               ROOF_FORMS.garage.ridge, null, null, BLOCK_PITCH,
                ['garage', 'mudroom'], null, ROOF_FORMS.garage.form);
 
     /* ---- the main block's north side ----------------------------------
@@ -9272,8 +9283,14 @@
         if (!ROOM_AABB[room]) return;
         ROOM_MASKS[room] = roomMask(room);
       });
-      /* every fabric mesh once: world box and world triangles (area0) */
+      /* every fabric mesh once: world box and world triangles (area0).
+         The yard (f.g === yardG) is skipped here -- ruling 3 below hides
+         it whole in every room view without ever reading row.meshes or
+         row.area0, so world-triing its (non-instanced) props was pure
+         build-time waste, never a correctness bug. */
       var rows = FABRIC.map(function (f) {
+        f.shells = {}; f.verdict = 'solid';
+        if (f.g === yardG) return { f: f, meshes: [], area0: 0 };
         var meshes = [], area0 = 0;
         f.g.updateMatrixWorld(true);
         f.g.traverse(function (mm) {
@@ -9284,7 +9301,6 @@
           meshes.push({ m: mm, tris: tris, area: area,
                         box: [b.min.x, b.max.x, b.min.y, b.max.y, b.min.z, b.max.z] });
         });
-        f.shells = {}; f.verdict = 'solid';
         return { f: f, meshes: meshes, area0: area0 };
       });
       Object.keys(ROOM_MASKS).forEach(function (room) {
@@ -9333,8 +9349,9 @@
             mg.matrixAutoUpdate = false;
             if (g === f.g) {
               mg.userData.shellOf = f.name;
-              if (g === yardG) mg.userData.yard = true;   /* inYard(): a cut
-                yard prop's remnant still reads as scenery */
+              /* g === yardG never reaches here: the yard row returns
+                 whole (stampPattern + fraction 1) before cutRow/mirrorOf
+                 ever runs, so f.g is never yardG inside this closure. */
               group.add(mg);
             } else mirrorOf(g.parent).add(mg);
             mirror[g.id] = mg;

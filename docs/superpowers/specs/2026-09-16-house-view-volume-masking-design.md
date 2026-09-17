@@ -34,11 +34,15 @@ One unit of pure functions, no scene state, no three.js objects except `Vector3`
 - For a room: `keep(piece) = clipConvex(piece, W planes) ∪ subtractConvex(piece, P planes)`.
 - Non-convex fabric (door and window kits, the coach lamp): masked whole if the piece's box centre is masked, kept whole otherwise; a kit whose box is more than half inside the mask goes whole.
 
+As built: see §9 deviation 18.
+
 ## 4. Build and swap
 
 - After the last `regFabric`, `buildRoomShells()` runs once per room camera (kitchen, living, study, garage, mudroom). For each fabric row it computes the kept solids, builds one geometry, and merges per room by material with the same `mergeStatic` idiom, so the batching contract is unchanged. Result: five room-shell groups beside the untouched full shell. Every geometry goes through `cgeo`, keyed `shell-mask|<room>|<piece>|<camera>`.
 - `enterRoom(r)` at settle: full shell hidden, room-shell r visible, the other four hidden. `goExterior` and the orbit: full shell visible. Lean-ins keep the room's shell. `shadowDirty()` after each swap, as today. The shell still pops at settle, as today.
 - Cut geometry is absent from the raycast and the shadow map for that room, exactly like a hidden verdict today, so markers and taps behave as they do now.
+
+As built: see §9 deviation 18.
 
 ## 5. Retired
 
@@ -286,6 +290,20 @@ In ruling order (Task 2's two precede Task 3's, chronologically):
     partition and reproduces the user's own wedge from the living camera; slot 14
     buries identically but the partition hides it from that camera. Both shot
     before/after (task-5-report.md).
+18. **The clipper works on triangle soups, never on §3's solids** — what shipped
+    (`chauffeur/static/house_clip.js`, `worldTris()` in `house.js` ~1064,
+    `buildRoomShells()`) reads each mesh's geometry back into `{a,b,c,slot}`
+    triangles and clips/subtracts with `clipTris`/`subtractTris`, not §3's face-list
+    `solid` (vertices carrying interpolated `ao`) built from a builder's `solids()`
+    getter and clipped/subtracted with `clipConvex`/`subtractConvex`/`toGeometry`;
+    the clip runs *before* `bakeAO()`, so a cap face gets its ambient occlusion from
+    the normal bake pass rather than by interpolating a baked value along the cut
+    edge, and every remnant geometry is stamped `userData.cached = true` with no
+    §4 `cgeo` key (`shell-mask|<room>|<piece>|<camera>`). Ruling: plan-level: exact
+    for convex meshes, which every non-kit mesh is; caps get AO from the bake;
+    remnants are never rebuilt so a cache key buys nothing. Cost if wrong: a future
+    rebuild path would have to stamp its own remnants (found in the whole-arc
+    review, fix-wave v2.499.60).
 
 ### Parked / known items (progress.md `minor (deferred)` lines and Task 3 look items)
 

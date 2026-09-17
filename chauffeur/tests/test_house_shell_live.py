@@ -778,8 +778,10 @@ def scenario_the_study_faces_east_behind_glass_doors():
 # block z -6.10..10.10, same eave; family pitch pi/8 on both) rather than
 # read back out of the scene that also uses it. house.js's roofVault()
 # and shellGable() each derive the same numbers a third and a second
-# time, so a change to any one of the three fails a pin here. (_VAULT_PITCH
-# itself lives in house_live_common.py: test_house_facade_live.py's
+# time -- both now reading the single BLOCK_PITCH constant house.js
+# hoists above its first use (v2.499.60), rather than four separate
+# `Math.PI / 8` literals -- so a change to it fails a pin here.
+# (_VAULT_PITCH itself lives in house_live_common.py: test_house_facade_live.py's
 # roof-line audit needs the same pitch constant.)
 #
 #   ridge = eave + 0.18 + half * tan(pitch)        the deck's CENTRE plane

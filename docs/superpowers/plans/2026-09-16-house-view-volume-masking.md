@@ -490,7 +490,7 @@ function solveShell(camPos, subject) {
 
 **Files:**
 - Modify: `chauffeur/static/house.js` — `shellGable` (accept `clipAbove: plane[]` and clip every deck/trim/cap/end-infill mesh's triangles with `HouseClip.clipTris(worldTris(mesh), plane, 1)` before it is added — build the mesh from the kept triangles the way Task 3's `trisToMesh` does, cap slot to `CAP_MAT`), `gableAt` (~5325-5359), `dormerAt` (~5362-5385), `roofPlaneEave`.
-- Test: `chauffeur/tests/test_house_live.py` (`scenario_roof_features_stop_at_the_roof_line`)
+- Test: `chauffeur/tests/test_house_live.py` (`scenario_roof_features_stop_at_the_roof_line`; now in `test_house_facade_live.py`, Task 7)
 
 **Interfaces:**
 - Consumes: `HouseClip`, `worldTris`, `trisToMesh`, `CAP_MAT`.

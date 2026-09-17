@@ -58,7 +58,10 @@ DAY_LOCK_JS = 'Date.prototype.getHours = function () { return 14; };'
 
 # The roof's own vault pitch (pi/8): shared by test_house_shell_live.py's
 # vault-height pin (via _deck_underside) and test_house_facade_live.py's
-# roof-plane pin.
+# roof-plane pin. Mirrors house.js's own BLOCK_PITCH constant (hoisted to
+# one `var BLOCK_PITCH = Math.PI / 8` in v2.499.60, read by roofVault(),
+# both shellGable('roof_main'/'garage_block_roof', ...) calls and
+# blockDeckPlanes()/faceDeckPlane() — previously four separate literals).
 _VAULT_PITCH = _math.pi / 8
 
 
