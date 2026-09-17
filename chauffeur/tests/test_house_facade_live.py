@@ -46,14 +46,35 @@ from house_live_common import (check, _seed, DAY_LOCK_JS, SEED_RNG_JS,
 # "the canonical still renders the same house" means, and none of them
 # can be held still from here.
 #
-# MEASURED, not guessed: with house.js at the V1 head this window's mean
-# channel difference against the fixture is [0.016, 0.094, 0.125] (max
-# pixel 22) -- the same house, to within the sky sliver above the ridge --
-# while the whole frame reads [7.9, 13.6, 16.4]. What is inside it is the
-# main roof's south deck, the east gable end, the street elevation east
-# of the porch, six windows, the fascia and rake trim, the fence and the
-# planting: every surface the block model repaints.
+# MEASURED, not guessed: with house.js at the V1 head the EAST window's
+# mean channel difference against the fixture is [0.016, 0.094, 0.125]
+# (max pixel 22) -- the same house, to within the sky sliver above the
+# ridge -- while the whole frame reads [7.9, 13.6, 16.4].
+#
+# TWO windows (review fix, v2.499.75), because one was half a house. The
+# EAST window is the main roof's south deck, the east gable end, the
+# street elevation east of the porch, six windows, the fascia and rake
+# trim, the fence and the planting. The WEST window is the other half and
+# the half this task could actually break: the garage bay's door, header
+# and both PIERS (which now carry the base band), the mudroom's street
+# face, the porch's gable, posts, deck and steps, and the front door.
+# Measured the same way, same tolerance: [0.347, 0.236, 0.103], max 87.
+#
+# The west window's bounds are where they are for a reason, all four
+# checked against the fixture pixel by pixel: x starts at 340 because the
+# SKY (and the tree against it) begins around x 320 and the sky is the
+# one big surface the weather stub moves; y starts at 460 to clear the
+# Garage and Mudroom badges and the Garage MARKER, whose glyphs count the
+# cars the probe seeded and this file does not; y stops at 715 because
+# the wall clock's "11:48 AM" runs to x 455 below it; x stops at 660,
+# short of the east window, with the Living-room marker inside it (that
+# overlay costs about 3 per channel locally and the window absorbs it).
+# The garage DOOR LEAF was the data-dependent risk worth checking -- four
+# seeded cars versus none -- and it is not: the leaf's own region
+# (x 340..440, y 460..560) differs by 0.002 per channel with and without
+# them, which is antialiasing and not a door in another state.
 B0_HOUSE_CLIP = {'x': 600, 'y': 430, 'width': 660, 'height': 470}
+B0_WEST_CLIP = {'x': 340, 'y': 460, 'width': 320, 'height': 255}
 
 
 # The facade spec §2.2 pins the canonical facade to the elevation it
@@ -349,18 +370,19 @@ def scenario_canonical_facade_pins_the_hand_built_elevation():
         # day lock). Mean absolute difference over the house window,
         # 8-bit channels.
         page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
-        png = page.screenshot(clip=B0_HOUSE_CLIP)
         from PIL import Image, ImageChops, ImageStat
         import io as _io
-        a = Image.open(_io.BytesIO(png)).convert('RGB')
-        b = Image.open(os.path.join(os.path.dirname(__file__), 'fixtures',
-                                    'house_photo', 'b0-exterior.png')).convert('RGB')
-        b = b.crop((B0_HOUSE_CLIP['x'], B0_HOUSE_CLIP['y'],
-                    B0_HOUSE_CLIP['x'] + B0_HOUSE_CLIP['width'],
-                    B0_HOUSE_CLIP['y'] + B0_HOUSE_CLIP['height']))
-        diff = ImageStat.Stat(ImageChops.difference(a, b)).mean
-        check(max(diff) < 1.5,
-              'canonical V2 renders B0 within tolerance: mean channel diff %r' % (diff,))
+        fixture = Image.open(os.path.join(os.path.dirname(__file__), 'fixtures',
+                                          'house_photo', 'b0-exterior.png')).convert('RGB')
+        for half, clip in (('east', B0_HOUSE_CLIP), ('west', B0_WEST_CLIP)):
+            png = page.screenshot(clip=clip)
+            a = Image.open(_io.BytesIO(png)).convert('RGB')
+            b = fixture.crop((clip['x'], clip['y'],
+                              clip['x'] + clip['width'], clip['y'] + clip['height']))
+            diff = ImageStat.Stat(ImageChops.difference(a, b)).mean
+            check(max(diff) < 1.5,
+                  'canonical V2 renders B0 within tolerance, %s half: '
+                  'mean channel diff %r' % (half, diff))
         check(page.evaluate('window.chfBlocks().main.cladding') == 'batten',
               'the scene built from the block model')
         check(page.evaluate('window.chfBlocks()') == hf.CANONICAL['blocks'],
@@ -413,16 +435,18 @@ def scenario_claddings_and_base_band():
         with served.browser() as page:
             r = boot(page, spec)
             # MEASURED, every one of the six identical (task-5-report.md):
-            # +3 meshes -- the garage block's three base-band runs, one per
-            # shellWall -- and +6 draws: those three, plus the two new
-            # material buckets (the main block's own tile, now a different
-            # (material, body) pair from the garage's, and the stone base)
-            # splitting merges the canonical could make. Nothing else.
-            check(r['calls'] <= base['calls'] + 6,
+            # +5 meshes -- the garage block's five base-band runs, three
+            # from shellWall (garage_block_north/west, mudroom_front) and
+            # one on each of the bay's two piers -- and +10 draws: those
+            # five, plus the two new material buckets (the main block's own
+            # tile, now a different (material, body) pair from the
+            # garage's, and the stone base) splitting merges the canonical
+            # could make. Nothing else.
+            check(r['calls'] <= base['calls'] + 10,
                   '%s: draws %s vs canonical %s (+2 material buckets, '
-                  '+ three unmerged band runs)' % (clad, r['calls'], base['calls']))
-            check(r['inFrustum'] <= base['inFrustum'] + 3,
-                  '%s: meshes %s vs %s (the three base bands and nothing else)'
+                  '+ five unmerged band runs)' % (clad, r['calls'], base['calls']))
+            check(r['inFrustum'] <= base['inFrustum'] + 5,
+                  '%s: meshes %s vs %s (the five base bands and nothing else)'
                   % (clad, r['inFrustum'], base['inFrustum']))
             u = page.evaluate("(() => { const b = window.chfBlocks();"
                               " return b.main.cladding + '|' + b.garage.base.material; })()")

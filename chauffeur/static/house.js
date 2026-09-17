@@ -5057,21 +5057,33 @@
       return frame;
     }
     /* Spec 2026-09-17 section 2: a band at the block's foot in its own
-       material, height and colour. A second box run 0.06 proud of the
-       wall, added to the wall's OWN group (same registered piece, same
-       room) so it masks, ghosts and merges with the wall it belongs to.
-       A block with no base (the canonical, both blocks) builds nothing.
+       material, height and colour. A second box run at the wall's own
+       thickness, shifted 0.03 along the wall's outward normal, added to
+       the wall's OWN group (same registered piece, same room) so it
+       masks, ghosts and merges with the wall it belongs to. A block with
+       no base (the canonical, both blocks) builds nothing.
 
        x0/z0..x1/z1 are the wall's CENTRE LINE, exactly as shellWall takes
        them -- a band placed on a wall's OUTER face would stand 0.2 proud
-       of it and bury the bottom of any door in that wall. */
-    function baseBand(g, x0, z0, x1, z1, normal, block) {
+       of it and bury the bottom of any door in that wall.
+
+       THE 0.03 SHIFT IS THE WHOLE OFFSET (review fix, v2.499.75): the
+       band reads as 0.03 proud outside and its back face lands 0.03
+       INSIDE the wall's mass rather than coplanar with the interior
+       surface. A band as thick as the wall + 0.06 put those two faces in
+       the same plane, which z-fights from inside the room.
+
+       `thick` (default WALL_T4) is for a run whose wall is not a shell
+       wall -- the garage bay's piers are 0.24 deep, and a 0.35 band on
+       them would stand proud of their own front face. */
+    function baseBand(g, x0, z0, x1, z1, normal, block, thick) {
       var b = BLOCKS[block || 'main']; if (!b || !b.base) return;
       var h = b.base.height, alongX = x0 !== x1;
+      var t = thick || WALL_T4;
       var length = alongX ? x1 - x0 : z1 - z0;
       var cx = (x0 + x1) / 2 + (alongX ? 0 : normal[0] * 0.03);
       var cz = (z0 + z1) / 2 + (alongX ? normal[2] * 0.03 : 0);
-      return shellBox(g, alongX ? length : WALL_T4 + 0.06, h, alongX ? WALL_T4 + 0.06 : length,
+      return shellBox(g, alongX ? length : t, h, alongX ? t : length,
                NICE ? 0xffffff : pal('body', b.base.body, 0x8b8a84), cx, h / 2, cz,
                { rough: 0.95, map: cladTex(b.base.material,
                                            pal('body', b.base.body, 0x8b8a84)) });
@@ -6335,6 +6347,22 @@
       gtag(box(0.76, 3.5, 0.24, cladColour('garage'),
                -13.22, 1.75, 9.88, garageDoorG,
                sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
+      /* Spec 2026-09-17 section 2 (review fix, v2.499.75): the bay's two
+         PIERS are the garage block's street face between garage_block_west
+         and mudroom_front, and those two get their band from shellWall.
+         Without these the water table stopped dead at x -12.60 and picked
+         up again at the block's west corner, with the whole bay bare
+         between them. The piers' own 0.24 depth, not WALL_T4, and the
+         same centre-line rule; they ride garageDoorG so the band hides
+         with the piers when the garage camera looks out through the
+         opening. The OPENING itself is left bare on purpose -- a water
+         table does not run across a garage door -- and so is the 0.24
+         between the east pier and mudroom_front, where the face steps
+         back 0.22 in z anyway. */
+      [-17.58, -13.22].forEach(function (px) {
+        gtag(baseBand(garageDoorG, px - 0.38, 9.88, px + 0.38, 9.88,
+                      [0, 0, 1], 'garage', 0.24));
+      });
       /* FACADE (arc 4): the door leaf, its board seams, strap hardware
          and top-light row used to be authored here. garageDoorAt() (the
          facade block above) builds them into this same garageDoorG from
