@@ -78,17 +78,20 @@ def scenario_house_life():
         # camera stood EAST of the main block at x 14.6 and reached the
         # room by ghosting the east partition, taking the slider and the
         # back-room door in that wall with it. The kitchen is viewed
-        # from the STREET now (HOME_POS 4.64, 13.8, 23.0) and
-        # east_partition is owned by the study, so the wall stands and
-        # its two openings stand on it: from the kitchen you look AT the
-        # slider, not through it. Asserted as the verdict rather than as
-        # a screen probe -- the back-room door sits at the very edge of
-        # this frame, which is a framing fact, not a cutaway one.
+        # from the STREET now (HOME_POS 4.64, 13.8, 23.0), so the wall
+        # stands and its two openings stand on it: from the kitchen you
+        # look AT the slider, not through it. Asserted as the mask rather
+        # than as a screen probe -- the back-room door sits at the very
+        # edge of this frame, which is a framing fact, not a cutaway one.
         # STUDY REFIT (2026-09-16): the slider is east_room_door now --
         # a plain interior door in the same opening, same registration.
+        # VIEW-VOLUME MASKING (task 3): the pin reads maskedFraction --
+        # the kitchen's mask (its box ends at x 6.5; the partition is at
+        # 6.44..6.85, beside the pyramid, behind the box's south face)
+        # takes nothing off any of the three.
         for piece in ('east_room_door', 'living_back_room_door', 'east_partition'):
             check(page.evaluate(
-                "(n) => chfShellFabric().find(f => f.name === n).verdict", piece) == 'solid',
+                "(n) => chfShellFabric().find(f => f.name === n).maskedFraction.kitchen", piece) == 0,
                 piece + " must stand from the kitchen: the east partition is "
                 "the study's enclosure, not the kitchen's")
         page.evaluate("chfHouseFindFeature('study')")
@@ -111,7 +114,7 @@ def scenario_house_life():
         for fixture in ('back-room-door',):
             fixture_point = page.evaluate('(key) => chfNavProbe({feature:key})', fixture)
             check(fixture_point, fixture + ' is visible on the living-room east wall')
-        check(page.evaluate("chfShellFabric().find(f => f.name === 'east_room_door').verdict === 'solid'"),
+        check(page.evaluate("chfShellFabric().find(f => f.name === 'east_room_door').maskedFraction.living === 0"),
               "the east room's door is visible from the living room")
         # STUDY REFIT: the glazing this used to pin moved to the study's
         # own doors, and the rule moved with it -- both sides of that

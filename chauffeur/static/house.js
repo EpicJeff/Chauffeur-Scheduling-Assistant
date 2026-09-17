@@ -1106,15 +1106,14 @@
         if (f.name === name) f.convexity = scanConvexity(g);
       });
     }
-    /* ---- SHELL (spec section 4): the half-space solver ------------------
+    /* ---- SHELL (spec section 4): the shell swap ------------------------
        Camera-settle only (enterRoom, goExterior, frameZone's lean-in) —
-       never per frame; render-on-demand law intact. A piece ghosts when
-       the camera stands on its outward side, the subject stands on its
-       inner side, AND the piece's box overlaps the camera-subject
-       corridor (skips far-away fabric that faces the wrong way, e.g. the
-       garage's far wall while in the living room). mode:'hide' pieces
-       hide under that same verdict. subject === null (the exterior) ->
-       every piece solid, the sealed-house case. */
+       never per frame; render-on-demand law intact. VIEW-VOLUME MASKING
+       (task 3) replaced the half-space solver that lived here: the
+       per-room cut is decided ONCE at build time (buildRoomShells, far
+       below, beside the merge loop) and solveShell only swaps what is
+       visible. boxCentre/boxOk/corridorHits stay for the callers that
+       still read them (the registry bridge's box guard, tests). */
     function boxCentre(b) {
       return new T.Vector3((b[0]+b[1])/2, (b[2]+b[3])/2, (b[4]+b[5])/2);
     }
@@ -1144,50 +1143,33 @@
              b[3] >= lo[1] && b[4] <= hi[2] && b[5] >= lo[2];
     }
     function solveShell(camPos, subject) {
-      var subPt = subject && subject.point ? subject.point
-                : subject ? boxCentre(subject.box) : null;
+      /* VIEW-VOLUME MASKING (task 3, spec section 4): the verdicts and
+         the corridor rule are gone; this is a SWAP. subject.room names
+         the room shell to show; every mesh whose maskPattern names that
+         room hides and its remnant (in the shell) stands in. subject
+         null (the exterior, every orbit stop) and a room with no shell:
+         everything on, every shell off -- the sealed house. camPos is
+         no longer read (the masks were built from the room cameras at
+         build time; a lean-in keeps its room's shell, no recompute),
+         kept in the signature so every caller stays as it was. The old
+         per-row fields (owners, cutawayRoom, twoSided, mode, plane, pad)
+         are no longer read here; Task 4 retires them. */
+      var room = subject && subject.room && roomShellGroups[subject.room] ? subject.room : null;
+      var tag = room ? '|' + room + '|' : null;
       FABRIC.forEach(function (f) {
-        var v = 'solid';
-        /* A roof encloses its room rather than separating camera and subject
-           along a vertical wall plane. Declare that ownership at its build
-           site so both pitches leave together in the room cutaway. */
-        if (subject && subject.room && f.owners.length &&
-            f.owners.indexOf(subject.room) < 0) {
-          /* CUTAWAY OWNERSHIP: another room's enclosure never leaves.
-             FIRST, ahead of cutawayRoom and the corridor rule both --
-             the two later rules each answer "is this piece in the way?",
-             and this one answers "is it mine to take?", which has to win
-             or a piece can still be stripped from a room that does not
-             own it. (It matters in practice: a facade feature carries
-             cutawayRoom = the room its FACE fronts, which for the
-             study's own street windows is the living room, so with
-             cutawayRoom checked first the living cutaway would hide the
-             study's windows off a wall that is still standing.) The
-             later rules still govern (a) ownerless pieces -- every
-             opening, the yard -- and (b) owned pieces when the subject
-             IS an owner, so the wall between the camera and its own room
-             still ghosts and the backdrop wall behind that room still
-             stays, because the half-space test says so. */
-          v = 'solid';
-        } else if (subject && subject.room && f.cutawayRoom === subject.room) {
-          v = 'hide';
-        } else if (subPt && boxOk(f.box)) {
-          var p = f.plane || boxCentre(f.box);
-          var camSide = f.n.dot(new T.Vector3().subVectors(camPos, p));
-          var subSide = f.n.dot(new T.Vector3().subVectors(subPt, p));
-          var separates = f.twoSided ? camSide * subSide < 0
-                                     : camSide > 0 && subSide < 0;
-          if (separates && corridorHits(f.box, camPos, subPt, f.pad)) {
-            v = f.mode === 'hide' ? 'hide' : 'ghost';
-          }
-        }
-        f.verdict = v;
-        /* Fills show only on 'solid'. Ghost and hide verdicts both expose
-           the room cleanly; retained edge geometry stays dormant. */
-        f.g.visible = (v === 'solid');
-        /* Hidden shell fills make the cutaway. Permanent wireframes obscured
-           the room on touch panels, so ghost edges remain off. */
+        f.verdict = (room && f.shells && f.shells[room] && f.shells[room].fraction > 0)
+                  ? 'masked' : 'solid';
+        /* Permanent wireframes obscured the room on touch panels, so
+           ghost edges remain off. */
         if (f.edges) f.edges.visible = false;
+      });
+      MASK_TOGGLES.forEach(function (o) {
+        var ud = o.userData;
+        if (ud.maskOnly) o.visible = !!tag && ud.maskOnly.indexOf(tag) >= 0;
+        else o.visible = !tag || ud.maskPattern.indexOf(tag) < 0;
+      });
+      Object.keys(roomShellGroups).forEach(function (r) {
+        roomShellGroups[r].visible = (r === room);
       });
       if (webgl) webgl.shadowDirty();
     }
@@ -3960,7 +3942,14 @@
       roof:  { charcoal: 0x2b2f33, weathered: 0x7d7a72, brown: 0x5a4636 },
       frame: { black: 0x1b1c1e, white: 0xf7f5ef },
       door:  { wood: 0x6b4a30, black: 0x1b1c1e, red: 0x9b2f2a, sage: 0x7d8f74 },
-      trim:  { white: 0xf7f5ef, black: 0x1b1c1e }
+      trim:  { white: 0xf7f5ef, black: 0x1b1c1e },
+      /* VIEW-VOLUME MASKING (spec 2026-09-16 masking section 2, choice
+         A): the ONE neutral section tone every cut face of every room
+         shell wears -- a light plaster grey, the same for every piece.
+         Carries no facade enum (the stored spec has no role for it), so
+         the single row is read by its own name below. Hex lives here
+         and nowhere else. */
+      section: { plaster: 0xe9e4da }
     };
     /* The server injects the active facade before this file loads (spec
        §3.1/§6: build-once, from the payload the page already fetched). A
@@ -3980,6 +3969,7 @@
       frame:    pal('frame', FSTYLE.frame, 0x1b1c1e),  // window frames + grilles
       wood:     pal('door', FSTYLE.door, 0x6b4a30),    // front door, garage door, posts
       trim:     pal('trim', FSTYLE.trim, 0xf7f5ef),    // fascia, corner boards, gutters
+      section:  pal('section', FSTYLE.section || 'plaster', 0xe9e4da), // mask cut faces
       stoop:    0x8a8175,   // masonry-tone stoop
       windowDark: 0x273438,
       curtainGlow: 0xd9ae73,
@@ -8728,9 +8718,7 @@
                 '|' + roomTag + '|' + (o.visible ? 1 : 0);
         (buckets[k] = buckets[k] || []).push(o);
       });
-      Object.keys(buckets).forEach(function (k) {
-        var list = buckets[k];
-        if (list.length < 4) return;
+      function composite(list, k) {
         var first = list[0];
         var mm = new T.Mesh(mergeGeoms(list, root.matrixWorld),
                             first.material);
@@ -8748,6 +8736,53 @@
         var rt = k.split('|')[3];
         if (rt) mm.userData.room = rt;
         root.add(mm);
+        return mm;
+      }
+      Object.keys(buckets).forEach(function (k) {
+        var list = buckets[k];
+        if (list.length < 4) return;
+        /* VIEW-VOLUME MASKING (task 3): a fabric mesh the mask cuts in
+           some room views carries userData.maskPattern ('|kitchen|living|'
+           -- the rooms whose view hides it, its remnant standing in). A
+           bucket with none of those merges exactly as before. A bucket
+           with some does NOT split by pattern (that was tried: every
+           (material x pattern) sub-bucket under the 4-item floor became
+           a loose draw, +94 in the exterior, against "exterior
+           unchanged"). Instead the FULL composite is built exactly as
+           before -- so the exterior and the orbit draw the same list --
+           and carries the union of its members' patterns (hidden in any
+           room where any member is hidden); then one composite per
+           DISTINCT surviving subset stands in for it in the rooms that
+           hide that subset (userData.maskOnly: the rooms it is visible
+           in, and in no other view). A room view therefore draws one
+           composite where it drew one before, plus the room's remnants.
+           The price is geometry: the surviving members duplicated once
+           per distinct subset (measured and recorded in the report). */
+        var rooms = {};
+        list.forEach(function (o) {
+          var pat = o.userData && o.userData.maskPattern;
+          if (pat) pat.split('|').forEach(function (r) { if (r) rooms[r] = true; });
+        });
+        var full = composite(list, k), union = Object.keys(rooms);
+        if (union.length) {
+          full.userData.maskPattern = '|' + union.join('|') + '|';
+          var subsets = {};
+          union.forEach(function (r) {
+            var idx = [];
+            list.forEach(function (o, i) {
+              if ((o.userData.maskPattern || '').indexOf('|' + r + '|') < 0) idx.push(i);
+            });
+            var sk = idx.join(',');
+            (subsets[sk] = subsets[sk] || { idx: idx, rooms: [] }).rooms.push(r);
+          });
+          Object.keys(subsets).forEach(function (sk) {
+            var sub = subsets[sk];
+            if (!sub.idx.length) return;      /* every member hidden there: nothing stands in */
+            var part = composite(sub.idx.map(function (i) { return list[i]; }), k);
+            part.userData.maskOnly = '|' + sub.rooms.join('|') + '|';
+            part.visible = false;             /* until solveShell shows a room */
+          });
+        }
         list.forEach(function (o) { if (o.parent) o.parent.remove(o); });
       });
     }
@@ -8805,6 +8840,405 @@
        level — not inside a nested IIFE), so it resolves here directly,
        the same as any other single-mesh anchor in this list. */
     NO_MERGE.add(grassSlab);
+    /* ---- STUDY: built here, joins the scene later ----------------------
+       VIEW-VOLUME MASKING (task 3): the study's footprint is one of the
+       five mask boxes, and the shells are cut from the PRE-merge fabric
+       (the per-fabric merge loop is just below), so the study has to be
+       built before ROOM_AABB is measured here. It is NOT added to the
+       scene here: scene.add stays at its original site after the merge
+       passes and the AO bake (search "if (studyWorld) {"), so neither
+       ever sees it -- its materials are unshared and it was never baked,
+       and adding it early would have baked ~500 study meshes and changed
+       the study's look. Only the factory call and the zone registration
+       moved. */
+    if (window.HouseStudy) {
+      /* VAULTED PARTITIONS: the study's own architecture is authored
+         4.45 tall, against a house whose eave is 5.6 and whose roof
+         clears 8.5 over this room's north wall -- so from the east room
+         you looked straight over it, and between 4.45 and 5.6 the room
+         showed the block's plaster rather than its own. Hand the adapter
+         the house's OWN arithmetic rather than let it copy the numbers:
+         `underside` is the deck this file builds, `eave` the line every
+         exterior wall already reaches. The standalone /study page calls
+         the same factory with no ceiling and keeps its authored 4.45. */
+      studyWorld = window.HouseStudy.build(T, DETAIL, R, {
+        eave: EXT_TOP4,
+        underside: function (z) {
+          return VAULTED ? vaultTop(MAIN_VAULT, z) : EXT_TOP4;
+        }
+      });
+      Object.keys(studyWorld.zones).forEach(function (key) {
+        groups[key] = studyWorld.zones[key];
+      });
+    }
+
+    /* ---- SHELL (spec section 4): per-room footprints ------------------
+       roomsReg()'s subject box for the room-level views: a box around
+       what is actually INSIDE the room (floor, furniture, fixtures), not
+       the shell that ENCLOSES it. The long derivation note (why it is
+       rooted at `scene`, the two exclusions, the ROOM_CEILING line) is
+       kept at its ORIGINAL site far below, beside zoneExtra; only the
+       code moved. VIEW-VOLUME MASKING (task 3) hoisted it here because
+       the five room masks are built from it and buildRoomShells() below
+       must run before the per-fabric merge loop. Nothing between here
+       and the original site adds a room-tagged mesh or moves a group
+       (verified by reading: the sky dome, the ghost edges and the study
+       are the only later scene additions, and the study is built above
+       and measured explicitly here -- its roots are not in the scene
+       yet, so they are walked by hand with their own matrices updated).
+       Measured against the original site before the move: the same
+       five boxes to the millimetre, except the living floor's y-min
+       (-0.002 -> -0.006: a floor-level prop's box read pre-merge
+       instead of through its merged composite), which nothing reads at
+       that precision. */
+    var ROOM_CEILING = 6.0;
+    var ROOM_AABB = {};
+    (function () {
+      var boxes = {};
+      var shellGroups = FABRIC.map(function (f) { return f.g; });
+      function inShell(o) {
+        for (var i = 0; i < shellGroups.length; i++)
+          for (var p = o; p; p = p.parent) if (p === shellGroups[i]) return true;
+        return false;
+      }
+      function visit(o) {
+        if (!o.isMesh || o === skyDome) return;
+        if (inShell(o)) return;
+        var b0 = new T.Box3().setFromObject(o);
+        if (b0.max.y > ROOM_CEILING) return;
+        var room = null;
+        for (var p = o; p && p !== scene; p = p.parent)
+          if (p.userData && p.userData.room) { room = p.userData.room; break; }
+        if (!room) return;
+        if (!boxes[room]) boxes[room] = new T.Box3();
+        boxes[room].union(b0);
+      }
+      scene.updateMatrixWorld(true);
+      scene.traverse(visit);
+      if (studyWorld) [studyWorld.group, studyWorld.architecture, studyWorld.proxies]
+        .forEach(function (root) {
+          if (!root) return;
+          root.updateMatrixWorld(true);
+          root.traverse(visit);
+        });
+      Object.keys(boxes).forEach(function (r) {
+        var b = boxes[r];
+        ROOM_AABB[r] = [b.min.x, b.max.x, b.min.y, b.max.y, b.min.z, b.max.z];
+      });
+    })();
+
+    /* ---- VIEW-VOLUME MASKING (spec 2026-09-16 masking sections 2-4) ----
+       One mask per room camera, applied at build time to every fabric
+       mesh (pre-merge: the box()/extrude solids Task 2 stamped convex,
+       never the fused composites the merge loop below makes of them):
+       keep = (mesh outside the pyramid P) union (mesh inside P and inside
+       the wedge W). Both pieces are disjoint by construction (the second
+       is clipped to P first), so nothing is drawn twice; every cut face
+       is capped in CAP_MAT, the one shared section tone.
+
+       WHAT A ROOM SHELL HOLDS -- a deviation from the task brief's "a
+       full cut copy of every fabric row per room", recorded in the task
+       report: the shells hold ONLY the remnants of meshes the mask
+       actually cut. Everything the mask leaves whole (the vast majority
+       -- 55k fabric triangles per copy, five copies, would have cost a
+       second merge pass and a second AO bake of the yard's 30k-triangle
+       planting per room, against a 1500ms buildMs ceiling with ~500ms of
+       headroom) stays exactly where it is, in the full shell, and is
+       never copied. A mesh the mask cuts or drops in some room's view is
+       stamped userData.maskPattern ('|kitchen|living|', the rooms whose
+       view hides it); mergeStatic builds such a bucket's full composite
+       exactly as before plus one stand-in composite per distinct
+       surviving subset (userData.maskOnly), and solveShell toggles them
+       (and shows the room's remnant shell) at settle. The exterior and
+       every orbit stop toggle everything back on and hide every shell:
+       the sealed house, the same draw list as before.
+
+       WHO IS CUT, WHO IS WHOLE (spec section 3, controller rulings):
+       - a convex mesh (userData.convex) is clipped to keep, its remnant
+         (kept faces in the mesh's own material, caps in CAP_MAT) built
+         as a new BufferGeometry in the room's shell;
+       - a kit row (f.kit: doors, windows, porches, the garage door) is
+         whole or nothing by its registered box: masked whole when the
+         box centre is masked OR five or more of its eight corners are;
+       - a genuinely non-convex mesh (lathe, cylinder, sphere, tube) is
+         whole or nothing by its own box, the same rule;
+       - an InstancedMesh (the yard's planting) is EXEMPT: never clipped,
+         never toggled, never cloned -- worldTris throws on one, and no
+         room camera looks through a bush at its own room;
+       - a row that registers AFTER this build (house_features.js's door
+         fixtures, through syncWorld) is whole or nothing by its box,
+         through maskLateRow at registration.
+
+       THE BOX (spec section 2, choice A): the room's registered AABB,
+       floor to EAVE. ROOM_AABB is measured from the room's props and
+       floor (never its enclosure), so its top is wherever the tallest
+       prop stops (living 1.99, kitchen 3.3) -- min(top, eave) would
+       read those and cut the roof only where a ray reaches a sofa; the
+       spec's "footprint x floor-to-eave" is the walled volume, so the
+       top is SET to the eave. Its footprint, for the same reason, runs
+       INTO the enclosure it stands against (a floor slab under its
+       wall; the study floor 0.25 into the street wall; the roof deck's
+       overhang dips 0.19 below the eave line), and a front-face plane
+       taken raw would keep the inner sliver of the very wall the mask
+       exists to remove -- an opaque 2cm slab hides a room exactly as
+       well as a whole wall. So a mesh that STRADDLES a front face
+       (pokes into the box by at most STRADDLE_TOL, one wall thickness
+       plus the deepest interior casing) is judged against that plane
+       moved to its own deepest point (meshMask): the whole mesh counts
+       as "in front", and its cut is P alone, on the room's silhouette.
+       A mesh that runs deeper than that is the enclosure of the far
+       side or a wall perpendicular to the face (the kitchen's north
+       wall, the garage's back wall reaching past the bay) and keeps the
+       raw plane -- a global inset was tried first and notched a 0.45
+       band off every such wall (recorded in the report). P is never
+       moved, so the cut edge still projects onto the room's own
+       silhouette. */
+    var CAP_MAT = mat(FARMHOUSE.section, { rough: 0.95 });
+    var STRADDLE_TOL = WALL_T4 + 0.25;
+    var ROOM_CAMS = { kitchen: HOME_POS, living: LIV_POS, study: STUDY_POS,
+                      garage: GARAGE_POS, mudroom: MUD_POS };
+    var ROOM_MASKS = {};        /* room -> {P, W, box, cam} */
+    var roomShellGroups = {};   /* room -> THREE.Group 'shell:<room>' */
+    var MASK_TOGGLES = [];      /* every object solveShell toggles by pattern */
+    function ROOM_AABB_EAVE(room) {
+      var b = ROOM_AABB[room].slice();
+      b[3] = EXT_TOP4;          /* eave-high (spec section 2 choice A) */
+      return b;
+    }
+    function roomMask(room) {
+      var box = ROOM_AABB_EAVE(room), cam = ROOM_CAMS[room].toArray();
+      var m = window.HouseClip.maskPlanes(cam, box);
+      m.box = box; m.cam = cam;
+      return m;
+    }
+    /* the room mask as ONE mesh (box b) sees it: every W plane the mesh
+       straddles by no more than STRADDLE_TOL is moved to the mesh's own
+       deepest point (kept side is n.p - d >= 0, so a larger d shrinks
+       the kept half-space, i.e. moves the plane INTO the box); P and
+       every other W plane are shared with the room mask untouched */
+    function meshMask(m, b) {
+      var cs = boxCorners(b);
+      return { P: m.P, box: m.box, cam: m.cam, W: m.W.map(function (pl) {
+        var pen = -Infinity;
+        for (var k = 0; k < 8; k++) {
+          var sd = pl.n[0]*cs[k][0] + pl.n[1]*cs[k][1] + pl.n[2]*cs[k][2] - pl.d;
+          if (sd > pen) pen = sd;
+        }
+        if (pen > 0 && pen <= STRADDLE_TOL) return { n: pl.n, d: pl.d + pen + 1e-4 };
+        return pl;
+      }) };
+    }
+    function keepTris(tris, m) {
+      var C = window.HouseClip;
+      var outside = C.subtractTris(tris, m.P, 1);
+      var inside = m.P.reduce(function (t, pl) { return C.clipTris(t, pl, 1); }, tris);
+      var kept = m.W.reduce(function (t, pl) { return C.clipTris(t, pl, 1); }, inside);
+      return outside.concat(kept);
+    }
+    function trisToMesh(tris, slot, material, like, room) {
+      var sel = tris.filter(function (t) { return t.slot === slot; });
+      if (!sel.length) return null;
+      var pos = new Float32Array(sel.length * 9), uv = new Float32Array(sel.length * 6);
+      sel.forEach(function (t, i) {
+        [t.a, t.b, t.c].forEach(function (v, k) {
+          pos.set(v.p, i * 9 + k * 3); uv.set(v.uv, i * 6 + k * 2);
+        });
+      });
+      var g = new T.BufferGeometry();
+      g.setAttribute('position', new T.BufferAttribute(pos, 3));
+      g.setAttribute('uv', new T.BufferAttribute(uv, 2));
+      g.computeVertexNormals();
+      g.userData.cached = true;   /* lifecycle law: never disposed by a rebuild path */
+      var mesh = new T.Mesh(g, material);
+      /* the source mesh's own tags travel (glazing/shellWindow/lamp keep
+         the night loops honest for the remnant, entry keeps the probe
+         box); the room is the RESOLVED one (ancestor walk), so the
+         merge bucket and onTap read the remnant exactly as the source */
+      mesh.userData = Object.assign({}, like.userData, { convex: false, remnant: true });
+      delete mesh.userData.maskPattern;
+      if (room) mesh.userData.room = room;
+      mesh.castShadow = like.castShadow; mesh.receiveShadow = like.receiveShadow;
+      mesh.renderOrder = like.renderOrder;
+      return mesh;
+    }
+    function boxCorners(b) {
+      var out = [];
+      for (var i = 0; i < 8; i++) out.push([(i & 1) ? b[1] : b[0], (i & 2) ? b[3] : b[2], (i & 4) ? b[5] : b[4]]);
+      return out;
+    }
+    function boxCentre3(b) { return [(b[0]+b[1])/2, (b[2]+b[3])/2, (b[4]+b[5])/2]; }
+    /* Classifies a world AABB against a mask without clipping anything:
+       'out'   every corner beyond one P plane -> the box misses the
+               pyramid, kept whole;
+       'keep'  every corner behind every W plane -> inside the wedge,
+               kept whole (whatever P says);
+       'drop'  every corner inside every P plane AND every corner in
+               front of one W plane -> the whole box is masked;
+       'mixed' anything else -> only a real clip can decide. */
+    function boxClass(b, m) {
+      var cs = boxCorners(b), i, k, all;
+      function sideOf(pl, p) { return pl.n[0]*p[0] + pl.n[1]*p[1] + pl.n[2]*p[2] - pl.d; }
+      for (i = 0; i < m.P.length; i++) {
+        all = true;
+        for (k = 0; k < 8 && all; k++) if (sideOf(m.P[i], cs[k]) >= -1e-7) all = false;
+        if (all) return 'out';
+      }
+      all = true;
+      for (i = 0; i < m.W.length && all; i++)
+        for (k = 0; k < 8 && all; k++) if (sideOf(m.W[i], cs[k]) < -1e-7) all = false;
+      if (all) return 'keep';
+      var inP = true;
+      for (i = 0; i < m.P.length && inP; i++)
+        for (k = 0; k < 8 && inP; k++) if (sideOf(m.P[i], cs[k]) < -1e-7) inP = false;
+      if (inP) for (i = 0; i < m.W.length; i++) {
+        all = true;
+        for (k = 0; k < 8 && all; k++) if (sideOf(m.W[i], cs[k]) >= -1e-7) all = false;
+        if (all) return 'drop';
+      }
+      return 'mixed';
+    }
+    /* whole-or-nothing rule for kits and non-convex meshes (spec
+       section 3): masked whole when the box centre is masked or five
+       or more of the eight corners are */
+    function boxMasked(b, m) {
+      var C = window.HouseClip;
+      if (C.pointMasked(boxCentre3(b), m)) return true;
+      return boxCorners(b).filter(function (p) { return C.pointMasked(p, m); }).length >= 5;
+    }
+    function stampPattern(o, room) {
+      o.userData.maskPattern = (o.userData.maskPattern || '|') + room + '|';
+    }
+    function roomOfMesh(mm, top) {
+      for (var p = mm; p; p = p.parent) {
+        if (p.userData && p.userData.room) return p.userData.room;
+        if (p === top) break;
+      }
+      return null;
+    }
+    function buildRoomShells() {
+      var C = window.HouseClip, t0 = performance.now();
+      var stats = { rooms: 0, clipped: 0, dropped: 0, kitsDropped: 0, remnantTris: 0, ms: 0 };
+      Object.keys(ROOM_CAMS).forEach(function (room) {
+        if (!ROOM_AABB[room]) return;
+        ROOM_MASKS[room] = roomMask(room);
+      });
+      /* every fabric mesh once: world box and world triangles (area0) */
+      var rows = FABRIC.map(function (f) {
+        var meshes = [], area0 = 0;
+        f.g.updateMatrixWorld(true);
+        f.g.traverse(function (mm) {
+          if (!mm.isMesh || mm.isInstancedMesh) return;   /* InstancedMesh: exempt */
+          var b = new T.Box3().setFromObject(mm);
+          var tris = worldTris(mm), area = C.triArea(tris);
+          area0 += area;
+          meshes.push({ m: mm, tris: tris, area: area,
+                        box: [b.min.x, b.max.x, b.min.y, b.max.y, b.min.z, b.max.z] });
+        });
+        f.shells = {}; f.verdict = 'solid';
+        return { f: f, meshes: meshes, area0: area0 };
+      });
+      Object.keys(ROOM_MASKS).forEach(function (room) {
+        var m = ROOM_MASKS[room];
+        var group = new T.Group(); group.name = 'shell:' + room; group.visible = false;
+        roomShellGroups[room] = group;
+        stats.rooms++;
+        rows.forEach(function (row) {
+          var f = row.f, area1 = 0, mirror = {};
+          if (f.kit) {
+            var gone = boxOk(f.box) && boxMasked(f.box, meshMask(m, f.box));
+            if (gone) { stampPattern(f.g, room); stats.kitsDropped++; }
+            f.shells[room] = { group: null, fraction: gone ? 1 : 0 };
+            return;
+          }
+          /* the mirrored ancestor chain: every group between f.g and a
+             cut mesh is re-created (at identity -- remnants are world-
+             space) with the same userData, so the merge bucket (L4: a
+             zone subtree never merges), onTap's room walk, inertFabric,
+             inYard and the batching invariant's material-per-zone rule
+             read a remnant exactly as they read its source. The one
+             zone that lives inside a fabric group (the wall calendar,
+             on west_wall) keeps its zone tag on the mirrored chain too:
+             zoneAt walks hits with no visibility check either way, and
+             the remnant occupies the same space as its pattern-hidden
+             source, so it adds no answer the source did not already
+             give. */
+          function mirrorOf(g) {
+            if (mirror[g.id]) return mirror[g.id];
+            var mg = new T.Group();
+            mg.name = 'shell:' + room + ':' + (g === f.g ? f.name : (g.name || g.id));
+            mg.userData = Object.assign({}, g.userData);
+            delete mg.userData.maskPattern; delete mg.userData.convex;
+            mg.matrixAutoUpdate = false;
+            if (g === f.g) {
+              mg.userData.shellOf = f.name;
+              if (g === yardG) mg.userData.yard = true;   /* inYard(): a cut
+                yard prop's remnant still reads as scenery */
+              group.add(mg);
+            } else mirrorOf(g.parent).add(mg);
+            mirror[g.id] = mg;
+            return mg;
+          }
+          row.meshes.forEach(function (e) {
+            var mm = meshMask(m, e.box), cls = boxClass(e.box, mm);
+            if (cls === 'out' || cls === 'keep') { area1 += e.area; return; }
+            if (!e.m.userData.convex) {
+              if (cls === 'drop' || boxMasked(e.box, mm)) { stampPattern(e.m, room); stats.dropped++; }
+              else area1 += e.area;
+              return;
+            }
+            if (cls === 'drop') { stampPattern(e.m, room); stats.dropped++; return; }
+            var kept = keepTris(e.tris, mm);
+            var a1 = C.triArea(kept, 0);
+            /* untouched when the clip took nothing, or next to nothing:
+               a sliver under 0.1% of the mesh's own area (a gable end's
+               far tip grazing a pyramid plane) is a hairline either way
+               and is not worth a remnant, a toggle and a 'masked'
+               verdict for a piece that is whole to the eye */
+            if (a1 >= e.area * (1 - 1e-3)) { area1 += e.area; return; }
+            area1 += a1;
+            stampPattern(e.m, room);
+            if (a1 <= 1e-9) { stats.dropped++; return; }
+            stats.clipped++; stats.remnantTris += kept.length;
+            /* a row registered as a bare mesh (north_wall) IS its own
+               f.g; its remnant hangs off the mirrored row group directly */
+            var parent = mirrorOf(e.m === f.g ? f.g : e.m.parent), rm = roomOfMesh(e.m, f.g);
+            var ka = trisToMesh(kept, 0, e.m.material, e.m, rm);
+            var kb = trisToMesh(kept, 1, CAP_MAT, e.m, rm);
+            if (ka) parent.add(ka);
+            if (kb) parent.add(kb);
+          });
+          var fr = row.area0 ? Math.max(0, Math.min(1, 1 - area1 / row.area0)) : 0;
+          if (fr < 1e-6) fr = 0;   /* the two sums differ by an ulp when nothing was cut */
+          f.shells[room] = { group: mirror[f.g.id] || null, fraction: fr };
+        });
+        scene.add(group);
+        group.updateMatrixWorld(true);
+        /* the same per-group merge every fabric row gets (batching
+           contract unchanged), BEFORE the group is fenced: the fence
+           below keeps the exterior/scene passes from ever folding a
+           shell's remnants across rows or into anything else */
+        mergeStatic(group, NO_MERGE);
+        NO_MERGE.add(group);
+      });
+      stats.ms = Math.round(performance.now() - t0);
+      scene.userData.shellStats = stats;   /* --budget-reachable via __hpScene */
+    }
+    /* a row registered after buildRoomShells ran (house_features.js's
+       door fixtures, via syncWorld -> webgl.registerFabric): whole or
+       nothing per room by its registered box, the kit rule -- there is
+       nothing pre-merge left to clip by then, and every such row today
+       IS a kit */
+    function maskLateRow(f) {
+      f.shells = {}; f.verdict = 'solid';
+      Object.keys(ROOM_MASKS).forEach(function (room) {
+        var gone = boxOk(f.box) && boxMasked(f.box, meshMask(ROOM_MASKS[room], f.box));
+        if (gone) stampPattern(f.g, room);
+        f.shells[room] = { group: null, fraction: gone ? 1 : 0 };
+      });
+      if (f.g.userData.maskPattern) MASK_TOGGLES.push(f.g);
+    }
+    buildRoomShells();
+
     /* Each registered piece owns one merge pass. No roof can be omitted
        from batching when the envelope grows. Groups are sibling merge
        boundaries; the registry also fences the later exterior pass.
@@ -8816,6 +9250,19 @@
        for why a snapshot taken here (or after) would be too late for
        house_features.js's fixtures, which register even later still. */
     FABRIC.forEach(function (f) { mergeStatic(f.g, NO_MERGE); });
+    /* VIEW-VOLUME MASKING (task 3): the toggle list is collected AFTER
+       the merge, because that is when the patterned meshes take their
+       final form -- a merged composite carries the union of its members'
+       patterns and its per-room stand-ins carry maskOnly (mergeStatic,
+       above), an unmerged survivor keeps its own pattern, and a
+       whole-or-nothing kit carries it on the row group itself. */
+    FABRIC.forEach(function (f) {
+      if (f.g.userData.maskPattern) { MASK_TOGGLES.push(f.g); return; }
+      f.g.traverse(function (o) {
+        if (o !== f.g && o.userData && (o.userData.maskPattern || o.userData.maskOnly))
+          MASK_TOGGLES.push(o);
+      });
+    });
     var EXT_NO_MERGE = new Set(NO_MERGE);
     /* SHELL (shell spec section 3): the registry feeds both fence sets
        so shell membership is declared exactly once, replacing the four
@@ -8915,6 +9362,11 @@
       var pos = [];
       f.g.traverse(function (o) {
         if (!o.isMesh || !o.geometry) return;
+        /* VIEW-VOLUME MASKING (task 3): a per-room stand-in composite
+           (mergeStatic's maskOnly) duplicates edges the full composite
+           already contributes -- skip it, or the (dormant) ghost carries
+           every masked bucket's outline up to six times over */
+        if (o.userData && o.userData.maskOnly) return;
         var eg = new T.EdgesGeometry(o.geometry, 35);
         var p = eg.attributes.position;
         m4.multiplyMatrices(toParent, o.matrixWorld);
@@ -9820,29 +10272,19 @@
     }
 
     /* Study occupies the authored east-front wing and joins this scene's
-       room/zone registries before footprints and scenery are indexed. */
-    if (window.HouseStudy) {
-      /* VAULTED PARTITIONS: the study's own architecture is authored
-         4.45 tall, against a house whose eave is 5.6 and whose roof
-         clears 8.5 over this room's north wall -- so from the east room
-         you looked straight over it, and between 4.45 and 5.6 the room
-         showed the block's plaster rather than its own. Hand the adapter
-         the house's OWN arithmetic rather than let it copy the numbers:
-         `underside` is the deck this file builds, `eave` the line every
-         exterior wall already reaches. The standalone /study page calls
-         the same factory with no ceiling and keeps its authored 4.45. */
-      studyWorld = window.HouseStudy.build(T, DETAIL, R, {
-        eave: EXT_TOP4,
-        underside: function (z) {
-          return VAULTED ? vaultTop(MAIN_VAULT, z) : EXT_TOP4;
-        }
-      });
+       room/zone registries before footprints and scenery are indexed.
+       VIEW-VOLUME MASKING (task 3): the study is BUILT earlier now (see
+       "studyWorld = window.HouseStudy.build" beside ROOM_AABB, above the
+       per-fabric merge loop) because its footprint feeds the study's
+       mask box, which has to exist before the shells are cut -- but it
+       joins the SCENE here, exactly where it always did: after the merge
+       passes and the AO bake, which therefore never see it (its own
+       materials are unshared and it was never baked; moving the add
+       would have baked ~500 study meshes and changed the study's look). */
+    if (studyWorld) {
       scene.add(studyWorld.group);
       if (studyWorld.architecture) scene.add(studyWorld.architecture);
       if (studyWorld.proxies) scene.add(studyWorld.proxies);
-      Object.keys(studyWorld.zones).forEach(function (key) {
-        groups[key] = studyWorld.zones[key];
-      });
     }
 
     /* on BUILD: the room boots at the exterior, where nothing recedes, so
@@ -9941,33 +10383,18 @@
        the room's subject CENTRE on all three axes. If any wall or fixture
        height changes near 6.0, re-verify against the LEGACY verdict table
        (scenario_shell_fabric_registry). */
-    var ROOM_CEILING = 6.0;
-    var ROOM_AABB = {};
-    (function () {
-      var boxes = {};
-      var shellGroups = FABRIC.map(function (f) { return f.g; });
-      function inShell(o) {
-        for (var i = 0; i < shellGroups.length; i++)
-          for (var p = o; p; p = p.parent) if (p === shellGroups[i]) return true;
-        return false;
-      }
-      scene.traverse(function (o) {
-        if (!o.isMesh || o === skyDome) return;
-        if (inShell(o)) return;
-        var b0 = new T.Box3().setFromObject(o);
-        if (b0.max.y > ROOM_CEILING) return;
-        var room = null;
-        for (var p = o; p && p !== scene; p = p.parent)
-          if (p.userData && p.userData.room) { room = p.userData.room; break; }
-        if (!room) return;
-        if (!boxes[room]) boxes[room] = new T.Box3();
-        boxes[room].union(b0);
-      });
-      Object.keys(boxes).forEach(function (r) {
-        var b = boxes[r];
-        ROOM_AABB[r] = [b.min.x, b.max.x, b.min.y, b.max.y, b.min.z, b.max.z];
-      });
-    })();
+    /* VIEW-VOLUME MASKING (task 3): ROOM_AABB itself is DERIVED ABOVE
+       now -- immediately before buildRoomShells(), ahead of the per-
+       fabric merge loop -- because the five room masks are built from
+       it and the shells must be cut from the pre-merge boxes. Every
+       word of the comment above still holds: nothing between that site
+       and this one adds a room-tagged mesh or moves a group (verified:
+       the only later scene additions are the sky dome, the ghost edges
+       and the study, and the study is built there too and measured
+       explicitly). The hoisted values were compared against this
+       original site's, room by room, before the move: the same to the
+       millimetre (the living floor's y-min moved 4mm, pre-merge vs
+       merged box of one floor-level prop). */
 
     return {
       applyScenery: applyScenery,
@@ -10010,9 +10437,17 @@
                           room:spec.room, mode:spec.mode, twoSided:spec.twoSided,
                           pad:spec.pad, cutawayRoom:spec.cutawayRoom,
                           owners:spec.owners, kit:spec.kit});
+        /* VIEW-VOLUME MASKING (task 3): a row registered after the
+           shells were built is masked whole-or-nothing, synchronously,
+           because syncWorld's own solveShell call follows this at once */
+        maskLateRow(FABRIC[FABRIC.length - 1]);
       },
       solveShell: solveShell, ROOM_AABB: ROOM_AABB, AO_OCCLUDERS: AO_OCCLUDERS,
       worldTris: worldTris,
+      /* VIEW-VOLUME MASKING (task 3): the five room shells, their masks
+         (P, W, box, cam) and the one cap material, for the read-only
+         window.chfRoomShell* hooks below */
+      roomShellGroups: roomShellGroups, ROOM_MASKS: ROOM_MASKS, CAP_MAT: CAP_MAT,
       /* FACADE (arc 4): the spec the elevation was BUILT from (never the
          raw injection -- buildElevation() falls back to CANONICAL_JS)
          and the slot table it derived, for chfFacade/chfFacadeSlots. */
@@ -11027,8 +11462,74 @@
                     this same shape from FABRIC -- exposed here too so the
                     test can assert against exactly what the derivation saw */
                verdict: f.verdict, interiorGlow: interiorGlow,
+               /* VIEW-VOLUME MASKING (task 3, spec section 5): the
+                  surface area of the piece's original faces the mask
+                  removed in each room's view, over its original area --
+                  0 untouched, 1 masked whole. `verdict` above is
+                  'masked' when the CURRENT view's fraction is > 0 and
+                  'solid' otherwise (the exterior: all solid). */
+               maskedFraction: maskedFractionOf(f),
                edgesVisible: f.edges ? f.edges.visible : null };
     });
+  };
+  function maskedFractionOf(f) {
+    var out = {};
+    Object.keys(webgl.ROOM_MASKS).forEach(function (r) {
+      out[r] = f.shells && f.shells[r] ? f.shells[r].fraction : 0;
+    });
+    return out;
+  }
+  /* VIEW-VOLUME MASKING (task 3): read-only like chfShellFabric --
+     which room shell is visible right now (null: none, the exterior). */
+  window.chfRoomShellShown = function () {
+    if (!webgl) return null;
+    var r = null;
+    Object.keys(webgl.roomShellGroups).forEach(function (k) {
+      if (webgl.roomShellGroups[k].visible) r = k;
+    });
+    return r;
+  };
+  /* the room's mask: the pyramid planes P, the wedge planes W (raw --
+     meshMask moves a W plane per straddling mesh at cut time, always
+     deeper into the box, so everything a shell keeps is on the kept
+     side of these too), the eave-high box, the camera */
+  window.chfRoomMask = function (room) {
+    if (!webgl || !webgl.ROOM_MASKS[room]) return null;
+    var m = webgl.ROOM_MASKS[room];
+    return { P: m.P.map(function (pl) { return { n: pl.n.slice(), d: pl.d }; }),
+             W: m.W.map(function (pl) { return { n: pl.n.slice(), d: pl.d }; }),
+             box: m.box.slice(), cam: m.cam.slice() };
+  };
+  /* samples up to n vertices of the room shell's meshes (world space)
+     and counts those the mask says are masked -- a kept vertex inside
+     the mask is a leak. Vertices ON a mask plane (|side| < 1e-3: every
+     clipped edge and every cap lies on one) are skipped, since a cap
+     vertex sits exactly on the boundary between kept and masked and
+     rounds either way. */
+  window.chfRoomShellLeak = function (room, n) {
+    if (!webgl || !webgl.roomShellGroups[room]) return null;
+    var m = webgl.ROOM_MASKS[room], C = window.HouseClip;
+    var verts = [], v = new webgl.T.Vector3();
+    webgl.roomShellGroups[room].updateMatrixWorld(true);
+    webgl.roomShellGroups[room].traverse(function (o) {
+      if (!o.isMesh || !o.geometry) return;
+      var p = o.geometry.getAttribute('position');
+      for (var i = 0; i < p.count; i++) {
+        v.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld);
+        verts.push([v.x, v.y, v.z]);
+      }
+    });
+    var step = Math.max(1, Math.floor(verts.length / (n || 2000))), bad = 0;
+    function onPlane(pl, p) {
+      return Math.abs(pl.n[0]*p[0] + pl.n[1]*p[1] + pl.n[2]*p[2] - pl.d) < 1e-3;
+    }
+    for (var k = 0; k < verts.length; k += step) {
+      var p = verts[k], skip = false;
+      for (var a = 0; a < m.P.length && !skip; a++) if (onPlane(m.P[a], p)) skip = true;
+      for (var b = 0; b < m.W.length && !skip; b++) if (onPlane(m.W[b], p)) skip = true;
+      if (!skip && C.pointMasked(p, m)) bad++;
+    }
+    return bad;
   };
   /* VIEW-VOLUME MASKING (task 2, corrected): read-only like
      chfShellFabric above -- reads the `convexity` each row already
@@ -11158,10 +11659,10 @@
       var pp = project(spec.point[0], spec.point[1], spec.point[2]);
       return pp.z >= -1 && pp.z <= 1 && onCanvas(pp) ? pp : null;
     }
-    var b = null, target = null;
+    var b = null, target = null, targetName = null;
     if (spec.piece) {
       webgl.FABRIC.forEach(function (f) {
-        if (f.name === spec.piece) { b = f.box; target = f.g; }
+        if (f.name === spec.piece) { b = f.box; target = f.g; targetName = f.name; }
       });
       if (!b) return null;
     } else if (spec.front) {
@@ -11174,10 +11675,10 @@
       var face = String(spec.front).replace(/_front$/, '');
       webgl.FABRIC.forEach(function (f) {
         if (b || f.name.indexOf('facade_' + face + '_') !== 0 || f.n.z <= 0.5) return;
-        b = f.box; target = f.g;
+        b = f.box; target = f.g; targetName = f.name;
       });
       if (!b) webgl.FABRIC.forEach(function (f) {
-        if (!b && f.name === 'garage_door') { b = f.box; target = f.g; }
+        if (!b && f.name === 'garage_door') { b = f.box; target = f.g; targetName = f.name; }
       });
       if (!b) return null;
     } else if (spec.zone || spec.action || spec.feature) {
@@ -11228,7 +11729,11 @@
           if (e.userData && e.userData.entry === spec.entry) return true;
         return false;
       }
-      for (var o = hit; o; o = o.parent) if (o === target) return true;
+      /* VIEW-VOLUME MASKING (task 3): in a room view a piece the mask
+         cut is drawn partly by its remnant in the room shell, whose
+         mirrored row group carries shellOf = the piece's name */
+      for (var o = hit; o; o = o.parent)
+        if (o === target || (targetName && o.userData && o.userData.shellOf === targetName)) return true;
       return false;
     }
     var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
