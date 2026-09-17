@@ -5766,7 +5766,15 @@
       var FIELD = 3.6, STILE = 0.12;
       var n = (feat.leaves === 2) ? 2 : 1;
       var lw = (FIELD - (n - 1) * STILE) / n, k = lw / FIELD;
-      var y = 1.6, z = 10.02, dh = 3.0;
+      /* MASSING ARC 2 task 6 (fix round 1): + GAR_DZ. Every leaf part
+         below is placed off this one `z`, and it was the last piece of
+         the bay still nailed to the old face line -- at garage depth 6
+         the opening moved out and the door stood six units back inside
+         the block, hanging over garage_void_floor. This IS the slot's
+         own z less the 0.08 the leaf has always stood inside the face
+         (slot.z - 0.08 === 10.02 + GAR_DZ), written as the literal plus
+         the depth so the canonical is literally unchanged. */
+      var y = 1.6, z = 10.02 + GAR_DZ, dh = 3.0;
       var style = feat.style || 'carriage';
       function gtag(m) { if (m) m.userData.room = slot.room; return m; }
       function gGlass(w, h, gx, gy, gz) {
@@ -6160,9 +6168,36 @@
       pl.forEach(function (q) { region.push(C.flip({ n: q.n, d: q.d + 0.09 })); });
       return region;
     }
-    var BLOCK_MEET = (MAIN_DZ !== GAR_DZ)
-      ? { main: neighbourVolume('main'), garage: neighbourVolume('garage') }
-      : { main: null, garage: null };
+    /* WHEN THE CLIP RUNS (fix round 1). Not "the depths differ" -- the
+       two blocks meet the same way they always have only when their
+       roofs are geometrically IDENTICAL in every input that places a
+       deck: depth (where the block ends), form, ridge direction, pitch
+       and eave. A hip main beside a gable garage at equal depth, or two
+       gables at different pitches, genuinely interpenetrate and must be
+       cut. The canonical has all five equal, which is what keeps its
+       coplanar north decks, the main roof's west rakes and the two
+       gable infills at the shared face exactly as they were built --
+       see the paragraph above for why cutting there costs pins and buys
+       nothing. ROOF_FORMS, not BLOCKS[*].roof: window.HOUSE_ROOF_FORMS
+       can override form and ridge, and the gate has to read what was
+       actually built. */
+    function blockRoofsIdentical() {
+      return MAIN_DZ === GAR_DZ &&
+             ROOF_FORMS.main.form === ROOF_FORMS.garage.form &&
+             ROOF_FORMS.main.ridge === ROOF_FORMS.garage.ridge &&
+             blockPitch('main') === blockPitch('garage') &&
+             FULL_HOUSE.eave === GARAGE_BLOCK.eave;
+    }
+    /* Both volumes are ALWAYS derived, whether or not they are applied:
+       window.chfBlockMeet() hands the block-meet audit the very planes
+       the clipper used (or would have used), so a test measures the
+       result against the same shared-side ownership offsets rather than
+       a re-guessed box. */
+    var BLOCK_VOLUMES = { main: neighbourVolume('main'),
+                          garage: neighbourVolume('garage') };
+    var BLOCK_MEET = blockRoofsIdentical()
+      ? { main: null, garage: null }
+      : { main: BLOCK_VOLUMES.main, garage: BLOCK_VOLUMES.garage };
     /* the two blocks' envelopes and the deck planes their roofs were
        placed by, for the read-only window.chfBlockGeometry hook: a test
        rebuilds the neighbour volume from these numbers alone and audits
@@ -6514,9 +6549,11 @@
          the BAY is the garage block's street face -- the header, the
          lintel, the two piers and their base band, the pier window, the
          gable's half-round, the coach lamp and the band above -- so a
-         garage depth moves all of it with GARAGE_BLOCK.south. The door
-         LEAF needs nothing here: garageDoorAt() builds it off the slot
-         table, which already carries the moved z. The bay's own jambs
+         garage depth moves all of it with GARAGE_BLOCK.south -- and so
+         does the door LEAF, which garageDoorAt() places off one `z` of
+         its own (fix round 1: it does NOT read the slot table, and was
+         left behind at 10.02 until that `z` learned GAR_DZ too). The
+         bay's own jambs
          end up standing proud of the garage ROOM's side walls, which
          stop at z 10.0 -- that is what depth IS (the face moves, the
          room does not), and garage_void_floor floors what opens up. */
@@ -9101,8 +9138,12 @@
         [16.55, 5.32, 0.82, 'ball', 2, 0],    [15.87, 6.02, 0.64, 'tuft', 0, 0],
         [16.30, 9.90, 0.92, 'mound', 3, 0],   [16.85, 10.55, 0.58, 'low', 0, 1],
         [15.80, 10.45, 0.70, 'ball', 4, 0],
-        [-11.40, 13.60, 1.00, 'mound', 2, 0], [-11.95, 14.20, 0.62, 'low', 0, 1],
-        [-10.85, 14.25, 0.74, 'ball', 3, 0],  [-12.15, 13.10, 0.66, 'tuft', 1, 0]
+        /* task 6 (fix round 1): these four stand against the GARAGE
+           block's street corner, not the east side the rest of this bed
+           runs up, so they ride GAR_DZ the way the main-face planting
+           rides MAIN_DZ. */
+        [-11.40, 13.60 + GAR_DZ, 1.00, 'mound', 2, 0], [-11.95, 14.20 + GAR_DZ, 0.62, 'low', 0, 1],
+        [-10.85, 14.25 + GAR_DZ, 0.74, 'ball', 3, 0],  [-12.15, 13.10 + GAR_DZ, 0.66, 'tuft', 1, 0]
       ]);
 
       /* the neighbour's hedge, beyond the fence: the far corner of the
@@ -9115,16 +9156,23 @@
       ]);
       /* the drive's east edge and the mailbox foot: the left of the
          frame was a driveway and a mown void */
-      bed(-12.98, 10.90, -11.72, 16.30, 'SEN');
+      /* task 6 (fix round 1): the drive's east edge runs FROM the garage
+         block's street corner up to the kerb, and the two pots stand at
+         the mudroom's own door -- all of it moves out with the garage
+         block's depth, exactly as the main-face beds move with the
+         main's. The bed's kerb end (16.30) travels with the rest: it is
+         the planting's own composition against the face, not a line
+         pinned to the pavement. */
+      bed(-12.98, 10.90 + GAR_DZ, -11.72, 16.30 + GAR_DZ, 'SEN');
       planting([
-        [-12.40, 15.72, 0.94, 'mound', 0, 0], [-12.34, 15.02, 0.56, 'low', 2, 1],
-        [-12.42, 14.34, 1.06, 'column', 1, 0], [-12.36, 13.64, 0.74, 'ball', 3, 0],
-        [-12.40, 12.96, 0.62, 'tuft', 4, 0],  [-12.34, 12.26, 0.90, 'mound', 2, 0],
-        [-12.42, 11.56, 0.58, 'low', 1, 3],   [-12.40, 16.02, 0.60, 'mound', 3, 1],
-        [-12.86, 15.34, 0.50, 'low', 0, 2]
+        [-12.40, 15.72 + GAR_DZ, 0.94, 'mound', 0, 0], [-12.34, 15.02 + GAR_DZ, 0.56, 'low', 2, 1],
+        [-12.42, 14.34 + GAR_DZ, 1.06, 'column', 1, 0], [-12.36, 13.64 + GAR_DZ, 0.74, 'ball', 3, 0],
+        [-12.40, 12.96 + GAR_DZ, 0.62, 'tuft', 4, 0],  [-12.34, 12.26 + GAR_DZ, 0.90, 'mound', 2, 0],
+        [-12.42, 11.56 + GAR_DZ, 0.58, 'low', 1, 3],   [-12.40, 16.02 + GAR_DZ, 0.60, 'mound', 3, 1],
+        [-12.86, 15.34 + GAR_DZ, 0.50, 'low', 0, 2]
       ]);
-      pot(-10.35, 12.85, 0.90, C.terracotta, 'spray');
-      pot(-10.30, 13.78, 0.76, C.cream, 'mound');
+      pot(-10.35, 12.85 + GAR_DZ, 0.90, C.terracotta, 'spray');
+      pot(-10.30, 13.78 + GAR_DZ, 0.76, C.cream, 'mound');
 
       /* the fence: an L round the side garden, clear of the bus (which
          stands at x -8.3..-2.7, z 18.8..20.8) and of the path */
@@ -11151,8 +11199,11 @@
       faceDeckPlane: faceDeckPlane, blockDeckPlanes: blockDeckPlanes,
       FEATURE_VERTS: FEATURE_VERTS,
       /* MASSING ARC 2 task 6: the two blocks' envelopes and deck planes,
-         for the read-only window.chfBlockGeometry hook */
+         for the read-only window.chfBlockGeometry hook; and (fix round
+         1) whether each block's roof was actually clipped against its
+         neighbour's volume, with the planes of that volume either way */
       blockGeometry: blockGeometry,
+      BLOCK_MEET: BLOCK_MEET, BLOCK_VOLUMES: BLOCK_VOLUMES,
       /* VIEW-VOLUME MASKING (task 3): the five room shells, their masks
          (P, W, box, cam) and the one cap material, for the read-only
          window.chfRoomShell* hooks below */
@@ -12406,6 +12457,18 @@
      from exactly these numbers. */
   window.chfBlockGeometry = function () {
     return webgl ? webgl.blockGeometry() : null;
+  };
+  /* MASSING ARC 2 task 6 (fix round 1): the BLOCK MEET as built -- for
+     each block, whether its roof was clipped against the neighbour's
+     bounded volume, and that volume's own planes (always derived, so a
+     test can audit the equal-geometry case against the same region the
+     clipper would have used). Read-only, like chfBlockGeometry. */
+  window.chfBlockMeet = function () {
+    if (!webgl) return null;
+    return { main: { active: !!webgl.BLOCK_MEET.main,
+                     planes: webgl.BLOCK_VOLUMES.main },
+             garage: { active: !!webgl.BLOCK_MEET.garage,
+                       planes: webgl.BLOCK_VOLUMES.garage } };
   };
   /* ROOF VALLEYS (masking spec section 6): the block deck plane under a
      street face's features, {n, d} with n the deck's upward normal

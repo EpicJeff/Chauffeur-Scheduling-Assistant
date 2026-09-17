@@ -32,7 +32,8 @@ os.environ.setdefault('CHAUFFEUR_DATA_DIR',
 from live_app import live_app
 from house_live_common import (check, _seed, DAY_LOCK_JS, SEED_RNG_JS,
                                INVARIANT_JS, _VAULT_PITCH, FEATURE_JS,
-                               VERTEX_AUDIT_JS, ROOF_INSIDE_NEIGHBOUR_JS)
+                               VERTEX_AUDIT_JS, ROOF_INSIDE_NEIGHBOUR_JS,
+                               roof_piece_names)
 
 # Spec 2026-09-17 blocks section 2, the compatibility pin's window: the
 # rectangle of the B0 frame that is the HOUSE and nothing else.
@@ -721,15 +722,24 @@ def scenario_a_bad_draft_token_is_not_an_error():
 # services/house_facade.py's FACES table carries verbatim.
 MAIN_SOUTH_0, GARAGE_SOUTH_0 = 14.55, 10.10
 
+# The `garage_door` fabric row is the whole bay assembly -- jambs, header
+# trim, glazing, coach lamps AND the leaf -- and its box centre sits
+# 0.015 behind the face line at depth 0 (MEASURED at the canonical boot,
+# not derived: the group spans z 9.76..10.41). Fix round 1 pins it,
+# because the LEAF was the one part of the bay still nailed to z 10.02
+# while the opening around it moved out with the face.
+GARAGE_DOOR_ZC_0 = 10.085
+
 
 def scenario_depth_moves_the_face_and_the_blocks_meet():
     """Spec section 2 (depth, where blocks meet) and 3.2.
 
-    Four depth combinations; each boots clean, the street faces sit where
-    the model says, the JS slot table still agrees with Python's, the
-    step at the shared face x -7.15 is closed by a wall, the deeper
-    block's roof stops at the neighbour's BOUNDED volume and nothing
-    outside that volume is lost.
+    Five boots; each one comes up clean, the street faces sit where the
+    model says, the JS slot table still agrees with Python's, the whole
+    garage bay -- leaf included -- rides its own face, the step at the
+    shared face x -7.15 is closed by a wall, the deeper block's roof
+    stops at the neighbour's BOUNDED volume, and nothing outside that
+    volume is lost.
 
     TWO BRIEF DEVIATIONS, both recorded in task-6-report.md.
 
@@ -743,16 +753,28 @@ def scenario_depth_moves_the_face_and_the_blocks_meet():
     PAST the main's street face, is a new piece (`garage_return`). A
     second wall in the same plane as west_skirt would z-fight it.
 
-    (2) THE NEIGHBOUR-VOLUME CLIP RUNS ONLY WHERE THE BLOCKS DIFFER.
-    Spec section 2 rev2 ends "with equal depth and equal stories nothing
-    changes for the canonical", and measurably it cannot: at equal depths
-    the two blocks stand exactly as they were hand-built -- one shared
-    eave line, one pitch, therefore one coplanar north deck -- and the
-    main roof's west rakes have always run over the garage's footprint
-    under the garage's own roof. Subtracting there would cut geometry the
-    canonical mesh and pixel pins hold. So the clip is gated on the two
-    blocks' depths differing, and at equal depths this scenario asserts
-    the roofs are left exactly as built instead.
+    (2) THE NEIGHBOUR-VOLUME CLIP RUNS ONLY WHERE THE TWO BLOCK ROOFS ARE
+    GEOMETRICALLY IDENTICAL -- depth, form, ridge, pitch AND eave, all
+    five (fix round 1; it was depth alone). Spec section 2 rev2 ends
+    "with equal depth and equal stories nothing changes for the
+    canonical", and measurably it cannot: with all five equal the two
+    blocks stand exactly as they were hand-built -- one shared eave line,
+    one pitch, therefore one coplanar north deck -- and the main roof's
+    west rakes have always run over the garage's footprint under the
+    garage's own roof. Subtracting there would cut geometry the canonical
+    mesh and pixel pins hold. Any other combination -- a hip beside a
+    gable, two different pitches, a moved face -- genuinely
+    interpenetrates and is clipped; the fifth boot below is exactly that
+    case at depth 0/0.
+
+    A BLOCK-ROOF PIECE CAN LEGITIMATELY VANISH. Where the clip runs,
+    `garage_block_roof_end_east` -- the garage's own gable infill at the
+    shared face -- stands wholly inside the main block's volume, because
+    the main owns that face plane (equal eaves, tie to main) and closes
+    it with its own `roof_main_end_west` in the same 0.14 of x. Two
+    infills in one plane is the z-fight the ownership rule exists to
+    end, so the garage's is dropped rather than registered with nothing
+    in it. Every combination below pins the exact surviving set.
     """
     from services import house_facade as hf
     served = live_app(_seed)
@@ -761,13 +783,21 @@ def scenario_depth_moves_the_face_and_the_blocks_meet():
     from house_probe import BUDGET_JS, THREE_WRAP
     with open('static/vendor/three.min.js', 'rb') as fh:
         patched = fh.read() + THREE_WRAP
-    combos = [{'main': 0, 'garage': 0}, {'main': 2, 'garage': 0},
-              {'main': 0, 'garage': 6}, {'main': 2, 'garage': 6}]
-    base_out = None
-    for depths in combos:
+    all_roof = (roof_piece_names('roof_main', 'gable', 'x') |
+                roof_piece_names('garage_block_roof', 'gable', 'x'))
+    # (depths, main roof override, label)
+    combos = [({'main': 0, 'garage': 0}, None, 'canonical'),
+              ({'main': 2, 'garage': 0}, None, 'main deeper'),
+              ({'main': 0, 'garage': 6}, None, 'garage deeper'),
+              ({'main': 2, 'garage': 6}, None, 'both, main still deeper'),
+              ({'main': 0, 'garage': 0}, 'hip', 'a hip beside a gable')]
+    base_main_out = base_garage_out = None
+    for depths, main_form, label in combos:
         spec = copy.deepcopy(hf.CANONICAL)
         spec['blocks']['main']['depth'] = depths['main']
         spec['blocks']['garage']['depth'] = depths['garage']
+        if main_form:
+            spec['blocks']['main']['roof']['form'] = main_form
         spec, _notes = hf.normalize(spec)
         m_south = MAIN_SOUTH_0 + depths['main']
         g_south = GARAGE_SOUTH_0 + depths['garage']
@@ -776,6 +806,8 @@ def scenario_depth_moves_the_face_and_the_blocks_meet():
         # step. Only the garage's side needs a new piece (see the
         # docstring); the main's is west_skirt.
         want_return = 'garage_return' if g_south > m_south + 1e-6 else None
+        # the clip runs unless all five roof inputs match
+        want_meet = bool(depths['main'] != depths['garage'] or main_form)
         tok = hf.issue_draft(spec)
         with served.browser() as page:
             page.route('**/three.min.js*', lambda route: route.fulfill(
@@ -788,61 +820,92 @@ def scenario_depth_moves_the_face_and_the_blocks_meet():
             geo = page.evaluate('window.chfBlockGeometry()')
             check(geo and abs(geo['main']['south'] - m_south) < 1e-3 and
                   abs(geo['garage']['south'] - g_south) < 1e-3,
-                  f'{depths}: the street faces moved: {geo}')
+                  f'{label} {depths}: the street faces moved: {geo}')
             # the JS slot table still IS the Python one, depth and all
             js_slots = page.evaluate('window.chfFacadeSlots()')
             py_slots = hf.slot_table(spec['blocks'])
-            check(len(js_slots) == len(py_slots), f'{depths}: slot count')
+            check(len(js_slots) == len(py_slots), f'{label}: slot count')
             for a, b in zip(js_slots, py_slots):
                 check(abs(a['z'] - b['z']) < 1e-6,
-                      f"{depths}: slot {b['i']} z {a['z']} vs {b['z']}")
+                      f"{label}: slot {b['i']} z {a['z']} vs {b['z']}")
             rows = {r['name']: r for r in page.evaluate('window.chfShellFabric()')}
+            # FIX ROUND 1: the whole bay rides its own face -- the LEAF
+            # is inside this box and was the one part left behind
+            zc = (rows['garage_door']['box'][4] + rows['garage_door']['box'][5]) / 2
+            check(abs(zc - (GARAGE_DOOR_ZC_0 + depths['garage'])) < 0.2,
+                  f'{label}: the garage door assembly (leaf included) sits on '
+                  f'its own face: centre z {zc:.3f}, want '
+                  f'~{GARAGE_DOOR_ZC_0 + depths["garage"]:.3f}')
             check('main_return' not in rows,
-                  f'{depths}: the main block never gets a second west face')
+                  f'{label}: the main block never gets a second west face')
             if want_return:
-                check(want_return in rows, f'{depths}: {want_return} registered')
+                check(want_return in rows, f'{label}: {want_return} registered')
                 box = rows[want_return]['box']
                 check(abs(box[4] - m_south) < 0.2 and abs(box[5] - g_south) < 0.2,
-                      f'{depths}: {want_return} closes the step: {box}')
+                      f'{label}: {want_return} closes the step: {box}')
             else:
                 check('garage_return' not in rows,
-                      f'{depths}: no garage return wall wanted, got one')
+                      f'{label}: no garage return wall wanted, got one')
                 # the main block IS the deeper one here, and its west face
-                # reaches its own street line
-                # + 0.05: the corner board at its end is 0.1 deep and
-                # centred on the face line, so the box runs half past it
+                # reaches its own street line. + 0.05: the corner board at
+                # its end is 0.1 deep and centred on the face line, so the
+                # box runs half past it
                 check(abs(rows['west_skirt']['box'][5] - (m_south + 0.05)) < 0.02,
-                      f"{depths}: west_skirt reaches the main face: "
+                      f"{label}: west_skirt reaches the main face: "
                       f"{rows['west_skirt']['box']}")
             # R-B: a depth opens a floor-less void behind the moved face
             for who, key in (('main', 'main_void_floor'), ('garage', 'garage_void_floor')):
                 check((key in rows) == (depths[who] > 0),
-                      f'{depths}: {key} present iff {who} has depth')
-            # the front door and the garage still read from the street
+                      f'{label}: {key} present iff {who} has depth')
+            # the front door and the garage still read from the street,
+            # and the Mudroom marker's own roof piece still resolves
+            # through roofAlias whatever the clip dropped
             check(page.evaluate("window.chfNavProbe({front:'main'})"),
-                  f'{depths}: the front door is reachable from the street')
+                  f'{label}: the front door is reachable from the street')
             check(page.evaluate("window.chfNavProbe({front:'garage_block'})"),
-                  f'{depths}: the garage front is reachable from the street')
+                  f'{label}: the garage front is reachable from the street')
+            check(page.evaluate("window.chfNavProbe({piece:'garage_block_roof_south'})"),
+                  f'{label}: the Mudroom marker still lands on a roof piece')
+            meet = page.evaluate('window.chfBlockMeet()')
+            check(meet['main']['active'] is want_meet and
+                  meet['garage']['active'] is want_meet,
+                  f'{label}: the block-meet clip active={want_meet}, got '
+                  f"{meet['main']['active']}/{meet['garage']['active']}")
             leak = page.evaluate(ROOF_INSIDE_NEIGHBOUR_JS)
-            check(not leak.get('err'), f'{depths}: audit ran: {leak}')
-            if depths['main'] != depths['garage']:
+            check(not leak.get('err'), f'{label}: audit ran: {leak}')
+            # FIX ROUND 1: the exact surviving block-roof set, so a piece
+            # the clip swallows whole can never vanish unnoticed
+            check(set(leak['pieces']) == all_roof,
+                  f'{label}: block roof pieces {sorted(leak["pieces"])} != '
+                  f'{sorted(all_roof)}')
+            if want_meet:
                 check(leak['main_in_garage'] == 0 and leak['garage_in_main'] == 0,
-                      f'{depths}: roof left inside the neighbour volume: {leak}')
-            if base_out is None:
-                base_out = leak['main_out']
-            check(leak['main_out'] > 0.9 * base_out,
-                  f'{depths}: main roof kept outside the neighbour: {leak}')
+                      f'{label}: roof left inside the neighbour volume: {leak}')
+            if base_main_out is None:
+                base_main_out, base_garage_out = leak['main_out'], leak['garage_out']
+            check(leak['main_out'] > 0.9 * base_main_out,
+                  f'{label}: main roof kept outside the neighbour: {leak}')
+            # the garage roof keeps its own volume too, at the same
+            # 0.9 floor -- NOTHING is legitimately removed whole in any
+            # of these five boots (both blocks' north faces sit on
+            # z -6.10 and each roof overhangs 0.32 past it, which is
+            # outside the neighbour's footprint, so every one of the
+            # eight pieces keeps at least its own north tip). MEASURED
+            # counts per boot in task-6-report.md.
+            check(leak['garage_out'] > 0.9 * base_garage_out,
+                  f'{label}: garage roof kept outside the neighbour: {leak}')
             # nothing outside the neighbour's volume is lost: the main
             # roof still runs its whole east/south footprint plus the
             # 0.32 overhang
             span = leak['main_span']
             check(span[1] > 14.65 + 0.32 - 0.02 and span[3] > m_south + 0.32 - 0.02,
-                  f'{depths}: the main roof still covers its own block: {span}')
+                  f'{label}: the main roof still covers its own block: {span}')
             b = page.evaluate(BUDGET_JS)
-            print('  depth %r inFrustum=%s calls=%s buildMs=%s'
-                  % (depths, b.get('inFrustum'), b.get('calls'), b.get('buildMs')))
+            print('  %-24s %r inFrustum=%s calls=%s buildMs=%s main_out=%s garage_out=%s'
+                  % (label, depths, b.get('inFrustum'), b.get('calls'),
+                     b.get('buildMs'), leak['main_out'], leak['garage_out']))
             errs = [e for e in served.errors() if 'WebGL' not in e]
-            check(not errs, f'{depths}: console clean: {errs[:3]}')
+            check(not errs, f'{label}: console clean: {errs[:3]}')
 
 
 if __name__ == '__main__':
