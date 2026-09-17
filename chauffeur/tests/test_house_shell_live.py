@@ -126,6 +126,14 @@ def scenario_shell_fabric_registry():
         from services import house_facade as _hf
         canon = {(f['slot'], f['kind'])
                  for f in _hf.CANONICAL['ground'] + _hf.CANONICAL['roof']}
+        # MASSING ARC 2 (spec 2026-09-17 section 2): the porch OWNS its
+        # roof, so the canonical's gable at slot 8 is now the porch's
+        # `roof: 'gable'` rather than a free feature. The piece it builds
+        # still traces back to a canonical feature -- that porch -- so
+        # teach the derivation the new schema. The rule is unchanged: a
+        # generated name with no canonical feature behind it still fails.
+        canon |= {(f['slot'], 'gable') for f in _hf.CANONICAL['ground']
+                  if f['kind'] == 'porch' and f.get('roof') == 'gable'}
         slots = _hf.slot_table()
         check(generated, 'the elevation must register generated pieces')
         # face names can themselves carry an underscore now (garage_block),

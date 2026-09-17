@@ -5775,6 +5775,21 @@
       (spec.roof || []).forEach(function (f) {
         if (roofKind[f.kind] && SLOTS[f.slot]) roofKind[f.kind](f);
       });
+      /* TASK 3+4 BRIDGE (massing arc 2, spec 2026-09-17 section 2). The
+         porch OWNS its roof now: the canonical's free-standing gable at
+         slot 8 became the porch's `roof: 'gable'`, and normalize() drops
+         any gable FEATURE covering a gabled porch, so nothing here would
+         build it and the canonical exterior would come up 23 meshes
+         short of its live pin. gableAt already carries a gable out to a
+         porch's own front edge and eave (PORCH_SPANS, filled by porchAt
+         in the ground loop above), so replaying the porch's roof through
+         it rebuilds exactly the old facade_<face>_gable_<slot> pieces.
+         REPLACED IN TASK 8 by the porch's own roof inside porchAt
+         (facade_<face>_porch_<slot>_roof_*); delete this loop then. */
+      (spec.ground || []).forEach(function (f) {
+        if (f.kind === 'porch' && f.roof === 'gable' && SLOTS[f.slot])
+          gableAt({ slot: f.slot, span: f.span, kind: 'gable' });
+      });
     }
     /* ================= END FACADE ===================================== */
 
