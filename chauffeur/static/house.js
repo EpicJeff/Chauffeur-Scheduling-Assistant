@@ -4448,13 +4448,32 @@
        over the study, on the same registered piece. */
     var SWZ0 = grFloorBox.max.z;                          /* ~14.2 */
     var SWZ1 = SWZ0 + WALL_T4;                             /* ~14.55 */
+    /* MASSING ARC 2 task 6 (spec 2026-09-17 section 2): DEPTH. A block's
+       `depth` pushes its STREET FACE out toward the kerb and nothing
+       else -- the room behind it, its north wall and its side walls all
+       stay where they are (R-B floors the void that opens between the
+       floor's edge and the moved wall). services/house_facade.py's
+       normalize() clamps it (0..6, and 2.0 on a face carrying a porch,
+       so the porch stays behind the kerb) and its slot_table() moves a
+       face's z by exactly this number; facadeSlots() below follows the
+       same rule off FACES, which is what keeps the JS and Python slot
+       tables pinned to each other at every depth, not just at zero.
+
+       ADDED, never substituted: every street-face coordinate below is
+       written `<the old literal> + MAIN_DZ` (or GAR_DZ) rather than
+       re-derived from the block row, because `x + 0` is x EXACTLY in
+       IEEE754 -- so a canonical build (depth 0/0) is the same numbers,
+       the same geometry cache keys and the same picture it was before
+       this task, which the canonical mesh and pixel pins hold to. */
+    var MAIN_DZ = BLOCKS.main.depth || 0;
+    var GAR_DZ = BLOCKS.garage.depth || 0;
     /* MASSING ARC 1 (spec sections 2 and 3): the main block's envelope.
        Declared BEFORE the walls that read it: the south wall right
        here, the east wall below and every massing call further down
        all measure themselves off this row (GARAGE_BLOCK, the second
        block, is declared with the massing block below). */
     var FULL_HOUSE = {
-      west: -7.15, east: 14.65, north: -6.10, south: SWZ1,
+      west: -7.15, east: 14.65, north: -6.10, south: SWZ1 + MAIN_DZ,
       eave: EXT_TOP4, overhang: 0.32
     };
     var SW_W = FULL_HOUSE.east - FULL_HOUSE.west;            /* 21.8 */
@@ -4500,17 +4519,17 @@
        above WALL_TOP4 — a 5.6-tall wall would leave a gap under that
        eave, the exact wedge bug this whole block exists to avoid. */
     swtag(box(SW_W, EXT_TOP4, WALL_T4 / 2, C.wall, SW_CX, EXT_TOP4 / 2,
-              SWZ0 + WALL_T4 / 4, southWallG, sharp(WALL_O)));
+              SWZ0 + MAIN_DZ + WALL_T4 / 4, southWallG, sharp(WALL_O)));
     swtag(box(SW_W, EXT_TOP4, WALL_T4 / 2, NICE ? 0xffffff : EXTC.siding,
-              SW_CX, EXT_TOP4 / 2, SWZ0 + WALL_T4 * 3 / 4, southWallG,
+              SW_CX, EXT_TOP4 / 2, SWZ0 + MAIN_DZ + WALL_T4 * 3 / 4, southWallG,
               sharp({ rough: 0.95, map: CLAD() })));
     /* the baseboard: one board, its two ends inset 0.15 each. */
     swtag(box(SW_W - 0.3, 0.2, 0.08, 0xe4ddd1, SW_CX, 0.1,
-              SWZ0 - 0.02, southWallG, sharp()));
+              SWZ0 + MAIN_DZ - 0.02, southWallG, sharp()));
     /* spec 2026-09-17 section 2: the main block's base band on the
        street face itself. Nothing is built when the block has no base. */
-    swtag(baseBand(southWallG, FULL_HOUSE.west, SWZ1 - WALL_T4 / 2,
-                   FULL_HOUSE.east, SWZ1 - WALL_T4 / 2, [0, 0, 1], 'main'));
+    swtag(baseBand(southWallG, FULL_HOUSE.west, SWZ1 + MAIN_DZ - WALL_T4 / 2,
+                   FULL_HOUSE.east, SWZ1 + MAIN_DZ - WALL_T4 / 2, [0, 0, 1], 'main'));
 
     /* FACADE (arc 4): the door, the porch and the second coach lamp all
        stood here, hand-placed into southWallG. They are spec features
@@ -4525,7 +4544,7 @@
        itself -- so a facade with no main-face porch gets a front walk
        that starts at the wall, not 4.6 units out in the grass where a
        porch that was never built would have ended. */
-    var PORCH_FRONT_Z4 = SWZ1;
+    var PORCH_FRONT_Z4 = SWZ1 + MAIN_DZ;
 
     /* SHELL: south_wall is the street FACE itself -- the slab, its
        siding skin and its baseboard. Its windows, door, porch and lamp
@@ -4548,7 +4567,7 @@
        one eave line across both blocks, which is what lets a roof
        feature run coplanar across the old garage/mudroom boundary. */
     var GARAGE_BLOCK = { west: -18.20, east: -7.15, north: -6.10,
-                         south: 10.10, eave: EXT_TOP4 };
+                         south: 10.10 + GAR_DZ, eave: EXT_TOP4 };
     /* Every block roof is {form, ridge}: nothing about ridge direction
        is fixed (spec section 3). Canonical is today's look — both blocks
        gabled with the ridge running east/west. window.HOUSE_ROOF_FORMS
@@ -4906,8 +4925,9 @@
        unbuilt massing it replaces. */
     var EWX1_4 = FULL_HOUSE.east;                   /* 14.65 */
     var EWX0_4 = EWX1_4 - WALL_T4;                  /* 14.30 */
-    var EWZ1_4 = SWZ1;                              /* south_wall's own
-                                                        outer face */
+    var EWZ1_4 = SWZ1 + MAIN_DZ;                    /* south_wall's own
+                                                        outer face, which
+                                                        depth moves (task 6) */
     var EW_LEN4 = EWZ1_4 - EWZ0_4;
     var EW_CZ4 = (EWZ0_4 + EWZ1_4) / 2;
     var eastWallG = new T.Group();
@@ -4944,6 +4964,17 @@
                            box: fabBox(eastWallG) });
 
     function shellGroup() { var g = new T.Group(); extG.add(g); return g; }
+    /* MASSING ARC 2 task 6: a block roof piece that stood WHOLLY inside
+       the neighbour block's volume (the garage's own gable infill at the
+       shared face, when the main block owns that plane) comes back from
+       clipBuried with nothing left. An empty group must not be
+       registered: fabBox() would hand the mask solver an empty Box3
+       (min +Infinity) and every reader of that row would carry it. */
+    function hasMesh(g) {
+      var any = false;
+      g.traverse(function (m) { if (m.isMesh) any = true; });
+      return any;
+    }
     function shellBox(g, w, h, d, c, x, y, z, opts) {
       return box(w, h, d, c, x, y, z, g, sharp(opts));
     }
@@ -4953,9 +4984,19 @@
        built (not the composites it became). Facade rows only: a few
        hundred vertices each. */
     var FEATURE_VERTS = {};
+    function wantsVerts(name) {
+      /* MASSING ARC 2 task 6: the two BLOCK ROOFS join the facade rows
+         here. The block-meet audit has to read a deck, rake or gable
+         infill AS BUILT -- after the neighbour-volume clip, before
+         mergeStatic folds it -- and the whole roof is a few thousand
+         vertices, build-time only, the same order as the facade's. */
+      return name.indexOf('facade_') === 0 ||
+             name.indexOf('roof_main_') === 0 ||
+             name.indexOf('garage_block_roof_') === 0;
+    }
     function shellRegister(g, name, normal, room, kit) {
       g.updateMatrixWorld(true);
-      if (name.indexOf('facade_') === 0) {
+      if (wantsVerts(name)) {
         var verts = [], v = new T.Vector3();
         g.traverse(function (m) {
           if (!m.isMesh || m.isInstancedMesh) return;
@@ -5145,6 +5186,12 @@
     function shellGable(name, x0, x1, z0, z1, eave, ridgeAxis, room, ends, pitch, slopeRooms, depthEnds, form, buried) {
       var alongZ = (ridgeAxis === 'z' || ridgeAxis === true);
       var hip = (form === 'hip');
+      /* MASSING ARC 2 task 6: only a BLOCK roof drops a piece the clip
+         emptied. A facade gable or dormer the valley clip buries whole
+         has always registered as an empty row (the worst case's garage
+         bay gable does), and quietly retiring those rows would be a
+         behaviour change this task never asked for. */
+      var isBlockRoof = (name === 'roof_main' || name === 'garage_block_roof');
       pitch = pitch || PITCH_FAMILY;
       /* the deck arithmetic is deckPlane's (one derivation, masking task
          5); the +1 plane carries the numbers both signs share */
@@ -5247,6 +5294,7 @@
         var n = new T.Vector3(0, 1, 0).applyQuaternion(
           deck.getWorldQuaternion(new T.Quaternion()));
         if (buried) clipBuried(g, buried);
+        if (buried && isBlockRoof && !hasMesh(g)) { extG.remove(g); return; }
         shellRegister(g, name + (alongZ ? (sign < 0 ? '_west' : '_east')
                                        : (sign < 0 ? '_north' : '_south')),
                       n.toArray(), slopeRooms ? slopeRooms[sign < 0 ? 0 : 1] : room);
@@ -5293,6 +5341,7 @@
           var hn = new T.Vector3(0, 1, 0).applyQuaternion(
             hm.getWorldQuaternion(new T.Quaternion()));
           if (buried) clipBuried(g, buried);
+          if (buried && isBlockRoof && !hasMesh(g)) { extG.remove(g); return; }
           shellRegister(g, name + (alongZ ? (sign < 0 ? '_back' : '_front')
                                          : (sign < 0 ? '_end_west' : '_end_east')),
                         hn.toArray(), room);
@@ -5328,6 +5377,7 @@
           else rake.rotation.x = side * pitch;
         });
         if (buried) clipBuried(g, buried);
+        if (buried && isBlockRoof && !hasMesh(g)) { extG.remove(g); return; }
         shellRegister(g, name + (alongZ ? (sign < 0 ? '_back' : '_front')
                                        : (sign < 0 ? '_end_west' : '_end_east')),
                       alongZ ? [0, 0, sign] : [sign, 0, 0], room);
@@ -5363,7 +5413,7 @@
        (task-3-report.md shows the derivation). */
     var FACES = [
       { face: 'garage_block', x0: GARAGE_BLOCK.west, x1: GARAGE_BLOCK.east, z: GARAGE_BLOCK.south, eave: GARAGE_BLOCK.eave, room: 'garage', roof: 'garage_block_roof' },
-      { face: 'main',         x0: FULL_HOUSE.west,   x1: FULL_HOUSE.east,   z: SWZ1,               eave: EXT_TOP4,         room: 'living', roof: 'roof_main' }
+      { face: 'main',         x0: FULL_HOUSE.west,   x1: FULL_HOUSE.east,   z: FULL_HOUSE.south,   eave: EXT_TOP4,         room: 'living', roof: 'roof_main' }
     ];
     /* Mirrors services/house_facade.py's GARAGE_BAY_SLOTS: the garage
        ROOM's own x range (-18.2..-12.6) nearest-slot-boundary snapped
@@ -5873,7 +5923,15 @@
            5.6 on a ridge-x block); its z range 4.0..10.1 already reaches
            past the meet point (5.47 for the canonical bay), so the
            valley closes on its own */
-        shellGable(name, e.x0, e.x1, 4.0, 10.1, featureEave(slot, e.cx), 'z',
+        /* MASSING ARC 2 task 6: + GAR_DZ. The bay's z range is the one
+           street feature in this file written as absolutes rather than
+           off slot.z, so a garage DEPTH has to carry it out with the
+           face; left at 4.0..10.1 it stays where the old face was, which
+           at depth 6 is six units inside the block, under the block roof
+           -- buriedRegion then clips the whole gable away and the piece
+           registers with nothing in it. */
+        shellGable(name, e.x0, e.x1, 4.0 + GAR_DZ, 10.1 + GAR_DZ,
+                   featureEave(slot, e.cx), 'z',
                    slot.room, [1], PITCH_FAMILY, null, null, null, region);
         return;
       }
@@ -6011,6 +6069,115 @@
     }
     /* ================= END FACADE ===================================== */
 
+    /* ---- MASSING ARC 2 task 6: WHERE THE TWO BLOCKS MEET -------------
+       Spec 2026-09-17 section 2 (rev2). Three things, in order:
+
+       (a) THE VOID FLOOR (controller ruling R-B). Depth moves a street
+       FACE, not the room behind it, so between the room floor's own edge
+       and the moved wall there is a strip of ground with no floor on it.
+       A plain slab in the stoop tone floors it. Registered as fabric of
+       NO room, so the view-volume mask keeps it in every view -- it is
+       the ground under all of them, not one room's own.
+
+       (b) THE RETURN WALL. The blocks share the face plane x -7.15. The
+       main block's own side of that step is `west_skirt` (built with the
+       shell above, and extended to FULL_HOUSE.south by this task), which
+       is why there is no `main_return`: a second wall in the same plane
+       would only z-fight it. The GARAGE's side has never needed one --
+       the main block has always stood further south -- so it is built
+       here, and only when a depth actually pushes the garage block past
+       the main's street face.
+
+       (c) THE NEIGHBOUR VOLUME. Where the roofs meet, each block's roof
+       is clipped against the OTHER block's BOUNDED volume: its footprint
+       (with its own depth) from the ground to its ridge, capped by its
+       own decks -- never an infinite deck plane, which would cut the
+       roof clean off across the whole property. The shared plane belongs
+       to ONE block (the higher eave; a tie goes to main): the owner's
+       volume carries its overhang across the plane, so the other roof is
+       cut back to the owner's rake, and the non-owner's volume stops
+       0.02 short of it, so the owner's own deck, rake and gable infill
+       survive and no two cut faces ever land coplanar.
+
+       THE DECK BOUND IS THE DECK'S TOP SURFACE, not its centre plane: a
+       deck is a 0.18-thick slab whose faces sit 0.09 along its own
+       normal either side of the centre, so `d + 0.09` is the shingle
+       line. Cutting at the centre plane would leave the buried roof's
+       upper half standing inside the neighbour's shingles.
+
+       AND IT RUNS ONLY WHERE THE BLOCKS DIFFER. The spec's own rule ends
+       "with equal depth and equal stories nothing changes" -- and
+       measurably it cannot: at equal depths the two blocks stand exactly
+       as they were hand-built, sharing one eave line and one pitch, so
+       their north decks are the SAME plane, and the main roof's west
+       rakes have run over the garage's footprint under the garage's own
+       roof since long before the block model existed. Subtracting there
+       would cut geometry the canonical mesh and pixel pins hold to, for
+       no visible gain (all of it is between the two blocks, where no
+       camera stands). So the clip is gated on the depths differing. */
+    if (MAIN_DZ > 0) (function () {
+      var g = shellGroup();
+      shellBox(g, SW_W, 0.10, MAIN_DZ + WALL_T4, FARMHOUSE.stoop,
+               SW_CX, -0.05, (SWZ0 + FULL_HOUSE.south) / 2);
+      shellRegister(g, 'main_void_floor', [0, 1, 0], null);
+    })();
+    if (GAR_DZ > 0) (function () {
+      var g = shellGroup();
+      shellBox(g, GARAGE_BLOCK.east - GARAGE_BLOCK.west, 0.10,
+               GAR_DZ + WALL_T4, FARMHOUSE.stoop,
+               (GARAGE_BLOCK.west + GARAGE_BLOCK.east) / 2, -0.05,
+               (10.10 - WALL_T4 + GARAGE_BLOCK.south) / 2);
+      shellRegister(g, 'garage_void_floor', [0, 1, 0], null);
+    })();
+    var SHARED_X = FULL_HOUSE.west;              /* -7.15, both blocks' */
+    if (GARAGE_BLOCK.south > FULL_HOUSE.south + 1e-6)
+      shellWall('garage_return', SHARED_X, FULL_HOUSE.south,
+                SHARED_X, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
+                [1, 0, 0], [], 'mudroom', 'garage');
+    /* the block that owns the shared face plane: the higher eave, and a
+       tie goes to main (today always a tie -- stories are not built into
+       these envelopes yet -- but read off the rows so the stories task
+       has nothing to change here). */
+    function sharedFaceOwner() {
+      return GARAGE_BLOCK.eave > FULL_HOUSE.eave ? 'garage' : 'main';
+    }
+    /* `name` is the block whose roof is being clipped; the volume is its
+       NEIGHBOUR's. Returns clipBuried's region: planes whose kept side
+       is INSIDE the volume. */
+    function neighbourVolume(name) {
+      var other = name === 'main' ? 'garage' : 'main';
+      var B = other === 'main' ? FULL_HOUSE : GARAGE_BLOCK;
+      var C = window.HouseClip;
+      var pl = blockDeckPlanes(other === 'main' ? 'main' : 'garage_block');
+      var step = (sharedFaceOwner() === other) ? FULL_HOUSE.overhang : -0.02;
+      var west = other === 'main' ? SHARED_X - step : B.west;
+      var east = other === 'main' ? B.east : SHARED_X + step;
+      var region = [
+        { n: [1, 0, 0], d: west }, { n: [-1, 0, 0], d: -east },
+        { n: [0, 0, 1], d: B.north }, { n: [0, 0, -1], d: -B.south },
+        { n: [0, 1, 0], d: 0 }, { n: [0, -1, 0], d: -pl[0].ridge }
+      ];
+      pl.forEach(function (q) { region.push(C.flip({ n: q.n, d: q.d + 0.09 })); });
+      return region;
+    }
+    var BLOCK_MEET = (MAIN_DZ !== GAR_DZ)
+      ? { main: neighbourVolume('main'), garage: neighbourVolume('garage') }
+      : { main: null, garage: null };
+    /* the two blocks' envelopes and the deck planes their roofs were
+       placed by, for the read-only window.chfBlockGeometry hook: a test
+       rebuilds the neighbour volume from these numbers alone and audits
+       the result, rather than reading the clipper's own region back. */
+    function blockGeometry() {
+      function row(key, B, face) {
+        var pl = blockDeckPlanes(face);
+        return { west: B.west, east: B.east, north: B.north, south: B.south,
+                 eave: B.eave, ridge: pl[0].ridge, depth: BLOCKS[key].depth || 0,
+                 decks: pl.map(function (q) { return { n: q.n, d: q.d }; }) };
+      }
+      return { main: row('main', FULL_HOUSE, 'main'),
+               garage: row('garage', GARAGE_BLOCK, 'garage_block') };
+    }
+
     /* ---- the two block roofs (spec section 3) -------------------------
        Eleven hand-placed roof pieces became these calls plus the
        facade's own features. Both read ROOF_FORMS, so form and ridge
@@ -6035,7 +6202,8 @@
     shellGable('roof_main', FULL_HOUSE.west, FULL_HOUSE.east,
                FULL_HOUSE.north, FULL_HOUSE.south, EXT_TOP4,
                ROOF_FORMS.main.ridge, null, null, BLOCK_PITCH,
-               ['kitchen', 'living'], null, ROOF_FORMS.main.form);
+               ['kitchen', 'living'], null, ROOF_FORMS.main.form,
+               BLOCK_MEET.main);
 
     /* ---- the garage block (spec section 2) ----------------------------
        The garage's own three walls (garage_shell) and the mudroom's own
@@ -6067,7 +6235,8 @@
     shellGable('garage_block_roof', GARAGE_BLOCK.west, GARAGE_BLOCK.east,
                GARAGE_BLOCK.north, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
                ROOF_FORMS.garage.ridge, null, null, blockPitch('garage'),
-               ['garage', 'mudroom'], null, ROOF_FORMS.garage.form);
+               ['garage', 'mudroom'], null, ROOF_FORMS.garage.form,
+               BLOCK_MEET.garage);
 
     /* Spec 2026-09-17 blocks section 0: a block roof's pieces are named by
        geometric side (shellGable: _north/_south + _end_west/_end_east on a
@@ -6279,14 +6448,24 @@
        this group should not have to rediscover that omission. */
     var westSkirtG = new T.Group();
     extG.add(westSkirtG);
-    box(0.3, EXT_TOP4, SWZ1 - 6.0, NICE ? 0xffffff : EXTC.siding,
-        -7.0, EXT_TOP4 / 2, (6.0 + SWZ1) / 2, westSkirtG,
+    /* MASSING ARC 2 task 6 (spec 2026-09-17 section 2, THE BLOCK MEET):
+       this IS the main block's return wall at the shared face x -7.15.
+       The main block stands 4.45 deeper than the garage block even at
+       depth 0/0, and this piece has carried its cladding, its corner
+       board and (task 5) its base band over that step since long before
+       the block model existed -- so a main-side depth extends THIS wall
+       to the new street line rather than minting a second wall in the
+       same plane for it to z-fight. The garage's own return, for when a
+       depth pushes the garage block PAST the main's face, is built with
+       the block roofs below (`garage_return`). */
+    box(0.3, EXT_TOP4, SWZ1 + MAIN_DZ - 6.0, NICE ? 0xffffff : EXTC.siding,
+        -7.0, EXT_TOP4 / 2, (6.0 + SWZ1 + MAIN_DZ) / 2, westSkirtG,
         sharp({ rough: 0.95, map: CLAD() }));
-    box(0.35, EXT_TOP4, 0.1, EXTC.trim, -6.675, EXT_TOP4 / 2, SWZ1,
+    box(0.35, EXT_TOP4, 0.1, EXTC.trim, -6.675, EXT_TOP4 / 2, SWZ1 + MAIN_DZ,
         westSkirtG, sharp());
     /* spec 2026-09-17 section 2: the main block's base band, west face
        south of the garage block (the one stretch of it the street sees) */
-    baseBand(westSkirtG, -7.0, 6.0, -7.0, SWZ1, [-1, 0, 0], 'main');
+    baseBand(westSkirtG, -7.0, 6.0, -7.0, SWZ1 + MAIN_DZ, [-1, 0, 0], 'main');
     /* spec section 5: fronts mudroom, same adjacency shape as west_wall's
        own T2/T7 flip immediately above this file's own west_skirt
        derivation — this piece only ever ghosts for the mudroom's camera
@@ -6331,21 +6510,31 @@
                 cladColour('garage'),
                 -15.4, 2.3, 2.12, { rough: 0.95, map: CLAD('garage') }));
       webgl_garageBackWall = garageBackWall;
+      /* MASSING ARC 2 task 6 (spec 2026-09-17 section 2): every piece of
+         the BAY is the garage block's street face -- the header, the
+         lintel, the two piers and their base band, the pier window, the
+         gable's half-round, the coach lamp and the band above -- so a
+         garage depth moves all of it with GARAGE_BLOCK.south. The door
+         LEAF needs nothing here: garageDoorAt() builds it off the slot
+         table, which already carries the moved z. The bay's own jambs
+         end up standing proud of the garage ROOM's side walls, which
+         stop at z 10.0 -- that is what depth IS (the face moves, the
+         room does not), and garage_void_floor floors what opens up. */
       gtag(box(5.6, 1.1, 0.24, cladColour('garage'),
-               -15.4, 4.05, 9.88, garageDoorG,
+               -15.4, 4.05, 9.88 + GAR_DZ, garageDoorG,
                sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
       /* the lintel: the header stopped at y 3.5 and the door at 3.1, so
          a 0.4 slot ran the width of the bay and the resting camera
          looked straight through it at the shelves */
       gtag(box(5.6, 0.46, 0.24, cladColour('garage'),
-               -15.4, 3.27, 9.88, garageDoorG,
+               -15.4, 3.27, 9.88 + GAR_DZ, garageDoorG,
                sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
-      gtag(box(3.9, 0.16, 0.16, EXTC.trim, -15.4, 3.16, 10.00, garageDoorG, sharp()));
+      gtag(box(3.9, 0.16, 0.16, EXTC.trim, -15.4, 3.16, 10.00 + GAR_DZ, garageDoorG, sharp()));
       gtag(box(0.76, 3.5, 0.24, cladColour('garage'),
-               -17.58, 1.75, 9.88, garageDoorG,
+               -17.58, 1.75, 9.88 + GAR_DZ, garageDoorG,
                sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
       gtag(box(0.76, 3.5, 0.24, cladColour('garage'),
-               -13.22, 1.75, 9.88, garageDoorG,
+               -13.22, 1.75, 9.88 + GAR_DZ, garageDoorG,
                sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
       /* Spec 2026-09-17 section 2 (review fix, v2.499.75): the bay's two
          PIERS are the garage block's street face between garage_block_west
@@ -6360,7 +6549,7 @@
          between the east pier and mudroom_front, where the face steps
          back 0.22 in z anyway. */
       [-17.58, -13.22].forEach(function (px) {
-        gtag(baseBand(garageDoorG, px - 0.38, 9.88, px + 0.38, 9.88,
+        gtag(baseBand(garageDoorG, px - 0.38, 9.88 + GAR_DZ, px + 0.38, 9.88 + GAR_DZ,
                       [0, 0, 1], 'garage', 0.24));
       });
       /* FACADE (arc 4): the door leaf, its board seams, strap hardware
@@ -6384,29 +6573,29 @@
            faces' windows recolor to the black-frame language at their
            current sizes." Every w/h/x/y/z below is unchanged; only the
            casing color moves, EXTC.trim -> FARMHOUSE.frame. */
-        gGlass(0.58, 0.68, -13.22, 2.68, 10.02);
-        gtag(box(0.74, 0.09, 0.10, FARMHOUSE.frame, -13.22, 3.07, 10.03, garageDoorG));
-        gtag(box(0.80, 0.08, 0.18, FARMHOUSE.frame, -13.22, 2.29, 10.06, garageDoorG));
+        gGlass(0.58, 0.68, -13.22, 2.68, 10.02 + GAR_DZ);
+        gtag(box(0.74, 0.09, 0.10, FARMHOUSE.frame, -13.22, 3.07, 10.03 + GAR_DZ, garageDoorG));
+        gtag(box(0.80, 0.08, 0.18, FARMHOUSE.frame, -13.22, 2.29, 10.06 + GAR_DZ, garageDoorG));
         [-0.345, 0.345].forEach(function (dx) {
-          gtag(box(0.09, 0.86, 0.10, FARMHOUSE.frame, -13.22 + dx, 2.68, 10.03,
+          gtag(box(0.09, 0.86, 0.10, FARMHOUSE.frame, -13.22 + dx, 2.68, 10.03 + GAR_DZ,
                    garageDoorG));
         });
         if (DETAIL >= 3) {
-          gtag(box(0.05, 0.68, 0.05, FARMHOUSE.frame, -13.22, 2.68, 10.04, garageDoorG));
-          gtag(box(0.58, 0.05, 0.05, FARMHOUSE.frame, -13.22, 2.68, 10.04, garageDoorG));
+          gtag(box(0.05, 0.68, 0.05, FARMHOUSE.frame, -13.22, 2.68, 10.04 + GAR_DZ, garageDoorG));
+          gtag(box(0.58, 0.05, 0.05, FARMHOUSE.frame, -13.22, 2.68, 10.04 + GAR_DZ, garageDoorG));
         }
         /* the gable's half-round, and a coach lamp beside the door —
            same black-frame recolor, same unchanged size/position. */
-        gGlass(0.44, 0.44, -15.40, 5.36, 10.27);
-        gtag(cyl(0.34, 0.34, 0.09, FARMHOUSE.frame, -15.40, 5.36, 10.24,
+        gGlass(0.44, 0.44, -15.40, 5.36, 10.27 + GAR_DZ);
+        gtag(cyl(0.34, 0.34, 0.09, FARMHOUSE.frame, -15.40, 5.36, 10.24 + GAR_DZ,
                  garageDoorG, 16)).rotation.x = Math.PI / 2;
         if (DETAIL >= 3) {
-          gtag(box(0.05, 0.42, 0.05, FARMHOUSE.frame, -15.40, 5.36, 10.28, garageDoorG));
-          gtag(box(0.42, 0.05, 0.05, FARMHOUSE.frame, -15.40, 5.36, 10.28, garageDoorG));
+          gtag(box(0.05, 0.42, 0.05, FARMHOUSE.frame, -15.40, 5.36, 10.28 + GAR_DZ, garageDoorG));
+          gtag(box(0.42, 0.05, 0.05, FARMHOUSE.frame, -15.40, 5.36, 10.28 + GAR_DZ, garageDoorG));
         }
-        gtag(box(0.10, 0.34, 0.09, C.ink, -17.58, 2.96, 10.02, garageDoorG,
+        gtag(box(0.10, 0.34, 0.09, C.ink, -17.58, 2.96, 10.02 + GAR_DZ, garageDoorG,
                  { rough: 0.5 }));
-        gtag(box(0.34, 0.09, 0.26, C.ink, -17.58, 3.16, 10.13, garageDoorG,
+        gtag(box(0.34, 0.09, 0.26, C.ink, -17.58, 3.16, 10.13 + GAR_DZ, garageDoorG,
                  { rough: 0.5 }));
         /* R5: the shade becomes a lathe on PROFILES.shade — the same
            wide-flare-at-the-rim silhouette the tapered cyl approximated
@@ -6424,18 +6613,18 @@
            combined mesh and strand the toggle (webgl_coachLampGlass is
            added to NO_MERGE beside webgl_garageBackWall, below). */
         var lamp2 = gtag(latheAt('shade', [0.37, 0.34, 0.37], 0xf7e8c2,
-                                 -17.58, 2.59, 10.16, garageDoorG, GLOSS));
+                                 -17.58, 2.59, 10.16 + GAR_DZ, garageDoorG, GLOSS));
         lamp2.userData.lamp = true;       /* geometry only: the pass lights it */
         lamp2.userData.glazing = true;
         webgl_coachLampGlass = lamp2;
         gtag(latheAt('finial', [0.22, 0.06, 0.22], C.ink, -17.58, 2.93,
-                     10.16, garageDoorG, { rough: 0.5 }));
-        gtag(cyl(0.20, 0.20, 0.05, C.ink, -17.58, 2.57, 10.16, garageDoorG,
+                     10.16 + GAR_DZ, garageDoorG, { rough: 0.5 }));
+        gtag(cyl(0.20, 0.20, 0.05, C.ink, -17.58, 2.57, 10.16 + GAR_DZ, garageDoorG,
                  4, { rough: 0.5 })).rotation.y = Math.PI / 4;
       }
       [5.10].forEach(function (y) {
         gtag(box(5.60, 1.0, 0.30, cladColour('garage'),
-                  -15.4, y, 10.02, garageDoorG,
+                  -15.4, y, 10.02 + GAR_DZ, garageDoorG,
                   sharp({ rough: 0.95, map: CLAD('garage') })));
       });
       /* The lower cross roof spans both garage and mudroom. The bay
@@ -7215,16 +7404,26 @@
        the garage door, leaving a ribbon of grass under the threshold.
        Now it runs from the door line to the kerb and is saw-cut on a
        grid, the joints proud by a hair so they catch the light. */
-    ebox(4.6, 0.08, 16.7, NICE ? 0xffffff : EXTC.drive, -15.4, -0.25, 17.95,
+    /* MASSING ARC 2 task 6: the apron starts at the garage's own door
+       line, so a garage depth shortens it from the house end and leaves
+       the kerb end (z 26.30) exactly where it was. Its saw-cut joints
+       are absolute positions on the lawn, so the ones a deeper garage
+       has swallowed are dropped rather than left stranded in the grass
+       short of the slab. Written as `9.60 + (GARAGE_BLOCK.south - 10.10)`
+       rather than re-derived, so the canonical is the same numbers. */
+    var driveDz = GARAGE_BLOCK.south - 10.10, driveZ0 = 9.60 + driveDz;
+    var driveLen = 16.7 - driveDz, driveCz = 17.95 + driveDz / 2;
+    ebox(4.6, 0.08, driveLen, NICE ? 0xffffff : EXTC.drive, -15.4, -0.25, driveCz,
          { rough: 0.95, map: driveT });
     if (DETAIL >= 2) {
       [10.85, 12.60, 14.35, 16.10, 17.85, 19.60, 21.35, 23.10, 24.85].forEach(function (jz) {
+        if (jz < driveZ0 + 0.20) return;
         ebox(4.6, 0.014, 0.055, 0x8e887d, -15.4, -0.204, jz, { rough: 0.95 });
       });
-      ebox(0.055, 0.014, 16.7, 0x8e887d, -15.4, -0.204, 17.95, { rough: 0.95 });
+      ebox(0.055, 0.014, driveLen, 0x8e887d, -15.4, -0.204, driveCz, { rough: 0.95 });
       /* the apron's own edge, where the slab meets the lawn */
       [-1, 1].forEach(function (sx) {
-        ebox(0.10, 0.10, 16.7, EXTC.trim, -15.4 + sx * 2.30, -0.245, 17.95,
+        ebox(0.10, 0.10, driveLen, EXTC.trim, -15.4 + sx * 2.30, -0.245, driveCz,
              { rough: 0.9 });
       });
       /* and the thing every driveway ends in */
@@ -8826,15 +9025,22 @@
           yb(0.05, 0.014, 1.20, 0x7d776c, sw, GY + 0.072, 24.95, STONEO);
         }
       }
-      /* the front path, relaid in flags (it was one poured ribbon) */
-      pave(-9.62, 12.16, -7.02, 13.04, 0.66);
-      pave(-9.66, 13.04, -8.74, 24.35, 0.62);
+      /* the front path, relaid in flags (it was one poured ribbon).
+         MASSING ARC 2 task 6: the mudroom's own leg starts at the
+         mudroom door, so it follows the garage block's depth; the main
+         walk already follows PORCH_FRONT_Z4, which the porch (or, with
+         no main-face porch, the street face itself) publishes. */
+      pave(-9.62, 12.16 + GAR_DZ, -7.02, 13.04 + GAR_DZ, 0.66);
+      pave(-9.66, 13.04 + GAR_DZ, -8.74, 24.35, 0.62);
       pave(DOOR_X4 - 1.2, PORCH_FRONT_Z4 + 0.65, DOOR_X4 + 1.2, 24.35, 0.80);
-      /* foundation beds: they wrap the corner the camera looks at */
-      bed(-8.70, 14.24, -3.10, 16.00, 'SEW');
-      bed(5.70, 14.24, 11.85, 16.00, 'SEW');
-      bed(-3.10, 19.30, -0.10, 20.80, 'SEW');
-      bed(2.70, 19.30, 5.70, 20.80, 'SEW');
+      /* foundation beds: they wrap the corner the camera looks at. A
+         bed is planted AGAINST the street face, so the main block's
+         depth carries the two front ones and the porch pair out with
+         it rather than leaving them inside the living room. */
+      bed(-8.70, 14.24 + MAIN_DZ, -3.10, 16.00 + MAIN_DZ, 'SEW');
+      bed(5.70, 14.24 + MAIN_DZ, 11.85, 16.00 + MAIN_DZ, 'SEW');
+      bed(-3.10, 19.30 + MAIN_DZ, -0.10, 20.80 + MAIN_DZ, 'SEW');
+      bed(2.70, 19.30 + MAIN_DZ, 5.70, 20.80 + MAIN_DZ, 'SEW');
       /* MASSING ARC 1: the side garden moves out with the wall. The main
          block's east face went from x 10.40 to 14.65, so every east-side
          planting, the birdbath, the fence's north/south run, the hedge
@@ -8868,6 +9074,9 @@
                                     : 2.90 + (p[0] - DOOR_X4) * 0.58;
           p[1] += 5.0;
         }
+        /* task 6: the front bed rides the street face, porch group and
+           all -- see the bed() calls above */
+        p[1] += MAIN_DZ;
         return p;
       }));
       /* the east bed, up the side the camera sees most */
@@ -10941,6 +11150,9 @@
          read-only window.chfRoofPlane / chfFabricVertices hooks */
       faceDeckPlane: faceDeckPlane, blockDeckPlanes: blockDeckPlanes,
       FEATURE_VERTS: FEATURE_VERTS,
+      /* MASSING ARC 2 task 6: the two blocks' envelopes and deck planes,
+         for the read-only window.chfBlockGeometry hook */
+      blockGeometry: blockGeometry,
       /* VIEW-VOLUME MASKING (task 3): the five room shells, their masks
          (P, W, box, cam) and the one cap material, for the read-only
          window.chfRoomShell* hooks below */
@@ -10948,6 +11160,9 @@
       /* MASSING ARC 2 (spec 2026-09-17 section 2): the block model the
          scene was built from, for window.chfBlocks */
       BLOCKS: BLOCKS,
+      /* task 6: syncGarage parks driveway cars off the apron's own near
+         end, which a garage depth moves */
+      GARAGE_SOUTH: GARAGE_BLOCK.south,
       /* FACADE (arc 4): the spec the elevation was BUILT from (never the
          raw injection -- buildElevation() falls back to CANONICAL_JS)
          and the slot table it derived, for chfFacade/chfFacadeSlots. */
@@ -11318,7 +11533,8 @@
           inside++;
         } else {
           grp.position.set(DRIVE_X[outside % 2], -0.206,
-                           13.4 + Math.floor(outside / 2) * 4.2);
+                           13.4 + Math.max(0, webgl.GARAGE_SOUTH - 10.10) +
+                           Math.floor(outside / 2) * 4.2);
           eye = webgl.EXT_POS;
           extAim = true;
           outside++;
@@ -12183,6 +12399,14 @@
      was built from -- each block's depth, stories, roof {form, ridge,
      pitch_deg}, cladding, base band and body. Read-only, like chfFacade. */
   window.chfBlocks = function () { return webgl ? webgl.BLOCKS : null; };
+  /* MASSING ARC 2 task 6 (spec 2026-09-17 section 2): where each block
+     ACTUALLY stands after its depth -- west/east/north/south, its eave,
+     its ridge and the deck planes its roof was placed by. Read-only,
+     like chfBlocks. The block-meet audit rebuilds the neighbour volume
+     from exactly these numbers. */
+  window.chfBlockGeometry = function () {
+    return webgl ? webgl.blockGeometry() : null;
+  };
   /* ROOF VALLEYS (masking spec section 6): the block deck plane under a
      street face's features, {n, d} with n the deck's upward normal
      (n.p - d >= 0 is above the deck), derived by deckPlane exactly as

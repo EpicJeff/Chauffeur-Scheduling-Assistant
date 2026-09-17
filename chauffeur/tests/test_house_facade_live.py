@@ -32,7 +32,7 @@ os.environ.setdefault('CHAUFFEUR_DATA_DIR',
 from live_app import live_app
 from house_live_common import (check, _seed, DAY_LOCK_JS, SEED_RNG_JS,
                                INVARIANT_JS, _VAULT_PITCH, FEATURE_JS,
-                               VERTEX_AUDIT_JS)
+                               VERTEX_AUDIT_JS, ROOF_INSIDE_NEIGHBOUR_JS)
 
 # Spec 2026-09-17 blocks section 2, the compatibility pin's window: the
 # rectangle of the B0 frame that is the HOUSE and nothing else.
@@ -715,6 +715,136 @@ def scenario_a_bad_draft_token_is_not_an_error():
               'and it is the active facade exactly, spec for spec')
         check(not served.errors(), f'console clean: {served.errors()[:3]}')
 
+
+# MASSING ARC 2 task 6: the canonical souths the block model measures its
+# depth from -- house.js's own SWZ1 and the garage block's 10.10, which
+# services/house_facade.py's FACES table carries verbatim.
+MAIN_SOUTH_0, GARAGE_SOUTH_0 = 14.55, 10.10
+
+
+def scenario_depth_moves_the_face_and_the_blocks_meet():
+    """Spec section 2 (depth, where blocks meet) and 3.2.
+
+    Four depth combinations; each boots clean, the street faces sit where
+    the model says, the JS slot table still agrees with Python's, the
+    step at the shared face x -7.15 is closed by a wall, the deeper
+    block's roof stops at the neighbour's BOUNDED volume and nothing
+    outside that volume is lost.
+
+    TWO BRIEF DEVIATIONS, both recorded in task-6-report.md.
+
+    (1) THE RETURN WALL IS NOT SYMMETRIC, because the house is not. The
+    main block already stands 4.45 deeper than the garage block at depth
+    0/0, and its west face over that step is `west_skirt` -- a piece that
+    has carried the main block's cladding and base band there since long
+    before the block model existed. So the MAIN's return wall IS
+    west_skirt (extended to FULL_HOUSE.south by this task), and only the
+    garage's own return, when a depth actually pushes the garage block
+    PAST the main's street face, is a new piece (`garage_return`). A
+    second wall in the same plane as west_skirt would z-fight it.
+
+    (2) THE NEIGHBOUR-VOLUME CLIP RUNS ONLY WHERE THE BLOCKS DIFFER.
+    Spec section 2 rev2 ends "with equal depth and equal stories nothing
+    changes for the canonical", and measurably it cannot: at equal depths
+    the two blocks stand exactly as they were hand-built -- one shared
+    eave line, one pitch, therefore one coplanar north deck -- and the
+    main roof's west rakes have always run over the garage's footprint
+    under the garage's own roof. Subtracting there would cut geometry the
+    canonical mesh and pixel pins hold. So the clip is gated on the two
+    blocks' depths differing, and at equal depths this scenario asserts
+    the roofs are left exactly as built instead.
+    """
+    from services import house_facade as hf
+    served = live_app(_seed)
+    if served is None:
+        return
+    from house_probe import BUDGET_JS, THREE_WRAP
+    with open('static/vendor/three.min.js', 'rb') as fh:
+        patched = fh.read() + THREE_WRAP
+    combos = [{'main': 0, 'garage': 0}, {'main': 2, 'garage': 0},
+              {'main': 0, 'garage': 6}, {'main': 2, 'garage': 6}]
+    base_out = None
+    for depths in combos:
+        spec = copy.deepcopy(hf.CANONICAL)
+        spec['blocks']['main']['depth'] = depths['main']
+        spec['blocks']['garage']['depth'] = depths['garage']
+        spec, _notes = hf.normalize(spec)
+        m_south = MAIN_SOUTH_0 + depths['main']
+        g_south = GARAGE_SOUTH_0 + depths['garage']
+        # the shared face x -7.15: whichever block's street face is
+        # further south leaves the OTHER one's side wall exposed over the
+        # step. Only the garage's side needs a new piece (see the
+        # docstring); the main's is west_skirt.
+        want_return = 'garage_return' if g_south > m_south + 1e-6 else None
+        tok = hf.issue_draft(spec)
+        with served.browser() as page:
+            page.route('**/three.min.js*', lambda route: route.fulfill(
+                status=200, content_type='application/javascript', body=patched))
+            page.add_init_script(DAY_LOCK_JS)
+            page.add_init_script(SEED_RNG_JS)
+            page.goto(served.url('house?quality=high&draft=' + tok))
+            page.wait_for_selector('#room canvas', timeout=20000)
+            page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+            geo = page.evaluate('window.chfBlockGeometry()')
+            check(geo and abs(geo['main']['south'] - m_south) < 1e-3 and
+                  abs(geo['garage']['south'] - g_south) < 1e-3,
+                  f'{depths}: the street faces moved: {geo}')
+            # the JS slot table still IS the Python one, depth and all
+            js_slots = page.evaluate('window.chfFacadeSlots()')
+            py_slots = hf.slot_table(spec['blocks'])
+            check(len(js_slots) == len(py_slots), f'{depths}: slot count')
+            for a, b in zip(js_slots, py_slots):
+                check(abs(a['z'] - b['z']) < 1e-6,
+                      f"{depths}: slot {b['i']} z {a['z']} vs {b['z']}")
+            rows = {r['name']: r for r in page.evaluate('window.chfShellFabric()')}
+            check('main_return' not in rows,
+                  f'{depths}: the main block never gets a second west face')
+            if want_return:
+                check(want_return in rows, f'{depths}: {want_return} registered')
+                box = rows[want_return]['box']
+                check(abs(box[4] - m_south) < 0.2 and abs(box[5] - g_south) < 0.2,
+                      f'{depths}: {want_return} closes the step: {box}')
+            else:
+                check('garage_return' not in rows,
+                      f'{depths}: no garage return wall wanted, got one')
+                # the main block IS the deeper one here, and its west face
+                # reaches its own street line
+                # + 0.05: the corner board at its end is 0.1 deep and
+                # centred on the face line, so the box runs half past it
+                check(abs(rows['west_skirt']['box'][5] - (m_south + 0.05)) < 0.02,
+                      f"{depths}: west_skirt reaches the main face: "
+                      f"{rows['west_skirt']['box']}")
+            # R-B: a depth opens a floor-less void behind the moved face
+            for who, key in (('main', 'main_void_floor'), ('garage', 'garage_void_floor')):
+                check((key in rows) == (depths[who] > 0),
+                      f'{depths}: {key} present iff {who} has depth')
+            # the front door and the garage still read from the street
+            check(page.evaluate("window.chfNavProbe({front:'main'})"),
+                  f'{depths}: the front door is reachable from the street')
+            check(page.evaluate("window.chfNavProbe({front:'garage_block'})"),
+                  f'{depths}: the garage front is reachable from the street')
+            leak = page.evaluate(ROOF_INSIDE_NEIGHBOUR_JS)
+            check(not leak.get('err'), f'{depths}: audit ran: {leak}')
+            if depths['main'] != depths['garage']:
+                check(leak['main_in_garage'] == 0 and leak['garage_in_main'] == 0,
+                      f'{depths}: roof left inside the neighbour volume: {leak}')
+            if base_out is None:
+                base_out = leak['main_out']
+            check(leak['main_out'] > 0.9 * base_out,
+                  f'{depths}: main roof kept outside the neighbour: {leak}')
+            # nothing outside the neighbour's volume is lost: the main
+            # roof still runs its whole east/south footprint plus the
+            # 0.32 overhang
+            span = leak['main_span']
+            check(span[1] > 14.65 + 0.32 - 0.02 and span[3] > m_south + 0.32 - 0.02,
+                  f'{depths}: the main roof still covers its own block: {span}')
+            b = page.evaluate(BUDGET_JS)
+            print('  depth %r inFrustum=%s calls=%s buildMs=%s'
+                  % (depths, b.get('inFrustum'), b.get('calls'), b.get('buildMs')))
+            errs = [e for e in served.errors() if 'WebGL' not in e]
+            check(not errs, f'{depths}: console clean: {errs[:3]}')
+
+
 if __name__ == '__main__':
     scenario_canonical_facade_pins_the_hand_built_elevation()
     scenario_worst_case_facade_builds_clean()
@@ -722,6 +852,7 @@ if __name__ == '__main__':
     scenario_a_saved_gable_over_the_study_stays_outside()
     scenario_a_draft_token_renders_day_locked_and_captures()
     scenario_a_bad_draft_token_is_not_an_error()
+    scenario_depth_moves_the_face_and_the_blocks_meet()
     # Last: it boots six browsers of its own, and every scenario above
     # reads mesh counts out of the shared temp data dir this one seeds.
     scenario_claddings_and_base_band()

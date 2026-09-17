@@ -176,3 +176,58 @@ def _seed():
     # H3: children hang backpacks in the mudroom
     storage.add_member({'id': 'k1', 'name': 'Maya', 'role': 'child'})
     storage.add_member({'id': 'k2', 'name': 'Finn', 'role': 'child'})
+
+
+# ---- MASSING ARC 2 task 6: where two blocks meet ----------------------
+# Spec 2026-09-17 section 2 (rev2): each block's roof is clipped against
+# the NEIGHBOUR's BOUNDED volume -- its footprint (with depth) from the
+# ground to its ridge, capped by its own decks -- never an infinite deck
+# plane. This audit rebuilds that volume from window.chfBlockGeometry()
+# alone (west/east/north/south/ridge and the deck planes the block roof
+# was actually placed by), so it measures the RESULT rather than reading
+# the clipper's own region back.
+#
+# The deck bound is the deck's TOP SURFACE, not its centre plane: a deck
+# is a 0.18-thick slab whose faces sit 0.09 along its own normal either
+# side of the centre plane, so `d + 0.09` is the shingle line. Every
+# bound is taken 0.05 INWARD, which is what keeps the two blocks' shared
+# eave (both north decks share one eave line, one pitch and therefore one
+# plane, whatever the depths) from reading as a leak.
+ROOF_INSIDE_NEIGHBOUR_JS = r"""() => {
+  const G = window.chfBlockGeometry();
+  if (!G) return { err: 'no block geometry' };
+  const T = 0.05;
+  function inside(b, p) {
+    if (p[0] < b.west + T || p[0] > b.east - T) return false;
+    if (p[2] < b.north + T || p[2] > b.south - T) return false;
+    if (p[1] < T || p[1] > b.ridge - T) return false;
+    for (let i = 0; i < b.decks.length; i++) {
+      const pl = b.decks[i];
+      if (pl.n[0] * p[0] + pl.n[1] * p[1] + pl.n[2] * p[2] - (pl.d + 0.09) > -T)
+        return false;                       /* at or above that deck */
+    }
+    return true;
+  }
+  const out = { main_in_garage: 0, garage_in_main: 0,
+                main_out: 0, garage_out: 0, main_span: null };
+  let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+  window.chfShellFabric().forEach(r => {
+    const isMain = r.name.indexOf('roof_main_') === 0;
+    const isGar = r.name.indexOf('garage_block_roof_') === 0;
+    if (!isMain && !isGar) return;
+    const vs = window.chfFabricVertices(r.name) || [];
+    vs.forEach(p => {
+      if (isMain) {
+        if (inside(G.garage, p)) out.main_in_garage++; else out.main_out++;
+        if (p[0] < x0) x0 = p[0];
+        if (p[0] > x1) x1 = p[0];
+        if (p[2] < z0) z0 = p[2];
+        if (p[2] > z1) z1 = p[2];
+      } else {
+        if (inside(G.main, p)) out.garage_in_main++; else out.garage_out++;
+      }
+    });
+  });
+  out.main_span = [x0, x1, z0, z1];
+  return out;
+}"""
