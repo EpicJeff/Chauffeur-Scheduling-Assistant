@@ -19,7 +19,7 @@ The main rectangle is the whole east side now; nothing projects past the front a
 
 **Deleted** (shell only, no props, no zones): `massing_east_back_north/east/patio`, `massing_east_front_east/patio/south`, `massing_front_roof`, `massing_back_roof_*` and `massing_back_roof_shed`, `massing_service_north/south/west/roof`, `mudroom_cross_roof`, `mudroom_roof`, the terrace slab and its furniture, `living_roof` (registered, empty, inert since H3). `mudroom_front_cladding` / `mudroom_east_finish` fold into the garage block's walls.
 
-**Kept as-is**: `north_wall` (grows east to x 14.65), `north_cladding`, `west_wall`, `west_skirt`, `west_cladding`, `south_wall` (grows east to x 14.65 — the study's street face is part of it now), `garage_shell`, `garage_door`, `patio_slider` (re-registered as interior;retired v2.499.42 → `east_room_door`), `living_back_room_door`, `yard`, every interior zone, every camera except the study's.
+**Kept as-is**: `north_wall` (grows east to x 14.65), `north_cladding`, `west_wall`, `west_skirt`, `west_cladding`, `south_wall` (grows east to x 14.65 — the study's street face is part of it now), `garage_shell`, `garage_door`, `patio_slider` (re-registered as interior; retired v2.499.42 → `east_room_door`), `living_back_room_door`, `yard`, every interior zone, every camera except the study's.
 
 **New pieces**: `north_wall_east` (the main's north wall from x 6.85 to 14.65, one window), `mudroom_front` (the mudroom's full-height street face on the garage block, `room: 'mudroom'` — the old front band folded in), `east_wall` (rebuilt: the main's full east side at x 14.65, -6.1..14.55, exterior; the old east wall at x 6.85 becomes the interior partition between kitchen/living and the future rooms/study, registered as `east_partition` for cutaways), `garage_block_north`, `garage_block_west` (one window), `garage_block_roof_*`, `roof_main_*` (re-extended to the full main), `back_door` (north wall, `room: 'kitchen'`, `entry: 'back_door'`), `future_room_partition` (between east room and back room, `room: null` — inert), `back_patio` (slab, not registered).
 
@@ -592,7 +592,7 @@ the study, because the study owns it (10.10). The sage wainscot, the base, the c
 calendar and the clock have been invisible from inside this room since the study moved into the main
 block, and so had the corkboard's cork face: what showed was its frame with wall inside it. Moving
 the window onto that wall made it impossible to leave alone. The room is placed by its WALLS now —
-the study scene's own east wall plane lands 0.12 clear of the slab (the clearance the window sill
+the study scene's own east wall plane lands 0.06 clear of the slab (the clearance the window sill
 needs, since it reaches .088 behind its own plane), the north wall box is built BEHIND its own face
 rather than centred on it, and both walls' finish runs sit on the face they belong to, the east
 wall's split around the window because the glass reaches below the rail.

@@ -477,12 +477,23 @@ south-east through the street wall, which hides with the roof.
    1 lines the whole plinth with planting.
 2. The cutaway edge is a raw wall section. Give it a visible wall thickness
    band in `cabShade`, as the plates do.
-3. A room's cutaway takes only that room's OWN enclosure. Every shell piece
-   declares the rooms it encloses (`owners`), and a wall or roof spanning two
-   rooms is built as two pieces split on the line between them — you should
-   only ever be seeing the room you are looking at, never through a third
-   room whose walls happened to be in the way.
-4. Warm interior light does not read from outside. That is the lighting pass,
+3. A room's cutaway is a **view-volume mask** (v2.499.53+), not a per-piece
+   verdict: a build-time pyramid-minus-wedge from the room's own camera
+   through its eave-high box clips every registered wall, roof, door,
+   window and the yard, so you only ever see what actually stands between
+   the camera and that room's own walled volume — never a whole wall or
+   roof ghosted or hidden because it happened to belong to the same
+   registered piece as something that does block the view. A cut face caps
+   in ONE neutral section tone, a light plaster grey, the same shared
+   material everywhere a cut lands — never the piece's own siding, shingle
+   or trim colour continued across the cut.
+4. A facade roof feature (a gable, dormer or hip end) stops at the roof
+   line of the block it sits on. Its deck, trim and ridge cap are clipped
+   to the parent roof's own slope plane, so nothing of it runs on under
+   the main roof to show inside the house as a shingled wedge; a feature
+   that would keep less than a fifth of itself after clipping is dropped
+   whole instead, rather than left as a sliver.
+5. Warm interior light does not read from outside. That is the lighting pass,
    but the geometry must leave the windows glazed and emissive-capable.
 
 ---
