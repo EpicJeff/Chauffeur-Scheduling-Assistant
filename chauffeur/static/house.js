@@ -527,6 +527,14 @@
     /* one clock for the whole scene: the sky dome and the rig must never
        disagree about whether it is dark out */
     function isNight() {
+      /* MASSING ARC 2 task 10: ?day=1 pins the scene to daylight. A
+         screenshot taken after seven in the evening photographed a dark
+         house, so every probe and live test had to monkey-patch
+         Date.prototype.getHours from an init script; the URL says it now,
+         once, for the one clock the whole scene reads. */
+      try {
+        if (new URLSearchParams(location.search).get('day') === '1') return false;
+      } catch (e) {}
       var h = new Date().getHours();
       return h < 7 || h >= 19;
     }
@@ -11993,6 +12001,17 @@
     return webgl.FEATURE_VERTS[name] || null;
   };
   window.chfFacadeSlots = function () { return webgl ? webgl.SLOTS : []; };
+  /* MASSING ARC 2 task 10: one frame, one data URL, synchronously. The
+     canvas has no preserveDrawingBuffer (it never will -- that costs a
+     copy on every frame of every wall panel), so toDataURL only sees
+     pixels while the drawing buffer is still unswapped: render here and
+     read in the SAME task, never across an await. No per-frame work is
+     added; this runs only when something calls it. */
+  window.chfCapture = function () {
+    if (!webgl) return null;
+    webgl.R.render(webgl.scene, webgl.cam);
+    return webgl.R.domElement.toDataURL('image/png');
+  };
   /* Read-only test hook: find a canvas pixel over actual geometry. Use
      the production hit readers so candidate selection cannot drift from
      pointer handling. Tests still assert the result of a real mouse click.

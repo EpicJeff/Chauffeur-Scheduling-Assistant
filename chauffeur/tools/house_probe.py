@@ -8,6 +8,7 @@ playwright probes:
     python tools/house_probe.py --views all --quality high
     python tools/house_probe.py --views garage --clip 300,60,900,600
     python tools/house_probe.py --views kitchen --scenery 0.5
+    python tools/house_probe.py --facade-json my_spec.json --day
 
 Views: exterior, kitchen, living, mudroom, garage, study, and lean_<zone> for
 any zone (lean_board, lean_door, lean_radio, lean_calendar, ...). `all` = the
@@ -22,6 +23,7 @@ without it, exit 0 — the same bargain live_app makes).
 Run from chauffeur/. Screenshots land as <out>/<view>.png, 1400x1000.
 """
 import argparse
+import io
 import json
 import datetime
 import os
@@ -361,7 +363,27 @@ def main():
                          'at night without this. Off by default: identical '
                          'behaviour and output to a probe run before this '
                          'flag existed.')
+    ap.add_argument('--facade-json', default='',
+                    help='a JSON file holding one facade spec: it is '
+                         'normalized, issued a DRAFT token inside the served '
+                         'app, and opened as /house?draft=<token>. Nothing '
+                         'is saved and no setting is touched, so a spec can '
+                         'be photographed without ever becoming the house '
+                         'this household lives in. Refuses to run unless '
+                         'CHAUFFEUR_DATA_DIR is the temp dir this probe made '
+                         'for itself.')
     args = ap.parse_args()
+
+    if args.facade_json:
+        # The probe seeds a whole fixture household. Inheriting a REAL data
+        # dir (a dev checkout's, an add-on's) would write those fixtures
+        # into it, so a file adapter that anyone can point at a spec refuses
+        # to run anywhere but the mkdtemp at the top of this module.
+        # normcase because Windows hands the temp root back in whatever case
+        # the caller typed.
+        _dd = os.path.normcase(os.environ.get('CHAUFFEUR_DATA_DIR', ''))
+        if not _dd.startswith(os.path.normcase(tempfile.gettempdir())):
+            raise SystemExit('refusing to run against a non-temp data dir')
 
     os.environ['HOUSE_PROBE_FACADE'] = args.facade
 
@@ -417,7 +439,20 @@ def main():
             page.route('**/three.min.js*', lambda route: route.fulfill(
                 status=200, content_type='application/javascript',
                 body=patched))
-        page.goto(served.url('house?quality=' + args.quality))
+        _url = 'house?quality=' + args.quality
+        if args.facade_json:
+            # In-process: live_app runs uvicorn on a thread of THIS
+            # interpreter, so the token this line mints is the token the
+            # served /house resolves.
+            from services import house_facade as _hf
+            with io.open(args.facade_json, encoding='utf-8') as fh:
+                _spec, _notes = _hf.normalize(json.load(fh))
+            _url += '&draft=' + _hf.issue_draft(_spec)
+            print('facade-json: %s (%d note%s)'
+                  % (args.facade_json, len(_notes), '' if len(_notes) == 1 else 's'))
+            for _n in _notes:
+                print('  note:', _n)
+        page.goto(served.url(_url))
         page.wait_for_selector('#room canvas', timeout=20000)
         page.wait_for_timeout(2200)
         if args.scenery != '':

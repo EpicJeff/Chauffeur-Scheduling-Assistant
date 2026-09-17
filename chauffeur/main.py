@@ -1724,11 +1724,23 @@ def house_page(request: Request):
     state fetch, so build-once means the spec arrives with the HTML."""
     import json as _json
     from services import house_facade as _hf
+    bundle = None
     try:
-        bundle = _hf.active_bundle()
+        # MASSING ARC 2 task 10: ?draft=<token> renders a spec this process
+        # is holding for fifteen minutes (the photo pipeline's proposal, or
+        # the editor's Preview in 3D) instead of the saved one. A bad or
+        # expired token is not an error -- the house just draws the active
+        # facade, the same page anyone else would get.
+        tok = request.query_params.get('draft')
+        entry = _hf.draft_for(tok) if tok else None
+        if entry is not None:
+            bundle = {'id': 'draft', 'name': 'Draft', 'spec': entry['spec'],
+                      'slots': _hf.slot_table(entry['spec']['blocks'])}
+        if bundle is None:
+            bundle = _hf.active_bundle()
     except Exception:
         bundle = {'id': 'canonical', 'name': 'Canonical', 'spec': _hf.CANONICAL,
-                  'slots': _hf.slot_table()}
+                  'slots': _hf.slot_table(_hf.CANONICAL['blocks'])}
     facade_json = _json.dumps(bundle).replace('</', '<\\/')
     return templates.TemplateResponse(request=request, name="house.html",
                                       context={'facade_json': facade_json})
@@ -5477,8 +5489,20 @@ def house_state_api(since: float = 0, request: Request = None):
 @app.get("/api/house/facades")
 def house_facades_api():
     from services import house_facade as _hf
-    return {'active': _hf.active_bundle()['id'], 'facades': _hf.list_facades(),
-            'slots': _hf.slot_table()}
+    bundle = _hf.active_bundle()
+    # the slot table follows the ACTIVE spec's blocks, exactly as the one
+    # the page carries does (task 10) -- one table, one depth.
+    return {'active': bundle['id'], 'facades': _hf.list_facades(),
+            'slots': bundle['slots']}
+
+
+@app.post("/api/house/facades/draft")
+def house_facade_draft(body: dict = Body(default={})):
+    """A hand draft becomes a token /house can render (Preview in 3D). The
+    defaults path: this is the editor's own object, not a model's."""
+    from services import house_facade as _hf
+    spec, notes = _hf.normalize((body or {}).get('spec'))
+    return {'token': _hf.issue_draft(spec), 'spec': spec, 'notes': notes}
 
 
 @app.post("/api/house/facades/preview")

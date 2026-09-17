@@ -364,6 +364,7 @@ def scenario_routes_and_template():
     for line in ("('GET', '/api/house/facades', WALL_OR_SERVICE, None)",
                  "('POST', '/api/house/facades', PARENTS, None)",
                  "('POST', '/api/house/facades/preview', PARENTS, None)",
+                 "('POST', '/api/house/facades/draft', PARENTS, None)",
                  "('POST', '/api/house/facades/photo', PARENTS, None)",
                  "('PUT', '/api/house/facades/active', PARENTS, None)",
                  "('PUT', '/api/house/facades/{fid}', PARENTS, None)",
@@ -418,6 +419,66 @@ def scenario_route_wrappers_map_errors():
 
     done = main.house_facade_delete(fid)
     check(done == {'status': 'ok', 'active': 'canonical'}, f'delete wrapper falls back to canonical: {done}')
+
+
+def scenario_draft_tokens_verify_expire_and_dedupe():
+    """MASSING ARC 2 task 10 (spec 2026-09-17 section 4): a draft is a
+    15-minute HMAC token over a spec the process holds in memory. Nothing
+    is stored, nothing is trusted from the client but the token itself."""
+    spec, _ = hf.normalize(hf.CANONICAL)
+    tok = hf.issue_draft(spec, photo='AAAA', mime='image/jpeg')
+    d = hf.draft_for(tok)
+    check(d and d['spec'] == spec and d['photo_b64'] == 'AAAA', 'a fresh token resolves to its draft')
+    check(hf.draft_for(tok[:-1] + ('0' if tok[-1] != '0' else '1')) is None, 'a tampered token is refused')
+    check(hf.draft_for('') is None and hf.draft_for('nope.nope') is None, 'garbage is refused')
+    hf.store_result(tok, {'revised': spec, 'reasons': ['x']})
+    check(hf.draft_for(tok)['result']['reasons'] == ['x'], 'a stored result rides the token')
+    old = hf._DRAFTS[tok]['issued'] - (hf.DRAFT_TTL_S + 1) * 1000
+    hf._DRAFTS[tok]['issued'] = old
+    check(hf.draft_for(tok) is None, 'an expired token is refused')
+    check(tok not in hf._DRAFTS, 'expired entries are swept')
+
+
+def _house_html(query):
+    """The /house route, rendered. FastAPI's TestClient needs httpx, which
+    is not installed here, so the route function is called directly with a
+    hand-built Starlette Request — the idiom tests/test_auth.py already
+    uses. TemplateResponse renders in its constructor, so .body is the
+    page."""
+    from starlette.requests import Request
+    import main as _main
+    req = Request({'type': 'http', 'method': 'GET', 'path': '/house',
+                   'query_string': query.encode('utf-8'), 'headers': [],
+                   'app': _main.app, 'router': _main.app.router})
+    return _main.house_page(req).body.decode('utf-8')
+
+
+def scenario_house_page_renders_a_draft():
+    import main as _main
+    _fresh()
+    spec, _ = hf.normalize({**copy.deepcopy(hf.CANONICAL), 'mirror': True})
+    tok = hf.issue_draft(spec)
+    html = _house_html(f'draft={tok}&day=1')
+    check('"id": "draft"' in html and '"mirror": true' in html, 'the draft rides the page')
+    html2 = _house_html('draft=bogus')
+    check('"id": "canonical"' in html2, 'a bad token falls back to the active facade')
+    r = _main.house_facade_draft({'spec': {'blocks': {'main': {'depth': 9}}}})
+    check(r['token'] and r['spec']['blocks']['main']['depth'] == 6.0,
+          'a hand draft gets a token through the defaults path')
+    check(len(hf.list_facades()) == 1, 'nothing saved')
+    # every bundle's slots follow its OWN blocks, draft included: a deeper
+    # main face moves its slots' z, and the page must carry that table or
+    # house.js builds features against the canonical depth.
+    deep, _ = hf.normalize({**copy.deepcopy(hf.CANONICAL),
+                            'blocks': {**copy.deepcopy(hf.CANONICAL['blocks']),
+                                       'main': {**copy.deepcopy(hf.CANONICAL['blocks']['main']),
+                                                'depth': 4}}})
+    dtok = hf.issue_draft(deep)
+    bundle = json.loads(_house_html(f'draft={dtok}').split('window.HOUSE_FACADE = ')[1].split(';</script>')[0])
+    check(bundle['slots'] == hf.slot_table(deep['blocks']) and
+          bundle['slots'] != hf.slot_table(), 'the draft bundle carries its own blocks slot table')
+    check(_main.house_facades_api()['slots'] == hf.slot_table(hf.active_bundle()['spec']['blocks']),
+          'the facades API slots follow the active spec too')
 
 
 def scenario_photo_becomes_a_draft_never_a_save():
@@ -697,6 +758,8 @@ if __name__ == '__main__':
                scenario_active_bundle_survives_a_missing_name,
                scenario_routes_and_template,
                scenario_route_wrappers_map_errors,
+               scenario_draft_tokens_verify_expire_and_dedupe,
+               scenario_house_page_renders_a_draft,
                scenario_photo_becomes_a_draft_never_a_save,
                scenario_photo_failures_are_answers,
                scenario_the_two_v2_bridges_are_declared,

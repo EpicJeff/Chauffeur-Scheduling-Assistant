@@ -371,6 +371,7 @@ RULES = [
     ('GET', '/api/house/facades', WALL_OR_SERVICE, None),
     ('POST', '/api/house/facades', PARENTS, None),
     ('POST', '/api/house/facades/preview', PARENTS, None),
+    ('POST', '/api/house/facades/draft', PARENTS, None),
     ('POST', '/api/house/facades/photo', PARENTS, None),
     ('PUT', '/api/house/facades/active', PARENTS, None),
     ('PUT', '/api/house/facades/{fid}', PARENTS, None),

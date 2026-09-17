@@ -5,7 +5,11 @@ Pure functions above the line, storage below it. The slot table and the
 canonical facade are the JS side's single source of truth too: a live
 test pins window.chfFacadeSlots() against slot_table()."""
 import copy
+import hashlib
+import hmac
+import json
 import math
+import secrets
 import time
 import uuid
 
@@ -781,6 +785,75 @@ def active_bundle():
     fid = _settings().get('house_facade_active') or CANONICAL_ID
     rec = next((r for r in _saved() if r['id'] == fid), None)
     if rec is None:
-        return {'id': CANONICAL_ID, 'name': 'Canonical', 'spec': copy.deepcopy(CANONICAL), 'slots': slot_table()}
+        spec = copy.deepcopy(CANONICAL)
+        return {'id': CANONICAL_ID, 'name': 'Canonical', 'spec': spec,
+                'slots': slot_table(spec['blocks'])}
     spec, _ = normalize(rec.get('spec'))
-    return {'id': rec['id'], 'name': rec.get('name') or 'Saved facade', 'spec': spec, 'slots': slot_table()}
+    # MASSING ARC 2 task 10: every bundle's slots follow ITS OWN blocks. A
+    # deeper or two-storey block moves its face's z and raises its eave, and
+    # house.js builds features against the table that rides the page -- so a
+    # canonical table under a non-canonical spec put every window on the
+    # wrong plane.
+    return {'id': rec['id'], 'name': rec.get('name') or 'Saved facade', 'spec': spec,
+            'slots': slot_table(spec['blocks'])}
+
+
+# --- drafts (spec 2026-09-17 section 4: token lifecycle) ---
+# A draft is a spec this PROCESS holds for fifteen minutes under a token
+# nobody can forge: /house?draft=<token> renders it, and nothing about it
+# is ever stored. The token carries its own issue time and an HMAC over
+# (photo, spec, issued) -- so a tampered or aged token resolves to
+# nothing and the page quietly falls back to the active facade.
+_DRAFT_SECRET = secrets.token_bytes(32)
+_DRAFTS = {}
+DRAFT_TTL_S = 900
+
+
+def _sha(s):
+    return hashlib.sha256((s or '').encode('utf-8') if isinstance(s, str) else (s or b'')).hexdigest()
+
+
+def _sign(photo_sha, spec_sha, issued_ms):
+    return hmac.new(_DRAFT_SECRET, f'{photo_sha}|{spec_sha}|{issued_ms}'.encode(), 'sha256').hexdigest()[:32]
+
+
+def _sweep(now_ms):
+    for k in [k for k, v in _DRAFTS.items() if now_ms - v['issued'] > DRAFT_TTL_S * 1000]:
+        _DRAFTS.pop(k, None)
+
+
+def issue_draft(spec, photo=None, mime=None):
+    """A normalized spec (plus, optionally, the photo it came from) becomes
+    a token /house can render. Returns the token; stores nothing on disk."""
+    now_ms = int(time.time() * 1000)
+    _sweep(now_ms)
+    spec_sha = _sha(json.dumps(spec, sort_keys=True))
+    photo_sha = _sha(photo or '')
+    tok = f'{now_ms:x}.{_sign(photo_sha, spec_sha, now_ms)}'
+    _DRAFTS[tok] = {'spec': copy.deepcopy(spec), 'photo_b64': photo, 'mime': mime,
+                    'issued': now_ms, 'spec_sha': spec_sha, 'photo_sha': photo_sha,
+                    'result': None}
+    return tok
+
+
+def draft_for(token):
+    """The draft behind a token, or None -- expired, tampered or unknown."""
+    now_ms = int(time.time() * 1000)
+    _sweep(now_ms)
+    e = _DRAFTS.get(token or '')
+    if not e:
+        return None
+    try:
+        issued = int(token.split('.')[0], 16)
+    except ValueError:
+        return None
+    if not hmac.compare_digest(token.split('.')[1], _sign(e['photo_sha'], e['spec_sha'], issued)):
+        return None
+    return e
+
+
+def store_result(token, result):
+    """A model's answer rides the token it was asked about."""
+    e = draft_for(token)
+    if e is not None:
+        e['result'] = result

@@ -481,9 +481,113 @@ def scenario_a_saved_gable_over_the_study_stays_outside():
         hf.set_active(hf.CANONICAL_ID)
 
 
+
+# ?day=1 has to beat a clock that says otherwise, so this locks the page's
+# own clock to eleven at night -- the inverse of DAY_LOCK_JS.
+NIGHT_LOCK_JS = 'Date.prototype.getHours = function () { return 23; };'
+
+
+def _mean_luma(data_url):
+    """The mean brightness of a chfCapture() frame, and its size."""
+    import base64, io as _io
+    raw = base64.b64decode(data_url.split(',', 1)[1])
+    from PIL import Image
+    im = Image.open(_io.BytesIO(raw)).convert('L')
+    px = list(im.getdata())
+    return sum(px) / float(len(px)), im.size
+
+
+def scenario_a_draft_token_renders_day_locked_and_captures():
+    """MASSING ARC 2 task 10: /house?draft=<token> is the injection path.
+
+    `window.HOUSE_FACADE = ...` is assigned INLINE in house.html, AFTER
+    every init script has run, so page.add_init_script cannot inject a
+    facade -- house.js reads the inline assignment, not the injected one.
+    The token is the seam instead: live_app runs uvicorn on a thread of
+    THIS interpreter, so a token minted here is a token the served /house
+    resolves, and the spec rides the page without anything being saved or
+    activated.
+
+    Three laws in one boot:
+      - the DRAFT builds (a mirrored spec, which the active facade is not),
+        and the draft's own slot table rides the page with it;
+      - ?day=1 beats the scene's own clock, pinned here to 23:00 -- a night
+        sweep used to photograph a dark house, and no init script is needed
+        to stop it any more;
+      - window.chfCapture() hands back one real 1400x1000 frame, rendered
+        and read in the same task with no preserveDrawingBuffer.
+    """
+    from services import house_facade as hf
+    served = live_app(_seed)
+    if served is None:
+        return
+    spec, _ = hf.normalize({**copy.deepcopy(hf.CANONICAL), 'mirror': True})
+    tok = hf.issue_draft(spec)
+    with served.browser() as page:
+        page.add_init_script(NIGHT_LOCK_JS)      # deliberately NOT DAY_LOCK_JS
+        page.goto(served.url('house?draft=' + tok + '&day=1&quality=medium'))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        built = page.evaluate('window.chfFacade()')
+        check(built and built['mirror'] is True,
+              'the mirrored DRAFT is what built, not the active facade: %r'
+              % (built and built.get('mirror')))
+        check(hf.active_bundle()['spec']['mirror'] is False,
+              'and the active facade was never touched by rendering a draft')
+        # the injected bundle itself, not the JS recomputation (house.js
+        # derives SLOTS in unrounded floats of its own; the canonical pin
+        # above already holds those two against each other). What is new
+        # here is that the DRAFT bundle rode the page, slots and all.
+        inj = page.evaluate('window.HOUSE_FACADE')
+        check(inj['id'] == 'draft' and inj['spec'] == spec,
+              "the page carries the draft bundle: %r" % inj.get('id'))
+        check(inj['slots'] == hf.slot_table(spec['blocks']),
+              "the draft carries its OWN blocks' slot table into the page")
+        day_shot = page.evaluate('window.chfCapture()')
+        check(isinstance(day_shot, str) and day_shot.startswith('data:image/png;base64,'),
+              'chfCapture hands back a png data URL: %r' % (day_shot or '')[:40])
+        day_mean, size = _mean_luma(day_shot)
+        check(size == (1400, 1000), 'the frame is the whole viewport: %r' % (size,))
+        check(day_mean > 40,
+              'at 23:00 with ?day=1 the capture is a LIT house: mean %.1f' % day_mean)
+
+        # the same page, same clock, no ?day=1: the scene's own night rig is
+        # still in charge, so the flag is a flag and not a new default.
+        page.goto(served.url('house?draft=' + tok + '&quality=medium'))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        night_mean, _ = _mean_luma(page.evaluate('window.chfCapture()'))
+        check(night_mean < day_mean - 5,
+              'without ?day=1 the 23:00 clock still wins: night %.1f vs day %.1f'
+              % (night_mean, day_mean))
+        check(not served.errors(), f'console clean: {served.errors()[:3]}')
+
+
+def scenario_a_bad_draft_token_is_not_an_error():
+    """Never drop functionality: a token that expired while a parent was
+    away, or a link someone kept, draws the ACTIVE facade -- the page
+    everyone else gets -- and never an error page."""
+    from services import house_facade as hf
+    served = live_app(_seed)
+    if served is None:
+        return
+    with served.browser() as page:
+        page.add_init_script(DAY_LOCK_JS)
+        page.goto(served.url('house?draft=deadbeef.nope&quality=medium'))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        built = page.evaluate('window.chfFacade()')
+        check(built and built['mirror'] is False,
+              'a bad token falls back to the active facade, never an error page')
+        check(built == hf.active_bundle()['spec'],
+              'and it is the active facade exactly, spec for spec')
+        check(not served.errors(), f'console clean: {served.errors()[:3]}')
+
 if __name__ == '__main__':
     scenario_canonical_facade_pins_the_hand_built_elevation()
     scenario_worst_case_facade_builds_clean()
     scenario_roof_features_stop_at_the_roof_line()
     scenario_a_saved_gable_over_the_study_stays_outside()
+    scenario_a_draft_token_renders_day_locked_and_captures()
+    scenario_a_bad_draft_token_is_not_an_error()
     print("test_house_facade_live OK")
