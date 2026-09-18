@@ -4585,6 +4585,19 @@
     var GARAGE_BLOCK = { west: -18.20, east: -7.15, north: -6.10,
                          south: 10.10 + GAR_DZ,
                          eave: EXT_TOP4 * (BLOCKS.garage.stories || 1) };
+    /* MASSING ARC 2 task 8 (spec 2026-09-17 section 2): a SIDE-ENTRY
+       garage. The bay's street face stops being a door bay and becomes
+       an ordinary walled face with a window (services/house_facade.py's
+       normalize() already deletes the street garage_door row and adds
+       that window); the door moves to the block's WEST face, centred on
+       SIDE_DOOR_Z, and the drive turns an L to reach it. One flag, read
+       by the west wall, the bay's street pieces, garageDoorAt, the
+       driveway and the car plaques -- every one of them reproduces
+       today's front-entry numbers when it is false. */
+    var GARAGE_SIDE = BLOCKS.garage.orientation === 'side';
+    /* the side opening: 3.6 clear between these two z lines (the same
+       3.6 the street bay's piers leave), and the leaf centred on 4.0. */
+    var SIDE_DOOR_Z = 4.0, SIDE_OPEN_Z0 = 2.30, SIDE_OPEN_Z1 = 5.90;
     /* Every block roof is {form, ridge}: nothing about ridge direction
        is fixed (spec section 3). Canonical is today's look — both blocks
        gabled with the ridge running east/west. window.HOUSE_ROOF_FORMS
@@ -5210,7 +5223,11 @@
        at each end, and the two ends become triangular decks of the same
        pitch instead of vertical clapboard infill (so all four planes
        meet at the same ridge point and no batten infill is needed). */
-    function shellGable(name, x0, x1, z0, z1, eave, ridgeAxis, room, ends, pitch, slopeRooms, depthEnds, form, buried) {
+    /* `cladMap` (task 8): the tile this gable's END INFILL wears when the
+       feature that asked for it overrides its block's cladding. Absent
+       (every block roof, every canonical feature) the block's own tile
+       stands, so nothing about the canonical moves. */
+    function shellGable(name, x0, x1, z0, z1, eave, ridgeAxis, room, ends, pitch, slopeRooms, depthEnds, form, buried, cladMap) {
       var alongZ = (ridgeAxis === 'z' || ridgeAxis === true);
       var hip = (form === 'hip');
       /* MASSING ARC 2 task 6: only a BLOCK roof drops a piece the clip
@@ -5382,7 +5399,8 @@
           return new T.ExtrudeGeometry(shape, { depth: 0.14, bevelEnabled: false });
         });
         var m = new T.Mesh(geo, mat(cladColour(blockOfName(name)),
-                                   { rough: 0.95, map: CLAD(blockOfName(name)) }));
+                                   { rough: 0.95,
+                                     map: cladMap || CLAD(blockOfName(name)) }));
         /* VIEW-VOLUME MASKING (task 2): the gable-end shape above is a
            symmetric "house" pentagon -- a rectangle (eave to roofEave)
            with a triangular peak (roofEave to the ridge apex) -- and
@@ -5811,8 +5829,26 @@
         ptag(box(W, 0.28, 0.24, FARMHOUSE.wood, X, eave - 0.14,
                  frontZ - 0.20, g, sharp(WOODM)));
       }
-      PORCH_SPANS.push({ slot: feat.slot, span: feat.span, frontZ: frontZ });
+      PORCH_SPANS.push({ slot: feat.slot, span: feat.span, frontZ: frontZ,
+                         roof: feat.roof || null });
       if (slot.face === 'main') PORCH_FRONT_Z4 = frontZ;
+      /* MASSING ARC 2 task 8 (spec 2026-09-17 section 2): THE PORCH OWNS
+         ITS ROOF. `roof: 'gable'` used to be replayed through gableAt by
+         a bridge in buildElevation, which registered the porch's own
+         roof under a free gable's name (facade_<face>_gable_<slot>_*);
+         it is built here now, under the porch's own name, and the bridge
+         is gone. Every number is the one that bridge computed -- the
+         porch's eave (PORCH_EAVE4, the posts it rests on), its own front
+         edge, featureBack's meet with the block deck and PITCH_FAMILY --
+         so the canonical's porch roof is the same roof, renamed.
+         A stoop has no posts to carry a roof, so it never gets one. */
+      if (feat.roof === 'gable' && type !== 'stoop') {
+        var ridge = eave + 0.18 + (W / 2) * Math.tan(PITCH_FAMILY);
+        shellGable('facade_' + slot.face + '_porch_' + feat.slot + '_roof',
+                   e.x0, e.x1, featureBack(slot, X, ridge), frontZ, eave, 'z',
+                   slot.room, [1], PITCH_FAMILY, null, null, null,
+                   buriedRegion(slot.face));
+      }
       /* VIEW-VOLUME MASKING (task 3, fix round 1 ruling): a porch is NOT
          a kit. Every piece of it is a box() -- slab, step, posts, beam,
          roof deck, rails, the sitting bench -- each convex on its own,
@@ -5830,7 +5866,9 @@
       /* The one builder that does NOT make its own group: the leaves ride
          garageDoorG so the dollhouse's openable-door trick (the whole
          group hides from inside the bay) keeps working, and that group's
-         own regFabric call below still registers it as 'garage_door'. */
+         own regFabric call below still registers it as 'garage_door'.
+         (`GDOOR` below is that group, or -- for a side-entry garage --
+         the turned sub-group of it the west-face leaf hangs in.) */
       var e = spanX(feat), slot = e.slot, cx = e.cx;
       /* The BAY is fixed: piers at -17.58 and -13.22, 0.76 wide, leaving
          a 3.6 opening -- the one today's single leaf fills. So `leaves`
@@ -5852,9 +5890,30 @@
          the depth so the canonical is literally unchanged. */
       var y = 1.6, z = 10.02 + GAR_DZ, dh = 3.0;
       var style = feat.style || 'carriage';
+      /* SIDE-ENTRY (task 8): the leaf hangs on the block's WEST face, so
+         it is built in a group of its own -- a quarter turn about y,
+         stood on the block's west line at SIDE_DOOR_Z -- and every
+         number below is read in THAT group's local frame. The turn is
+         -PI/2 so local +z (the side every applied detail stacks toward:
+         seams, straps, bolts, top lights) becomes world -x, the way the
+         face actually looks; +PI/2 would point the whole door's face
+         east, into the bay. `cx` 0 centres the field on the opening and
+         `z` stands the leaf on the wall's OUTER skin (WALL_T4/2 + 0.07),
+         exactly as the street leaf stands 0.08 proud of its own piers.
+         Nothing else of the bay is built for a side garage: the piers,
+         header, lintel, band and their details ARE the street face, and
+         shellWall('garage_front_wall') is that face now. */
+      var GDOOR = garageDoorG;
+      if (GARAGE_SIDE) {
+        GDOOR = new T.Group();
+        GDOOR.rotation.y = -Math.PI / 2;
+        GDOOR.position.set(GARAGE_BLOCK.west, 0, SIDE_DOOR_Z);
+        garageDoorG.add(GDOOR);
+        cx = 0; z = WALL_T4 / 2 + 0.07;
+      }
       function gtag(m) { if (m) m.userData.room = slot.room; return m; }
       function gGlass(w, h, gx, gy, gz) {
-        var m = box(w, h, 0.03, 0x9fc4dc, gx, gy, gz, garageDoorG, FGLZ);
+        var m = box(w, h, 0.03, 0x9fc4dc, gx, gy, gz, GDOOR, FGLZ);
         m.userData.glazing = true;       /* the lighting pass looks for this */
         return gtag(m);
       }
@@ -5872,7 +5931,7 @@
                                          metalness: 0.0 }));
         m.position.set(gx, gy, gz);
         m.userData.glazing = true;
-        gtag(m); finish(m, true); garageDoorG.add(m);
+        gtag(m); finish(m, true); GDOOR.add(m);
         return m;
       }
       function leafAt(lx) {
@@ -5880,7 +5939,7 @@
           /* an aluminium-framed glazed door: the field takes the frame
              tone and frosted panes run across the top half. */
           gtag(rbox(lw, dh, 0.14, 0.05, FARMHOUSE.frame, lx, y, z,
-                    garageDoorG, { rough: 0.35, metal: 0.25 }));
+                    GDOOR, { rough: 0.35, metal: 0.25 }));
           var np = Math.max(2, Math.round(4 * k));
           for (var q = 0; q < np; q++) {
             frosted(lw / np - 0.16, dh / 2 - 0.22,
@@ -5890,7 +5949,7 @@
           return;
         }
         gtag(rbox(lw, dh, 0.14, 0.05, FARMHOUSE.wood, lx, y, z,
-                  garageDoorG, WOODM));
+                  GDOOR, WOODM));
         if (DETAIL < 2) return;
         if (style === 'panel') {
           /* four raised panels in a 2x2 grid: no brace, no lights. */
@@ -5898,7 +5957,7 @@
             [-1, 1].forEach(function (sy) {
               gtag(box(lw / 2 - 0.42 * k, dh / 2 - 0.42, 0.04, C.wood2,
                        lx + sx * lw / 4, y + sy * dh / 4, z + 0.08,
-                       garageDoorG, WOODM));
+                       GDOOR, WOODM));
             });
           });
           return;
@@ -5909,20 +5968,20 @@
            share one centre, one derived length and one angle, mirrored
            by sign. */
         [1.0, 1.8, 2.6].forEach(function (sy) {
-          gtag(box(3.4 * k, 0.05, 0.06, C.wood2, lx, sy, z + 0.08, garageDoorG));
+          gtag(box(3.4 * k, 0.05, 0.06, C.wood2, lx, sy, z + 0.08, GDOOR));
         });
         var SDX = 1.65 * k, SDY = 1.45;
         var SLEN = Math.sqrt(SDX * SDX * 4 + SDY * SDY * 4);
         var SANG = Math.atan2(SDX * 2, SDY * 2);
         [1, -1].forEach(function (sign) {
           var strap = gtag(box(0.09, SLEN, 0.025, FARMHOUSE.frame,
-                               lx, y, z + 0.08, garageDoorG, { rough: 0.5 }));
+                               lx, y, z + 0.08, GDOOR, { rough: 0.5 }));
           strap.rotation.z = sign * SANG;
         });
         [[lx - SDX, y - SDY], [lx + SDX, y - SDY], [lx - SDX, y + SDY],
          [lx + SDX, y + SDY], [lx, y]].forEach(function (p) {
           gtag(cyl(0.05, 0.05, 0.03, C.ink, p[0], p[1], z + 0.09,
-                   garageDoorG, 8, { rough: 0.4, metal: 0.6 }));
+                   GDOOR, 8, { rough: 0.4, metal: 0.6 }));
         });
         /* the top-light row every carriage door carries: four across
            today's full-width leaf, fewer on a narrow one, spread over
@@ -5932,14 +5991,14 @@
           var gx = lx + (li - (nl - 1) / 2) * lspan / (nl - 1);
           gGlass(0.52 * k, 0.30, gx, 2.86, z + 0.08);
           gtag(box(0.60 * k, 0.38, 0.05, FARMHOUSE.frame, gx, 2.86,
-                   z + 0.065, garageDoorG));
+                   z + 0.065, GDOOR));
         }
       }
       for (var i = 0; i < n; i++) {
         leafAt(cx - FIELD / 2 + lw / 2 + i * (lw + STILE));
       }
       if (n === 2) {
-        gtag(box(STILE, dh, 0.06, FARMHOUSE.frame, cx, y, z + 0.08, garageDoorG));
+        gtag(box(STILE, dh, 0.06, FARMHOUSE.frame, cx, y, z + 0.08, GDOOR));
       }
     }
     /* ROOF VALLEYS (masking spec section 6): where a street feature's
@@ -6023,9 +6082,16 @@
          edge (today's porch_roof) and hands it the porch's eave;
          otherwise the gable projects a fixed 2.2 from the face at the
          height rule's eave. */
+      /* MASSING ARC 2 task 8: ... unless that porch is GABLED, in which
+         case the porch built its own roof (porchAt, above) and this is a
+         second gable over the same posts. normalize() already drops a
+         gable feature covering a gabled porch, so no spec that renders
+         reaches this line; the guard is belt and braces for a hand-built
+         or replayed feature. */
       var front = slot.z + 2.2, porch = false;
       PORCH_SPANS.forEach(function (p) {
-        if (p.slot < feat.slot + feat.span && feat.slot < p.slot + p.span) {
+        if (p.slot < feat.slot + feat.span && feat.slot < p.slot + p.span &&
+            p.roof !== 'gable') {
           front = Math.max(front, p.frontZ); porch = true;
         }
       });
@@ -6033,7 +6099,16 @@
       var ridge = eave + 0.18 + (e.w / 2) * Math.tan(PITCH_FAMILY);
       shellGable(name, e.x0, e.x1, featureBack(slot, e.cx, ridge), front,
                  eave, 'z', slot.room, [1], PITCH_FAMILY, null, null, null,
-                 region);
+                 region, featClad(feat));
+    }
+    /* PER-FEATURE CLADDING (task 8, spec section 2): a roof feature may
+       wear a skin its parent block does not -- a shingled shed on a
+       board-and-batten wall. `cladding` is the feature's own material
+       over the block's own body colour, and absent it the block's tile
+       stands, which is every canonical feature. */
+    function featClad(feat) {
+      return feat && feat.cladding ? cladTex(feat.cladding, FARMHOUSE.body)
+                                   : null;
     }
 
     function dormerAt(feat) {
@@ -6053,8 +6128,13 @@
          zc, its front face 0.62 buried and the window's sill 0.22 into
          the shingles. */
       var y = roofY(slot.face, e.cx, zc + 0.8) + 0.95;
+      /* task 8: the dormer's own `cladding`, when it has one, over the
+         block's tile -- box and gable infill alike, so the whole dormer
+         reads as one material and not a shingled hat on a batten box. */
+      var dclad = featClad(feat);
       shellBox(g, w, 1.9, 1.6, cladColour(BLOCK_OF_FACE[slot.face]),
-               e.cx, y, zc, { rough: 0.95, map: CLAD(BLOCK_OF_FACE[slot.face]) });
+               e.cx, y, zc, { rough: 0.95,
+                              map: dclad || CLAD(BLOCK_OF_FACE[slot.face]) });
       if (feat.window !== false) {
         shellWindow(g, e.cx, y, zc + 0.85, 0, Math.min(1.1, w - 0.5), 1.1, true);
       }
@@ -6071,7 +6151,50 @@
       shellGable('facade_' + slot.face + '_dormer_' + feat.slot + '_roof',
                  e.cx - w / 2, e.cx + w / 2, zc - 0.8, zc + 0.8,
                  y + 0.95, 'z', slot.room, [1], PITCH_FAMILY,
-                 null, null, null, region);
+                 null, null, null, region, dclad);
+    }
+
+    function shedAt(feat) {
+      /* THE SHED (task 8, spec 2026-09-17 section 2): a SINGLE slope,
+         the one roof form the elevation could not make. It runs from the
+         feature's own front edge (2.2 proud of the face, a dormer's own
+         projection) back to the parent deck it dies into, so its high
+         back edge sits ON the block's roof line -- which is why nothing
+         of it is ever buried, and why it needs no ridge and no end
+         infill. With `window` it is a shed DORMER: a clad box under the
+         slope carrying one shell window, registered as its OWN row
+         (facade_<face>_shed_<slot>_box) so the mask can take the glass
+         and leave the deck, exactly as a dormer's roof and box part. */
+      var e = spanX(feat), slot = e.slot, g = shellGroup();
+      var region = buriedRegion(slot.face);
+      var clad = featClad(feat) || shingleT;
+      var zf = slot.z + 2.2, yf = featureEave(slot, e.cx) - 0.3;
+      var zb = slot.z - 0.8, yb = roofY(slot.face, e.cx, zb);
+      var len = Math.hypot(zf - zb, yb - yf), pitch = Math.atan2(yb - yf, zf - zb);
+      /* the deck's own centre sits 0.09 (half its thickness) above the
+         line front-edge -> back-edge, so its UNDER side is that line:
+         the back edge lands on the deck plane rather than 0.09 through
+         it. */
+      var deck = shellBox(g, e.w, 0.18, len, NICE ? 0xffffff : FARMHOUSE.roofTone,
+                          e.cx, (yf + yb) / 2 + 0.09, (zf + zb) / 2,
+                          { rough: 0.9, map: clad });
+      deck.rotation.x = pitch;
+      shellBox(g, e.w + 0.16, 0.22, 0.14, FARMHOUSE.trim, e.cx, yf - 0.02, zf + 0.02);
+      clipBuried(g, region);
+      shellRegister(g, 'facade_' + slot.face + '_shed_' + feat.slot,
+                    [0, 0, 1], slot.room);
+      if (!feat.window) return;
+      var bg = shellGroup(), y = yf - 0.95, w = Math.max(1.2, e.w - 0.4);
+      shellBox(bg, w, 1.7, 1.4, cladColour(BLOCK_OF_FACE[slot.face]),
+               e.cx, y, slot.z + 1.4,
+               { rough: 0.95, map: featClad(feat) || CLAD(BLOCK_OF_FACE[slot.face]) });
+      shellWindow(bg, e.cx, y, slot.z + 2.15, 0, Math.min(1.1, w - 0.5), 1.0, true);
+      clipBuried(bg, region);
+      /* not a kit, for dormerAt's own reason: the box and the window's
+         boxes are every one of them convex, so the mask clips them in
+         place rather than keeping or dropping the assembly whole. */
+      shellRegister(bg, 'facade_' + slot.face + '_shed_' + feat.slot + '_box',
+                    [0, 0, 1], slot.room);
     }
 
     function hipEndAt(feat) {
@@ -6122,7 +6245,8 @@
       SPEC = spec;                       /* chfFacade() reports what BUILT */
       var byKind = { window: windowAt, door: doorAt, porch: porchAt,
                      garage_door: garageDoorAt };
-      var roofKind = { gable: gableAt, dormer: dormerAt, hip_end: hipEndAt };
+      var roofKind = { gable: gableAt, dormer: dormerAt, hip_end: hipEndAt,
+                       shed: shedAt };
       (spec.ground || []).forEach(function (f) {
         if (f.kind !== 'door') return;
         var s = SLOTS[f.slot];
@@ -6135,21 +6259,23 @@
       (spec.roof || []).forEach(function (f) {
         if (roofKind[f.kind] && SLOTS[f.slot]) roofKind[f.kind](f);
       });
-      /* TASK 3+4 BRIDGE (massing arc 2, spec 2026-09-17 section 2). The
-         porch OWNS its roof now: the canonical's free-standing gable at
-         slot 8 became the porch's `roof: 'gable'`, and normalize() drops
-         any gable FEATURE covering a gabled porch, so nothing here would
-         build it and the canonical exterior would come up 23 meshes
-         short of its live pin. gableAt already carries a gable out to a
-         porch's own front edge and eave (PORCH_SPANS, filled by porchAt
-         in the ground loop above), so replaying the porch's roof through
-         it rebuilds exactly the old facade_<face>_gable_<slot> pieces.
-         REPLACED IN TASK 8 by the porch's own roof inside porchAt
-         (facade_<face>_porch_<slot>_roof_*); delete this loop then. */
-      (spec.ground || []).forEach(function (f) {
-        if (f.kind === 'porch' && f.roof === 'gable' && SLOTS[f.slot])
-          gableAt({ slot: f.slot, span: f.span, kind: 'gable' });
-      });
+      /* The last V2 bridge stood here: a replay that rebuilt a gabled
+         porch's roof through gableAt, under a free gable's name. Task 8
+         retired it -- porchAt owns the roof and registers it as
+         facade_<face>_porch_<slot>_roof_*, the same geometry (same eave,
+         same front, same featureBack, same PITCH_FAMILY) under the name
+         the spec's own rule gives it. */
+      /* SIDE-ENTRY GARAGE (task 8): normalize() deletes the street
+         garage_door row for a side-entry garage, so no spec feature asks
+         for a leaf -- but the block still HAS a garage door; it is on
+         the west face. Built from the bay's own slots, so the fabric row
+         `garage_door` (and the garage_front marker that finds it) exists
+         in both orientations and nothing that could be done in one
+         becomes impossible in the other. */
+      if (GARAGE_SIDE)
+        garageDoorAt({ slot: GARAGE_BAY_SLOTS[0], kind: 'garage_door',
+                       span: GARAGE_BAY_SLOTS[1] - GARAGE_BAY_SLOTS[0] + 1,
+                       style: 'carriage', leaves: 1 });
     }
     /* ================= END FACADE ===================================== */
 
@@ -6333,9 +6459,49 @@
     shellWall('garage_block_north', GARAGE_BLOCK.west, GARAGE_BLOCK.north,
               GARAGE_BLOCK.east, GARAGE_BLOCK.north, EXT_TOP4,
               [0, 0, -1], [], null);
-    shellWall('garage_block_west', GARAGE_BLOCK.west, GARAGE_BLOCK.north,
-              GARAGE_BLOCK.west, GARAGE_BLOCK.south, EXT_TOP4,
-              [-1, 0, 0], [[2.0, 1.35, true]], null);
+    /* MASSING ARC 2 task 8: the WEST face carries the door on a
+       side-entry garage, so it is built as the three pieces an opening
+       makes -- the wall north of it, the wall south of it and the head
+       over it -- instead of one run. Each is an ordinary shellWall (or
+       shellBox) so each gets its own base band, corner boards and
+       registration for free. Front-entry builds the single wall it
+       always has, window and all, so nothing about the canonical moves.
+       The window moves to z 1.0 on the north piece: at its old z 2.0 a
+       1.35-wide window would run 0.375 past that piece's own end into
+       the opening. */
+    if (GARAGE_SIDE) {
+      shellWall('garage_block_west_a', GARAGE_BLOCK.west, GARAGE_BLOCK.north,
+                GARAGE_BLOCK.west, SIDE_OPEN_Z0, EXT_TOP4,
+                [-1, 0, 0], [[1.0, 1.35, true]], null, 'garage');
+      shellWall('garage_block_west_b', GARAGE_BLOCK.west, SIDE_OPEN_Z1,
+                GARAGE_BLOCK.west, GARAGE_BLOCK.south, EXT_TOP4,
+                [-1, 0, 0], [], null, 'garage');
+      /* the head: the lintel over the opening, from the leaf's own top
+         (y 3.1: the 3.0 leaf centred at 1.6) to the block's ground eave.
+         It starts AT the leaf rather than at a headroom line, because a
+         slot between the two would look straight through the face. */
+      (function () {
+        var hg = shellGroup(), y0 = 3.10;
+        shellBox(hg, WALL_T4, EXT_TOP4 - y0, SIDE_OPEN_Z1 - SIDE_OPEN_Z0,
+                 cladColour('garage'), GARAGE_BLOCK.west, (y0 + EXT_TOP4) / 2,
+                 (SIDE_OPEN_Z0 + SIDE_OPEN_Z1) / 2,
+                 { rough: 0.95, map: CLAD('garage') });
+        shellRegister(hg, 'garage_block_west_head', [-1, 0, 0], null);
+      })();
+      /* the bay's street face is a WALL now, not a door bay: the same
+         one-story face the mudroom's own street wall is, over the
+         garage's own skin, carrying the window normalize() put there in
+         the street door's place. The window itself is the facade's
+         (windowAt dresses that slot from the spec), so the wall asks for
+         none of its own -- two would stand in the same plane. */
+      shellWall('garage_front_wall', GARAGE_BLOCK.west, GARAGE_BLOCK.south,
+                -12.60, GARAGE_BLOCK.south, EXT_TOP4, [0, 0, 1], [],
+                'garage', 'garage');
+    } else {
+      shellWall('garage_block_west', GARAGE_BLOCK.west, GARAGE_BLOCK.north,
+                GARAGE_BLOCK.west, GARAGE_BLOCK.south, EXT_TOP4,
+                [-1, 0, 0], [[2.0, 1.35, true]], null);
+    }
     /* the mudroom's street face, one story tall like every other GROUND
        wall of the block (task 7: the block's own eave is `stories` of
        these, and storyBox() builds the difference).
@@ -6745,113 +6911,127 @@
          end up standing proud of the garage ROOM's side walls, which
          stop at z 10.0 -- that is what depth IS (the face moves, the
          room does not), and garage_void_floor floors what opens up. */
-      gtag(box(5.6, 1.1, 0.24, cladColour('garage'),
-               -15.4, 4.05, 9.88 + GAR_DZ, garageDoorG,
-               sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
-      /* the lintel: the header stopped at y 3.5 and the door at 3.1, so
-         a 0.4 slot ran the width of the bay and the resting camera
-         looked straight through it at the shelves */
-      gtag(box(5.6, 0.46, 0.24, cladColour('garage'),
-               -15.4, 3.27, 9.88 + GAR_DZ, garageDoorG,
-               sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
-      gtag(box(3.9, 0.16, 0.16, EXTC.trim, -15.4, 3.16, 10.00 + GAR_DZ, garageDoorG, sharp()));
-      gtag(box(0.76, 3.5, 0.24, cladColour('garage'),
-               -17.58, 1.75, 9.88 + GAR_DZ, garageDoorG,
-               sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
-      gtag(box(0.76, 3.5, 0.24, cladColour('garage'),
-               -13.22, 1.75, 9.88 + GAR_DZ, garageDoorG,
-               sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
-      /* Spec 2026-09-17 section 2 (review fix, v2.499.75): the bay's two
-         PIERS are the garage block's street face between garage_block_west
-         and mudroom_front, and those two get their band from shellWall.
-         Without these the water table stopped dead at x -12.60 and picked
-         up again at the block's west corner, with the whole bay bare
-         between them. The piers' own 0.24 depth, not WALL_T4, and the
-         same centre-line rule; they ride garageDoorG so the band hides
-         with the piers when the garage camera looks out through the
-         opening. The OPENING itself is left bare on purpose -- a water
-         table does not run across a garage door -- and so is the 0.24
-         between the east pier and mudroom_front, where the face steps
-         back 0.22 in z anyway. */
-      [-17.58, -13.22].forEach(function (px) {
-        gtag(baseBand(garageDoorG, px - 0.38, 9.88 + GAR_DZ, px + 0.38, 9.88 + GAR_DZ,
-                      [0, 0, 1], 'garage', 0.24));
-      });
-      /* FACADE (arc 4): the door leaf, its board seams, strap hardware
-         and top-light row used to be authored here. garageDoorAt() (the
-         facade block above) builds them into this same garageDoorG from
-         the spec's own style enum, so the openable-door trick and this
-         group's registration below are untouched. */
-      /* the bay's daylight, and the only exterior windows the resting
-         camera sees square on: real glazing in a real casing, left
-         emissive-capable for the lighting pass (bible S7.3). All of it
-         rides garageDoorG, so the inside camera still sees a bare wall
-         where the door is. */
-      if (DETAIL >= 2) {
-        var GLZ = { rough: 0.16, metal: 0.0, envInt: 0.6 };
-        function gGlass(w, h, x, y, z, gp) {
-          var m = box(w, h, 0.03, 0x9fc4dc, x, y, z, gp || garageDoorG, GLZ);
-          m.userData.glazing = true;      /* the lighting pass looks for this */
-          return gtag(m);
-        }
-        /* the window in the pier east of the door — spec 6b: "other
-           faces' windows recolor to the black-frame language at their
-           current sizes." Every w/h/x/y/z below is unchanged; only the
-           casing color moves, EXTC.trim -> FARMHOUSE.frame. */
-        gGlass(0.58, 0.68, -13.22, 2.68, 10.02 + GAR_DZ);
-        gtag(box(0.74, 0.09, 0.10, FARMHOUSE.frame, -13.22, 3.07, 10.03 + GAR_DZ, garageDoorG));
-        gtag(box(0.80, 0.08, 0.18, FARMHOUSE.frame, -13.22, 2.29, 10.06 + GAR_DZ, garageDoorG));
-        [-0.345, 0.345].forEach(function (dx) {
-          gtag(box(0.09, 0.86, 0.10, FARMHOUSE.frame, -13.22 + dx, 2.68, 10.03 + GAR_DZ,
-                   garageDoorG));
+      /* SIDE-ENTRY GARAGE (task 8, spec 2026-09-17 section 2): none of
+         the BAY is built when the door is on the side. Every piece from
+         here to the band below IS the street face -- header, lintel,
+         trim, the two piers and their base band, the pier window, the
+         gable's half-round, the coach lamp and the band that carries the
+         face to the block eave -- and a side-entry garage's street face
+         is `garage_front_wall` (a full-height shell wall, built with the
+         block's own walls above) with the facade's window in it. The
+         leaf itself is not here either: garageDoorAt() hangs it on the
+         west face, in a turned sub-group of this same garageDoorG, so
+         the openable-door trick and the `garage_door` row are unchanged.
+         Front-entry builds exactly what it always did. */
+      if (!GARAGE_SIDE) {
+        gtag(box(5.6, 1.1, 0.24, cladColour('garage'),
+                 -15.4, 4.05, 9.88 + GAR_DZ, garageDoorG,
+                 sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
+        /* the lintel: the header stopped at y 3.5 and the door at 3.1, so
+           a 0.4 slot ran the width of the bay and the resting camera
+           looked straight through it at the shelves */
+        gtag(box(5.6, 0.46, 0.24, cladColour('garage'),
+                 -15.4, 3.27, 9.88 + GAR_DZ, garageDoorG,
+                 sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
+        gtag(box(3.9, 0.16, 0.16, EXTC.trim, -15.4, 3.16, 10.00 + GAR_DZ, garageDoorG, sharp()));
+        gtag(box(0.76, 3.5, 0.24, cladColour('garage'),
+                 -17.58, 1.75, 9.88 + GAR_DZ, garageDoorG,
+                 sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
+        gtag(box(0.76, 3.5, 0.24, cladColour('garage'),
+                 -13.22, 1.75, 9.88 + GAR_DZ, garageDoorG,
+                 sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
+        /* Spec 2026-09-17 section 2 (review fix, v2.499.75): the bay's two
+           PIERS are the garage block's street face between garage_block_west
+           and mudroom_front, and those two get their band from shellWall.
+           Without these the water table stopped dead at x -12.60 and picked
+           up again at the block's west corner, with the whole bay bare
+           between them. The piers' own 0.24 depth, not WALL_T4, and the
+           same centre-line rule; they ride garageDoorG so the band hides
+           with the piers when the garage camera looks out through the
+           opening. The OPENING itself is left bare on purpose -- a water
+           table does not run across a garage door -- and so is the 0.24
+           between the east pier and mudroom_front, where the face steps
+           back 0.22 in z anyway. */
+        [-17.58, -13.22].forEach(function (px) {
+          gtag(baseBand(garageDoorG, px - 0.38, 9.88 + GAR_DZ, px + 0.38, 9.88 + GAR_DZ,
+                        [0, 0, 1], 'garage', 0.24));
         });
-        if (DETAIL >= 3) {
-          gtag(box(0.05, 0.68, 0.05, FARMHOUSE.frame, -13.22, 2.68, 10.04 + GAR_DZ, garageDoorG));
-          gtag(box(0.58, 0.05, 0.05, FARMHOUSE.frame, -13.22, 2.68, 10.04 + GAR_DZ, garageDoorG));
+        /* FACADE (arc 4): the door leaf, its board seams, strap hardware
+           and top-light row used to be authored here. garageDoorAt() (the
+           facade block above) builds them into this same garageDoorG from
+           the spec's own style enum, so the openable-door trick and this
+           group's registration below are untouched. */
+        /* the bay's daylight, and the only exterior windows the resting
+           camera sees square on: real glazing in a real casing, left
+           emissive-capable for the lighting pass (bible S7.3). All of it
+           rides garageDoorG, so the inside camera still sees a bare wall
+           where the door is. */
+        if (DETAIL >= 2) {
+          var GLZ = { rough: 0.16, metal: 0.0, envInt: 0.6 };
+          function gGlass(w, h, x, y, z, gp) {
+            var m = box(w, h, 0.03, 0x9fc4dc, x, y, z, gp || garageDoorG, GLZ);
+            m.userData.glazing = true;      /* the lighting pass looks for this */
+            return gtag(m);
+          }
+          /* the window in the pier east of the door — spec 6b: "other
+             faces' windows recolor to the black-frame language at their
+             current sizes." Every w/h/x/y/z below is unchanged; only the
+             casing color moves, EXTC.trim -> FARMHOUSE.frame. */
+          gGlass(0.58, 0.68, -13.22, 2.68, 10.02 + GAR_DZ);
+          gtag(box(0.74, 0.09, 0.10, FARMHOUSE.frame, -13.22, 3.07, 10.03 + GAR_DZ, garageDoorG));
+          gtag(box(0.80, 0.08, 0.18, FARMHOUSE.frame, -13.22, 2.29, 10.06 + GAR_DZ, garageDoorG));
+          [-0.345, 0.345].forEach(function (dx) {
+            gtag(box(0.09, 0.86, 0.10, FARMHOUSE.frame, -13.22 + dx, 2.68, 10.03 + GAR_DZ,
+                     garageDoorG));
+          });
+          if (DETAIL >= 3) {
+            gtag(box(0.05, 0.68, 0.05, FARMHOUSE.frame, -13.22, 2.68, 10.04 + GAR_DZ, garageDoorG));
+            gtag(box(0.58, 0.05, 0.05, FARMHOUSE.frame, -13.22, 2.68, 10.04 + GAR_DZ, garageDoorG));
+          }
+          /* the gable's half-round, and a coach lamp beside the door —
+             same black-frame recolor, same unchanged size/position. */
+          gGlass(0.44, 0.44, -15.40, 5.36, 10.27 + GAR_DZ);
+          gtag(cyl(0.34, 0.34, 0.09, FARMHOUSE.frame, -15.40, 5.36, 10.24 + GAR_DZ,
+                   garageDoorG, 16)).rotation.x = Math.PI / 2;
+          if (DETAIL >= 3) {
+            gtag(box(0.05, 0.42, 0.05, FARMHOUSE.frame, -15.40, 5.36, 10.28 + GAR_DZ, garageDoorG));
+            gtag(box(0.42, 0.05, 0.05, FARMHOUSE.frame, -15.40, 5.36, 10.28 + GAR_DZ, garageDoorG));
+          }
+          gtag(box(0.10, 0.34, 0.09, C.ink, -17.58, 2.96, 10.02 + GAR_DZ, garageDoorG,
+                   { rough: 0.5 }));
+          gtag(box(0.34, 0.09, 0.26, C.ink, -17.58, 3.16, 10.13 + GAR_DZ, garageDoorG,
+                   { rough: 0.5 }));
+          /* R5: the shade becomes a lathe on PROFILES.shade — the same
+             wide-flare-at-the-rim silhouette the tapered cyl approximated
+             with two radii — and the flat disc cap above it becomes a
+             squashed `finial` (the trick R4 used for headlight housings).
+             latheAt grows a profile UP from the given y, where cyl() grew
+             it from its own CENTRE, so the y below is the old span's low
+             edge, not the old centre; x/z and the overall span are
+             unchanged. The round shade has no "facing" left to turn, so
+             the old 45-degree twist is dropped. NO_MERGE is what actually
+             keeps the night glow honest here, not the object's rarity
+             today: this is still the only mesh carrying userData.lamp,
+             and a future bucket crossing mergeStatic's 4-item floor on
+             this exact material must not be allowed to fold it into a
+             combined mesh and strand the toggle (webgl_coachLampGlass is
+             added to NO_MERGE beside webgl_garageBackWall, below). */
+          var lamp2 = gtag(latheAt('shade', [0.37, 0.34, 0.37], 0xf7e8c2,
+                                   -17.58, 2.59, 10.16 + GAR_DZ, garageDoorG, GLOSS));
+          lamp2.userData.lamp = true;       /* geometry only: the pass lights it */
+          lamp2.userData.glazing = true;
+          webgl_coachLampGlass = lamp2;
+          gtag(latheAt('finial', [0.22, 0.06, 0.22], C.ink, -17.58, 2.93,
+                       10.16 + GAR_DZ, garageDoorG, { rough: 0.5 }));
+          gtag(cyl(0.20, 0.20, 0.05, C.ink, -17.58, 2.57, 10.16 + GAR_DZ, garageDoorG,
+                   4, { rough: 0.5 })).rotation.y = Math.PI / 4;
         }
-        /* the gable's half-round, and a coach lamp beside the door —
-           same black-frame recolor, same unchanged size/position. */
-        gGlass(0.44, 0.44, -15.40, 5.36, 10.27 + GAR_DZ);
-        gtag(cyl(0.34, 0.34, 0.09, FARMHOUSE.frame, -15.40, 5.36, 10.24 + GAR_DZ,
-                 garageDoorG, 16)).rotation.x = Math.PI / 2;
-        if (DETAIL >= 3) {
-          gtag(box(0.05, 0.42, 0.05, FARMHOUSE.frame, -15.40, 5.36, 10.28 + GAR_DZ, garageDoorG));
-          gtag(box(0.42, 0.05, 0.05, FARMHOUSE.frame, -15.40, 5.36, 10.28 + GAR_DZ, garageDoorG));
-        }
-        gtag(box(0.10, 0.34, 0.09, C.ink, -17.58, 2.96, 10.02 + GAR_DZ, garageDoorG,
-                 { rough: 0.5 }));
-        gtag(box(0.34, 0.09, 0.26, C.ink, -17.58, 3.16, 10.13 + GAR_DZ, garageDoorG,
-                 { rough: 0.5 }));
-        /* R5: the shade becomes a lathe on PROFILES.shade — the same
-           wide-flare-at-the-rim silhouette the tapered cyl approximated
-           with two radii — and the flat disc cap above it becomes a
-           squashed `finial` (the trick R4 used for headlight housings).
-           latheAt grows a profile UP from the given y, where cyl() grew
-           it from its own CENTRE, so the y below is the old span's low
-           edge, not the old centre; x/z and the overall span are
-           unchanged. The round shade has no "facing" left to turn, so
-           the old 45-degree twist is dropped. NO_MERGE is what actually
-           keeps the night glow honest here, not the object's rarity
-           today: this is still the only mesh carrying userData.lamp,
-           and a future bucket crossing mergeStatic's 4-item floor on
-           this exact material must not be allowed to fold it into a
-           combined mesh and strand the toggle (webgl_coachLampGlass is
-           added to NO_MERGE beside webgl_garageBackWall, below). */
-        var lamp2 = gtag(latheAt('shade', [0.37, 0.34, 0.37], 0xf7e8c2,
-                                 -17.58, 2.59, 10.16 + GAR_DZ, garageDoorG, GLOSS));
-        lamp2.userData.lamp = true;       /* geometry only: the pass lights it */
-        lamp2.userData.glazing = true;
-        webgl_coachLampGlass = lamp2;
-        gtag(latheAt('finial', [0.22, 0.06, 0.22], C.ink, -17.58, 2.93,
-                     10.16 + GAR_DZ, garageDoorG, { rough: 0.5 }));
-        gtag(cyl(0.20, 0.20, 0.05, C.ink, -17.58, 2.57, 10.16 + GAR_DZ, garageDoorG,
-                 4, { rough: 0.5 })).rotation.y = Math.PI / 4;
+        [5.10].forEach(function (y) {
+          gtag(box(5.60, 1.0, 0.30, cladColour('garage'),
+                    -15.4, y, 10.02 + GAR_DZ, garageDoorG,
+                    sharp({ rough: 0.95, map: CLAD('garage') })));
+        });
       }
-      [5.10].forEach(function (y) {
-        gtag(box(5.60, 1.0, 0.30, cladColour('garage'),
-                  -15.4, y, 10.02 + GAR_DZ, garageDoorG,
-                  sharp({ rough: 0.95, map: CLAD('garage') })));
-      });
       /* The lower cross roof spans both garage and mudroom. The bay
          keeps its original walls and door as separate navigation fabric. */
       garageShellG = new T.Group();
@@ -6932,9 +7112,14 @@
       /* VIEW-VOLUME MASKING (task 2): the leaves, header, glazing,
          lights and coach lamp are a kit, same reasoning as the facade's
          own doors. */
-      regFabric(garageDoorG, { name: 'garage_door', n: [0, 0, 1],
+      /* task 8: a side-entry door faces WEST, and `n` is what every
+         reader (the AO derivation, the registry report, the nav probe's
+         face lookup) takes for the way this piece looks. */
+      regFabric(garageDoorG, { name: 'garage_door',
+                                n: GARAGE_SIDE ? [-1, 0, 0] : [0, 0, 1],
                                 box: gdBox, room: 'garage', kit: true });
-      blobShadow(3.0, 4.2, -15.4, 6.0, extG);
+      if (GARAGE_SIDE) blobShadow(4.2, 3.0, GARAGE_BLOCK.west - 1.4, SIDE_DOOR_Z, extG);
+      else blobShadow(3.0, 4.2, -15.4, 6.0, extG);
       /* ================= THE BAY (style bible S7 garage) ================
          Plates 3, 4 and 5: a working garage, not a shed. A concrete slab
          with saw-cut joints (a garage floor is never plank), lined walls,
@@ -7643,19 +7828,51 @@
        rather than re-derived, so the canonical is the same numbers. */
     var driveDz = GARAGE_BLOCK.south - 10.10, driveZ0 = 9.60 + driveDz;
     var driveLen = 16.7 - driveDz, driveCz = 17.95 + driveDz / 2;
-    ebox(4.6, 0.08, driveLen, NICE ? 0xffffff : EXTC.drive, -15.4, -0.25, driveCz,
-         { rough: 0.95, map: driveT });
+    /* SIDE-ENTRY (task 8): a side door cannot be reached down the middle
+       of the block, so the drive turns an L -- the APPROACH runs from
+       the kerb up the block's own west edge, and the APRON in front of
+       the door turns west across z 1.9..6.1, which is where the cars
+       (and their plaques, DRIVE_SIDE) park. The approach's own z range
+       stops at the apron rather than overlapping it, so the two slabs
+       abut instead of z-fighting over a shared strip. */
+    var SIDE_DRIVE_X = GARAGE_BLOCK.west - 2.30;      /* -20.50 */
+    var SIDE_APRON_Z0 = 1.90, SIDE_APRON_Z1 = 6.10;
+    var sideRunLen = 26.30 - SIDE_APRON_Z1, sideRunCz = SIDE_APRON_Z1 + sideRunLen / 2;
+    if (GARAGE_SIDE) {
+      ebox(4.6, 0.08, sideRunLen, NICE ? 0xffffff : EXTC.drive, SIDE_DRIVE_X,
+           -0.25, sideRunCz, { rough: 0.95, map: driveT });
+      ebox(5.2, 0.08, SIDE_APRON_Z1 - SIDE_APRON_Z0, NICE ? 0xffffff : EXTC.drive,
+           GARAGE_BLOCK.west - 2.60, -0.25, (SIDE_APRON_Z0 + SIDE_APRON_Z1) / 2,
+           { rough: 0.95, map: driveT });
+    } else {
+      ebox(4.6, 0.08, driveLen, NICE ? 0xffffff : EXTC.drive, -15.4, -0.25, driveCz,
+           { rough: 0.95, map: driveT });
+    }
     if (DETAIL >= 2) {
-      [10.85, 12.60, 14.35, 16.10, 17.85, 19.60, 21.35, 23.10, 24.85].forEach(function (jz) {
-        if (jz < driveZ0 + 0.20) return;
-        ebox(4.6, 0.014, 0.055, 0x8e887d, -15.4, -0.204, jz, { rough: 0.95 });
-      });
-      ebox(0.055, 0.014, driveLen, 0x8e887d, -15.4, -0.204, driveCz, { rough: 0.95 });
-      /* the apron's own edge, where the slab meets the lawn */
-      [-1, 1].forEach(function (sx) {
-        ebox(0.10, 0.10, driveLen, EXTC.trim, -15.4 + sx * 2.30, -0.245, driveCz,
-             { rough: 0.9 });
-      });
+      if (GARAGE_SIDE) {
+        /* the same saw-cut grid, on the approach's own line */
+        [10.85, 12.60, 14.35, 16.10, 17.85, 19.60, 21.35, 23.10, 24.85].forEach(function (jz) {
+          if (jz < SIDE_APRON_Z1 + 0.20) return;
+          ebox(4.6, 0.014, 0.055, 0x8e887d, SIDE_DRIVE_X, -0.204, jz, { rough: 0.95 });
+        });
+        ebox(0.055, 0.014, sideRunLen, 0x8e887d, SIDE_DRIVE_X, -0.204, sideRunCz,
+             { rough: 0.95 });
+        [-1, 1].forEach(function (sx) {
+          ebox(0.10, 0.10, sideRunLen, EXTC.trim, SIDE_DRIVE_X + sx * 2.30, -0.245,
+               sideRunCz, { rough: 0.9 });
+        });
+      } else {
+        [10.85, 12.60, 14.35, 16.10, 17.85, 19.60, 21.35, 23.10, 24.85].forEach(function (jz) {
+          if (jz < driveZ0 + 0.20) return;
+          ebox(4.6, 0.014, 0.055, 0x8e887d, -15.4, -0.204, jz, { rough: 0.95 });
+        });
+        ebox(0.055, 0.014, driveLen, 0x8e887d, -15.4, -0.204, driveCz, { rough: 0.95 });
+        /* the apron's own edge, where the slab meets the lawn */
+        [-1, 1].forEach(function (sx) {
+          ebox(0.10, 0.10, driveLen, EXTC.trim, -15.4 + sx * 2.30, -0.245, driveCz,
+               { rough: 0.9 });
+        });
+      }
       /* and the thing every driveway ends in */
       /* the mailbox is a PROP standing in the shell fabric's group, not
          shell fabric itself — box() directly, so it keeps the NICE-tier
@@ -9881,7 +10098,11 @@
     /* CAP_MAT is declared with shellRegister (the valley clip uses it
        at facade-build time, long before this runs) */
     var STRADDLE_TOL = WALL_T4 + 0.25;
-    var ROOF_FEATURE = /^facade_.*_(gable|dormer|hip_end)_\d+/;   /* ruling 1 */
+    /* task 8: the SHED joins the list, and a gabled porch's own roof --
+       which is the same deck the free gable used to build, under the
+       porch's name now (facade_<face>_porch_<slot>_roof_*) -- keeps the
+       ruling it had under the old one. */
+    var ROOF_FEATURE = /^facade_.*_(gable|dormer|hip_end|shed)_\d+|^facade_.*_porch_\d+_roof/;   /* ruling 1 */
     var ROOF_FEATURE_MIN_KEPT = 0.2;
     var ROOM_CAMS = { kitchen: HOME_POS, living: LIV_POS, study: STUDY_POS,
                       garage: GARAGE_POS, mudroom: MUD_POS };
@@ -11417,6 +11638,11 @@
       /* task 6: syncGarage parks driveway cars off the apron's own near
          end, which a garage depth moves */
       GARAGE_SOUTH: GARAGE_BLOCK.south,
+      /* task 8: which way the garage faces -- syncGarage parks the
+         driveway cars on the side apron instead of the front one, and
+         chfNavProbe's face lookup goes straight to the door row, which
+         on a side-entry garage is not street-facing at all. */
+      GARAGE_SIDE: GARAGE_SIDE,
       /* FACADE (arc 4): the spec the elevation was BUILT from (never the
          raw injection -- buildElevation() falls back to CANONICAL_JS)
          and the slot table it derived, for chfFacade/chfFacadeSlots. */
@@ -11719,6 +11945,12 @@
      sliver. Past 13 the apron is cleanly out of the garage's shot, which
      is the honest answer — you cannot see the car there either. */
   var BAY_X = [-16.7, -14.1], DRIVE_X = [-16.55, -14.25];
+  /* SIDE-ENTRY (task 8): the apron in front of a side door runs west
+     across z 1.9..6.1, so its two spots stand side by side along z at
+     one x and the cars face the door -- a quarter turn from the ones on
+     the front drive. Further rows step WEST (the apron's own long axis)
+     rather than south, where the block is. */
+  var DRIVE_SIDE = [[-21.4, 2.6], [-21.4, 5.4]];
   var carPlates = [];        /* the plaques, so the lean-in can blank them */
   /* ORBIT (spec section 4): turn the driveway plaques to the stop the
      camera has arrived at. Called once per landed orbit step — never per
@@ -11785,6 +12017,13 @@
           grp.position.set(BAY_X[inside], 0.038, 5.6);
           eye = webgl.GARAGE_POS;
           inside++;
+        } else if (webgl.GARAGE_SIDE) {
+          var spot = DRIVE_SIDE[outside % 2];
+          grp.position.set(spot[0] - Math.floor(outside / 2) * 4.2, -0.206, spot[1]);
+          grp.rotation.y = Math.PI / 2;
+          eye = webgl.EXT_POS;
+          extAim = true;
+          outside++;
         } else {
           grp.position.set(DRIVE_X[outside % 2], -0.206,
                            13.4 + Math.max(0, webgl.GARAGE_SOUTH - 10.10) +
@@ -12843,7 +13082,15 @@
          spec generated nothing street-facing falls back to the garage
          door, registered by hand and always present. */
       var face = String(spec.front).replace(/_front$/, '');
-      webgl.FABRIC.forEach(function (f) {
+      /* SIDE-ENTRY GARAGE (task 8): a side garage's street face is a
+         plain walled face -- its window is a street-facing generated
+         piece, and the marker would land on THAT instead of the door.
+         The garage marker means the garage DOOR, so on a side-entry
+         garage the target is the `garage_door` row itself, registered by
+         hand and always present, whichever way it faces. */
+      var sideGarage = webgl.GARAGE_SIDE &&
+                       (face === 'garage' || face === 'garage_block');
+      if (!sideGarage) webgl.FABRIC.forEach(function (f) {
         if (b || f.name.indexOf('facade_' + face + '_') !== 0 || f.n.z <= 0.5) return;
         b = f.box; target = f.g; targetName = f.name;
       });

@@ -526,7 +526,8 @@ def scenario_roof_features_stop_at_the_roof_line():
     dormer behind the street face sits at or above the block deck it sits
     on; a gable's ridge stands proud of that deck at the wall.
 
-    The porch gable (canonical gable_8) keeps the porch's own eave (4.8:
+    The porch gable (canonical porch_8_roof, the porch's own roof since
+    task 8 retired the free-gable replay) keeps the porch's own eave (4.8:
     it IS the porch roof, on the porch posts), so in FRONT of the wall its
     low eaves pass under the main eave as they always have -- the audit
     is 'nothing buried behind the face', not 'nothing below the plane
@@ -550,8 +551,8 @@ def scenario_roof_features_stop_at_the_roof_line():
         y_wall = (pl['d'] - pl['n'][2] * 14.55) / pl['n'][1]
         check(abs(y_wall - 5.78) < 1e-3, f'main deck plane at the wall: {y_wall:.3f} != 5.78')
         seen = _audit_roof_features(page)
-        for name, proud in (('facade_main_gable_8_west', 1.725),
-                            ('facade_main_gable_8_east', 1.725),
+        for name, proud in (('facade_main_porch_8_roof_west', 1.725),
+                            ('facade_main_porch_8_roof_east', 1.725),
                             ('facade_garage_block_gable_0_west', 1.92),
                             ('facade_garage_block_gable_0_east', 1.92)):
             check(name in seen, f'{name} audited')
@@ -908,6 +909,103 @@ def scenario_depth_moves_the_face_and_the_blocks_meet():
             check(not errs, f'{label}: console clean: {errs[:3]}')
 
 
+def scenario_side_garage_shed_and_porch_gable():
+    """MASSING ARC 2 task 8 (spec 2026-09-17 section 2): a side-entry
+    garage, the shed roof feature, and the porch's OWN gable.
+
+    Three things at once because they are one spec: `orientation: 'side'`
+    moves the garage door onto the block's west face and turns the drive
+    into an L (normalize() has already deleted the street garage_door row
+    and put a window in its place, so the bay's street face is an
+    ordinary walled face); a `shed` is the single-slope roof feature the
+    elevation could not make, with its own cladding and its own window
+    box; and a gabled porch registers its roof under its OWN name now
+    (facade_<face>_porch_<slot>_roof_*) instead of through the free-gable
+    replay Task 3+4 bridged it with.
+
+    `?angle=1`: the side door faces WEST, so the orbit's stop 0 (dead
+    ahead of the street face) has the block itself between the camera and
+    the door. If the boot stop cannot see it the scenario walks the ring
+    rather than calling a door that exists unreachable, and prints the
+    stop that found it -- MEASURED stop 2, round the west corner, where
+    the whole west face comes square on.
+    """
+    from services import house_facade as hf
+    spec = copy.deepcopy(hf.CANONICAL)
+    spec['blocks']['garage']['orientation'] = 'side'
+    spec['roof'].append({'slot': 13, 'span': 2, 'kind': 'shed',
+                         'window': True, 'cladding': 'shingle'})
+    spec, notes = hf.normalize(spec)
+    check(not any(g['kind'] == 'garage_door' for g in spec['ground']),
+          'normalize dropped the street garage door: %r' % notes)
+    served = live_app(_seed)
+    if served is None:
+        return
+    from house_probe import BUDGET_JS, THREE_WRAP
+    with open('static/vendor/three.min.js', 'rb') as fh:
+        patched = fh.read() + THREE_WRAP
+    tok = hf.issue_draft(spec)
+    with served.browser() as page:
+        page.route('**/three.min.js*', lambda route: route.fulfill(
+            status=200, content_type='application/javascript', body=patched))
+        page.add_init_script(DAY_LOCK_JS)
+        page.goto(served.url('house?quality=high&angle=1&draft=' + tok))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        check(page.evaluate('window.chfFacade()') == spec,
+              'the side-entry spec is what built')
+        names = {r['name'] for r in page.evaluate('window.chfShellFabric()')}
+        for n in ('garage_front_wall', 'garage_block_west_a', 'garage_block_west_b',
+                  'garage_block_west_head', 'facade_main_shed_13',
+                  'facade_main_shed_13_box', 'facade_main_porch_8_roof_west',
+                  'facade_main_porch_8_roof_east'):
+            check(n in names, f'{n} registered')
+        # the bridge's own names are gone: the porch roof is the porch's
+        check(not [n for n in names if n.startswith('facade_main_gable_8')],
+              'the replayed gable name is retired: '
+              f'{[n for n in names if n.startswith("facade_main_gable_8")]}')
+        door = page.evaluate("(() => { const f = window.chfShellFabric()"
+                             ".find(r => r.name === 'garage_door');"
+                             " return f && f.box; })()")
+        check(door and door[1] < -18.0 and abs((door[4] + door[5]) / 2 - 4.0) < 0.6,
+              f'the garage door stands on the west face: {door}')
+        # every marker still reachable, the garage one included: the
+        # probe resolves `front` to the door row itself on a side garage
+        stop, probe = None, page.evaluate("window.chfNavProbe({front:'garage_front'})")
+        if probe:
+            stop = page.evaluate('window.chfOrbitStop()')
+        else:
+            for k in range(8):
+                page.evaluate('window.chfOrbitTo(%d)' % k)
+                page.wait_for_function("window.chfNavProbe({settled:true})",
+                                       timeout=20000)
+                probe = page.evaluate("window.chfNavProbe({front:'garage_front'})")
+                if probe:
+                    stop = k
+                    break
+        check(probe, f'the garage marker is reachable from some orbit stop: {probe}')
+        print('  side garage: garage_front marker hit at orbit stop %r' % stop)
+        # every roof feature (shed and porch gable included) passes the
+        # roof-line audit: nothing buried under the deck it stands on
+        from house_live_common import VERTEX_AUDIT_ALL_JS
+        feats = page.evaluate(FEATURE_JS)
+        check(any(f['kind'] == 'shed' for f in feats), f'the shed is audited: {feats}')
+        check(any(f['kind'] == 'porch_roof' for f in feats),
+              f'the porch roof is audited: {feats}')
+        for f in feats:
+            if f['kind'] == 'hip_end':
+                continue
+            a = page.evaluate(VERTEX_AUDIT_ALL_JS, f)
+            check(a['buried'] == 0,
+                  f"{f['name']}: {a['buried']} of {a['n']} buried vertices "
+                  f"(lowest {a['worst']:.3f})")
+        b = page.evaluate(BUDGET_JS)
+        print('  side garage + shed: inFrustum=%s calls=%s buildMs=%s'
+              % (b.get('inFrustum'), b.get('calls'), b.get('buildMs')))
+        errs = [e for e in served.errors() if 'WebGL' not in e]
+        check(not errs, f'console clean: {errs[:3]}')
+
+
 if __name__ == '__main__':
     scenario_canonical_facade_pins_the_hand_built_elevation()
     scenario_worst_case_facade_builds_clean()
@@ -916,6 +1014,10 @@ if __name__ == '__main__':
     scenario_a_draft_token_renders_day_locked_and_captures()
     scenario_a_bad_draft_token_is_not_an_error()
     scenario_depth_moves_the_face_and_the_blocks_meet()
+    # AFTER the canonical pin, never before it: that pin counts unmerged
+    # exterior meshes in the scene the shared temp data dir produces, so
+    # a scenario that boots ahead of it changes the number it reads.
+    scenario_side_garage_shed_and_porch_gable()
     # Last: it boots six browsers of its own, and every scenario above
     # reads mesh counts out of the shared temp data dir this one seeds.
     scenario_claddings_and_base_band()

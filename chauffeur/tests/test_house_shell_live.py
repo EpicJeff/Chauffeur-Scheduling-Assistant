@@ -127,14 +127,13 @@ def scenario_shell_fabric_registry():
         from services import house_facade as _hf
         canon = {(f['slot'], f['kind'])
                  for f in _hf.CANONICAL['ground'] + _hf.CANONICAL['roof']}
-        # MASSING ARC 2 (spec 2026-09-17 section 2): the porch OWNS its
-        # roof, so the canonical's gable at slot 8 is now the porch's
-        # `roof: 'gable'` rather than a free feature. The piece it builds
-        # still traces back to a canonical feature -- that porch -- so
-        # teach the derivation the new schema. The rule is unchanged: a
-        # generated name with no canonical feature behind it still fails.
-        canon |= {(f['slot'], 'gable') for f in _hf.CANONICAL['ground']
-                  if f['kind'] == 'porch' and f.get('roof') == 'gable'}
+        # MASSING ARC 2 task 8: the porch OWNS its roof and registers it
+        # under its OWN name now (facade_main_porch_8_roof_west/east/
+        # front), so the (slot, 'porch') pair already in `canon` licenses
+        # it and the special case that licensed a `gable` at the gabled
+        # porch's slot -- the replay bridge's artefact -- is gone with
+        # the bridge. The rule is unchanged: a generated name with no
+        # canonical feature behind it still fails.
         slots = _hf.slot_table()
         check(generated, 'the elevation must register generated pieces')
         # face names can themselves carry an underscore now (garage_block),
@@ -274,8 +273,8 @@ def scenario_shell_fabric_registry():
             # end (0.006 of the old half), so it is neither list.
             'kitchen': {'masked': ['roof_main_south', 'roof_main_end_west',
                                    'garage_block_roof_end_east', 'west_wall',
-                                   'west_skirt', 'facade_main_gable_8_west',
-                                   'facade_main_gable_8_east'],
+                                   'west_skirt', 'facade_main_porch_8_roof_west',
+                                   'facade_main_porch_8_roof_east'],
                         'whole': ['south_wall', 'facade_main_window_7',
                                   'facade_main_window_9', 'facade_main_window_12',
                                   'facade_main_door_10', 'facade_main_porch_8',
@@ -305,8 +304,8 @@ def scenario_shell_fabric_registry():
             'living': {'masked': ['south_wall', 'roof_main_south',
                                   'facade_main_window_7', 'facade_main_window_9',
                                   'facade_main_window_12', 'facade_main_door_10',
-                                  'facade_main_gable_8_west', 'facade_main_gable_8_east',
-                                  'facade_main_gable_8_front', 'facade_main_porch_8'],
+                                  'facade_main_porch_8_roof_west', 'facade_main_porch_8_roof_east',
+                                  'facade_main_porch_8_roof_front', 'facade_main_porch_8'],
                        'whole': ['facade_main_window_15', 'facade_main_window_16',
                                  'east_partition', 'east_wall', 'north_wall',
                                  'north_wall_east', 'future_room_partition',
@@ -440,7 +439,7 @@ def scenario_shell_fabric_registry():
         check(page.evaluate("window.chfNavProbe({settled:true}).focused") == 'door',
               'tapping the visible garage connection must focus the hero')
 
-        for piece in ['south_wall', 'facade_main_gable_8_front']:
+        for piece in ['south_wall', 'facade_main_porch_8_roof_front']:
             page.evaluate("window.chfHouseExit()")
             page.wait_for_function("window.chfNavProbe({settled:true})")
             hit = page.evaluate("window.chfNavProbe({piece:%r})" % piece)
@@ -1197,7 +1196,7 @@ def scenario_room_masks_cut_only_what_blocks_the_room():
             check(frac(kit, 'living') == 1, f'living: {kit} goes whole with the wall it sits in')
         # PORCH (fix round 1 ruling): not a kit -- its boxes clip per
         # mesh. The porch ROW is the slab, step, posts, rails and the
-        # eave beam; its roof decks are the facade_main_gable_8_* rows
+        # eave beam; its roof decks are the facade_main_porch_8_roof_* rows
         # (dropped whole above). What stands in the pyramid is the beam
         # and the tops of the posts -- 13% of the row's surface (the
         # slab, step and rails under the pyramid's floor plane are most
@@ -1217,11 +1216,11 @@ def scenario_room_masks_cut_only_what_blocks_the_room():
         # buried deck reached 6.84 there), so the kitchen's cut of what
         # remains reads 0.20 where it read 0.25 -- measured, the pin
         # widened to hold it.
-        for deck in ('facade_main_gable_8_west', 'facade_main_gable_8_east'):
+        for deck in ('facade_main_porch_8_roof_west', 'facade_main_porch_8_roof_east'):
             check(frac(deck, 'living') == 1, f'living: {deck} drops whole below a fifth kept, got {frac(deck, "living")}')
             check(0.15 < frac(deck, 'kitchen') < 0.3, f'kitchen: {deck} keeps its clipped part, got {frac(deck, "kitchen")}')
-        check(0.5 < frac('facade_main_gable_8_front', 'living') < 0.8,
-              f"living: the porch gable front is clipped, not dropped, got {frac('facade_main_gable_8_front', 'living')}")
+        check(0.5 < frac('facade_main_porch_8_roof_front', 'living') < 0.8,
+              f"living: the porch gable front is clipped, not dropped, got {frac('facade_main_porch_8_roof_front', 'living')}")
         #   kitchen: the box's near face is z 5.8, INSIDE the open great
         #   room. The pyramid's floor plane runs from HOME_POS through
         #   the box's bottom-south edge (y 0, z 5.8) and crosses the
@@ -1341,7 +1340,7 @@ def scenario_room_masks_cut_only_what_blocks_the_room():
             check(not sliver, f'{room}: {len(sliver)} kept {wall} vertices inside P behind the near face (inner sliver survived): {sliver[:3]}')
         check(page.evaluate("window.chfRoomShellVerts('living', 'facade_main_porch_8', 100)"),
               'living shell: the porch leaves remnants (its posts and cut deck)')
-        for deck in ('facade_main_gable_8_west', 'facade_main_gable_8_east'):
+        for deck in ('facade_main_porch_8_roof_west', 'facade_main_porch_8_roof_east'):
             check(page.evaluate(f"window.chfRoomShellVerts('living', '{deck}', 100)") == [],
                   f'living shell: no {deck} remnant')
             check(page.evaluate(f"window.chfRoomShellVerts('kitchen', '{deck}', 100)"),

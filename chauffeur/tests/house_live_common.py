@@ -90,11 +90,17 @@ def roof_piece_names(base, form, ridge):
 # its own decks by); the face line from the slot table.
 # Moved here from test_house_facade_live.py (blocks spec section 0) so
 # the shell file's hip / ridge-z pin reads the same audit.
+# MASSING ARC 2 task 8: the SHED joins the roof kinds, and a gabled
+# porch's own roof (facade_<face>_porch_<slot>_roof_*) is a roof feature
+# too -- it is the same deck the free-gable replay used to build, under
+# the porch's own name -- so the roof-line audit must still see it.
 FEATURE_JS = r"""() => {
   const out = [];
   window.chfShellFabric().forEach(f => {
-    const m = /^facade_(garage_block|main)_(gable|dormer|hip_end)_(\d+)/.exec(f.name);
-    if (m) out.push({ name: f.name, face: m[1], kind: m[2], slot: +m[3] });
+    const m = /^facade_(garage_block|main)_(gable|dormer|hip_end|shed)_(\d+)/.exec(f.name);
+    if (m) { out.push({ name: f.name, face: m[1], kind: m[2], slot: +m[3] }); return; }
+    const p = /^facade_(garage_block|main)_porch_(\d+)_roof/.exec(f.name);
+    if (p) out.push({ name: f.name, face: p[1], kind: 'porch_roof', slot: +p[2] });
   });
   return out;
 }"""

@@ -689,7 +689,12 @@ def scenario_the_two_v2_bridges_are_declared():
     trim) and body/cladding are read per BLOCK through BLOCKS/CLAD(block),
     so the _fstyle() style bridge is gone and CANONICAL_JS is the V2
     literal -- equal to CANONICAL directly, no upgrade table in between.
-    One bridge is left, the porch-gable replay, and TASK 8 owns it."""
+
+    TASK 8 CLOSED THE SECOND: the porch-gable replay is gone and porchAt
+    builds the porch's own roof, registered under the porch's own name
+    (facade_<face>_porch_<slot>_roof_*). BOTH bridges are retired now, so
+    this asserts their absence -- no replay call, no bridge label left in
+    the file -- rather than their presence."""
     import io, os
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     js = io.open(os.path.join(root, 'static', 'house.js'), encoding='utf-8').read()
@@ -699,11 +704,14 @@ def scenario_the_two_v2_bridges_are_declared():
     for needle in ('var BLOCKS = SPEC0.blocks', 'function blockPitch(',
                    'function cladTex(', 'function baseBand('):
         check(needle in js, f'the block model is read in JS: {needle}')
-    check("f.roof === 'gable'" in js and 'gableAt({ slot: f.slot' in js,
-          "the porch-roof bridge: a gabled porch's own gable is built until "
-          'task 8 moves it inside porchAt')
-    check(js.count('TASK 3+4 BRIDGE') == 1,
-          f'exactly the ONE remaining bridge says so: {js.count("TASK 3+4 BRIDGE")}')
+    check('gableAt({ slot: f.slot' not in js,
+          'TASK 8: the porch-gable replay is GONE -- nothing rebuilds a '
+          "gabled porch's roof through gableAt")
+    check("_porch_' + feat.slot + '_roof" in js,
+          'TASK 8: porchAt OWNS the gable -- it registers the porch roof '
+          'under the porch\'s own name')
+    check(js.count('TASK 3+4 BRIDGE') == 0,
+          f'no bridge label is left in the file: {js.count("TASK 3+4 BRIDGE")}')
     # CANONICAL_JS is now field for field hf.CANONICAL. Parse the literal
     # out of the file rather than retyping it here: a retyped copy is a
     # third canonical that can drift from both.
