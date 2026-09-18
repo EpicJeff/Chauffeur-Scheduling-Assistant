@@ -153,3 +153,28 @@ budget orbit0    meshes=2286 visible=1433 inFrustum=1433 tris=299285 materials=1
 ```
 
 So **B0 = inFrustum 1433, tris 299285, calls 2819, buildMs 1090, materials 1450, geometries 1713** (meshes 2286, visible 1433, ghostLines 0, ghostDraws 0, mainPassDraws 1433). Every later ceiling in this spec is this row plus the stated per-variant delta. The exterior PNG from this run is `chauffeur/tests/fixtures/house_photo/b0-exterior.png` (Task 5's pixel reference) — confirmed the daytime canonical exterior at stop 0 (Garage/Mudroom/Living room lean-in markers visible, no night rig).
+
+### Per-variant budgets (Task 13, 2026-09-18)
+
+Measured at HEAD `ca94790` (v2.499.90) by `chauffeur/tests/test_house_variants_live.py`, run from `chauffeur/`:
+
+```
+env -u HA_BASE_URL python tests/test_house_variants_live.py
+```
+
+**Paired, not against the B0 literal.** The probe's scene is seeded but not frozen: the planting's own seed follows the DATE, so the identical canonical house measured `inFrustum 1433 / calls 2819` on the day B0 was captured (2026-09-17) and `1374 / 2699` here. A ceiling written as "B0 + delta" therefore drifts by a handful of meshes every midnight. The scenario instead boots the CANONICAL first — same served app, same browser session, same seeded temp data dir, `THREE_WRAP` routed, `DAY_LOCK_JS` + `SEED_RNG_JS` installed, `?draft=<token>` so the base takes the identical route a variant does — records that row as `base`, and holds every variant against `base + DELTA[variant]`. The B0 row stays in the file as a recorded number; nothing asserts against it.
+
+All six boots, one session, `quality=high`, orbit stop 0 (`BUDGET_JS`):
+
+| boot | inFrustum | calls | tris | buildMs | Δ meshes | Δ calls |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| base (canonical) | 1374 | 2699 | 293071 | 1137 | 0 | 0 |
+| mirror | 1371 | 2693 | 291919 | 955 | −3 | −6 |
+| two_story (both blocks) | 1394 | 2739 | 293166 | 1088 | +20 | +40 |
+| side_garage | 1377 | 2705 | 291503 | 970 | +3 | +6 |
+| brick (brick main + stone base on the garage) | 1379 | 2709 | 293131 | 1081 | +5 | +10 |
+| combined (§6 rev2) | 1430 | 2810 | 291151 | 1047 | +56 | +111 |
+
+Ceilings in the file are the measured delta plus 2 meshes / 4 calls of headroom, floored at the base — `mirror` gets `+2/+4` rather than `−1/−2`, because a ceiling that fails when the mirror costs exactly what the base costs is a rule about frustum noise, not about budget: `mirror 2/4, two_story 22/44, side_garage 5/10, brick 7/14, combined 58/115`. `buildMs ≤ 1500` holds on every boot of a quiet machine, worst 1137 (the base itself). Two runs at these numbers were bit-identical in meshes, calls and tris. **buildMs is paired too**: inside `tools/test.py`'s twelve-worker sweep the SAME canonical measured 1885 ms — a number about machine load, not about the build — so the file holds every variant at `max(1500, base.buildMs + 250)`. On a quiet machine that is exactly the spec's 1500; on a loaded one it is "a variant is no slower to build than the canonical is right now". The base's own conformance to 1500 is printed every run, so a real regression in the canonical build still surfaces.
+
+**The combined boot's laws** (its own scenario, its own server — so its absolute counts sit ~127 meshes higher than the table above: `live_app(_seed)` seeds a second pair of cars into the shared temp data dir, which is exactly why the budget scenario runs first): main depth clamped to 2.0 by the porch with the note, garage at 6.0, street garage door replaced by a window, story-2 shuttered window and shed both survive; `chfBlockMeet()` active on **both** blocks (hip main, gable garage, unequal depth and equal stories) with `main_in_garage = 0`, `garage_in_main = 0`, `main_out = 585`, `garage_out = 960`; markers reachable at `{front:'main'}` stop 0, `{piece:'back_door'}` stop 4, `{piece:'garage_block_roof_south'}` stop 0, `{front:'garage_block'}` stop 0; all five rooms entered and settled; kitchen and living both report a non-empty `chfRoomShellCut` including `_upper_` rows. Under `mirror: true` `chfRoomViewClear` returns `null` by the §3.4 ruling (a house-local ray into a world graph would be a confident lie), so the combined scenario asserts the mask's own record instead of the ray.
