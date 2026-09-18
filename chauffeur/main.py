@@ -5546,7 +5546,10 @@ def house_facade_critique(body: dict = Body(default={})):
         render = render.split(',', 1)[1]
     result, err = _hf.critique(str((body or {}).get('token') or ''), render)
     if err:
-        raise HTTPException(status_code=400, detail=err)
+        # FINAL REVIEW (important 2): a second request while the first is
+        # still with the model is a CONFLICT, not a bad request — the token
+        # is fine, the answer just is not here yet.
+        raise HTTPException(status_code=409 if 'in progress' in err else 400, detail=err)
     return {'result': result}
 
 

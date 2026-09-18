@@ -31,6 +31,15 @@ from concurrent.futures import ThreadPoolExecutor
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TESTS = os.path.join(HERE, 'tests')
 
+# The house live files each boot a real browser and drive a full 3D scene, some
+# of them several times over. Twelve of them against twelve of everything else
+# oversubscribes the machine badly enough that the heaviest two time out —
+# while every one of them passes solo. They get their own lane: one at a time,
+# in parallel with the ordinary fan-out, so the sweep stays a single command
+# and stays honest. Timings are reported exactly as before.
+HEAVY = {'test_house_facade_live.py', 'test_house_shell_live.py',
+         'test_house_variants_live.py', 'test_house_nav_live.py'}
+
 
 def all_tests():
     return sorted(glob.glob(os.path.join(TESTS, 'test_*.py')))
@@ -116,8 +125,14 @@ def run(files, show_slow=False):
 
     t0 = time.time()
     workers = max(2, (os.cpu_count() or 4))
+    heavy = [f for f in files if os.path.basename(f) in HEAVY]
+    light = [f for f in files if os.path.basename(f) not in HEAVY]
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        rows = list(ex.map(one, files))
+        # the heavy lane is ONE worker: its files run one after another while
+        # everything else fans out across the rest of the pool.
+        with ThreadPoolExecutor(max_workers=1) as slow:
+            heavy_rows = slow.map(one, heavy)
+            rows = list(ex.map(one, light)) + list(heavy_rows)
     wall = time.time() - t0
 
     bad = [r for r in rows if r[2] != 0]

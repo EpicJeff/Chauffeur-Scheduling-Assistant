@@ -619,6 +619,161 @@ def scenario_critique_returns_one_revised_model_or_the_draft():
         model_pools.call_pool_json = orig
 
 
+def scenario_saved_v1_facades_normalize_on_read():
+    """FINAL REVIEW (critical 1): a facade saved before massing arc 2 is a V1
+    row with no `blocks`. list_facades() used to hand the raw row to the
+    editor, whose Blocks panel reads spec.blocks.<name> — so every facade
+    saved before the arc broke the page that was meant to edit it. Every row
+    comes back through the V1 mapping table now, exactly as active_bundle's
+    does."""
+    from services import storage
+    _fresh()
+    v1 = {'version': 1, 'pitch_deg': 30.0,
+          'style': {'cladding': 'clapboard', 'body': 'sage', 'roof': 'brown',
+                    'frame': 'white', 'door': 'red', 'trim': 'black'},
+          'ground': [{'slot': 10, 'span': 1, 'kind': 'door'},
+                     {'slot': 12, 'span': 1, 'kind': 'window', 'size': 'tall'}],
+          'roof': [{'slot': 15, 'span': 1, 'kind': 'hip_end'}]}
+    storage.patch_settings({'house_facades': [{'id': 'oldrow', 'name': 'Before the arc', 'spec': v1}]})
+    rows = hf.list_facades()
+    check(len(rows) == 2 and rows[0]['id'] == 'canonical', f'canonical first, then the saved row: {[r["id"] for r in rows]}')
+    spec = rows[1]['spec']
+    check(spec['blocks']['main']['cladding'] == 'lap' and spec['blocks']['garage']['cladding'] == 'lap',
+          f"a V1 clapboard row comes back as lap on both blocks: {spec.get('blocks')}")
+    check(spec['blocks']['main']['body'] == 'sage' and spec['blocks']['main']['roof']['pitch_deg'] == 22.5,
+          'the mapping table ran: body copied, block pitch still 22.5')
+    check(spec['version'] == 2 and spec['mirror'] is False, 'the row is V2 on the way out')
+    check((storage.get_settings().get('house_facades') or [])[0]['spec'] == v1,
+          'reading never rewrites what is stored')
+
+
+def scenario_critique_is_single_flight():
+    """FINAL REVIEW (important 2): the replay check was check-then-act, so two
+    requests on ONE token both ran a 90-second vision call. Exactly one runs;
+    the other is told the work is in progress and the route answers 409."""
+    import threading, time as _t
+    from services import storage, model_pools
+    _fresh()
+    storage.update_settings({'calendar_ids': [], 'llm_gemini_api_key': 'k'})
+    orig = model_pools.call_pool_json
+    try:
+        model_pools.call_pool_json = lambda *a, **k: _fixture('brick.pass1.json')
+        _, _, _, tok = hf.from_photo('AAAA', 'image/jpeg')
+        calls = {'n': 0}
+
+        def slow_pool(*a, **k):
+            calls['n'] += 1
+            _t.sleep(0.3)
+            return _fixture('brick.pass2.json')
+        model_pools.call_pool_json = slow_pool
+        out = []
+        threads = [threading.Thread(target=lambda: out.append(hf.critique(tok, 'iVBOR'))) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        check(calls['n'] == 1, f'exactly one provider call for one token: {calls["n"]}')
+        busy = [r for r in out if r == (None, 'critique in progress')]
+        done = [r for r in out if r[0] is not None]
+        check(len(busy) == 1 and len(done) == 1, f'one runs, one is told it is in progress: {[(bool(r[0]), r[1]) for r in out]}')
+        check(done[0][0]['revised'], 'the winner still returns a real result')
+        check(hf.critique(tok, 'iVBOR')[0] == done[0][0] and calls['n'] == 1,
+              'once stored, a later submission replays it rather than 409ing forever')
+    finally:
+        model_pools.call_pool_json = orig
+
+
+def scenario_an_unseen_garage_is_a_plain_block():
+    """FINAL REVIEW (important 3): the prompt allows a photo with no visible
+    garage and validate_block_model requires blocks.garage — so the honest
+    answer was rejected whole. It becomes the default block with a note."""
+    from services import storage, model_pools
+    _fresh()
+    storage.update_settings({'calendar_ids': [], 'llm_gemini_api_key': 'k'})
+    orig = model_pools.call_pool_json
+    try:
+        no_garage = _fixture('brick.pass1.json')
+        no_garage['blocks'].pop('garage', None)
+        model_pools.call_pool_json = lambda *a, **k: copy.deepcopy(no_garage)
+        draft, notes, err, tok = hf.from_photo('AAAA', 'image/jpeg')
+        check(err is None and draft and tok, f'a photo with no visible garage still yields a draft: {err}')
+        check(draft['blocks']['garage'] == hf._block(orientation='front'),
+              f"the unseen garage is the plain default block: {draft['blocks']['garage']}")
+        check(any('garage not visible' in n for n in notes), f'and it says so: {notes}')
+        # a null garage is the same case
+        no_garage['blocks']['garage'] = None
+        draft2, notes2, err2, _ = hf.from_photo('AAAA', 'image/jpeg')
+        check(err2 is None and draft2['blocks']['garage']['orientation'] == 'front', f'null garage too: {err2}')
+        check('If the garage is not visible, describe it' in hf.PHOTO_SYSTEM
+              and 'never omit it' in hf.PHOTO_SYSTEM, 'the prompt no longer invites an omission')
+        # same class: an unknown block name lands on main, out loud
+        notes3 = []
+        hf._snap_fractions({'ground': [{'block': 'shed', 'at': 0.5, 'width': 0.1, 'kind': 'door'}]}, notes3)
+        check(any("unknown block 'shed'" in n for n in notes3), f'an unknown block is noted, not silent: {notes3}')
+    finally:
+        model_pools.call_pool_json = orig
+
+
+def scenario_the_draft_cache_is_bounded():
+    """FINAL REVIEW (important 4): drafts hold the photo's bytes for fifteen
+    minutes. The cache keeps the newest DRAFT_MAX and drops the oldest."""
+    hf._DRAFTS.clear()
+    toks = [hf.issue_draft(hf.CANONICAL, 'A' * 64, 'image/jpeg') for _ in range(hf.DRAFT_MAX + 1)]
+    check(len(hf._DRAFTS) == hf.DRAFT_MAX, f'the cache holds at most {hf.DRAFT_MAX}: {len(hf._DRAFTS)}')
+    check(hf.draft_for(toks[0]) is None, 'the oldest token stopped resolving')
+    check(all(hf.draft_for(t) is not None for t in toks[1:]), 'every newer token still resolves')
+    hf._DRAFTS.clear()
+
+
+def scenario_the_pipeline_records_its_request_count():
+    """FINAL REVIEW (important 5): spec section 4 says the pipeline records its
+    request count in the notes. call_pool_json now reports the models it
+    actually sent a request to, and both passes write the count down."""
+    from services import storage, model_pools
+    _fresh()
+    storage.update_settings({'calendar_ids': [], 'llm_gemini_api_key': 'k'})
+    orig = model_pools.call_pool_json
+    try:
+        def two_tries(tier, key, system, user, attempts=None, **kw):
+            attempts.extend(['gemini-a', 'gemini-b'])
+            return _fixture('brick.pass1.json')
+        model_pools.call_pool_json = two_tries
+        draft, notes, err, tok = hf.from_photo('AAAA', 'image/jpeg')
+        check(err is None and any('2 model request(s): gemini-a, gemini-b' in n for n in notes),
+              f'pass 1 writes down what it spent: {notes}')
+
+        def one_try(tier, key, system, user, attempts=None, **kw):
+            attempts.append('gemini-a')
+            return _fixture('brick.pass2.json')
+        model_pools.call_pool_json = one_try
+        res, err2 = hf.critique(tok, 'iVBOR')
+        check(err2 is None and res['attempts'] == 1, f"pass 2's own count is measured, not assumed: {res['attempts']}")
+        check(res['requests_total'] == 3, f"the token's total is pass 1 plus pass 2: {res['requests_total']}")
+        check(any('1 model request(s): gemini-a' in r for r in res['reasons']), f'and it is in the reasons: {res["reasons"]}')
+    finally:
+        model_pools.call_pool_json = orig
+
+
+def scenario_shed_windows_spend_the_window_budget():
+    """FINAL REVIEW (minor 9): a shed with `window: true` is a shed dormer and
+    draws a real window; it used to be free while a dormer's was not."""
+    # a door of our own, so normalize does not invent one over a window
+    ground = ([{'slot': 10, 'span': 1, 'kind': 'door'}]
+              + [{'slot': i, 'span': 1, 'kind': 'window', 'size': 'tall'} for i in (6, 7, 8, 9, 11, 12, 13, 14, 15, 16)])
+    plain, _ = hf.normalize(_spec(ground=list(ground), roof=[]))
+    check(len([g for g in plain['ground'] if g['kind'] == 'window']) == hf.MAX_WINDOWS,
+          f"ten windows and no roof window: the cap is the cap: {len([g for g in plain['ground'] if g['kind'] == 'window'])}")
+    spec, notes = hf.normalize(_spec(ground=list(ground),
+                                     roof=[{'slot': 17, 'span': 1, 'kind': 'shed', 'window': True}]))
+    wins = [g for g in spec['ground'] if g['kind'] == 'window']
+    check(any(r['kind'] == 'shed' and r['window'] for r in spec['roof']), 'the shed dormer survives')
+    check(len(wins) == hf.MAX_WINDOWS - 1, f'its window spends a slot of the budget: {len(wins)}')
+    blind, _ = hf.normalize(_spec(ground=list(ground),
+                                  roof=[{'slot': 17, 'span': 1, 'kind': 'shed', 'window': False}]))
+    check(len([g for g in blind['ground'] if g['kind'] == 'window']) == hf.MAX_WINDOWS,
+          'a shed with no window costs nothing')
+
+
 def scenario_validate_rejects_structurally_bad_models():
     """Spec 2026-09-17 blocks section 4: validation is not normalization.
     normalize manufactures defaults; validate must refuse first."""
@@ -847,7 +1002,7 @@ def scenario_home_section_pins():
     check('facadeCellStory' in tpl, 'the cell editor tracks which story it is editing')
     check('Editing' in tpl, 'a control names which story is being edited')
     i0 = tpl.index('facadeCellApply() {')
-    i1 = tpl.index('async facadePreview() {', i0)
+    i1 = tpl.index('async facadePreview(spec) {', i0)
     apply_body = tpl[i0:i1]
     check('facadeCellStory' in apply_body,
           "facadeCellApply's removal filter is story-aware: a stacked "
@@ -859,6 +1014,20 @@ def scenario_home_section_pins():
           'facadeCellSelect falls back to the story-2 entry: a story-2-only '
           'span clicked on a continuation cell must snap to its own start, '
           'not relocate on the next apply')
+    # FINAL REVIEW: minor 7 (the strip colours a story-2-only slot), important 2
+    # (neither model button is armed while one is running, and a 409 says so),
+    # minor 10 (an expired ?draft= preview is called out, never shown silently).
+    k0 = tpl.index('facadeCellClass(i) {')
+    class_body = tpl[k0:tpl.index('facadeCellApply() {', k0)]
+    check("facadeEntry('ground', i, 1)" in class_body and "facadeEntry('ground', i, 2)" in class_body,
+          'facadeCellClass looks up story 1 then story 2, like the label and the select do')
+    check(tpl.count(':disabled="!!facadeBusy"') == 2,
+          'both Preview in 3D and Compare to photo are disarmed while one is running')
+    check('res.status === 409' in tpl and 'Still comparing' in tpl,
+          'a concurrent critique is reported as a wait, not a failure')
+    check('facadeFrameLoaded()' in tpl and "HOUSE_FACADE.id !== 'draft'" in tpl
+          and 'This preview expired' in tpl,
+          'an expired draft token is named rather than showing the active house as the draft')
     for bad in ('alert(', 'confirm(', 'prompt('):
         sec = tpl[tpl.index('id="home"'):tpl.index('id="home"') + 20000]
         check(bad not in sec.replace('promptConfirm(', '').replace('promptInput(', ''), f'no browser dialogs: {bad}')
@@ -991,6 +1160,12 @@ if __name__ == '__main__':
                scenario_photo_pass1_maps_the_fixtures,
                scenario_photo_pass1_rejects_before_normalize,
                scenario_critique_returns_one_revised_model_or_the_draft,
+               scenario_saved_v1_facades_normalize_on_read,
+               scenario_critique_is_single_flight,
+               scenario_an_unseen_garage_is_a_plain_block,
+               scenario_the_draft_cache_is_bounded,
+               scenario_the_pipeline_records_its_request_count,
+               scenario_shed_windows_spend_the_window_budget,
                scenario_the_two_v2_bridges_are_declared,
                scenario_home_section_pins,
                scenario_text_meshes_use_the_helper):

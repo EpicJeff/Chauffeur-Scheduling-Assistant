@@ -8345,7 +8345,11 @@
          a unit at the first step below high (the cap's own order: "keep
          rims, lose hubs; lose mirrors; keep seams" — mirrors go together
          with the handles/badge that already lived at this tier). */
-      if (DETAIL >= 3 && !p.noMirror) {
+      /* `sideMirrors: false` on a body params object means this vehicle has no
+         wing mirrors (the bus). It is NOT userData.noMirror, which is the text
+         contract's counter-flip flag — two different things that used to share
+         one name in this file. */
+      if (DETAIL >= 3 && p.sideMirrors !== false) {
         [-1, 1].forEach(function (sx) {
           var mx = sx * (hw + 0.05), my = p.belt + 0.075, mz = p.wsB - 0.12;
           tag(sweepAt([[sx * (hw - 0.02), p.belt + 0.02, p.wsB - 0.04],
@@ -8463,7 +8467,7 @@
                      fw: 2.02, rw: -1.82, wsB: 1.86, wsT: 1.62,
                      blT: -2.62, blB: -2.74, dual: true,
                      pil: [0.12, 0.27, 0.42, 0.57, 0.72, 0.88],
-                     trim: 0x23272c, noMirror: true };
+                     trim: 0x23272c, sideMirrors: false };
     var busG = new T.Group();
     busG.visible = false;
     busG.position.set(-5.5, -0.31, 27.8);

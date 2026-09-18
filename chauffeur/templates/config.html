@@ -2714,12 +2714,12 @@
                                 <button class="px-3 py-1 rounded bg-gray-700" @click="facades[0] && facadeLoad(facades[0])">Reset to canonical</button>
                             </div>
                             <div class="flex gap-2 items-center">
-                                <button class="px-3 py-1 rounded bg-gray-700" @click="facadePreview3D()">Preview in 3D</button>
-                                <button class="px-3 py-1 rounded bg-amber-700" x-show="facadeDraftSource === 'photo' && facadePhotoToken" @click="facadeCritique()">Compare to photo</button>
+                                <button class="px-3 py-1 rounded bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed" :disabled="!!facadeBusy" @click="facadePreview3D()">Preview in 3D</button>
+                                <button class="px-3 py-1 rounded bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed" x-show="facadeDraftSource === 'photo' && facadePhotoToken" :disabled="!!facadeBusy" @click="facadeCritique()">Compare to photo</button>
                                 <span class="text-xs text-gray-400" x-text="facadeBusy"></span>
                             </div>
                             <div x-show="facadePreviewToken" class="rounded-xl overflow-hidden bg-black" style="width:700px;height:500px">
-                                <iframe id="facade-preview-frame" :src="facadePreviewToken ? (apiBase + 'house?draft=' + facadePreviewToken + '&angle=' + facadePreviewAngle + '&quality=medium&day=1') : 'about:blank'"
+                                <iframe id="facade-preview-frame" @load="facadeFrameLoaded()" :src="facadePreviewToken ? (apiBase + 'house?draft=' + facadePreviewToken + '&angle=' + facadePreviewAngle + '&quality=medium&day=1') : 'about:blank'"
                                         style="width:1400px;height:1000px;transform:scale(0.5);transform-origin:0 0;border:0"></iframe>
                             </div>
                             <div x-show="facadeRenders.draft || facadeRenders.revised" class="grid md:grid-cols-2 gap-3">
@@ -5654,10 +5654,19 @@
                     }
                 },
                 facadeLoad(f) {
-                    this.facadeDraft = JSON.parse(JSON.stringify(f.spec)); this.facadeDraftId = f.id; this.facadeDraftSource = 'hand'; this.facadeNotes = []; this.facadeSlot = null;
+                    const spec = JSON.parse(JSON.stringify((f && f.spec) || {}));
+                    this.facadeDraftId = f.id; this.facadeDraftSource = 'hand'; this.facadeNotes = []; this.facadeSlot = null;
                     this.facadePhotoToken = null; this.facadePhotoViewpoint = null;
                     this.facadePreviewToken = null; this.facadePreviewAngle = 0;
                     this.facadeRenders = { draft: null, revised: null }; this.facadeCritiqueResult = { reasons: [], unexpressed: [], revised: null };
+                    // FINAL REVIEW (critical 1): the server normalizes every saved
+                    // row on read now, so a pre-arc V1 facade arrives carrying
+                    // `blocks`. Belt and braces for any other route in: the Blocks
+                    // panel binds straight to spec.blocks.<name>, so binding a spec
+                    // without one throws on the first render. A blocks-less spec
+                    // goes through normalize FIRST and is never bound raw.
+                    if (!spec.blocks) { this.facadeDraft = null; this.facadePreview(spec); return; }
+                    this.facadeDraft = spec;
                 },
                 facadeEntry(layer, i, story = 1) {
                     // A porch is an overlay (spec 4.5): it shares slots with the door/window
@@ -5702,7 +5711,11 @@
                     return ground + '\n' + (r ? r.kind : '');
                 },
                 facadeCellClass(i) {
-                    const g = this.facadeEntry('ground', i);
+                    // FINAL REVIEW (minor 7): story 1 first, then story 2 — the same
+                    // lookup facadeCellSelect and facadeCellText already do. Asking
+                    // only the default story left a story-2-only slot uncoloured and
+                    // its span unbracketed while its own label said `↑`.
+                    const g = this.facadeEntry('ground', i, 1) || this.facadeEntry('ground', i, 2);
                     const start = g ? g.slot : i, end = g ? g.slot + g.span - 1 : i;
                     const isStart = i === start, isEnd = i === end;
                     let cls = (this.facadeSlot === start ? 'border-teal-400 ' : 'border-gray-700 ') + (g ? 'bg-gray-700 ' : 'bg-gray-900 ');
@@ -5745,9 +5758,9 @@
                     }
                     this.facadePreview();
                 },
-                async facadePreview() {
+                async facadePreview(spec) {
                     try {
-                        const res = await fetch(`${this.apiBase}api/house/facades/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spec: this.facadeDraft }) });
+                        const res = await fetch(`${this.apiBase}api/house/facades/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spec: spec || this.facadeDraft }) });
                         const data = await res.json();
                         if (!res.ok) { showGlobalAlert(data.detail || 'Could not check the facade'); return; }
                         this.facadeDraft = data.spec; this.facadeNotes = data.notes;
@@ -5780,6 +5793,27 @@
                 // points toward stop 7, not stop 1 -- so a photo taken from the
                 // photographer's right stood at stop 7, and one from their left at stop 1.
                 facadeAngleForViewpoint(vp) { return vp === 'left' ? 1 : vp === 'right' ? 7 : 0; },
+                // FINAL REVIEW (minor 10): /house falls back to the ACTIVE facade
+                // when a ?draft= token has expired or been evicted, silently — so a
+                // stale preview showed the family's saved house and looked like the
+                // draft. The page says which facade it drew; say so out loud.
+                async facadeFrameLoaded() {
+                    if (!this.facadePreviewToken) return;
+                    try {
+                        const f = document.getElementById('facade-preview-frame');
+                        const w = f && f.contentWindow;
+                        if (!w) return;
+                        for (let i = 0; i < 200; i++) {
+                            if (w.chfNavProbe && w.chfNavProbe({ settled: true })) break;
+                            await new Promise(r => setTimeout(r, 100));
+                        }
+                        if (!this.facadePreviewToken) return;        // swapped out while we waited
+                        if (!w.chfFacade || !w.chfFacade()) return;  // never built: not our call to make
+                        if (!w.HOUSE_FACADE || w.HOUSE_FACADE.id !== 'draft') {
+                            showGlobalAlert('This preview expired — press Preview in 3D again');
+                        }
+                    } catch (e) { /* torn down mid-check: nothing to report */ }
+                },
                 facadeCaptureFrame() {
                     return new Promise((resolve, reject) => {
                         const f = document.getElementById('facade-preview-frame');
@@ -5803,6 +5837,9 @@
                         this.facadeRenders.draft = png; this.facadeBusy = 'Comparing to your photo…';
                         const res = await fetch(`${this.apiBase}api/house/facades/critique`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: this.facadePhotoToken, render: png }) });
                         const data = await res.json();
+                        // 409: this token is already with the model (a double tap, a
+                        // second tab). The first run owns the answer; wait for it.
+                        if (res.status === 409) { showGlobalAlert('Still comparing — one moment'); return; }
                         if (!res.ok) { showGlobalAlert(data.detail || 'Could not compare'); return; }
                         const r = data.result;
                         this.facadeCritiqueResult = { reasons: r.reasons || [], unexpressed: r.unexpressed || [], revised: r.revised || null };

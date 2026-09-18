@@ -10,6 +10,7 @@ import hmac
 import json
 import math
 import secrets
+import threading
 import time
 import uuid
 
@@ -569,8 +570,11 @@ def normalize(raw):
     # a shed is a dormer's weight: the two share one cap (spec 2)
     roof = cap(roof, 'shed', MAX_DORMERS, extra=sum(1 for r in roof if r['kind'] == 'dormer'))
     roof = cap(roof, 'gable', MAX_GABLES)
-    dormer_windows = sum(1 for r in roof if r['kind'] == 'dormer' and r['window'])
-    exclusive = cap(exclusive, 'window', MAX_WINDOWS, extra=dormer_windows)
+    # FINAL REVIEW (minor 9): a SHED with `window: true` is a shed dormer --
+    # it draws a real window, so it spends the window budget exactly as a
+    # dormer's does. It used to be free.
+    roof_windows = sum(1 for r in roof if r['kind'] in ('dormer', 'shed') and r.get('window'))
+    exclusive = cap(exclusive, 'window', MAX_WINDOWS, extra=roof_windows)
     total = 0
     porch_keep = []
     for pch in sorted(porches, key=lambda i: i['slot']):
@@ -682,8 +686,18 @@ def _saved():
 
 
 def list_facades():
+    """Every row's spec comes back NORMALIZED, exactly as active_bundle()
+    hands one out. FINAL REVIEW (critical 1): facades saved before massing
+    arc 2 are V1 rows with no `blocks`, and the editor's Blocks panel
+    (facadeBlockStories, the cladding/base selects) reads
+    `spec.blocks.<name>` the moment such a row is loaded -- so a raw row
+    threw. Normalizing on read runs the V1 mapping table here too, which
+    is the same upgrade the 3D house already gets."""
+    rows = copy.deepcopy(_saved())
+    for r in rows:
+        r['spec'], _ = normalize(r.get('spec'))
     return [{'id': CANONICAL_ID, 'name': 'Canonical', 'readonly': True,
-             'source': 'builtin', 'spec': copy.deepcopy(CANONICAL)}] + copy.deepcopy(_saved())
+             'source': 'builtin', 'spec': copy.deepcopy(CANONICAL)}] + rows
 
 
 def save_facade(name, spec, activate=False, source='hand'):
@@ -776,7 +790,8 @@ Return exactly this shape (a fraction-based feature has "block"/"at"/"width" ins
             | {{"block","at","width","kind":"porch","type": one of {porch_types}, "roof": one of {porch_roofs}}}],
   "roof": [{{"block": "main"|"garage", "at": 0..1, "width": 0..1, "kind": one of {roof_kinds_features}, "window": bool}}],
   "unexpressed": [up to 8 short strings naming real details the shape above cannot capture]}}
-Rules: colours are the NEAREST palette name, never hex. If the garage is not visible, omit it.
+Rules: colours are the NEAREST palette name, never hex. If the garage is not visible, describe it
+as a plain default block (batten, white, gable ridge x, one story, front) -- never omit it.
 If unsure of a count, prefer fewer windows. The front door goes on the main block. Anything real
 about the house that this schema has no field for -- a shape, a material, a massing detail --
 goes in "unexpressed" as a short phrase, never invented into a field that doesn't fit it. No prose."""
@@ -797,12 +812,16 @@ def _photo_prompt():
                                porch_roofs=list(PORCH_ROOFS), roof_kinds_features=roof_kinds_features)
 
 
-def _snap_fractions(obj):
+def _snap_fractions(obj, notes=None):
     """Pass 1 reports ground/roof features as a FRACTION of their own block's
     street width (`block`/`at`/`width`) rather than a slot number, so the
     model never has to know the slot grid. This converts each fraction entry
     to the `slot`/`span` shape validate_block_model expects, on that block's
-    own face. Entries that already carry `slot` pass through untouched."""
+    own face. Entries that already carry `slot` pass through untouched.
+
+    FINAL REVIEW (important 3, same class): a `block` the schema does not
+    know used to land silently on the main face. It still lands there --
+    that is the only sane fallback -- but it says so in `notes`."""
     if not isinstance(obj, dict):
         return obj
     out = copy.deepcopy(obj)
@@ -813,7 +832,10 @@ def _snap_fractions(obj):
         for e in items:
             if not isinstance(e, dict) or 'slot' in e or 'block' not in e:
                 continue
-            face = 'garage_block' if e.get('block') == 'garage' else 'main'
+            blk = e.get('block')
+            if blk not in ('main', 'garage') and notes is not None:
+                notes.append(f"feature with unknown block '{blk}' placed on the main face")
+            face = 'garage_block' if blk == 'garage' else 'main'
             lo, hi = _face_range(face)
             n = hi - lo + 1
             at, width = _num(e.get('at'), 0.0), _num(e.get('width'), 1.0 / n)
@@ -833,12 +855,14 @@ def from_photo(image_b64, mime):
     api_key = settings.get('llm_gemini_api_key', '')
     if not api_key:
         return None, [], 'no LLM API key configured', None
+    attempts = []
     try:
         res = model_pools.call_pool_json(
             'vision', api_key, _photo_prompt(),
             'Describe the street-facing elevation of the house in the attached photo as the block model.',
             temperature=0.1, timeout_s=90, settings=settings, strict_json=True,
             max_output_tokens=4096, max_models=2, workflow='house_photo',
+            attempts=attempts,
             images=[{'mime': mime or 'image/jpeg', 'b64': image_b64}])
     except Exception as e:
         return None, [], f'could not read the photo ({e})', None
@@ -848,12 +872,30 @@ def from_photo(image_b64, mime):
         return None, [], f"could not read the photo ({res['error']})", None
     res.pop('_model', None)
     viewpoint = _pick(res.pop('viewpoint', None), ('left', 'centre', 'right'), 'centre')
-    snapped = _snap_fractions(res)
+    pre = []
+    snapped = _snap_fractions(res, pre)
+    # FINAL REVIEW (important 3): the prompt allows a house whose garage the
+    # photo cannot see, and validate_block_model requires `blocks.garage`.
+    # An unseen garage becomes the DEFAULT block rather than a rejection --
+    # the parent edits or deletes it in the editor, which is the whole point
+    # of review-before-save.
+    blocks = snapped.get('blocks') if isinstance(snapped, dict) else None
+    if isinstance(blocks, dict) and not isinstance(blocks.get('garage'), dict):
+        blocks['garage'] = _block(orientation='front')
+        pre.append('garage not visible in the photo: drawn as a plain block')
     errs = validate_block_model(snapped)
     if errs:
         return None, [], 'the model returned an incomplete house: ' + '; '.join(errs[:3]), None
     spec, notes = normalize(snapped)
-    return spec, notes, None, issue_draft(spec, image_b64, mime, viewpoint=viewpoint)
+    notes = pre + notes + [_requests_note(attempts)]
+    return spec, notes, None, issue_draft(spec, image_b64, mime, viewpoint=viewpoint,
+                                          requests=len(attempts))
+
+
+def _requests_note(attempts):
+    """Spec section 4's attempt budget, made true: the pipeline records the
+    provider requests it actually made, per pass, in its own notes."""
+    return f"{len(attempts)} model request(s): {', '.join(attempts) or 'none'}"
 
 
 CRITIQUE_SYSTEM = """You compare a photo of a house with a 3D render of a draft description of it,
@@ -881,48 +923,74 @@ def critique(token, render_png_b64):
     """A photo + a render of the current draft -> at most eight ordered
     reasons and one revised model (never a patch). The result rides the
     token: a second submission for the same token replays it rather than
-    asking the model again. The cached draft itself is never mutated."""
+    asking the model again. The cached draft itself is never mutated.
+
+    FINAL REVIEW (important 2): the replay check used to be check-then-act,
+    so two requests landing together (a double tap, a retry on a slow
+    render) both sailed past `result is None` and both paid for a vision
+    call. The read-and-mark is one critical section now: the FIRST caller
+    marks the entry in flight and runs; a second caller that sees the
+    in-flight sentinel is told so, and the route answers 409. Only the
+    mark is locked -- the 90-second model call is not."""
     from services import model_pools
-    e = draft_for(token)
-    if e is None:
-        return None, 'unknown or expired draft'
-    if e['result'] is not None:
-        return e['result'], None
+    with _CRITIQUE_LOCK:
+        e = draft_for(token)
+        if e is None:
+            return None, 'unknown or expired draft'
+        if e['result'] is not None:
+            if e['result'].get('pending'):
+                return None, 'critique in progress'
+            return e['result'], None
+        e['result'] = {'pending': True}
     settings = _settings()
     api_key = settings.get('llm_gemini_api_key', '')
     draft = copy.deepcopy(e['spec'])
-    result = {'draft': draft, 'revised': None, 'reasons': [], 'unexpressed': list(draft.get('unexpressed') or []), 'attempts': 0}
+    attempts = []
+    issued_requests = e.get('requests') or 0
+    result = {'draft': draft, 'revised': None, 'reasons': [],
+              'unexpressed': list(draft.get('unexpressed') or []),
+              'attempts': 0, 'requests_total': issued_requests}
+
+    def finish(res_obj):
+        # Every exit below this point stores a real result, so an entry can
+        # never stay `pending` and lock its own token out.
+        res_obj['attempts'] = len(attempts)
+        res_obj['requests_total'] = issued_requests + len(attempts)
+        res_obj['reasons'] = list(res_obj['reasons']) + [_requests_note(attempts)]
+        store_result(token, res_obj)
+        return res_obj, None
+
     if not api_key or not e.get('photo_b64'):
         result['reasons'] = ['no critique: ' + ('no LLM API key configured' if not api_key else 'no photo on this draft')]
-        store_result(token, result)
-        return result, None
+        return finish(result)
     try:
         res = model_pools.call_pool_json(
             'vision', api_key, CRITIQUE_SYSTEM,
             'Photo first, then the render of the draft, then the draft JSON:\n' + json.dumps(draft),
             temperature=0.1, timeout_s=90, settings=settings, strict_json=True,
             max_output_tokens=4096, max_models=2, workflow='house_photo',
+            attempts=attempts,
             images=[{'mime': e.get('mime') or 'image/jpeg', 'b64': e['photo_b64']},
                     {'mime': 'image/png', 'b64': render_png_b64}])
-        result['attempts'] = 1
     except Exception as ex:
-        result['reasons'] = [f'critique failed ({ex})']; store_result(token, result); return result, None
+        result['reasons'] = [f'critique failed ({ex})']
+        return finish(result)
     if not isinstance(res, dict) or res.get('error'):
         result['reasons'] = [f"critique failed ({(res or {}).get('error', 'bad response') if isinstance(res, dict) else 'bad response'})"]
-        store_result(token, result); return result, None
+        return finish(result)
     reasons = [str(r)[:160] for r in (res.get('reasons') or []) if isinstance(r, (str, dict))][:8]
     reasons = [r if isinstance(r, str) else str(r.get('reason', r)) for r in reasons]
-    revised = _snap_fractions(res.get('revised'))
+    snap_notes = []
+    revised = _snap_fractions(res.get('revised'), snap_notes)
     errs = validate_block_model(revised)
     if errs:
-        result['reasons'] = reasons + ['revision rejected as incomplete: ' + '; '.join(errs[:3])]
+        result['reasons'] = reasons + snap_notes + ['revision rejected as incomplete: ' + '; '.join(errs[:3])]
     else:
         spec, notes = normalize(copy.deepcopy(revised))
         result['revised'] = spec
-        result['reasons'] = reasons + notes
+        result['reasons'] = reasons + snap_notes + notes
         result['unexpressed'] = list(spec.get('unexpressed') or [])
-    store_result(token, result)
-    return result, None
+    return finish(result)
 
 
 def active_bundle():
@@ -951,6 +1019,14 @@ def active_bundle():
 _DRAFT_SECRET = secrets.token_bytes(32)
 _DRAFTS = {}
 DRAFT_TTL_S = 900
+# FINAL REVIEW (important 4): the window is fifteen minutes and every entry
+# holds the photo's bytes, so an unbounded cache was a memory ceiling nobody
+# set. Eight drafts is more than any one review session opens; the oldest
+# goes first, and its token simply stops resolving (the page already falls
+# back to the active facade, and the editor now says so out loud).
+DRAFT_MAX = 8
+# One critical section guards the read-and-mark in critique(); see there.
+_CRITIQUE_LOCK = threading.Lock()
 
 
 def _sha(s):
@@ -966,7 +1042,7 @@ def _sweep(now_ms):
         _DRAFTS.pop(k, None)
 
 
-def issue_draft(spec, photo=None, mime=None, viewpoint=None):
+def issue_draft(spec, photo=None, mime=None, viewpoint=None, requests=0):
     """A normalized spec (plus, optionally, the photo it came from) becomes
     a token /house can render. Returns the token; stores nothing on disk.
     Two drafts issued in the same millisecond must never collide: a
@@ -974,6 +1050,8 @@ def issue_draft(spec, photo=None, mime=None, viewpoint=None):
     first token's entry."""
     now_ms = int(time.time() * 1000)
     _sweep(now_ms)
+    while len(_DRAFTS) >= DRAFT_MAX:
+        _DRAFTS.pop(min(_DRAFTS, key=lambda k: _DRAFTS[k]['issued']), None)
     spec_sha = _sha(json.dumps(spec, sort_keys=True))
     photo_sha = _sha(photo or '')
     tok = f'{now_ms:x}.{_sign(photo_sha, spec_sha, now_ms)}'
@@ -982,7 +1060,7 @@ def issue_draft(spec, photo=None, mime=None, viewpoint=None):
         tok = f'{now_ms:x}.{_sign(photo_sha, spec_sha, now_ms)}'
     _DRAFTS[tok] = {'spec': copy.deepcopy(spec), 'photo_b64': photo, 'mime': mime,
                     'viewpoint': viewpoint, 'issued': now_ms, 'spec_sha': spec_sha,
-                    'photo_sha': photo_sha, 'result': None}
+                    'photo_sha': photo_sha, 'result': None, 'requests': int(requests or 0)}
     return tok
 
 

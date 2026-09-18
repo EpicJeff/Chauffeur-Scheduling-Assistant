@@ -269,7 +269,7 @@ Each is a place the shipped arc differs from the text above. All are ruled and r
 - **`chfNavProbe`'s real contract** is `{settled} | {point} | {piece:name} | {front:face}` returning a projection or `null`; the plan's `{feature:…}` → `{hit}` was never real (ruling 2).
 - **`chfRoomViewClear` returns `null` under `mirror: true`** rather than raying a house-local camera into a reflected world; the combined scenario asserts the mask's own record (`chfRoomShellCut`) instead.
 - **`textMesh` does not call `finish()`.** The counter-flip is applied by the root pass after the reflection (a `REFLECTED` flag lets meshes minted later — `syncGarage`'s car plaques — take the flip at birth), not by a per-mesh finish step as the spec's wording implied. `plate()` / `dockFace` are not in `TEXT_PAINTERS`: wall plates carry no text and house.js has no dock.
-- **Three compatibility bridges existed and are all retired**: the porch-gable replay through `gableAt` (Tasks 3+4, gone at Task 8), `FSTYLE` deriving body/cladding from `spec.blocks.main` (Tasks 3+4, gone at Task 5), and the `shell_live` derivation line. `scenario_the_two_v2_bridges_are_declared` went with them.
+- **Three compatibility bridges existed and are all retired**: the porch-gable replay through `gableAt` (Tasks 3+4, gone at Task 8), `FSTYLE` deriving body/cladding from `spec.blocks.main` (Tasks 3+4, gone at Task 5), and the `shell_live` derivation line. `scenario_the_two_v2_bridges_are_declared` outlived them and now asserts their ABSENCE: the scenario is the standing pin that no bridge crept back.
 - **The porch's roof pieces are named `facade_main_porch_8_roof_west/east/front`**, not `facade_main_gable_8_*`. The geometry is byte-identical (same eave 4.8, same front edge, same `featureBack` meet, same `PITCH_FAMILY`); only the names moved, and every registered-name pin moved with them.
 - **Budgets are paired, per variant, not `B0 + delta` against the recorded literal** (ruling 17), and **`buildMs` is `max(1500, base + 250)`** (ruling 22).
 - **The mudroom's old street door still opens into a sealed void** — §8 said it stays sealed this arc; it does, and it is on the parked list below.
@@ -282,10 +282,8 @@ Nothing here blocks the arc. **Look items** are things only the user's eyes on a
 
 - **Mirrored traffic drives on the left.** The road is mirrored with the house, so the cars and the bus keep the right-hand side of a reflected road. Stated in §3.4 as acceptable; worth one look.
 - **Mirrored lighting comes from the other flank.** The sun rig keeps its WORLD side, so a mirrored house is lit from the opposite side to an unmirrored one. Also §3.4, also acceptable, also worth a look.
-- **The garage ROOM does not follow its block's depth.** At `garage.depth: 6` the block's street face moves forward and the room behind it does not, leaving a deep recess between the new wall and the room.
+- **`garage.depth > 0` is geometrically legal and visually unfinished.** One item, three faces of it: the garage ROOM does not follow its block (the street face moves forward and the room behind it does not, leaving a deep recess), the bay piers stand proud of the garage room's walls at depth 6, and `garage_void_floor` overlaps the apron's near 0.5 (R-B's slab against the drive). Nothing here is a crash or a wrong number — it is a depth the model allows and the massing has not caught up with. One look settles how far arc 3 has to go.
 - **A side garage's door opens onto the garage room's own west wall** (`gWallW`, 0.12 behind it) — the door reads right from outside but is not a through-route into the bay. The same relationship the street door has always had to `garageBackWall`; a massing question, not a facade one.
-- **`garage_void_floor` overlaps the apron's near 0.5** at `depth > 0` (R-B's slab against the drive).
-- **The bay piers stand proud of the garage room's walls at depth 6.**
 - **The sealed upper story.** With `stories: 2` the story-2 windows are lit panes over an empty volume — no interior, no zones, no cameras, by design (§2). At night a lit pane over nothing may read wrong.
 - **The mudroom's street door still opens into a sealed void** (arc 1 deferred it here; §8 ruled it stays sealed).
 - **Depth-6 yard.** The garage-side bed, shrubs and pots move with the block, but F3's garage-side yard move has no `depth > 0` assertion (the ground there is unregistered), so a depth-6 screenshot is the only check.
@@ -293,19 +291,37 @@ Nothing here blocks the arc. **Look items** are things only the user's eyes on a
 
 **Deferred minors.**
 
-- `test_house_facade_live` / `test_house_shell_live` time out under the twelve-worker sweep and pass solo (present before this arc; the nav live file grew two boots and 16 stops this arc, which does not help).
 - `house_probe` imports `SEED_RNG_JS` inside the flag branch rather than at module top.
 - `roof_piece_names` ignores `form` (plan-mandated signature); `VERTEX_AUDIT_ALL_JS` computes an unread `proudAtWall` with a different meaning; `yAt` divides by `n[1]` unguarded; `hintChoices` tests `h[3]` twice.
-- `active_bundle()` / `house_facades_api` hand out the canonical `slot_table()` beside a spec that carries depth and stories; shed windows do not count toward `MAX_WINDOWS`.
+- `active_bundle()` / `house_facades_api` hand out the canonical `slot_table()` beside a spec that carries depth and stories.
 - `slot_table` calls `float()` on a garbage depth; `{}` means canonical; `_norm_block` notes unused; the depth clamp runs after the slots are derived; a side-garage window may lose to `_resolve_exclusive`; batten→batten and non-tie overlap rows unpinned; an unreachable already-gabled branch; `validate_block_model`'s docstring claims a caller it only gained at Task 11.
-- Draft cache: the HMAC branch is unreachable via the dict lookup (the test proves the lookup, not the HMAC); the scenario name promises a dedupe it does not itself test; `_DRAFTS` is unbounded within the 15-minute window; `chfCapture` bypasses any composer (none known).
+- Draft cache: the HMAC branch is unreachable via the dict lookup (the test proves the lookup, not the HMAC); the scenario name promises a dedupe it does not itself test; `chfCapture` bypasses any composer (none known).
 - Materials: `EXTC.garage` is dead; five exterior skins still spell `EXTC.siding` / `CLAD()` instead of `cladColour` / `CLAD(b)`; a partial-blocks payload throws at `ROOF_FORMS`; non-canonical claddings get no PBR normal map and both lap and batten tiles build regardless; the `_js_object` parser is narrow by design.
 - Depth and meet: coplanar north decks z-fight at equal depths (pre-existing); a wholly-clipped facade feature registers an empty `+Infinity` box row (`fabBox` should refuse it); the garage east gable infill is removed whole at unequal depths; `garage_return`, centred on the shared plane, leaves a 0.175 step against `west_skirt`; `isBlockRoof`'s literal duplicates the `wantsVerts` prefix.
 - Stories: two false comments (~6216, ~6344); `stories` has no `|| 1` default unlike `depth`; `chfRoomViewClear`'s single ray is trivially clear when no upper piece is in view; `null` from `chfFabricVertices` surfaces as a JS `TypeError`.
 - Side garage: the side apron has no saw-cuts, centre line or edging; the deck `+0.09` comment overstates; a braceless multi-line `if` at ~13096; `featClad` called twice; a 0.1 sliver beside the side leaf (z 5.80..5.90).
 - Mirror: a redundant `.clone()` after `toWorld`; `get EXT_AT()` now returns a copy (a silent semantic change).
-- Pipeline: RED was narrated rather than shown for the replaced scenarios; `_snap_fractions` maps an unknown `block` to `main` silently.
+- Pipeline: RED was narrated rather than shown for the replaced scenarios.
 - Editor: `facadeCellApply` spreads the whole cell object regardless of kind (stray keys; a pre-existing pattern); clicking an already-selected cell whose only change is the story does not re-run `facadeLoadCell` (the segmented control covers it).
+
+### Security judgement
+
+`/house?draft=<token>` is **ANYONE-tier by design, and that is the right tier**. The token is a 128-bit HMAC over (photo sha256, spec sha256, issued-at) with a 15-minute TTL, unguessable and unforgeable; the response carries the facade SPEC only and never the photo the draft came from; and the content is house geometry — slots, claddings, colours — not household data. A bearer URL is acceptable for that, and the alternative (a session on the iframe) would have cost the render path its whole reason for existing. Whoever holds the link sees a drawing of a house for fifteen minutes.
+
+### Final review wave (v2.499.94)
+
+One commit after the whole-branch review. Ten findings, all fixed, each with a pure pin in `tests/test_house_facade.py`:
+
+- **`list_facades()` normalizes every saved row on read** (critical). Pre-arc facades are V1 rows with no `blocks`, `active_bundle()` was fixed at Task 10 and its sibling was not, so the Blocks panel threw on every facade saved before this arc. The editor also refuses to bind a blocks-less spec: it runs it through `normalize` first.
+- **`critique()` is single-flight** (important). The replay check was check-then-act; two requests on one token both paid for a vision call — six provider requests against §4's ceiling of four. A module lock now guards the read-and-mark, the first caller marks the entry in flight, and a second gets HTTP **409** (`Still comparing — one moment`). Both model buttons are disarmed while one runs.
+- **An unseen garage is a plain default block** (important). The prompt invited omitting it and `validate_block_model` required it — the honest answer was rejected whole. `from_photo` fills an absent or null `blocks.garage` with the default block and says so in the notes; the prompt now asks for a plain default block and never an omission. Same class: `_snap_fractions` names an unknown `block` instead of dropping it silently onto the main face.
+- **The draft cache is bounded** (important). `DRAFT_MAX = 8`, oldest evicted first — the entries hold photo bytes for fifteen minutes on a Pi.
+- **The request count in the notes is real** (important). §4 claimed it; nothing implemented it. `call_pool_json(..., attempts=[])` records every model it actually sends a request to, both passes write `"N model request(s): …"` into their own notes, `critique` reports a measured `attempts` (it was hard-coded 1) and the token's `requests_total` across both passes.
+- **Minors.** The spec sentence about `scenario_the_two_v2_bridges_are_declared` (above); `facadeCellClass` colours a story-2-only slot; `BUS_BODY.noMirror` → `sideMirrors: false`, so the vehicle param no longer shares a name with the `userData.noMirror` text contract; shed windows spend the `MAX_WINDOWS` budget as dormer windows always did; an expired `?draft=` preview is named out loud instead of quietly showing the active house.
+
+**Sweep decision.** `test.py` keeps a `HEAVY` set — `test_house_facade_live`, `test_house_shell_live`, `test_house_variants_live`, `test_house_nav_live` — on a dedicated single-worker lane that runs alongside the ordinary fan-out. The files each boot a real browser and drive a full 3D scene; twelve-wide they starved each other into timeouts and solo they always passed. One command, one report, no timeouts.
+
+**Retired concern.** `chfMirror().fabricDet` measuring −2.43e−05 mirrored (task 9) is **not** a thin pin. The quantifier direction is correct: `fabricDet` is a max over non-`noMirror` meshes, so a mesh that failed to mirror would push the max POSITIVE, not toward zero. A near-zero magnitude is a near-degenerate mesh winning the max, not a weak assertion — the sign is the whole claim and a missed mesh flips it.
 
 ### Arc 2, as shipped
 

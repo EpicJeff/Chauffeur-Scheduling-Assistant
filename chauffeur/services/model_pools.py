@@ -165,13 +165,20 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
                    gemma_timeout_s: int = None, max_models: int = 4,
                    settings: dict = None, images: list = None,
                    background: bool = None, workflow: str = None,
-                   strict_json: bool = False, max_output_tokens: int = None) -> dict:
+                   strict_json: bool = False, max_output_tokens: int = None,
+                   attempts: list = None) -> dict:
     """JSON call with one HTTP attempt per candidate and persistent admission.
 
     Background work tries one candidate, then defers; foreground work may try
     up to max_models candidates. Success includes '_model'; failures return
     'error', with 'deferred'/'retry_at' when admission blocks background work.
     Ollama callers keep their own single-model path.
+
+    `attempts`, when a list is passed, collects the id of every model this
+    call actually sends a PROVIDER REQUEST to, in order — so a caller can
+    report what a stage really cost rather than guessing from `max_models`
+    (the house photo pipeline writes it into its own notes). Nothing else
+    changes; an admission deferral, which sends nothing, is not recorded.
     """
     from services import llm as _llm
     from services import llm_budget
@@ -183,6 +190,8 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
         t = gemma_timeout_s if (gemma_timeout_s and is_gemma(model)) else timeout_s
         try:
             with llm_budget.request_scope(workflow, background):
+                if attempts is not None:
+                    attempts.append(model)
                 res = _llm._call_llm_json('gemini', '', api_key, model, system_prompt,
                                           user_prompt, temperature=temperature, timeout_s=t,
                                           images=images, transient_retries=0,
