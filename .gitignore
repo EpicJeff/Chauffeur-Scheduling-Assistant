@@ -51,3 +51,8 @@ azure_speech_key.txt
 *.key.txt
 
 .superpowers/
+
+# house_probe.py writes its PNGs here (tools/house_probe.py --out, default
+# "probe_shots" relative to chauffeur/). Probe output, never source.
+probe_shots/
+chauffeur/probe_shots/

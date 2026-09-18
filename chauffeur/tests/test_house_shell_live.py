@@ -1533,6 +1533,25 @@ def scenario_a_hip_end_stands_on_the_roof_line():
         hf.set_active(hf.CANONICAL_ID)
 
 
+# the world-space bounding extent of one registered row's vertices AS
+# BUILT (chfFabricVertices), for the geometric pins on the two things
+# this task actually put on screen: a shutter and a story-2 window.
+ROW_EXTENT_JS = """(name) => {
+  const vs = window.chfFabricVertices(name);
+  if (!vs || !vs.length) return null;
+  const o = { n: vs.length, x0: 1e9, x1: -1e9, y0: 1e9, y1: -1e9, z0: 1e9, z1: -1e9 };
+  vs.forEach(p => {
+    if (p[0] < o.x0) o.x0 = p[0];
+    if (p[0] > o.x1) o.x1 = p[0];
+    if (p[1] < o.y0) o.y0 = p[1];
+    if (p[1] > o.y1) o.y1 = p[1];
+    if (p[2] < o.z0) o.z0 = p[2];
+    if (p[2] > o.z1) o.z1 = p[2];
+  });
+  return o;
+}"""
+
+
 def scenario_two_stories_are_cut_like_fabric():
     """Spec section 3.2 (rev): an upper story is FABRIC, and the room mask
     cuts it exactly as it cuts any other wall.
@@ -1586,14 +1605,24 @@ def scenario_two_stories_are_cut_like_fabric():
     # printed rather than asserted.
     REQUIRE_CUT = ('kitchen', 'living')
 
-    def spec_for(main_stories, garage_stories, upper_windows):
+    def spec_for(main_stories, garage_stories, upper_windows, garage_depth=0):
         s = copy.deepcopy(hf.CANONICAL)
         s['blocks']['main']['stories'] = main_stories
         s['blocks']['garage']['stories'] = garage_stories
+        s['blocks']['garage']['depth'] = garage_depth
         if upper_windows:
+            # 7 and 12 are the pair the shutter/proud pins compare (same
+            # 'standard' size, shutters on one only). 9 is there for the
+            # kit-drop pin: measured, slot 9's own stretch of the upper
+            # south wall is inside BOTH the kitchen's and the living
+            # room's mask, while 7's is inside neither -- so 9 is the
+            # slot where "does the window go with its wall?" can actually
+            # be asked.
             s['ground'] = s['ground'] + [
                 {'slot': 7, 'span': 1, 'kind': 'window', 'size': 'standard',
                  'shutters': True, 'story': 2},
+                {'slot': 9, 'span': 1, 'kind': 'window', 'size': 'standard',
+                 'shutters': False, 'story': 2},
                 {'slot': 12, 'span': 1, 'kind': 'window', 'size': 'standard',
                  'shutters': False, 'story': 2}]
         return hf.normalize(s)[0]
@@ -1620,8 +1649,8 @@ def scenario_two_stories_are_cut_like_fabric():
         names = {r['name'] for r in page.evaluate('window.chfShellFabric()')}
         for n in ('main_upper_south', 'main_upper_north', 'main_upper_east',
                   'main_upper_west', 'garage_upper_south', 'garage_upper_north',
-                  'garage_upper_west',
-                  'facade_main_window_7_s2', 'facade_main_window_12_s2'):
+                  'garage_upper_west', 'facade_main_window_7_s2',
+                  'facade_main_window_9_s2', 'facade_main_window_12_s2'):
             check(n in names, f'{n} registered; got '
                   f'{sorted(m for m in names if "upper" in m or "_s2" in m)}')
         check('garage_upper_east' not in names,
@@ -1633,6 +1662,80 @@ def scenario_two_stories_are_cut_like_fabric():
         top = page.evaluate("window.chfFabricVertices('east_partition')"
                             ".reduce((m, v) => Math.max(m, v[1]), 0)")
         check(top < 5.65, f'partitions cap at EXT_TOP4 under two stories: top {top}')
+        # ---- the two things this task actually PUT ON SCREEN -----------
+        # (a) SHUTTERS. Slot 7's story-2 window asked for them and slot
+        # 12's did not; they are the same 'standard' size, so the only
+        # difference between the two rows is two 0.28 boards. A shutter
+        # whose inner edge tucks behind the sill's ends would leave the
+        # piece barely wider than the bare one, which is why the builder
+        # hangs them off the WIDEST element and the pin is the full
+        # 2 x 0.28.
+        ext = {n: page.evaluate(ROW_EXTENT_JS, n)
+               for n in ('facade_main_window_7_s2', 'facade_main_window_12_s2',
+                         'main_upper_south')}
+        for n, e in ext.items():
+            check(e and e['n'] > 0, f'{n} has vertices: {e}')
+        s7, s12, wall = (ext['facade_main_window_7_s2'],
+                         ext['facade_main_window_12_s2'], ext['main_upper_south'])
+        grew = (s7['x1'] - s7['x0']) - (s12['x1'] - s12['x0'])
+        check(grew >= 2 * 0.28 - 0.05,
+              f'shutters widen the window by 2 x 0.28: grew {grew:.3f}')
+        WW = 1.55                       # WINDOW_SIZES.standard
+        cx7 = js_slots[7]['cx']
+        check(s7['x1'] > cx7 + WW / 2 + 0.1,
+              f"the shutter boards sit outside the frame: x1 {s7['x1']:.3f} "
+              f"vs cx {cx7:.3f}")
+        # ... and outside the SILL (w + 0.40), which the bare window's own
+        # x-extent stops at -- the discriminating half of the same claim
+        check(s7['x1'] > cx7 + WW / 2 + 0.20 + 0.05 and
+              s12['x1'] < js_slots[12]['cx'] + WW / 2 + 0.20 + 0.05,
+              f"only the shuttered window reaches past its sill: "
+              f"{s7['x1']:.3f} / {s12['x1']:.3f}")
+        # (b) the story-2 window stands PROUD of the upper wall it is set
+        # in -- the bug the main block's half-thickness inset exists to
+        # avoid (a window centred on the envelope line is entombed in the
+        # slab). Its casing/jambs are half-embedded by the wall's own
+        # idiom, unchanged since the hand-built elevation, so the pin is
+        # on the FACE: the window's outermost z is in front of the wall's.
+        check(s7['z1'] - wall['z1'] >= 0.02,
+              f"the story-2 window stands proud of main_upper_south: window "
+              f"z1 {s7['z1']:.3f} vs wall z1 {wall['z1']:.3f}")
+        check(s7['z0'] > wall['z1'] - 0.36,
+              f"...and never punches out the back of it: window z0 "
+              f"{s7['z0']:.3f} vs wall z1 {wall['z1']:.3f}")
+        check(s7['y0'] > 5.6 and s7['y1'] < 11.25,
+              f"the story-2 window is inside the upper story: y "
+              f"{s7['y0']:.3f}..{s7['y1']:.3f}")
+        # (c) the window goes WITH its wall. A kit is never clipped, so in
+        # every room view it is whole or gone; and wherever it is gone,
+        # the wall around it must have opened too -- otherwise a black
+        # frame floats in a hole, or a window hangs in an opened wall.
+        rows = {r['name']: r for r in page.evaluate('window.chfShellFabric()')}
+        fwall = rows['main_upper_south']['maskedFraction']
+        UPPER_WINDOWS = ('facade_main_window_7_s2', 'facade_main_window_9_s2',
+                         'facade_main_window_12_s2')
+        fw = {n: rows[n]['maskedFraction'] for n in UPPER_WINDOWS}
+        for n in UPPER_WINDOWS:
+            for room in ROOMS:
+                check(fw[n][room] < 1e-6 or fw[n][room] > 1 - 1e-6,
+                      f'{room}: {n} is a kit -- whole or gone, never part '
+                      f'cut: {fw[n][room]}')
+                if fw[n][room] > 0.5:
+                    check(fwall[room] > 1e-6,
+                          f'{room}: {n} went but its wall stayed: '
+                          f'wall {fwall[room]}')
+        # ... and the case that matters: where the mask DOES open the wall
+        # over the window, the window goes with it, or a black frame is
+        # left hanging in the hole. Slot 9 is that slot for both of the
+        # rooms whose camera looks down through the upper story.
+        for room in REQUIRE_CUT:
+            check(fw['facade_main_window_9_s2'][room] > 0.5 and fwall[room] > 1e-6,
+                  f'{room}: the story-2 window at slot 9 must go with the wall '
+                  f"the mask opens around it: window "
+                  f"{fw['facade_main_window_9_s2'][room]}, wall {fwall[room]}")
+        for n in UPPER_WINDOWS:
+            print('    %s dropped in: %s'
+                  % (n, sorted(r for r in ROOMS if fw[n][r] > 0.5) or 'nowhere'))
         cut_report = {}
         for room in ROOMS:
             page.evaluate("window.chfHouseEnterRoom('%s')" % room)
@@ -1645,6 +1748,17 @@ def scenario_two_stories_are_cut_like_fabric():
             cut_report[room] = cut
             if room in REQUIRE_CUT:
                 check(cut, f'{room}: the mask cut no upper piece at all')
+            # the two hooks agree with the record chfShellFabric publishes
+            gone = page.evaluate("window.chfRoomShellDropped('%s')" % room) or []
+            for n in UPPER_WINDOWS:
+                check((n in gone) == (fw[n][room] > 0.5),
+                      f'{room}: chfRoomShellDropped disagrees with '
+                      f'maskedFraction {fw[n][room]} for {n}')
+            if room in REQUIRE_CUT:
+                check('main_upper_south' in cut and
+                      'facade_main_window_9_s2' in gone,
+                      f'{room}: the wall opened ({cut}) and its window went '
+                      f'with it ({[n for n in gone if "_s2" in n]})')
         page.evaluate("window.chfHouseExit()")
         page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
         b = page.evaluate(BUDGET_JS)
@@ -1693,6 +1807,75 @@ def scenario_two_stories_are_cut_like_fabric():
               % (leak['main_out'], leak['garage_out']))
         errs = [e for e in served.errors() if 'WebGL' not in e]
         check(not errs, f'mixed stories: console clean: {errs[:3]}')
+
+    # ---- BOOT 3: two stories AND a garage depth -- the shared plane ----
+    # FIX ROUND 1. The garage block's street face is 6 further south than
+    # the main's here, so an upper west wall drawn over the MAIN block's
+    # own z range alone leaves 4.5 units of the shared plane x -7.15 wide
+    # open between y 5.6 and 11.2. sharedFaceOwner() names one owner for
+    # that plane (equal eaves, tie to main) and the owner's wall closes
+    # the WHOLE of it; the non-owner builds none.
+    spec = spec_for(2, 2, False, garage_depth=6)
+    with served.browser() as page:
+        page.add_init_script(DAY_LOCK_JS)
+        page.add_init_script(SEED_RNG_JS)
+        page.goto(served.url('house?quality=high&draft=' + hf.issue_draft(spec)))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        geo = page.evaluate('window.chfBlockGeometry()')
+        g_south, m_south = geo['garage']['south'], geo['main']['south']
+        check(g_south > m_south + 1.0,
+              f'the garage block is the deeper one here: {g_south} vs {m_south}')
+        names = {r['name'] for r in page.evaluate('window.chfShellFabric()')}
+        check('garage_upper_east' not in names,
+              'the shared plane is still one wall, owned by main')
+        e = page.evaluate(ROW_EXTENT_JS, 'main_upper_west')
+        check(e and e['z1'] >= g_south - 0.05,
+              f"the owner's upper wall closes the WHOLE shared plane: z "
+              f"{e and e['z0']:.3f}..{e and e['z1']:.3f}, garage face {g_south}")
+        check(e['z1'] <= g_south + 0.3,
+              f"...and stops there: z1 {e['z1']:.3f} vs {g_south}")
+        check(e['y1'] > 11.1 and e['y0'] < 5.65,
+              f"...over the whole upper story: y {e['y0']:.3f}..{e['y1']:.3f}")
+        print('    deep garage    main_upper_west z %.2f..%.2f (garage face %.2f)'
+              % (e['z0'], e['z1'], g_south))
+        check(page.evaluate("window.chfNavProbe({front:'garage_block'})"),
+              'deep garage: the garage front is reachable from the street')
+        errs = [e2 for e2 in served.errors() if 'WebGL' not in e2]
+        check(not errs, f'deep garage: console clean: {errs[:3]}')
+
+    # ---- BOOT 4: the inverse -- only the GARAGE stands two stories -----
+    # Nothing is shared then: the garage builds its own east wall on the
+    # plane over its own extent, and the main block builds no upper box.
+    spec = spec_for(1, 2, False)
+    with served.browser() as page:
+        page.add_init_script(DAY_LOCK_JS)
+        page.add_init_script(SEED_RNG_JS)
+        page.goto(served.url('house?quality=high&draft=' + hf.issue_draft(spec)))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        names = {r['name'] for r in page.evaluate('window.chfShellFabric()')}
+        check('garage_upper_east' in names,
+              f'a two-story garage beside a one-story main closes its own '
+              f'east face: {sorted(n for n in names if "upper" in n)}')
+        check(not any(n.startswith('main_upper') for n in names),
+              'a one-story main builds no upper box')
+        geo = page.evaluate('window.chfBlockGeometry()')
+        check(abs(geo['garage']['eave'] - 11.2) < 1e-6 and
+              abs(geo['main']['eave'] - 5.6) < 1e-6,
+              f"the taller block is the garage here: {geo['garage']['eave']} / "
+              f"{geo['main']['eave']}")
+        leak = page.evaluate(ROOF_INSIDE_NEIGHBOUR_JS)
+        check(leak['main_in_garage'] == 0 and leak['garage_in_main'] == 0,
+              f'garage taller: roof left inside the neighbour volume: {leak}')
+        for room in ('kitchen', 'living', 'mudroom', 'garage', 'study'):
+            page.evaluate("window.chfHouseEnterRoom('%s')" % room)
+            page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+            r = page.evaluate("window.chfRoomViewClear('%s')" % room)
+            check(r and r['clear'],
+                  f'garage taller, {room}: upper story in the way: {r}')
+        errs = [e for e in served.errors() if 'WebGL' not in e]
+        check(not errs, f'garage taller: console clean: {errs[:3]}')
 
 
 if __name__ == '__main__':

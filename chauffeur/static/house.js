@@ -4485,7 +4485,7 @@
        buildElevation()) carries the block from there up to this eave. */
     var FULL_HOUSE = {
       west: -7.15, east: 14.65, north: -6.10, south: SWZ1 + MAIN_DZ,
-      eave: EXT_TOP4 * BLOCKS.main.stories, overhang: 0.32
+      eave: EXT_TOP4 * (BLOCKS.main.stories || 1), overhang: 0.32
     };
     var SW_W = FULL_HOUSE.east - FULL_HOUSE.west;            /* 21.8 */
     var SW_CX = (FULL_HOUSE.west + FULL_HOUSE.east) / 2;     /* 3.75 */
@@ -4584,7 +4584,7 @@
        owns the shared face plane at x -7.15. */
     var GARAGE_BLOCK = { west: -18.20, east: -7.15, north: -6.10,
                          south: 10.10 + GAR_DZ,
-                         eave: EXT_TOP4 * BLOCKS.garage.stories };
+                         eave: EXT_TOP4 * (BLOCKS.garage.stories || 1) };
     /* Every block roof is {form, ridge}: nothing about ridge direction
        is fixed (spec section 3). Canonical is today's look — both blocks
        gabled with the ridge running east/west. window.HOUSE_ROOF_FORMS
@@ -4865,7 +4865,7 @@
        also the upper story's own floor line. The garage block reads its
        OWN `stories` at gVault the same way. */
     var VAULTED = (MAIN_VAULT.axis === 'z' && ROOF_FORMS.main.form === 'gable' &&
-                   BLOCKS.main.stories === 1);
+                   (BLOCKS.main.stories || 1) === 1);
 
     /* ---- the east PARTITION (was east_wall) ---------------------------
        The wall at x 6.85 stopped being an exterior side elevation the
@@ -5591,13 +5591,21 @@
          looks a piece up by name. */
       var s2 = (feat.story === 2), yOff = s2 ? EXT_TOP4 : 0;
       function wtag(m) { if (m) m.userData.room = slot.room; return m; }
-      /* SHUTTERS (spec section 3.2, both stories): two boards either side
-         of the frame, in the window's own FARMHOUSE.frame bucket so they
-         cost no new material. `fz` is the outer face of whatever the
-         frame in this branch stands on, so a shutter is flush with the
-         casing rather than floating off it. The spec has carried
-         `shutters` since the model's first version and nothing had ever
-         built them. */
+      /* SHUTTERS (spec section 3.2, both stories): two 0.28-wide boards,
+         one either side, in the window's own FARMHOUSE.frame bucket so
+         they cost no new material. The spec has carried `shutters` since
+         the model's first version and nothing had ever built them.
+
+         `halfW` is the half-extent of the WIDEST thing the branch below
+         already built (the main branch's sill, w + 0.40; shellWindow's
+         own sill trim, w + 0.32), and the board's INNER edge lands on
+         it: a shutter beside the jambs alone would tuck behind the sill's
+         ends and the piece would barely grow, which is not what a
+         shutter looks like and not something a test could see. So a
+         shuttered window is exactly 2 x 0.28 wider than the same window
+         without them. `fz` is the outer face of the frame in that
+         branch, so the board is flush with the casing rather than
+         floating off it. */
       function shutters(wy, wh, halfW, fz) {
         if (!feat.shutters) return;
         [-1, 1].forEach(function (s) {
@@ -5648,8 +5656,9 @@
         }
         /* the jambs stand 0.16 deep centred at z + 0.02, so their outer
            face is z + 0.10; a 0.06 shutter centred at z + 0.07 is flush
-           with it. Half-width: the jamb's own outer edge (w/2 + 0.14). */
-        shutters(wy, h + 0.13, w / 2 + 0.14, z + 0.07);
+           with it. Half-width: the SILL's own outer edge (w/2 + 0.20),
+           the widest element above. */
+        shutters(wy, h + 0.13, w / 2 + 0.20, z + 0.07);
       } else {
         /* every other face takes the shell's own window idiom (dark pane
            behind a frame, glow at night), proud of the wall's outer skin
@@ -5657,7 +5666,10 @@
            wing head, centre 2.80 plus half of a 2.70 pane. */
         var fz = slot.z + WALL_T4 / 2 + 0.05;
         shellWindow(g, cx, 4.15 + yOff - h / 2, fz, 0, w, h, true);
-        shutters(4.15 + yOff - h / 2, h, w / 2 + 0.08, fz + 0.03);
+        /* shellWindow's widest element is its sill trim (w + 0.32); its
+           outer casing face is fz + 0.11, so a 0.06 board at fz + 0.08
+           is flush with it. */
+        shutters(4.15 + yOff - h / 2, h, w / 2 + 0.16, fz + 0.08);
       }
       /* VIEW-VOLUME MASKING (task 2): a window is a frame -- casing,
          jambs and sill boxes arranged around a hole, and on 'main' faces
@@ -6213,9 +6225,11 @@
                 SHARED_X, GARAGE_BLOCK.south, EXT_TOP4,
                 [1, 0, 0], [], 'mudroom', 'garage');
     /* the block that owns the shared face plane: the higher eave, and a
-       tie goes to main (today always a tie -- stories are not built into
-       these envelopes yet -- but read off the rows so the stories task
-       has nothing to change here). */
+       tie goes to main. Task 7 made the two eaves genuinely differ (a
+       block's `stories` multiplies its own), so this is a live choice
+       now, not the standing tie it was written as -- and storyBox()
+       reads the SAME answer to decide which block's upper wall closes
+       the shared plane at x -7.15. */
     function sharedFaceOwner() {
       return GARAGE_BLOCK.eave > FULL_HOUSE.eave ? 'garage' : 'main';
     }
@@ -6322,7 +6336,9 @@
     shellWall('garage_block_west', GARAGE_BLOCK.west, GARAGE_BLOCK.north,
               GARAGE_BLOCK.west, GARAGE_BLOCK.south, EXT_TOP4,
               [-1, 0, 0], [[2.0, 1.35, true]], null);
-    /* the mudroom's street face, full height to the block's own eave.
+    /* the mudroom's street face, one story tall like every other GROUND
+       wall of the block (task 7: the block's own eave is `stories` of
+       these, and storyBox() builds the difference).
        The old front band (mudroom_front_cladding) closed the gap above
        the room's door wall to the underside of a cross roof that no
        longer exists; this is that band re-authored as the face itself,
@@ -6621,13 +6637,15 @@
        straddles -18.20), so its upper walls are centred too.
 
        THE SHARED PLANE x -7.15 is one wall, never two: a second slab in
-       the same plane is a z-fight. It belongs to `main_upper_west`
-       whenever the main block has two stories -- the main block's face
-       there is the outer one -- and only then is the garage's own east
-       upper wall skipped. A two-story garage beside a ONE-story main
-       still builds `garage_upper_east`, because nothing else closes it. */
+       the same plane is a z-fight, and no slab at all is a hole. Which
+       block owns it is sharedFaceOwner()'s answer, already given for the
+       block-meet clip above -- see the rule written out at the two side
+       walls below. */
     function storyBox(name) {
-      if (BLOCKS[name].stories !== 2) return;
+      /* `|| 1` throughout, exactly the way `depth` defaults: the block
+         model always carries `stories`, but a hand-fed HOUSE_FACADE or an
+         older saved row need not, and an absent storey is one storey. */
+      if ((BLOCKS[name].stories || 1) !== 2) return;
       var B = name === 'main' ? FULL_HOUSE : GARAGE_BLOCK;
       var y0 = EXT_TOP4, h = EXT_TOP4;
       /* the main block's envelope lines are outer faces, the garage
@@ -6649,9 +6667,47 @@
       }
       wall('south', west, south, east, south, [0, 0, 1]);
       wall('north', west, north, east, north, [0, 0, -1]);
-      wall('west', west, north, west, south, [-1, 0, 0]);
-      if (!(name === 'garage' && BLOCKS.main.stories === 2))
-        wall('east', east, north, east, south, [1, 0, 0]);
+      /* THE SHARED PLANE, one rule (fix round 1). The main block's WEST
+         side and the garage block's EAST side are the same plane,
+         x -7.15, and it must be closed by exactly one wall -- two is a
+         z-fight, none is a hole. sharedFaceOwner() (declared with the
+         block meet above) already names the block that owns that plane,
+         so this reads it rather than inventing a second answer:
+
+         - both blocks two stories: the OWNER's wall closes the WHOLE
+           plane -- each end runs to the further of the two blocks'
+           faces -- and the non-owner skips its own. The extent matters:
+           `main_upper_west` over the main block's z range alone leaves
+           the strip z FULL_HOUSE.south..GARAGE_BLOCK.south open
+           whenever a garage DEPTH pushes the garage block past the main
+           (depth 6: 4.5 units of open upper storey at the shared face).
+         - only one block two stories: there is nothing to share. That
+           block builds its own wall over its OWN extent, and the other
+           builds nothing at all.
+
+         Each end takes the face convention of the block it came from --
+         the main block's faces are outer, the garage block's are wall
+         centres -- which is how every block corner in this file already
+         meets (garage_block_west runs to GARAGE_BLOCK.south and
+         mudroom_front's slab is centred there; the corner boards hide
+         the crossing). */
+      var shared = (name === 'main') ? 'west' : 'east';
+      var both = (BLOCKS.main.stories || 1) === 2 &&
+                 (BLOCKS.garage.stories || 1) === 2;
+      function sharedEnd(sign) {
+        var m = sign < 0 ? FULL_HOUSE.north + WALL_T4 / 2
+                         : FULL_HOUSE.south - WALL_T4 / 2;
+        var g = sign < 0 ? GARAGE_BLOCK.north : GARAGE_BLOCK.south;
+        return sign < 0 ? Math.min(m, g) : Math.max(m, g);
+      }
+      ['west', 'east'].forEach(function (side) {
+        var onShared = (side === shared);
+        if (onShared && both && sharedFaceOwner() !== name) return;
+        var x = side === 'west' ? west : east;
+        var z0 = (onShared && both) ? sharedEnd(-1) : north;
+        var z1 = (onShared && both) ? sharedEnd(1) : south;
+        wall(side, x, z0, x, z1, side === 'west' ? [-1, 0, 0] : [1, 0, 0]);
+      });
     }
     /* BEFORE buildElevation(): a story-2 feature is placed on the face
        these walls make, so they have to stand first. */
@@ -6821,7 +6877,7 @@
          top at EXT_TOP4 that the two bands just above already give it. */
       var gVault = roofVault(GARAGE_BLOCK, ROOF_FORMS.garage, blockPitch('garage'));
       if (gVault.axis === 'z' && ROOF_FORMS.garage.form === 'gable' &&
-          BLOCKS.garage.stories === 1)
+          (BLOCKS.garage.stories || 1) === 1)
         /* vFrom 4.6: the band just above starts ITS courses at its own
            bottom edge, so the section continues them from there rather
            than opening a fresh course at the eave. */
@@ -12411,6 +12467,22 @@
     webgl.FABRIC.forEach(function (f) {
       var sh = f.shells && f.shells[room];
       if (sh && sh.fraction > 1e-6) out.push(f.name);
+    });
+    return out.sort();
+  };
+  /* ... and which rows that view draws NOTHING of: a kit the mask took
+     whole (buildRoomShells records `{group: null, fraction: 1}` for one),
+     a roof feature dropped under ruling 1, the yard, or a convex mesh
+     the clip emptied. `cut` above is the superset; this is the part of it
+     that is gone rather than opened, which is the only way to ask "did
+     the window go with its wall?" -- a kit is never clipped, so it has no
+     remnant to look for. Names only, sorted; read-only. */
+  window.chfRoomShellDropped = function (room) {
+    if (!webgl || !webgl.ROOM_MASKS[room]) return null;
+    var out = [];
+    webgl.FABRIC.forEach(function (f) {
+      var sh = f.shells && f.shells[room];
+      if (sh && sh.fraction >= 1 - 1e-6) out.push(f.name);
     });
     return out.sort();
   };
