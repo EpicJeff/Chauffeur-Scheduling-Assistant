@@ -1086,6 +1086,73 @@ def scenario_side_garage_shed_and_porch_gable():
         check(not errs, f'console clean: {errs[:3]}')
 
 
+def scenario_mixed_porch_roof_builds_and_cuts():
+    """The sloped cover and smaller gable share one porch and room mask."""
+    from services import house_facade as hf
+    served = live_app(_seed)
+    if served is None:
+        return
+    spec = copy.deepcopy(hf.CANONICAL)
+    porch = next(g for g in spec['ground'] if g['kind'] == 'porch')
+    porch.update(roof='mixed', gable_offset=1, gable_span=2)
+    spec, _ = hf.normalize(spec)
+    check(not hf.validate_block_model(spec), 'mixed porch is a valid saved facade')
+    check(hf.normalize(spec)[0] == spec, 'mixed porch survives a saved round trip')
+    prefix = 'facade_main_porch_%s' % porch['slot']
+    with served.browser() as page:
+        page.add_init_script(DAY_LOCK_JS)
+        page.add_init_script(SEED_RNG_JS)
+        page.goto(served.url('house?quality=high&day=1&draft=' + hf.issue_draft(spec)))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_function('window.chfNavProbe({settled:true})', timeout=20000)
+        names = {r['name'] for r in page.evaluate('window.chfShellFabric()')}
+        check(prefix + '_shed' in names, 'continuous sloped cover registered')
+        check(any(n.startswith(prefix + '_gable_') for n in names), 'smaller gable registered')
+        if os.environ.get('HOUSE_SHOTS'):
+            from pathlib import Path
+            directory = Path(os.environ['HOUSE_SHOTS'])
+            directory.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(directory / 'mixed-porch.png'))
+        page.evaluate("window.chfHouseEnterRoom('living')")
+        page.wait_for_function('window.chfNavProbe({settled:true})', timeout=20000)
+        clear = page.evaluate("window.chfRoomViewClear('living')")
+        check(clear and clear['clear'], 'mixed porch leaves living view clear')
+        check(not [e for e in served.errors() if 'WebGL' not in e], 'mixed porch console clean')
+
+
+def scenario_covered_porch_and_roof_connections():
+    from services import house_facade as hf
+    served = live_app(_seed)
+    if served is None:
+        return
+    spec = copy.deepcopy(hf.CANONICAL)
+    porch = next(g for g in spec['ground'] if g['kind'] == 'porch')
+    porch['roof'] = 'flat'
+    spec['roof'] += [{'kind': 'gable', 'slot': 14, 'span': 2},
+                     {'kind': 'dormer', 'slot': 17, 'span': 1, 'window': True}]
+    spec, _ = hf.normalize(spec)
+    with served.browser() as page:
+        page.add_init_script(DAY_LOCK_JS)
+        page.goto(served.url('house?quality=high&day=1&draft=' + hf.issue_draft(spec)))
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_function('window.chfNavProbe({settled:true})', timeout=20000)
+        roof = page.evaluate("window.chfWorldBox('facade_main_porch_%s_shed')" % porch['slot'])
+        check(roof is not None, 'covered flat porch has a roof deck')
+        gable = page.evaluate("window.chfFabricVertices('facade_main_gable_14_front')")
+        street = hf.slot_table(spec['blocks'], spec['upper'])[14]['z']
+        check(gable and max(v[2] for v in gable) <= street + 0.5,
+              'ordinary gable projects only its eave overhang beyond the wall')
+        dormer = page.evaluate("window.chfFabricVertices('facade_main_dormer_17_roof_west')")
+        check(dormer and min(v[2] for v in dormer) < street - 3.5,
+              'dormer roof extends back to meet the parent deck, beyond the old fixed box')
+        names = {r['name'] for r in page.evaluate('window.chfShellFabric()')}
+        check('facade_main_dormer_17_roof_west' in names, 'dormer roof built')
+        if os.environ.get('HOUSE_SHOTS'):
+            from pathlib import Path
+            page.screenshot(path=str(Path(os.environ['HOUSE_SHOTS']) / 'roof-connections.png'))
+        check(not [e for e in served.errors() if 'WebGL' not in e], 'roof connections console clean')
+
+
 if __name__ == '__main__':
     scenario_canonical_facade_pins_the_hand_built_elevation()
     scenario_worst_case_facade_builds_clean()
@@ -1101,4 +1168,6 @@ if __name__ == '__main__':
     # Last: it boots six browsers of its own, and every scenario above
     # reads mesh counts out of the shared temp data dir this one seeds.
     scenario_claddings_and_base_band()
+    scenario_mixed_porch_roof_builds_and_cuts()
+    scenario_covered_porch_and_roof_connections()
     print("test_house_facade_live OK")

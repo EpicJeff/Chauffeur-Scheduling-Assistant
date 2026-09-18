@@ -121,3 +121,13 @@ Implemented in v2.499.97 on 2026-09-18. Canonical V3/no-upper remained within th
 ### Prerequisite carried from arc 2's parked list
 
 `roofVault(GARAGE_BLOCK, …, Math.PI / 8)` (house.js ~6182) reads a literal and must read `BLOCK_PITCH` before per-volume roofs are built from it; `hipEndAt`'s local pitch must read `PITCH_FAMILY`. The ridge-z roof-piece rename is subsumed by §3's naming rule.
+
+### Editor and roof follow-up (v2.499.98, 2026-09-18)
+
+User testing exposed restrictions that the initial tests did not exercise. Selecting a cell now keeps that exact slot selected even inside an upper span. Ground edits replace only the selected range on the selected story and preserve the other portions; upper, roof and porch edits retain their own anchors. Applying one layer does not rewrite the others. The editor refreshes from the normalized response so merged or clamped spans do not leave stale anchors.
+
+Garage/mudroom is a room boundary within one roof block, not a roof-span boundary. Roof features can span all six slots; ground features retain the driveway/garage-door rules. Both blocks now show room labels under their block heading. Slot counts remain derived from fixed block widths; changing house width or grid resolution is a separate capability and was not added here.
+
+Covered flat porches now build their missing deck. Porch roofs also accept `shed` and `mixed`; mixed uses one sloped cover plus a smaller gable, positioned by `gable_offset` and `gable_span` within the porch. The two roof surfaces are clipped at their intersection. Ordinary non-porch gables terminate at the wall face plus the normal eave overhang, rather than projecting 2.2 units into the yard. Dormer bodies and roofs extend back to the parent roof intersection. Buried-feature clipping uses the parent volume under the feature, not the intersection of every volume in its block.
+
+These changes close the reported editor/roof gaps. They do not establish full visual equivalence with both reference photos. Fixed block widths, roof-material differences and unsupported house shapes remain separate representation limits. Browser screenshots were inspected at high quality; wall-panel verification remains outstanding.

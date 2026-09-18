@@ -5721,9 +5721,9 @@
        at slot 0 did, 0.18 past the garage's west infill) -- which is
        exactly a feature running on where the block roof already is. */
     var FACE_INSET = 0.02;
-    function buriedRegion(face) {
+    function buriedRegion(face, x) {
       var b = FACE_BLOCKS[face].block, C = window.HouseClip;
-      var region = blockDeckPlanes(face).map(function (pl) { return C.flip(pl); });
+      var region = blockDeckPlanes(face, x).map(function (pl) { return C.flip(pl); });
       region.push({ n: [0, 0, -1], d: -(b.south - FACE_INSET) });
       region.push({ n: [0, 0, 1], d: b.north });
       return region;
@@ -5989,7 +5989,44 @@
         shellGable('facade_' + slot.face + '_porch_' + feat.slot + '_roof',
                    e.x0, e.x1, featureBack(slot, X, ridge), frontZ, eave, 'z',
                    slot.room, [1], PITCH_FAMILY, null, null, null,
-                   buriedRegion(slot.face));
+                   buriedRegion(slot.face, e.cx));
+      }
+      if ((feat.roof === 'flat' || feat.roof === 'shed' || feat.roof === 'mixed') && type !== 'stoop') {
+        // One continuous cover. The gable and shed subtract each other's
+        // buried volumes, leaving their higher surfaces joined at valleys.
+        var pg = shellGroup(), C = window.HouseClip;
+        var angle = feat.roof === 'flat' ? 0 : Math.min(PITCH_FAMILY, Math.atan2(1.0, depth));
+        var sn = [0, Math.cos(angle), Math.sin(angle)];
+        var sd = sn[1] * (eave + 0.18) + sn[2] * frontZ;
+        var zb = z0 - 0.12, zf = frontZ + FULL_HOUSE.overhang;
+        var yb = (sd - sn[2] * zb) / sn[1], yf = (sd - sn[2] * zf) / sn[1];
+        var pd = shellBox(pg, W + 2 * FULL_HOUSE.overhang, 0.18,
+                          Math.hypot(zf - zb, yb - yf), NICE ? 0xffffff : FARMHOUSE.roofTone,
+                          X, (yb + yf) / 2, (zb + zf) / 2,
+                          { rough: 0.9, map: shingleT });
+        pd.rotation.x = angle;
+        shellBox(pg, W + 2 * FULL_HOUSE.overhang, 0.22, 0.14,
+                 FARMHOUSE.trim, X, yf - 0.1, zf);
+        if (feat.roof === 'mixed') {
+          var gs = feat.slot + (feat.gable_offset || 0);
+          var ge = Math.min(feat.slot + feat.span, gs + (feat.gable_span || 2));
+          var gx0 = SLOTS[gs].x0, gx1 = SLOTS[ge - 1].x1;
+          var gp = [-1, 1].map(function (sign) {
+            return deckPlane(gx0, gx1, zb, frontZ, eave, 'z', PITCH_FAMILY, sign);
+          });
+          var gableRegion = [
+            { n: [1, 0, 0], d: gx0 - FULL_HOUSE.overhang },
+            { n: [-1, 0, 0], d: -gx1 - FULL_HOUSE.overhang }
+          ].concat(gp.map(function (p) { return C.flip({ n: p.n, d: p.d }); }));
+          clipBuried(pg, gableRegion);
+          shellGable('facade_' + slot.face + '_porch_' + feat.slot + '_gable',
+                     gx0, gx1, zb, frontZ, eave, 'z', slot.room, [1],
+                     PITCH_FAMILY, null, null, null,
+                     [[C.flip({ n: sn, d: sd })], buriedRegion(slot.face, e.cx)]);
+        }
+        clipBuried(pg, buriedRegion(slot.face, e.cx));
+        shellRegister(pg, 'facade_' + slot.face + '_porch_' + feat.slot + '_shed',
+                      [0, 0, 1], slot.room);
       }
       /* VIEW-VOLUME MASKING (task 3, fix round 1 ruling): a porch is NOT
          a kit. Every piece of it is a box() -- slab, step, posts, beam,
@@ -6182,7 +6219,7 @@
       return roofY(slot.face, cx, slot.z) - 0.18;
     }
     function featureBack(slot, cx, ridge) {
-      var pl = faceDeckPlane(slot.face, slot.cx), back = slot.z - 2.8;
+      var pl = faceDeckPlane(slot.face, cx), back = slot.z - 2.8;
       if (!pl || Math.abs(pl.n[2]) < 1e-6) return back;
       var meet = (pl.d - pl.n[0] * cx - pl.n[1] * ridge) / pl.n[2];
       return Math.min(back, meet - 0.6);
@@ -6190,7 +6227,7 @@
     function gableAt(feat) {
       var e = spanX(feat), slot = e.slot;
       var name = 'facade_' + slot.face + '_gable_' + feat.slot;
-      var region = buriedRegion(slot.face);
+      var region = buriedRegion(slot.face, e.cx);
       if (feat.slot >= GARAGE_BAY_SLOTS[0] && feat.slot <= GARAGE_BAY_SLOTS[1] &&
           feat.slot + feat.span - 1 <= GARAGE_BAY_SLOTS[1]) {
         /* the street-facing garage gable (spec section 2.1: today's
@@ -6224,18 +6261,18 @@
       }
       /* a porch sharing the span carries the gable out to its own front
          edge (today's porch_roof) and hands it the porch's eave;
-         otherwise the gable projects a fixed 2.2 from the face at the
-         height rule's eave. */
+         otherwise the gable sits on the wall face, with only its roof
+         overhang extending toward the street. */
       /* MASSING ARC 2 task 8: ... unless that porch is GABLED, in which
          case the porch built its own roof (porchAt, above) and this is a
          second gable over the same posts. normalize() already drops a
          gable feature covering a gabled porch, so no spec that renders
          reaches this line; the guard is belt and braces for a hand-built
          or replayed feature. */
-      var front = slot.z + 2.2, porch = false;
+      var front = slot.z, porch = false;
       PORCH_SPANS.forEach(function (p) {
         if (p.slot < feat.slot + feat.span && feat.slot < p.slot + p.span &&
-            p.roof !== 'gable') {
+            p.roof !== 'gable' && p.roof !== 'mixed') {
           front = Math.max(front, p.frontZ); porch = true;
         }
       });
@@ -6261,7 +6298,7 @@
          deck planes (roofY), whatever form and ridge the block has. */
       var e = spanX(feat), slot = e.slot, g = shellGroup();
       var w = Math.max(1.2, e.w - 0.4);
-      var zc = slot.z - 1.6, region = buriedRegion(slot.face);
+      var zc = slot.z - 1.6, region = buriedRegion(slot.face, e.cx);
       /* ROOF VALLEYS (masking spec section 6): the box STANDS on the
          roof -- its bottom edge at its front face (zc + 0.8) is the
          roof line there (roofY: the block's own deck planes, no longer
@@ -6276,9 +6313,16 @@
          block's tile -- box and gable infill alike, so the whole dormer
          reads as one material and not a shingled hat on a batten box. */
       var dclad = featClad(feat);
-      shellBox(g, w, 1.9, 1.6, cladColour(BLOCK_OF_FACE[slot.face]),
-               e.cx, y, zc, { rough: 0.95,
-                              map: dclad || CLAD(BLOCK_OF_FACE[slot.face]) });
+      var dormerFront = zc + 0.8;
+      var dormerRidge = y + 0.95 + 0.18 + w / 2 * Math.tan(PITCH_FAMILY);
+      var dormerBack = featureBack(slot, e.cx, dormerRidge);
+      var bottom = Math.min(roofY(slot.face, e.cx - w / 2, dormerFront),
+                            roofY(slot.face, e.cx + w / 2, dormerFront)) - 0.12;
+      var top = y + 0.95;
+      shellBox(g, w, top - bottom, dormerFront - dormerBack,
+               cladColour(BLOCK_OF_FACE[slot.face]),
+               e.cx, (top + bottom) / 2, (dormerBack + dormerFront) / 2,
+               { rough: 0.95, map: dclad || CLAD(BLOCK_OF_FACE[slot.face]) });
       if (feat.window !== false) {
         shellWindow(g, e.cx, y, zc + 0.85, 0, Math.min(1.1, w - 0.5), 1.1, true);
       }
@@ -6293,7 +6337,7 @@
          the same dormer feature. Its eave is the box top, as before
          (the height rule's own form: ridge = box top + 0.18 + rise). */
       shellGable('facade_' + slot.face + '_dormer_' + feat.slot + '_roof',
-                 e.cx - w / 2, e.cx + w / 2, zc - 0.8, zc + 0.8,
+                 e.cx - w / 2, e.cx + w / 2, dormerBack, dormerFront,
                  y + 0.95, 'z', slot.room, [1], PITCH_FAMILY,
                  null, null, null, region, dclad);
     }
@@ -6310,7 +6354,7 @@
          (facade_<face>_shed_<slot>_box) so the mask can take the glass
          and leave the deck, exactly as a dormer's roof and box part. */
       var e = spanX(feat), slot = e.slot, g = shellGroup();
-      var region = buriedRegion(slot.face);
+      var region = buriedRegion(slot.face, e.cx);
       var clad = featClad(feat) || shingleT;
       var zf = slot.z + 2.2, yf = featureEave(slot, e.cx) - 0.3;
       var zb = slot.z - 0.8, yb = roofY(slot.face, e.cx, zb);

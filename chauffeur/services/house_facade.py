@@ -51,7 +51,7 @@ GROUND_KINDS = ('wall', 'window', 'door', 'garage_door', 'porch')
 ROOF_KINDS = ('eave', 'gable', 'dormer', 'shed', 'hip_end')
 WINDOW_SIZES = ('tall', 'standard', 'small')
 PORCH_TYPES = ('sitting', 'stoop', 'covered')
-PORCH_ROOFS = ('flat', 'gable')
+PORCH_ROOFS = ('flat', 'gable', 'shed', 'mixed')
 GARAGE_STYLES = ('carriage', 'panel', 'glass')
 CLADDINGS = ('batten', 'lap', 'brick', 'stone', 'stucco', 'shingle')
 ROOF_FORMS = ('gable', 'hip')
@@ -351,6 +351,9 @@ def _entries(raw_list, kinds, notes, layer):
         elif kind == 'porch':
             item['type'] = _pick(e.get('type'), PORCH_TYPES, 'covered')
             item['roof'] = _pick(e.get('roof'), PORCH_ROOFS, 'flat')
+            if item['roof'] == 'mixed':
+                item['gable_offset'] = max(0, min(span - 1, _int(e.get('gable_offset'), 0)))
+                item['gable_span'] = max(1, min(span - item['gable_offset'], _int(e.get('gable_span'), min(2, span))))
         elif kind == 'garage_door':
             item['style'] = _pick(e.get('style'), GARAGE_STYLES, 'carriage')
             item['leaves'] = 2 if _int(e.get('leaves'), 1) == 2 else 1
@@ -363,19 +366,17 @@ def _entries(raw_list, kinds, notes, layer):
     return out
 
 
-def _clip_to_face(item, notes):
-    """Spans never cross a face (spec 4.3). The garage BAY is a hard
-    boundary too (spec 4.4: the garage door always spans its own bay) --
-    task 3 merged the old 3-slot 'garage' face into the 6-slot
-    garage_block face, so without this a feature starting in the bay
-    (slots 0-2) could otherwise run on into the mudroom's ordinary roof
-    slots (3-5). A feature starting in the bay is clipped to the bay,
-    not the whole face."""
+def _clip_to_face(item, notes, *, roof=False):
+    """Clip to the physical face. Only ground features also stop at the bay.
+
+    Garage and mudroom share one roof block; their room boundary does not
+    constrain roof features. Upper-volume seams are handled separately.
+    """
     slots = slot_table()
     face = slots[item['slot']]['face']
     lo, hi = _face_range(face)
     bay_lo, bay_hi = GARAGE_BAY_SLOTS
-    if bay_lo <= item['slot'] <= bay_hi:
+    if not roof and bay_lo <= item['slot'] <= bay_hi:
         hi = min(hi, bay_hi)
     end = min(item['slot'] + item['span'] - 1, hi)
     if end != item['slot'] + item['span'] - 1:
@@ -615,7 +616,7 @@ def normalize(raw):
         kept.append(g)
     ground = kept
     for r in roof:
-        _clip_to_face(r, notes)
+        _clip_to_face(r, notes, roof=True)
         end = r['slot'] + r['span']
         boundaries = sorted({u['slot'] for u in spec['upper']} |
                             {u['slot'] + u['span'] for u in spec['upper']})
@@ -710,6 +711,10 @@ def normalize(raw):
         seen |= cells
         porches.append(pch)
 
+    for porch in porches:
+        if porch.get('roof') == 'mixed':
+            porch['gable_offset'] = min(porch['gable_offset'], porch['span'] - 1)
+            porch['gable_span'] = min(porch['gable_span'], porch['span'] - porch['gable_offset'])
     spec['ground'] = sorted(exclusive + porches, key=lambda g: (g['slot'], g.get('story', 1), g['kind']))
     spec['roof'] = sorted(roof, key=lambda r: (r['slot'], r['kind']))
     un = raw.get('unexpressed') if isinstance(raw.get('unexpressed'), list) else []
@@ -913,7 +918,11 @@ Return exactly this shape (a fraction-based feature has "block"/"at"/"width" ins
   "upper": [{{"block": "main"|"garage", "at": 0..1, "width": 0..1,
                "roof": {{"form": one of {roof_forms}, "ridge": one of {ridges}, "pitch_deg": number}}}}],
   "unexpressed": [up to 8 short strings naming real details the shape above cannot capture]}}
-Rules: colours are the NEAREST palette name, never hex. If the garage is not visible, describe it
+Rules: colours are the NEAREST palette name, never hex.
+For a continuous sloping porch cover with a smaller front gable, use porch roof "mixed".
+Its optional gable_offset and gable_span count slots relative to the porch start; defaults are 0 and 2.
+Use roof "shed" for a porch cover with only one slope.
+If the garage is not visible, describe it
 as a plain default block (batten, white, gable ridge x, no upper span, front) -- never omit it.
 If unsure of a count, prefer fewer windows. The front door goes on the main block. Anything real
 about the house that this schema has no field for -- a shape, a material, a massing detail --

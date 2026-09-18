@@ -228,16 +228,13 @@ def scenario_roof_priority_and_no_bans():
     check(g == [(0, 3), (8, 2)], f'both gables kept: {g}')
 
 
-def scenario_garage_bay_is_a_hard_boundary_for_roof_too():
-    # a gable starting inside the garage bay (slots 0-2 of the six-slot
-    # garage_block face) must not bleed into the mudroom's ordinary roof
-    # slots (3-5): the bay is a hard boundary for roof features exactly
-    # as it already is for the garage door itself (spec 4.4).
+def scenario_roof_can_span_garage_and_mudroom():
+    # Both rooms belong to one physical block roof.
     raw = _spec(roof=[{'slot': 1, 'span': 4, 'kind': 'gable'}])
     spec, notes = hf.normalize(raw)
     g = next(r for r in spec['roof'] if r['kind'] == 'gable' and r['slot'] == 1)
-    check(g['span'] == 2, f'gable clipped to the garage bay, not the whole face: {g}')
-    check(any('face' in n for n in notes), 'truncation noted')
+    check(g['span'] == 4, f'roof spans the garage and mudroom on one block: {g}')
+    check(not any('truncated' in n for n in notes), 'no artificial roof boundary at the bay')
     # a gable fully inside the bay is untouched
     raw2 = _spec(roof=[{'slot': 0, 'span': 3, 'kind': 'gable'}])
     spec2, notes2 = hf.normalize(raw2)
@@ -933,6 +930,23 @@ def scenario_upper_spans_resolve_migrate_and_publish_eaves():
           'strict V3 validation rejects legacy stories')
 
 
+def scenario_mixed_porch_round_trip():
+    raw = copy.deepcopy(hf.CANONICAL)
+    porch = next(g for g in raw['ground'] if g['kind'] == 'porch')
+    porch.update(roof='mixed', gable_offset=1, gable_span=2)
+    spec, _ = hf.normalize(raw)
+    saved = next(g for g in spec['ground'] if g['kind'] == 'porch')
+    check(saved['roof'] == 'mixed' and saved['gable_offset'] == 1 and saved['gable_span'] == 2,
+          'a smaller gable is retained on a continuous covered porch')
+    check(hf.normalize(spec)[0] == spec and not hf.validate_block_model(spec),
+          'mixed porch saves and reloads without losing its roof settings')
+    porch.update(gable_offset=100, gable_span=100)
+    spec, _ = hf.normalize(raw)
+    saved = next(g for g in spec['ground'] if g['kind'] == 'porch')
+    check(saved['gable_offset'] + saved['gable_span'] <= saved['span'],
+          'the gable stays within the porch footprint')
+
+
 def scenario_upper_seams_trim_roof_features_and_windows():
     raw = _v2()
     raw['upper'] = [{'slot': 9, 'span': 4,
@@ -1195,6 +1209,7 @@ if __name__ == '__main__':
                scenario_stories_and_per_story_overlap,
                scenario_upper_spans_resolve_migrate_and_publish_eaves,
                scenario_upper_seams_trim_roof_features_and_windows,
+               scenario_mixed_porch_round_trip,
                scenario_side_garage_and_shed_and_unexpressed,
                scenario_canonical_is_normal_and_idempotent,
                scenario_unknown_enums_fall_to_defaults,
@@ -1204,7 +1219,7 @@ if __name__ == '__main__':
                scenario_overlap_priority_trims_the_loser,
                scenario_porch_is_barred_from_the_bay_not_the_whole_block,
                scenario_roof_priority_and_no_bans,
-               scenario_garage_bay_is_a_hard_boundary_for_roof_too,
+               scenario_roof_can_span_garage_and_mudroom,
                scenario_budget_caps_drop_east_most_first,
                scenario_sorted_and_deduped,
                scenario_wall_and_eave_entries_are_dropped,
