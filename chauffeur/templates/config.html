@@ -5672,9 +5672,13 @@
                     return (this.facadeDraft.ground || []).find(e => e.kind === 'porch' && i >= e.slot && i < e.slot + e.span);
                 },
                 facadeCellSelect(i) {
-                    this.facadeCellStory = 1;
-                    const g = this.facadeEntry('ground', i, this.facadeCellStory);
+                    // Story 1 first, then story 2: a story-2-only entry (span > 1)
+                    // clicked on a continuation cell must still snap to ITS start
+                    // and open on Story 2 -- resetting to story 1 unconditionally
+                    // would leave facadeSlot = i and a later apply would relocate it.
+                    const g = this.facadeEntry('ground', i, 1) || this.facadeEntry('ground', i, 2);
                     this.facadeSlot = g ? g.slot : i;
+                    this.facadeCellStory = g ? (g.story || 1) : 1;
                 },
                 facadeLoadCell() {
                     const i = this.facadeSlot; if (i === null) return;

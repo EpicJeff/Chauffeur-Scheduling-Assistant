@@ -852,6 +852,13 @@ def scenario_home_section_pins():
     check('facadeCellStory' in apply_body,
           "facadeCellApply's removal filter is story-aware: a stacked "
           "story-1/story-2 window pair must not be wiped when one is edited")
+    j0 = tpl.index('facadeCellSelect(i) {')
+    j1 = tpl.index('facadeLoadCell() {', j0)
+    select_body = tpl[j0:j1]
+    check("facadeEntry('ground', i, 2)" in select_body,
+          'facadeCellSelect falls back to the story-2 entry: a story-2-only '
+          'span clicked on a continuation cell must snap to its own start, '
+          'not relocate on the next apply')
     for bad in ('alert(', 'confirm(', 'prompt('):
         sec = tpl[tpl.index('id="home"'):tpl.index('id="home"') + 20000]
         check(bad not in sec.replace('promptConfirm(', '').replace('promptInput(', ''), f'no browser dialogs: {bad}')
