@@ -2676,9 +2676,6 @@
                                     <select class="w-full bg-gray-800" x-model="facadeCell.ground.size" @change="facadeCellApply()">
                                         <option>tall</option><option>standard</option><option>small</option></select></label>
                                 <label x-show="facadeCell.ground.kind === 'window'"><input type="checkbox" x-model="facadeCell.ground.shutters" @change="facadeCellApply()"> shutters</label>
-                                <label x-show="facadeCell.ground.kind === 'window' && facadeBlockStories(facadeSlot) === 2">Story
-                                    <select class="w-full bg-gray-800" x-model.number="facadeCell.ground.story" @change="facadeCellApply()">
-                                        <option value="1">1</option><option value="2">2</option></select></label>
                                 <label x-show="facadeCell.ground.kind === 'garage_door'">Door
                                     <select class="w-full bg-gray-800" x-model="facadeCell.ground.style" @change="facadeCellApply()">
                                         <option>carriage</option><option>panel</option><option>glass</option></select></label>
