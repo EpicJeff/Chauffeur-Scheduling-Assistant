@@ -1273,11 +1273,61 @@ def scenario_exterior_rooms_and_side_door_controls():
         check(not errors, f'room markers and side door build clean: {errors}')
 
 
+def scenario_side_garage_front_seal_and_popout():
+    from services import house_facade as hf
+    from pathlib import Path
+    served = live_app(_seed)
+    if served is None:
+        return
+    for label, projection, mirror, quality in [('flush', 0, False, 'high'), ('popout', 1.8, False, 'high'), ('popout-mirror', 2.8, True, 'low'), ('upper-popout', 1.8, True, 'high')]:
+        spec = copy.deepcopy(hf.CANONICAL)
+        spec['mirror'] = mirror
+        spec['blocks']['garage'].update(orientation='side', door_colour='white', side_door={
+            'style':'carriage', 'leaves':2, 'width':4.4, 'height':3.0,
+            'third_bay':projection > 0, 'front_setback':0.75, 'projection':projection})
+        if label == 'upper-popout':
+            spec['upper'] = [{'slot':0, 'span':6, 'roof':{'form':'gable','ridge':'z','pitch_deg':35}}]
+            spec['blocks']['garage']['depth'] = 6
+            spec['blocks']['garage']['side_door']['height'] = 4
+        spec, _ = hf.normalize(spec)
+        with served.browser() as page:
+            errors = []
+            page.on('pageerror', lambda e: errors.append(str(e)))
+            page.goto(served.url('house?quality=' + quality + '&day=1&editor=1&draft=' + hf.issue_draft(spec)))
+            page.wait_for_function('window.chfNavProbe && window.chfNavProbe({settled:true})', timeout=30000)
+            wall = page.evaluate("window.chfFabricVertices('garage_front_wall')")
+            check(wall and max(v[0] for v in wall)-min(v[0] for v in wall) >= 5.6, 'side garage street wall spans whole bay')
+            check(max(v[1] for v in wall) >= 5.6-1e-5 and min(v[1] for v in wall) <= 1e-5, f'street wall seals floor to eave: {min(v[1] for v in wall)}, {max(v[1] for v in wall)}')
+            roof = page.evaluate("window.chfFabricVertices('garage_popout_roof_end_west')")
+            check(bool(roof) == (projection > 0), 'projecting bay has its own outward gable only when selected')
+            if projection:
+                door = page.evaluate("window.chfFabricVertices('garage_door')")
+                check(max(v[0] for v in door)-min(v[0] for v in door) > projection, 'single door projects beyond main door')
+                # Door registry reports world coordinates; undo the house mirror.
+                protruding = [v for v in door if v[0] * (-1 if mirror else 1) < -18.2-projection/2]
+                main = [v for v in door if v[0] * (-1 if mirror else 1) >= -18.2-projection/2]
+                check(protruding and main and max(v[2] for v in protruding) < min(v[2] for v in main),
+                      'projecting single door is behind main door toward the rear')
+                for piece in ['north', 'south', 'pier_north', 'pier_south', 'header', 'floor']:
+                    check(page.evaluate("(n) => window.chfFabricVertices('garage_popout_' + n)", piece), 'popout enclosed by ' + piece)
+            page.evaluate('(a) => window.chfOrbitTo(a)', 0 if mirror else 2)
+            page.wait_for_function('window.chfNavProbe({settled:true})', timeout=30000)
+            shots = os.environ.get('HOUSE_SHOTS')
+            if shots:
+                Path(shots).mkdir(parents=True, exist_ok=True)
+                page.screenshot(path=str(Path(shots, label + '.png')))
+            page.evaluate("window.chfHouseEnterRoom('garage')")
+            page.wait_for_function("window.chfNavProbe({settled:true}) && window.chfHouseMode() === 'garage'", timeout=30000)
+            check(not errors, f'garage shell builds and cuts cleanly: {errors}')
+    print('Side garage seal and projecting bay passed')
+
+
 if __name__ == '__main__':
     scenario_canonical_facade_pins_the_hand_built_elevation()
     scenario_worst_case_facade_builds_clean()
     scenario_story_and_slot_finishes_build_clean()
     scenario_exterior_rooms_and_side_door_controls()
+    scenario_side_garage_front_seal_and_popout()
     scenario_roof_features_stop_at_the_roof_line()
     scenario_a_saved_gable_over_the_study_stays_outside()
     scenario_a_draft_token_renders_day_locked_and_captures()

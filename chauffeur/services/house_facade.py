@@ -276,6 +276,8 @@ def validate_block_model(obj):
                         enum(door, 'style', GARAGE_STYLES, p + '.side_door')
                         if 'third_bay' in door:
                             need(door, 'third_bay', bool, p + '.side_door')
+                        if 'projection' in door:
+                            rng(door, 'projection', 0, 3.0, p + '.side_door')
                         if 'front_setback' in door:
                             rng(door, 'front_setback', 0.6, 4.0, p + '.side_door')
                         rng(door, 'width', 2.4, 4.4, p + '.side_door')
@@ -534,6 +536,8 @@ def _norm_block(name, raw, notes):
             }
             if 'third_bay' in door:
                 b['side_door']['third_bay'] = bool(door['third_bay'])
+            if 'projection' in door:
+                b['side_door']['projection'] = round(min(3.0, max(0.0, _num(door['projection'], 0))), 2)
             if 'front_setback' in door:
                 b['side_door']['front_setback'] = round(min(4.0, max(0.6, _num(door['front_setback'], 0.75))), 2)
     return b
@@ -1046,6 +1050,8 @@ The garage may also include optional side_door: style (carriage/panel/glass), le
 width (2.4..4.4, default 3.6) and height (2.4..4.0, default 3.0), in scene units.
 Optional side_door.third_bay (boolean) adds a separate single door; front_setback
 (0.6..4.0, default 0.75) measures the gap from the front corner to the nearest door.
+Optional side_door.projection (0..3, default 0) projects the third bay toward
+the driveway with its own gable; 0 keeps it flush, 1.8 is a typical pop-out.
 The garage may include door_colour: wood/white/black/greige/sage/slate/navy.
 These control the garage doors independently of street openings.
 Finishes are optional overrides. Omit unchanged cladding/body fields to inherit independently.

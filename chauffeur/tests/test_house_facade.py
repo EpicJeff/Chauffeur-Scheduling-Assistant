@@ -769,11 +769,14 @@ def scenario_side_door_settings_round_trip():
     check(hf.normalize(spec)[0] == spec and not hf.validate_block_model(spec), 'side door round trip')
     check('side_door' not in hf.normalize(hf.CANONICAL)[0]['blocks']['garage'], 'old front house unchanged')
     raw['blocks']['garage']['door_colour'] = 'navy'
-    raw['blocks']['garage']['side_door'].update(third_bay=True, front_setback=0.75)
+    raw['blocks']['garage']['side_door'].update(third_bay=True, front_setback=0.75, projection=1.8)
     spec, _ = hf.normalize(raw)
     check(spec['blocks']['garage'] == raw['blocks']['garage'], 'third bay, colour and setback survive')
     check(not hf.validate_block_model(spec), 'extended garage model valid')
     check(hf.normalize(spec)[0] == spec, 'extended garage idempotent')
+    raw['blocks']['garage']['side_door']['projection'] = 99
+    check(hf.validate_block_model(raw), 'oversized projection rejected')
+    check(hf.normalize(raw)[0]['blocks']['garage']['side_door']['projection'] == 3, 'projection clamped')
     raw['blocks']['garage']['side_door']['front_setback'] = -9
     check(hf.validate_block_model(raw), 'invalid setback rejected')
     check(hf.normalize(raw)[0]['blocks']['garage']['side_door']['front_setback'] == 0.6, 'setback safely clamped')

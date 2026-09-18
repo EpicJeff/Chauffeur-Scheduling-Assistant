@@ -2652,6 +2652,7 @@
                                             <h4 class="font-semibold">Side garage door</h4><p class="home-help">Changes the door and its wall opening. Block depth above changes the garage building.</p>
                                             <div class="home-fields">
                                                 <label><input type="checkbox" :checked="facadeSideDoor().third_bay" @change="facadeSetSideDoor('third_bay', $event.target.checked)"> Add a third bay (separate single door)</label>
+                                                <label x-show="facadeSideDoor().third_bay">Third bay shape (behind main door)<select :value="facadeSideDoor().projection || 0" @change="facadeSetSideDoor('projection', Number($event.target.value))"><option value="0">Flush with garage</option><option value="1.8">Pop-out with gable</option><option value="2.8">Deeper pop-out with gable</option></select></label>
                                                 <label>Distance from front corner<select :value="facadeSideDoor().front_setback" @change="facadeSetSideDoor('front_setback', Number($event.target.value))"><option value="0.75">Near front</option><option value="2">Set back</option><option value="4">Farther back</option></select></label>
                                                 <label>Door style<select :value="facadeSideDoor().style" @change="facadeSetSideDoor('style', $event.target.value)"><option value="carriage">Carriage</option><option value="panel">Raised panels</option><option value="glass">Glass</option></select></label>
                                                 <label>Door panels<select :value="facadeSideDoor().leaves" @change="facadeSetSideDoor('leaves', Number($event.target.value))"><option value="1">One</option><option value="2">Two</option></select></label>
@@ -5738,6 +5739,7 @@
                 },
                 facadeSetSideDoor(key, value) {
                     this.facadeDraft.blocks.garage.side_door = {...this.facadeSideDoor(), [key]:value};
+                    if (key === 'third_bay' && value && this.facadeDraft.blocks.garage.side_door.projection === undefined) this.facadeDraft.blocks.garage.side_door.projection = 1.8;
                     this.facadeBlockApply();
                 },
                 facadePorch(i) {

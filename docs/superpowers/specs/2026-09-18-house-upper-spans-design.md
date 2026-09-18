@@ -171,3 +171,12 @@ An optional `side_door.third_bay` adds a separate single-width door (2.4 units),
 `blocks.garage.door_colour` controls front and side garage doors independently: wood, white, black, greige, sage, slate or navy. Glass doors now contain four rows of framed panes, with no opaque slab behind the glazing, at all detail levels. Existing facades omit the optional fields and retain their prior colour.
 
 Verification: facade normalization and validation, editor method tests, live browser controls at desktop/mobile sizes, all eight exterior orbit positions, rendered third-door bounds and front-corner placement, JavaScript syntax and Tailwind build gates. High-quality side-view screenshot inspected. Existing editor account-scope warnings and chat-stream teardown errors remain unrelated.
+
+
+### Side garage front wall and projecting third bay (v2.499.104)
+
+Side-entry garages again have a complete street-facing wall from floor to eave. The side-entry path removed the front door assembly but had lost the replacement `garage_front_wall` call; the registered replacement now closes that bay while preserving its facade window and garage cutaway ownership.
+
+House shape > Side garage door > Third bay shape offers Flush with garage, Pop-out with gable, and Deeper pop-out with gable. A newly enabled third bay defaults to the pop-out; previously saved third bays without a projection remain flush. Optional `side_door.projection` persists 0..3, with UI choices 0, 1.8 and 2.8. The main door stays near the front corner; the third bay sits behind it toward the rear of the house. The extension projects toward the side driveway, has enclosing walls, a floor, a door on the outer face and a separate gable matching the garage roof pitch and materials. The driveway apron widens and exterior parking follows the moved door. This supersedes v2.499.103's missing-projecting-annex limitation; interior vehicle allocation remains unchanged.
+
+The small gable is registered separately for cutaways and excluded from upper-story main-roof aliases. Regression coverage checks front-wall closure, flush/projecting geometry, mirrored low-quality and two-story high-quality builds, garage entry, schema persistence and the live editor controls.
