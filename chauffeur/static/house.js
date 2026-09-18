@@ -4472,9 +4472,20 @@
        here, the east wall below and every massing call further down
        all measure themselves off this row (GARAGE_BLOCK, the second
        block, is declared with the massing block below). */
+    /* MASSING ARC 2 task 7 (spec 2026-09-17 section 3.2): STORIES. A
+       block's eave is EXT_TOP4 per story -- exactly what
+       services/house_facade.py's slot_table() has always published, and
+       what house.js did not read, so a two-story spec's JS and Python
+       slot tables disagreed on `eave`. Everything that places itself off
+       the block row follows for free: the block roof (its shellGable
+       call takes THIS number now, not the literal EXT_TOP4), the deck
+       planes every street feature stands on, the gable-end infill, the
+       facade slot table. The block's own GROUND walls keep their
+       EXT_TOP4 height; storyBox() (far below, just above
+       buildElevation()) carries the block from there up to this eave. */
     var FULL_HOUSE = {
       west: -7.15, east: 14.65, north: -6.10, south: SWZ1 + MAIN_DZ,
-      eave: EXT_TOP4, overhang: 0.32
+      eave: EXT_TOP4 * BLOCKS.main.stories, overhang: 0.32
     };
     var SW_W = FULL_HOUSE.east - FULL_HOUSE.west;            /* 21.8 */
     var SW_CX = (FULL_HOUSE.west + FULL_HOUSE.east) / 2;     /* 3.75 */
@@ -4566,8 +4577,14 @@
        set back 4.45 behind the main front. Its own eave is the main's:
        one eave line across both blocks, which is what lets a roof
        feature run coplanar across the old garage/mudroom boundary. */
+    /* task 7: its own stories, the same rule as the main block's above.
+       The two eaves can now DIFFER, which is what blockRoofsIdentical()
+       reads to decide the blocks' roofs must be clipped against each
+       other, and what sharedFaceOwner() reads to decide which of them
+       owns the shared face plane at x -7.15. */
     var GARAGE_BLOCK = { west: -18.20, east: -7.15, north: -6.10,
-                         south: 10.10 + GAR_DZ, eave: EXT_TOP4 };
+                         south: 10.10 + GAR_DZ,
+                         eave: EXT_TOP4 * BLOCKS.garage.stories };
     /* Every block roof is {form, ridge}: nothing about ridge direction
        is fixed (spec section 3). Canonical is today's look — both blocks
        gabled with the ridge running east/west. window.HOUSE_ROOF_FORMS
@@ -4837,8 +4854,18 @@
        Under either variant the walls stay at the eave, exactly where
        they stood before this arc, rather than wearing a section that
        pokes through a deck. Every vault below is gated on this flag;
-       the garage block reads its OWN row the same way. */
-    var VAULTED = (MAIN_VAULT.axis === 'z' && ROOF_FORMS.main.form === 'gable');
+       the garage block reads its OWN row the same way.
+
+       STORIES (task 7, spec section 3.2). A vault is a partition carried
+       up INTO the roof space, and a two-story block has no roof space
+       over its ground floor: the deck is 5.6 higher with a whole sealed
+       story in between, so a section reaching it would be a slab of
+       plaster standing through the upper floor. Under two stories every
+       partition keeps the flat top at EXT_TOP4 it already has, which is
+       also the upper story's own floor line. The garage block reads its
+       OWN `stories` at gVault the same way. */
+    var VAULTED = (MAIN_VAULT.axis === 'z' && ROOF_FORMS.main.form === 'gable' &&
+                   BLOCKS.main.stories === 1);
 
     /* ---- the east PARTITION (was east_wall) ---------------------------
        The wall at x 6.85 stopped being an exterior side elevation the
@@ -5413,7 +5440,10 @@
        (task-3-report.md shows the derivation). */
     var FACES = [
       { face: 'garage_block', x0: GARAGE_BLOCK.west, x1: GARAGE_BLOCK.east, z: GARAGE_BLOCK.south, eave: GARAGE_BLOCK.eave, room: 'garage', roof: 'garage_block_roof' },
-      { face: 'main',         x0: FULL_HOUSE.west,   x1: FULL_HOUSE.east,   z: FULL_HOUSE.south,   eave: EXT_TOP4,         room: 'living', roof: 'roof_main' }
+      /* task 7: FULL_HOUSE.eave, not the EXT_TOP4 literal -- a block's
+         stories raise its face's eave, which is what Python's
+         slot_table() publishes and what the JS/Python slot pin reads. */
+      { face: 'main',         x0: FULL_HOUSE.west,   x1: FULL_HOUSE.east,   z: FULL_HOUSE.south,   eave: FULL_HOUSE.eave,  room: 'living', roof: 'roof_main' }
     ];
     /* Mirrors services/house_facade.py's GARAGE_BAY_SLOTS: the garage
        ROOM's own x range (-18.2..-12.6) nearest-slot-boundary snapped
@@ -5549,16 +5579,41 @@
       var e = spanX(feat), slot = e.slot, g = shellGroup();
       var size = WINDOW_SIZES[feat.size] || WINDOW_SIZES.standard;
       var w = size[0], h = size[1], cx = e.cx, z = slot.z;
+      /* MASSING ARC 2 task 7 (spec section 3.2): a story-2 window is the
+         same window one story higher -- ONE offset, applied to every y
+         this builder writes, so there is no second window builder to
+         drift. services/house_facade.py's normalize() has already
+         dropped a story-2 feature whose block has one story, and it
+         resolves overlap PER STORY, so a slot can legitimately carry one
+         window on each floor: the piece name below therefore carries an
+         `_s2` suffix, or the two would register under one name and the
+         second would silently overwrite the first in every reader that
+         looks a piece up by name. */
+      var s2 = (feat.story === 2), yOff = s2 ? EXT_TOP4 : 0;
       function wtag(m) { if (m) m.userData.room = slot.room; return m; }
+      /* SHUTTERS (spec section 3.2, both stories): two boards either side
+         of the frame, in the window's own FARMHOUSE.frame bucket so they
+         cost no new material. `fz` is the outer face of whatever the
+         frame in this branch stands on, so a shutter is flush with the
+         casing rather than floating off it. The spec has carried
+         `shutters` since the model's first version and nothing had ever
+         built them. */
+      function shutters(wy, wh, halfW, fz) {
+        if (!feat.shutters) return;
+        [-1, 1].forEach(function (s) {
+          wtag(box(0.28, wh, 0.06, FARMHOUSE.frame,
+                   cx + s * (halfW + 0.14), wy, fz, g, sharp()));
+        });
+      }
       if (slot.face === 'main') {
         /* the old swWindow, parameterised: casing, jambs and sill in
            FARMHOUSE.frame (one shared cache bucket), a 2x3 grille at
            DETAIL 2, a directly-built transparent pane the merge pass
            exempts by construction, and the interior sill at DETAIL 3 on
            the room side of the wall's own thickness. */
-        var wy = WIN_HEAD4 - h / 2;
+        var head = WIN_HEAD4 + yOff, wy = head - h / 2;
         wtag(box(w + 0.24, 0.13, 0.16, FARMHOUSE.frame, cx,
-                 WIN_HEAD4 + 0.065, z + 0.02, g, sharp()));
+                 head + 0.065, z + 0.02, g, sharp()));
         [-(w / 2 + 0.07), (w / 2 + 0.07)].forEach(function (dx) {
           wtag(box(0.14, h + 0.13, 0.16, FARMHOUSE.frame, cx + dx, wy,
                    z + 0.02, g, sharp()));
@@ -5583,17 +5638,26 @@
            chfFabricConvexity's nonconvex inventory honest. */
         gl.userData.convex = true;
         wtag(gl); finish(gl, true); g.add(gl);
-        if (DETAIL >= 3) {
+        /* the interior sill is the ROOM's side of the wall's thickness,
+           and there is no room behind a story-2 window -- the upper
+           story is a sealed box -- so a story-2 window does not get one
+           rather than hanging a cabinet-toned board inside it. */
+        if (DETAIL >= 3 && !s2) {
           wtag(box(w + 0.10, 0.07, 0.30, C.cab, cx, wy - h / 2 - 0.10,
                    z - WALL_T4 - 0.10, g, { rough: 0.9 }));
         }
+        /* the jambs stand 0.16 deep centred at z + 0.02, so their outer
+           face is z + 0.10; a 0.06 shutter centred at z + 0.07 is flush
+           with it. Half-width: the jamb's own outer edge (w/2 + 0.14). */
+        shutters(wy, h + 0.13, w / 2 + 0.14, z + 0.07);
       } else {
         /* every other face takes the shell's own window idiom (dark pane
            behind a frame, glow at night), proud of the wall's outer skin
            exactly where shellWall placed its own. Head 4.15: today's
            wing head, centre 2.80 plus half of a 2.70 pane. */
-        shellWindow(g, cx, 4.15 - h / 2, slot.z + WALL_T4 / 2 + 0.05,
-                    0, w, h, true);
+        var fz = slot.z + WALL_T4 / 2 + 0.05;
+        shellWindow(g, cx, 4.15 + yOff - h / 2, fz, 0, w, h, true);
+        shutters(4.15 + yOff - h / 2, h, w / 2 + 0.08, fz + 0.03);
       }
       /* VIEW-VOLUME MASKING (task 2): a window is a frame -- casing,
          jambs and sill boxes arranged around a hole, and on 'main' faces
@@ -5602,8 +5666,8 @@
          is a hole in a wall, and when the mask takes the wall around it
          the kit rule (box centre masked) takes the window with it, so
          no black frame stands floating in the opening. */
-      shellRegister(g, 'facade_' + slot.face + '_window_' + feat.slot,
-                    [0, 0, 1], slot.room, true);
+      shellRegister(g, 'facade_' + slot.face + '_window_' + feat.slot +
+                    (s2 ? '_s2' : ''), [0, 0, 1], slot.room, true);
     }
 
     function doorAt(feat) {
@@ -6138,9 +6202,15 @@
       shellRegister(g, 'garage_void_floor', [0, 1, 0], null);
     })();
     var SHARED_X = FULL_HOUSE.west;              /* -7.15, both blocks' */
+    /* task 7: EXT_TOP4, not GARAGE_BLOCK.eave. Every GROUND wall of a
+       block is one story tall; the block's eave is `stories` of them,
+       and storyBox() below builds the walls that make up the difference.
+       At one story the two numbers are the same value, so this is the
+       canonical's own geometry to the bit. Same substitution at the
+       three garage-block wall calls below. */
     if (GARAGE_BLOCK.south > FULL_HOUSE.south + 1e-6)
       shellWall('garage_return', SHARED_X, FULL_HOUSE.south,
-                SHARED_X, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
+                SHARED_X, GARAGE_BLOCK.south, EXT_TOP4,
                 [1, 0, 0], [], 'mudroom', 'garage');
     /* the block that owns the shared face plane: the higher eave, and a
        tie goes to main (today always a tie -- stories are not built into
@@ -6235,7 +6305,7 @@
        something a roof tap may step around. Reads ROOF_FORMS.main, so
        form and ridge stay one parameter. */
     shellGable('roof_main', FULL_HOUSE.west, FULL_HOUSE.east,
-               FULL_HOUSE.north, FULL_HOUSE.south, EXT_TOP4,
+               FULL_HOUSE.north, FULL_HOUSE.south, FULL_HOUSE.eave,
                ROOF_FORMS.main.ridge, null, null, BLOCK_PITCH,
                ['kitchen', 'living'], null, ROOF_FORMS.main.form,
                BLOCK_MEET.main);
@@ -6247,10 +6317,10 @@
        becomes garage/mudroom depth behind the garage's back wall. No
        floor back there and no camera ever sees it. */
     shellWall('garage_block_north', GARAGE_BLOCK.west, GARAGE_BLOCK.north,
-              GARAGE_BLOCK.east, GARAGE_BLOCK.north, GARAGE_BLOCK.eave,
+              GARAGE_BLOCK.east, GARAGE_BLOCK.north, EXT_TOP4,
               [0, 0, -1], [], null);
     shellWall('garage_block_west', GARAGE_BLOCK.west, GARAGE_BLOCK.north,
-              GARAGE_BLOCK.west, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
+              GARAGE_BLOCK.west, GARAGE_BLOCK.south, EXT_TOP4,
               [-1, 0, 0], [[2.0, 1.35, true]], null);
     /* the mudroom's street face, full height to the block's own eave.
        The old front band (mudroom_front_cladding) closed the gap above
@@ -6265,7 +6335,7 @@
        clipping it, so this row is still not a kit; see chfFabricConvexity's
        `nonconvex` list for the honest inventory of what those are. */
     var mudroomFrontG = shellWall('mudroom_front', -12.60, GARAGE_BLOCK.south,
-              GARAGE_BLOCK.east, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
+              GARAGE_BLOCK.east, GARAGE_BLOCK.south, EXT_TOP4,
               [0, 0, 1], [], 'mudroom');
     shellGable('garage_block_roof', GARAGE_BLOCK.west, GARAGE_BLOCK.east,
                GARAGE_BLOCK.north, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
@@ -6525,6 +6595,68 @@
     extG.add(garageDoorG);
     var garageInterior = new T.Group();
     extG.add(garageInterior);
+    /* ---- MASSING ARC 2 task 7 (spec section 3.2): THE UPPER STORY -----
+       A second story is FOUR SHELL WALLS, nothing more exotic: from the
+       story-1 eave (EXT_TOP4) up to the block's own eave (EXT_TOP4 x
+       stories), in the block's cladding, with the same 0.18 corner
+       boards every shellWall carries -- and NO base band, because a base
+       band is where a wall meets the ground and this one meets a floor.
+       Registered as fabric of NO room: no room's AABB reaches above
+       EXT_TOP4 (ROOM_AABB_EAVE pins the box top there on purpose), so
+       the upper story is not part of anyone's volume -- it is fabric
+       standing between a camera and its room, and buildRoomShells()
+       opens it exactly the way it opens `south_wall`. The kitchen
+       camera (y 13.8) and the living camera (y 12.8) both sit ABOVE this
+       box's 11.2 top and look down THROUGH it, which is the whole reason
+       it has to be cut like fabric rather than ghosted whole.
+
+       WHERE THE WALL LINE IS. Each block's ground floor already has a
+       convention and the upper story matches it, so the two floors are
+       flush and a story-2 window lands proud of the skin instead of
+       inside it: the MAIN block's envelope numbers are its walls' OUTER
+       faces (south_wall runs SWZ0..SWZ1 = FULL_HOUSE.south, east_wall
+       14.30..FULL_HOUSE.east, west_skirt -7.15..-6.85), so its upper
+       walls are inset half a thickness; the GARAGE block's walls are
+       shellWall's own, CENTRED on the envelope line (garage_block_west
+       straddles -18.20), so its upper walls are centred too.
+
+       THE SHARED PLANE x -7.15 is one wall, never two: a second slab in
+       the same plane is a z-fight. It belongs to `main_upper_west`
+       whenever the main block has two stories -- the main block's face
+       there is the outer one -- and only then is the garage's own east
+       upper wall skipped. A two-story garage beside a ONE-story main
+       still builds `garage_upper_east`, because nothing else closes it. */
+    function storyBox(name) {
+      if (BLOCKS[name].stories !== 2) return;
+      var B = name === 'main' ? FULL_HOUSE : GARAGE_BLOCK;
+      var y0 = EXT_TOP4, h = EXT_TOP4;
+      /* the main block's envelope lines are outer faces, the garage
+         block's are wall centres (see the paragraph above) */
+      var io = name === 'main' ? WALL_T4 / 2 : 0;
+      var south = B.south - io, north = B.north + io;
+      var west = B.west + io, east = B.east - io;
+      function wall(suffix, x0, z0, x1, z1, normal) {
+        var g = shellGroup(), alongX = x0 !== x1;
+        var len = alongX ? x1 - x0 : z1 - z0;
+        shellBox(g, alongX ? len : WALL_T4, h, alongX ? WALL_T4 : len,
+                 cladColour(name), (x0 + x1) / 2, y0 + h / 2, (z0 + z1) / 2,
+                 { rough: 0.95, map: CLAD(name) });
+        [0, 1].forEach(function (end) {
+          shellBox(g, 0.18, h, 0.18, FARMHOUSE.trim,
+                   end ? x1 : x0, y0 + h / 2, end ? z1 : z0);
+        });
+        shellRegister(g, name + '_upper_' + suffix, normal, null);
+      }
+      wall('south', west, south, east, south, [0, 0, 1]);
+      wall('north', west, north, east, north, [0, 0, -1]);
+      wall('west', west, north, west, south, [-1, 0, 0]);
+      if (!(name === 'garage' && BLOCKS.main.stories === 2))
+        wall('east', east, north, east, south, [1, 0, 0]);
+    }
+    /* BEFORE buildElevation(): a story-2 feature is placed on the face
+       these walls make, so they have to stand first. */
+    storyBox('main'); storyBox('garage');
+
     /* FACADE (arc 4, spec section 6): the street elevation builds
        HERE. Every helper it uses exists (the shell helpers above,
        garageDoorG just above), and garage_door's own fabBox below is
@@ -6683,8 +6815,13 @@
          street. The WEST band needs nothing: `garage_block_west` stands
          outboard of it and `garage_block_roof_end_west`'s gable infill
          closes the block above. */
+      /* task 7: ... and only on a ONE-story garage block. Two stories put
+         a sealed upper floor between this wall's head and the deck (see
+         VAULTED's own paragraph, far above), so the wall keeps the flat
+         top at EXT_TOP4 that the two bands just above already give it. */
       var gVault = roofVault(GARAGE_BLOCK, ROOF_FORMS.garage, blockPitch('garage'));
-      if (gVault.axis === 'z' && ROOF_FORMS.garage.form === 'gable')
+      if (gVault.axis === 'z' && ROOF_FORMS.garage.form === 'gable' &&
+          BLOCKS.garage.stories === 1)
         /* vFrom 4.6: the band just above starts ITS courses at its own
            bottom edge, so the section continues them from there rather
            than opening a fresh course at the eave. */
@@ -9692,6 +9829,13 @@
     var ROOF_FEATURE_MIN_KEPT = 0.2;
     var ROOM_CAMS = { kitchen: HOME_POS, living: LIV_POS, study: STUDY_POS,
                       garage: GARAGE_POS, mudroom: MUD_POS };
+    /* MASSING ARC 2 task 7: the look-at target that goes with each of
+       those cameras -- the same pairs enterRoom() tweens to. The mask
+       reads only the camera (the pyramid's apex); window.chfRoomViewClear
+       reads both, because the pin it serves is a RAY from the camera to
+       what the room view is actually pointed at. */
+    var ROOM_AT = { kitchen: HOME_AT, living: LIV_AT, study: STUDY_AT,
+                    garage: GARAGE_AT, mudroom: MUD_AT };
     var ROOM_MASKS = {};        /* room -> {P, W, box, cam} */
     var roomShellGroups = {};   /* room -> THREE.Group 'shell:<room>' */
     var MASK_TOGGLES = [];      /* every object solveShell toggles by pattern */
@@ -11208,6 +11352,9 @@
          (P, W, box, cam) and the one cap material, for the read-only
          window.chfRoomShell* hooks below */
       roomShellGroups: roomShellGroups, ROOM_MASKS: ROOM_MASKS, CAP_MAT: CAP_MAT,
+      /* MASSING ARC 2 task 7: the five room poses, for the read-only
+         window.chfRoomViewClear hook (a ray from cam to at) */
+      ROOM_CAMS: ROOM_CAMS, ROOM_AT: ROOM_AT,
       /* MASSING ARC 2 (spec 2026-09-17 section 2): the block model the
          scene was built from, for window.chfBlocks */
       BLOCKS: BLOCKS,
@@ -12254,6 +12401,57 @@
     });
     return r;
   };
+  /* MASSING ARC 2 task 7 (spec section 3.2): which fabric rows the mask
+     CUT for `room` -- every row whose per-room shell records a removed
+     fraction, which is buildRoomShells()'s own record of a cut (a row it
+     left whole gets fraction 0). Names only, sorted; read-only. */
+  window.chfRoomShellCut = function (room) {
+    if (!webgl || !webgl.ROOM_MASKS[room]) return null;
+    var out = [];
+    webgl.FABRIC.forEach(function (f) {
+      var sh = f.shells && f.shells[room];
+      if (sh && sh.fraction > 1e-6) out.push(f.name);
+    });
+    return out.sort();
+  };
+  /* MASSING ARC 2 task 7: is the upper story out of this room's way? A
+     ray from the room camera to its look-at target against ONLY the
+     upper-story rows, and only against what that view actually DRAWS of
+     them: the source meshes solveShell left visible, plus the room
+     shell's own remnants. Anything the ray meets before it reaches the
+     target is a piece standing between the camera and the room -- which
+     is exactly what the mask exists to remove. */
+  window.chfRoomViewClear = function (room) {
+    if (!webgl || !webgl.ROOM_CAMS[room]) return null;
+    var cam = webgl.ROOM_CAMS[room].clone(), at = webgl.ROOM_AT[room].clone();
+    var far = cam.distanceTo(at);
+    var ray = new webgl.T.Raycaster(cam, at.clone().sub(cam).normalize());
+    var upper = [], owner = {};
+    function drawn(o) {
+      for (var p = o; p; p = p.parent) if (!p.visible) return false;
+      return true;
+    }
+    function collect(root, label) {
+      if (!root) return;
+      root.updateMatrixWorld(true);
+      root.traverse(function (m) {
+        if (!m.isMesh || m.isInstancedMesh || !drawn(m)) return;
+        upper.push(m); owner[m.id] = label;
+      });
+    }
+    webgl.FABRIC.forEach(function (f) {
+      if (f.name.indexOf('_upper_') < 0) return;
+      collect(f.g, f.name);
+      var sh = f.shells && f.shells[room];
+      if (sh && sh.group) collect(sh.group, f.name + ':remnant');
+    });
+    var hits = ray.intersectObjects(upper, false).filter(function (h) {
+      return h.distance < far;
+    });
+    return { clear: hits.length === 0, blocked: hits.map(function (h) {
+      return owner[h.object.id] || h.object.name || 'mesh';
+    }) };
+  };
   /* the room's mask: the pyramid planes P, the wedge planes W (raw --
      meshMask moves a W plane per straddling mesh at cut time, always
      deeper into the box, so everything a shell keeps is on the kept
@@ -12485,12 +12683,38 @@
     if (!webgl) return [];
     return webgl.blockDeckPlanes(face).map(function (pl) { return { n: pl.n, d: pl.d }; });
   };
-  /* the world vertices of one facade row's meshes as BUILT (after the
-     valley clip, before mergeStatic), [[x, y, z], ...]; null for a row
-     that is not a facade piece */
+  /* the world vertices of one facade row's (or block roof's) meshes as
+     BUILT -- after the valley clip, before mergeStatic -- [[x, y, z],
+     ...]; task 7 adds a query-time fallback for every other row, so an
+     interior partition or a plain shell wall answers too. null only for
+     a name no registered row carries. */
   window.chfFabricVertices = function (name) {
     if (!webgl) return null;
-    return webgl.FEATURE_VERTS[name] || null;
+    if (webgl.FEATURE_VERTS[name]) return webgl.FEATURE_VERTS[name];
+    /* MASSING ARC 2 task 7: a row that was never snapshotted at
+       registration -- an interior partition (east_partition and friends
+       go through regFabric directly, hundreds of lines before
+       FEATURE_VERTS exists) or a plain shell wall -- is read off its own
+       meshes here instead. mergeStatic bakes each source's world matrix
+       into its composite and parks the composite under the same root, so
+       the world points are the same either side of the merge; the only
+       difference from a snapshot is that a row whose meshes the room
+       masks stamped is reported whole, which is what "as built" means. */
+    var row = null;
+    webgl.FABRIC.forEach(function (f) { if (f.name === name) row = f; });
+    if (!row) return null;
+    var out = [], v = new webgl.T.Vector3();
+    row.g.updateMatrixWorld(true);
+    row.g.traverse(function (m) {
+      if (!m.isMesh || m.isInstancedMesh || !m.geometry) return;
+      var p = m.geometry.getAttribute('position');
+      if (!p) return;
+      for (var i = 0; i < p.count; i++) {
+        v.fromBufferAttribute(p, i).applyMatrix4(m.matrixWorld);
+        out.push([v.x, v.y, v.z]);
+      }
+    });
+    return out.length ? out : null;
   };
   window.chfFacadeSlots = function () { return webgl ? webgl.SLOTS : []; };
   /* MASSING ARC 2 task 10: one frame, one data URL, synchronously. The
