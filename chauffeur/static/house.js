@@ -342,6 +342,10 @@
     function toWorld(v) {
       return MIRROR ? new T.Vector3(-v.x, v.y, v.z) : v.clone();
     }
+    /* false until the houseRoot pass has run. Read by textMesh(), which
+       leaves the counter-flip to that pass while it is false and applies
+       it itself afterwards -- see its own comment. */
+    var REFLECTED = false;
     /* the kitchen. SUPERSEDED, both of them, by the cutaway-ownership
        note below -- kept as the record of what this pose used to be
        bought with, not as a description of what it is now:
@@ -1270,13 +1274,19 @@
     /* ---- TEXT MESHES (spec 2026-09-17 section 3.4) ----------------------
        A reflection turns lettering into its own mirror image, and there is
        no amount of camera work that reads that back. So the ONE creator of
-       every mesh that wears a painted, text-bearing canvas stamps
-       userData.noMirror and, on a mirrored plan, negates that mesh's own
-       scale.x straight back: the plane still hangs on the mirrored wall,
-       facing the mirrored way, and its words read forward.
-       The maths: world = F . T . R . S with F = diag(-1,1,1) from
-       houseRoot and S = diag(-1,1,1) from the stamp, so the determinant
-       comes back +1 -- a proper rigid transform, not a reflection.
+       every mesh that wears a painted, text-bearing canvas STAMPS
+       userData.noMirror -- and nothing else. The counter-flip itself is
+       applied by the houseRoot pass, after the AO bake, because
+       CONSTRUCTION NEVER FLIPS: a negative scale carried through
+       worldTris, the room masks, the clipper, the AO bake and the merge
+       passes is exactly the thing this arc's ruling forbids, and it
+       would hand every one of them a mirrored triangle winding to reason
+       about. Built, measured and batched square; reflected at the end.
+       The maths, once the pass has run: world = F . T . R . S with
+       F = diag(-1,1,1) from houseRoot and S = diag(-1,1,1) from the
+       counter-flip, so the determinant comes back +1 -- a proper rigid
+       transform, not a reflection, and the words read forward on the
+       mirrored wall.
 
        The manifest below is the contract the pure test reads back: every
        canvas-drawn word in this file is written inside one of these
@@ -1295,11 +1305,12 @@
     function textMesh(geo, material, group) {
       var m = new T.Mesh(geo, material);
       m.userData.noMirror = true;
-      /* Counter-flipped HERE rather than in one pass over houseRoot: the
-         car plaques are built by syncGarage, long after the reflection
-         exists, and a one-shot pass would silently miss every one of
-         them. The root pass counts instead (see chfMirror). */
-      if (MIRROR) m.scale.x = -1;
+      /* REFLECTED says the one-shot pass has already been and gone. A
+         mesh built before it (every wearer in this file) is left square
+         and the pass flips it; a mesh built AFTER it -- syncGarage's car
+         plaques, rebuilt on every telemetry change -- has missed the
+         pass, so it takes the same flip here. Never both. */
+      if (MIRROR && REFLECTED) m.scale.x *= -1;
       if (group) group.add(m);
       return m;
     }
@@ -10970,17 +10981,31 @@
        the one mesh whose own texture is repainted against the world clock
        rather than the house).
 
-       The counter-flip itself is stamped on at textMesh() time (see its
-       comment: the car plaques are built long after this runs), so all
-       this pass does is count what is standing. */
+       And THEN the counter-flip, not before: every mesh textMesh()
+       stamped gets its own scale.x negated back here, once the geometry
+       passes above are all behind us. counterFlip() is a function
+       because two subtrees join houseRoot after this line -- the study
+       (whose meshes were built long before it) and, later still, the
+       car plaques (which are built after REFLECTED goes true and so
+       flip themselves inside textMesh). */
     var houseRoot = new T.Group(); houseRoot.name = 'houseRoot';
     scene.children.slice().forEach(function (o) {
       if (o.isLight || o.isCamera || o === sunTarget || o === skyDome) return;
       scene.remove(o); houseRoot.add(o);
     });
     scene.add(houseRoot);
+    function counterFlip(root) {
+      if (!MIRROR || !root) return 0;
+      var n = 0;
+      root.traverse(function (m) {
+        if (m.userData && m.userData.noMirror) { m.scale.x *= -1; n++; }
+      });
+      return n;
+    }
     if (MIRROR) houseRoot.scale.x = -1;
+    counterFlip(houseRoot);
     houseRoot.updateMatrixWorld(true);
+    REFLECTED = true;
     function noMirrorCount() {
       var n = 0;
       houseRoot.traverse(function (m) {
@@ -11586,9 +11611,16 @@
        behind in the scene would sit on the far side of a mirrored plan
        and the study view would look at empty lawn. */
     if (studyWorld) {
-      houseRoot.add(studyWorld.group);
-      if (studyWorld.architecture) houseRoot.add(studyWorld.architecture);
-      if (studyWorld.proxies) houseRoot.add(studyWorld.proxies);
+      [studyWorld.group, studyWorld.architecture, studyWorld.proxies]
+        .forEach(function (g) {
+          if (!g) return;
+          houseRoot.add(g);
+          /* the study's own lettered meshes (house_study.js stamps
+             userData.noMirror on them; it is built before `webgl` exists
+             and so cannot call textMesh) missed the root pass by joining
+             here -- counter-flip this subtree now, exactly once. */
+          counterFlip(g);
+        });
     }
 
     /* on BUILD: the room boots at the exterior, where nothing recedes, so
@@ -12949,6 +12981,14 @@
      is exactly what the mask exists to remove. */
   window.chfRoomViewClear = function (room) {
     if (!webgl || !webgl.ROOM_CAMS[room]) return null;
+    /* THE MIRROR (spec 2026-09-17 section 3.4): this hook casts a ray
+       from ROOM_CAMS[room], which is HOUSE-LOCAL by design (the masks
+       were built from exactly those five poses), into the WORLD graph.
+       On a mirrored plan those two spaces disagree and the answer would
+       be a confident lie about the far side of the house. It reports
+       nothing rather than something false; the mask itself is unaffected,
+       because it never left house-local space. */
+    if (webgl.MIRROR) return null;
     var cam = webgl.ROOM_CAMS[room].clone(), at = webgl.ROOM_AT[room].clone();
     var far = cam.distanceTo(at);
     var ray = new webgl.T.Raycaster(cam, at.clone().sub(cam).normalize());
@@ -13207,9 +13247,29 @@
         textDet = textDet === null ? d : Math.min(textDet, d);
       else if (fabricDet === null || d > fabricDet) fabricDet = d;
     });
+    /* the STUDY reported separately: its lettered panels are stamped in
+       study.js (which is built before `webgl` exists and cannot call
+       textMesh) and they join houseRoot AFTER the root pass, so they are
+       the one set that could silently miss the counter-flip. A test that
+       only read the whole-house minimum could not tell a mirrored study
+       from a study with no panels built yet. */
+    var sCount = 0, sDet = null;
+    var study = webgl.studyWorld;
+    if (study) [study.group, study.architecture, study.proxies]
+      .forEach(function (g) {
+        if (!g) return;
+        g.updateMatrixWorld(true);
+        g.traverse(function (m) {
+          if (!m.isMesh || !m.userData || !m.userData.noMirror) return;
+          sCount++;
+          var d = m.matrixWorld.determinant();
+          sDet = sDet === null ? d : Math.min(sDet, d);
+        });
+      });
     return { mirror: !!webgl.MIRROR, root: webgl.houseRoot.scale.x,
              noMirrorCount: webgl.noMirrorCount(),
-             textDet: textDet, fabricDet: fabricDet };
+             textDet: textDet, fabricDet: fabricDet,
+             study: { count: sCount, minDet: sDet } };
   };
   /* where the eye actually IS, in world space -- the read-only twin of
      chfHouseCam, which only ever writes. A lean-in is only provable

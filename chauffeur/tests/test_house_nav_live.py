@@ -666,7 +666,15 @@ def scenario_mirror_is_one_reflection():
               'the canonical house already carries its text meshes '
               '(pane, calendar, hero plaque, critters, bus stop arm and one '
               'plaque per parked car): %d' % plain_text)
+        check(plain['study']['count'] >= 5 and plain['study']['minDet'] > 0,
+              'the study builds its own stamped text panels and none of '
+              'them is reflected in the canonical plan: %r' % (plain['study'],))
+        plain_study = plain['study']['count']
         plain_reach = reachable(page)
+        check(len(plain_reach) == len(PROBES),
+              'the canonical ring finds every exterior marker somewhere, so '
+              'the mirrored comparison below is not comparing two empty '
+              'sets: %r' % (sorted(plain_reach),))
         plain_gd = page.evaluate(CENTRE_X_JS + "('garage_door')")
         check(plain_gd is not None and plain_gd < 0,
               'the canonical garage door stands WEST of the origin: %r'
@@ -688,6 +696,15 @@ def scenario_mirror_is_one_reflection():
         check(m['noMirrorCount'] == plain_text,
               'the same text meshes stand in both plans: %d vs %d'
               % (m['noMirrorCount'], plain_text))
+        # the STUDY is the one subtree that joins houseRoot AFTER the root
+        # pass, so it is the one that could silently miss the counter-flip.
+        # Asserted by determinant rather than by pixels: reaching the study
+        # needs the parent PIN unlock, and the determinant is the same
+        # statement without a fetch or a screenshot in the way.
+        check(m['study']['count'] == plain_study and m['study']['minDet'] > 0,
+              'the study joins the mirror with every lettered panel '
+              'counter-flipped: %r (canonical count %d)'
+              % (m['study'], plain_study))
         check(page.evaluate('window.chfShellFabric().length') == plain_fabric,
               'a reflection builds no extra fabric and drops none: %d vs %d'
               % (page.evaluate('window.chfShellFabric().length'), plain_fabric))
@@ -727,9 +744,9 @@ def scenario_mirror_is_one_reflection():
                                timeout=20000)
         url = page.evaluate('window.chfPlaqueCanvas(0)')
         rect = page.evaluate('window.chfPlaqueRect(0)')
-        check(url and rect and rect['w'] > 20,
-              'the garage view shows a car plaque big enough to read: %r'
-              % (rect,))
+        check(url and rect and rect['w'] >= 60 and rect['h'] >= 20,
+              'the garage view shows a car plaque big enough for an '
+              'orientation check to mean anything: %r' % (rect,))
         png = page.screenshot()
         import base64
         from PIL import Image, ImageChops, ImageOps
@@ -743,16 +760,19 @@ def scenario_mirror_is_one_reflection():
         want = ImageOps.autocontrast(want)
 
         def diff(a, b):
+            """mean absolute difference, normalised to 0..1"""
             d = ImageChops.difference(a, b)
             px = list(d.getdata())
-            return sum(px) / float(len(px))
+            return sum(px) / float(len(px)) / 255.0
 
         fwd = diff(crop, want)
         rev = diff(crop, want.transpose(Image.FLIP_LEFT_RIGHT))
-        check(fwd < rev,
-              'the plaque on screen matches its OWN canvas better than a '
-              'mirrored copy of it (forward %.2f vs flipped %.2f)'
-              % (fwd, rev))
+        # a MARGIN, not a coin flip: a plaque rendered backwards and a
+        # plaque rendered forwards must be separated by more than noise.
+        check(rev - fwd > 0.02,
+              'the plaque on screen matches its OWN canvas materially '
+              'better than a mirrored copy of it (forward %.4f vs flipped '
+              '%.4f, margin %.4f needs > 0.02)' % (fwd, rev, rev - fwd))
 
         page.evaluate('window.chfHouseExit()')
         page.wait_for_function("window.chfNavProbe({settled:true})",

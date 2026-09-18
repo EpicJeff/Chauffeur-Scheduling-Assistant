@@ -468,6 +468,17 @@
   // the same device-pixel-ratio discipline the renderer itself is under.
   const TX = Math.min(devicePixelRatio || 1, 2) * 2;
 
+  // THE MIRROR (house spec 2026-09-17 section 3.4). Every word this room
+  // ever says is written by `studyPanelPaint` below, and every surface it
+  // writes on is a `panel`. So `panel` is this file's textMesh(): it
+  // stamps userData.noMirror, and when the study is standing inside a
+  // MIRRORED house, house.js's counterFlip() negates each stamped mesh's
+  // own scale.x back after the root reflection, so the study's board,
+  // stickies, monitor and map read forward instead of backwards. On the
+  // standalone /study page there is no reflection and the stamp is inert.
+  // The study is built before house.js's `webgl` object exists, which is
+  // why it stamps rather than calling webgl.textMesh directly.
+  /* TEXT_PAINTERS: studyPanelPaint */
   function panel(pw, ph, cw, ch, o) {
     o = o || {};
     const mat = new THREE.MeshBasicMaterial({
@@ -478,7 +489,8 @@
     m.visible = false;
     m.renderOrder = 4;                       // over the surface it sits on
     m.userData.pw = pw; m.userData.ph = ph;
-    m.userData.paint = function (draw) {
+    m.userData.noMirror = true;      /* see THE MIRROR, above */
+    m.userData.paint = function studyPanelPaint(draw) {
       let g = m.userData.g;
       if (!g) {
         const c = document.createElement('canvas');

@@ -796,10 +796,11 @@ def scenario_text_meshes_use_the_helper():
     # every canvas text call is inside a manifest painter. The nearest
     # preceding NAMED function wins: the anonymous forEach bodies the
     # painters draw their rows in are skipped, which is the intent.
+    # strokeText counts as lettering exactly as fillText does.
     names = [(mm.start(), mm.group(1)) for mm in
              _re.finditer(r'function\s+([A-Za-z_$][\w$]*)\s*\(', src)]
     stray = []
-    for mm in _re.finditer(r'fillText\(', src):
+    for mm in _re.finditer(r'(?:fillText|strokeText)\(', src):
         before = [n for pos, n in names if pos < mm.start()]
         owner = before[-1] if before else None
         if owner not in manifest:
@@ -807,8 +808,50 @@ def scenario_text_meshes_use_the_helper():
     check(not stray,
           'every lettered canvas belongs to a manifest painter; stray: %r'
           % (stray[:3],))
-    check(src.count('textMesh(') >= 8,
-          'textMesh call sites: %d' % src.count('textMesh('))
+
+    # REAL call sites, not prose: a doc comment that mentions textMesh()
+    # must not be able to hold this pin up on its own.
+    def call_sites(text, name):
+        code = _re.sub(r'/\*.*?\*/', '', text, flags=_re.S)   # block comments
+        code = _re.sub(r'(?m)^\s*//.*$', '', code)            # line comments
+        return code.count(name + '(') - code.count('function ' + name + '(')
+
+    sites = call_sites(src, 'textMesh')
+    check(sites == 6,
+          'the six wearers each call textMesh() and nothing else does: %d'
+          % sites)
+
+    # ---- the STUDY (static/study.js) keeps the same contract ----------
+    # Its lettering is written by ONE painter (studyPanelPaint) onto
+    # surfaces minted by ONE creator (panel), which is study.js's
+    # textMesh: it stamps userData.noMirror, and house.js counter-flips
+    # the study subtree when it joins houseRoot. The study is built
+    # before house.js's `webgl` exists, so it stamps instead of calling
+    # webgl.textMesh -- hence a stamp check here rather than a call count.
+    study = _io.open(_os.path.join(root, 'static', 'study.js'),
+                     encoding='utf-8').read()
+    sm = _re.search(r'/\* TEXT_PAINTERS: ([^*]+)\*/', study)
+    check(sm, 'study.js carries its own TEXT_PAINTERS manifest')
+    study_manifest = [s.strip() for s in sm.group(1).split(',') if s.strip()]
+    for name in study_manifest:
+        check(_re.search(r'function\s+' + _re.escape(name) + r'\s*\(', study),
+              'study.js manifest names a real painter: %s' % name)
+    check('userData.noMirror = true' in study,
+          'study.js stamps noMirror on the surfaces it letters')
+    # and every text call lands on a panel's canvas: walking back from
+    # each one, the nearest canvas-bearing construct must be `.paint(`
+    # (the painter) and never a bare canvasTex/CanvasTexture.
+    marks = [(mm.start(), mm.group(1)) for mm in _re.finditer(
+        r'(\.paint\(|canvasTex\(|new THREE\.CanvasTexture\()', study)]
+    unowned = []
+    for mm in _re.finditer(r'(?:fillText|strokeText)\(', study):
+        before = [k for pos, k in marks if pos < mm.start()]
+        if not before or before[-1] != '.paint(':
+            unowned.append((study[:mm.start()].count(chr(10)) + 1,
+                            before[-1] if before else None))
+    check(not unowned,
+          'every study text call is painted onto a stamped panel; '
+          'unowned: %r' % (unowned[:3],))
 
 
 if __name__ == '__main__':
