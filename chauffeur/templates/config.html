@@ -2611,6 +2611,33 @@
                             <div x-show="facadeDraftSource === 'photo'" class="bg-amber-900/40 border border-amber-600 rounded-lg p-2 text-amber-200 text-sm">
                                 From your photo — not saved yet. Review, then Save as new or Overwrite; /house shows only the active facade.
                             </div>
+                            <div class="bg-gray-900 p-3 rounded-xl text-sm space-y-2" x-show="facadeDraft">
+                                <div class="flex items-center gap-4">
+                                    <b class="text-teal-300">Blocks</b>
+                                    <label><input type="checkbox" x-model="facadeDraft.mirror" @change="facadeBlockApply()"> Mirror the house (garage on the right)</label>
+                                </div>
+                                <template x-for="b in ['main','garage']" :key="b">
+                                    <div class="grid md:grid-cols-6 gap-2 items-end">
+                                        <span class="uppercase text-xs text-gray-500" x-text="b"></span>
+                                        <label>Stories <select class="w-full bg-gray-800" x-model.number="facadeDraft.blocks[b].stories" @change="facadeBlockApply()"><option value="1">1</option><option value="2">2</option></select></label>
+                                        <label>Roof <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].roof.form" @change="facadeBlockApply()"><option>gable</option><option>hip</option></select></label>
+                                        <label>Ridge <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].roof.ridge" @change="facadeBlockApply()"><option value="x">along the street</option><option value="z">toward the street</option></select></label>
+                                        <label>Pitch <input type="range" min="22.5" max="35" step="0.5" class="w-full" x-model.number="facadeDraft.blocks[b].roof.pitch_deg" @change="facadeBlockApply()"> <span x-text="facadeDraft.blocks[b].roof.pitch_deg + '°'"></span></label>
+                                        <label>Depth <input type="range" min="0" max="6" step="0.5" class="w-full" x-model.number="facadeDraft.blocks[b].depth" @change="facadeBlockApply()"> <span x-text="facadeDraft.blocks[b].depth"></span></label>
+                                        <label>Cladding <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].cladding" @change="facadeBlockApply()"><template x-for="c in facadeCladdings" :key="c"><option :value="c" x-text="c"></option></template></select></label>
+                                        <label>Body <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].body" @change="facadeBlockApply()"><template x-for="c in facadeStyleOptions.body" :key="c"><option :value="c" x-text="c"></option></template></select></label>
+                                        <label><input type="checkbox" :checked="!!facadeDraft.blocks[b].base" @change="facadeBaseToggle(b, $event.target.checked)"> Base band</label>
+                                        <template x-if="facadeDraft.blocks[b].base">
+                                            <div class="contents">
+                                                <label>Base material <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].base.material" @change="facadeBlockApply()"><template x-for="c in facadeCladdings" :key="c"><option :value="c" x-text="c"></option></template></select></label>
+                                                <label>Base height <input type="range" min="0.6" max="1.8" step="0.1" class="w-full" x-model.number="facadeDraft.blocks[b].base.height" @change="facadeBlockApply()"></label>
+                                                <label>Base colour <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].base.body" @change="facadeBlockApply()"><template x-for="c in facadeStyleOptions.body" :key="c"><option :value="c" x-text="c"></option></template></select></label>
+                                            </div>
+                                        </template>
+                                        <label x-show="b === 'garage'">Garage door <select class="w-full bg-gray-800" x-model="facadeDraft.blocks.garage.orientation" @change="facadeBlockApply()"><option value="front">faces the street</option><option value="side">on the side</option></select></label>
+                                    </div>
+                                </template>
+                            </div>
                             <div class="flex flex-wrap gap-1" id="facade-strip">
                                 <template x-for="face in facadeFaces" :key="face.face">
                                     <div class="flex flex-col">
@@ -2633,11 +2660,20 @@
                                     </select></label>
                                 <label>Roof
                                     <select class="w-full bg-gray-800" x-model="facadeCell.roof.kind" @change="facadeCellApply()">
-                                        <option value="eave">eave</option><option value="gable">gable</option><option value="dormer">dormer</option><option value="hip_end">hip end</option>
+                                        <option value="eave">eave</option><option value="gable">gable</option><option value="dormer">dormer</option><option value="hip_end">hip end</option><option value="shed">shed</option>
+                                    </select></label>
+                                <label x-show="facadeCell.roof.kind !== 'eave'">Feature cladding
+                                    <select class="w-full bg-gray-800" x-model="facadeCell.roof.cladding" @change="facadeCellApply()">
+                                        <option value="">inherit</option>
+                                        <template x-for="c in facadeCladdings" :key="c"><option :value="c" x-text="c"></option></template>
                                     </select></label>
                                 <label x-show="facadeCell.ground.kind === 'window'">Size
                                     <select class="w-full bg-gray-800" x-model="facadeCell.ground.size" @change="facadeCellApply()">
                                         <option>tall</option><option>standard</option><option>small</option></select></label>
+                                <label x-show="facadeCell.ground.kind === 'window'"><input type="checkbox" x-model="facadeCell.ground.shutters" @change="facadeCellApply()"> shutters</label>
+                                <label x-show="facadeCell.ground.kind === 'window' && facadeBlockStories(facadeSlot) === 2">Story
+                                    <select class="w-full bg-gray-800" x-model.number="facadeCell.ground.story" @change="facadeCellApply()">
+                                        <option value="1">1</option><option value="2">2</option></select></label>
                                 <label x-show="facadeCell.ground.kind === 'garage_door'">Door
                                     <select class="w-full bg-gray-800" x-model="facadeCell.ground.style" @change="facadeCellApply()">
                                         <option>carriage</option><option>panel</option><option>glass</option></select></label>
@@ -2652,11 +2688,14 @@
                                         <option value="none">none</option><option value="sitting">sitting</option><option value="stoop">stoop</option><option value="covered">covered</option>
                                     </select></label>
                                 <label x-show="facadeCell.porch.type !== 'none'">Porch span <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.porch.span" @change="facadeCellApply()"></label>
+                                <label x-show="facadeCell.porch.type !== 'none'">Porch roof
+                                    <select class="w-full bg-gray-800" x-model="facadeCell.porch.roof" @change="facadeCellApply()">
+                                        <option>flat</option><option>gable</option></select></label>
                             </div>
                             <template x-if="facadeDraft">
                                 <div class="grid grid-cols-3 gap-2 text-sm">
                                     <label>Pitch <input type="range" min="22.5" max="35" step="0.5" class="w-full" x-model.number="facadeDraft.pitch_deg" @change="facadePreview()"> <span x-text="facadeDraft.pitch_deg + '°'"></span></label>
-                                    <template x-for="role in ['cladding','body','roof','frame','door','trim']" :key="role">
+                                    <template x-for="role in ['roof','frame','door','trim']" :key="role">
                                         <label><span x-text="role"></span>
                                             <select class="w-full bg-gray-800" x-model="facadeDraft.style[role]" @change="facadePreview()">
                                                 <template x-for="opt in facadeStyleOptions[role]" :key="opt"><option :value="opt" x-text="opt"></option></template>
@@ -2672,6 +2711,21 @@
                                 <button class="px-3 py-1 rounded bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed" :disabled="!facadeDraftId || facadeDraftId === 'canonical'" @click="facadeOverwrite()">Overwrite</button>
                                 <button class="px-3 py-1 rounded bg-gray-700" @click="facades[0] && facadeLoad(facades[0])">Reset to canonical</button>
                             </div>
+                            <div class="flex gap-2 items-center">
+                                <button class="px-3 py-1 rounded bg-gray-700" @click="facadePreview3D()">Preview in 3D</button>
+                                <button class="px-3 py-1 rounded bg-amber-700" x-show="facadeDraftSource === 'photo' && facadePhotoToken" @click="facadeCritique()">Compare to photo</button>
+                                <span class="text-xs text-gray-400" x-text="facadeBusy"></span>
+                            </div>
+                            <div x-show="facadePreviewToken" class="rounded-xl overflow-hidden bg-black" style="width:700px;height:500px">
+                                <iframe id="facade-preview-frame" :src="facadePreviewToken ? (apiBase + 'house?draft=' + facadePreviewToken + '&angle=' + facadePreviewAngle + '&quality=medium&day=1') : 'about:blank'"
+                                        style="width:1400px;height:1000px;transform:scale(0.5);transform-origin:0 0;border:0"></iframe>
+                            </div>
+                            <div x-show="facadeRenders.draft || facadeRenders.revised" class="grid md:grid-cols-2 gap-3">
+                                <div><img :src="facadeRenders.draft" class="rounded-lg"><button class="mt-1 px-3 py-1 rounded bg-teal-600" @click="facadePickDraft()">Use this</button><div class="text-xs text-gray-400">the draft</div></div>
+                                <div x-show="facadeRenders.revised"><img :src="facadeRenders.revised" class="rounded-lg"><button class="mt-1 px-3 py-1 rounded bg-teal-600" @click="facadePickRevised()">Use this</button><div class="text-xs text-gray-400">after comparing to your photo</div></div>
+                            </div>
+                            <ul class="text-xs text-gray-300" x-show="facadeCritiqueResult.reasons.length"><template x-for="r in facadeCritiqueResult.reasons" :key="r"><li x-text="r"></li></template></ul>
+                            <div class="text-xs text-amber-200" x-show="facadeCritiqueResult.unexpressed.length">Not in the model: <span x-text="facadeCritiqueResult.unexpressed.join(' · ')"></span></div>
                         </div>
                     </div>
                 </div>
@@ -4618,16 +4672,23 @@
                 facadeDraftId: null,
                 facadeDraftSource: 'hand',
                 facadeSlot: null,
-                facadeCell: { ground: { kind: 'wall', span: 1 }, roof: { kind: 'eave', span: 1 }, porch: { type: 'none', span: 1 } },
+                facadeCell: { ground: { kind: 'wall', span: 1, shutters: false, story: 1 }, roof: { kind: 'eave', span: 1, cladding: '' }, porch: { type: 'none', span: 1, roof: 'flat' } },
                 facadeNotes: [],
                 facadeStyleOptions: {
-                    cladding: ['batten', 'clapboard'],
                     body: ['white', 'greige', 'sage', 'slate', 'navy'],
                     roof: ['charcoal', 'weathered', 'brown'],
                     frame: ['black', 'white'],
                     door: ['wood', 'black', 'red', 'sage'],
                     trim: ['white', 'black']
                 },
+                facadeCladdings: ['batten', 'lap', 'brick', 'stone', 'stucco', 'shingle'],
+                facadePhotoToken: null,
+                facadePhotoViewpoint: null,
+                facadePreviewToken: null,
+                facadePreviewAngle: 0,
+                facadeRenders: { draft: null, revised: null },
+                facadeCritiqueResult: { reasons: [], unexpressed: [], revised: null },
+                facadeBusy: '',
 
                 async init() {
                     console.log("configApp init started");
@@ -4640,9 +4701,9 @@
                         if (i === null) return;
                         const g = this.facadeEntry('ground', i), r = this.facadeEntry('roof', i), p = this.facadePorch(i);
                         this.facadeCell = {
-                            ground: g ? { ...g } : { kind: 'wall', span: 1 },
-                            roof: r ? { ...r } : { kind: 'eave', span: 1 },
-                            porch: p ? { type: p.type, span: p.span } : { type: 'none', span: 1 }
+                            ground: g ? { shutters: false, story: 1, ...g } : { kind: 'wall', span: 1, shutters: false, story: 1 },
+                            roof: r ? { cladding: '', ...r } : { kind: 'eave', span: 1, cladding: '' },
+                            porch: p ? { type: p.type, span: p.span, roof: p.roof || 'flat' } : { type: 'none', span: 1, roof: 'flat' }
                         };
                         this._origPorch = JSON.stringify(this.facadeCell.porch);
                     });
@@ -5595,7 +5656,12 @@
                         this.facades = []; this.facadeSlots = []; this.facadeFaces = [];
                     }
                 },
-                facadeLoad(f) { this.facadeDraft = JSON.parse(JSON.stringify(f.spec)); this.facadeDraftId = f.id; this.facadeDraftSource = 'hand'; this.facadeNotes = []; this.facadeSlot = null; },
+                facadeLoad(f) {
+                    this.facadeDraft = JSON.parse(JSON.stringify(f.spec)); this.facadeDraftId = f.id; this.facadeDraftSource = 'hand'; this.facadeNotes = []; this.facadeSlot = null;
+                    this.facadePhotoToken = null; this.facadePhotoViewpoint = null;
+                    this.facadePreviewToken = null; this.facadePreviewAngle = 0;
+                    this.facadeRenders = { draft: null, revised: null }; this.facadeCritiqueResult = { reasons: [], unexpressed: [], revised: null };
+                },
                 facadeEntry(layer, i) {
                     // A porch is an overlay (spec 4.5): it shares slots with the door/window
                     // underneath, so the "entry at this slot" is always the non-porch one.
@@ -5629,12 +5695,16 @@
                     ['ground', 'roof'].forEach(layer => {
                         const cell = this.facadeCell[layer];
                         this.facadeDraft[layer] = (this.facadeDraft[layer] || []).filter(e => e.kind === 'porch' || !(i >= e.slot && i < e.slot + e.span));
-                        if (cell.kind !== 'wall' && cell.kind !== 'eave') this.facadeDraft[layer].push({ ...cell, slot: i, span: Math.max(1, cell.span || 1) });
+                        if (cell.kind !== 'wall' && cell.kind !== 'eave') {
+                            const entry = { ...cell, slot: i, span: Math.max(1, cell.span || 1) };
+                            if (layer === 'roof' && !entry.cladding) delete entry.cladding;  // '' means inherit
+                            this.facadeDraft[layer].push(entry);
+                        }
                     });
                     if (JSON.stringify(this.facadeCell.porch) !== this._origPorch) {
                         this.facadeDraft.ground = (this.facadeDraft.ground || []).filter(e => !(e.kind === 'porch' && i >= e.slot && i < e.slot + e.span));
                         if (this.facadeCell.porch.type !== 'none') {
-                            this.facadeDraft.ground.push({ slot: i, span: Math.max(1, this.facadeCell.porch.span || 1), kind: 'porch', type: this.facadeCell.porch.type });
+                            this.facadeDraft.ground.push({ slot: i, span: Math.max(1, this.facadeCell.porch.span || 1), kind: 'porch', type: this.facadeCell.porch.type, roof: this.facadeCell.porch.roof || 'flat' });
                         }
                         this._origPorch = JSON.stringify(this.facadeCell.porch);
                     }
@@ -5651,6 +5721,67 @@
                         showGlobalAlert('Could not check the facade');
                     }
                 },
+                facadeBlockStories(i) {
+                    const s = this.facadeSlots.find(x => x.i === i);
+                    return s ? this.facadeDraft.blocks[s.face === 'garage_block' ? 'garage' : 'main'].stories : 1;
+                },
+                facadeBaseToggle(b, on) {
+                    this.facadeDraft.blocks[b].base = on ? { material: 'stone', height: 0.9, body: 'stone_grey' } : null;
+                    this.facadeBlockApply();
+                },
+                async facadeBlockApply() { await this.facadePreview(); },
+                async facadePreview3D() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/house/facades/draft`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spec: this.facadeDraft }) });
+                        const data = await res.json();
+                        if (!res.ok) { showGlobalAlert(data.detail || 'Could not preview'); return; }
+                        this.facadeDraft = data.spec; this.facadeNotes = data.notes; this.facadePreviewToken = data.token; this.facadePreviewAngle = 0;
+                        this.facadeRenders = { draft: null, revised: null };
+                        this.facadeCritiqueResult = { reasons: [], unexpressed: [], revised: null };
+                    } catch (e) { console.error('Failed to preview', e); showGlobalAlert('Could not preview'); }
+                },
+                // ORBIT (house.js orbitPos): stop 0 is the resting street view (centre).
+                // At stop 0 the camera's own right-hand axis (cross(up, cameraPos-target))
+                // points toward stop 7, not stop 1 -- so a photo taken from the
+                // photographer's right stood at stop 7, and one from their left at stop 1.
+                facadeAngleForViewpoint(vp) { return vp === 'left' ? 1 : vp === 'right' ? 7 : 0; },
+                facadeCaptureFrame() {
+                    return new Promise((resolve, reject) => {
+                        const f = document.getElementById('facade-preview-frame');
+                        let tries = 0;
+                        const tick = () => {
+                            const w = f && f.contentWindow;
+                            if (w && w.chfNavProbe && w.chfNavProbe({ settled: true })) { resolve(w.chfCapture()); return; }
+                            if (++tries > 200) { reject(new Error('the preview never settled')); return; }
+                            setTimeout(tick, 100);
+                        };
+                        tick();
+                    });
+                },
+                async facadeCritique() {
+                    if (!this.facadePhotoToken) { showGlobalAlert('Load a photo first'); return; }
+                    this.facadeBusy = 'Rendering the draft…';
+                    try {
+                        this.facadePreviewToken = this.facadePhotoToken;           // the photo's own draft renders
+                        this.facadePreviewAngle = this.facadeAngleForViewpoint(this.facadePhotoViewpoint);  // the camera stands where the photo did
+                        const png = await this.facadeCaptureFrame();
+                        this.facadeRenders.draft = png; this.facadeBusy = 'Comparing to your photo…';
+                        const res = await fetch(`${this.apiBase}api/house/facades/critique`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: this.facadePhotoToken, render: png }) });
+                        const data = await res.json();
+                        if (!res.ok) { showGlobalAlert(data.detail || 'Could not compare'); return; }
+                        const r = data.result;
+                        this.facadeCritiqueResult = { reasons: r.reasons || [], unexpressed: r.unexpressed || [], revised: r.revised || null };
+                        if (r.revised) {
+                            const res2 = await fetch(`${this.apiBase}api/house/facades/draft`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spec: r.revised }) });
+                            const d2 = await res2.json();
+                            this.facadePreviewToken = d2.token;
+                            this.facadeRenders.revised = await this.facadeCaptureFrame();
+                        }
+                    } catch (e) { console.error('critique failed', e); showGlobalAlert('Could not compare to the photo'); }
+                    finally { this.facadeBusy = ''; }
+                },
+                facadePickRevised() { if (this.facadeCritiqueResult.revised) { this.facadeDraft = this.facadeCritiqueResult.revised; this.facadePreview(); } },
+                facadePickDraft() { /* the draft is already loaded; nothing to swap */ this.facadePreview(); },
                 async facadePhoto(ev) {
                     const file = ev.target.files && ev.target.files[0]; if (!file) return;
                     const fd = new FormData(); fd.append('photo', file);
@@ -5660,6 +5791,9 @@
                         if (!res.ok) { showGlobalAlert(data.detail || 'Could not read the photo'); return; }
                         if (!data.draft) { showGlobalAlert(data.error || 'Could not read the photo'); return; }
                         this.facadeDraft = data.draft; this.facadeNotes = data.notes || []; this.facadeDraftSource = 'photo'; this.facadeSlot = null;
+                        this.facadePhotoToken = data.token || null; this.facadePhotoViewpoint = data.viewpoint || null;
+                        this.facadePreviewToken = null; this.facadePreviewAngle = 0;
+                        this.facadeRenders = { draft: null, revised: null }; this.facadeCritiqueResult = { reasons: [], unexpressed: [], revised: null };
                     } catch (e) {
                         console.error("Failed to read facade photo", e);
                         ev.target.value = '';
@@ -5673,7 +5807,7 @@
                         const res = await fetch(`${this.apiBase}api/house/facades`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, spec: this.facadeDraft, source: this.facadeDraftSource }) });
                         const data = await res.json();
                         if (!res.ok) { showGlobalAlert(data.detail || 'Could not save the facade'); return; }
-                        this.facadeDraft = null; await this.loadFacades();
+                        this.facadeDraft = null; this.facadePhotoToken = null; this.facadePhotoViewpoint = null; await this.loadFacades();
                     } catch (e) {
                         console.error("Failed to save facade", e);
                         showGlobalAlert('Could not save the facade');
@@ -5685,7 +5819,7 @@
                         const res = await fetch(`${this.apiBase}api/house/facades/${this.facadeDraftId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spec: this.facadeDraft }) });
                         const data = await res.json();
                         if (!res.ok) { showGlobalAlert(data.detail || 'Could not save the facade'); return; }
-                        this.facadeDraftSource = 'hand'; await this.loadFacades();
+                        this.facadeDraftSource = 'hand'; this.facadePhotoToken = null; this.facadePhotoViewpoint = null; await this.loadFacades();
                     } catch (e) {
                         console.error("Failed to overwrite facade", e);
                         showGlobalAlert('Could not save the facade');

@@ -830,6 +830,14 @@ def scenario_home_section_pins():
     for needle in ('facadePhoto(', 'facadeSaveNew(', 'facadeOverwrite(', 'facadeActivate(', 'facadeDelete(', 'facadeRename(', 'facadePreview('):
         check(needle in tpl, f'hand path method {needle}')
     check('From your photo' in tpl, 'the draft banner names its source')
+    for needle in ('facadeBlockApply(', 'facadePreview3D(', 'facadeCritique(', 'facadePickRevised(', 'facadePickDraft(',
+                   'x-model="facadeDraft.mirror"', 'facadeDraft.blocks[b].stories', 'facadeDraft.blocks[b].roof.form',
+                   'facadeDraft.blocks[b].depth', 'facadeDraft.blocks[b].cladding', 'facadeDraft.blocks.garage.orientation',
+                   '<option value="shed">', 'facadeCell.ground.shutters', 'facadeCell.ground.story', 'facadeCell.porch.roof',
+                   'facadeCell.roof.cladding', 'Preview in 3D', 'Compare to photo', 'Use this', 'unexpressed',
+                   'id="facade-preview-frame"', "day=1"):
+        check(needle in tpl, f'hand path: {needle}')
+    check('preserveDrawingBuffer' not in tpl, 'capture never toggles the drawing buffer flag')
     for bad in ('alert(', 'confirm(', 'prompt('):
         sec = tpl[tpl.index('id="home"'):tpl.index('id="home"') + 20000]
         check(bad not in sec.replace('promptConfirm(', '').replace('promptInput(', ''), f'no browser dialogs: {bad}')
