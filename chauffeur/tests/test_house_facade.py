@@ -844,6 +844,14 @@ def scenario_home_section_pins():
     body_list = m.group(1)
     for name in ('brick_red', 'tan', 'cream_brick', 'stone_grey', 'painted_brick'):
         check(name in body_list, f'the hand path can pick every body colour the model produces: {name}')
+    check('facadeCellStory' in tpl, 'the cell editor tracks which story it is editing')
+    check('Editing' in tpl, 'a control names which story is being edited')
+    i0 = tpl.index('facadeCellApply() {')
+    i1 = tpl.index('async facadePreview() {', i0)
+    apply_body = tpl[i0:i1]
+    check('facadeCellStory' in apply_body,
+          "facadeCellApply's removal filter is story-aware: a stacked "
+          "story-1/story-2 window pair must not be wiped when one is edited")
     for bad in ('alert(', 'confirm(', 'prompt('):
         sec = tpl[tpl.index('id="home"'):tpl.index('id="home"') + 20000]
         check(bad not in sec.replace('promptConfirm(', '').replace('promptInput(', ''), f'no browser dialogs: {bad}')

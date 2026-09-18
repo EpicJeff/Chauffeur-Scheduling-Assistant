@@ -2653,6 +2653,11 @@
                                 </template>
                             </div>
                             <div x-show="facadeSlot !== null" class="bg-gray-900 p-3 rounded-xl grid grid-cols-2 gap-2 text-sm">
+                                <div x-show="facadeBlockStories(facadeSlot) === 2" class="col-span-2 flex items-center gap-2">
+                                    <span class="text-xs text-gray-500">Editing</span>
+                                    <button type="button" class="px-2 py-0.5 rounded text-xs" :class="facadeCellStory === 1 ? 'bg-teal-600' : 'bg-gray-700'" @click="facadeCellStory = 1; facadeLoadCell()">Story 1</button>
+                                    <button type="button" class="px-2 py-0.5 rounded text-xs" :class="facadeCellStory === 2 ? 'bg-teal-600' : 'bg-gray-700'" @click="facadeCellStory = 2; facadeLoadCell()">Story 2</button>
+                                </div>
                                 <label>Ground
                                     <select class="w-full bg-gray-800" x-model="facadeCell.ground.kind" @change="facadeCellApply()">
                                         <option value="wall">wall</option><option value="window">window</option><option value="door">door</option>
@@ -4672,6 +4677,7 @@
                 facadeDraftId: null,
                 facadeDraftSource: 'hand',
                 facadeSlot: null,
+                facadeCellStory: 1,
                 facadeCell: { ground: { kind: 'wall', span: 1, shutters: false, story: 1 }, roof: { kind: 'eave', span: 1, cladding: '' }, porch: { type: 'none', span: 1, roof: 'flat' } },
                 facadeNotes: [],
                 facadeStyleOptions: {
@@ -4699,13 +4705,7 @@
                     await this.loadFacades();
                     this.$watch('facadeSlot', i => {
                         if (i === null) return;
-                        const g = this.facadeEntry('ground', i), r = this.facadeEntry('roof', i), p = this.facadePorch(i);
-                        this.facadeCell = {
-                            ground: g ? { shutters: false, story: 1, ...g } : { kind: 'wall', span: 1, shutters: false, story: 1 },
-                            roof: r ? { cladding: '', ...r } : { kind: 'eave', span: 1, cladding: '' },
-                            porch: p ? { type: p.type, span: p.span, roof: p.roof || 'flat' } : { type: 'none', span: 1, roof: 'flat' }
-                        };
-                        this._origPorch = JSON.stringify(this.facadeCell.porch);
+                        this.facadeLoadCell();
                     });
                     this.loadIcsFeeds();  // not awaited: feeds are a side panel
                     await this.loadMembers();
@@ -5662,21 +5662,43 @@
                     this.facadePreviewToken = null; this.facadePreviewAngle = 0;
                     this.facadeRenders = { draft: null, revised: null }; this.facadeCritiqueResult = { reasons: [], unexpressed: [], revised: null };
                 },
-                facadeEntry(layer, i) {
+                facadeEntry(layer, i, story = 1) {
                     // A porch is an overlay (spec 4.5): it shares slots with the door/window
                     // underneath, so the "entry at this slot" is always the non-porch one.
-                    const covering = e => i >= e.slot && i < e.slot + e.span;
-                    return (this.facadeDraft[layer] || []).filter(covering).find(e => e.kind !== 'porch');
+                    // Ground is per-story (a stacked story-1/story-2 window pair can share a
+                    // slot): only roof has no story field, so its lookup is unchanged.
+                    const covering = e => i >= e.slot && i < e.slot + e.span && e.kind !== 'porch';
+                    if (layer === 'ground') return (this.facadeDraft.ground || []).find(e => covering(e) && (e.story || 1) === story);
+                    return (this.facadeDraft[layer] || []).find(covering);
                 },
                 facadePorch(i) {
                     return (this.facadeDraft.ground || []).find(e => e.kind === 'porch' && i >= e.slot && i < e.slot + e.span);
                 },
-                facadeCellSelect(i) { const g = this.facadeEntry('ground', i); this.facadeSlot = g ? g.slot : i; },
+                facadeCellSelect(i) {
+                    this.facadeCellStory = 1;
+                    const g = this.facadeEntry('ground', i, this.facadeCellStory);
+                    this.facadeSlot = g ? g.slot : i;
+                },
+                facadeLoadCell() {
+                    const i = this.facadeSlot; if (i === null) return;
+                    const g = this.facadeEntry('ground', i, this.facadeCellStory), r = this.facadeEntry('roof', i), p = this.facadePorch(i);
+                    this.facadeCell = {
+                        ground: g ? { shutters: false, story: this.facadeCellStory, ...g } : { kind: 'wall', span: 1, shutters: false, story: this.facadeCellStory },
+                        roof: r ? { cladding: '', ...r } : { kind: 'eave', span: 1, cladding: '' },
+                        porch: p ? { type: p.type, span: p.span, roof: p.roof || 'flat' } : { type: 'none', span: 1, roof: 'flat' }
+                    };
+                    this._origPorch = JSON.stringify(this.facadeCell.porch);
+                },
                 facadeCellText(i) {
-                    const g = this.facadeEntry('ground', i);
-                    if (g && g.slot < i) return '';  // continuation cell: the label lives on the span's start cell
+                    const g1 = this.facadeEntry('ground', i, 1), g2 = this.facadeEntry('ground', i, 2);
+                    const anchor = g1 || g2;
+                    if (anchor && anchor.slot < i) return '';  // continuation cell: the label lives on the span's start cell
                     const r = this.facadeEntry('roof', i);
-                    return (g ? g.kind.replace('_', ' ') : '') + '\n' + (r ? r.kind : '');
+                    let ground = '';
+                    if (g1 && g2) ground = g1.kind === g2.kind ? (g1.kind.replace('_', ' ') + ' ×2') : (g1.kind.replace('_', ' ') + ' / ' + g2.kind.replace('_', ' ') + '↑');
+                    else if (g1) ground = g1.kind.replace('_', ' ');
+                    else if (g2) ground = g2.kind.replace('_', ' ') + '↑';
+                    return ground + '\n' + (r ? r.kind : '');
                 },
                 facadeCellClass(i) {
                     const g = this.facadeEntry('ground', i);
@@ -5692,15 +5714,27 @@
                 },
                 facadeCellApply() {
                     const i = this.facadeSlot; if (i === null) return;
-                    ['ground', 'roof'].forEach(layer => {
-                        const cell = this.facadeCell[layer];
-                        this.facadeDraft[layer] = (this.facadeDraft[layer] || []).filter(e => e.kind === 'porch' || !(i >= e.slot && i < e.slot + e.span));
-                        if (cell.kind !== 'wall' && cell.kind !== 'eave') {
-                            const entry = { ...cell, slot: i, span: Math.max(1, cell.span || 1) };
-                            if (layer === 'roof' && !entry.cladding) delete entry.cladding;  // '' means inherit
-                            this.facadeDraft[layer].push(entry);
-                        }
-                    });
+                    const gcell = this.facadeCell.ground;
+                    // Only the STORY being edited is replaced: a story-1 door and a
+                    // story-2 window can share this slot, and editing one must not
+                    // silently drop the other.
+                    this.facadeDraft.ground = (this.facadeDraft.ground || []).filter(e =>
+                        e.kind === 'porch' || !(i >= e.slot && i < e.slot + e.span && (e.story || 1) === this.facadeCellStory));
+                    if (gcell.kind !== 'wall') {
+                        const span = Math.max(1, gcell.span || 1);
+                        let entry = null;
+                        if (gcell.kind === 'window') entry = { slot: i, span, kind: 'window', size: gcell.size, shutters: !!gcell.shutters, story: this.facadeCellStory };
+                        else if (gcell.kind === 'door') entry = { slot: i, span, kind: 'door' };
+                        else if (gcell.kind === 'garage_door') entry = { slot: i, span, kind: 'garage_door', style: gcell.style, leaves: gcell.leaves };
+                        if (entry) this.facadeDraft.ground.push(entry);
+                    }
+                    const rcell = this.facadeCell.roof;
+                    this.facadeDraft.roof = (this.facadeDraft.roof || []).filter(e => !(i >= e.slot && i < e.slot + e.span));
+                    if (rcell.kind !== 'eave') {
+                        const rentry = { slot: i, span: Math.max(1, rcell.span || 1), kind: rcell.kind, window: !!rcell.window };
+                        if (rcell.cladding) rentry.cladding = rcell.cladding;  // '' means inherit
+                        this.facadeDraft.roof.push(rentry);
+                    }
                     if (JSON.stringify(this.facadeCell.porch) !== this._origPorch) {
                         this.facadeDraft.ground = (this.facadeDraft.ground || []).filter(e => !(e.kind === 'porch' && i >= e.slot && i < e.slot + e.span));
                         if (this.facadeCell.porch.type !== 'none') {
