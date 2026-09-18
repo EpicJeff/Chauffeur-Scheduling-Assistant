@@ -24,6 +24,48 @@
             color: #e2e8f0;
             font-family: 'Inter', sans-serif;
         }
+
+        /* The house editor uses task groups and a responsive inspector/preview layout. */
+        #home { padding: 1.25rem; }
+        #home .home-help { color: #9ca3af; font-size: .875rem; line-height: 1.5; margin: .35rem 0 .85rem; }
+        #home button, #home select, #home input[type=number] { min-height: 44px; border-radius: .5rem; }
+        #home button { padding: .5rem .75rem; }
+        #home button:disabled { opacity: .45; cursor: not-allowed; }
+        #home button:focus-visible, #home select:focus-visible, #home input:focus-visible, #home summary:focus-visible { outline: 2px solid #5eead4; outline-offset: 3px; }
+        #home [aria-pressed=true] { background: #134e4a; border-color: #5eead4; color: #ccfbf1; }
+        #home .home-library { margin: 1rem 0; border: 1px solid #4b5563; border-radius: .75rem; padding: .75rem; }
+        #home summary { cursor: pointer; padding: .5rem; font-weight: 600; }
+        #home .home-designs { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: .75rem; }
+        #home .home-design, #home .home-photo { background: #111827; border-radius: .5rem; padding: .75rem; flex: 1 1 210px; min-width: 0; }
+        #home .home-check { display: flex; align-items: center; gap: .6rem; font-size: .875rem; min-height: 44px; }
+        #home .home-photo input { display: block; width: 100%; min-width: 0; max-width: 100%; margin-top: .75rem; }
+        #home .home-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; margin: .75rem 0; }
+        #home .home-workspace { display: grid; gap: 1.25rem; align-items: start; }
+        #home .home-controls, #home .home-preview { min-width: 0; }
+        #home .home-tasks { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .5rem; margin: .75rem 0 1rem; }
+        #home .home-tasks button { border: 1px solid #4b5563; text-align: left; font-size: .875rem; }
+        #home .home-section { background: #111827; border: 1px solid #374151; border-radius: .75rem; padding: 1rem; margin: 1rem 0; min-width: 0; }
+        #home legend { color: #99f6e4; font-weight: 600; padding: 0 .4rem; }
+        #home .home-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .9rem; align-items: start; }
+        #home .home-fields label { display: block; min-width: 0; font-size: .875rem; color: #e5e7eb; }
+        #home .home-fields select, #home input[type=number] { width: 100%; display: block; margin-top: .35rem; padding: .5rem; background: #1f2937; border: 1px solid #4b5563; }
+        #home input[type=range] { width: 100%; display: block; min-height: 36px; }
+        #home .home-wide { grid-column: 1 / -1; }
+        #home .home-story, #home .home-subsection { margin-top: .75rem; }
+        #home .home-subsection { border-top: 1px solid #374151; padding-top: .5rem; }
+        #home .home-face { margin: .75rem 0; overflow-x: auto; padding: .25rem; }
+        #home .home-slots { display: flex; gap: .25rem; margin-top: .4rem; }
+        #home .home-slots button { flex: 1 0 44px; min-width: 44px; padding: .3rem; border: 1px solid #4b5563; }
+        #home .home-slots b { display: block; font-size: .85rem; }
+        #home .home-slots span { display: block; font-size: .65rem; line-height: 1.25; white-space: pre-line; }
+        #home .home-selection { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; margin-top: 1rem; }
+        #home .home-selection button { border: 1px solid #4b5563; }
+        #home .home-notice { background: #1f2937; border-left: 3px solid #fbbf24; border-radius: .4rem; padding: .85rem; font-size: .875rem; margin: .75rem 0; }
+        #home .home-preview-canvas { width: 100%; aspect-ratio: 7 / 5; border-radius: .75rem; overflow: hidden; background: #030712; }
+        #home .home-preview-canvas iframe { width: 100%; height: 100%; border: 0; }
+        #home .home-preview-empty { min-height: 240px; display: grid; place-items: center; padding: 2rem; text-align: center; color: #9ca3af; background: #111827; border: 1px dashed #4b5563; border-radius: .75rem; }
+        @media (min-width: 1200px) { #home .home-workspace { grid-template-columns: minmax(440px,5fr) minmax(0,6fr); } #home .home-preview { position: sticky; top: 1rem; } }
+        @media (max-width: 540px) { #home { padding: .75rem; } #home .home-fields { grid-template-columns: minmax(0,1fr); } #home .home-fields .col-span-2 { grid-column: auto; } }
     </style>
     <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
 </head>
@@ -2577,195 +2619,125 @@
                     </div>
                 </div>
 
-                <!-- The Home (People tab sub-panel, beside Cars): the street facade -->
-                <div x-show="activeTab === 'family'" x-cloak x-transition.opacity id="home"
-                    class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
-                    <h2 class="text-3xl font-bold mb-2 text-teal-300">Home</h2>
-                    <p class="text-gray-400 text-sm mb-4">The street face of the dollhouse at <a href="house" target="_blank" class="underline">/house</a>.
-                        Match it to a photo of your real house, or draw it slot by slot. Nothing changes until you save;
-                        the wall builds from the <b>active</b> facade on its next load.
-                        <span class="hidden">house_facades house_facade_active</span></p>
-
-                    <div class="grid md:grid-cols-3 gap-4">
-                        <div class="space-y-2">
-                            <template x-for="f in facades" :key="f.id">
-                                <div class="bg-gray-900 p-3 rounded-xl flex items-center gap-2"
-                                     :class="facadeDraftId === f.id ? 'ring-2 ring-teal-500' : ''">
-                                    <input type="radio" name="facade_active" :checked="facadeActive === f.id" @change="facadeActivate(f.id)">
-                                    <button class="flex-1 text-left" @click="facadeLoad(f)" x-text="f.name"></button>
-                                    <template x-if="!f.readonly">
-                                        <div class="flex gap-1">
-                                            <button class="text-xs text-gray-400 hover:text-white" @click="facadeRename(f)">Rename</button>
-                                            <button class="text-xs text-red-400 hover:text-red-200" @click="facadeDelete(f)">Delete</button>
-                                        </div>
-                                    </template>
-                                </div>
-                            </template>
-                            <label class="block bg-gray-900 p-3 rounded-xl cursor-pointer text-center text-teal-300 hover:bg-gray-700">
-                                Match a photo…
-                                <input type="file" accept="image/*" class="hidden" @change="facadePhoto($event)">
-                            </label>
-                        </div>
-
-                        <div class="md:col-span-2 space-y-3">
-                            <div x-show="facadeDraftSource === 'photo'" class="bg-amber-900/40 border border-amber-600 rounded-lg p-2 text-amber-200 text-sm">
-                                From your photo — not saved yet. Review, then Save as new or Overwrite; /house shows only the active facade.
-                            </div>
-                            <div class="bg-gray-900 p-3 rounded-xl text-sm space-y-2" x-show="facadeDraft">
-                                <div class="flex items-center gap-4">
-                                    <b class="text-teal-300">Blocks</b>
-                                    <label><input type="checkbox" x-model="facadeDraft.mirror" @change="facadeBlockApply()"> Mirror the house (garage on the right)</label>
-                                </div>
-                                <template x-for="b in ['main','garage']" :key="b">
-                                    <div class="grid md:grid-cols-6 gap-2 items-end">
-                                        <span class="uppercase text-xs text-gray-500" x-text="b"></span>
-                                        <label>Roof <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].roof.form" @change="facadeBlockApply()"><option>gable</option><option>hip</option></select></label>
-                                        <label>Ridge <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].roof.ridge" @change="facadeBlockApply()"><option value="x">along the street</option><option value="z">toward the street</option></select></label>
-                                        <label>Pitch <input type="range" min="22.5" max="35" step="0.5" class="w-full" x-model.number="facadeDraft.blocks[b].roof.pitch_deg" @change="facadeBlockApply()"> <span x-text="facadeDraft.blocks[b].roof.pitch_deg + '°'"></span></label>
-                                        <label>Depth <input type="range" min="0" max="6" step="0.5" class="w-full" x-model.number="facadeDraft.blocks[b].depth" @change="facadeBlockApply()"> <span x-text="facadeDraft.blocks[b].depth"></span></label>
-                                        <label>Cladding <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].cladding" @change="facadeBlockApply()"><template x-for="c in facadeCladdings" :key="c"><option :value="c" x-text="c"></option></template></select></label>
-                                        <label>Body <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].body" @change="facadeBlockApply()"><template x-for="c in facadeStyleOptions.body" :key="c"><option :value="c" x-text="c"></option></template></select></label>
-                                        <label><input type="checkbox" :checked="!!facadeDraft.blocks[b].base" @change="facadeBaseToggle(b, $event.target.checked)"> Base band</label>
-                                        <template x-if="facadeDraft.blocks[b].base">
-                                            <div class="contents">
-                                                <label>Base material <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].base.material" @change="facadeBlockApply()"><template x-for="c in facadeCladdings" :key="c"><option :value="c" x-text="c"></option></template></select></label>
-                                                <label>Base height <input type="range" min="0.6" max="1.8" step="0.1" class="w-full" x-model.number="facadeDraft.blocks[b].base.height" @change="facadeBlockApply()"></label>
-                                                <label>Base colour <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].base.body" @change="facadeBlockApply()"><template x-for="c in facadeStyleOptions.body" :key="c"><option :value="c" x-text="c"></option></template></select></label>
+                <!-- House editor: task navigation with explicit editing scope. -->
+                <div x-show="activeTab === 'family'" x-cloak id="home" class="bg-gray-800 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+                    <div class="home-heading"><h2 class="text-3xl font-bold text-teal-300">Your house</h2>
+                        <p class="home-help">Choose a design, shape the house, then add details. Preview changes before saving. Use a saved design on the house to make it appear on the next load.</p>
+                        <span class="hidden">house_facades house_facade_active</span>
+                    </div>
+                    <details class="home-library" open><summary>Saved designs &amp; photo matching</summary>
+                        <div class="home-designs"><template x-for="f in facades" :key="f.id"><div class="home-design" :class="facadeDraftId === f.id ? 'ring-2 ring-teal-500' : ''">
+                            <button type="button" class="text-left font-semibold" @click="facadeLoad(f)" x-text="f.name"></button>
+                            <label class="home-check"><input type="radio" name="facade_active" :aria-label="'Use ' + f.name + ' on the house'" :checked="facadeActive === f.id" @change="facadeActivate(f.id)"><span x-text="facadeActive === f.id ? 'In use on house' : 'Use on house'"></span></label>
+                            <template x-if="!f.readonly"><div class="flex gap-2"><button type="button" @click="facadeRename(f)">Rename</button><button type="button" class="text-red-300" @click="facadeDelete(f)">Delete</button></div></template>
+                        </div></template>
+                        <label class="home-photo">Match a house photo<input type="file" accept="image/*" @change="facadePhoto($event)"></label></div>
+                    </details>
+                    <div class="home-toolbar"><div><b x-text="'Editing: ' + (facades.find(f => f.id === facadeDraftId)?.name || 'New design')"></b><p class="home-help">Edits are a draft until saved.</p></div>
+                        <div class="flex flex-wrap gap-2"><button type="button" class="bg-teal-700" @click="facadeSaveNew()">Save as new design</button><button type="button" class="bg-gray-700" :disabled="!facadeDraftId || facadeDraftId === 'canonical'" @click="facadeOverwrite()">Save changes</button></div>
+                    </div>
+                    <div x-show="facadeDraftSource === 'photo'" class="home-notice">From your photo: this is a draft. Review it, then save a design.</div>
+                    <div class="home-workspace"><div class="home-controls">
+                        <nav class="home-tasks" aria-label="House editing tasks"><template x-for="task in facadeTasks" :key="task.id"><button type="button" :aria-pressed="facadeTask === task.id" @click="facadeTask = task.id" x-text="task.label"></button></template></nav>
+                        <template x-if="facadeDraft"><div>
+                            <div x-show="facadeTask === 'shape'">
+                                <fieldset class="home-section"><legend>House shape</legend><p class="home-help">These settings affect an entire block of the house.</p><div class="home-fields"><label><input type="checkbox" x-model="facadeDraft.mirror" @change="facadeBlockApply()"> Mirror the house (garage on the right)</label></div></fieldset>
+                                <template x-for="b in ['main','garage']" :key="b"><fieldset class="home-section"><legend x-text="b === 'main' ? 'Main house' : 'Garage & mudroom'"></legend><div class="home-fields"><label>Roof <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].roof.form" @change="facadeBlockApply()"><option>gable</option><option>hip</option></select></label>
+<label>Ridge direction <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].roof.ridge" @change="facadeBlockApply()"><option value="x">along the street</option><option value="z">toward the street</option></select></label>
+<label>Roof pitch <input type="range" min="22.5" max="35" step="0.5" class="w-full" x-model.number="facadeDraft.blocks[b].roof.pitch_deg" @change="facadeBlockApply()"> <span x-text="facadeDraft.blocks[b].roof.pitch_deg + '°'"></span></label>
+<label>Block depth <input type="range" min="0" max="6" step="0.5" class="w-full" x-model.number="facadeDraft.blocks[b].depth" @change="facadeBlockApply()"> <span x-text="facadeDraft.blocks[b].depth"></span></label>
+<label x-show="b === 'garage'">Garage door <select class="w-full bg-gray-800" x-model="facadeDraft.blocks.garage.orientation" @change="facadeBlockApply()"><option value="front">faces the street</option><option value="side">on the side</option></select></label>
+                                        <div x-show="b === 'garage' && facadeDraft.blocks.garage.orientation === 'side'" class="home-wide home-subsection">
+                                            <h4 class="font-semibold">Side garage door</h4><p class="home-help">Changes the door and its wall opening. Block depth above changes the garage building.</p>
+                                            <div class="home-fields">
+                                                <label>Door style<select :value="facadeSideDoor().style" @change="facadeSetSideDoor('style', $event.target.value)"><option value="carriage">Carriage</option><option value="panel">Raised panels</option><option value="glass">Glass</option></select></label>
+                                                <label>Door panels<select :value="facadeSideDoor().leaves" @change="facadeSetSideDoor('leaves', Number($event.target.value))"><option value="1">One</option><option value="2">Two</option></select></label>
+                                                <label>Door width <span x-text="Math.round(facadeSideDoor().width / 3.6 * 100) + '% of standard'"></span><input type="range" min="2.4" max="4.4" step="0.1" :value="facadeSideDoor().width" @change="facadeSetSideDoor('width', Number($event.target.value))"></label>
+                                                <label>Door height <span x-text="Math.round(facadeSideDoor().height / 3 * 100) + '% of standard'"></span><input type="range" min="2.4" max="4" step="0.1" :value="facadeSideDoor().height" @change="facadeSetSideDoor('height', Number($event.target.value))"></label>
                                             </div>
-                                        </template>
-                                        <template x-for="story in [1,2]" :key="story">
-                                            <div class="col-span-2">
-                                                <span x-text="'Story ' + story + ' wall defaults'"></span>
-                                                <select class="w-full bg-gray-800" :value="facadeStoryFinish(b, story, 'cladding')" @change="facadeSetStoryFinish(b, story, 'cladding', $event.target.value)"><option value="">Cladding: inherit block</option><template x-for="c in facadeCladdings" :key="c"><option :value="c" x-text="c"></option></template></select>
-                                                <select class="w-full bg-gray-800" :value="facadeStoryFinish(b, story, 'body')" @change="facadeSetStoryFinish(b, story, 'body', $event.target.value)"><option value="">Colour: inherit block</option><template x-for="c in facadeStyleOptions.body" :key="c"><option :value="c" x-text="c"></option></template></select>
-                                            </div>
-                                        </template>
-                                        <label x-show="b === 'garage'">Garage door <select class="w-full bg-gray-800" x-model="facadeDraft.blocks.garage.orientation" @change="facadeBlockApply()"><option value="front">faces the street</option><option value="side">on the side</option></select></label>
-                                    </div>
-                                </template>
+                                        </div></div></fieldset></template>
                             </div>
-                            <div class="flex flex-wrap gap-1" id="facade-strip">
-                                <template x-for="face in facadeFaces" :key="face.face">
-                                    <div class="flex flex-col">
-                                        <span class="text-xs text-gray-500 uppercase" x-text="face.face === 'garage_block' ? 'Garage block' : 'Main block'"></span>
-                                        <div class="flex text-xs text-gray-400">
-                                            <template x-for="section in facadeRoomSections(face)" :key="section.label">
-                                                <span :style="{flex: section.count}" x-text="section.label"></span>
-                                            </template>
-                                        </div>
-                                        <div class="flex gap-0.5">
-                                            <template x-for="s in face.slots" :key="s.i">
-                                                <button class="w-9 h-14 text-[10px] leading-tight border"
-                                                        :class="facadeCellClass(s.i)" :title="'Slot ' + s.i" @click="facadeCellSelect(s.i)"
-                                                        x-text="facadeCellText(s.i)"></button>
-                                            </template>
-                                        </div>
-                                    </div>
-                                </template>
+                            <div x-show="facadeTask === 'finishes'">
+                                <fieldset class="home-section"><legend>Whole-house colours</legend><p class="home-help">Roof covering, window frames, doors and trim share these colours.</p><div class="home-fields"><template x-for="role in ['roof','frame','door','trim']" :key="role"><label><span x-text="facadeLabel(role) + ' colour'"></span><select x-model="facadeDraft.style[role]" @change="facadePreview()"><template x-for="opt in facadeStyleOptions[role]" :key="opt"><option :value="opt" x-text="facadeLabel(opt)"></option></template></select></label></template></div></fieldset>
+                                <template x-for="b in ['main','garage']" :key="b"><fieldset class="home-section"><legend x-text="b === 'main' ? 'Main house walls' : 'Garage & mudroom walls'"></legend><p class="home-help">Defaults for this block. Change a story or selected slots below to override them.</p><div class="home-fields"><label>Wall material <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].cladding" @change="facadeBlockApply()"><template x-for="c in facadeCladdings" :key="c"><option :value="c" x-text="facadeLabel(c)"></option></template></select></label>
+<label>Wall colour <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].body" @change="facadeBlockApply()"><template x-for="c in facadeStyleOptions.body" :key="c"><option :value="c" x-text="facadeLabel(c)"></option></template></select></label></div><details class="home-subsection"><summary>Story wall materials &amp; colours</summary><div class="home-fields"><template x-for="story in [1,2]" :key="story"><div class="home-wide home-story"><b x-text="'Story ' + story"></b><div class="home-fields"><label>Wall material<select :value="facadeStoryFinish(b, story, 'cladding')" @change="facadeSetStoryFinish(b, story, 'cladding', $event.target.value)"><option value="">Use block material</option><template x-for="c in facadeCladdings" :key="c"><option :value="c" x-text="facadeLabel(c)"></option></template></select></label><label>Wall colour<select :value="facadeStoryFinish(b, story, 'body')" @change="facadeSetStoryFinish(b, story, 'body', $event.target.value)"><option value="">Use block colour</option><template x-for="c in facadeStyleOptions.body" :key="c"><option :value="c" x-text="facadeLabel(c)"></option></template></select></label></div></div></template></div></details><details class="home-subsection"><summary>Decorative base band</summary><p class="home-help">A separate material around the bottom of the walls.</p><div class="home-fields"><label><input type="checkbox" :checked="!!facadeDraft.blocks[b].base" @change="facadeBaseToggle(b, $event.target.checked)"> Base band</label><template x-if="facadeDraft.blocks[b].base"><div class="home-fields home-wide"><label>Base material <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].base.material" @change="facadeBlockApply()"><template x-for="c in facadeCladdings" :key="c"><option :value="c" x-text="facadeLabel(c)"></option></template></select></label>
+<label>Base height <input type="range" min="0.6" max="1.8" step="0.1" class="w-full" x-model.number="facadeDraft.blocks[b].base.height" @change="facadeBlockApply()"></label>
+<label>Base colour <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].base.body" @change="facadeBlockApply()"><template x-for="c in facadeStyleOptions.body" :key="c"><option :value="c" x-text="facadeLabel(c)"></option></template></select></label></div></template></div></details></fieldset></template>
                             </div>
-                            <p class="text-xs text-gray-400">Room labels are guides. Roof features can cross rooms within the same roof; changes in roof height divide spans.</p>
-                            <div x-show="facadeSlot !== null" class="bg-gray-900 p-3 rounded-xl grid grid-cols-2 gap-2 text-sm">
-                                <b class="col-span-2" x-text="'Editing slot ' + facadeSlot"></b>
-                                <div x-show="facadeSlotStories(facadeSlot) === 2" class="col-span-2 flex items-center gap-2">
-                                    <span class="text-xs text-gray-500">Editing</span>
-                                    <button type="button" class="px-2 py-0.5 rounded text-xs" :class="facadeCellStory === 1 ? 'bg-teal-600' : 'bg-gray-700'" @click="facadeCellStory = 1; facadeLoadCell()">Story 1</button>
-                                    <button type="button" class="px-2 py-0.5 rounded text-xs" :class="facadeCellStory === 2 ? 'bg-teal-600' : 'bg-gray-700'" @click="facadeCellStory = 2; facadeLoadCell()">Story 2</button>
-                                </div>
-                                <label>Upper story
-                                    <select class="w-full bg-gray-800" x-model="facadeCell.upper.mode" @change="facadeCellApply()">
-                                        <option value="none">none</option><option value="two">two stories</option>
-                                    </select></label>
-                                <div class="col-span-2 space-y-2">
-                                    <b>Street wall finish</b><p>Applies to this story and slot span. Material and colour inherit independently. Side and rear walls use story defaults.</p>
-                                    <select class="w-full bg-gray-800" x-model="facadeCell.finish.cladding" @change="facadeCellApply()"><option value="">Cladding: inherit story</option><template x-for="c in facadeCladdings" :key="c"><option :value="c" x-text="c"></option></template></select>
-                                    <select class="w-full bg-gray-800" x-model="facadeCell.finish.body" @change="facadeCellApply()"><option value="">Colour: inherit story</option><template x-for="c in facadeStyleOptions.body" :key="c"><option :value="c" x-text="c"></option></template></select>
-                                    <label>Finish span <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.finish.span" @change="facadeCellApply()"></label>
-                                </div>
-                                <label x-show="facadeCell.upper.mode === 'two'">Upper span <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.upper.span" @change="facadeCellApply()"></label>
-                                <label x-show="facadeCell.upper.mode === 'two'">Upper roof
-                                    <select class="w-full bg-gray-800" x-model="facadeCell.upper.roof.form" @change="facadeCellApply()"><option>gable</option><option>hip</option></select></label>
-                                <label x-show="facadeCell.upper.mode === 'two'">Upper ridge
-                                    <select class="w-full bg-gray-800" x-model="facadeCell.upper.roof.ridge" @change="facadeCellApply()"><option value="x">along the street</option><option value="z">toward the street</option></select></label>
-                                <label x-show="facadeCell.upper.mode === 'two'" class="col-span-2">Upper pitch <input type="range" min="22.5" max="35" step="0.5" class="w-full" x-model.number="facadeCell.upper.roof.pitch_deg" @change="facadeCellApply()"></label>
-                                <label>Ground
+                            <div x-show="!['shape'].includes(facadeTask)">
+                                <div class="home-slot-heading"><h3 class="font-semibold">Choose a location</h3><p class="home-help">Numbers identify slots across the street face. A span covers consecutive slots starting at its anchor.</p></div>
+                                <div id="facade-strip"><template x-for="face in facadeFaces" :key="face.face"><div class="home-face"><b x-text="face.face === 'garage_block' ? 'Garage & mudroom' : 'Main house'"></b><div class="flex text-xs text-gray-400"><template x-for="section in facadeRoomSections(face)" :key="section.label"><span :style="{flex: section.count}" x-text="section.label"></span></template></div><div class="home-slots"><template x-for="s in face.slots" :key="s.i"><button type="button" :aria-label="'Slot ' + s.i + ': ' + facadeCellText(s.i)" :aria-pressed="facadeSlot === s.i" @click="facadeCellSelect(s.i)"><b x-text="s.i"></b><span x-text="facadeCellText(s.i) || 'Wall'"></span></button></template></div></div></template></div>
+                                <p x-show="facadeSlot === null" class="home-notice">Select a numbered slot to edit this part of the house.</p>
+                                <div x-show="facadeSlot !== null">
+                                    <div class="home-selection"><b x-text="'Selected slot ' + facadeSlot"></b><div x-show="['openings','finishes'].includes(facadeTask) && facadeSlotStories(facadeSlot) === 2" class="flex gap-2"><button type="button" :aria-pressed="facadeCellStory === 1" @click="facadeCellStory = 1; facadeLoadCell()">Story 1</button><button type="button" :aria-pressed="facadeCellStory === 2" @click="facadeCellStory = 2; facadeLoadCell()">Story 2</button></div></div>
+                                    <div x-show="facadeTask === 'openings'"><fieldset class="home-section"><legend>Windows & doors</legend><p class="home-help">Edits start at the selected slot, on the selected story.</p><div class="home-fields"><p class="home-wide home-help" x-text="'Editing story ' + facadeCellStory"></p><label>Opening
                                     <select class="w-full bg-gray-800" x-model="facadeCell.ground.kind" @change="facadeCellApply()">
-                                        <option value="wall">wall</option><option value="window">window</option><option value="door">door</option>
-                                        <option value="garage_door">garage door</option>
+                                        <option value="wall">Plain wall</option><option value="window">window</option><option value="door" :disabled="facadeCellStory === 2">Door</option>
+                                        <option value="garage_door" :disabled="facadeCellStory === 2 || facadeSlot > 2">Garage door</option>
                                     </select></label>
-                                <label>Roof
+<label x-show="facadeCell.ground.kind !== 'wall'">Opening span (slots) <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.ground.span" @change="facadeCellApply()"></label>
+<label x-show="facadeCell.ground.kind === 'window'">Size
+                                    <select class="w-full bg-gray-800" x-model="facadeCell.ground.size" @change="facadeCellApply()">
+                                        <option>tall</option><option>standard</option><option>small</option></select></label>
+<label x-show="facadeCell.ground.kind === 'window'"><input type="checkbox" x-model="facadeCell.ground.shutters" @change="facadeCellApply()"> shutters</label>
+<label x-show="facadeCell.ground.kind === 'garage_door'">Door
+                                    <select class="w-full bg-gray-800" x-model="facadeCell.ground.style" @change="facadeCellApply()">
+                                        <option>carriage</option><option>panel</option><option>glass</option></select></label>
+<label x-show="facadeCell.ground.kind === 'garage_door'">Door panels
+                                    <select class="w-full bg-gray-800" x-model.number="facadeCell.ground.leaves" @change="facadeCellApply()">
+                                        <option value="1">1</option><option value="2">2</option></select></label></div></fieldset></div>
+                                    <div x-show="facadeTask === 'roof'"><fieldset class="home-section"><legend>Roof details</legend><p class="home-help">Add a feature to the roof above this location, including above a second story.</p><div class="home-fields"><p class="home-wide home-help" x-text="'Roof feature starts at slot ' + (_origRoofSlot ?? facadeSlot)"></p><label>Added roof feature
                                     <select class="w-full bg-gray-800" x-model="facadeCell.roof.kind" @change="facadeCellApply()">
                                         <option value="eave">no added feature (eave)</option><option value="gable">gable</option><option value="dormer">dormer</option><option value="hip_end">hip end</option><option value="shed">shed roof</option><option value="shed_dormer">shed dormer</option>
                                     </select></label>
-                                <label x-show="facadeCell.roof.kind !== 'eave'">Feature cladding
+<label x-show="facadeCell.roof.kind !== 'eave'">Roof feature span <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.roof.span" @change="facadeCellApply()"></label>
+<label x-show="facadeCell.roof.kind !== 'eave'">Feature wall material
                                     <select class="w-full bg-gray-800" x-model="facadeCell.roof.cladding" @change="facadeCellApply()">
                                         <option value="">inherit</option>
-                                        <template x-for="c in facadeCladdings" :key="c"><option :value="c" x-text="c"></option></template>
+                                        <template x-for="c in facadeCladdings" :key="c"><option :value="c" x-text="facadeLabel(c)"></option></template>
                                     </select></label>
-                                <label x-show="facadeCell.ground.kind === 'window'">Size
-                                    <select class="w-full bg-gray-800" x-model="facadeCell.ground.size" @change="facadeCellApply()">
-                                        <option>tall</option><option>standard</option><option>small</option></select></label>
-                                <label x-show="facadeCell.ground.kind === 'window'"><input type="checkbox" x-model="facadeCell.ground.shutters" @change="facadeCellApply()"> shutters</label>
-                                <label x-show="facadeCell.ground.kind === 'garage_door'">Door
-                                    <select class="w-full bg-gray-800" x-model="facadeCell.ground.style" @change="facadeCellApply()">
-                                        <option>carriage</option><option>panel</option><option>glass</option></select></label>
-                                <label x-show="facadeCell.ground.kind === 'garage_door'">Leaves
-                                    <select class="w-full bg-gray-800" x-model.number="facadeCell.ground.leaves" @change="facadeCellApply()">
-                                        <option value="1">1</option><option value="2">2</option></select></label>
-                                <label x-show="facadeCell.roof.kind === 'dormer'"><input type="checkbox" x-model="facadeCell.roof.window" @change="facadeCellApply()"> dormer window</label>
-                                <label>Ground span <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.ground.span" @change="facadeCellApply()"></label>
-                                <label x-show="facadeCell.roof.kind !== 'eave'">Roof feature span <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.roof.span" @change="facadeCellApply()"></label>
-                                <p x-show="facadeCell.roof.kind === 'eave'" class="col-span-2 text-xs text-gray-400">The roof follows the block or upper-story span. Choose a feature to give it its own span.</p>
-                                <label>Porch here
+<label x-show="facadeCell.roof.kind === 'dormer'"><input type="checkbox" x-model="facadeCell.roof.window" @change="facadeCellApply()"> dormer window</label></div></fieldset><fieldset class="home-section"><legend>Feature roof pitch</legend><p class="home-help">Shared by added gables and dormers, including porch gables. Block roofs have their own pitch under House shape.</p><div class="home-fields"><label>Roof pitch <input type="range" min="22.5" max="35" step="0.5" class="w-full" x-model.number="facadeDraft.pitch_deg" @change="facadePreview()"> <span x-text="facadeDraft.pitch_deg + '°'"></span></label></div></fieldset></div>
+                                    <div x-show="facadeTask === 'porch'"><fieldset class="home-section"><legend>Porch</legend><p class="home-help">The porch stays on the ground floor. Its roof settings are separate from the house roof.</p><div class="home-fields"><p class="home-wide home-help" x-text="'Porch starts at slot ' + (_origPorchSlot ?? facadeSlot)"></p><label>Porch type
                                     <select class="w-full bg-gray-800" x-model="facadeCell.porch.type" @change="facadeCellApply()">
                                         <option value="none">none</option><option value="sitting">sitting</option><option value="stoop">stoop</option><option value="covered">covered</option>
                                     </select></label>
-                                <label x-show="facadeCell.porch.type !== 'none'">Porch span <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.porch.span" @change="facadeCellApply()"></label>
-                                <label x-show="facadeCell.porch.type !== 'none'">Porch roof
+<label x-show="facadeCell.porch.type !== 'none'">Porch span (slots) <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.porch.span" @change="facadeCellApply()"></label>
+<label x-show="facadeCell.porch.type !== 'none' && facadeCell.porch.type !== 'stoop'">Porch roof
                                     <select class="w-full bg-gray-800" x-model="facadeCell.porch.roof" @change="facadeCellApply()">
-                                        <option>flat</option><option>gable</option><option value="shed">sloped</option><option value="mixed">sloped with gable</option></select></label>
-                                <label x-show="facadeCell.porch.roof === 'mixed'">Gable starting slot
+                                        <option>flat</option><option>gable</option><option value="shed">sloped</option><option value="mixed">sloped with gable</option></select></label></div></fieldset><div x-show="facadeCell.porch.type !== 'none' && facadeCell.porch.type !== 'stoop' && facadeCell.porch.roof === 'mixed'"><fieldset class="home-section"><legend>Gable placement</legend><p class="home-help">Position the smaller gable anywhere along the sloped porch cover.</p><div class="home-fields"><label x-show="facadeCell.porch.roof === 'mixed'">Gable starting slot
                                     <select class="w-full bg-gray-800" x-model.number="facadeCell.porch.gable_start" @change="facadePorchGableStart($event.target.value)">
                                         <template x-for="slot in facadePorchGableSlots()" :key="slot"><option :value="slot" x-text="'Slot ' + slot"></option></template>
                                     </select></label>
-                                <label x-show="facadeCell.porch.roof === 'mixed'">Gable span (slots)
-                                    <input type="number" min="1" :max="Math.max(1, facadePorchGableSlots().length - (facadeCell.porch.gable_offset || 0))" class="w-16 bg-gray-800" x-model.number="facadeCell.porch.gable_span" @change="facadeCellApply()"></label>
-                            </div>
-                            <template x-if="facadeDraft">
-                                <div class="grid grid-cols-3 gap-2 text-sm">
-                                    <label>Pitch <input type="range" min="22.5" max="35" step="0.5" class="w-full" x-model.number="facadeDraft.pitch_deg" @change="facadePreview()"> <span x-text="facadeDraft.pitch_deg + '°'"></span></label>
-                                    <template x-for="role in ['roof','frame','door','trim']" :key="role">
-                                        <label><span x-text="role"></span>
-                                            <select class="w-full bg-gray-800" x-model="facadeDraft.style[role]" @change="facadePreview()">
-                                                <template x-for="opt in facadeStyleOptions[role]" :key="opt"><option :value="opt" x-text="opt"></option></template>
-                                            </select></label>
-                                    </template>
+<label x-show="facadeCell.porch.roof === 'mixed'">Gable span (slots)
+                                    <input type="number" min="1" :max="Math.max(1, facadePorchGableSlots().length - (facadeCell.porch.gable_offset || 0))" class="w-16 bg-gray-800" x-model.number="facadeCell.porch.gable_span" @change="facadeCellApply()"></label></div></fieldset></div></div>
+                                    <div x-show="facadeTask === 'upper'"><fieldset class="home-section"><legend>Second story</legend><p class="home-help">This span has its own roof. Windows and wall finishes are edited separately using the story selector.</p><div class="home-fields"><p class="home-wide home-help" x-text="'Second story starts at slot ' + (_origUpperSlot ?? facadeSlot)"></p><label>Stories at this location
+                                    <select class="w-full bg-gray-800" x-model="facadeCell.upper.mode" @change="facadeCellApply()">
+                                        <option value="none">none</option><option value="two">two stories</option>
+                                    </select></label>
+<label x-show="facadeCell.upper.mode === 'two'">Second-story span (slots) <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.upper.span" @change="facadeCellApply()"></label>
+<label x-show="facadeCell.upper.mode === 'two'">Roof shape
+                                    <select class="w-full bg-gray-800" x-model="facadeCell.upper.roof.form" @change="facadeCellApply()"><option>gable</option><option>hip</option></select></label>
+<label x-show="facadeCell.upper.mode === 'two'">Roof ridge direction
+                                    <select class="w-full bg-gray-800" x-model="facadeCell.upper.roof.ridge" @change="facadeCellApply()"><option value="x">along the street</option><option value="z">toward the street</option></select></label>
+<label x-show="facadeCell.upper.mode === 'two'" class="col-span-2">Roof pitch <input type="range" min="22.5" max="35" step="0.5" class="w-full" x-model.number="facadeCell.upper.roof.pitch_deg" @change="facadeCellApply()"></label></div></fieldset></div>
+                                    <div x-show="facadeTask === 'finishes'"><fieldset class="home-section"><legend>Selected street wall</legend><p class="home-help">Overrides the material or colour for these slots on this story. Side and rear walls keep the story defaults.</p><div class="home-fields"><p class="home-wide home-help" x-text="'Editing story ' + facadeCellStory"></p><label>Wall material<select x-model="facadeCell.finish.cladding" @change="facadeCellApply()"><option value="">Use story material</option><template x-for="c in facadeCladdings" :key="c"><option :value="c" x-text="facadeLabel(c)"></option></template></select></label><label>Wall colour<select x-model="facadeCell.finish.body" @change="facadeCellApply()"><option value="">Use story colour</option><template x-for="c in facadeStyleOptions.body" :key="c"><option :value="c" x-text="facadeLabel(c)"></option></template></select></label><label>Wall finish span (slots) <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.finish.span" @change="facadeCellApply()"></label></div></fieldset></div>
                                 </div>
-                            </template>
-                            <ul class="text-xs text-amber-300" x-show="facadeNotes.length">
-                                <template x-for="n in facadeNotes" :key="n"><li x-text="n"></li></template>
-                            </ul>
-                            <div class="flex gap-2">
-                                <button class="px-3 py-1 rounded bg-teal-600" @click="facadeSaveNew()">Save as new</button>
-                                <button class="px-3 py-1 rounded bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed" :disabled="!facadeDraftId || facadeDraftId === 'canonical'" @click="facadeOverwrite()">Overwrite</button>
-                                <button class="px-3 py-1 rounded bg-gray-700" @click="facades[0] && facadeLoad(facades[0])">Reset to canonical</button>
                             </div>
-                            <div class="flex gap-2 items-center">
-                                <button class="px-3 py-1 rounded bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed" :disabled="!!facadeBusy" @click="facadePreview3D()">Preview in 3D</button>
-                                <button class="px-3 py-1 rounded bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed" x-show="facadeDraftSource === 'photo' && facadePhotoToken" :disabled="!!facadeBusy" @click="facadeCritique()">Compare to photo</button>
-                                <span class="text-xs text-gray-400" x-text="facadeBusy"></span>
-                            </div>
-                            <div x-show="facadePreviewToken" class="rounded-xl overflow-hidden bg-black" style="width:700px;height:500px">
-                                <iframe id="facade-preview-frame" @load="facadeFrameLoaded()" :src="facadePreviewToken ? (apiBase + 'house?draft=' + facadePreviewToken + '&angle=' + facadePreviewAngle + '&quality=medium&day=1') : 'about:blank'"
-                                        style="width:1400px;height:1000px;transform:scale(0.5);transform-origin:0 0;border:0"></iframe>
-                            </div>
-                            <div x-show="facadeRenders.draft || facadeRenders.revised" class="grid md:grid-cols-2 gap-3">
+                        </div></template>
+                    </div>
+                    <aside class="home-preview"><div class="home-preview-inner"><div class="home-toolbar"><div><h3 class="font-semibold">Design preview</h3><p class="home-help" x-text="facadePreviewToken ? (facadePreviewStale ? 'Settings changed. Refresh to see them.' : 'Showing the previewed draft.') : 'Build a preview to see your design.'"></p></div><button type="button" class="bg-teal-700" :disabled="!!facadeBusy || !facadeDraft" @click="facadePreview3D()" x-text="facadePreviewToken ? 'Refresh preview' : 'Preview in 3D'"></button></div>
+                        <div x-show="!facadePreviewToken" class="home-preview-empty">Your house preview appears here. It does not change the active design.</div>
+                        <div x-show="facadePreviewToken" class="home-preview-canvas"><iframe title="House design preview" id="facade-preview-frame" @load="facadeFrameLoaded()" :src="facadePreviewToken ? (apiBase + 'house?draft=' + facadePreviewToken + '&angle=' + facadePreviewAngle + '&quality=medium&day=1&editor=1') : 'about:blank'"></iframe></div>
+                        <div class="home-notice" x-show="facadeNotes.length" role="status"><b>Adjustments to your design</b><ul><template x-for="n in facadeNotes" :key="n"><li x-text="n"></li></template></ul></div>
+                        <div class="home-toolbar"><button type="button" class="bg-amber-800" x-show="facadeDraftSource === 'photo' && facadePhotoToken" :disabled="!!facadeBusy" @click="facadeCritique()">Compare to photo</button><span class="home-help" role="status" x-text="facadeBusy"></span><a href="house" target="_blank" class="underline">Open current house</a></div>
+                                                    <div x-show="facadeRenders.draft || facadeRenders.revised" class="grid md:grid-cols-2 gap-3">
                                 <div><img :src="facadeRenders.draft" class="rounded-lg"><button class="mt-1 px-3 py-1 rounded bg-teal-600" @click="facadePickDraft()">Use this</button><div class="text-xs text-gray-400">the draft</div></div>
                                 <div x-show="facadeRenders.revised"><img :src="facadeRenders.revised" class="rounded-lg"><button class="mt-1 px-3 py-1 rounded bg-teal-600" @click="facadePickRevised()">Use this</button><div class="text-xs text-gray-400">after comparing to your photo</div></div>
                             </div>
                             <ul class="text-xs text-gray-300" x-show="facadeCritiqueResult.reasons.length"><template x-for="r in facadeCritiqueResult.reasons" :key="r"><li x-text="r"></li></template></ul>
                             <div class="text-xs text-amber-200" x-show="facadeCritiqueResult.unexpressed.length">Not in the model: <span x-text="facadeCritiqueResult.unexpressed.join(' · ')"></span></div>
-                        </div>
-                    </div>
+
+                    </div></aside></div>
                 </div>
 
                 <!-- Outside hands (People tab sub-panel, load arc A1).
@@ -4710,6 +4682,10 @@
                 facadeDraftId: null,
                 facadeDraftSource: 'hand',
                 facadeSlot: null,
+                facadeTask: 'shape',
+                facadeTasks: [{id:'shape',label:'House shape'}, {id:'finishes',label:'Walls & colours'}, {id:'openings',label:'Windows & doors'}, {id:'roof',label:'Roof details'}, {id:'porch',label:'Porch'}, {id:'upper',label:'Second story'}],
+                _origRoofSlot: null, _origPorchSlot: null, _origUpperSlot: null,
+                facadePreviewStale: false,
                 facadeCellStory: 1,
                 facadeCell: { finish: {cladding: '', body: '', span: 1}, ground: { kind: 'wall', span: 1, shutters: false, story: 1 }, roof: { kind: 'eave', span: 1, cladding: '' }, porch: { type: 'none', span: 1, roof: 'flat', gable_start: 0, gable_offset: 0, gable_span: 2 }, upper: { mode: 'none', span: 1, roof: { form: 'gable', ridge: 'x', pitch_deg: 22.5 } } },
                 facadeNotes: [],
@@ -5750,6 +5726,17 @@
                     this.facadeCell.porch.gable_offset = start - slots[0];
                     this.facadeCellApply();
                 },
+                facadeLabel(value) {
+                    return ({batten:'Board & batten',lap:'Horizontal siding',frame:'Window frame',door:'Door',roof:'Roof',trim:'Trim'})[value] || String(value).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+                },
+                facadeSideDoor() {
+                    const front = (this.facadeDraft?.ground || []).find(g => g.kind === 'garage_door');
+                    return this.facadeDraft?.blocks?.garage?.side_door || {style:front?.style || 'carriage', leaves:front?.leaves || 1, width:3.6, height:3};
+                },
+                facadeSetSideDoor(key, value) {
+                    this.facadeDraft.blocks.garage.side_door = {...this.facadeSideDoor(), [key]:value};
+                    this.facadeBlockApply();
+                },
                 facadePorch(i) {
                     return (this.facadeDraft.ground || []).find(e => e.kind === 'porch' && i >= e.slot && i < e.slot + e.span);
                 },
@@ -5909,6 +5896,7 @@
                     this.facadePreview();
                 },
                 async facadePreview(spec) {
+                    this.facadePreviewStale = true;
                     try {
                         const res = await fetch(`${this.apiBase}api/house/facades/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spec: spec || this.facadeDraft }) });
                         const data = await res.json();
@@ -5927,17 +5915,23 @@
                     this.facadeDraft.blocks[b].base = on ? { material: 'stone', height: 0.9, body: 'stone_grey' } : null;
                     this.facadeBlockApply();
                 },
-                async facadeBlockApply() { await this.facadePreview(); },
+                async facadeBlockApply() {
+                    if (this.facadeDraft.blocks.garage.orientation === 'side' && !this.facadeDraft.blocks.garage.side_door)
+                        this.facadeDraft.blocks.garage.side_door = {...this.facadeSideDoor()};
+                    await this.facadePreview();
+                },
                 async facadePreview3D() {
+                    this.facadeBusy = 'Building preview...';
                     try {
                         const res = await fetch(`${this.apiBase}api/house/facades/draft`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spec: this.facadeDraft }) });
                         const data = await res.json();
                         if (!res.ok) { showGlobalAlert(data.detail || 'Could not preview'); return; }
                         this.facadeDraft = data.spec; this.facadeNotes = data.notes;
-                        if (this.facadeSlot !== null) this.facadeLoadCell(); this.facadePreviewToken = data.token; this.facadePreviewAngle = 0;
+                        if (this.facadeSlot !== null) this.facadeLoadCell(); this.facadePreviewToken = data.token; this.facadePreviewAngle = 0; this.facadePreviewStale = false;
                         this.facadeRenders = { draft: null, revised: null };
                         this.facadeCritiqueResult = { reasons: [], unexpressed: [], revised: null };
                     } catch (e) { console.error('Failed to preview', e); showGlobalAlert('Could not preview'); }
+                    finally { this.facadeBusy = ''; }
                 },
                 // ORBIT (house.js orbitPos): stop 0 is the resting street view (centre).
                 // At stop 0 the camera's own right-hand axis (cross(up, cameraPos-target))

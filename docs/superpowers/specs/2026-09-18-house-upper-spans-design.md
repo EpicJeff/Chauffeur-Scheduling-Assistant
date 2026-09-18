@@ -151,3 +151,12 @@ V3 gains two optional fields without changing existing facades:
 Material and body colour resolve independently from block defaults through story defaults to street-span overrides. Story defaults cover the block's walls at that story; slot spans cover the street-facing wall only. Base bands and roof-feature cladding retain their separate controls. Empty overrides are omitted. Adjacent identical overrides merge only within one block/story. Editing a continuation slot splits the existing finish span around the selected range. First explicit values win per property for overlapping imported rows. Photo generation uses block-relative fractions for finish spans, like opening spans.
 
 The September 15 spec's combined `MAX_WINDOWS = 10` cap is superseded: normalization no longer drops wall windows to meet a total. Slot occupancy and upper-story coverage provide structural bounds. Dormer/gable/porch caps are unchanged. The expanded stress fixture fills both stories (32 wall windows plus six dormer windows). Browser verification is not a claim of acceptable frame rates on every wall panel.
+
+
+## Editor and exterior follow-up (v2.499.102)
+
+The editor uses six task groups with explicit block/story/slot scope and numbered slot targets. A mixed porch's starting slot and gable span stay together under Porch. A responsive design-only preview remains separate from save/activate actions and identifies stale renders.
+
+Optional `blocks.garage.side_door` stores `{style, leaves, width, height}` for side entry without creating a street opening. Width/height bounds are 2.4?4.4 and 2.4?4.0 scene units; default size is 3.6 ? 3.0. Opening geometry follows the dimensions. This does not make block width editable.
+
+The exterior exposes five directly tappable room markers at every orbit stop, including the kitchen and PIN-gated Study. They represent room positions through the shell, not a visible doorway. The Study uses the existing unlock flow.

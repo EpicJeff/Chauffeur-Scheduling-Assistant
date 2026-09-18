@@ -80,6 +80,8 @@
           border-radius: 50%; display: grid; place-items: center;
           color: #fff4dc; background: rgba(28,23,16,.30);
           box-shadow: 0 0 0 1px rgba(28,23,16,.55); }
+        button.house-hint { cursor: pointer; padding: 0; }
+        button.house-hint:focus-visible { outline: 3px solid #fff4dc; outline-offset: 5px; }
         .house-hint::before { content: ''; position: absolute; inset: -2px;
           border: 2px solid rgba(240,184,110,.72); border-radius: inherit;
           animation: house-hint-wave 3.6s ease-out var(--hint-delay, 0s) infinite; }
@@ -178,18 +180,21 @@
         #overlay-door .flex-1 { flex-basis: 100%; }
         #overlay-door .truncate { white-space: normal; overflow: visible; }
         #overlay-door .text-right { text-align: left; }
+        {% if request.query_params.get('editor') == '1' %}
+        .editor-chrome, #house-glance, #house-hints, #kitchen-title { display: none !important; }
+        {% endif %}
     </style>
     <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
     <link rel="stylesheet" href="{{ 'static/house_life.css'|ver }}">
 </head>
 
 <body class="flex flex-col h-screen overflow-hidden">
-    {% include 'nav.html' %}
+    <div class="editor-chrome">{% include 'nav.html' %}</div>
 
     <div id="kitchen-wrap" class="panel-page">
         <h1 id="kitchen-title" class="panel-page-title">The Home</h1>
         <button id="house-back" type="button" hidden aria-label="Go back"></button>
-        <div id="house-hints" hidden aria-hidden="true"></div>
+        <div id="house-hints" hidden aria-label="House rooms and features"></div>
         <!-- ORBIT (spec §4): the hand path for the eight stops. house.js
              shows them at the exterior and hides them in a room, and wires
              both to chfOrbitStep. Swipe, the arrow keys and ?angle= reach
@@ -236,7 +241,7 @@
             </div>
         </div>
     </div>
-    {% include 'components/control_center.html' %}
+    <div class="editor-chrome">{% include 'components/control_center.html' %}</div>
     {% include 'components/moments_hearth.html' %}
     {% include 'components/agenda_row.html' %}
     {% include 'components/packing_card.html' %}

@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.101 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.102 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8097,3 +8097,14 @@ The old combined ten-window cap is removed. Windows remain subject to available 
 ### Porch gable placement (v2.499.101)
 
 The sloped-with-gable porch editor exposes an absolute starting slot and a gable span. The selector includes every slot within the porch, even when editing from a continuation slot. Moving the gable preserves the porch anchor; its span clamps to the remaining porch width. Shortening the porch keeps the gable within it. Saved data retains the compatible relative `gable_offset` and `gable_span` fields.
+
+
+### House editor UX, exterior access and side garage doors (v2.499.102)
+
+The Home editor in People now groups controls into House shape, Walls & colours, Windows & doors, Roof details, Porch, and Second story. The location strip shows slot numbers with 44px targets; each group explains its scope and span anchor. Story selectors appear for story-specific opening/finish edits. Porch cover and gable placement are adjacent, while base bands and story finish defaults are grouped under their block. Save-as-new, save changes and use-on-house are distinct actions. A responsive preview sits beside the inspector on wide screens and below on phones; changes mark the preview stale until refreshed. Embedded previews suppress the application navigation, chat, glance overlay and room markers to keep the design visible.
+
+All five room markers (kitchen, living, mudroom, garage, Study) appear from every exterior orbit angle, projected over room locations without shell occlusion. They are keyboard-accessible buttons with direct navigation and collision spacing. Empty overlay space still passes input through to the scene. The Study button invokes the existing parent-PIN flow and never calls direct Study entry.
+
+House shape exposes side garage door style (carriage, panels, glass), one/two panels, width and height. Optional `blocks.garage.side_door` persists `{style, leaves, width, height}` independently of front openings. Width is bounded to 2.4?4.4 scene units, height to 2.4?4.0, default 3.6 ? 3.0. Door geometry and the side-wall opening resize together. Block depth remains a separate building control; the block's overall width is still fixed. Existing front facades are unchanged.
+
+Verification: editor methods and facade schema gates; Chromium desktop/390px editor interactions and overflow checks; actual side-door geometry; all five room markers at eight orbit stops; kitchen click-through and Study gate dispatch. Two pre-existing missing Alpine variables in account-scope controls (`scopeTuneOpen`, `scopeMeta`) are explicitly excluded from the house-editor console assertion; no new house-editor errors are allowed.

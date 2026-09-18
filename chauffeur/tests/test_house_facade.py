@@ -761,6 +761,18 @@ def scenario_the_pipeline_records_its_request_count():
         model_pools.call_pool_json = orig
 
 
+def scenario_side_door_settings_round_trip():
+    raw = _spec()
+    raw['blocks']['garage'].update(orientation='side', side_door={'style':'glass', 'leaves':2, 'width':4.4, 'height':3.8})
+    spec, _ = hf.normalize(raw)
+    check(spec['blocks']['garage']['side_door'] == raw['blocks']['garage']['side_door'], 'side door settings survive')
+    check(hf.normalize(spec)[0] == spec and not hf.validate_block_model(spec), 'side door round trip')
+    check('side_door' not in hf.normalize(hf.CANONICAL)[0]['blocks']['garage'], 'old front house unchanged')
+    raw['blocks']['garage']['side_door']['width'] = 100
+    check(hf.validate_block_model(raw), 'photo model rejects oversize door')
+    check(hf.normalize(raw)[0]['blocks']['garage']['side_door']['width'] == 4.4, 'hand editor clamps safe opening')
+
+
 def scenario_finish_inheritance_and_round_trip():
     raw = _spec(story_finishes={'main': {'1': {'body': 'brick_red'}, '2': {'cladding': 'shingle'}}},
                 finishes=[{'slot': 6, 'span': 5, 'story': 1, 'cladding': 'brick'},
@@ -1129,7 +1141,7 @@ def scenario_home_section_pins():
     class_body = tpl[k0:tpl.index('facadeCellApply() {', k0)]
     check("facadeEntry('ground', i, 1)" in class_body and "facadeEntry('ground', i, 2)" in class_body,
           'facadeCellClass looks up story 1 then story 2, like the label and the select do')
-    check(tpl.count(':disabled="!!facadeBusy"') == 2,
+    check(':disabled="!!facadeBusy"' in tpl and ':disabled="!!facadeBusy || !facadeDraft"' in tpl,
           'both Preview in 3D and Compare to photo are disarmed while one is running')
     check('res.status === 409' in tpl and 'Still comparing' in tpl,
           'a concurrent critique is reported as a wait, not a failure')
@@ -1277,6 +1289,7 @@ if __name__ == '__main__':
                scenario_an_unseen_garage_is_a_plain_block,
                scenario_the_draft_cache_is_bounded,
                scenario_the_pipeline_records_its_request_count,
+               scenario_side_door_settings_round_trip,
                scenario_finish_inheritance_and_round_trip,
                scenario_shed_windows_do_not_remove_wall_windows,
                scenario_the_two_v2_bridges_are_declared,

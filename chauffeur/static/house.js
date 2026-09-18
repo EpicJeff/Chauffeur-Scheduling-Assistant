@@ -4754,7 +4754,10 @@
     var GARAGE_SIDE = BLOCKS.garage.orientation === 'side';
     /* the side opening: 3.6 clear between these two z lines (the same
        3.6 the street bay's piers leave), and the leaf centred on 4.0. */
-    var SIDE_DOOR_Z = 4.0, SIDE_OPEN_Z0 = 2.30, SIDE_OPEN_Z1 = 5.90;
+    var SIDE_DOOR = BLOCKS.garage.side_door || {style:'carriage', leaves:1, width:3.6, height:3.0};
+    var SIDE_DOOR_Z = 4.0;
+    var SIDE_OPEN_Z0 = SIDE_DOOR_Z - SIDE_DOOR.width / 2;
+    var SIDE_OPEN_Z1 = SIDE_DOOR_Z + SIDE_DOOR.width / 2;
     /* Every block roof is {form, ridge}: nothing about ridge direction
        is fixed (spec section 3). Canonical is today's look — both blocks
        gabled with the ridge running east/west. window.HOUSE_ROOF_FORMS
@@ -6146,7 +6149,8 @@
       if (GARAGE_SIDE) {
         GDOOR = new T.Group();
         GDOOR.rotation.y = -Math.PI / 2;
-        GDOOR.position.set(GARAGE_BLOCK.west, 0, SIDE_DOOR_Z);
+        GDOOR.scale.set(SIDE_DOOR.width / 3.6, SIDE_DOOR.height / 3.0, 1);
+        GDOOR.position.set(GARAGE_BLOCK.west, 0.1 * (1 - GDOOR.scale.y), SIDE_DOOR_Z);
         garageDoorG.add(GDOOR);
         cx = 0; z = WALL_T4 / 2 + 0.07;
       }
@@ -6524,7 +6528,7 @@
       if (GARAGE_SIDE)
         garageDoorAt({ slot: GARAGE_BAY_SLOTS[0], kind: 'garage_door',
                        span: GARAGE_BAY_SLOTS[1] - GARAGE_BAY_SLOTS[0] + 1,
-                       style: 'carriage', leaves: 1 });
+                       style: SIDE_DOOR.style, leaves: SIDE_DOOR.leaves });
     }
     /* ================= END FACADE ===================================== */
 
@@ -6802,7 +6806,7 @@
          It starts AT the leaf rather than at a headroom line, because a
          slot between the two would look straight through the face. */
       (function () {
-        var hg = shellGroup(), y0 = 3.10;
+        var hg = shellGroup(), y0 = 0.10 + SIDE_DOOR.height;
         shellBox(hg, WALL_T4, EXT_TOP4 - y0, SIDE_OPEN_Z1 - SIDE_OPEN_Z0,
                  cladColour('garage'), GARAGE_BLOCK.west, (y0 + EXT_TOP4) / 2,
                  (SIDE_OPEN_Z0 + SIDE_OPEN_Z1) / 2,
@@ -13837,17 +13841,11 @@
     study_gauges: 'schedule', study_monitor: 'study', study_map: 'schedule'
   };
   var EXTERIOR_HINTS = [
-    ['back_door', 'Kitchen', ['moments', 'meals', 'lists', 'calendar', 'weather'], 'entry'],
-    ['front_door', 'Living room', ['music', 'critters', 'tasks', 'programs', 'study'], 'entry', ['tasks','programs']],
-    /* MASSING ARC 1: mudroom_cross_roof_south became the south deck of
-       the one garage-block roof, under the same room ownership
-       (slopeRooms[1] = 'mudroom'), so the Mudroom marker follows the
-       deck across the rename. NOT mudroom_front: that face sits at
-       z 10.10 behind the porch and the main block and chfNavProbe
-       returns null for it from the street view -- the same reason this
-       marker has always ridden the roof rather than the wall. */
-    ['garage_block_roof_south', 'Mudroom', ['schedule', 'chores', 'routines'], null, ['packing','chores','routines']],
-    ['garage_front', 'Garage', ['garage', 'errands'], 'front', ['errands']]
+    ['kitchen', 'Kitchen', ['moments', 'meals', 'lists', 'calendar', 'weather']],
+    ['living', 'Living room', ['music', 'critters', 'tasks', 'programs'], ['tasks','programs']],
+    ['mudroom', 'Mudroom', ['schedule', 'chores', 'routines'], ['packing','chores','routines']],
+    ['garage', 'Garage', ['garage', 'errands'], ['errands']],
+    ['study', 'Study (Parent PIN)', ['study'], ['intake','tasks']]
   ];
   function packingAttention() {
     return (((state || {}).mudroom || {}).packs || []).reduce(function (n, p) {
@@ -13878,13 +13876,9 @@
   function hintChoices() {
     if (mode === 'exterior') {
       var exterior = EXTERIOR_HINTS.map(function (h) {
-      /* BLOCKS (spec 2026-09-17 section 0): a `piece` hint names the
-         CANONICAL roof piece; roofAlias hands back the piece that
-         actually stands there under this block's form and ridge. `key`
-         stays canonical, so hintAttention still matches. */
-      var spec = {}, kind = h[3] || 'piece';
-      spec[kind] = kind === 'piece' ? webgl.roofAlias(h[0]) : h[0];
-      return { spec: spec, label: h[1], key: h[0], icons: h[2], attention: h[4] || [] };
+        var b = webgl.ROOM_AABB[h[0]];
+        return { spec: {point: [(b[0]+b[1])/2, b[3]+0.6, (b[4]+b[5])/2]},
+                 label:h[1], key:h[0], room:h[0], icons:h[2], attention:h[3] || [] };
       });
       return exterior;
     }
@@ -13911,12 +13905,36 @@
     if (!HINT || !webgl || focused || tween ||
         typeof window.chfNavProbe !== 'function') return;
     HINT.textContent = '';
-    var choices = hintChoices(), shown = 0;
+    var choices = hintChoices(), shown = 0, placed = [];
     for (var i = 0; i < choices.length; i++) {
       var choice = choices[i];
       var point = window.chfNavProbe(choice.spec);
+      if (choice.room) {
+        // Room navigation remains available through the shell from every angle.
+        var rect = webgl.R.domElement.getBoundingClientRect();
+        point = point || {cx:rect.left + rect.width*(i+1)/(choices.length+1), cy:rect.top+rect.height/2};
+        var left = rect.left+50, right = rect.right-50, top = rect.top+60, bottom = rect.bottom-125;
+        point.cx = Math.max(left,Math.min(right,point.cx));
+        point.cy = Math.max(top,Math.min(bottom,point.cy));
+        for (var attempt=0; attempt<40; attempt++) {
+          if (!placed.some(function(p) { return Math.abs(p.cx-point.cx)<100 && Math.abs(p.cy-point.cy)<100; })) break;
+          point.cy += 105;
+          if (point.cy>bottom) { point.cy=top; point.cx+=105; if(point.cx>right) point.cx=left; }
+        }
+        placed.push({cx:point.cx,cy:point.cy});
+      }
       if (!point) continue;
-      var marker = document.createElement('div');
+      var marker = document.createElement(choice.room ? 'button' : 'div');
+      if (choice.room) {
+        marker.type = 'button'; marker.dataset.room = choice.room;
+        marker.setAttribute('aria-label', 'Open ' + choice.label);
+        marker.style.pointerEvents = 'auto';
+        marker.addEventListener('click', (function(room) { return function(event) {
+          event.stopPropagation();
+          if (room === 'study') window.dispatchEvent(new CustomEvent('chf-house-open', {detail:'study'}));
+          else enterRoom(room,null);
+        }; })(choice.room));
+      }
       marker.className = 'house-hint' + (choice.icons.length > 3 ? ' crowded' : '');
       marker.dataset.target = choice.key;
       if (choice.action) marker.dataset.houseAction = choice.action;

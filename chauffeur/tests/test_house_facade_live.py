@@ -1228,10 +1228,55 @@ def scenario_story_and_slot_finishes_build_clean():
             check(not errors, f'{quality} cutaway builds clean: {errors}')
 
 
+def scenario_exterior_rooms_and_side_door_controls():
+    from services import house_facade as hf
+    from pathlib import Path
+    served = live_app(_seed)
+    if served is None:
+        return
+    spec = copy.deepcopy(hf.CANONICAL)
+    spec['blocks']['garage'].update(orientation='side', side_door={'style':'glass','leaves':2,'width':4.4,'height':3.8})
+    spec, _ = hf.normalize(spec)
+    with served.browser() as page:
+        errors = []
+        page.on('pageerror', lambda e: errors.append(str(e)))
+        page.goto(served.url('house?quality=high&day=1&draft=' + hf.issue_draft(spec)))
+        page.wait_for_function('window.chfNavProbe && window.chfNavProbe({settled:true})', timeout=30000)
+        for angle in range(8):
+            page.evaluate('(a) => window.chfOrbitTo(a)', angle)
+            page.wait_for_function('window.chfNavProbe({settled:true})', timeout=30000)
+            page.wait_for_function("document.querySelectorAll('#house-hints button[data-room]').length === 5")
+            rooms = page.locator('#house-hints button[data-room]').evaluate_all('(els) => els.map(e=>e.dataset.room).sort()')
+            check(rooms == ['garage','kitchen','living','mudroom','study'], f'all rooms at angle {angle}')
+            for room in rooms:
+                marker = page.locator('[data-room="' + room + '"]')
+                check(marker.is_visible(), f'{room} visible at {angle}')
+        page.evaluate('window.chfOrbitTo(0)')
+        page.wait_for_function('window.chfNavProbe({settled:true})')
+        page.wait_for_selector('#house-hints button[data-room="kitchen"]')
+        shots = os.environ.get('HOUSE_SHOTS')
+        if shots:
+            Path(shots).mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(Path(shots, 'all-exterior-rooms.png')))
+        vertices = page.evaluate("window.chfFabricVertices('garage_door')")
+        check(vertices and max(p[2] for p in vertices)-min(p[2] for p in vertices) > 4.3, 'side door width rendered')
+        check(max(p[1] for p in vertices)-min(p[1] for p in vertices) > 3.7, 'side door height rendered')
+        page.locator('#house-hints button[data-room="kitchen"]').click()
+        page.wait_for_function("window.chfNavProbe({settled:true}) && window.chfHouseMode() === 'kitchen'")
+        page.evaluate('window.chfHouseExit()')
+        page.wait_for_function('window.chfNavProbe({settled:true})')
+        page.wait_for_selector('#house-hints button[data-room="study"]')
+        page.evaluate("window.addEventListener('chf-house-open', e => window.__studyAction=e.detail)")
+        page.locator('#house-hints button[data-room="study"]').click()
+        check(page.evaluate("window.__studyAction === 'study' && window.chfHouseMode() === 'exterior'"), 'Study uses parent gate, not direct entry')
+        check(not errors, f'room markers and side door build clean: {errors}')
+
+
 if __name__ == '__main__':
     scenario_canonical_facade_pins_the_hand_built_elevation()
     scenario_worst_case_facade_builds_clean()
     scenario_story_and_slot_finishes_build_clean()
+    scenario_exterior_rooms_and_side_door_controls()
     scenario_roof_features_stop_at_the_roof_line()
     scenario_a_saved_gable_over_the_study_stays_outside()
     scenario_a_draft_token_renders_day_locked_and_captures()

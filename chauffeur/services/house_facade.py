@@ -267,6 +267,15 @@ def validate_block_model(obj):
                     enum(b['base'], 'body', STYLE['body'], p + '.base')
             if name == 'garage':
                 enum(b, 'orientation', ORIENTATIONS, p)
+                if 'side_door' in b:
+                    door = need(b, 'side_door', dict, p)
+                    if door is not None:
+                        enum(door, 'style', GARAGE_STYLES, p + '.side_door')
+                        rng(door, 'width', 2.4, 4.4, p + '.side_door')
+                        rng(door, 'height', 2.4, 4.0, p + '.side_door')
+                        leaves = need(door, 'leaves', int, p + '.side_door')
+                        if leaves not in (1, 2):
+                            errs.append(p + '.side_door.leaves must be 1 or 2')
     def validate_finish(row, path):
         if not isinstance(row, dict):
             errs.append(f'{path} not an object')
@@ -506,6 +515,14 @@ def _norm_block(name, raw, notes):
         b['base'] = None
     if name == 'garage':
         b['orientation'] = _pick(raw.get('orientation'), ORIENTATIONS, 'front')
+        door = raw.get('side_door')
+        if isinstance(door, dict):
+            b['side_door'] = {
+                'style': _pick(door.get('style'), GARAGE_STYLES, 'carriage'),
+                'leaves': 2 if _int(door.get('leaves'), 1) == 2 else 1,
+                'width': round(min(4.4, max(2.4, _num(door.get('width'), 3.6))), 2),
+                'height': round(min(4.0, max(2.4, _num(door.get('height'), 3.0))), 2),
+            }
     return b
 
 
@@ -1012,6 +1029,9 @@ Return exactly this shape (a fraction-based feature has "block"/"at"/"width" ins
   "story_finishes": {{"main": {{"1": {{"cladding": one of {claddings}, "body": one of {body}}}}}}},
   "finishes": [{{"block": "main"|"garage", "at": 0..1, "width": 0..1, "story": 1|2, "cladding": one of {claddings}, "body": one of {body}}}],
   "unexpressed": [up to 8 short strings naming real details the shape above cannot capture]}}
+The garage may also include optional side_door: style (carriage/panel/glass), leaves (1 or 2),
+width (2.4..4.4, default 3.6) and height (2.4..4.0, default 3.0), in scene units.
+This controls the side-facing door independently of street openings.
 Finishes are optional overrides. Omit unchanged cladding/body fields to inherit independently.
 Story defaults may name main and/or garage, stories "1" and/or "2"; they wrap the block.
 Finish spans affect the street-facing wall only, even behind windows or doors.

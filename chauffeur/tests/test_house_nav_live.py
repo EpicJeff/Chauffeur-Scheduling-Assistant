@@ -59,32 +59,15 @@ def scenario_navigation_real_mouse():
               'chfNavProbe must exist for a real-mouse test to derive its '
               'own pixels, never a hard-coded screen point')
 
-        # MASSING ARC 1 (spec sections 2 and 4): the Kitchen marker moved
-        # off the patio slider (interior now) onto the new back door, and
-        # the Mudroom marker follows its deck's rename
-        # (mudroom_cross_roof_south -> garage_block_roof_south). The
-        # back door is on the main's NORTH wall, which stop 0 cannot see,
-        # so three markers draw at the resting view; the Kitchen one
-        # arrives further down, at the orbit stop that can see it.
-        page.wait_for_function(
-            "() => document.querySelectorAll("
-            "'#house-hints:not([hidden]) .house-hint').length === 3",
-            timeout=10000)
-        hints = page.locator('#house-hints .house-hint')
-        exterior_targets = set(hints.evaluate_all(
-            "els => els.map(e => e.dataset.target)"))
-        check(exterior_targets == {
-            'front_door', 'garage_block_roof_south', 'garage_front'},
-              'persistent exterior markers must identify every room entrance '
-              'the street view can see')
-        check(page.locator('#house-hints').evaluate(
-            "e => getComputedStyle(e).pointerEvents") == 'none',
-              'discovery markers must never intercept mouse or touch input')
-        living_hint = page.locator(
-            '#house-hints .house-hint[data-target="front_door"]')
-        check(living_hint.locator('svg').count() == 5,
-              'living-room marker must preview music, critters, tasks, '
-              'programs and the parent Study')
+        # All five rooms are directly reachable through the exterior shell.
+        page.wait_for_function("document.querySelectorAll('#house-hints button[data-room]').length === 5", timeout=10000)
+        hints = page.locator('#house-hints button[data-room]')
+        check(set(hints.evaluate_all('els => els.map(e => e.dataset.room)')) ==
+              {'kitchen','living','mudroom','garage','study'}, 'all exterior rooms')
+        check(page.locator('#house-hints').evaluate("e => getComputedStyle(e).pointerEvents") == 'none',
+              'empty overlay passes through input')
+        living_hint = page.locator('#house-hints button[data-room="living"]')
+        check(living_hint.locator('svg').count() == 4, 'Study has its own room marker')
 
         def probe(spec_js):
             page.wait_for_function("window.chfNavProbe({settled:true})",
@@ -170,10 +153,10 @@ def scenario_navigation_real_mouse():
                                timeout=20000)
         page.wait_for_function(
             "() => [...document.querySelectorAll('#house-hints .house-hint')]"
-            ".some(e => e.dataset.target === 'back_door')", timeout=10000)
+            ".some(e => e.dataset.target === 'kitchen')", timeout=10000)
         check(page.evaluate(
             "[...document.querySelectorAll('#house-hints .house-hint')]"
-            ".some(e => e.dataset.target === 'back_door')"),
+            ".some(e => e.dataset.target === 'kitchen')"),
               'the Kitchen marker is drawn at the stop that can see the '
               'back door')
         p = probe("{entry:'back_door'}")
