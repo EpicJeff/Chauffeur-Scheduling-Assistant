@@ -17,8 +17,7 @@
           "form": "gable",
           "pitch_deg": 22.5,
           "ridge": "x"
-        },
-        "stories": 1
+        }
       },
       "main": {
         "base": {
@@ -31,10 +30,9 @@
         "depth": 0.0,
         "roof": {
           "form": "gable",
-          "pitch_deg": 22.5,
-          "ridge": "z"
-        },
-        "stories": 2
+          "ridge": "x",
+          "pitch_deg": 22.5
+        }
       }
     },
     "ground": [
@@ -99,10 +97,19 @@
       "trim": "white"
     },
     "unexpressed": [
-      "metal porch roof",
-      "wing with the ridge along the street",
-      "partial second story"
+      "metal porch roof"
     ],
-    "version": 2
+    "version": 3,
+    "upper": [
+      {
+        "slot": 10,
+        "span": 4,
+        "roof": {
+          "form": "gable",
+          "ridge": "z",
+          "pitch_deg": 22.5
+        }
+      }
+    ]
   }
 }

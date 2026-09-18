@@ -43,9 +43,10 @@ GARAGE_BAY_SLOTS = (0, 2)
 # face a slot is on and which room that face fronts.
 
 # MASSING ARC 2 (spec 2026-09-17-house-blocks-materials-design.md
-# section 2): the facade speaks a version-2 BLOCK MODEL. Cladding, body,
-# base band, depth, stories and roof form/ridge/pitch are per BLOCK;
-# `style` keeps only the four roles that are not a block's own skin.
+# section 2 plus the upper-span insert): the facade speaks a version-3
+# BLOCK MODEL. Cladding, body, base band, depth and the ground roof are
+# per block; `upper` owns second-story runs and their roofs; `style`
+# keeps only the four roles that are not a block's own skin.
 GROUND_KINDS = ('wall', 'window', 'door', 'garage_door', 'porch')
 ROOF_KINDS = ('eave', 'gable', 'dormer', 'shed', 'hip_end')
 WINDOW_SIZES = ('tall', 'standard', 'small')
@@ -81,7 +82,7 @@ _ROOF_RANK = {'gable': 3, 'dormer': 2, 'shed': 2, 'hip_end': 1}
 
 
 def _block(**over):
-    b = {'depth': 0.0, 'stories': 1,
+    b = {'depth': 0.0,
          'roof': {'form': 'gable', 'ridge': 'x', 'pitch_deg': BLOCK_PITCH_DEG},
          'cladding': 'batten', 'base': None, 'body': 'white'}
     b.update(over)
@@ -89,7 +90,7 @@ def _block(**over):
 
 
 CANONICAL = {
-    'version': 2,
+    'version': 3,
     'mirror': False,
     'pitch_deg': round(math.degrees(math.atan2(2.05, 2.95)), 1),   # 34.8, PITCH_FAMILY (features)
     # Today's house expressed in the model (spec 2026-09-17 section 2):
@@ -122,6 +123,7 @@ CANONICAL = {
     'roof': [
         {'slot': 0, 'span': 3, 'kind': 'gable'},
     ],
+    'upper': [],
     'unexpressed': [],
 }
 
@@ -135,22 +137,28 @@ def block_face(name):
     return FACE_OF_BLOCK.get(name)
 
 
-def slot_table(blocks=None):
-    """Slots per street face. `blocks` (a V2 `blocks` dict) moves each face
-    by its depth and raises its eave by its stories; None = canonical."""
+def slot_table(blocks=None, upper=None):
+    """Slots per street face. Blocks move faces; upper spans raise eaves."""
     blocks = blocks or CANONICAL['blocks']
+    upper = CANONICAL.get('upper', []) if upper is None else upper
+    upper_slots = set()
+    for span in upper if isinstance(upper, list) else []:
+        if not isinstance(span, dict):
+            continue
+        start, count = _int(span.get('slot'), -1), max(0, _int(span.get('span'), 0))
+        upper_slots.update(range(start, start + count))
     out, i = [], 0
     for f in FACES:
         b = blocks.get(BLOCK_OF_FACE[f['face']]) or {}
         z = f['z'] + float(b.get('depth') or 0)
-        eave = f['eave'] * (2 if b.get('stories') == 2 else 1)
         width = f['x1'] - f['x0']
         n = max(1, int(round(width / SLOT_W)))
         w = width / n
         for k in range(n):
             x0 = f['x0'] + k * w
             out.append({'i': i, 'face': f['face'], 'x0': round(x0, 6), 'x1': round(x0 + w, 6),
-                        'cx': round(x0 + w / 2, 6), 'z': round(z, 6), 'eave': eave,
+                        'cx': round(x0 + w / 2, 6), 'z': round(z, 6),
+                        'eave': f['eave'] * (2 if i in upper_slots else 1),
                         'room': f['room'], 'roof': f['roof']})
             i += 1
     return out
@@ -227,8 +235,8 @@ def validate_block_model(obj):
             errs.append(f'{path}.{key} out of range {lo}..{hi}')
         return v
 
-    if obj.get('version') != 2:
-        errs.append('version must be 2')
+    if obj.get('version') != 3:
+        errs.append('version must be 3')
     need(obj, 'mirror', bool, 'house')
     rng(obj, 'pitch_deg', PITCH_MIN, PITCH_MAX, 'house')
     blocks = need(obj, 'blocks', dict, 'house')
@@ -239,9 +247,8 @@ def validate_block_model(obj):
                 errs.append(f'blocks.{name} missing'); continue
             p = f'blocks.{name}'
             rng(b, 'depth', 0, DEPTH_MAX, p)
-            st = need(b, 'stories', int, p)
-            if st is not None and st not in (1, 2):
-                errs.append(f'{p}.stories must be 1 or 2')
+            if 'stories' in b:
+                errs.append(f'{p}.stories: removed in version 3, use upper[]')
             roof = need(b, 'roof', dict, p)
             if roof is not None:
                 enum(roof, 'form', ROOF_FORMS, p + '.roof')
@@ -260,6 +267,28 @@ def validate_block_model(obj):
                     enum(b['base'], 'body', STYLE['body'], p + '.base')
             if name == 'garage':
                 enum(b, 'orientation', ORIENTATIONS, p)
+    upper = need(obj, 'upper', list, 'house')
+    if upper is not None:
+        slots = slot_table()
+        for i, span in enumerate(upper):
+            p = f'upper[{i}]'
+            if not isinstance(span, dict):
+                errs.append(f'{p} not an object'); continue
+            start = need(span, 'slot', int, p)
+            count = need(span, 'span', int, p)
+            roof = need(span, 'roof', dict, p)
+            if start is not None and not (0 <= start < len(slots)):
+                errs.append(f'{p}.slot out of range 0..{len(slots) - 1}')
+            if count is not None and count < 1:
+                errs.append(f'{p}.span must be at least 1')
+            if start is not None and count is not None and 0 <= start < len(slots):
+                _, hi = _face_range(slots[start]['face'])
+                if start + count - 1 > hi:
+                    errs.append(f'{p}.span crosses its face boundary')
+            if roof is not None:
+                enum(roof, 'form', ROOF_FORMS, p + '.roof')
+                enum(roof, 'ridge', RIDGES, p + '.roof')
+                rng(roof, 'pitch_deg', PITCH_MIN, PITCH_MAX, p + '.roof')
     style = need(obj, 'style', dict, 'house')
     if style is not None:
         for role in ('roof', 'frame', 'door', 'trim'):
@@ -430,7 +459,6 @@ def _norm_block(name, raw, notes):
     raw = raw if isinstance(raw, dict) else {}
     b = _block(orientation='front') if name == 'garage' else _block()
     b['depth'] = round(min(DEPTH_MAX, max(0.0, _num(raw.get('depth'), 0.0))), 2)
-    b['stories'] = 2 if _int(raw.get('stories'), 1) == 2 else 1
     rr = raw.get('roof') if isinstance(raw.get('roof'), dict) else {}
     b['roof'] = {'form': _pick(rr.get('form'), ROOF_FORMS, 'gable'),
                  'ridge': _pick(rr.get('ridge'), RIDGES, 'x'),
@@ -449,26 +477,101 @@ def _norm_block(name, raw, notes):
     return b
 
 
+def _resolve_upper_spans(spans, notes):
+    """Resolve upper overlap by input order, then merge identical neighbours."""
+    taken, kept = set(), []
+    for span in spans:
+        cells = list(range(span['slot'], span['slot'] + span['span']))
+        free = [cell for cell in cells if cell not in taken]
+        if not free:
+            notes.append(f"dropped an upper span at slot {span['slot']}: its slots were taken")
+            continue
+        runs, run = [], [free[0]]
+        for cell in free[1:]:
+            if cell == run[-1] + 1:
+                run.append(cell)
+            else:
+                runs.append(run); run = [cell]
+        runs.append(run)
+        if len(free) != len(cells) or len(runs) > 1:
+            notes.append(f"trimmed an upper span at slot {span['slot']} around an earlier span")
+        for cells_run in runs:
+            piece = copy.deepcopy(span)
+            piece['slot'], piece['span'] = cells_run[0], len(cells_run)
+            kept.append(piece)
+            taken.update(cells_run)
+    kept.sort(key=lambda item: item['slot'])
+    merged = []
+    for span in kept:
+        same_face = (merged and slot_table()[merged[-1]['slot']]['face'] ==
+                     slot_table()[span['slot']]['face'])
+        if (same_face and merged[-1]['slot'] + merged[-1]['span'] == span['slot']
+                and merged[-1]['roof'] == span['roof']):
+            merged[-1]['span'] += span['span']
+        else:
+            merged.append(span)
+    return merged
+
+
+def _upper_entries(raw_upper, blocks, notes):
+    """Shape, face-split, resolve and merge upper spans."""
+    slots, shaped = slot_table(blocks, []), []
+    if not isinstance(raw_upper, list):
+        return []
+    for raw_span in raw_upper:
+        if not isinstance(raw_span, dict):
+            continue
+        start = min(len(slots) - 1, max(0, _int(raw_span.get('slot'), 0)))
+        end = min(len(slots), start + max(1, _int(raw_span.get('span'), 1)))
+        rr = raw_span.get('roof') if isinstance(raw_span.get('roof'), dict) else None
+        cursor = start
+        while cursor < end:
+            face = slots[cursor]['face']
+            _, face_hi = _face_range(face)
+            piece_end = min(end, face_hi + 1)
+            block = BLOCK_OF_FACE[face]
+            source = rr or blocks[block]['roof']
+            roof = {'form': _pick(source.get('form'), ROOF_FORMS, blocks[block]['roof']['form']),
+                    'ridge': _pick(source.get('ridge'), RIDGES, blocks[block]['roof']['ridge']),
+                    'pitch_deg': round(min(PITCH_MAX, max(PITCH_MIN,
+                                      _num(source.get('pitch_deg'), blocks[block]['roof']['pitch_deg']))), 1)}
+            shaped.append({'slot': cursor, 'span': piece_end - cursor, 'roof': roof})
+            if piece_end < end:
+                notes.append(f'upper span at slot {start} split at the {face} face boundary')
+            cursor = piece_end
+    return _resolve_upper_spans(shaped, notes)
+
+
 def normalize(raw):
     notes = []
     raw = raw if isinstance(raw, dict) else {}
     # A facade with no `blocks` is a version-1 one: run it through the
-    # mapping table first, then apply every V2 law to the result.
+    # mapping table first, then apply every current law to the result.
     if 'blocks' not in raw:
         raw = _upgrade_v1(raw, notes)
-    spec = {'version': 2, 'mirror': bool(raw.get('mirror', False))}
+    source_version = _int(raw.get('version'), 2)
+    spec = {'version': 3, 'mirror': bool(raw.get('mirror', False))}
     p = _num(raw.get('pitch_deg'), CANONICAL['pitch_deg'])
     spec['pitch_deg'] = round(min(PITCH_MAX, max(PITCH_MIN, p)), 1)
     blocks_raw = raw.get('blocks') if isinstance(raw.get('blocks'), dict) else {}
     spec['blocks'] = {'main': _norm_block('main', blocks_raw.get('main'), notes),
                       'garage': _norm_block('garage', blocks_raw.get('garage'), notes)}
+    raw_upper = copy.deepcopy(raw.get('upper')) if isinstance(raw.get('upper'), list) else []
+    if source_version < 3:
+        for block in ('garage', 'main'):
+            old = blocks_raw.get(block) if isinstance(blocks_raw.get(block), dict) else {}
+            if _int(old.get('stories'), 1) == 2:
+                lo, hi = _face_range(FACE_OF_BLOCK[block])
+                raw_upper.append({'slot': lo, 'span': hi - lo + 1,
+                                  'roof': copy.deepcopy(spec['blocks'][block]['roof'])})
+    spec['upper'] = _upper_entries(raw_upper, spec['blocks'], notes)
     st = raw.get('style') if isinstance(raw.get('style'), dict) else {}
     spec['style'] = {k: _pick(st.get(k), allowed, CANONICAL['style'][k])
                      for k, allowed in STYLE.items() if k != 'body'}
 
     ground = _entries(raw.get('ground'), GROUND_KINDS, notes, 'ground')
     roof = _entries(raw.get('roof'), ROOF_KINDS, notes, 'roof')
-    slots = slot_table(spec['blocks'])
+    slots = slot_table(spec['blocks'], spec['upper'])
 
     # pin openings to their room's face (spec 4.4)
     g_lo, g_hi = GARAGE_BAY_SLOTS
@@ -513,6 +616,13 @@ def normalize(raw):
     ground = kept
     for r in roof:
         _clip_to_face(r, notes)
+        end = r['slot'] + r['span']
+        boundaries = sorted({u['slot'] for u in spec['upper']} |
+                            {u['slot'] + u['span'] for u in spec['upper']})
+        seam = next((edge for edge in boundaries if r['slot'] < edge < end), None)
+        if seam is not None:
+            r['span'] = seam - r['slot']
+            notes.append(f"trimmed a {r['kind']} at slot {r['slot']} at an upper-story seam")
 
     # a side-entry garage has no street garage door: the bay's street face
     # carries one window instead (spec 2)
@@ -525,14 +635,18 @@ def normalize(raw):
             ground.append({'slot': g_lo + 1, 'span': 1, 'kind': 'window', 'size': 'standard',
                            'shutters': False, 'story': 1})
 
-    # story-2 entries only on a two-story block; overlap resolved PER story
+    # story-2 entries only inside one upper span; overlap resolved PER story
     def block_of(item):
         return BLOCK_OF_FACE[slots[item['slot']]['face']]
     kept = []
     for g in ground:
-        if g.get('story') == 2 and spec['blocks'][block_of(g)]['stories'] != 2:
-            notes.append(f"dropped a story-2 {g['kind']} at slot {g['slot']}: that block has one story")
-            continue
+        if g.get('story') == 2:
+            whole = any(u['slot'] <= g['slot'] and
+                        g['slot'] + g['span'] <= u['slot'] + u['span']
+                        for u in spec['upper'])
+            if not whole:
+                notes.append(f"dropped a story-2 {g['kind']} at slot {g['slot']}: no upper story there")
+                continue
         kept.append(g)
     ground = kept
     porches = [g for g in ground if g['kind'] == 'porch']
@@ -642,26 +756,31 @@ def worst_case():
         if s['i'] not in {r['slot'] for r in roof} and s['i'] not in owned:
             roof.append({'slot': s['i'], 'span': 1, 'kind': 'gable'})
             gables += 1
-    # The heaviest BLOCK model too (spec 2026-09-17 section 2): two
-    # stories on both, a different cladding per block plus a base band in
+    # The heaviest BLOCK model too: full-face upper spans on both blocks,
+    # a different cladding per block plus a base band in
     # a third material (each distinct material/body pair is at least one
     # more static draw), the garage as deep as the schema allows and the
     # main at the porch's curb clamp. A SIDE garage is lighter, not
     # heavier -- it deletes the garage door -- so the orientation stays
     # front, and mirror costs nothing (one root scale).
     blocks = {
-        'main': {'depth': DEPTH_MAX_WITH_PORCH, 'stories': 2,
+        'main': {'depth': DEPTH_MAX_WITH_PORCH,
                  'roof': {'form': 'gable', 'ridge': 'x', 'pitch_deg': PITCH_MAX},
                  'cladding': 'brick', 'body': 'brick_red',
                  'base': {'material': 'stone', 'height': BASE_H_MAX, 'body': 'stone_grey'}},
-        'garage': {'depth': DEPTH_MAX, 'stories': 2, 'orientation': 'front',
+        'garage': {'depth': DEPTH_MAX, 'orientation': 'front',
                    'roof': {'form': 'gable', 'ridge': 'x', 'pitch_deg': PITCH_MAX},
                    'cladding': 'stone', 'body': 'stone_grey',
                    'base': {'material': 'brick', 'height': BASE_H_MAX, 'body': 'painted_brick'}},
     }
-    spec, _ = normalize({'version': 2, 'mirror': False, 'pitch_deg': PITCH_MAX, 'blocks': blocks,
+    upper = []
+    for block in ('garage', 'main'):
+        lo, hi = _face_range(FACE_OF_BLOCK[block])
+        upper.append({'slot': lo, 'span': hi - lo + 1,
+                      'roof': copy.deepcopy(blocks[block]['roof'])})
+    spec, _ = normalize({'version': 3, 'mirror': False, 'pitch_deg': PITCH_MAX, 'blocks': blocks,
                          'style': {'roof': 'brown', 'frame': 'white', 'door': 'red', 'trim': 'black'},
-                         'ground': ground, 'roof': roof, 'unexpressed': []})
+                         'ground': ground, 'roof': roof, 'upper': upper, 'unexpressed': []})
     return spec
 
 
@@ -770,17 +889,19 @@ WORKED EXAMPLE: a garage on the LEFT showing the triangular end of its roof to t
 ridge running front-to-back) is {{"form": "gable", "ridge": "z"}} with "orientation": "front" --
 because the street sees the gable END, not the long eave side. A hip-roofed main block with two
 small gables poking out of the roof toward the street is main.roof = {{"form": "hip", "ridge": "x"}}
-plus two separate roof features of kind "gable", one per protrusion.
+plus two separate roof features of kind "gable", one per protrusion. A two-story centre showing
+its gable to the street with one-story wings is main.roof ridge x plus an upper span over the
+middle third whose roof is gable ridge z.
 
 Return exactly this shape (a fraction-based feature has "block"/"at"/"width" instead of "slot"/"span"):
-{{"version": 2, "mirror": bool, "viewpoint": "left"|"centre"|"right",
+{{"version": 3, "mirror": bool, "viewpoint": "left"|"centre"|"right",
   "pitch_deg": number between 22.5 and 35,
   "style": {{"roof": one of {roof}, "frame": one of {frame}, "door": one of {door}, "trim": one of {trim}}},
   "blocks": {{
-    "main": {{"stories": 1|2, "roof": {{"form": one of {roof_forms}, "ridge": one of {ridges}, "pitch_deg": number}},
+    "main": {{"depth": number, "roof": {{"form": one of {roof_forms}, "ridge": one of {ridges}, "pitch_deg": number}},
               "cladding": one of {claddings}, "body": one of {body},
               "base": null | {{"material": one of {claddings}, "height": number, "body": one of {body}}}}},
-    "garage": {{"stories": 1|2, "roof": {{"form": one of {roof_forms}, "ridge": one of {ridges}, "pitch_deg": number}},
+    "garage": {{"depth": number, "roof": {{"form": one of {roof_forms}, "ridge": one of {ridges}, "pitch_deg": number}},
                 "cladding": one of {claddings}, "body": one of {body},
                 "base": null | {{"material": one of {claddings}, "height": number, "body": one of {body}}},
                 "orientation": one of {orientations}}}}},
@@ -789,9 +910,11 @@ Return exactly this shape (a fraction-based feature has "block"/"at"/"width" ins
             | {{"block","at","width","kind":"garage_door","style": one of {garage_styles}, "leaves": 1|2}}
             | {{"block","at","width","kind":"porch","type": one of {porch_types}, "roof": one of {porch_roofs}}}],
   "roof": [{{"block": "main"|"garage", "at": 0..1, "width": 0..1, "kind": one of {roof_kinds_features}, "window": bool}}],
+  "upper": [{{"block": "main"|"garage", "at": 0..1, "width": 0..1,
+               "roof": {{"form": one of {roof_forms}, "ridge": one of {ridges}, "pitch_deg": number}}}}],
   "unexpressed": [up to 8 short strings naming real details the shape above cannot capture]}}
 Rules: colours are the NEAREST palette name, never hex. If the garage is not visible, describe it
-as a plain default block (batten, white, gable ridge x, one story, front) -- never omit it.
+as a plain default block (batten, white, gable ridge x, no upper span, front) -- never omit it.
 If unsure of a count, prefer fewer windows. The front door goes on the main block. Anything real
 about the house that this schema has no field for -- a shape, a material, a massing detail --
 goes in "unexpressed" as a short phrase, never invented into a field that doesn't fit it. No prose."""
@@ -825,7 +948,7 @@ def _snap_fractions(obj, notes=None):
     if not isinstance(obj, dict):
         return obj
     out = copy.deepcopy(obj)
-    for layer in ('ground', 'roof'):
+    for layer in ('ground', 'roof', 'upper'):
         items = out.get(layer)
         if not isinstance(items, list):
             continue
@@ -905,7 +1028,7 @@ draft, and the draft's own JSON (the same block-model shape pass 1 produces, but
 
 Go through the comparison in this FIXED ORDER and give AT MOST EIGHT reasons, each one line,
 each naming what you saw and what you changed (or that nothing needed changing):
-1. Massing and roof forms -- block count, stories, roof form/ridge/pitch per block.
+1. Massing and roof forms -- block count, upper-span placement, and roof form/ridge/pitch.
 2. Materials and base -- cladding and body colour per block, the base band.
 3. Openings -- windows, doors, garage door, porch: position, size, count.
 4. Colours -- style roof/frame/door/trim, and any body colour not already covered above.
@@ -999,7 +1122,7 @@ def active_bundle():
     if rec is None:
         spec = copy.deepcopy(CANONICAL)
         return {'id': CANONICAL_ID, 'name': 'Canonical', 'spec': spec,
-                'slots': slot_table(spec['blocks'])}
+                'slots': slot_table(spec['blocks'], spec['upper'])}
     spec, _ = normalize(rec.get('spec'))
     # MASSING ARC 2 task 10: every bundle's slots follow ITS OWN blocks. A
     # deeper or two-storey block moves its face's z and raises its eave, and
@@ -1007,7 +1130,7 @@ def active_bundle():
     # canonical table under a non-canonical spec put every window on the
     # wrong plane.
     return {'id': rec['id'], 'name': rec.get('name') or 'Saved facade', 'spec': spec,
-            'slots': slot_table(spec['blocks'])}
+            'slots': slot_table(spec['blocks'], spec['upper'])}
 
 
 # --- drafts (spec 2026-09-17 section 4: token lifecycle) ---

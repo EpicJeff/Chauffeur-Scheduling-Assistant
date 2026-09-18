@@ -675,7 +675,7 @@ def scenario_a_draft_token_renders_day_locked_and_captures():
         inj = page.evaluate('window.HOUSE_FACADE')
         check(inj['id'] == 'draft' and inj['spec'] == spec,
               "the page carries the draft bundle: %r" % inj.get('id'))
-        check(inj['slots'] == hf.slot_table(spec['blocks']),
+        check(inj['slots'] == hf.slot_table(spec['blocks'], spec['upper']),
               "the draft carries its OWN blocks' slot table into the page")
         day_shot = page.evaluate('window.chfCapture()')
         check(isinstance(day_shot, str) and day_shot.startswith('data:image/png;base64,'),
@@ -824,7 +824,7 @@ def scenario_depth_moves_the_face_and_the_blocks_meet():
                   f'{label} {depths}: the street faces moved: {geo}')
             # the JS slot table still IS the Python one, depth and all
             js_slots = page.evaluate('window.chfFacadeSlots()')
-            py_slots = hf.slot_table(spec['blocks'])
+            py_slots = hf.slot_table(spec['blocks'], spec['upper'])
             check(len(js_slots) == len(py_slots), f'{label}: slot count')
             for a, b in zip(js_slots, py_slots):
                 check(abs(a['z'] - b['z']) < 1e-6,

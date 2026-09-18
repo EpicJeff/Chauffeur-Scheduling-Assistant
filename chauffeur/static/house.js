@@ -4049,8 +4049,8 @@
        -- falls back to CANONICAL_JS, the V2 literal just below. */
     var FACADE = (window.HOUSE_FACADE && window.HOUSE_FACADE.spec) ? window.HOUSE_FACADE : null;
     /* THE CANONICAL FACADE, field for field services/house_facade.py's
-       own CANONICAL (spec 2026-09-17 section 2: the VERSION-2 block
-       model -- per-block depth/stories/roof/cladding/base/body, the
+       own CANONICAL (arc-2 spec plus the upper-span insert: VERSION 3,
+       with per-block depth/roof/cladding/base/body and top-level upper,
        porch owning its gable, and `style` down to the four roles that
        are not a block's own skin). Only a page served WITHOUT the
        injection -- nothing but the 2D fallback path can reach that --
@@ -4062,14 +4062,14 @@
        whatever was last assigned when a reader runs, and SPEC0 three
        lines below is the earliest reader. */
     var CANONICAL_JS = {
-      version: 2,
+      version: 3,
       mirror: false,
       pitch_deg: 34.8,
       blocks: {
-        main:   { depth: 0.0, stories: 1,
+        main:   { depth: 0.0,
                   roof: { form: 'gable', ridge: 'x', pitch_deg: 22.5 },
                   cladding: 'batten', base: null, body: 'white' },
-        garage: { depth: 0.0, stories: 1,
+        garage: { depth: 0.0,
                   roof: { form: 'gable', ridge: 'x', pitch_deg: 22.5 },
                   cladding: 'batten', base: null, body: 'white',
                   orientation: 'front' }
@@ -4089,18 +4089,33 @@
       roof: [
         { slot: 0, span: 3, kind: 'gable' }
       ],
+      upper: [],
       unexpressed: []
     };
-    /* MASSING ARC 2 (spec 2026-09-17 section 2): THE BLOCK MODEL. The
+    /* MASSING ARC 2 + 2b: THE BLOCK MODEL. The
        house is no longer one body colour and one cladding -- each block
-       carries its own depth, stories, roof {form, ridge, pitch_deg},
+       carries its own depth, ground roof {form, ridge, pitch_deg},
        cladding, base band and body, and `style` keeps only roof/frame/
-       door/trim. A spec reaches this file already normalized (the store
+       door/trim. Top-level upper spans own their second-story roofs. A
+       spec reaches this file already normalized (the store
        upgrades a V1 save before it is ever served), so `blocks` is
        always there; the canonical row is the belt-and-braces fallback
        for a hand-built payload that skipped normalize. */
     var SPEC0 = FACADE ? FACADE.spec : CANONICAL_JS;
     var BLOCKS = SPEC0.blocks || CANONICAL_JS.blocks;
+    var UPPER = SPEC0.upper || [];
+    function upperOverlapsX(name, x0, x1) {
+      var first = name === 'garage' ? 0 : 6, count = name === 'garage' ? 6 : 12;
+      var west = name === 'garage' ? -18.20 : -7.15;
+      var east = name === 'garage' ? -7.15 : 14.65;
+      var w = (east - west) / count;
+      return UPPER.some(function (u) {
+        if (u.slot < first || u.slot >= first + count) return false;
+        var a = west + (u.slot - first) * w;
+        var b = west + (u.slot - first + u.span) * w;
+        return x0 < b - 1e-6 && a < x1 - 1e-6;
+      });
+    }
     var BLOCK_OF_FACE = { garage_block: 'garage', main: 'main' };
     var FSTYLE = SPEC0.style || CANONICAL_JS.style;   /* roof, frame, door, trim */
     function blockPitch(name) {
@@ -4567,7 +4582,7 @@
        buildElevation()) carries the block from there up to this eave. */
     var FULL_HOUSE = {
       west: -7.15, east: 14.65, north: -6.10, south: SWZ1 + MAIN_DZ,
-      eave: EXT_TOP4 * (BLOCKS.main.stories || 1), overhang: 0.32
+      eave: EXT_TOP4, overhang: 0.32
     };
     var SW_W = FULL_HOUSE.east - FULL_HOUSE.west;            /* 21.8 */
     var SW_CX = (FULL_HOUSE.west + FULL_HOUSE.east) / 2;     /* 3.75 */
@@ -4666,7 +4681,7 @@
        owns the shared face plane at x -7.15. */
     var GARAGE_BLOCK = { west: -18.20, east: -7.15, north: -6.10,
                          south: 10.10 + GAR_DZ,
-                         eave: EXT_TOP4 * (BLOCKS.garage.stories || 1) };
+                         eave: EXT_TOP4 };
     /* MASSING ARC 2 task 8 (spec 2026-09-17 section 2): a SIDE-ENTRY
        garage. The bay's street face stops being a door bay and becomes
        an ordinary walled face with a window (services/house_facade.py's
@@ -4959,8 +4974,8 @@
        partition keeps the flat top at EXT_TOP4 it already has, which is
        also the upper story's own floor line. The garage block reads its
        OWN `stories` at gVault the same way. */
-    var VAULTED = (MAIN_VAULT.axis === 'z' && ROOF_FORMS.main.form === 'gable' &&
-                   (BLOCKS.main.stories || 1) === 1);
+    var VAULTED = (MAIN_VAULT.axis === 'z' && ROOF_FORMS.main.form === 'gable');
+    function mainWingVault(x0, x1) { return VAULTED && !upperOverlapsX('main', x0, x1); }
 
     /* ---- the east PARTITION (was east_wall) ---------------------------
        The wall at x 6.85 stopped being an exterior side elevation the
@@ -5027,7 +5042,7 @@
        above BOTH door headers all the way to the roof. Plain plaster on
        both faces, like the segments below it: the gable-end infills'
        battens belong to an OUTSIDE face and this one has none. */
-    if (VAULTED)
+    if (mainWingVault(EPX0_4, EPX1_4))
       vaultSection(eastPartG, vaultRidgePts(MAIN_VAULT, EWZ0_4, SWZ0, EXT_TOP4),
                    EXT_TOP4, 'z', EPX1_4, WALL_T4, C.wall, WALL_O);
     /* room: null — it fronts the kitchen on one face and the future
@@ -5317,7 +5332,8 @@
          has always registered as an empty row (the worst case's garage
          bay gable does), and quietly retiring those rows would be a
          behaviour change this task never asked for. */
-      var isBlockRoof = (name === 'roof_main' || name === 'garage_block_roof');
+      var isBlockRoof = (name === 'roof_main' || name === 'garage_block_roof' ||
+                         /^main_[uw]\d+_roof$/.test(name) || /^garage_[uw]\d+_roof$/.test(name));
       pitch = pitch || PITCH_FAMILY;
       /* the deck arithmetic is deckPlane's (one derivation, masking task
          5); the +1 plane carries the numbers both signs share */
@@ -5419,7 +5435,7 @@
         g.updateMatrixWorld(true);
         var n = new T.Vector3(0, 1, 0).applyQuaternion(
           deck.getWorldQuaternion(new T.Quaternion()));
-        if (buried) clipBuried(g, buried);
+        if (buried) (Array.isArray(buried[0]) ? buried : [buried]).forEach(function (r) { clipBuried(g, r); });
         if (buried && isBlockRoof && !hasMesh(g)) { extG.remove(g); return; }
         shellRegister(g, name + (alongZ ? (sign < 0 ? '_west' : '_east')
                                        : (sign < 0 ? '_north' : '_south')),
@@ -5466,7 +5482,7 @@
           g.updateMatrixWorld(true);
           var hn = new T.Vector3(0, 1, 0).applyQuaternion(
             hm.getWorldQuaternion(new T.Quaternion()));
-          if (buried) clipBuried(g, buried);
+          if (buried) (Array.isArray(buried[0]) ? buried : [buried]).forEach(function (r) { clipBuried(g, r); });
           if (buried && isBlockRoof && !hasMesh(g)) { extG.remove(g); return; }
           shellRegister(g, name + (alongZ ? (sign < 0 ? '_back' : '_front')
                                          : (sign < 0 ? '_end_west' : '_end_east')),
@@ -5503,7 +5519,7 @@
           if (alongZ) rake.rotation.z = -side * pitch;
           else rake.rotation.x = side * pitch;
         });
-        if (buried) clipBuried(g, buried);
+        if (buried) (Array.isArray(buried[0]) ? buried : [buried]).forEach(function (r) { clipBuried(g, r); });
         if (buried && isBlockRoof && !hasMesh(g)) { extG.remove(g); return; }
         shellRegister(g, name + (alongZ ? (sign < 0 ? '_back' : '_front')
                                        : (sign < 0 ? '_end_west' : '_end_east')),
@@ -5540,9 +5556,8 @@
        (task-3-report.md shows the derivation). */
     var FACES = [
       { face: 'garage_block', x0: GARAGE_BLOCK.west, x1: GARAGE_BLOCK.east, z: GARAGE_BLOCK.south, eave: GARAGE_BLOCK.eave, room: 'garage', roof: 'garage_block_roof' },
-      /* task 7: FULL_HOUSE.eave, not the EXT_TOP4 literal -- a block's
-         stories raise its face's eave, which is what Python's
-         slot_table() publishes and what the JS/Python slot pin reads. */
+      /* Per-slot eaves are replaced below from the volume covering x;
+         Python's slot_table publishes the same upper-aware result. */
       { face: 'main',         x0: FULL_HOUSE.west,   x1: FULL_HOUSE.east,   z: FULL_HOUSE.south,   eave: FULL_HOUSE.eave,  room: 'living', roof: 'roof_main' }
     ];
     /* Mirrors services/house_facade.py's GARAGE_BAY_SLOTS: the garage
@@ -5565,13 +5580,54 @@
         var width = f.x1 - f.x0, n = Math.max(1, Math.round(width / SLOT_W)), w = width / n;
         for (var k = 0; k < n; k++) {
           var x0 = f.x0 + k * w, gi = i++;
+          var raised = UPPER.some(function (u) { return gi >= u.slot && gi < u.slot + u.span; });
           out.push({ i: gi, face: f.face, x0: x0, x1: x0 + w, cx: x0 + w / 2, z: f.z,
-                     eave: f.eave, room: f.room, roof: f.roof });
+                     eave: raised ? 2 * EXT_TOP4 : EXT_TOP4, room: f.room, roof: f.roof });
         }
       });
       return out;
     }
     var SLOTS = facadeSlots();
+    function blockVolumes(name) {
+      var face = name === 'garage' ? 'garage_block' : 'main';
+      var B = name === 'garage' ? GARAGE_BLOCK : FULL_HOUSE;
+      var cells = SLOTS.filter(function (s) { return s.face === face; });
+      var spans = UPPER.filter(function (u) {
+        return cells.some(function (s) { return s.i === u.slot; });
+      });
+      if (!spans.length) return [{ name: name, block: name, k: 0,
+        x0: B.west, x1: B.east, north: B.north, south: B.south,
+        eave: EXT_TOP4, roof: { form: ROOF_FORMS[name].form,
+          ridge: ROOF_FORMS[name].ridge, pitch_deg: BLOCKS[name].roof.pitch_deg },
+        upper: false, canonical: true }];
+      function owner(i) {
+        return spans.find(function (u) { return i >= u.slot && i < u.slot + u.span; }) || null;
+      }
+      var runs = [], start = 0, prior = owner(cells[0].i);
+      for (var j = 1; j <= cells.length; j++) {
+        var next = j < cells.length ? owner(cells[j].i) : null;
+        if (j === cells.length || next !== prior) {
+          var roof = prior ? prior.roof : { form: ROOF_FORMS[name].form,
+            ridge: ROOF_FORMS[name].ridge, pitch_deg: BLOCKS[name].roof.pitch_deg };
+          var k = runs.length;
+          runs.push({ name: name + '_' + (prior ? 'u' : 'w') + k, block: name, k: k,
+            x0: cells[start].x0, x1: cells[j - 1].x1,
+            north: B.north, south: B.south, eave: prior ? 2 * EXT_TOP4 : EXT_TOP4,
+            roof: roof, upper: !!prior, canonical: false });
+          start = j; prior = next;
+        }
+      }
+      return runs;
+    }
+    var HOUSE_VOLUMES = { main: blockVolumes('main'), garage: blockVolumes('garage') };
+    var ALL_VOLUMES = HOUSE_VOLUMES.garage.concat(HOUSE_VOLUMES.main);
+    function volumeAt(face, x) {
+      var name = face === 'garage_block' ? 'garage' : 'main';
+      var list = HOUSE_VOLUMES[name];
+      return list.find(function (v, i) {
+        return x >= v.x0 - 1e-6 && (x < v.x1 - 1e-6 || i === list.length - 1);
+      }) || list[0];
+    }
     /* The canonical facade (spec section 2.2: today's elevation, snapped
        onto the slot grid) is CANONICAL_JS, declared with the block model
        far above -- SPEC0 reads it there, and `var` hoisting means the
@@ -5620,32 +5676,36 @@
     /* every deck plane of the block's roof: the two slope decks, plus
        the two hipped ends when the form is a hip. The roof surface is
        the LOWEST of them at any (x, z). */
-    function blockDeckPlanes(face) {
-      var B = FACE_BLOCKS[face], b = B.block, out = [];
+    function volumeDeckPlanes(v) {
+      var out = [], pitch = v.roof.pitch_deg * Math.PI / 180;
       [-1, 1].forEach(function (sign) {
-        out.push(deckPlane(b.west, b.east, b.north, b.south, b.eave,
-                           B.forms.ridge, B.pitch, sign));
+        out.push(deckPlane(v.x0, v.x1, v.north, v.south, v.eave,
+                           v.roof.ridge, pitch, sign));
       });
-      if (B.forms.form === 'hip') [-1, 1].forEach(function (sign) {
-        out.push(hipEndPlane(b.west, b.east, b.north, b.south, b.eave,
-                             B.forms.ridge, B.pitch, sign));
+      if (v.roof.form === 'hip') [-1, 1].forEach(function (sign) {
+        out.push(hipEndPlane(v.x0, v.x1, v.north, v.south, v.eave,
+                             v.roof.ridge, pitch, sign));
       });
       return out;
+    }
+    function blockDeckPlanes(face, x) {
+      if (x !== undefined) return volumeDeckPlanes(volumeAt(face, x));
+      var name = face === 'garage_block' ? 'garage' : 'main';
+      return [].concat.apply([], HOUSE_VOLUMES[name].map(volumeDeckPlanes));
     }
     /* the STREET deck of the block: the south slope when the ridge runs
        x; a ridge on z puts a gable end on the street, so there is no
        one deck under a street feature (null) and the callers below fall
        back to the roof line. */
-    function faceDeckPlane(face) {
-      var B = FACE_BLOCKS[face];
-      if (B.forms.ridge === 'z') return null;
-      var b = B.block;
-      return deckPlane(b.west, b.east, b.north, b.south, b.eave,
-                       B.forms.ridge, B.pitch, 1);
+    function faceDeckPlane(face, x) {
+      var v = volumeAt(face, x === undefined ? FACE_BLOCKS[face].block.west : x);
+      if (v.roof.ridge === 'z') return null;
+      return deckPlane(v.x0, v.x1, v.north, v.south, v.eave,
+                       v.roof.ridge, v.roof.pitch_deg * Math.PI / 180, 1);
     }
     /* the roof line over (x, z) on that block: its centre planes' minimum */
     function roofY(face, x, z) {
-      return blockDeckPlanes(face).reduce(function (y, pl) {
+      return blockDeckPlanes(face, x).reduce(function (y, pl) {
         return Math.min(y, planeY(pl, x, z));
       }, Infinity);
     }
@@ -6122,7 +6182,7 @@
       return roofY(slot.face, cx, slot.z) - 0.18;
     }
     function featureBack(slot, cx, ridge) {
-      var pl = faceDeckPlane(slot.face), back = slot.z - 2.8;
+      var pl = faceDeckPlane(slot.face, slot.cx), back = slot.z - 2.8;
       if (!pl || Math.abs(pl.n[2]) < 1e-6) return back;
       var meet = (pl.d - pl.n[0] * cx - pl.n[1] * ridge) / pl.n[2];
       return Math.min(back, meet - 0.6);
@@ -6492,6 +6552,76 @@
     var BLOCK_MEET = blockRoofsIdentical()
       ? { main: null, garage: null }
       : { main: BLOCK_VOLUMES.main, garage: BLOCK_VOLUMES.garage };
+    function adjacentVolumes(v) {
+      var own = HOUSE_VOLUMES[v.block], out = [];
+      own.forEach(function (n) {
+        if (n !== v && (Math.abs(n.x1 - v.x0) < 1e-5 || Math.abs(n.x0 - v.x1) < 1e-5)) out.push(n);
+      });
+      if (v === HOUSE_VOLUMES.main[0]) out.push(HOUSE_VOLUMES.garage[HOUSE_VOLUMES.garage.length - 1]);
+      if (v === HOUSE_VOLUMES.garage[HOUSE_VOLUMES.garage.length - 1]) out.push(HOUSE_VOLUMES.main[0]);
+      return out;
+    }
+    function seamOwner(a, b) {
+      if (a.eave !== b.eave) return a.eave > b.eave ? a : b;
+      if (a.block !== b.block) return a.block === 'main' ? a : b;
+      return a.x0 < b.x0 ? a : b;
+    }
+    function sameRoofVolume(a, b) {
+      return a.south - a.north === b.south - b.north && a.eave === b.eave &&
+             a.roof.form === b.roof.form && a.roof.ridge === b.roof.ridge &&
+             a.roof.pitch_deg === b.roof.pitch_deg;
+    }
+    function clipRegionFor(v, n) {
+      var C = window.HouseClip, planes = volumeDeckPlanes(n);
+      var west = n.x0, east = n.x1, owner = seamOwner(v, n) === n;
+      if (owner && n.x0 >= v.x1 - 1e-5) west -= FULL_HOUSE.overhang;
+      if (owner && n.x1 <= v.x0 + 1e-5) east += FULL_HOUSE.overhang;
+      var region = [
+        { n: [1, 0, 0], d: west }, { n: [-1, 0, 0], d: -east },
+        { n: [0, 0, 1], d: n.north }, { n: [0, 0, -1], d: -n.south },
+        { n: [0, 1, 0], d: 0 }, { n: [0, -1, 0], d: -planes[0].ridge }
+      ];
+      planes.forEach(function (q) { region.push(C.flip({ n: q.n, d: q.d + 0.09 })); });
+      return region;
+    }
+    function volumeClips(v) {
+      var regions = adjacentVolumes(v).filter(function (n) { return !sameRoofVolume(v, n); })
+        .map(function (n) { return clipRegionFor(v, n); });
+      return regions.length ? regions : null;
+    }
+    /* V3 audit surface: every derived wing/upper volume and every
+       bounded region actually offered to its roof clipper. */
+    var VOLUME_MEETS = ALL_VOLUMES.map(function (v) {
+      var regions = volumeClips(v);
+      return { name: v.name, block: v.block, upper: v.upper,
+               active: !!regions, regions: regions || [] };
+    });
+    function volumeClosureEnds(v) {
+      if (v.roof.ridge !== 'x') return null;
+      var neighbours = adjacentVolumes(v), signs = [];
+      [-1, 1].forEach(function (sign) {
+        var edge = sign < 0 ? v.x0 : v.x1;
+        var n = neighbours.find(function (other) {
+          return Math.abs((sign < 0 ? other.x1 : other.x0) - edge) < 1e-5;
+        });
+        /* At an equal-eave mixed-ridge seam, only the ridge-x roof has a
+           vertical gable profile to close. Let that profile stand even
+           when the rectangular seam wall belongs to the west volume;
+           volumeClips() trims it to the neighbour's deck. */
+        if (!n || seamOwner(v, n) === v ||
+            (v.eave === n.eave && v.roof.ridge === 'x' && n.roof.ridge !== 'x')) signs.push(sign);
+      });
+      return signs;
+    }
+    function buildVolumeRoof(v) {
+      var base = v.canonical ? (v.block === 'main' ? 'roof_main' : 'garage_block_roof')
+                             : v.name + '_roof';
+      var rooms = v.block === 'main' ? ['kitchen', 'living'] : ['garage', 'mudroom'];
+      shellGable(base, v.x0, v.x1, v.north, v.south, v.eave,
+                 v.roof.ridge, null, volumeClosureEnds(v),
+                 v.roof.pitch_deg * Math.PI / 180, rooms, null,
+                 v.roof.form, volumeClips(v));
+    }
     /* the two blocks' envelopes and the deck planes their roofs were
        placed by, for the read-only window.chfBlockGeometry hook: a test
        rebuilds the neighbour volume from these numbers alone and audits
@@ -6528,11 +6658,13 @@
        into the room the deck faces, and the study's PIN is not
        something a roof tap may step around. Reads ROOF_FORMS.main, so
        form and ridge stay one parameter. */
-    shellGable('roof_main', FULL_HOUSE.west, FULL_HOUSE.east,
-               FULL_HOUSE.north, FULL_HOUSE.south, FULL_HOUSE.eave,
-               ROOF_FORMS.main.ridge, null, null, BLOCK_PITCH,
-               ['kitchen', 'living'], null, ROOF_FORMS.main.form,
-               BLOCK_MEET.main);
+    if (!UPPER.length) {
+      shellGable('roof_main', FULL_HOUSE.west, FULL_HOUSE.east,
+                 FULL_HOUSE.north, FULL_HOUSE.south, FULL_HOUSE.eave,
+                 ROOF_FORMS.main.ridge, null, null, BLOCK_PITCH,
+                 ['kitchen', 'living'], null, ROOF_FORMS.main.form,
+                 BLOCK_MEET.main);
+    } else HOUSE_VOLUMES.main.forEach(buildVolumeRoof);
 
     /* ---- the garage block (spec section 2) ----------------------------
        The garage's own three walls (garage_shell) and the mudroom's own
@@ -6603,11 +6735,13 @@
     var mudroomFrontG = shellWall('mudroom_front', -12.60, GARAGE_BLOCK.south,
               GARAGE_BLOCK.east, GARAGE_BLOCK.south, EXT_TOP4,
               [0, 0, 1], [], 'mudroom');
-    shellGable('garage_block_roof', GARAGE_BLOCK.west, GARAGE_BLOCK.east,
-               GARAGE_BLOCK.north, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
-               ROOF_FORMS.garage.ridge, null, null, blockPitch('garage'),
-               ['garage', 'mudroom'], null, ROOF_FORMS.garage.form,
-               BLOCK_MEET.garage);
+    if (!UPPER.length) {
+      shellGable('garage_block_roof', GARAGE_BLOCK.west, GARAGE_BLOCK.east,
+                 GARAGE_BLOCK.north, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
+                 ROOF_FORMS.garage.ridge, null, null, blockPitch('garage'),
+                 ['garage', 'mudroom'], null, ROOF_FORMS.garage.form,
+                 BLOCK_MEET.garage);
+    } else HOUSE_VOLUMES.garage.forEach(buildVolumeRoof);
 
     /* Spec 2026-09-17 blocks section 0: a block roof's pieces are named by
        geometric side (shellGable: _north/_south + _end_west/_end_east on a
@@ -6618,7 +6752,11 @@
        normalizes the array it was handed), so the picks read .z. */
     var ROOF_ALIAS = {};
     function aliasRoof(base) {
-      var rows = FABRIC.filter(function (f) { return f.name.indexOf(base + '_') === 0; });
+      var volumePrefix = base === 'roof_main' ? 'main_' : 'garage_';
+      var rows = FABRIC.filter(function (f) {
+        return f.name.indexOf(base + '_') === 0 ||
+          (UPPER.length && f.name.indexOf(volumePrefix) === 0 && f.name.indexOf('_roof_') > 0);
+      });
       function pick(sel) {
         var best = null;
         rows.forEach(function (f) { if (!best || sel(f.n) > sel(best.n)) best = f; });
@@ -6714,7 +6852,7 @@
        axis: z 1.50 is north of the ridge at 4.225, the deck is at one
        height over the wall's whole length, and the top is cut square at
        the lower of its two faces. */
-    if (VAULTED)
+    if (mainWingVault(EPX1_4, EWX0_4))
       vaultSection(futurePartG,
                    vaultFlatPts(MAIN_VAULT, EPX1_4, EWX0_4, EXT_TOP4,
                                 1.50 - WALL_T4 / 2, 1.50 + WALL_T4 / 2),
@@ -6891,12 +7029,9 @@
        block owns it is sharedFaceOwner()'s answer, already given for the
        block-meet clip above -- see the rule written out at the two side
        walls below. */
-    function storyBox(name) {
-      /* `|| 1` throughout, exactly the way `depth` defaults: the block
-         model always carries `stories`, but a hand-fed HOUSE_FACADE or an
-         older saved row need not, and an absent storey is one storey. */
-      if ((BLOCKS[name].stories || 1) !== 2) return;
-      var B = name === 'main' ? FULL_HOUSE : GARAGE_BLOCK;
+    function storyBox(v) {
+      if (!v.upper) return;
+      var name = v.block, B = name === 'main' ? FULL_HOUSE : GARAGE_BLOCK;
       var y0 = EXT_TOP4, h = EXT_TOP4;
       /* the main block's envelope lines are outer faces, the garage
          block's are wall centres (see the paragraph above) */
@@ -6913,37 +7048,15 @@
           shellBox(g, 0.18, h, 0.18, FARMHOUSE.trim,
                    end ? x1 : x0, y0 + h / 2, end ? z1 : z0);
         });
-        shellRegister(g, name + '_upper_' + suffix, normal, null);
+        shellRegister(g, v.name + '_upper_' + suffix, normal, null);
       }
+      west = v.x0 + io; east = v.x1 - io;
       wall('south', west, south, east, south, [0, 0, 1]);
       wall('north', west, north, east, north, [0, 0, -1]);
-      /* THE SHARED PLANE, one rule (fix round 1). The main block's WEST
-         side and the garage block's EAST side are the same plane,
-         x -7.15, and it must be closed by exactly one wall -- two is a
-         z-fight, none is a hole. sharedFaceOwner() (declared with the
-         block meet above) already names the block that owns that plane,
-         so this reads it rather than inventing a second answer:
-
-         - both blocks two stories: the OWNER's wall closes the WHOLE
-           plane -- each end runs to the further of the two blocks'
-           faces -- and the non-owner skips its own. The extent matters:
-           `main_upper_west` over the main block's z range alone leaves
-           the strip z FULL_HOUSE.south..GARAGE_BLOCK.south open
-           whenever a garage DEPTH pushes the garage block past the main
-           (depth 6: 4.5 units of open upper storey at the shared face).
-         - only one block two stories: there is nothing to share. That
-           block builds its own wall over its OWN extent, and the other
-           builds nothing at all.
-
-         Each end takes the face convention of the block it came from --
-         the main block's faces are outer, the garage block's are wall
-         centres -- which is how every block corner in this file already
-         meets (garage_block_west runs to GARAGE_BLOCK.south and
-         mudroom_front's slab is centred there; the corner boards hide
-         the crossing). */
-      var shared = (name === 'main') ? 'west' : 'east';
-      var both = (BLOCKS.main.stories || 1) === 2 &&
-                 (BLOCKS.garage.stories || 1) === 2;
+      /* Each x seam is closed once. seamOwner() chooses the taller
+         volume, then west within one block or main across the shared
+         block plane. When both sides of the block plane are upper, its
+         one wall covers the union of their north/south extents. */
       function sharedEnd(sign) {
         var m = sign < 0 ? FULL_HOUSE.north + WALL_T4 / 2
                          : FULL_HOUSE.south - WALL_T4 / 2;
@@ -6951,17 +7064,23 @@
         return sign < 0 ? Math.min(m, g) : Math.max(m, g);
       }
       ['west', 'east'].forEach(function (side) {
-        var onShared = (side === shared);
-        if (onShared && both && sharedFaceOwner() !== name) return;
+        var sign = side === 'west' ? -1 : 1;
+        var edge = sign < 0 ? v.x0 : v.x1;
+        var neighbour = adjacentVolumes(v).find(function (n) {
+          return Math.abs((sign < 0 ? n.x1 : n.x0) - edge) < 1e-5;
+        });
+        if (neighbour && seamOwner(v, neighbour) !== v) return;
+        var across = neighbour && neighbour.block !== v.block;
+        var both = across && neighbour.upper;
         var x = side === 'west' ? west : east;
-        var z0 = (onShared && both) ? sharedEnd(-1) : north;
-        var z1 = (onShared && both) ? sharedEnd(1) : south;
+        var z0 = both ? sharedEnd(-1) : north;
+        var z1 = both ? sharedEnd(1) : south;
         wall(side, x, z0, x, z1, side === 'west' ? [-1, 0, 0] : [1, 0, 0]);
       });
     }
     /* BEFORE buildElevation(): a story-2 feature is placed on the face
        these walls make, so they have to stand first. */
-    storyBox('main'); storyBox('garage');
+    HOUSE_VOLUMES.main.forEach(storyBox); HOUSE_VOLUMES.garage.forEach(storyBox);
 
     /* FACADE (arc 4, spec section 6): the street elevation builds
        HERE. Every helper it uses exists (the shell helpers above,
@@ -7141,7 +7260,7 @@
          top at EXT_TOP4 that the two bands just above already give it. */
       var gVault = roofVault(GARAGE_BLOCK, ROOF_FORMS.garage, blockPitch('garage'));
       if (gVault.axis === 'z' && ROOF_FORMS.garage.form === 'gable' &&
-          (BLOCKS.garage.stories || 1) === 1)
+          !upperOverlapsX('garage', -12.72, -12.42))
         /* vFrom 4.6: the band just above starts ITS courses at its own
            bottom edge, so the section continues them from there rather
            than opening a fresh course at the eave. */
@@ -10077,7 +10196,7 @@
       studyWorld = window.HouseStudy.build(T, DETAIL, R, {
         eave: EXT_TOP4,
         underside: function (z) {
-          return VAULTED ? vaultTop(MAIN_VAULT, z) : EXT_TOP4;
+          return mainWingVault(EPX1_4, EWX0_4) ? vaultTop(MAIN_VAULT, z) : EXT_TOP4;
         }
       });
       Object.keys(studyWorld.zones).forEach(function (key) {
@@ -11814,6 +11933,7 @@
          neighbour's volume, with the planes of that volume either way */
       blockGeometry: blockGeometry,
       BLOCK_MEET: BLOCK_MEET, BLOCK_VOLUMES: BLOCK_VOLUMES,
+      VOLUME_MEETS: VOLUME_MEETS,
       /* VIEW-VOLUME MASKING (task 3): the five room shells, their masks
          (P, W, box, cam) and the one cap material, for the read-only
          window.chfRoomShell* hooks below */
@@ -13214,9 +13334,8 @@
      both and asserts them against services/house_facade.py, which is
      what keeps the JS and Python slot tables from ever drifting. */
   window.chfFacade = function () { return webgl ? webgl.SPEC : null; };
-  /* MASSING ARC 2 (spec 2026-09-17 section 2): the BLOCK MODEL the scene
-     was built from -- each block's depth, stories, roof {form, ridge,
-     pitch_deg}, cladding, base band and body. Read-only, like chfFacade. */
+  /* MASSING ARC 2 + 2b: the VERSION-3 block/upper model the scene was
+     built from. Read-only, like chfFacade. */
   window.chfBlocks = function () { return webgl ? webgl.BLOCKS : null; };
   /* ---- THE MIRROR (spec 2026-09-17 section 3.4): read-only hooks, the
      chfBlocks stance -- they report, they never move anything.
@@ -13333,10 +13452,19 @@
      clipper would have used). Read-only, like chfBlockGeometry. */
   window.chfBlockMeet = function () {
     if (!webgl) return null;
-    return { main: { active: !!webgl.BLOCK_MEET.main,
-                     planes: webgl.BLOCK_VOLUMES.main },
-             garage: { active: !!webgl.BLOCK_MEET.garage,
-                       planes: webgl.BLOCK_VOLUMES.garage } };
+    var out = { main: { active: !!webgl.BLOCK_MEET.main,
+                        planes: webgl.BLOCK_VOLUMES.main },
+                garage: { active: !!webgl.BLOCK_MEET.garage,
+                          planes: webgl.BLOCK_VOLUMES.garage } };
+    if (webgl.VOLUME_MEETS && webgl.VOLUME_MEETS.length > 2) {
+      out.volumes = webgl.VOLUME_MEETS;
+      ['main', 'garage'].forEach(function (block) {
+        out[block].active = webgl.VOLUME_MEETS.some(function (v) {
+          return v.block === block && v.active;
+        });
+      });
+    }
+    return out;
   };
   /* ROOF VALLEYS (masking spec section 6): the block deck plane under a
      street face's features, {n, d} with n the deck's upward normal

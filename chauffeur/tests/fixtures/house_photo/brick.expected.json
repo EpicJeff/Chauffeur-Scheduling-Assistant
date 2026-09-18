@@ -10,8 +10,7 @@
         "form": "gable",
         "pitch_deg": 22.5,
         "ridge": "z"
-      },
-      "stories": 1
+      }
     },
     "main": {
       "base": {
@@ -26,8 +25,7 @@
         "form": "hip",
         "pitch_deg": 22.5,
         "ridge": "x"
-      },
-      "stories": 1
+      }
     }
   },
   "ground": [
@@ -68,5 +66,6 @@
     "arched entry",
     "stone accents beyond the base band"
   ],
-  "version": 2
+  "version": 3,
+  "upper": []
 }

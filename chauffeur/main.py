@@ -1735,12 +1735,12 @@ def house_page(request: Request):
         entry = _hf.draft_for(tok) if tok else None
         if entry is not None:
             bundle = {'id': 'draft', 'name': 'Draft', 'spec': entry['spec'],
-                      'slots': _hf.slot_table(entry['spec']['blocks'])}
+                      'slots': _hf.slot_table(entry['spec']['blocks'], entry['spec']['upper'])}
         if bundle is None:
             bundle = _hf.active_bundle()
     except Exception:
         bundle = {'id': 'canonical', 'name': 'Canonical', 'spec': _hf.CANONICAL,
-                  'slots': _hf.slot_table(_hf.CANONICAL['blocks'])}
+                  'slots': _hf.slot_table(_hf.CANONICAL['blocks'], _hf.CANONICAL['upper'])}
     facade_json = _json.dumps(bundle).replace('</', '<\\/')
     return templates.TemplateResponse(request=request, name="house.html",
                                       context={'facade_json': facade_json})

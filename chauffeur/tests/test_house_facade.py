@@ -18,6 +18,15 @@ def _v2():
     return copy.deepcopy(hf.CANONICAL)
 
 
+def _legacy_v2(main_stories=1, garage_stories=1):
+    s = copy.deepcopy(hf.CANONICAL)
+    s['version'] = 2
+    s.pop('upper', None)
+    s['blocks']['main']['stories'] = main_stories
+    s['blocks']['garage']['stories'] = garage_stories
+    return s
+
+
 def scenario_slot_table_is_derived_from_the_faces():
     slots = hf.slot_table()
     check([s['face'] for s in slots].count('garage_block') == 6, 'garage_block face: 6 slots')
@@ -82,7 +91,7 @@ def scenario_unknown_enums_fall_to_defaults():
           f'unknown block materials fall to the canonical ones: {main}')
     check(main['roof'] == {'form': 'gable', 'ridge': 'x', 'pitch_deg': hf.BLOCK_PITCH_DEG},
           f'unknown roof form/ridge/pitch -> the canonical block roof: {main["roof"]}')
-    check(main['stories'] == 1 and main['depth'] == 0.0, f'garbage stories/depth -> 1 and 0: {main}')
+    check('stories' not in main and main['depth'] == 0.0, f'stories removed; garbage depth -> 0: {main}')
     check(spec['blocks']['garage']['orientation'] == 'front', 'unknown orientation -> front')
     kinds = {(g['slot'], g['kind']) for g in spec['ground']}
     check((9, 'window') in kinds and (11, 'skylight') not in kinds, 'unknown kind dropped')
@@ -269,7 +278,7 @@ def scenario_garbage_in_never_raises():
     for raw in (None, 3, 'x', [], {}, {'ground': 'no'}, {'ground': [None, 3, {'kind': 'door'}]},
                 {'roof': [{'slot': 'a', 'span': -2, 'kind': 'gable'}]}):
         spec, _ = hf.normalize(raw)
-        check(spec['version'] == 2 and any(g['kind'] == 'door' for g in spec['ground']),
+        check(spec['version'] == 3 and any(g['kind'] == 'door' for g in spec['ground']),
               f'{raw!r} -> a valid spec')
         check(hf.validate_block_model(spec) == [],
               f'{raw!r} -> a spec that passes the structural validator')
@@ -289,9 +298,9 @@ def scenario_worst_case_is_within_caps():
     gd = next(g for g in spec['ground'] if g['kind'] == 'garage_door')
     check(gd['style'] == 'glass' and gd['leaves'] == 2, 'heaviest garage door')
     # V2: the heaviest BLOCK model too (spec 2026-09-17 section 2/7).
-    check(w['version'] == 2 and hf.validate_block_model(w) == [], f'worst case is a valid V2 model: {hf.validate_block_model(w)}')
+    check(w['version'] == 3 and hf.validate_block_model(w) == [], f'worst case is a valid V3 model: {hf.validate_block_model(w)}')
     b = w['blocks']
-    check(b['main']['stories'] == 2 and b['garage']['stories'] == 2, 'two stories on both blocks')
+    check(len(w['upper']) == 2 and {u['slot'] for u in w['upper']} == {0, 6}, 'full-face upper spans on both blocks')
     check(b['main']['cladding'] == 'brick' and b['garage']['cladding'] == 'stone',
           f"brick main, stone garage: {b['main']['cladding']}/{b['garage']['cladding']}")
     check(b['main']['base'] and b['garage']['base'], 'a base band on each block')
@@ -523,9 +532,10 @@ def scenario_house_page_renders_a_draft():
                                                 'depth': 4}}})
     dtok = hf.issue_draft(deep)
     bundle = json.loads(_house_html(f'draft={dtok}').split('window.HOUSE_FACADE = ')[1].split(';</script>')[0])
-    check(bundle['slots'] == hf.slot_table(deep['blocks']) and
+    check(bundle['slots'] == hf.slot_table(deep['blocks'], deep['upper']) and
           bundle['slots'] != hf.slot_table(), 'the draft bundle carries its own blocks slot table')
-    check(_main.house_facades_api()['slots'] == hf.slot_table(hf.active_bundle()['spec']['blocks']),
+    active = hf.active_bundle()['spec']
+    check(_main.house_facades_api()['slots'] == hf.slot_table(active['blocks'], active['upper']),
           'the facades API slots follow the active spec too')
 
 
@@ -642,7 +652,7 @@ def scenario_saved_v1_facades_normalize_on_read():
           f"a V1 clapboard row comes back as lap on both blocks: {spec.get('blocks')}")
     check(spec['blocks']['main']['body'] == 'sage' and spec['blocks']['main']['roof']['pitch_deg'] == 22.5,
           'the mapping table ran: body copied, block pitch still 22.5')
-    check(spec['version'] == 2 and spec['mirror'] is False, 'the row is V2 on the way out')
+    check(spec['version'] == 3 and spec['mirror'] is False, 'the row is V3 on the way out')
     check((storage.get_settings().get('house_facades') or [])[0]['spec'] == v1,
           'reading never rewrites what is stored')
 
@@ -777,7 +787,7 @@ def scenario_shed_windows_spend_the_window_budget():
 def scenario_validate_rejects_structurally_bad_models():
     """Spec 2026-09-17 blocks section 4: validation is not normalization.
     normalize manufactures defaults; validate must refuse first."""
-    check(hf.validate_block_model(_v2()) == [], 'the canonical V2 model validates clean')
+    check(hf.validate_block_model(_v2()) == [], 'the canonical V3 model validates clean')
     check(hf.validate_block_model({}) != [], 'an empty object is rejected')
     m = _v2(); del m['blocks']['garage']
     check(any('garage' in e for e in hf.validate_block_model(m)), 'a missing block is named')
@@ -800,10 +810,10 @@ def scenario_validate_rejects_structurally_bad_models():
 
 def scenario_canonical_v2_is_the_old_house():
     c = hf.CANONICAL
-    check(c['version'] == 2 and c['mirror'] is False, 'canonical is version 2, unmirrored')
+    check(c['version'] == 3 and c['mirror'] is False and c['upper'] == [], 'canonical is version 3, unmirrored, no upper spans')
     for name in ('main', 'garage'):
         b = c['blocks'][name]
-        check(b['depth'] == 0 and b['stories'] == 1 and b['roof'] == {'form': 'gable', 'ridge': 'x', 'pitch_deg': 22.5}
+        check(b['depth'] == 0 and 'stories' not in b and b['roof'] == {'form': 'gable', 'ridge': 'x', 'pitch_deg': 22.5}
               and b['cladding'] == 'batten' and b['base'] is None and b['body'] == 'white',
               f'{name} block is today\'s house: {b}')
     check(c['blocks']['garage']['orientation'] == 'front', 'garage faces the street')
@@ -816,7 +826,7 @@ def scenario_canonical_v2_is_the_old_house():
     check(hf.block_face('main') == 'main' and hf.block_face('garage') == 'garage_block',
           'a block names the street face it fronts')
     spec, notes = hf.normalize(c)
-    check(spec == c and notes == [], f'canonical v2 is normal and idempotent: {notes}')
+    check(spec == c and notes == [], f'canonical v3 is normal and idempotent: {notes}')
 
 
 def scenario_v1_upgrade_is_the_mapping_table():
@@ -880,19 +890,66 @@ def scenario_depth_clamps_against_the_curb():
 
 
 def scenario_stories_and_per_story_overlap():
-    m = _v2(); m['blocks']['main']['stories'] = 2
+    m = _v2(); m['upper'] = [{'slot': 6, 'span': 12, 'roof': copy.deepcopy(m['blocks']['main']['roof'])}]
     m['ground'].append({'slot': 10, 'span': 1, 'kind': 'window', 'size': 'standard', 'shutters': True, 'story': 2})
     spec, notes = hf.normalize(m)
     kinds = [(g['kind'], g['slot'], g.get('story')) for g in spec['ground']]
     check(('door', 10, None) in kinds or ('door', 10, 1) in kinds, 'the ground-floor door at slot 10 stays')
     check(('window', 10, 2) in kinds, 'an upstairs window over the door is kept: overlap is per story')
-    slots = hf.slot_table(spec['blocks'])
-    check(abs(slots[6]['eave'] - 11.2) < 1e-6 and abs(slots[0]['eave'] - 5.6) < 1e-6, 'eaves follow stories per face')
+    slots = hf.slot_table(spec['blocks'], spec['upper'])
+    check(abs(slots[6]['eave'] - 11.2) < 1e-6 and abs(slots[0]['eave'] - 5.6) < 1e-6, 'eaves follow upper spans')
     m = _v2()
     m['ground'].append({'slot': 12, 'span': 1, 'kind': 'window', 'size': 'small', 'shutters': False, 'story': 2})
     spec, notes = hf.normalize(m)
     check(not any(g.get('story') == 2 for g in spec['ground']) and any('story' in n for n in notes),
           f'a story-2 window on a one-story block is dropped with a note: {notes}')
+
+
+def scenario_upper_spans_resolve_migrate_and_publish_eaves():
+    roof_x = {'form': 'gable', 'ridge': 'x', 'pitch_deg': 22.5}
+    roof_z = {'form': 'gable', 'ridge': 'z', 'pitch_deg': 30.0}
+    raw = _v2()
+    raw['upper'] = [
+        {'slot': 8, 'span': 4, 'roof': roof_z},
+        {'slot': 6, 'span': 6, 'roof': roof_x},
+        {'slot': 12, 'span': 2, 'roof': roof_z},
+    ]
+    spec, notes = hf.normalize(raw)
+    check([(u['slot'], u['span']) for u in spec['upper']] == [(6, 2), (8, 6)],
+          f'earlier span wins, later span trims, identical neighbours merge: {spec["upper"]}')
+    check(any('trimmed an upper span' in n for n in notes), f'upper trim noted: {notes}')
+    slots = hf.slot_table(spec['blocks'], spec['upper'])
+    check([slots[i]['eave'] for i in range(6, 14)] == [11.2] * 8,
+          'published slot table raises only covered slots')
+    legacy = _legacy_v2(main_stories=2)
+    migrated, _ = hf.normalize(legacy)
+    check(migrated['version'] == 3 and migrated['upper'][0]['slot'] == 6 and
+          migrated['upper'][0]['span'] == 12 and
+          all('stories' not in b for b in migrated['blocks'].values()),
+          f'V2 full story migrates to a full-face upper span: {migrated["upper"]}')
+    invalid = copy.deepcopy(hf.CANONICAL)
+    invalid['blocks']['main']['stories'] = 2
+    check(any('removed in version 3' in e for e in hf.validate_block_model(invalid)),
+          'strict V3 validation rejects legacy stories')
+
+
+def scenario_upper_seams_trim_roof_features_and_windows():
+    raw = _v2()
+    raw['upper'] = [{'slot': 9, 'span': 4,
+                     'roof': {'form': 'gable', 'ridge': 'z', 'pitch_deg': 22.5}}]
+    raw['roof'].append({'slot': 8, 'span': 4, 'kind': 'dormer', 'window': True})
+    raw['ground'].extend([
+        {'slot': 10, 'span': 1, 'kind': 'window', 'size': 'small', 'shutters': False, 'story': 2},
+        {'slot': 12, 'span': 2, 'kind': 'window', 'size': 'small', 'shutters': False, 'story': 2},
+    ])
+    spec, notes = hf.normalize(raw)
+    dormer = next(r for r in spec['roof'] if r['kind'] == 'dormer')
+    check(dormer['slot'] == 8 and dormer['span'] == 1, f'roof feature trims at first seam: {dormer}')
+    check(any(g.get('story') == 2 and g['slot'] == 10 for g in spec['ground']) and
+          not any(g.get('story') == 2 and g['slot'] == 12 for g in spec['ground']),
+          'story-2 windows survive only when wholly inside one upper span')
+    check(any('upper-story seam' in n for n in notes) and any('no upper story' in n for n in notes),
+          f'both losses are explained: {notes}')
 
 
 def scenario_side_garage_and_shed_and_unexpressed():
@@ -986,7 +1043,7 @@ def scenario_home_section_pins():
         check(needle in tpl, f'hand path method {needle}')
     check('From your photo' in tpl, 'the draft banner names its source')
     for needle in ('facadeBlockApply(', 'facadePreview3D(', 'facadeCritique(', 'facadePickRevised(', 'facadePickDraft(',
-                   'x-model="facadeDraft.mirror"', 'facadeDraft.blocks[b].stories', 'facadeDraft.blocks[b].roof.form',
+                   'x-model="facadeDraft.mirror"', 'facadeCell.upper.mode', 'facadeDraft.blocks[b].roof.form',
                    'facadeDraft.blocks[b].depth', 'facadeDraft.blocks[b].cladding', 'facadeDraft.blocks.garage.orientation',
                    '<option value="shed">', 'facadeCell.ground.shutters', 'facadeCell.porch.roof',
                    'facadeCell.roof.cladding', 'Preview in 3D', 'Compare to photo', 'Use this', 'unexpressed',
@@ -1136,6 +1193,8 @@ if __name__ == '__main__':
                scenario_v1_upgrade_is_the_mapping_table,
                scenario_depth_clamps_against_the_curb,
                scenario_stories_and_per_story_overlap,
+               scenario_upper_spans_resolve_migrate_and_publish_eaves,
+               scenario_upper_seams_trim_roof_features_and_windows,
                scenario_side_garage_and_shed_and_unexpressed,
                scenario_canonical_is_normal_and_idempotent,
                scenario_unknown_enums_fall_to_defaults,
