@@ -1,0 +1,80 @@
+{
+  "reasons": [
+    "Massing and roof forms: the hip main and gable-end garage match the photo; no changes.",
+    "Materials and base: the render shows brick_red on the main body; the photo brick reads closer to tan.",
+    "Openings: the garage door and front door line up with the photo; no changes.",
+    "Colours: the stone base band matches the photo; no other colour drift."
+  ],
+  "revised": {
+    "blocks": {
+      "garage": {
+        "base": null,
+        "body": "brick_red",
+        "cladding": "brick",
+        "depth": 0.0,
+        "orientation": "front",
+        "roof": {
+          "form": "gable",
+          "pitch_deg": 22.5,
+          "ridge": "z"
+        },
+        "stories": 1
+      },
+      "main": {
+        "base": {
+          "body": "stone_grey",
+          "height": 0.9,
+          "material": "stone"
+        },
+        "body": "tan",
+        "cladding": "brick",
+        "depth": 0.0,
+        "roof": {
+          "form": "hip",
+          "pitch_deg": 22.5,
+          "ridge": "x"
+        },
+        "stories": 1
+      }
+    },
+    "ground": [
+      {
+        "kind": "garage_door",
+        "leaves": 1,
+        "slot": 0,
+        "span": 3,
+        "style": "carriage"
+      },
+      {
+        "kind": "door",
+        "slot": 10,
+        "span": 1
+      }
+    ],
+    "mirror": false,
+    "pitch_deg": 34.8,
+    "roof": [
+      {
+        "kind": "gable",
+        "slot": 8,
+        "span": 1
+      },
+      {
+        "kind": "gable",
+        "slot": 15,
+        "span": 1
+      }
+    ],
+    "style": {
+      "door": "wood",
+      "frame": "black",
+      "roof": "charcoal",
+      "trim": "white"
+    },
+    "unexpressed": [
+      "arched entry",
+      "stone accents beyond the base band"
+    ],
+    "version": 2
+  }
+}

@@ -5514,13 +5514,14 @@ def house_facade_preview(body: dict = Body(default={})):
 
 
 @app.post("/api/house/facades/photo")
-async def house_facade_photo(photo: UploadFile = File(...)):
-    """Photo -> DRAFT facade. Returned, never stored: the parent reviews it
-    in the editor and saves on purpose (spec 2026-09-15 §5). The bytes live
-    in this request only."""
+def house_facade_photo(photo: UploadFile = File(...)):
+    """Sync def on purpose (spec 2026-09-17 section 4): a vision call must
+    not block the event loop. Photo -> DRAFT + token; returned, never
+    stored -- the parent reviews it in the editor and saves on purpose
+    (spec 2026-09-15 §5). The bytes live in this request only."""
     import base64
     from services import house_facade as _hf
-    data = await photo.read()
+    data = photo.file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty upload")
     if len(data) > _PHOTO_MAX_BYTES:
@@ -5528,8 +5529,24 @@ async def house_facade_photo(photo: UploadFile = File(...)):
     mime = (photo.content_type or '').lower()
     if not mime.startswith('image/'):
         raise HTTPException(status_code=400, detail="Only images are supported")
-    draft, notes, err = _hf.from_photo(base64.b64encode(data).decode('ascii'), mime)
-    return {'draft': draft, 'notes': notes, 'error': err}
+    draft, notes, err, token = _hf.from_photo(base64.b64encode(data).decode('ascii'), mime)
+    return {'draft': draft, 'notes': notes, 'error': err, 'token': token}
+
+
+@app.post("/api/house/facades/critique")
+def house_facade_critique(body: dict = Body(default={})):
+    """Pass 2: the photo, a render of the current draft, and the draft's own
+    JSON go back to the model for a critique + one revised model (never a
+    patch). The result rides the token -- a duplicate submission replays it
+    rather than asking the model again."""
+    from services import house_facade as _hf
+    render = str((body or {}).get('render') or '')
+    if render.startswith('data:image/png;base64,'):
+        render = render.split(',', 1)[1]
+    result, err = _hf.critique(str((body or {}).get('token') or ''), render)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    return {'result': result}
 
 
 @app.post("/api/house/facades")

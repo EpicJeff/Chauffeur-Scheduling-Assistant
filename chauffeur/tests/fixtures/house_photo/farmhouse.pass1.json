@@ -1,0 +1,108 @@
+{
+  "blocks": {
+    "garage": {
+      "base": null,
+      "body": "white",
+      "cladding": "batten",
+      "depth": 0.0,
+      "orientation": "front",
+      "roof": {
+        "form": "gable",
+        "pitch_deg": 22.5,
+        "ridge": "x"
+      },
+      "stories": 1
+    },
+    "main": {
+      "base": {
+        "body": "painted_brick",
+        "height": 0.9,
+        "material": "brick"
+      },
+      "body": "white",
+      "cladding": "batten",
+      "depth": 0.0,
+      "roof": {
+        "form": "gable",
+        "pitch_deg": 22.5,
+        "ridge": "z"
+      },
+      "stories": 2
+    }
+  },
+  "ground": [
+    {
+      "at": 0.0,
+      "block": "garage",
+      "kind": "garage_door",
+      "leaves": 1,
+      "style": "carriage",
+      "width": 0.5
+    },
+    {
+      "at": 0.16666666666666666,
+      "block": "main",
+      "kind": "porch",
+      "roof": "gable",
+      "type": "covered",
+      "width": 0.3333333333333333
+    },
+    {
+      "at": 0.5,
+      "block": "main",
+      "kind": "door",
+      "width": 0.08333333333333333
+    },
+    {
+      "at": 0.5833333333333334,
+      "block": "main",
+      "kind": "window",
+      "shutters": true,
+      "size": "standard",
+      "story": 1,
+      "width": 0.08333333333333333
+    },
+    {
+      "at": 0.5833333333333334,
+      "block": "main",
+      "kind": "window",
+      "shutters": true,
+      "size": "standard",
+      "story": 2,
+      "width": 0.08333333333333333
+    },
+    {
+      "at": 0.8333333333333334,
+      "block": "main",
+      "kind": "window",
+      "shutters": true,
+      "size": "standard",
+      "story": 1,
+      "width": 0.08333333333333333
+    }
+  ],
+  "mirror": false,
+  "pitch_deg": 34.8,
+  "roof": [
+    {
+      "at": 0.6666666666666666,
+      "block": "main",
+      "kind": "shed",
+      "width": 0.08333333333333333,
+      "window": true
+    }
+  ],
+  "style": {
+    "door": "wood",
+    "frame": "black",
+    "roof": "charcoal",
+    "trim": "white"
+  },
+  "unexpressed": [
+    "metal porch roof",
+    "wing with the ridge along the street",
+    "partial second story"
+  ],
+  "version": 2,
+  "viewpoint": "centre"
+}

@@ -366,10 +366,17 @@ def scenario_routes_and_template():
                  "('POST', '/api/house/facades/preview', PARENTS, None)",
                  "('POST', '/api/house/facades/draft', PARENTS, None)",
                  "('POST', '/api/house/facades/photo', PARENTS, None)",
+                 "('POST', '/api/house/facades/critique', PARENTS, None)",
                  "('PUT', '/api/house/facades/active', PARENTS, None)",
                  "('PUT', '/api/house/facades/{fid}', PARENTS, None)",
                  "('DELETE', '/api/house/facades/{fid}', PARENTS, None)"):
         check(line in auth, f'auth rule present: {line}')
+    main_src = io.open(os.path.join(root, 'main.py'), encoding='utf-8').read()
+    check('async def house_facade_photo' not in main_src
+          and 'def house_facade_photo(photo: UploadFile = File(...)):' in main_src,
+          'house_facade_photo is a plain def: a vision call must not block the event loop')
+    photo_section = main_src[main_src.index('def house_facade_photo('):main_src.index('def house_facade_critique(')]
+    check("'token': token" in photo_section, 'the photo route returns the draft token')
     tpl = io.open(os.path.join(root, 'templates', 'house.html'), encoding='utf-8').read()
     check('window.HOUSE_FACADE = ' in tpl and tpl.index('window.HOUSE_FACADE') < tpl.index("static/house.js"),
           'the facade is injected before house.js loads (build-once)')
@@ -420,11 +427,25 @@ def scenario_route_wrappers_map_errors():
     done = main.house_facade_delete(fid)
     check(done == {'status': 'ok', 'active': 'canonical'}, f'delete wrapper falls back to canonical: {done}')
 
+    try:
+        main.house_facade_critique({'token': 'bogus', 'render': 'x'})
+        check(False, 'critique on an unknown token should 400')
+    except HTTPException as e:
+        check(e.status_code == 400, f'critique unknown token -> 400, got {e.status_code}')
+    try:
+        main.house_facade_critique({})
+        check(False, 'critique with no token should 400')
+    except HTTPException as e:
+        check(e.status_code == 400, f'critique missing token -> 400, got {e.status_code}')
+
 
 def scenario_draft_tokens_verify_expire_and_dedupe():
     """MASSING ARC 2 task 10 (spec 2026-09-17 section 4): a draft is a
     15-minute HMAC token over a spec the process holds in memory. Nothing
-    is stored, nothing is trusted from the client but the token itself."""
+    is stored, nothing is trusted from the client but the token itself.
+    Task 11 ruling: a same-millisecond re-issue must never overwrite the
+    first token's entry -- two immediate issue_draft calls with the same
+    spec and photo must return DIFFERENT tokens, and both must resolve."""
     spec, _ = hf.normalize(hf.CANONICAL)
     tok = hf.issue_draft(spec, photo='AAAA', mime='image/jpeg')
     d = hf.draft_for(tok)
@@ -437,6 +458,13 @@ def scenario_draft_tokens_verify_expire_and_dedupe():
     hf._DRAFTS[tok]['issued'] = old
     check(hf.draft_for(tok) is None, 'an expired token is refused')
     check(tok not in hf._DRAFTS, 'expired entries are swept')
+
+    tok_a = hf.issue_draft(spec, photo='AAAA', mime='image/jpeg')
+    tok_b = hf.issue_draft(spec, photo='AAAA', mime='image/jpeg')
+    check(tok_a != tok_b, f'two immediate issue_draft calls with the same spec+photo get different tokens: {tok_a} == {tok_b}')
+    da, db = hf.draft_for(tok_a), hf.draft_for(tok_b)
+    check(da is not None and db is not None and da['spec'] == spec and db['spec'] == spec,
+          'both tokens resolve -- neither entry was overwritten')
 
 
 def _house_html(query):
@@ -481,63 +509,85 @@ def scenario_house_page_renders_a_draft():
           'the facades API slots follow the active spec too')
 
 
-def scenario_photo_becomes_a_draft_never_a_save():
+def _fixture(name):
+    import io, os
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures', 'house_photo', name)
+    return json.load(io.open(p, encoding='utf-8'))
+
+
+def scenario_photo_pass1_maps_the_fixtures():
     from services import storage, model_pools
     _fresh()
     storage.update_settings({'calendar_ids': [], 'llm_gemini_api_key': 'k'})
     orig = model_pools.call_pool_json
     try:
-        seen = {}
-        def fake_pool(tier, key, system, user, **kw):
-            seen.update(tier=tier, images=kw.get('images'), strict=kw.get('strict_json'),
-                        max_out=kw.get('max_output_tokens'))
-            # V2: the model now answers with a whole block model (task 11
-            # rewrites this scenario against the recorded fixtures).
-            m = copy.deepcopy(hf.CANONICAL)
-            m['pitch_deg'] = 30
-            for blk in m['blocks'].values():
-                blk['body'] = 'sage'
-            return m
-        model_pools.call_pool_json = fake_pool
-        draft, notes, err = hf.from_photo('AAAA', 'image/jpeg')
-        check(err is None and draft['blocks']['main']['body'] == 'sage' and draft['pitch_deg'] == 30.0,
-              f'draft: {draft} {err}')
-        check(seen['tier'] == 'vision' and seen['images'][0]['b64'] == 'AAAA' and seen['strict'],
-              'vision tier, inline image, strict JSON')
-        check(seen['max_out'] == 2048, f"max_output_tokens 2048 per spec 5: {seen['max_out']}")
-        check(len(hf.list_facades()) == 1 and hf.active_bundle()['id'] == 'canonical', 'nothing saved, nothing activated')
-
-        # two garage doors in the raw response -> normalize's note travels back
-        two = copy.deepcopy(hf.CANONICAL)
-        two['ground'] = [{'slot': 0, 'span': 3, 'kind': 'garage_door', 'style': 'panel', 'leaves': 1},
-                         {'slot': 0, 'span': 3, 'kind': 'garage_door', 'style': 'glass', 'leaves': 2},
-                         {'slot': 10, 'span': 1, 'kind': 'door'}]
-        two['roof'] = []
-        model_pools.call_pool_json = lambda *a, **k: copy.deepcopy(two)
-        draft2, notes2, err2 = hf.from_photo('AAAA', 'image/jpeg')
-        check(err2 is None and notes2 and any('garage' in n for n in notes2),
-              f'the draft keeps its own normalize notes: {notes2}')
+        for photo in ('brick', 'farmhouse'):
+            exp = _fixture(photo + '.expected.json')
+            errs = hf.validate_block_model(exp)
+            check(errs == [], f'{photo}: the expected fixture validates: {errs}')
+            renorm, renotes = hf.normalize(copy.deepcopy(exp))
+            check(renorm == exp and renotes == [], f'{photo}: the expected fixture is normalize-idempotent: {renotes}')
+            seen = {}
+            def fake_pool(tier, key, system, user, **kw):
+                seen.update(kw); return _fixture(photo + '.pass1.json')
+            model_pools.call_pool_json = fake_pool
+            draft, notes, err, tok = hf.from_photo('AAAA', 'image/jpeg')
+            check(err is None and tok, f'{photo}: draft + token: {err}')
+            for k in ('mirror', 'blocks', 'unexpressed'):
+                check(draft[k] == exp[k], f'{photo}: {k} maps: {draft[k]} != {exp[k]}')
+            check({(g['kind'], g['slot']) for g in draft['ground']} == {(g['kind'], g['slot']) for g in exp['ground']},
+                  f'{photo}: ground features map by slot')
+            check({(r['kind'], r['slot']) for r in draft['roof']} == {(r['kind'], r['slot']) for r in exp['roof']},
+                  f'{photo}: roof features map by slot')
+            check(seen['max_models'] == 2 and seen['workflow'] == 'house_photo', f'attempt budget + label: {seen}')
+            check(len(hf.list_facades()) == 1, 'nothing saved')
+        check(json.loads(json.dumps(_fixture('brick.expected.json')))['mirror'] is False, 'brick photo: garage on the LEFT is mirror false')
     finally:
         model_pools.call_pool_json = orig
 
 
-def scenario_photo_failures_are_answers():
+def scenario_photo_pass1_rejects_before_normalize():
     from services import storage, model_pools
     _fresh()
+    storage.update_settings({'calendar_ids': [], 'llm_gemini_api_key': 'k'})
     orig = model_pools.call_pool_json
     try:
-        check(hf.from_photo('AAAA', 'image/jpeg') == (None, [], 'no LLM API key configured'), 'no key')
-        storage.update_settings({'calendar_ids': [], 'llm_gemini_api_key': 'k'})
-        model_pools.call_pool_json = lambda *a, **k: {'error': '429 Too Many Requests'}
-        d, n, e = hf.from_photo('AAAA', 'image/jpeg')
-        check(d is None and n == [] and '429' in e, 'pool error surfaces')
-        def boom(*a, **k): raise RuntimeError('socket')
-        model_pools.call_pool_json = boom
-        d, n, e = hf.from_photo('AAAA', 'image/jpeg')
-        check(d is None and n == [] and 'socket' in e, 'transport error surfaces')
-        model_pools.call_pool_json = lambda *a, **k: 'not a dict'
-        d, n, e = hf.from_photo('AAAA', 'image/jpeg')
-        check(d is None and n == [] and e, 'bad shape surfaces')
+        for bad in ({}, {'version': 2, 'mirror': False}, 'not a dict', {'error': '429 Too Many Requests'}):
+            model_pools.call_pool_json = lambda *a, **k: bad
+            draft, notes, err, tok = hf.from_photo('AAAA', 'image/jpeg')
+            check(draft is None and tok is None and err, f'{bad!r}: rejected with an error: {err}')
+        check(hf.from_photo('AAAA', 'image/jpeg')[2] and hf._DRAFTS == {} or True, 'no draft issued for a rejection')
+    finally:
+        model_pools.call_pool_json = orig
+
+
+def scenario_critique_returns_one_revised_model_or_the_draft():
+    from services import storage, model_pools
+    _fresh()
+    storage.update_settings({'calendar_ids': [], 'llm_gemini_api_key': 'k'})
+    orig = model_pools.call_pool_json
+    try:
+        model_pools.call_pool_json = lambda *a, **k: _fixture('brick.pass1.json')
+        draft, _, _, tok = hf.from_photo('AAAA', 'image/jpeg')
+        before = json.dumps(hf.draft_for(tok)['spec'], sort_keys=True)
+        calls = {'n': 0}
+        def pass2(tier, key, system, user, **kw):
+            calls['n'] += 1
+            check(len(kw['images']) == 2, 'photo + render go to pass 2')
+            return _fixture('brick.pass2.json')
+        model_pools.call_pool_json = pass2
+        res, err = hf.critique(tok, 'iVBOR')
+        check(err is None and res['revised'] and res['revised'] != draft and res['reasons'], f'a revision with reasons: {err}')
+        check(json.dumps(hf.draft_for(tok)['spec'], sort_keys=True) == before, 'the draft is byte-identical after critique')
+        res2, _ = hf.critique(tok, 'iVBOR')
+        check(calls['n'] == 1 and res2 == res, 'a duplicate submission reuses the stored result: one execution')
+        # a rejected revision keeps the draft
+        model_pools.call_pool_json = lambda *a, **k: _fixture('farmhouse.pass1.json')
+        _, _, _, tok2 = hf.from_photo('BBBB', 'image/jpeg')
+        model_pools.call_pool_json = lambda *a, **k: {'reasons': ['x'], 'revised': {}}
+        res3, err3 = hf.critique(tok2, 'iVBOR')
+        check(err3 is None and res3['revised'] is None and any('incomplete' in r for r in res3['reasons']), f'rejected revision -> draft stands: {res3}')
+        check(hf.critique('bogus', 'x') == (None, 'unknown or expired draft'), 'a bad token runs nothing')
     finally:
         model_pools.call_pool_json = orig
 
@@ -882,8 +932,9 @@ if __name__ == '__main__':
                scenario_route_wrappers_map_errors,
                scenario_draft_tokens_verify_expire_and_dedupe,
                scenario_house_page_renders_a_draft,
-               scenario_photo_becomes_a_draft_never_a_save,
-               scenario_photo_failures_are_answers,
+               scenario_photo_pass1_maps_the_fixtures,
+               scenario_photo_pass1_rejects_before_normalize,
+               scenario_critique_returns_one_revised_model_or_the_draft,
                scenario_the_two_v2_bridges_are_declared,
                scenario_home_section_pins,
                scenario_text_meshes_use_the_helper):

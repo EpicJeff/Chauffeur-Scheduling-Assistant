@@ -373,6 +373,7 @@ RULES = [
     ('POST', '/api/house/facades/preview', PARENTS, None),
     ('POST', '/api/house/facades/draft', PARENTS, None),
     ('POST', '/api/house/facades/photo', PARENTS, None),
+    ('POST', '/api/house/facades/critique', PARENTS, None),
     ('PUT', '/api/house/facades/active', PARENTS, None),
     ('PUT', '/api/house/facades/{fid}', PARENTS, None),
     ('DELETE', '/api/house/facades/{fid}', PARENTS, None),

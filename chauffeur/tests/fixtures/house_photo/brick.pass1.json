@@ -1,0 +1,77 @@
+{
+  "blocks": {
+    "garage": {
+      "base": null,
+      "body": "brick_red",
+      "cladding": "brick",
+      "depth": 0.0,
+      "orientation": "front",
+      "roof": {
+        "form": "gable",
+        "pitch_deg": 22.5,
+        "ridge": "z"
+      },
+      "stories": 1
+    },
+    "main": {
+      "base": {
+        "body": "stone_grey",
+        "height": 0.9,
+        "material": "stone"
+      },
+      "body": "brick_red",
+      "cladding": "brick",
+      "depth": 0.0,
+      "roof": {
+        "form": "hip",
+        "pitch_deg": 22.5,
+        "ridge": "x"
+      },
+      "stories": 1
+    }
+  },
+  "ground": [
+    {
+      "at": 0.0,
+      "block": "garage",
+      "kind": "garage_door",
+      "leaves": 1,
+      "style": "carriage",
+      "width": 0.5
+    },
+    {
+      "at": 0.3333333333333333,
+      "block": "main",
+      "kind": "door",
+      "width": 0.08333333333333333
+    }
+  ],
+  "mirror": false,
+  "pitch_deg": 34.8,
+  "roof": [
+    {
+      "at": 0.16666666666666666,
+      "block": "main",
+      "kind": "gable",
+      "width": 0.08333333333333333
+    },
+    {
+      "at": 0.75,
+      "block": "main",
+      "kind": "gable",
+      "width": 0.08333333333333333
+    }
+  ],
+  "style": {
+    "door": "wood",
+    "frame": "black",
+    "roof": "charcoal",
+    "trim": "white"
+  },
+  "unexpressed": [
+    "arched entry",
+    "stone accents beyond the base band"
+  ],
+  "version": 2,
+  "viewpoint": "left"
+}

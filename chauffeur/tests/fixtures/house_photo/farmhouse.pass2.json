@@ -1,0 +1,108 @@
+{
+  "reasons": [
+    "Massing and roof forms: the two-story gable main and one-story gable garage match the photo.",
+    "Materials and base: the render shows white batten siding; the photo reads closer to greige.",
+    "Openings: the covered porch, shed dormer and shuttered windows all line up with the photo.",
+    "Colours: the painted-brick base band matches; no other colour drift."
+  ],
+  "revised": {
+    "blocks": {
+      "garage": {
+        "base": null,
+        "body": "white",
+        "cladding": "batten",
+        "depth": 0.0,
+        "orientation": "front",
+        "roof": {
+          "form": "gable",
+          "pitch_deg": 22.5,
+          "ridge": "x"
+        },
+        "stories": 1
+      },
+      "main": {
+        "base": {
+          "body": "painted_brick",
+          "height": 0.9,
+          "material": "brick"
+        },
+        "body": "greige",
+        "cladding": "batten",
+        "depth": 0.0,
+        "roof": {
+          "form": "gable",
+          "pitch_deg": 22.5,
+          "ridge": "z"
+        },
+        "stories": 2
+      }
+    },
+    "ground": [
+      {
+        "kind": "garage_door",
+        "leaves": 1,
+        "slot": 0,
+        "span": 3,
+        "style": "carriage"
+      },
+      {
+        "kind": "porch",
+        "roof": "gable",
+        "slot": 8,
+        "span": 4,
+        "type": "covered"
+      },
+      {
+        "kind": "door",
+        "slot": 12,
+        "span": 1
+      },
+      {
+        "kind": "window",
+        "shutters": true,
+        "size": "standard",
+        "slot": 13,
+        "span": 1,
+        "story": 1
+      },
+      {
+        "kind": "window",
+        "shutters": true,
+        "size": "standard",
+        "slot": 13,
+        "span": 1,
+        "story": 2
+      },
+      {
+        "kind": "window",
+        "shutters": true,
+        "size": "standard",
+        "slot": 16,
+        "span": 1,
+        "story": 1
+      }
+    ],
+    "mirror": false,
+    "pitch_deg": 34.8,
+    "roof": [
+      {
+        "kind": "shed",
+        "slot": 14,
+        "span": 1,
+        "window": true
+      }
+    ],
+    "style": {
+      "door": "wood",
+      "frame": "black",
+      "roof": "charcoal",
+      "trim": "white"
+    },
+    "unexpressed": [
+      "metal porch roof",
+      "wing with the ridge along the street",
+      "partial second story"
+    ],
+    "version": 2
+  }
+}

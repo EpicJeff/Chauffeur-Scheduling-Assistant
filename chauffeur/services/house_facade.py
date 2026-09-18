@@ -737,48 +737,192 @@ def set_active(fid):
 
 
 PHOTO_SYSTEM = """You describe the STREET-FACING elevation of a house from one photo, as JSON only.
-The house is drawn on a fixed strip of {n} slots, west to east (left to right as seen from the street):
+The house is drawn as two BLOCKS side by side on a fixed strip of {n} slots, west to east
+(left to right as seen from the street):
 {faces}
-Slot numbers are global (0..{last}). Report only what is on the street face.
-Return exactly this shape:
-{{"pitch_deg": number between 22.5 and 35, "style": {{"cladding": "batten"|"clapboard", "body": one of {body}, "roof": one of {roof}, "frame": one of {frame}, "door": one of {door}, "trim": one of {trim}}},
-  "ground": [{{"slot": int, "span": int, "kind": "window", "size": "tall"|"standard"|"small"}} | {{"slot","span","kind":"door"}} | {{"slot","span","kind":"garage_door","style":"carriage"|"panel"|"glass","leaves":1|2}} | {{"slot","span","kind":"porch","type":"sitting"|"stoop"|"covered"}}],
-  "roof": [{{"slot": int, "span": int, "kind": "gable"|"dormer"|"hip_end", "window": bool}}]}}
-Rules: colours are the NEAREST palette name, never hex. If the garage is not visible, omit it. If unsure of a count, prefer fewer windows. The front door goes on the main face. No prose."""
+Slot numbers are global (0..{last}), but you report each feature's position as a FRACTION of
+its own block's street width (0.0 at that block's west edge, 1.0 at its east edge) -- never a
+slot number. This lets you describe the same house regardless of exactly how many slots a block
+has.
+
+MIRROR: the garage sits on the WEST (left) side by default. If the garage is on the EAST (right)
+side as seen from the street, set "mirror": true. If the garage is on the left, or you cannot see
+it at all, set "mirror": false.
+
+VIEWPOINT: report roughly where the photo was taken from relative to the house's centre --
+"left", "centre" or "right".
+
+WORKED EXAMPLE: a garage on the LEFT showing the triangular end of its roof to the street (its
+ridge running front-to-back) is {{"form": "gable", "ridge": "z"}} with "orientation": "front" --
+because the street sees the gable END, not the long eave side. A hip-roofed main block with two
+small gables poking out of the roof toward the street is main.roof = {{"form": "hip", "ridge": "x"}}
+plus two separate roof features of kind "gable", one per protrusion.
+
+Return exactly this shape (a fraction-based feature has "block"/"at"/"width" instead of "slot"/"span"):
+{{"version": 2, "mirror": bool, "viewpoint": "left"|"centre"|"right",
+  "pitch_deg": number between 22.5 and 35,
+  "style": {{"roof": one of {roof}, "frame": one of {frame}, "door": one of {door}, "trim": one of {trim}}},
+  "blocks": {{
+    "main": {{"stories": 1|2, "roof": {{"form": one of {roof_forms}, "ridge": one of {ridges}, "pitch_deg": number}},
+              "cladding": one of {claddings}, "body": one of {body},
+              "base": null | {{"material": one of {claddings}, "height": number, "body": one of {body}}}}},
+    "garage": {{"stories": 1|2, "roof": {{"form": one of {roof_forms}, "ridge": one of {ridges}, "pitch_deg": number}},
+                "cladding": one of {claddings}, "body": one of {body},
+                "base": null | {{"material": one of {claddings}, "height": number, "body": one of {body}}},
+                "orientation": one of {orientations}}}}},
+  "ground": [{{"block": "main"|"garage", "at": 0..1, "width": 0..1, "kind": "window", "size": one of {window_sizes}, "shutters": bool, "story": 1|2}}
+            | {{"block","at","width","kind":"door"}}
+            | {{"block","at","width","kind":"garage_door","style": one of {garage_styles}, "leaves": 1|2}}
+            | {{"block","at","width","kind":"porch","type": one of {porch_types}, "roof": one of {porch_roofs}}}],
+  "roof": [{{"block": "main"|"garage", "at": 0..1, "width": 0..1, "kind": one of {roof_kinds_features}, "window": bool}}],
+  "unexpressed": [up to 8 short strings naming real details the shape above cannot capture]}}
+Rules: colours are the NEAREST palette name, never hex. If the garage is not visible, omit it.
+If unsure of a count, prefer fewer windows. The front door goes on the main block. Anything real
+about the house that this schema has no field for -- a shape, a material, a massing detail --
+goes in "unexpressed" as a short phrase, never invented into a field that doesn't fit it. No prose."""
 
 
 def _photo_prompt():
     faces = '\n'.join(f"- {f['face']}: slots {_face_range(f['face'])[0]}..{_face_range(f['face'])[1]}"
                       for f in FACES)
     n = len(slot_table())
+    roof_kinds_features = [k for k in ROOF_KINDS if k not in ('eave',)]
     return PHOTO_SYSTEM.format(n=n, last=n - 1, faces=faces,
                                body=list(STYLE['body']), roof=list(STYLE['roof']),
                                frame=list(STYLE['frame']), door=list(STYLE['door']),
-                               trim=list(STYLE['trim']))
+                               trim=list(STYLE['trim']), claddings=list(CLADDINGS),
+                               roof_forms=list(ROOF_FORMS), ridges=list(RIDGES),
+                               orientations=list(ORIENTATIONS), window_sizes=list(WINDOW_SIZES),
+                               garage_styles=list(GARAGE_STYLES), porch_types=list(PORCH_TYPES),
+                               porch_roofs=list(PORCH_ROOFS), roof_kinds_features=roof_kinds_features)
+
+
+def _snap_fractions(obj):
+    """Pass 1 reports ground/roof features as a FRACTION of their own block's
+    street width (`block`/`at`/`width`) rather than a slot number, so the
+    model never has to know the slot grid. This converts each fraction entry
+    to the `slot`/`span` shape validate_block_model expects, on that block's
+    own face. Entries that already carry `slot` pass through untouched."""
+    if not isinstance(obj, dict):
+        return obj
+    out = copy.deepcopy(obj)
+    for layer in ('ground', 'roof'):
+        items = out.get(layer)
+        if not isinstance(items, list):
+            continue
+        for e in items:
+            if not isinstance(e, dict) or 'slot' in e or 'block' not in e:
+                continue
+            face = 'garage_block' if e.get('block') == 'garage' else 'main'
+            lo, hi = _face_range(face)
+            n = hi - lo + 1
+            at, width = _num(e.get('at'), 0.0), _num(e.get('width'), 1.0 / n)
+            slot = lo + int(round(min(0.999, max(0.0, at)) * n))
+            span = max(1, int(round(width * n)))
+            e['slot'] = min(max(lo, slot), hi)
+            e['span'] = min(span, hi - e['slot'] + 1)
+            for k in ('block', 'at', 'width'):
+                e.pop(k, None)
+    return out
 
 
 def from_photo(image_b64, mime):
-    """One photo -> a DRAFT facade (normalized) or an error. Never stores."""
+    """One photo -> a validated, normalized DRAFT + its token. Never stores."""
     from services import model_pools
     settings = _settings()
     api_key = settings.get('llm_gemini_api_key', '')
     if not api_key:
-        return None, [], 'no LLM API key configured'
+        return None, [], 'no LLM API key configured', None
     try:
         res = model_pools.call_pool_json(
             'vision', api_key, _photo_prompt(),
-            'Describe the street-facing elevation of the house in the attached photo.',
+            'Describe the street-facing elevation of the house in the attached photo as the block model.',
             temperature=0.1, timeout_s=90, settings=settings, strict_json=True,
-            max_output_tokens=2048,
+            max_output_tokens=4096, max_models=2, workflow='house_photo',
             images=[{'mime': mime or 'image/jpeg', 'b64': image_b64}])
     except Exception as e:
-        return None, [], f'could not read the photo ({e})'
+        return None, [], f'could not read the photo ({e})', None
     if not isinstance(res, dict):
-        return None, [], 'could not read the photo (bad response)'
+        return None, [], 'could not read the photo (bad response)', None
     if res.get('error'):
-        return None, [], f"could not read the photo ({res['error']})"
-    spec, notes = normalize(res)
-    return spec, notes, None
+        return None, [], f"could not read the photo ({res['error']})", None
+    res.pop('_model', None)
+    viewpoint = _pick(res.pop('viewpoint', None), ('left', 'centre', 'right'), 'centre')
+    snapped = _snap_fractions(res)
+    errs = validate_block_model(snapped)
+    if errs:
+        return None, [], 'the model returned an incomplete house: ' + '; '.join(errs[:3]), None
+    spec, notes = normalize(snapped)
+    return spec, notes, None, issue_draft(spec, image_b64, mime, viewpoint=viewpoint)
+
+
+CRITIQUE_SYSTEM = """You compare a photo of a house with a 3D render of a draft description of it,
+and improve the draft. You are given, in order: the ORIGINAL PHOTO, the RENDER of the current
+draft, and the draft's own JSON (the same block-model shape pass 1 produces, but with "slot" and
+"span" instead of fractions -- keep that shape).
+
+Go through the comparison in this FIXED ORDER and give AT MOST EIGHT reasons, each one line,
+each naming what you saw and what you changed (or that nothing needed changing):
+1. Massing and roof forms -- block count, stories, roof form/ridge/pitch per block.
+2. Materials and base -- cladding and body colour per block, the base band.
+3. Openings -- windows, doors, garage door, porch: position, size, count.
+4. Colours -- style roof/frame/door/trim, and any body colour not already covered above.
+
+Then return ONE full revised model -- never a patch, never a diff -- in the exact same shape as
+the draft you were given (slot/span, not fractions). If the draft already matches the photo,
+return it unchanged. Anything real about the house the schema still cannot capture belongs in
+"unexpressed", not invented into a field that doesn't fit it.
+
+Return exactly this shape: {"reasons": [string, ...up to 8], "revised": <the full block model>}
+No prose outside that JSON."""
+
+
+def critique(token, render_png_b64):
+    """A photo + a render of the current draft -> at most eight ordered
+    reasons and one revised model (never a patch). The result rides the
+    token: a second submission for the same token replays it rather than
+    asking the model again. The cached draft itself is never mutated."""
+    from services import model_pools
+    e = draft_for(token)
+    if e is None:
+        return None, 'unknown or expired draft'
+    if e['result'] is not None:
+        return e['result'], None
+    settings = _settings()
+    api_key = settings.get('llm_gemini_api_key', '')
+    draft = copy.deepcopy(e['spec'])
+    result = {'draft': draft, 'revised': None, 'reasons': [], 'unexpressed': list(draft.get('unexpressed') or []), 'attempts': 0}
+    if not api_key or not e.get('photo_b64'):
+        result['reasons'] = ['no critique: ' + ('no LLM API key configured' if not api_key else 'no photo on this draft')]
+        store_result(token, result)
+        return result, None
+    try:
+        res = model_pools.call_pool_json(
+            'vision', api_key, CRITIQUE_SYSTEM,
+            'Photo first, then the render of the draft, then the draft JSON:\n' + json.dumps(draft),
+            temperature=0.1, timeout_s=90, settings=settings, strict_json=True,
+            max_output_tokens=4096, max_models=2, workflow='house_photo',
+            images=[{'mime': e.get('mime') or 'image/jpeg', 'b64': e['photo_b64']},
+                    {'mime': 'image/png', 'b64': render_png_b64}])
+        result['attempts'] = 1
+    except Exception as ex:
+        result['reasons'] = [f'critique failed ({ex})']; store_result(token, result); return result, None
+    if not isinstance(res, dict) or res.get('error'):
+        result['reasons'] = [f"critique failed ({(res or {}).get('error', 'bad response') if isinstance(res, dict) else 'bad response'})"]
+        store_result(token, result); return result, None
+    reasons = [str(r)[:160] for r in (res.get('reasons') or []) if isinstance(r, (str, dict))][:8]
+    reasons = [r if isinstance(r, str) else str(r.get('reason', r)) for r in reasons]
+    revised = _snap_fractions(res.get('revised'))
+    errs = validate_block_model(revised)
+    if errs:
+        result['reasons'] = reasons + ['revision rejected as incomplete: ' + '; '.join(errs[:3])]
+    else:
+        spec, notes = normalize(copy.deepcopy(revised))
+        result['revised'] = spec
+        result['reasons'] = reasons + notes
+        result['unexpressed'] = list(spec.get('unexpressed') or [])
+    store_result(token, result)
+    return result, None
 
 
 def active_bundle():
@@ -822,17 +966,23 @@ def _sweep(now_ms):
         _DRAFTS.pop(k, None)
 
 
-def issue_draft(spec, photo=None, mime=None):
+def issue_draft(spec, photo=None, mime=None, viewpoint=None):
     """A normalized spec (plus, optionally, the photo it came from) becomes
-    a token /house can render. Returns the token; stores nothing on disk."""
+    a token /house can render. Returns the token; stores nothing on disk.
+    Two drafts issued in the same millisecond must never collide: a
+    same-millisecond re-issue bumps the clock rather than overwriting the
+    first token's entry."""
     now_ms = int(time.time() * 1000)
     _sweep(now_ms)
     spec_sha = _sha(json.dumps(spec, sort_keys=True))
     photo_sha = _sha(photo or '')
     tok = f'{now_ms:x}.{_sign(photo_sha, spec_sha, now_ms)}'
+    while tok in _DRAFTS:
+        now_ms += 1
+        tok = f'{now_ms:x}.{_sign(photo_sha, spec_sha, now_ms)}'
     _DRAFTS[tok] = {'spec': copy.deepcopy(spec), 'photo_b64': photo, 'mime': mime,
-                    'issued': now_ms, 'spec_sha': spec_sha, 'photo_sha': photo_sha,
-                    'result': None}
+                    'viewpoint': viewpoint, 'issued': now_ms, 'spec_sha': spec_sha,
+                    'photo_sha': photo_sha, 'result': None}
     return tok
 
 
