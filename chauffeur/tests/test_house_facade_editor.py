@@ -51,6 +51,23 @@ assert.equal(editor.facadeCell.roof.kind,'shed_dormer','saved shed dormer reopen
 editor.facadeCell.roof.kind = 'shed';
 editor.facadeCellApply();
 assert.equal(editor.facadeDraft.roof[0].window,false,'plain shed roof removes the window');
+editor.facadeDraft.finishes = [{slot:9,span:4,story:1,cladding:'brick'}, {slot:9,span:4,story:2,body:'stone_grey'}];
+editor.facadeCellStory = 1;
+editor.facadeLoadCell();
+editor.facadeCell.finish.body = 'brick_red';
+editor.facadeCellApply();
+assert.deepEqual(editor.facadeDraft.finishes.filter(f=>f.story===1), [
+ {slot:9,span:2,story:1,cladding:'brick'}, {slot:12,span:1,story:1,cladding:'brick'},
+ {slot:11,span:1,story:1,cladding:'brick',body:'brick_red'}]);
+assert.equal(editor.facadeDraft.finishes.find(f=>f.story===2).span,4,'other story untouched');
+editor.facadeCell.finish.cladding = ''; editor.facadeCell.finish.body = '';
+editor.facadeCellApply();
+assert.ok(!editor.facadeDraft.finishes.some(f=>f.story===1 && f.slot===11),'inherit removes local override only');
+editor.facadeSetStoryFinish('main',2,'cladding','shingle');
+editor.facadeSetStoryFinish('main',2,'body','brick_red');
+editor.facadeSetStoryFinish('main',2,'cladding','');
+assert.equal(editor.facadeStoryFinish('main',2,'body'),'brick_red','clearing material preserves colour');
+assert.equal(editor.facadeStoryFinish('main',2,'cladding'),'');
 console.log('facade editor slot/layer isolation OK');
 '''
     subprocess.run(['node', '-e', script], check=True)

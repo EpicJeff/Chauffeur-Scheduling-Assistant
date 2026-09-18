@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.99 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.100 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8083,3 +8083,12 @@ Known deviations, ruled: the spec's own text contradicts itself on stop 0 (pixel
 
 
 **Upper-roof feature controls (v2.499.99, 2026-09-18).** A gabled porch no longer deletes an upper-story gable sharing its slots. Other porch forms no longer pull that upper gable down to porch height or extend it to the porch front. The eave choice is explicitly labeled as no added feature; its ineffective span input is hidden. Shed dormer is now a distinct editor choice backed by the existing `shed` feature with `window: true`; plain shed roof uses `window: false`. Save/reload preserves that choice. Pure/editor tests pass, and browser geometry checks verify upper gables above both gabled and flat porches. Hip-end fins and fixed shed projection remain visual limitations. The pitch minimum remains 22.5 degrees: independent low/zero-pitch dormer geometry is not implemented by this fix.
+
+
+### Per-story and street-span finishes; window capacity (v2.499.100)
+
+The block cladding and body colour remain defaults. Optional `story_finishes[block]["1"|"2"]` override either property for that story's walls, including side and rear walls. Optional `finishes` rows (`slot`, `span`, `story`, plus `cladding` and/or `body`) override street-facing wall spans. Each property inherits independently: span, then story, then block. Clearing a selector restores inheritance. Existing facades without overrides render unchanged. Roof-feature cladding and base bands remain separately controlled.
+
+The editor permits a single slot inside a finish span to be changed without changing its neighbours or the other story. Save/load, normalization, draft preview, and the photo schema preserve overrides. Normalization merges identical adjacent finishes on the same block. The renderer partitions actual wall geometry at material boundaries rather than adding overlapping surfaces; tiled textures retain scale and phase across the partitions.
+
+The old combined ten-window cap is removed. Windows remain subject to available slots, opening overlap rules and upper-story coverage, but adding a dormer no longer deletes an unrelated wall window. Existing dormer, gable and porch caps remain unchanged. The expanded stress fixture contains 32 wall windows and six dormer windows; this is a fixture, not a new window cap. Chromium checks cover high/low quality builds and living-room cutaways. Device performance still requires wall-panel measurement.

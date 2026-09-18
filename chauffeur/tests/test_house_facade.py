@@ -243,16 +243,16 @@ def scenario_roof_can_span_garage_and_mudroom():
           f'a gable already inside the bay is unchanged: {g2} {notes2}')
 
 
-def scenario_budget_caps_drop_east_most_first():
+def scenario_windows_fill_available_slots():
     ground = [{'slot': i, 'span': 1, 'kind': 'window', 'size': 'tall'} for i in range(6, 14)]
     ground += [{'slot': i, 'span': 1, 'kind': 'window', 'size': 'tall'} for i in range(14, 18)]
     ground += [{'slot': i, 'span': 1, 'kind': 'window', 'size': 'tall'} for i in range(3, 6)]
     ground.append({'slot': 9, 'span': 1, 'kind': 'door'})
     spec, notes = hf.normalize(_spec(ground=ground))
     wins = [g for g in spec['ground'] if g['kind'] == 'window']
-    check(len(wins) == hf.MAX_WINDOWS, f'capped at {hf.MAX_WINDOWS}: {len(wins)}')
-    check(max(g['slot'] for g in wins) < 17, 'the east-most windows went first')
-    check(any('window' in n for n in notes), 'noted')
+    check(len(wins) == 14, f'all unoccupied slots keep windows: {len(wins)}')
+    check(max(g['slot'] for g in wins) == 17, 'east-most window survives')
+    check(not any('draw budget' in n for n in notes), 'no window budget pruning')
 
 
 def scenario_sorted_and_deduped():
@@ -287,7 +287,7 @@ def scenario_worst_case_is_within_caps():
     check(spec == w, f'worst case is already normal; notes {notes}')
     wins = sum(g['kind'] == 'window' for g in spec['ground'])
     dw = sum(1 for r in spec['roof'] if r['kind'] == 'dormer' and r.get('window'))
-    check(wins + dw == hf.MAX_WINDOWS, f'worst case uses every window: {wins}+{dw}')
+    check(wins == 32 and dw == 6, f'all free wall slots and dormers: {wins}+{dw}')
     check(sum(r['kind'] == 'dormer' for r in spec['roof']) == hf.MAX_DORMERS, 'every dormer')
     check(sum(r['kind'] == 'gable' for r in spec['roof']) == hf.MAX_GABLES, 'every gable')
     check(sum(g['span'] for g in spec['ground'] if g['kind'] == 'porch') == hf.MAX_PORCH_SLOTS,
@@ -761,24 +761,46 @@ def scenario_the_pipeline_records_its_request_count():
         model_pools.call_pool_json = orig
 
 
-def scenario_shed_windows_spend_the_window_budget():
-    """FINAL REVIEW (minor 9): a shed with `window: true` is a shed dormer and
-    draws a real window; it used to be free while a dormer's was not."""
+def scenario_finish_inheritance_and_round_trip():
+    raw = _spec(story_finishes={'main': {'1': {'body': 'brick_red'}, '2': {'cladding': 'shingle'}}},
+                finishes=[{'slot': 6, 'span': 5, 'story': 1, 'cladding': 'brick'},
+                          {'slot': 8, 'span': 1, 'story': 1, 'body': 'stone_grey'},
+                          {'slot': 6, 'span': 5, 'story': 2, 'body': 'painted_brick'}])
+    spec, notes = hf.normalize(raw)
+    check(not notes and not hf.validate_block_model(spec), 'valid optional finishes')
+    check(hf.normalize(spec)[0] == spec, 'finish normalization is idempotent')
+    check(hf.effective_finish(spec, 8, 1) == {'cladding': 'brick', 'body': 'stone_grey'}, 'independent span properties')
+    check(hf.effective_finish(spec, 7, 1) == {'cladding': 'brick', 'body': 'brick_red'}, 'span inherits story colour')
+    check(hf.effective_finish(spec, 7, 2) == {'cladding': 'shingle', 'body': 'painted_brick'}, 'second story independent')
+    check(hf.effective_finish(spec, 0) == {k: spec['blocks']['garage'][k] for k in ('cladding', 'body')}, 'other block unchanged')
+    _fresh()
+    rec = hf.save_facade('Mixed finishes', spec)
+    check(next(r for r in hf.list_facades() if r['id'] == rec['id'])['spec'] == spec, 'save/load preserves finishes')
+    snapped = hf._snap_fractions(_spec(finishes=[{'block': 'main', 'at': 0, 'width': .25, 'story': 2, 'cladding': 'brick'}]))
+    check(snapped['finishes'][0]['slot'] == 6 and snapped['finishes'][0]['span'] == 3, 'photo fractional finishes')
+    for invalid in ({'finishes': 'bad'}, {'finishes': [{'slot': True, 'span': 1, 'story': 2}]},
+                    {'story_finishes': {'main': {'3': {'cladding': 'brick'}}}}):
+        check(hf.validate_block_model(_spec(**invalid)), 'reject malformed finish model')
+    check('story_finishes' not in hf.normalize(_spec(story_finishes={}, finishes=[]))[0], 'empty overrides omitted')
+
+
+def scenario_shed_windows_do_not_remove_wall_windows():
+    """Adding a roof window must not remove an unrelated wall window."""
     # a door of our own, so normalize does not invent one over a window
     ground = ([{'slot': 10, 'span': 1, 'kind': 'door'}]
               + [{'slot': i, 'span': 1, 'kind': 'window', 'size': 'tall'} for i in (6, 7, 8, 9, 11, 12, 13, 14, 15, 16)])
     plain, _ = hf.normalize(_spec(ground=list(ground), roof=[]))
-    check(len([g for g in plain['ground'] if g['kind'] == 'window']) == hf.MAX_WINDOWS,
-          f"ten windows and no roof window: the cap is the cap: {len([g for g in plain['ground'] if g['kind'] == 'window'])}")
+    check(len([g for g in plain['ground'] if g['kind'] == 'window']) == 10,
+          f"ten wall windows survive: {len([g for g in plain['ground'] if g['kind'] == 'window'])}")
     spec, notes = hf.normalize(_spec(ground=list(ground),
                                      roof=[{'slot': 17, 'span': 1, 'kind': 'shed', 'window': True}]))
     wins = [g for g in spec['ground'] if g['kind'] == 'window']
     check(any(r['kind'] == 'shed' and r['window'] for r in spec['roof']), 'the shed dormer survives')
-    check(len(wins) == hf.MAX_WINDOWS - 1, f'its window spends a slot of the budget: {len(wins)}')
+    check(len(wins) == 10, f'roof window leaves wall windows intact: {len(wins)}')
     blind, _ = hf.normalize(_spec(ground=list(ground),
                                   roof=[{'slot': 17, 'span': 1, 'kind': 'shed', 'window': False}]))
-    check(len([g for g in blind['ground'] if g['kind'] == 'window']) == hf.MAX_WINDOWS,
-          'a shed with no window costs nothing')
+    check(len([g for g in blind['ground'] if g['kind'] == 'window']) == 10,
+          'windowless shed leaves wall windows intact')
 
 
 def scenario_validate_rejects_structurally_bad_models():
@@ -1236,7 +1258,7 @@ if __name__ == '__main__':
                scenario_porch_is_barred_from_the_bay_not_the_whole_block,
                scenario_roof_priority_and_no_bans,
                scenario_roof_can_span_garage_and_mudroom,
-               scenario_budget_caps_drop_east_most_first,
+               scenario_windows_fill_available_slots,
                scenario_sorted_and_deduped,
                scenario_wall_and_eave_entries_are_dropped,
                scenario_garbage_in_never_raises,
@@ -1255,7 +1277,8 @@ if __name__ == '__main__':
                scenario_an_unseen_garage_is_a_plain_block,
                scenario_the_draft_cache_is_bounded,
                scenario_the_pipeline_records_its_request_count,
-               scenario_shed_windows_spend_the_window_budget,
+               scenario_finish_inheritance_and_round_trip,
+               scenario_shed_windows_do_not_remove_wall_windows,
                scenario_the_two_v2_bridges_are_declared,
                scenario_home_section_pins,
                scenario_text_meshes_use_the_helper):

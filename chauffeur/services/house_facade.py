@@ -45,7 +45,8 @@ GARAGE_BAY_SLOTS = (0, 2)
 # MASSING ARC 2 (spec 2026-09-17-house-blocks-materials-design.md
 # section 2 plus the upper-span insert): the facade speaks a version-3
 # BLOCK MODEL. Cladding, body, base band, depth and the ground roof are
-# per block; `upper` owns second-story runs and their roofs; `style`
+# default per block; story_finishes and finishes override wall skins.
+# `upper` owns second-story runs and their roofs; `style`
 # keeps only the four roles that are not a block's own skin.
 GROUND_KINDS = ('wall', 'window', 'door', 'garage_door', 'porch')
 ROOF_KINDS = ('eave', 'gable', 'dormer', 'shed', 'hip_end')
@@ -72,7 +73,6 @@ DEPTH_MAX_WITH_PORCH = 2.0        # curb 8.0 - porch 4.6 - walk 1.0 = 2.4, floor
 BASE_H_MIN, BASE_H_MAX = 0.6, 1.8
 UNEXPRESSED_MAX, UNEXPRESSED_LEN = 8, 80
 # Draw-budget constants, not grammar (spec 4.7). Tuned in the probe task.
-MAX_WINDOWS = 10
 MAX_DORMERS = 6
 MAX_GABLES = 4
 MAX_PORCH_SLOTS = 10
@@ -267,6 +267,37 @@ def validate_block_model(obj):
                     enum(b['base'], 'body', STYLE['body'], p + '.base')
             if name == 'garage':
                 enum(b, 'orientation', ORIENTATIONS, p)
+    def validate_finish(row, path):
+        if not isinstance(row, dict):
+            errs.append(f'{path} not an object')
+            return
+        for key, allowed in (('cladding', CLADDINGS), ('body', STYLE['body'])):
+            if key in row:
+                enum(row, key, allowed, path)
+    if 'story_finishes' in obj:
+        defaults = need(obj, 'story_finishes', dict, 'house')
+        for block, stories in (defaults or {}).items():
+            if block not in ('main', 'garage') or not isinstance(stories, dict):
+                errs.append(f'story_finishes.{block} invalid')
+                continue
+            for story, row in stories.items():
+                if story not in ('1', '2'):
+                    errs.append(f'story_finishes.{block}.{story} invalid story')
+                validate_finish(row, f'story_finishes.{block}.{story}')
+    if 'finishes' in obj:
+        spans = need(obj, 'finishes', list, 'house')
+        for i, row in enumerate(spans or []):
+            path = f'finishes[{i}]'
+            validate_finish(row, path)
+            if not isinstance(row, dict):
+                continue
+            start = need(row, 'slot', int, path)
+            count = need(row, 'span', int, path)
+            story = need(row, 'story', int, path)
+            if story not in (1, 2):
+                errs.append(f'{path}.story must be 1 or 2')
+            if start is not None and count is not None and not (0 <= start < len(slot_table()) and 1 <= count <= len(slot_table()) - start):
+                errs.append(f'{path} outside elevation')
     upper = need(obj, 'upper', list, 'house')
     if upper is not None:
         slots = slot_table()
@@ -543,6 +574,69 @@ def _upper_entries(raw_upper, blocks, notes):
     return _resolve_upper_spans(shaped, notes)
 
 
+def _finish_fields(raw):
+    if not isinstance(raw, dict):
+        return {}
+    return {key: raw[key] for key, allowed in
+            (('cladding', CLADDINGS), ('body', STYLE['body'])) if raw.get(key) in allowed}
+
+
+def _normalize_finishes(raw, spec, notes):
+    defaults = raw.get('story_finishes', {})
+    defaults = defaults if isinstance(defaults, dict) else {}
+    stories = {}
+    for block in ('main', 'garage'):
+        values = defaults.get(block, {})
+        if not isinstance(values, dict):
+            continue
+        entries = {str(story): _finish_fields(values.get(str(story))) for story in (1, 2)}
+        entries = {k: v for k, v in entries.items() if v}
+        if entries:
+            stories[block] = entries
+    if stories:
+        spec['story_finishes'] = stories
+    slots = slot_table()
+    painted = {}
+    raw_spans = raw.get('finishes', [])
+    for row in raw_spans if isinstance(raw_spans, list) else []:
+        fields = _finish_fields(row)
+        if not fields:
+            continue
+        start = _int(row.get('slot'), -1)
+        if not 0 <= start < len(slots):
+            notes.append('dropped a finish outside the elevation')
+            continue
+        story = 2 if _int(row.get('story'), 1) == 2 else 1
+        end = min(len(slots), start + max(1, _int(row.get('span'), 1)))
+        for i in range(start, end):
+            cell = painted.setdefault((story, i), {})
+            for key, value in fields.items():
+                cell.setdefault(key, value)  # first explicit value wins per property
+    spans = []
+    for (story, i), fields in sorted(painted.items()):
+        if (spans and spans[-1]['story'] == story and
+                spans[-1]['slot'] + spans[-1]['span'] == i and
+                slots[spans[-1]['slot']]['face'] == slots[i]['face'] and
+                _finish_fields(spans[-1]) == fields):
+            spans[-1]['span'] += 1
+        else:
+            spans.append(dict(slot=i, span=1, story=story, **fields))
+    if spans:
+        spec['finishes'] = spans
+
+
+def effective_finish(spec, slot, story=1):
+    """Resolve each property independently: block, story, then street span."""
+    face = slot_table()[slot]['face']
+    block = BLOCK_OF_FACE[face]
+    result = _finish_fields(spec['blocks'][block])
+    result.update(spec.get('story_finishes', {}).get(block, {}).get(str(story), {}))
+    for row in reversed(spec.get('finishes', [])):
+        if row['story'] == story and row['slot'] <= slot < row['slot'] + row['span']:
+            result.update(_finish_fields(row))
+    return result
+
+
 def normalize(raw):
     notes = []
     raw = raw if isinstance(raw, dict) else {}
@@ -566,6 +660,7 @@ def normalize(raw):
                 raw_upper.append({'slot': lo, 'span': hi - lo + 1,
                                   'roof': copy.deepcopy(spec['blocks'][block]['roof'])})
     spec['upper'] = _upper_entries(raw_upper, spec['blocks'], notes)
+    _normalize_finishes(raw, spec, notes)
     st = raw.get('style') if isinstance(raw.get('style'), dict) else {}
     spec['style'] = {k: _pick(st.get(k), allowed, CANONICAL['style'][k])
                      for k, allowed in STYLE.items() if k != 'body'}
@@ -687,11 +782,6 @@ def normalize(raw):
     # a shed is a dormer's weight: the two share one cap (spec 2)
     roof = cap(roof, 'shed', MAX_DORMERS, extra=sum(1 for r in roof if r['kind'] == 'dormer'))
     roof = cap(roof, 'gable', MAX_GABLES)
-    # FINAL REVIEW (minor 9): a SHED with `window: true` is a shed dormer --
-    # it draws a real window, so it spends the window budget exactly as a
-    # dormer's does. It used to be free.
-    roof_windows = sum(1 for r in roof if r['kind'] in ('dormer', 'shed') and r.get('window'))
-    exclusive = cap(exclusive, 'window', MAX_WINDOWS, extra=roof_windows)
     total = 0
     porch_keep = []
     for pch in sorted(porches, key=lambda i: i['slot']):
@@ -737,13 +827,11 @@ def worst_case():
         if not (g_lo <= s['i'] <= g_hi) and dormers < MAX_DORMERS:
             roof.append({'slot': s['i'], 'span': 1, 'kind': 'dormer', 'window': True})
             dormers += 1
-    windows = MAX_WINDOWS - dormers
     for s in slots[g_hi + 1:]:
-        if s['i'] == m_lo or windows <= 0:
+        if s['i'] == m_lo:
             continue
         ground.append({'slot': s['i'], 'span': 1, 'kind': 'window', 'size': 'tall',
                        'shutters': True, 'story': 1})
-        windows -= 1
     ground.append({'slot': m_lo, 'span': min(MAX_PORCH_SLOTS, m_hi - m_lo + 1),
                    'kind': 'porch', 'type': 'sitting', 'roof': 'gable'})
     left = MAX_PORCH_SLOTS - (m_hi - m_lo + 1)
@@ -785,6 +873,8 @@ def worst_case():
         lo, hi = _face_range(FACE_OF_BLOCK[block])
         upper.append({'slot': lo, 'span': hi - lo + 1,
                       'roof': copy.deepcopy(blocks[block]['roof'])})
+    ground.extend({'slot': s['i'], 'span': 1, 'kind': 'window', 'size': 'tall',
+                   'shutters': True, 'story': 2} for s in slots)
     spec, _ = normalize({'version': 3, 'mirror': False, 'pitch_deg': PITCH_MAX, 'blocks': blocks,
                          'style': {'roof': 'brown', 'frame': 'white', 'door': 'red', 'trim': 'black'},
                          'ground': ground, 'roof': roof, 'upper': upper, 'unexpressed': []})
@@ -919,7 +1009,12 @@ Return exactly this shape (a fraction-based feature has "block"/"at"/"width" ins
   "roof": [{{"block": "main"|"garage", "at": 0..1, "width": 0..1, "kind": one of {roof_kinds_features}, "window": bool}}],
   "upper": [{{"block": "main"|"garage", "at": 0..1, "width": 0..1,
                "roof": {{"form": one of {roof_forms}, "ridge": one of {ridges}, "pitch_deg": number}}}}],
+  "story_finishes": {{"main": {{"1": {{"cladding": one of {claddings}, "body": one of {body}}}}}}},
+  "finishes": [{{"block": "main"|"garage", "at": 0..1, "width": 0..1, "story": 1|2, "cladding": one of {claddings}, "body": one of {body}}}],
   "unexpressed": [up to 8 short strings naming real details the shape above cannot capture]}}
+Finishes are optional overrides. Omit unchanged cladding/body fields to inherit independently.
+Story defaults may name main and/or garage, stories "1" and/or "2"; they wrap the block.
+Finish spans affect the street-facing wall only, even behind windows or doors.
 Rules: colours are the NEAREST palette name, never hex.
 For a continuous sloping porch cover with a smaller front gable, use porch roof "mixed".
 Its optional gable_offset and gable_span count slots relative to the porch start; defaults are 0 and 2.
@@ -959,7 +1054,7 @@ def _snap_fractions(obj, notes=None):
     if not isinstance(obj, dict):
         return obj
     out = copy.deepcopy(obj)
-    for layer in ('ground', 'roof', 'upper'):
+    for layer in ('ground', 'roof', 'upper', 'finishes'):
         items = out.get(layer)
         if not isinstance(items, list):
             continue

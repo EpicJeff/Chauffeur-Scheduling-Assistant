@@ -1352,6 +1352,8 @@
       });
     }
     function box(w, h, d, c, x, y, z, group, opts) {
+      if (opts && opts.facadeBlock && SPEC0 && (SPEC0.story_finishes || SPEC0.finishes))
+        return finishWallBox(w, h, d, c, x, y, z, group, opts);
       var g0 = group || scene;
       var ch = opts && opts.ch !== undefined ? opts.ch
              : (NICE ? 0.022 : 0);
@@ -4278,6 +4280,64 @@
       return NICE ? 0xffffff
                   : pal('body', BLOCKS[block || 'main'].body, 0xf4f1e9);
     }
+    // Split the actual wall, never overlay a second coplanar skin.
+    function wallFinish(block, story, slot) {
+      var b = BLOCKS[block], value = { cladding: b.cladding, body: b.body };
+      Object.assign(value, ((SPEC0.story_finishes || {})[block] || {})[story] || {});
+      (SPEC0.finishes || []).slice().reverse().forEach(function (f) {
+        if (f.story === story && slot >= f.slot && slot < f.slot + f.span) {
+          if (f.cladding) value.cladding = f.cladding;
+          if (f.body) value.body = f.body;
+        }
+      });
+      return value;
+    }
+    function finishWallBox(w, h, d, c, x, y, z, group, opts) {
+      var block = opts.facadeBlock, story = y >= 5.6 ? 2 : 1;
+      var first = block === 'garage' ? 0 : 6, count = block === 'garage' ? 6 : 12;
+      var west = block === 'garage' ? -18.20 : -7.15, east = block === 'garage' ? -7.15 : 14.65;
+      var step = (east - west) / count;
+      var south = (block === 'garage' ? 10.10 : 14.55) + BLOCKS[block].depth;
+      var front = w > d && Math.abs(z - south) < 0.4;
+      var cuts = [x - w / 2, x + w / 2];
+      if (front) for (var i = 0; i <= count; i++) {
+        var edge = west + i * step;
+        if (edge > cuts[0] + 1e-6 && edge < x + w / 2 - 1e-6) cuts.push(edge);
+      }
+      cuts.sort(function (a, b) { return a - b; });
+      var runs = [];
+      for (var j = 1; j < cuts.length; j++) {
+        var mid = (cuts[j - 1] + cuts[j]) / 2;
+        var slot = front ? first + Math.max(0, Math.min(count - 1, Math.floor((mid - west) / step))) : -1;
+        var f = wallFinish(block, story, slot), last = runs[runs.length - 1];
+        if (last && last.f.cladding === f.cladding && last.f.body === f.body) last.end = cuts[j];
+        else runs.push({start: cuts[j - 1], end: cuts[j], f: f});
+      }
+      var parent = group || scene, result = runs.length > 1 ? new T.Group() : null;
+      if (result) parent.add(result);
+      runs.forEach(function (run) {
+        var clean = Object.assign({}, opts); delete clean.facadeBlock;
+        clean.map = cladTex(run.f.cladding, pal('body', run.f.body, 0xf4f1e9));
+        var piece = box(run.end - run.start, h, d,
+                        NICE ? 0xffffff : pal('body', run.f.body, 0xf4f1e9),
+                        (run.start + run.end) / 2, y, z, result || parent, clean);
+        // Preserve the original wall's texture phase at every material seam.
+        if (runs.length > 1 && clean.map && piece.geometry.attributes.uv) {
+          var ref = clean.map.userData.uvRef, offset = run.start - (x - w / 2);
+          piece.geometry = cgeo('finish|' + piece.geometry.uuid + '|' + offset, function () {
+            var geo = piece.geometry.clone(), uv = geo.attributes.uv, no = geo.attributes.normal;
+            for (var k = 0; k < uv.count; k++) {
+              if (Math.abs(no.getX(k)) < 0.5)
+                uv.setX(k, uv.getX(k) + (no.getZ(k) < -0.5 ? w - (run.end - run.start) - offset : offset) / ref[0]);
+            }
+            uv.needsUpdate = true; return geo;
+          });
+        }
+        piece.userData.wallFinish = { block: block, story: story, cladding: run.f.cladding, body: run.f.body };
+        if (!result) result = piece;
+      });
+      return result;
+    }
     var grassT = null, sidingT = null, shingleT = null, driveT = null,
         battenT = null;
     if (NICE) {
@@ -4443,21 +4503,21 @@
       return box(w, h, d, c, x, y, z, northCladdingG, sharp(opts));
     }
     nbox(14.0, 5.6, 0.3, NICE ? 0xffffff : EXTC.siding, -0.15, 2.8, -5.95,
-         { rough: 0.95, map: CLAD() });
+         { rough: 0.95, facadeBlock: 'main', map: CLAD() });
     var westCladdingG = new T.Group(); extG.add(westCladdingG);
     function wbox(w, h, d, c, x, y, z, opts) {
       return box(w, h, d, c, x, y, z, westCladdingG, sharp(opts));
     }
     wbox(0.3, 5.6, 5.15, NICE ? 0xffffff : EXTC.siding, -7.0, 2.8, -4.025,
-         { rough: 0.95, map: CLAD() });
+         { rough: 0.95, facadeBlock: 'main', map: CLAD() });
     wbox(0.3, 5.6, 2.55, NICE ? 0xffffff : EXTC.siding, -7.0, 2.8, 1.525,
-         { rough: 0.95, map: CLAD() });
+         { rough: 0.95, facadeBlock: 'main', map: CLAD() });
     wbox(0.3, 2.4, 1.7, NICE ? 0xffffff : EXTC.siding, -7.0, 4.4, -0.6,
-         { rough: 0.95, map: CLAD() });
+         { rough: 0.95, facadeBlock: 'main', map: CLAD() });
     wbox(0.3, 5.6, 1.6, NICE ? 0xffffff : EXTC.siding, -7.0, 2.8, 5.2,
-         { rough: 0.95, map: CLAD() });
+         { rough: 0.95, facadeBlock: 'main', map: CLAD() });
     wbox(0.3, 2.2, 1.6, NICE ? 0xffffff : EXTC.siding, -7.0, 4.5, 3.6,
-         { rough: 0.95, map: CLAD() });
+         { rough: 0.95, facadeBlock: 'main', map: CLAD() });
     regFabric(westCladdingG, { name: 'west_cladding', n: [1, 0, 0],
                                box: fabBox(westCladdingG), room: 'mudroom' });
     /* MASSING ARC 1 fix wave: the trim board that used to stand here
@@ -4630,7 +4690,7 @@
               SWZ0 + MAIN_DZ + WALL_T4 / 4, southWallG, sharp(WALL_O)));
     swtag(box(SW_W, EXT_TOP4, WALL_T4 / 2, NICE ? 0xffffff : EXTC.siding,
               SW_CX, EXT_TOP4 / 2, SWZ0 + MAIN_DZ + WALL_T4 * 3 / 4, southWallG,
-              sharp({ rough: 0.95, map: CLAD() })));
+              sharp({ rough: 0.95, facadeBlock: 'main', map: CLAD() })));
     /* the baseboard: one board, its two ends inset 0.15 each. */
     swtag(box(SW_W - 0.3, 0.2, 0.08, 0xe4ddd1, SW_CX, 0.1,
               SWZ0 + MAIN_DZ - 0.02, southWallG, sharp()));
@@ -5073,7 +5133,7 @@
         EXT_TOP4 / 2, EW_CZ4, eastWallG, sharp(WALL_O));
     box(WALL_T4 / 2, EXT_TOP4, EW_LEN4, NICE ? 0xffffff : EXTC.siding,
         EWX0_4 + WALL_T4 * 3 / 4, EXT_TOP4 / 2, EW_CZ4, eastWallG,
-        sharp({ rough: 0.95, map: CLAD() }));
+        sharp({ rough: 0.95, facadeBlock: 'main', map: CLAD() }));
     box(0.08, 0.2, EW_LEN4 - 0.3, 0xe4ddd1, EWX0_4 - 0.02, 0.1, EW_CZ4,
         eastWallG, sharp());
     /* spec 2026-09-17 section 2: the main block's base band, east face */
@@ -5282,7 +5342,7 @@
       block = block || blockOfName(name);
       shellBox(g, alongX ? length : WALL_T4, height,
                alongX ? WALL_T4 : length, cladColour(block),
-               cx, height / 2, cz, { rough: 0.95, map: CLAD(block) });
+               cx, height / 2, cz, { rough: 0.95, facadeBlock: block, map: CLAD(block) });
       shellBox(g, alongX ? length : WALL_T4 + 0.06, 0.20,
                alongX ? WALL_T4 + 0.06 : length, FARMHOUSE.stoop,
                cx, 0.10, cz);
@@ -6746,7 +6806,7 @@
         shellBox(hg, WALL_T4, EXT_TOP4 - y0, SIDE_OPEN_Z1 - SIDE_OPEN_Z0,
                  cladColour('garage'), GARAGE_BLOCK.west, (y0 + EXT_TOP4) / 2,
                  (SIDE_OPEN_Z0 + SIDE_OPEN_Z1) / 2,
-                 { rough: 0.95, map: CLAD('garage') });
+                 { rough: 0.95, facadeBlock: 'garage', map: CLAD('garage') });
         shellRegister(hg, 'garage_block_west_head', [-1, 0, 0], null);
       })();
       /* the bay's street face is a WALL now, not a door bay: the same
@@ -7014,7 +7074,7 @@
        the block roofs below (`garage_return`). */
     box(0.3, EXT_TOP4, SWZ1 + MAIN_DZ - 6.0, NICE ? 0xffffff : EXTC.siding,
         -7.0, EXT_TOP4 / 2, (6.0 + SWZ1 + MAIN_DZ) / 2, westSkirtG,
-        sharp({ rough: 0.95, map: CLAD() }));
+        sharp({ rough: 0.95, facadeBlock: 'main', map: CLAD() }));
     box(0.35, EXT_TOP4, 0.1, EXTC.trim, -6.675, EXT_TOP4 / 2, SWZ1 + MAIN_DZ,
         westSkirtG, sharp());
     /* spec 2026-09-17 section 2: the main block's base band, west face
@@ -7088,7 +7148,7 @@
         var len = alongX ? x1 - x0 : z1 - z0;
         shellBox(g, alongX ? len : WALL_T4, h, alongX ? WALL_T4 : len,
                  cladColour(name), (x0 + x1) / 2, y0 + h / 2, (z0 + z1) / 2,
-                 { rough: 0.95, map: CLAD(name) });
+                 { rough: 0.95, facadeBlock: name, map: CLAD(name) });
         [0, 1].forEach(function (end) {
           shellBox(g, 0.18, h, 0.18, FARMHOUSE.trim,
                    end ? x1 : x0, y0 + h / 2, end ? z1 : z0);
@@ -7140,12 +7200,12 @@
         return m;
       }
       var gWallW = gtag(ebox(0.24, 4.6, 8.0, cladColour('garage'),
-                -18.08, 2.3, 6.0, { rough: 0.95, map: CLAD('garage') }));
+                -18.08, 2.3, 6.0, { rough: 0.95, facadeBlock: 'garage', map: CLAD('garage') }));
       var gWallE = gtag(ebox(0.24, 4.6, 8.0, cladColour('garage'),
-                -12.72, 2.3, 6.0, { rough: 0.95, map: CLAD('garage') }));
+                -12.72, 2.3, 6.0, { rough: 0.95, facadeBlock: 'garage', map: CLAD('garage') }));
       var garageBackWall = gtag(ebox(5.6, 4.6, 0.24,
                 cladColour('garage'),
-                -15.4, 2.3, 2.12, { rough: 0.95, map: CLAD('garage') }));
+                -15.4, 2.3, 2.12, { rough: 0.95, facadeBlock: 'garage', map: CLAD('garage') }));
       webgl_garageBackWall = garageBackWall;
       /* MASSING ARC 2 task 6 (spec 2026-09-17 section 2): every piece of
          the BAY is the garage block's street face -- the header, the
@@ -7174,20 +7234,20 @@
       if (!GARAGE_SIDE) {
         gtag(box(5.6, 1.1, 0.24, cladColour('garage'),
                  -15.4, 4.05, 9.88 + GAR_DZ, garageDoorG,
-                 sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
+                 sharp({ rough: 0.95, facadeBlock: 'garage', map: CLAD('garage') })));
         /* the lintel: the header stopped at y 3.5 and the door at 3.1, so
            a 0.4 slot ran the width of the bay and the resting camera
            looked straight through it at the shelves */
         gtag(box(5.6, 0.46, 0.24, cladColour('garage'),
                  -15.4, 3.27, 9.88 + GAR_DZ, garageDoorG,
-                 sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
+                 sharp({ rough: 0.95, facadeBlock: 'garage', map: CLAD('garage') })));
         gtag(box(3.9, 0.16, 0.16, EXTC.trim, -15.4, 3.16, 10.00 + GAR_DZ, garageDoorG, sharp()));
         gtag(box(0.76, 3.5, 0.24, cladColour('garage'),
                  -17.58, 1.75, 9.88 + GAR_DZ, garageDoorG,
-                 sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
+                 sharp({ rough: 0.95, facadeBlock: 'garage', map: CLAD('garage') })));
         gtag(box(0.76, 3.5, 0.24, cladColour('garage'),
                  -13.22, 1.75, 9.88 + GAR_DZ, garageDoorG,
-                 sharp(NICE ? { rough: 0.95, map: CLAD('garage') } : { rough: 0.95 })));
+                 sharp({ rough: 0.95, facadeBlock: 'garage', map: CLAD('garage') })));
         /* Spec 2026-09-17 section 2 (review fix, v2.499.75): the bay's two
            PIERS are the garage block's street face between garage_block_west
            and mudroom_front, and those two get their band from shellWall.
@@ -7277,7 +7337,7 @@
         [5.10].forEach(function (y) {
           gtag(box(5.60, 1.0, 0.30, cladColour('garage'),
                     -15.4, y, 10.02 + GAR_DZ, garageDoorG,
-                    sharp({ rough: 0.95, map: CLAD('garage') })));
+                    sharp({ rough: 0.95, facadeBlock: 'garage', map: CLAD('garage') })));
         });
       }
       /* The lower cross roof spans both garage and mudroom. The bay
@@ -7287,7 +7347,7 @@
       [gWallW, gWallE, garageBackWall].forEach(function (m) { garageShellG.add(m); });
       [-18.08, -12.72].forEach(function (x) {
         box(0.30, 1.0, 8.0, cladColour('garage'),
-            x, 5.10, 6.0, garageShellG, sharp({ rough: 0.95, map: CLAD('garage') }));
+            x, 5.10, 6.0, garageShellG, sharp({ rough: 0.95, facadeBlock: 'garage', map: CLAD('garage') }));
       });
       /* THE VAULT (see roofVault, way above). The two bands just above
          carry these walls to the block's eave; the EAST one is the wall
@@ -7313,7 +7373,7 @@
                      vaultRidgePts(gVault, 2.0, 10.0, EXT_TOP4),
                      EXT_TOP4, 'z', -12.57, 0.30,
                      cladColour('garage'),
-                     { rough: 0.95, map: CLAD('garage') }, 4.6);
+                     { rough: 0.95, facadeBlock: 'garage', map: CLAD('garage') }, 4.6);
       /* VIEW-VOLUME MASKING (task 4): the garage camera's mask grazes
          this row (0.04) and no other room's touches it; `n` is read by
          the AO derivation and the registry report only. The paragraph
@@ -8839,11 +8899,11 @@
       mfloor.position.set(-9.7, 0.03, 5.4);
       mtag(mfloor); finish(mfloor); extG.add(mfloor);
       mtag(ebox(5.6, 4.2, 0.24, cladColour('garage'),
-                -9.8, 2.1, 2.48, { rough: 0.95, map: CLAD('garage') }));
+                -9.8, 2.1, 2.48, { rough: 0.95, facadeBlock: 'garage', map: CLAD('garage') }));
       /* the street end is the mudroom's "garage door": hidden from the
          inside so the camera can look straight into the room */
       var mudFrontWall = mtag(ebox(5.6, 4.2, 0.24, cladColour('garage'),
-                -9.8, 2.1, 8.32, { rough: 0.95, map: CLAD('garage') }));
+                -9.8, 2.1, 8.32, { rough: 0.95, facadeBlock: 'garage', map: CLAD('garage') }));
       mudroomRoofG.add(mudFrontWall);
       /* The cross roof replaces the old flat slab. This legacy registry
          name owns the front wall, street door and trim. Register after

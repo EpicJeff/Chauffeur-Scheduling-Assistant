@@ -2633,6 +2633,13 @@
                                                 <label>Base colour <select class="w-full bg-gray-800" x-model="facadeDraft.blocks[b].base.body" @change="facadeBlockApply()"><template x-for="c in facadeStyleOptions.body" :key="c"><option :value="c" x-text="c"></option></template></select></label>
                                             </div>
                                         </template>
+                                        <template x-for="story in [1,2]" :key="story">
+                                            <div class="col-span-2">
+                                                <span x-text="'Story ' + story + ' wall defaults'"></span>
+                                                <select class="w-full bg-gray-800" :value="facadeStoryFinish(b, story, 'cladding')" @change="facadeSetStoryFinish(b, story, 'cladding', $event.target.value)"><option value="">Cladding: inherit block</option><template x-for="c in facadeCladdings" :key="c"><option :value="c" x-text="c"></option></template></select>
+                                                <select class="w-full bg-gray-800" :value="facadeStoryFinish(b, story, 'body')" @change="facadeSetStoryFinish(b, story, 'body', $event.target.value)"><option value="">Colour: inherit block</option><template x-for="c in facadeStyleOptions.body" :key="c"><option :value="c" x-text="c"></option></template></select>
+                                            </div>
+                                        </template>
                                         <label x-show="b === 'garage'">Garage door <select class="w-full bg-gray-800" x-model="facadeDraft.blocks.garage.orientation" @change="facadeBlockApply()"><option value="front">faces the street</option><option value="side">on the side</option></select></label>
                                     </div>
                                 </template>
@@ -2668,6 +2675,12 @@
                                     <select class="w-full bg-gray-800" x-model="facadeCell.upper.mode" @change="facadeCellApply()">
                                         <option value="none">none</option><option value="two">two stories</option>
                                     </select></label>
+                                <div class="col-span-2 space-y-2">
+                                    <b>Street wall finish</b><p>Applies to this story and slot span. Material and colour inherit independently. Side and rear walls use story defaults.</p>
+                                    <select class="w-full bg-gray-800" x-model="facadeCell.finish.cladding" @change="facadeCellApply()"><option value="">Cladding: inherit story</option><template x-for="c in facadeCladdings" :key="c"><option :value="c" x-text="c"></option></template></select>
+                                    <select class="w-full bg-gray-800" x-model="facadeCell.finish.body" @change="facadeCellApply()"><option value="">Colour: inherit story</option><template x-for="c in facadeStyleOptions.body" :key="c"><option :value="c" x-text="c"></option></template></select>
+                                    <label>Finish span <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.finish.span" @change="facadeCellApply()"></label>
+                                </div>
                                 <label x-show="facadeCell.upper.mode === 'two'">Upper span <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.upper.span" @change="facadeCellApply()"></label>
                                 <label x-show="facadeCell.upper.mode === 'two'">Upper roof
                                     <select class="w-full bg-gray-800" x-model="facadeCell.upper.roof.form" @change="facadeCellApply()"><option>gable</option><option>hip</option></select></label>
@@ -4696,7 +4709,7 @@
                 facadeDraftSource: 'hand',
                 facadeSlot: null,
                 facadeCellStory: 1,
-                facadeCell: { ground: { kind: 'wall', span: 1, shutters: false, story: 1 }, roof: { kind: 'eave', span: 1, cladding: '' }, porch: { type: 'none', span: 1, roof: 'flat' }, upper: { mode: 'none', span: 1, roof: { form: 'gable', ridge: 'x', pitch_deg: 22.5 } } },
+                facadeCell: { finish: {cladding: '', body: '', span: 1}, ground: { kind: 'wall', span: 1, shutters: false, story: 1 }, roof: { kind: 'eave', span: 1, cladding: '' }, porch: { type: 'none', span: 1, roof: 'flat' }, upper: { mode: 'none', span: 1, roof: { form: 'gable', ridge: 'x', pitch_deg: 22.5 } } },
                 facadeNotes: [],
                 facadeStyleOptions: {
                     body: ['white', 'greige', 'sage', 'slate', 'navy', 'brick_red', 'tan', 'cream_brick', 'stone_grey', 'painted_brick'],
@@ -5710,6 +5723,19 @@
                     if (layer === 'ground') return (this.facadeDraft.ground || []).find(e => covering(e) && (e.story || 1) === story);
                     return (this.facadeDraft[layer] || []).find(covering);
                 },
+                facadeStoryFinish(block, story, key) {
+                    return (((this.facadeDraft.story_finishes || {})[block] || {})[story] || {})[key] || '';
+                },
+                facadeSetStoryFinish(block, story, key, value) {
+                    const all = this.facadeDraft.story_finishes ||= {};
+                    const stories = all[block] ||= {};
+                    const row = stories[story] ||= {};
+                    if (value) row[key] = value; else delete row[key];
+                    if (!Object.keys(row).length) delete stories[story];
+                    if (!Object.keys(stories).length) delete all[block];
+                    if (!Object.keys(all).length) delete this.facadeDraft.story_finishes;
+                    this.facadePreview();
+                },
                 facadePorch(i) {
                     return (this.facadeDraft.ground || []).find(e => e.kind === 'porch' && i >= e.slot && i < e.slot + e.span);
                 },
@@ -5725,12 +5751,15 @@
                     const g = this.facadeEntry('ground', i, this.facadeCellStory), r = this.facadeEntry('roof', i), p = this.facadePorch(i), u = this.facadeEntry('upper', i);
                     const slot = this.facadeSlots.find(s => s.i === i), block = slot && slot.face === 'garage_block' ? 'garage' : 'main';
                     const blockRoof = this.facadeDraft.blocks[block].roof;
+                    const f = (this.facadeDraft.finishes || []).find(e => e.story === this.facadeCellStory && i >= e.slot && i < e.slot + e.span);
                     this.facadeCell = {
+                        finish: {cladding: f?.cladding || '', body: f?.body || '', span: f?.slot === i ? f.span : 1},
                         ground: g ? { shutters: false, story: this.facadeCellStory, ...g, span: g.slot === i ? g.span : 1 } : { kind: 'wall', span: 1, shutters: false, story: this.facadeCellStory },
                         roof: r ? { cladding: '', ...r, kind: r.kind === 'shed' && r.window !== false ? 'shed_dormer' : r.kind } : { kind: 'eave', span: 1, cladding: '' },
                         porch: p ? { type: p.type, span: p.span, roof: p.roof || 'flat', gable_offset: p.gable_offset || 0, gable_span: p.gable_span || 2 } : { type: 'none', span: 1, roof: 'flat', gable_offset: 0, gable_span: 2 },
                         upper: u ? { mode: 'two', span: u.span, roof: { ...u.roof } } : { mode: 'none', span: 1, roof: { ...blockRoof } }
                     };
+                    this._origFinish = JSON.stringify(this.facadeCell.finish);
                     this._origUpperSlot = u ? u.slot : null;
                     this._origUpper = JSON.stringify(this.facadeCell.upper);
                     this._origGround = JSON.stringify(this.facadeCell.ground);
@@ -5770,6 +5799,25 @@
                 },
                 facadeCellApply() {
                     const i = this.facadeSlot; if (i === null) return;
+                    const finish = this.facadeCell.finish;
+                    if (JSON.stringify(finish) !== this._origFinish) {
+                        const face = this.facadeSlots.find(s => s.i === i)?.face;
+                        const last = Math.max(...this.facadeSlots.filter(s => s.face === face).map(s => s.i));
+                        const end = Math.min(last + 1, i + Math.max(1, finish.span || 1));
+                        const rows = (this.facadeDraft.finishes || []).flatMap(e => {
+                            if (e.story !== this.facadeCellStory || e.slot >= end || e.slot + e.span <= i) return [e];
+                            const kept = [];
+                            if (e.slot < i) kept.push({...e, span: i - e.slot});
+                            if (e.slot + e.span > end) kept.push({...e, slot: end, span: e.slot + e.span - end});
+                            return kept;
+                        });
+                        const fields = {};
+                        if (finish.cladding) fields.cladding = finish.cladding;
+                        if (finish.body) fields.body = finish.body;
+                        if (Object.keys(fields).length) rows.push({slot: i, span: end - i, story: this.facadeCellStory, ...fields});
+                        if (rows.length) this.facadeDraft.finishes = rows; else delete this.facadeDraft.finishes;
+                        this._origFinish = JSON.stringify(finish);
+                    }
                     const ucell = this.facadeCell.upper;
                     if (JSON.stringify(ucell) !== this._origUpper) {
                         const upperStart = this._origUpperSlot === null ? i : this._origUpperSlot;

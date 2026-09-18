@@ -116,7 +116,7 @@ The canonical facade is not stored; `house_facade.list_facades()` prepends it as
 4. **Openings with interior meaning pin to their room's face**: `garage_door` is forced onto the `garage` face at slot 0 span 3 (the whole face; `leaves` sets its width) — never more than one; `door` entries are moved into the `main` face — any number; at least one always exists (a spec without one gets the canonical door). The west-most door on the main face carries the `front_door` marker/entry; every door tap-navigates to living through its room stamp. The study's patio slider is not a street feature and is untouched.
 5. **Overlap priority** on the ground layer, exclusive kinds only: `garage_door > door > window > wall`. When two entries overlap, the lower-priority one is trimmed to the free slots (split into up to two pieces if the winner sits inside it) and dropped if nothing is left. `porch` is an **overlay**: it shares slots with a door and with windows (a window under a covered porch is ordinary, and the canonical single window stands beside the porch today), so it never trims and is never trimmed; it is clamped to one face, and never placed on the `garage` face (the garage door spans that face and cars drive through it — a porch there would stand in the driveway). Any number of porches; abutting spans simply abut.
 6. **Roof layer priority**: `gable > dormer > hip_end > eave`, same trim rule.
-7. **Budget caps** (constants, tuned in 7.2): `MAX_WINDOWS` (windows + dormer windows, initial 10), `MAX_DORMERS` (initial 6), `MAX_GABLES` (initial 4), `MAX_PORCH_SLOTS` (porch slots summed, initial 10). These are draw-budget constants, not grammar: the grammar itself has no count limits. Excess entries drop east-most first; a note names what was dropped.
+7. **Budget caps** (historical: v2.499.100 removes the combined window cap; see the September 18 upper-spans follow-up). **Original rule:** (constants, tuned in 7.2): `MAX_WINDOWS` (windows + dormer windows, initial 10), `MAX_DORMERS` (initial 6), `MAX_GABLES` (initial 4), `MAX_PORCH_SLOTS` (porch slots summed, initial 10). These are draw-budget constants, not grammar: the grammar itself has no count limits. Excess entries drop east-most first; a note names what was dropped.
 8. **Sorting and dedupe**: output lists are sorted by slot; the same slot never appears twice per layer among EXCLUSIVE kinds (a porch overlay may share a slot — see 4.5).
 9. **Idempotence**: `normalize(normalize(x)) == normalize(x)`; `normalize(CANONICAL) == CANONICAL`.
 
@@ -209,7 +209,7 @@ Worst case (1544 exterior, buildMs 1112) clears all three with headroom. Caps we
 
 | constant | value | governs |
 |---|---:|---|
-| `MAX_WINDOWS` | 10 | ordinary windows + dormer windows, combined |
+| `MAX_WINDOWS` (removed in v2.499.100) | No total cap now | Historical value: 10 ordinary + dormer windows combined |
 | `MAX_DORMERS` | 6 | dormer roof features |
 | `MAX_GABLES` | 4 | gable roof features |
 | `MAX_PORCH_SLOTS` | 10 | porch ground-feature slots, summed |

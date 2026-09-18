@@ -1181,9 +1181,57 @@ def scenario_upper_gable_stays_above_the_porch():
             check(not [e for e in served.errors() if 'WebGL' not in e], 'upper gable console clean')
 
 
+def scenario_story_and_slot_finishes_build_clean():
+    from services import house_facade as hf
+    from house_probe import THREE_WRAP, BUDGET_JS
+    import base64
+    from pathlib import Path
+    served = live_app(_seed)
+    if served is None:
+        return
+    spec = hf.worst_case()
+    spec['story_finishes'] = {'main': {'2': {'cladding': 'shingle', 'body': 'painted_brick'}}}
+    spec['finishes'] = [{'slot': 6, 'span': 6, 'story': 1, 'cladding': 'lap'},
+                        {'slot': 12, 'span': 6, 'story': 2, 'cladding': 'stone'}]
+    spec, _ = hf.normalize(spec)
+    patched = Path('static/vendor/three.min.js').read_bytes() + THREE_WRAP
+    for quality in ('high', 'low'):
+        with served.browser() as page:
+            errors = []
+            page.on('pageerror', lambda e: errors.append(str(e)))
+            page.route('**/three.min.js*', lambda route: route.fulfill(status=200, content_type='application/javascript', body=patched))
+            page.add_init_script(DAY_LOCK_JS)
+            page.add_init_script(SEED_RNG_JS)
+            page.goto(served.url('house?quality=' + quality + '&draft=' + hf.issue_draft(spec)))
+            page.wait_for_selector('#room canvas', timeout=30000)
+            page.wait_for_function('window.chfNavProbe({settled:true})', timeout=30000)
+            check(not errors, f'{quality} finish build errors: {errors}')
+            check(page.evaluate('window.chfFacade()') == spec, 'all finish and window data reaches renderer')
+            if quality == 'high':
+                fab = page.evaluate('window.chfShellFabric()')
+                south = [f['name'] for f in fab if '_upper_south' in f['name'] and 'main' in f['name']]
+                check(south, 'upper wall registered')
+                maps = page.evaluate('(names) => names.flatMap(n => window.chfPieceMaps(n))', south)
+                check('shingle' in maps and 'stone' in maps, f'upper street wall wears both finishes: {maps}')
+                front = [f['name'] for f in fab if 'south' in f['name'] and '_upper_' not in f['name']]
+                lower_maps = page.evaluate('(names) => names.flatMap(n => window.chfPieceMaps(n) || [])', front)
+                check('lap' in lower_maps, f'first-story street override rendered: {lower_maps}')
+                print('mixed finish/window budget:', page.evaluate(BUDGET_JS))
+                shots = os.environ.get('HOUSE_SHOTS')
+                if shots:
+                    Path(shots).mkdir(parents=True, exist_ok=True)
+                    Path(shots, 'mixed-finishes.png').write_bytes(base64.b64decode(page.evaluate('window.chfCapture()').split(',')[1]))
+            point = page.evaluate("window.chfNavProbe({entry:'front_door'})")
+            check(point is not None, 'front door still available')
+            page.mouse.click(point['cx'], point['cy'])
+            page.wait_for_function("window.chfNavProbe({settled:true}) && window.chfHouseMode() === 'living'", timeout=30000)
+            check(not errors, f'{quality} cutaway builds clean: {errors}')
+
+
 if __name__ == '__main__':
     scenario_canonical_facade_pins_the_hand_built_elevation()
     scenario_worst_case_facade_builds_clean()
+    scenario_story_and_slot_finishes_build_clean()
     scenario_roof_features_stop_at_the_roof_line()
     scenario_a_saved_gable_over_the_study_stays_outside()
     scenario_a_draft_token_renders_day_locked_and_captures()

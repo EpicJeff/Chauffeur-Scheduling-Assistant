@@ -135,3 +135,19 @@ These changes close the reported editor/roof gaps. They do not establish full vi
 ### Upper-roof feature correction (v2.499.99)
 
 Porch conflict suppression applies only to ground-level roof features. An upper gable keeps the upper volume's roof height and wall frontage regardless of the porch beneath it. The eave choice means no added feature and therefore exposes no independent span. The editor offers shed dormer explicitly (`shed`, `window: true`) alongside plain shed roof (`window: false`). Tests reproduce the original dropped-gable failure and verify height/frontage over both porch types in Chromium. Remaining visual gaps: hip-end's fin geometry, shed's fixed projection, and independent dormer roof pitch including explicit flat-roof support. Relaxing the pitch clamp alone is not a solution for those shapes.
+
+
+## Implemented follow-up: finish inheritance and window capacity (v2.499.100)
+
+V3 gains two optional fields without changing existing facades:
+
+```json
+{
+  "story_finishes": {"main": {"2": {"cladding": "shingle"}}},
+  "finishes": [{"slot": 12, "span": 3, "story": 2, "body": "stone_grey"}]
+}
+```
+
+Material and body colour resolve independently from block defaults through story defaults to street-span overrides. Story defaults cover the block's walls at that story; slot spans cover the street-facing wall only. Base bands and roof-feature cladding retain their separate controls. Empty overrides are omitted. Adjacent identical overrides merge only within one block/story. Editing a continuation slot splits the existing finish span around the selected range. First explicit values win per property for overlapping imported rows. Photo generation uses block-relative fractions for finish spans, like opening spans.
+
+The September 15 spec's combined `MAX_WINDOWS = 10` cap is superseded: normalization no longer drops wall windows to meet a total. Slot occupancy and upper-story coverage provide structural bounds. Dormer/gable/porch caps are unchanged. The expanded stress fixture fills both stories (32 wall windows plus six dormer windows). Browser verification is not a claim of acceptable frame rates on every wall panel.
