@@ -2647,9 +2647,12 @@
 <label>Roof pitch <input type="range" min="22.5" max="35" step="0.5" class="w-full" x-model.number="facadeDraft.blocks[b].roof.pitch_deg" @change="facadeBlockApply()"> <span x-text="facadeDraft.blocks[b].roof.pitch_deg + '°'"></span></label>
 <label>Block depth <input type="range" min="0" max="6" step="0.5" class="w-full" x-model.number="facadeDraft.blocks[b].depth" @change="facadeBlockApply()"> <span x-text="facadeDraft.blocks[b].depth"></span></label>
 <label x-show="b === 'garage'">Garage door <select class="w-full bg-gray-800" x-model="facadeDraft.blocks.garage.orientation" @change="facadeBlockApply()"><option value="front">faces the street</option><option value="side">on the side</option></select></label>
+                                        <label x-show="b === 'garage'">Garage door colour<select :value="facadeDraft.blocks.garage.door_colour || 'wood'" @change="facadeDraft.blocks.garage.door_colour = $event.target.value; facadeBlockApply()"><template x-for="colour in ['wood','white','black','greige','sage','slate','navy']" :key="colour"><option :value="colour" x-text="facadeLabel(colour)"></option></template></select></label>
                                         <div x-show="b === 'garage' && facadeDraft.blocks.garage.orientation === 'side'" class="home-wide home-subsection">
                                             <h4 class="font-semibold">Side garage door</h4><p class="home-help">Changes the door and its wall opening. Block depth above changes the garage building.</p>
                                             <div class="home-fields">
+                                                <label><input type="checkbox" :checked="facadeSideDoor().third_bay" @change="facadeSetSideDoor('third_bay', $event.target.checked)"> Add a third bay (separate single door)</label>
+                                                <label>Distance from front corner<select :value="facadeSideDoor().front_setback" @change="facadeSetSideDoor('front_setback', Number($event.target.value))"><option value="0.75">Near front</option><option value="2">Set back</option><option value="4">Farther back</option></select></label>
                                                 <label>Door style<select :value="facadeSideDoor().style" @change="facadeSetSideDoor('style', $event.target.value)"><option value="carriage">Carriage</option><option value="panel">Raised panels</option><option value="glass">Glass</option></select></label>
                                                 <label>Door panels<select :value="facadeSideDoor().leaves" @change="facadeSetSideDoor('leaves', Number($event.target.value))"><option value="1">One</option><option value="2">Two</option></select></label>
                                                 <label>Door width <span x-text="Math.round(facadeSideDoor().width / 3.6 * 100) + '% of standard'"></span><input type="range" min="2.4" max="4.4" step="0.1" :value="facadeSideDoor().width" @change="facadeSetSideDoor('width', Number($event.target.value))"></label>
@@ -5731,7 +5734,7 @@
                 },
                 facadeSideDoor() {
                     const front = (this.facadeDraft?.ground || []).find(g => g.kind === 'garage_door');
-                    return this.facadeDraft?.blocks?.garage?.side_door || {style:front?.style || 'carriage', leaves:front?.leaves || 1, width:3.6, height:3};
+                    return {third_bay:false, front_setback:0.75, ...(this.facadeDraft?.blocks?.garage?.side_door || {style:front?.style || 'carriage', leaves:front?.leaves || 1, width:3.6, height:3})};
                 },
                 facadeSetSideDoor(key, value) {
                     this.facadeDraft.blocks.garage.side_door = {...this.facadeSideDoor(), [key]:value};

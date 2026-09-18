@@ -160,3 +160,14 @@ The editor uses six task groups with explicit block/story/slot scope and numbere
 Optional `blocks.garage.side_door` stores `{style, leaves, width, height}` for side entry without creating a street opening. Width/height bounds are 2.4?4.4 and 2.4?4.0 scene units; default size is 3.6 ? 3.0. Opening geometry follows the dimensions. This does not make block width editable.
 
 The exterior exposes five directly tappable room markers at every orbit stop, including the kitchen and PIN-gated Study. They represent room positions through the shell, not a visible doorway. The Study uses the existing unlock flow.
+
+
+### Side garage placement, extra bay and door finish (v2.499.103)
+
+Side-facing doors default near the front corner of the garage block. House shape offers Near front, Set back and Farther back placement; the apron and parked vehicles follow the door positions. This moves the openings, not the entire garage block. Optional `side_door.front_setback` is bounded to 0.6..4.0, default 0.75.
+
+An optional `side_door.third_bay` adds a separate single-width door (2.4 units), with a 0.75-unit wall pier beside the main door. Both openings share style, height and colour. This is additional exterior frontage within the existing block, not a projecting annex or a third interior parking position. The reference's independently gabled projecting bay remains unimplemented.
+
+`blocks.garage.door_colour` controls front and side garage doors independently: wood, white, black, greige, sage, slate or navy. Glass doors now contain four rows of framed panes, with no opaque slab behind the glazing, at all detail levels. Existing facades omit the optional fields and retain their prior colour.
+
+Verification: facade normalization and validation, editor method tests, live browser controls at desktop/mobile sizes, all eight exterior orbit positions, rendered third-door bounds and front-corner placement, JavaScript syntax and Tailwind build gates. High-quality side-view screenshot inspected. Existing editor account-scope warnings and chat-stream teardown errors remain unrelated.

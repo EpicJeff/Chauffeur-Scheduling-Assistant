@@ -54,6 +54,7 @@ WINDOW_SIZES = ('tall', 'standard', 'small')
 PORCH_TYPES = ('sitting', 'stoop', 'covered')
 PORCH_ROOFS = ('flat', 'gable', 'shed', 'mixed')
 GARAGE_STYLES = ('carriage', 'panel', 'glass')
+GARAGE_COLOURS = ('wood', 'white', 'black', 'greige', 'sage', 'slate', 'navy')
 CLADDINGS = ('batten', 'lap', 'brick', 'stone', 'stucco', 'shingle')
 ROOF_FORMS = ('gable', 'hip')
 RIDGES = ('x', 'z')
@@ -267,10 +268,16 @@ def validate_block_model(obj):
                     enum(b['base'], 'body', STYLE['body'], p + '.base')
             if name == 'garage':
                 enum(b, 'orientation', ORIENTATIONS, p)
+                if 'door_colour' in b:
+                    enum(b, 'door_colour', GARAGE_COLOURS, p)
                 if 'side_door' in b:
                     door = need(b, 'side_door', dict, p)
                     if door is not None:
                         enum(door, 'style', GARAGE_STYLES, p + '.side_door')
+                        if 'third_bay' in door:
+                            need(door, 'third_bay', bool, p + '.side_door')
+                        if 'front_setback' in door:
+                            rng(door, 'front_setback', 0.6, 4.0, p + '.side_door')
                         rng(door, 'width', 2.4, 4.4, p + '.side_door')
                         rng(door, 'height', 2.4, 4.0, p + '.side_door')
                         leaves = need(door, 'leaves', int, p + '.side_door')
@@ -515,6 +522,8 @@ def _norm_block(name, raw, notes):
         b['base'] = None
     if name == 'garage':
         b['orientation'] = _pick(raw.get('orientation'), ORIENTATIONS, 'front')
+        if 'door_colour' in raw:
+            b['door_colour'] = _pick(raw.get('door_colour'), GARAGE_COLOURS, 'wood')
         door = raw.get('side_door')
         if isinstance(door, dict):
             b['side_door'] = {
@@ -523,6 +532,10 @@ def _norm_block(name, raw, notes):
                 'width': round(min(4.4, max(2.4, _num(door.get('width'), 3.6))), 2),
                 'height': round(min(4.0, max(2.4, _num(door.get('height'), 3.0))), 2),
             }
+            if 'third_bay' in door:
+                b['side_door']['third_bay'] = bool(door['third_bay'])
+            if 'front_setback' in door:
+                b['side_door']['front_setback'] = round(min(4.0, max(0.6, _num(door['front_setback'], 0.75))), 2)
     return b
 
 
@@ -1031,7 +1044,10 @@ Return exactly this shape (a fraction-based feature has "block"/"at"/"width" ins
   "unexpressed": [up to 8 short strings naming real details the shape above cannot capture]}}
 The garage may also include optional side_door: style (carriage/panel/glass), leaves (1 or 2),
 width (2.4..4.4, default 3.6) and height (2.4..4.0, default 3.0), in scene units.
-This controls the side-facing door independently of street openings.
+Optional side_door.third_bay (boolean) adds a separate single door; front_setback
+(0.6..4.0, default 0.75) measures the gap from the front corner to the nearest door.
+The garage may include door_colour: wood/white/black/greige/sage/slate/navy.
+These control the garage doors independently of street openings.
 Finishes are optional overrides. Omit unchanged cladding/body fields to inherit independently.
 Story defaults may name main and/or garage, stories "1" and/or "2"; they wrap the block.
 Finish spans affect the street-facing wall only, even behind windows or doors.

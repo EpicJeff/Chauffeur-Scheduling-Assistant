@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.102 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.103 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8108,3 +8108,14 @@ All five room markers (kitchen, living, mudroom, garage, Study) appear from ever
 House shape exposes side garage door style (carriage, panels, glass), one/two panels, width and height. Optional `blocks.garage.side_door` persists `{style, leaves, width, height}` independently of front openings. Width is bounded to 2.4?4.4 scene units, height to 2.4?4.0, default 3.6 ? 3.0. Door geometry and the side-wall opening resize together. Block depth remains a separate building control; the block's overall width is still fixed. Existing front facades are unchanged.
 
 Verification: editor methods and facade schema gates; Chromium desktop/390px editor interactions and overflow checks; actual side-door geometry; all five room markers at eight orbit stops; kitchen click-through and Study gate dispatch. Two pre-existing missing Alpine variables in account-scope controls (`scopeTuneOpen`, `scopeMeta`) are explicitly excluded from the house-editor console assertion; no new house-editor errors are allowed.
+
+
+### Side garage placement, extra bay and door finish (v2.499.103)
+
+Side-facing doors default near the front corner of the garage block. House shape offers Near front, Set back and Farther back placement; the apron and parked vehicles follow the door positions. This moves the openings, not the entire garage block. Optional `side_door.front_setback` is bounded to 0.6..4.0, default 0.75.
+
+An optional `side_door.third_bay` adds a separate single-width door (2.4 units), with a 0.75-unit wall pier beside the main door. Both openings share style, height and colour. This is additional exterior frontage within the existing block, not a projecting annex or a third interior parking position. The reference's independently gabled projecting bay remains unimplemented.
+
+`blocks.garage.door_colour` controls front and side garage doors independently: wood, white, black, greige, sage, slate or navy. Glass doors now contain four rows of framed panes, with no opaque slab behind the glazing, at all detail levels. Existing facades omit the optional fields and retain their prior colour.
+
+Verification: facade normalization and validation, editor method tests, live browser controls at desktop/mobile sizes, all eight exterior orbit positions, rendered third-door bounds and front-corner placement, JavaScript syntax and Tailwind build gates. High-quality side-view screenshot inspected. Existing editor account-scope warnings and chat-stream teardown errors remain unrelated.

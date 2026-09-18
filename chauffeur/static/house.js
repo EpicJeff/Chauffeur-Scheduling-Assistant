@@ -4752,12 +4752,18 @@
        driveway and the car plaques -- every one of them reproduces
        today's front-entry numbers when it is false. */
     var GARAGE_SIDE = BLOCKS.garage.orientation === 'side';
-    /* the side opening: 3.6 clear between these two z lines (the same
-       3.6 the street bay's piers leave), and the leaf centred on 4.0. */
+    /* Side openings follow the front corner as block depth changes.
+       A third bay adds a separate single-width opening and wall pier. */
     var SIDE_DOOR = BLOCKS.garage.side_door || {style:'carriage', leaves:1, width:3.6, height:3.0};
-    var SIDE_DOOR_Z = 4.0;
+    var SIDE_FRONT_SETBACK = SIDE_DOOR.front_setback === undefined ? 0.75 : SIDE_DOOR.front_setback;
+    var SIDE_THIRD_WIDTH = 2.4, SIDE_PIER = 0.75;
+    var SIDE_THIRD_Z = GARAGE_BLOCK.south - SIDE_FRONT_SETBACK - SIDE_THIRD_WIDTH / 2;
+    var SIDE_DOOR_Z = GARAGE_BLOCK.south - SIDE_FRONT_SETBACK - SIDE_DOOR.width / 2
+                     - (SIDE_DOOR.third_bay ? SIDE_THIRD_WIDTH + SIDE_PIER : 0);
+    var SIDE_OPENINGS = [{z:SIDE_DOOR_Z, width:SIDE_DOOR.width}];
+    if (SIDE_DOOR.third_bay) SIDE_OPENINGS.push({z:SIDE_THIRD_Z, width:SIDE_THIRD_WIDTH, third:true});
     var SIDE_OPEN_Z0 = SIDE_DOOR_Z - SIDE_DOOR.width / 2;
-    var SIDE_OPEN_Z1 = SIDE_DOOR_Z + SIDE_DOOR.width / 2;
+    var SIDE_OPEN_Z1 = SIDE_DOOR.third_bay ? SIDE_THIRD_Z + SIDE_THIRD_WIDTH/2 : SIDE_DOOR_Z + SIDE_DOOR.width/2;
     /* Every block roof is {form, ridge}: nothing about ridge direction
        is fixed (spec section 3). Canonical is today's look — both blocks
        gabled with the ridge running east/west. window.HOUSE_ROOF_FORMS
@@ -6132,6 +6138,12 @@
          the depth so the canonical is literally unchanged. */
       var y = 1.6, z = 10.02 + GAR_DZ, dh = 3.0;
       var style = feat.style || 'carriage';
+      var garageColour = BLOCKS.garage.door_colour;
+      var doorTone = !garageColour || garageColour === 'wood' ? FARMHOUSE.wood
+                     : garageColour === 'black' ? 0x252a2d : pal('body', garageColour, 0xf4f1e9);
+      var panelTone = garageColour && garageColour !== 'wood'
+                      ? new T.Color(doorTone).multiplyScalar(0.84).getHex() : C.wood2;
+      var frameTone = garageColour ? doorTone : FARMHOUSE.frame;
       /* SIDE-ENTRY (task 8): the leaf hangs on the block's WEST face, so
          it is built in a group of its own -- a quarter turn about y,
          stood on the block's west line at SIDE_DOOR_Z -- and every
@@ -6149,8 +6161,8 @@
       if (GARAGE_SIDE) {
         GDOOR = new T.Group();
         GDOOR.rotation.y = -Math.PI / 2;
-        GDOOR.scale.set(SIDE_DOOR.width / 3.6, SIDE_DOOR.height / 3.0, 1);
-        GDOOR.position.set(GARAGE_BLOCK.west, 0.1 * (1 - GDOOR.scale.y), SIDE_DOOR_Z);
+        GDOOR.scale.set((feat.sideWidth || SIDE_DOOR.width) / 3.6, SIDE_DOOR.height / 3.0, 1);
+        GDOOR.position.set(GARAGE_BLOCK.west, 0.1 * (1 - GDOOR.scale.y), feat.sideZ === undefined ? SIDE_DOOR_Z : feat.sideZ);
         garageDoorG.add(GDOOR);
         cx = 0; z = WALL_T4 / 2 + 0.07;
       }
@@ -6160,45 +6172,26 @@
         m.userData.glazing = true;       /* the lighting pass looks for this */
         return gtag(m);
       }
-      /* frosted glazing is built DIRECTLY, not through box()/mat(): the
-         material cache neither reads `opacity` nor keys on it, so a
-         frosted pane asked for through it comes back opaque and shares a
-         bucket with the solid one. windowAt's own street glass is built
-         the same way, for the same reason, and transparency is also what
-         exempts it from mergeStatic by construction. */
-      function frosted(w, h, gx, gy, gz) {
-        var m = new T.Mesh(cgeo('gd-pane|' + w + '|' + h, function () {
-          return new T.BoxGeometry(w, h, 0.03);
-        }), new T.MeshStandardMaterial({ color: 0x9fc4dc, transparent: true,
-                                         opacity: 0.55, roughness: 0.5,
-                                         metalness: 0.0 }));
-        m.position.set(gx, gy, gz);
-        m.userData.glazing = true;
-        gtag(m); finish(m, true); GDOOR.add(m);
-        return m;
-      }
       function leafAt(lx) {
         if (style === 'glass') {
-          /* an aluminium-framed glazed door: the field takes the frame
-             tone and frosted panes run across the top half. */
-          gtag(rbox(lw, dh, 0.14, 0.05, FARMHOUSE.frame, lx, y, z,
-                    GDOOR, { rough: 0.35, metal: 0.25 }));
-          var np = Math.max(2, Math.round(4 * k));
-          for (var q = 0; q < np; q++) {
-            frosted(lw / np - 0.16, dh / 2 - 0.22,
-                    lx - lw / 2 + lw / (2 * np) + q * lw / np,
-                    y + dh / 4, z + 0.05);
-          }
+          // A grid of panes framed by rails, never glass buried in a solid slab.
+          var columns = Math.max(2, Math.round(4 * k)), rows = 4, rail = 0.10;
+          for (var col=0; col<=columns; col++)
+            gtag(box(rail, dh, 0.14, frameTone, lx-lw/2+col*lw/columns, y, z, GDOOR, {rough:0.35,metal:0.25}));
+          for (var row=0; row<=rows; row++)
+            gtag(box(lw, rail, 0.14, frameTone, lx, y-dh/2+row*dh/rows, z, GDOOR, {rough:0.35,metal:0.25}));
+          for (var col=0; col<columns; col++) for (var row=0; row<rows; row++)
+            gGlass(lw/columns-rail, dh/rows-rail,
+                   lx-lw/2+(col+0.5)*lw/columns, y-dh/2+(row+0.5)*dh/rows, z+0.06);
           return;
         }
-        gtag(rbox(lw, dh, 0.14, 0.05, FARMHOUSE.wood, lx, y, z,
-                  GDOOR, WOODM));
+        gtag(rbox(lw, dh, 0.14, 0.05, doorTone, lx, y, z, GDOOR, WOODM));
         if (DETAIL < 2) return;
         if (style === 'panel') {
           /* four raised panels in a 2x2 grid: no brace, no lights. */
           [-1, 1].forEach(function (sx) {
             [-1, 1].forEach(function (sy) {
-              gtag(box(lw / 2 - 0.42 * k, dh / 2 - 0.42, 0.04, C.wood2,
+              gtag(box(lw / 2 - 0.42 * k, dh / 2 - 0.42, 0.04, panelTone,
                        lx + sx * lw / 4, y + sy * dh / 4, z + 0.08,
                        GDOOR, WOODM));
             });
@@ -6211,7 +6204,7 @@
            share one centre, one derived length and one angle, mirrored
            by sign. */
         [1.0, 1.8, 2.6].forEach(function (sy) {
-          gtag(box(3.4 * k, 0.05, 0.06, C.wood2, lx, sy, z + 0.08, GDOOR));
+          gtag(box(3.4 * k, 0.05, 0.06, panelTone, lx, sy, z + 0.08, GDOOR));
         });
         var SDX = 1.65 * k, SDY = 1.45;
         var SLEN = Math.sqrt(SDX * SDX * 4 + SDY * SDY * 4);
@@ -6241,7 +6234,7 @@
         leafAt(cx - FIELD / 2 + lw / 2 + i * (lw + STILE));
       }
       if (n === 2) {
-        gtag(box(STILE, dh, 0.06, FARMHOUSE.frame, cx, y, z + 0.08, GDOOR));
+        gtag(box(STILE, dh, 0.06, frameTone, cx, y, z + 0.08, GDOOR));
       }
     }
     /* ROOF VALLEYS (masking spec section 6): where a street feature's
@@ -6525,10 +6518,12 @@
          `garage_door` (and the garage_front marker that finds it) exists
          in both orientations and nothing that could be done in one
          becomes impossible in the other. */
-      if (GARAGE_SIDE)
-        garageDoorAt({ slot: GARAGE_BAY_SLOTS[0], kind: 'garage_door',
-                       span: GARAGE_BAY_SLOTS[1] - GARAGE_BAY_SLOTS[0] + 1,
-                       style: SIDE_DOOR.style, leaves: SIDE_DOOR.leaves });
+      if (GARAGE_SIDE) SIDE_OPENINGS.forEach(function(opening) {
+        garageDoorAt({slot:GARAGE_BAY_SLOTS[0], kind:'garage_door',
+                      span:GARAGE_BAY_SLOTS[1]-GARAGE_BAY_SLOTS[0]+1,
+                      style:SIDE_DOOR.style, leaves:opening.third ? 1 : SIDE_DOOR.leaves,
+                      sideZ:opening.z, sideWidth:opening.width});
+      });
     }
     /* ================= END FACADE ===================================== */
 
@@ -6795,33 +6790,21 @@
        1.35-wide window would run 0.375 past that piece's own end into
        the opening. */
     if (GARAGE_SIDE) {
-      shellWall('garage_block_west_a', GARAGE_BLOCK.west, GARAGE_BLOCK.north,
-                GARAGE_BLOCK.west, SIDE_OPEN_Z0, EXT_TOP4,
-                [-1, 0, 0], [[1.0, 1.35, true]], null, 'garage');
-      shellWall('garage_block_west_b', GARAGE_BLOCK.west, SIDE_OPEN_Z1,
-                GARAGE_BLOCK.west, GARAGE_BLOCK.south, EXT_TOP4,
-                [-1, 0, 0], [], null, 'garage');
-      /* the head: the lintel over the opening, from the leaf's own top
-         (y 3.1: the 3.0 leaf centred at 1.6) to the block's ground eave.
-         It starts AT the leaf rather than at a headroom line, because a
-         slot between the two would look straight through the face. */
-      (function () {
-        var hg = shellGroup(), y0 = 0.10 + SIDE_DOOR.height;
-        shellBox(hg, WALL_T4, EXT_TOP4 - y0, SIDE_OPEN_Z1 - SIDE_OPEN_Z0,
-                 cladColour('garage'), GARAGE_BLOCK.west, (y0 + EXT_TOP4) / 2,
-                 (SIDE_OPEN_Z0 + SIDE_OPEN_Z1) / 2,
-                 { rough: 0.95, facadeBlock: 'garage', map: CLAD('garage') });
-        shellRegister(hg, 'garage_block_west_head', [-1, 0, 0], null);
-      })();
-      /* the bay's street face is a WALL now, not a door bay: the same
-         one-story face the mudroom's own street wall is, over the
-         garage's own skin, carrying the window normalize() put there in
-         the street door's place. The window itself is the facade's
-         (windowAt dresses that slot from the spec), so the wall asks for
-         none of its own -- two would stand in the same plane. */
-      shellWall('garage_front_wall', GARAGE_BLOCK.west, GARAGE_BLOCK.south,
-                -12.60, GARAGE_BLOCK.south, EXT_TOP4, [0, 0, 1], [],
-                'garage', 'garage');
+      var sideCursor = GARAGE_BLOCK.north;
+      SIDE_OPENINGS.forEach(function(opening, index) {
+        var lo = opening.z-opening.width/2, hi = opening.z+opening.width/2;
+        shellWall(index === 0 ? 'garage_block_west_a' : 'garage_block_west_pier',
+                  GARAGE_BLOCK.west, sideCursor, GARAGE_BLOCK.west, lo, EXT_TOP4,
+                  [-1,0,0], index === 0 && lo > 2 ? [[1.0,1.35,true]] : [], null, 'garage');
+        var hg=shellGroup(), y0=0.1+SIDE_DOOR.height;
+        shellBox(hg,WALL_T4,EXT_TOP4-y0,opening.width,cladColour('garage'),
+                 GARAGE_BLOCK.west,(y0+EXT_TOP4)/2,opening.z,
+                 {rough:0.95,facadeBlock:'garage',map:CLAD('garage')});
+        shellRegister(hg,'garage_block_west_head'+(index ? '_third' : ''),[-1,0,0],null);
+        sideCursor=hi;
+      });
+      shellWall('garage_block_west_b',GARAGE_BLOCK.west,sideCursor,
+                GARAGE_BLOCK.west,GARAGE_BLOCK.south,EXT_TOP4,[-1,0,0],[],null,'garage');
     } else {
       shellWall('garage_block_west', GARAGE_BLOCK.west, GARAGE_BLOCK.north,
                 GARAGE_BLOCK.west, GARAGE_BLOCK.south, EXT_TOP4,
@@ -8148,7 +8131,7 @@
        stops at the apron rather than overlapping it, so the two slabs
        abut instead of z-fighting over a shared strip. */
     var SIDE_DRIVE_X = GARAGE_BLOCK.west - 2.30;      /* -20.50 */
-    var SIDE_APRON_Z0 = 1.90, SIDE_APRON_Z1 = 6.10;
+    var SIDE_APRON_Z0 = SIDE_OPEN_Z0 - 0.4, SIDE_APRON_Z1 = SIDE_OPEN_Z1 + 0.4;
     var sideRunLen = 26.30 - SIDE_APRON_Z1, sideRunCz = SIDE_APRON_Z1 + sideRunLen / 2;
     if (GARAGE_SIDE) {
       ebox(4.6, 0.08, sideRunLen, NICE ? 0xffffff : EXTC.drive, SIDE_DRIVE_X,
@@ -12056,6 +12039,8 @@
       /* task 6: syncGarage parks driveway cars off the apron's own near
          end, which a garage depth moves */
       GARAGE_SOUTH: GARAGE_BLOCK.south,
+      SIDE_PARK_Z: SIDE_DOOR.third_bay ? [SIDE_DOOR_Z, SIDE_THIRD_Z] : [SIDE_DOOR_Z - 1.4, SIDE_DOOR_Z + 1.4],
+      SIDE_QUEUE_Z: SIDE_APRON_Z1 + 3.3,
       /* task 8: which way the garage faces -- syncGarage parks the
          driveway cars on the side apron instead of the front one, and
          chfNavProbe's face lookup goes straight to the door row, which
@@ -12469,12 +12454,12 @@
         } else if (webgl.GARAGE_SIDE) {
           if (outside < 2) {
             var spot = DRIVE_SIDE[outside];
-            grp.position.set(spot[0], -0.206, spot[1]);
+            grp.position.set(spot[0], -0.206, webgl.SIDE_PARK_Z[outside]);
             grp.rotation.y = Math.PI / 2;   /* facing the side door */
           } else {
             var q = outside - 2;
             grp.position.set(DRIVE_SIDE_RUN[q % 2], -0.206,
-                             9.4 + Math.floor(q / 2) * 4.2);
+                             webgl.SIDE_QUEUE_Z + Math.floor(q / 2) * 4.2);
           }
           eye = webgl.EXT_POS;
           extAim = true;

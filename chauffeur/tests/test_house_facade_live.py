@@ -1235,7 +1235,7 @@ def scenario_exterior_rooms_and_side_door_controls():
     if served is None:
         return
     spec = copy.deepcopy(hf.CANONICAL)
-    spec['blocks']['garage'].update(orientation='side', side_door={'style':'glass','leaves':2,'width':4.4,'height':3.8})
+    spec['blocks']['garage'].update(orientation='side', door_colour='white', side_door={'style':'glass','leaves':2,'width':4.4,'height':3.8,'third_bay':True,'front_setback':0.75})
     spec, _ = hf.normalize(spec)
     with served.browser() as page:
         errors = []
@@ -1251,7 +1251,7 @@ def scenario_exterior_rooms_and_side_door_controls():
             for room in rooms:
                 marker = page.locator('[data-room="' + room + '"]')
                 check(marker.is_visible(), f'{room} visible at {angle}')
-        page.evaluate('window.chfOrbitTo(0)')
+        page.evaluate('window.chfOrbitTo(2)')
         page.wait_for_function('window.chfNavProbe({settled:true})')
         page.wait_for_selector('#house-hints button[data-room="kitchen"]')
         shots = os.environ.get('HOUSE_SHOTS')
@@ -1259,8 +1259,9 @@ def scenario_exterior_rooms_and_side_door_controls():
             Path(shots).mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(Path(shots, 'all-exterior-rooms.png')))
         vertices = page.evaluate("window.chfFabricVertices('garage_door')")
-        check(vertices and max(p[2] for p in vertices)-min(p[2] for p in vertices) > 4.3, 'side door width rendered')
+        check(vertices and max(p[2] for p in vertices)-min(p[2] for p in vertices) > 7.5, 'main and third doors rendered with separating pier')
         check(max(p[1] for p in vertices)-min(p[1] for p in vertices) > 3.7, 'side door height rendered')
+        check(9.3 < max(p[2] for p in vertices) < 9.5, 'side doors sit near the front corner')
         page.locator('#house-hints button[data-room="kitchen"]').click()
         page.wait_for_function("window.chfNavProbe({settled:true}) && window.chfHouseMode() === 'kitchen'")
         page.evaluate('window.chfHouseExit()')
