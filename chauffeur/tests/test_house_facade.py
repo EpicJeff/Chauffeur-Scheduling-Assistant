@@ -377,6 +377,7 @@ def scenario_routes_and_template():
           'house_facade_photo is a plain def: a vision call must not block the event loop')
     photo_section = main_src[main_src.index('def house_facade_photo('):main_src.index('def house_facade_critique(')]
     check("'token': token" in photo_section, 'the photo route returns the draft token')
+    check("'viewpoint': viewpoint" in photo_section, 'the photo route returns the draft viewpoint')
     tpl = io.open(os.path.join(root, 'templates', 'house.html'), encoding='utf-8').read()
     check('window.HOUSE_FACADE = ' in tpl and tpl.index('window.HOUSE_FACADE') < tpl.index("static/house.js"),
           'the facade is injected before house.js loads (build-once)')
@@ -387,6 +388,25 @@ def scenario_routes_and_template():
     prev = main.house_facade_preview({'spec': {'ground': []}})
     check(any(g['kind'] == 'door' for g in prev['spec']['ground']) and prev['notes'], 'preview normalizes, stores nothing')
     check(len(hf.list_facades()) == 1, 'preview stored nothing')
+
+    # the route wrapper itself: F1 -- the photo route must thread the
+    # draft's viewpoint through, not just its token, or the editor (task
+    # 12) has no orbit stop to pick.
+    from fastapi import UploadFile
+    from starlette.datastructures import Headers
+    from services import storage, model_pools
+    _fresh()
+    storage.update_settings({'calendar_ids': [], 'llm_gemini_api_key': 'k'})
+    orig_pool = model_pools.call_pool_json
+    try:
+        model_pools.call_pool_json = lambda *a, **k: _fixture('brick.pass1.json')
+        upload = UploadFile(io.BytesIO(b'\x89PNG\r\n\x1a\n'), filename='b0.png',
+                            headers=Headers({'content-type': 'image/png'}))
+        out = main.house_facade_photo(upload)
+        check(out['token'] and out['viewpoint'] == 'left',
+              f"the photo route wrapper returns the fixture's viewpoint: {out.get('viewpoint')!r}")
+    finally:
+        model_pools.call_pool_json = orig_pool
 
 
 def scenario_route_wrappers_map_errors():
@@ -535,10 +555,17 @@ def scenario_photo_pass1_maps_the_fixtures():
             check(err is None and tok, f'{photo}: draft + token: {err}')
             for k in ('mirror', 'blocks', 'unexpressed'):
                 check(draft[k] == exp[k], f'{photo}: {k} maps: {draft[k]} != {exp[k]}')
-            check({(g['kind'], g['slot']) for g in draft['ground']} == {(g['kind'], g['slot']) for g in exp['ground']},
-                  f'{photo}: ground features map by slot')
-            check({(r['kind'], r['slot']) for r in draft['roof']} == {(r['kind'], r['slot']) for r in exp['roof']},
-                  f'{photo}: roof features map by slot')
+            # F2 review fix: a (kind, slot) SET collapses two stacked windows
+            # at the same slot (farmhouse story 1/2) and ignores every other
+            # field (span/size/shutters/style/leaves/type/roof/window) --
+            # compare the full normalized lists instead, sorted the same way
+            # normalize() itself sorts them.
+            sort_ground = lambda lst: sorted(lst, key=lambda g: (g['slot'], g.get('story', 1), g['kind']))
+            sort_roof = lambda lst: sorted(lst, key=lambda r: (r['slot'], r['kind']))
+            check(sort_ground(draft['ground']) == sort_ground(exp['ground']),
+                  f"{photo}: ground matches the expected model in full: {draft['ground']} != {exp['ground']}")
+            check(sort_roof(draft['roof']) == sort_roof(exp['roof']),
+                  f"{photo}: roof matches the expected model in full: {draft['roof']} != {exp['roof']}")
             check(seen['max_models'] == 2 and seen['workflow'] == 'house_photo', f'attempt budget + label: {seen}')
             check(len(hf.list_facades()) == 1, 'nothing saved')
         check(json.loads(json.dumps(_fixture('brick.expected.json')))['mirror'] is False, 'brick photo: garage on the LEFT is mirror false')

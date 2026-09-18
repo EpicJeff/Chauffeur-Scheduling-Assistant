@@ -5530,7 +5530,8 @@ def house_facade_photo(photo: UploadFile = File(...)):
     if not mime.startswith('image/'):
         raise HTTPException(status_code=400, detail="Only images are supported")
     draft, notes, err, token = _hf.from_photo(base64.b64encode(data).decode('ascii'), mime)
-    return {'draft': draft, 'notes': notes, 'error': err, 'token': token}
+    viewpoint = _hf.draft_for(token).get('viewpoint') if token else None
+    return {'draft': draft, 'notes': notes, 'error': err, 'token': token, 'viewpoint': viewpoint}
 
 
 @app.post("/api/house/facades/critique")
