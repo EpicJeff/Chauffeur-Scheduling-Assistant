@@ -838,6 +838,12 @@ def scenario_home_section_pins():
                    'id="facade-preview-frame"', "day=1"):
         check(needle in tpl, f'hand path: {needle}')
     check('preserveDrawingBuffer' not in tpl, 'capture never toggles the drawing buffer flag')
+    import re
+    m = re.search(r"body:\s*\[([^\]]*)\]", tpl)
+    check(m, 'facadeStyleOptions.body is a list in the template')
+    body_list = m.group(1)
+    for name in ('brick_red', 'tan', 'cream_brick', 'stone_grey', 'painted_brick'):
+        check(name in body_list, f'the hand path can pick every body colour the model produces: {name}')
     for bad in ('alert(', 'confirm(', 'prompt('):
         sec = tpl[tpl.index('id="home"'):tpl.index('id="home"') + 20000]
         check(bad not in sec.replace('promptConfirm(', '').replace('promptInput(', ''), f'no browser dialogs: {bad}')
