@@ -2723,10 +2723,12 @@
                                 <label x-show="facadeCell.porch.type !== 'none'">Porch roof
                                     <select class="w-full bg-gray-800" x-model="facadeCell.porch.roof" @change="facadeCellApply()">
                                         <option>flat</option><option>gable</option><option value="shed">sloped</option><option value="mixed">sloped with gable</option></select></label>
-                                <label x-show="facadeCell.porch.roof === 'mixed'">Gable offset (slots)
-                                    <input type="number" min="0" class="w-16 bg-gray-800" x-model.number="facadeCell.porch.gable_offset" @change="facadeCellApply()"></label>
-                                <label x-show="facadeCell.porch.roof === 'mixed'">Gable width (slots)
-                                    <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.porch.gable_span" @change="facadeCellApply()"></label>
+                                <label x-show="facadeCell.porch.roof === 'mixed'">Gable starting slot
+                                    <select class="w-full bg-gray-800" x-model.number="facadeCell.porch.gable_start" @change="facadePorchGableStart($event.target.value)">
+                                        <template x-for="slot in facadePorchGableSlots()" :key="slot"><option :value="slot" x-text="'Slot ' + slot"></option></template>
+                                    </select></label>
+                                <label x-show="facadeCell.porch.roof === 'mixed'">Gable span (slots)
+                                    <input type="number" min="1" :max="Math.max(1, facadePorchGableSlots().length - (facadeCell.porch.gable_offset || 0))" class="w-16 bg-gray-800" x-model.number="facadeCell.porch.gable_span" @change="facadeCellApply()"></label>
                             </div>
                             <template x-if="facadeDraft">
                                 <div class="grid grid-cols-3 gap-2 text-sm">
@@ -4709,7 +4711,7 @@
                 facadeDraftSource: 'hand',
                 facadeSlot: null,
                 facadeCellStory: 1,
-                facadeCell: { finish: {cladding: '', body: '', span: 1}, ground: { kind: 'wall', span: 1, shutters: false, story: 1 }, roof: { kind: 'eave', span: 1, cladding: '' }, porch: { type: 'none', span: 1, roof: 'flat' }, upper: { mode: 'none', span: 1, roof: { form: 'gable', ridge: 'x', pitch_deg: 22.5 } } },
+                facadeCell: { finish: {cladding: '', body: '', span: 1}, ground: { kind: 'wall', span: 1, shutters: false, story: 1 }, roof: { kind: 'eave', span: 1, cladding: '' }, porch: { type: 'none', span: 1, roof: 'flat', gable_start: 0, gable_offset: 0, gable_span: 2 }, upper: { mode: 'none', span: 1, roof: { form: 'gable', ridge: 'x', pitch_deg: 22.5 } } },
                 facadeNotes: [],
                 facadeStyleOptions: {
                     body: ['white', 'greige', 'sage', 'slate', 'navy', 'brick_red', 'tan', 'cream_brick', 'stone_grey', 'painted_brick'],
@@ -5736,6 +5738,18 @@
                     if (!Object.keys(all).length) delete this.facadeDraft.story_finishes;
                     this.facadePreview();
                 },
+                facadePorchGableSlots() {
+                    const start = this._origPorchSlot ?? this.facadeSlot;
+                    const face = this.facadeSlots.find(s => s.i === start)?.face;
+                    const end = start + Math.max(1, this.facadeCell.porch.span || 1);
+                    return this.facadeSlots.filter(s => s.face === face && s.i >= start && s.i < end).map(s => s.i);
+                },
+                facadePorchGableStart(value) {
+                    const slots = this.facadePorchGableSlots(), start = Number(value);
+                    if (!slots.includes(start)) return;
+                    this.facadeCell.porch.gable_offset = start - slots[0];
+                    this.facadeCellApply();
+                },
                 facadePorch(i) {
                     return (this.facadeDraft.ground || []).find(e => e.kind === 'porch' && i >= e.slot && i < e.slot + e.span);
                 },
@@ -5756,7 +5770,7 @@
                         finish: {cladding: f?.cladding || '', body: f?.body || '', span: f?.slot === i ? f.span : 1},
                         ground: g ? { shutters: false, story: this.facadeCellStory, ...g, span: g.slot === i ? g.span : 1 } : { kind: 'wall', span: 1, shutters: false, story: this.facadeCellStory },
                         roof: r ? { cladding: '', ...r, kind: r.kind === 'shed' && r.window !== false ? 'shed_dormer' : r.kind } : { kind: 'eave', span: 1, cladding: '' },
-                        porch: p ? { type: p.type, span: p.span, roof: p.roof || 'flat', gable_offset: p.gable_offset || 0, gable_span: p.gable_span || 2 } : { type: 'none', span: 1, roof: 'flat', gable_offset: 0, gable_span: 2 },
+                        porch: p ? { gable_start: p.slot + (p.gable_offset || 0), type: p.type, span: p.span, roof: p.roof || 'flat', gable_offset: p.gable_offset || 0, gable_span: p.gable_span || 2 } : { type: 'none', span: 1, roof: 'flat', gable_start: i, gable_offset: 0, gable_span: 2 },
                         upper: u ? { mode: 'two', span: u.span, roof: { ...u.roof } } : { mode: 'none', span: 1, roof: { ...blockRoof } }
                     };
                     this._origFinish = JSON.stringify(this.facadeCell.finish);
@@ -5877,6 +5891,13 @@
                             this.facadeDraft.roof.push(rentry);
                         }
                         this._origRoof = JSON.stringify(rcell);
+                    }
+                    if (this.facadeCell.porch.roof === 'mixed') {
+                        const count = Math.max(1, this.facadePorchGableSlots().length);
+                        const p = this.facadeCell.porch;
+                        p.gable_offset = Math.max(0, Math.min(count - 1, p.gable_offset || 0));
+                        p.gable_span = Math.max(1, Math.min(count - p.gable_offset, p.gable_span || 1));
+                        p.gable_start = (this._origPorchSlot ?? i) + p.gable_offset;
                     }
                     if (JSON.stringify(this.facadeCell.porch) !== this._origPorch) {
                         this.facadeDraft.ground = (this.facadeDraft.ground || []).filter(e => !(e.kind === 'porch' && i >= e.slot && i < e.slot + e.span));

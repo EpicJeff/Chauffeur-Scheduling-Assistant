@@ -68,6 +68,25 @@ editor.facadeSetStoryFinish('main',2,'body','brick_red');
 editor.facadeSetStoryFinish('main',2,'cladding','');
 assert.equal(editor.facadeStoryFinish('main',2,'body'),'brick_red','clearing material preserves colour');
 assert.equal(editor.facadeStoryFinish('main',2,'cladding'),'');
+// Choose every porch slot even when editing a continuation cell.
+editor.facadeCellSelect(11);
+assert.deepEqual(editor.facadePorchGableSlots(), [9,10,11,12]);
+for (const start of [12,10,9]) {
+  editor.facadePorchGableStart(String(start));
+  editor.facadeCell.porch.gable_span = 2;
+  editor.facadeCellApply();
+  const p = editor.facadeDraft.ground.find(e=>e.kind==='porch');
+  assert.equal(p.slot,9,'moving gable never moves porch');
+  assert.equal(p.gable_offset,start-9,'absolute starting slot maps to saved offset');
+  assert.equal(p.gable_span,Math.min(2,13-start),'span stays inside porch');
+  editor.facadeLoadCell();
+  assert.equal(editor._origPorchSlot+editor.facadeCell.porch.gable_offset,start,'start survives reload');
+}
+editor.facadePorchGableStart('12');
+editor.facadeCell.porch.span = 2;
+editor.facadeCellApply();
+assert.equal(editor.facadeCell.porch.gable_offset,1,'shortening porch keeps gable inside');
+assert.equal(editor.facadeCell.porch.gable_span,1);
 console.log('facade editor slot/layer isolation OK');
 '''
     subprocess.run(['node', '-e', script], check=True)

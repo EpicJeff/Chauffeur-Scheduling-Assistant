@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.100 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.101 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8092,3 +8092,8 @@ The block cladding and body colour remain defaults. Optional `story_finishes[blo
 The editor permits a single slot inside a finish span to be changed without changing its neighbours or the other story. Save/load, normalization, draft preview, and the photo schema preserve overrides. Normalization merges identical adjacent finishes on the same block. The renderer partitions actual wall geometry at material boundaries rather than adding overlapping surfaces; tiled textures retain scale and phase across the partitions.
 
 The old combined ten-window cap is removed. Windows remain subject to available slots, opening overlap rules and upper-story coverage, but adding a dormer no longer deletes an unrelated wall window. Existing dormer, gable and porch caps remain unchanged. The expanded stress fixture contains 32 wall windows and six dormer windows; this is a fixture, not a new window cap. Chromium checks cover high/low quality builds and living-room cutaways. Device performance still requires wall-panel measurement.
+
+
+### Porch gable placement (v2.499.101)
+
+The sloped-with-gable porch editor exposes an absolute starting slot and a gable span. The selector includes every slot within the porch, even when editing from a continuation slot. Moving the gable preserves the porch anchor; its span clamps to the remaining porch width. Shortening the porch keeps the gable within it. Saved data retains the compatible relative `gable_offset` and `gable_span` fields.
