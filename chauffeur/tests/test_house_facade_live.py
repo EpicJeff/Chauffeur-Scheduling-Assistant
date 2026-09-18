@@ -923,18 +923,32 @@ def scenario_side_garage_shed_and_porch_gable():
     (facade_<face>_porch_<slot>_roof_*) instead of through the free-gable
     replay Task 3+4 bridged it with.
 
-    `?angle=1`: the side door faces WEST, so the orbit's stop 0 (dead
-    ahead of the street face) has the block itself between the camera and
-    the door. If the boot stop cannot see it the scenario walks the ring
-    rather than calling a door that exists unreachable, and prints the
-    stop that found it -- MEASURED stop 2, round the west corner, where
-    the whole west face comes square on.
+    THE MARKER (controller ruling on the task-8 review). A side garage's
+    door faces WEST, so from the RESTING stop it is behind the block and
+    a marker aimed at the leaf would simply not be offered -- a capability
+    dropped by geometry. The rule: on a side garage the exterior Garage
+    marker targets `garage_front_wall`, the block's own street face,
+    visible at every stop and carrying room 'garage', so a real tap on it
+    walks into the garage exactly as a tap on the door does. This asserts
+    that at stop 0, with a real mouse click (the nav file's own idiom),
+    and separately walks the ring to show the DOOR itself is still
+    reachable by name -- `{piece:'garage_door'}` is untouched.
+
+    PER-FEATURE CLADDING (review fix F1). The spec carries a dormer in
+    brick and a shed in stone on a board-and-batten house, and
+    `chfPieceMaps` reports the cladding keys each registered row actually
+    wears. NOTE the shed is STONE, not shingle: `shingleT` -- the default
+    map every roof deck wears -- is itself stamped `uvKey: 'shingle'`, so
+    a shed clad in shingle would report the same key with the override
+    working or not. The pin needs a key the default cannot produce.
     """
     from services import house_facade as hf
     spec = copy.deepcopy(hf.CANONICAL)
     spec['blocks']['garage']['orientation'] = 'side'
     spec['roof'].append({'slot': 13, 'span': 2, 'kind': 'shed',
-                         'window': True, 'cladding': 'shingle'})
+                         'window': True, 'cladding': 'stone'})
+    spec['roof'].append({'slot': 15, 'span': 2, 'kind': 'dormer',
+                         'cladding': 'brick'})
     spec, notes = hf.normalize(spec)
     check(not any(g['kind'] == 'garage_door' for g in spec['ground']),
           'normalize dropped the street garage door: %r' % notes)
@@ -949,9 +963,13 @@ def scenario_side_garage_shed_and_porch_gable():
         page.route('**/three.min.js*', lambda route: route.fulfill(
             status=200, content_type='application/javascript', body=patched))
         page.add_init_script(DAY_LOCK_JS)
-        page.goto(served.url('house?quality=high&angle=1&draft=' + tok))
+        # the RESTING stop, on purpose: the marker ruling below is
+        # about what a person is offered when the house first draws.
+        page.goto(served.url('house?quality=high&draft=' + tok))
         page.wait_for_selector('#room canvas', timeout=20000)
         page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+        check(page.evaluate('window.chfOrbitStop()') == 0,
+              'the scene boots at the resting orbit stop')
         check(page.evaluate('window.chfFacade()') == spec,
               'the side-entry spec is what built')
         names = {r['name'] for r in page.evaluate('window.chfShellFabric()')}
@@ -969,22 +987,84 @@ def scenario_side_garage_shed_and_porch_gable():
                              " return f && f.box; })()")
         check(door and door[1] < -18.0 and abs((door[4] + door[5]) / 2 - 4.0) < 0.6,
               f'the garage door stands on the west face: {door}')
-        # every marker still reachable, the garage one included: the
-        # probe resolves `front` to the door row itself on a side garage
-        stop, probe = None, page.evaluate("window.chfNavProbe({front:'garage_front'})")
-        if probe:
-            stop = page.evaluate('window.chfOrbitStop()')
-        else:
-            for k in range(8):
-                page.evaluate('window.chfOrbitTo(%d)' % k)
-                page.wait_for_function("window.chfNavProbe({settled:true})",
-                                       timeout=20000)
-                probe = page.evaluate("window.chfNavProbe({front:'garage_front'})")
-                if probe:
-                    stop = k
-                    break
-        check(probe, f'the garage marker is reachable from some orbit stop: {probe}')
-        print('  side garage: garage_front marker hit at orbit stop %r' % stop)
+        # REVIEW FIX F2: the bay's street face carries the window
+        # normalize() put there in the street door's place, and it is the
+        # FACADE's window (windowAt dresses the slot), which is why
+        # garage_front_wall asks for none of its own -- two shellWindows
+        # in one plane would z-fight. Locked here: the piece exists, and
+        # it stands on the garage block's own street face.
+        bay_lo, bay_hi = 0, 2
+        bay_w = [g['slot'] for g in spec['ground']
+                 if g['kind'] == 'window' and bay_lo <= g['slot'] <= bay_hi]
+        check(len(bay_w) == 1,
+              f'normalize put exactly one window on the bay: {bay_w}')
+        win = 'facade_garage_block_window_%d' % bay_w[0]
+        check(win in names, f'{win} registered (the bay face is dressed)')
+        wbox = page.evaluate("(() => { const f = window.chfShellFabric()"
+                             ".find(r => r.name === %r); return f && f.box; })()" % win)
+        g_south = page.evaluate('window.chfBlockGeometry()')['garage']['south']
+        check(wbox and abs((wbox[4] + wbox[5]) / 2 - g_south) < 0.3,
+              f'{win} stands on the garage face ({g_south}): {wbox}')
+
+        # CONTROLLER RULING (never drop functionality): the Garage marker
+        # is offered at the RESTING stop on a side garage too -- it
+        # targets the block's street face, not the west-facing leaf -- and
+        # a real tap on it walks into the garage, the way the door does.
+        for spec_js in ("{front:'garage_front'}", "{front:'garage_block'}"):
+            p = page.evaluate('window.chfNavProbe(%s)' % spec_js)
+            check(p, f'the garage marker is offered at stop 0: {spec_js} -> {p}')
+        p = page.evaluate("window.chfNavProbe({front:'garage_front'})")
+        check(page.evaluate("window.chfHouseMode()") == 'exterior',
+              'still outside before the tap')
+        page.mouse.click(p['cx'], p['cy'])
+        page.wait_for_function("window.chfNavProbe({settled:true}) && "
+                               "window.chfHouseMode() === 'garage'", timeout=20000)
+        check(page.evaluate("window.chfHouseMode()") == 'garage',
+              'tapping the garage marker walks into the garage')
+        page.evaluate("window.chfHouseExit()")
+        page.wait_for_function("window.chfNavProbe({settled:true}) && "
+                               "window.chfHouseMode() === 'exterior'", timeout=20000)
+
+        # ... and the DOOR itself is still addressable by name and still
+        # reachable: it is on the west face, so the ring has to come round
+        # to it. Walked, not assumed, and the stop is printed.
+        stop, probe = None, None
+        for k in range(8):
+            page.evaluate('window.chfOrbitTo(%d)' % k)
+            page.wait_for_function("window.chfNavProbe({settled:true})",
+                                   timeout=20000)
+            probe = page.evaluate("window.chfNavProbe({piece:'garage_door'})")
+            if probe:
+                stop = k
+                break
+        check(probe, f'the side door is reachable from some orbit stop: {probe}')
+        print('  side garage: garage_door reachable from orbit stop %r' % stop)
+        page.evaluate('window.chfOrbitTo(0)')
+        page.wait_for_function("window.chfNavProbe({settled:true})", timeout=20000)
+
+        # REVIEW FIX F1: per-feature cladding is a MAP, so assert the map.
+        # chfPieceMaps reports the distinct cladTex uvKeys a registered row
+        # wears; the house is board-and-batten, so 'brick'/'stone' can only
+        # have come from the feature's own `cladding`.
+        def maps(name):
+            return page.evaluate('window.chfPieceMaps(%r)' % name)
+        # `_roof_front`, not `_roof`: shellGable registers a gable under
+        # <name>_west/_east (the decks, roof shingle either way) and
+        # <name>_front (the END INFILL, which is the piece a feature's
+        # cladding actually reaches -- the cladMap argument).
+        for row, want in (('facade_main_dormer_15', 'brick'),
+                          ('facade_main_dormer_15_roof_front', 'brick'),
+                          ('facade_main_shed_13', 'stone'),
+                          ('facade_main_shed_13_box', 'stone')):
+            got = maps(row)
+            check(got and want in got,
+                  f'{row} wears its own cladding {want!r}, got {got}')
+        # and a feature with NO cladding wears its block's own tile only.
+        # The gable's DECKS are roof shingle either way; its end infill is
+        # the piece cladding actually reaches.
+        plain = maps('facade_garage_block_gable_0_front')
+        check(plain == ['batten'],
+              f'a plain gable wears only the block cladding, got {plain}')
         # every roof feature (shed and porch gable included) passes the
         # roof-line audit: nothing buried under the deck it stands on
         from house_live_common import VERTEX_AUDIT_ALL_JS

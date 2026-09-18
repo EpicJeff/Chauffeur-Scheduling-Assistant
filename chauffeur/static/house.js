@@ -6018,7 +6018,9 @@
        porch's roof, on the porch's posts and beam (PORCH_EAVE4, 4.8),
        and stays there: raised 0.8 to the rule it would float clear of
        the posts it rests on. Its ridge still stands proud at the wall
-       -- canonical gable_8: 7.505 against the plane's 5.78, 1.725, its
+       -- canonical facade_main_porch_8_roof (the porch's own gable since
+       task 8; it was gable_8 while the replay bridge named it):
+       7.505 against the plane's 5.78, 1.725, its
        rise 2.525 less the 0.8 -- and in FRONT of the wall its low eaves
        pass under the main eave as the porch roof always has; only what
        is behind the wall and under the deck is buried, and that is what
@@ -7877,18 +7879,35 @@
       /* the mailbox is a PROP standing in the shell fabric's group, not
          shell fabric itself — box() directly, so it keeps the NICE-tier
          chamfer default ebox() now opts out of */
-      box(0.10, 0.92, 0.10, C.wood2, -12.95, 0.17, 25.30, mailboxG, { rough: 0.8 });
-      box(0.26, 0.24, 0.44, C.slate, -12.95, 0.74, 25.30, mailboxG, { rough: 0.7 });
+      /* SIDE-ENTRY (task 8, review fix): a mailbox stands at the kerb end
+         of the drive people actually use, and on a side garage that is
+         the L's approach, four units west. ONE anchor -- every part below
+         is written off `mbX`, at the same offsets from it the front
+         drive's mailbox has always used (post at 0, flag arm +0.08..
+         +0.15, away from the concrete) -- so the side variant cannot
+         drift a flag off its own post. -12.95 is 0.15 outboard of the
+         front apron's east edge; GARAGE_BLOCK.west + 0.15 is the same
+         0.15 outboard of the approach's east edge. */
+      /* the front-entry row is the LITERALS it has always been, not the
+         anchor plus a delta: sweepGeo keys its cache on JSON.stringify of
+         these points, and -12.95 + 0.08 is -12.870000000000001, a
+         different key string for the same arm. */
+      var MB = GARAGE_SIDE
+        ? { x: GARAGE_BLOCK.west + 0.15, f0: GARAGE_BLOCK.west + 0.23,
+            f1: GARAGE_BLOCK.west + 0.27, f2: GARAGE_BLOCK.west + 0.30 }
+        : { x: -12.95, f0: -12.87, f1: -12.83, f2: -12.80 };
+      box(0.10, 0.92, 0.10, C.wood2, MB.x, 0.17, 25.30, mailboxG, { rough: 0.8 });
+      box(0.26, 0.24, 0.44, C.slate, MB.x, 0.74, 25.30, mailboxG, { rough: 0.7 });
       if (DETAIL >= 3) {
         /* R5: the flag becomes a swept arm carrying the same paddle —
            same paddle position as before, now reached by a rod instead
            of floating beside the body on its own. */
-        sweepAt([[-12.87, 0.66, 25.30], [-12.83, 0.72, 25.30],
-                 [-12.80, 0.80, 25.30]], 0.012, C.ink, mailboxG, STEEL);
-        box(0.05, 0.16, 0.04, C.red, -12.80, 0.80, 25.30, mailboxG, GLOSS);
-        box(0.28, 0.05, 0.46, C.dark, -12.95, 0.87, 25.30, mailboxG, { rough: 0.7 });
+        sweepAt([[MB.f0, 0.66, 25.30], [MB.f1, 0.72, 25.30],
+                 [MB.f2, 0.80, 25.30]], 0.012, C.ink, mailboxG, STEEL);
+        box(0.05, 0.16, 0.04, C.red, MB.f2, 0.80, 25.30, mailboxG, GLOSS);
+        box(0.28, 0.05, 0.46, C.dark, MB.x, 0.87, 25.30, mailboxG, { rough: 0.7 });
         /* the lid's lift handle, at its street-facing tip */
-        latheAt('knob', [0.032, 0.045, 0.032], C.dark, -12.95, 0.87, 25.53,
+        latheAt('knob', [0.032, 0.045, 0.032], C.dark, MB.x, 0.87, 25.53,
                 mailboxG, STEEL).rotation.x = Math.PI / 2;
       }
     }
@@ -11948,9 +11967,17 @@
   /* SIDE-ENTRY (task 8): the apron in front of a side door runs west
      across z 1.9..6.1, so its two spots stand side by side along z at
      one x and the cars face the door -- a quarter turn from the ones on
-     the front drive. Further rows step WEST (the apron's own long axis)
-     rather than south, where the block is. */
+     the front drive.
+     REVIEW FIX: the apron is CAPPED AT TWO and the rest queue down the
+     APPROACH, because the apron is only 5.2 deep and a third row west of
+     it would stand on the lawn. Cars 3+ take the approach's own two
+     columns (x -21.65 / -19.35, inside its 4.6 width the way DRIVE_X
+     sits inside the front apron's) and rows 4.2 apart running south from
+     z 9.4, which is clear of the apron's own z 6.1 edge -- two abreast on
+     concrete, exactly what the front branch does. They face the street
+     (no turn), since that is the way they drove in. */
   var DRIVE_SIDE = [[-21.4, 2.6], [-21.4, 5.4]];
+  var DRIVE_SIDE_RUN = [-21.65, -19.35];
   var carPlates = [];        /* the plaques, so the lean-in can blank them */
   /* ORBIT (spec section 4): turn the driveway plaques to the stop the
      camera has arrived at. Called once per landed orbit step — never per
@@ -12018,9 +12045,15 @@
           eye = webgl.GARAGE_POS;
           inside++;
         } else if (webgl.GARAGE_SIDE) {
-          var spot = DRIVE_SIDE[outside % 2];
-          grp.position.set(spot[0] - Math.floor(outside / 2) * 4.2, -0.206, spot[1]);
-          grp.rotation.y = Math.PI / 2;
+          if (outside < 2) {
+            var spot = DRIVE_SIDE[outside];
+            grp.position.set(spot[0], -0.206, spot[1]);
+            grp.rotation.y = Math.PI / 2;   /* facing the side door */
+          } else {
+            var q = outside - 2;
+            grp.position.set(DRIVE_SIDE_RUN[q % 2], -0.206,
+                             9.4 + Math.floor(q / 2) * 4.2);
+          }
           eye = webgl.EXT_POS;
           extAim = true;
           outside++;
@@ -13027,6 +13060,32 @@
     });
     return out.length ? out : null;
   };
+  /* PER-FEATURE CLADDING (task 8, review fix F1): the distinct cladding
+     tiles a registered row actually WEARS, read off its live materials.
+     cladTex stamps every tile it makes with `userData.uvKey` (the
+     material name: 'batten', 'brick', 'shingle', ...) for the world-UV
+     rescale, so the key is already there to read and this hook invents
+     no second source of truth. Read-only, called by tests only, and it
+     runs AFTER mergeStatic -- a merged composite carries the one
+     material its bucket shared, which is exactly the tile the row wears.
+     Rows with no mapped material come back as an empty list rather than
+     null, so "this row wears nothing" and "no such row" stay different
+     answers. */
+  window.chfPieceMaps = function (name) {
+    if (!webgl) return null;
+    var row = null;
+    webgl.FABRIC.forEach(function (f) { if (f.name === name) row = f; });
+    if (!row) return null;
+    var keys = [];
+    row.g.traverse(function (m) {
+      if (!m.isMesh || !m.material) return;
+      [].concat(m.material).forEach(function (mt) {
+        var k = mt && mt.map && mt.map.userData && mt.map.userData.uvKey;
+        if (k && keys.indexOf(k) < 0) keys.push(k);
+      });
+    });
+    return keys;
+  };
   window.chfFacadeSlots = function () { return webgl ? webgl.SLOTS : []; };
   /* MASSING ARC 2 task 10: one frame, one data URL, synchronously. The
      canvas has no preserveDrawingBuffer (it never will -- that costs a
@@ -13082,15 +13141,27 @@
          spec generated nothing street-facing falls back to the garage
          door, registered by hand and always present. */
       var face = String(spec.front).replace(/_front$/, '');
-      /* SIDE-ENTRY GARAGE (task 8): a side garage's street face is a
-         plain walled face -- its window is a street-facing generated
-         piece, and the marker would land on THAT instead of the door.
-         The garage marker means the garage DOOR, so on a side-entry
-         garage the target is the `garage_door` row itself, registered by
-         hand and always present, whichever way it faces. */
+      /* SIDE-ENTRY GARAGE (task 8, controller ruling on the review): the
+         Garage marker must be offered at the RESTING stop, like every
+         other exterior marker. A side garage's door faces WEST, so it is
+         behind the block from stop 0 and the marker would simply not
+         appear -- functionality dropped by geometry. The marker means
+         "the garage", not "that leaf": on a side garage it targets
+         `garage_front_wall`, the block's own street face, which is
+         visible at every stop and carries room 'garage', so a tap on it
+         walks into the garage exactly as a tap on the door does. The
+         DOOR is still addressable by name -- {piece:'garage_door'} is
+         untouched -- and the first-street-facing-generated-piece rule
+         below is skipped here, because on a side garage that piece is
+         the bay's WINDOW. */
       var sideGarage = webgl.GARAGE_SIDE &&
                        (face === 'garage' || face === 'garage_block');
-      if (!sideGarage) webgl.FABRIC.forEach(function (f) {
+      if (sideGarage) webgl.FABRIC.forEach(function (f) {
+        if (!b && f.name === 'garage_front_wall') {
+          b = f.box; target = f.g; targetName = f.name;
+        }
+      });
+      else webgl.FABRIC.forEach(function (f) {
         if (b || f.name.indexOf('facade_' + face + '_') !== 0 || f.n.z <= 0.5) return;
         b = f.box; target = f.g; targetName = f.name;
       });
