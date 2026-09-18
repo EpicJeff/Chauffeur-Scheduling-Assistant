@@ -317,6 +317,31 @@
     var scene = new T.Scene();
     scene.background = new T.Color(0xbdb3c7);          // the soft lilac of the reference
     var cam = new T.PerspectiveCamera(24, 1, 0.1, 200); // narrow FOV = near-isometric diorama; far covers the yard dome
+    /* ---- THE MIRROR (spec 2026-09-17 section 3.4) ----------------------
+       A mirrored plan is ONE reflection of the finished house, applied to
+       a root group at the very end of the build (see `houseRoot`, after
+       bakeAO). NOTHING between here and there is authored twice: every
+       coordinate in this file is HOUSE-LOCAL, the masks/clips/AO/merges
+       all run on the unflipped fabric, and the only values that cross
+       into world space before the reflection exists are the CAMERA's.
+
+       toWorldX/toWorld are that boundary, and they are their own inverse
+       (a world point handed back through toWorld lands in house-local
+       space again), which is what lets chfNavProbe reflect a stored
+       house-local box on its way to the screen.
+
+       MIRROR is read from the injected facade rather than from SPEC0,
+       which is not assigned until the facade section ~3700 lines below:
+       the resting camera pose is computed HERE (orbitPos, a dozen lines
+       down), long before SPEC0 exists. It is `!!SPEC0.mirror` by
+       construction -- SPEC0 is `FACADE ? FACADE.spec : CANONICAL_JS` and
+       CANONICAL_JS.mirror is false. */
+    var MIRROR = !!(window.HOUSE_FACADE && window.HOUSE_FACADE.spec &&
+                    window.HOUSE_FACADE.spec.mirror);
+    function toWorldX(x) { return MIRROR ? -x : x; }
+    function toWorld(v) {
+      return MIRROR ? new T.Vector3(-v.x, v.y, v.z) : v.clone();
+    }
     /* the kitchen. SUPERSEDED, both of them, by the cutaway-ownership
        note below -- kept as the record of what this pose used to be
        bought with, not as a description of what it is now:
@@ -381,7 +406,11 @@
     ORBIT.a0 = Math.atan2(EXT_POS.z - ORBIT.pivot.z, EXT_POS.x - ORBIT.pivot.x);
     function orbitPos(k) {
       var a = ORBIT.a0 + k * Math.PI / 4;
-      return new T.Vector3(ORBIT.pivot.x + ORBIT.radius * Math.cos(a),
+      /* THE MIRROR (section 3.4): the ring's CENTRE moves to the mirrored
+         house; the eight ANGLES do not. Stop 0 stays the resting street
+         view and every stop keeps its name, so ?angle=N, the swipe and
+         the idle return all mean what they meant. */
+      return new T.Vector3(toWorldX(ORBIT.pivot.x) + ORBIT.radius * Math.cos(a),
                            ORBIT.height,
                            ORBIT.pivot.z + ORBIT.radius * Math.sin(a));
     }
@@ -427,7 +456,7 @@
     var STUDY_POS = new T.Vector3(7.02, 4.75, 18.82);
     var STUDY_AT = new T.Vector3(12.30, 1.45, 10.68);
     cam.position.copy(orbitPos(ORBIT.stop));
-    cam.lookAt(ORBIT.pivot);
+    cam.lookAt(toWorld(ORBIT.pivot));   /* the camera lives in world space */
 
     var R = new T.WebGLRenderer({ antialias: DETAIL >= 2 });
     R.setPixelRatio(1);                                // the Pi law: never a retina multiplier
@@ -616,9 +645,17 @@
     };
     function aimShadow(name) {
       var b = SHADOW_BOX[name] || SHADOW_BOX.exterior;
-      sunTarget.position.set(b[0], 1.2, b[1]);
+      /* THE MIRROR (section 3.4): the boxes above are house-local, like
+         every other coordinate here, and the sun and its target live in
+         `scene` (outside houseRoot), so the CENTRE has to be reflected or
+         the frustum sits on empty lawn and the whole house draws the hard
+         diagonal this block exists to prevent. SUN_OFF is NOT reflected:
+         the sun keeps its own world side, so a mirrored house is lit from
+         the same compass direction as an unmirrored one. */
+      var bx = toWorldX(b[0]);
+      sunTarget.position.set(bx, 1.2, b[1]);
       sunTarget.updateMatrixWorld();
-      sun.position.set(b[0] + SUN_OFF.x, 1.2 + SUN_OFF.y, b[1] + SUN_OFF.z);
+      sun.position.set(bx + SUN_OFF.x, 1.2 + SUN_OFF.y, b[1] + SUN_OFF.z);
       if (!SHADOWS) return;
       var c = sun.shadow.camera, h = b[2];
       c.left = -h; c.right = h; c.top = h; c.bottom = -h;
@@ -1228,6 +1265,42 @@
 
     function finish(m, noShadow) {
       if (SHADOWS && !noShadow) { m.castShadow = true; m.receiveShadow = true; }
+      return m;
+    }
+    /* ---- TEXT MESHES (spec 2026-09-17 section 3.4) ----------------------
+       A reflection turns lettering into its own mirror image, and there is
+       no amount of camera work that reads that back. So the ONE creator of
+       every mesh that wears a painted, text-bearing canvas stamps
+       userData.noMirror and, on a mirrored plan, negates that mesh's own
+       scale.x straight back: the plane still hangs on the mirrored wall,
+       facing the mirrored way, and its words read forward.
+       The maths: world = F . T . R . S with F = diag(-1,1,1) from
+       houseRoot and S = diag(-1,1,1) from the stamp, so the determinant
+       comes back +1 -- a proper rigid transform, not a reflection.
+
+       The manifest below is the contract the pure test reads back: every
+       canvas-drawn word in this file is written inside one of these
+       named painters, and each painter's canvas is worn by a mesh built
+       here. Add a painter that letters a surface and it goes in the list
+       or the test says so.
+
+       finish() is deliberately NOT called from inside: four of the six
+       wearers set their own shadow flags (the weather pane switches
+       castShadow OFF on purpose, the hero plaque and the calendar sheet
+       never cast at all), so folding it in would change what the
+       unmirrored house renders -- which this task is not allowed to do.
+       `group` is optional for the same reason: the bus stop arm is
+       parented by btag(), which also tags its zone. */
+    /* TEXT_PAINTERS: stopArm, heroFace, calFace, critFace, paneFace, carPlaque */
+    function textMesh(geo, material, group) {
+      var m = new T.Mesh(geo, material);
+      m.userData.noMirror = true;
+      /* Counter-flipped HERE rather than in one pass over houseRoot: the
+         car plaques are built by syncGarage, long after the reflection
+         exists, and a one-shot pass would silently miss every one of
+         them. The root pass counts instead (see chfMirror). */
+      if (MIRROR) m.scale.x = -1;
+      if (group) group.add(m);
       return m;
     }
     /* Exterior patterns use the main facade and main roof as their scale
@@ -3025,11 +3098,10 @@
        pane is a canvas the painter redraws when the sky changes; unlit
        material so it always reads as daylight coming IN. */
     var winG = zoneGroup('window', -1.88, 0, -5.4);
-    var paneMesh = new T.Mesh(new T.BoxGeometry(1.9, 1.7, 0.06),
-      new T.MeshBasicMaterial({ color: 0xffffff }));
+    var paneMesh = textMesh(new T.BoxGeometry(1.9, 1.7, 0.06),
+      new T.MeshBasicMaterial({ color: 0xffffff }), winG);
     paneMesh.position.set(0, 3.4, 0.06);
     if (SHADOWS) paneMesh.castShadow = false;
-    winG.add(paneMesh);
     box(2.1, 0.12, 0.16, C.cab, 0, 4.32, 0.1, winG);
     box(2.1, 0.1, 0.16, C.cab, 0, 2.52, 0.1, winG);
     box(0.12, 1.9, 0.16, C.cab, -1.02, 3.38, 0.1, winG);
@@ -3481,8 +3553,8 @@
     westWallG.add(calG);
     /* L1: lands straight on calG (a zone group) with no zoneTag wrapper
        after it, so the cache must be forced unique right here. */
-    var calFace = new T.Mesh(new T.PlaneGeometry(1.5, 1.9),
-                             mat(0xf6f1e4, { rough: 0.9 }, true));
+    var calFace = textMesh(new T.PlaneGeometry(1.5, 1.9),
+                           mat(0xf6f1e4, { rough: 0.9 }, true));
     /* VIEW-VOLUME MASKING (task 2): a flat rectangle is a degenerate
        convex polygon -- worldTris/clipConvex handle it the same as any
        other convex solid's faces. Its map texture is repainted over
@@ -3529,10 +3601,9 @@
     /* the next-leave HERO CARD, rendered app-style, big enough to read
        from across the room — it hangs on the door because the door is
        where leaving happens */
-    var plaque = new T.Mesh(new T.PlaneGeometry(1.5, 0.94),
-      new T.MeshBasicMaterial({ transparent: true }));
+    var plaque = textMesh(new T.PlaneGeometry(1.5, 0.94),
+      new T.MeshBasicMaterial({ transparent: true }), doorG);
     plaque.position.set(0, 3.02, 0.1);
-    doorG.add(plaque);
 
     /* ---- RADIO (zone: radio) on the countertop ------------------------- */
     var radio = zoneGroup('radio', -6.15, 0, 5.5);   /* the living-room shelf */
@@ -3918,8 +3989,8 @@
     lid.position.y = 1.445; lid.position.z = -0.175;
     /* L1: lands straight on crit (a zone group) with no zoneTag wrapper
        after it, so the cache must be forced unique right here. */
-    var critFace = new T.Mesh(new T.PlaneGeometry(0.60, 0.38),
-                              mat(0x12151c, { rough: 0.6 }, true));
+    var critFace = textMesh(new T.PlaneGeometry(0.60, 0.38),
+                            mat(0x12151c, { rough: 0.6 }, true));
     critFace.rotation.x = -0.30;
     critFace.position.set(0, 1.4395, -0.157);
     crit.add(critFace); finish(critFace);
@@ -8417,7 +8488,9 @@
         btag(box(0.03, 0.86, 0.38, CAR_GLASS, hwB + 0.03, 0.96, 1.30,
                  inner, GLOSS));
         /* the stop arm, on the traffic side */
-        var arm = new T.Mesh(new T.CylinderGeometry(0.27, 0.27, 0.05, 8),
+        /* THE MIRROR (section 3.4): the sign says STOP, so it is a text
+           mesh -- btag() below does the parenting and the zone tag. */
+        var arm = textMesh(new T.CylinderGeometry(0.27, 0.27, 0.05, 8),
           mat(C.red, GLOSS));
         arm.rotation.z = Math.PI / 2;
         arm.position.set(-(hwB + 0.13), BUS_BODY.belt - 0.10, 0.35);
@@ -8432,7 +8505,7 @@
            instead of being multiplied by C.red a second time; the
            octagon's thin rim samples the same map's border ring, which
            is the right colour for an edge anyway. */
-        var stopArmTex = canvasTex(128, function (g, S) {
+        var stopArmTex = canvasTex(128, function stopArm(g, S) {
           g.fillStyle = '#c9473d'; g.fillRect(0, 0, S, S);
           g.strokeStyle = '#f2ece1'; g.lineWidth = S * 0.09;
           g.beginPath(); g.arc(S / 2, S / 2, S * 0.40, 0, Math.PI * 2);
@@ -8445,6 +8518,10 @@
         arm.material.color.setHex(0xffffff);
         arm.material.map = stopArmTex;
         arm.material.needsUpdate = true;
+        /* the mesh this map lands on came out of textMesh() a few lines
+           up, which is what keeps STOP reading forward on a mirrored
+           plan; the ring below wears no lettering and is an ordinary
+           mesh (spec 2026-09-17 section 3.4). */
         if (DETAIL >= 3) {
           var ring = new T.Mesh(new T.CylinderGeometry(0.17, 0.17, 0.055, 8),
             mat(C.cream, GLOSS));
@@ -10880,6 +10957,38 @@
     scene.userData.aoStats = aoStats;   /* --budget-reachable via __hpScene,
       the same pattern userData.merged already uses for test introspection */
 
+    /* ---- THE REFLECTION (spec 2026-09-17 section 3.4) -------------------
+       ONE reflection, applied LAST. Everything geometric above -- the room
+       masks and their shells, the clipper, the block-meet volumes, the AO
+       bake, every merge pass -- ran in house-local space and never sees a
+       flipped value, which is the whole reason the flip waits until here.
+
+       What stays behind in `scene`: the three lights and the sun's target
+       (so a mirrored house is lit from the same compass direction as an
+       unmirrored one -- the sun does not swap sides with the garage), the
+       camera, and the sky dome (a mirrored sky is the same sky, and it is
+       the one mesh whose own texture is repainted against the world clock
+       rather than the house).
+
+       The counter-flip itself is stamped on at textMesh() time (see its
+       comment: the car plaques are built long after this runs), so all
+       this pass does is count what is standing. */
+    var houseRoot = new T.Group(); houseRoot.name = 'houseRoot';
+    scene.children.slice().forEach(function (o) {
+      if (o.isLight || o.isCamera || o === sunTarget || o === skyDome) return;
+      scene.remove(o); houseRoot.add(o);
+    });
+    scene.add(houseRoot);
+    if (MIRROR) houseRoot.scale.x = -1;
+    houseRoot.updateMatrixWorld(true);
+    function noMirrorCount() {
+      var n = 0;
+      houseRoot.traverse(function (m) {
+        if (m.userData && m.userData.noMirror) n++;
+      });
+      return n;
+    }
+
     /* ---- the painters: every data surface drawn like the app draws it —
        Inter type, white cards, accent bars, soft shadows. Cached per
        payload; a poll that changes nothing repaints nothing. ---- */
@@ -10961,7 +11070,7 @@
       var time = lbl.slice(0, 5), title = lbl.indexOf(' \u2014 ') !== -1
         ? lbl.slice(lbl.indexOf(' \u2014 ') + 3) : lbl.slice(5);
       var payload = calm ? 'calm' : [time, title, d.mins].join('|');
-      return mkTex('hero', 512, 320, payload, function (g, w, h) {
+      return mkTex('hero', 512, 320, payload, function heroFace(g, w, h) {
         g.clearRect(0, 0, w, h);
         card(g, 14, 14, w - 28, h - 28, calm ? '#0d9488' : '#2563eb');
         if (calm) {
@@ -10981,7 +11090,7 @@
     }
     function critterTex(p) {
       if (p && p.__blank) {
-        return mkTex('critters', 512, 324, 'blank', function (g, w, h) {
+        return mkTex('critters', 512, 324, 'blank', function critFace(g, w, h) {
           g.fillStyle = '#12151c'; g.fillRect(0, 0, w, h);
           g.fillStyle = '#1d2230'; g.fillRect(0, 0, w, 64);
           g.fillStyle = '#7ee787'; g.font = '800 34px ' + FONT;
@@ -10992,7 +11101,7 @@
       var pets = (p && p.pets) || [];
       var payload = calm ? 'calm'
         : pets.map(function (x) { return x.name + ':' + x.level; }).join('|');
-      return mkTex('critters', 512, 324, payload, function (g, w, h) {
+      return mkTex('critters', 512, 324, payload, function critFace(g, w, h) {
         g.fillStyle = '#12151c'; g.fillRect(0, 0, w, h);
         g.fillStyle = '#1d2230'; g.fillRect(0, 0, w, 64);
         g.fillStyle = '#7ee787'; g.font = '800 34px ' + FONT;
@@ -11022,7 +11131,7 @@
       if (c && c.__blank) {
         /* focused: the board's own card is ON this sheet — bare paper
            underneath, so the room never says the same thing twice */
-        return mkTex('calendar', 512, 640, 'blank', function (g, w, h) {
+        return mkTex('calendar', 512, 640, 'blank', function calFace(g, w, h) {
           g.fillStyle = '#f6f1e4'; g.fillRect(0, 0, w, h);
           g.fillStyle = '#111827'; g.font = '800 40px ' + FONT;
           g.fillText('Today', 30, 66);
@@ -11031,7 +11140,7 @@
       var calm = !c || c.calm !== false;
       var next = (c && c.next) || [];
       var payload = calm ? 'calm' : [c.today].concat(next).join('|');
-      return mkTex('calendar', 512, 640, payload, function (g, w, h) {
+      return mkTex('calendar', 512, 640, payload, function calFace(g, w, h) {
         g.fillStyle = '#f6f1e4'; g.fillRect(0, 0, w, h);
         g.fillStyle = '#111827'; g.font = '800 40px ' + FONT;
         g.fillText('Today', 30, 66);
@@ -11062,7 +11171,7 @@
         ? Math.round(wz.temp) : null;
       var night = isNight();       /* one clock for the whole scene */
       var payload = [cond, temp, night].join('|');
-      return mkTex('weather', 320, 288, payload, function (g, w, h) {
+      return mkTex('weather', 320, 288, payload, function paneFace(g, w, h) {
         var top = '#7cc4f0', bot = '#d8ecf7';
         if (night) { top = '#1c2748'; bot = '#33406b'; }
         else if (cond.indexOf('rain') !== -1 || cond === 'pouring' || cond.indexOf('lightning') !== -1) { top = '#5b6c7d'; bot = '#8fa0af'; }
@@ -11252,7 +11361,7 @@
     function carTex(c) {
       var payload = [c.name, c.battery_pct, c.fuel_pct, c.warn].join('|');
       return mkTex('car:' + (c.id || c.name), 256, 128, payload,
-                   function (g, w, h) {
+                   function carPlaque(g, w, h) {
         g.clearRect(0, 0, w, h);
         card(g, 6, 6, w - 12, h - 12, c.warn ? '#dc2626' : '#0d9488');
         g.fillStyle = '#111827'; g.font = '800 26px ' + FONT;
@@ -11471,10 +11580,15 @@
        passes and the AO bake, which therefore never see it (its own
        materials are unshared and it was never baked; moving the add
        would have baked ~500 study meshes and changed the study's look). */
+    /* THE MIRROR (section 3.4): into houseRoot, not the scene -- the study
+       is a room of THIS house at an authored house-local address, and its
+       camera pose is reflected with every other room's, so a study left
+       behind in the scene would sit on the far side of a mirrored plan
+       and the study view would look at empty lawn. */
     if (studyWorld) {
-      scene.add(studyWorld.group);
-      if (studyWorld.architecture) scene.add(studyWorld.architecture);
-      if (studyWorld.proxies) scene.add(studyWorld.proxies);
+      houseRoot.add(studyWorld.group);
+      if (studyWorld.architecture) houseRoot.add(studyWorld.architecture);
+      if (studyWorld.proxies) houseRoot.add(studyWorld.proxies);
     }
 
     /* on BUILD: the room boots at the exterior, where nothing recedes, so
@@ -11589,6 +11703,12 @@
     return {
       applyScenery: applyScenery,
       T: T, scene: scene, cam: cam, R: R, groups: groups,
+      /* THE MIRROR (spec 2026-09-17 section 3.4): the reflection root, the
+         flag, the house-local <-> world boundary (its own inverse) and the
+         one creator of text-bearing meshes -- syncGarage's car plaques are
+         built out here, after the reflection, and need all four. */
+      MIRROR: MIRROR, houseRoot: houseRoot, textMesh: textMesh,
+      toWorld: toWorld, toWorldX: toWorldX, noMirrorCount: noMirrorCount,
       steam: steam, steam2: steam2, needle: needle, plaque: plaque,
       calFace: calFace, boardFace: boardFace, magnets: magnets,
       /* boardFace stays exported: the overlay quad rides its plane */
@@ -11613,7 +11733,13 @@
          left from" for free. Each read hands back a fresh vector; nothing
          in the app has ever mutated these. */
       get EXT_POS() { return orbitPos(ORBIT.stop); },
-      get EXT_AT() { return ORBIT.pivot; },
+      /* THE MIRROR (section 3.4): EXT_POS/EXT_AT are the exterior CAMERA's
+         pose, so both are world. The five room poses below stay
+         house-local on purpose -- the mask solver and ROOM_CAMS read
+         them, and a flipped value there would cut the cutaways from the
+         wrong side. goHome/enterRoom put them through toWorld at the
+         tween, which is the one place they become a camera. */
+      get EXT_AT() { return toWorld(ORBIT.pivot); },
       ORBIT: ORBIT, orbitPos: orbitPos,
       GARAGE_POS: GARAGE_POS, GARAGE_AT: GARAGE_AT,
       MUD_POS: MUD_POS, MUD_AT: MUD_AT, LIV_POS: LIV_POS, LIV_AT: LIV_AT,
@@ -11624,7 +11750,15 @@
       ROOF_FORMS: ROOF_FORMS,
       ROOF_ALIAS: ROOF_ALIAS, roofAlias: roofAlias,
       registerFabric: function (group, spec) {
-        regFabric(group, {name:spec.name, n:spec.normal, box:fabBox(group),
+        /* THE MIRROR (spec 2026-09-17 section 3.4): fabBox measures in
+           WORLD space, and a row registered out here is already inside
+           houseRoot -- so on a mirrored plan its box comes back reflected
+           while every row registered at build time is house-local. Bring
+           it back, so FABRIC speaks ONE space and the mask below (and
+           chfNavProbe's own reflection) read what they expect. */
+        var b = fabBox(group);
+        if (MIRROR) b = [-b[1], -b[0], b[2], b[3], b[4], b[5]];
+        regFabric(group, {name:spec.name, n:spec.normal, box:b,
                           room:spec.room, kit:spec.kit});
         /* VIEW-VOLUME MASKING (task 3): a row registered after the
            shells were built is masked whole-or-nothing, synchronously,
@@ -11922,9 +12056,14 @@
   var world = null;
   function syncWorld() {
     if (!webgl || !window.HouseFeatures || world) return;
-    if (world) { webgl.scene.remove(world.group); world.dispose(); }
+    /* THE MIRROR (spec 2026-09-17 section 3.4): into houseRoot, not the
+       scene -- every fixture here stands at an authored HOUSE-LOCAL
+       address inside a room, so it has to be reflected with the room it
+       stands in. (registerFabric measures its box in world space and
+       brings it back to house-local; see its own note.) */
+    if (world) { webgl.houseRoot.remove(world.group); world.dispose(); }
     world = window.HouseFeatures.build(webgl.T, DETAIL);
-    webgl.scene.add(world.group);
+    webgl.houseRoot.add(world.group);
     (world.fabric || []).forEach(function (fixture) {
       webgl.registerFabric(fixture.group, {
         name:fixture.name, normal:fixture.normal,
@@ -11982,11 +12121,26 @@
   /* ORBIT (spec section 4): turn the driveway plaques to the stop the
      camera has arrived at. Called once per landed orbit step — never per
      frame, and never for a bay plaque, which faces its own fixed camera. */
+  /* THE MIRROR (spec 2026-09-17 section 3.4): Object3D.lookAt() removes
+     the parent's rotation with extractRotation(), which only normalises
+     the column lengths -- hand it a REFLECTING parent (houseRoot, scaled
+     -1 in x) and it reads diag(-1,1,1) back as if it were a rotation and
+     the plaque ends up aimed at nothing. So the aim is taken in the
+     plaque's OWN parent space instead: the world eye is brought into that
+     space through the full inverse matrix (which handles the reflection
+     exactly), and the look matrix is built there. Unmirrored this is
+     arithmetically what lookAt() already did. */
+  function aimPlate(p, worldEye) {
+    var e = worldEye.clone();
+    if (p.parent) { p.parent.updateWorldMatrix(true, false); p.parent.worldToLocal(e); }
+    p.quaternion.setFromRotationMatrix(
+      new webgl.T.Matrix4().lookAt(e, p.position, p.up));
+  }
   function aimCarPlates() {
     if (!webgl) return;
     var eye = webgl.EXT_POS;
     carPlates.forEach(function (p) {
-      if (p.userData.orbitAimed) p.lookAt(eye);
+      if (p.userData.orbitAimed) aimPlate(p, eye);
     });
   }
   function syncGarage(s) {
@@ -12042,7 +12196,10 @@
              -0.21: a car parked at y 0 sinks into one and floats over
              the other, and its contact shadow goes with it */
           grp.position.set(BAY_X[inside], 0.038, 5.6);
-          eye = webgl.GARAGE_POS;
+          /* THE MIRROR (section 3.4): GARAGE_POS is the house-local room
+             pose (the mask solver's copy); aimPlate wants the eye in
+             WORLD space, the same space EXT_POS already reports in. */
+          eye = webgl.toWorld(webgl.GARAGE_POS);
           inside++;
         } else if (webgl.GARAGE_SIDE) {
           if (outside < 2) {
@@ -12073,15 +12230,22 @@
            shares through cgeo exactly like every other cached primitive
            in the room; see the dispose call above for the material and
            texture this leaves behind, which stay fresh on purpose. */
-        var plate = new webgl.T.Mesh(
+        /* THE MIRROR (section 3.4): the plaque wears the carPlaque
+           painter's lettering, so it is built by textMesh -- which stamps
+           noMirror and counter-flips it on a mirrored plan. Parented
+           below, beside carPlates, exactly as it always was. */
+        var plate = webgl.textMesh(
           webgl.cgeo('pq|1.5|0.75', function () {
             return new webgl.T.PlaneGeometry(1.5, 0.75);
           }),
           new webgl.T.MeshBasicMaterial({ transparent: true,
-                                          map: webgl.carTex(c) }));
+                                          map: webgl.carTex(c) }),
+          webgl.carsG);        /* parented HERE (it used to be parented a
+             few lines down): aimPlate needs the plaque's real parent to
+             bring the world eye into its own space */
         plate.position.set(grp.position.x, box.max.y + 0.86,
                            grp.position.z);
-        plate.lookAt(eye);
+        aimPlate(plate, eye);
         /* ORBIT (spec section 4): a driveway plaque faces the EXTERIOR
            eye, and that eye is a ring of eight now — so it has to be
            re-aimed when the ring moves or it goes edge-on (invisible)
@@ -12092,7 +12256,6 @@
         /* fresh material every rebuild: never cache-shared (L1) */
         plate.userData.zone = 'garage';
         plate.userData.room = 'garage';
-        webgl.carsG.add(plate);
         carPlates.push(plate);
       });
     }
@@ -12221,7 +12384,11 @@
     if (!o) return null;
     var v = new webgl.T.Vector3();
     v[o[0]] = o[1];
-    return v;
+    /* THE MIRROR (section 3.4): the table above names a HOUSE-LOCAL axis
+       ("the garage door's face looks east"); on a mirrored plan that face
+       looks west. The branch above needs no such help -- a world
+       quaternion is already reflected. */
+    return webgl.toWorld(v);
   }
 
   function frameZone(key, cb) {
@@ -12237,6 +12404,10 @@
        touch of height mixed in so the room keeps its depth): an oblique
        wall card reads as a misaligned web element; a square one reads as
        part of the surface */
+    /* THE MIRROR (section 3.4): zoneFaceNormal already hands back a WORLD
+       normal -- the face-mesh branch reads a world quaternion, and its
+       axis-table fallback reflects its own literal. `center` is a world
+       Box3 read. So nothing here is flipped a second time. */
     var fn = zoneFaceNormal(key);
     var dir = fn
       ? fn.clone().add(new webgl.T.Vector3(0, 0.22, 0)).normalize()
@@ -12255,10 +12426,16 @@
     webgl.cam.updateProjectionMatrix();
     /* A focused view steps back through its room before leaving the house.
        This is essential in the garage, where cars fill the close view. */
+    /* THE MIRROR (section 3.4): room.pos/room.at are HOUSE-LOCAL (the mask
+       solver below was built from exactly these five poses and must never
+       see a flipped one); toWorld turns them into the camera's world pose
+       at the tween, and returns a fresh vector, so the .clone() the tween
+       used to take is already paid for. */
     webgl.solveShell(room.pos, { box: room.aabb, room:name || 'kitchen' });
     webgl.aimShadow(name || 'kitchen');
-    tween = { fromP: webgl.cam.position.clone(), toP: room.pos.clone(),
-              fromA: (lookAt || room.at).clone(), toA: room.at.clone(),
+    tween = { fromP: webgl.cam.position.clone(), toP: webgl.toWorld(room.pos),
+              fromA: (lookAt || webgl.toWorld(room.at)).clone(),
+              toA: webgl.toWorld(room.at),
               t0: performance.now(), ms: 650, cb: null };
     focused = null;
     TIP.style.opacity = 0;
@@ -12326,8 +12503,11 @@
     webgl.solveShell(room.pos, { box: room.aabb, room:name });
     webgl.aimShadow(name);        /* the sun's shadow box follows the camera */
     syncScenery();                /* inside a room the set dressing steps back */
-    tween = { fromP: webgl.cam.position.clone(), toP: room.pos.clone(),
-              fromA: (lookAt || webgl.EXT_AT).clone(), toA: room.at.clone(),
+    /* THE MIRROR (section 3.4): same boundary as goHome -- solveShell got
+       the house-local pose above, the camera gets the world one here. */
+    tween = { fromP: webgl.cam.position.clone(), toP: webgl.toWorld(room.pos),
+              fromA: (lookAt || webgl.EXT_AT).clone(),
+              toA: webgl.toWorld(room.at),
               t0: performance.now(), ms: 850, cb: cb || null };
     requestFrame();
   }
@@ -12353,7 +12533,7 @@
                                      that can see the whole property */
     syncScenery();                /* ... and out here nothing recedes */
     tween = { fromP: webgl.cam.position.clone(), toP: webgl.EXT_POS.clone(),
-              fromA: (lookAt || webgl.HOME_AT).clone(),
+              fromA: (lookAt || webgl.toWorld(webgl.HOME_AT)).clone(),
               toA: webgl.EXT_AT.clone(),
               t0: performance.now(), ms: 850, cb: null };
     requestFrame();
@@ -12389,9 +12569,11 @@
        is still live and that stop silently draws no markers at all.
        Armed at the landing, the delay is the delay it means. */
     hideHint();
+    /* THE MIRROR (section 3.4): EXT_AT is the pivot in WORLD space (the
+       raw ORBIT.pivot is house-local, like every other authored point). */
     tween = { fromP: webgl.cam.position.clone(), toP: to,
-              fromA: (lookAt || webgl.ORBIT.pivot).clone(),
-              toA: webgl.ORBIT.pivot.clone(),
+              fromA: (lookAt || webgl.EXT_AT).clone(),
+              toA: webgl.EXT_AT.clone(),
               t0: performance.now(), ms: 850,
               cb: function () { aimCarPlates(); scheduleHint();
                                 if (cb) cb(); } };
@@ -12992,6 +13174,86 @@
      was built from -- each block's depth, stories, roof {form, ridge,
      pitch_deg}, cladding, base band and body. Read-only, like chfFacade. */
   window.chfBlocks = function () { return webgl ? webgl.BLOCKS : null; };
+  /* ---- THE MIRROR (spec 2026-09-17 section 3.4): read-only hooks, the
+     chfBlocks stance -- they report, they never move anything.
+
+     chfMirror     whether this plan is reflected, what the root carries,
+                   how many text meshes stand counter-flipped, and the two
+                   determinants that say so geometrically.
+     chfCamPose    where the eye actually is, in world space.
+     chfWorldBox   a registered piece's (or a zone group's) box AFTER the
+                   reflection: a live Box3 over the real graph, which is
+                   the only honest way to ask which side of the world a
+                   thing ended up on. FABRIC's own f.box is house-local
+                   and deliberately stays that way.
+     chfPlaqueCanvas / chfPlaqueRect
+                   the i-th car plaque's painted canvas and where it lands
+                   on screen, so a test can prove the lettering reads
+                   FORWARD rather than merely present. */
+  window.chfMirror = function () {
+    if (!webgl) return null;
+    /* textDet / fabricDet: the determinant of a world matrix is negative
+       exactly when that mesh is being drawn through a reflection, which
+       is what turns lettering into its own mirror image. So a mirrored
+       house must report fabricDet < 0 (the house IS reflected) and
+       textDet > 0 (every lettered mesh is not) -- the geometric statement
+       of "the words read forward", with no pixels involved. */
+    var textDet = null, fabricDet = null;
+    webgl.houseRoot.updateMatrixWorld(true);
+    webgl.houseRoot.traverse(function (m) {
+      if (!m.isMesh) return;
+      var d = m.matrixWorld.determinant();
+      if (m.userData && m.userData.noMirror)
+        textDet = textDet === null ? d : Math.min(textDet, d);
+      else if (fabricDet === null || d > fabricDet) fabricDet = d;
+    });
+    return { mirror: !!webgl.MIRROR, root: webgl.houseRoot.scale.x,
+             noMirrorCount: webgl.noMirrorCount(),
+             textDet: textDet, fabricDet: fabricDet };
+  };
+  /* where the eye actually IS, in world space -- the read-only twin of
+     chfHouseCam, which only ever writes. A lean-in is only provable
+     against the card's own world box with both halves in hand. */
+  window.chfCamPose = function () {
+    if (!webgl) return null;
+    var p = webgl.cam.position;
+    return { pos: [p.x, p.y, p.z], fov: webgl.cam.fov, mode: mode,
+             focused: focused };
+  };
+  window.chfWorldBox = function (name) {
+    if (!webgl) return null;
+    var g = null;
+    webgl.FABRIC.forEach(function (f) { if (!g && f.name === name) g = f.g; });
+    if (!g) g = webgl.groups[name] || null;
+    if (!g) return null;
+    var box = new webgl.T.Box3().setFromObject(g);
+    if (box.isEmpty()) return null;
+    return [box.min.x, box.max.x, box.min.y, box.max.y, box.min.z, box.max.z];
+  };
+  window.chfPlaqueCanvas = function (i) {
+    var p = carPlates[i || 0];
+    if (!p || !p.material || !p.material.map || !p.material.map.image) return null;
+    try { return p.material.map.image.toDataURL('image/png'); }
+    catch (e) { return null; }
+  };
+  window.chfPlaqueRect = function (i) {
+    var p = carPlates[i || 0];
+    if (!webgl || !p) return null;
+    webgl.cam.updateMatrixWorld();
+    p.updateWorldMatrix(true, false);
+    var rect = webgl.R.domElement.getBoundingClientRect();
+    var x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    [[-0.75, -0.375], [0.75, -0.375], [-0.75, 0.375], [0.75, 0.375]]
+      .forEach(function (c) {
+        var w = p.localToWorld(new webgl.T.Vector3(c[0], c[1], 0));
+        var s = _project(w, rect.width, rect.height);
+        x0 = Math.min(x0, s.x + rect.left); x1 = Math.max(x1, s.x + rect.left);
+        y0 = Math.min(y0, s.y + rect.top); y1 = Math.max(y1, s.y + rect.top);
+      });
+    if (!isFinite(x0) || x1 <= x0 || y1 <= y0) return null;
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0,
+             cw: rect.width, ch: rect.height };
+  };
   /* MASSING ARC 2 task 6 (spec 2026-09-17 section 2): where each block
      ACTUALLY stands after its depth -- west/east/north/south, its eave,
      its ridge and the deck planes its roof was placed by. Read-only,
@@ -13115,11 +13377,18 @@
     function onCanvas(p) {
       return document.elementFromPoint(p.cx, p.cy) === webgl.R.domElement;
     }
+    /* THE MIRROR (spec 2026-09-17 section 3.4): this hook speaks
+       HOUSE-LOCAL, because that is what its callers hold -- an authored
+       point (hintChoices' PACK_SPOTS) and FABRIC's boxes, which were
+       measured before the reflection and are never re-measured. Both are
+       reflected on their way to the screen. The branches further down
+       that read a live Box3.setFromObject (zone/action/feature/entry) are
+       already WORLD and are left exactly alone. */
     if (spec.point) {
-      var pp = project(spec.point[0], spec.point[1], spec.point[2]);
+      var pp = project(webgl.toWorldX(spec.point[0]), spec.point[1], spec.point[2]);
       return pp.z >= -1 && pp.z <= 1 && onCanvas(pp) ? pp : null;
     }
-    var b = null, target = null, targetName = null;
+    var b = null, target = null, targetName = null, bLocal = false;
     if (spec.piece) {
       /* BLOCKS (spec 2026-09-17 section 0): a caller names the CANONICAL
          piece (the Mudroom marker asks for garage_block_roof_south), and
@@ -13130,7 +13399,7 @@
          probe that places it cannot disagree. */
       var pieceName = webgl.roofAlias(spec.piece);
       webgl.FABRIC.forEach(function (f) {
-        if (f.name === pieceName) { b = f.box; target = f.g; targetName = f.name; }
+        if (f.name === pieceName) { b = f.box; target = f.g; targetName = f.name; bLocal = true; }
       });
       if (!b) return null;
     } else if (spec.front) {
@@ -13158,15 +13427,17 @@
                        (face === 'garage' || face === 'garage_block');
       if (sideGarage) webgl.FABRIC.forEach(function (f) {
         if (!b && f.name === 'garage_front_wall') {
-          b = f.box; target = f.g; targetName = f.name;
+          b = f.box; target = f.g; targetName = f.name; bLocal = true;
         }
       });
       else webgl.FABRIC.forEach(function (f) {
         if (b || f.name.indexOf('facade_' + face + '_') !== 0 || f.n.z <= 0.5) return;
-        b = f.box; target = f.g; targetName = f.name;
+        b = f.box; target = f.g; targetName = f.name; bLocal = true;
       });
       if (!b) webgl.FABRIC.forEach(function (f) {
-        if (!b && f.name === 'garage_door') { b = f.box; target = f.g; targetName = f.name; }
+        if (!b && f.name === 'garage_door') {
+          b = f.box; target = f.g; targetName = f.name; bLocal = true;
+        }
       });
       if (!b) return null;
     } else if (spec.zone || spec.action || spec.feature) {
@@ -13189,6 +13460,9 @@
       b = [entryBox.min.x, entryBox.max.x, entryBox.min.y, entryBox.max.y,
            entryBox.min.z, entryBox.max.z];
     } else if (!spec.sky && !spec.empty && !spec.exit) return null;
+    /* the reflection, once, for the two branches that read a stored
+       house-local box (see the note above spec.point) */
+    if (b && bLocal && webgl.MIRROR) b = [-b[1], -b[0], b[2], b[3], b[4], b[5]];
     var minX = rect.left + 2, maxX = rect.right - 2;
     var minY = rect.top + 2, maxY = rect.bottom - 2;
     if (b) {

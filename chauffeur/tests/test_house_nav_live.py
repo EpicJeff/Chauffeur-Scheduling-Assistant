@@ -567,9 +567,204 @@ def scenario_idle_return_snaps_the_orbit_home():
         storage.update_settings(before)
 
 
+def scenario_mirror_is_one_reflection():
+    """Spec 2026-09-17 section 3.4: a mirrored plan is ONE reflection of the
+    finished house, applied to a root group after the clip/merge/AO passes.
+
+    What that has to mean, and what this pins:
+      * the reflection is on the root and nowhere else -- same fabric count
+        as the unmirrored build, houseRoot.scale.x -1, house meshes drawn
+        through a negative determinant;
+      * the house really is on the other side -- the garage door and its
+        block's roof, west of the origin in the canonical plan, come out
+        at POSITIVE world x, the door at exactly -x of where it stood;
+      * lettering still reads forward -- every text mesh is counter-flipped
+        back to a positive determinant, and the leaned-in car plaque's
+        pixels correlate with its own canvas rather than with a mirrored
+        copy of it;
+      * every exterior marker is still findable from the ring, and a
+        lean-in still lands on its card (the kitchen calendar), which is
+        the whole camera boundary in one number.
+    """
+    import copy
+    import io as _io
+    import json
+
+    from services import house_facade as hf
+    from house_live_common import SEED_RNG_JS
+
+    spec, _notes = hf.normalize(dict(copy.deepcopy(hf.CANONICAL), mirror=True))
+    check(spec['mirror'] is True, 'the draft really asks for a mirror')
+    served = live_app(_seed)
+    if served is None:
+        return
+
+    # the four exterior markers the street view offers, in the shape
+    # hintChoices() builds them (an `entry` is a live world box; a `piece`
+    # and a `front` are FABRIC's own house-local boxes, which is the pair
+    # the reflection has to get right in different ways).
+    PROBES = [('front_door', {'entry': 'front_door'}),
+              ('back_door', {'entry': 'back_door'}),
+              ('mudroom_roof', {'piece': 'garage_block_roof_south'}),
+              ('garage_front', {'front': 'garage_front'})]
+
+    def boot(page, url):
+        page.add_init_script(DAY_LOCK_JS)
+        page.add_init_script(SEED_RNG_JS)
+        page.goto(url)
+        page.wait_for_selector('#room canvas', timeout=20000)
+        page.wait_for_function("window.chfNavProbe({settled:true})",
+                               timeout=20000)
+
+    def reachable(page):
+        """which markers the ring can find, walking all eight stops"""
+        found = set()
+        for k in range(8):
+            page.evaluate('window.chfOrbitTo(%d)' % k)
+            page.wait_for_function("window.chfNavProbe({settled:true})",
+                                   timeout=20000)
+            for name, probe in PROBES:
+                if name in found:
+                    continue
+                if page.evaluate('window.chfNavProbe(%s)' % json.dumps(probe)):
+                    found.add(name)
+        page.evaluate('window.chfOrbitTo(0)')
+        page.wait_for_function("window.chfNavProbe({settled:true})",
+                               timeout=20000)
+        return found
+
+    CENTRE_X_JS = ("(n => { const b = window.chfWorldBox(n);"
+                   " return b ? (b[0] + b[1]) / 2 : null; })")
+    CAL_DIST_JS = ("(() => { const b = window.chfWorldBox('calendar');"
+                   " const c = window.chfCamPose();"
+                   " if (!b || !c) return null;"
+                   " const dx = (b[0]+b[1])/2 - c.pos[0];"
+                   " const dy = (b[2]+b[3])/2 - c.pos[1];"
+                   " const dz = (b[4]+b[5])/2 - c.pos[2];"
+                   " return Math.sqrt(dx*dx + dy*dy + dz*dz); })()")
+
+    def lean_on_the_calendar(page):
+        """chfKitchenFocus walks the room and then frames the card: two
+        tweens, so settle twice before the camera has arrived."""
+        page.evaluate("window.chfKitchenFocus('calendar')")
+        for _ in range(2):
+            page.wait_for_timeout(400)
+            page.wait_for_function("window.chfNavProbe({settled:true})",
+                                   timeout=20000)
+        return page.evaluate(CAL_DIST_JS)
+
+    with served.browser() as page:
+        boot(page, served.url('house?quality=high'))
+        plain_fabric = page.evaluate('window.chfShellFabric().length')
+        plain = page.evaluate('window.chfMirror()')
+        check(plain['mirror'] is False and plain['root'] == 1,
+              'the canonical plan is not reflected: %r' % (plain,))
+        check(plain['fabricDet'] > 0 and plain['textDet'] > 0,
+              'nothing is drawn through a reflection unmirrored: %r' % (plain,))
+        plain_text = plain['noMirrorCount']
+        check(plain_text >= 7,
+              'the canonical house already carries its text meshes '
+              '(pane, calendar, hero plaque, critters, bus stop arm and one '
+              'plaque per parked car): %d' % plain_text)
+        plain_reach = reachable(page)
+        plain_gd = page.evaluate(CENTRE_X_JS + "('garage_door')")
+        check(plain_gd is not None and plain_gd < 0,
+              'the canonical garage door stands WEST of the origin: %r'
+              % (plain_gd,))
+        plain_lean = lean_on_the_calendar(page)
+        check(plain_lean is not None and plain_lean < 10.0,
+              'the canonical lean-in stands at the card: %r' % (plain_lean,))
+
+    with served.browser() as page:
+        boot(page, served.url('house?quality=high&draft=' + hf.issue_draft(spec)))
+        m = page.evaluate('window.chfMirror()')
+        check(m['mirror'] and m['root'] == -1,
+              'one reflection, and it is on the root: %r' % (m,))
+        check(m['fabricDet'] < 0,
+              'the house itself IS drawn reflected: %r' % (m,))
+        check(m['textDet'] > 0,
+              'every lettered mesh is counter-flipped back to a proper '
+              'rotation, so its words read forward: %r' % (m,))
+        check(m['noMirrorCount'] == plain_text,
+              'the same text meshes stand in both plans: %d vs %d'
+              % (m['noMirrorCount'], plain_text))
+        check(page.evaluate('window.chfShellFabric().length') == plain_fabric,
+              'a reflection builds no extra fabric and drops none: %d vs %d'
+              % (page.evaluate('window.chfShellFabric().length'), plain_fabric))
+
+        # the house really moved, and by exactly one reflection: the garage
+        # door, west of the origin in the canonical plan, comes out east of
+        # it at the mirror image of its own x, to the millimetre.
+        cx = page.evaluate(CENTRE_X_JS + "('garage_door')")
+        check(cx is not None and cx > 0,
+              'the garage door is on the other side once mirrored: %r' % (cx,))
+        check(abs(cx + plain_gd) < 0.01,
+              'the garage door lands at exactly -x, not merely somewhere '
+              'east: %r vs %r' % (cx, plain_gd))
+        rx = page.evaluate(CENTRE_X_JS + "('garage_block_roof_south')")
+        check(rx is not None and rx > 0,
+              'the garage block roof went with it: %r' % (rx,))
+
+        mirror_reach = reachable(page)
+        check(mirror_reach == plain_reach,
+              'every exterior marker the ring could find is still findable '
+              'mirrored: %r vs %r' % (sorted(mirror_reach),
+                                      sorted(plain_reach)))
+
+        # the lean-in: the camera has to land on the MIRRORED calendar, at
+        # the same remove from the card as it does in the canonical plan.
+        # (An unflipped camera would stop the width of the house away, so
+        # the number is not a near miss either way.)
+        d = lean_on_the_calendar(page)
+        check(d is not None and abs(d - plain_lean) < 0.05,
+              'the lean-in stands off the mirrored calendar exactly as far '
+              'as it stands off the canonical one: %r vs %r' % (d, plain_lean))
+
+        # ... and the plaque it can see there reads FORWARD by pixel
+        page.evaluate("window.chfHouseEnterRoom('garage')")
+        page.wait_for_timeout(400)
+        page.wait_for_function("window.chfNavProbe({settled:true})",
+                               timeout=20000)
+        url = page.evaluate('window.chfPlaqueCanvas(0)')
+        rect = page.evaluate('window.chfPlaqueRect(0)')
+        check(url and rect and rect['w'] > 20,
+              'the garage view shows a car plaque big enough to read: %r'
+              % (rect,))
+        png = page.screenshot()
+        import base64
+        from PIL import Image, ImageChops, ImageOps
+        want = Image.open(_io.BytesIO(base64.b64decode(url.split(',', 1)[1])))
+        want = want.convert('L').resize((128, 64))
+        shot = Image.open(_io.BytesIO(png)).convert('L')
+        crop = shot.crop((int(rect['x']), int(rect['y']),
+                          int(rect['x'] + rect['w']),
+                          int(rect['y'] + rect['h']))).resize((128, 64))
+        crop = ImageOps.autocontrast(crop)
+        want = ImageOps.autocontrast(want)
+
+        def diff(a, b):
+            d = ImageChops.difference(a, b)
+            px = list(d.getdata())
+            return sum(px) / float(len(px))
+
+        fwd = diff(crop, want)
+        rev = diff(crop, want.transpose(Image.FLIP_LEFT_RIGHT))
+        check(fwd < rev,
+              'the plaque on screen matches its OWN canvas better than a '
+              'mirrored copy of it (forward %.2f vs flipped %.2f)'
+              % (fwd, rev))
+
+        page.evaluate('window.chfHouseExit()')
+        page.wait_for_function("window.chfNavProbe({settled:true})",
+                               timeout=20000)
+        errs = [e for e in served.errors() if 'WebGL' not in e]
+        check(not errs, 'console clean: %r' % (errs[:3],))
+
+
 if __name__ == '__main__':
     scenario_navigation_real_mouse()
     scenario_orbit_eight_stops()
     scenario_orbit_swipe_works_under_a_real_finger()
     scenario_idle_return_snaps_the_orbit_home()
+    scenario_mirror_is_one_reflection()
     print("test_house_nav_live OK")

@@ -758,6 +758,59 @@ def scenario_home_section_pins():
         check(bad not in sec.replace('promptConfirm(', '').replace('promptInput(', ''), f'no browser dialogs: {bad}')
 
 
+def scenario_text_meshes_use_the_helper():
+    """Spec 2026-09-17 section 3.4: the mirror is ONE reflection on a root
+    group, so every mesh that wears lettering has to be counter-flipped or
+    its words come back backwards. textMesh() is the single creator that
+    stamps them, and TEXT_PAINTERS is the manifest the file keeps of the
+    canvas painters that letter anything.
+
+    The greps: the helper exists and stamps; every name in the manifest is
+    a real function; no mesh wears a manifest painter's canvas through a
+    bare `new T.Mesh(`; and -- the load-bearing one -- EVERY canvas text
+    call in house.js sits inside a function the manifest names, found by
+    walking back to the nearest preceding NAMED function.  A new painter
+    that letters a surface and is not on the list fails here.
+    """
+    import io as _io
+    import os as _os
+    import re as _re
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    src = _io.open(_os.path.join(root, 'static', 'house.js'), encoding='utf-8').read()
+    check('function textMesh(' in src and 'userData.noMirror = true' in src,
+          'the helper exists and stamps noMirror')
+    m = _re.search(r'/\* TEXT_PAINTERS: ([^*]+)\*/', src)
+    check(m, 'the TEXT_PAINTERS manifest exists')
+    manifest = [s.strip() for s in m.group(1).split(',') if s.strip()]
+    check(manifest, 'the manifest names at least one painter')
+    for name in manifest:
+        check(_re.search(r'function\s+' + _re.escape(name) + r'\s*\(', src),
+              'manifest names a real painter: %s' % name)
+        uses = [mm.start() for mm in _re.finditer(_re.escape(name), src)]
+        bad = [u for u in uses
+               if 'new T.Mesh(' in src[max(0, u - 200):u + 200]
+               and 'textMesh(' not in src[max(0, u - 400):u + 400]]
+        check(not bad,
+              '%s: a mesh wears it without textMesh() near offsets %r'
+              % (name, bad[:3]))
+    # every canvas text call is inside a manifest painter. The nearest
+    # preceding NAMED function wins: the anonymous forEach bodies the
+    # painters draw their rows in are skipped, which is the intent.
+    names = [(mm.start(), mm.group(1)) for mm in
+             _re.finditer(r'function\s+([A-Za-z_$][\w$]*)\s*\(', src)]
+    stray = []
+    for mm in _re.finditer(r'fillText\(', src):
+        before = [n for pos, n in names if pos < mm.start()]
+        owner = before[-1] if before else None
+        if owner not in manifest:
+            stray.append((src[:mm.start()].count(chr(10)) + 1, owner))
+    check(not stray,
+          'every lettered canvas belongs to a manifest painter; stray: %r'
+          % (stray[:3],))
+    check(src.count('textMesh(') >= 8,
+          'textMesh call sites: %d' % src.count('textMesh('))
+
+
 if __name__ == '__main__':
     for fn in (scenario_slot_table_is_derived_from_the_faces,
                scenario_validate_rejects_structurally_bad_models,
@@ -789,6 +842,7 @@ if __name__ == '__main__':
                scenario_photo_becomes_a_draft_never_a_save,
                scenario_photo_failures_are_answers,
                scenario_the_two_v2_bridges_are_declared,
-               scenario_home_section_pins):
+               scenario_home_section_pins,
+               scenario_text_meshes_use_the_helper):
         fn()
         print('  ok ', fn.__name__)
