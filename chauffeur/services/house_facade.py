@@ -654,13 +654,15 @@ def normalize(raw):
     s1 = [g for g in ground if g['kind'] != 'porch' and g.get('story', 1) == 1]
     s2 = [g for g in ground if g['kind'] != 'porch' and g.get('story') == 2]
     exclusive = _resolve_exclusive(s1, _GROUND_RANK, notes) + _resolve_exclusive(s2, _GROUND_RANK, notes)
-    # a gabled porch owns its roof: a gable FEATURE covering it is dropped
+    # A porch owns only its ground-level roof, not the upper roof above it.
     for pch in porches:
         if pch['roof'] != 'gable':
             continue
         n0 = len(roof)
         roof = [r for r in roof
-                if not (r['kind'] == 'gable' and r['slot'] < pch['slot'] + pch['span']
+                if not (r['kind'] == 'gable' and not any(
+                            u['slot'] <= r['slot'] < u['slot'] + u['span'] for u in spec['upper'])
+                        and r['slot'] < pch['slot'] + pch['span']
                         and pch['slot'] < r['slot'] + r['span'])]
         if len(roof) != n0:
             notes.append(f"dropped a gable over the gabled porch at slot {pch['slot']}")

@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.98 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.99 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8080,3 +8080,6 @@ Known deviations, ruled: the spec's own text contradicts itself on stop 0 (pixel
 
 
 **House facade editor and roof follow-up (v2.499.98, 2026-09-18).** Slots remain individually selectable inside upper spans. Editing a ground cell preserves other cells and other layers; span controls retain each layer's own anchor. Both blocks display room labels without imposing roof boundaries. A roof feature may cross the garage/mudroom room boundary. Covered flat porches have a roof deck; sloped and mixed sloped-plus-gable porch roofs are available, with offset/width controls for the smaller gable. Non-porch gables sit on the wall face; dormers extend to meet the parent roof. The geometry uses the feature's actual parent volume for buried clipping. Slot counts remain tied to fixed block dimensions. High-quality browser inspection completed; device verification remains outstanding.
+
+
+**Upper-roof feature controls (v2.499.99, 2026-09-18).** A gabled porch no longer deletes an upper-story gable sharing its slots. Other porch forms no longer pull that upper gable down to porch height or extend it to the porch front. The eave choice is explicitly labeled as no added feature; its ineffective span input is hidden. Shed dormer is now a distinct editor choice backed by the existing `shed` feature with `window: true`; plain shed roof uses `window: false`. Save/reload preserves that choice. Pure/editor tests pass, and browser geometry checks verify upper gables above both gabled and flat porches. Hip-end fins and fixed shed projection remain visual limitations. The pitch minimum remains 22.5 degrees: independent low/zero-pitch dormer geometry is not implemented by this fix.

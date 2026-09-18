@@ -930,6 +930,21 @@ def scenario_upper_spans_resolve_migrate_and_publish_eaves():
           'strict V3 validation rejects legacy stories')
 
 
+def scenario_upper_gable_is_independent_of_porch():
+    raw = copy.deepcopy(hf.CANONICAL)
+    porch = next(g for g in raw['ground'] if g['kind'] == 'porch')
+    roof = copy.deepcopy(raw['blocks']['main']['roof'])
+    raw['upper'] = [{'slot': porch['slot'], 'span': porch['span'], 'roof': roof}]
+    feature = {'slot': porch['slot'], 'span': 2, 'kind': 'gable'}
+    raw['roof'].append(feature)
+    spec, notes = hf.normalize(raw)
+    check(feature in spec['roof'], f'upper gable survives the gabled porch below: {notes}')
+    check(hf.normalize(spec)[0] == spec, 'upper gable survives repeated preview/save normalization')
+    raw['upper'] = []
+    spec, _ = hf.normalize(raw)
+    check(feature not in spec['roof'], 'same-level duplicate porch gable is still suppressed')
+
+
 def scenario_mixed_porch_round_trip():
     raw = copy.deepcopy(hf.CANONICAL)
     porch = next(g for g in raw['ground'] if g['kind'] == 'porch')
@@ -1210,6 +1225,7 @@ if __name__ == '__main__':
                scenario_upper_spans_resolve_migrate_and_publish_eaves,
                scenario_upper_seams_trim_roof_features_and_windows,
                scenario_mixed_porch_round_trip,
+               scenario_upper_gable_is_independent_of_porch,
                scenario_side_garage_and_shed_and_unexpressed,
                scenario_canonical_is_normal_and_idempotent,
                scenario_unknown_enums_fall_to_defaults,

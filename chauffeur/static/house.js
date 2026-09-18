@@ -6271,7 +6271,8 @@
          or replayed feature. */
       var front = slot.z, porch = false;
       PORCH_SPANS.forEach(function (p) {
-        if (p.slot < feat.slot + feat.span && feat.slot < p.slot + p.span &&
+        if (!volumeAt(slot.face, e.cx).upper &&
+            p.slot < feat.slot + feat.span && feat.slot < p.slot + p.span &&
             p.roof !== 'gable' && p.roof !== 'mixed') {
           front = Math.max(front, p.frontZ); porch = true;
         }

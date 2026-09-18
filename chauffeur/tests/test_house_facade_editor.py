@@ -42,6 +42,15 @@ const porch = editor.facadeDraft.ground.find(e=>e.kind==='porch');
 assert.equal(porch.slot,9,'porch edit retains its own anchor');
 assert.equal(porch.gable_offset,1);
 assert.equal(porch.gable_span,2);
+editor.facadeCell.roof.kind = 'shed_dormer';
+editor.facadeCellApply();
+assert.equal(editor.facadeDraft.roof[0].kind,'shed');
+assert.equal(editor.facadeDraft.roof[0].window,true,'explicit shed dormer includes a window');
+editor.facadeLoadCell();
+assert.equal(editor.facadeCell.roof.kind,'shed_dormer','saved shed dormer reopens as the same choice');
+editor.facadeCell.roof.kind = 'shed';
+editor.facadeCellApply();
+assert.equal(editor.facadeDraft.roof[0].window,false,'plain shed roof removes the window');
 console.log('facade editor slot/layer isolation OK');
 '''
     subprocess.run(['node', '-e', script], check=True)

@@ -2681,7 +2681,7 @@
                                     </select></label>
                                 <label>Roof
                                     <select class="w-full bg-gray-800" x-model="facadeCell.roof.kind" @change="facadeCellApply()">
-                                        <option value="eave">eave</option><option value="gable">gable</option><option value="dormer">dormer</option><option value="hip_end">hip end</option><option value="shed">shed</option>
+                                        <option value="eave">no added feature (eave)</option><option value="gable">gable</option><option value="dormer">dormer</option><option value="hip_end">hip end</option><option value="shed">shed roof</option><option value="shed_dormer">shed dormer</option>
                                     </select></label>
                                 <label x-show="facadeCell.roof.kind !== 'eave'">Feature cladding
                                     <select class="w-full bg-gray-800" x-model="facadeCell.roof.cladding" @change="facadeCellApply()">
@@ -2700,7 +2700,8 @@
                                         <option value="1">1</option><option value="2">2</option></select></label>
                                 <label x-show="facadeCell.roof.kind === 'dormer'"><input type="checkbox" x-model="facadeCell.roof.window" @change="facadeCellApply()"> dormer window</label>
                                 <label>Ground span <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.ground.span" @change="facadeCellApply()"></label>
-                                <label>Roof span <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.roof.span" @change="facadeCellApply()"></label>
+                                <label x-show="facadeCell.roof.kind !== 'eave'">Roof feature span <input type="number" min="1" class="w-16 bg-gray-800" x-model.number="facadeCell.roof.span" @change="facadeCellApply()"></label>
+                                <p x-show="facadeCell.roof.kind === 'eave'" class="col-span-2 text-xs text-gray-400">The roof follows the block or upper-story span. Choose a feature to give it its own span.</p>
                                 <label>Porch here
                                     <select class="w-full bg-gray-800" x-model="facadeCell.porch.type" @change="facadeCellApply()">
                                         <option value="none">none</option><option value="sitting">sitting</option><option value="stoop">stoop</option><option value="covered">covered</option>
@@ -5726,7 +5727,7 @@
                     const blockRoof = this.facadeDraft.blocks[block].roof;
                     this.facadeCell = {
                         ground: g ? { shutters: false, story: this.facadeCellStory, ...g, span: g.slot === i ? g.span : 1 } : { kind: 'wall', span: 1, shutters: false, story: this.facadeCellStory },
-                        roof: r ? { cladding: '', ...r } : { kind: 'eave', span: 1, cladding: '' },
+                        roof: r ? { cladding: '', ...r, kind: r.kind === 'shed' && r.window !== false ? 'shed_dormer' : r.kind } : { kind: 'eave', span: 1, cladding: '' },
                         porch: p ? { type: p.type, span: p.span, roof: p.roof || 'flat', gable_offset: p.gable_offset || 0, gable_span: p.gable_span || 2 } : { type: 'none', span: 1, roof: 'flat', gable_offset: 0, gable_span: 2 },
                         upper: u ? { mode: 'two', span: u.span, roof: { ...u.roof } } : { mode: 'none', span: 1, roof: { ...blockRoof } }
                     };
@@ -5748,7 +5749,7 @@
                     else if (g1) ground = g1.kind.replace('_', ' ');
                     else if (g2) ground = g2.kind.replace('_', ' ') + '↑';
                     const upper = this.facadeEntry('upper', i);
-                    return ground + '\n' + (r ? r.kind : '') + (upper ? '\n2\u2191' : '');
+                    return ground + '\n' + (r ? (r.kind === 'shed' && r.window !== false ? 'shed dormer' : r.kind) : '') + (upper ? '\n2\u2191' : '');
                 },
                 facadeCellClass(i) {
                     // FINAL REVIEW (minor 7): story 1 first, then story 2 — the same
@@ -5823,7 +5824,7 @@
                         const roofStart = this._origRoofSlot;
                         this.facadeDraft.roof = (this.facadeDraft.roof || []).filter(e => !(i >= e.slot && i < e.slot + e.span));
                         if (rcell.kind !== 'eave') {
-                            const rentry = { slot: roofStart, span: Math.max(1, rcell.span || 1), kind: rcell.kind, window: !!rcell.window };
+                            const rentry = { slot: roofStart, span: Math.max(1, rcell.span || 1), kind: rcell.kind === 'shed_dormer' ? 'shed' : rcell.kind, window: rcell.kind === 'shed_dormer' || (rcell.kind !== 'shed' && !!rcell.window) };
                             if (rcell.cladding) rentry.cladding = rcell.cladding;  // '' means inherit
                             this.facadeDraft.roof.push(rentry);
                         }

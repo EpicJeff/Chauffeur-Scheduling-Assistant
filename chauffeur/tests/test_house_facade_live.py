@@ -1153,6 +1153,34 @@ def scenario_covered_porch_and_roof_connections():
         check(not [e for e in served.errors() if 'WebGL' not in e], 'roof connections console clean')
 
 
+def scenario_upper_gable_stays_above_the_porch():
+    from services import house_facade as hf
+    served = live_app(_seed)
+    if served is None:
+        return
+    for porch_roof in ('gable', 'flat'):
+        spec = copy.deepcopy(hf.CANONICAL)
+        porch = next(g for g in spec['ground'] if g['kind'] == 'porch')
+        porch['roof'] = porch_roof
+        start = porch['slot']
+        spec['upper'] = [{'slot': start, 'span': porch['span'],
+                          'roof': copy.deepcopy(spec['blocks']['main']['roof'])}]
+        spec['roof'].append({'slot': start, 'span': 2, 'kind': 'gable'})
+        spec, _ = hf.normalize(spec)
+        with served.browser() as page:
+            page.add_init_script(DAY_LOCK_JS)
+            page.goto(served.url('house?quality=high&day=1&draft=' + hf.issue_draft(spec)))
+            page.wait_for_selector('#room canvas', timeout=20000)
+            page.wait_for_function('window.chfNavProbe({settled:true})', timeout=20000)
+            vertices = page.evaluate("window.chfFabricVertices('facade_main_gable_%s_front')" % start)
+            check(vertices and min(v[1] for v in vertices) > 10,
+                  'gable stays on the upper roof above a %s porch' % porch_roof)
+            street = hf.slot_table(spec['blocks'], spec['upper'])[start]['z']
+            check(max(v[2] for v in vertices) < street + 0.5,
+                  'upper gable never borrows the porch projection')
+            check(not [e for e in served.errors() if 'WebGL' not in e], 'upper gable console clean')
+
+
 if __name__ == '__main__':
     scenario_canonical_facade_pins_the_hand_built_elevation()
     scenario_worst_case_facade_builds_clean()
@@ -1170,4 +1198,5 @@ if __name__ == '__main__':
     scenario_claddings_and_base_band()
     scenario_mixed_porch_roof_builds_and_cuts()
     scenario_covered_porch_and_roof_connections()
+    scenario_upper_gable_stays_above_the_porch()
     print("test_house_facade_live OK")
