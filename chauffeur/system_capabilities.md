@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.104 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.105 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8128,3 +8128,12 @@ Side-entry garages again have a complete street-facing wall from floor to eave. 
 House shape > Side garage door > Third bay shape offers Flush with garage, Pop-out with gable, and Deeper pop-out with gable. A newly enabled third bay defaults to the pop-out; previously saved third bays without a projection remain flush. Optional `side_door.projection` persists 0..3, with UI choices 0, 1.8 and 2.8. The main door stays near the front corner; the third bay sits behind it toward the rear of the house. The extension projects toward the side driveway, has enclosing walls, a floor, a door on the outer face and a separate gable matching the garage roof pitch and materials. The driveway apron widens and exterior parking follows the moved door. This supersedes v2.499.103's missing-projecting-annex limitation; interior vehicle allocation remains unchanged.
 
 The small gable is registered separately for cutaways and excluded from upper-story main-roof aliases. Regression coverage checks front-wall closure, flush/projecting geometry, mirrored low-quality and two-story high-quality builds, garage entry, schema persistence and the live editor controls.
+
+
+### Perpendicular third-bay entrance (v2.499.105)
+
+The projecting third bay stays behind the main side-entry doors but its single door now faces the street, perpendicular to them. The gable retains its side-facing orientation. The old outward side-door opening is replaced by a solid wall; the street-facing wall has the opening, piers and header. Flush third doors remain side-facing.
+
+A street-facing door needs a full-width wing: the pop-out has at least 3.6 units of width (2.4 door plus two 0.6 piers), with the wider preset adding space. The compatible `projection` setting still selects flush/standard/wider; small nonzero values cannot shrink the wing below its door clearance. The editor labels the options Street-facing pop-out and Wider street-facing pop-out. Exterior parking faces the corresponding door; the street-facing car uses the approach beyond the side-door parking position to avoid overlap.
+
+Verification: browser geometry asserts the third door's street-facing plane, rearward placement, and enclosing walls in normal, mirrored and two-story layouts. Existing front-wall seal and garage cutaway checks remain. High-quality rendered view inspected, editor controls and static build checks passed.

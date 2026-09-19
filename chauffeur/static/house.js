@@ -4760,10 +4760,15 @@
     var SIDE_DOOR_Z = GARAGE_BLOCK.south - SIDE_FRONT_SETBACK - SIDE_DOOR.width / 2;
     // The single bay sits behind the main door, toward the rear of the house.
     var SIDE_THIRD_Z = SIDE_DOOR_Z - SIDE_DOOR.width/2 - SIDE_PIER - SIDE_THIRD_WIDTH/2;
-    var SIDE_OPENINGS = [{z:SIDE_DOOR_Z, width:SIDE_DOOR.width}];
-    if (SIDE_DOOR.third_bay) SIDE_OPENINGS.unshift({z:SIDE_THIRD_Z, width:SIDE_THIRD_WIDTH, third:true});
     var SIDE_PROJECTION = GARAGE_SIDE && SIDE_DOOR.third_bay ? (SIDE_DOOR.projection || 0) : 0;
-    var SIDE_OPEN_Z0 = SIDE_DOOR.third_bay ? SIDE_THIRD_Z-SIDE_THIRD_WIDTH/2 : SIDE_DOOR_Z-SIDE_DOOR.width/2;
+    // A street-facing single bay needs a full door width plus two piers.
+    var POP_WIDTH = SIDE_THIRD_WIDTH + 1.2 + Math.max(0, SIDE_PROJECTION-1.8);
+    var POP_X = GARAGE_BLOCK.west-POP_WIDTH/2;
+    var POP_FRONT = SIDE_DOOR_Z-SIDE_DOOR.width/2-SIDE_PIER;
+    var POP_BACK = POP_FRONT-(SIDE_THIRD_WIDTH+1.2);
+    var SIDE_OPENINGS = [{z:SIDE_DOOR_Z, width:SIDE_DOOR.width}];
+    if (SIDE_DOOR.third_bay && !SIDE_PROJECTION) SIDE_OPENINGS.unshift({z:SIDE_THIRD_Z, width:SIDE_THIRD_WIDTH, third:true});
+    var SIDE_OPEN_Z0 = SIDE_PROJECTION ? POP_FRONT : SIDE_DOOR.third_bay ? SIDE_THIRD_Z-SIDE_THIRD_WIDTH/2 : SIDE_DOOR_Z-SIDE_DOOR.width/2;
     var SIDE_OPEN_Z1 = SIDE_DOOR_Z + SIDE_DOOR.width/2;
     /* Every block roof is {form, ridge}: nothing about ridge direction
        is fixed (spec section 3). Canonical is today's look — both blocks
@@ -6164,6 +6169,11 @@
         GDOOR.rotation.y = -Math.PI / 2;
         GDOOR.scale.set((feat.sideWidth || SIDE_DOOR.width) / 3.6, SIDE_DOOR.height / 3.0, 1);
         GDOOR.position.set(GARAGE_BLOCK.west - (feat.third ? SIDE_PROJECTION : 0), 0.1 * (1 - GDOOR.scale.y), feat.sideZ === undefined ? SIDE_DOOR_Z : feat.sideZ);
+        if (feat.third && SIDE_PROJECTION) {
+          GDOOR.rotation.y = 0;
+          GDOOR.position.x = POP_X;
+          GDOOR.position.z = POP_FRONT;
+        }
         garageDoorG.add(GDOOR);
         cx = 0; z = WALL_T4 / 2 + 0.07;
       }
@@ -6525,6 +6535,8 @@
                       style:SIDE_DOOR.style, leaves:opening.third ? 1 : SIDE_DOOR.leaves,
                       sideZ:opening.z, sideWidth:opening.width, third:opening.third});
       });
+      if (SIDE_PROJECTION) garageDoorAt({slot:GARAGE_BAY_SLOTS[0], kind:'garage_door',
+          span:3, style:SIDE_DOOR.style, leaves:1, sideWidth:SIDE_THIRD_WIDTH, third:true});
     }
     /* ================= END FACADE ===================================== */
 
@@ -6830,31 +6842,28 @@
                               -12.60, GARAGE_BLOCK.south, EXT_TOP4,
                               [0,0,1], [], 'garage', 'garage');
     if (SIDE_PROJECTION > 0) {
-      var px = GARAGE_BLOCK.west - SIDE_PROJECTION;
-      var pz0 = SIDE_THIRD_Z - SIDE_THIRD_WIDTH/2 - 0.6;
-      var pz1 = SIDE_THIRD_Z + SIDE_THIRD_WIDTH/2 + 0.6;
-      var peave = Math.max(4.1, SIDE_DOOR.height + 0.5);
-      shellWall('garage_popout_north', px, pz0, GARAGE_BLOCK.west, pz0,
+      var px = GARAGE_BLOCK.west-POP_WIDTH;
+      var peave = Math.max(4.1, SIDE_DOOR.height+0.5);
+      shellWall('garage_popout_north', px, POP_BACK, GARAGE_BLOCK.west, POP_BACK,
                 peave, [0,0,-1], [], 'garage', 'garage');
-      shellWall('garage_popout_south', px, pz1, GARAGE_BLOCK.west, pz1,
+      shellWall('garage_popout_west', px, POP_BACK, px, POP_FRONT,
+                peave, [-1,0,0], [], 'garage', 'garage');
+      shellWall('garage_popout_pier_west', px, POP_FRONT, POP_X-SIDE_THIRD_WIDTH/2, POP_FRONT,
                 peave, [0,0,1], [], 'garage', 'garage');
-      shellWall('garage_popout_pier_north', px, pz0, px, SIDE_THIRD_Z-SIDE_THIRD_WIDTH/2,
-                peave, [-1,0,0], [], 'garage', 'garage');
-      shellWall('garage_popout_pier_south', px, SIDE_THIRD_Z+SIDE_THIRD_WIDTH/2, px, pz1,
-                peave, [-1,0,0], [], 'garage', 'garage');
-      var ph = shellGroup(), py = 0.1 + SIDE_DOOR.height;
-      shellBox(ph, WALL_T4, peave-py, SIDE_THIRD_WIDTH, cladColour('garage'),
-               px, (peave+py)/2, SIDE_THIRD_Z,
+      shellWall('garage_popout_pier_east', POP_X+SIDE_THIRD_WIDTH/2, POP_FRONT, GARAGE_BLOCK.west, POP_FRONT,
+                peave, [0,0,1], [], 'garage', 'garage');
+      var ph = shellGroup(), py = 0.1+SIDE_DOOR.height;
+      shellBox(ph, SIDE_THIRD_WIDTH, peave-py, WALL_T4, cladColour('garage'),
+               POP_X, (peave+py)/2, POP_FRONT,
                {rough:0.95,facadeBlock:'garage',map:CLAD('garage')});
-      shellRegister(ph, 'garage_popout_header', [-1,0,0], 'garage');
-      // Ridge runs into the garage wall; only the outward end has a gable.
-      // The short roof terminates inside the wall, without a buried end cap.
+      shellRegister(ph, 'garage_popout_header', [0,0,1], 'garage');
+      // Keep the existing side-facing gable; the single door faces the street.
       shellGable('garage_popout_roof', px, GARAGE_BLOCK.west,
-                 pz0, pz1, peave, 'x', 'garage', [-1], blockPitch('garage'),
+                 POP_BACK, POP_FRONT, peave, 'x', 'garage', [-1], blockPitch('garage'),
                  ['garage','garage'], [true,false], 'gable');
       var pf = shellGroup();
-      shellBox(pf, SIDE_PROJECTION, 0.12, pz1-pz0, FARMHOUSE.stoop,
-               (px+GARAGE_BLOCK.west)/2, -0.06, SIDE_THIRD_Z);
+      shellBox(pf, POP_WIDTH, 0.12, POP_FRONT-POP_BACK, FARMHOUSE.stoop,
+               POP_X, -0.06, (POP_BACK+POP_FRONT)/2);
       shellRegister(pf, 'garage_popout_floor', [0,1,0], 'garage');
     }
     var mudroomFrontG = shellWall('mudroom_front', -12.60, GARAGE_BLOCK.south,
@@ -8169,8 +8178,8 @@
     if (GARAGE_SIDE) {
       ebox(4.6, 0.08, sideRunLen, NICE ? 0xffffff : EXTC.drive, SIDE_DRIVE_X,
            -0.25, sideRunCz, { rough: 0.95, map: driveT });
-      ebox(5.2 + SIDE_PROJECTION, 0.08, SIDE_APRON_Z1 - SIDE_APRON_Z0, NICE ? 0xffffff : EXTC.drive,
-           GARAGE_BLOCK.west - 2.60 - SIDE_PROJECTION/2, -0.25, (SIDE_APRON_Z0 + SIDE_APRON_Z1) / 2,
+      ebox(5.2, 0.08, SIDE_APRON_Z1 - SIDE_APRON_Z0, NICE ? 0xffffff : EXTC.drive,
+           GARAGE_BLOCK.west - 2.60, -0.25, (SIDE_APRON_Z0 + SIDE_APRON_Z1) / 2,
            { rough: 0.95, map: driveT });
     } else {
       ebox(4.6, 0.08, driveLen, NICE ? 0xffffff : EXTC.drive, -15.4, -0.25, driveCz,
@@ -12072,8 +12081,9 @@
       /* task 6: syncGarage parks driveway cars off the apron's own near
          end, which a garage depth moves */
       GARAGE_SOUTH: GARAGE_BLOCK.south,
-      SIDE_PARK_X: [-21.4, -21.4-SIDE_PROJECTION],
-      SIDE_PARK_Z: SIDE_DOOR.third_bay ? [SIDE_DOOR_Z, SIDE_THIRD_Z] : [SIDE_DOOR_Z - 1.4, SIDE_DOOR_Z + 1.4],
+      SIDE_PARK_X: [-21.4, SIDE_PROJECTION ? POP_X : -21.4],
+      SIDE_PARK_TURN: [Math.PI/2, SIDE_PROJECTION ? 0 : Math.PI/2],
+      SIDE_PARK_Z: SIDE_PROJECTION ? [SIDE_DOOR_Z, SIDE_OPEN_Z1+3.0] : SIDE_DOOR.third_bay ? [SIDE_DOOR_Z, SIDE_THIRD_Z] : [SIDE_DOOR_Z - 1.4, SIDE_DOOR_Z + 1.4],
       SIDE_QUEUE_Z: SIDE_APRON_Z1 + 3.3,
       /* task 8: which way the garage faces -- syncGarage parks the
          driveway cars on the side apron instead of the front one, and
@@ -12489,7 +12499,7 @@
           if (outside < 2) {
             var spot = DRIVE_SIDE[outside];
             grp.position.set(webgl.SIDE_PARK_X[outside], -0.206, webgl.SIDE_PARK_Z[outside]);
-            grp.rotation.y = Math.PI / 2;   /* facing the side door */
+            grp.rotation.y = webgl.SIDE_PARK_TURN[outside];
           } else {
             var q = outside - 2;
             grp.position.set(DRIVE_SIDE_RUN[q % 2], -0.206,

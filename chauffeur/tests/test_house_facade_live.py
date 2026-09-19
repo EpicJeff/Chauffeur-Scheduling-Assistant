@@ -1304,11 +1304,12 @@ def scenario_side_garage_front_seal_and_popout():
                 door = page.evaluate("window.chfFabricVertices('garage_door')")
                 check(max(v[0] for v in door)-min(v[0] for v in door) > projection, 'single door projects beyond main door')
                 # Door registry reports world coordinates; undo the house mirror.
-                protruding = [v for v in door if v[0] * (-1 if mirror else 1) < -18.2-projection/2]
-                main = [v for v in door if v[0] * (-1 if mirror else 1) >= -18.2-projection/2]
+                protruding = [v for v in door if v[0] * (-1 if mirror else 1) < -18.6]
+                main = [v for v in door if v[0] * (-1 if mirror else 1) >= -18.6]
                 check(protruding and main and max(v[2] for v in protruding) < min(v[2] for v in main),
                       'projecting single door is behind main door toward the rear')
-                for piece in ['north', 'south', 'pier_north', 'pier_south', 'header', 'floor']:
+                check(max(v[0] for v in protruding)-min(v[0] for v in protruding) > 2.3 and max(v[2] for v in protruding)-min(v[2] for v in protruding) < 0.5, 'third door faces street, perpendicular to side doors')
+                for piece in ['north', 'west', 'pier_west', 'pier_east', 'header', 'floor']:
                     check(page.evaluate("(n) => window.chfFabricVertices('garage_popout_' + n)", piece), 'popout enclosed by ' + piece)
             page.evaluate('(a) => window.chfOrbitTo(a)', 0 if mirror else 2)
             page.wait_for_function('window.chfNavProbe({settled:true})', timeout=30000)
