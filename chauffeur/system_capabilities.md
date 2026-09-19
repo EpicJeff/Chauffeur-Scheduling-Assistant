@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.106 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.107 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8142,3 +8142,12 @@ Verification: browser geometry asserts the third door's street-facing plane, rea
 ### Side-driveway tree clearance (v2.499.106)
 
 The garage-side specimen tree moves onto the front lawn for side-entry layouts, 2.8 units inward from the driveway edge and 4.6 units ahead of the garage front. Its placement follows block depth and the house mirror. Front-entry layouts retain their existing tree placement. Browser regression coverage records every actual tree anchor before instancing and checks a two-unit clearance from the side driveway across flush, projecting, mirrored and deep two-story garage layouts.
+
+
+### Curved side-entry driveway (v2.499.107)
+
+The side-entry driveway is one continuous concrete surface with a rounded outer court corner and a smoothly curved approach to the street, replacing the two rectangular slabs. Matching edge bands follow its outline; sparse transverse joints replace the center stripe and separate apron grid. The driveway footprint adapts to garage depth and the third-bay frontage.
+
+The mailbox follows the new street entrance, and curb/sidewalk openings leave that entrance clear. The front-lawn tree reads the curved boundary for clearance. Queued exterior cars follow the approach center and tangent. Front-entry driveway geometry remains unchanged. The surface is built once with sampled static geometry; no new animation or network request is involved.
+
+Verification: rendered high-quality views, mirrored/low-quality and deep two-story cases, continuous driveway width and sampled tree clearance, garage navigation, JavaScript syntax and whitespace checks.

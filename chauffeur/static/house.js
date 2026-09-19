@@ -8165,39 +8165,71 @@
        rather than re-derived, so the canonical is the same numbers. */
     var driveDz = GARAGE_BLOCK.south - 10.10, driveZ0 = 9.60 + driveDz;
     var driveLen = 16.7 - driveDz, driveCz = 17.95 + driveDz / 2;
-    /* SIDE-ENTRY (task 8): a side door cannot be reached down the middle
-       of the block, so the drive turns an L -- the APPROACH runs from
-       the kerb up the block's own west edge, and the APRON in front of
-       the door turns west across z 1.9..6.1, which is where the cars
-       (and their plaques, DRIVE_SIDE) park. The approach's own z range
-       stops at the apron rather than overlapping it, so the two slabs
-       abut instead of z-fighting over a shared strip. */
-    var SIDE_DRIVE_X = GARAGE_BLOCK.west - 2.30;      /* -20.50 */
+    /* One continuous side driveway: rounded court, eased approach and
+       street entrance. Parking, planting and mailbox read this footprint. */
+    var SIDE_DRIVE_X = GARAGE_BLOCK.west - 2.30;
     var SIDE_APRON_Z0 = SIDE_OPEN_Z0 - 0.4, SIDE_APRON_Z1 = SIDE_OPEN_Z1 + 0.4;
-    var sideRunLen = 26.30 - SIDE_APRON_Z1, sideRunCz = SIDE_APRON_Z1 + sideRunLen / 2;
+    function sideDriveSection(z) {
+      var t = Math.max(0, Math.min(1, (z-SIDE_APRON_Z1)/(26.30-SIDE_APRON_Z1)));
+      var ease = t*t*(3-2*t);
+      var center = GARAGE_BLOCK.west-2.60 + 3.0*ease;
+      var width = 5.2-0.6*ease;
+      var corner = Math.max(0, Math.min(1, (z-SIDE_APRON_Z0)/0.8));
+      var round = 0.8*(1-Math.sqrt(Math.max(0,1-(1-corner)*(1-corner))));
+      return {left:center-width/2+round, right:center+width/2, center:center};
+    }
     if (GARAGE_SIDE) {
-      ebox(4.6, 0.08, sideRunLen, NICE ? 0xffffff : EXTC.drive, SIDE_DRIVE_X,
-           -0.25, sideRunCz, { rough: 0.95, map: driveT });
-      ebox(5.2, 0.08, SIDE_APRON_Z1 - SIDE_APRON_Z0, NICE ? 0xffffff : EXTC.drive,
-           GARAGE_BLOCK.west - 2.60, -0.25, (SIDE_APRON_Z0 + SIDE_APRON_Z1) / 2,
-           { rough: 0.95, map: driveT });
+      var driveSections = [], driveSteps = 96;
+      for (var di=0; di<=driveSteps; di++) {
+        var dz = SIDE_APRON_Z0+(26.30-SIDE_APRON_Z0)*di/driveSteps;
+        var ds = sideDriveSection(dz); ds.z = dz; driveSections.push(ds);
+      }
+      function drivewayRibbon(edge) {
+        var positions=[], uvs=[];
+        function quad(a,b,c,d) {
+          [a,b,c,a,c,d].forEach(function(v) {
+            positions.push(v[0],v[1],v[2]); uvs.push(v[0]/4.6,v[2]/16.7);
+          });
+        }
+        function bounds(s) {
+          return edge === 'left' ? [s.left,s.left+0.16]
+               : edge === 'right' ? [s.right-0.16,s.right] : [s.left,s.right];
+        }
+        var y=edge ? -0.195 : -0.21, bottom=-0.29;
+        for (var i=1;i<driveSections.length;i++) {
+          var a=driveSections[i-1], b=driveSections[i], aa=bounds(a), bb=bounds(b);
+          quad([aa[0],y,a.z],[bb[0],y,b.z],[bb[1],y,b.z],[aa[1],y,a.z]);
+          if (!edge) {
+            quad([aa[0],bottom,a.z],[bb[0],bottom,b.z],[bb[0],y,b.z],[aa[0],y,a.z]);
+            quad([aa[1],y,a.z],[bb[1],y,b.z],[bb[1],bottom,b.z],[aa[1],bottom,a.z]);
+          }
+        }
+        if (!edge) [driveSections[0],driveSections[driveSteps]].forEach(function(s,i) {
+          var a=[s.left,bottom,s.z],b=[s.left,y,s.z],c=[s.right,y,s.z],d=[s.right,bottom,s.z];
+          if(i) quad(d,c,b,a); else quad(a,b,c,d);
+        });
+        var geo=new T.BufferGeometry();
+        geo.setAttribute('position',new T.Float32BufferAttribute(positions,3));
+        geo.setAttribute('uv',new T.Float32BufferAttribute(uvs,2)); geo.computeVertexNormals();
+        var m=new T.Mesh(geo,mat(edge ? EXTC.trim : (NICE ? 0xffffff : EXTC.drive),
+                      {rough:0.95,map:edge ? null : driveT}));
+        m.name=edge ? 'side_driveway_edge_'+edge : 'side_driveway';
+        finish(m); extG.add(m);
+      }
+      drivewayRibbon(null);
+      drivewayRibbon('left'); drivewayRibbon('right');
     } else {
       ebox(4.6, 0.08, driveLen, NICE ? 0xffffff : EXTC.drive, -15.4, -0.25, driveCz,
            { rough: 0.95, map: driveT });
     }
     if (DETAIL >= 2) {
       if (GARAGE_SIDE) {
-        /* the same saw-cut grid, on the approach's own line */
-        [10.85, 12.60, 14.35, 16.10, 17.85, 19.60, 21.35, 23.10, 24.85].forEach(function (jz) {
-          if (jz < SIDE_APRON_Z1 + 0.20) return;
-          ebox(4.6, 0.014, 0.055, 0x8e887d, SIDE_DRIVE_X, -0.204, jz, { rough: 0.95 });
-        });
-        ebox(0.055, 0.014, sideRunLen, 0x8e887d, SIDE_DRIVE_X, -0.204, sideRunCz,
-             { rough: 0.95 });
-        [-1, 1].forEach(function (sx) {
-          ebox(0.10, 0.10, sideRunLen, EXTC.trim, SIDE_DRIVE_X + sx * 2.30, -0.245,
-               sideRunCz, { rough: 0.9 });
-        });
+        // Sparse transverse joints; no centre stripe or rotated apron grid.
+        for (var jz=SIDE_APRON_Z0+2.6;jz<25.8;jz+=2.6) {
+          var js=sideDriveSection(jz);
+          ebox(js.right-js.left-0.32,0.009,0.028,0x8e887d,
+               (js.left+js.right)/2,-0.202,jz,{rough:0.95});
+        }
       } else {
         [10.85, 12.60, 14.35, 16.10, 17.85, 19.60, 21.35, 23.10, 24.85].forEach(function (jz) {
           if (jz < driveZ0 + 0.20) return;
@@ -8228,8 +8260,8 @@
          these points, and -12.95 + 0.08 is -12.870000000000001, a
          different key string for the same arm. */
       var MB = GARAGE_SIDE
-        ? { x: GARAGE_BLOCK.west + 0.15, f0: GARAGE_BLOCK.west + 0.23,
-            f1: GARAGE_BLOCK.west + 0.27, f2: GARAGE_BLOCK.west + 0.30 }
+        ? { x: sideDriveSection(25.30).right+0.30, f0: sideDriveSection(25.30).right+0.38,
+            f1: sideDriveSection(25.30).right+0.42, f2: sideDriveSection(25.30).right+0.45 }
         : { x: -12.95, f0: -12.87, f1: -12.83, f2: -12.80 };
       box(0.10, 0.92, 0.10, C.wood2, MB.x, 0.17, 25.30, mailboxG, { rough: 0.8 });
       box(0.26, 0.24, 0.44, C.slate, MB.x, 0.74, 25.30, mailboxG, { rough: 0.7 });
@@ -8263,7 +8295,14 @@
     }
     ebox(50, 0.38, 5, NICE ? 0xffffff : 0x4a4f55, 0.5, -0.50, 28.5,
          { rough: 0.95, map: roadT });
+    if (GARAGE_SIDE) {
+      var entry=sideDriveSection(25.85);
+      [[-24.5,entry.left-0.1],[entry.right+0.1,25.5]].forEach(function(run) {
+        ebox(run[1]-run[0],0.1,0.5,EXTC.trim,(run[0]+run[1])/2,-0.28,25.85,{rough:0.9});
+      });
+    } else {
     ebox(50, 0.1, 0.5, EXTC.trim, 0.5, -0.28, 25.85, { rough: 0.9 });
+    }
     /* ================= VEHICLES (docs/house_style_bible.md S6) ==========
        Plate 10 is a low-poly car pack: faceted bodies, hard chamfers,
        inset blue glass, a grille, headlight blocks and a cut arch over
@@ -9830,9 +9869,16 @@
       /* ================= THE PLAN ==================================== */
       /* the sidewalk: the line every front yard has, and the thing that
          stops the lawn bleeding into the kerb */
-      yb(38, 0.10, 1.20, 0xa9a294, -2.0, GY + 0.015, 24.95, STONEO);
+      var walkGap = GARAGE_SIDE ? [sideDriveSection(24.35).left-0.08,
+                                  sideDriveSection(25.55).right+0.08] : null;
+      if (walkGap) {
+        [[-24.5,walkGap[0]],[walkGap[1],17]].forEach(function(run) {
+          yb(run[1]-run[0],0.10,1.20,0xa9a294,(run[0]+run[1])/2,GY+0.015,24.95,STONEO);
+        });
+      } else yb(38, 0.10, 1.20, 0xa9a294, -2.0, GY + 0.015, 24.95, STONEO);
       if (Y2) {
-        for (var sw = -20; sw < 17; sw += 1.55) {
+        for (var sw = walkGap ? -23.5 : -20; sw < 17; sw += 1.55) {
+          if (walkGap && sw > walkGap[0]-0.05 && sw < walkGap[1]+0.05) continue;
           yb(0.05, 0.014, 1.20, 0x7d776c, sw, GY + 0.072, 24.95, STONEO);
         }
       }
@@ -9990,7 +10036,7 @@
          outside the frame. */
       // Side-entry paving occupies the old tree position. Keep the trunk
       // 2.8 units inside the front lawn and ahead of the garage building.
-      tree(GARAGE_SIDE ? SIDE_DRIVE_X + 2.30 + 2.80 : -19.60,
+      tree(GARAGE_SIDE ? sideDriveSection(GARAGE_BLOCK.south+4.60).right+2.80 : -19.60,
            GARAGE_SIDE ? GARAGE_BLOCK.south + 4.60 : 13.90,
            1.45, 'broad', 0.5);
       tree(17.85, 4.60, 1.12, 'open', 2.2);
@@ -12088,6 +12134,7 @@
       SIDE_PARK_X: [-21.4, SIDE_PROJECTION ? POP_X : -21.4],
       SIDE_PARK_TURN: [Math.PI/2, SIDE_PROJECTION ? 0 : Math.PI/2],
       SIDE_PARK_Z: SIDE_PROJECTION ? [SIDE_DOOR_Z, SIDE_OPEN_Z1+3.0] : SIDE_DOOR.third_bay ? [SIDE_DOOR_Z, SIDE_THIRD_Z] : [SIDE_DOOR_Z - 1.4, SIDE_DOOR_Z + 1.4],
+      SIDE_DRIVE_SECTION: sideDriveSection,
       SIDE_QUEUE_Z: SIDE_APRON_Z1 + 3.3,
       /* task 8: which way the garage faces -- syncGarage parks the
          driveway cars on the side apron instead of the front one, and
@@ -12506,8 +12553,11 @@
             grp.rotation.y = webgl.SIDE_PARK_TURN[outside];
           } else {
             var q = outside - 2;
-            grp.position.set(DRIVE_SIDE_RUN[q % 2], -0.206,
-                             webgl.SIDE_QUEUE_Z + Math.floor(q / 2) * 4.2);
+            var queueZ=webgl.SIDE_QUEUE_Z+Math.floor(q/2)*4.2;
+            var lane=webgl.SIDE_DRIVE_SECTION(queueZ);
+            grp.position.set(lane.center+(q%2 ? 1.1 : -1.1),-0.206,queueZ);
+            grp.rotation.y=Math.atan2(webgl.SIDE_DRIVE_SECTION(queueZ+0.05).center-
+                                     webgl.SIDE_DRIVE_SECTION(queueZ-0.05).center,0.1);
           }
           eye = webgl.EXT_POS;
           extAim = true;

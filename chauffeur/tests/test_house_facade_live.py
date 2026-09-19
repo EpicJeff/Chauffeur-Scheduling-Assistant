@@ -1273,13 +1273,15 @@ def scenario_exterior_rooms_and_side_door_controls():
         check(not errors, f'room markers and side door build clean: {errors}')
 
 
-def scenario_side_garage_front_seal_and_popout():
+def scenario_side_garage_front_seal_and_popout(labels=None):
     from services import house_facade as hf
     from pathlib import Path
     served = live_app(_seed)
     if served is None:
         return
     for label, projection, mirror, quality in [('flush', 0, False, 'high'), ('popout', 1.8, False, 'high'), ('popout-mirror', 2.8, True, 'low'), ('upper-popout', 1.8, True, 'high')]:
+        if labels and label not in labels:
+            continue
         spec = copy.deepcopy(hf.CANONICAL)
         spec['mirror'] = mirror
         spec['blocks']['garage'].update(orientation='side', door_colour='white', side_door={
@@ -1296,19 +1298,22 @@ def scenario_side_garage_front_seal_and_popout():
             # Record authored tree anchors before garden instancing removes groups.
             house_script = Path('static/house.js').read_text(encoding='utf-8')
             house_script = house_script.replace('function tree(x, z, s, kind, spin) {',
-                'function tree(x, z, s, kind, spin) { (window.__yardTrees ||= []).push([x,z]);', 1)
+                'function tree(x, z, s, kind, spin) { (window.__yardTrees ||= []).push([x,z]); window.__driveSections = driveSections;', 1)
             page.route('**/house.js*', lambda route: route.fulfill(status=200,
                 content_type='application/javascript', body=house_script))
             page.goto(served.url('house?quality=' + quality + '&day=1&editor=1&draft=' + hf.issue_draft(spec)))
             page.wait_for_function('window.chfNavProbe && window.chfNavProbe({settled:true})', timeout=30000)
             trees = page.evaluate('window.__yardTrees')
             check(trees and len(trees) == 7, 'all authored trees recorded')
-            garage = spec['blocks']['garage']
-            nearest = 10.1 + garage['depth'] - 0.75 - 4.4 - (0.75 if projection else 0) - 0.4
+            sections = page.evaluate('window.__driveSections')
+            check(len(sections) > 32, 'curved paving has a smooth sampled boundary')
+            check(sections[-1]['center']-sections[0]['center'] > 2.9, 'approach curves toward street entrance')
+            check(all(4.3 < row['right']-row['left'] < 5.3 for row in sections), 'continuous usable driveway width')
             for x, z in trees:
-                dx = max(-23.4-x, 0, x+18.2)
-                dz = max(nearest-z, 0, z-26.3)
-                check(dx*dx + dz*dz >= 4, f'tree {x,z} clears side driveway by two units')
+                for a, b in zip(sections, sections[1:]):
+                    dx = max(min(a['left'],b['left'])-x, 0, x-max(a['right'],b['right']))
+                    dz = max(a['z']-z, 0, z-b['z'])
+                    check(dx*dx + dz*dz >= 4, f'tree {x,z} clears curved driveway by two units')
             wall = page.evaluate("window.chfFabricVertices('garage_front_wall')")
             check(wall and max(v[0] for v in wall)-min(v[0] for v in wall) >= 5.6, 'side garage street wall spans whole bay')
             check(max(v[1] for v in wall) >= 5.6-1e-5 and min(v[1] for v in wall) <= 1e-5, f'street wall seals floor to eave: {min(v[1] for v in wall)}, {max(v[1] for v in wall)}')
