@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.105 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.106 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8137,3 +8137,8 @@ The projecting third bay stays behind the main side-entry doors but its single d
 A street-facing door needs a full-width wing: the pop-out has at least 3.6 units of width (2.4 door plus two 0.6 piers), with the wider preset adding space. The compatible `projection` setting still selects flush/standard/wider; small nonzero values cannot shrink the wing below its door clearance. The editor labels the options Street-facing pop-out and Wider street-facing pop-out. Exterior parking faces the corresponding door; the street-facing car uses the approach beyond the side-door parking position to avoid overlap.
 
 Verification: browser geometry asserts the third door's street-facing plane, rearward placement, and enclosing walls in normal, mirrored and two-story layouts. Existing front-wall seal and garage cutaway checks remain. High-quality rendered view inspected, editor controls and static build checks passed.
+
+
+### Side-driveway tree clearance (v2.499.106)
+
+The garage-side specimen tree moves onto the front lawn for side-entry layouts, 2.8 units inward from the driveway edge and 4.6 units ahead of the garage front. Its placement follows block depth and the house mirror. Front-entry layouts retain their existing tree placement. Browser regression coverage records every actual tree anchor before instancing and checks a two-unit clearance from the side driveway across flush, projecting, mirrored and deep two-story garage layouts.

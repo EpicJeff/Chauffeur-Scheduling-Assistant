@@ -1293,8 +1293,22 @@ def scenario_side_garage_front_seal_and_popout():
         with served.browser() as page:
             errors = []
             page.on('pageerror', lambda e: errors.append(str(e)))
+            # Record authored tree anchors before garden instancing removes groups.
+            house_script = Path('static/house.js').read_text(encoding='utf-8')
+            house_script = house_script.replace('function tree(x, z, s, kind, spin) {',
+                'function tree(x, z, s, kind, spin) { (window.__yardTrees ||= []).push([x,z]);', 1)
+            page.route('**/house.js*', lambda route: route.fulfill(status=200,
+                content_type='application/javascript', body=house_script))
             page.goto(served.url('house?quality=' + quality + '&day=1&editor=1&draft=' + hf.issue_draft(spec)))
             page.wait_for_function('window.chfNavProbe && window.chfNavProbe({settled:true})', timeout=30000)
+            trees = page.evaluate('window.__yardTrees')
+            check(trees and len(trees) == 7, 'all authored trees recorded')
+            garage = spec['blocks']['garage']
+            nearest = 10.1 + garage['depth'] - 0.75 - 4.4 - (0.75 if projection else 0) - 0.4
+            for x, z in trees:
+                dx = max(-23.4-x, 0, x+18.2)
+                dz = max(nearest-z, 0, z-26.3)
+                check(dx*dx + dz*dz >= 4, f'tree {x,z} clears side driveway by two units')
             wall = page.evaluate("window.chfFabricVertices('garage_front_wall')")
             check(wall and max(v[0] for v in wall)-min(v[0] for v in wall) >= 5.6, 'side garage street wall spans whole bay')
             check(max(v[1] for v in wall) >= 5.6-1e-5 and min(v[1] for v in wall) <= 1e-5, f'street wall seals floor to eave: {min(v[1] for v in wall)}, {max(v[1] for v in wall)}')

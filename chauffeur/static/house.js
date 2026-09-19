@@ -9988,7 +9988,11 @@
       /* four trees, three silhouettes (S7.4). The old pair were two
          spheres on a stick, and one of them stood at x 17.5 - entirely
          outside the frame. */
-      tree(-19.60, 13.90, 1.45, 'broad', 0.5);
+      // Side-entry paving occupies the old tree position. Keep the trunk
+      // 2.8 units inside the front lawn and ahead of the garage building.
+      tree(GARAGE_SIDE ? SIDE_DRIVE_X + 2.30 + 2.80 : -19.60,
+           GARAGE_SIDE ? GARAGE_BLOCK.south + 4.60 : 13.90,
+           1.45, 'broad', 0.5);
       tree(17.85, 4.60, 1.12, 'open', 2.2);
       tree(18.25, 12.70, 1.05, 'gold', 1.1);
       /* the back line: four crowns that break the skyline, so the roofs
