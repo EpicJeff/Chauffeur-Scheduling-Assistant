@@ -12,11 +12,10 @@ The second half of the arc uses the same clipping machinery for a separate defec
 
 For a room R with room camera C:
 
-- **B** is R's registered AABB: footprint × floor-to-eave (**eave-high, choice A**). The roof is cut only where a ray through it would reach the walled volume; the near slope of the vaulted ceiling comes off and the far slope stays visible from inside.
-- **Front faces** of B are the faces whose outward normal points toward C.
-- **P** (pyramid) is the intersection of the half-spaces through C and B's silhouette edges as seen from C. Convex, at most six side planes.
-- **W** (wedge) is the intersection of the half-spaces behind each front face plane (the box side). Convex.
-- **Masked = P ∩ ¬W; kept = ¬P ∪ W.** A point is masked exactly when the ray from C through it would enter B after passing it. The cut edges therefore project onto B's silhouette from C: from the room camera the cut coincides with the room boundary.
+- **B** is R's registered footprint extended from the floor through the overhead roof. **User clarification 2026-09-18:** the clipping volume runs from the camera to the extents of this room volume; it must not continue beyond them.
+- **P** is the bounded convex hull of C and B: silhouette planes through C, closed by B's faces facing away from C. The far bounds are essential; silhouette planes alone produce an unbounded shape and can cut neighboring rooms beyond the footprint.
+- **W** keeps the occupied ground-floor interior, using the original ground-floor-eave box's camera-facing planes. Upper stories remain shell, not occupied interior.
+- **Masked = P intersect not-W; kept = not-P union W.** Shell outside P remains beyond the geometric cut. No per-room or whole-block hide exception is introduced.
 - **Shell only (choice A).** The mask applies to registered fabric (walls, roofs, doors, windows, yard). Props of other rooms in the way are never cut.
 - **Cut faces are capped in one neutral section tone (choice A)**: a light plaster grey, the same for every piece, a single shared material.
 - Camera inside B never happens for a room camera. Lean-in cameras (frameZone) keep the room's mask; no recompute.

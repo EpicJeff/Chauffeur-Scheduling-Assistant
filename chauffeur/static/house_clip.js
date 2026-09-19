@@ -128,6 +128,13 @@
         } else seen[key] = i;
       }
     });
+    // Close the camera-to-box hull at every box face facing away from
+    // the camera. Silhouette planes alone continue beyond the footprint.
+    faces.forEach(function(f,i) {
+      if (front[i]) return;
+      var fc = corner(f.ring[0]);
+      P.push({n:[-f.n[0],-f.n[1],-f.n[2]],d:-dot(f.n,fc)});
+    });
     return { P: P, W: W };
   }
   function pointMasked(p, m) {

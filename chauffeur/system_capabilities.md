@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.108 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.109 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8162,3 +8162,12 @@ Interior point lights now mirror with the house and are enabled only for interio
 Regression coverage: day/night checks across 40 layouts, including mirrored/front-entry/side-entry/projecting garages, gable/shed/flat/mixed porches, stoops, no porch, depth changes, upper stories and all quality levels; separate checks exercise lighting ownership on room entry and exit.
 
 The older B0 screenshot comparison remains outside tolerance on both the previous renderer and this release (east-half maximum mean channel difference 2.86 and 3.08 respectively, versus 1.5). Its tolerance and fixture are unchanged. The canonical geometry count is updated by six for the new porch fixtures and pools.
+
+
+### Bounded camera-to-room shell masking (v2.499.109)
+
+The clipping volume is the convex hull of the camera and the room footprint extended through the roof above it. Box faces facing away from the camera close the volume. Previously only silhouette side planes were present: raising that unbounded shape exposed neighboring rooms beyond the footprint. The room volume was also incorrectly capped at the ground-floor eave, leaving second-story walls and windows across the view.
+
+Room height now derives from registered shell bounds overlapping its footprint. The ground-floor occupied wedge remains protected. This uses the generic clipper, without whole-block hiding or neighboring-room exceptions. Boundary regression checks compare 31,875 points against an independent camera-to-box segment calculation, including cameras above, beside and inside the volume. Live regression coverage exercises full mirrored and partial second stories, all five rooms, upper remnants, window kits and exterior restoration.
+
+Shells touching a keep plane exactly use the existing small boundary tolerance, preventing an upper wall bottom from surviving as a flat strip at the eave. Regression checks explicitly reject those strips inside the bounded volume.

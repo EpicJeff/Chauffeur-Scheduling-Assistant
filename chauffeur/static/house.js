@@ -7185,7 +7185,7 @@
        boards every shellWall carries -- and NO base band, because a base
        band is where a wall meets the ground and this one meets a floor.
        Registered as fabric of NO room: no room's AABB reaches above
-       EXT_TOP4 (ROOM_AABB_EAVE pins the box top there on purpose), so
+       EXT_TOP4 (the occupied wedge stops there), so
        the upper story is not part of anyone's volume -- it is fabric
        standing between a camera and its room, and buildRoomShells()
        opens it exactly the way it opens `south_wall`. The kitchen
@@ -10548,8 +10548,9 @@
          fixtures, through syncWorld) is whole or nothing by its box,
          through maskLateRow at registration.
 
-       THE BOX (spec section 2, choice A): the room's registered AABB,
-       floor to EAVE. ROOM_AABB is measured from the room's props and
+       The occupied wedge remains floor-to-eave. The bounded camera
+       volume uses the same footprint extended through the overhead roof.
+       ROOM_AABB is measured from the room's props and
        floor (never its enclosure), so its top is wherever the tallest
        prop stops (living 1.99, kitchen 3.3) -- min(top, eave) would
        read those and cut the roof only where a ray reaches a sofa; the
@@ -10599,8 +10600,17 @@
       return b;
     }
     function roomMask(room) {
-      var box = ROOM_AABB_EAVE(room), cam = ROOM_CAMS[room].toArray();
+      var occupied = ROOM_AABB_EAVE(room), box = occupied.slice();
+      FABRIC.forEach(function(f) {
+        var b = f.box;
+        if (f.g !== yardG && boxOk(b) && b[1] >= box[0] && b[0] <= box[1] &&
+            b[5] >= box[4] && b[4] <= box[5]) box[3] = Math.max(box[3], b[3] + 0.01);
+      });
+      var cam = ROOM_CAMS[room].toArray();
       var m = window.HouseClip.maskPlanes(cam, box);
+      // Keep the ground-floor interior; the bounded volume removes the
+      // overhead shell, including upper stories, without extending past it.
+      m.W = window.HouseClip.maskPlanes(cam, occupied).W;
       m.box = box; m.cam = cam;
       return m;
     }
@@ -10617,7 +10627,9 @@
           var sd = pl.n[0]*cs[k][0] + pl.n[1]*cs[k][1] + pl.n[2]*cs[k][2] - pl.d;
           if (sd > pen) pen = sd;
         }
-        if (pen > 0 && pen <= STRADDLE_TOL) return { n: pl.n, d: pl.d + pen + 1e-4 };
+        // Include exact contact: an upper wall's bottom face on the eave
+        // otherwise survives as a zero-thickness strip across the view.
+        if (pen >= -1e-6 && pen <= STRADDLE_TOL) return { n: pl.n, d: pl.d + Math.max(0, pen) + 1e-4 };
         return pl;
       }) };
     }
@@ -13398,7 +13410,7 @@
   /* the room's mask: the pyramid planes P, the wedge planes W (raw --
      meshMask moves a W plane per straddling mesh at cut time, always
      deeper into the box, so everything a shell keeps is on the kept
-     side of these too), the eave-high box, the camera */
+     side of these too), the roof-high bounded box, the camera */
   window.chfRoomMask = function (room) {
     if (!webgl || !webgl.ROOM_MASKS[room]) return null;
     var m = webgl.ROOM_MASKS[room];
