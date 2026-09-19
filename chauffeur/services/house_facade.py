@@ -199,11 +199,12 @@ _FEATURE_REQUIRED = {
 }
 
 
-def validate_block_model(obj):
+def validate_block_model(obj, *, _range_notes=None):
     """Structural validation of a MODEL-produced block model (spec 2026-09-17
     section 4). Returns a list of error strings; [] means valid. Never
-    mutates and never fills a default: that is normalize's job, and only
-    a validated object may reach it from the photo pipeline."""
+    mutates by default and never fills a default. The private photo adapter
+    may pass _range_notes to repair finite numeric ranges on its own copy;
+    schema, type and missing-field errors remain fatal."""
     errs = []
     if not isinstance(obj, dict):
         return ['not an object']
@@ -233,6 +234,13 @@ def validate_block_model(obj):
     def rng(d, key, lo, hi, path):
         v = need(d, key, float, path)
         if v is not None and not (lo <= v <= hi):
+            finite = not isinstance(v, float) or math.isfinite(v)
+            if _range_notes is not None and finite:
+                clamped = min(hi, max(lo, v))
+                d[key] = clamped
+                _range_notes.append(f'{path}.{key} adjusted from {v} to {clamped} '
+                                    f'(supported range {lo}..{hi})')
+                return clamped
             errs.append(f'{path}.{key} out of range {lo}..{hi}')
         return v
 
@@ -1000,8 +1008,13 @@ def set_active(fid):
     return fid
 
 
-_PHOTO_BASE_GUIDANCE = (f'\nBase bands: height must be {BASE_H_MIN}..{BASE_H_MAX} scene units. '
-                        'Use base: null when no base band is visible; do not use height 0.\n')
+_PHOTO_DIMENSION_GUIDANCE = (f'\nBase bands: height must be {BASE_H_MIN}..{BASE_H_MAX} scene units. '
+                        'Use base: null when no base band is visible; do not use height 0.\n'
+                        f'Block depth is extra depth beyond the default block, 0..{DEPTH_MAX} '
+                        'scene units, not the total building depth.\n'
+                        f'All roof pitches, including upper spans: {PITCH_MIN}..{PITCH_MAX} degrees.\n'
+                        'Side garage door width: 2.4..4.4; height: 2.4..4.0; '
+                        'front_setback: 0.6..4.0; projection: 0..3.0 scene units.\n')
 
 PHOTO_SYSTEM = """You describe the STREET-FACING elevation of a house from one photo, as JSON only.
 The house is drawn as two BLOCKS side by side on a fixed strip of {n} slots, west to east
@@ -1083,7 +1096,7 @@ def _photo_prompt():
                                roof_forms=list(ROOF_FORMS), ridges=list(RIDGES),
                                orientations=list(ORIENTATIONS), window_sizes=list(WINDOW_SIZES),
                                garage_styles=list(GARAGE_STYLES), porch_types=list(PORCH_TYPES),
-                               porch_roofs=list(PORCH_ROOFS), roof_kinds_features=roof_kinds_features) + _PHOTO_BASE_GUIDANCE
+                               porch_roofs=list(PORCH_ROOFS), roof_kinds_features=roof_kinds_features) + _PHOTO_DIMENSION_GUIDANCE
 
 
 def _snap_fractions(obj, notes=None):
@@ -1122,32 +1135,13 @@ def _snap_fractions(obj, notes=None):
     return out
 
 
-def _repair_photo_base_heights(obj, notes):
-    """Recover a numeric model estimate before strict structural validation.
+def _validate_photo_model(obj, notes):
+    """Recover finite numeric ranges using the validator's authoritative limits.
 
-    Keep malformed/missing fields for the validator to reject. Never mutate
-    the provider response or hide an adjustment from the draft's reviewer.
+    Work on a copy, surface every correction, and retain strict schema checks.
     """
     out = copy.deepcopy(obj)
-    blocks = out.get('blocks') if isinstance(out, dict) else None
-    if not isinstance(blocks, dict):
-        return out
-    for name in ('main', 'garage'):
-        block = blocks.get(name)
-        base = block.get('base') if isinstance(block, dict) else None
-        if not isinstance(base, dict):
-            continue
-        height = base.get('height')
-        if isinstance(height, bool) or not isinstance(height, (int, float)):
-            continue
-        if isinstance(height, float) and not math.isfinite(height):
-            continue
-        clamped = min(BASE_H_MAX, max(BASE_H_MIN, height))
-        if clamped != height:
-            base['height'] = clamped
-            notes.append(f'blocks.{name}.base.height adjusted from {height} to {clamped} '
-                         f'(supported range {BASE_H_MIN}..{BASE_H_MAX})')
-    return out
+    return out, validate_block_model(out, _range_notes=notes)
 
 
 def from_photo(image_b64, mime):
@@ -1175,7 +1169,7 @@ def from_photo(image_b64, mime):
     res.pop('_model', None)
     viewpoint = _pick(res.pop('viewpoint', None), ('left', 'centre', 'right'), 'centre')
     pre = []
-    snapped = _repair_photo_base_heights(_snap_fractions(res, pre), pre)
+    snapped = _snap_fractions(res, pre)
     # FINAL REVIEW (important 3): the prompt allows a house whose garage the
     # photo cannot see, and validate_block_model requires `blocks.garage`.
     # An unseen garage becomes the DEFAULT block rather than a rejection --
@@ -1185,7 +1179,7 @@ def from_photo(image_b64, mime):
     if isinstance(blocks, dict) and not isinstance(blocks.get('garage'), dict):
         blocks['garage'] = _block(orientation='front')
         pre.append('garage not visible in the photo: drawn as a plain block')
-    errs = validate_block_model(snapped)
+    snapped, errs = _validate_photo_model(snapped, pre)
     if errs:
         return None, [], 'the model returned an incomplete house: ' + '; '.join(errs[:3]), None
     spec, notes = normalize(snapped)
@@ -1267,7 +1261,7 @@ def critique(token, render_png_b64):
         return finish(result)
     try:
         res = model_pools.call_pool_json(
-            'vision', api_key, CRITIQUE_SYSTEM + _PHOTO_BASE_GUIDANCE,
+            'vision', api_key, CRITIQUE_SYSTEM + _PHOTO_DIMENSION_GUIDANCE,
             'Photo first, then the render of the draft, then the draft JSON:\n' + json.dumps(draft),
             temperature=0.1, timeout_s=90, settings=settings, strict_json=True,
             max_output_tokens=4096, max_models=10, total_timeout_s=120, workflow='house_photo',
@@ -1283,8 +1277,7 @@ def critique(token, render_png_b64):
     reasons = [str(r)[:160] for r in (res.get('reasons') or []) if isinstance(r, (str, dict))][:8]
     reasons = [r if isinstance(r, str) else str(r.get('reason', r)) for r in reasons]
     snap_notes = []
-    revised = _repair_photo_base_heights(_snap_fractions(res.get('revised'), snap_notes), snap_notes)
-    errs = validate_block_model(revised)
+    revised, errs = _validate_photo_model(_snap_fractions(res.get('revised'), snap_notes), snap_notes)
     if errs:
         result['reasons'] = reasons + snap_notes + ['revision rejected as incomplete: ' + '; '.join(errs[:3])]
     else:

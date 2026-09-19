@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.111 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.112 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8183,3 +8183,10 @@ There is still one HTTP attempt per candidate, no same-model retry loop, and bac
 ### Recoverable photo base-height estimates (v2.499.111)
 
 Photo description and render critique prompts explicitly require base-band heights of 0.6..1.8 scene units, or `base: null` when no band is visible. Both stages clamp finite numeric base-height estimates to that existing supported range before strict structural validation. Draft notes name each adjusted field and its original/final height. No extra model call or automatic save occurs. Missing heights, wrong types, booleans and non-finite values remain invalid; other structural checks remain unchanged. Offline regression tests reproduce the original rejection, verify recovery in both stages and unchanged provider responses, and preserve rejection of malformed data. The facade suite passes.
+
+
+### Consistent photo dimension recovery (v2.499.112)
+
+The v2.499.111 base-height repair now uses the validator's authoritative numeric range definitions for all continuous dimensions: block depth, global/block/upper roof pitch, base height and side-garage dimensions. Both photo stages validate a copy with explicit adjustment notes; normal validator callers remain strict and non-mutating. Missing fields, wrong types, non-finite numbers, unknown enums and invalid structural slot/span rules still reject the result. This avoids field-by-field repair drift without allowing normalization to invent missing house structure.
+
+Both prompts clarify that block depth is an extension beyond the default block, 0..6 scene units, not total building depth, and list supported pitch and garage dimensions. Existing normalization may further constrain depth to preserve porch/curb clearance. Offline regressions cover multiple simultaneous range violations in both stages, response immutability, correction notes and one model call per stage. Facade and overload-routing suites pass.

@@ -331,3 +331,8 @@ One commit after the whole-branch review. Ten findings, all fixed, each with a p
 ### Photo validation amendment (v2.499.111)
 
 Both photo stages may repair an out-of-range, finite numeric `blocks.<name>.base.height` to the existing 0.6..1.8 limits before validation, with a draft note naming the original and adjusted values. This is a narrow exception to rejecting out-of-range model estimates: missing/malformed fields, non-finite values and other structural errors remain rejected. Prompts state the limits and require `base: null` for no visible band. Repair does not call a model again, mutate its response, or save the draft automatically.
+
+
+### Continuous dimension recovery amendment (v2.499.112)
+
+The photo validation adapter now repairs finite continuous numeric range violations using the same bounds declared by strict validation, including depth, pitches, base height and side-garage dimensions. This supersedes the base-only exception above. It operates on a copy and reports every correction. Normal validation remains strict; types, missing fields, enums and structural slot/span constraints are not repaired. Prompts explain depth as added depth beyond the default block. No extra model calls or automatic saves are introduced.

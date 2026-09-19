@@ -36,6 +36,36 @@ class PhotoBoundsTests(unittest.TestCase):
                 self.assertEqual(call.call_count,1)
             self.assertEqual(obj,original)
 
+    def test_numeric_dimension_recovery_in_both_passes(self):
+        obj=self.model(4)
+        obj['pitch_deg']=80
+        obj['blocks']['main']['depth']=20
+        obj['blocks']['garage']['depth']=-3
+        obj['blocks']['main']['roof']['pitch_deg']=5
+        obj['blocks']['garage']['side_door']={'style':'carriage','leaves':1,
+            'width':20,'height':0,'front_setback':10,'projection':8}
+        obj['upper']=[{'slot':6,'span':2,'roof':{'form':'gable','ridge':'x','pitch_deg':90}}]
+        original=copy.deepcopy(obj)
+        expected=['house.pitch_deg','blocks.main.depth','blocks.garage.depth',
+                  'blocks.main.roof.pitch_deg','upper[0].roof.pitch_deg',
+                  'blocks.garage.side_door.width','blocks.garage.side_door.height',
+                  'blocks.garage.side_door.front_setback','blocks.garage.side_door.projection']
+        self.assertTrue(hf.validate_block_model(obj))
+        for stage in ('describe','critique'):
+            response=obj if stage=='describe' else {'revised':obj,'reasons':[]}
+            with patch.object(hf,'_settings',return_value={'llm_gemini_api_key':'offline'}),patch('services.model_pools.call_pool_json',return_value=response) as call:
+                if stage=='describe':spec,notes,error,_=hf.from_photo('AAAA','image/jpeg')
+                else:
+                    token=hf.issue_draft(hf.CANONICAL,'AAAA','image/jpeg')
+                    result,error=hf.critique(token,'iVBOR')
+                    spec,notes=result['revised'],result['reasons']
+                self.assertIsNone(error)
+                self.assertIsNotNone(spec)
+                self.assertEqual(hf.validate_block_model(spec),[])
+                for field in expected:self.assertTrue(any(field+' adjusted' in n for n in notes),field)
+                self.assertEqual(call.call_count,1)
+            self.assertEqual(obj,original)
+
     def test_invalid_types_and_nonfinite_heights_still_rejected(self):
         for value in ('1.2',True,None,float('nan'),float('inf')):
             with self.subTest(value=value),patch.object(hf,'_settings',return_value={'llm_gemini_api_key':'offline'}),patch('services.model_pools.call_pool_json',return_value=self.model(value)):
