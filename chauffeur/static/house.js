@@ -718,7 +718,11 @@
        The other half of the pooling is BAKED - the warm radial in each
        floor texture below - because that half survives to `low`, where
        there are no lamps at all. */
-    var poolLamps = [];
+    var poolLamps = [], exteriorLamps = [], exteriorAnchors = [], exteriorGlowMeshes = [], porchPools = [];
+    var interiorLightRoot = new T.Group(), exteriorLightRoot = new T.Group();
+    interiorLightRoot.name = 'interior_lights'; exteriorLightRoot.name = 'exterior_lights';
+    interiorLightRoot.visible = false;
+    scene.add(interiorLightRoot); scene.add(exteriorLightRoot);
     if (DETAIL >= 2) {
       var POOL = 0xffe2b4;                  /* warm, but not the orange the
                                                old 0xffd9a0 pushed onto wood */
@@ -726,13 +730,13 @@
        [-2.4, 4.35, 9.6, 13.0, 0.40],       /* the living room's own corner */
        [-9.9, 3.45, 5.3, 8.5, 0.34],        /* the mudroom's wall light */
        [-15.4, 3.95, 6.3, 10.0, 0.36],      /* the garage's strip light */
-       [10.6, 3.85, 12.1, 9.0, 0.40],       /* the Study's reading lamp */
-       [-17.55, 2.80, 10.4, 7.0, 0.00]      /* the coach lamp: dark by day */
+       [10.6, 3.85, 12.1, 9.0, 0.40]        /* the Study's reading lamp */
       ].forEach(function (p) {
         var lamp = new T.PointLight(POOL, (PBR ? 1 : 0.72) * p[4], p[3]);
         lamp.position.set(p[0], p[1], p[2]);
         lamp.userData.dayI = (PBR ? 1 : 0.72) * p[4];
-        scene.add(lamp);
+        lamp.userData.lightRole = 'interior';
+        interiorLightRoot.add(lamp);
         poolLamps.push(lamp);
       });
     }
@@ -1173,6 +1177,9 @@
              isFinite(b[3]) && isFinite(b[4]) && isFinite(b[5]);
     }
     function solveShell(camPos, subject) {
+      // Unshadowed interior pools must not shine through the closed exterior.
+      interiorLightRoot.visible = !!subject;
+      exteriorLightRoot.visible = !subject;
       /* VIEW-VOLUME MASKING (task 3, spec section 4): the verdicts and
          the corridor rule are gone; this is a SWAP. subject.room names
          the room shell to show; every mesh whose maskPattern names that
@@ -5727,6 +5734,37 @@
     var FRONT_DOOR_SLOT = -1;
     var PORCH_SPANS = [];
     var webgl_coachLampGlass2 = null;   /* R5 NO_MERGE anchor, far below */
+
+    function exteriorAnchor(g, lamp, role, reach) {
+      lamp.material = lamp.material.clone();
+      lamp.userData.lamp = true;
+      lamp.userData.exteriorFixture = role;
+      exteriorGlowMeshes.push(lamp);
+      exteriorAnchors.push({g:g, lamp:lamp, role:role, reach:reach || 4.8});
+    }
+    function sideGarageLantern(g) {
+      var lx=2.04, ly=2.72, lz=WALL_T4/2+0.20;
+      box(0.12,0.42,0.10,C.ink,lx,ly,lz-0.1,g,sharp());
+      var shade=box(0.23,0.30,0.22,0xf7e8c2,lx,ly,lz,g,{rough:0.45,unique:true});
+      box(0.29,0.07,0.27,C.ink,lx,ly+0.19,lz,g,sharp());
+      exteriorAnchor(g,shade,'garage',4.8);
+    }
+    var porchPoolTexture = null;
+    function porchLight(g,x,y,z,width,depth) {
+      var shade=cyl(0.18,0.22,0.10,0xf7e8c2,x,y,z,g,12,{rough:0.45,unique:true});
+      box(0.42,0.06,0.42,C.ink,x,y+0.08,z,g,sharp());
+      exteriorAnchor(g,shade,'porch',Math.max(5.2,Math.min(7,width)));
+      // A local, soft pool remains available on low quality without point lights.
+      if (!porchPoolTexture) porchPoolTexture=canvasTex(64,function(c,S) {
+        var r=c.createRadialGradient(S/2,S/2,0,S/2,S/2,S/2);
+        r.addColorStop(0,'rgba(255,209,135,0.55)'); r.addColorStop(0.5,'rgba(255,209,135,0.26)');
+        r.addColorStop(1,'rgba(255,209,135,0)'); c.fillStyle=r;c.fillRect(0,0,S,S);
+      });
+      var pool=new T.Mesh(new T.PlaneGeometry(width,depth),new T.MeshBasicMaterial({
+        map:porchPoolTexture,transparent:true,opacity:0,depthWrite:false,blending:T.AdditiveBlending}));
+      pool.rotation.x=-Math.PI/2;pool.position.set(x,0.135,z);pool.userData.convex=true;
+      pool.userData.porchLightPool=true;g.add(pool);porchPools.push(pool);
+    }
     /* The bay's own glazing opts, identical to the garage block's GLZ
        (declared inside that closure, out of reach here). Identical
        VALUES are what matter: mat() keys on them, so both resolve to the
@@ -5971,6 +6009,7 @@
       lamp.userData.lamp = true;         /* geometry only: the night pass
                                             lights it */
       lamp.userData.glazing = true;
+      exteriorAnchor(g,lamp,'door',4.8);
       if (entry) webgl_coachLampGlass2 = lamp;
       latheAt('finial', [0.22, 0.06, 0.22], C.ink, lampX, 2.93, lampZ, g,
               { rough: 0.5 }).userData.room = slot.room;
@@ -6049,6 +6088,11 @@
       PORCH_SPANS.push({ slot: feat.slot, span: feat.span, frontZ: frontZ,
                          roof: feat.roof || null });
       if (slot.face === 'main') PORCH_FRONT_Z4 = frontZ;
+      if (type !== 'stoop' && feat.roof) {
+        var lamps = Math.max(1,Math.ceil(W/6));
+        for (var pi=0;pi<lamps;pi++) porchLight(g,e.x0+W*(pi+0.5)/lamps,
+                 eave-0.24,z0+depth/2,Math.min(W/lamps,6),depth*0.94);
+      }
       /* MASSING ARC 2 task 8 (spec 2026-09-17 section 2): THE PORCH OWNS
          ITS ROOF. `roof: 'gable'` used to be replayed through gableAt by
          a bridge in buildElevation, which registered the porch's own
@@ -6176,6 +6220,7 @@
         }
         garageDoorG.add(GDOOR);
         cx = 0; z = WALL_T4 / 2 + 0.07;
+        sideGarageLantern(GDOOR);
       }
       function gtag(m) { if (m) m.userData.room = slot.room; return m; }
       function gGlass(w, h, gx, gy, gz) {
@@ -7357,6 +7402,7 @@
                                    -17.58, 2.59, 10.16 + GAR_DZ, garageDoorG, GLOSS));
           lamp2.userData.lamp = true;       /* geometry only: the pass lights it */
           lamp2.userData.glazing = true;
+          exteriorAnchor(garageDoorG,lamp2,'garage',4.8);
           webgl_coachLampGlass = lamp2;
           gtag(latheAt('finial', [0.22, 0.06, 0.22], C.ink, -17.58, 2.93,
                        10.16 + GAR_DZ, garageDoorG, { rough: 0.5 }));
@@ -10302,6 +10348,21 @@
         list.forEach(function (o) { if (o.parent) o.parent.remove(o); });
       });
     }
+    // Fixture-owned anchors replace the old world-fixed garage lamp. Limit
+    // real lamps to six; every fixture still glows and porches retain pools.
+    exteriorAnchors.sort(function(a,b) {
+      var rank={porch:0,garage:1,door:2}; return rank[a.role]-rank[b.role];
+    });
+    if (DETAIL >= 2) exteriorAnchors.slice(0,6).forEach(function(a) {
+      a.g.updateMatrixWorld(true);
+      var pos=a.lamp.position.clone();
+      if(a.role !== 'porch') pos.z+=0.22; else pos.y-=0.12;
+      pos.applyMatrix4(a.g.matrixWorld);
+      var light=new T.PointLight(0xffe2b4,0,a.reach,2);
+      light.position.copy(pos);light.userData.lightRole=a.role;
+      light.userData.fixtureAnchor=pos.toArray();light.userData.fixtureId=a.lamp.uuid;light.userData.nightI=a.role==='porch' ? 1.0 : 0.65;
+      exteriorLightRoot.add(light);exteriorLamps.push(light);
+    });
     /* Dynamic and painted things keep their own draws: state repaints
        their maps, toggles their visibility, or rebuilds them wholesale. */
     var NO_MERGE = new Set([carsG, busG, mudBagsG, magnets, skyDome,
@@ -10348,6 +10409,8 @@
        finish), matching the file's own stated principle: NO_MERGE is
        what keeps the night glow honest, not an object's rarity today. */
     NO_MERGE.add(webgl_coachLampGlass2);
+    exteriorGlowMeshes.forEach(function(m){NO_MERGE.add(m);});
+    porchPools.forEach(function(m){NO_MERGE.add(m);});
     /* grassSlab: carries userData.yard, which inYard() reads for the
        navigation law (spec section 5, rule 5). A fold into extG's
        siding/ground material bucket would delete that flag along with
@@ -11281,7 +11344,7 @@
        bake, every merge pass -- ran in house-local space and never sees a
        flipped value, which is the whole reason the flip waits until here.
 
-       What stays behind in `scene`: the three lights and the sun's target
+       What stays behind in `scene`: the global sky/sun lights and the sun's target
        (so a mirrored house is lit from the same compass direction as an
        unmirrored one -- the sun does not swap sides with the garage), the
        camera, and the sky dome (a mirrored sky is the same sky, and it is
@@ -11661,11 +11724,9 @@
       amb.color.setHex(n ? NIGHT_F.ambC : (PBR ? 0xdfe6f0 : 0xe4eaf2));
       sun.intensity = n ? SUN_I * NIGHT_F.sun : SUN_I;
       sun.color.setHex(n ? 0x9db4dd : SUN_C);   /* a moon, not a sun */
-      poolLamps.forEach(function (l, i) {
-        /* the coach lamp is the last one and is DARK by day */
-        l.intensity = n ? (i === poolLamps.length - 1 ? 0.34 : l.userData.dayI * 2.1)
-                        : l.userData.dayI;
-      });
+      poolLamps.forEach(function(l) { l.intensity=n ? l.userData.dayI*2.1 : l.userData.dayI; });
+      exteriorLamps.forEach(function(l) { l.intensity=n ? l.userData.nightI : 0; });
+      porchPools.forEach(function(m) { m.material.opacity=n ? (DETAIL >= 2 ? 0.50 : 0.75) : 0; });
       glazing.forEach(function (m) {
         if (!m.material || !m.material.emissive) return;
         if (m.material.color) m.material.color.setHex(FARMHOUSE.windowDark);

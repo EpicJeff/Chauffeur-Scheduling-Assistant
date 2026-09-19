@@ -299,7 +299,8 @@ B0_WEST_CLIP = {'x': 340, 'y': 460, 'width': 320, 'height': 255}
 # ownership splits, the STUDY REFIT, FIX ROUND 1, view-volume masking
 # tasks 3-5) -- re-measured directly rather than back-derived, and
 # three-run-stable in this file alone.
-CANONICAL_EXTERIOR_MESHES = 1874
+# v2.499.108: two porch fixtures and their soft floor pools add six meshes.
+CANONICAL_EXTERIOR_MESHES = 1880
 
 
 def scenario_canonical_facade_pins_the_hand_built_elevation():

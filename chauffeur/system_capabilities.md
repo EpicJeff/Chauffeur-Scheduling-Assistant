@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.107 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.108 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8151,3 +8151,14 @@ The side-entry driveway is one continuous concrete surface with a rounded outer 
 The mailbox follows the new street entrance, and curb/sidewalk openings leave that entrance clear. The front-lawn tree reads the curved boundary for clearance. Queued exterior cars follow the approach center and tangent. Front-entry driveway geometry remains unchanged. The surface is built once with sampled static geometry; no new animation or network request is involved.
 
 Verification: rendered high-quality views, mirrored/low-quality and deep two-story cases, continuous driveway width and sampled tree clearance, garage navigation, JavaScript syntax and whitespace checks.
+
+
+### Facade-aware night lighting (v2.499.108)
+
+Exterior light positions derive from their actual lanterns and porch fixtures, following garage orientation, projecting third bays, depth and house mirroring. The obsolete fixed garage light is removed. Covered porch spans receive ceiling fixtures and soft warm floor pools; uncovered stoops do not receive floating ceiling lights. Exterior lamps and pools turn off by day.
+
+Interior point lights now mirror with the house and are enabled only for interior views, preventing unshadowed light from leaking through the closed exterior. Exterior point lights are disabled during interior views. High and medium quality use at most six exterior points or five interior points, without new shadow maps. Low quality retains emissive fixtures and porch floor pools without point lights.
+
+Regression coverage: day/night checks across 40 layouts, including mirrored/front-entry/side-entry/projecting garages, gable/shed/flat/mixed porches, stoops, no porch, depth changes, upper stories and all quality levels; separate checks exercise lighting ownership on room entry and exit.
+
+The older B0 screenshot comparison remains outside tolerance on both the previous renderer and this release (east-half maximum mean channel difference 2.86 and 3.08 respectively, versus 1.5). Its tolerance and fixture are unchanged. The canonical geometry count is updated by six for the new porch fixtures and pools.
