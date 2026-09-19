@@ -86,7 +86,7 @@ The slot strip is one button per slot showing the cell's ground and roof kinds. 
 - **Pass 1 prompt.** `blocks.*.stories` is gone. A fraction-based `upper` list is added: `[{"block": "main"|"garage", "at": 0..1, "width": 0..1, "roof": {"form", "ridge", "pitch_deg"}}]`, snapped to slots the way features are. The worked example gains the farmhouse sentence: "a two-story centre showing its gable to the street with one-story wings either side whose ridge runs along the street is main.roof {gable, x} plus upper [{block main, at 0.33, width 0.34, roof {gable, z}}]". A whole-block second story is one span at 0 width 1.
 - **Pass 2** is unchanged in shape: one full revised model, now V3, validated then normalized on a copy.
 - **Fixtures.** The farmhouse EXPECTED model is rewritten: main roof gable ridge x, one upper span over the centre with gable ridge z, the stacked slot-13 window pair now inside that span, "partial second story" leaves the structural-gap list. The brick EXPECTED model gains `upper: []` and is otherwise unchanged. The mapping test compares the `upper` list as a full sorted list, like ground and roof (arc 2 ruling 19). Recorded responses stay hand-written until a real key run — arc 2's posture, its commands still apply.
-- `viewpoint`, `critique_token`, single-flight, `max_models=2`, `_DRAFTS` bound: unchanged.
+- `viewpoint`, `critique_token`, single-flight and `_DRAFTS` bound: unchanged. Photo attempt limits were subsequently updated in v2.499.110 to `max_models=10, total_timeout_s=120` per pass for overload fallback.
 
 ## 6. Tests
 

@@ -26,10 +26,14 @@ daily quotas reset) if the error body names a per-day quota, else 2 minutes
 (per-minute limit). An unknown-model error (404) cools the model for 6 hours
 and logs loudly — it usually means a pool default has a stale model id.
 
+HTTP 500/502/503/504 failures also cool a model for two minutes, so later
+foreground requests can reach healthy candidates instead of repeating overloads.
+
 Pools are overridable without a code change via comma-separated settings keys
 model_pool_lite / model_pool_flash / model_pool_gemma.
 """
 import logging
+import re
 import threading
 import time
 import datetime
@@ -118,10 +122,13 @@ def note_failure(model: str, err_str: str):
         logger.error(f"[model-pools] {model} looks unknown to the API (404) — cooling "
                      f"6h. If this persists, fix the model id via the model_pool_* "
                      f"settings keys. Error: {err[:200]}")
+    elif re.search(r"\b(?:500|502|503|504)\b", err):
+        until = time.time() + 120
+        logger.info(f"[model-pools] {model} server unavailable - 120s cooldown")
     else:
-        return  # 5xx/parse errors: the caller already moves on; no quota signal
+        return  # Parse and other errors are not a model-availability signal.
     with _lock:
-        _cooldowns[model] = until
+        _cooldowns[model] = max(until, _cooldowns.get(model, 0))
 
 
 def reset_cooldowns():
@@ -166,13 +173,15 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
                    settings: dict = None, images: list = None,
                    background: bool = None, workflow: str = None,
                    strict_json: bool = False, max_output_tokens: int = None,
-                   attempts: list = None) -> dict:
+                   attempts: list = None, total_timeout_s: float = None) -> dict:
     """JSON call with one HTTP attempt per candidate and persistent admission.
 
     Background work tries one candidate, then defers; foreground work may try
     up to max_models candidates. Success includes '_model'; failures return
     'error', with 'deferred'/'retry_at' when admission blocks background work.
-    Ollama callers keep their own single-model path.
+    Ollama callers keep their own single-model path. An optional monotonic
+    time budget caps each attempt's timeout to the remaining budget and stops
+    launching candidates when it expires; existing callers remain unchanged.
 
     `attempts`, when a list is passed, collects the id of every model this
     call actually sends a PROVIDER REQUEST to, in order — so a caller can
@@ -186,8 +195,15 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
     workflow = workflow or tier
     last_err = "no models available"
     transient = False
+    deadline = None if total_timeout_s is None else time.monotonic() + total_timeout_s
     for model in models_for(tier, settings)[:(1 if background else max_models)]:
         t = gemma_timeout_s if (gemma_timeout_s and is_gemma(model)) else timeout_s
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return {"error": "Model pool time budget exhausted; last error: " + last_err,
+                        "transient": True}
+            t = min(t, remaining)
         try:
             with llm_budget.request_scope(workflow, background):
                 if attempts is not None:

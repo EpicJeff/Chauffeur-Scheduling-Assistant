@@ -573,7 +573,7 @@ def scenario_photo_pass1_maps_the_fixtures():
                   f"{photo}: ground matches the expected model in full: {draft['ground']} != {exp['ground']}")
             check(sort_roof(draft['roof']) == sort_roof(exp['roof']),
                   f"{photo}: roof matches the expected model in full: {draft['roof']} != {exp['roof']}")
-            check(seen['max_models'] == 2 and seen['workflow'] == 'house_photo', f'attempt budget + label: {seen}')
+            check(seen['max_models'] == 10 and seen['total_timeout_s'] == 120 and seen['workflow'] == 'house_photo', f'attempt budget + label: {seen}')
             check(len(hf.list_facades()) == 1, 'nothing saved')
         check(json.loads(json.dumps(_fixture('brick.expected.json')))['mirror'] is False, 'brick photo: garage on the LEFT is mirror false')
     finally:
@@ -608,6 +608,7 @@ def scenario_critique_returns_one_revised_model_or_the_draft():
         def pass2(tier, key, system, user, **kw):
             calls['n'] += 1
             check(len(kw['images']) == 2, 'photo + render go to pass 2')
+            check(kw['max_models'] == 10 and kw['total_timeout_s'] == 120, 'critique uses bounded pool fallback')
             return _fixture('brick.pass2.json')
         model_pools.call_pool_json = pass2
         res, err = hf.critique(tok, 'iVBOR')

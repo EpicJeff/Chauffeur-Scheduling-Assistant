@@ -1132,7 +1132,7 @@ def from_photo(image_b64, mime):
             'vision', api_key, _photo_prompt(),
             'Describe the street-facing elevation of the house in the attached photo as the block model.',
             temperature=0.1, timeout_s=90, settings=settings, strict_json=True,
-            max_output_tokens=4096, max_models=2, workflow='house_photo',
+            max_output_tokens=4096, max_models=10, total_timeout_s=120, workflow='house_photo',
             attempts=attempts,
             images=[{'mime': mime or 'image/jpeg', 'b64': image_b64}])
     except Exception as e:
@@ -1239,7 +1239,7 @@ def critique(token, render_png_b64):
             'vision', api_key, CRITIQUE_SYSTEM,
             'Photo first, then the render of the draft, then the draft JSON:\n' + json.dumps(draft),
             temperature=0.1, timeout_s=90, settings=settings, strict_json=True,
-            max_output_tokens=4096, max_models=2, workflow='house_photo',
+            max_output_tokens=4096, max_models=10, total_timeout_s=120, workflow='house_photo',
             attempts=attempts,
             images=[{'mime': e.get('mime') or 'image/jpeg', 'b64': e['photo_b64']},
                     {'mime': 'image/png', 'b64': render_png_b64}])
