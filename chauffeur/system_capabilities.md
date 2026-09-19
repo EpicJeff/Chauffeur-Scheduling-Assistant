@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.110 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.111 (2026-09-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8178,3 +8178,8 @@ Shells touching a keep plane exactly use the existing small boundary tolerance, 
 HTTP 500/502/503/504 responses put a pool model on a two-minute in-process cooldown. Subsequent calls skip it while another candidate is ready; a short overload cooldown never replaces a longer quota/unknown-model cooldown. Photo description and render critique each allow ten candidates, covering the default Flash and Flash Lite vision chain. Each stage has a 120-second monotonic attempt budget: individual network timeouts are capped at the remaining budget, with no new candidate launched after expiry. Normal attempts retain their 90-second timeout ceiling; success stops fallback immediately. The low-level socket timeout is not a hard worker cancellation deadline.
 
 There is still one HTTP attempt per candidate, no same-model retry loop, and background work still attempts one candidate before deferring. Existing persistent admission and request accounting remain active. Offline regression tests cover repeated overload rotation, Lite fallback, both real photo-service stages succeeding on a third model, timeout/request caps, cooldown expiry and preservation of longer cooldowns. Facade and LLM-budget suites pass; no live provider calls used for verification.
+
+
+### Recoverable photo base-height estimates (v2.499.111)
+
+Photo description and render critique prompts explicitly require base-band heights of 0.6..1.8 scene units, or `base: null` when no band is visible. Both stages clamp finite numeric base-height estimates to that existing supported range before strict structural validation. Draft notes name each adjusted field and its original/final height. No extra model call or automatic save occurs. Missing heights, wrong types, booleans and non-finite values remain invalid; other structural checks remain unchanged. Offline regression tests reproduce the original rejection, verify recovery in both stages and unchanged provider responses, and preserve rejection of malformed data. The facade suite passes.

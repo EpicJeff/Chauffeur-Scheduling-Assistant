@@ -326,3 +326,8 @@ One commit after the whole-branch review. Ten findings, all fixed, each with a p
 ### Arc 2, as shipped
 
 **v2.499.67 – v2.499.93, 2026-09-17/18.** Fourteen tasks: the B0 baseline and measured draw calls; the §0 prerequisites; the V2 schema with `validate_block_model` ahead of `normalize` and the V1 mapping table; the six claddings, base bands and the pixel pin; per-block depth with the block-meet return wall, the void floor and neighbour-volume roof subtraction; stories as cut fabric; the side-entry garage, the shed and the porch's own gable; the mirror; the draft token and `/house?draft=`; the two-pass photo pipeline; the Blocks panel and the story-aware cell editor; the per-variant paired budgets; and this wrap. **NOT device-verified** — everything above was measured in a probe or a Playwright boot, never on the wall panel or the add-on. Next in sequence: **arc 3, style kits** (spec not written).
+
+
+### Photo validation amendment (v2.499.111)
+
+Both photo stages may repair an out-of-range, finite numeric `blocks.<name>.base.height` to the existing 0.6..1.8 limits before validation, with a draft note naming the original and adjusted values. This is a narrow exception to rejecting out-of-range model estimates: missing/malformed fields, non-finite values and other structural errors remain rejected. Prompts state the limits and require `base: null` for no visible band. Repair does not call a model again, mutate its response, or save the draft automatically.

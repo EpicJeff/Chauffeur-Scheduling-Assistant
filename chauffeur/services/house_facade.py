@@ -1000,6 +1000,9 @@ def set_active(fid):
     return fid
 
 
+_PHOTO_BASE_GUIDANCE = (f'\nBase bands: height must be {BASE_H_MIN}..{BASE_H_MAX} scene units. '
+                        'Use base: null when no base band is visible; do not use height 0.\n')
+
 PHOTO_SYSTEM = """You describe the STREET-FACING elevation of a house from one photo, as JSON only.
 The house is drawn as two BLOCKS side by side on a fixed strip of {n} slots, west to east
 (left to right as seen from the street):
@@ -1080,7 +1083,7 @@ def _photo_prompt():
                                roof_forms=list(ROOF_FORMS), ridges=list(RIDGES),
                                orientations=list(ORIENTATIONS), window_sizes=list(WINDOW_SIZES),
                                garage_styles=list(GARAGE_STYLES), porch_types=list(PORCH_TYPES),
-                               porch_roofs=list(PORCH_ROOFS), roof_kinds_features=roof_kinds_features)
+                               porch_roofs=list(PORCH_ROOFS), roof_kinds_features=roof_kinds_features) + _PHOTO_BASE_GUIDANCE
 
 
 def _snap_fractions(obj, notes=None):
@@ -1119,6 +1122,34 @@ def _snap_fractions(obj, notes=None):
     return out
 
 
+def _repair_photo_base_heights(obj, notes):
+    """Recover a numeric model estimate before strict structural validation.
+
+    Keep malformed/missing fields for the validator to reject. Never mutate
+    the provider response or hide an adjustment from the draft's reviewer.
+    """
+    out = copy.deepcopy(obj)
+    blocks = out.get('blocks') if isinstance(out, dict) else None
+    if not isinstance(blocks, dict):
+        return out
+    for name in ('main', 'garage'):
+        block = blocks.get(name)
+        base = block.get('base') if isinstance(block, dict) else None
+        if not isinstance(base, dict):
+            continue
+        height = base.get('height')
+        if isinstance(height, bool) or not isinstance(height, (int, float)):
+            continue
+        if isinstance(height, float) and not math.isfinite(height):
+            continue
+        clamped = min(BASE_H_MAX, max(BASE_H_MIN, height))
+        if clamped != height:
+            base['height'] = clamped
+            notes.append(f'blocks.{name}.base.height adjusted from {height} to {clamped} '
+                         f'(supported range {BASE_H_MIN}..{BASE_H_MAX})')
+    return out
+
+
 def from_photo(image_b64, mime):
     """One photo -> a validated, normalized DRAFT + its token. Never stores."""
     from services import model_pools
@@ -1144,7 +1175,7 @@ def from_photo(image_b64, mime):
     res.pop('_model', None)
     viewpoint = _pick(res.pop('viewpoint', None), ('left', 'centre', 'right'), 'centre')
     pre = []
-    snapped = _snap_fractions(res, pre)
+    snapped = _repair_photo_base_heights(_snap_fractions(res, pre), pre)
     # FINAL REVIEW (important 3): the prompt allows a house whose garage the
     # photo cannot see, and validate_block_model requires `blocks.garage`.
     # An unseen garage becomes the DEFAULT block rather than a rejection --
@@ -1236,7 +1267,7 @@ def critique(token, render_png_b64):
         return finish(result)
     try:
         res = model_pools.call_pool_json(
-            'vision', api_key, CRITIQUE_SYSTEM,
+            'vision', api_key, CRITIQUE_SYSTEM + _PHOTO_BASE_GUIDANCE,
             'Photo first, then the render of the draft, then the draft JSON:\n' + json.dumps(draft),
             temperature=0.1, timeout_s=90, settings=settings, strict_json=True,
             max_output_tokens=4096, max_models=10, total_timeout_s=120, workflow='house_photo',
@@ -1252,7 +1283,7 @@ def critique(token, render_png_b64):
     reasons = [str(r)[:160] for r in (res.get('reasons') or []) if isinstance(r, (str, dict))][:8]
     reasons = [r if isinstance(r, str) else str(r.get('reason', r)) for r in reasons]
     snap_notes = []
-    revised = _snap_fractions(res.get('revised'), snap_notes)
+    revised = _repair_photo_base_heights(_snap_fractions(res.get('revised'), snap_notes), snap_notes)
     errs = validate_block_model(revised)
     if errs:
         result['reasons'] = reasons + snap_notes + ['revision rejected as incomplete: ' + '; '.join(errs[:3])]
