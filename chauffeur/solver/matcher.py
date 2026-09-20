@@ -16,6 +16,23 @@ def get_travel_time_minutes(origin, dest, departure_time=None, return_traffic=Fa
         return t
 
 
+def home_drive_limit_reason(event, driver, home_location=None):
+    """A home-radius restriction, independent of the previous stop or trip lodging."""
+    limit = driver.max_drive_time_from_home
+    if limit is None:
+        return None
+    home = (driver.home_location or home_location or '').strip()
+    destination = (event.location or '').strip()
+    if not home or not destination:
+        return "Cannot verify drive time from home: home or activity location is missing."
+    minutes = _raw_get_travel_time_minutes(home, destination)
+    if minutes is None or not math.isfinite(minutes) or minutes < 0:
+        return "Cannot verify drive time from home for this activity."
+    if minutes > limit:
+        return f"Activity is {minutes:g} minutes from home; {driver.name}'s limit is {limit} minutes."
+    return None
+
+
 def travel_for_display(origin, dest, departure_time=None):
     """The TRUE minutes, without the solver's sub-three-minute collapse.
 
@@ -498,7 +515,9 @@ def solve_schedule(
     # An out-param rather than a fifth return value, because four callers'
     # worth of tuple unpacking is not worth breaking to learn one number.
     # Filled only when a dict is passed in.
-    stats: dict = None
+    stats: dict = None,
+    # Separate from home_location: do not change existing route-chain timing.
+    restriction_home_location: Optional[str] = None
 ) -> Tuple[Dict[str, str], List[str], Dict[str, str], Dict[str, str]]:
     """
     Solves the driver assignment problem using OR-Tools CP-SAT solver.
@@ -583,6 +602,10 @@ def solve_schedule(
     for e in assignable_events:
         for d in drivers:
             assign_vars[(e.id, d.id)] = model.NewBoolVar(f'assign_{e.id}_{d.id}')
+            if ((e.id, d.id) not in overridden_pairs and
+                    home_drive_limit_reason(e, d, restriction_home_location or home_location)):
+                model.Add(assign_vars[(e.id, d.id)] == 0)
+
             
             # Trip Assignment Constraint
             if trip_metadata:
@@ -1352,13 +1375,16 @@ def solve_schedule(
 
 def explain_assignment_conflicts(event: Event, driver: Driver, rules: List[Rule] = None,
                                  passengers: List[Passenger] = None, trip_metadata: List[dict] = None,
-                                 driver_events: List[Event] = None) -> List[str]:
+                                 driver_events: List[Event] = None, home_location: Optional[str] = None) -> List[str]:
     """Human-readable reasons why the solver would normally refuse to assign
     this driver to this event. Purely informational — a manual override always
     wins every one of these — so the UI can warn before creating the override.
     trip dicts use the same shape as solve_schedule's trip_metadata (datetime
     start/end, entities as a set or list)."""
     reasons = []
+    home_reason = home_drive_limit_reason(event, driver, home_location)
+    if home_reason:
+        reasons.append(home_reason)
     rules = rules or []
     passengers = passengers or []
     trip_metadata = trip_metadata or []
@@ -1996,7 +2022,7 @@ def compute_conflicts(assignments: Dict[str, str], ghost_assignments: Dict[str, 
                 
     return conflicts
 
-def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers: List[Driver], driver_events: dict, assignments: dict, overrides: List[dict], rules: List[Rule], passengers: List[Passenger] = None, trip_metadata: List[dict] = None, cars: List[Car] = None, driver_passenger_map: Dict[str, str] = None) -> dict:
+def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers: List[Driver], driver_events: dict, assignments: dict, overrides: List[dict], rules: List[Rule], passengers: List[Passenger] = None, trip_metadata: List[dict] = None, cars: List[Car] = None, driver_passenger_map: Dict[str, str] = None, home_location: Optional[str] = None) -> dict:
     if passengers is None:
         passengers = []
     if trip_metadata is None:
@@ -2048,6 +2074,11 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                 if eff_did == 'unassigned':
                     reason = {"text": "Blocked by 'Unassigned' override.", "type": "override"}
                 
+            if not reason and (e.id, d.id) not in overridden_pairs:
+                home_reason = home_drive_limit_reason(e, d, home_location)
+                if home_reason:
+                    reason = {"text": home_reason, "type": "home_drive_limit"}
+
             # 2. Driver Personal Calendar
             if not reason:
                 for de in driver_events.get(d.id, []):

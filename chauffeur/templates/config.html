@@ -1024,6 +1024,12 @@
                                 <input type="time" x-model="newDriver.preferred_end"
                                     class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
                             </div>
+                            <div class="w-full lg:w-64">
+                                <label class="block text-gray-400 mb-1 text-sm">Max Drive Time From Home (minutes)</label>
+                                <input type="number" x-model="newDriver.max_drive_time_from_home" min="1" step="1" placeholder="Unlimited"
+                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                <p class="text-xs text-gray-400 mt-1">Leave blank for unlimited. Uses this driver's home override, or the household home. Activities farther away are excluded from automatic assignments.</p>
+                            </div>
                             <div class="w-full lg:flex-1 relative">
                                 <label class="block text-gray-400 mb-1 text-sm">Driver Home Location Override</label>
                                 <input type="text" x-model="newDriver.home_location"
@@ -4576,7 +4582,7 @@
                 llmTestSuccess: null,
                 matchedEventsByRule: {},
 
-                newDriver: { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], hashtags: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '' },
+                newDriver: { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', max_drive_time_from_home: '', calendarIds: [], hashtags: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '' },
                 newDriverCalendarInput: '',
                 newDriverHashtagInput: '',
                 newPassenger: { name: '', hashtags: [], calendar_ids: [], requires_attendance: false },
@@ -5279,6 +5285,11 @@
                     try {
                         if (!this.newDriver.id || !this.newDriver.name) return;
 
+                        const driveLimit = this.newDriver.max_drive_time_from_home;
+                        if (driveLimit !== '' && driveLimit != null && (!Number.isInteger(Number(driveLimit)) || Number(driveLimit) <= 0)) {
+                            showGlobalAlert('Max Drive Time From Home must be a positive whole number of minutes, or blank for unlimited.');
+                            return;
+                        }
                         const payload = {
                             id: this.newDriver.id,
                             name: this.newDriver.name,
@@ -5288,6 +5299,7 @@
                             preferred_start: this.newDriver.preferred_start || null,
                             preferred_end: this.newDriver.preferred_end || null,
                             home_location: this.newDriver.home_location || null,
+                            max_drive_time_from_home: this.newDriver.max_drive_time_from_home === '' || this.newDriver.max_drive_time_from_home == null ? null : Number(this.newDriver.max_drive_time_from_home),
                             is_disabled: this.newDriver.is_disabled,
                             calendar_ids: this.newDriver.calendarIds,
                             hashtags: this.newDriver.hashtags,
@@ -5338,6 +5350,7 @@
                         preferred_start: d.preferred_start || '',
                         preferred_end: d.preferred_end || '',
                         home_location: d.home_location || '',
+                        max_drive_time_from_home: d.max_drive_time_from_home ?? '',
                         is_disabled: d.is_disabled || false,
                         calendarIds: Array.isArray(d.calendar_ids) ? d.calendar_ids : (d.calendar_ids ? [d.calendar_ids] : []),
                         hashtags: Array.isArray(d.hashtags) ? d.hashtags : (d.hashtags ? [d.hashtags] : []),
@@ -5351,7 +5364,7 @@
                 cancelEditDriver() {
                     this.editDriverId = null;
                     this.showDriverForm = false;
-                    this.newDriver = { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', home_location: '', calendarIds: [], hashtags: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '' };
+                    this.newDriver = { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', max_drive_time_from_home: '', home_location: '', calendarIds: [], hashtags: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '' };
                     this.newDriverCalendarInput = '';
                     this.newDriverHashtagInput = '';
                 },

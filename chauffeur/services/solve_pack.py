@@ -62,7 +62,7 @@ def _dump_trip(t):
 def build(date_str, *, events, drivers, rules, priority_rules, overrides,
           passengers, cars, driver_events, trip_metadata, driver_passenger_map,
           previous_assignments, load_balancing, load_balancing_metric,
-          protected_rule_index) -> dict:
+          protected_rule_index, restriction_home_location=None) -> dict:
     """Everything `solve_schedule` was given, as plain JSON-able data.
 
     `protected_rule_index` maps a protected commitment's id to its position in
@@ -73,6 +73,7 @@ def build(date_str, *, events, drivers, rules, priority_rules, overrides,
     """
     return {
         'date': date_str,
+        'restriction_home_location': restriction_home_location,
         'events': [_dump(e) for e in events],
         'drivers': [_dump(d) for d in drivers],
         'rules': [_dump(r) for r in rules],
@@ -174,7 +175,8 @@ def replay(pack: dict, time_limit_s: float = DEFAULT_TIME_LIMIT_S) -> dict:
         load_balancing_metric=pack['load_balancing_metric'],
         cars=[Car(**c) for c in pack['cars']],
         driver_passenger_map=dict(pack['driver_passenger_map']),
-        time_limit_s=time_limit_s, stats=stats)
+        time_limit_s=time_limit_s, stats=stats,
+        restriction_home_location=pack.get('restriction_home_location'))
     # No `conflicts` and no `true_unassigned` here, deliberately. Both would
     # be lies of a different kind: `compute_conflicts` pairs assignments
     # against GHOST routes, which a replay does not solve, so it could only

@@ -16306,7 +16306,7 @@ def check_override_conflicts(payload: OverrideCheckPayload):
 
     conflicts = matcher.explain_assignment_conflicts(
         event, driver, rules=rules, passengers=passengers,
-        trip_metadata=trips, driver_events=driver_events)
+        trip_metadata=trips, driver_events=driver_events, home_location=maps.get_home_location())
     return {"conflicts": conflicts}
 
 @app.post("/api/overrides")
@@ -18512,7 +18512,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             diagnostics = {}
         else:
             diagnostics = matcher.compute_diagnostics(
-                combined_true_unassigned, list(all_events_for_ui.values()), drivers, driver_events_map, combined_assignments, overrides, rules, passengers=passengers, trip_metadata=trip_metadata, cars=cars, driver_passenger_map=driver_passenger_map
+                combined_true_unassigned, list(all_events_for_ui.values()), drivers, driver_events_map, combined_assignments, overrides, rules, passengers=passengers, trip_metadata=trip_metadata, cars=cars, driver_passenger_map=driver_passenger_map, home_location=home_location
             )
 
         duplicate_groups = []
@@ -18975,7 +18975,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             true_unassigned = unassigned
         else:
             assignments, unassigned, lateness_warnings, car_assignments = matcher.solve_schedule(
-                daily_events_to_solve, drivers, day_rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, load_balancing=load_balancing, load_balancing_metric=load_balancing_metric, cars=cars, driver_passenger_map=driver_passenger_map
+                daily_events_to_solve, drivers, day_rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, load_balancing=load_balancing, load_balancing_metric=load_balancing_metric, cars=cars, driver_passenger_map=driver_passenger_map, restriction_home_location=home_location
             )
             
             unassigned_events = [e for e in daily_events_to_solve if e.id in unassigned]
@@ -19022,7 +19022,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     previous_assignments=previous_assignments,
                     load_balancing=load_balancing,
                     load_balancing_metric=load_balancing_metric,
-                    protected_rule_index=day_protected_index))
+                    protected_rule_index=day_protected_index, restriction_home_location=home_location))
             except Exception as _pe:
                 logger.warning(f"Solve pack write failed for {date_str}: {_pe}")
 

@@ -107,6 +107,7 @@ class Driver(BaseModel):
     preferred_maps_provider: str = 'google'
     phone_number: Optional[str] = None
     cell_carrier: Optional[str] = None
+    max_drive_time_from_home: Optional[int] = Field(default=None, gt=0, strict=True)
     max_passengers: Optional[int] = None  # graduated-licensing cap, independent of car
 
 class Passenger(BaseModel):
