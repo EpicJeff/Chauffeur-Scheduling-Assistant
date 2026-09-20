@@ -4709,7 +4709,7 @@
                 facadeCladdings: ['batten', 'lap', 'brick', 'stone', 'stucco', 'shingle'],
                 facadePhotoToken: null,
                 facadePhotoViewpoint: null,
-                facadePreviewToken: null,
+                facadePreviewToken: null, facadeLoadedToken: null, facadeLoadedAngle: null,
                 facadePreviewAngle: 0,
                 facadeRenders: { draft: null, revised: null },
                 facadeCritiqueResult: { reasons: [], unexpressed: [], revised: null },
@@ -5962,6 +5962,9 @@
                 // draft. The page says which facade it drew; say so out loud.
                 async facadeFrameLoaded() {
                     if (!this.facadePreviewToken) return;
+                    const loadedToken = this.facadePreviewToken;
+                    const loadedAngle = this.facadePreviewAngle || 0;
+                    this.facadeLoadedToken = null;
                     try {
                         const f = document.getElementById('facade-preview-frame');
                         const w = f && f.contentWindow;
@@ -5974,16 +5977,20 @@
                         if (!w.chfFacade || !w.chfFacade()) return;  // never built: not our call to make
                         if (!w.HOUSE_FACADE || w.HOUSE_FACADE.id !== 'draft') {
                             showGlobalAlert('This preview expired — press Preview in 3D again');
+                        } else if (this.facadePreviewToken === loadedToken && new URL(w.location.href).searchParams.get('draft') === loadedToken && Number(new URL(w.location.href).searchParams.get('angle') || 0) === loadedAngle) {
+                            this.facadeLoadedToken = loadedToken;
+                            this.facadeLoadedAngle = loadedAngle;
                         }
                     } catch (e) { /* torn down mid-check: nothing to report */ }
                 },
-                facadeCaptureFrame() {
+                facadeCaptureFrame(expectedToken = this.facadePreviewToken) {
                     return new Promise((resolve, reject) => {
                         const f = document.getElementById('facade-preview-frame');
                         let tries = 0;
                         const tick = () => {
                             const w = f && f.contentWindow;
-                            if (w && w.chfNavProbe && w.chfNavProbe({ settled: true })) { resolve(w.chfCapture()); return; }
+                            if (this.facadePreviewToken !== expectedToken) { reject(new Error('preview changed during capture')); return; }
+                            if (w && this.facadeLoadedToken === expectedToken && this.facadeLoadedAngle === (this.facadePreviewAngle || 0) && Number(new URL(w.location.href).searchParams.get('angle') || 0) === (this.facadePreviewAngle || 0) && new URL(w.location.href).searchParams.get('draft') === expectedToken && w.chfNavProbe && w.chfNavProbe({ settled: true })) { resolve(w.chfCapture()); return; }
                             if (++tries > 200) { reject(new Error('the preview never settled')); return; }
                             setTimeout(tick, 100);
                         };
@@ -5996,6 +6003,7 @@
                     try {
                         this.facadePreviewToken = this.facadePhotoToken;           // the photo's own draft renders
                         this.facadePreviewAngle = this.facadeAngleForViewpoint(this.facadePhotoViewpoint);  // the camera stands where the photo did
+                        await this.$nextTick();
                         const png = await this.facadeCaptureFrame();
                         this.facadeRenders.draft = png; this.facadeBusy = 'Comparing to your photo…';
                         const res = await fetch(`${this.apiBase}api/house/facades/critique`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: this.facadePhotoToken, render: png }) });
@@ -6009,7 +6017,9 @@
                         if (r.revised) {
                             const res2 = await fetch(`${this.apiBase}api/house/facades/draft`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spec: r.revised }) });
                             const d2 = await res2.json();
+                            if (!res2.ok || !d2.token) throw new Error('Could not render revision');
                             this.facadePreviewToken = d2.token;
+                            await this.$nextTick();
                             this.facadeRenders.revised = await this.facadeCaptureFrame();
                         }
                     } catch (e) { console.error('critique failed', e); showGlobalAlert('Could not compare to the photo'); }

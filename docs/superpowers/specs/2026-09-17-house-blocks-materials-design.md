@@ -336,3 +336,24 @@ Both photo stages may repair an out-of-range, finite numeric `blocks.<name>.base
 ### Continuous dimension recovery amendment (v2.499.112)
 
 The photo validation adapter now repairs finite continuous numeric range violations using the same bounds declared by strict validation, including depth, pitches, base height and side-garage dimensions. This supersedes the base-only exception above. It operates on a copy and reports every correction. Normal validation remains strict; types, missing fields, enums and structural slot/span constraints are not repaired. Prompts explain depth as added depth beyond the default block. No extra model calls or automatic saves are introduced.
+
+
+## Photo pipeline reliability amendment ? v2.499.114 (2026-09-20)
+
+Supersedes the earlier two-pass and ten-candidate-per-pass descriptions above.
+The pipeline is now observations, configuration, then one user-requested visual critique.
+Observations use whole-photo left-edge fractions; configuration uses block-local
+photo-left fractions, reflected to canonical slots once in code (including mixed porch
+gable offsets). Critique uses canonical slot/span coordinates and receives the complete
+schema and observations. An unseen garage no longer implies a left/front garage.
+
+Six provider attempts are shared across a photo run, including fallbacks, with one
+reserved for critique. Same-photo uploads reuse cached observations and request counts
+for fifteen minutes; successful uploads reuse their draft token. Structural checks flag
+upper spans, upstairs window counts, porch spans, gable spans and garage orientation.
+A critique introducing new discrepancies cannot replace the draft. All flagged drafts
+remain reviewable; saving still requires the user's normal explicit action.
+
+Fixtures include the supplied authored and failed photo-generated house. These prove
+structural detection and conversion, not model quality. Live visual benchmarking remains
+pending: the local key was rejected by Google during a two-attempt observation call.

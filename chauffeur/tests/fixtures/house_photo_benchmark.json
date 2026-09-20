@@ -1,0 +1,404 @@
+{
+  "My house": {
+    "version": 3,
+    "mirror": true,
+    "pitch_deg": 35.0,
+    "blocks": {
+      "main": {
+        "depth": 0.0,
+        "roof": {
+          "form": "gable",
+          "ridge": "x",
+          "pitch_deg": 35.0
+        },
+        "cladding": "batten",
+        "base": null,
+        "body": "greige"
+      },
+      "garage": {
+        "depth": 4.5,
+        "roof": {
+          "form": "gable",
+          "ridge": "x",
+          "pitch_deg": 35.0
+        },
+        "cladding": "batten",
+        "base": null,
+        "body": "white",
+        "orientation": "side",
+        "side_door": {
+          "style": "glass",
+          "leaves": 1,
+          "width": 4.4,
+          "height": 3.0,
+          "third_bay": true,
+          "projection": 1.8,
+          "front_setback": 2.0
+        }
+      }
+    },
+    "upper": [
+      {
+        "slot": 6,
+        "span": 8,
+        "roof": {
+          "form": "gable",
+          "ridge": "x",
+          "pitch_deg": 22.5
+        }
+      }
+    ],
+    "finishes": [
+      {
+        "slot": 6,
+        "span": 8,
+        "story": 1,
+        "cladding": "brick",
+        "body": "cream_brick"
+      }
+    ],
+    "style": {
+      "roof": "charcoal",
+      "frame": "white",
+      "door": "wood",
+      "trim": "white"
+    },
+    "ground": [
+      {
+        "slot": 0,
+        "span": 1,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "story": 1
+      },
+      {
+        "slot": 2,
+        "span": 1,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "story": 1
+      },
+      {
+        "slot": 3,
+        "span": 1,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "story": 1
+      },
+      {
+        "slot": 5,
+        "span": 1,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "story": 1
+      },
+      {
+        "slot": 6,
+        "span": 8,
+        "kind": "porch",
+        "type": "covered",
+        "roof": "mixed",
+        "gable_offset": 4,
+        "gable_span": 4
+      },
+      {
+        "slot": 7,
+        "span": 1,
+        "kind": "window",
+        "size": "tall",
+        "shutters": false,
+        "story": 1
+      },
+      {
+        "slot": 7,
+        "span": 1,
+        "kind": "window",
+        "size": "tall",
+        "shutters": true,
+        "story": 2
+      },
+      {
+        "slot": 8,
+        "span": 1,
+        "kind": "window",
+        "size": "tall",
+        "shutters": false,
+        "story": 1
+      },
+      {
+        "slot": 9,
+        "span": 1,
+        "kind": "window",
+        "size": "tall",
+        "shutters": false,
+        "story": 1
+      },
+      {
+        "slot": 9,
+        "span": 1,
+        "kind": "window",
+        "size": "tall",
+        "shutters": true,
+        "story": 2
+      },
+      {
+        "slot": 11,
+        "span": 1,
+        "kind": "door"
+      },
+      {
+        "slot": 11,
+        "span": 2,
+        "kind": "window",
+        "size": "standard",
+        "shutters": true,
+        "story": 2
+      },
+      {
+        "slot": 12,
+        "span": 1,
+        "kind": "door"
+      },
+      {
+        "slot": 15,
+        "span": 1,
+        "kind": "window",
+        "size": "standard",
+        "shutters": true,
+        "story": 1
+      },
+      {
+        "slot": 16,
+        "span": 1,
+        "kind": "window",
+        "size": "standard",
+        "shutters": true,
+        "story": 1
+      }
+    ],
+    "roof": [
+      {
+        "slot": 0,
+        "span": 6,
+        "kind": "gable"
+      },
+      {
+        "slot": 6,
+        "span": 5,
+        "kind": "gable"
+      }
+    ],
+    "unexpressed": []
+  },
+  "My house - photo": {
+    "version": 3,
+    "mirror": false,
+    "pitch_deg": 30.0,
+    "blocks": {
+      "main": {
+        "depth": 0.0,
+        "roof": {
+          "form": "gable",
+          "ridge": "x",
+          "pitch_deg": 30.0
+        },
+        "cladding": "batten",
+        "base": {
+          "material": "brick",
+          "height": 1.0,
+          "body": "cream_brick"
+        },
+        "body": "greige"
+      },
+      "garage": {
+        "depth": 0.0,
+        "roof": {
+          "form": "gable",
+          "ridge": "x",
+          "pitch_deg": 30.0
+        },
+        "cladding": "batten",
+        "base": null,
+        "body": "greige",
+        "orientation": "front"
+      }
+    },
+    "upper": [
+      {
+        "slot": 1,
+        "span": 5,
+        "roof": {
+          "form": "gable",
+          "ridge": "z",
+          "pitch_deg": 30.0
+        }
+      }
+    ],
+    "story_finishes": {
+      "main": {
+        "1": {
+          "cladding": "batten",
+          "body": "greige"
+        }
+      }
+    },
+    "finishes": [
+      {
+        "slot": 1,
+        "span": 5,
+        "story": 1,
+        "cladding": "brick",
+        "body": "cream_brick"
+      },
+      {
+        "slot": 9,
+        "span": 5,
+        "story": 1,
+        "cladding": "brick",
+        "body": "cream_brick"
+      },
+      {
+        "slot": 15,
+        "span": 3,
+        "story": 1,
+        "cladding": "brick",
+        "body": "cream_brick"
+      }
+    ],
+    "style": {
+      "roof": "charcoal",
+      "frame": "white",
+      "door": "wood",
+      "trim": "white"
+    },
+    "ground": [
+      {
+        "slot": 1,
+        "span": 2,
+        "kind": "window",
+        "size": "standard",
+        "shutters": true,
+        "story": 1
+      },
+      {
+        "slot": 6,
+        "span": 4,
+        "kind": "porch",
+        "type": "covered",
+        "roof": "mixed",
+        "gable_offset": 0,
+        "gable_span": 2
+      },
+      {
+        "slot": 7,
+        "span": 1,
+        "kind": "door"
+      },
+      {
+        "slot": 11,
+        "span": 2,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "story": 1
+      },
+      {
+        "slot": 14,
+        "span": 1,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "story": 1
+      },
+      {
+        "slot": 15,
+        "span": 2,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "story": 1
+      },
+      {
+        "slot": 17,
+        "span": 1,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "story": 1
+      }
+    ],
+    "roof": [
+      {
+        "slot": 1,
+        "span": 5,
+        "kind": "gable"
+      },
+      {
+        "slot": 13,
+        "span": 5,
+        "kind": "gable"
+      }
+    ],
+    "unexpressed": [
+      "metal awning over right wing windows",
+      "double front doors with glass lites",
+      "board and batten gable accents"
+    ]
+  },
+  "observations": {
+    "viewpoint": "centre",
+    "garage_side": "right",
+    "sections": [
+      {
+        "at": 0,
+        "width": 0.23,
+        "description": "Single-story left wing"
+      },
+      {
+        "at": 0.23,
+        "width": 0.43,
+        "description": "Broad central second story above covered porch"
+      },
+      {
+        "at": 0.66,
+        "width": 0.34,
+        "description": "Wide right gable, not a full second story"
+      }
+    ],
+    "upper": [
+      {
+        "at": 0.23,
+        "width": 0.43,
+        "windows": 3
+      }
+    ],
+    "porches": [
+      {
+        "at": 0.23,
+        "width": 0.43
+      }
+    ],
+    "gables": [
+      {
+        "at": 0.66,
+        "width": 0.34
+      },
+      {
+        "at": 0.38,
+        "width": 0.28
+      }
+    ],
+    "materials": [
+      "white brick",
+      "batten",
+      "blue-gray shutters"
+    ],
+    "uncertain": [
+      "Garage door is not visible; right-side garage inferred from reference context."
+    ]
+  }
+}

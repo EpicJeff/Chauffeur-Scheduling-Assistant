@@ -6,8 +6,12 @@ from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from services import house_facade as hf
+from photo_helpers import photo_response
 
 class PhotoBoundsTests(unittest.TestCase):
+    def setUp(self):
+        hf._PHOTO_RUNS.clear()
+
     def model(self,height):
         obj=copy.deepcopy(hf.CANONICAL)
         for name in ('main','garage'):
@@ -20,7 +24,8 @@ class PhotoBoundsTests(unittest.TestCase):
             obj['blocks']['garage']['base']['height']=0.2
             original=copy.deepcopy(obj)
             response=obj if stage=='describe' else {'reasons':['match stone base'],'revised':obj}
-            with patch.object(hf,'_settings',return_value={'llm_gemini_api_key':'offline'}),patch('services.model_pools.call_pool_json',return_value=response) as call:
+            with patch.object(hf,'_settings',return_value={'llm_gemini_api_key':'offline'}),patch('services.model_pools.call_pool_json',side_effect=lambda *a, **k: photo_response(a[2], response)) as call:
+                hf._PHOTO_RUNS.clear()
                 if stage=='describe':
                     spec,notes,error,token=hf.from_photo('AAAA','image/jpeg')
                 else:
@@ -33,7 +38,7 @@ class PhotoBoundsTests(unittest.TestCase):
                 self.assertEqual(spec['blocks']['garage']['base']['height'],0.6)
                 self.assertTrue(any('main.base.height' in n for n in notes))
                 self.assertTrue(any('garage.base.height' in n for n in notes))
-                self.assertEqual(call.call_count,1)
+                self.assertEqual(call.call_count,2 if stage=='describe' else 1)
             self.assertEqual(obj,original)
 
     def test_numeric_dimension_recovery_in_both_passes(self):
@@ -53,7 +58,8 @@ class PhotoBoundsTests(unittest.TestCase):
         self.assertTrue(hf.validate_block_model(obj))
         for stage in ('describe','critique'):
             response=obj if stage=='describe' else {'revised':obj,'reasons':[]}
-            with patch.object(hf,'_settings',return_value={'llm_gemini_api_key':'offline'}),patch('services.model_pools.call_pool_json',return_value=response) as call:
+            with patch.object(hf,'_settings',return_value={'llm_gemini_api_key':'offline'}),patch('services.model_pools.call_pool_json',side_effect=lambda *a, **k: photo_response(a[2], response)) as call:
+                hf._PHOTO_RUNS.clear()
                 if stage=='describe':spec,notes,error,_=hf.from_photo('AAAA','image/jpeg')
                 else:
                     token=hf.issue_draft(hf.CANONICAL,'AAAA','image/jpeg')
@@ -63,19 +69,20 @@ class PhotoBoundsTests(unittest.TestCase):
                 self.assertIsNotNone(spec)
                 self.assertEqual(hf.validate_block_model(spec),[])
                 for field in expected:self.assertTrue(any(field+' adjusted' in n for n in notes),field)
-                self.assertEqual(call.call_count,1)
+                self.assertEqual(call.call_count,2 if stage=='describe' else 1)
             self.assertEqual(obj,original)
 
     def test_invalid_types_and_nonfinite_heights_still_rejected(self):
         for value in ('1.2',True,None,float('nan'),float('inf')):
-            with self.subTest(value=value),patch.object(hf,'_settings',return_value={'llm_gemini_api_key':'offline'}),patch('services.model_pools.call_pool_json',return_value=self.model(value)):
+            with self.subTest(value=value),patch.object(hf,'_settings',return_value={'llm_gemini_api_key':'offline'}),patch('services.model_pools.call_pool_json',side_effect=lambda *a, **k: photo_response(a[2], self.model(value))):
+                hf._PHOTO_RUNS.clear()
                 spec,_,error,_=hf.from_photo('AAAA','image/jpeg')
                 self.assertIsNone(spec)
                 self.assertIn('base.height',error)
 
     def test_null_base_and_valid_height_unchanged(self):
         obj=self.model(1.2);obj['blocks']['garage']['base']=None
-        with patch.object(hf,'_settings',return_value={'llm_gemini_api_key':'offline'}),patch('services.model_pools.call_pool_json',return_value=obj):
+        with patch.object(hf,'_settings',return_value={'llm_gemini_api_key':'offline'}),patch('services.model_pools.call_pool_json',side_effect=lambda *a, **k: photo_response(a[2], obj)):
             spec,notes,error,_=hf.from_photo('AAAA','image/jpeg')
         self.assertIsNone(error)
         self.assertEqual(spec['blocks']['main']['base']['height'],1.2)

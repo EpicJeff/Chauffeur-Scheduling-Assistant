@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.113 (2026-09-19).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.114 (2026-09-20).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8208,3 +8208,32 @@ reference and driver setting for consistent replay. Existing route-chain timing 
 unchanged. Regression coverage includes thresholds, unlimited defaults, both legs,
 alternative drivers, home overrides, missing locations, persistence, manual warnings,
 and solve-pack replay.
+
+
+### v2.499.114 ? Observation-first house photo matching (2026-09-20)
+
+Photo matching now separates visual observations from block configuration. The first
+vision-pool pass records full-facade regions, actual upper stories and window groups,
+porches, gables, materials, viewpoint, and uncertain garage placement. The second
+pass receives those observations plus the full house schema. Its feature fractions
+start at the photo-left edge of each block; mirroring and mixed-porch offsets are
+converted once in code. Known garage side determines mirroring. Unknown side is
+reported instead of silently imposing a left/front garage.
+
+Deterministic checks flag mismatched second-story position/width, upstairs window
+counts, porch coverage, gable extent, and known garage orientation after normalization.
+These are approximate photo-proportion checks, not pixel similarity scores. Parents
+can inspect flagged drafts. **Compare to photo** supplies the full schema, observations,
+structural discrepancies, original image, and correct draft render for one revision.
+Revisions introducing new structural discrepancies are withheld. Existing discrepancies
+remain visible; there is no claim that passing the checks guarantees resemblance.
+
+A normal review uses three successful calls. Each photo run has a six-attempt maximum
+including provider fallbacks (up to two observation attempts, three initial translation
+attempts, and remaining attempts for critique). Analysis is cached for fifteen minutes;
+repeated uploads reuse the run and its request ledger, and repeat critiques replay their
+result. There is no automatic retry loop or automatic save. The preview capture waits
+for the requested iframe token and angle, preventing critique of a previous settled
+render. Offline tests use the family's authored and failed generated configurations,
+plus existing brick/farmhouse fixtures. A live reference attempt made two requests but
+Google rejected the local API key; visual improvement is not yet live-verified.

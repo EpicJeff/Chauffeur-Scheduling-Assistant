@@ -13,6 +13,7 @@ import secrets
 import threading
 import time
 import uuid
+from services.house_photo import OBSERVATION_PROMPT, validate_observations, structural_issues
 
 SLOT_W = 1.85
 # West to east. Mirrors house.js: FULL_HOUSE, GARAGE_BLOCK, EXT_TOP4.
@@ -1026,8 +1027,8 @@ slot number. This lets you describe the same house regardless of exactly how man
 has.
 
 MIRROR: the garage sits on the WEST (left) side by default. If the garage is on the EAST (right)
-side as seen from the street, set "mirror": true. If the garage is on the left, or you cannot see
-it at all, set "mirror": false.
+side as seen from the street, set "mirror": true. If garage side is unknown, choose the block mapping that best fits the visible
+section widths and record that uncertainty. Never assume left/front simply because a door is unseen.
 
 VIEWPOINT: report roughly where the photo was taken from relative to the house's centre --
 "left", "centre" or "right".
@@ -1036,9 +1037,10 @@ WORKED EXAMPLE: a garage on the LEFT showing the triangular end of its roof to t
 ridge running front-to-back) is {{"form": "gable", "ridge": "z"}} with "orientation": "front" --
 because the street sees the gable END, not the long eave side. A hip-roofed main block with two
 small gables poking out of the roof toward the street is main.roof = {{"form": "hip", "ridge": "x"}}
-plus two separate roof features of kind "gable", one per protrusion. A two-story centre showing
-its gable to the street with one-story wings is main.roof ridge x plus an upper span over the
-middle third whose roof is gable ridge z.
+plus two separate roof features of kind "gable", one per protrusion. A broad two-story centre with a side-to-side main ridge and a smaller front-facing gable
+is ONE broad upper span with ridge x plus a separate roof gable feature. Its upper span
+covers the rectangular upstairs wall, not merely the triangle. Use ridge z only when
+the entire upper roof actually runs front-to-back.
 
 Return exactly this shape (a fraction-based feature has "block"/"at"/"width" instead of "slot"/"span"):
 {{"version": 3, "mirror": bool, "viewpoint": "left"|"centre"|"right",
@@ -1078,8 +1080,9 @@ For a continuous sloping porch cover with a smaller front gable, use porch roof 
 Its optional gable_offset and gable_span count slots relative to the porch start; defaults are 0 and 2.
 Use roof "shed" for a porch cover with only one slope.
 If the garage is not visible, describe it
-as a plain default block (batten, white, gable ridge x, no upper span, front) -- never omit it.
-If unsure of a count, prefer fewer windows. The front door goes on the main block. Anything real
+as the visible wing mapped to that block; never omit it. Do not invent a street garage door.
+Use the observed facade geometry to choose the mapping and report uncertainty.
+Preserve every confidently visible window group; report obscured counts as uncertain. The front door goes on the main block. Anything real
 about the house that this schema has no field for -- a shape, a material, a massing detail --
 goes in "unexpressed" as a short phrase, never invented into a field that doesn't fit it. No prose."""
 
@@ -1099,7 +1102,7 @@ def _photo_prompt():
                                porch_roofs=list(PORCH_ROOFS), roof_kinds_features=roof_kinds_features) + _PHOTO_DIMENSION_GUIDANCE
 
 
-def _snap_fractions(obj, notes=None):
+def _snap_fractions(obj, notes=None, photo_coordinates=False):
     """Pass 1 reports ground/roof features as a FRACTION of their own block's
     street width (`block`/`at`/`width`) rather than a slot number, so the
     model never has to know the slot grid. This converts each fraction entry
@@ -1126,6 +1129,11 @@ def _snap_fractions(obj, notes=None):
             lo, hi = _face_range(face)
             n = hi - lo + 1
             at, width = _num(e.get('at'), 0.0), _num(e.get('width'), 1.0 / n)
+            if photo_coordinates and out.get('mirror'):
+                at = 1.0 - at - width
+                if e.get('kind') == 'porch' and e.get('roof') == 'mixed':
+                    porch_span = max(1, int(round(width * n)))
+                    e['gable_offset'] = max(0, porch_span - int(e.get('gable_offset', 0)) - int(e.get('gable_span', 2)))
             slot = lo + int(round(min(0.999, max(0.0, at)) * n))
             span = max(1, int(round(width * n)))
             e['slot'] = min(max(lo, slot), hi)
@@ -1144,48 +1152,107 @@ def _validate_photo_model(obj, notes):
     return out, validate_block_model(out, _range_notes=notes)
 
 
+# One bounded run per image during the draft review window. Retry reuses observations
+# and the request ledger; a double click cannot start a second provider run.
+PHOTO_REQUEST_CAP = 6
+_PHOTO_RUNS = {}
+_PHOTO_LOCK = threading.Lock()
+
+
 def from_photo(image_b64, mime):
-    """One photo -> a validated, normalized DRAFT + its token. Never stores."""
+    """Observe, then configure. Drafts and cached observations expire after 15 minutes."""
     from services import model_pools
     settings = _settings()
     api_key = settings.get('llm_gemini_api_key', '')
     if not api_key:
         return None, [], 'no LLM API key configured', None
-    attempts = []
-    try:
-        res = model_pools.call_pool_json(
-            'vision', api_key, _photo_prompt(),
-            'Describe the street-facing elevation of the house in the attached photo as the block model.',
-            temperature=0.1, timeout_s=90, settings=settings, strict_json=True,
-            max_output_tokens=4096, max_models=10, total_timeout_s=120, workflow='house_photo',
-            attempts=attempts,
+    key = _sha((mime or '') + image_b64)
+    with _PHOTO_LOCK:
+        now = time.time()
+        for k in list(_PHOTO_RUNS):
+            if not _PHOTO_RUNS[k]['pending'] and now - _PHOTO_RUNS[k]['created'] > DRAFT_TTL_S:
+                del _PHOTO_RUNS[k]
+        run = _PHOTO_RUNS.get(key)
+        if run and run['pending']:
+            return None, [], 'photo analysis already in progress', None
+        if run and run.get('token') and draft_for(run['token']):
+            return copy.deepcopy(run['spec']), list(run['notes']), None, run['token']
+        if run is None:
+            if len(_PHOTO_RUNS) >= DRAFT_MAX:
+                return None, [], 'photo review cache full; retry after existing reviews expire', None
+            run = {'created': now, 'attempts': [], 'observations': None, 'pending': False}
+            _PHOTO_RUNS[key] = run
+        run['pending'] = True
+    attempts = run['attempts']
+
+    def call(system, user, budget):
+        remaining = min(budget, PHOTO_REQUEST_CAP - 1 - len(attempts))  # reserve visual correction
+        if remaining <= 0:
+            raise ValueError('photo request budget exhausted; review the draft or retry after 15 minutes')
+        return model_pools.call_pool_json(
+            'vision', api_key, system, user, temperature=0.1, timeout_s=90,
+            settings=settings, strict_json=True, max_output_tokens=4096,
+            max_models=remaining, total_timeout_s=120, workflow='house_photo', attempts=attempts,
             images=[{'mime': mime or 'image/jpeg', 'b64': image_b64}])
-    except Exception as e:
-        return None, [], f'could not read the photo ({e})', None
-    if not isinstance(res, dict):
-        return None, [], 'could not read the photo (bad response)', None
-    if res.get('error'):
-        return None, [], f"could not read the photo ({res['error']})", None
-    res.pop('_model', None)
-    viewpoint = _pick(res.pop('viewpoint', None), ('left', 'centre', 'right'), 'centre')
-    pre = []
-    snapped = _snap_fractions(res, pre)
-    # FINAL REVIEW (important 3): the prompt allows a house whose garage the
-    # photo cannot see, and validate_block_model requires `blocks.garage`.
-    # An unseen garage becomes the DEFAULT block rather than a rejection --
-    # the parent edits or deletes it in the editor, which is the whole point
-    # of review-before-save.
-    blocks = snapped.get('blocks') if isinstance(snapped, dict) else None
-    if isinstance(blocks, dict) and not isinstance(blocks.get('garage'), dict):
-        blocks['garage'] = _block(orientation='front')
-        pre.append('garage not visible in the photo: drawn as a plain block')
-    snapped, errs = _validate_photo_model(snapped, pre)
-    if errs:
-        return None, [], 'the model returned an incomplete house: ' + '; '.join(errs[:3]), None
-    spec, notes = normalize(snapped)
-    notes = pre + notes + [_requests_note(attempts)]
-    return spec, notes, None, issue_draft(spec, image_b64, mime, viewpoint=viewpoint,
-                                          requests=len(attempts))
+
+    try:
+        if run['observations'] is None:
+            observed = call(OBSERVATION_PROMPT, 'Identify the visible architecture and proportions.', 2)
+            if isinstance(observed, dict) and observed.get('error'):
+                raise ValueError(observed['error'])
+            errors = validate_observations(observed)
+            if errors:
+                raise ValueError('invalid photo observations: ' + '; '.join(errors[:3]))
+            run['observations'] = copy.deepcopy(observed)
+        observed = run['observations']
+        res = call(_photo_prompt() + PHOTO_COORDINATES,
+                   'Build the house from these observations and the photo. Preserve the broad sections, '
+                   'second stories and visible window groups. An attic gable is not an upper story.\n'
+                   + json.dumps(observed), 3)
+        if not isinstance(res, dict) or res.get('error'):
+            raise ValueError(res.get('error', 'bad configuration response') if isinstance(res, dict) else 'bad response')
+        res = copy.deepcopy(res)
+        if observed['garage_side'] != 'unknown':
+            res['mirror'] = observed['garage_side'] == 'right'
+        pre = []
+        snapped = _snap_fractions(res, pre, photo_coordinates=True)
+        blocks = snapped.get('blocks')
+        if isinstance(blocks, dict) and not isinstance(blocks.get('garage'), dict):
+            blocks['garage'] = _block(orientation='front')
+            pre.append('garage block missing: drawn as a plain block; review placement')
+        snapped, errs = _validate_photo_model(snapped, pre)
+        if errs:
+            raise ValueError('the model returned an incomplete house: ' + '; '.join(errs[:3]))
+        spec, notes = normalize(snapped)
+        issues = structural_issues(spec, observed, len(slot_table()))
+        notes = pre + notes + ['Needs review: ' + x for x in issues] + observed['uncertain'] + [_requests_note(attempts)]
+        if observed['garage_side'] == 'unknown':
+            notes.append('Garage side is uncertain; block mapping is inferred from visible geometry.')
+        token = issue_draft(spec, image_b64, mime, viewpoint=observed['viewpoint'], requests=len(attempts))
+        _DRAFTS[token]['observations'] = copy.deepcopy(observed)
+        _DRAFTS[token]['photo_run'] = run
+        run.update(spec=copy.deepcopy(spec), notes=list(notes), token=token)
+        return spec, notes, None, token
+    except Exception as ex:
+        return None, [_requests_note(attempts)], f'could not match the photo ({ex})', None
+    finally:
+        with _PHOTO_LOCK:
+            run['pending'] = False
+
+
+PHOTO_COORDINATES = """
+Coordinate contract for THIS configuration pass overrides the generic slot description:
+Report block/at/width fractions, never slot/span. at is the LEFT EDGE of a feature
+in that block AS SEEN IN THE PHOTO; width is its extent, not its centre or endpoint.
+Do NOT reverse these fractions when mirror=true: the application does that once.
+Porch gable_offset counts slots from the porch's PHOTO-LEFT edge and is reflected in code.
+For mirror=false the garage block occupies the left third, main the right two thirds.
+For mirror=true main occupies the left two thirds, garage the right third.
+Map the observed full-facade regions into these block-local fractions. Use ONE broad
+upper span for each rectangular second-story wall, with its windows on story 2.
+Roof triangles alone belong in roof features, not upper spans. Keep the upper roof's
+main ridge direction separate from any smaller decorative front-facing gable.
+"""
 
 
 def _requests_note(attempts):
@@ -1196,7 +1263,7 @@ def _requests_note(attempts):
 
 CRITIQUE_SYSTEM = """You compare a photo of a house with a 3D render of a draft description of it,
 and improve the draft. You are given, in order: the ORIGINAL PHOTO, the RENDER of the current
-draft, and the draft's own JSON (the same block-model shape pass 1 produces, but with "slot" and
+draft, and the draft's own JSON (the configuration pass produces, but with "slot" and
 "span" instead of fractions -- keep that shape).
 
 Go through the comparison in this FIXED ORDER and give AT MOST EIGHT reasons, each one line,
@@ -1238,6 +1305,9 @@ def critique(token, render_png_b64):
                 return None, 'critique in progress'
             return e['result'], None
         e['result'] = {'pending': True}
+        if e.get('photo_run') is not None:
+            with _PHOTO_LOCK:
+                e['photo_run']['pending'] = True
     settings = _settings()
     api_key = settings.get('llm_gemini_api_key', '')
     draft = copy.deepcopy(e['spec'])
@@ -1248,6 +1318,10 @@ def critique(token, render_png_b64):
               'attempts': 0, 'requests_total': issued_requests}
 
     def finish(res_obj):
+        if e.get('photo_run') is not None:
+            with _PHOTO_LOCK:
+                e['photo_run']['attempts'].extend(attempts)
+                e['photo_run']['pending'] = False
         # Every exit below this point stores a real result, so an entry can
         # never stay `pending` and lock its own token out.
         res_obj['attempts'] = len(attempts)
@@ -1259,12 +1333,17 @@ def critique(token, render_png_b64):
     if not api_key or not e.get('photo_b64'):
         result['reasons'] = ['no critique: ' + ('no LLM API key configured' if not api_key else 'no photo on this draft')]
         return finish(result)
+    if issued_requests >= PHOTO_REQUEST_CAP:
+        result['reasons'] = ['Photo request budget exhausted; no additional request made.']
+        return finish(result)
+    observed = e.get('observations')
+    before_issues = structural_issues(draft, observed, len(slot_table()))
     try:
         res = model_pools.call_pool_json(
-            'vision', api_key, CRITIQUE_SYSTEM + _PHOTO_DIMENSION_GUIDANCE,
-            'Photo first, then the render of the draft, then the draft JSON:\n' + json.dumps(draft),
+            'vision', api_key, _photo_prompt() + '\n' + CRITIQUE_SYSTEM + '\nUse canonical slot/span coordinates: garage slots 0..5, main 6..17. mirror reflects the whole house; increasing slots run RIGHT TO LEFT in a mirrored photo. Do not use photo fractions in the revision.',
+            'Photo first, then render. Observations: ' + json.dumps(observed) + '\nStructural discrepancies: ' + json.dumps(before_issues) + '\nDraft JSON:\n' + json.dumps(draft),
             temperature=0.1, timeout_s=90, settings=settings, strict_json=True,
-            max_output_tokens=4096, max_models=10, total_timeout_s=120, workflow='house_photo',
+            max_output_tokens=4096, max_models=PHOTO_REQUEST_CAP - issued_requests, total_timeout_s=120, workflow='house_photo',
             attempts=attempts,
             images=[{'mime': e.get('mime') or 'image/jpeg', 'b64': e['photo_b64']},
                     {'mime': 'image/png', 'b64': render_png_b64}])
@@ -1282,8 +1361,12 @@ def critique(token, render_png_b64):
         result['reasons'] = reasons + snap_notes + ['revision rejected as incomplete: ' + '; '.join(errs[:3])]
     else:
         spec, notes = normalize(copy.deepcopy(revised))
+        after_issues = structural_issues(spec, observed, len(slot_table()))
+        if not set(after_issues).issubset(set(before_issues)):
+            result['reasons'] = reasons + snap_notes + notes + ['Revision withheld: it introduces structural discrepancies.'] + after_issues
+            return finish(result)
         result['revised'] = spec
-        result['reasons'] = reasons + snap_notes + notes
+        result['reasons'] = reasons + snap_notes + notes + ['Still needs review: ' + x for x in after_issues]
         result['unexpressed'] = list(spec.get('unexpressed') or [])
     return finish(result)
 

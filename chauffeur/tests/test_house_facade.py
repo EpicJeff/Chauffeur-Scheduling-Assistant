@@ -6,6 +6,7 @@ import json
 
 from harness import check
 from services import house_facade as hf
+from photo_helpers import photo_response
 
 
 def _spec(**over):
@@ -310,6 +311,7 @@ def scenario_worst_case_is_within_caps():
 
 
 def _fresh():
+    hf._PHOTO_RUNS.clear()
     # harness.py replaces storage.get_settings with a constant lambda; the
     # storage laws need the real table, so read it directly.
     from services import storage
@@ -405,7 +407,7 @@ def scenario_routes_and_template():
     storage.update_settings({'calendar_ids': [], 'llm_gemini_api_key': 'k'})
     orig_pool = model_pools.call_pool_json
     try:
-        model_pools.call_pool_json = lambda *a, **k: _fixture('brick.pass1.json')
+        model_pools.call_pool_json = lambda *a, **k: photo_response(a[2], _fixture('brick.pass1.json'))
         upload = UploadFile(io.BytesIO(b'\x89PNG\r\n\x1a\n'), filename='b0.png',
                             headers=Headers({'content-type': 'image/png'}))
         out = main.house_facade_photo(upload)
@@ -549,6 +551,7 @@ def scenario_photo_pass1_maps_the_fixtures():
     orig = model_pools.call_pool_json
     try:
         for photo in ('brick', 'farmhouse'):
+            hf._PHOTO_RUNS.clear()
             exp = _fixture(photo + '.expected.json')
             errs = hf.validate_block_model(exp)
             check(errs == [], f'{photo}: the expected fixture validates: {errs}')
@@ -556,7 +559,7 @@ def scenario_photo_pass1_maps_the_fixtures():
             check(renorm == exp and renotes == [], f'{photo}: the expected fixture is normalize-idempotent: {renotes}')
             seen = {}
             def fake_pool(tier, key, system, user, **kw):
-                seen.update(kw); return _fixture(photo + '.pass1.json')
+                seen.update(kw); return photo_response(system, _fixture(photo + '.pass1.json'))
             model_pools.call_pool_json = fake_pool
             draft, notes, err, tok = hf.from_photo('AAAA', 'image/jpeg')
             check(err is None and tok, f'{photo}: draft + token: {err}')
@@ -573,7 +576,7 @@ def scenario_photo_pass1_maps_the_fixtures():
                   f"{photo}: ground matches the expected model in full: {draft['ground']} != {exp['ground']}")
             check(sort_roof(draft['roof']) == sort_roof(exp['roof']),
                   f"{photo}: roof matches the expected model in full: {draft['roof']} != {exp['roof']}")
-            check(seen['max_models'] == 10 and seen['total_timeout_s'] == 120 and seen['workflow'] == 'house_photo', f'attempt budget + label: {seen}')
+            check(seen['max_models'] == 3 and seen['total_timeout_s'] == 120 and seen['workflow'] == 'house_photo', f'attempt budget + label: {seen}')
             check(len(hf.list_facades()) == 1, 'nothing saved')
         check(json.loads(json.dumps(_fixture('brick.expected.json')))['mirror'] is False, 'brick photo: garage on the LEFT is mirror false')
     finally:
@@ -601,14 +604,14 @@ def scenario_critique_returns_one_revised_model_or_the_draft():
     storage.update_settings({'calendar_ids': [], 'llm_gemini_api_key': 'k'})
     orig = model_pools.call_pool_json
     try:
-        model_pools.call_pool_json = lambda *a, **k: _fixture('brick.pass1.json')
+        model_pools.call_pool_json = lambda *a, **k: photo_response(a[2], _fixture('brick.pass1.json'))
         draft, _, _, tok = hf.from_photo('AAAA', 'image/jpeg')
         before = json.dumps(hf.draft_for(tok)['spec'], sort_keys=True)
         calls = {'n': 0}
         def pass2(tier, key, system, user, **kw):
             calls['n'] += 1
             check(len(kw['images']) == 2, 'photo + render go to pass 2')
-            check(kw['max_models'] == 10 and kw['total_timeout_s'] == 120, 'critique uses bounded pool fallback')
+            check(kw['max_models'] == hf.PHOTO_REQUEST_CAP and kw['total_timeout_s'] == 120, 'critique uses bounded pool fallback')
             return _fixture('brick.pass2.json')
         model_pools.call_pool_json = pass2
         res, err = hf.critique(tok, 'iVBOR')
@@ -617,7 +620,7 @@ def scenario_critique_returns_one_revised_model_or_the_draft():
         res2, _ = hf.critique(tok, 'iVBOR')
         check(calls['n'] == 1 and res2 == res, 'a duplicate submission reuses the stored result: one execution')
         # a rejected revision keeps the draft
-        model_pools.call_pool_json = lambda *a, **k: _fixture('farmhouse.pass1.json')
+        model_pools.call_pool_json = lambda *a, **k: photo_response(a[2], _fixture('farmhouse.pass1.json'))
         _, _, _, tok2 = hf.from_photo('BBBB', 'image/jpeg')
         model_pools.call_pool_json = lambda *a, **k: {'reasons': ['x'], 'revised': {}}
         res3, err3 = hf.critique(tok2, 'iVBOR')
@@ -665,7 +668,7 @@ def scenario_critique_is_single_flight():
     storage.update_settings({'calendar_ids': [], 'llm_gemini_api_key': 'k'})
     orig = model_pools.call_pool_json
     try:
-        model_pools.call_pool_json = lambda *a, **k: _fixture('brick.pass1.json')
+        model_pools.call_pool_json = lambda *a, **k: photo_response(a[2], _fixture('brick.pass1.json'))
         _, _, _, tok = hf.from_photo('AAAA', 'image/jpeg')
         calls = {'n': 0}
 
@@ -702,12 +705,12 @@ def scenario_an_unseen_garage_is_a_plain_block():
     try:
         no_garage = _fixture('brick.pass1.json')
         no_garage['blocks'].pop('garage', None)
-        model_pools.call_pool_json = lambda *a, **k: copy.deepcopy(no_garage)
+        model_pools.call_pool_json = lambda *a, **k: photo_response(a[2], no_garage)
         draft, notes, err, tok = hf.from_photo('AAAA', 'image/jpeg')
         check(err is None and draft and tok, f'a photo with no visible garage still yields a draft: {err}')
         check(draft['blocks']['garage'] == hf._block(orientation='front'),
               f"the unseen garage is the plain default block: {draft['blocks']['garage']}")
-        check(any('garage not visible' in n for n in notes), f'and it says so: {notes}')
+        check(any('garage block missing' in n for n in notes), f'and it says so: {notes}')
         # a null garage is the same case
         no_garage['blocks']['garage'] = None
         draft2, notes2, err2, _ = hf.from_photo('AAAA', 'image/jpeg')
@@ -744,10 +747,10 @@ def scenario_the_pipeline_records_its_request_count():
     try:
         def two_tries(tier, key, system, user, attempts=None, **kw):
             attempts.extend(['gemini-a', 'gemini-b'])
-            return _fixture('brick.pass1.json')
+            return photo_response(system, _fixture('brick.pass1.json'))
         model_pools.call_pool_json = two_tries
         draft, notes, err, tok = hf.from_photo('AAAA', 'image/jpeg')
-        check(err is None and any('2 model request(s): gemini-a, gemini-b' in n for n in notes),
+        check(err is None and any('4 model request(s): gemini-a, gemini-b, gemini-a, gemini-b' in n for n in notes),
               f'pass 1 writes down what it spent: {notes}')
 
         def one_try(tier, key, system, user, attempts=None, **kw):
@@ -756,7 +759,7 @@ def scenario_the_pipeline_records_its_request_count():
         model_pools.call_pool_json = one_try
         res, err2 = hf.critique(tok, 'iVBOR')
         check(err2 is None and res['attempts'] == 1, f"pass 2's own count is measured, not assumed: {res['attempts']}")
-        check(res['requests_total'] == 3, f"the token's total is pass 1 plus pass 2: {res['requests_total']}")
+        check(res['requests_total'] == 5, f"the token's total is pass 1 plus pass 2: {res['requests_total']}")
         check(any('1 model request(s): gemini-a' in r for r in res['reasons']), f'and it is in the reasons: {res["reasons"]}')
     finally:
         model_pools.call_pool_json = orig
