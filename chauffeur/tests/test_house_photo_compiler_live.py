@@ -23,16 +23,27 @@ def main():
             page.set_viewport_size({'width':1400,'height':1000})
             page.add_init_script(DAY_LOCK_JS)
             page.route('**/api/v2/chat/stream*',lambda route:route.fulfill(status=200,body=''))
-            for mode in ('replay','unmirrored','no-upper','photo8'):
+            for mode in ('replay','unmirrored','no-upper','photo8','photo10-faces'):
                 if mode=='unmirrored':spec['mirror']=False
                 if mode=='no-upper':spec['upper']=[];spec,_=hf.normalize(spec)
                 if mode=='photo8':
                     spec,_,_=compile_analysis(json.loads((Path(__file__).parent/'fixtures/house_photo8_analysis.json').read_text()))
+                if mode=='photo10-faces':
+                    a=json.loads((Path(__file__).parent/'fixtures/house_photo10_trace.json').read_text())['review_analysis']
+                    a.update(schema_version=2,coordinate_frame='house_front',observations=[])
+                    for layer in ('volumes','porches','gables','dormers','openings','finishes'):
+                        for row in a[layer]:
+                            row['face']='right' if row.get('id')=='O11' else 'front'
+                            if 'id' in row:a['observations'].append({'feature':row['id'],
+                                'image':3 if row['face']=='right' else 1,'face':row['face'],
+                                'box':{'x':row['at'],'y':.2,'width':row['width'],'height':.5},
+                                'evidence':'Synthetic face annotation for regression; not live recognition.'})
+                    spec,_,_=compile_analysis(a)
                 token=hf.issue_draft(spec)
                 page.goto(served.url('house')+'?draft='+token+'&angle=0&quality=high&day=1&editor=1')
                 page.wait_for_function('window.chfFacade && window.chfFacade() && window.chfNavProbe({settled:true})',timeout=120000)
                 rows=page.evaluate('window.chfShellFabric().map(f=>f.name)')
-                if mode!='photo8':
+                if mode not in ('photo8','photo10-faces'):
                     assert 'facade_garage_block_gable_0_attic_window' in rows, rows
                     assert any(n.startswith('facade_garage_block_gable_0') for n in rows)
                     assert sum(n.startswith('facade_garage_block_window_2_unit') for n in rows)==3

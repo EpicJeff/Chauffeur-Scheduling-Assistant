@@ -87,3 +87,37 @@ the existing review lifetime; exported traces retain only view labels alongside 
 Single-photo uploads remain compatible. Request limits stay 3 upload attempts plus one
 automatic review, with 3 for manual review. More images may increase input tokens.
 Browser and ASGI multipart tests exercise the new flow without live Gemini calls.
+
+
+## Wall faces and evidence contract (v2.499.131)
+
+Analysis schema v2 adds `face` to every feature layer and `coordinate_frame=house_front`.
+Roof ridge directions remain parallel/perpendicular but explicitly reference the house
+front, independent of camera direction. Side-facing end gables do not imply a
+front-to-back ridge. Front wall volumes describe rectangular walls below the eaves;
+side attic triangles must not extend the front second story.
+
+`observations` contains feature ID, image number, physical face, normalized image box
+(x,y,width,height), and evidence. Boxes stay in their own image coordinate system.
+Every identified feature needs evidence; front features require image 1. Compiler checks
+face agreement, box bounds, valid owner types, available source images and containment of
+front opening boxes within their wall/gable owner. Front at/width remains the facade
+coordinate system; non-front at/width is face-local and is never projected into it.
+
+Compiler v4 reduces v2 to its front projection before the existing bounded preparation
+and slot mapping. It preserves original analysis and records excluded faces separately.
+Side garage observations set side entry without emitting a front garage opening or
+occupying front window slots. Door leaves are bounded by renderer capacity; layout and
+dimensions use renderer defaults, with explicit notes. Non-front details unsupported by
+the renderer remain observations/limitations. Existing v1 analyses retain legacy behavior.
+
+Review schema requires five structural checks: wall faces, story boundaries, roof
+directions, opening ownership and porch placement. Each is matched/corrected/uncertain.
+Uncertain or missing checks and remaining compiler conflicts prevent auto-adoption;
+the original draft remains available and review is retryable. This is a deterministic
+acceptance gate, not independent proof that model judgments are correct.
+
+Photo10 raw trace is the regression fixture. Annotating O11 as right-face/image3 proves
+the compiler no longer creates a front garage door or drops the displaced window.
+Synthetic side-wall/gable observations prove they do not enlarge the front elevation.
+No fresh model run was used to establish recognition quality.

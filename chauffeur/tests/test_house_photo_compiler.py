@@ -10,6 +10,16 @@ from services import house_facade as hf, model_pools, llm_budget
 from services.house_photo_compiler import compile_analysis, validate_analysis, ANALYSIS_PROMPT
 DATA=json.loads((Path(__file__).parent/'fixtures/house_photo_architecture_v1.json').read_text())
 
+def faced_analysis(data):
+    """Synthetic labeled evidence for compiler tests, not model recognition proof."""
+    a=copy.deepcopy(data);a.update(schema_version=2,coordinate_frame='house_front',observations=[])
+    for layer in ('volumes','porches','gables','dormers','openings','finishes'):
+        for row in a[layer]:
+            row['face']='front'
+            if 'id' in row:a['observations'].append({'feature':row['id'],'image':1,'face':'front',
+                'box':{'x':row['at'],'y':.2,'width':row['width'],'height':.5},'evidence':'Synthetic primary evidence.'})
+    return a
+
 class CompilerTests(unittest.TestCase):
     def test_reference_shape_and_units_are_deterministic(self):
         original=copy.deepcopy(DATA)
@@ -162,6 +172,69 @@ class CompilerTests(unittest.TestCase):
                           [('photo',('bad.txt',b'no','text/plain'))]):
                 self.assertEqual(client.post('/api/house/facades/photo',files=files).status_code,400)
             self.assertEqual(service.call_count,2)
+
+    def test_photo10_side_garage_does_not_take_front_slots(self):
+        trace=json.loads((Path(__file__).parent/'fixtures/house_photo10_trace.json').read_text())
+        raw=trace['review_analysis']
+        self.assertTrue(any(o['kind']=='garage_door' for o in compile_analysis(raw)[0]['ground']))
+        a=faced_analysis(raw)
+        door=next(o for o in a['openings'] if o['id']=='O11');door['face']='right'
+        evidence=next(o for o in a['observations'] if o['feature']=='O11')
+        evidence.update(face='right',image=3)
+        spec,notes,compiled=compile_analysis(a)
+        self.assertTrue(spec['mirror'])
+        self.assertEqual(spec['blocks']['garage']['orientation'],'side')
+        self.assertEqual(spec['blocks']['garage']['side_door']['leaves'],2)
+        self.assertFalse(any(o['kind']=='garage_door' for o in spec['ground']))
+        self.assertTrue(any(o['id']=='O11' for o in compiled['face_projection']['excluded_faces']))
+        self.assertFalse(any('dropped a window' in n for n in notes))
+        self.assertEqual(hf.validate_block_model(spec),[])
+
+    def test_side_evidence_never_creates_front_story_or_roof(self):
+        a=faced_analysis(DATA);expected=compile_analysis(a)[0]
+        side=copy.deepcopy(a['volumes'][0]);side.update(id='side-wall',face='left',stories='two')
+        side['roof']['ridge']='parallel'
+        a['volumes'].append(side)
+        gable={'id':'side-end','owner':'side-wall','face':'left','at':0,'width':1,'kind':'end','evidence':'Side-facing triangle.'}
+        a['gables'].append(gable)
+        for r in (side,gable):a['observations'].append({'feature':r['id'],'image':2,'face':'left',
+            'box':{'x':.1,'y':.1,'width':.5,'height':.5},'evidence':'Synthetic side evidence.'})
+        spec,_,_=compile_analysis(a)
+        for key in ('upper','roof','ground'):self.assertEqual(spec[key],expected[key])
+        bad=copy.deepcopy(a);bad['observations'][0]['image']=2
+        with self.assertRaisesRegex(ValueError,'primary-photo evidence'):compile_analysis(bad)
+        bad=copy.deepcopy(a);bad['observations'][0]['face']='rear'
+        with self.assertRaisesRegex(ValueError,'face conflicts'):compile_analysis(bad)
+        bad=copy.deepcopy(a)
+        attic=next(o for o in bad['openings'] if o['level']=='attic')
+        obs=next(o for o in bad['observations'] if o['feature']==attic['id'])
+        obs['box'].update(y=.75,height=.1)
+        with self.assertRaisesRegex(ValueError,'outside its owner'):compile_analysis(bad)
+        bad=copy.deepcopy(a);bad['coordinate_frame']='camera'
+        with self.assertRaises(ValueError):compile_analysis(bad)
+        with self.assertRaisesRegex(ValueError,'not supplied'):
+            hf._validate_photo_sources(a,[{}])
+
+    def test_uncertain_structural_review_is_not_auto_applied(self):
+        hf._PHOTO_RUNS.clear();a=faced_analysis(DATA)
+        checks={k:'matched' for k in ('wall_faces','story_boundaries','roof_directions','opening_ownership','porch_placement')}
+        checks['story_boundaries']='uncertain'
+        review={'analysis':copy.deepcopy(a),'reasons':['The eave is obscured.'],'structural_review':checks}
+        with patch.object(hf,'_settings',return_value={'llm_gemini_api_key':'offline'}),patch(
+                'services.model_pools.call_pool_json',side_effect=[a,review]) as api:
+            spec,_,error,token=hf.from_photo('faces','image/png')
+            self.assertIsNone(error)
+            result,error=hf.critique(token,'render',automatic=True)
+            self.assertIsNone(error)
+            self.assertIsNone(result['revised'])
+            self.assertEqual(hf._DRAFTS[token]['spec'],spec)
+            self.assertIn('story_boundaries',result['reasons'][0])
+            self.assertEqual(api.call_count,2)
+            checks['story_boundaries']='matched'
+            api.side_effect=None;api.return_value=review
+            result,error=hf.critique(token,'render',automatic=True)
+            self.assertIsNone(error)
+            self.assertIsNotNone(result['revised'])
 
     def test_roof_story_and_known_orientation_matrix(self):
         for form in ('gable','hip'):

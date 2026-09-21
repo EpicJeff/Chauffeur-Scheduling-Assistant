@@ -1,0 +1,2380 @@
+{
+  "pipeline": "deterministic_v1",
+  "photo_views": [
+    "primary front",
+    "front-left",
+    "front-right"
+  ],
+  "analysis": {
+    "schema_version": 1,
+    "viewpoint": "centre",
+    "garage_side": "right",
+    "volumes": [
+      {
+        "id": "V1",
+        "at": 0.0,
+        "width": 0.25,
+        "stories": "two",
+        "projection": "forward",
+        "roof": {
+          "form": "gable",
+          "ridge": "perpendicular",
+          "pitch": "medium",
+          "evidence": "Main roof form for the leftmost section, ridge runs front-to-back (image 2)."
+        },
+        "evidence": "Leftmost two-story section, projects forward relative to V2 (image 1)."
+      },
+      {
+        "id": "V2",
+        "at": 0.25,
+        "width": 0.35,
+        "stories": "two",
+        "projection": "recessed",
+        "roof": {
+          "form": "gable",
+          "ridge": "perpendicular",
+          "pitch": "medium",
+          "evidence": "Main roof form for the central section, ridge runs front-to-back (image 1, 2)."
+        },
+        "evidence": "Central two-story section, recessed relative to V1 and V3 (image 1)."
+      },
+      {
+        "id": "V3",
+        "at": 0.6,
+        "width": 0.4,
+        "stories": "one",
+        "projection": "forward",
+        "roof": {
+          "form": "gable",
+          "ridge": "perpendicular",
+          "pitch": "medium",
+          "evidence": "Main roof form for the rightmost section, ridge runs front-to-back (image 1, 3)."
+        },
+        "evidence": "Rightmost one-story section, projects forward relative to V2 and contains the garage (image 1, 3)."
+      }
+    ],
+    "porches": [
+      {
+        "id": "P1",
+        "owner": "V2",
+        "at": 0.25,
+        "width": 0.35,
+        "roof": "shed"
+      }
+    ],
+    "gables": [
+      {
+        "id": "G1",
+        "owner": "V1",
+        "at": 0.0,
+        "width": 0.25,
+        "kind": "end",
+        "evidence": "The gable end of volume V1 is visible on the left (image 1)."
+      },
+      {
+        "id": "G2",
+        "owner": "V2",
+        "at": 0.25,
+        "width": 0.35,
+        "kind": "cross",
+        "evidence": "A cross-gable projects from the main roof of V2, above the porch (image 1)."
+      },
+      {
+        "id": "G3",
+        "owner": "V3",
+        "at": 0.6,
+        "width": 0.4,
+        "kind": "end",
+        "evidence": "The gable end of volume V3 is visible on the right (image 1)."
+      }
+    ],
+    "dormers": [],
+    "openings": [
+      {
+        "id": "O1",
+        "owner": "V1",
+        "at": 0.05,
+        "width": 0.15,
+        "kind": "window",
+        "level": "ground",
+        "count": 2,
+        "size": "standard",
+        "shutters": false
+      },
+      {
+        "id": "O2",
+        "owner": "V1",
+        "at": 0.05,
+        "width": 0.15,
+        "kind": "window",
+        "level": "upper",
+        "count": 1,
+        "size": "standard",
+        "shutters": true
+      },
+      {
+        "id": "O3",
+        "owner": "P1",
+        "at": 0.27,
+        "width": 0.08,
+        "kind": "door",
+        "level": "ground",
+        "count": 2,
+        "size": "tall",
+        "shutters": false
+      },
+      {
+        "id": "O4",
+        "owner": "V2",
+        "at": 0.38,
+        "width": 0.12,
+        "kind": "window",
+        "level": "ground",
+        "count": 3,
+        "size": "standard",
+        "shutters": false
+      },
+      {
+        "id": "O5",
+        "owner": "V2",
+        "at": 0.3,
+        "width": 0.1,
+        "kind": "window",
+        "level": "upper",
+        "count": 1,
+        "size": "standard",
+        "shutters": true
+      },
+      {
+        "id": "O6",
+        "owner": "V2",
+        "at": 0.45,
+        "width": 0.1,
+        "kind": "window",
+        "level": "upper",
+        "count": 1,
+        "size": "standard",
+        "shutters": true
+      },
+      {
+        "id": "O7",
+        "owner": "G2",
+        "at": 0.37,
+        "width": 0.1,
+        "kind": "window",
+        "level": "attic",
+        "count": 1,
+        "size": "small",
+        "shutters": false
+      },
+      {
+        "id": "O8",
+        "owner": "V3",
+        "at": 0.62,
+        "width": 0.15,
+        "kind": "window",
+        "level": "ground",
+        "count": 3,
+        "size": "standard",
+        "shutters": false
+      },
+      {
+        "id": "O9",
+        "owner": "V3",
+        "at": 0.8,
+        "width": 0.05,
+        "kind": "window",
+        "level": "ground",
+        "count": 1,
+        "size": "standard",
+        "shutters": false
+      },
+      {
+        "id": "O10",
+        "owner": "G3",
+        "at": 0.7,
+        "width": 0.1,
+        "kind": "window",
+        "level": "attic",
+        "count": 1,
+        "size": "standard",
+        "shutters": false
+      },
+      {
+        "id": "O11",
+        "owner": "V3",
+        "at": 0.7,
+        "width": 0.2,
+        "kind": "garage_door",
+        "level": "ground",
+        "count": 2,
+        "size": "tall",
+        "shutters": false
+      }
+    ],
+    "finishes": [
+      {
+        "at": 0.0,
+        "width": 1.0,
+        "story": "base",
+        "material": "brick",
+        "colour": "white"
+      },
+      {
+        "at": 0.0,
+        "width": 1.0,
+        "story": "ground",
+        "material": "lap",
+        "colour": "greige"
+      },
+      {
+        "at": 0.0,
+        "width": 1.0,
+        "story": "upper",
+        "material": "lap",
+        "colour": "greige"
+      },
+      {
+        "at": 0.0,
+        "width": 1.0,
+        "story": "upper",
+        "material": "batten",
+        "colour": "greige"
+      }
+    ],
+    "palette": {
+      "roof": "charcoal",
+      "frame": "white",
+      "door": "wood",
+      "trim": "white"
+    },
+    "limitations": [
+      "The exact material for the upper story gables (V1, G2, G3) is batten, while the main wall sections are lap siding. This is captured by the 'batten' finish entry for the upper story.",
+      "The porch roof is a shed form, but it has a small decorative metal awning over the main door, which is not explicitly captured by the schema.",
+      "The garage doors (O11) are visible in image 3, but partially obscured by a tree in image 1. Their position and width are estimated from image 3 and aligned with image 1's coordinate system."
+    ],
+    "_model": "gemini-2.5-flash"
+  },
+  "raw_analysis": {
+    "schema_version": 1,
+    "viewpoint": "centre",
+    "garage_side": "right",
+    "volumes": [
+      {
+        "id": "V1",
+        "at": 0.0,
+        "width": 0.25,
+        "stories": "two",
+        "projection": "forward",
+        "roof": {
+          "form": "gable",
+          "ridge": "perpendicular",
+          "pitch": "medium",
+          "evidence": "Main roof form for the leftmost section, ridge runs front-to-back (image 2)."
+        },
+        "evidence": "Leftmost two-story section, projects forward relative to V2 (image 1)."
+      },
+      {
+        "id": "V2",
+        "at": 0.25,
+        "width": 0.35,
+        "stories": "two",
+        "projection": "recessed",
+        "roof": {
+          "form": "gable",
+          "ridge": "perpendicular",
+          "pitch": "medium",
+          "evidence": "Main roof form for the central section, ridge runs front-to-back (image 1, 2)."
+        },
+        "evidence": "Central two-story section, recessed relative to V1 and V3 (image 1)."
+      },
+      {
+        "id": "V3",
+        "at": 0.6,
+        "width": 0.4,
+        "stories": "one",
+        "projection": "forward",
+        "roof": {
+          "form": "gable",
+          "ridge": "perpendicular",
+          "pitch": "medium",
+          "evidence": "Main roof form for the rightmost section, ridge runs front-to-back (image 1, 3)."
+        },
+        "evidence": "Rightmost one-story section, projects forward relative to V2 and contains the garage (image 1, 3)."
+      }
+    ],
+    "porches": [
+      {
+        "id": "P1",
+        "owner": "V2",
+        "at": 0.25,
+        "width": 0.35,
+        "roof": "shed"
+      }
+    ],
+    "gables": [
+      {
+        "id": "G1",
+        "owner": "V1",
+        "at": 0.0,
+        "width": 0.25,
+        "kind": "end",
+        "evidence": "The gable end of volume V1 is visible on the left (image 1)."
+      },
+      {
+        "id": "G2",
+        "owner": "V2",
+        "at": 0.25,
+        "width": 0.35,
+        "kind": "cross",
+        "evidence": "A cross-gable projects from the main roof of V2, above the porch (image 1)."
+      },
+      {
+        "id": "G3",
+        "owner": "V3",
+        "at": 0.6,
+        "width": 0.4,
+        "kind": "end",
+        "evidence": "The gable end of volume V3 is visible on the right (image 1)."
+      }
+    ],
+    "dormers": [],
+    "openings": [
+      {
+        "id": "O1",
+        "owner": "V1",
+        "at": 0.05,
+        "width": 0.15,
+        "kind": "window",
+        "level": "ground",
+        "count": 2,
+        "size": "standard",
+        "shutters": false
+      },
+      {
+        "id": "O2",
+        "owner": "V1",
+        "at": 0.05,
+        "width": 0.15,
+        "kind": "window",
+        "level": "upper",
+        "count": 1,
+        "size": "standard",
+        "shutters": true
+      },
+      {
+        "id": "O3",
+        "owner": "P1",
+        "at": 0.27,
+        "width": 0.08,
+        "kind": "door",
+        "level": "ground",
+        "count": 2,
+        "size": "tall",
+        "shutters": false
+      },
+      {
+        "id": "O4",
+        "owner": "V2",
+        "at": 0.38,
+        "width": 0.12,
+        "kind": "window",
+        "level": "ground",
+        "count": 3,
+        "size": "standard",
+        "shutters": false
+      },
+      {
+        "id": "O5",
+        "owner": "V2",
+        "at": 0.3,
+        "width": 0.1,
+        "kind": "window",
+        "level": "upper",
+        "count": 1,
+        "size": "standard",
+        "shutters": true
+      },
+      {
+        "id": "O6",
+        "owner": "V2",
+        "at": 0.45,
+        "width": 0.1,
+        "kind": "window",
+        "level": "upper",
+        "count": 1,
+        "size": "standard",
+        "shutters": true
+      },
+      {
+        "id": "O7",
+        "owner": "G2",
+        "at": 0.37,
+        "width": 0.1,
+        "kind": "window",
+        "level": "attic",
+        "count": 1,
+        "size": "small",
+        "shutters": false
+      },
+      {
+        "id": "O8",
+        "owner": "V3",
+        "at": 0.62,
+        "width": 0.15,
+        "kind": "window",
+        "level": "ground",
+        "count": 3,
+        "size": "standard",
+        "shutters": false
+      },
+      {
+        "id": "O9",
+        "owner": "V3",
+        "at": 0.8,
+        "width": 0.05,
+        "kind": "window",
+        "level": "ground",
+        "count": 1,
+        "size": "standard",
+        "shutters": false
+      },
+      {
+        "id": "O10",
+        "owner": "G3",
+        "at": 0.7,
+        "width": 0.1,
+        "kind": "window",
+        "level": "attic",
+        "count": 1,
+        "size": "standard",
+        "shutters": false
+      },
+      {
+        "id": "O11",
+        "owner": "V3",
+        "at": 0.7,
+        "width": 0.2,
+        "kind": "garage_door",
+        "level": "ground",
+        "count": 2,
+        "size": "tall",
+        "shutters": false
+      }
+    ],
+    "finishes": [
+      {
+        "at": 0.0,
+        "width": 1.0,
+        "story": "base",
+        "material": "brick",
+        "colour": "white"
+      },
+      {
+        "at": 0.0,
+        "width": 1.0,
+        "story": "ground",
+        "material": "lap",
+        "colour": "greige"
+      },
+      {
+        "at": 0.0,
+        "width": 1.0,
+        "story": "upper",
+        "material": "lap",
+        "colour": "greige"
+      },
+      {
+        "at": 0.0,
+        "width": 1.0,
+        "story": "upper",
+        "material": "batten",
+        "colour": "greige"
+      }
+    ],
+    "palette": {
+      "roof": "charcoal",
+      "frame": "white",
+      "door": "wood",
+      "trim": "white"
+    },
+    "limitations": [
+      "The exact material for the upper story gables (V1, G2, G3) is batten, while the main wall sections are lap siding. This is captured by the 'batten' finish entry for the upper story.",
+      "The porch roof is a shed form, but it has a small decorative metal awning over the main door, which is not explicitly captured by the schema.",
+      "The garage doors (O11) are visible in image 3, but partially obscured by a tree in image 1. Their position and width are estimated from image 3 and aligned with image 1's coordinate system."
+    ],
+    "_model": "gemini-2.5-flash"
+  },
+  "compilation": {
+    "compiler_version": 3,
+    "prepared_analysis": {
+      "schema_version": 1,
+      "viewpoint": "centre",
+      "garage_side": "right",
+      "volumes": [
+        {
+          "id": "V1",
+          "at": 0.0,
+          "width": 0.25,
+          "stories": "two",
+          "projection": "forward",
+          "roof": {
+            "form": "gable",
+            "ridge": "perpendicular",
+            "pitch": "medium",
+            "evidence": "Main roof form for the leftmost section, ridge runs front-to-back (image 2)."
+          },
+          "evidence": "Leftmost two-story section, projects forward relative to V2 (image 1)."
+        },
+        {
+          "id": "V2",
+          "at": 0.25,
+          "width": 0.35,
+          "stories": "two",
+          "projection": "recessed",
+          "roof": {
+            "form": "gable",
+            "ridge": "perpendicular",
+            "pitch": "medium",
+            "evidence": "Main roof form for the central section, ridge runs front-to-back (image 1, 2)."
+          },
+          "evidence": "Central two-story section, recessed relative to V1 and V3 (image 1)."
+        },
+        {
+          "id": "V3",
+          "at": 0.6,
+          "width": 0.4,
+          "stories": "one",
+          "projection": "forward",
+          "roof": {
+            "form": "gable",
+            "ridge": "perpendicular",
+            "pitch": "medium",
+            "evidence": "Main roof form for the rightmost section, ridge runs front-to-back (image 1, 3)."
+          },
+          "evidence": "Rightmost one-story section, projects forward relative to V2 and contains the garage (image 1, 3)."
+        }
+      ],
+      "porches": [
+        {
+          "id": "P1",
+          "owner": "V2",
+          "at": 0.25,
+          "width": 0.35,
+          "roof": "shed"
+        }
+      ],
+      "gables": [
+        {
+          "id": "G1",
+          "owner": "V1",
+          "at": 0.0,
+          "width": 0.25,
+          "kind": "end",
+          "evidence": "The gable end of volume V1 is visible on the left (image 1)."
+        },
+        {
+          "id": "G2",
+          "owner": "V2",
+          "at": 0.25,
+          "width": 0.35,
+          "kind": "cross",
+          "evidence": "A cross-gable projects from the main roof of V2, above the porch (image 1)."
+        },
+        {
+          "id": "G3",
+          "owner": "V3",
+          "at": 0.6,
+          "width": 0.4,
+          "kind": "end",
+          "evidence": "The gable end of volume V3 is visible on the right (image 1)."
+        }
+      ],
+      "dormers": [],
+      "openings": [
+        {
+          "id": "O1",
+          "owner": "V1",
+          "at": 0.05,
+          "width": 0.15,
+          "kind": "window",
+          "level": "ground",
+          "count": 2,
+          "size": "standard",
+          "shutters": false
+        },
+        {
+          "id": "O2",
+          "owner": "V1",
+          "at": 0.05,
+          "width": 0.15,
+          "kind": "window",
+          "level": "upper",
+          "count": 1,
+          "size": "standard",
+          "shutters": true
+        },
+        {
+          "id": "O3",
+          "owner": "P1",
+          "at": 0.27,
+          "width": 0.08,
+          "kind": "door",
+          "level": "ground",
+          "count": 2,
+          "size": "tall",
+          "shutters": false
+        },
+        {
+          "id": "O4",
+          "owner": "V2",
+          "at": 0.38,
+          "width": 0.12,
+          "kind": "window",
+          "level": "ground",
+          "count": 3,
+          "size": "standard",
+          "shutters": false
+        },
+        {
+          "id": "O5",
+          "owner": "V2",
+          "at": 0.3,
+          "width": 0.1,
+          "kind": "window",
+          "level": "upper",
+          "count": 1,
+          "size": "standard",
+          "shutters": true
+        },
+        {
+          "id": "O6",
+          "owner": "V2",
+          "at": 0.45,
+          "width": 0.1,
+          "kind": "window",
+          "level": "upper",
+          "count": 1,
+          "size": "standard",
+          "shutters": true
+        },
+        {
+          "id": "O7",
+          "owner": "G2",
+          "at": 0.37,
+          "width": 0.1,
+          "kind": "window",
+          "level": "attic",
+          "count": 1,
+          "size": "small",
+          "shutters": false
+        },
+        {
+          "id": "O8",
+          "owner": "V3",
+          "at": 0.62,
+          "width": 0.15,
+          "kind": "window",
+          "level": "ground",
+          "count": 3,
+          "size": "standard",
+          "shutters": false
+        },
+        {
+          "id": "O9",
+          "owner": "V3",
+          "at": 0.8,
+          "width": 0.05,
+          "kind": "window",
+          "level": "ground",
+          "count": 1,
+          "size": "standard",
+          "shutters": false
+        },
+        {
+          "id": "O10",
+          "owner": "G3",
+          "at": 0.7,
+          "width": 0.1,
+          "kind": "window",
+          "level": "attic",
+          "count": 1,
+          "size": "standard",
+          "shutters": false
+        },
+        {
+          "id": "O11",
+          "owner": "V3",
+          "at": 0.7,
+          "width": 0.2,
+          "kind": "garage_door",
+          "level": "ground",
+          "count": 2,
+          "size": "tall",
+          "shutters": false
+        }
+      ],
+      "finishes": [
+        {
+          "at": 0.0,
+          "width": 1.0,
+          "story": "base",
+          "material": "brick",
+          "colour": "white"
+        },
+        {
+          "at": 0.0,
+          "width": 1.0,
+          "story": "ground",
+          "material": "lap",
+          "colour": "greige"
+        },
+        {
+          "at": 0.0,
+          "width": 1.0,
+          "story": "upper",
+          "material": "lap",
+          "colour": "greige"
+        },
+        {
+          "at": 0.0,
+          "width": 1.0,
+          "story": "upper",
+          "material": "batten",
+          "colour": "greige"
+        }
+      ],
+      "palette": {
+        "roof": "charcoal",
+        "frame": "white",
+        "door": "wood",
+        "trim": "white"
+      },
+      "limitations": [
+        "The exact material for the upper story gables (V1, G2, G3) is batten, while the main wall sections are lap siding. This is captured by the 'batten' finish entry for the upper story.",
+        "The porch roof is a shed form, but it has a small decorative metal awning over the main door, which is not explicitly captured by the schema.",
+        "The garage doors (O11) are visible in image 3, but partially obscured by a tree in image 1. Their position and width are estimated from image 3 and aligned with image 1's coordinate system."
+      ],
+      "_model": "gemini-2.5-flash"
+    },
+    "analysis_adjustments": [],
+    "block_seam": 0.4,
+    "mirror_scores": {
+      "normal": 205,
+      "mirrored": 1
+    },
+    "mapping": [
+      {
+        "id": "V1",
+        "kind": "volume",
+        "slots": [
+          [
+            13,
+            18
+          ]
+        ]
+      },
+      {
+        "id": "V2",
+        "kind": "volume",
+        "slots": [
+          [
+            6,
+            13
+          ]
+        ]
+      },
+      {
+        "id": "V3",
+        "kind": "volume",
+        "slots": [
+          [
+            0,
+            6
+          ]
+        ]
+      },
+      {
+        "id": "P1",
+        "kind": "porch",
+        "slot": 6,
+        "span": 7
+      },
+      {
+        "id": "G1",
+        "kind": "gable",
+        "owner": "V1",
+        "slot": 13,
+        "span": 5
+      },
+      {
+        "id": "G3",
+        "kind": "gable",
+        "owner": "V3",
+        "slot": 0,
+        "span": 6
+      },
+      {
+        "id": "O11",
+        "kind": "garage_door",
+        "owner": "V3",
+        "wall_owner": "V3",
+        "slot": 2,
+        "span": 1,
+        "count": 2
+      },
+      {
+        "id": "O3",
+        "kind": "door",
+        "owner": "P1",
+        "wall_owner": "V2",
+        "slot": 11,
+        "span": 1,
+        "count": 2
+      },
+      {
+        "id": "O9",
+        "kind": "window",
+        "owner": "V3",
+        "wall_owner": "V3",
+        "slot": 1,
+        "span": 1,
+        "count": 1
+      },
+      {
+        "id": "O8",
+        "kind": "window",
+        "owner": "V3",
+        "wall_owner": "V3",
+        "slot": 3,
+        "span": 3,
+        "count": 3
+      },
+      {
+        "id": "O6",
+        "kind": "window",
+        "owner": "V2",
+        "wall_owner": "V2",
+        "slot": 7,
+        "span": 2,
+        "count": 1
+      },
+      {
+        "id": "O4",
+        "kind": "window",
+        "owner": "V2",
+        "wall_owner": "V2",
+        "slot": 7,
+        "span": 3,
+        "count": 3
+      },
+      {
+        "id": "O5",
+        "kind": "window",
+        "owner": "V2",
+        "wall_owner": "V2",
+        "slot": 10,
+        "span": 2,
+        "count": 1
+      },
+      {
+        "id": "O1",
+        "kind": "window",
+        "owner": "V1",
+        "wall_owner": "V1",
+        "slot": 14,
+        "span": 3,
+        "count": 2
+      },
+      {
+        "id": "O2",
+        "kind": "window",
+        "owner": "V1",
+        "wall_owner": "V1",
+        "slot": 14,
+        "span": 3,
+        "count": 1
+      }
+    ],
+    "before_normalization": {
+      "version": 3,
+      "mirror": true,
+      "pitch_deg": 30,
+      "blocks": {
+        "main": {
+          "depth": 0.0,
+          "roof": {
+            "form": "gable",
+            "ridge": "z",
+            "pitch_deg": 30
+          },
+          "cladding": "lap",
+          "base": {
+            "material": "brick",
+            "body": "white",
+            "height": 0.8
+          },
+          "body": "greige"
+        },
+        "garage": {
+          "depth": 1.5,
+          "roof": {
+            "form": "gable",
+            "ridge": "z",
+            "pitch_deg": 30,
+            "window": true
+          },
+          "cladding": "lap",
+          "base": {
+            "material": "brick",
+            "body": "white",
+            "height": 0.8
+          },
+          "body": "greige",
+          "orientation": "front"
+        }
+      },
+      "style": {
+        "roof": "charcoal",
+        "frame": "white",
+        "door": "wood",
+        "trim": "white"
+      },
+      "ground": [
+        {
+          "slot": 6,
+          "span": 7,
+          "kind": "porch",
+          "type": "covered",
+          "roof": "shed"
+        },
+        {
+          "slot": 2,
+          "span": 1,
+          "kind": "garage_door",
+          "style": "panel",
+          "leaves": 2
+        },
+        {
+          "slot": 11,
+          "span": 1,
+          "kind": "door"
+        },
+        {
+          "slot": 1,
+          "span": 1,
+          "kind": "window",
+          "size": "standard",
+          "shutters": false,
+          "story": 1,
+          "count": 1
+        },
+        {
+          "slot": 3,
+          "span": 3,
+          "kind": "window",
+          "size": "standard",
+          "shutters": false,
+          "story": 1,
+          "count": 3
+        },
+        {
+          "slot": 7,
+          "span": 2,
+          "kind": "window",
+          "size": "standard",
+          "shutters": true,
+          "story": 2,
+          "count": 1
+        },
+        {
+          "slot": 7,
+          "span": 3,
+          "kind": "window",
+          "size": "standard",
+          "shutters": false,
+          "story": 1,
+          "count": 3
+        },
+        {
+          "slot": 10,
+          "span": 2,
+          "kind": "window",
+          "size": "standard",
+          "shutters": true,
+          "story": 2,
+          "count": 1
+        },
+        {
+          "slot": 14,
+          "span": 3,
+          "kind": "window",
+          "size": "standard",
+          "shutters": false,
+          "story": 1,
+          "count": 2
+        },
+        {
+          "slot": 14,
+          "span": 3,
+          "kind": "window",
+          "size": "standard",
+          "shutters": true,
+          "story": 2,
+          "count": 1
+        }
+      ],
+      "roof": [],
+      "upper": [
+        {
+          "slot": 13,
+          "span": 5,
+          "roof": {
+            "form": "gable",
+            "ridge": "z",
+            "pitch_deg": 30
+          }
+        },
+        {
+          "slot": 6,
+          "span": 7,
+          "roof": {
+            "form": "gable",
+            "ridge": "z",
+            "pitch_deg": 30
+          }
+        }
+      ],
+      "unexpressed": [],
+      "finishes": [
+        {
+          "slot": 0,
+          "span": 6,
+          "story": 1,
+          "cladding": "lap",
+          "body": "greige"
+        },
+        {
+          "slot": 6,
+          "span": 12,
+          "story": 1,
+          "cladding": "lap",
+          "body": "greige"
+        },
+        {
+          "slot": 0,
+          "span": 6,
+          "story": 2,
+          "cladding": "lap",
+          "body": "greige"
+        },
+        {
+          "slot": 6,
+          "span": 12,
+          "story": 2,
+          "cladding": "lap",
+          "body": "greige"
+        },
+        {
+          "slot": 0,
+          "span": 6,
+          "story": 2,
+          "cladding": "batten",
+          "body": "greige"
+        },
+        {
+          "slot": 6,
+          "span": 12,
+          "story": 2,
+          "cladding": "batten",
+          "body": "greige"
+        }
+      ],
+      "story_finishes": {}
+    },
+    "normalization_notes": [
+      "the garage door spans its own bay",
+      "dropped a window at slot 1: its slots were taken"
+    ]
+  },
+  "compiler_notes": [
+    "The exact material for the upper story gables (V1, G2, G3) is batten, while the main wall sections are lap siding. This is captured by the 'batten' finish entry for the upper story.",
+    "The porch roof is a shed form, but it has a small decorative metal awning over the main door, which is not explicitly captured by the schema.",
+    "The garage doors (O11) are visible in image 3, but partially obscured by a tree in image 1. Their position and width are estimated from image 3 and aligned with image 1's coordinate system.",
+    "Facade proportions fitted to the fixed block boundary at an observed wall-volume seam.",
+    "V2: absolute depth is not observable; using default depth.",
+    "G2: cross-gable conflicts with perpendicular underlying ridge; omitted for review.",
+    "O11: opening quantized/repositioned to fit fixed slots.",
+    "O3: porch opening resolved to wall volume V2.",
+    "O3: multiple entry door leaves use the renderer's single entry door.",
+    "O3: opening quantized/repositioned to fit fixed slots.",
+    "O9: opening quantized/repositioned to fit fixed slots.",
+    "O4: opening quantized/repositioned to fit fixed slots.",
+    "Base band height defaults to 0.8 scene units and wraps its block.",
+    "the garage door spans its own bay",
+    "dropped a window at slot 1: its slots were taken",
+    "2 model request(s): gemini-3.5-flash, gemini-2.5-flash this upload; 8 cumulative across actions."
+  ],
+  "attempts": [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash"
+  ],
+  "requests_total": 9,
+  "request_actions": [
+    {
+      "id": 1,
+      "kind": "upload",
+      "limit": 3,
+      "stages": [
+        {
+          "name": "analysis",
+          "models": [
+            "gemini-3.8-flash",
+            "gemini-3.7-flash",
+            "gemini-3.6-flash"
+          ],
+          "requests": 3
+        }
+      ],
+      "requests": 3
+    },
+    {
+      "id": 2,
+      "kind": "upload",
+      "limit": 3,
+      "stages": [
+        {
+          "name": "analysis",
+          "models": [
+            "gemini-3.8-flash",
+            "gemini-3.7-flash",
+            "gemini-3.6-flash"
+          ],
+          "requests": 3
+        }
+      ],
+      "requests": 3
+    },
+    {
+      "id": 3,
+      "kind": "upload",
+      "limit": 3,
+      "stages": [
+        {
+          "name": "analysis",
+          "models": [
+            "gemini-3.5-flash",
+            "gemini-2.5-flash"
+          ],
+          "requests": 2
+        }
+      ],
+      "requests": 2
+    },
+    {
+      "id": 4,
+      "kind": "automatic_visual",
+      "limit": 1,
+      "requests": 1,
+      "stages": [
+        {
+          "name": "visual_review",
+          "models": [
+            "gemini-2.5-flash"
+          ],
+          "requests": 1
+        }
+      ]
+    }
+  ],
+  "visual_review_mode": "automatic",
+  "review_raw": {
+    "analysis": {
+      "schema_version": 1,
+      "viewpoint": "centre",
+      "garage_side": "right",
+      "volumes": [
+        {
+          "id": "V1",
+          "at": 0.0,
+          "width": 0.25,
+          "stories": "two",
+          "projection": "forward",
+          "roof": {
+            "form": "gable",
+            "ridge": "perpendicular",
+            "pitch": "medium",
+            "evidence": "Main roof form for the leftmost section, ridge runs front-to-back (image 2)."
+          },
+          "evidence": "Leftmost two-story section, projects forward relative to V2 (image 1)."
+        },
+        {
+          "id": "V2",
+          "at": 0.25,
+          "width": 0.35,
+          "stories": "two",
+          "projection": "recessed",
+          "roof": {
+            "form": "gable",
+            "ridge": "perpendicular",
+            "pitch": "medium",
+            "evidence": "Main roof form for the central section, ridge runs front-to-back (image 1, 2)."
+          },
+          "evidence": "Central two-story section, recessed relative to V1 and V3 (image 1)."
+        },
+        {
+          "id": "V3",
+          "at": 0.6,
+          "width": 0.4,
+          "stories": "one",
+          "projection": "forward",
+          "roof": {
+            "form": "gable",
+            "ridge": "perpendicular",
+            "pitch": "medium",
+            "evidence": "Main roof form for the rightmost section, ridge runs front-to-back (image 1, 3)."
+          },
+          "evidence": "Rightmost one-story section, projects forward relative to V2 and contains the garage (image 1, 3)."
+        }
+      ],
+      "porches": [
+        {
+          "id": "P1",
+          "owner": "V2",
+          "at": 0.25,
+          "width": 0.35,
+          "roof": "shed"
+        }
+      ],
+      "gables": [
+        {
+          "id": "G1",
+          "owner": "V1",
+          "at": 0.0,
+          "width": 0.25,
+          "kind": "end",
+          "evidence": "The gable end of volume V1 is visible on the left (image 1)."
+        },
+        {
+          "id": "G2",
+          "owner": "V2",
+          "at": 0.35,
+          "width": 0.2,
+          "kind": "cross",
+          "evidence": "A cross-gable projects from the main roof of V2, above the porch (image 1)."
+        },
+        {
+          "id": "G3",
+          "owner": "V3",
+          "at": 0.6,
+          "width": 0.4,
+          "kind": "end",
+          "evidence": "The gable end of volume V3 is visible on the right (image 1)."
+        }
+      ],
+      "dormers": [],
+      "openings": [
+        {
+          "id": "O1",
+          "owner": "V1",
+          "at": 0.05,
+          "width": 0.15,
+          "kind": "window",
+          "level": "ground",
+          "count": 2,
+          "size": "standard",
+          "shutters": true
+        },
+        {
+          "id": "O2",
+          "owner": "V1",
+          "at": 0.05,
+          "width": 0.15,
+          "kind": "window",
+          "level": "upper",
+          "count": 1,
+          "size": "standard",
+          "shutters": true
+        },
+        {
+          "id": "O3",
+          "owner": "P1",
+          "at": 0.27,
+          "width": 0.08,
+          "kind": "door",
+          "level": "ground",
+          "count": 2,
+          "size": "tall",
+          "shutters": false
+        },
+        {
+          "id": "O4",
+          "owner": "V2",
+          "at": 0.38,
+          "width": 0.12,
+          "kind": "window",
+          "level": "ground",
+          "count": 3,
+          "size": "standard",
+          "shutters": false
+        },
+        {
+          "id": "O5",
+          "owner": "V2",
+          "at": 0.3,
+          "width": 0.1,
+          "kind": "window",
+          "level": "upper",
+          "count": 1,
+          "size": "standard",
+          "shutters": true
+        },
+        {
+          "id": "O6",
+          "owner": "V2",
+          "at": 0.45,
+          "width": 0.1,
+          "kind": "window",
+          "level": "upper",
+          "count": 1,
+          "size": "standard",
+          "shutters": true
+        },
+        {
+          "id": "O7",
+          "owner": "G2",
+          "at": 0.37,
+          "width": 0.1,
+          "kind": "window",
+          "level": "attic",
+          "count": 1,
+          "size": "small",
+          "shutters": false
+        },
+        {
+          "id": "O8",
+          "owner": "V3",
+          "at": 0.62,
+          "width": 0.15,
+          "kind": "window",
+          "level": "ground",
+          "count": 3,
+          "size": "standard",
+          "shutters": false
+        },
+        {
+          "id": "O9",
+          "owner": "V3",
+          "at": 0.8,
+          "width": 0.05,
+          "kind": "window",
+          "level": "ground",
+          "count": 1,
+          "size": "standard",
+          "shutters": false
+        },
+        {
+          "id": "O10",
+          "owner": "G3",
+          "at": 0.7,
+          "width": 0.1,
+          "kind": "window",
+          "level": "attic",
+          "count": 1,
+          "size": "standard",
+          "shutters": false
+        },
+        {
+          "id": "O11",
+          "owner": "V3",
+          "at": 0.7,
+          "width": 0.2,
+          "kind": "garage_door",
+          "level": "ground",
+          "count": 2,
+          "size": "tall",
+          "shutters": false
+        }
+      ],
+      "finishes": [
+        {
+          "at": 0.0,
+          "width": 1.0,
+          "story": "base",
+          "material": "brick",
+          "colour": "white"
+        },
+        {
+          "at": 0.0,
+          "width": 1.0,
+          "story": "ground",
+          "material": "lap",
+          "colour": "greige"
+        },
+        {
+          "at": 0.0,
+          "width": 0.25,
+          "story": "upper",
+          "material": "lap",
+          "colour": "greige"
+        },
+        {
+          "at": 0.25,
+          "width": 0.35,
+          "story": "upper",
+          "material": "lap",
+          "colour": "greige"
+        },
+        {
+          "at": 0.0,
+          "width": 0.25,
+          "story": "upper",
+          "material": "batten",
+          "colour": "greige"
+        },
+        {
+          "at": 0.35,
+          "width": 0.2,
+          "story": "upper",
+          "material": "batten",
+          "colour": "greige"
+        },
+        {
+          "at": 0.6,
+          "width": 0.4,
+          "story": "upper",
+          "material": "batten",
+          "colour": "greige"
+        }
+      ],
+      "palette": {
+        "roof": "charcoal",
+        "frame": "white",
+        "door": "wood",
+        "trim": "white"
+      },
+      "limitations": [
+        "The porch roof is a shed form, but it has a small decorative metal awning over the main door, which is not explicitly captured by the schema.",
+        "The garage doors (O11) are visible in image 3, but partially obscured by a tree in image 1. Their position and width are estimated from image 3 and aligned with image 1's coordinate system."
+      ]
+    },
+    "reasons": [
+      "Corrected O1 shutters from false to true based on visible evidence in image 1.",
+      "Corrected the finishes to explicitly separate the lap siding on the main upper walls of V1 and V2 from the batten siding on the gables (G1, G2, G3) and the upper portion of V1 and V2 where the gables are. The prior analysis had a single 'upper' batten finish for the entire facade, which was inaccurate. The main upper walls of V1 and V2 are lap siding, while the gables and the upper parts of the volumes that form the gables are batten. This is now represented by multiple finish entries for the upper story.",
+      "The prior analysis's limitation regarding 'The exact material for the upper story gables (V1, G2, G3) is batten, while the main wall sections are lap siding. This is captured by the 'batten' finish entry for the upper story.' was contradictory and has been addressed by separating the finishes. The new limitation reflects only the metal awning.",
+      "The render image shows the same material distinctions as observed in the photos, confirming the need for separate finish entries for lap and batten siding on the upper story."
+    ],
+    "_model": "gemini-2.5-flash"
+  },
+  "review_analysis": {
+    "schema_version": 1,
+    "viewpoint": "centre",
+    "garage_side": "right",
+    "volumes": [
+      {
+        "id": "V1",
+        "at": 0.0,
+        "width": 0.25,
+        "stories": "two",
+        "projection": "forward",
+        "roof": {
+          "form": "gable",
+          "ridge": "perpendicular",
+          "pitch": "medium",
+          "evidence": "Main roof form for the leftmost section, ridge runs front-to-back (image 2)."
+        },
+        "evidence": "Leftmost two-story section, projects forward relative to V2 (image 1)."
+      },
+      {
+        "id": "V2",
+        "at": 0.25,
+        "width": 0.35,
+        "stories": "two",
+        "projection": "recessed",
+        "roof": {
+          "form": "gable",
+          "ridge": "perpendicular",
+          "pitch": "medium",
+          "evidence": "Main roof form for the central section, ridge runs front-to-back (image 1, 2)."
+        },
+        "evidence": "Central two-story section, recessed relative to V1 and V3 (image 1)."
+      },
+      {
+        "id": "V3",
+        "at": 0.6,
+        "width": 0.4,
+        "stories": "one",
+        "projection": "forward",
+        "roof": {
+          "form": "gable",
+          "ridge": "perpendicular",
+          "pitch": "medium",
+          "evidence": "Main roof form for the rightmost section, ridge runs front-to-back (image 1, 3)."
+        },
+        "evidence": "Rightmost one-story section, projects forward relative to V2 and contains the garage (image 1, 3)."
+      }
+    ],
+    "porches": [
+      {
+        "id": "P1",
+        "owner": "V2",
+        "at": 0.25,
+        "width": 0.35,
+        "roof": "shed"
+      }
+    ],
+    "gables": [
+      {
+        "id": "G1",
+        "owner": "V1",
+        "at": 0.0,
+        "width": 0.25,
+        "kind": "end",
+        "evidence": "The gable end of volume V1 is visible on the left (image 1)."
+      },
+      {
+        "id": "G2",
+        "owner": "V2",
+        "at": 0.35,
+        "width": 0.2,
+        "kind": "cross",
+        "evidence": "A cross-gable projects from the main roof of V2, above the porch (image 1)."
+      },
+      {
+        "id": "G3",
+        "owner": "V3",
+        "at": 0.6,
+        "width": 0.4,
+        "kind": "end",
+        "evidence": "The gable end of volume V3 is visible on the right (image 1)."
+      }
+    ],
+    "dormers": [],
+    "openings": [
+      {
+        "id": "O1",
+        "owner": "V1",
+        "at": 0.05,
+        "width": 0.15,
+        "kind": "window",
+        "level": "ground",
+        "count": 2,
+        "size": "standard",
+        "shutters": true
+      },
+      {
+        "id": "O2",
+        "owner": "V1",
+        "at": 0.05,
+        "width": 0.15,
+        "kind": "window",
+        "level": "upper",
+        "count": 1,
+        "size": "standard",
+        "shutters": true
+      },
+      {
+        "id": "O3",
+        "owner": "P1",
+        "at": 0.27,
+        "width": 0.08,
+        "kind": "door",
+        "level": "ground",
+        "count": 2,
+        "size": "tall",
+        "shutters": false
+      },
+      {
+        "id": "O4",
+        "owner": "V2",
+        "at": 0.38,
+        "width": 0.12,
+        "kind": "window",
+        "level": "ground",
+        "count": 3,
+        "size": "standard",
+        "shutters": false
+      },
+      {
+        "id": "O5",
+        "owner": "V2",
+        "at": 0.3,
+        "width": 0.1,
+        "kind": "window",
+        "level": "upper",
+        "count": 1,
+        "size": "standard",
+        "shutters": true
+      },
+      {
+        "id": "O6",
+        "owner": "V2",
+        "at": 0.45,
+        "width": 0.1,
+        "kind": "window",
+        "level": "upper",
+        "count": 1,
+        "size": "standard",
+        "shutters": true
+      },
+      {
+        "id": "O7",
+        "owner": "G2",
+        "at": 0.37,
+        "width": 0.1,
+        "kind": "window",
+        "level": "attic",
+        "count": 1,
+        "size": "small",
+        "shutters": false
+      },
+      {
+        "id": "O8",
+        "owner": "V3",
+        "at": 0.62,
+        "width": 0.15,
+        "kind": "window",
+        "level": "ground",
+        "count": 3,
+        "size": "standard",
+        "shutters": false
+      },
+      {
+        "id": "O9",
+        "owner": "V3",
+        "at": 0.8,
+        "width": 0.05,
+        "kind": "window",
+        "level": "ground",
+        "count": 1,
+        "size": "standard",
+        "shutters": false
+      },
+      {
+        "id": "O10",
+        "owner": "G3",
+        "at": 0.7,
+        "width": 0.1,
+        "kind": "window",
+        "level": "attic",
+        "count": 1,
+        "size": "standard",
+        "shutters": false
+      },
+      {
+        "id": "O11",
+        "owner": "V3",
+        "at": 0.7,
+        "width": 0.2,
+        "kind": "garage_door",
+        "level": "ground",
+        "count": 2,
+        "size": "tall",
+        "shutters": false
+      }
+    ],
+    "finishes": [
+      {
+        "at": 0.0,
+        "width": 1.0,
+        "story": "base",
+        "material": "brick",
+        "colour": "white"
+      },
+      {
+        "at": 0.0,
+        "width": 1.0,
+        "story": "ground",
+        "material": "lap",
+        "colour": "greige"
+      },
+      {
+        "at": 0.0,
+        "width": 0.25,
+        "story": "upper",
+        "material": "lap",
+        "colour": "greige"
+      },
+      {
+        "at": 0.25,
+        "width": 0.35,
+        "story": "upper",
+        "material": "lap",
+        "colour": "greige"
+      },
+      {
+        "at": 0.0,
+        "width": 0.25,
+        "story": "upper",
+        "material": "batten",
+        "colour": "greige"
+      },
+      {
+        "at": 0.35,
+        "width": 0.2,
+        "story": "upper",
+        "material": "batten",
+        "colour": "greige"
+      },
+      {
+        "at": 0.6,
+        "width": 0.4,
+        "story": "upper",
+        "material": "batten",
+        "colour": "greige"
+      }
+    ],
+    "palette": {
+      "roof": "charcoal",
+      "frame": "white",
+      "door": "wood",
+      "trim": "white"
+    },
+    "limitations": [
+      "The porch roof is a shed form, but it has a small decorative metal awning over the main door, which is not explicitly captured by the schema.",
+      "The garage doors (O11) are visible in image 3, but partially obscured by a tree in image 1. Their position and width are estimated from image 3 and aligned with image 1's coordinate system."
+    ]
+  },
+  "review_compilation": {
+    "compiler_version": 3,
+    "prepared_analysis": {
+      "schema_version": 1,
+      "viewpoint": "centre",
+      "garage_side": "right",
+      "volumes": [
+        {
+          "id": "V1",
+          "at": 0.0,
+          "width": 0.25,
+          "stories": "two",
+          "projection": "forward",
+          "roof": {
+            "form": "gable",
+            "ridge": "perpendicular",
+            "pitch": "medium",
+            "evidence": "Main roof form for the leftmost section, ridge runs front-to-back (image 2)."
+          },
+          "evidence": "Leftmost two-story section, projects forward relative to V2 (image 1)."
+        },
+        {
+          "id": "V2",
+          "at": 0.25,
+          "width": 0.35,
+          "stories": "two",
+          "projection": "recessed",
+          "roof": {
+            "form": "gable",
+            "ridge": "perpendicular",
+            "pitch": "medium",
+            "evidence": "Main roof form for the central section, ridge runs front-to-back (image 1, 2)."
+          },
+          "evidence": "Central two-story section, recessed relative to V1 and V3 (image 1)."
+        },
+        {
+          "id": "V3",
+          "at": 0.6,
+          "width": 0.4,
+          "stories": "one",
+          "projection": "forward",
+          "roof": {
+            "form": "gable",
+            "ridge": "perpendicular",
+            "pitch": "medium",
+            "evidence": "Main roof form for the rightmost section, ridge runs front-to-back (image 1, 3)."
+          },
+          "evidence": "Rightmost one-story section, projects forward relative to V2 and contains the garage (image 1, 3)."
+        }
+      ],
+      "porches": [
+        {
+          "id": "P1",
+          "owner": "V2",
+          "at": 0.25,
+          "width": 0.35,
+          "roof": "shed"
+        }
+      ],
+      "gables": [
+        {
+          "id": "G1",
+          "owner": "V1",
+          "at": 0.0,
+          "width": 0.25,
+          "kind": "end",
+          "evidence": "The gable end of volume V1 is visible on the left (image 1)."
+        },
+        {
+          "id": "G2",
+          "owner": "V2",
+          "at": 0.35,
+          "width": 0.2,
+          "kind": "cross",
+          "evidence": "A cross-gable projects from the main roof of V2, above the porch (image 1)."
+        },
+        {
+          "id": "G3",
+          "owner": "V3",
+          "at": 0.6,
+          "width": 0.4,
+          "kind": "end",
+          "evidence": "The gable end of volume V3 is visible on the right (image 1)."
+        }
+      ],
+      "dormers": [],
+      "openings": [
+        {
+          "id": "O1",
+          "owner": "V1",
+          "at": 0.05,
+          "width": 0.15,
+          "kind": "window",
+          "level": "ground",
+          "count": 2,
+          "size": "standard",
+          "shutters": true
+        },
+        {
+          "id": "O2",
+          "owner": "V1",
+          "at": 0.05,
+          "width": 0.15,
+          "kind": "window",
+          "level": "upper",
+          "count": 1,
+          "size": "standard",
+          "shutters": true
+        },
+        {
+          "id": "O3",
+          "owner": "P1",
+          "at": 0.27,
+          "width": 0.08,
+          "kind": "door",
+          "level": "ground",
+          "count": 2,
+          "size": "tall",
+          "shutters": false
+        },
+        {
+          "id": "O4",
+          "owner": "V2",
+          "at": 0.38,
+          "width": 0.12,
+          "kind": "window",
+          "level": "ground",
+          "count": 3,
+          "size": "standard",
+          "shutters": false
+        },
+        {
+          "id": "O5",
+          "owner": "V2",
+          "at": 0.3,
+          "width": 0.1,
+          "kind": "window",
+          "level": "upper",
+          "count": 1,
+          "size": "standard",
+          "shutters": true
+        },
+        {
+          "id": "O6",
+          "owner": "V2",
+          "at": 0.45,
+          "width": 0.1,
+          "kind": "window",
+          "level": "upper",
+          "count": 1,
+          "size": "standard",
+          "shutters": true
+        },
+        {
+          "id": "O7",
+          "owner": "G2",
+          "at": 0.37,
+          "width": 0.1,
+          "kind": "window",
+          "level": "attic",
+          "count": 1,
+          "size": "small",
+          "shutters": false
+        },
+        {
+          "id": "O8",
+          "owner": "V3",
+          "at": 0.62,
+          "width": 0.15,
+          "kind": "window",
+          "level": "ground",
+          "count": 3,
+          "size": "standard",
+          "shutters": false
+        },
+        {
+          "id": "O9",
+          "owner": "V3",
+          "at": 0.8,
+          "width": 0.05,
+          "kind": "window",
+          "level": "ground",
+          "count": 1,
+          "size": "standard",
+          "shutters": false
+        },
+        {
+          "id": "O10",
+          "owner": "G3",
+          "at": 0.7,
+          "width": 0.1,
+          "kind": "window",
+          "level": "attic",
+          "count": 1,
+          "size": "standard",
+          "shutters": false
+        },
+        {
+          "id": "O11",
+          "owner": "V3",
+          "at": 0.7,
+          "width": 0.2,
+          "kind": "garage_door",
+          "level": "ground",
+          "count": 2,
+          "size": "tall",
+          "shutters": false
+        }
+      ],
+      "finishes": [
+        {
+          "at": 0.0,
+          "width": 1.0,
+          "story": "base",
+          "material": "brick",
+          "colour": "white"
+        },
+        {
+          "at": 0.0,
+          "width": 1.0,
+          "story": "ground",
+          "material": "lap",
+          "colour": "greige"
+        },
+        {
+          "at": 0.0,
+          "width": 0.25,
+          "story": "upper",
+          "material": "lap",
+          "colour": "greige"
+        },
+        {
+          "at": 0.25,
+          "width": 0.35,
+          "story": "upper",
+          "material": "lap",
+          "colour": "greige"
+        },
+        {
+          "at": 0.0,
+          "width": 0.25,
+          "story": "upper",
+          "material": "batten",
+          "colour": "greige"
+        },
+        {
+          "at": 0.35,
+          "width": 0.2,
+          "story": "upper",
+          "material": "batten",
+          "colour": "greige"
+        },
+        {
+          "at": 0.6,
+          "width": 0.4,
+          "story": "upper",
+          "material": "batten",
+          "colour": "greige"
+        }
+      ],
+      "palette": {
+        "roof": "charcoal",
+        "frame": "white",
+        "door": "wood",
+        "trim": "white"
+      },
+      "limitations": [
+        "The porch roof is a shed form, but it has a small decorative metal awning over the main door, which is not explicitly captured by the schema.",
+        "The garage doors (O11) are visible in image 3, but partially obscured by a tree in image 1. Their position and width are estimated from image 3 and aligned with image 1's coordinate system."
+      ]
+    },
+    "analysis_adjustments": [],
+    "block_seam": 0.4,
+    "mirror_scores": {
+      "normal": 205,
+      "mirrored": 1
+    },
+    "mapping": [
+      {
+        "id": "V1",
+        "kind": "volume",
+        "slots": [
+          [
+            13,
+            18
+          ]
+        ]
+      },
+      {
+        "id": "V2",
+        "kind": "volume",
+        "slots": [
+          [
+            6,
+            13
+          ]
+        ]
+      },
+      {
+        "id": "V3",
+        "kind": "volume",
+        "slots": [
+          [
+            0,
+            6
+          ]
+        ]
+      },
+      {
+        "id": "P1",
+        "kind": "porch",
+        "slot": 6,
+        "span": 7
+      },
+      {
+        "id": "G1",
+        "kind": "gable",
+        "owner": "V1",
+        "slot": 13,
+        "span": 5
+      },
+      {
+        "id": "G3",
+        "kind": "gable",
+        "owner": "V3",
+        "slot": 0,
+        "span": 6
+      },
+      {
+        "id": "O11",
+        "kind": "garage_door",
+        "owner": "V3",
+        "wall_owner": "V3",
+        "slot": 2,
+        "span": 1,
+        "count": 2
+      },
+      {
+        "id": "O3",
+        "kind": "door",
+        "owner": "P1",
+        "wall_owner": "V2",
+        "slot": 11,
+        "span": 1,
+        "count": 2
+      },
+      {
+        "id": "O9",
+        "kind": "window",
+        "owner": "V3",
+        "wall_owner": "V3",
+        "slot": 1,
+        "span": 1,
+        "count": 1
+      },
+      {
+        "id": "O8",
+        "kind": "window",
+        "owner": "V3",
+        "wall_owner": "V3",
+        "slot": 3,
+        "span": 3,
+        "count": 3
+      },
+      {
+        "id": "O6",
+        "kind": "window",
+        "owner": "V2",
+        "wall_owner": "V2",
+        "slot": 7,
+        "span": 2,
+        "count": 1
+      },
+      {
+        "id": "O4",
+        "kind": "window",
+        "owner": "V2",
+        "wall_owner": "V2",
+        "slot": 7,
+        "span": 3,
+        "count": 3
+      },
+      {
+        "id": "O5",
+        "kind": "window",
+        "owner": "V2",
+        "wall_owner": "V2",
+        "slot": 10,
+        "span": 2,
+        "count": 1
+      },
+      {
+        "id": "O1",
+        "kind": "window",
+        "owner": "V1",
+        "wall_owner": "V1",
+        "slot": 14,
+        "span": 3,
+        "count": 2
+      },
+      {
+        "id": "O2",
+        "kind": "window",
+        "owner": "V1",
+        "wall_owner": "V1",
+        "slot": 14,
+        "span": 3,
+        "count": 1
+      }
+    ],
+    "before_normalization": {
+      "version": 3,
+      "mirror": true,
+      "pitch_deg": 30,
+      "blocks": {
+        "main": {
+          "depth": 0.0,
+          "roof": {
+            "form": "gable",
+            "ridge": "z",
+            "pitch_deg": 30
+          },
+          "cladding": "lap",
+          "base": {
+            "material": "brick",
+            "body": "white",
+            "height": 0.8
+          },
+          "body": "greige"
+        },
+        "garage": {
+          "depth": 1.5,
+          "roof": {
+            "form": "gable",
+            "ridge": "z",
+            "pitch_deg": 30,
+            "window": true
+          },
+          "cladding": "lap",
+          "base": {
+            "material": "brick",
+            "body": "white",
+            "height": 0.8
+          },
+          "body": "greige",
+          "orientation": "front"
+        }
+      },
+      "style": {
+        "roof": "charcoal",
+        "frame": "white",
+        "door": "wood",
+        "trim": "white"
+      },
+      "ground": [
+        {
+          "slot": 6,
+          "span": 7,
+          "kind": "porch",
+          "type": "covered",
+          "roof": "shed"
+        },
+        {
+          "slot": 2,
+          "span": 1,
+          "kind": "garage_door",
+          "style": "panel",
+          "leaves": 2
+        },
+        {
+          "slot": 11,
+          "span": 1,
+          "kind": "door"
+        },
+        {
+          "slot": 1,
+          "span": 1,
+          "kind": "window",
+          "size": "standard",
+          "shutters": false,
+          "story": 1,
+          "count": 1
+        },
+        {
+          "slot": 3,
+          "span": 3,
+          "kind": "window",
+          "size": "standard",
+          "shutters": false,
+          "story": 1,
+          "count": 3
+        },
+        {
+          "slot": 7,
+          "span": 2,
+          "kind": "window",
+          "size": "standard",
+          "shutters": true,
+          "story": 2,
+          "count": 1
+        },
+        {
+          "slot": 7,
+          "span": 3,
+          "kind": "window",
+          "size": "standard",
+          "shutters": false,
+          "story": 1,
+          "count": 3
+        },
+        {
+          "slot": 10,
+          "span": 2,
+          "kind": "window",
+          "size": "standard",
+          "shutters": true,
+          "story": 2,
+          "count": 1
+        },
+        {
+          "slot": 14,
+          "span": 3,
+          "kind": "window",
+          "size": "standard",
+          "shutters": true,
+          "story": 1,
+          "count": 2
+        },
+        {
+          "slot": 14,
+          "span": 3,
+          "kind": "window",
+          "size": "standard",
+          "shutters": true,
+          "story": 2,
+          "count": 1
+        }
+      ],
+      "roof": [],
+      "upper": [
+        {
+          "slot": 13,
+          "span": 5,
+          "roof": {
+            "form": "gable",
+            "ridge": "z",
+            "pitch_deg": 30
+          }
+        },
+        {
+          "slot": 6,
+          "span": 7,
+          "roof": {
+            "form": "gable",
+            "ridge": "z",
+            "pitch_deg": 30
+          }
+        }
+      ],
+      "unexpressed": [],
+      "finishes": [
+        {
+          "slot": 0,
+          "span": 6,
+          "story": 1,
+          "cladding": "lap",
+          "body": "greige"
+        },
+        {
+          "slot": 6,
+          "span": 12,
+          "story": 1,
+          "cladding": "lap",
+          "body": "greige"
+        },
+        {
+          "slot": 13,
+          "span": 5,
+          "story": 2,
+          "cladding": "lap",
+          "body": "greige"
+        },
+        {
+          "slot": 6,
+          "span": 7,
+          "story": 2,
+          "cladding": "lap",
+          "body": "greige"
+        },
+        {
+          "slot": 13,
+          "span": 5,
+          "story": 2,
+          "cladding": "batten",
+          "body": "greige"
+        },
+        {
+          "slot": 7,
+          "span": 4,
+          "story": 2,
+          "cladding": "batten",
+          "body": "greige"
+        },
+        {
+          "slot": 0,
+          "span": 6,
+          "story": 2,
+          "cladding": "batten",
+          "body": "greige"
+        }
+      ],
+      "story_finishes": {}
+    },
+    "normalization_notes": [
+      "the garage door spans its own bay",
+      "dropped a window at slot 1: its slots were taken"
+    ]
+  },
+  "review_notes": [
+    "The porch roof is a shed form, but it has a small decorative metal awning over the main door, which is not explicitly captured by the schema.",
+    "The garage doors (O11) are visible in image 3, but partially obscured by a tree in image 1. Their position and width are estimated from image 3 and aligned with image 1's coordinate system.",
+    "Facade proportions fitted to the fixed block boundary at an observed wall-volume seam.",
+    "V2: absolute depth is not observable; using default depth.",
+    "G2: cross-gable conflicts with perpendicular underlying ridge; omitted for review.",
+    "O11: opening quantized/repositioned to fit fixed slots.",
+    "O3: porch opening resolved to wall volume V2.",
+    "O3: multiple entry door leaves use the renderer's single entry door.",
+    "O3: opening quantized/repositioned to fit fixed slots.",
+    "O9: opening quantized/repositioned to fit fixed slots.",
+    "O4: opening quantized/repositioned to fit fixed slots.",
+    "Base band height defaults to 0.8 scene units and wraps its block.",
+    "the garage door spans its own bay",
+    "dropped a window at slot 1: its slots were taken"
+  ],
+  "saved_matches": "revision"
+}

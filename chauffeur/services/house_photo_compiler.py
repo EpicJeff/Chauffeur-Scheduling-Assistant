@@ -7,12 +7,25 @@ import copy
 import math
 from services.house_photo_schema import obj, arr, enum, number, TEXT, BOOL
 
-ANALYSIS_PROMPT = '''Analyze the ORIGINAL HOUSE PHOTO. Return the supplied architecture schema only.
+ANALYSIS_PROMPT = '''Schema version 2: explicitly classify each wall face as front/left/right/rear/unknown,
+relative to the HOUSE'S FRONT, not the camera. coordinate_frame is house_front.
+A side-facing end gable does NOT imply a perpendicular ridge: roof.ridge always means
+parallel/perpendicular to the front facade, regardless of which photo shows the ridge.
+Record per-image observations: feature ID, image number, physical face and 2D bounding box
+in THAT image's normalized coordinates. Keep these boxes separate from front at/width.
+Every front feature needs image-1 evidence. Only front rows compile into facade slots.
+Side doors/windows/gables must retain their physical face; never move them to the front
+just because a supplemental camera sees them. Side garage doors determine side entry.
+Volumes describe rectangular WALL faces up to their eaves. A side attic triangle is
+not a second front story. Count full front wall stories using visible horizontal eaves.
+Use separate side volume rows for side geometry; their at/width is face-local and is
+not projected into front slots. Finishes also identify the physical wall face.
+Analyze the ORIGINAL HOUSE PHOTO. Return the supplied architecture schema only.
 Do not design a house configuration or assign blocks, slots, mirror flags or renderer values.
-All at/width intervals use ONE axis: the ENTIRE visible front facade, photo-left 0 to
+All FRONT at/width intervals use ONE axis: the ENTIRE visible front facade, photo-left 0 to
 photo-right 1. Exclude landscaping and driveway. at is the left edge, width is extent.
-Describe rectangular wall volumes (not triangles) with stable unique ids. Adjacent wall
-volumes must not overlap. stories counts full rectangular walls below the eave, not
+Describe rectangular wall volumes (not triangles) with stable unique ids. Adjacent FRONT
+wall volumes must not overlap. stories counts full rectangular walls below the eave, not
 window rows. A window inside an attic triangle is an opening owned by a gable, not an
 extra story. Use unknown where evidence is insufficient.
 Each volume owns one underlying roof. parallel means ridge across the front facade;
@@ -40,13 +53,13 @@ for details such as bay windows, metal awnings or hidden garage entrances.
 '''
 
 
-def analysis_schema():
+def analysis_schema(version=2):
     from services import house_facade as h
     region={'at':number(0,1),'width':number(0,1)}
     roof=obj({'form':enum(('gable','hip','shed','flat','unknown')),
               'ridge':enum(('parallel','perpendicular','unknown')),
               'pitch':enum(('low','medium','steep','unknown')),'evidence':TEXT})
-    return obj({'schema_version':{'type':'integer','enum':[1]},
+    schema = obj({'schema_version':{'type':'integer','enum':[version]},
       'viewpoint':enum(('left','centre','right')),'garage_side':enum(('left','right','unknown')),
       'volumes':arr(obj({'id':TEXT,**region,'stories':enum(('one','two','unknown')),
         'projection':enum(('flush','forward','recessed','unknown')),'roof':roof,'evidence':TEXT})),
@@ -60,10 +73,24 @@ def analysis_schema():
         'material':enum((*h.CLADDINGS,'unknown')),'colour':enum((*h.STYLE['body'],'unknown'))})),
       'palette':obj({role:enum((*h.STYLE[role],'unknown')) for role in ('roof','frame','door','trim')}),
       'limitations':arr(TEXT)})
+    if version==2:
+        face=enum(('front','left','right','rear','unknown'))
+        for layer in ('volumes','porches','gables','dormers','openings','finishes'):
+            item=schema['properties'][layer]['items']
+            item['properties']['face']=face
+            item['required'].append('face')
+        schema['properties']['coordinate_frame']=enum(('house_front',))
+        schema['properties']['observations']=arr(obj({'feature':TEXT,'image':number(1,3,True),
+            'face':face,'box':obj({'x':number(0,1),'y':number(0,1),
+                'width':number(0,1),'height':number(0,1)}),'evidence':TEXT}))
+        schema['required']+=['coordinate_frame','observations']
+    return schema
 
 
 def review_schema():
-    return obj({'analysis':analysis_schema(),'reasons':arr(TEXT)})
+    return obj({'analysis':analysis_schema(),'reasons':arr(TEXT),
+        'structural_review':obj({key:enum(('matched','corrected','uncertain')) for key in
+            ('wall_faces','story_boundaries','roof_directions','opening_ownership','porch_placement')})})
 
 
 def validate_analysis(value, *, _shape_only=False):
@@ -87,8 +114,13 @@ def validate_analysis(value, *, _shape_only=False):
         elif kind=='array':
             if len(v)>64:errors.append(path+' has too many entries');return
             for i,x in enumerate(v):walk(x,s['items'],f'{path}[{i}]')
-    walk(value,analysis_schema(),'analysis')
+    walk(value,analysis_schema(2 if isinstance(value,dict) and value.get('schema_version')==2 else 1),'analysis')
     if errors or _shape_only:return errors
+    if value.get('schema_version')==2:
+        try:
+            front,_,_=project_front_analysis(value)
+            return validate_analysis(front)
+        except ValueError as ex:return [str(ex)]
     if not value['volumes']:return ['analysis needs at least one wall volume']
     ids={}
     for layer in ('volumes','porches','gables','dormers','openings','finishes'):
@@ -125,11 +157,75 @@ def validate_analysis(value, *, _shape_only=False):
     return errors
 
 
+def project_front_analysis(value):
+    """Project explicitly classified faces, never project another camera's pixels."""
+    a=copy.deepcopy(value);notes=[];excluded=[]
+    layers=('volumes','porches','gables','dormers','openings','finishes')
+    rows=[r for layer in layers for r in a[layer] if 'id' in r]
+    ids={r['id']:r for r in rows}
+    if len(ids)!=len(rows):raise ValueError('duplicate architectural id')
+    kinds={r['id']:layer for layer in layers for r in a[layer] if 'id' in r}
+    allowed={'porches':('volumes',),'gables':('volumes','porches'),
+             'dormers':('volumes',),'openings':('volumes','porches','gables')}
+    for layer in allowed:
+        for row in a[layer]:
+            if kinds.get(row['owner']) not in allowed[layer]:
+                raise ValueError(row['id']+' has invalid owner '+row['owner'])
+    for obs in a['observations']:
+        if obs['feature'] not in ids:raise ValueError('observation references unknown feature '+obs['feature'])
+        if obs['face']!=ids[obs['feature']]['face']:raise ValueError('observation face conflicts with '+obs['feature'])
+        box=obs['box']
+        if box['width']<=0 or box['height']<=0 or box['x']+box['width']>1.001 or box['y']+box['height']>1.001:
+            raise ValueError('observation box outside image')
+    for row in rows:
+        observed=[o for o in a['observations'] if o['feature']==row['id']]
+        if not observed:raise ValueError(row['id']+' lacks image evidence')
+        if row['face']=='front' and not any(o['image']==1 for o in observed):
+            raise ValueError(row['id']+' front placement lacks primary-photo evidence')
+    # An explicit owner must also contain the opening in the same source image.
+    # This catches a below-eave wall window mislabeled as an attic/gable window.
+    primary={o['feature']:o['box'] for o in a['observations'] if o['image']==1 and o['face']=='front'}
+    for opening in a['openings']:
+        if opening['face']!='front':continue
+        owner=ids[opening['owner']]
+        if kinds[opening['owner']]=='porches':owner=ids[owner['owner']]
+        child=primary.get(opening['id']);parent=primary.get(owner['id'])
+        if child and parent and (child['x']<parent['x']-.02 or child['y']<parent['y']-.02 or
+                child['x']+child['width']>parent['x']+parent['width']+.02 or
+                child['y']+child['height']>parent['y']+parent['height']+.02):
+            raise ValueError(opening['id']+' image evidence lies outside its owner wall/gable')
+    side_doors=[o for o in a['openings'] if o['kind']=='garage_door' and o['face'] in ('left','right')]
+    faces={o['face'] for o in side_doors}
+    if len(faces)>1:notes.append('Garage doors on both sides cannot be represented; retaining configured side.')
+    elif faces:
+        side=next(iter(faces))
+        if a['garage_side'] not in ('unknown',side):raise ValueError('garage side conflicts with observed door face')
+        a['garage_side']=side
+    kept={r['id'] for r in rows if r['face']=='front'}
+    for layer in layers:
+        front=[]
+        for row in a[layer]:
+            face=row.pop('face')
+            if face!='front':
+                excluded.append({'id':row.get('id',layer),'face':face,'kind':row.get('kind',layer)})
+                notes.append(row.get('id',layer)+': '+face+' face kept out of front-facade slots.')
+            elif 'owner' in row and row['owner'] not in kept:
+                raise ValueError(row['id']+' front feature has a non-front owner')
+            else:front.append(row)
+        a[layer]=front
+    a['schema_version']=1
+    a.pop('coordinate_frame');a.pop('observations')
+    return a,notes,{'excluded_faces':excluded,'side_garage':bool(side_doors),
+                   'side_garage_count':sum(o['count'] for o in side_doors)}
+
+
 def prepare_analysis(value):
     """Resolve redundant labels and small boundary rounding, never infer new massing."""
     errors=validate_analysis(value,_shape_only=True)
     if errors:raise ValueError('; '.join(errors[:6]))
     a=copy.deepcopy(value);notes=[]
+    if a.get('schema_version')==2:
+        a,notes,_=project_front_analysis(a)
     # Duplicate IDs remain strict errors; never pick one ambiguous owner.
     rows=[r for layer in ('volumes','porches','gables','dormers','openings') for r in a[layer]]
     ids=[r['id'] for r in rows]
@@ -158,6 +254,7 @@ def compile_analysis(analysis):
     """Return spec, notes, provenance; identical analysis always yields identical output."""
     from services import house_facade as h
     a,adjustments=prepare_analysis(analysis)
+    projection=project_front_analysis(analysis)[2] if analysis.get('schema_version')==2 else {}
     notes=list(a['limitations'])+adjustments;mapping=[]
     # Fit the fixed block seam to a real wall-volume boundary. A uniform scale
     # can cut a single perpendicular roof into two independently capped towers.
@@ -277,6 +374,9 @@ def compile_analysis(analysis):
     # Place doors first, then windows; use the closest free interval without losing count.
     for o in sorted(a['openings'],key=lambda o:(o['kind']=='window',interval(o,mirror)[0],o['id'])):
         if o['level']=='attic':continue
+        if o['kind']=='garage_door' and projection.get('side_garage'):
+            notes.append(o['id']+': additional front garage entry omitted while preserving side entry.')
+            continue
         level=2 if o['level']=='upper' else 1
         start,end=interval(o,mirror);count=o['count']
         wall_owner=porches[o['owner']]['owner'] if o['owner'] in porches else o['owner']
@@ -314,6 +414,13 @@ def compile_analysis(analysis):
                 spec['blocks'][name]['base']={'material':fields.get('cladding','brick'),'body':fields.get('body','painted_brick'),'height':.8}
                 notes.append('Base band height defaults to 0.8 scene units and wraps its block.')
             else:spec['finishes'].append({'slot':start,'span':end-start,'story':2 if f['story']=='upper' else 1,**fields})
+    if projection.get('side_garage'):
+        notes.append('Side garage uses the renderer side-entry layout and default door dimensions; supplemental image coordinates are not projected onto the front.')
+        if any(o['kind']=='garage_door' for o in a['openings']):
+            notes.append('Front and side garage entries cannot both be placed exactly; preserving side entry.')
+            spec['ground']=[g for g in spec['ground'] if g['kind']!='garage_door']
+        spec['blocks']['garage']['orientation']='side'
+        spec['blocks']['garage']['side_door']={'style':'panel','leaves':min(2,projection['side_garage_count']),'width':4.4,'height':3.0}
     notes=list(dict.fromkeys(notes))
     before=copy.deepcopy(spec)
     spec,normalization=h.normalize(spec)
@@ -322,5 +429,5 @@ def compile_analysis(analysis):
     if errors:raise ValueError('Compiled house failed validation: '+'; '.join(errors[:6]))
     # Capture normalization losses explicitly; never claim the analysis was reproduced exactly.
     spec['unexpressed']=[n[:h.UNEXPRESSED_LEN] for n in notes[:h.UNEXPRESSED_MAX]]
-    return spec,notes,{'compiler_version':3,'prepared_analysis':copy.deepcopy(a),'analysis_adjustments':adjustments,'block_seam':seams[mirror],'mirror_scores':{'normal':score(False),'mirrored':score(True)},
+    return spec,notes,{'compiler_version':4,'face_projection':projection,'prepared_analysis':copy.deepcopy(a),'analysis_adjustments':adjustments,'block_seam':seams[mirror],'mirror_scores':{'normal':score(False),'mirrored':score(True)},
                        'mapping':mapping,'before_normalization':before,'normalization_notes':normalization}

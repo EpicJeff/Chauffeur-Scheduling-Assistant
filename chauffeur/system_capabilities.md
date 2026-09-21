@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.130 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.131 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8491,3 +8491,29 @@ limitations and uncertain-geometry defaults remain; extra photos do not add supp
 L-shaped roof intersections. No model quality claim: tests use mocked provider replies.
 37 photo unit/route tests, facade scenarios, and browser selection/removal/upload/review
 checks pass. Fresh multi-angle recognition remains to be evaluated.
+
+
+### Photo wall faces and source evidence - v2.499.131 (2026-09-21)
+
+New photo analysis uses schema v2 with explicit front/left/right/rear/unknown faces on
+volumes, roof features, openings and finishes. coordinate_frame is house_front; ridge
+parallel/perpendicular is relative to the house front, never the supplemental camera.
+Per-image observations link feature IDs to image numbers, physical faces and normalized
+2D bounding boxes. These image coordinates are separate from facade at/width intervals.
+Every front feature requires primary-photo evidence. Missing images, mismatched faces,
+invalid boxes and front openings outside their stated wall/gable image box are rejected.
+
+Compiler v4 projects only front rows into facade slots. Side/rear stories and gables
+cannot create front stories or roof features. A left/right garage door selects side
+entry and garage side; its face-local position does not occupy front window slots.
+Other non-front details remain in source analysis and explicit omission notes; general
+side/rear editing and L-shaped reconstruction are not introduced. Side garage dimensions
+use existing renderer defaults. Version-1 saved analysis remains readable/replayable.
+
+Visual review must report wall_faces, story_boundaries, roof_directions,
+opening_ownership and porch_placement as matched/corrected/uncertain. Missing or uncertain
+checks and compiler conflicts withhold the revision, retain the initial draft, and allow
+retry. No extra model stage or quota allowance. Regression uses the exact photo10 trace
+with explicitly synthetic face annotations; it does not claim to correct that run's
+remaining massing. 40 photo tests plus facade and browser flow checks pass; no live
+provider calls or fresh recognition-quality claim.

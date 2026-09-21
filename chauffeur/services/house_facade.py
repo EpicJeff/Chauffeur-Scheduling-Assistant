@@ -1312,11 +1312,18 @@ _PHOTO_LOCK = threading.Lock()
 PHOTO_VIEWS = ('front-left', 'front-right', 'left', 'right', 'rear', 'unknown')
 
 
+def _validate_photo_sources(analysis, photos):
+    if isinstance(analysis,dict) and analysis.get('schema_version')==2:
+        if any(o.get('image',0)>len(photos) for o in analysis.get('observations',[]) if isinstance(o,dict)):
+            raise ValueError('Analysis cites a reference image that was not supplied.')
+
+
 def _photo_context(photos):
     return ('Image order: ' + '; '.join(f"image {i+1}: {p['view']}" for i,p in enumerate(photos)) +
-            '. Image 1 is the PRIMARY facade coordinate reference. All at/width values must refer to image 1. '
+            '. Image 1 is the PRIMARY facade coordinate reference. All FRONT at/width values must refer to image 1; non-front face-local values never enter facade slots. '
             'Supplemental views show the SAME house from other angles: use them to clarify depth, garage side, '
             'roof intersections and occlusions, never copy their image coordinates into the facade. '
+            'Record per-image bounding boxes in observations and physical wall faces on features. '
             'Match physical features across images. In evidence and limitations cite image numbers; '
             'report conflicts and unseen geometry instead of inventing certainty. Left/right view labels '
             'are as seen while facing the primary facade.')
@@ -1386,6 +1393,7 @@ def from_photo(image_b64, mime, supplemental=None):
                 raise ValueError(message)
             run['raw_observations'] = copy.deepcopy(observed)
             # Compile first; invalid analyses never become cached successful inputs.
+            _validate_photo_sources(observed, photos)
             spec, notes, compiled = compile_analysis(observed)
             run['observations'] = copy.deepcopy(observed)
         else:
@@ -1535,7 +1543,10 @@ def critique(token, render_png_b64, *, automatic=False):
             res = model_pools.call_pool_json(
                 'vision', api_key, ANALYSIS_PROMPT + '\nCompare the house photos with the LAST image, which is the RENDER from the primary view. '
                 'The prior analysis may be wrong. Return {analysis: complete corrected analysis, reasons: image-based explanations}. '
-                'Do not return a house configuration. Correct wall-story counts, ridge directions, ownership and opening counts from the photo.',
+                'First check wall faces, full-story eave boundaries, HOUSE-relative ridge directions, opening ownership and porch placement. '
+                'Return structural_review with matched/corrected/uncertain for EACH check. Resolve structural errors before finishes. '
+                'If evidence is insufficient mark uncertain; do not call cosmetic changes a successful structural match. '
+                'Do not return a house configuration. Compare against reference photos, not just the prior analysis.',
                 _photo_context(photos) + '\nThe final image is the render, not another reference photograph.\nPrior analysis: ' + json.dumps(e['analysis'], separators=(',', ':')) +
                 '\nCompiler limitations: ' + json.dumps(trace.get('compiler_notes', []), separators=(',', ':')),
                 temperature=.1, timeout_s=90, settings=settings, strict_json=True,
@@ -1552,8 +1563,18 @@ def critique(token, render_png_b64, *, automatic=False):
             reasons = res.get('reasons')
             if not isinstance(reasons, list) or not reasons or any(not isinstance(x, str) or not x.strip() for x in reasons):
                 raise ValueError('Visual review requires image-based explanations.')
+            _validate_photo_sources(res.get('analysis'), photos)
             revised, notes, compiled = compile_analysis(res.get('analysis'))
             trace.update(review_analysis=copy.deepcopy(res['analysis']), review_compilation=compiled, review_notes=notes)
+            if res.get('analysis',{}).get('schema_version')==2:
+                checks=res.get('structural_review',{})
+                required=('wall_faces','story_boundaries','roof_directions','opening_ownership','porch_placement')
+                uncertain=[key for key in required if checks.get(key) not in ('matched','corrected')]
+                if any('conflicts' in n for n in notes):uncertain.append('compiler roof/face conflicts')
+                trace['structural_review']=copy.deepcopy(checks)
+                if uncertain:
+                    result['reasons']=['Structural review unresolved: '+', '.join(uncertain)+'. Original draft retained.']+reasons+notes
+                    return finish(result,retryable=True)
             result.update(revised=revised, reasons=reasons + notes, unexpressed=revised['unexpressed'])
             return finish(result)
         except Exception as ex:
