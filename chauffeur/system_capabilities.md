@@ -251,7 +251,7 @@ Distinct from standard rules, priority rules allow dynamic modification of the `
 Every Gemini call in the app routes through quota-bucket pools so same-ability models combine their free-tier daily limits (each MODEL has its own quota; caps as of 2026-08-02):
 
 - **lite** — `gemini-3.5-flash-lite` (500/day), `gemini-3.1-flash-lite` (500/day), `gemini-2.5-flash-lite` (20/day tail) → ~1,020 fast requests/day.
-- **flash** — `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.1-flash`, `gemini-3-flash`, `gemini-2.5-flash` (20/day each) → ~100 quality requests/day.
+- **flash** — `gemini-3.8-flash`,`gemini-3.7-flash`,`gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3-flash`, `gemini-2.5-flash` (20/day each) → ~100 quality requests/day.
 - **gemma** — `gemma-4-31b-it`, `gemma-4-26b-it` (14,400/day each) → ~28,800/day, but 44-180s per call.
 - **pro** — `gemini-3.1-pro-preview` (paid key, mission-tier only; 2.5-pro is closed to new users, and preview ids are served on v1beta — all Gemini calls now use v1beta) → billed per call, no free-tier quota to combine.
 

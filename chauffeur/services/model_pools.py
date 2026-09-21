@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_POOLS = {
     'lite': ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"],
     'flash': ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash",
-              "gemini-3.1-flash", "gemini-3-flash", "gemini-2.5-flash"],
+              "gemini-3-flash", "gemini-2.5-flash"],
     'gemma': ["gemma-4-31b-it", "gemma-4-26b-it"],
     # gemini-2.5-pro is closed to new users; the live pro id is the -preview
     # one (device-verified error text, 2026-09-06). Served via v1beta only.
