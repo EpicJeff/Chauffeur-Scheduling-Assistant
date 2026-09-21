@@ -85,6 +85,33 @@ class StructureTests(unittest.TestCase):
         with self.assertRaises(ValueError): apply_details(s, locked, d)
         self.assertEqual(locked, before)
 
+    def test_attic_wall_owner_resolves_without_losing_other_details(self):
+        s=structure(); locked,_,_=compile_structure(s)
+        d=details(); attic=next(o for o in d['openings'] if o['level']=='attic')
+        attic['owner']='right'; raw=copy.deepcopy(d)
+        revised,notes,trace=apply_details(s,locked,d)
+        self.assertEqual(d,raw)
+        self.assertEqual(geometry(revised),geometry(locked))
+        self.assertEqual(sum(g.get('story')==2 for g in revised['ground']),3)
+        self.assertTrue(any(g.get('window') for g in revised['roof']))
+        self.assertTrue(any('resolved to existing gable' in n for n in notes))
+        self.assertTrue(trace['detail_ownership_adjustments'])
+
+    def test_unresolved_attic_keeps_other_windows_and_materials(self):
+        for ambiguous in (False,True):
+            s=structure()
+            if ambiguous:
+                g=copy.deepcopy(s['gables'][-1]);g['id']='other-gable';s['gables'].append(g)
+            else:
+                s['gables']=[g for g in s['gables'] if g['owner']!='right']
+            locked,_,_=compile_structure(s)
+            d=details();next(o for o in d['openings'] if o['level']=='attic')['owner']='right'
+            revised,notes,_=apply_details(s,locked,d)
+            self.assertEqual(geometry(revised),geometry(locked))
+            self.assertEqual(sum(g.get('story')==2 for g in revised['ground']),3)
+            self.assertTrue(revised['finishes'])
+            self.assertTrue(any('attic opening left unplaced' in n for n in notes))
+
     def test_gable_overhang_fits_explicit_owner_without_changing_massing(self):
         for owner in ('centre','porch'):
             s=structure()

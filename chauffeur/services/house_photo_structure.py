@@ -111,12 +111,36 @@ def apply_details(structure, locked, details):
         a[k] = copy.deepcopy(details[k])
     if isinstance(a['limitations'], list):
         a['limitations'] = copy.deepcopy(structure['limitations']) + a['limitations']
+    errors = validate_analysis(a, _shape_only=True)
+    if errors:
+        raise ValueError('; '.join(errors[:6]))
+    # Detail ownership cannot invalidate every other opening/material. Resolve
+    # redundant attic ownership only within the explicitly named wall/porch.
+    gables = {g['id']: g for g in a['gables']}
+    parents = {r['id'] for layer in ('volumes', 'porches') for r in a[layer]}
+    retained = []
+    adjustments = []
+    for opening in a['openings']:
+        if opening['level'] == 'attic' and opening['owner'] in parents:
+            matches = [g for g in gables.values() if g['owner'] == opening['owner']
+                       and opening['at'] >= g['at'] - .02
+                       and opening['at'] + opening['width'] <= g['at'] + g['width'] + .02]
+            if len(matches) == 1 and opening['kind'] == 'window':
+                opening['owner'] = matches[0]['id']
+                adjustments.append(opening['id'] + ': attic window resolved to existing gable ' + opening['owner'] + '.')
+            else:
+                adjustments.append(opening['id'] + ': attic opening left unplaced; no unique existing gable matches its declared owner and position.')
+                continue
+        retained.append(opening)
+    a['openings'] = retained
+    a['limitations'] = adjustments + a['limitations']
     # The compiler's unknown-side heuristic also considers entry placement.
     # Freeze its chosen mapping before giving it any openings.
     a['garage_side'] = 'right' if locked['mirror'] else 'left'
     if structure['garage_entry'] != 'front' and isinstance(a['openings'], list):
         a['openings'] = [o for o in a['openings'] if not isinstance(o, dict) or o.get('kind') != 'garage_door']
     revised, notes, trace = compile_analysis(a)
+    trace['detail_ownership_adjustments'] = adjustments
     revised['blocks']['garage']['orientation'] = locked['blocks']['garage']['orientation']
     if geometry(revised) != geometry(locked):
         raise ValueError('detail compilation would change locked architecture; structure retained')

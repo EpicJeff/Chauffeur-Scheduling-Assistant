@@ -72,3 +72,13 @@ The compiler records the fit, preserves the input and changes no wall or underly
 roof. Missing owners and gables centred away from their owner remain errors. The
 reported g1 failure had no raw coordinates available; synthetic regressions establish
 this bounded correction, not an exact replay of that provider response.
+
+## Attic detail ownership (2.499.138)
+
+An attic window naming an existing wall/porch instead of a gable resolves to that
+parent's unique gable containing its interval (existing .02 boundary tolerance).
+No gable, roof or story is invented. With zero or multiple matches, only that attic
+opening is left unplaced with an explicit note; other details still compile. Unknown
+owner IDs remain errors. Raw responses remain in diagnostics and the geometry lock
+still applies. Synthetic tests cover unique, missing and ambiguous matches; the
+reported o10 response was not available in the local export.

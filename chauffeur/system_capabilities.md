@@ -8613,3 +8613,12 @@ overlaps. No ownership reassignment, wall resizing, story or ridge changes occur
 Compiler notes record each correction. Missing/unrelated owners still fail validation.
 59 photo tests pass, including wall/porch overhangs and detail geometry preservation.
 The screenshot's raw g1 coordinates were unavailable; coverage is synthetic.
+
+
+### Attic detail ownership - v2.499.138 (2026-09-21)
+
+The locked detail pass resolves attic windows naming a wall/porch to its unique
+existing gable containing the opening. No match or multiple matches leave only that
+attic opening unplaced, with a note, instead of withholding all windows/materials.
+Unknown IDs remain strict. Architecture geometry invariance is still required.
+61 photo tests pass; unique/absent/ambiguous ownership regressions are synthetic.

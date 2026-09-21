@@ -12,7 +12,7 @@ Reduce the coordination work required to run a family. Chauffeur should understa
 
 The 3D house is the shared spatial interface. Rooms and real-world objects provide stable context for features. The house should also reflect the family's own life through carefully quality-gated, personalized objects and spaces.
 
-## Latest architecture change (2026-09-21, v2.499.137)
+## Latest architecture change (2026-09-21, v2.499.138)
 
 House photo matching uses three bounded stages: compact structure analysis, a rendered
 structure review, then details constrained to that architecture. Code compiles all
@@ -22,6 +22,7 @@ The new contract has no per-feature bounding-box inventory. House calls use Flas
 failed details resume from cached reviewed structure. Existing saved designs and old
 analysis replays remain supported. See the [staged contract and evaluation limits](superpowers/specs/2026-09-21-structure-first-photo-pipeline.md).
 Gable edge estimates can be fitted to their declared owner when centred on it with majority overlap; this changes no underlying wall/roof geometry.
+Attic window ownership can resolve to a unique existing gable; an ambiguous attic window no longer withholds all other details.
 Fresh-photo recognition across independent house styles remains an unproven quality gate.
 
 ## Shipped foundation
