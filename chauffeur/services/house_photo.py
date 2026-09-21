@@ -1,4 +1,5 @@
 """Photo observations and structural checks, independent of provider and storage."""
+import copy
 import math
 
 OBSERVATION_PROMPT = """Inspect the attached house photo before designing anything. Return JSON only.
@@ -61,9 +62,6 @@ def validate_observations(value):
                         or row.get('front_gable') not in ('cross', 'end', 'none', 'unknown')
                         or not isinstance(row.get('evidence'), str) or not row['evidence'].strip()):
                     errors.append('invalid roof interpretation')
-                if ((row.get('front_gable') == 'cross' and row.get('ridge') == 'z')
-                        or (row.get('front_gable') == 'end' and row.get('ridge') == 'x')):
-                    errors.append('contradictory roof interpretation')
             if key == 'upper' and (type(row.get('windows')) is not int or not 0 <= row['windows'] <= 40):
                 errors.append('invalid upstairs window count')
     for key in ('materials', 'uncertain'):
@@ -72,6 +70,24 @@ def validate_observations(value):
     if not value.get('sections'):
         errors.append('no visible sections identified')
     return errors
+
+
+def reconcile_observations(value):
+    """Soften contradictory interpretations after schema validation, without guessing.
+
+    The original response is retained separately in the photo trace. Both disputed
+    labels become unknown; positions, story counts and visible evidence survive.
+    """
+    result = copy.deepcopy(value)
+    for i, roof in enumerate(result.get('roofs', [])):
+        ridge, gable = roof['ridge'], roof['front_gable']
+        if (ridge, gable) not in (('z', 'cross'), ('x', 'end')):
+            continue
+        roof['ridge'] = roof['front_gable'] = 'unknown'
+        result['uncertain'].append(
+            f'Roof region {i + 1}: conflicting ridge={ridge} and front_gable={gable}; '
+            'both interpretations marked unknown. Recheck visible roof planes before choosing the structure.')
+    return result
 
 
 def structural_issues(spec, observations, slot_count=18):

@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.120 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.121 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8328,3 +8328,15 @@ records the raw correction, validation/check results, and acceptance/failure/bud
 Cached repeat uploads make no new calls. This is a structural correction, not the separate
 render-based Compare to photo action. Offline regression tests use the latest failed
 export and the authored reference; fresh model interpretation accuracy remains unverified.
+
+
+### Conflicting photo roof observations - v2.499.121 (2026-09-21)
+
+A schema-valid observation with conflicting ridge/gable labels no longer aborts the
+photo run. Both disputed labels become unknown, with an explicit uncertainty note;
+region bounds, supporting story and visible evidence remain intact. Configuration
+receives the reconciled observations and the photo. Malformed fields still fail schema
+validation. photo_trace.raw_observations retains the original response alongside the
+reconciled observations. This adds no provider requests; cached observations are reused.
+Regression coverage verifies both conflict pairs, nonmutation, cache reuse and retained
+trace evidence. All 22 photo tests and 45 facade scenarios pass; no live Gemini calls.

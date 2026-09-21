@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 import harness
 from services import house_facade as hf
-from services.house_photo import validate_observations, structural_issues
+from services.house_photo import validate_observations, reconcile_observations, structural_issues
 from photo_helpers import OBSERVATIONS
 
 DATA=json.loads((Path(__file__).parent/'fixtures/house_photo_roof_structure.json').read_text())
@@ -41,8 +41,35 @@ class RoofStructure(unittest.TestCase):
             bad=copy.deepcopy(self.obs);bad['roofs'][0][field]=value
             self.assertTrue(validate_observations(bad))
         self.obs['roofs'][0].update(ridge='z',front_gable='cross')
-        self.assertTrue(validate_observations(self.obs))
+        self.assertEqual(validate_observations(self.obs),[])
+        self.assertEqual(reconcile_observations(self.obs)['roofs'][0]['ridge'],'unknown')
         self.assertEqual(validate_observations(OBSERVATIONS),[])
+
+    def test_conflicting_interpretations_continue_without_extra_calls(self):
+        for ridge, gable in [('z', 'cross'), ('x', 'end')]:
+            hf._PHOTO_RUNS.clear()
+            observed=copy.deepcopy(OBSERVATIONS)
+            observed['roofs']=[{'at':0,'width':1/3,'story':1,'ridge':ridge,
+                                'front_gable':gable,'evidence':'Visible triangle and roof slope.'}]
+            original=copy.deepcopy(observed)
+            with patch.object(hf,'_settings',return_value={'llm_gemini_api_key':'offline'}),patch(
+                    'services.model_pools.call_pool_json',side_effect=[observed,copy.deepcopy(hf.CANONICAL)]) as api:
+                spec,notes,error,token=hf.from_photo('conflicting-roof','image/png')
+                self.assertIsNone(error)
+                self.assertIsNotNone(spec)
+                self.assertEqual(api.call_count,2)
+                self.assertEqual(hf.from_photo('conflicting-roof','image/png')[3],token)
+                self.assertEqual(api.call_count,2)
+                sent=api.call_args.args[3]
+                self.assertIn('"ridge":"unknown"',sent)
+                self.assertIn('"front_gable":"unknown"',sent)
+            self.assertEqual(observed,original)
+            self.assertTrue(any('conflicting ridge=' in note for note in notes))
+            trace=hf._DRAFTS[token]['photo_trace']
+            self.assertEqual(trace['raw_observations'],original)
+            self.assertEqual(trace['observations']['roofs'][0]['ridge'],'unknown')
+            self.assertEqual(trace['observations']['roofs'][0]['evidence'],original['roofs'][0]['evidence'])
+            self.assertEqual(reconcile_observations(trace['observations']),trace['observations'])
 
     def test_porch_triangle_does_not_require_extra_gable(self):
         spec=copy.deepcopy(hf.CANONICAL)

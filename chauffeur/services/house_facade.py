@@ -13,7 +13,7 @@ import secrets
 import threading
 import time
 import uuid
-from services.house_photo import OBSERVATION_PROMPT, validate_observations, structural_issues, restore_missing_upper_windows
+from services.house_photo import OBSERVATION_PROMPT, validate_observations, reconcile_observations, structural_issues, restore_missing_upper_windows
 
 SLOT_W = 1.85
 # West to east. Mirrors house.js: FULL_HOUSE, GARAGE_BLOCK, EXT_TOP4.
@@ -1315,7 +1315,8 @@ def from_photo(image_b64, mime):
             errors = validate_observations(observed)
             if errors:
                 raise ValueError('invalid photo observations: ' + '; '.join(errors[:3]))
-            run['observations'] = copy.deepcopy(observed)
+            run['raw_observations'] = copy.deepcopy(observed)
+            run['observations'] = reconcile_observations(observed)
         observed = run['observations']
         res = call(_photo_prompt() + PHOTO_COORDINATES,
                    'Build the house from these observations and the photo. Preserve the broad sections, '
@@ -1384,7 +1385,9 @@ def from_photo(image_b64, mime):
         token = issue_draft(spec, image_b64, mime, viewpoint=observed['viewpoint'], requests=len(attempts))
         _DRAFTS[token]['observations'] = copy.deepcopy(observed)
         _DRAFTS[token]['photo_trace'] = {
-            'observations': copy.deepcopy(observed), 'raw_configuration': raw_configuration,
+            'observations': copy.deepcopy(observed),
+            'raw_observations': copy.deepcopy(run.get('raw_observations', observed)),
+            'raw_configuration': raw_configuration,
             'before_normalization': before_normalization, 'normalization_notes': normalization_notes,
             'structural_issues': list(issues), 'automatic_correction': correction, 'attempts': list(attempts)}
         _DRAFTS[token]['photo_run'] = run
