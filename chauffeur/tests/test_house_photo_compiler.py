@@ -468,7 +468,8 @@ class CompilerTests(unittest.TestCase):
             spec,notes,error,token=hf.from_photo('new-analysis','image/png')
             self.assertIsNone(error)
             self.assertEqual(api.call_count,1)
-            self.assertEqual(api.call_args.args[2],ANALYSIS_PROMPT)
+            from services.house_photo_structure import STRUCTURE_PROMPT
+            self.assertEqual(api.call_args.args[2],STRUCTURE_PROMPT)
             self.assertEqual(hf.from_photo('new-analysis','image/png')[3],token)
             result,error=hf.critique(token,'render',automatic=True)
             self.assertIsNone(error)

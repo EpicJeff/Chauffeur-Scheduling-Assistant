@@ -12,15 +12,16 @@ Reduce the coordination work required to run a family. Chauffeur should understa
 
 The 3D house is the shared spatial interface. Rooms and real-world objects provide stable context for features. The house should also reflect the family's own life through carefully quality-gated, personalized objects and spaces.
 
-## Latest architecture change (2026-09-21, v2.499.131)
+## Latest architecture change (2026-09-21, v2.499.136)
 
-House photo matching now compiles an architectural analysis schema deterministically.
-The LLM describes visible geometry and revises that description during visual review;
-code generates all renderer configuration. Matching accepts one primary front photo and
-up to two labeled supplemental views. Schema v2 separates wall faces and per-image
-evidence from front-facade coordinates; structural review gates automatic revisions. See the
-[contract and remaining limits](superpowers/specs/2026-09-21-photo-architecture-compiler.md).
-Fresh-photo recognition across independent house styles remains the next quality gate.
+House photo matching uses three bounded stages: compact structure analysis, a rendered
+structure review, then details constrained to that architecture. Code compiles all
+renderer configuration and verifies that details preserve the structural geometry.
+Primary-front coordinates remain authoritative with up to two supplemental angles.
+The new contract has no per-feature bounding-box inventory. House calls use Flash only;
+failed details resume from cached reviewed structure. Existing saved designs and old
+analysis replays remain supported. See the [staged contract and evaluation limits](superpowers/specs/2026-09-21-structure-first-photo-pipeline.md).
+Fresh-photo recognition across independent house styles remains an unproven quality gate.
 
 ## Shipped foundation
 

@@ -47,10 +47,15 @@ Verification uses mocked HTTP only: retry amplification, shared limits,
 foreground reserve, concurrent admission, restart persistence, and day reset.
 
 
-### House photo actions (v2.499.126)
+### House photo actions (v2.499.136)
 
-Photo upload has one analysis stage with at most three transmitted requests. Automatic
-visual review permits one more; manual review permits three. Compilation is local and
-has no provider cost. Pool request traces are recorded immediately before HTTP after
+Photo upload has one structure stage with at most three transmitted requests and a
+120-second pool deadline. New drafts complete with one structural review request and
+one detail request (two total, automatic or manual; shared 180-second deadline and
+90-second maximum per request). Typical successful path: three requests; maximum for
+one upload plus completion: five. A failed detail stage resumes without another review.
+House matching uses a Flash-only pool chain, never automatic Lite fallback. Older draft
+tokens retain their previous review limits (one automatic, three manual).
+Compilation is local and has no provider cost. Pool request traces are recorded immediately before HTTP after
 admission: local deferrals count zero and do not consume foreground fallback allowance.
 Failed transmitted requests still count. Existing workflow pauses remain enforced.

@@ -59,6 +59,7 @@ TIER_CHAINS = {
     # excluded; flash first because flyers/screenshots are the hard case and
     # volume is family-scale (dozens/week vs the ~120/day flash quota).
     'vision': ['flash', 'lite'],
+    'house_photo': ['flash'],  # architecture must not silently fall back to Lite
     # Missions (services/missions.py). 'mission' is the ONLY tier that touches
     # the pro pool and it never falls back to a free pool — a mission pauses
     # rather than silently degrading. 'mission_flash' exists for benchmarking

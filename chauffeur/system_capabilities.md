@@ -8581,3 +8581,25 @@ coordinates that cross their declared wall are fitted within that wall using the
 placement algorithm, with explicit notes; owner IDs and global bounds remain validated.
 This repairs compiler-caused feature loss;
 it does not establish correctness of the model's feature descriptions or provider uptime.
+
+
+### Structure-first photo matching - v2.499.136 (2026-09-21)
+
+New uploads describe only stories, wall widths/projections, underlying roofs, porches,
+gables and dormers in a compact schema. There is no per-feature bounding-box inventory.
+The deterministic structure preview is reviewed against the photographs before a
+separate detail-only call adds openings/materials. Detail compilation must preserve
+block depths, mirror/orientation, upper spans, roof geometry and porch coverage.
+Failures retain usable architecture; detail retries reuse the reviewed structure.
+An uncertain structural review retains original architecture and reports uncertainty.
+
+House photo calls now stay in the Flash pool. Nominal cost is three calls; upload has
+at most three transmitted attempts, completion has at most two (one review, one detail).
+The request ledger records each stage and actual model IDs. Saved models remain compatible.
+See docs/superpowers/specs/2026-09-21-structure-first-photo-pipeline.md for the contracts.
+
+Verification covers diverse synthetic structures, saved failed analyses, stage/failure
+contracts and browser rendering. No live-provider recognition benchmark was run;
+new-photo roof/story accuracy remains unproven. Fixed-block and intersecting-roof
+representation limitations remain. This release changes the task decomposition,
+not the renderer's architectural capacity or provider availability.
