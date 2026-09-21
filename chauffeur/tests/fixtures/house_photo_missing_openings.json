@@ -1,0 +1,396 @@
+{
+  "observations": {
+    "viewpoint": "centre",
+    "garage_side": "unknown",
+    "sections": [
+      {
+        "description": "Left ground level section with side-gabled roof slope behind",
+        "at": 0.04,
+        "width": 0.21
+      },
+      {
+        "description": "Center recessed front porch section with covered entrance gabled hood",
+        "at": 0.22,
+        "width": 0.36
+      },
+      {
+        "description": "Right prominent front-facing gabled wing with multi-pane windows and metal accent roof skirt",
+        "at": 0.58,
+        "width": 0.39
+      }
+    ],
+    "upper": [
+      {
+        "at": 0.25,
+        "width": 0.32,
+        "windows": 3
+      }
+    ],
+    "porches": [
+      {
+        "at": 0.22,
+        "width": 0.36
+      }
+    ],
+    "gables": [
+      {
+        "at": 0.22,
+        "width": 0.17
+      },
+      {
+        "at": 0.35,
+        "width": 0.23
+      },
+      {
+        "at": 0.61,
+        "width": 0.36
+      }
+    ],
+    "materials": [
+      "Light gray painted brick on lower main walls and foundation",
+      "Light gray vertical board and batten siding on upper walls and gables",
+      "Dark gray/blue window shutters on upper and main floor windows",
+      "Dark brown wood double front entry door with glass panes",
+      "Black asphalt shingles on main roof slopes",
+      "Dark metal metal roofing on porch awning roofs"
+    ],
+    "uncertain": [
+      "Garage location (no garage doors visible from front elevation)",
+      "Exact rear roof structure"
+    ],
+    "_model": "gemini-3.6-flash"
+  },
+  "raw_configuration": {
+    "version": 3,
+    "mirror": true,
+    "viewpoint": "centre",
+    "pitch_deg": 30.0,
+    "style": {
+      "roof": "charcoal",
+      "frame": "white",
+      "door": "wood",
+      "trim": "white"
+    },
+    "blocks": {
+      "main": {
+        "depth": 0.0,
+        "roof": {
+          "form": "gable",
+          "ridge": "x",
+          "pitch_deg": 30.0
+        },
+        "cladding": "batten",
+        "body": "greige",
+        "base": {
+          "material": "brick",
+          "height": 0.8,
+          "body": "painted_brick"
+        }
+      },
+      "garage": {
+        "depth": 1.5,
+        "roof": {
+          "form": "gable",
+          "ridge": "z",
+          "pitch_deg": 32.0
+        },
+        "cladding": "batten",
+        "body": "greige",
+        "base": {
+          "material": "brick",
+          "height": 0.8,
+          "body": "painted_brick"
+        },
+        "orientation": "side"
+      }
+    },
+    "ground": [
+      {
+        "block": "main",
+        "at": 0.1,
+        "width": 0.18,
+        "kind": "window",
+        "size": "standard",
+        "shutters": true,
+        "count": 1,
+        "story": 1
+      },
+      {
+        "block": "main",
+        "at": 0.35,
+        "width": 0.22,
+        "kind": "door"
+      },
+      {
+        "block": "main",
+        "at": 0.6,
+        "width": 0.2,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "count": 2,
+        "story": 1
+      },
+      {
+        "block": "main",
+        "at": 0.32,
+        "width": 0.52,
+        "kind": "porch",
+        "type": "covered",
+        "roof": "mixed"
+      },
+      {
+        "block": "garage",
+        "at": 0.05,
+        "width": 0.18,
+        "kind": "window",
+        "size": "tall",
+        "shutters": false,
+        "count": 1,
+        "story": 1
+      },
+      {
+        "block": "garage",
+        "at": 0.25,
+        "width": 0.5,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "count": 3,
+        "story": 1
+      },
+      {
+        "block": "garage",
+        "at": 0.78,
+        "width": 0.18,
+        "kind": "window",
+        "size": "tall",
+        "shutters": false,
+        "count": 1,
+        "story": 1
+      }
+    ],
+    "roof": [
+      {
+        "block": "main",
+        "at": 0.5,
+        "width": 0.26,
+        "kind": "gable",
+        "window": false
+      },
+      {
+        "block": "garage",
+        "at": 0.0,
+        "width": 1.0,
+        "kind": "gable",
+        "window": true
+      }
+    ],
+    "upper": [
+      {
+        "block": "main",
+        "at": 0.35,
+        "width": 0.5,
+        "roof": {
+          "form": "gable",
+          "ridge": "x",
+          "pitch_deg": 30.0
+        }
+      }
+    ],
+    "story_finishes": {
+      "main": {
+        "1": {
+          "cladding": "batten",
+          "body": "greige"
+        }
+      }
+    },
+    "finishes": [
+      {
+        "block": "main",
+        "at": 0.35,
+        "width": 0.5,
+        "story": 2,
+        "cladding": "brick",
+        "body": "painted_brick"
+      },
+      {
+        "block": "main",
+        "at": 0.35,
+        "width": 0.2,
+        "story": 2,
+        "cladding": "batten",
+        "body": "greige"
+      }
+    ],
+    "unexpressed": [
+      "Metal roof shed skirts over porch and garage lower windows",
+      "Gabled entry porch integrated into main porch roof",
+      "Side-entry garage inferred on right wing",
+      "Slate blue louvred shutters"
+    ],
+    "_model": "gemini-3.6-flash"
+  },
+  "before_normalization": {
+    "version": 3,
+    "mirror": true,
+    "viewpoint": "centre",
+    "pitch_deg": 30.0,
+    "style": {
+      "roof": "charcoal",
+      "frame": "white",
+      "door": "wood",
+      "trim": "white"
+    },
+    "blocks": {
+      "main": {
+        "depth": 0.0,
+        "roof": {
+          "form": "gable",
+          "ridge": "x",
+          "pitch_deg": 30.0
+        },
+        "cladding": "batten",
+        "body": "greige",
+        "base": {
+          "material": "brick",
+          "height": 0.8,
+          "body": "painted_brick"
+        }
+      },
+      "garage": {
+        "depth": 1.5,
+        "roof": {
+          "form": "gable",
+          "ridge": "z",
+          "pitch_deg": 32.0
+        },
+        "cladding": "batten",
+        "body": "greige",
+        "base": {
+          "material": "brick",
+          "height": 0.8,
+          "body": "painted_brick"
+        },
+        "orientation": "side"
+      }
+    },
+    "ground": [
+      {
+        "kind": "window",
+        "size": "standard",
+        "shutters": true,
+        "count": 1,
+        "story": 1,
+        "slot": 15,
+        "span": 2
+      },
+      {
+        "kind": "door",
+        "slot": 11,
+        "span": 3
+      },
+      {
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "count": 2,
+        "story": 1,
+        "slot": 8,
+        "span": 2
+      },
+      {
+        "kind": "porch",
+        "type": "covered",
+        "roof": "mixed",
+        "gable_offset": 4,
+        "slot": 8,
+        "span": 6
+      },
+      {
+        "kind": "window",
+        "size": "tall",
+        "shutters": false,
+        "count": 1,
+        "story": 1,
+        "slot": 5,
+        "span": 1
+      },
+      {
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "count": 3,
+        "story": 1,
+        "slot": 2,
+        "span": 3
+      },
+      {
+        "kind": "window",
+        "size": "tall",
+        "shutters": false,
+        "count": 1,
+        "story": 1,
+        "slot": 0,
+        "span": 1
+      }
+    ],
+    "roof": [
+      {
+        "kind": "gable",
+        "window": false,
+        "slot": 9,
+        "span": 3
+      },
+      {
+        "kind": "gable",
+        "window": true,
+        "slot": 0,
+        "span": 6
+      }
+    ],
+    "upper": [
+      {
+        "roof": {
+          "form": "gable",
+          "ridge": "x",
+          "pitch_deg": 30.0
+        },
+        "slot": 8,
+        "span": 6
+      }
+    ],
+    "story_finishes": {
+      "main": {
+        "1": {
+          "cladding": "batten",
+          "body": "greige"
+        }
+      }
+    },
+    "finishes": [
+      {
+        "story": 2,
+        "cladding": "brick",
+        "body": "painted_brick",
+        "slot": 8,
+        "span": 6
+      },
+      {
+        "story": 2,
+        "cladding": "batten",
+        "body": "greige",
+        "slot": 11,
+        "span": 2
+      }
+    ],
+    "unexpressed": [
+      "Metal roof shed skirts over porch and garage lower windows",
+      "Gabled entry porch integrated into main porch roof",
+      "Side-entry garage inferred on right wing",
+      "Slate blue louvred shutters"
+    ],
+    "_model": "gemini-3.6-flash"
+  }
+}

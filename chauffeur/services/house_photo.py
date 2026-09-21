@@ -99,3 +99,42 @@ def structural_issues(spec, observations, slot_count=18):
         if not any(matches(g, observed) for g in gables):
             issues.append(f'Gable region {i + 1} has the wrong position or width.')
     return issues
+
+
+def restore_missing_upper_windows(spec, observations, slot_count=18):
+    """Recover a wholly omitted row only when one observed upper matches uniquely.
+
+    Counts are image observations; evenly spaced positions are explicitly inferred.
+    Partial rows and ambiguous/missing upper volumes remain review issues, not guesses.
+    """
+    notes = []
+    if not observations:
+        return notes
+    matches = []
+    for observed in observations['upper']:
+        candidates = []
+        for upper in spec['upper']:
+            a, w = upper['slot'] / slot_count, upper['span'] / slot_count
+            if spec['mirror']:
+                a = 1 - a - w
+            if abs(a - observed['at']) <= .13 and abs(w - observed['width']) <= .16:
+                candidates.append(upper)
+        matches.append(candidates)
+    for observed, candidates in zip(observations['upper'], matches):
+        if len(candidates) != 1:
+            continue
+        upper = candidates[0]
+        if sum(any(u is upper for u in group) for group in matches) != 1:
+            continue
+        count = observed['windows']
+        if not 0 < count <= upper['span']:
+            continue
+        if any(g.get('story') == 2 and g['slot'] < upper['slot'] + upper['span']
+               and upper['slot'] < g['slot'] + g['span'] for g in spec['ground']):
+            continue
+        for i in range(count):
+            spec['ground'].append({'kind': 'window', 'slot': upper['slot'] + int((i + .5) * upper['span'] / count),
+                                   'span': 1, 'size': 'standard', 'shutters': False, 'story': 2})
+        notes.append(f"Restored {count} omitted upstairs window groups at upper slot {upper['slot']} from photo observations; spacing inferred, review placement.")
+    spec['ground'].sort(key=lambda g: (g['slot'], g.get('story', 1), g['kind']))
+    return notes

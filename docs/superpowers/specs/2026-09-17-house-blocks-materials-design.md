@@ -394,3 +394,20 @@ before strict validation. In particular, painted_brick/cream_brick are body colo
 can be safely interpreted as brick when returned as material/cladding. Valid explicit
 body colors are preserved. Unknown materials remain errors, now including the rejected
 value. Mapping notes remain in photo diagnostics. Normal editor validation is unchanged.
+
+
+### Photo openings and gable repair - v2.499.119 (2026-09-21)
+
+Window groups may cross the garage/mudroom slot seam within the same block face;
+physical face limits and opening conflicts still apply. A full-width gable feature
+matching an existing ridge-z gable roof is removed as redundant. Optional roof.window
+moves its attic opening onto the existing block/upper roof; cross-gables also preserve
+window=true. Openings use the authored window geometry and shell clipping.
+
+Photo generation and critique recover a completely missing upstairs window row only
+when an observed upper region uniquely matches one configured upper span and the count
+fits. Spacing is inferred and explicitly reported in notes/photo_trace. Partial rows,
+ambiguous matches, and unmatched massing remain review issues. This adds no provider
+calls. Saved failed response replay covers grouped windows, missing upstairs openings,
+and duplicate gables; high-quality browser checks cover mirrored/unmirrored and no-upper
+layouts. Fresh Gemini output quality remains to be evaluated with deployed credentials.

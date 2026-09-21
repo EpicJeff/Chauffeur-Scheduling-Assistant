@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.118 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.119 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8290,3 +8290,20 @@ Every conversion is noted and operates on a copy. Unknown values and wrong types
 invalid; ordinary editor validation remains strict. Prompts distinguish material enums
 from body colors, and enum errors display the rejected value. Both photo generation and
 critique use the same adapter. Offline regression tests passed; no Gemini calls needed.
+
+
+### Photo openings and gable repair - v2.499.119 (2026-09-21)
+
+Window groups may cross the garage/mudroom slot seam within the same block face;
+physical face limits and opening conflicts still apply. A full-width gable feature
+matching an existing ridge-z gable roof is removed as redundant. Optional roof.window
+moves its attic opening onto the existing block/upper roof; cross-gables also preserve
+window=true. Openings use the authored window geometry and shell clipping.
+
+Photo generation and critique recover a completely missing upstairs window row only
+when an observed upper region uniquely matches one configured upper span and the count
+fits. Spacing is inferred and explicitly reported in notes/photo_trace. Partial rows,
+ambiguous matches, and unmatched massing remain review issues. This adds no provider
+calls. Saved failed response replay covers grouped windows, missing upstairs openings,
+and duplicate gables; high-quality browser checks cover mirrored/unmirrored and no-upper
+layouts. Fresh Gemini output quality remains to be evaluated with deployed credentials.

@@ -13,7 +13,7 @@ import secrets
 import threading
 import time
 import uuid
-from services.house_photo import OBSERVATION_PROMPT, validate_observations, structural_issues
+from services.house_photo import OBSERVATION_PROMPT, validate_observations, structural_issues, restore_missing_upper_windows
 
 SLOT_W = 1.85
 # West to east. Mirrors house.js: FULL_HOUSE, GARAGE_BLOCK, EXT_TOP4.
@@ -264,6 +264,8 @@ def validate_block_model(obj, *, _range_notes=None):
                 enum(roof, 'form', ROOF_FORMS, p + '.roof')
                 enum(roof, 'ridge', RIDGES, p + '.roof')
                 rng(roof, 'pitch_deg', PITCH_MIN, PITCH_MAX, p + '.roof')
+                if 'window' in roof:
+                    need(roof, 'window', bool, p + '.roof')
             enum(b, 'cladding', CLADDINGS, p)
             enum(b, 'body', STYLE['body'], p)
             if 'base' not in b:
@@ -347,6 +349,8 @@ def validate_block_model(obj, *, _range_notes=None):
                 enum(roof, 'form', ROOF_FORMS, p + '.roof')
                 enum(roof, 'ridge', RIDGES, p + '.roof')
                 rng(roof, 'pitch_deg', PITCH_MIN, PITCH_MAX, p + '.roof')
+                if 'window' in roof:
+                    need(roof, 'window', bool, p + '.roof')
     style = need(obj, 'style', dict, 'house')
     if style is not None:
         for role in ('roof', 'frame', 'door', 'trim'):
@@ -360,6 +364,8 @@ def validate_block_model(obj, *, _range_notes=None):
             if not isinstance(e, dict):
                 errs.append(f'{p} not an object'); continue
             kind = enum(e, 'kind', kinds, p)
+            if layer == 'roof' and 'window' in e:
+                need(e, 'window', bool, p)
             if kind in ('wall', 'eave'):
                 continue
             for key in _FEATURE_REQUIRED.get(kind, ()):
@@ -421,6 +427,8 @@ def _entries(raw_list, kinds, notes, layer):
             item['leaves'] = 2 if _int(e.get('leaves'), 1) == 2 else 1
         elif kind in ('dormer', 'shed'):
             item['window'] = bool(e.get('window', True))
+        elif kind == 'gable' and e.get('window'):
+            item['window'] = True
         # a roof feature may override its parent block's cladding (spec 2)
         if layer == 'roof' and e.get('cladding') in CLADDINGS:
             item['cladding'] = e['cladding']
@@ -429,7 +437,7 @@ def _entries(raw_list, kinds, notes, layer):
 
 
 def _clip_to_face(item, notes, *, roof=False):
-    """Clip to the physical face. Only ground features also stop at the bay.
+    """Clip to the physical face. Garage doors and porches also stop at the bay; windows may cross it.
 
     Garage and mudroom share one roof block; their room boundary does not
     constrain roof features. Upper-volume seams are handled separately.
@@ -438,7 +446,7 @@ def _clip_to_face(item, notes, *, roof=False):
     face = slots[item['slot']]['face']
     lo, hi = _face_range(face)
     bay_lo, bay_hi = GARAGE_BAY_SLOTS
-    if not roof and bay_lo <= item['slot'] <= bay_hi:
+    if not roof and item['kind'] != 'window' and bay_lo <= item['slot'] <= bay_hi:
         hi = min(hi, bay_hi)
     end = min(item['slot'] + item['span'] - 1, hi)
     if end != item['slot'] + item['span'] - 1:
@@ -526,6 +534,8 @@ def _norm_block(name, raw, notes):
     b['roof'] = {'form': _pick(rr.get('form'), ROOF_FORMS, 'gable'),
                  'ridge': _pick(rr.get('ridge'), RIDGES, 'x'),
                  'pitch_deg': round(min(PITCH_MAX, max(PITCH_MIN, _num(rr.get('pitch_deg'), BLOCK_PITCH_DEG))), 1)}
+    if rr.get('window') and b['roof']['form'] == 'gable' and b['roof']['ridge'] == 'z':
+        b['roof']['window'] = True
     b['cladding'] = _pick(raw.get('cladding'), CLADDINGS, 'batten')
     b['body'] = _pick(raw.get('body'), STYLE['body'], 'white')
     base = raw.get('base')
@@ -614,6 +624,8 @@ def _upper_entries(raw_upper, blocks, notes):
                     'ridge': _pick(source.get('ridge'), RIDGES, blocks[block]['roof']['ridge']),
                     'pitch_deg': round(min(PITCH_MAX, max(PITCH_MIN,
                                       _num(source.get('pitch_deg'), blocks[block]['roof']['pitch_deg']))), 1)}
+            if source.get('window') and roof['form'] == 'gable' and roof['ridge'] == 'z':
+                roof['window'] = True
             shaped.append({'slot': cursor, 'span': piece_end - cursor, 'roof': roof})
             if piece_end < end:
                 notes.append(f'upper span at slot {start} split at the {face} face boundary')
@@ -766,6 +778,27 @@ def normalize(raw):
         if seam is not None:
             r['span'] = seam - r['slot']
             notes.append(f"trimmed a {r['kind']} at slot {r['slot']} at an upper-story seam")
+
+    # A full-width gable end already belongs to its volume's roof. Keep
+    # its opening on that roof instead of constructing a second cross-gable.
+    kept = []
+    for r in roof:
+        owner = next((u for u in spec['upper'] if u['slot'] <= r['slot'] < u['slot'] + u['span']), None)
+        if owner is None:
+            face = slots[r['slot']]['face']
+            lo, hi = _face_range(face)
+            owner = {'slot': lo, 'span': hi - lo + 1,
+                     'roof': spec['blocks'][BLOCK_OF_FACE[face]]['roof']}
+        parent = owner['roof']
+        if (r['kind'] == 'gable' and r['slot'] == owner['slot'] and r['span'] == owner['span']
+                and parent['form'] == 'gable' and parent['ridge'] == 'z'):
+            if r.get('window'):
+                parent['window'] = True
+            notes.append(f"removed duplicate gable at slot {r['slot']}; opening retained on existing roof end" if r.get('window')
+                         else f"removed duplicate gable at slot {r['slot']}: existing roof end already supplies it")
+        else:
+            kept.append(r)
+    roof = kept
 
     # a side-entry garage has no street garage door: the bay's street face
     # carries one window instead (spec 2)
@@ -1106,6 +1139,10 @@ Material and color are DIFFERENT fields. cladding/base.material must be exactly 
 of batten, lap, brick, stone, stucco, shingle. painted_brick and cream_brick are BODY
 colors, never materials. White-painted brick means material="brick", body="painted_brick".
 Board-and-batten means cladding="batten". Use these exact enum values in every finish.
+A volume roof with form="gable", ridge="z" ALREADY supplies its street-facing gable.
+Never add a full-width gable feature on top of that end. For its attic opening use
+window=true on the block/upper roof object. Cross-gable features also accept window=true.
+Check the observed upstairs window-group count against your story=2 entries before returning.
 Rules: colours are the NEAREST palette name, never hex.
 For a continuous sloping porch cover with a smaller front gable, use porch roof "mixed".
 Its optional gable_offset and gable_span count slots relative to the porch start; defaults are 0 and 2.
@@ -1296,6 +1333,7 @@ def from_photo(image_b64, mime):
         if errs:
             raise ValueError('the model returned an incomplete house: ' + '; '.join(errs[:3]))
         spec, notes = normalize(snapped)
+        notes += restore_missing_upper_windows(spec, observed, len(slot_table()))
         normalization_notes = list(pre + notes)
         issues = structural_issues(spec, observed, len(slot_table()))
         notes = pre + notes + ['Needs review: ' + x for x in issues] + observed['uncertain'] + [_requests_note(attempts)]
@@ -1440,6 +1478,7 @@ def critique(token, render_png_b64):
         result['reasons'] = reasons + snap_notes + ['revision rejected as incomplete: ' + '; '.join(errs[:3])]
     else:
         spec, notes = normalize(copy.deepcopy(revised))
+        notes += restore_missing_upper_windows(spec, observed, len(slot_table()))
         trace['revision_normalization_notes'] = list(snap_notes + notes)
         after_issues = structural_issues(spec, observed, len(slot_table()))
         trace['revision_structural_issues'] = list(after_issues)

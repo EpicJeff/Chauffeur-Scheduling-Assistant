@@ -5680,7 +5680,7 @@
       if (!spans.length) return [{ name: name, block: name, k: 0,
         x0: B.west, x1: B.east, north: B.north, south: B.south,
         eave: EXT_TOP4, roof: { form: ROOF_FORMS[name].form,
-          ridge: ROOF_FORMS[name].ridge, pitch_deg: BLOCKS[name].roof.pitch_deg },
+          ridge: ROOF_FORMS[name].ridge, window: BLOCKS[name].roof.window, pitch_deg: BLOCKS[name].roof.pitch_deg },
         upper: false, canonical: true }];
       function owner(i) {
         return spans.find(function (u) { return i >= u.slot && i < u.slot + u.span; }) || null;
@@ -5690,7 +5690,7 @@
         var next = j < cells.length ? owner(cells[j].i) : null;
         if (j === cells.length || next !== prior) {
           var roof = prior ? prior.roof : { form: ROOF_FORMS[name].form,
-            ridge: ROOF_FORMS[name].ridge, pitch_deg: BLOCKS[name].roof.pitch_deg };
+            ridge: ROOF_FORMS[name].ridge, window: BLOCKS[name].roof.window, pitch_deg: BLOCKS[name].roof.pitch_deg };
           var k = runs.length;
           runs.push({ name: name + '_' + (prior ? 'u' : 'w') + k, block: name, k: k,
             x0: cells[start].x0, x1: cells[j - 1].x1,
@@ -6349,6 +6349,15 @@
       var meet = (pl.d - pl.n[0] * cx - pl.n[1] * ridge) / pl.n[2];
       return Math.min(back, meet - 0.6);
     }
+    function gableWindow(name, x0, x1, front, eave, pitch, room, buried) {
+      var rise = (x1 - x0) / 2 * Math.tan(pitch);
+      if (rise < 0.8) return;
+      var g = shellGroup(), h = Math.min(1.4, rise * 0.42);
+      shellWindow(g, (x0 + x1) / 2, eave + rise * 0.40,
+                  front + 0.18, 0, Math.min(1.2, (x1 - x0) * 0.24), h, true);
+      if (buried) (Array.isArray(buried[0]) ? buried : [buried]).forEach(function (r) { clipBuried(g, r); });
+      shellRegister(g, name + '_attic_window', [0, 0, 1], room, true);
+    }
     function gableAt(feat) {
       var e = spanX(feat), slot = e.slot;
       var name = 'facade_' + slot.face + '_gable_' + feat.slot;
@@ -6382,6 +6391,8 @@
         shellGable(name, e.x0, e.x1, 4.0 + GAR_DZ, 10.1 + GAR_DZ,
                    featureEave(slot, e.cx), 'z',
                    slot.room, [1], PITCH_FAMILY, null, null, null, region);
+        if (feat.window) gableWindow(name, e.x0, e.x1, 10.1 + GAR_DZ,
+                                     featureEave(slot, e.cx), PITCH_FAMILY, slot.room, region);
         return;
       }
       /* a porch sharing the span carries the gable out to its own front
@@ -6407,6 +6418,7 @@
       shellGable(name, e.x0, e.x1, featureBack(slot, e.cx, ridge), front,
                  eave, 'z', slot.room, [1], PITCH_FAMILY, null, null, null,
                  region, featClad(feat));
+      if (feat.window) gableWindow(name, e.x0, e.x1, front, eave, PITCH_FAMILY, slot.room, region);
     }
     /* PER-FEATURE CLADDING (task 8, spec section 2): a roof feature may
        wear a skin its parent block does not -- a shingled shed on a
@@ -6795,6 +6807,8 @@
                  v.roof.ridge, null, volumeClosureEnds(v),
                  v.roof.pitch_deg * Math.PI / 180, rooms, null,
                  v.roof.form, volumeClips(v));
+      if (v.roof.window && v.roof.form === 'gable' && v.roof.ridge === 'z')
+        gableWindow(base, v.x0, v.x1, v.south, v.eave, v.roof.pitch_deg * Math.PI / 180, null, volumeClips(v));
     }
     /* the two blocks' envelopes and the deck planes their roofs were
        placed by, for the read-only window.chfBlockGeometry hook: a test
@@ -6838,6 +6852,8 @@
                  ROOF_FORMS.main.ridge, null, null, BLOCK_PITCH,
                  ['kitchen', 'living'], null, ROOF_FORMS.main.form,
                  BLOCK_MEET.main);
+      if (BLOCKS.main.roof.window && ROOF_FORMS.main.form === 'gable' && ROOF_FORMS.main.ridge === 'z') gableWindow('roof_main', FULL_HOUSE.west, FULL_HOUSE.east,
+        FULL_HOUSE.south, FULL_HOUSE.eave, BLOCK_PITCH, null, BLOCK_MEET.main);
     } else HOUSE_VOLUMES.main.forEach(buildVolumeRoof);
 
     /* ---- the garage block (spec section 2) ----------------------------
@@ -6932,6 +6948,8 @@
                  ROOF_FORMS.garage.ridge, null, null, blockPitch('garage'),
                  ['garage', 'mudroom'], null, ROOF_FORMS.garage.form,
                  BLOCK_MEET.garage);
+      if (BLOCKS.garage.roof.window && ROOF_FORMS.garage.form === 'gable' && ROOF_FORMS.garage.ridge === 'z') gableWindow('garage_block_roof', GARAGE_BLOCK.west, GARAGE_BLOCK.east,
+        GARAGE_BLOCK.south, GARAGE_BLOCK.eave, blockPitch('garage'), null, BLOCK_MEET.garage);
     } else HOUSE_VOLUMES.garage.forEach(buildVolumeRoof);
 
     /* Spec 2026-09-17 blocks section 0: a block roof's pieces are named by
