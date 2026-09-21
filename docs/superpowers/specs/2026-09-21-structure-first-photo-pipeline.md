@@ -63,3 +63,12 @@ was performed for this release.
 Renderer limits persist: two fixed blocks and slot quantization cannot reproduce every
 L-shaped footprint, intersecting roof, split level or setback. Unknown structures and
 unsupported intersections remain explicit limitations rather than invented extra stories.
+
+## Gable bounds correction (2.499.137)
+
+An estimated gable extending past its declared wall/porch is intersected with that
+owner when its centre lies inside the owner and at least half its width overlaps.
+The compiler records the fit, preserves the input and changes no wall or underlying
+roof. Missing owners and gables centred away from their owner remain errors. The
+reported g1 failure had no raw coordinates available; synthetic regressions establish
+this bounded correction, not an exact replay of that provider response.

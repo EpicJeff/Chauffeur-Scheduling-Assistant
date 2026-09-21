@@ -260,6 +260,20 @@ def prepare_analysis(value):
             seam=(end+right['at'])/2;right_end=right['at']+right['width']
             left['width']=seam-left['at'];right['at']=seam;right['width']=right_end-seam
             notes.append(left['id']+' / '+right['id']+': small wall-boundary overlap shared at midpoint.')
+    # Photo estimates include roof overhangs and imprecise shared edges. Keep
+    # explicit ownership authoritative when the gable is centred on its owner
+    # and most of its width overlaps it. Never reassign it to a different wall.
+    owners={r['id']:r for layer in ('volumes','porches') for r in a[layer]}
+    for g in a['gables']:
+        parent=owners.get(g['owner'])
+        if not parent:continue  # strict ownership validation below
+        lo,hi=parent['at'],parent['at']+parent['width']
+        start,end=g['at'],g['at']+g['width']
+        overlap=min(end,hi)-max(start,lo)
+        if (g['width']>0 and (start<lo-.02 or end>hi+.02) and
+                lo<=(start+end)/2<=hi and overlap>=g['width']*.5):
+            g['at']=max(start,lo);g['width']=min(end,hi)-g['at']
+            notes.append(g['id']+': approximate gable bounds fitted to declared owner '+g['owner']+'.')
     if value.get('schema_version')==2:
         walls={v['id']:v for v in a['volumes']}
         for opening in a['openings']:

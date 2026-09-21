@@ -85,6 +85,34 @@ class StructureTests(unittest.TestCase):
         with self.assertRaises(ValueError): apply_details(s, locked, d)
         self.assertEqual(locked, before)
 
+    def test_gable_overhang_fits_explicit_owner_without_changing_massing(self):
+        for owner in ('centre','porch'):
+            s=structure()
+            parent=next(r for layer in ('volumes','porches') for r in s[layer] if r['id']==owner)
+            g=next(g for g in s['gables'] if g['owner']==owner)
+            g.update(at=parent['at']-.03,width=parent['width']+.06)
+            raw=copy.deepcopy(s)
+            spec,notes,trace=compile_structure(s)
+            prepared=trace['prepared_analysis']
+            fitted=next(r for r in prepared['gables'] if r['id']==g['id'])
+            self.assertAlmostEqual(fitted['at'],parent['at'])
+            self.assertAlmostEqual(fitted['width'],parent['width'])
+            self.assertEqual(prepared['volumes'],s['volumes'])
+            self.assertEqual(prepared['porches'],s['porches'])
+            self.assertEqual(s,raw)
+            self.assertTrue(any('gable bounds fitted' in n for n in notes))
+            self.assertEqual(hf.validate_block_model(spec),[])
+            revised,_,_=apply_details(s,spec,details())
+            self.assertEqual(geometry(spec),geometry(revised))
+
+    def test_unrelated_gable_owner_is_not_silently_repaired(self):
+        s=structure()
+        g=next(g for g in s['gables'] if g['owner']=='centre')
+        g.update(at=.85,width=.1)
+        with self.assertRaisesRegex(ValueError,'extends beyond its owner'):compile_structure(s)
+        g['owner']='nonexistent'
+        with self.assertRaisesRegex(ValueError,'invalid owner'):compile_structure(s)
+
     def test_saved_failures_retain_declared_architecture_without_boxes(self):
         from services.house_photo_compiler import compile_analysis
         folder=Path(__file__).parent/'fixtures'

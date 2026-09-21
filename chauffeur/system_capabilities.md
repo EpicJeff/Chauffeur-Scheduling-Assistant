@@ -8603,3 +8603,13 @@ contracts and browser rendering. No live-provider recognition benchmark was run;
 new-photo roof/story accuracy remains unproven. Fixed-block and intersecting-roof
 representation limitations remain. This release changes the task decomposition,
 not the renderer's architectural capacity or provider availability.
+
+
+### Bounded gable ownership fit - v2.499.137 (2026-09-21)
+
+Approximate gable intervals extending beyond their explicitly named wall or porch
+are fitted to that owner if their centre is inside it and at least half their width
+overlaps. No ownership reassignment, wall resizing, story or ridge changes occur.
+Compiler notes record each correction. Missing/unrelated owners still fail validation.
+59 photo tests pass, including wall/porch overhangs and detail geometry preservation.
+The screenshot's raw g1 coordinates were unavailable; coverage is synthetic.
