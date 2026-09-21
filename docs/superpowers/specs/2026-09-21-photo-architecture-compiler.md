@@ -69,3 +69,21 @@ precede recovery. Full relationship validation follows. Raw input remains unchan
 prepared_analysis and analysis_adjustments are retained in the compilation trace.
 This handles redundant-label conflicts and rounding noise without claiming support for
 intersecting footprints. Larger overlap diagnostics identify volume IDs and magnitude.
+
+
+## Multiple views (v2.499.130)
+
+One primary front photo plus zero to two supplemental images enter the same analysis
+call. Supplemental labels: front-left, front-right, left, right, rear, unknown, relative
+to someone facing the primary facade. Every interval still references image 1; other
+views only disambiguate architecture. Evidence/limitations cite numbered images and
+report contradictions. Review receives the same ordered references followed by the render.
+The renderer and schema have not acquired general multi-view reconstruction capabilities.
+
+The multipart API retains required `photo` and adds repeated `supplemental` and `views`
+fields with matching counts, maximum two. All files must be images, each up to 8MB.
+Bytes, MIME and view labels participate in cache identity. Drafts retain references for
+the existing review lifetime; exported traces retain only view labels alongside analysis.
+Single-photo uploads remain compatible. Request limits stay 3 upload attempts plus one
+automatic review, with 3 for manual review. More images may increase input tokens.
+Browser and ASGI multipart tests exercise the new flow without live Gemini calls.

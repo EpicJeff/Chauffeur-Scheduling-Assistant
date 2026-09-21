@@ -94,6 +94,75 @@ class CompilerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'wall volumes overlap:'):
             compile_analysis(a)
 
+    def test_multiple_photos_cache_labels_and_review_order(self):
+        hf._PHOTO_RUNS.clear()
+        extra=[{'mime':'image/png','b64':'side','view':'front-right'},
+               {'mime':'image/jpeg','b64':'back','view':'rear'}]
+        with patch.object(hf,'_settings',return_value={'llm_gemini_api_key':'offline'}),patch(
+                'services.model_pools.call_pool_json',return_value=copy.deepcopy(DATA)) as api:
+            spec,_,err,token=hf.from_photo('front','image/png',extra)
+            self.assertIsNone(err)
+            self.assertEqual([p['b64'] for p in api.call_args.kwargs['images']],['front','side','back'])
+            self.assertIn('image 2: front-right',api.call_args.args[3])
+            self.assertEqual(hf.from_photo('front','image/png',extra)[3],token)
+            self.assertEqual(api.call_count,1)
+            changed=copy.deepcopy(extra);changed[0]['view']='left'
+            self.assertNotEqual(hf.from_photo('front','image/png',changed)[3],token)
+            changed[0]['b64']='other'
+            hf.from_photo('front','image/png',changed)
+            self.assertEqual(api.call_count,3)
+            api.return_value={'analysis':copy.deepcopy(DATA),'reasons':['Compared all reference views.']}
+            result,err=hf.critique(token,'render',automatic=True)
+            self.assertIsNone(err)
+            self.assertEqual([p['b64'] for p in api.call_args.kwargs['images']],['front','side','back','render'])
+            self.assertIn('LAST image',api.call_args.args[2])
+            self.assertEqual(hf._DRAFTS[token]['photo_trace']['photo_views'],['primary front','front-right','rear'])
+            self.assertNotIn('b64',hf._DRAFTS[token]['photo_trace'])
+            self.assertIsNotNone(hf.from_photo('front','image/png',extra*2)[2])
+
+    def test_multipart_multi_photo_validation(self):
+        import main
+        import asyncio
+        from types import SimpleNamespace
+        class Client:
+            def post(self,path,files):
+                rows=list(files.items()) if isinstance(files,dict) else files
+                body=b''
+                for name,item in rows:
+                    filename,value,*mime=item
+                    if isinstance(value,str):value=value.encode()
+                    header=f'--testboundary\r\nContent-Disposition: form-data; name="{name}"'
+                    if filename:header+=f'; filename="{filename}"'
+                    if mime:header+='\r\nContent-Type: '+mime[0]
+                    body+=header.encode()+b'\r\n\r\n'+value+b'\r\n'
+                body+=b'--testboundary--\r\n';messages=[];sent=False
+                async def receive():
+                    nonlocal sent
+                    if not sent:
+                        sent=True;return {'type':'http.request','body':body,'more_body':False}
+                    await asyncio.sleep(3600)
+                async def send(message):messages.append(message)
+                scope={'type':'http','asgi':{'version':'3.0'},'http_version':'1.1',
+                    'method':'POST','scheme':'http','path':path,'raw_path':path.encode(),
+                    'query_string':b'','root_path':'','server':('test',80),'client':('127.0.0.1',123),
+                    'headers':[(b'content-type',b'multipart/form-data; boundary=testboundary')]}
+                asyncio.run(main.app(scope,receive,send))
+                return SimpleNamespace(status_code=next(m['status'] for m in messages if m['type']=='http.response.start'))
+        client=Client()
+        with patch.object(hf,'from_photo',return_value=(None,[],'offline',None)) as service:
+            photo=('front.png',b'front','image/png')
+            response=client.post('/api/house/facades/photo',files=[('photo',photo),
+                ('supplemental',('side.jpg',b'side','image/jpeg')),('views',(None,'front-right'))])
+            self.assertEqual(response.status_code,200)
+            self.assertEqual(service.call_args.kwargs['supplemental'][0]['view'],'front-right')
+            self.assertEqual(client.post('/api/house/facades/photo',files={'photo':photo}).status_code,200)
+            for files in ([('photo',photo),('supplemental',photo)],
+                          [('photo',photo),('supplemental',photo),('views',(None,'invalid'))],
+                          [('photo',photo)]+[('supplemental',photo),('views',(None,'rear'))]*3,
+                          [('photo',('bad.txt',b'no','text/plain'))]):
+                self.assertEqual(client.post('/api/house/facades/photo',files=files).status_code,400)
+            self.assertEqual(service.call_count,2)
+
     def test_roof_story_and_known_orientation_matrix(self):
         for form in ('gable','hip'):
             for ridge in ('parallel','perpendicular'):

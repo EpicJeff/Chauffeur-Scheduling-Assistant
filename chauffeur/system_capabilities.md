@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.129 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.130 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8470,3 +8470,24 @@ both volumes and overlap amount. No additional provider request or story inferen
 35 focused photo tests pass. The reported failed payload was unavailable; synthetic
 regressions reproduce the relationship conflict and boundary-rounding case, not proof
 that this particular overlap falls within the recovery threshold.
+
+
+### Multiple reference photos - v2.499.130 (2026-09-21)
+
+House matching accepts one primary front photo and up to two supplemental images.
+The editor offers front-left, front-right, left, right, rear or unknown labels and an
+explicit Match photos action. Left/right is while facing the front facade. The primary
+image remains the single facade coordinate reference; supplemental views clarify depth,
+garage location, intersections and occlusions. Prompts request image-number evidence and
+explicit conflicts, not mixed-view coordinate arithmetic. Analysis remains one request
+stage; automatic/manual review receives all reference images followed by the render.
+
+Multipart validation enforces count, label pairing, image MIME and 8MB per photo. Cache
+identity includes all bytes and labels; changed input cannot replay a different set.
+References stay in the existing expiring draft cache; saved traces record photo view
+labels, not image bytes. Single-photo callers remain supported. Request attempt limits
+are unchanged, although multiple images can use more input tokens. Existing renderer
+limitations and uncertain-geometry defaults remain; extra photos do not add support for
+L-shaped roof intersections. No model quality claim: tests use mocked provider replies.
+37 photo unit/route tests, facade scenarios, and browser selection/removal/upload/review
+checks pass. Fresh multi-angle recognition remains to be evaluated.

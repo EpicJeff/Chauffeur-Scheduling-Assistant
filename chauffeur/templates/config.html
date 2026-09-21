@@ -2637,7 +2637,20 @@
                             <label class="home-check"><input type="radio" name="facade_active" :aria-label="'Use ' + f.name + ' on the house'" :checked="facadeActive === f.id" @change="facadeActivate(f.id)"><span x-text="facadeActive === f.id ? 'In use on house' : 'Use on house'"></span></label>
                             <template x-if="!f.readonly"><div class="flex gap-2"><button type="button" @click="facadeRename(f)">Rename</button><button type="button" class="text-red-300" @click="facadeDelete(f)">Delete</button></div></template>
                         </div></template>
-                        <label class="home-photo">Match a house photo<input type="file" accept="image/*" @change="facadePhoto($event)"></label></div>
+                        </div>
+                        <fieldset class="home-photo"><legend>Match house photos</legend>
+                            <p class="home-help">Use a front photo for the facade. Add up to two other angles to clarify the garage and roofs. Left/right means while facing the front of the house.</p>
+                            <label>Primary front photo <input type="file" accept="image/*" :disabled="!!facadeBusy" @change="facadePrimary = $event.target.files[0] || null"></label>
+                            <template x-for="(view, i) in facadeExtraViews" :key="i"><div class="home-toolbar">
+                                <label x-text="'Additional angle ' + (i + 1)"></label>
+                                <input type="file" accept="image/*" :aria-label="'Additional photo ' + (i + 1)" :disabled="!!facadeBusy" @change="facadeExtraFiles[i] = $event.target.files[0] || null">
+                                <select x-model="facadeExtraViews[i]" :aria-label="'View of additional photo ' + (i + 1)" :disabled="!!facadeBusy">
+                                    <option value="unknown">Unknown angle</option><option value="front-left">Front-left</option><option value="front-right">Front-right</option><option value="left">Left side</option><option value="right">Right side</option><option value="rear">Rear</option>
+                                </select>
+                                <button type="button" :disabled="!!facadeBusy" @click="facadeExtraFiles[i] = null; $el.parentElement.querySelector('input').value = ''">Remove</button>
+                            </div></template>
+                            <button type="button" :disabled="!facadePrimary || !!facadeBusy" @click="facadePhoto()">Match photos</button>
+                        </fieldset>
                     </details>
                     <div class="home-toolbar"><div><b x-text="'Editing: ' + (facades.find(f => f.id === facadeDraftId)?.name || 'New design')"></b><p class="home-help">Edits are a draft until saved.</p></div>
                         <div class="flex flex-wrap gap-2"><button type="button" class="bg-teal-700" @click="facadeSaveNew()">Save as new design</button><button type="button" class="bg-gray-700" :disabled="!facadeDraftId || facadeDraftId === 'canonical'" @click="facadeOverwrite()">Save changes</button></div>
@@ -4711,6 +4724,9 @@
                     trim: ['white', 'black']
                 },
                 facadeCladdings: ['batten', 'lap', 'brick', 'stone', 'stucco', 'shingle'],
+                facadePrimary: null,
+                facadeExtraFiles: [null, null],
+                facadeExtraViews: ['unknown', 'unknown'],
                 facadePhotoToken: null,
                 facadePhotoViewpoint: null,
                 facadePreviewToken: null, facadeLoadedToken: null, facadeLoadedAngle: null,
@@ -6037,13 +6053,14 @@
                 facadePickRevised() { if (this.facadeCritiqueResult.revised) { this.facadeDraft = this.facadeCritiqueResult.revised; this.facadePreview(); } },
                 facadePickDraft() { if (this._facadePhotoOriginal) this.facadeDraft = JSON.parse(JSON.stringify(this._facadePhotoOriginal)); this.facadePreview(); },
                 async facadePhoto(ev) {
-                    const file = ev.target.files && ev.target.files[0]; if (!file) return;
+                    const file = ev ? (ev.target.files && ev.target.files[0]) : this.facadePrimary; if (!file) return;
                     if (this.facadeBusy) return;
-                    this.facadeBusy = 'Reading your photo...';
+                    this.facadeBusy = 'Reading your photos...';
                     const fd = new FormData(); fd.append('photo', file);
+                    (this.facadeExtraFiles || []).forEach((extra, i) => { if (extra) { fd.append('supplemental', extra); fd.append('views', this.facadeExtraViews[i]); } });
                     try {
                         const res = await fetch(`${this.apiBase}api/house/facades/photo`, { method: 'POST', body: fd });
-                        const data = await res.json(); ev.target.value = '';
+                        const data = await res.json(); if (ev) ev.target.value = '';
                         if (!res.ok) { showGlobalAlert(data.detail || 'Could not read the photo'); return; }
                         if (!data.draft) { showGlobalAlert(data.error || 'Could not read the photo'); return; }
                         this.facadeDraft = data.draft; this.facadeNotes = data.notes || []; this.facadeDraftSource = 'photo'; this.facadeSlot = null;
@@ -6054,7 +6071,7 @@
                         if (this.facadePhotoToken) await this.facadeCritique(true);
                     } catch (e) {
                         console.error("Failed to read facade photo", e);
-                        ev.target.value = '';
+                        if (ev) ev.target.value = '';
                         showGlobalAlert('Could not read the photo');
                     } finally { this.facadeBusy = ''; }
                 },

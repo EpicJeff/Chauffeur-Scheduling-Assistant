@@ -1309,14 +1309,35 @@ _PHOTO_RUNS = {}
 _PHOTO_LOCK = threading.Lock()
 
 
-def from_photo(image_b64, mime):
+PHOTO_VIEWS = ('front-left', 'front-right', 'left', 'right', 'rear', 'unknown')
+
+
+def _photo_context(photos):
+    return ('Image order: ' + '; '.join(f"image {i+1}: {p['view']}" for i,p in enumerate(photos)) +
+            '. Image 1 is the PRIMARY facade coordinate reference. All at/width values must refer to image 1. '
+            'Supplemental views show the SAME house from other angles: use them to clarify depth, garage side, '
+            'roof intersections and occlusions, never copy their image coordinates into the facade. '
+            'Match physical features across images. In evidence and limitations cite image numbers; '
+            'report conflicts and unseen geometry instead of inventing certainty. Left/right view labels '
+            'are as seen while facing the primary facade.')
+
+
+def from_photo(image_b64, mime, supplemental=None):
     """One architectural analysis, compiled in code. Drafts expire after 15 minutes."""
     from services import model_pools
     settings = _settings()
     api_key = settings.get('llm_gemini_api_key', '')
     if not api_key:
         return None, [], 'no LLM API key configured', None
-    key = _sha((mime or '') + image_b64)
+    supplemental = supplemental or []
+    if not isinstance(supplemental,list) or len(supplemental)>2 or any(
+            not isinstance(p,dict) or p.get('view') not in PHOTO_VIEWS or
+            not isinstance(p.get('b64'),str) or not p['b64'] or
+            not str(p.get('mime','')).startswith('image/') for p in supplemental):
+        return None, [], 'Provide at most two labeled supplemental images.', None
+    photos = [{'mime': mime or 'image/jpeg', 'b64': image_b64, 'view': 'primary front'}] + copy.deepcopy(supplemental)
+    photo_context = _photo_context(photos)
+    key = _sha(json.dumps(photos,sort_keys=True))
     with _PHOTO_LOCK:
         now = time.time()
         for k in list(_PHOTO_RUNS):
@@ -1349,7 +1370,7 @@ def from_photo(image_b64, mime):
                 'vision', api_key, system, user, temperature=0.1, timeout_s=90,
                 settings=settings, strict_json=True, response_schema=schema, max_output_tokens=16384, thinking_level='low',
                 max_models=remaining, total_timeout_s=120, workflow='house_photo', attempts=attempts,
-                images=[{'mime': mime or 'image/jpeg', 'b64': image_b64}])
+                images=[{'mime': p['mime'], 'b64': p['b64']} for p in photos])
         finally:
             action['stages'].append({'name': stage, 'models': list(attempts[start:]), 'requests': len(attempts) - start})
             action['requests'] = len(attempts) - action_start
@@ -1358,7 +1379,7 @@ def from_photo(image_b64, mime):
     try:
         from services.house_photo_compiler import ANALYSIS_PROMPT, analysis_schema, compile_analysis
         if run['observations'] is None:
-            observed = call(ANALYSIS_PROMPT, 'Describe the visible architecture using the full-facade coordinate system.',
+            observed = call(ANALYSIS_PROMPT, photo_context + '\nDescribe the visible architecture using the full-facade coordinate system.',
                             3, 'analysis', analysis_schema())
             if not isinstance(observed, dict) or observed.get('error'):
                 message = (observed or {}).get('error', 'invalid analysis response') if isinstance(observed, dict) else 'invalid analysis response'
@@ -1373,8 +1394,9 @@ def from_photo(image_b64, mime):
         notes += [_requests_note(attempts[action_start:]) + f' this upload; {len(attempts)} cumulative across actions.']
         token = issue_draft(spec, image_b64, mime, viewpoint=observed['viewpoint'], requests=len(attempts))
         _DRAFTS[token]['analysis'] = copy.deepcopy(observed)
+        _DRAFTS[token]['photos'] = photos
         _DRAFTS[token]['photo_trace'] = {
-            'pipeline': 'deterministic_v1', 'analysis': copy.deepcopy(observed),
+            'pipeline': 'deterministic_v1', 'photo_views': [p['view'] for p in photos], 'analysis': copy.deepcopy(observed),
             'raw_analysis': copy.deepcopy(run.get('raw_observations', observed)),
             'compilation': compiled, 'compiler_notes': list(notes),
             'attempts': list(attempts), 'requests_total': len(attempts), 'request_actions': copy.deepcopy(actions)}
@@ -1508,18 +1530,19 @@ def critique(token, render_png_b64, *, automatic=False):
         from services.house_photo_compiler import ANALYSIS_PROMPT, review_schema as analysis_review_schema, compile_analysis
         trace = e.setdefault('photo_trace', {})
         trace['visual_review_mode'] = 'automatic' if automatic else 'manual'
+        photos = e.get('photos') or [{'mime':e.get('mime') or 'image/jpeg','b64':e['photo_b64'],'view':'primary front'}]
         try:
             res = model_pools.call_pool_json(
-                'vision', api_key, ANALYSIS_PROMPT + '\nCompare the ORIGINAL PHOTO first with the RENDER second. '
+                'vision', api_key, ANALYSIS_PROMPT + '\nCompare the house photos with the LAST image, which is the RENDER from the primary view. '
                 'The prior analysis may be wrong. Return {analysis: complete corrected analysis, reasons: image-based explanations}. '
                 'Do not return a house configuration. Correct wall-story counts, ridge directions, ownership and opening counts from the photo.',
-                'Prior analysis: ' + json.dumps(e['analysis'], separators=(',', ':')) +
+                _photo_context(photos) + '\nThe final image is the render, not another reference photograph.\nPrior analysis: ' + json.dumps(e['analysis'], separators=(',', ':')) +
                 '\nCompiler limitations: ' + json.dumps(trace.get('compiler_notes', []), separators=(',', ':')),
                 temperature=.1, timeout_s=90, settings=settings, strict_json=True,
                 response_schema=analysis_review_schema(), max_output_tokens=16384, thinking_level='low',
                 max_models=1 if automatic else 3, total_timeout_s=120, workflow='house_photo', attempts=attempts,
-                images=[{'mime': e.get('mime') or 'image/jpeg', 'b64': e['photo_b64']},
-                        {'mime': 'image/png', 'b64': render_png_b64}])
+                images=[{'mime':p['mime'],'b64':p['b64']} for p in photos] +
+                       [{'mime': 'image/png', 'b64': render_png_b64}])
             trace['review_raw'] = copy.deepcopy(res)
             if not isinstance(res, dict) or res.get('error'):
                 failure = res if isinstance(res, dict) else {}

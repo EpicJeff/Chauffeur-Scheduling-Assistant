@@ -382,7 +382,7 @@ def scenario_routes_and_template():
         check(line in auth, f'auth rule present: {line}')
     main_src = io.open(os.path.join(root, 'main.py'), encoding='utf-8').read()
     check('async def house_facade_photo' not in main_src
-          and 'def house_facade_photo(photo: UploadFile = File(...)):' in main_src,
+          and 'def house_facade_photo(photo: UploadFile = File(...),' in main_src,
           'house_facade_photo is a plain def: a vision call must not block the event loop')
     photo_section = main_src[main_src.index('def house_facade_photo('):main_src.index('def house_facade_critique(')]
     check("'token': token" in photo_section, 'the photo route returns the draft token')
@@ -413,7 +413,7 @@ def scenario_routes_and_template():
         model_pools.call_pool_json = lambda *a, **k: copy.deepcopy(architecture)
         upload = UploadFile(io.BytesIO(b'\x89PNG\r\n\x1a\n'), filename='b0.png',
                             headers=Headers({'content-type': 'image/png'}))
-        out = main.house_facade_photo(upload)
+        out = main.house_facade_photo(upload, [], [])
         check(out['token'] and out['viewpoint'] == 'left',
               f"the photo route wrapper returns the fixture's viewpoint: {out.get('viewpoint')!r}")
     finally:

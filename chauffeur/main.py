@@ -5514,22 +5514,31 @@ def house_facade_preview(body: dict = Body(default={})):
 
 
 @app.post("/api/house/facades/photo")
-def house_facade_photo(photo: UploadFile = File(...)):
+def house_facade_photo(photo: UploadFile = File(...), supplemental: list[UploadFile] = File(default=[]),
+                       views: list[str] = Form(default=[])):
     """Sync def on purpose (spec 2026-09-17 section 4): a vision call must
     not block the event loop. Photo -> DRAFT + token; returned, never
     stored -- the parent reviews it in the editor and saves on purpose
     (spec 2026-09-15 §5). The bytes live in this request only."""
     import base64
     from services import house_facade as _hf
-    data = photo.file.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="Empty upload")
-    if len(data) > _PHOTO_MAX_BYTES:
-        raise HTTPException(status_code=413, detail="Image too large (8MB max)")
-    mime = (photo.content_type or '').lower()
-    if not mime.startswith('image/'):
-        raise HTTPException(status_code=400, detail="Only images are supported")
-    draft, notes, err, token = _hf.from_photo(base64.b64encode(data).decode('ascii'), mime)
+    if len(supplemental)>2 or len(views)!=len(supplemental):
+        raise HTTPException(status_code=400, detail="Add at most two supplemental photos, each with a view label")
+    if any(view not in _hf.PHOTO_VIEWS for view in views):
+        raise HTTPException(status_code=400, detail="Unknown photo view label")
+    def read_image(upload):
+        data = upload.file.read(_PHOTO_MAX_BYTES+1)
+        if not data:
+            raise HTTPException(status_code=400, detail="Empty upload")
+        if len(data)>_PHOTO_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="Image too large (8MB max per photo)")
+        mime=(upload.content_type or '').lower()
+        if not mime.startswith('image/'):
+            raise HTTPException(status_code=400, detail="Only images are supported")
+        return {'b64':base64.b64encode(data).decode('ascii'),'mime':mime}
+    primary=read_image(photo)
+    extra=[{**read_image(upload),'view':view} for upload,view in zip(supplemental,views)]
+    draft, notes, err, token = _hf.from_photo(primary['b64'], primary['mime'], supplemental=extra)
     viewpoint = _hf.draft_for(token).get('viewpoint') if token else None
     return {'draft': draft, 'notes': notes, 'error': err, 'token': token, 'viewpoint': viewpoint}
 
