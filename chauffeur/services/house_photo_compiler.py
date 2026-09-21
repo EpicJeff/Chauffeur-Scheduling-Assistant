@@ -22,7 +22,10 @@ Cross-gables are separate gables owned by a volume; an end gable is already part
 perpendicular roof. Porch gables are owned by a porch, never by a building roof.
 Each porch references its wall volume. Give one continuous covered porch interval even
 when a small entrance gable interrupts it. Gables on a shed porch produce a mixed roof.
-Openings have owner ids of a volume or gable and explicit count of FRAMED units, not panes.
+Openings have owner ids of an existing volume or gable and explicit count of FRAMED units,
+not panes. Ground-floor doors/windows under a porch preferably reference its wall volume;
+a porch owner is also accepted and resolves through the porch to that same wall volume.
+Upper openings must reference a two-story volume; attic windows must reference a gable.
 List each separated upstairs window independently. Include shutters when visible.
 Record finish bands by global interval and story. base bands have story=base.
 Materials and colours must use the nearest permitted values, unknown if uncertain.
@@ -96,14 +99,23 @@ def validate_analysis(value):
                 ids[row['id']]=(layer,row)
     vols=sorted(value['volumes'],key=lambda r:r['at'])
     if any(a['at']+a['width']>b['at']+.001 for a,b in zip(vols,vols[1:])):errors.append('wall volumes overlap')
-    for layer,allowed in [('porches',('volumes',)),('gables',('volumes','porches')),('dormers',('volumes',)),('openings',('volumes','gables'))]:
+    for layer,allowed in [('porches',('volumes',)),('gables',('volumes','porches')),('dormers',('volumes',)),('openings',('volumes','gables','porches'))]:
         for row in value[layer]:
             owner=ids.get(row['owner'])
-            if not owner or owner[0] not in allowed:errors.append(row['id']+' has invalid owner');continue
+            if not owner or owner[0] not in allowed:
+                errors.append(row['id']+' has invalid owner '+repr(row['owner'])+'; expected '+', '.join(allowed));continue
             parent=owner[1]
             if layer != 'porches' and (row['at']<parent['at']-.02 or row['at']+row['width']>parent['at']+parent['width']+.02):
                 errors.append(row['id']+' extends beyond its owner')
             if layer=='openings':
+                if owner[0]=='porches':
+                    wall=ids.get(parent['owner'])
+                    if row['level']!='ground' or row['kind'] not in ('window','door'):
+                        errors.append(row['id']+' porch opening must be a ground-floor window or door')
+                    if not wall or wall[0]!='volumes':
+                        errors.append(row['id']+' porch has no valid wall volume')
+                    elif row['at']<wall[1]['at']-.02 or row['at']+row['width']>wall[1]['at']+wall[1]['width']+.02:
+                        errors.append(row['id']+' extends beyond its porch wall volume')
                 if row['level']=='upper' and (owner[0]!='volumes' or parent['stories']!='two'):errors.append(row['id']+' upper opening has no second-story wall')
                 if (row['level']=='attic') != (owner[0]=='gables'):errors.append(row['id']+' attic opening must belong to a gable')
                 if row['level']=='attic' and row['kind']!='window':errors.append(row['id']+' attic opening must be a window')
@@ -236,7 +248,10 @@ def compile_analysis(analysis):
         if o['level']=='attic':continue
         level=2 if o['level']=='upper' else 1
         start,end=interval(o,mirror);count=o['count']
-        owner=volumes[o['owner']]
+        wall_owner=porches[o['owner']]['owner'] if o['owner'] in porches else o['owner']
+        owner=volumes[wall_owner]
+        if wall_owner!=o['owner']:
+            notes.append(o['id']+': porch opening resolved to wall volume '+wall_owner+'.')
         spans=parts(owner)
         if o['kind']=='door':spans=[(max(6,s),e) for s,e in spans if e>6]
         if o['kind']=='garage_door':spans=[(0,3)]
@@ -257,7 +272,7 @@ def compile_analysis(analysis):
         elif count>1:notes.append(o['id']+': multiple entry door leaves use the renderer\'s single entry door.')
         if cell!=start or width!=end-start:notes.append(o['id']+': opening quantized/repositioned to fit fixed slots.')
         occupied[level].update(range(cell,cell+width));spec['ground'].append(row)
-        mapping.append({'id':o['id'],'kind':o['kind'],'owner':o['owner'],'slot':cell,'span':width,'count':count})
+        mapping.append({'id':o['id'],'kind':o['kind'],'owner':o['owner'],'wall_owner':wall_owner,'slot':cell,'span':width,'count':count})
     for f in a['finishes']:
         fields={}
         if f['material']!='unknown':fields['cladding']=f['material']

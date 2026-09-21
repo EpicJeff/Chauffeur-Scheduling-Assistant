@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.127 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.128 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8446,3 +8446,14 @@ and perpendicular ridges on an L-shaped footprint, beyond the current single-roo
 representation. The hand-built cross-gable is an intentional approximation. This fix
 does not resolve that representation limit or the omitted entrance porch gable. No provider
 requests or saved-facade mutations are involved.
+
+
+### Porch-owned photo openings - v2.499.128 (2026-09-21)
+
+Photo analysis accepts a ground-floor door/window owned by an existing porch and resolves
+it through that porch to its wall volume. The opening must lie within both porch and
+supporting wall extents. Missing/invalid owners, porch garage doors, upper and attic
+porch openings remain invalid. Geometry matches direct wall ownership; traces preserve
+both original owner and resolved wall_owner. Errors now include the rejected owner
+reference and allowed owner types. No provider calls are added. A synthetic reproduction
+matches the reported error; the failed provider payload itself was not available.

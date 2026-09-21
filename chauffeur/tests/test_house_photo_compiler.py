@@ -48,6 +48,33 @@ class CompilerTests(unittest.TestCase):
         for key in ('ground','roof','upper'):
             self.assertEqual(reflected[key],spec[key])
 
+    def test_porch_openings_resolve_to_wall_without_changing_geometry(self):
+        a=copy.deepcopy(DATA)
+        porch=a['porches'][0]
+        openings=[o for o in a['openings'] if o['owner']==porch['owner'] and o['level']=='ground']
+        self.assertTrue(any(o['kind']=='door' for o in openings))
+        self.assertTrue(any(o['kind']=='window' for o in openings))
+        expected=compile_analysis(a)[0]
+        for o in openings:o['owner']=porch['id']
+        original=copy.deepcopy(a)
+        self.assertEqual(validate_analysis(a),[])
+        spec,notes,trace=compile_analysis(a)
+        self.assertEqual(a,original)
+        for key in ('ground','roof','upper','blocks'):
+            self.assertEqual(spec[key],expected[key])
+        self.assertTrue(any('porch' in n and 'wall' in n for n in notes))
+        for o in openings:
+            mapped=next(m for m in trace['mapping'] if m['id']==o['id'])
+            self.assertEqual(mapped['owner'],porch['id'])
+            self.assertEqual(mapped['wall_owner'],porch['owner'])
+        for change in ('missing','upper','outside'):
+            bad=copy.deepcopy(a);o=next(o for o in bad['openings'] if o['owner']==porch['id'])
+            if change=='missing':o['owner']='nonexistent'
+            if change=='upper':o['level']='upper'
+            if change=='outside':o['at']=0
+            self.assertTrue(validate_analysis(bad),change)
+            with self.assertRaises(ValueError):compile_analysis(bad)
+
     def test_roof_story_and_known_orientation_matrix(self):
         for form in ('gable','hip'):
             for ridge in ('parallel','perpendicular'):

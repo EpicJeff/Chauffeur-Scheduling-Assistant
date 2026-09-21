@@ -47,3 +47,13 @@ not ground truth for the literal ridge structure. The current single-roof volume
 cannot encode that intersection; evidence and limitations should retain it. The missing
 porch gable is a separate observation omission. Code does not replace those observations
 with reference-specific assumptions. A failed provider visual review left the original analysis untouched.
+
+
+## Porch opening ownership (v2.499.128)
+
+A ground-floor door or window may reference a porch; the compiler resolves its wall
+through the porch owner. Both porch and wall containment are validated. Upper openings
+still require a two-story volume, attic openings a gable. Unknown references remain
+errors, with the reference included in diagnostics. Mapping traces keep original owner
+and resolved wall_owner. This is deterministic relationship resolution, not a guess
+based on ID spelling or proximity, and requires no additional model request.
