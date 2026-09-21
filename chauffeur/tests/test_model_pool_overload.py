@@ -35,33 +35,6 @@ class OverloadTests(unittest.TestCase):
         with patch('services.llm._call_llm_json',request):
             self.assertEqual(self.call(max_models=10,total_timeout_s=120)['_model'],'gemini-lite')
 
-    def test_photo_matching_and_critique_reach_third_model(self):
-        import json
-        from photo_helpers import OBSERVATIONS
-        from services import house_facade as hf
-        hf._PHOTO_RUNS.clear()
-        fixtures=Path(__file__).parent/'fixtures'/'house_photo'
-        settings={**SETTINGS,'llm_gemini_api_key':'offline'}
-        for stage in ('pass1','pass2'):
-            pools.reset_cooldowns();seen=[]
-            def request(*args,**kw):
-                seen.append(args[3])
-                if len(seen)<3:raise RuntimeError('HTTP Error 503: Service Unavailable')
-                if args[4] == hf.OBSERVATION_PROMPT:
-                    return dict(OBSERVATIONS)
-                return json.loads((fixtures/('brick.'+stage+'.json')).read_text(encoding='utf-8'))
-            with patch.object(hf,'_settings',return_value=settings),patch('services.llm._call_llm_json',request):
-                if stage=='pass1':
-                    draft,notes,error,token=hf.from_photo('AAAA','image/jpeg')
-                    self.assertIsNone(error)
-                    self.assertTrue(draft and token)
-                    self.assertTrue(any('4 model request(s)' in n for n in notes))
-                else:
-                    token=hf.issue_draft(hf.CANONICAL,'AAAA','image/jpeg')
-                    result,error=hf.critique(token,'iVBOR')
-                    self.assertIsNone(error)
-                    self.assertTrue(result['revised'])
-            self.assertEqual(seen,['gemini-a','gemini-b','gemini-c'] + (['gemini-c'] if stage == 'pass1' else []))
 
     def test_time_budget_limits_attempt_timeout_and_stops(self):
         clock=[0];timeouts=[]

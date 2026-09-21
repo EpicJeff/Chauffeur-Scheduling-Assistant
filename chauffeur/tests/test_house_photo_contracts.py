@@ -53,26 +53,5 @@ class PhotoContracts(unittest.TestCase):
         self.assertEqual(cfg['responseMimeType'],'application/json')
         self.assertEqual(cfg['responseJsonSchema'],schema.review_schema())
 
-    def test_failed_upload_resume_and_visual_counts_are_separate(self):
-        hf._PHOTO_RUNS.clear()
-        steps=iter([OBSERVATIONS,{'error':'503'},hf.CANONICAL,{'error':'503'}])
-        def provider(*args,**kw):
-            kw['attempts'].append('offline-flash')
-            return copy.deepcopy(next(steps))
-        with patch.object(hf,'_settings',return_value={'llm_gemini_api_key':'offline'}),patch(
-                'services.model_pools.call_pool_json',side_effect=provider):
-            self.assertIsNotNone(hf.from_photo('ledger','image/png')[2])
-            _,notes,error,token=hf.from_photo('ledger','image/png')
-            self.assertIsNone(error)
-            self.assertTrue(any('1 model request(s)' in n and '3 cumulative' in n for n in notes))
-            hf.critique(token,'render',automatic=True)
-        trace=hf._DRAFTS[token]['photo_trace']
-        actions=trace['request_actions']
-        self.assertEqual([a['requests'] for a in actions],[2,1,1])
-        self.assertEqual([a['kind'] for a in actions],['upload','upload','automatic_visual'])
-        self.assertEqual([a['stages'][0]['name'] for a in actions],['observation','configuration','visual_review'])
-        self.assertEqual(trace['requests_total'],4)
-        self.assertEqual(len(trace['attempts']),4)
-        self.assertTrue(all(a['requests']<=a['limit'] for a in actions))
 
 if __name__=='__main__':unittest.main()

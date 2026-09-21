@@ -20,23 +20,5 @@ class PhotoDescriptions(unittest.TestCase):
             self.assertEqual(hf._validate_photo_model(clean,[])[0],clean)
         self.assertTrue(hf.validate_block_model(original))  # normal validation remains strict
 
-    def test_generation_and_revision_preserve_full_raw_notes(self):
-        hf._PHOTO_RUNS.clear()
-        raw=copy.deepcopy(hf.CANONICAL);raw['unexpressed']=['a'*150]
-        with patch.object(hf,'_settings',return_value={'llm_gemini_api_key':'offline'}),patch(
-            'services.model_pools.call_pool_json',side_effect=[OBSERVATIONS,raw,{'revised':raw,'reasons':[]}]) as api:
-            spec,notes,error,token=hf.from_photo('long-note','image/png')
-            self.assertIsNone(error)
-            self.assertEqual(len(spec['unexpressed'][0]),80)
-            revised,error=hf.critique(token,'render')
-            self.assertIsNone(error)
-            self.assertIsNotNone(revised['revised'])
-            self.assertEqual(api.call_count,3)
-        trace=hf._DRAFTS[token]['photo_trace']
-        self.assertEqual(trace['raw_configuration']['unexpressed'],raw['unexpressed'])
-        self.assertEqual(trace['revision_raw']['unexpressed'],raw['unexpressed'])
-        self.assertTrue(any('unexpressed descriptions normalized' in n for n in notes))
-        bad=copy.deepcopy(raw);bad['blocks']['main']['roof']=None
-        self.assertTrue(hf._validate_photo_model(bad,[])[1])
 
 if __name__=='__main__':unittest.main()

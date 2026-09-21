@@ -1,0 +1,229 @@
+{
+  "schema_version": 1,
+  "viewpoint": "centre",
+  "garage_side": "unknown",
+  "volumes": [
+    {
+      "id": "left",
+      "at": 0,
+      "width": 0.25,
+      "stories": "one",
+      "projection": "flush",
+      "roof": {
+        "form": "gable",
+        "ridge": "parallel",
+        "pitch": "medium",
+        "evidence": "Roof plane continues across the wall behind its front triangle."
+      },
+      "evidence": "Single rectangular wall below an eave."
+    },
+    {
+      "id": "centre",
+      "at": 0.25,
+      "width": 0.35,
+      "stories": "two",
+      "projection": "flush",
+      "roof": {
+        "form": "gable",
+        "ridge": "parallel",
+        "pitch": "medium",
+        "evidence": "Roof plane continues across the wall behind its front triangle."
+      },
+      "evidence": "Three windows in a full rectangular upstairs wall."
+    },
+    {
+      "id": "right",
+      "at": 0.6,
+      "width": 0.4,
+      "stories": "one",
+      "projection": "forward",
+      "roof": {
+        "form": "gable",
+        "ridge": "parallel",
+        "pitch": "medium",
+        "evidence": "Roof plane continues across the wall behind its front triangle."
+      },
+      "evidence": "Upper window belongs to the attic triangle."
+    }
+  ],
+  "porches": [
+    {
+      "id": "porch",
+      "owner": "centre",
+      "at": 0.22,
+      "width": 0.38,
+      "roof": "shed"
+    }
+  ],
+  "gables": [
+    {
+      "id": "entry-gable",
+      "owner": "porch",
+      "at": 0.22,
+      "width": 0.18,
+      "kind": "cross",
+      "evidence": "Entrance triangle on continuous porch roof."
+    },
+    {
+      "id": "centre-gable",
+      "owner": "centre",
+      "at": 0.36,
+      "width": 0.22,
+      "kind": "cross",
+      "evidence": "Decorative triangle projects from parallel ridge."
+    },
+    {
+      "id": "right-gable",
+      "owner": "right",
+      "at": 0.6,
+      "width": 0.4,
+      "kind": "cross",
+      "evidence": "Large triangle projects from transverse roof."
+    }
+  ],
+  "openings": [
+    {
+      "id": "left-window",
+      "owner": "left",
+      "at": 0.08,
+      "width": 0.12,
+      "level": "ground",
+      "count": 2,
+      "kind": "window",
+      "shutters": true,
+      "size": "standard"
+    },
+    {
+      "id": "entry",
+      "owner": "centre",
+      "at": 0.27,
+      "width": 0.09,
+      "level": "ground",
+      "count": 2,
+      "kind": "door",
+      "shutters": false,
+      "size": "standard"
+    },
+    {
+      "id": "centre-ground",
+      "owner": "centre",
+      "at": 0.43,
+      "width": 0.13,
+      "level": "ground",
+      "count": 2,
+      "kind": "window",
+      "shutters": false,
+      "size": "standard"
+    },
+    {
+      "id": "up-left",
+      "owner": "centre",
+      "at": 0.29,
+      "width": 0.05,
+      "level": "upper",
+      "count": 1,
+      "kind": "window",
+      "shutters": true,
+      "size": "standard"
+    },
+    {
+      "id": "up-mid",
+      "owner": "centre",
+      "at": 0.4,
+      "width": 0.05,
+      "level": "upper",
+      "count": 1,
+      "kind": "window",
+      "shutters": true,
+      "size": "standard"
+    },
+    {
+      "id": "up-right",
+      "owner": "centre",
+      "at": 0.51,
+      "width": 0.05,
+      "level": "upper",
+      "count": 1,
+      "kind": "window",
+      "shutters": true,
+      "size": "standard"
+    },
+    {
+      "id": "right-left",
+      "owner": "right",
+      "at": 0.64,
+      "width": 0.04,
+      "level": "ground",
+      "count": 1,
+      "kind": "window",
+      "shutters": false,
+      "size": "standard"
+    },
+    {
+      "id": "right-group",
+      "owner": "right",
+      "at": 0.73,
+      "width": 0.15,
+      "level": "ground",
+      "count": 3,
+      "kind": "window",
+      "shutters": false,
+      "size": "standard"
+    },
+    {
+      "id": "right-right",
+      "owner": "right",
+      "at": 0.92,
+      "width": 0.04,
+      "level": "ground",
+      "count": 1,
+      "kind": "window",
+      "shutters": false,
+      "size": "standard"
+    },
+    {
+      "id": "attic",
+      "owner": "right-gable",
+      "at": 0.78,
+      "width": 0.04,
+      "level": "attic",
+      "count": 1,
+      "kind": "window",
+      "shutters": false,
+      "size": "standard"
+    }
+  ],
+  "finishes": [
+    {
+      "at": 0,
+      "width": 1,
+      "story": "ground",
+      "material": "batten",
+      "colour": "greige"
+    },
+    {
+      "at": 0.25,
+      "width": 0.35,
+      "story": "upper",
+      "material": "brick",
+      "colour": "painted_brick"
+    },
+    {
+      "at": 0,
+      "width": 1,
+      "story": "base",
+      "material": "brick",
+      "colour": "painted_brick"
+    }
+  ],
+  "palette": {
+    "roof": "charcoal",
+    "frame": "white",
+    "door": "wood",
+    "trim": "white"
+  },
+  "limitations": [
+    "Standing-seam window canopy and blue shutter colour are not available."
+  ],
+  "dormers": []
+}

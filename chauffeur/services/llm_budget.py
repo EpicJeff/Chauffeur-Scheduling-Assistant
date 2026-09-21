@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 BACKGROUND_FLASH_LIMIT = 12  # shared across automated workflows/models per day
 FLASH_MODEL_LIMIT = 20
 _scope = contextvars.ContextVar('llm_request_scope', default=('direct', False))
+_wire_attempts = contextvars.ContextVar('llm_wire_attempts', default=None)
 
 
 class Deferred(RuntimeError):
@@ -35,6 +36,15 @@ def request_scope(workflow, background=False):
         yield
     finally:
         _scope.reset(token)
+
+
+@contextlib.contextmanager
+def record_attempts(attempts):
+    token = _wire_attempts.set(attempts)
+    try:
+        yield
+    finally:
+        _wire_attempts.reset(token)
 
 
 def _connect():
@@ -145,6 +155,9 @@ def urlopen(request, timeout=60):
     model = url.path.split('/models/', 1)[1].split(':', 1)[0]
     key = urllib.parse.parse_qs(url.query).get('key', [''])[0] or request.get_header('X-goog-api-key', '')
     reservation = _reserve(key, model)
+    attempts = _wire_attempts.get()
+    if attempts is not None:
+        attempts.append(model)
     try:
         response = urllib.request.urlopen(request, timeout=timeout)
     except urllib.error.HTTPError as error:

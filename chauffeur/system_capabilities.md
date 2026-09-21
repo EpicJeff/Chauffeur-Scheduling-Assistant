@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.125 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.126 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8412,3 +8412,21 @@ non-descriptive values are omitted. Every adaptation is noted, and full raw resp
 remain in generation/correction/review traces. Provider schema bounds the list and asks
 for short phrases. Ordinary house validation and geometric checks remain strict.
 34 photo tests and 45 facade scenarios pass; no added calls or live provider usage.
+
+
+### Deterministic photo compiler - v2.499.126 (2026-09-21)
+
+New photo uploads use one architecture-analysis schema followed by deterministic
+compilation. The model supplies full-facade intervals and explicit ownership for wall
+volumes, porches, gables, dormers, openings and finishes. Code owns mirror selection,
+slot mapping, spans, window placement, defaults and normalization. Visual review revises
+the analysis and runs the same compiler; it never generates house configuration.
+This supersedes the generation/correction stages and six-request upload allowance above.
+Upload allows at most three actual HTTP attempts, automatic review one, manual review
+three. Cached successful actions are free; locally deferred calls no longer inflate
+request counts or consume foreground fallback allowance. Traces retain analysis,
+compiler mapping and review results. Existing saved facades are unchanged.
+
+The renderer still has fixed blocks/slots and explicit approximation limits. Browser
+proof uses a hand-labeled reference at high quality, not a fresh successful model run.
+See [architecture/compiler contract](../docs/superpowers/specs/2026-09-21-photo-architecture-compiler.md).

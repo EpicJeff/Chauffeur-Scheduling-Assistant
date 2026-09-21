@@ -196,7 +196,11 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
     last_err = "no models available"
     transient = False
     deadline = None if total_timeout_s is None else time.monotonic() + total_timeout_s
-    for model in models_for(tier, settings)[:(1 if background else max_models)]:
+    launched = 0
+    deferred_until = None
+    for model in models_for(tier, settings):
+        if launched >= (1 if background else max_models):
+            break
         t = gemma_timeout_s if (gemma_timeout_s and is_gemma(model)) else timeout_s
         if deadline is not None:
             remaining = deadline - time.monotonic()
@@ -205,9 +209,7 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
                         "transient": True}
             t = min(t, remaining)
         try:
-            with llm_budget.request_scope(workflow, background):
-                if attempts is not None:
-                    attempts.append(model)
+            with llm_budget.request_scope(workflow, background), llm_budget.record_attempts(attempts):
                 res = _llm._call_llm_json('gemini', '', api_key, model, system_prompt,
                                           user_prompt, temperature=temperature, timeout_s=t,
                                           images=images, transient_retries=0,
@@ -219,15 +221,18 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
             if background:
                 return {'error': str(e), 'deferred': True, 'retry_at': e.retry_at}
             last_err = str(e)
+            deferred_until = min(deferred_until or e.retry_at, e.retry_at)
             transient = True
             continue
         except Exception as e:
+            launched += 1
             last_err = str(e)
             note_failure(model, last_err)
             transient = any(c in last_err for c in ("429", "500", "502", "503", "504",
                                                     "timed out", "timeout"))
             logger.warning(f"[model-pools] {model} failed ({last_err[:160]}) — " + ('deferring background work' if background else 'trying next'))
             continue
+        launched += 1
         if isinstance(res, dict) and res.get("error") and "429" in str(res["error"]):
             last_err = str(res["error"])
             note_failure(model, last_err)
@@ -237,7 +242,8 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
         if isinstance(res, dict):
             res["_model"] = model
         return res
-    return {"error": last_err, "transient": transient}
+    return {"error": last_err, "transient": transient,
+            **({"deferred": True, "retry_at": deferred_until} if deferred_until and launched == 0 else {})}
 
 
 def pooled_or_direct(provider: str, url: str, api_key: str, model: str, tier: str,

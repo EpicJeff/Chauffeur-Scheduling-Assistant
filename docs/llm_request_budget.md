@@ -45,3 +45,12 @@ quota. Unknown model classes are recorded without guessing a daily allowance.
 
 Verification uses mocked HTTP only: retry amplification, shared limits,
 foreground reserve, concurrent admission, restart persistence, and day reset.
+
+
+### House photo actions (v2.499.126)
+
+Photo upload has one analysis stage with at most three transmitted requests. Automatic
+visual review permits one more; manual review permits three. Compilation is local and
+has no provider cost. Pool request traces are recorded immediately before HTTP after
+admission: local deferrals count zero and do not consume foreground fallback allowance.
+Failed transmitted requests still count. Existing workflow pauses remain enforced.

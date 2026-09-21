@@ -45,85 +45,11 @@ class PipelineTests(unittest.TestCase):
             return copy.deepcopy(next(items))
         return call
 
-    def test_three_calls_cached_and_regression_withheld(self):
-        replies = [DATA['observations'], DATA['My house'], {'revised':DATA['My house - photo'],'reasons':['Changed massing']}]
-        with patch('services.model_pools.call_pool_json', side_effect=self.provider(replies)) as api:
-            spec, notes, err, token = hf.from_photo('image','image/png')
-            self.assertIsNone(err)
-            self.assertEqual(hf.from_photo('image','image/png')[3],token)
-            self.assertEqual(api.call_count,2)
-            result, err = hf.critique(token,'render')
-            self.assertIsNone(result['revised'])
-            self.assertTrue(any('withheld' in x for x in result['reasons']))
-            self.assertEqual(result['requests_total'],3)
-            hf.critique(token,'render')
-            self.assertEqual(api.call_count,3)
-            self.assertIn('Observations:', api.call_args.args[3])
-            self.assertIn('Return exactly this shape',api.call_args.args[2])
 
-    def test_correction_accepts_authored_structure(self):
-        with patch('services.model_pools.call_pool_json', side_effect=self.provider(
-                [DATA['observations'], DATA['My house - photo'], DATA['My house']])) as api:
-            spec, notes, err, token = hf.from_photo('image','image/png')
-            self.assertIsNone(err)
-            self.assertEqual(structural_issues(spec, DATA['observations']), [])
-            self.assertTrue(any('correction accepted' in x for x in notes))
-            self.assertEqual(api.call_count, 3)
-            self.assertEqual(api.call_args.kwargs['max_models'], 1)
-            self.assertEqual(hf._DRAFTS[token]['photo_trace']['automatic_correction']['status'], 'accepted')
-            hf.from_photo('image','image/png')
-            self.assertEqual(api.call_count, 3)
 
-    def test_retry_reuses_observations_and_budget(self):
-        def call(*args, **kw):
-            if args[2] == hf.OBSERVATION_PROMPT:
-                kw['attempts'].append('flash')
-                return copy.deepcopy(DATA['observations'])
-            kw['attempts'].extend(['busy'] * kw['max_models'])
-            return {'error':'503 unavailable'}
-        with patch('services.model_pools.call_pool_json',side_effect=call) as api:
-            for _ in range(4):
-                self.assertIsNotNone(hf.from_photo('image','image/png')[2])
-            self.assertEqual(api.call_count,5)  # analysis once, four explicit translation attempts
-            self.assertEqual(len(next(iter(hf._PHOTO_RUNS.values()))['attempts']),13)
 
-    def test_six_request_ceiling_includes_pool_fallbacks(self):
-        budgets = []
-        def call(*args, **kw):
-            budgets.append(kw['max_models'])
-            kw['attempts'].extend(['flash'] * kw['max_models'])
-            if len(budgets) == 1: return copy.deepcopy(DATA['observations'])
-            if len(budgets) == 2: return copy.deepcopy(DATA['My house'])
-            return {'revised':copy.deepcopy(DATA['My house']), 'reasons':[]}
-        with patch('services.model_pools.call_pool_json', side_effect=call):
-            _, _, error, token = hf.from_photo('image','image/png')
-            self.assertIsNone(error)
-            result, _ = hf.critique(token,'render')
-            self.assertEqual(result['requests_total'],9)
-            self.assertEqual(budgets,[3,3,3])
-            hf.from_photo('image','image/png')
-            hf.critique(token,'render')
-            self.assertEqual(budgets,[3,3,3])
 
-    def test_failed_critique_can_resume_without_rebuilding(self):
-        replies = [DATA['observations'],DATA['My house'], {'error':'503'},
-                   {'revised':DATA['My house'],'reasons':[]}]
-        with patch('services.model_pools.call_pool_json', side_effect=self.provider(replies)) as api:
-            _, _, _, token = hf.from_photo('image','image/png')
-            first, _ = hf.critique(token,'render')
-            self.assertIsNone(first['revised'])
-            second, _ = hf.critique(token,'render')
-            self.assertIsNotNone(second['revised'])
-            self.assertEqual(second['requests_total'],4)
-            self.assertEqual(api.call_count,4)
-            for call in api.call_args_list:
-                self.assertEqual(call.kwargs['thinking_level'],'low')
-                self.assertEqual(call.kwargs['max_output_tokens'],16384)
 
-    def test_invalid_observations_never_translate(self):
-        with patch('services.model_pools.call_pool_json',side_effect=self.provider([{}])) as api:
-            self.assertIn('invalid photo observations',hf.from_photo('image','image/png')[2])
-            self.assertEqual(api.call_count,1)
 
 if __name__ == '__main__':
     unittest.main()

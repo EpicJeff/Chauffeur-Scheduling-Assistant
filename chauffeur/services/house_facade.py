@@ -1304,13 +1304,13 @@ def _validate_photo_model(obj, notes):
 # One bounded run per image during the draft review window. Retry reuses observations
 # and cumulative request accounting; each explicit retry has a bounded allowance.
 # A double click cannot start a second provider run.
-PHOTO_REQUEST_CAP = 6
+PHOTO_REQUEST_CAP = 3
 _PHOTO_RUNS = {}
 _PHOTO_LOCK = threading.Lock()
 
 
 def from_photo(image_b64, mime):
-    """Observe, then configure. Drafts and cached observations expire after 15 minutes."""
+    """One architectural analysis, compiled in code. Drafts expire after 15 minutes."""
     from services import model_pools
     settings = _settings()
     api_key = settings.get('llm_gemini_api_key', '')
@@ -1356,93 +1356,32 @@ def from_photo(image_b64, mime):
 
 
     try:
+        from services.house_photo_compiler import ANALYSIS_PROMPT, analysis_schema, compile_analysis
         if run['observations'] is None:
-            observed = call(OBSERVATION_PROMPT, 'Identify the visible architecture and proportions.', 3, 'observation', observations_schema())
-            if isinstance(observed, dict) and observed.get('error'):
-                raise ValueError(observed['error'])
-            raw_observed = copy.deepcopy(observed)
-            observed = normalize_observation_notes(observed)
-            errors = validate_observations(observed)
-            if errors:
-                raise ValueError('invalid photo observations: ' + '; '.join(errors[:3]))
-            run['raw_observations'] = raw_observed
-            run['observations'] = reconcile_observations(observed)
-        observed = run['observations']
-        res = call(_photo_prompt() + PHOTO_COORDINATES,
-                   'Build the house from these observations and the photo. Preserve the broad sections, '
-                   'second stories and visible window groups. An attic gable is not an upper story.\n'
-                   + json.dumps(observed, separators=(',', ':')), 3, 'configuration', house_schema(fractional=True))
-        if not isinstance(res, dict) or res.get('error'):
-            raise ValueError(res.get('error', 'bad configuration response') if isinstance(res, dict) else 'bad response')
-        raw_configuration = copy.deepcopy(res)
-        res = copy.deepcopy(res)
-        if observed['garage_side'] != 'unknown':
-            res['mirror'] = observed['garage_side'] == 'right'
-        pre = []
-        snapped = _snap_fractions(res, pre, photo_coordinates=True)
-        blocks = snapped.get('blocks')
-        if isinstance(blocks, dict) and not isinstance(blocks.get('garage'), dict):
-            blocks['garage'] = _block(orientation='front')
-            pre.append('garage block missing: drawn as a plain block; review placement')
-        snapped, errs = _validate_photo_model(snapped, pre)
-        before_normalization = copy.deepcopy(snapped)
-        if errs:
-            raise ValueError('the model returned an incomplete house: ' + '; '.join(errs[:3]))
-        spec, notes = normalize(snapped)
-        notes += restore_missing_upper_windows(spec, observed, len(slot_table()))
-        normalization_notes = list(pre + notes)
-        issues = structural_issues(spec, observed, len(slot_table()))
-        correction = {'initial_issues': list(issues), 'status': 'not_needed'}
-        if issues and len(attempts) - action_start < PHOTO_REQUEST_CAP:
-            # One bounded structural correction, sharing the upload's existing budget.
-            # Failure must leave a usable draft, and never silently accept regression.
-            correction['status'] = 'failed'
-            try:
-                repair = call(_revision_prompt() + '\nReturn ONE complete house using canonical slot/span, not fractions. '
-                              'Correct the listed structural discrepancies using the original photo. '
-                              'Recheck observations against visible roof planes; do not add stories for attic windows. '
-                              'Keep correctly represented features unchanged.',
-                              'Observations: ' + json.dumps(observed, separators=(',', ':'))
-                              + '\nDiscrepancies: ' + json.dumps(issues, separators=(',', ':'))
-                              + '\nNormalization changes: ' + json.dumps(normalization_notes, separators=(',', ':'))
-                              + '\nDraft: ' + json.dumps(spec, separators=(',', ':')), 1, 'structural_correction', house_schema())
-                correction['raw_configuration'] = copy.deepcopy(repair)
-                repair_notes = []
-                candidate, errors = _revision_model(copy.deepcopy(repair), repair_notes)
-                correction['validation_errors'] = list(errors)
-                if errors:
-                    raise ValueError('; '.join(errors[:3]))
-                candidate, clean_notes = normalize(candidate)
-                repair_notes += clean_notes + restore_missing_upper_windows(candidate, observed, len(slot_table()))
-                remaining = structural_issues(candidate, observed, len(slot_table()))
-                correction.update(normalization_notes=repair_notes, structural_issues=remaining)
-                if set(remaining) < set(issues):
-                    spec, issues = candidate, remaining
-                    notes += ['Automatic structural correction accepted.'] + repair_notes
-                    correction['status'] = 'accepted'
-                else:
-                    correction['status'] = 'withheld'
-                    notes.append('Automatic correction withheld: it did not reduce discrepancies without regressions.')
-            except Exception as ex:
-                correction['error'] = str(ex)
-                notes.append('Automatic structural correction unavailable; original draft retained.')
-        elif issues:
-            correction['status'] = 'budget_exhausted'
-            notes.append('Automatic structural correction skipped: upload request limit reached.')
-        notes = pre + notes + ['Needs review: ' + x for x in issues] + observed['uncertain'] + [_requests_note(attempts[action_start:]) + f' this upload; {len(attempts)} cumulative across actions.']
-        if observed['garage_side'] == 'unknown':
-            notes.append('Garage side is uncertain; block mapping is inferred from visible geometry.')
+            observed = call(ANALYSIS_PROMPT, 'Describe the visible architecture using the full-facade coordinate system.',
+                            3, 'analysis', analysis_schema())
+            if not isinstance(observed, dict) or observed.get('error'):
+                message = (observed or {}).get('error', 'invalid analysis response') if isinstance(observed, dict) else 'invalid analysis response'
+                raise ValueError(message)
+            run['raw_observations'] = copy.deepcopy(observed)
+            # Compile first; invalid analyses never become cached successful inputs.
+            spec, notes, compiled = compile_analysis(observed)
+            run['observations'] = copy.deepcopy(observed)
+        else:
+            observed = run['observations']
+            spec, notes, compiled = compile_analysis(observed)
+        notes += [_requests_note(attempts[action_start:]) + f' this upload; {len(attempts)} cumulative across actions.']
         token = issue_draft(spec, image_b64, mime, viewpoint=observed['viewpoint'], requests=len(attempts))
-        _DRAFTS[token]['observations'] = copy.deepcopy(observed)
+        _DRAFTS[token]['analysis'] = copy.deepcopy(observed)
         _DRAFTS[token]['photo_trace'] = {
-            'observations': copy.deepcopy(observed),
-            'raw_observations': copy.deepcopy(run.get('raw_observations', observed)),
-            'raw_configuration': raw_configuration,
-            'before_normalization': before_normalization, 'normalization_notes': normalization_notes,
-            'structural_issues': list(issues), 'automatic_correction': correction, 'attempts': list(attempts), 'requests_total': len(attempts), 'request_actions': copy.deepcopy(actions)}
+            'pipeline': 'deterministic_v1', 'analysis': copy.deepcopy(observed),
+            'raw_analysis': copy.deepcopy(run.get('raw_observations', observed)),
+            'compilation': compiled, 'compiler_notes': list(notes),
+            'attempts': list(attempts), 'requests_total': len(attempts), 'request_actions': copy.deepcopy(actions)}
         _DRAFTS[token]['photo_run'] = run
         run.update(spec=copy.deepcopy(spec), notes=list(notes), token=token)
         return spec, notes, None, token
+
     except Exception as ex:
         return None, [_requests_note(attempts[action_start:]) + f' this upload; {len(attempts)} cumulative across actions.'], f'could not match the photo ({ex})', None
     finally:
@@ -1565,6 +1504,39 @@ def critique(token, render_png_b64, *, automatic=False):
     if not api_key or not e.get('photo_b64'):
         result['reasons'] = ['no critique: ' + ('no LLM API key configured' if not api_key else 'no photo on this draft')]
         return finish(result)
+    if e.get('analysis') is not None:
+        from services.house_photo_compiler import ANALYSIS_PROMPT, review_schema as analysis_review_schema, compile_analysis
+        trace = e.setdefault('photo_trace', {})
+        trace['visual_review_mode'] = 'automatic' if automatic else 'manual'
+        try:
+            res = model_pools.call_pool_json(
+                'vision', api_key, ANALYSIS_PROMPT + '\nCompare the ORIGINAL PHOTO first with the RENDER second. '
+                'The prior analysis may be wrong. Return {analysis: complete corrected analysis, reasons: image-based explanations}. '
+                'Do not return a house configuration. Correct wall-story counts, ridge directions, ownership and opening counts from the photo.',
+                'Prior analysis: ' + json.dumps(e['analysis'], separators=(',', ':')) +
+                '\nCompiler limitations: ' + json.dumps(trace.get('compiler_notes', []), separators=(',', ':')),
+                temperature=.1, timeout_s=90, settings=settings, strict_json=True,
+                response_schema=analysis_review_schema(), max_output_tokens=16384, thinking_level='low',
+                max_models=1 if automatic else 3, total_timeout_s=120, workflow='house_photo', attempts=attempts,
+                images=[{'mime': e.get('mime') or 'image/jpeg', 'b64': e['photo_b64']},
+                        {'mime': 'image/png', 'b64': render_png_b64}])
+            trace['review_raw'] = copy.deepcopy(res)
+            if not isinstance(res, dict) or res.get('error'):
+                failure = res if isinstance(res, dict) else {}
+                result['reasons'] = ['Visual review deferred or failed; initial draft retained. ' + str(failure.get('error', 'invalid response'))]
+                result['retry_at'] = failure.get('retry_at')
+                return finish(result, retryable=True)
+            reasons = res.get('reasons')
+            if not isinstance(reasons, list) or not reasons or any(not isinstance(x, str) or not x.strip() for x in reasons):
+                raise ValueError('Visual review requires image-based explanations.')
+            revised, notes, compiled = compile_analysis(res.get('analysis'))
+            trace.update(review_analysis=copy.deepcopy(res['analysis']), review_compilation=compiled, review_notes=notes)
+            result.update(revised=revised, reasons=reasons + notes, unexpressed=revised['unexpressed'])
+            return finish(result)
+        except Exception as ex:
+            trace['review_error'] = str(ex)
+            result['reasons'] = ['Visual review unavailable; initial draft retained. ' + str(ex)]
+            return finish(result, retryable=True)
     observed = e.get('observations')
     before_issues = structural_issues(draft, observed, len(slot_table()))
     try:
