@@ -316,7 +316,9 @@
 
     var scene = new T.Scene();
     scene.background = new T.Color(0xbdb3c7);          // the soft lilac of the reference
-    var cam = new T.PerspectiveCamera(24, 1, 0.1, 200); // narrow FOV = near-isometric diorama; far covers the yard dome
+    var neighborhoodEnabled = !!window.ChauffeurNeighborhood && new URLSearchParams(location.search).get('editor') !== '1';
+    var cam = new T.PerspectiveCamera(24, 1, 0.1, neighborhoodEnabled ? 500 : 200);
+    var neighborhood = null;
     /* ---- THE MIRROR (spec 2026-09-17 section 3.4) ----------------------
        A mirrored plan is ONE reflection of the finished house, applied to
        a root group at the very end of the build (see `houseRoot`, after
@@ -1177,6 +1179,7 @@
              isFinite(b[3]) && isFinite(b[4]) && isFinite(b[5]);
     }
     function solveShell(camPos, subject) {
+      if (neighborhood) neighborhood.update(camPos, toWorld(ORBIT.pivot), !subject);
       // Unshadowed interior pools must not shine through the closed exterior.
       interiorLightRoot.visible = !!subject;
       exteriorLightRoot.visible = !subject;
@@ -10223,7 +10226,7 @@
     refabConvexity('yard', yardG);
     /* sky dome: weather-painted from the inside, swapped by applyState.
        The dome IS the background now, so the flat clear color retires. */
-    var skyDome = new T.Mesh(new T.SphereGeometry(80, 24, 12),
+    var skyDome = new T.Mesh(new T.SphereGeometry(neighborhoodEnabled ? 220 : 80, 24, 12),
       new T.MeshBasicMaterial({ side: T.BackSide }));
     skyDome.rotation.y = Math.PI / 4;   /* UV seam behind the house, not the camera */
     extG.add(skyDome);
@@ -11427,6 +11430,16 @@
     counterFlip(houseRoot);
     houseRoot.updateMatrixWorld(true);
     REFLECTED = true;
+    // Photo/editor captures isolate the active design. Scenery is independent
+    // of its mirror, shell masks, household state and room navigation.
+    if (neighborhoodEnabled) {
+      neighborhood = window.ChauffeurNeighborhood.build(T, CANONICAL_JS, {
+        main: Object.assign({}, FULL_HOUSE, {south: FULL_HOUSE.south - MAIN_DZ}),
+        garage: Object.assign({}, GARAGE_BLOCK, {south: GARAGE_BLOCK.south - GAR_DZ})
+      }, PALETTE, function () { return makeMat(0xffffff, {rough:.95}); });
+      scene.add(neighborhood.group);
+      neighborhood.update(cam.position, toWorld(ORBIT.pivot), true);
+    }
     function noMirrorCount() {
       var n = 0;
       houseRoot.traverse(function (m) {
@@ -12196,7 +12209,7 @@
       MUD_POS: MUD_POS, MUD_AT: MUD_AT, LIV_POS: LIV_POS, LIV_AT: LIV_AT,
       STUDY_POS: STUDY_POS, STUDY_AT: STUDY_AT, studyWorld: studyWorld,
       mudroomRoofG: mudroomRoofG,
-      yardG: yardG, westWallG: westWallG, zoneExtra: zoneExtra,
+      yardG: yardG, neighborhood: neighborhood, westWallG: westWallG, zoneExtra: zoneExtra,
       mudBagsG: mudBagsG, makeBag: makeBag, FABRIC: FABRIC,
       ROOF_FORMS: ROOF_FORMS,
       ROOF_ALIAS: ROOF_ALIAS, roofAlias: roofAlias,
@@ -12346,6 +12359,7 @@
       webgl.steam2.material.opacity = 0;
     }
 
+    if (webgl.neighborhood) webgl.neighborhood.update(webgl.cam.position, webgl.EXT_AT, mode === 'exterior');
     webgl.R.render(webgl.scene, webgl.cam);
     if (keep) { rafLive = true; requestAnimationFrame(frame); }
   }
@@ -13272,6 +13286,7 @@
   };
   /* read-only, the chfHouseScenery stance: reports, never moves */
   window.chfHouseMode = function () { return mode; };
+  window.chfNeighborhood = function () { return webgl && webgl.neighborhood ? webgl.neighborhood.stats() : null; };
   /* ORBIT (spec section 4). chfOrbitStop reports; chfOrbitTo/chfOrbitStep
      move the eye and nothing else — the same read-only-about-the-house
      stance chfHouseCam takes. Both return false inside a room. */
@@ -14387,6 +14402,7 @@
       /* the graceful death: swap to the calm 2D room, stop asking the GPU */
       announceFocus(null);
       try { ROOT.style.display = 'none'; } catch (err) {}
+      if (webgl && webgl.neighborhood) webgl.neighborhood.dispose();
       webgl = null;
       drawFallback(state);
     });

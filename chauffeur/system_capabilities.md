@@ -1,6 +1,8 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.135 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.142 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**Neighborhood scenery (v2.499.142).** The home exterior has five deterministic facade-based neighbors, two alongside and three across a continuous street, with sidewalks, driveways, lawns and trees. A lightweight exterior projection shares block envelopes, palette and material creation with the active home; five instanced geometry batches add 5,094 triangles (measured ten extra draw calls on high, five on low). Neighbors have no interiors, household state, navigation, persistence or model requests. Room views hide them; foreground lots hide while they obstruct the active home's orbit view. Photo/editor captures exclude them. Existing render-on-demand scheduling is retained. Chromium checks cover navigation and isolation with desktop/narrow-screen screenshots; Raspberry Pi frame-time validation remains outstanding. Design: `docs/superpowers/specs/2026-09-21-house-neighborhood.md`.
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 

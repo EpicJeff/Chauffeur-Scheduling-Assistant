@@ -12,7 +12,15 @@ Reduce the coordination work required to run a family. Chauffeur should understa
 
 The 3D house is the shared spatial interface. Rooms and real-world objects provide stable context for features. The house should also reflect the family's own life through carefully quality-gated, personalized objects and spaces.
 
-## Latest architecture change (2026-09-21, v2.499.141)
+## Latest architecture change (2026-09-21, v2.499.142)
+
+The home exterior now includes five deterministic neighboring houses, connected
+street/sidewalks, driveways and landscaping. Lightweight instanced exteriors consume
+the facade schema and shared block envelopes, palette and material factory; the active
+home retains its detailed renderer and room navigation. Neighbors hide in room views
+and when they obstruct the exterior camera, and are excluded from photo/editor captures.
+The first scene adds 5,094 triangles and 5–10 draw calls; Raspberry Pi frame-time testing
+is outstanding. See the [neighborhood scope and checks](superpowers/specs/2026-09-21-house-neighborhood.md).
 
 House photo matching uses three bounded stages: compact structure analysis, a rendered
 structure review, then details constrained to that architecture. Code compiles all
