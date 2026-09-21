@@ -5848,10 +5848,21 @@
        is what gives a generated piece the navigation law, the ghost and
        cutaway verdicts, AO occlusion and NO_MERGE fencing with no new
        solver code at all (shell spec sections 4-5). */
-    function windowAt(feat) {
+    function windowAt(feat, unit) {
+      var count = Math.max(1, Math.min(4, feat.count || 1));
+      if (count > 1 && unit === undefined) {
+        for (var index = 0; index < count; index++) windowAt(feat, index);
+        return;
+      }
       var e = spanX(feat), slot = e.slot, g = shellGroup();
       var size = WINDOW_SIZES[feat.size] || WINDOW_SIZES.standard;
       var w = size[0], h = size[1], cx = e.cx, z = slot.z;
+      if (count > 1) {
+        // Reserve outer shutters and casing, then fit adjacent framed units.
+        var available = e.w - (feat.shutters ? 0.76 : 0.20);
+        w = Math.min(w, (available - 0.40 * count) / count);
+        cx += (unit - (count - 1) / 2) * (w + 0.40);
+      }
       /* MASSING ARC 2 task 7 (spec section 3.2): a story-2 window is the
          same window one story higher -- ONE offset, applied to every y
          this builder writes, so there is no second window builder to
@@ -5882,6 +5893,7 @@
       function shutters(wy, wh, halfW, fz) {
         if (!feat.shutters) return;
         [-1, 1].forEach(function (s) {
+          if (count > 1 && ((s < 0 && unit !== 0) || (s > 0 && unit !== count - 1))) return;
           wtag(box(0.28, wh, 0.06, FARMHOUSE.frame,
                    cx + s * (halfW + 0.14), wy, fz, g, sharp()));
         });
@@ -5952,7 +5964,7 @@
          the kit rule (box centre masked) takes the window with it, so
          no black frame stands floating in the opening. */
       shellRegister(g, 'facade_' + slot.face + '_window_' + feat.slot +
-                    (s2 ? '_s2' : ''), [0, 0, 1], slot.room, true);
+                    (s2 ? '_s2' : '') + (count > 1 ? '_unit' + unit : ''), [0, 0, 1], slot.room, true);
     }
 
     function doorAt(feat) {

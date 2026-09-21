@@ -369,3 +369,19 @@ background retry loop is added. Photo calls use low thinking with 16,384 token h
 Gemini 2.5 receives thinkingBudget=1024. Incomplete JSON errors expose finishReason and
 token usage rather than hiding MAX_TOKENS versus other provider failures. Prompt JSON
 uses compact serialization without dropping geometry or schema fields.
+
+
+### Window-group and trace amendment ? v2.499.117 (2026-09-21)
+
+A window's optional `count` is 1?4 adjacent framed units (default 1). Its span reserves
+wall area and does not imply count. Counts exceeding the span after normalization are
+reduced with a note. Shutters appear only at the group's outer edges; existing singleton
+geometry stays unchanged. Every unit has a unique shell kit identity, including story 2.
+The editor and photo prompt expose count explicitly; separate upstairs openings remain
+separate features. No massing or saved-house migration accompanies this change.
+
+Saving a photo draft passes its review token to preserve observations, raw model
+configuration, pre-normalization configuration, notes and revision diagnostics in
+`photo_trace`. Exports retain this provenance without photo bytes. The record identifies
+draft/revision/edited saved results. Expired tokens yield an explicit missing-trace
+status instead of implying that old responses were retained.

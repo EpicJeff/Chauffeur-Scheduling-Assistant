@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.115 (2026-09-20).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.117 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8257,3 +8257,24 @@ the earlier generic error alone did not prove the provider's finish reason. Embe
 observation/draft JSON is compacted without removing fields. No Caveman dependency or
 gateway is introduced. Tests use mocked providers; no live Gemini requests were made
 for this change.
+
+
+### v2.499.117 ? Explicit window groups and saved photo diagnostics (2026-09-21)
+
+Window features support optional `count` (1?4, default one). `span` reserves wall
+space; count creates distinct adjacent framed windows. The editor exposes Single,
+Pair, Triple and Four, expanding the selected span to fit the requested count.
+Normalization reduces counts with a note if clipping leaves fewer slots. Existing
+single-window designs keep their previous geometry. Group frames fit the reserved
+span; shutters flank the group rather than every internal unit. Each unit retains
+its own shell kit identity on either story, including mirrored houses.
+
+Photo prompts explicitly distinguish groups from three separate upstairs openings.
+Saved photo facades carry `photo_trace`: observations, raw configuration, input to
+normalization, normalization notes, structural issues, and any revision diagnostics.
+The normal facade JSON export includes this record without the source photo. The
+record indicates whether the saved shape matches the draft, revision, or subsequent
+edits. Expired review tokens produce an explicit unavailable status; diagnostics
+cannot reconstruct old model responses. Rendering a group does not alter upper spans,
+roofs, porch coverage, or existing saved designs. Offline and high-quality browser
+checks cover pairs/triples, both stories, mirroring, persistence and removed windows.

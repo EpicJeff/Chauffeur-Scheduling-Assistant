@@ -5558,7 +5558,7 @@ def house_facade_create(body: dict = Body(default={})):
     from services import house_facade as _hf
     body = body or {}
     rec = _hf.save_facade(body.get('name'), body.get('spec'), activate=bool(body.get('activate')),
-                          source=body.get('source') or 'hand')
+                          source=body.get('source') or 'hand', photo_token=body.get('photo_token'))
     return {'facade': rec, 'active': _hf.active_bundle()['id']}
 
 

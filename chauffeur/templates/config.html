@@ -2689,6 +2689,10 @@
 <label x-show="facadeCell.ground.kind === 'window'">Size
                                     <select class="w-full bg-gray-800" x-model="facadeCell.ground.size" @change="facadeCellApply()">
                                         <option>tall</option><option>standard</option><option>small</option></select></label>
+<label x-show="facadeCell.ground.kind === 'window'">Windows in group
+                                    <select class="w-full bg-gray-800" x-model.number="facadeCell.ground.count" @change="facadeCell.ground.span = Math.max(facadeCell.ground.span || 1, facadeCell.ground.count); facadeCellApply()">
+                                        <option :value="1">Single</option><option :value="2">Pair</option><option :value="3">Triple</option><option :value="4">Four</option>
+                                    </select><span class="home-help">Use at least one opening slot per window.</span></label>
 <label x-show="facadeCell.ground.kind === 'window'"><input type="checkbox" x-model="facadeCell.ground.shutters" @change="facadeCellApply()"> shutters</label>
 <label x-show="facadeCell.ground.kind === 'garage_door'">Door
                                     <select class="w-full bg-gray-800" x-model="facadeCell.ground.style" @change="facadeCellApply()">
@@ -4697,7 +4701,7 @@
                 _origRoofSlot: null, _origPorchSlot: null, _origUpperSlot: null,
                 facadePreviewStale: false,
                 facadeCellStory: 1,
-                facadeCell: { finish: {cladding: '', body: '', span: 1}, ground: { kind: 'wall', span: 1, shutters: false, story: 1 }, roof: { kind: 'eave', span: 1, cladding: '' }, porch: { type: 'none', span: 1, roof: 'flat', gable_start: 0, gable_offset: 0, gable_span: 2 }, upper: { mode: 'none', span: 1, roof: { form: 'gable', ridge: 'x', pitch_deg: 22.5 } } },
+                facadeCell: { finish: {cladding: '', body: '', span: 1}, ground: { kind: 'wall', span: 1, count: 1, shutters: false, story: 1 }, roof: { kind: 'eave', span: 1, cladding: '' }, porch: { type: 'none', span: 1, roof: 'flat', gable_start: 0, gable_offset: 0, gable_span: 2 }, upper: { mode: 'none', span: 1, roof: { form: 'gable', ridge: 'x', pitch_deg: 22.5 } } },
                 facadeNotes: [],
                 facadeStyleOptions: {
                     body: ['white', 'greige', 'sage', 'slate', 'navy', 'brick_red', 'tan', 'cream_brick', 'stone_grey', 'painted_brick'],
@@ -5773,7 +5777,7 @@
                     const f = (this.facadeDraft.finishes || []).find(e => e.story === this.facadeCellStory && i >= e.slot && i < e.slot + e.span);
                     this.facadeCell = {
                         finish: {cladding: f?.cladding || '', body: f?.body || '', span: f?.slot === i ? f.span : 1},
-                        ground: g ? { shutters: false, story: this.facadeCellStory, ...g, span: g.slot === i ? g.span : 1 } : { kind: 'wall', span: 1, shutters: false, story: this.facadeCellStory },
+                        ground: g ? { count: 1, shutters: false, story: this.facadeCellStory, ...g, span: g.slot === i ? g.span : 1 } : { kind: 'wall', span: 1, count: 1, shutters: false, story: this.facadeCellStory },
                         roof: r ? { cladding: '', ...r, kind: r.kind === 'shed' && r.window !== false ? 'shed_dormer' : r.kind } : { kind: 'eave', span: 1, cladding: '' },
                         porch: p ? { gable_start: p.slot + (p.gable_offset || 0), type: p.type, span: p.span, roof: p.roof || 'flat', gable_offset: p.gable_offset || 0, gable_span: p.gable_span || 2 } : { type: 'none', span: 1, roof: 'flat', gable_start: i, gable_offset: 0, gable_span: 2 },
                         upper: u ? { mode: 'two', span: u.span, roof: { ...u.roof } } : { mode: 'none', span: 1, roof: { ...blockRoof } }
@@ -5879,7 +5883,7 @@
                         if (gcell.kind !== 'wall') {
                             const span = Math.max(1, gcell.span || 1);
                             let entry = null;
-                            if (gcell.kind === 'window') entry = { slot: i, span, kind: 'window', size: gcell.size, shutters: !!gcell.shutters, story: this.facadeCellStory };
+                            if (gcell.kind === 'window') entry = { slot: i, span, kind: 'window', size: gcell.size, shutters: !!gcell.shutters, story: this.facadeCellStory, ...(gcell.count > 1 ? {count: gcell.count} : {}) };
                             else if (gcell.kind === 'door') entry = { slot: i, span, kind: 'door' };
                             else if (gcell.kind === 'garage_door') entry = { slot: i, span, kind: 'garage_door', style: gcell.style, leaves: gcell.leaves };
                             if (entry) this.facadeDraft.ground.push(entry);
@@ -6049,7 +6053,7 @@
                     const name = await promptInput('Name this facade', 'Shown in the list on this page.', { value: 'My house', placeholder: 'My house' });
                     if (!name) return;
                     try {
-                        const res = await fetch(`${this.apiBase}api/house/facades`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, spec: this.facadeDraft, source: this.facadeDraftSource }) });
+                        const res = await fetch(`${this.apiBase}api/house/facades`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, spec: this.facadeDraft, source: this.facadeDraftSource, photo_token: this.facadePhotoToken }) });
                         const data = await res.json();
                         if (!res.ok) { showGlobalAlert(data.detail || 'Could not save the facade'); return; }
                         this.facadeDraft = null; this.facadePhotoToken = null; this.facadePhotoViewpoint = null; await this.loadFacades();

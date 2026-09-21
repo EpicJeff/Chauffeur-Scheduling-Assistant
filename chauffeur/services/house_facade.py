@@ -365,6 +365,8 @@ def validate_block_model(obj, *, _range_notes=None):
             for key in _FEATURE_REQUIRED.get(kind, ()):
                 if key not in e:
                     errs.append(f'{p}.{key} missing')
+            if kind == 'window' and 'count' in e and (type(e['count']) is not int or not 1 <= e['count'] <= 4):
+                errs.append(f'{p}.count must be an integer from 1 to 4')
             if kind == 'window' and 'story' in e and e['story'] not in (1, 2):
                 errs.append(f'{p}.story must be 1 or 2')
             if kind == 'porch' and e.get('roof') not in PORCH_ROOFS:
@@ -405,6 +407,8 @@ def _entries(raw_list, kinds, notes, layer):
         if kind == 'window':
             item['size'] = _pick(e.get('size'), WINDOW_SIZES, 'standard')
             item['shutters'] = bool(e.get('shutters', False))
+            if _int(e.get('count'), 1) > 1:
+                item['count'] = min(4, _int(e.get('count'), 1))
             item['story'] = 2 if _int(e.get('story'), 1) == 2 else 1
         elif kind == 'porch':
             item['type'] = _pick(e.get('type'), PORCH_TYPES, 'covered')
@@ -850,6 +854,12 @@ def normalize(raw):
         if porch.get('roof') == 'mixed':
             porch['gable_offset'] = min(porch['gable_offset'], porch['span'] - 1)
             porch['gable_span'] = min(porch['gable_span'], porch['span'] - porch['gable_offset'])
+    for entry in exclusive:
+        if entry['kind'] == 'window' and entry.get('count', 1) > entry['span']:
+            entry['count'] = entry['span']
+            notes.append(f"window group at slot {entry['slot']} reduced to {entry['count']} windows to fit its remaining span")
+        if entry.get('count') == 1:
+            entry.pop('count', None)
     spec['ground'] = sorted(exclusive + porches, key=lambda g: (g['slot'], g.get('story', 1), g['kind']))
     spec['roof'] = sorted(roof, key=lambda r: (r['slot'], r['kind']))
     un = raw.get('unexpressed') if isinstance(raw.get('unexpressed'), list) else []
@@ -959,12 +969,20 @@ def list_facades():
              'source': 'builtin', 'spec': copy.deepcopy(CANONICAL)}] + rows
 
 
-def save_facade(name, spec, activate=False, source='hand'):
+def save_facade(name, spec, activate=False, source='hand', photo_token=None):
     clean, _ = normalize(spec)
     now = time.time()
     rec = {'id': uuid.uuid4().hex[:12], 'name': (str(name or '').strip() or 'My house')[:60],
            'spec': clean, 'source': source if source in ('hand', 'photo') else 'hand',
            'created_at': now, 'updated_at': now}
+    if source == 'photo':
+        draft = draft_for(photo_token) if photo_token else None
+        if draft and draft.get('photo_trace'):
+            rec['photo_trace'] = copy.deepcopy(draft['photo_trace'])
+            rec['photo_trace']['saved_matches'] = ('draft' if clean == draft['spec'] else
+                'revision' if clean == (draft.get('result') or {}).get('revised') else 'edited')
+        else:
+            rec['photo_trace_status'] = 'unavailable: photo review expired or predates diagnostics'
     patch = {'house_facades': _saved() + [rec]}
     if activate:
         patch['house_facade_active'] = rec['id']
@@ -981,7 +999,10 @@ def update_facade(fid, name=None, spec=None):
             if name is not None:
                 r['name'] = (str(name).strip() or r['name'])[:60]
             if spec is not None:
-                r['spec'], _ = normalize(spec)
+                clean, _ = normalize(spec)
+                if r.get('photo_trace') and clean != r['spec']:
+                    r['photo_trace']['saved_matches'] = 'edited'
+                r['spec'] = clean
             r['updated_at'] = time.time()
             _write({'house_facades': rows})
             return r
@@ -1054,7 +1075,7 @@ Return exactly this shape (a fraction-based feature has "block"/"at"/"width" ins
                 "cladding": one of {claddings}, "body": one of {body},
                 "base": null | {{"material": one of {claddings}, "height": number, "body": one of {body}}},
                 "orientation": one of {orientations}}}}},
-  "ground": [{{"block": "main"|"garage", "at": 0..1, "width": 0..1, "kind": "window", "size": one of {window_sizes}, "shutters": bool, "story": 1|2}}
+  "ground": [{{"block": "main"|"garage", "at": 0..1, "width": 0..1, "kind": "window", "size": one of {window_sizes}, "shutters": bool, "count": integer 1..4, "story": 1|2}}
             | {{"block","at","width","kind":"door"}}
             | {{"block","at","width","kind":"garage_door","style": one of {garage_styles}, "leaves": 1|2}}
             | {{"block","at","width","kind":"porch","type": one of {porch_types}, "roof": one of {porch_roofs}}}],
@@ -1075,6 +1096,12 @@ These control the garage doors independently of street openings.
 Finishes are optional overrides. Omit unchanged cladding/body fields to inherit independently.
 Story defaults may name main and/or garage, stories "1" and/or "2"; they wrap the block.
 Finish spans affect the street-facing wall only, even behind windows or doors.
+Window count is the number of adjacent framed units in ONE group. Default is 1.
+Span/width reserves wall area; it does NOT multiply windows or stretch one window.
+Use count=2 for a paired opening, count=3 for a tripartite group, with at least
+one slot per unit. Three separate upstairs openings require THREE separate entries
+with story=2, located wholly inside the matching upper span. Never omit those entries
+merely because upper describes the wall. Shutters flank the outside of the group.
 Rules: colours are the NEAREST palette name, never hex.
 For a continuous sloping porch cover with a smaller front gable, use porch roof "mixed".
 Its optional gable_offset and gable_span count slots relative to the porch start; defaults are 0 and 2.
@@ -1213,6 +1240,7 @@ def from_photo(image_b64, mime):
                    + json.dumps(observed, separators=(',', ':')), 3)
         if not isinstance(res, dict) or res.get('error'):
             raise ValueError(res.get('error', 'bad configuration response') if isinstance(res, dict) else 'bad response')
+        raw_configuration = copy.deepcopy(res)
         res = copy.deepcopy(res)
         if observed['garage_side'] != 'unknown':
             res['mirror'] = observed['garage_side'] == 'right'
@@ -1223,15 +1251,21 @@ def from_photo(image_b64, mime):
             blocks['garage'] = _block(orientation='front')
             pre.append('garage block missing: drawn as a plain block; review placement')
         snapped, errs = _validate_photo_model(snapped, pre)
+        before_normalization = copy.deepcopy(snapped)
         if errs:
             raise ValueError('the model returned an incomplete house: ' + '; '.join(errs[:3]))
         spec, notes = normalize(snapped)
+        normalization_notes = list(pre + notes)
         issues = structural_issues(spec, observed, len(slot_table()))
         notes = pre + notes + ['Needs review: ' + x for x in issues] + observed['uncertain'] + [_requests_note(attempts)]
         if observed['garage_side'] == 'unknown':
             notes.append('Garage side is uncertain; block mapping is inferred from visible geometry.')
         token = issue_draft(spec, image_b64, mime, viewpoint=observed['viewpoint'], requests=len(attempts))
         _DRAFTS[token]['observations'] = copy.deepcopy(observed)
+        _DRAFTS[token]['photo_trace'] = {
+            'observations': copy.deepcopy(observed), 'raw_configuration': raw_configuration,
+            'before_normalization': before_normalization, 'normalization_notes': normalization_notes,
+            'structural_issues': list(issues), 'attempts': list(attempts)}
         _DRAFTS[token]['photo_run'] = run
         run.update(spec=copy.deepcopy(spec), notes=list(notes), token=token)
         return spec, notes, None, token
@@ -1356,12 +1390,18 @@ def critique(token, render_png_b64):
     reasons = [str(r)[:160] for r in (res.get('reasons') or []) if isinstance(r, (str, dict))][:8]
     reasons = [r if isinstance(r, str) else str(r.get('reason', r)) for r in reasons]
     snap_notes = []
+    trace = e.setdefault('photo_trace', {})
+    trace['revision_raw'] = copy.deepcopy(res.get('revised'))
     revised, errs = _validate_photo_model(_snap_fractions(res.get('revised'), snap_notes), snap_notes)
+    trace['revision_before_normalization'] = copy.deepcopy(revised)
+    trace['revision_validation_errors'] = list(errs)
     if errs:
         result['reasons'] = reasons + snap_notes + ['revision rejected as incomplete: ' + '; '.join(errs[:3])]
     else:
         spec, notes = normalize(copy.deepcopy(revised))
+        trace['revision_normalization_notes'] = list(snap_notes + notes)
         after_issues = structural_issues(spec, observed, len(slot_table()))
+        trace['revision_structural_issues'] = list(after_issues)
         if not set(after_issues).issubset(set(before_issues)):
             result['reasons'] = reasons + snap_notes + notes + ['Revision withheld: it introduces structural discrepancies.'] + after_issues
             return finish(result)
