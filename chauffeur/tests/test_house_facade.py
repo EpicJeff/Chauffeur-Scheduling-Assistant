@@ -611,7 +611,7 @@ def scenario_critique_returns_one_revised_model_or_the_draft():
         def pass2(tier, key, system, user, **kw):
             calls['n'] += 1
             check(len(kw['images']) == 2, 'photo + render go to pass 2')
-            check(kw['max_models'] == hf.PHOTO_REQUEST_CAP and kw['total_timeout_s'] == 120, 'critique uses bounded pool fallback')
+            check(kw['max_models'] == 3 and kw['total_timeout_s'] == 120, 'critique uses bounded pool fallback')
             return _fixture('brick.pass2.json')
         model_pools.call_pool_json = pass2
         res, err = hf.critique(tok, 'iVBOR')

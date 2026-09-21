@@ -53,8 +53,6 @@ class OverloadTests(unittest.TestCase):
             with patch.object(hf,'_settings',return_value=settings),patch('services.llm._call_llm_json',request):
                 if stage=='pass1':
                     draft,notes,error,token=hf.from_photo('AAAA','image/jpeg')
-                    self.assertIsNotNone(error)  # observation pass spends at most two attempts
-                    draft,notes,error,token=hf.from_photo('AAAA','image/jpeg')
                     self.assertIsNone(error)
                     self.assertTrue(draft and token)
                     self.assertTrue(any('4 model request(s)' in n for n in notes))

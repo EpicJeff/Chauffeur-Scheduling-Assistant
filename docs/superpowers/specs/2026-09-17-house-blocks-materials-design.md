@@ -357,3 +357,15 @@ remain reviewable; saving still requires the user's normal explicit action.
 Fixtures include the supplied authored and failed photo-generated house. These prove
 structural detection and conversion, not model quality. Live visual benchmarking remains
 pending: the local key was rejected by Google during a two-attempt observation call.
+
+
+### Photo retry amendment ? v2.499.115 (2026-09-20)
+
+The lifetime six-request photo limit prevented completion during provider overload.
+Replace it with six attempts per explicit upload/resume and three per explicit critique;
+keep cumulative counts, single-flight execution, cached observations and successful
+critique replay. Provider failures do not permanently cache a failed critique. No
+background retry loop is added. Photo calls use low thinking with 16,384 token headroom;
+Gemini 2.5 receives thinkingBudget=1024. Incomplete JSON errors expose finishReason and
+token usage rather than hiding MAX_TOKENS versus other provider failures. Prompt JSON
+uses compact serialization without dropping geometry or schema fields.

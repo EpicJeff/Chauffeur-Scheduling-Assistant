@@ -1153,7 +1153,8 @@ def _validate_photo_model(obj, notes):
 
 
 # One bounded run per image during the draft review window. Retry reuses observations
-# and the request ledger; a double click cannot start a second provider run.
+# and cumulative request accounting; each explicit retry has a bounded allowance.
+# A double click cannot start a second provider run.
 PHOTO_REQUEST_CAP = 6
 _PHOTO_RUNS = {}
 _PHOTO_LOCK = threading.Lock()
@@ -1184,20 +1185,21 @@ def from_photo(image_b64, mime):
             _PHOTO_RUNS[key] = run
         run['pending'] = True
     attempts = run['attempts']
+    action_start = len(attempts)
 
     def call(system, user, budget):
-        remaining = min(budget, PHOTO_REQUEST_CAP - 1 - len(attempts))  # reserve visual correction
+        remaining = min(budget, PHOTO_REQUEST_CAP - (len(attempts) - action_start))  # each explicit upload/resume is bounded
         if remaining <= 0:
-            raise ValueError('photo request budget exhausted; review the draft or retry after 15 minutes')
+            raise ValueError('This attempt reached its request limit. Retry this photo to resume cached analysis.')
         return model_pools.call_pool_json(
             'vision', api_key, system, user, temperature=0.1, timeout_s=90,
-            settings=settings, strict_json=True, max_output_tokens=4096,
+            settings=settings, strict_json=True, max_output_tokens=16384, thinking_level='low',
             max_models=remaining, total_timeout_s=120, workflow='house_photo', attempts=attempts,
             images=[{'mime': mime or 'image/jpeg', 'b64': image_b64}])
 
     try:
         if run['observations'] is None:
-            observed = call(OBSERVATION_PROMPT, 'Identify the visible architecture and proportions.', 2)
+            observed = call(OBSERVATION_PROMPT, 'Identify the visible architecture and proportions.', 3)
             if isinstance(observed, dict) and observed.get('error'):
                 raise ValueError(observed['error'])
             errors = validate_observations(observed)
@@ -1208,7 +1210,7 @@ def from_photo(image_b64, mime):
         res = call(_photo_prompt() + PHOTO_COORDINATES,
                    'Build the house from these observations and the photo. Preserve the broad sections, '
                    'second stories and visible window groups. An attic gable is not an upper story.\n'
-                   + json.dumps(observed), 3)
+                   + json.dumps(observed, separators=(',', ':')), 3)
         if not isinstance(res, dict) or res.get('error'):
             raise ValueError(res.get('error', 'bad configuration response') if isinstance(res, dict) else 'bad response')
         res = copy.deepcopy(res)
@@ -1317,7 +1319,7 @@ def critique(token, render_png_b64):
               'unexpressed': list(draft.get('unexpressed') or []),
               'attempts': 0, 'requests_total': issued_requests}
 
-    def finish(res_obj):
+    def finish(res_obj, retryable=False):
         if e.get('photo_run') is not None:
             with _PHOTO_LOCK:
                 e['photo_run']['attempts'].extend(attempts)
@@ -1327,32 +1329,30 @@ def critique(token, render_png_b64):
         res_obj['attempts'] = len(attempts)
         res_obj['requests_total'] = issued_requests + len(attempts)
         res_obj['reasons'] = list(res_obj['reasons']) + [_requests_note(attempts)]
-        store_result(token, res_obj)
+        e['requests'] = res_obj['requests_total']
+        store_result(token, None if retryable else res_obj)
         return res_obj, None
 
     if not api_key or not e.get('photo_b64'):
         result['reasons'] = ['no critique: ' + ('no LLM API key configured' if not api_key else 'no photo on this draft')]
-        return finish(result)
-    if issued_requests >= PHOTO_REQUEST_CAP:
-        result['reasons'] = ['Photo request budget exhausted; no additional request made.']
         return finish(result)
     observed = e.get('observations')
     before_issues = structural_issues(draft, observed, len(slot_table()))
     try:
         res = model_pools.call_pool_json(
             'vision', api_key, _photo_prompt() + '\n' + CRITIQUE_SYSTEM + '\nUse canonical slot/span coordinates: garage slots 0..5, main 6..17. mirror reflects the whole house; increasing slots run RIGHT TO LEFT in a mirrored photo. Do not use photo fractions in the revision.',
-            'Photo first, then render. Observations: ' + json.dumps(observed) + '\nStructural discrepancies: ' + json.dumps(before_issues) + '\nDraft JSON:\n' + json.dumps(draft),
+            'Photo first, then render. Observations: ' + json.dumps(observed, separators=(',', ':')) + '\nStructural discrepancies: ' + json.dumps(before_issues, separators=(',', ':')) + '\nDraft JSON:\n' + json.dumps(draft, separators=(',', ':')),
             temperature=0.1, timeout_s=90, settings=settings, strict_json=True,
-            max_output_tokens=4096, max_models=PHOTO_REQUEST_CAP - issued_requests, total_timeout_s=120, workflow='house_photo',
+            max_output_tokens=16384, thinking_level='low', max_models=3, total_timeout_s=120, workflow='house_photo',
             attempts=attempts,
             images=[{'mime': e.get('mime') or 'image/jpeg', 'b64': e['photo_b64']},
                     {'mime': 'image/png', 'b64': render_png_b64}])
     except Exception as ex:
-        result['reasons'] = [f'critique failed ({ex})']
-        return finish(result)
+        result['reasons'] = [f'critique failed ({ex}); press Compare to photo to retry.']
+        return finish(result, retryable=True)
     if not isinstance(res, dict) or res.get('error'):
         result['reasons'] = [f"critique failed ({(res or {}).get('error', 'bad response') if isinstance(res, dict) else 'bad response'})"]
-        return finish(result)
+        return finish(result, retryable=True)
     reasons = [str(r)[:160] for r in (res.get('reasons') or []) if isinstance(r, (str, dict))][:8]
     reasons = [r if isinstance(r, str) else str(r.get('reason', r)) for r in reasons]
     snap_notes = []

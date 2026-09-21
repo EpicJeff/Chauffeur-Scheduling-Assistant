@@ -140,7 +140,9 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
             if max_output_tokens is not None:
                 payload['generationConfig']['maxOutputTokens'] = max_output_tokens
             if thinking_level is not None:
-                payload['generationConfig']['thinkingConfig'] = {'thinkingLevel': thinking_level}
+                payload['generationConfig']['thinkingConfig'] = (
+                    {'thinkingBudget': {'low': 1024, 'medium': 4096, 'high': 8192}.get(thinking_level, 1024)}
+                    if gemini_model.startswith('gemini-2.5-') else {'thinkingLevel': thinking_level})
             if strict_json:
                 payload['generationConfig']['responseMimeType'] = 'application/json'
                 
@@ -172,7 +174,9 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
                 metrics['modelVersion'] = data.get('modelVersion', gemini_model)
                 metrics['finish_reason'] = (data.get('candidates') or [{}])[0].get('finishReason')
             if strict_json and (data.get('candidates') or [{}])[0].get('finishReason') != 'STOP':
-                raise RuntimeError('Incomplete Gemini JSON response')
+                finish = (data.get('candidates') or [{}])[0].get('finishReason') or 'NO_CANDIDATE'
+                usage = data.get('usageMetadata') or {}
+                raise RuntimeError(f"Incomplete Gemini JSON response (finish={finish}; output_tokens={usage.get('candidatesTokenCount', 0)}; thinking_tokens={usage.get('thoughtsTokenCount', 0)}; limit={max_output_tokens})")
             try:
                 parts = data['candidates'][0]['content']['parts']
 

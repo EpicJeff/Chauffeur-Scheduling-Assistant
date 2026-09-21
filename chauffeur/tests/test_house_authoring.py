@@ -84,8 +84,16 @@ def scenario_metered_transport():
         try:
             _call_llm_json('gemini','','key','gemini-test','s','u',strict_json=True)
             complete=True
-        except RuntimeError:complete=False
+        except RuntimeError as ex:
+            complete=False
+            check('finish=MAX_TOKENS' in str(ex), 'provider stop reason survives for diagnostics')
     check(not complete,'never salvage truncated nested JSON into a successful recipe')
+    payload['candidates'][0]['finishReason']='STOP'
+    with patch('urllib.request.urlopen',return_value=io.BytesIO(json.dumps(payload).encode())) as send:
+        _call_llm_json('gemini','','key','gemini-2.5-flash','s','u',thinking_level='low',strict_json=True)
+    config=json.loads(send.call_args.args[0].data)['generationConfig']
+    check(config['thinkingConfig']=={'thinkingBudget':1024},'2.5 uses thinkingBudget instead of unsupported thinkingLevel')
+
 
 
 if __name__=='__main__':

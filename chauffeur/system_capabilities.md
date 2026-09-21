@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.114 (2026-09-20).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.115 (2026-09-20).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8237,3 +8237,23 @@ for the requested iframe token and angle, preventing critique of a previous sett
 render. Offline tests use the family's authored and failed generated configurations,
 plus existing brick/farmhouse fixtures. A live reference attempt made two requests but
 Google rejected the local API key; visual improvement is not yet live-verified.
+
+
+### v2.499.115 ? Photo response headroom and resumable retries (2026-09-20)
+
+Supersedes the six-attempt lifetime lockout in v2.499.114. Each explicit upload/resume
+allows at most six requests (up to three for observations and three for configuration).
+An explicit Compare action allows up to three requests. Successful analysis is reused
+within the existing fifteen-minute cache, cumulative attempts remain visible, and
+successful critiques replay without another request. Failed provider critiques can be
+retried explicitly without rebuilding the draft. There is no automatic retry loop.
+
+Photo calls now request low thinking and 16,384 output-token headroom instead of 4,096.
+Gemini 2.5 uses its supported 1,024-token thinking budget; newer models receive the low
+thinking level. Strict JSON validation still rejects incomplete responses. Errors now
+include finish reason, output/thinking counts, and configured cap so MAX_TOKENS can be
+distinguished from other failures. This addresses a plausible truncation mechanism;
+the earlier generic error alone did not prove the provider's finish reason. Embedded
+observation/draft JSON is compacted without removing fields. No Caveman dependency or
+gateway is introduced. Tests use mocked providers; no live Gemini requests were made
+for this change.

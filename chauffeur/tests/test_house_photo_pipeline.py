@@ -80,8 +80,8 @@ class PipelineTests(unittest.TestCase):
         with patch('services.model_pools.call_pool_json',side_effect=call) as api:
             for _ in range(4):
                 self.assertIsNotNone(hf.from_photo('image','image/png')[2])
-            self.assertEqual(api.call_count,3)  # analysis 1 + translation 3 + retry 1
-            self.assertEqual(len(next(iter(hf._PHOTO_RUNS.values()))['attempts']),5)
+            self.assertEqual(api.call_count,5)  # analysis once, four explicit translation attempts
+            self.assertEqual(len(next(iter(hf._PHOTO_RUNS.values()))['attempts']),13)
 
     def test_six_request_ceiling_includes_pool_fallbacks(self):
         budgets = []
@@ -95,11 +95,26 @@ class PipelineTests(unittest.TestCase):
             _, _, error, token = hf.from_photo('image','image/png')
             self.assertIsNone(error)
             result, _ = hf.critique(token,'render')
-            self.assertEqual(result['requests_total'],6)
-            self.assertEqual(budgets,[2,3,1])
+            self.assertEqual(result['requests_total'],9)
+            self.assertEqual(budgets,[3,3,3])
             hf.from_photo('image','image/png')
             hf.critique(token,'render')
-            self.assertEqual(budgets,[2,3,1])
+            self.assertEqual(budgets,[3,3,3])
+
+    def test_failed_critique_can_resume_without_rebuilding(self):
+        replies = [DATA['observations'],DATA['My house'], {'error':'503'},
+                   {'revised':DATA['My house'],'reasons':[]}]
+        with patch('services.model_pools.call_pool_json', side_effect=self.provider(replies)) as api:
+            _, _, _, token = hf.from_photo('image','image/png')
+            first, _ = hf.critique(token,'render')
+            self.assertIsNone(first['revised'])
+            second, _ = hf.critique(token,'render')
+            self.assertIsNotNone(second['revised'])
+            self.assertEqual(second['requests_total'],4)
+            self.assertEqual(api.call_count,4)
+            for call in api.call_args_list:
+                self.assertEqual(call.kwargs['thinking_level'],'low')
+                self.assertEqual(call.kwargs['max_output_tokens'],16384)
 
     def test_invalid_observations_never_translate(self):
         with patch('services.model_pools.call_pool_json',side_effect=self.provider([{}])) as api:
