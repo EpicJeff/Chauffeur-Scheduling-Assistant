@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.133 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.134 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8548,3 +8548,16 @@ face. Raw analysis remains unchanged; unevidenced_features records exclusions.
 90 seconds falls back with the remaining 30 seconds of the 120-second stage allowance.
 No provider timeout policy changes or extra requests were introduced. Screenshot-only
 failures do not establish the exact provider-attempt history or missing raw payloads.
+
+
+### Consistent accessory evidence handling - v2.499.134 (2026-09-21)
+
+Missing or supplemental-only primary evidence on front porches, gables and dormers now
+uses the same unplaced-feature path as openings. Dependents are excluded transitively,
+preventing dangling owners. Independently evidenced ground windows/doors owned by an
+unplaced porch resolve to its supporting wall, with normal wall containment validation.
+Main front wall volumes still require primary evidence. Projection traces distinguish
+unplaced_features from unplaced_openings; structural review withholds unresolved revisions.
+Raw input remains unchanged. 45 photo tests include the accessory/evidence-state matrix.
+The screenshot ID p1 alone does not prove its feature type; this fixes the non-volume
+validation category rather than guessing from an ID prefix. No additional model calls.

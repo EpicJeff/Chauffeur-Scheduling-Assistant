@@ -286,6 +286,42 @@ class CompilerTests(unittest.TestCase):
         a['observations']=[o for o in a['observations'] if o['feature']!=a['volumes'][0]['id']]
         with self.assertRaisesRegex(ValueError,'front structure'):compile_analysis(a)
 
+    def test_unevidenced_porch_and_children_do_not_abort_wall_openings(self):
+        a=faced_analysis(DATA);porch=a['porches'][0]
+        for opening in a['openings']:
+            if opening['owner']==porch['owner'] and opening['level']=='ground':opening['owner']=porch['id']
+        a['observations']=[o for o in a['observations'] if o['feature']!=porch['id']]
+        raw=copy.deepcopy(a)
+        spec,notes,trace=compile_analysis(a)
+        self.assertEqual(a,raw)
+        self.assertFalse(any(g['kind']=='porch' for g in spec['ground']))
+        self.assertTrue(any(g['kind']=='door' for g in spec['ground']))
+        self.assertIn(porch['id'],trace['face_projection']['unplaced_features'])
+        child=next(g for g in a['gables'] if g['owner']==porch['id'])
+        self.assertIn(child['id'],trace['face_projection']['unplaced_features'])
+        self.assertEqual(hf.validate_block_model(spec),[])
+        self.assertTrue(any('supporting wall' in n for n in notes))
+
+    def test_missing_evidence_accessory_matrix_preserves_valid_draft(self):
+        for layer in ('porches','gables','dormers'):
+            for source in ('missing','supplemental'):
+                a=faced_analysis(DATA)
+                if layer=='dormers':
+                    volume=a['volumes'][0]
+                    a['dormers']=[{'id':'d1','owner':volume['id'],'face':'front',
+                        'at':volume['at'],'width':volume['width'],'roof':'shed','window':True}]
+                    a['observations'].append({'feature':'d1','image':1,'face':'front',
+                        'box':{'x':0,'y':0,'width':.1,'height':.1},'evidence':'Fixture.'})
+                row=a[layer][0]
+                if source=='missing':a['observations']=[o for o in a['observations'] if o['feature']!=row['id']]
+                else:
+                    for obs in a['observations']:
+                        if obs['feature']==row['id']:obs['image']=2
+                with self.subTest(layer=layer,source=source):
+                    spec,notes,trace=compile_analysis(a)
+                    self.assertIn(row['id'],trace['face_projection']['unplaced_features'])
+                    self.assertEqual(hf.validate_block_model(spec),[])
+
     def test_roof_story_and_known_orientation_matrix(self):
         for form in ('gable','hip'):
             for ridge in ('parallel','perpendicular'):

@@ -191,22 +191,37 @@ def project_front_analysis(value):
             if row['face']!='front':
                 notes.append(row['id']+': non-front feature lacks image evidence; retained as an annotation, not used to set geometry.')
                 continue
-            if kinds[row['id']]=='openings':
+            if kinds[row['id']]!='volumes':
                 unplaced.append(row['id'])
-                notes.append(row['id']+': front placement unresolved; opening has no image evidence and is not placed.')
+                notes.append(row['id']+': front placement unresolved; feature has no image evidence and is not placed.')
                 continue
             raise ValueError(row['id']+' lacks primary image evidence for front structure')
         if row['face']=='front' and not any(o['image']==1 for o in observed):
-            if kinds[row['id']]=='openings':
+            if kinds[row['id']]!='volumes':
                 unplaced.append(row['id'])
-                notes.append(row['id']+': front placement unresolved; supplemental-only opening retained in analysis, not placed on facade.')
+                notes.append(row['id']+': front placement unresolved; supplemental-only feature retained in analysis, not placed on facade.')
                 continue
             raise ValueError(row['id']+' front placement lacks primary-photo evidence')
+    # Resolve dependencies before projecting: omitted roof/porch features cannot
+    # leave dangling owners or smuggle their children into another wall.
+    for opening in a['openings']:
+        if opening['owner'] in unplaced and kinds[opening['owner']]=='porches' and opening['id'] not in unplaced:
+            porch=ids[opening['owner']]
+            if opening['level']=='ground' and opening['kind'] in ('door','window'):
+                opening['owner']=porch['owner']
+                notes.append(opening['id']+': independently evidenced opening resolved through unplaced porch to supporting wall.')
+    changed=True
+    while changed:
+        changed=False
+        for row in rows:
+            if row['face']=='front' and row.get('owner') in unplaced and row['id'] not in unplaced:
+                unplaced.append(row['id']);changed=True
+                notes.append(row['id']+': placement unresolved because its owner is unplaced.')
     # An explicit owner must also contain the opening in the same source image.
     # This catches a below-eave wall window mislabeled as an attic/gable window.
     primary={o['feature']:o['box'] for o in a['observations'] if o['image']==1 and o['face']=='front'}
     for opening in a['openings']:
-        if opening['face']!='front':continue
+        if opening['face']!='front' or opening['id'] in unplaced:continue
         owner=ids[opening['owner']]
         if kinds[opening['owner']]=='porches':owner=ids[owner['owner']]
         child=primary.get(opening['id']);parent=primary.get(owner['id'])
@@ -227,7 +242,7 @@ def project_front_analysis(value):
         for row in a[layer]:
             face=row.pop('face')
             if row.get('id') in unplaced:
-                excluded.append({'id':row['id'],'face':face,'kind':row['kind'],'reason':'no_primary_evidence'})
+                excluded.append({'id':row['id'],'face':face,'kind':row.get('kind',layer),'reason':'unresolved_primary_evidence_or_owner'})
             elif face!='front':
                 excluded.append({'id':row.get('id',layer),'face':face,'kind':row.get('kind',layer)})
                 notes.append(row.get('id',layer)+': '+face+' face kept out of front-facade slots.')
@@ -237,7 +252,7 @@ def project_front_analysis(value):
         a[layer]=front
     a['schema_version']=1
     a.pop('coordinate_frame');a.pop('observations')
-    return a,notes,{'excluded_faces':excluded,'unplaced_openings':unplaced,'unevidenced_features':unevidenced,'side_garage':bool(side_doors),
+    return a,notes,{'excluded_faces':excluded,'unplaced_features':unplaced,'unplaced_openings':[i for i in unplaced if kinds[i]=='openings'],'unevidenced_features':unevidenced,'side_garage':bool(side_doors),
                    'side_garage_count':sum(o['count'] for o in side_doors)}
 
 

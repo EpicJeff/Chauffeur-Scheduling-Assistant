@@ -148,3 +148,15 @@ unplaced opening; missing primary evidence for front structural massing remains 
 Raw observations remain available in successful draft traces. No geometry is synthesized
 to satisfy missing evidence. This supersedes the stricter collective-finish face gate above.
 Provider timeout fallback remains bounded by the existing stage deadline and request cap.
+
+
+## Accessory dependency handling (v2.499.134)
+
+Only front wall volumes require primary evidence to compile the overall structure.
+Porches, gables, dormers and openings without such evidence stay explicitly unplaced.
+Unplaced ownership propagates to dependent features. An independently evidenced ground
+window/door owned by an unplaced porch resolves through it to the wall and remains
+subject to containment validation. Raw analysis is preserved. Trace unplaced_features
+records all unresolved accessories; unplaced_openings remains the opening subset.
+Visual review cannot auto-adopt a revision with unresolved accessories. This supersedes
+prior statements requiring primary evidence for every front roof/porch feature.

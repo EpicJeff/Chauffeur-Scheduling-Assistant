@@ -1571,8 +1571,8 @@ def critique(token, render_png_b64, *, automatic=False):
                 required=('wall_faces','story_boundaries','roof_directions','opening_ownership','porch_placement')
                 uncertain=[key for key in required if checks.get(key) not in ('matched','corrected')]
                 if any('conflicts' in n for n in notes):uncertain.append('compiler roof/face conflicts')
-                if compiled.get('face_projection',{}).get('unplaced_openings'):
-                    uncertain.append('opening placement without primary evidence')
+                if compiled.get('face_projection',{}).get('unplaced_features'):
+                    uncertain.append('feature placement without primary evidence')
                 trace['structural_review']=copy.deepcopy(checks)
                 if uncertain:
                     result['reasons']=['Structural review unresolved: '+', '.join(uncertain)+'. Original draft retained.']+reasons+notes
