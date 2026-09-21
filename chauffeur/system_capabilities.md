@@ -8630,3 +8630,11 @@ Photo upload and staged review/detail errors now preserve the admission layer's
 retry_at as a UTC timestamp in the displayed reason. No cooldown, allowance or
 model fallback policy changes. Mocked tests cover paused uploads and details;
 no live requests were made to diagnose the reported pool exhaustion.
+
+
+### Gable window editor control - v2.499.140 (2026-09-21)
+
+Roof details now exposes the existing window checkbox for added gables as well as
+dormers. Select any slot within the gable, choose Roof details and toggle Gable window.
+The existing editor apply/save and renderer window setting are unchanged. Verified
+with the editor method suite and a Chromium check of the actual Alpine checkbox.
