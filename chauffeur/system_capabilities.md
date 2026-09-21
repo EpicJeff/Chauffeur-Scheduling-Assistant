@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.132 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.133 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8532,3 +8532,19 @@ which have no IDs. Its face must match an existing finish band and its image box
 remain valid. Other unknown feature names remain invalid. Schema description and prompt
 explain the contract. Synthetic regressions reproduce both reported failure categories;
 failed raw responses were not available. 42 photo tests pass; no extra model calls.
+
+
+### Optional photo evidence is nonfatal - v2.499.133 (2026-09-21)
+
+Missing image evidence on non-front features becomes a retained annotation and warning,
+not a whole-draft failure. Unevidenced side garage doors cannot select layout or door
+count; an independently evidenced side door may select side entry even when its unused
+parent side-volume annotation has no independent box. Missing evidence on front openings
+uses the existing unplaced-opening path. Front structural massing still requires evidence.
+Unmatched collective finish-face evidence stays informational and cannot recolor another
+face. Raw analysis remains unchanged; unevidenced_features records exclusions.
+
+43 photo tests and 6 pool tests pass. Mocked timeout regression proves an exception after
+90 seconds falls back with the remaining 30 seconds of the 120-second stage allowance.
+No provider timeout policy changes or extra requests were introduced. Screenshot-only
+failures do not establish the exact provider-attempt history or missing raw payloads.

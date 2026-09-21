@@ -162,7 +162,7 @@ def validate_analysis(value, *, _shape_only=False):
 
 def project_front_analysis(value):
     """Project explicitly classified faces, never project another camera's pixels."""
-    a=copy.deepcopy(value);notes=[];excluded=[];unplaced=[]
+    a=copy.deepcopy(value);notes=[];excluded=[];unplaced=[];unevidenced=[]
     layers=('volumes','porches','gables','dormers','openings','finishes')
     rows=[r for layer in layers for r in a[layer] if 'id' in r]
     ids={r['id']:r for r in rows}
@@ -177,7 +177,7 @@ def project_front_analysis(value):
     for obs in a['observations']:
         if obs['feature']=='finishes' and obs['feature'] not in ids:
             if not any(f['face']==obs['face'] for f in a['finishes']):
-                raise ValueError('finish evidence has no matching wall face')
+                notes.append('Finish evidence for '+obs['face']+' has no matching finish band; retained as an annotation, not applied to another face.')
         else:
             if obs['feature'] not in ids:raise ValueError('observation references unknown feature '+obs['feature'])
             if obs['face']!=ids[obs['feature']]['face']:raise ValueError('observation face conflicts with '+obs['feature'])
@@ -186,7 +186,16 @@ def project_front_analysis(value):
             raise ValueError('observation box outside image')
     for row in rows:
         observed=[o for o in a['observations'] if o['feature']==row['id']]
-        if not observed:raise ValueError(row['id']+' lacks image evidence')
+        if not observed:
+            unevidenced.append(row['id'])
+            if row['face']!='front':
+                notes.append(row['id']+': non-front feature lacks image evidence; retained as an annotation, not used to set geometry.')
+                continue
+            if kinds[row['id']]=='openings':
+                unplaced.append(row['id'])
+                notes.append(row['id']+': front placement unresolved; opening has no image evidence and is not placed.')
+                continue
+            raise ValueError(row['id']+' lacks primary image evidence for front structure')
         if row['face']=='front' and not any(o['image']==1 for o in observed):
             if kinds[row['id']]=='openings':
                 unplaced.append(row['id'])
@@ -205,7 +214,7 @@ def project_front_analysis(value):
                 child['x']+child['width']>parent['x']+parent['width']+.02 or
                 child['y']+child['height']>parent['y']+parent['height']+.02):
             raise ValueError(opening['id']+' image evidence lies outside its owner wall/gable')
-    side_doors=[o for o in a['openings'] if o['kind']=='garage_door' and o['face'] in ('left','right')]
+    side_doors=[o for o in a['openings'] if o['kind']=='garage_door' and o['face'] in ('left','right') and o['id'] not in unevidenced]
     faces={o['face'] for o in side_doors}
     if len(faces)>1:notes.append('Garage doors on both sides cannot be represented; retaining configured side.')
     elif faces:
@@ -228,7 +237,7 @@ def project_front_analysis(value):
         a[layer]=front
     a['schema_version']=1
     a.pop('coordinate_frame');a.pop('observations')
-    return a,notes,{'excluded_faces':excluded,'unplaced_openings':unplaced,'side_garage':bool(side_doors),
+    return a,notes,{'excluded_faces':excluded,'unplaced_openings':unplaced,'unevidenced_features':unevidenced,'side_garage':bool(side_doors),
                    'side_garage_count':sum(o['count'] for o in side_doors)}
 
 

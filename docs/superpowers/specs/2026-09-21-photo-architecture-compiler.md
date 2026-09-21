@@ -135,3 +135,16 @@ The reserved observation feature `finishes` references collective material evide
 since finish bands have no IDs. It must reference a face represented by a finish band;
 box validation and available-image checks still apply. Other observation references must
 match explicit feature IDs. No additional inference stage or provider request is added.
+
+
+## Optional evidence versus structural requirements (v2.499.133)
+
+Evidence on unused non-front geometry and collective finishes is supplemental metadata,
+not a mandatory gate for compiling the front facade. Missing non-front evidence is noted
+and listed under unevidenced_features. Side-entry configuration uses only independently
+evidenced garage doors. Finish evidence lacking a matching face is retained as an
+annotation and never applied to another wall. Missing front-opening evidence yields an
+unplaced opening; missing primary evidence for front structural massing remains an error.
+Raw observations remain available in successful draft traces. No geometry is synthesized
+to satisfy missing evidence. This supersedes the stricter collective-finish face gate above.
+Provider timeout fallback remains bounded by the existing stage deadline and request cap.

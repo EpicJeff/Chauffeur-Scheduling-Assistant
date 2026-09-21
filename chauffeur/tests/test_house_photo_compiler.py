@@ -255,9 +255,36 @@ class CompilerTests(unittest.TestCase):
             'box':{'x':0,'y':0,'width':1,'height':1},'evidence':'Painted masonry and batten.'}
         a['observations'].append(obs)
         self.assertEqual(compile_analysis(a)[0],expected)
-        for feature,face in (('missing-feature','front'),('finishes','rear')):
+        for feature,face in (('missing-feature','front'),):
             obs.update(feature=feature,face=face)
             with self.assertRaises(ValueError):compile_analysis(a)
+
+    def test_optional_evidence_cannot_abort_or_change_front_geometry(self):
+        a=faced_analysis(DATA);expected=compile_analysis(a)[0]
+        a['observations'].append({'feature':'finishes','image':2,'face':'rear',
+            'box':{'x':0,'y':0,'width':1,'height':1},'evidence':'Rear siding.'})
+        side=copy.deepcopy(a['volumes'][0]);side.update(id='v_garage_side',face='right')
+        a['volumes'].append(side)
+        a['openings'].append({'id':'side-door','owner':'v_garage_side','at':0,'width':.5,
+            'kind':'garage_door','face':'right','level':'ground','count':2,'size':'tall','shutters':False})
+        raw=copy.deepcopy(a)
+        spec,notes,trace=compile_analysis(a)
+        for key in ('blocks','ground','roof','upper','mirror'):self.assertEqual(spec[key],expected[key])
+        self.assertEqual(a,raw)
+        self.assertFalse(trace['face_projection']['side_garage'])
+        self.assertEqual(set(trace['face_projection']['unevidenced_features']),{'v_garage_side','side-door'})
+        self.assertTrue(any('no matching finish band' in n for n in notes))
+        self.assertTrue(any('non-front feature lacks image evidence' in n for n in notes))
+        # Evidence for a door can establish side entry even when its unused parent
+        # side-volume annotation has no independent box.
+        a['observations'].append({'feature':'side-door','image':2,'face':'right',
+            'box':{'x':.1,'y':.1,'width':.3,'height':.3},'evidence':'Visible side door.'})
+        spec,_,trace=compile_analysis(a)
+        self.assertTrue(trace['face_projection']['side_garage'])
+        self.assertEqual(spec['blocks']['garage']['orientation'],'side')
+        # Core front massing still cannot be synthesized from missing evidence.
+        a['observations']=[o for o in a['observations'] if o['feature']!=a['volumes'][0]['id']]
+        with self.assertRaisesRegex(ValueError,'front structure'):compile_analysis(a)
 
     def test_roof_story_and_known_orientation_matrix(self):
         for form in ('gable','hip'):

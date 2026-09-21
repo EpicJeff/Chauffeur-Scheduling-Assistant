@@ -46,6 +46,19 @@ class OverloadTests(unittest.TestCase):
         self.assertEqual(timeouts,[90,50])
         self.assertIn('time budget',result['error'])
 
+    def test_read_timeout_falls_back_within_stage_deadline(self):
+        clock=[0];seen=[]
+        def request(*args,**kw):
+            seen.append((args[3],kw['timeout_s']))
+            if len(seen)==1:
+                clock[0]+=90
+                raise RuntimeError('Gemini request failed: The read operation timed out')
+            return {'ok':True}
+        with patch('services.llm._call_llm_json',request),patch.object(pools.time,'monotonic',lambda:clock[0]):
+            result=self.call(max_models=3,timeout_s=90,total_timeout_s=120)
+        self.assertTrue(result['ok'])
+        self.assertEqual(seen,[('gemini-a',90),('gemini-b',30)])
+
     def test_request_cap_and_background_single_attempt(self):
         with patch('services.llm._call_llm_json',side_effect=RuntimeError('HTTP Error 503')) as request:
             self.call(max_models=2)
