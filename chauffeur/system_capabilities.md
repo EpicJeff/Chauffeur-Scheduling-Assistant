@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.126 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.127 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8430,3 +8430,19 @@ compiler mapping and review results. Existing saved facades are unchanged.
 The renderer still has fixed blocks/slots and explicit approximation limits. Browser
 proof uses a hand-labeled reference at high quality, not a fresh successful model run.
 See [architecture/compiler contract](../docs/superpowers/specs/2026-09-21-photo-architecture-compiler.md).
+
+
+### Photo compiler block-boundary fitting - v2.499.127 (2026-09-21)
+
+Compiler v2 aligns the fixed garage/main seam with a nearby observed wall-volume
+boundary using a shared continuous, monotonic piecewise map for all geometry and
+finishes. Mirror selection still evaluates unfitted photo intervals. When no nearby
+boundary exists, uniform mapping remains. The fit is reported and saved in the trace.
+Opening placement uses canonical spatial order so reflected inputs resolve slot
+collisions consistently. Saved photo8 analysis is a regression: the right wing now
+produces one upper roof, not a second narrow roof at the block seam. Its observed
+story/ridge values remain unchanged. The actual right wing has intersecting parallel
+and perpendicular ridges on an L-shaped footprint, beyond the current single-roof
+representation. The hand-built cross-gable is an intentional approximation. This fix
+does not resolve that representation limit or the omitted entrance porch gable. No provider
+requests or saved-facade mutations are involved.

@@ -27,3 +27,23 @@ This is an analysis/compiler contract, not a general building modeller. The rend
 A hand-labeled reference fixture verifies the broad central upper story, three upstairs windows, mixed continuous porch and right-hand cross-gable on a parallel ridge. Unit coverage includes reflection, owner validation, dense openings, dormers, cached/concurrent actions, review recompilation, saved traces and real transport accounting with mocked HTTP. High-quality browser renders cover mirrored, unmirrored and no-upper variants. Existing capture/adoption/fallback tests cover the UI flow.
 
 No live Gemini request was made during this implementation. The hand-labeled render proves compilation, not recognition accuracy. Next evaluation is fresh-photo analysis compared against that fixture; broaden to independent house styles before claiming majority-house recognition. Recognition errors should be fixed in observation semantics/evidence; deterministic mapping bugs should be fixed and replayed locally without additional provider calls.
+
+
+## Compiler v2 boundary fit (v2.499.127)
+
+Uniform scaling could split one observed perpendicular roof across both fixed renderer
+blocks, producing two independently capped roofs. The compiler now chooses the nearest
+adjacent-volume boundary to the one-third facade seam, within canonical fractions
+0.2..0.5 and with at most 0.025 separation between volumes. It maps that boundary to
+slot 6 with continuous linear scaling on each side, shared by every feature layer.
+Absent a candidate, the original uniform map remains. Mirror scoring uses unfitted
+intervals. The trace records the selected seam and a proportion-adjustment note.
+Placement order uses canonical coordinates, making collision handling reflection-stable.
+
+The real photo8 fixture verifies this mapping independently of recognition. The right
+wing actually has intersecting parallel and perpendicular ridges and an L-shaped
+footprint. The hand-authored parallel roof plus cross-gable is a deliberate simplification,
+not ground truth for the literal ridge structure. The current single-roof volume schema
+cannot encode that intersection; evidence and limitations should retain it. The missing
+porch gable is a separate observation omission. Code does not replace those observations
+with reference-specific assumptions. A failed provider visual review left the original analysis untouched.

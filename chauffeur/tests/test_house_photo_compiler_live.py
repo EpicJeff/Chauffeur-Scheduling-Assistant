@@ -23,17 +23,20 @@ def main():
             page.set_viewport_size({'width':1400,'height':1000})
             page.add_init_script(DAY_LOCK_JS)
             page.route('**/api/v2/chat/stream*',lambda route:route.fulfill(status=200,body=''))
-            for mode in ('replay','unmirrored','no-upper'):
+            for mode in ('replay','unmirrored','no-upper','photo8'):
                 if mode=='unmirrored':spec['mirror']=False
                 if mode=='no-upper':spec['upper']=[];spec,_=hf.normalize(spec)
+                if mode=='photo8':
+                    spec,_,_=compile_analysis(json.loads((Path(__file__).parent/'fixtures/house_photo8_analysis.json').read_text()))
                 token=hf.issue_draft(spec)
                 page.goto(served.url('house')+'?draft='+token+'&angle=0&quality=high&day=1&editor=1')
                 page.wait_for_function('window.chfFacade && window.chfFacade() && window.chfNavProbe({settled:true})',timeout=120000)
                 rows=page.evaluate('window.chfShellFabric().map(f=>f.name)')
-                assert 'facade_garage_block_gable_0_attic_window' in rows, rows
-                assert any(n.startswith('facade_garage_block_gable_0') for n in rows)
-                assert sum(n.startswith('facade_garage_block_window_2_unit') for n in rows)==3
-                if mode!='no-upper':assert sum(n.startswith('facade_main_window_') and '_s2' in n for n in rows)==3
+                if mode!='photo8':
+                    assert 'facade_garage_block_gable_0_attic_window' in rows, rows
+                    assert any(n.startswith('facade_garage_block_gable_0') for n in rows)
+                    assert sum(n.startswith('facade_garage_block_window_2_unit') for n in rows)==3
+                    if mode!='no-upper':assert sum(n.startswith('facade_main_window_') and '_s2' in n for n in rows)==3
                 if os.environ.get('HOUSE_SHOTS'):
                     out=Path(os.environ['HOUSE_SHOTS']);out.mkdir(parents=True,exist_ok=True)
                     page.screenshot(path=str(out/('compiled-architecture-'+mode+'.png')))

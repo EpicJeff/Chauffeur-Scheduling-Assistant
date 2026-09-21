@@ -26,6 +26,28 @@ class CompilerTests(unittest.TestCase):
         self.assertEqual(hf.validate_block_model(spec),[])
         self.assertEqual(hf.normalize(spec)[0],spec)
 
+    def test_photo8_volume_is_not_split_into_two_roof_towers(self):
+        a=json.loads((Path(__file__).parent/'fixtures/house_photo8_analysis.json').read_text())
+        original=copy.deepcopy(a)
+        spec,notes,trace=compile_analysis(a)
+        self.assertEqual(a,original)
+        right=next(r for r in trace['mapping'] if r['id']=='vol_right')
+        self.assertEqual(right['slots'],[[0,6]])
+        self.assertEqual(len(spec['upper']),2)
+        self.assertEqual(sum(u['roof']['ridge']=='z' for u in spec['upper']),1)
+        self.assertFalse(any('gable clipped' in n for n in notes))
+        self.assertEqual(sum(o.get('story')==2 for o in spec['ground']),4)
+        self.assertEqual(hf.validate_block_model(spec),[])
+        # Compiler must not silently turn incorrect observations into our reference.
+        self.assertEqual(spec['upper'][0]['roof']['ridge'],'z')
+        self.assertTrue(any('proportions fitted' in n for n in notes))
+        for layer in ('volumes','porches','gables','dormers','openings','finishes'):
+            for row in a[layer]:row['at']=round(1-row['at']-row['width'],8)
+        a['garage_side']='left'
+        reflected=compile_analysis(a)[0]
+        for key in ('ground','roof','upper'):
+            self.assertEqual(reflected[key],spec[key])
+
     def test_roof_story_and_known_orientation_matrix(self):
         for form in ('gable','hip'):
             for ridge in ('parallel','perpendicular'):

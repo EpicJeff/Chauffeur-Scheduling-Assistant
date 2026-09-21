@@ -27,6 +27,11 @@ List each separated upstairs window independently. Include shutters when visible
 Record finish bands by global interval and story. base bands have story=base.
 Materials and colours must use the nearest permitted values, unknown if uncertain.
 Projecting depth is relative to neighbouring walls, not total building depth.
+An L-shaped wing may have BOTH parallel and perpendicular intersecting ridges. Describe
+both in roof evidence and limitations; the single roof field records the dominant visible
+roof, not a claim that the other ridge is absent. Do not infer an extra full story from
+an intersecting roof or projecting wing. Do not force a hand-built simplified gable
+approximation to be the literal architecture seen in the photo.
 Unsupported elements and uncertainties belong in limitations; never invent roof/room shapes
 for details such as bay windows, metal awnings or hidden garage entrances.
 '''
@@ -111,26 +116,41 @@ def compile_analysis(analysis):
     errors=validate_analysis(analysis)
     if errors:raise ValueError('; '.join(errors[:6]))
     a=copy.deepcopy(analysis);notes=list(a['limitations']);mapping=[]
-    def interval(row,mirror):
+    # Fit the fixed block seam to a real wall-volume boundary. A uniform scale
+    # can cut a single perpendicular roof into two independently capped towers.
+    # Use one continuous monotonic map for EVERY layer, including openings.
+    seams={}
+    for mirrored in (False,True):
+        rows=sorted((1-v['at']-v['width'] if mirrored else v['at'],
+                     1-v['at'] if mirrored else v['at']+v['width']) for v in a['volumes'])
+        boundaries=[(left[1]+right[0])/2 for left,right in zip(rows,rows[1:])
+                    if abs(left[1]-right[0])<=.025 and .2<=(left[1]+right[0])/2<=.5]
+        seams[mirrored]=min(boundaries,key=lambda x:(abs(x-1/3),x)) if boundaries else 1/3
+    def interval(row,mirror,fit=True):
         left=1-row['at']-row['width'] if mirror else row['at']
-        start=max(0,min(17,int(math.floor(left*18+.5))))
-        end=max(start+1,min(18,int(math.floor((left+row['width'])*18+.5))))
+        seam=seams[mirror] if fit else 1/3
+        def project(x):
+            return x*6/seam if x<=seam else 6+(x-seam)*12/(1-seam)
+        start=max(0,min(17,int(math.floor(round(project(left),10)+.5))))
+        end=max(start+1,min(18,int(math.floor(round(project(left+row['width']),10)+.5))))
         return start,end
     def score(mirror):
         cost=0
         for v in a['volumes']:
-            start,end=interval(v,mirror)
+            start,end=interval(v,mirror,False)
             if start<6<end:cost+=min(6-start,end-6)*(5 if v['stories']=='two' else 1)
         for p in a['porches']:
-            start,end=interval(p,mirror);cost+=max(0,min(end,3)-start)*12
+            start,end=interval(p,mirror,False);cost+=max(0,min(end,3)-start)*12
         for o in a['openings']:
-            start,end=interval(o,mirror)
+            start,end=interval(o,mirror,False)
             if o['kind']=='door' and start<6:cost+=100
             if o['kind']=='garage_door' and start>=3:cost+=100
         return cost
     side=a['garage_side']
     mirror=side=='right' if side!='unknown' else score(True)<score(False)
     if side=='unknown':notes.append('Garage side is unseen; block mapping chosen from wall/porch/entry fit, not inferred as a visible garage.')
+    if abs(seams[mirror]-1/3)>.001:
+        notes.append('Facade proportions fitted to the fixed block boundary at an observed wall-volume seam.')
     spec=copy.deepcopy(h.CANONICAL)
     spec.update(mirror=mirror,ground=[],roof=[],upper=[],finishes=[],story_finishes={},unexpressed=[])
     for role,c in a['palette'].items():
@@ -212,7 +232,7 @@ def compile_analysis(analysis):
         mapping.append({'id':d['id'],'kind':'dormer','owner':d['owner'],'slot':start,'span':end-start})
     occupied={1:set(),2:set()}
     # Place doors first, then windows; use the closest free interval without losing count.
-    for o in sorted(a['openings'],key=lambda o:(o['kind']=='window',o['at'],o['id'])):
+    for o in sorted(a['openings'],key=lambda o:(o['kind']=='window',interval(o,mirror)[0],o['id'])):
         if o['level']=='attic':continue
         level=2 if o['level']=='upper' else 1
         start,end=interval(o,mirror);count=o['count']
@@ -256,5 +276,5 @@ def compile_analysis(analysis):
     if errors:raise ValueError('Compiled house failed validation: '+'; '.join(errors[:6]))
     # Capture normalization losses explicitly; never claim the analysis was reproduced exactly.
     spec['unexpressed']=[n[:h.UNEXPRESSED_LEN] for n in notes[:h.UNEXPRESSED_MAX]]
-    return spec,notes,{'compiler_version':1,'mirror_scores':{'normal':score(False),'mirrored':score(True)},
+    return spec,notes,{'compiler_version':2,'block_seam':seams[mirror],'mirror_scores':{'normal':score(False),'mirrored':score(True)},
                        'mapping':mapping,'before_normalization':before,'normalization_notes':normalization}
