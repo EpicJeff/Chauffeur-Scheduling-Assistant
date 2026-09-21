@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.128 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.129 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8457,3 +8457,16 @@ porch openings remain invalid. Geometry matches direct wall ownership; traces pr
 both original owner and resolved wall_owner. Errors now include the rejected owner
 reference and allowed owner types. No provider calls are added. A synthetic reproduction
 matches the reported error; the failed provider payload itself was not available.
+
+
+### Photo analysis reconciliation - v2.499.129 (2026-09-21)
+
+Compiler v3 resolves a window labeled upper but explicitly owned by a gable to attic.
+Adjacent wall-boundary overlaps of at most 0.02 facade width AND 10% of the smaller
+volume are split at the midpoint; nested or substantial overlaps remain errors.
+Strict relationship validation runs afterward. Raw analysis is unchanged; compilation
+trace includes prepared_analysis and analysis_adjustments. Larger overlap errors name
+both volumes and overlap amount. No additional provider request or story inference.
+35 focused photo tests pass. The reported failed payload was unavailable; synthetic
+regressions reproduce the relationship conflict and boundary-rounding case, not proof
+that this particular overlap falls within the recovery threshold.

@@ -57,3 +57,15 @@ still require a two-story volume, attic openings a gable. Unknown references rem
 errors, with the reference included in diagnostics. Mapping traces keep original owner
 and resolved wall_owner. This is deterministic relationship resolution, not a guess
 based on ID spelling or proximity, and requires no additional model request.
+
+
+## Compiler v3 bounded reconciliation (v2.499.129)
+
+Before strict relationship validation, gable-owned windows labeled upper become attic.
+No wall ownership or story count is inferred. Adjacent overlapping edges may share a
+midpoint only when overlap is at most 0.02 facade width and 10% of the smaller volume;
+nested volumes and larger overlaps are not flattened. Shape, enum and unique-ID checks
+precede recovery. Full relationship validation follows. Raw input remains unchanged;
+prepared_analysis and analysis_adjustments are retained in the compilation trace.
+This handles redundant-label conflicts and rounding noise without claiming support for
+intersecting footprints. Larger overlap diagnostics identify volume IDs and magnitude.

@@ -75,6 +75,25 @@ class CompilerTests(unittest.TestCase):
             self.assertTrue(validate_analysis(bad),change)
             with self.assertRaises(ValueError):compile_analysis(bad)
 
+    def test_redundant_attic_labels_and_small_boundary_overlap(self):
+        a=copy.deepcopy(DATA)
+        attic=next(o for o in a['openings'] if o['level']=='attic')
+        attic['level']='upper'
+        a['volumes'][0]['width']+=.01
+        original=copy.deepcopy(a)
+        self.assertTrue(validate_analysis(a))
+        spec,notes,trace=compile_analysis(a)
+        self.assertEqual(a,original)
+        self.assertEqual(len(spec['upper']),1)
+        self.assertTrue(any('resolved to attic' in n for n in notes))
+        self.assertTrue(any('overlap shared' in n for n in notes))
+        self.assertEqual(validate_analysis(trace['prepared_analysis']),[])
+        self.assertEqual(hf.validate_block_model(spec),[])
+        self.assertEqual(compile_analysis(trace['prepared_analysis'])[0]['ground'],spec['ground'])
+        a['volumes'][0]['width']+=.15
+        with self.assertRaisesRegex(ValueError,'wall volumes overlap:'):
+            compile_analysis(a)
+
     def test_roof_story_and_known_orientation_matrix(self):
         for form in ('gable','hip'):
             for ridge in ('parallel','perpendicular'):

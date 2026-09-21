@@ -66,7 +66,7 @@ def review_schema():
     return obj({'analysis':analysis_schema(),'reasons':arr(TEXT)})
 
 
-def validate_analysis(value):
+def validate_analysis(value, *, _shape_only=False):
     """Validate our small JSON-schema subset, then architecture relationships."""
     errors=[]
     def walk(v,s,path):
@@ -88,7 +88,7 @@ def validate_analysis(value):
             if len(v)>64:errors.append(path+' has too many entries');return
             for i,x in enumerate(v):walk(x,s['items'],f'{path}[{i}]')
     walk(value,analysis_schema(),'analysis')
-    if errors:return errors
+    if errors or _shape_only:return errors
     if not value['volumes']:return ['analysis needs at least one wall volume']
     ids={}
     for layer in ('volumes','porches','gables','dormers','openings','finishes'):
@@ -98,7 +98,10 @@ def validate_analysis(value):
                 if not row['id'].strip() or row['id'] in ids:errors.append('missing or duplicate architectural id')
                 ids[row['id']]=(layer,row)
     vols=sorted(value['volumes'],key=lambda r:r['at'])
-    if any(a['at']+a['width']>b['at']+.001 for a,b in zip(vols,vols[1:])):errors.append('wall volumes overlap')
+    for left,right in zip(vols,vols[1:]):
+        overlap=left['at']+left['width']-right['at']
+        if overlap>.001:
+            errors.append(f"wall volumes overlap: {left['id']} / {right['id']} by {overlap:.3f} of facade; intersecting footprints need explicit representation")
     for layer,allowed in [('porches',('volumes',)),('gables',('volumes','porches')),('dormers',('volumes',)),('openings',('volumes','gables','porches'))]:
         for row in value[layer]:
             owner=ids.get(row['owner'])
@@ -122,12 +125,40 @@ def validate_analysis(value):
     return errors
 
 
+def prepare_analysis(value):
+    """Resolve redundant labels and small boundary rounding, never infer new massing."""
+    errors=validate_analysis(value,_shape_only=True)
+    if errors:raise ValueError('; '.join(errors[:6]))
+    a=copy.deepcopy(value);notes=[]
+    # Duplicate IDs remain strict errors; never pick one ambiguous owner.
+    rows=[r for layer in ('volumes','porches','gables','dormers','openings') for r in a[layer]]
+    ids=[r['id'] for r in rows]
+    if len(ids)!=len(set(ids)):
+        raise ValueError('missing or duplicate architectural id')
+    gables={g['id'] for g in a['gables']}
+    for opening in a['openings']:
+        if opening['kind']=='window' and opening['level']=='upper' and opening['owner'] in gables:
+            opening['level']='attic'
+            notes.append(opening['id']+': upper label resolved to attic from explicit gable owner.')
+    volumes=sorted(a['volumes'],key=lambda r:r['at'])
+    for left,right in zip(volumes,volumes[1:]):
+        end=left['at']+left['width'];overlap=end-right['at']
+        # Only adjacent edge noise, not nested or intersecting architectural volumes.
+        if (.001<overlap<=.02+1e-9 and overlap<=min(left['width'],right['width'])*.1+1e-9
+                and left['at']<right['at'] and end<right['at']+right['width']):
+            seam=(end+right['at'])/2;right_end=right['at']+right['width']
+            left['width']=seam-left['at'];right['at']=seam;right['width']=right_end-seam
+            notes.append(left['id']+' / '+right['id']+': small wall-boundary overlap shared at midpoint.')
+    errors=validate_analysis(a)
+    if errors:raise ValueError('; '.join(errors[:6]))
+    return a,notes
+
+
 def compile_analysis(analysis):
     """Return spec, notes, provenance; identical analysis always yields identical output."""
     from services import house_facade as h
-    errors=validate_analysis(analysis)
-    if errors:raise ValueError('; '.join(errors[:6]))
-    a=copy.deepcopy(analysis);notes=list(a['limitations']);mapping=[]
+    a,adjustments=prepare_analysis(analysis)
+    notes=list(a['limitations'])+adjustments;mapping=[]
     # Fit the fixed block seam to a real wall-volume boundary. A uniform scale
     # can cut a single perpendicular roof into two independently capped towers.
     # Use one continuous monotonic map for EVERY layer, including openings.
@@ -291,5 +322,5 @@ def compile_analysis(analysis):
     if errors:raise ValueError('Compiled house failed validation: '+'; '.join(errors[:6]))
     # Capture normalization losses explicitly; never claim the analysis was reproduced exactly.
     spec['unexpressed']=[n[:h.UNEXPRESSED_LEN] for n in notes[:h.UNEXPRESSED_MAX]]
-    return spec,notes,{'compiler_version':2,'block_seam':seams[mirror],'mirror_scores':{'normal':score(False),'mirrored':score(True)},
+    return spec,notes,{'compiler_version':3,'prepared_analysis':copy.deepcopy(a),'analysis_adjustments':adjustments,'block_seam':seams[mirror],'mirror_scores':{'normal':score(False),'mirrored':score(True)},
                        'mapping':mapping,'before_normalization':before,'normalization_notes':normalization}
