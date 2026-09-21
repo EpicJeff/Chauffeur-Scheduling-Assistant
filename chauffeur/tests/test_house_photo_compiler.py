@@ -236,6 +236,29 @@ class CompilerTests(unittest.TestCase):
             self.assertIsNone(error)
             self.assertIsNotNone(result['revised'])
 
+    def test_supplemental_only_opening_remains_unplaced_not_fatal(self):
+        a=faced_analysis(DATA)
+        opening=next(o for o in a['openings'] if o['kind']=='window' and o['level']=='upper')
+        obs=next(o for o in a['observations'] if o['feature']==opening['id']);obs['image']=2
+        raw=copy.deepcopy(a)
+        spec,notes,trace=compile_analysis(a)
+        self.assertEqual(a,raw)
+        self.assertEqual(trace['face_projection']['unplaced_openings'],[opening['id']])
+        self.assertFalse(any(m['id']==opening['id'] for m in trace['mapping']))
+        self.assertEqual(sum(o.get('story')==2 for o in spec['ground']),2)
+        self.assertTrue(any('front placement unresolved' in n for n in notes))
+        self.assertEqual(hf.validate_block_model(spec),[])
+
+    def test_collective_finish_evidence_is_not_a_geometry_reference(self):
+        a=faced_analysis(DATA);expected=compile_analysis(a)[0]
+        obs={'feature':'finishes','image':1,'face':'front',
+            'box':{'x':0,'y':0,'width':1,'height':1},'evidence':'Painted masonry and batten.'}
+        a['observations'].append(obs)
+        self.assertEqual(compile_analysis(a)[0],expected)
+        for feature,face in (('missing-feature','front'),('finishes','rear')):
+            obs.update(feature=feature,face=face)
+            with self.assertRaises(ValueError):compile_analysis(a)
+
     def test_roof_story_and_known_orientation_matrix(self):
         for form in ('gable','hip'):
             for ridge in ('parallel','perpendicular'):

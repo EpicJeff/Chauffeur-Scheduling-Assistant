@@ -13,7 +13,10 @@ A side-facing end gable does NOT imply a perpendicular ridge: roof.ridge always 
 parallel/perpendicular to the front facade, regardless of which photo shows the ridge.
 Record per-image observations: feature ID, image number, physical face and 2D bounding box
 in THAT image's normalized coordinates. Keep these boxes separate from front at/width.
-Every front feature needs image-1 evidence. Only front rows compile into facade slots.
+Front placement needs image-1 evidence. Front openings seen only in supplemental views
+remain unresolved and are not placed. Use feature="finishes" for collective material
+evidence because finish bands have no IDs. Other observations use exact feature IDs.
+Only front rows with primary evidence compile into facade slots.
 Side doors/windows/gables must retain their physical face; never move them to the front
 just because a supplemental camera sees them. Side garage doors determine side entry.
 Volumes describe rectangular WALL faces up to their eaves. A side attic triangle is
@@ -80,7 +83,7 @@ def analysis_schema(version=2):
             item['properties']['face']=face
             item['required'].append('face')
         schema['properties']['coordinate_frame']=enum(('house_front',))
-        schema['properties']['observations']=arr(obj({'feature':TEXT,'image':number(1,3,True),
+        schema['properties']['observations']=arr(obj({'feature':{**TEXT,'description':'Exact feature id; use reserved finishes for collective material evidence (finish bands have no ids).'},'image':number(1,3,True),
             'face':face,'box':obj({'x':number(0,1),'y':number(0,1),
                 'width':number(0,1),'height':number(0,1)}),'evidence':TEXT}))
         schema['required']+=['coordinate_frame','observations']
@@ -159,7 +162,7 @@ def validate_analysis(value, *, _shape_only=False):
 
 def project_front_analysis(value):
     """Project explicitly classified faces, never project another camera's pixels."""
-    a=copy.deepcopy(value);notes=[];excluded=[]
+    a=copy.deepcopy(value);notes=[];excluded=[];unplaced=[]
     layers=('volumes','porches','gables','dormers','openings','finishes')
     rows=[r for layer in layers for r in a[layer] if 'id' in r]
     ids={r['id']:r for r in rows}
@@ -172,8 +175,12 @@ def project_front_analysis(value):
             if kinds.get(row['owner']) not in allowed[layer]:
                 raise ValueError(row['id']+' has invalid owner '+row['owner'])
     for obs in a['observations']:
-        if obs['feature'] not in ids:raise ValueError('observation references unknown feature '+obs['feature'])
-        if obs['face']!=ids[obs['feature']]['face']:raise ValueError('observation face conflicts with '+obs['feature'])
+        if obs['feature']=='finishes' and obs['feature'] not in ids:
+            if not any(f['face']==obs['face'] for f in a['finishes']):
+                raise ValueError('finish evidence has no matching wall face')
+        else:
+            if obs['feature'] not in ids:raise ValueError('observation references unknown feature '+obs['feature'])
+            if obs['face']!=ids[obs['feature']]['face']:raise ValueError('observation face conflicts with '+obs['feature'])
         box=obs['box']
         if box['width']<=0 or box['height']<=0 or box['x']+box['width']>1.001 or box['y']+box['height']>1.001:
             raise ValueError('observation box outside image')
@@ -181,6 +188,10 @@ def project_front_analysis(value):
         observed=[o for o in a['observations'] if o['feature']==row['id']]
         if not observed:raise ValueError(row['id']+' lacks image evidence')
         if row['face']=='front' and not any(o['image']==1 for o in observed):
+            if kinds[row['id']]=='openings':
+                unplaced.append(row['id'])
+                notes.append(row['id']+': front placement unresolved; supplemental-only opening retained in analysis, not placed on facade.')
+                continue
             raise ValueError(row['id']+' front placement lacks primary-photo evidence')
     # An explicit owner must also contain the opening in the same source image.
     # This catches a below-eave wall window mislabeled as an attic/gable window.
@@ -206,7 +217,9 @@ def project_front_analysis(value):
         front=[]
         for row in a[layer]:
             face=row.pop('face')
-            if face!='front':
+            if row.get('id') in unplaced:
+                excluded.append({'id':row['id'],'face':face,'kind':row['kind'],'reason':'no_primary_evidence'})
+            elif face!='front':
                 excluded.append({'id':row.get('id',layer),'face':face,'kind':row.get('kind',layer)})
                 notes.append(row.get('id',layer)+': '+face+' face kept out of front-facade slots.')
             elif 'owner' in row and row['owner'] not in kept:
@@ -215,7 +228,7 @@ def project_front_analysis(value):
         a[layer]=front
     a['schema_version']=1
     a.pop('coordinate_frame');a.pop('observations')
-    return a,notes,{'excluded_faces':excluded,'side_garage':bool(side_doors),
+    return a,notes,{'excluded_faces':excluded,'unplaced_openings':unplaced,'side_garage':bool(side_doors),
                    'side_garage_count':sum(o['count'] for o in side_doors)}
 
 

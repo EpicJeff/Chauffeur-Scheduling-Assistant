@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.131 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.132 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8517,3 +8517,18 @@ retry. No extra model stage or quota allowance. Regression uses the exact photo1
 with explicitly synthetic face annotations; it does not claim to correct that run's
 remaining massing. 40 photo tests plus facade and browser flow checks pass; no live
 provider calls or fresh recognition-quality claim.
+
+
+### Partial opening evidence and finish references - v2.499.132 (2026-09-21)
+
+A front opening with evidence only in supplemental images no longer aborts the whole
+photo draft. It remains in raw analysis and is recorded as an unplaced opening in the
+face projection, with an explicit note; no front slot is assigned. Structural review
+withholds revisions with these unresolved placements. Front structural features still
+require primary evidence. Missing feature evidence and unknown references remain errors.
+
+Observation feature `finishes` is a reserved collective reference for finish bands,
+which have no IDs. Its face must match an existing finish band and its image box must
+remain valid. Other unknown feature names remain invalid. Schema description and prompt
+explain the contract. Synthetic regressions reproduce both reported failure categories;
+failed raw responses were not available. 42 photo tests pass; no extra model calls.

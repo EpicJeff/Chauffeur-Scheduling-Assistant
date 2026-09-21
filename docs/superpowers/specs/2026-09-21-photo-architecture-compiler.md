@@ -121,3 +121,17 @@ Photo10 raw trace is the regression fixture. Annotating O11 as right-face/image3
 the compiler no longer creates a front garage door or drops the displaced window.
 Synthetic side-wall/gable observations prove they do not enlarge the front elevation.
 No fresh model run was used to establish recognition quality.
+
+
+## Partial evidence handling (v2.499.132)
+
+Supplemental-only front openings are retained in source analysis but excluded from slot
+placement, with `face_projection.unplaced_openings` and explanatory notes. This avoids
+rejecting the whole draft without guessing a front position. A visual revision containing
+unplaced openings is withheld as structurally unresolved. Structural front volumes and
+roof features still require primary-photo evidence; unknown IDs are not guessed.
+
+The reserved observation feature `finishes` references collective material evidence,
+since finish bands have no IDs. It must reference a face represented by a finish band;
+box validation and available-image checks still apply. Other observation references must
+match explicit feature IDs. No additional inference stage or provider request is added.
