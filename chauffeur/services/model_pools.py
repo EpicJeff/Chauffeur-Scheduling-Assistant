@@ -173,7 +173,7 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
                    settings: dict = None, images: list = None,
                    background: bool = None, workflow: str = None,
                    strict_json: bool = False, max_output_tokens: int = None,
-                   attempts: list = None, total_timeout_s: float = None, thinking_level: str = None) -> dict:
+                   attempts: list = None, total_timeout_s: float = None, thinking_level: str = None, response_schema: dict = None) -> dict:
     """JSON call with one HTTP attempt per candidate and persistent admission.
 
     Background work tries one candidate, then defers; foreground work may try
@@ -212,6 +212,7 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
                                           user_prompt, temperature=temperature, timeout_s=t,
                                           images=images, transient_retries=0,
                                           strict_json=strict_json,
+                                          **({"response_schema": response_schema} if response_schema is not None else {}),
                                           max_output_tokens=max_output_tokens,
                                           **({"thinking_level": thinking_level} if thinking_level is not None else {}))
         except llm_budget.Deferred as e:

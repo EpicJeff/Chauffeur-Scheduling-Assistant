@@ -13,6 +13,7 @@ import secrets
 import threading
 import time
 import uuid
+from services.house_photo_schema import observations_schema, house_schema, review_schema
 from services.house_photo import OBSERVATION_PROMPT, validate_observations, normalize_observation_notes, reconcile_observations, structural_issues, restore_missing_upper_windows
 
 SLOT_W = 1.85
@@ -1076,9 +1077,9 @@ The house is drawn as two BLOCKS side by side on a fixed strip of {n} slots, wes
 (left to right as seen from the street):
 {faces}
 Slot numbers are global (0..{last}), but you report each feature's position as a FRACTION of
-its own block's street width (0.0 at that block's west edge, 1.0 at its east edge) -- never a
-slot number. This lets you describe the same house regardless of exactly how many slots a block
-has.
+its own block's street width AS SEEN IN THE PHOTO (0.0 at its photo-left edge, 1.0 at its
+photo-right edge), never a slot number. Do not reverse fractions when mirror=true; the
+application reflects them once. This is independent of the number of slots in a block.
 
 MIRROR: the garage sits on the WEST (left) side by default. If the garage is on the EAST (right)
 side as seen from the street, set "mirror": true. If garage side is unknown, choose the block mapping that best fits the visible
@@ -1173,6 +1174,29 @@ def _photo_prompt():
                                orientations=list(ORIENTATIONS), window_sizes=list(WINDOW_SIZES),
                                garage_styles=list(GARAGE_STYLES), porch_types=list(PORCH_TYPES),
                                porch_roofs=list(PORCH_ROOFS), roof_kinds_features=roof_kinds_features) + _PHOTO_DIMENSION_GUIDANCE
+
+
+def _revision_prompt():
+    """Share architecture guidance, never the generation coordinate contract/examples."""
+    full = _photo_prompt()
+    intro = full[:full.index('Slot numbers are global')]
+    context = full[full.index('MIRROR:'):full.index('Return exactly this shape')]
+    guidance = full[full.index('The garage may also include'):]
+    return (intro + 'Use canonical integer slot/span coordinates for every feature, upper span and finish. '
+            'Garage slots 0..5, main slots 6..17. Mirror reflects the complete house. '
+            'Do not return block/at/width position fields. Windows belong in ground[], including story=2; '
+            'upper[] contains only spans with a complete roof object. Return a complete house, not a patch.\n'
+            + context + 'Canonical example (shape only, not target architecture):\n'
+            + json.dumps(CANONICAL, separators=(',', ':')) + '\n' + guidance)
+
+
+def _revision_model(raw, notes):
+    if isinstance(raw, dict):
+        for layer in ('ground', 'roof', 'upper', 'finishes'):
+            for i, row in enumerate(raw.get(layer) or []):
+                if isinstance(row, dict) and any(k in row for k in ('block', 'at', 'width')):
+                    return raw, [f'{layer}[{i}] must use canonical slot/span, not block/at/width']
+    return _validate_photo_model(raw, notes)
 
 
 def _snap_fractions(obj, notes=None, photo_coordinates=False):
@@ -1296,20 +1320,29 @@ def from_photo(image_b64, mime):
         run['pending'] = True
     attempts = run['attempts']
     action_start = len(attempts)
+    actions = run.setdefault('actions', [])
+    action = {'id': len(actions) + 1, 'kind': 'upload', 'limit': PHOTO_REQUEST_CAP, 'stages': []}
+    actions.append(action)
 
-    def call(system, user, budget):
+    def call(system, user, budget, stage, schema):
         remaining = min(budget, PHOTO_REQUEST_CAP - (len(attempts) - action_start))  # each explicit upload/resume is bounded
         if remaining <= 0:
             raise ValueError('This attempt reached its request limit. Retry this photo to resume cached analysis.')
-        return model_pools.call_pool_json(
-            'vision', api_key, system, user, temperature=0.1, timeout_s=90,
-            settings=settings, strict_json=True, max_output_tokens=16384, thinking_level='low',
-            max_models=remaining, total_timeout_s=120, workflow='house_photo', attempts=attempts,
-            images=[{'mime': mime or 'image/jpeg', 'b64': image_b64}])
+        start = len(attempts)
+        try:
+            return model_pools.call_pool_json(
+                'vision', api_key, system, user, temperature=0.1, timeout_s=90,
+                settings=settings, strict_json=True, response_schema=schema, max_output_tokens=16384, thinking_level='low',
+                max_models=remaining, total_timeout_s=120, workflow='house_photo', attempts=attempts,
+                images=[{'mime': mime or 'image/jpeg', 'b64': image_b64}])
+        finally:
+            action['stages'].append({'name': stage, 'models': list(attempts[start:]), 'requests': len(attempts) - start})
+            action['requests'] = len(attempts) - action_start
+
 
     try:
         if run['observations'] is None:
-            observed = call(OBSERVATION_PROMPT, 'Identify the visible architecture and proportions.', 3)
+            observed = call(OBSERVATION_PROMPT, 'Identify the visible architecture and proportions.', 3, 'observation', observations_schema())
             if isinstance(observed, dict) and observed.get('error'):
                 raise ValueError(observed['error'])
             raw_observed = copy.deepcopy(observed)
@@ -1323,7 +1356,7 @@ def from_photo(image_b64, mime):
         res = call(_photo_prompt() + PHOTO_COORDINATES,
                    'Build the house from these observations and the photo. Preserve the broad sections, '
                    'second stories and visible window groups. An attic gable is not an upper story.\n'
-                   + json.dumps(observed, separators=(',', ':')), 3)
+                   + json.dumps(observed, separators=(',', ':')), 3, 'configuration', house_schema(fractional=True))
         if not isinstance(res, dict) or res.get('error'):
             raise ValueError(res.get('error', 'bad configuration response') if isinstance(res, dict) else 'bad response')
         raw_configuration = copy.deepcopy(res)
@@ -1350,17 +1383,17 @@ def from_photo(image_b64, mime):
             # Failure must leave a usable draft, and never silently accept regression.
             correction['status'] = 'failed'
             try:
-                repair = call(_photo_prompt() + '\nReturn ONE complete house using canonical slot/span, not fractions. '
+                repair = call(_revision_prompt() + '\nReturn ONE complete house using canonical slot/span, not fractions. '
                               'Correct the listed structural discrepancies using the original photo. '
                               'Recheck observations against visible roof planes; do not add stories for attic windows. '
                               'Keep correctly represented features unchanged.',
                               'Observations: ' + json.dumps(observed, separators=(',', ':'))
                               + '\nDiscrepancies: ' + json.dumps(issues, separators=(',', ':'))
                               + '\nNormalization changes: ' + json.dumps(normalization_notes, separators=(',', ':'))
-                              + '\nDraft: ' + json.dumps(spec, separators=(',', ':')), 1)
+                              + '\nDraft: ' + json.dumps(spec, separators=(',', ':')), 1, 'structural_correction', house_schema())
                 correction['raw_configuration'] = copy.deepcopy(repair)
                 repair_notes = []
-                candidate, errors = _validate_photo_model(copy.deepcopy(repair), repair_notes)
+                candidate, errors = _revision_model(copy.deepcopy(repair), repair_notes)
                 correction['validation_errors'] = list(errors)
                 if errors:
                     raise ValueError('; '.join(errors[:3]))
@@ -1381,7 +1414,7 @@ def from_photo(image_b64, mime):
         elif issues:
             correction['status'] = 'budget_exhausted'
             notes.append('Automatic structural correction skipped: upload request limit reached.')
-        notes = pre + notes + ['Needs review: ' + x for x in issues] + observed['uncertain'] + [_requests_note(attempts)]
+        notes = pre + notes + ['Needs review: ' + x for x in issues] + observed['uncertain'] + [_requests_note(attempts[action_start:]) + f' this upload; {len(attempts)} cumulative across actions.']
         if observed['garage_side'] == 'unknown':
             notes.append('Garage side is uncertain; block mapping is inferred from visible geometry.')
         token = issue_draft(spec, image_b64, mime, viewpoint=observed['viewpoint'], requests=len(attempts))
@@ -1391,12 +1424,12 @@ def from_photo(image_b64, mime):
             'raw_observations': copy.deepcopy(run.get('raw_observations', observed)),
             'raw_configuration': raw_configuration,
             'before_normalization': before_normalization, 'normalization_notes': normalization_notes,
-            'structural_issues': list(issues), 'automatic_correction': correction, 'attempts': list(attempts)}
+            'structural_issues': list(issues), 'automatic_correction': correction, 'attempts': list(attempts), 'requests_total': len(attempts), 'request_actions': copy.deepcopy(actions)}
         _DRAFTS[token]['photo_run'] = run
         run.update(spec=copy.deepcopy(spec), notes=list(notes), token=token)
         return spec, notes, None, token
     except Exception as ex:
-        return None, [_requests_note(attempts)], f'could not match the photo ({ex})', None
+        return None, [_requests_note(attempts[action_start:]) + f' this upload; {len(attempts)} cumulative across actions.'], f'could not match the photo ({ex})', None
     finally:
         with _PHOTO_LOCK:
             run['pending'] = False
@@ -1500,6 +1533,15 @@ def critique(token, render_png_b64, *, automatic=False):
         # never stay `pending` and lock its own token out.
         res_obj['attempts'] = len(attempts)
         res_obj['requests_total'] = issued_requests + len(attempts)
+        trace = e.setdefault('photo_trace', {})
+        actions = (e.get('photo_run') or {}).setdefault('actions', trace.get('request_actions', []))
+        actions.append({'id': len(actions) + 1, 'kind': 'automatic_visual' if automatic else 'manual_visual',
+                        'limit': 1 if automatic else 3, 'requests': len(attempts),
+                        'stages': [{'name': 'visual_review', 'models': list(attempts), 'requests': len(attempts)}]})
+        trace['request_actions'] = copy.deepcopy(actions)
+        trace['attempts'] = [model for action in actions for stage in action['stages'] for model in stage['models']]
+        trace['requests_total'] = res_obj['requests_total']
+
         res_obj['reasons'] = list(res_obj['reasons']) + [_requests_note(attempts)]
         e['requests'] = res_obj['requests_total']
         store_result(token, None if retryable else res_obj)
@@ -1512,9 +1554,9 @@ def critique(token, render_png_b64, *, automatic=False):
     before_issues = structural_issues(draft, observed, len(slot_table()))
     try:
         res = model_pools.call_pool_json(
-            'vision', api_key, _photo_prompt() + '\n' + CRITIQUE_SYSTEM + '\nUse canonical slot/span coordinates: garage slots 0..5, main 6..17. mirror reflects the whole house; increasing slots run RIGHT TO LEFT in a mirrored photo. Do not use photo fractions in the revision.',
+            'vision', api_key, _revision_prompt() + '\n' + CRITIQUE_SYSTEM + '\nUse canonical slot/span coordinates: garage slots 0..5, main 6..17. mirror reflects the whole house; increasing slots run RIGHT TO LEFT in a mirrored photo. Do not use photo fractions in the revision.',
             'Photo first, then render. Observations: ' + json.dumps(observed, separators=(',', ':')) + '\nStructural discrepancies: ' + json.dumps(before_issues, separators=(',', ':')) + '\nDraft JSON:\n' + json.dumps(draft, separators=(',', ':')),
-            temperature=0.1, timeout_s=90, settings=settings, strict_json=True,
+            temperature=0.1, timeout_s=90, settings=settings, strict_json=True, response_schema=review_schema(),
             max_output_tokens=16384, thinking_level='low', max_models=1 if automatic else 3, total_timeout_s=120, workflow='house_photo',
             attempts=attempts,
             images=[{'mime': e.get('mime') or 'image/jpeg', 'b64': e['photo_b64']},
@@ -1556,7 +1598,7 @@ def critique(token, render_png_b64, *, automatic=False):
         result['observation_corrections'] = corrections or []
         before_issues = structural_issues(draft, review_observed, len(slot_table()))
     trace['revision_raw'] = copy.deepcopy(res.get('revised'))
-    revised, errs = _validate_photo_model(_snap_fractions(res.get('revised'), snap_notes), snap_notes)
+    revised, errs = _revision_model(res.get('revised'), snap_notes)
     trace['revision_before_normalization'] = copy.deepcopy(revised)
     trace['revision_validation_errors'] = list(errs)
     if errs:

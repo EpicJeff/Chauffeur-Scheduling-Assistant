@@ -64,7 +64,7 @@ def test_llm_connection(provider: str, url: str = None, api_key: str = None, mod
             
     return False, "Invalid provider selected."
 
-def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None, timeout_s: int = 180, images: list = None, metrics: dict = None, max_output_tokens: int = None, transient_retries: int = 2, thinking_level: str = None, strict_json: bool = False) -> dict:
+def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None, timeout_s: int = 180, images: list = None, metrics: dict = None, max_output_tokens: int = None, transient_retries: int = 2, thinking_level: str = None, strict_json: bool = False, response_schema: dict = None) -> dict:
     # images: [{'mime': 'image/jpeg', 'b64': '<base64>'}] — Gemini only
     # (attached as inline_data parts); the ollama branch ignores them.
     import json
@@ -143,7 +143,9 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
                 payload['generationConfig']['thinkingConfig'] = (
                     {'thinkingBudget': {'low': 1024, 'medium': 4096, 'high': 8192}.get(thinking_level, 1024)}
                     if gemini_model.startswith('gemini-2.5-') else {'thinkingLevel': thinking_level})
-            if strict_json:
+            if response_schema is not None:
+                payload['generationConfig']['responseJsonSchema'] = response_schema
+            if strict_json or response_schema is not None:
                 payload['generationConfig']['responseMimeType'] = 'application/json'
                 
             req = urllib.request.Request(

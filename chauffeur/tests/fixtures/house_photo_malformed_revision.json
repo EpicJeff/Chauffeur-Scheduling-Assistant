@@ -1,0 +1,387 @@
+{
+  "structural": {
+    "version": 3,
+    "mirror": false,
+    "viewpoint": "centre",
+    "pitch_deg": 30.0,
+    "style": {
+      "roof": "charcoal",
+      "frame": "white",
+      "door": "wood",
+      "trim": "white"
+    },
+    "blocks": {
+      "main": {
+        "depth": 0.0,
+        "roof": {
+          "form": "hip",
+          "ridge": "x",
+          "pitch_deg": 30.0
+        },
+        "cladding": "batten",
+        "body": "greige",
+        "base": {
+          "material": "brick",
+          "height": 1.0,
+          "body": "painted_brick"
+        }
+      },
+      "garage": {
+        "depth": 0.0,
+        "roof": {
+          "form": "gable",
+          "ridge": "z",
+          "pitch_deg": 30.0
+        },
+        "cladding": "batten",
+        "body": "greige",
+        "base": {
+          "material": "brick",
+          "height": 1.0,
+          "body": "painted_brick"
+        },
+        "orientation": "front"
+      }
+    },
+    "ground": [
+      {
+        "block": "garage",
+        "at": 0.16,
+        "width": 0.66,
+        "kind": "window",
+        "size": "standard",
+        "shutters": true,
+        "count": 2,
+        "story": 1
+      },
+      {
+        "block": "main",
+        "at": 0.08,
+        "width": 0.16,
+        "kind": "door",
+        "count": 1
+      },
+      {
+        "block": "main",
+        "at": 0.0,
+        "width": 0.33,
+        "kind": "porch",
+        "type": "covered",
+        "roof": "mixed",
+        "gable_offset": 0.08,
+        "gable_span": 0.16
+      },
+      {
+        "block": "main",
+        "at": 0.33,
+        "width": 0.25,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "count": 3,
+        "story": 1
+      },
+      {
+        "block": "main",
+        "at": 0.66,
+        "width": 0.16,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "count": 1,
+        "story": 1
+      },
+      {
+        "block": "main",
+        "at": 0.75,
+        "width": 0.25,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "count": 3,
+        "story": 1
+      }
+    ],
+    "roof": [
+      {
+        "block": "main",
+        "at": 0.08,
+        "width": 0.16,
+        "kind": "gable",
+        "window": false
+      },
+      {
+        "block": "main",
+        "at": 0.33,
+        "width": 0.33,
+        "kind": "gable",
+        "window": false
+      },
+      {
+        "block": "main",
+        "at": 0.66,
+        "width": 0.33,
+        "kind": "gable",
+        "window": true
+      },
+      {
+        "block": "main",
+        "at": 0.75,
+        "width": 0.16,
+        "kind": "shed",
+        "window": false
+      }
+    ],
+    "upper": [
+      {
+        "block": "main",
+        "at": 0.33,
+        "width": 0.33,
+        "roof": {
+          "form": "gable",
+          "ridge": "z",
+          "pitch_deg": 30.0
+        }
+      }
+    ],
+    "story_finishes": {},
+    "finishes": [
+      {
+        "block": "main",
+        "at": 0.33,
+        "width": 0.33,
+        "story": 1,
+        "cladding": "brick",
+        "body": "painted_brick"
+      },
+      {
+        "block": "main",
+        "at": 0.33,
+        "width": 0.33,
+        "story": 2,
+        "cladding": "brick",
+        "body": "painted_brick"
+      },
+      {
+        "block": "main",
+        "at": 0.0,
+        "width": 0.33,
+        "story": 1,
+        "cladding": "brick",
+        "body": "painted_brick"
+      }
+    ],
+    "unexpressed": [
+      "black standing seam metal roof over bay window and central upper story overhang",
+      "uncertain garage block mapping due to no visible garage door"
+    ],
+    "_model": "gemini-2.5-flash"
+  },
+  "visual": {
+    "version": 3,
+    "mirror": false,
+    "viewpoint": "centre",
+    "pitch_deg": 30.0,
+    "style": {
+      "roof": "charcoal",
+      "frame": "white",
+      "door": "wood",
+      "trim": "white"
+    },
+    "blocks": {
+      "main": {
+        "depth": 0.0,
+        "roof": {
+          "form": "gable",
+          "ridge": "z",
+          "pitch_deg": 30.0
+        },
+        "cladding": "batten",
+        "body": "greige",
+        "base": {
+          "material": "brick",
+          "height": 1.0,
+          "body": "greige"
+        }
+      },
+      "garage": {
+        "depth": 0.0,
+        "roof": {
+          "form": "gable",
+          "ridge": "z",
+          "pitch_deg": 30.0
+        },
+        "cladding": "batten",
+        "base": {
+          "material": "brick",
+          "height": 1.0,
+          "body": "greige"
+        },
+        "orientation": "front"
+      }
+    },
+    "ground": [
+      {
+        "block": "main",
+        "at": 1,
+        "width": 2,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "count": 2,
+        "story": 1
+      },
+      {
+        "block": "main",
+        "at": 6,
+        "width": 5,
+        "kind": "porch",
+        "type": "covered",
+        "roof": "mixed",
+        "gable_offset": 0,
+        "gable_span": 2
+      },
+      {
+        "block": "main",
+        "at": 7,
+        "width": 1,
+        "kind": "door",
+        "count": 2
+      },
+      {
+        "block": "main",
+        "at": 8,
+        "width": 3,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "count": 3,
+        "story": 1
+      },
+      {
+        "block": "main",
+        "at": 12,
+        "width": 2,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "count": 2,
+        "story": 1
+      },
+      {
+        "block": "main",
+        "at": 14,
+        "width": 3,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "count": 3,
+        "story": 1
+      },
+      {
+        "block": "main",
+        "at": 17,
+        "width": 1,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "story": 1
+      }
+    ],
+    "roof": [
+      {
+        "block": "main",
+        "at": 7,
+        "width": 1,
+        "kind": "gable"
+      },
+      {
+        "block": "main",
+        "at": 14,
+        "width": 4,
+        "kind": "gable",
+        "window": true
+      }
+    ],
+    "upper": [
+      {
+        "block": "main",
+        "at": 6,
+        "span": 5,
+        "roof": {
+          "form": "gable",
+          "ridge": "z",
+          "pitch_deg": 30.0
+        }
+      },
+      {
+        "block": "main",
+        "at": 8,
+        "width": 1,
+        "kind": "window",
+        "size": "standard",
+        "shutters": true,
+        "story": 2
+      },
+      {
+        "block": "main",
+        "at": 10,
+        "width": 1,
+        "kind": "window",
+        "size": "standard",
+        "shutters": true,
+        "story": 2
+      }
+    ],
+    "story_finishes": {
+      "main": {
+        "1": {
+          "cladding": "brick",
+          "body": "greige"
+        },
+        "2": {
+          "cladding": "batten",
+          "body": "greige"
+        }
+      }
+    },
+    "finishes": [
+      {
+        "block": "main",
+        "at": 0,
+        "width": 6,
+        "story": 1,
+        "cladding": "batten",
+        "body": "greige"
+      },
+      {
+        "block": "main",
+        "at": 6,
+        "width": 5,
+        "story": 1,
+        "cladding": "brick",
+        "body": "greige"
+      },
+      {
+        "block": "main",
+        "at": 14,
+        "width": 4,
+        "story": 1,
+        "cladding": "batten",
+        "body": "greige"
+      },
+      {
+        "block": "main",
+        "at": 8,
+        "width": 5,
+        "story": 2,
+        "cladding": "batten",
+        "body": "greige"
+      }
+    ],
+    "unexpressed": [
+      "black standing seam metal roof over bay window and central upper story overhang",
+      "bay window at slots 12-14"
+    ]
+  }
+}

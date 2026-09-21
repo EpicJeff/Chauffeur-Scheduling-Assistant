@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.123 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.124 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8375,3 +8375,29 @@ Offline regression uses My house - photo 5 to prove a self-consistent but wrong 
 interpretation can be revised. Browser tests exercise actual editor methods for exact
 capture, automatic review, revision selection and failure fallback. Live Gemini visual
 accuracy still needs evaluation; no live provider calls were used for implementation.
+
+
+### Photo stage contracts and request ledger - v2.499.124 (2026-09-21)
+
+Generation uses photo-left block fractions. Structural correction and visual review use
+canonical integer slot/span exclusively: their prompts share architectural guidance but
+contain no fractional output example. Revision validation rejects mixed/fractional
+position fields rather than snapping them and potentially moving features to the wrong block.
+Windows remain in ground[]; upper[] requires a complete roof. Missing required fields
+still reject a revision and retain the draft.
+
+All house photo stages send explicit JSON schemas through the model pool to Gemini's
+responseJsonSchema with application/json output. Ground kinds have distinct shapes,
+blocks require body fields, upper spans cannot contain window entries, and coordinate
+schemas differ by stage. Unrelated LLM calls omit the new optional argument. Existing
+application validation remains authoritative. API reference:
+https://ai.google.dev/gemini-api/docs/generate-content/structured-output
+
+photo_trace.request_actions records upload/resume and automatic/manual visual actions,
+limits, stage names, actual model attempts and request totals. It preserves failed upload
+history across a resume; cached responses add no action. UI notes distinguish this upload
+from cumulative counts. The limits remain six per upload, one automatic visual attempt,
+and three per explicitly requested manual review. Trace attempts/requests_total include
+visual calls. Exact malformed photo6 replies and failed-upload/resume ledger are offline
+regressions. 32 photo tests, six model-pool tests and 45 facade scenarios pass. No live
+provider calls; schema acceptance and visual accuracy still require deployment testing.
