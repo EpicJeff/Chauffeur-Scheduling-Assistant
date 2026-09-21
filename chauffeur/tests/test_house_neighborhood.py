@@ -16,14 +16,21 @@ const spec=JSON.parse(process.argv[3]),assert=require('node:assert/strict');
 const envelopes={main:{west:-7.15,east:14.65,north:-6.1,south:14.55,eave:5.6},garage:{west:-18.2,east:-7.15,north:-6.1,south:10.1,eave:5.6}};
 const palette={body:{white:0xffffff},roof:{charcoal:0x333333},frame:{white:0xffffff},trim:{white:0xffffff},door:{wood:0x885522}};
 const n=ChauffeurNeighborhood.build(T,spec,envelopes,palette);
-assert.equal(n.stats().lots,5);assert.equal(n.stats().batches,5);
-const mesh=n.group.children[0],material=mesh.material;
-let disposed=0;material.addEventListener('dispose',()=>disposed++);
+assert.equal(n.stats().lots,48);assert.equal(n.stats().nearLots,8);assert.equal(n.stats().farLots,40);
+assert(n.stats().batches<=12);assert(n.stats().triangles<90000);
+assert(n.stats().placements.some(p=>p.z<0&&p.detail==='near'));
+const materials=new Set(n.group.children.map(m=>m.material));
+let disposed=0;materials.forEach(m=>m.addEventListener('dispose',()=>disposed++));
+let near=0,far=0;
+ChauffeurNeighborhood.exterior(ChauffeurNeighborhood.plan(spec)[16].spec,envelopes,palette,()=>near++,true);
+ChauffeurNeighborhood.exterior(ChauffeurNeighborhood.plan(spec)[16].spec,envelopes,palette,()=>far++,false);
+assert(near>far);
+assert(n.group.children.every(m=>{const hits=[];m.raycast(null,hits);return hits.length===0;}));
 n.update(new T.Vector3(0,25,80),new T.Vector3(0,0,0),true);
-assert(n.stats().visibleLots<5);
+assert(n.stats().visibleLots<48);
 n.update(new T.Vector3(0,25,80),new T.Vector3(0,0,0),false);
 assert.equal(n.group.visible,false);
-n.dispose();assert.equal(n.group.children.length,0);assert.equal(disposed,1);
+n.dispose();assert.equal(n.group.children.length,0);assert.equal(disposed,materials.size);
 '''
         subprocess.run(['node','-e',script,str((base/'vendor/three.min.js').resolve()),str((base/'house_neighborhood.js').resolve()),json.dumps(hf.CANONICAL)],check=True)
 
@@ -31,8 +38,11 @@ n.dispose();assert.equal(n.group.children.length,0);assert.equal(disposed,1);
         path=Path(__file__).parents[1]/'static/house_neighborhood.js'
         script="require(process.argv[1]); const a=JSON.parse(process.argv[2]); const before=JSON.stringify(a); const p=ChauffeurNeighborhood.plan(a); if(JSON.stringify(a)!==before)throw Error('mutated'); if(JSON.stringify(p)!==JSON.stringify(ChauffeurNeighborhood.plan(a)))throw Error('unstable'); console.log(JSON.stringify(p));"
         rows=json.loads(subprocess.check_output(['node','-e',script,str(path.resolve()),json.dumps(hf.CANONICAL)],text=True))
-        self.assertEqual(len(rows),5)
-        self.assertEqual(len({(r['x'],r['z']) for r in rows}),5)
+        self.assertEqual(len(rows),48)
+        self.assertEqual(len({(r['x'],r['z']) for r in rows}),48)
+        self.assertEqual(sum(r['detail']=='near' for r in rows),8)
+        self.assertEqual({r['style'] for r in rows if r['detail']=='near'}, {'farmhouse','craftsman','modern','ranch'})
+        self.assertTrue(any(r['z']<0 and r['detail']=='near' for r in rows))
         for r in rows:
             self.assertEqual(hf.validate_block_model(r['spec']),[])
             self.assertGreater(abs(r['x'])+abs(r['z']),45)

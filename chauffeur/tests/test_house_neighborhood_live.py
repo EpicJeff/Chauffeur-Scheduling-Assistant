@@ -27,8 +27,8 @@ def main():
             for quality in ('high','low'):
                 page.goto(served.url('house')+'?quality='+quality+'&day=1')
                 page.wait_for_function('window.chfNeighborhood && window.chfNeighborhood() && window.chfNavProbe({settled:true})',timeout=120000)
-                stats=page.evaluate('chfNeighborhood()');print(quality,stats)
-                assert stats['lots']==5 and stats['batches']<=5 and stats['triangles']<20000,stats
+                stats=page.evaluate('chfNeighborhood()');print(quality,{k:v for k,v in stats.items() if k!='placements'})
+                assert stats['lots']==48 and stats['nearLots']==8 and stats['farLots']==40 and stats['horizon'] and stats['batches']<=13 and stats['triangles']<90000,stats
                 budget=page.evaluate('''() => {
                   const s=window.__hpScene,r=window.__hpR,c=window.__hpCam,g=s.getObjectByName('neighborhood');
                   r.render(s,c); const withNeighbors=r.info.render.calls;
@@ -36,7 +36,7 @@ def main():
                   g.visible=true;r.render(s,c);return {added:withNeighbors-alone,withNeighbors,alone};
                 }''')
                 print('draw calls',quality,budget)
-                assert 0<=budget['added']<=10,budget
+                assert 0<=budget['added']<=28,budget
                 for stop in range(8):
                     page.evaluate('(s)=>chfOrbitTo(s)',stop)
                     page.wait_for_function('chfNavProbe({settled:true})',timeout=20000)

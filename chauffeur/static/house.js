@@ -317,7 +317,7 @@
     var scene = new T.Scene();
     scene.background = new T.Color(0xbdb3c7);          // the soft lilac of the reference
     var neighborhoodEnabled = !!window.ChauffeurNeighborhood && new URLSearchParams(location.search).get('editor') !== '1';
-    var cam = new T.PerspectiveCamera(24, 1, 0.1, neighborhoodEnabled ? 500 : 200);
+    var cam = new T.PerspectiveCamera(24, 1, 0.1, neighborhoodEnabled ? 1000 : 200);
     var neighborhood = null;
     /* ---- THE MIRROR (spec 2026-09-17 section 3.4) ----------------------
        A mirrored plan is ONE reflection of the finished house, applied to
@@ -10226,7 +10226,7 @@
     refabConvexity('yard', yardG);
     /* sky dome: weather-painted from the inside, swapped by applyState.
        The dome IS the background now, so the flat clear color retires. */
-    var skyDome = new T.Mesh(new T.SphereGeometry(neighborhoodEnabled ? 220 : 80, 24, 12),
+    var skyDome = new T.Mesh(new T.SphereGeometry(neighborhoodEnabled ? 420 : 80, 24, 12),
       new T.MeshBasicMaterial({ side: T.BackSide }));
     skyDome.rotation.y = Math.PI / 4;   /* UV seam behind the house, not the camera */
     extG.add(skyDome);
@@ -11436,7 +11436,7 @@
       neighborhood = window.ChauffeurNeighborhood.build(T, CANONICAL_JS, {
         main: Object.assign({}, FULL_HOUSE, {south: FULL_HOUSE.south - MAIN_DZ}),
         garage: Object.assign({}, GARAGE_BLOCK, {south: GARAGE_BLOCK.south - GAR_DZ})
-      }, PALETTE, function () { return makeMat(0xffffff, {rough:.95}); });
+      }, PALETTE, function (surface) { return makeMat(0xffffff, {rough:.95, map: surface === 'plain' ? null : cladTex(surface, 0xffffff)}); });
       scene.add(neighborhood.group);
       neighborhood.update(cam.position, toWorld(ORBIT.pivot), true);
     }
@@ -11781,6 +11781,7 @@
     function setNight(n) {
       if (n === nightNow) return;
       nightNow = n;
+      if (neighborhood) neighborhood.setNight(n);
       hemi.intensity = n ? HEMI_I * NIGHT_F.hemi : HEMI_I;
       hemi.color.setHex(n ? NIGHT_F.sky : SKY_C);
       hemi.groundColor.setHex(n ? 0x1b1c22 : GND_C);

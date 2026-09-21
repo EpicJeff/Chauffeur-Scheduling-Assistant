@@ -1,56 +1,66 @@
-# First neighborhood street scene
+# Layered neighborhood street scene
 
-Implements the deferred neighborhood arc from the batching/facade specifications.
-Version 2.499.142. Scope is an exterior street scene around the household's house.
+Version 2.499.143 replaces the five-house exterior slice from 2.499.142.
+The objective is a full neighborhood surrounding the active home, including its rear.
 
-## Design
+## Layout and styles
 
-Five fixed, deterministic lots flank the active house and face it across the street.
-Their valid facade-v3 specs vary body/roof colors, wall finishes, mirrored garages,
-one/two stories, roof forms/directions, porches and opening groups. Generation is
-local and repeatable: no model, address, map service or household data is involved.
+A deterministic seven-by-seven parcel grid leaves the center for the active home:
+eight immediate neighbors, forty simpler outer houses, then a continuous painted
+panorama of distant roofs and trees. Paired rows face shared streets. The ground,
+sidewalks and road extensions reach the horizon instead of ending beside the home.
 
-`house_neighborhood.js` separates plan generation, a reusable lightweight exterior
-projection, and instanced scene construction. It takes the existing renderer's block
-envelopes, palette and material factory. The active home's detailed exterior and
-interiors remain on their existing build path. This is not a replacement renderer
-for all facade features: neighbors use closed low-detail solids, simple windows and
-roof forms, without shell clipping, detailed textures, interiors or interaction.
+Four facade-compatible recipes are independent of parcel placement:
 
-The street/sidewalk continues beyond the active parcel. Each neighbor has a lawn,
-driveway, path and simple trees. Neighbor buildings are rendered at 80% scale to
-keep the household home visually dominant; lots and street remain at scene scale.
-The sky dome and camera far plane expand only in the normal home scene.
+| Style | Distinguishing features |
+| --- | --- |
+| Farmhouse | White batten, steep gables, two stories, black frames, covered porch |
+| Craftsman | Sage lap, lower cross-gables, broad grouped windows, gabled porch with substantial posts and masonry bases |
+| Modern | Greige stucco, black trim, two stories, low hip roofs, flat entry canopy and glazed garage door |
+| Ranch | Single story, pale brick, low hip roofs, grouped windows and shutters |
 
-## Navigation and lifecycle
+The modern recipe respects the existing schema's 22.5-degree minimum and hip/gable
+main-roof vocabulary; it does not introduce flat main roofs. This release uses a
+mixed neighborhood, without an automatic style classifier or a style-selection UI.
 
-The neighborhood is outside `houseRoot`, so mirroring the active home does not move
-the street. All its geometry is marked inert yard scenery. Room views hide it;
-the existing frame loop updates visibility without adding an animation loop.
-Lots whose centers lie within a 24-unit camera-to-house corridor are hidden as a
-whole to keep the active home clear. This can make foreground lots appear/disappear
-while orbiting; continuous fades and neighborhood exploration are future work.
+## Rendering
 
-Photo/editor captures (`editor=1`) omit the neighborhood and retain the old camera
-far plane/sky size. No neighbors can enter the photo review's reference render.
+`house_neighborhood.js` consumes the shared facade schema, block envelopes, palette
+and material factory. Nearest houses are full-scale exterior projections with the
+active renderer's procedural cladding/shingle tiles, foundations, corner/eave trim,
+window frames/grilles/sills, fences and fuller trees. These are medium-detail scenery,
+not copies of the active home's detailed interior/cutaway renderer. Outer houses
+omit textures and most trim/yard details while preserving style and silhouette.
 
-Instances share five geometry batches and one material. No neighbor lights or shadow
-casters are added. A disposer releases instance buffers, geometries and material;
-context-loss fallback calls it before dropping the WebGL scene. Read-only
-`chfNeighborhood()` exposes placement, visibility and budget diagnostics.
+The horizon is a deterministic 4096x512 canvas on a continuous cylindrical surface;
+wrapped painter copies prevent a seam. Transparent sky reveals the existing weather
+sky dome. Its tint follows the active home's day/night transition. No images, providers, map service,
+address or household data are requested. All scenery remains render-on-demand.
 
-## Acceptance
+Instanced geometry shares surface materials. Active cladding textures are borrowed
+from its cache; the neighborhood owns and disposes its materials, instance buffers,
+geometries and panorama texture. The sky/far plane grow only in normal house views.
 
-- Generated facade specs validate; repeated generation is identical and leaves the
-  canonical spec untouched.
-- The geometry budget is 429 instances / 5,094 triangles, independent of household
-  state. Initial browser measurement: ten additional draw calls on high, five on low.
-- Chromium checks high/low tiers, all eight orbit stops, room entry/exit, a real room
-  marker click, and photo/editor isolation; desktop and narrow-screen screenshots inspected.
-- Pure builder tests cover foreground visibility and resource disposal.
-- Existing facade validation/storage scenarios pass.
+## Navigation and limits
 
-Device-level Raspberry Pi frame-time testing remains outstanding. Draw-call/triangle
-measurements establish the added geometry cost, not a frame-rate guarantee.
-Neighbor interiors, saved neighbor editing, roaming cameras and map-derived parcels
-are outside this first slice.
+The neighborhood stays outside `houseRoot`, independent of the active house's mirror.
+It has no room hit-testing or household state. Room views hide the whole neighborhood.
+Foreground lots within the camera-to-house corridor hide to preserve active-home
+visibility; lots can appear/disappear while orbiting. Photo/editor captures (`editor=1`)
+exclude all scenery and retain the original sky and far plane.
+
+`chfNeighborhood()` reports near/far counts, style, placement, visibility and geometry
+budgets. The current scene has 5,407 instances and 77,932 triangles including the
+panorama, in twelve batches. Chromium measured 23 added draw calls on high and twelve on low.
+Device-level Raspberry Pi frame times remain unverified.
+
+## Verification
+
+Pure tests validate all 48 facade specs, generation stability, no canonical mutation,
+all four styles in the near ring, rear coverage, near/far detail differences, inert
+picking, camera/room visibility and resource disposal. Browser checks cover high/low
+quality, all eight orbit stops, room entry/exit and marker clicks, narrow-screen layout,
+editor isolation and the rendered panorama. No live model calls are required.
+
+Neighbor interiors, roaming, saved neighbor editing and automatic matching to the
+user's house style remain outside this slice.
