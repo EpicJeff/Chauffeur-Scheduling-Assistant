@@ -8638,3 +8638,22 @@ Roof details now exposes the existing window checkbox for added gables as well a
 dormers. Select any slot within the gable, choose Roof details and toggle Gable window.
 The existing editor apply/save and renderer window setting are unchanged. Verified
 with the editor method suite and a Chromium check of the actual Alpine checkbox.
+
+
+### Opening assemblies - v2.499.141 (2026-09-21)
+
+Windows & doors separates occupied slot span from unit count. Windows offer Single,
+Pair, Triple or Four; shutters flank only the outer units. Count no longer expands
+span or gets reduced to span by normalization. Compact groups scale to their space.
+Entry doors offer Single/Double, centred within their span. Double doors use two
+mirrored handles/leaves, shared outer trim, and one coach light outside the assembly.
+Missing count retains single-door behavior; optional count=2 is additive to facade v3.
+Editing an interior slot of a group or door retains the assembly anchor and span;
+shortening it does not leave a duplicate assembly behind.
+
+Photo prompts, detail provider schema, configuration schema and compiler support
+these assemblies. Entry count above two is rejected by strict validation/schema.
+The photo compiler retains door width and count, and window counts independent of
+width. Structural locking still applies. No live model calls were used for validation.
+Checks: 64 photo tests, facade scenarios, actual editor methods and desktop/touch
+Chromium renders of single/double doors, outside-shutter triples and compact groups.

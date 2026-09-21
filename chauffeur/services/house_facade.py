@@ -374,6 +374,8 @@ def validate_block_model(obj, *, _range_notes=None):
                     errs.append(f'{p}.{key} missing')
             if kind == 'window' and 'count' in e and (type(e['count']) is not int or not 1 <= e['count'] <= 4):
                 errs.append(f'{p}.count must be an integer from 1 to 4')
+            if kind == 'door' and 'count' in e and (type(e['count']) is not int or e['count'] not in (1, 2)):
+                errs.append(f'{p}.count must be 1 or 2')
             if kind == 'window' and 'story' in e and e['story'] not in (1, 2):
                 errs.append(f'{p}.story must be 1 or 2')
             if kind == 'porch' and e.get('roof') not in PORCH_ROOFS:
@@ -417,6 +419,9 @@ def _entries(raw_list, kinds, notes, layer):
             if _int(e.get('count'), 1) > 1:
                 item['count'] = min(4, _int(e.get('count'), 1))
             item['story'] = 2 if _int(e.get('story'), 1) == 2 else 1
+        elif kind == 'door':
+            if _int(e.get('count'), 1) >= 2:
+                item['count'] = 2
         elif kind == 'porch':
             item['type'] = _pick(e.get('type'), PORCH_TYPES, 'covered')
             item['roof'] = _pick(e.get('roof'), PORCH_ROOFS, 'flat')
@@ -747,7 +752,7 @@ def normalize(raw):
         if not (m_lo <= d['slot'] <= m_hi):
             notes.append(f"front door moved onto the main face (was slot {d['slot']})")
             d['slot'] = min(max(d['slot'], m_lo), m_hi)
-        d['span'] = 1
+        d['span'] = min(d['span'], m_hi - d['slot'] + 1)
     if not doors:
         ground.append(dict(next(g for g in CANONICAL['ground'] if g['kind'] == 'door')))
         notes.append('a house needs a front door: the canonical one was added')
@@ -889,9 +894,6 @@ def normalize(raw):
             porch['gable_offset'] = min(porch['gable_offset'], porch['span'] - 1)
             porch['gable_span'] = min(porch['gable_span'], porch['span'] - porch['gable_offset'])
     for entry in exclusive:
-        if entry['kind'] == 'window' and entry.get('count', 1) > entry['span']:
-            entry['count'] = entry['span']
-            notes.append(f"window group at slot {entry['slot']} reduced to {entry['count']} windows to fit its remaining span")
         if entry.get('count') == 1:
             entry.pop('count', None)
     spec['ground'] = sorted(exclusive + porches, key=lambda g: (g['slot'], g.get('story', 1), g['kind']))
@@ -1110,7 +1112,7 @@ Return exactly this shape (a fraction-based feature has "block"/"at"/"width" ins
                 "base": null | {{"material": one of {claddings}, "height": number, "body": one of {body}}},
                 "orientation": one of {orientations}}}}},
   "ground": [{{"block": "main"|"garage", "at": 0..1, "width": 0..1, "kind": "window", "size": one of {window_sizes}, "shutters": bool, "count": integer 1..4, "story": 1|2}}
-            | {{"block","at","width","kind":"door"}}
+            | {{"block","at","width","kind":"door","count": integer 1..2}}
             | {{"block","at","width","kind":"garage_door","style": one of {garage_styles}, "leaves": 1|2}}
             | {{"block","at","width","kind":"porch","type": one of {porch_types}, "roof": one of {porch_roofs}}}],
   "roof": [{{"block": "main"|"garage", "at": 0..1, "width": 0..1, "kind": one of {roof_kinds_features}, "window": bool}}],
@@ -1132,8 +1134,9 @@ Story defaults may name main and/or garage, stories "1" and/or "2"; they wrap th
 Finish spans affect the street-facing wall only, even behind windows or doors.
 Window count is the number of adjacent framed units in ONE group. Default is 1.
 Span/width reserves wall area; it does NOT multiply windows or stretch one window.
-Use count=2 for a paired opening, count=3 for a tripartite group, with at least
-one slot per unit. Three separate upstairs openings require THREE separate entries
+Use count=2 for a paired opening, count=3 for a tripartite group; count is independent
+of slot span. Entry door count is 1 or 2, centred within its span with shared trim
+and outside lighting. Three separate upstairs openings require THREE separate entries
 with story=2, located wholly inside the matching upper span. Never omit those entries
 merely because upper describes the wall. Shutters flank the outside of the group.
 Material and color are DIFFERENT fields. cladding/base.material must be exactly one
@@ -1156,7 +1159,7 @@ Use roof "shed" for a porch cover with only one slope.
 If the garage is not visible, describe it
 as the visible wing mapped to that block; never omit it. Do not invent a street garage door.
 Use the observed facade geometry to choose the mapping and report uncertainty.
-Preserve every confidently visible window group; report obscured counts as uncertain. The front door goes on the main block. Anything real
+Preserve every confidently visible window group; report obscured counts as uncertain. Opening count is independent of width/span. A single opening is centred; window groups have outside-only shutters. Entry doors support count 1 or 2 with shared trim and outside lighting. The front door goes on the main block. Anything real
 about the house that this schema has no field for -- a shape, a material, a massing detail --
 goes in "unexpressed" as a short phrase, never invented into a field that doesn't fit it. No prose."""
 

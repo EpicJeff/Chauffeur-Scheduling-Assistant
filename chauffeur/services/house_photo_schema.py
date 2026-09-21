@@ -32,7 +32,7 @@ def house_schema(*, fractional=False):
         return obj(p,[k for k in p if k not in optional])
     ground={'anyOf':[
       feature('window',{'size':enum(h.WINDOW_SIZES),'shutters':BOOL,'story':number(1,2,True),'count':number(1,4,True)},('count',)),
-      feature('door',{}),feature('garage_door',{'style':enum(h.GARAGE_STYLES),'leaves':number(1,2,True)}),
+      feature('door',{'count':number(1,2,True)},('count',)),feature('garage_door',{'style':enum(h.GARAGE_STYLES),'leaves':number(1,2,True)}),
       feature('porch',{'type':enum(h.PORCH_TYPES),'roof':enum(h.PORCH_ROOFS),'gable_offset':number(0,17,True),'gable_span':number(1,18,True)},('gable_offset','gable_span'))]}
     return obj({'version':{'type':'integer','enum':[3]},'mirror':BOOL,'viewpoint':enum(('left','centre','right')),
       'pitch_deg':number(h.PITCH_MIN,h.PITCH_MAX),'style':obj({k:enum(h.STYLE[k]) for k in ('roof','frame','door','trim')}),

@@ -5856,11 +5856,12 @@
       }
       var e = spanX(feat), slot = e.slot, g = shellGroup();
       var size = WINDOW_SIZES[feat.size] || WINDOW_SIZES.standard;
-      var w = size[0], h = size[1], cx = e.cx, z = slot.z;
+      var w = size[0], h = size[1], cx = e.cx, z = slot.z, groupScale = 1;
       if (count > 1) {
         // Reserve outer shutters and casing, then fit adjacent framed units.
         var available = e.w - (feat.shutters ? 0.76 : 0.20);
-        w = Math.min(w, (available - 0.40 * count) / count);
+        w = Math.max(0.35, Math.min(w, (available - 0.40 * count) / count));
+        groupScale = Math.min(1, e.w / (count * (w + 0.40) + (feat.shutters ? 0.56 : 0)));
         cx += (unit - (count - 1) / 2) * (w + 0.40);
       }
       /* MASSING ARC 2 task 7 (spec section 3.2): a story-2 window is the
@@ -5963,6 +5964,7 @@
          is a hole in a wall, and when the mask takes the wall around it
          the kit rule (box centre masked) takes the window with it, so
          no black frame stands floating in the opening. */
+      g.scale.x = groupScale; g.position.x = e.cx * (1 - groupScale);
       shellRegister(g, 'facade_' + slot.face + '_window_' + feat.slot +
                     (s2 ? '_s2' : '') + (count > 1 ? '_unit' + unit : ''), [0, 0, 1], slot.room, true);
     }
@@ -5985,36 +5987,41 @@
          other door colour drops the map and takes the palette hex,
          because a red door mapped with oak reads as neither. */
       var woodMap = (FSTYLE.door === 'wood') ? woodDoor : null;
-      var leaf = new T.Mesh(
-        NICE ? chamferGeo(0.14, 3.2, 1.4, 0.04) : new T.BoxGeometry(0.14, 3.2, 1.4),
-        PBR ? new T.MeshStandardMaterial(woodMap
-                ? { map: woodMap, roughness: 0.65 }
-                : { color: FARMHOUSE.wood, roughness: 0.65 })
-            : new T.MeshLambertMaterial(woodMap
-                ? { color: 0xc9a06c, map: woodMap }
-                : { color: FARMHOUSE.wood }));
-      leaf.rotation.y = Math.PI / 2;
-      leaf.position.set(x, 1.6, z);
-      dtag(leaf); finish(leaf); g.add(leaf);
-      dtag(box(0.14, 3.44, 0.13, 0xe4ddd1, x - 0.65, 1.72, z, g, sharp()));
-      dtag(box(0.14, 3.44, 0.13, 0xe4ddd1, x + 0.65, 1.72, z, g, sharp()));
-      dtag(box(1.86, 0.14, 0.13, 0xe4ddd1, x, 3.37, z, g, sharp()));
-      if (DETAIL >= 2) {
-        dtag(box(0.90, 1.20, 0.02, 0x6f5433, x, 2.14, z + 0.075, g, WOODM));
-        dtag(box(0.90, 0.98, 0.02, 0x6f5433, x, 0.82, z + 0.075, g, WOODM));
-        dtag(box(0.74, 1.04, 0.04, 0xc79b63, x, 2.14, z + 0.080, g, WOODM));
-        dtag(box(0.74, 0.82, 0.04, 0xc79b63, x, 0.82, z + 0.080, g, WOODM));
+      var doorCount = feat.count === 2 ? 2 : 1;
+      for (var leafIndex = 0; leafIndex < doorCount; leafIndex++) {
+        var leafX = x + (leafIndex - (doorCount - 1) / 2) * 1.4;
+        var leaf = new T.Mesh(
+          NICE ? chamferGeo(0.14, 3.2, 1.4, 0.04) : new T.BoxGeometry(0.14, 3.2, 1.4),
+          PBR ? new T.MeshStandardMaterial(woodMap
+                  ? { map: woodMap, roughness: 0.65 }
+                  : { color: FARMHOUSE.wood, roughness: 0.65 })
+              : new T.MeshLambertMaterial(woodMap
+                  ? { color: 0xc9a06c, map: woodMap }
+                  : { color: FARMHOUSE.wood }));
+        leaf.rotation.y = Math.PI / 2;
+        leaf.position.set(leafX, 1.6, z);
+        dtag(leaf); finish(leaf); g.add(leaf);
+        if (DETAIL >= 2) {
+          dtag(box(0.90, 1.20, 0.02, 0x6f5433, leafX, 2.14, z + 0.075, g, WOODM));
+          dtag(box(0.90, 0.98, 0.02, 0x6f5433, leafX, 0.82, z + 0.075, g, WOODM));
+          dtag(box(0.74, 1.04, 0.04, 0xc79b63, leafX, 2.14, z + 0.080, g, WOODM));
+          dtag(box(0.74, 0.82, 0.04, 0xc79b63, leafX, 0.82, z + 0.080, g, WOODM));
+        }
+        var knob = latheAt('knob', [0.06, 0.1, 0.06], 0xd8c48a, leafX + (leafIndex === 1 ? -0.55 : 0.55),
+                           1.6, z + 0.07, g, CHROME);
+        knob.rotation.x = Math.PI / 2;
+        dtag(knob);
       }
-      var knob = latheAt('knob', [0.06, 0.1, 0.06], 0xd8c48a, x + 0.55,
-                         1.6, z + 0.07, g, CHROME);
-      knob.rotation.x = Math.PI / 2;
-      dtag(knob);
+      var halfFrame = doorCount === 2 ? 1.35 : 0.65;
+      dtag(box(0.14, 3.44, 0.13, 0xe4ddd1, x - halfFrame, 1.72, z, g, sharp()));
+      dtag(box(0.14, 3.44, 0.13, 0xe4ddd1, x + halfFrame, 1.72, z, g, sharp()));
+      dtag(box(doorCount === 2 ? 3.26 : 1.86, 0.14, 0.13, 0xe4ddd1, x, 3.37, z, g, sharp()));
       /* the coach lamp beside the door: the garage lamp's own shade,
          finial and cap language (a geometry cache hit through latheAt),
          and the only mesh carrying userData.lamp inside THIS piece's own
          merge pass -- webgl_coachLampGlass2 fences it, far below. Room
          tagged but never entry tagged: a lamp is not a door. */
-      var lampX = x - 0.85, lampZ = slot.z + 0.05;
+      var lampX = x - (doorCount === 2 ? 1.65 : 0.85), lampZ = slot.z + 0.05;
       var lamp = latheAt('shade', [0.37, 0.34, 0.37], 0xf7e8c2,
                          lampX, 2.59, lampZ, g, GLOSS);
       lamp.userData.room = slot.room;
@@ -6036,6 +6043,8 @@
       /* VIEW-VOLUME MASKING (task 2): a door is a leaf, casing, panels,
          a lathe knob and a coach lamp (lathe + cylinder cap) -- a kit,
          never a single convex solid. */
+      var doorScale = doorCount === 2 ? Math.min(1, e.w / 3.7) : 1;
+      g.scale.x = doorScale; g.position.x = x * (1 - doorScale);
       shellRegister(g, 'facade_' + slot.face + '_door_' + feat.slot,
                     [0, 0, 1], slot.room, true);
     }
@@ -6064,7 +6073,7 @@
         var doorX = null;
         (((SPEC || CANONICAL_JS).ground) || []).forEach(function (f) {
           if (f.kind === 'door' && f.slot >= feat.slot &&
-              f.slot < feat.slot + feat.span) doorX = SLOTS[f.slot].cx;
+              f.slot < feat.slot + feat.span) doorX = spanX(f).cx;
         });
         var A = (doorX === null) ? X : doorX;
         [-1, 1].forEach(function (side) {

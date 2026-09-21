@@ -39,7 +39,10 @@ perpendicular roof. Porch gables are owned by a porch, never by a building roof.
 Each porch references its wall volume. Give one continuous covered porch interval even
 when a small entrance gable interrupts it. Gables on a shed porch produce a mixed roof.
 Openings have owner ids of an existing volume or gable and explicit count of FRAMED units,
-not panes. Ground-floor doors/windows under a porch preferably reference its wall volume;
+not panes. Window count 1..4 is independent of width: one centred window or a group
+with shutters only at the outside edges. Entry door count is 1 or 2: two mirrored
+leaves share one frame and exterior lighting. Width is the whole assembly's extent.
+Ground-floor doors/windows under a porch preferably reference its wall volume;
 a porch owner is also accepted and resolves through the porch to that same wall volume.
 Upper openings must reference a two-story volume; attic windows must reference a gable.
 List each separated upstairs window independently. Include shutters when visible.
@@ -70,7 +73,8 @@ def analysis_schema(version=2):
       'gables':arr(obj({'id':TEXT,'owner':TEXT,**region,'kind':enum(('cross','end','unknown')),'evidence':TEXT})),
       'dormers':arr(obj({'id':TEXT,'owner':TEXT,**region,'roof':enum(('gable','shed')),'window':BOOL})),
       'openings':arr(obj({'id':TEXT,'owner':TEXT,**region,'kind':enum(('window','door','garage_door')),
-        'level':enum(('ground','upper','attic')),'count':number(1,4,True),
+        'level':enum(('ground','upper','attic')),'count':{**number(1,4,True),
+            'description':'Units within this opening, independent of width: windows 1..4; entry doors 1..2 mirrored leaves sharing trim and outside light.'},
         'size':enum(('small','standard','tall','unknown')),'shutters':BOOL})),
       'finishes':arr(obj({**region,'story':enum(('ground','upper','base')),
         'material':enum((*h.CLADDINGS,'unknown')),'colour':enum((*h.STYLE['body'],'unknown'))})),
@@ -146,6 +150,7 @@ def validate_analysis(value, *, _shape_only=False, _fit_openings=False):
             if layer != 'porches' and not (_fit_openings and layer=='openings' and row['level']!='attic') and (row['at']<parent['at']-.02 or row['at']+row['width']>parent['at']+parent['width']+.02):
                 errors.append(row['id']+' extends beyond its owner')
             if layer=='openings':
+                if row['kind']=='door' and row['count'] not in (1,2):errors.append(row['id']+' entry door count must be 1 or 2')
                 if owner[0]=='porches':
                     wall=ids.get(parent['owner'])
                     if row['level']!='ground' or row['kind'] not in ('window','door'):
@@ -421,12 +426,11 @@ def compile_analysis(analysis):
         spans=parts(owner)
         if o['kind']=='door':spans=[(max(6,s),e) for s,e in spans if e>6]
         if o['kind']=='garage_door':spans=[(0,3)]
-        size=max(count if o['kind']=='window' else 1,end-start)
-        if o['kind']=='door':size=1
+        size=max(1,end-start)
         choices=[]
         for lo,hi in spans:
             if level==2 and not any(u['slot']<=lo and hi<=u['slot']+u['span'] for u in spec['upper']):continue
-            for w in range(min(size,hi-lo), (count if o['kind']=='window' else 1)-1,-1):
+            for w in range(min(size,hi-lo), 0,-1):
                 for cell in range(lo,hi-w+1):
                     if not occupied[level].intersection(range(cell,cell+w)):
                         choices.append((abs(cell+w/2-(start+end)/2)+abs(w-size)*.25,cell,w))
@@ -435,7 +439,7 @@ def compile_analysis(analysis):
         row={'slot':cell,'span':width,'kind':o['kind']}
         if o['kind']=='window':row.update(size=o['size'] if o['size']!='unknown' else 'standard',shutters=o['shutters'],story=level,count=count)
         elif o['kind']=='garage_door':row.update(style='panel',leaves=2 if count>1 else 1);spec['blocks']['garage']['orientation']='front'
-        elif count>1:notes.append(o['id']+': multiple entry door leaves use the renderer\'s single entry door.')
+        elif o['kind']=='door' and count==2:row['count']=2
         if cell!=start or width!=end-start:notes.append(o['id']+': opening quantized/repositioned to fit fixed slots.')
         occupied[level].update(range(cell,cell+width));spec['ground'].append(row)
         mapping.append({'id':o['id'],'kind':o['kind'],'owner':o['owner'],'wall_owner':wall_owner,'slot':cell,'span':width,'count':count})

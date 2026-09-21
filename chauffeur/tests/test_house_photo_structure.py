@@ -51,6 +51,31 @@ class StructureTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'only openings'):
                 apply_details(s, locked, details() | {field: []})
 
+    def test_opening_counts_are_independent_of_span_and_round_trip(self):
+        spec=copy.deepcopy(hf.CANONICAL)
+        spec['ground']=[{'slot':7,'span':2,'kind':'window','size':'standard','shutters':True,'count':3,'story':1},
+                        {'slot':10,'span':3,'kind':'door','count':2}]
+        clean,_=hf.normalize(spec)
+        window=next(g for g in clean['ground'] if g['kind']=='window' and g['slot']==7)
+        door=next(g for g in clean['ground'] if g['kind']=='door')
+        self.assertEqual((window['count'],window['span']),(3,2))
+        self.assertEqual((door['count'],door['span']),(2,3))
+        self.assertEqual(hf.normalize(clean)[0],clean)
+        self.assertEqual(hf.validate_block_model(clean),[])
+        door['count']=3
+        self.assertTrue(any('count must be 1 or 2' in e for e in hf.validate_block_model(clean)))
+
+    def test_photo_details_compile_double_door_and_schema_caps_count(self):
+        s=structure();locked,_,_=compile_structure(s)
+        revised,notes,_=apply_details(s,locked,details())
+        self.assertEqual(next(g for g in revised['ground'] if g['kind']=='door')['count'],2)
+        self.assertEqual(geometry(locked),geometry(revised))
+        branches=detail_schema()['properties']['openings']['items']['anyOf']
+        door=next(b for b in branches if b['properties']['kind']['enum']==['door'])
+        self.assertEqual(door['properties']['count']['maximum'],2)
+        d=details();next(o for o in d['openings'] if o['kind']=='door')['count']=3
+        with self.assertRaisesRegex(ValueError,'door count must be 1 or 2'):apply_details(s,locked,d)
+
     def test_varied_architecture_matrix_and_mirrors(self):
         # Deliberately general synthetic inputs: test compilation, not recognition.
         for stories in ('one', 'two'):

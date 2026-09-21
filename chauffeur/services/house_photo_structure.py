@@ -33,7 +33,11 @@ architecture. All positions use the primary photo's full FRONT facade axis, 0..1
 Other images clarify appearance, not front positions. Do not describe side-facing
 windows or garage doors as front openings. Use only the supplied owner IDs.
 Upper openings belong to two-story volumes; attic windows belong to gables.
-Count framed units, not panes. Keep separate upstairs windows separate.
+Count framed units, not panes. Window count 1..4 is independent of occupied width:
+one centred window or one group, with shutters only outside the group. Door count
+must be 1 or 2; a double door is ONE opening with two mirrored leaves, shared trim
+and lighting outside the assembly. Width covers the whole opening, not each leaf.
+Keep separate upstairs windows separate.
 Do not change stories, wall widths, projections, roofs, porches or garage orientation.
 Use permitted material/color values, unknown when uncertain. Report unsupported
 details briefly in limitations. Return the detail schema only.
@@ -51,8 +55,16 @@ def structure_schema():
 
 def detail_schema():
     base = analysis_schema(1)['properties']
-    return obj({k: copy.deepcopy(base[k]) for k in
-                ('openings', 'finishes', 'palette', 'limitations')})
+    fields = {k: copy.deepcopy(base[k]) for k in ('openings', 'finishes', 'palette', 'limitations')}
+    variants = []
+    for kind in ('window', 'door', 'garage_door'):
+        opening = copy.deepcopy(base['openings']['items'])
+        opening['properties']['kind'] = enum((kind,))
+        if kind == 'door':
+            opening['properties']['count']['maximum'] = 2
+        variants.append(opening)
+    fields['openings'] = arr({'anyOf': variants})
+    return obj(fields)
 
 
 def review_schema():

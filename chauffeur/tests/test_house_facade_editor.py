@@ -87,6 +87,20 @@ editor.facadeCell.porch.span = 2;
 editor.facadeCellApply();
 assert.equal(editor.facadeCell.porch.gable_offset,1,'shortening porch keeps gable inside');
 assert.equal(editor.facadeCell.porch.gable_span,1);
+editor.facadeDraft.ground = [{slot:7,span:2,kind:'window',count:3,size:'standard',story:1,shutters:false},
+ {slot:10,span:3,kind:'door',count:2}];
+editor.facadeCellSelect(8);
+editor.facadeCell.ground.shutters = true;
+editor.facadeCellApply();
+assert.deepEqual(editor.facadeDraft.ground.find(g=>g.kind==='window'),
+ {slot:7,span:2,kind:'window',count:3,size:'standard',story:1,shutters:true});
+editor.facadeCellSelect(11);
+editor.facadeCell.ground.count = 1;
+editor.facadeCellApply();
+assert.deepEqual(editor.facadeDraft.ground.find(g=>g.kind==='door'),{slot:10,span:3,kind:'door'});
+editor.facadeCell.ground.span=2;
+editor.facadeCellApply();
+assert.equal(editor.facadeDraft.ground.filter(g=>g.kind==='door').length,1,'shortening does not duplicate an assembly');
 console.log('facade editor slot/layer isolation OK');
 '''
     subprocess.run(['node', '-e', script], check=True)

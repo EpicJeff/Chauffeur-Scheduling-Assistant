@@ -82,3 +82,15 @@ opening is left unplaced with an explicit note; other details still compile. Unk
 owner IDs remain errors. Raw responses remain in diagnostics and the geometry lock
 still applies. Synthetic tests cover unique, missing and ambiguous matches; the
 reported o10 response was not available in the local export.
+
+
+## Opening assemblies (2.499.141)
+
+Width/span describes occupied space, not unit count. Windows support 1..4 framed
+units, with shutters only at the group edges. Entry doors support 1..2 mirrored
+leaves within one assembly, shared outer trim and one outside light. Single units
+are centred. Both compiler and editor preserve door spans and explicit counts.
+Optional count is backward-compatible: absent means one. The detail response schema
+uses kind-specific branches to limit entry count to two; strict compiler validation
+also enforces this. Compact window groups fit to the available span. Roof/story
+geometry remains locked throughout the detail pass.
