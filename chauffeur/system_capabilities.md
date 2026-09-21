@@ -8622,3 +8622,11 @@ existing gable containing the opening. No match or multiple matches leave only t
 attic opening unplaced, with a note, instead of withholding all windows/materials.
 Unknown IDs remain strict. Architecture geometry invariance is still required.
 61 photo tests pass; unique/absent/ambiguous ownership regressions are synthetic.
+
+
+### Photo cooldown visibility - v2.499.139 (2026-09-21)
+
+Photo upload and staged review/detail errors now preserve the admission layer's
+retry_at as a UTC timestamp in the displayed reason. No cooldown, allowance or
+model fallback policy changes. Mocked tests cover paused uploads and details;
+no live requests were made to diagnose the reported pool exhaustion.

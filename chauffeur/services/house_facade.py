@@ -1329,6 +1329,20 @@ def _photo_context(photos, *, annotations=True):
             'are as seen while facing the primary facade.')
 
 
+def _photo_provider_error(response):
+    """Keep admission's retry time visible without bypassing request limits."""
+    if not isinstance(response, dict):
+        return 'invalid response'
+    message = str(response.get('error') or 'invalid response')
+    retry_at = response.get('retry_at')
+    if isinstance(retry_at, (int, float)) and math.isfinite(retry_at) and retry_at > 0:
+        try:
+            message += '. Retry after ' + time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(retry_at))
+        except (ValueError, OverflowError, OSError):
+            pass
+    return message
+
+
 def from_photo(image_b64, mime, supplemental=None):
     """Analyze structure first; the render review adds locked details. TTL: 15 minutes."""
     from services import model_pools
@@ -1390,7 +1404,7 @@ def from_photo(image_b64, mime, supplemental=None):
             observed = call(STRUCTURE_PROMPT, photo_context + '\nDescribe stories, roof planes, wall widths and porch coverage first.',
                             3, 'structure', structure_schema())
             if not isinstance(observed, dict) or observed.get('error'):
-                message = (observed or {}).get('error', 'invalid analysis response') if isinstance(observed, dict) else 'invalid analysis response'
+                message = _photo_provider_error(observed)
                 raise ValueError(message)
             run['raw_observations'] = copy.deepcopy(observed)
             # Compile first; invalid analyses never become cached successful inputs.
@@ -1557,7 +1571,7 @@ def critique(token, render_png_b64, *, automatic=False):
                            ([{'mime':'image/png','b64':render_png_b64}] if render else []))
                 e['photo_trace'][stage + '_raw'] = copy.deepcopy(response)
                 if not isinstance(response, dict) or response.get('error'):
-                    raise ValueError(response.get('error', 'invalid response') if isinstance(response, dict) else 'invalid response')
+                    raise ValueError(_photo_provider_error(response))
                 return response
             finally:
                 stage_records.append({'name':stage,'models':list(attempts[start:]),'requests':len(attempts)-start})

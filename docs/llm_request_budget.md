@@ -59,3 +59,8 @@ tokens retain their previous review limits (one automatic, three manual).
 Compilation is local and has no provider cost. Pool request traces are recorded immediately before HTTP after
 admission: local deferrals count zero and do not consume foreground fallback allowance.
 Failed transmitted requests still count. Existing workflow pauses remain enforced.
+
+
+As of v2.499.139, photo errors display the provided retry_at timestamp in UTC.
+A generic pause message alone cannot distinguish short rate limits from daily quota
+or another model cooldown. This display change does not clear or bypass admission.

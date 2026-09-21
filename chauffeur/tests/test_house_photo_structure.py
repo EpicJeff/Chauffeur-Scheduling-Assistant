@@ -224,5 +224,21 @@ class StructureTests(unittest.TestCase):
             self.assertIsNone(hf._DRAFTS[token]['result'])
             self.assertEqual(api.call_count,2)
 
+    def test_paused_upload_and_details_show_retry_time_without_extra_calls(self):
+        failure={'error':'AI requests paused after provider failure','deferred':True,'retry_at':1790000000}
+        with patch.object(hf,'_settings',return_value={'llm_gemini_api_key':'offline'}),patch(
+                'services.model_pools.call_pool_json',return_value=failure) as api:
+            _,_,error,_=hf.from_photo('paused','image/png')
+            self.assertIn('Retry after 2026-09-21 14:13:20 UTC',error)
+            self.assertEqual(api.call_count,1)
+        s=structure()
+        with patch.object(hf,'_settings',return_value={'llm_gemini_api_key':'offline'}),patch(
+                'services.model_pools.call_pool_json',side_effect=[s,review(s),failure]) as api:
+            _,_,_,token=hf.from_photo('paused-details','image/png')
+            result,_=hf.critique(token,'render',automatic=True)
+            self.assertTrue(any('Retry after 2026-09-21 14:13:20 UTC' in r for r in result['reasons']))
+            self.assertIsNotNone(result['revised'])
+            self.assertEqual(api.call_count,3)
+
 
 if __name__ == '__main__': unittest.main()
