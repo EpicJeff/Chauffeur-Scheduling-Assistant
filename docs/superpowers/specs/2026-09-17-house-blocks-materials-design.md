@@ -385,3 +385,12 @@ configuration, pre-normalization configuration, notes and revision diagnostics i
 `photo_trace`. Exports retain this provenance without photo bytes. The record identifies
 draft/revision/edited saved results. Expired tokens yield an explicit missing-trace
 status instead of implying that old responses were retained.
+
+
+### Photo material alias amendment ? v2.499.118 (2026-09-21)
+
+The photo-only validation adapter maps a bounded list of recognizable material aliases
+before strict validation. In particular, painted_brick/cream_brick are body colors but
+can be safely interpreted as brick when returned as material/cladding. Valid explicit
+body colors are preserved. Unknown materials remain errors, now including the rejected
+value. Mapping notes remain in photo diagnostics. Normal editor validation is unchanged.

@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.117 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.118 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8278,3 +8278,15 @@ edits. Expired review tokens produce an explicit unavailable status; diagnostics
 cannot reconstruct old model responses. Rendering a group does not alter upper spans,
 roofs, porch coverage, or existing saved designs. Offline and high-quality browser
 checks cover pairs/triples, both stories, mirroring, persistence and removed windows.
+
+
+### v2.499.118 ? Photo material aliases (2026-09-21)
+
+Photo validation recognizes explicit material aliases in block cladding, bases, finish
+spans, story finishes and roof cladding. Painted/cream brick color names become brick
+material, with the implied body color used only if no valid explicit body color exists.
+Board-and-batten, lap siding, brick/stone veneer and shingle aliases are likewise mapped.
+Every conversion is noted and operates on a copy. Unknown values and wrong types remain
+invalid; ordinary editor validation remains strict. Prompts distinguish material enums
+from body colors, and enum errors display the rejected value. Both photo generation and
+critique use the same adapter. Offline regression tests passed; no Gemini calls needed.

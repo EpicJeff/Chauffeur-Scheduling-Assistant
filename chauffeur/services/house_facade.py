@@ -229,7 +229,7 @@ def validate_block_model(obj, *, _range_notes=None):
     def enum(d, key, allowed, path):
         v = need(d, key, str, path)
         if v is not None and v not in allowed:
-            errs.append(f'{path}.{key} not one of {list(allowed)}')
+            errs.append(f'{path}.{key}={v!r} not one of {list(allowed)}')
         return v
 
     def rng(d, key, lo, hi, path):
@@ -1102,6 +1102,10 @@ Use count=2 for a paired opening, count=3 for a tripartite group, with at least
 one slot per unit. Three separate upstairs openings require THREE separate entries
 with story=2, located wholly inside the matching upper span. Never omit those entries
 merely because upper describes the wall. Shutters flank the outside of the group.
+Material and color are DIFFERENT fields. cladding/base.material must be exactly one
+of batten, lap, brick, stone, stucco, shingle. painted_brick and cream_brick are BODY
+colors, never materials. White-painted brick means material="brick", body="painted_brick".
+Board-and-batten means cladding="batten". Use these exact enum values in every finish.
 Rules: colours are the NEAREST palette name, never hex.
 For a continuous sloping porch cover with a smaller front gable, use porch roof "mixed".
 Its optional gable_offset and gable_span count slots relative to the porch start; defaults are 0 and 2.
@@ -1170,12 +1174,49 @@ def _snap_fractions(obj, notes=None, photo_coordinates=False):
     return out
 
 
+# Photo models sometimes put a finish/color name in the material field. These
+# explicit aliases preserve meaning; unknown materials still fail validation.
+_PHOTO_MATERIAL_ALIASES = {
+    'board and batten': ('batten', None), 'board & batten': ('batten', None),
+    'board batten': ('batten', None), 'clapboard': ('lap', None),
+    'lap siding': ('lap', None), 'horizontal siding': ('lap', None),
+    'brick veneer': ('brick', None), 'stone veneer': ('stone', None),
+    'painted brick': ('brick', 'painted_brick'), 'white brick': ('brick', 'painted_brick'),
+    'cream brick': ('brick', 'cream_brick'), 'red brick': ('brick', 'brick_red'),
+    'brick red': ('brick', 'brick_red'), 'stone grey': ('stone', 'stone_grey'),
+    'shingles': ('shingle', None), 'cedar shingles': ('shingle', None),
+    'shake': ('shingle', None), 'shakes': ('shingle', None),
+}
+
+
+def _repair_photo_materials(value, notes, path='house'):
+    if isinstance(value, list):
+        for i, row in enumerate(value):
+            _repair_photo_materials(row, notes, f'{path}[{i}]')
+    elif isinstance(value, dict):
+        for key in ('cladding', 'material'):
+            original = value.get(key)
+            if not isinstance(original, str) or original in CLADDINGS:
+                continue
+            normalized = ' '.join(original.lower().replace('_', ' ').replace('-', ' ').split())
+            alias = (normalized, None) if normalized in CLADDINGS else _PHOTO_MATERIAL_ALIASES.get(normalized)
+            if alias:
+                value[key] = alias[0]
+                notes.append(f'{path}.{key} mapped from {original!r} to {alias[0]!r}')
+                if alias[1] and value.get('body') not in STYLE['body']:
+                    value['body'] = alias[1]
+                    notes.append(f'{path}.body inferred as {alias[1]!r} from the material finish')
+        for key, row in value.items():
+            _repair_photo_materials(row, notes, f'{path}.{key}')
+
+
 def _validate_photo_model(obj, notes):
     """Recover finite numeric ranges using the validator's authoritative limits.
 
     Work on a copy, surface every correction, and retain strict schema checks.
     """
     out = copy.deepcopy(obj)
+    _repair_photo_materials(out, notes)
     return out, validate_block_model(out, _range_notes=notes)
 
 
