@@ -12,15 +12,16 @@ Reduce the coordination work required to run a family. Chauffeur should understa
 
 The 3D house is the shared spatial interface. Rooms and real-world objects provide stable context for features. The house should also reflect the family's own life through carefully quality-gated, personalized objects and spaces.
 
-## Latest architecture change (2026-09-21, v2.499.143)
+## Latest architecture change (2026-09-21, v2.499.144)
 
-The home sits within a layered neighborhood: eight textured immediate neighbors
-(including the rear), forty simpler outer houses, then a painted roof/tree horizon.
-Deterministic farmhouse, Craftsman, modern and ranch recipes use the facade schema.
-Near houses share the active home's cladding/shingle painters and add exterior trim,
-fences and fuller landscaping. Room navigation and photo/editor isolation remain intact.
-The scene adds about 78,000 triangles and 23 high-quality draw calls; Raspberry Pi
-frame-time testing is outstanding. See the [neighborhood scope and checks](superpowers/specs/2026-09-21-house-neighborhood.md).
+The eight immediate neighbors now reuse the active home's finished exterior geometry,
+materials and landscaping, replacing the simplified projection. They match the user's
+house and rendering tier, while forty outer houses retain lightweight mixed styles
+and a painted horizon. Exterior capture copies geometry/materials and borrows textures;
+vehicles, garage contents, labels, cutaways and lights are excluded. Nearby lots use
+shared material batches with mirrored instances. High-tier canonical scenery totals
+about 1.2 million triangles; hardware frame-time testing remains outstanding.
+See the [neighborhood scope and checks](superpowers/specs/2026-09-21-house-neighborhood.md).
 
 House photo matching uses three bounded stages: compact structure analysis, a rendered
 structure review, then details constrained to that architecture. Code compiles all

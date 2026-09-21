@@ -11436,7 +11436,8 @@
       neighborhood = window.ChauffeurNeighborhood.build(T, CANONICAL_JS, {
         main: Object.assign({}, FULL_HOUSE, {south: FULL_HOUSE.south - MAIN_DZ}),
         garage: Object.assign({}, GARAGE_BLOCK, {south: GARAGE_BLOCK.south - GAR_DZ})
-      }, PALETTE, function (surface) { return makeMat(0xffffff, {rough:.95, map: surface === 'plain' ? null : cladTex(surface, 0xffffff)}); });
+      }, PALETTE, function (surface) { return makeMat(0xffffff, {rough:.95, map: surface === 'plain' ? null : cladTex(surface, 0xffffff)}); }, window.ChauffeurNeighborhood.captureExterior(T, extG,
+        [garageInterior, carsG, busG, skyDome, webgl_garageBackWall], {front:26}));
       scene.add(neighborhood.group);
       neighborhood.update(cam.position, toWorld(ORBIT.pivot), true);
     }

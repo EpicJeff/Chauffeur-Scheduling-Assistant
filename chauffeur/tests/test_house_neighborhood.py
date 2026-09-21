@@ -34,6 +34,41 @@ n.dispose();assert.equal(n.group.children.length,0);assert.equal(disposed,materi
 '''
         subprocess.run(['node','-e',script,str((base/'vendor/three.min.js').resolve()),str((base/'house_neighborhood.js').resolve()),json.dumps(hf.CANONICAL)],check=True)
 
+    def test_capture_preserves_finished_geometry_and_owns_only_copies(self):
+        base=Path(__file__).parents[1]/'static'
+        script=r'''
+const T=require(process.argv[1]);require(process.argv[2]);const assert=require('node:assert/strict');
+const root=new T.Group();root.position.set(12,0,4);
+const geo=new T.BoxGeometry(2,3,4),map=new T.Texture(),material=new T.MeshStandardMaterial({color:0x88aa66,map});
+const first=new T.Mesh(geo,material);first.position.x=2;first.scale.x=-1;root.add(first);
+const copies=new T.InstancedMesh(geo,material,2);copies.setMatrixAt(0,new T.Matrix4().makeTranslation(5,0,0));copies.setMatrixAt(1,new T.Matrix4().makeTranslation(8,0,0));root.add(copies);
+const excluded=new T.Group();excluded.add(new T.Mesh(geo,material));root.add(excluded);
+const cutaway=new T.Mesh(geo,material);cutaway.userData.maskOnly='|kitchen|';root.add(cutaway);
+const label=new T.Mesh(geo,material);label.userData.noMirror=true;root.add(label);
+let sourceDisposals=0;[geo,map,material].forEach(r=>r.addEventListener('dispose',()=>sourceDisposals++));
+const kit=ChauffeurNeighborhood.captureExterior(T,root,[excluded]);
+assert.equal(kit.sourceMeshes,2);assert.equal(kit.sourceInstances,3);assert.equal(kit.triangles,36);assert.equal(kit.parts.length,1);
+const part=kit.parts[0];assert.notEqual(part.material,material);assert.equal(part.material.map,map);
+part.geometry.computeBoundingBox();assert.equal(part.geometry.boundingBox.min.x,1);assert.equal(part.geometry.boundingBox.max.x,9);
+const positions=part.geometry.attributes.position,normals=part.geometry.attributes.normal;
+for(let i=0;i<positions.count;i+=3){const a=new T.Vector3().fromBufferAttribute(positions,i),b=new T.Vector3().fromBufferAttribute(positions,i+1),c=new T.Vector3().fromBufferAttribute(positions,i+2);assert(b.sub(a).cross(c.sub(a)).dot(new T.Vector3().fromBufferAttribute(normals,i))>0);}
+const street=new T.Group(),streetMesh=new T.Mesh(new T.BoxGeometry(4,.1,4),material);streetMesh.position.z=30;street.add(streetMesh);
+const roadKit=ChauffeurNeighborhood.captureExterior(T,street,[],{front:26});assert.equal(roadKit.triangles,0);roadKit.dispose();
+assert.equal(part.geometry.attributes.uv.count,108);assert(Math.abs(part.geometry.attributes.color.getX(0)-material.color.r)<1e-6);
+first.position.x=90;material.color.setHex(0xff0000);assert.equal(part.geometry.boundingBox.min.x,1);
+let copiesDisposed=0;[part.geometry,part.material].forEach(r=>r.addEventListener('dispose',()=>copiesDisposed++));
+const spec=JSON.parse(process.argv[3]);
+const envelopes={main:{west:-7.15,east:14.65,north:-6.1,south:14.55,eave:5.6},garage:{west:-18.2,east:-7.15,north:-6.1,south:10.1,eave:5.6}};
+const palette={body:{white:0xffffff},roof:{charcoal:0x333333},frame:{white:0xffffff},trim:{white:0xffffff},door:{wood:0x885522}};
+const n=ChauffeurNeighborhood.build(T,spec,envelopes,palette,null,kit);
+assert.equal(n.stats().nearSource,'active-exterior');
+const detailed=n.group.children.filter(m=>m.userData.nearExterior);assert.equal(detailed.reduce((sum,m)=>sum+m.count,0),8);
+const transform=new T.Matrix4();detailed.forEach(m=>{for(let i=0;i<m.count;i++){m.getMatrixAt(i,transform);assert(transform.determinant()>0);}});
+assert(n.stats().placements.filter(l=>l.detail==='near').every(l=>l.style==='matching-home'));
+n.dispose();assert.equal(copiesDisposed,2);assert.equal(sourceDisposals,0);
+'''
+        subprocess.run(['node','-e',script,str((base/'vendor/three.min.js').resolve()),str((base/'house_neighborhood.js').resolve()),json.dumps(hf.CANONICAL)],check=True)
+
     def test_plan_is_stable_valid_and_does_not_modify_canonical(self):
         path=Path(__file__).parents[1]/'static/house_neighborhood.js'
         script="require(process.argv[1]); const a=JSON.parse(process.argv[2]); const before=JSON.stringify(a); const p=ChauffeurNeighborhood.plan(a); if(JSON.stringify(a)!==before)throw Error('mutated'); if(JSON.stringify(p)!==JSON.stringify(ChauffeurNeighborhood.plan(a)))throw Error('unstable'); console.log(JSON.stringify(p));"
