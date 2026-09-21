@@ -1440,11 +1440,23 @@ the draft you were given (slot/span, not fractions). If the draft already matche
 return it unchanged. Anything real about the house the schema still cannot capture belongs in
 "unexpressed", not invented into a field that doesn't fit it.
 
-Return exactly this shape: {"reasons": [string, ...up to 8], "revised": <the full block model>}
+The original photo is the source of truth. Initial observations are fallible, NOT constraints.
+Independently compare silhouette, eave heights, rectangular wall heights, attic windows,
+and roof planes behind front triangles. A matching description does not prove a matching image.
+Re-read the photo before deciding whether the right/left gable is an attic cross-gable
+on a parallel ridge or a full second-story end gable. Never infer stories from window rows alone.
+Return corrected_observations in the same full observation schema supplied (photo-relative
+fractions, not slots), and observation_corrections as short visible-evidence explanations
+of any changes. Preserve observations supported by the photo. Do not erase regions or
+change window counts simply to make the draft pass checks. If observations were correct,
+return them unchanged and observation_corrections=[].
+Return exactly this shape: {"reasons": [string, ...up to 8],
+"corrected_observations": <full observations>, "observation_corrections": [string, ...],
+"revised": <the full block model>}
 No prose outside that JSON."""
 
 
-def critique(token, render_png_b64):
+def critique(token, render_png_b64, *, automatic=False):
     """A photo + a render of the current draft -> at most eight ordered
     reasons and one revised model (never a patch). The result rides the
     token: a second submission for the same token replays it rather than
@@ -1503,7 +1515,7 @@ def critique(token, render_png_b64):
             'vision', api_key, _photo_prompt() + '\n' + CRITIQUE_SYSTEM + '\nUse canonical slot/span coordinates: garage slots 0..5, main 6..17. mirror reflects the whole house; increasing slots run RIGHT TO LEFT in a mirrored photo. Do not use photo fractions in the revision.',
             'Photo first, then render. Observations: ' + json.dumps(observed, separators=(',', ':')) + '\nStructural discrepancies: ' + json.dumps(before_issues, separators=(',', ':')) + '\nDraft JSON:\n' + json.dumps(draft, separators=(',', ':')),
             temperature=0.1, timeout_s=90, settings=settings, strict_json=True,
-            max_output_tokens=16384, thinking_level='low', max_models=3, total_timeout_s=120, workflow='house_photo',
+            max_output_tokens=16384, thinking_level='low', max_models=1 if automatic else 3, total_timeout_s=120, workflow='house_photo',
             attempts=attempts,
             images=[{'mime': e.get('mime') or 'image/jpeg', 'b64': e['photo_b64']},
                     {'mime': 'image/png', 'b64': render_png_b64}])
@@ -1517,6 +1529,32 @@ def critique(token, render_png_b64):
     reasons = [r if isinstance(r, str) else str(r.get('reason', r)) for r in reasons]
     snap_notes = []
     trace = e.setdefault('photo_trace', {})
+    trace['visual_review_mode'] = 'automatic' if automatic else 'manual'
+    review_observed = observed
+    changed_observations = False
+    if automatic and res.get('corrected_observations') is None:
+        result['reasons'] = reasons + ['Visual review incomplete: revised observations missing; use Compare to photo to retry.']
+        return finish(result, retryable=True)
+    if res.get('corrected_observations') is not None:
+        raw_review = res['corrected_observations']
+        trace['revision_raw_observations'] = copy.deepcopy(raw_review)
+        review_observed = normalize_observation_notes(raw_review)
+        errors = validate_observations(review_observed)
+        corrections = res.get('observation_corrections')
+        if errors:
+            result['reasons'] = reasons + ['Visual revision withheld: invalid revised observations.'] + errors[:3]
+            return finish(result)
+        review_observed = reconcile_observations(review_observed)
+        changed_observations = ({k: v for k, v in review_observed.items() if k != '_model'} !=
+                                {k: v for k, v in (observed or {}).items() if k != '_model'})
+        if changed_observations and (not isinstance(corrections, list) or not corrections
+                or any(not isinstance(x, str) or not x.strip() for x in corrections)):
+            result['reasons'] = reasons + ['Visual revision withheld: observation changes lack image evidence.']
+            return finish(result)
+        trace['revision_observations'] = copy.deepcopy(review_observed)
+        trace['observation_corrections'] = copy.deepcopy(corrections or [])
+        result['observation_corrections'] = corrections or []
+        before_issues = structural_issues(draft, review_observed, len(slot_table()))
     trace['revision_raw'] = copy.deepcopy(res.get('revised'))
     revised, errs = _validate_photo_model(_snap_fractions(res.get('revised'), snap_notes), snap_notes)
     trace['revision_before_normalization'] = copy.deepcopy(revised)
@@ -1525,11 +1563,11 @@ def critique(token, render_png_b64):
         result['reasons'] = reasons + snap_notes + ['revision rejected as incomplete: ' + '; '.join(errs[:3])]
     else:
         spec, notes = normalize(copy.deepcopy(revised))
-        notes += restore_missing_upper_windows(spec, observed, len(slot_table()))
+        notes += restore_missing_upper_windows(spec, review_observed, len(slot_table()))
         trace['revision_normalization_notes'] = list(snap_notes + notes)
-        after_issues = structural_issues(spec, observed, len(slot_table()))
+        after_issues = structural_issues(spec, review_observed, len(slot_table()))
         trace['revision_structural_issues'] = list(after_issues)
-        if not set(after_issues).issubset(set(before_issues)):
+        if (changed_observations and after_issues) or not set(after_issues).issubset(set(before_issues)):
             result['reasons'] = reasons + snap_notes + notes + ['Revision withheld: it introduces structural discrepancies.'] + after_issues
             return finish(result)
         result['revised'] = spec

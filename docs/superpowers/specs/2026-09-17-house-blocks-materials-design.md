@@ -455,3 +455,27 @@ with an explicit note. Geometry, story counts and enum validation remain strict.
 Raw observations are captured before adaptation and retained in photo_trace. Conversion
 adds no model requests and cached observations are reused. 25 photo tests and 45 facade
 scenarios pass; no live Gemini requests were made.
+
+
+### Automatic visual photo review - v2.499.123 (2026-09-21)
+
+Successful photo uploads now render their exact draft at the photo viewpoint in high
+quality/daylight, then automatically compare the original photo and rendered image.
+This runs even when initial structural checks pass. The visual reviewer treats initial
+observations as fallible and returns revised observations with image-evidence explanations
+alongside its revised facade. Changed observations require explanations and a facade
+with no structural discrepancies against those corrected observations. Unchanged
+observations retain the existing no-new-discrepancies gate. Original observations and
+raw/reconciled review observations remain separate in the saved trace.
+
+Automatic visual review uses at most ONE additional provider attempt: upload retains its
+six-attempt ceiling, so upload plus automatic visual review is at most seven. There is
+no automatic retry loop. Provider failures retain the usable initial draft; explicit
+Compare to photo retries retain the existing three-attempt limit. Successful reviews
+are cached/single-flight. An accepted revision becomes the editor draft, with original
+and revised images and selection controls; nothing saves or activates without user action.
+
+Offline regression uses My house - photo 5 to prove a self-consistent but wrong initial
+interpretation can be revised. Browser tests exercise actual editor methods for exact
+capture, automatic review, revision selection and failure fallback. Live Gemini visual
+accuracy still needs evaluation; no live provider calls were used for implementation.

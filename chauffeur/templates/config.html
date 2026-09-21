@@ -2741,7 +2741,7 @@
                     </div>
                     <aside class="home-preview"><div class="home-preview-inner"><div class="home-toolbar"><div><h3 class="font-semibold">Design preview</h3><p class="home-help" x-text="facadePreviewToken ? (facadePreviewStale ? 'Settings changed. Refresh to see them.' : 'Showing the previewed draft.') : 'Build a preview to see your design.'"></p></div><button type="button" class="bg-teal-700" :disabled="!!facadeBusy || !facadeDraft" @click="facadePreview3D()" x-text="facadePreviewToken ? 'Refresh preview' : 'Preview in 3D'"></button></div>
                         <div x-show="!facadePreviewToken" class="home-preview-empty">Your house preview appears here. It does not change the active design.</div>
-                        <div x-show="facadePreviewToken" class="home-preview-canvas"><iframe title="House design preview" id="facade-preview-frame" @load="facadeFrameLoaded()" :src="facadePreviewToken ? (apiBase + 'house?draft=' + facadePreviewToken + '&angle=' + facadePreviewAngle + '&quality=medium&day=1&editor=1') : 'about:blank'"></iframe></div>
+                        <div x-show="facadePreviewToken" class="home-preview-canvas"><iframe title="House design preview" id="facade-preview-frame" @load="facadeFrameLoaded()" :src="facadePreviewToken ? (apiBase + 'house?draft=' + facadePreviewToken + '&angle=' + facadePreviewAngle + '&quality=' + (facadePhotoToken ? 'high' : 'medium') + '&day=1&editor=1') : 'about:blank'"></iframe></div>
                         <div class="home-notice" x-show="facadeNotes.length" role="status"><b>Adjustments to your design</b><ul><template x-for="n in facadeNotes" :key="n"><li x-text="n"></li></template></ul></div>
                         <div class="home-toolbar"><button type="button" class="bg-amber-800" x-show="facadeDraftSource === 'photo' && facadePhotoToken" :disabled="!!facadeBusy" @click="facadeCritique()">Compare to photo</button><span class="home-help" role="status" x-text="facadeBusy"></span><a href="house" target="_blank" class="underline">Open current house</a></div>
                                                     <div x-show="facadeRenders.draft || facadeRenders.revised" class="grid md:grid-cols-2 gap-3">
@@ -6001,7 +6001,7 @@
                         tick();
                     });
                 },
-                async facadeCritique() {
+                async facadeCritique(automatic = false) {
                     if (!this.facadePhotoToken) { showGlobalAlert('Load a photo first'); return; }
                     this.facadeBusy = 'Rendering the draft…';
                     try {
@@ -6010,7 +6010,7 @@
                         await this.$nextTick();
                         const png = await this.facadeCaptureFrame();
                         this.facadeRenders.draft = png; this.facadeBusy = 'Comparing to your photo…';
-                        const res = await fetch(`${this.apiBase}api/house/facades/critique`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: this.facadePhotoToken, render: png }) });
+                        const res = await fetch(`${this.apiBase}api/house/facades/critique`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: this.facadePhotoToken, render: png, automatic }) });
                         const data = await res.json();
                         // 409: this token is already with the model (a double tap, a
                         // second tab). The first run owns the answer; wait for it.
@@ -6025,14 +6025,21 @@
                             this.facadePreviewToken = d2.token;
                             await this.$nextTick();
                             this.facadeRenders.revised = await this.facadeCaptureFrame();
+                            if (automatic) {
+                                this.facadeDraft = d2.spec;
+                                this.facadePreviewStale = false;
+                                this.facadeNotes = [...this.facadeNotes, ...(r.reasons || []), ...(r.observation_corrections || [])];
+                            }
                         }
                     } catch (e) { console.error('critique failed', e); showGlobalAlert('Could not compare to the photo'); }
                     finally { this.facadeBusy = ''; }
                 },
                 facadePickRevised() { if (this.facadeCritiqueResult.revised) { this.facadeDraft = this.facadeCritiqueResult.revised; this.facadePreview(); } },
-                facadePickDraft() { /* the draft is already loaded; nothing to swap */ this.facadePreview(); },
+                facadePickDraft() { if (this._facadePhotoOriginal) this.facadeDraft = JSON.parse(JSON.stringify(this._facadePhotoOriginal)); this.facadePreview(); },
                 async facadePhoto(ev) {
                     const file = ev.target.files && ev.target.files[0]; if (!file) return;
+                    if (this.facadeBusy) return;
+                    this.facadeBusy = 'Reading your photo...';
                     const fd = new FormData(); fd.append('photo', file);
                     try {
                         const res = await fetch(`${this.apiBase}api/house/facades/photo`, { method: 'POST', body: fd });
@@ -6043,11 +6050,13 @@
                         this.facadePhotoToken = data.token || null; this.facadePhotoViewpoint = data.viewpoint || null;
                         this.facadePreviewToken = null; this.facadePreviewAngle = 0;
                         this.facadeRenders = { draft: null, revised: null }; this.facadeCritiqueResult = { reasons: [], unexpressed: [], revised: null };
+                        this._facadePhotoOriginal = JSON.parse(JSON.stringify(this.facadeDraft));
+                        if (this.facadePhotoToken) await this.facadeCritique(true);
                     } catch (e) {
                         console.error("Failed to read facade photo", e);
                         ev.target.value = '';
                         showGlobalAlert('Could not read the photo');
-                    }
+                    } finally { this.facadeBusy = ''; }
                 },
                 async facadeSaveNew() {
                     const name = await promptInput('Name this facade', 'Shown in the list on this page.', { value: 'My house', placeholder: 'My house' });

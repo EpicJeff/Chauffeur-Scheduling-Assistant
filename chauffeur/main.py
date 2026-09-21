@@ -5544,7 +5544,7 @@ def house_facade_critique(body: dict = Body(default={})):
     render = str((body or {}).get('render') or '')
     if render.startswith('data:image/png;base64,'):
         render = render.split(',', 1)[1]
-    result, err = _hf.critique(str((body or {}).get('token') or ''), render)
+    result, err = _hf.critique(str((body or {}).get('token') or ''), render, automatic=(body or {}).get('automatic') is True)
     if err:
         # FINAL REVIEW (important 2): a second request while the first is
         # still with the model is a CONFLICT, not a bad request — the token

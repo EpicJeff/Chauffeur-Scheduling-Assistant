@@ -1,0 +1,283 @@
+{
+  "spec": {
+    "version": 3,
+    "mirror": true,
+    "pitch_deg": 30.0,
+    "blocks": {
+      "main": {
+        "depth": 0.0,
+        "roof": {
+          "form": "gable",
+          "ridge": "x",
+          "pitch_deg": 30.0
+        },
+        "cladding": "batten",
+        "base": {
+          "material": "brick",
+          "height": 0.8,
+          "body": "painted_brick"
+        },
+        "body": "greige"
+      },
+      "garage": {
+        "depth": 1.5,
+        "roof": {
+          "form": "gable",
+          "ridge": "z",
+          "pitch_deg": 30.0
+        },
+        "cladding": "batten",
+        "base": {
+          "material": "brick",
+          "height": 0.8,
+          "body": "painted_brick"
+        },
+        "body": "greige",
+        "orientation": "side"
+      }
+    },
+    "upper": [
+      {
+        "slot": 0,
+        "span": 6,
+        "roof": {
+          "form": "gable",
+          "ridge": "z",
+          "pitch_deg": 30.0
+        }
+      },
+      {
+        "slot": 7,
+        "span": 6,
+        "roof": {
+          "form": "gable",
+          "ridge": "x",
+          "pitch_deg": 30.0
+        }
+      }
+    ],
+    "story_finishes": {
+      "main": {
+        "1": {
+          "cladding": "batten",
+          "body": "greige"
+        }
+      }
+    },
+    "finishes": [
+      {
+        "slot": 7,
+        "span": 4,
+        "story": 1,
+        "cladding": "brick",
+        "body": "painted_brick"
+      },
+      {
+        "slot": 7,
+        "span": 4,
+        "story": 2,
+        "cladding": "brick",
+        "body": "painted_brick"
+      }
+    ],
+    "style": {
+      "roof": "charcoal",
+      "frame": "white",
+      "door": "wood",
+      "trim": "white"
+    },
+    "ground": [
+      {
+        "slot": 0,
+        "span": 1,
+        "kind": "window",
+        "size": "tall",
+        "shutters": false,
+        "story": 1
+      },
+      {
+        "slot": 1,
+        "span": 3,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "count": 3,
+        "story": 1
+      },
+      {
+        "slot": 3,
+        "span": 1,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "story": 2
+      },
+      {
+        "slot": 4,
+        "span": 1,
+        "kind": "window",
+        "size": "tall",
+        "shutters": false,
+        "story": 1
+      },
+      {
+        "slot": 7,
+        "span": 7,
+        "kind": "porch",
+        "type": "covered",
+        "roof": "mixed",
+        "gable_offset": 5,
+        "gable_span": 2
+      },
+      {
+        "slot": 8,
+        "span": 3,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "count": 2,
+        "story": 1
+      },
+      {
+        "slot": 8,
+        "span": 1,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "story": 2
+      },
+      {
+        "slot": 10,
+        "span": 1,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "story": 2
+      },
+      {
+        "slot": 11,
+        "span": 1,
+        "kind": "door"
+      },
+      {
+        "slot": 12,
+        "span": 1,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "story": 2
+      },
+      {
+        "slot": 14,
+        "span": 3,
+        "kind": "window",
+        "size": "standard",
+        "shutters": true,
+        "story": 1
+      }
+    ],
+    "roof": [
+      {
+        "slot": 8,
+        "span": 4,
+        "kind": "gable"
+      }
+    ],
+    "unexpressed": [
+      "standing seam metal roof on porch and brow canopy",
+      "double front entry doors with glass panes",
+      "board and batten gable infill detail"
+    ]
+  },
+  "observations": {
+    "viewpoint": "centre",
+    "garage_side": "unknown",
+    "sections": [
+      {
+        "description": "left ground-floor single-story wing under side-gable roof",
+        "at": 0.04,
+        "width": 0.22
+      },
+      {
+        "description": "central two-story main body with covered front porch and side-to-side roof ridge with front dormer gable",
+        "at": 0.26,
+        "width": 0.32
+      },
+      {
+        "description": "right prominent forward-projecting two-story gable wing",
+        "at": 0.58,
+        "width": 0.39
+      }
+    ],
+    "roofs": [
+      {
+        "at": 0.04,
+        "width": 0.22,
+        "story": 1,
+        "ridge": "x",
+        "front_gable": "none",
+        "evidence": "horizontal ridge parallel to front, eaves sloping to front and rear"
+      },
+      {
+        "at": 0.26,
+        "width": 0.32,
+        "story": 2,
+        "ridge": "x",
+        "front_gable": "cross",
+        "evidence": "main ridge parallel to front behind prominent decorative front dormer gable"
+      },
+      {
+        "at": 0.58,
+        "width": 0.39,
+        "story": 2,
+        "ridge": "z",
+        "front_gable": "end",
+        "evidence": "large front-facing gable with sloping roof planes running front-to-back"
+      }
+    ],
+    "upper": [
+      {
+        "at": 0.26,
+        "width": 0.32,
+        "windows": 3
+      },
+      {
+        "at": 0.58,
+        "width": 0.39,
+        "windows": 1
+      }
+    ],
+    "porches": [
+      {
+        "at": 0.22,
+        "width": 0.36
+      }
+    ],
+    "gables": [
+      {
+        "at": 0.22,
+        "width": 0.17
+      },
+      {
+        "at": 0.36,
+        "width": 0.22
+      },
+      {
+        "at": 0.58,
+        "width": 0.39
+      }
+    ],
+    "materials": [
+      "painted brick on ground level lower walls and porch foundation",
+      "board and batten siding on upper walls and main exterior upper stories",
+      "dark gray asphalt shingles on main roof slopes",
+      "metal seam standing metal roofing over porch canopy and right lower window brow roof",
+      "wood louvers/shutters around double-hung windows"
+    ],
+    "uncertain": [
+      "garage location (obscured behind side facade or detached)",
+      "rear roof structure and exact ridge connection points"
+    ],
+    "_model": "gemini-3.6-flash"
+  }
+}

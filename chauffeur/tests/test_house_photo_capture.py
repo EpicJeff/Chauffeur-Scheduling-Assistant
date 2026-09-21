@@ -5,7 +5,7 @@ from playwright.sync_api import sync_playwright
 
 def main():
     template = (Path(__file__).parents[1] / 'templates/config.html').read_text(encoding='utf-8')
-    methods = template[template.index('async facadeFrameLoaded()'):template.index('async facadeCritique()')]
+    methods = template[template.index('async facadeFrameLoaded()'):template.index('async facadeCritique(')]
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
         page = browser.new_page()
