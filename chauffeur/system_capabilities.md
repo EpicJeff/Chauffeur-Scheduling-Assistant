@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.134 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.135 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8561,3 +8561,23 @@ unplaced_features from unplaced_openings; structural review withholds unresolved
 Raw input remains unchanged. 45 photo tests include the accessory/evidence-state matrix.
 The screenshot ID p1 alone does not prove its feature type; this fixes the non-volume
 validation category rather than guessing from an ID prefix. No additional model calls.
+
+
+### Revert destructive missing-evidence filtering - v2.499.135 (2026-09-21)
+
+Missing primary-image annotations no longer erase explicitly declared front geometry or
+abort front volumes. The feature's validated face, owner and facade coordinates govern
+placement; absent or supplemental-only evidence adds a single uncertainty note and
+face_projection.evidence_gaps. No annotation-based dependency pruning occurs. Explicit
+non-front geometry remains outside front slots, and contradictory supplied ownership/box
+information is still validated. Uncertain structural review still cannot auto-apply.
+
+This supersedes the missing-primary-evidence omission policies introduced in .132-.134,
+which produced almost empty houses despite model-supplied features. Acceptance now checks
+geometry preservation: stripping all observations, or retaining only wall observations,
+must leave blocks, upper stories, roof features, ground features and finishes identical
+to the annotated fixture. 47 photo tests pass, including the exact photo11 analysis. Rough ground/upper opening
+coordinates that cross their declared wall are fitted within that wall using the existing
+placement algorithm, with explicit notes; owner IDs and global bounds remain validated.
+This repairs compiler-caused feature loss;
+it does not establish correctness of the model's feature descriptions or provider uptime.

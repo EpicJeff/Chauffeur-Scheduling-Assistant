@@ -160,3 +160,27 @@ subject to containment validation. Raw analysis is preserved. Trace unplaced_fea
 records all unresolved accessories; unplaced_openings remains the opening subset.
 Visual review cannot auto-adopt a revision with unresolved accessories. This supersedes
 prior statements requiring primary evidence for every front roof/porch feature.
+
+
+## Evidence absence is not geometry absence (v2.499.135)
+
+Supersedes the primary-evidence omission/abort rules above. Declared front geometry is
+compiled from its explicit face, owner and at/width even when separate observations are
+missing or cite only supplemental images. A consolidated warning and evidence_gaps list
+make uncertainty visible. Missing annotations neither invent new geometry nor delete
+existing feature descriptions. Non-front face filtering and supplied-evidence contradiction
+checks remain. Empty unplaced_* fields remain in traces for compatibility.
+
+Regression acceptance is geometry equality against the complete fixture when every
+observation is removed, and when only wall-volume observations remain. Porches, windows,
+gables, stories and finishes must survive; a canonical replacement door is not acceptable
+as a substitute for the model's declared door. This is compiler preservation proof, not
+live recognition proof. The previous omission policy tested successful validation while
+allowing a major visual regression and is retired.
+
+The exact photo11 analysis is also replayed locally. It includes two ground openings
+whose approximate coordinates extend beyond their declared wall. V2 preparation allows
+the existing placement algorithm to fit those ground/upper openings inside the declared
+wall and reports the adjustment. It does not reassign owners, alter wall geometry or
+relax global-coordinate bounds or attic ownership. Regression verifies the porch, every
+declared non-attic front window, and the model's door survive without a provider call.

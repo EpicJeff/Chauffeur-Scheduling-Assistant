@@ -13,10 +13,10 @@ A side-facing end gable does NOT imply a perpendicular ridge: roof.ridge always 
 parallel/perpendicular to the front facade, regardless of which photo shows the ridge.
 Record per-image observations: feature ID, image number, physical face and 2D bounding box
 in THAT image's normalized coordinates. Keep these boxes separate from front at/width.
-Front placement needs image-1 evidence. Front openings seen only in supplemental views
-remain unresolved and are not placed. Use feature="finishes" for collective material
+Record image-1 evidence for front features when possible. Missing observation annotations
+are uncertainty metadata, not an instruction to remove declared front geometry. Use feature="finishes" for collective material
 evidence because finish bands have no IDs. Other observations use exact feature IDs.
-Only front rows with primary evidence compile into facade slots.
+Only explicitly front-facing rows compile into facade slots.
 Side doors/windows/gables must retain their physical face; never move them to the front
 just because a supplemental camera sees them. Side garage doors determine side entry.
 Volumes describe rectangular WALL faces up to their eaves. A side attic triangle is
@@ -96,7 +96,7 @@ def review_schema():
             ('wall_faces','story_boundaries','roof_directions','opening_ownership','porch_placement')})})
 
 
-def validate_analysis(value, *, _shape_only=False):
+def validate_analysis(value, *, _shape_only=False, _fit_openings=False):
     """Validate our small JSON-schema subset, then architecture relationships."""
     errors=[]
     def walk(v,s,path):
@@ -143,7 +143,7 @@ def validate_analysis(value, *, _shape_only=False):
             if not owner or owner[0] not in allowed:
                 errors.append(row['id']+' has invalid owner '+repr(row['owner'])+'; expected '+', '.join(allowed));continue
             parent=owner[1]
-            if layer != 'porches' and (row['at']<parent['at']-.02 or row['at']+row['width']>parent['at']+parent['width']+.02):
+            if layer != 'porches' and not (_fit_openings and layer=='openings' and row['level']!='attic') and (row['at']<parent['at']-.02 or row['at']+row['width']>parent['at']+parent['width']+.02):
                 errors.append(row['id']+' extends beyond its owner')
             if layer=='openings':
                 if owner[0]=='porches':
@@ -184,39 +184,17 @@ def project_front_analysis(value):
         box=obs['box']
         if box['width']<=0 or box['height']<=0 or box['x']+box['width']>1.001 or box['y']+box['height']>1.001:
             raise ValueError('observation box outside image')
+    evidence_gaps=[]
     for row in rows:
         observed=[o for o in a['observations'] if o['feature']==row['id']]
-        if not observed:
-            unevidenced.append(row['id'])
-            if row['face']!='front':
-                notes.append(row['id']+': non-front feature lacks image evidence; retained as an annotation, not used to set geometry.')
-                continue
-            if kinds[row['id']]!='volumes':
-                unplaced.append(row['id'])
-                notes.append(row['id']+': front placement unresolved; feature has no image evidence and is not placed.')
-                continue
-            raise ValueError(row['id']+' lacks primary image evidence for front structure')
+        if not observed:unevidenced.append(row['id'])
         if row['face']=='front' and not any(o['image']==1 for o in observed):
-            if kinds[row['id']]!='volumes':
-                unplaced.append(row['id'])
-                notes.append(row['id']+': front placement unresolved; supplemental-only feature retained in analysis, not placed on facade.')
-                continue
-            raise ValueError(row['id']+' front placement lacks primary-photo evidence')
-    # Resolve dependencies before projecting: omitted roof/porch features cannot
-    # leave dangling owners or smuggle their children into another wall.
-    for opening in a['openings']:
-        if opening['owner'] in unplaced and kinds[opening['owner']]=='porches' and opening['id'] not in unplaced:
-            porch=ids[opening['owner']]
-            if opening['level']=='ground' and opening['kind'] in ('door','window'):
-                opening['owner']=porch['owner']
-                notes.append(opening['id']+': independently evidenced opening resolved through unplaced porch to supporting wall.')
-    changed=True
-    while changed:
-        changed=False
-        for row in rows:
-            if row['face']=='front' and row.get('owner') in unplaced and row['id'] not in unplaced:
-                unplaced.append(row['id']);changed=True
-                notes.append(row['id']+': placement unresolved because its owner is unplaced.')
+            evidence_gaps.append(row['id'])
+        elif not observed:
+            notes.append(row['id']+': non-front feature lacks image evidence; retained as an annotation, not used to set geometry.')
+    if evidence_gaps:
+        notes.append('Primary evidence annotations incomplete for '+', '.join(evidence_gaps)+
+                     '; declared front geometry retained. Photo accuracy is unverified.')
     # An explicit owner must also contain the opening in the same source image.
     # This catches a below-eave wall window mislabeled as an attic/gable window.
     primary={o['feature']:o['box'] for o in a['observations'] if o['image']==1 and o['face']=='front'}
@@ -252,7 +230,7 @@ def project_front_analysis(value):
         a[layer]=front
     a['schema_version']=1
     a.pop('coordinate_frame');a.pop('observations')
-    return a,notes,{'excluded_faces':excluded,'unplaced_features':unplaced,'unplaced_openings':[i for i in unplaced if kinds[i]=='openings'],'unevidenced_features':unevidenced,'side_garage':bool(side_doors),
+    return a,notes,{'excluded_faces':excluded,'unplaced_features':unplaced,'unplaced_openings':[i for i in unplaced if kinds[i]=='openings'],'unevidenced_features':unevidenced,'evidence_gaps':evidence_gaps,'side_garage':bool(side_doors),
                    'side_garage_count':sum(o['count'] for o in side_doors)}
 
 
@@ -282,7 +260,13 @@ def prepare_analysis(value):
             seam=(end+right['at'])/2;right_end=right['at']+right['width']
             left['width']=seam-left['at'];right['at']=seam;right['width']=right_end-seam
             notes.append(left['id']+' / '+right['id']+': small wall-boundary overlap shared at midpoint.')
-    errors=validate_analysis(a)
+    if value.get('schema_version')==2:
+        walls={v['id']:v for v in a['volumes']}
+        for opening in a['openings']:
+            wall=walls.get(opening['owner'])
+            if wall and opening['level']!='attic' and (opening['at']<wall['at']-.02 or opening['at']+opening['width']>wall['at']+wall['width']+.02):
+                notes.append(opening['id']+': approximate opening coordinates extend beyond declared wall; placement constrained to that wall.')
+    errors=validate_analysis(a,_fit_openings=value.get('schema_version')==2)
     if errors:raise ValueError('; '.join(errors[:6]))
     return a,notes
 

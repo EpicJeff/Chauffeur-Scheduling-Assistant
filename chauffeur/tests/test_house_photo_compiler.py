@@ -202,7 +202,7 @@ class CompilerTests(unittest.TestCase):
         spec,_,_=compile_analysis(a)
         for key in ('upper','roof','ground'):self.assertEqual(spec[key],expected[key])
         bad=copy.deepcopy(a);bad['observations'][0]['image']=2
-        with self.assertRaisesRegex(ValueError,'primary-photo evidence'):compile_analysis(bad)
+        self.assertEqual(compile_analysis(bad)[0]['ground'],spec['ground'])
         bad=copy.deepcopy(a);bad['observations'][0]['face']='rear'
         with self.assertRaisesRegex(ValueError,'face conflicts'):compile_analysis(bad)
         bad=copy.deepcopy(a)
@@ -236,17 +236,17 @@ class CompilerTests(unittest.TestCase):
             self.assertIsNone(error)
             self.assertIsNotNone(result['revised'])
 
-    def test_supplemental_only_opening_remains_unplaced_not_fatal(self):
+    def test_supplemental_only_annotation_preserves_declared_front_opening(self):
         a=faced_analysis(DATA)
         opening=next(o for o in a['openings'] if o['kind']=='window' and o['level']=='upper')
         obs=next(o for o in a['observations'] if o['feature']==opening['id']);obs['image']=2
         raw=copy.deepcopy(a)
         spec,notes,trace=compile_analysis(a)
         self.assertEqual(a,raw)
-        self.assertEqual(trace['face_projection']['unplaced_openings'],[opening['id']])
-        self.assertFalse(any(m['id']==opening['id'] for m in trace['mapping']))
-        self.assertEqual(sum(o.get('story')==2 for o in spec['ground']),2)
-        self.assertTrue(any('front placement unresolved' in n for n in notes))
+        self.assertIn(opening['id'],trace['face_projection']['evidence_gaps'])
+        self.assertTrue(any(m['id']==opening['id'] for m in trace['mapping']))
+        self.assertEqual(sum(o.get('story')==2 for o in spec['ground']),3)
+        self.assertTrue(any('declared front geometry retained' in n for n in notes))
         self.assertEqual(hf.validate_block_model(spec),[])
 
     def test_collective_finish_evidence_is_not_a_geometry_reference(self):
@@ -282,9 +282,10 @@ class CompilerTests(unittest.TestCase):
         spec,_,trace=compile_analysis(a)
         self.assertTrue(trace['face_projection']['side_garage'])
         self.assertEqual(spec['blocks']['garage']['orientation'],'side')
-        # Core front massing still cannot be synthesized from missing evidence.
+        # Missing annotations do not erase explicitly declared front massing.
+
         a['observations']=[o for o in a['observations'] if o['feature']!=a['volumes'][0]['id']]
-        with self.assertRaisesRegex(ValueError,'front structure'):compile_analysis(a)
+        self.assertEqual(compile_analysis(a)[0]['upper'],spec['upper'])
 
     def test_unevidenced_porch_and_children_do_not_abort_wall_openings(self):
         a=faced_analysis(DATA);porch=a['porches'][0]
@@ -294,13 +295,13 @@ class CompilerTests(unittest.TestCase):
         raw=copy.deepcopy(a)
         spec,notes,trace=compile_analysis(a)
         self.assertEqual(a,raw)
-        self.assertFalse(any(g['kind']=='porch' for g in spec['ground']))
+        self.assertTrue(any(g['kind']=='porch' for g in spec['ground']))
         self.assertTrue(any(g['kind']=='door' for g in spec['ground']))
-        self.assertIn(porch['id'],trace['face_projection']['unplaced_features'])
+        self.assertIn(porch['id'],trace['face_projection']['evidence_gaps'])
         child=next(g for g in a['gables'] if g['owner']==porch['id'])
-        self.assertIn(child['id'],trace['face_projection']['unplaced_features'])
+        self.assertNotIn(child['id'],trace['face_projection']['unplaced_features'])
         self.assertEqual(hf.validate_block_model(spec),[])
-        self.assertTrue(any('supporting wall' in n for n in notes))
+        self.assertTrue(any('wall volume' in n for n in notes))
 
     def test_missing_evidence_accessory_matrix_preserves_valid_draft(self):
         for layer in ('porches','gables','dormers'):
@@ -319,8 +320,36 @@ class CompilerTests(unittest.TestCase):
                         if obs['feature']==row['id']:obs['image']=2
                 with self.subTest(layer=layer,source=source):
                     spec,notes,trace=compile_analysis(a)
-                    self.assertIn(row['id'],trace['face_projection']['unplaced_features'])
+                    self.assertIn(row['id'],trace['face_projection']['evidence_gaps'])
                     self.assertEqual(hf.validate_block_model(spec),[])
+
+    def test_missing_annotations_never_strip_the_house(self):
+        complete=faced_analysis(DATA);expected=compile_analysis(complete)[0]
+        for retained_layers in ((),('volumes',)):
+            a=copy.deepcopy(complete)
+            keep={r['id'] for layer in retained_layers for r in a[layer]}
+            a['observations']=[o for o in a['observations'] if o['feature'] in keep]
+            raw=copy.deepcopy(a)
+            spec,notes,trace=compile_analysis(a)
+            self.assertEqual(a,raw)
+            for key in ('blocks','upper','roof','ground','finishes','mirror'):
+                self.assertEqual(spec[key],expected[key],key)
+            self.assertFalse(trace['face_projection']['unplaced_features'])
+            self.assertTrue(trace['face_projection']['evidence_gaps'])
+            self.assertFalse(any('canonical' in n for n in notes))
+            self.assertTrue(any(g['kind']=='porch' for g in spec['ground']))
+            self.assertEqual(sum(g.get('story')==2 for g in spec['ground']),3)
+
+    def test_photo11_retains_described_features_without_new_model_call(self):
+        a=json.loads((Path(__file__).parent/'fixtures/house_photo11_analysis.json').read_text())
+        spec,notes,trace=compile_analysis(a)
+        expected=[o for o in a['openings'] if o['face']=='front' and o['kind']=='window' and o['level']!='attic']
+        mapped={row['id'] for row in trace['mapping'] if row['kind']=='window'}
+        self.assertTrue({o['id'] for o in expected}.issubset(mapped))
+        self.assertTrue(any(g['kind']=='porch' for g in spec['ground']))
+        self.assertFalse(any('canonical' in n for n in notes))
+        self.assertTrue(any('placement constrained' in n for n in notes))
+        self.assertEqual(hf.validate_block_model(spec),[])
 
     def test_roof_story_and_known_orientation_matrix(self):
         for form in ('gable','hip'):

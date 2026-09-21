@@ -1,0 +1,261 @@
+{
+  "schema_version": 2,
+  "viewpoint": "centre",
+  "garage_side": "right",
+  "volumes": [
+    {
+      "id": "v1",
+      "at": 0.0,
+      "width": 0.35,
+      "stories": "two",
+      "projection": "flush",
+      "roof": {
+        "form": "gable",
+        "ridge": "parallel",
+        "pitch": "medium",
+        "evidence": "main parallel roof covering left side volume in image 1"
+      },
+      "evidence": "left front section of the house",
+      "face": "front"
+    },
+    {
+      "id": "v2",
+      "at": 0.35,
+      "width": 0.28,
+      "stories": "two",
+      "projection": "flush",
+      "roof": {
+        "form": "gable",
+        "ridge": "parallel",
+        "pitch": "medium",
+        "evidence": "central parallel roof section with a front facing gable"
+      },
+      "evidence": "central front section of the house",
+      "face": "front"
+    },
+    {
+      "id": "v3",
+      "at": 0.63,
+      "width": 0.37,
+      "stories": "one",
+      "projection": "forward",
+      "roof": {
+        "form": "gable",
+        "ridge": "perpendicular",
+        "pitch": "medium",
+        "evidence": "right projecting wing with perpendicular gable roof"
+      },
+      "evidence": "right front projecting wing",
+      "face": "front"
+    }
+  ],
+  "porches": [
+    {
+      "id": "p1",
+      "owner": "v2",
+      "at": 0.18,
+      "width": 0.45,
+      "roof": "flat",
+      "face": "front"
+    }
+  ],
+  "gables": [
+    {
+      "id": "g1",
+      "owner": "v2",
+      "at": 0.33,
+      "width": 0.3,
+      "kind": "cross",
+      "evidence": "central front-facing gable above the entrance",
+      "face": "front"
+    },
+    {
+      "id": "g2",
+      "owner": "v3",
+      "at": 0.63,
+      "width": 0.37,
+      "kind": "cross",
+      "evidence": "main gable of the right projecting wing",
+      "face": "front"
+    }
+  ],
+  "dormers": [],
+  "openings": [
+    {
+      "id": "w1",
+      "owner": "v1",
+      "at": 0.08,
+      "width": 0.14,
+      "kind": "window",
+      "level": "ground",
+      "count": 1,
+      "size": "standard",
+      "shutters": true,
+      "face": "front"
+    },
+    {
+      "id": "w2",
+      "owner": "v1",
+      "at": 0.08,
+      "width": 0.14,
+      "kind": "window",
+      "level": "upper",
+      "count": 1,
+      "size": "standard",
+      "shutters": true,
+      "face": "front"
+    },
+    {
+      "id": "w3",
+      "owner": "v2",
+      "at": 0.27,
+      "width": 0.1,
+      "kind": "window",
+      "level": "ground",
+      "count": 1,
+      "size": "tall",
+      "shutters": false,
+      "face": "front"
+    },
+    {
+      "id": "d1",
+      "owner": "v2",
+      "at": 0.27,
+      "width": 0.09,
+      "kind": "door",
+      "level": "ground",
+      "count": 1,
+      "size": "standard",
+      "shutters": false,
+      "face": "front"
+    },
+    {
+      "id": "w4",
+      "owner": "v2",
+      "at": 0.38,
+      "width": 0.18,
+      "kind": "window",
+      "level": "upper",
+      "count": 2,
+      "size": "standard",
+      "shutters": true,
+      "face": "front"
+    },
+    {
+      "id": "w5",
+      "owner": "g1",
+      "at": 0.42,
+      "width": 0.09,
+      "kind": "window",
+      "level": "attic",
+      "count": 1,
+      "size": "standard",
+      "shutters": false,
+      "face": "front"
+    },
+    {
+      "id": "w6",
+      "owner": "v3",
+      "at": 0.69,
+      "width": 0.25,
+      "kind": "window",
+      "level": "ground",
+      "count": 1,
+      "size": "standard",
+      "shutters": false,
+      "face": "front"
+    },
+    {
+      "id": "w7",
+      "owner": "v3",
+      "at": 0.73,
+      "width": 0.05,
+      "kind": "window",
+      "level": "ground",
+      "count": 1,
+      "size": "standard",
+      "shutters": false,
+      "face": "front"
+    },
+    {
+      "id": "w8",
+      "owner": "g2",
+      "at": 0.73,
+      "width": 0.1,
+      "kind": "window",
+      "level": "attic",
+      "count": 1,
+      "size": "standard",
+      "shutters": false,
+      "face": "front"
+    }
+  ],
+  "finishes": [
+    {
+      "at": 0.0,
+      "width": 1.0,
+      "story": "ground",
+      "material": "brick",
+      "colour": "cream_brick",
+      "face": "front"
+    },
+    {
+      "at": 0.0,
+      "width": 1.0,
+      "story": "upper",
+      "material": "batten",
+      "colour": "sage",
+      "face": "front"
+    }
+  ],
+  "palette": {
+    "roof": "charcoal",
+    "frame": "white",
+    "door": "wood",
+    "trim": "white"
+  },
+  "limitations": [
+    "Garage is located on the right side visible in supplemental image 3",
+    "Snow partially obscures roof details in image 1"
+  ],
+  "coordinate_frame": "house_front",
+  "observations": [
+    {
+      "feature": "v1",
+      "image": 1,
+      "face": "front",
+      "box": {
+        "x": 0.03,
+        "y": 0.21,
+        "width": 0.35,
+        "height": 0.7
+      },
+      "evidence": "left wall volume in image 1"
+    },
+    {
+      "feature": "v2",
+      "image": 1,
+      "face": "front",
+      "box": {
+        "x": 0.26,
+        "y": 0.28,
+        "width": 0.31,
+        "height": 0.62
+      },
+      "evidence": "central wall volume in image 1"
+    },
+    {
+      "feature": "v3",
+      "image": 1,
+      "face": "front",
+      "box": {
+        "x": 0.56,
+        "y": 0.11,
+        "width": 0.41,
+        "height": 0.79
+      },
+      "evidence": "right projecting wing in image 1"
+    }
+  ],
+  "_model": "gemini-3.5-flash-lite"
+}
