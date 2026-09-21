@@ -505,3 +505,14 @@ and three per explicitly requested manual review. Trace attempts/requests_total 
 visual calls. Exact malformed photo6 replies and failed-upload/resume ledger are offline
 regressions. 32 photo tests, six model-pool tests and 45 facade scenarios pass. No live
 provider calls; schema acceptance and visual accuracy still require deployment testing.
+
+
+### Photo unexpressed descriptions - v2.499.125 (2026-09-21)
+
+The photo-only validation adapter bounds unexpressed descriptions before strict house
+validation: eight notes, 80 characters each. Long strings are shortened with an ellipsis;
+structured descriptions become JSON text, missing/null becomes an empty list, and
+non-descriptive values are omitted. Every adaptation is noted, and full raw responses
+remain in generation/correction/review traces. Provider schema bounds the list and asks
+for short phrases. Ordinary house validation and geometric checks remain strict.
+34 photo tests and 45 facade scenarios pass; no added calls or live provider usage.

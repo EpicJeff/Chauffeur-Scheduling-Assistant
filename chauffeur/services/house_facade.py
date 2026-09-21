@@ -1283,6 +1283,21 @@ def _validate_photo_model(obj, notes):
     """
     out = copy.deepcopy(obj)
     _repair_photo_materials(out, notes)
+    if isinstance(out, dict):
+        raw = out.get('unexpressed')
+        rows = raw if isinstance(raw, list) else ([] if raw is None else [raw])
+        clean = []
+        for row in rows:
+            if isinstance(row, (dict, list)):
+                row = json.dumps(row, ensure_ascii=False, separators=(',', ':'))
+            if isinstance(row, str) and row.strip():
+                text = row.strip()
+                clean.append(text if len(text) <= UNEXPRESSED_LEN else text[:UNEXPRESSED_LEN - 1] + '?')
+        clean = clean[:UNEXPRESSED_MAX]
+        if raw != clean:
+            notes.append(f'unexpressed descriptions normalized to at most {UNEXPRESSED_MAX} notes of '
+                         f'{UNEXPRESSED_LEN} characters; original text retained in the raw photo trace.')
+        out['unexpressed'] = clean
     return out, validate_block_model(out, _range_notes=notes)
 
 

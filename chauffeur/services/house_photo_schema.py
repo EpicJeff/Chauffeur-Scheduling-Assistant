@@ -40,7 +40,7 @@ def house_schema(*, fractional=False):
       'roof':arr(obj({**coord,'kind':enum(('gable','dormer','shed','hip_end')),'window':BOOL,'cladding':enum(h.CLADDINGS)},list(coord)+['kind'])),
       'upper':arr(obj({**coord,'roof':roof})),
       'finishes':arr(obj({**coord,'story':number(1,2,True),**finish['properties']},list(coord)+['story'])),
-      'story_finishes':obj({b:obj({'1':finish,'2':finish},[]) for b in ('main','garage')},[]),'unexpressed':arr(TEXT)},
+      'story_finishes':obj({b:obj({'1':finish,'2':finish},[]) for b in ('main','garage')},[]),'unexpressed':{'type':'array','maxItems':h.UNEXPRESSED_MAX,'items':{'type':'string','description':f'At most {h.UNEXPRESSED_LEN} characters; a short phrase.'}}},
       ['version','mirror','pitch_deg','style','blocks','ground','roof','upper','unexpressed'])
 
 def review_schema():
