@@ -559,7 +559,9 @@ def scenario_photo_pass1_maps_the_fixtures():
             check(renorm == exp and renotes == [], f'{photo}: the expected fixture is normalize-idempotent: {renotes}')
             seen = {}
             def fake_pool(tier, key, system, user, **kw):
-                seen.update(kw); return photo_response(system, _fixture(photo + '.pass1.json'))
+                if kw['max_models'] == 3:
+                    seen.update(kw)  # initial observation/configuration pool settings
+                return photo_response(system, _fixture(photo + '.pass1.json'))
             model_pools.call_pool_json = fake_pool
             draft, notes, err, tok = hf.from_photo('AAAA', 'image/jpeg')
             check(err is None and tok, f'{photo}: draft + token: {err}')

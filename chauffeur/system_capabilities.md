@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.119 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.120 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8307,3 +8307,24 @@ ambiguous matches, and unmatched massing remain review issues. This adds no prov
 calls. Saved failed response replay covers grouped windows, missing upstairs openings,
 and duplicate gables; high-quality browser checks cover mirrored/unmirrored and no-upper
 layouts. Fresh Gemini output quality remains to be evaluated with deployed credentials.
+
+
+### Roof interpretation and bounded correction - v2.499.120 (2026-09-21)
+
+Photo observations now describe underlying roof regions separately from visible front
+triangles: supporting story, parallel (x) or perpendicular (z) ridge, cross-gable versus
+end-gable, and visible evidence. Unknown directions remain explicit; legacy cached
+observations without roof regions still work. Configuration instructions distinguish
+ridge-x plus a projecting gable from a ridge-z end, and attic windows from full stories.
+Structural checks validate those distinctions with mirrored coordinates. Porch-owned
+triangles count toward observed gables instead of requiring duplicate roof features.
+
+An initial draft with structural discrepancies gets at most one automatic correction
+request using the original image, observations, normalized draft and normalization notes.
+It shares the existing six-provider-request upload limit; no spare budget means no
+correction. Only a strict reduction in discrepancies with no new ones replaces the draft.
+Failures and regressions retain the initial draft. photo_trace.automatic_correction
+records the raw correction, validation/check results, and acceptance/failure/budget status.
+Cached repeat uploads make no new calls. This is a structural correction, not the separate
+render-based Compare to photo action. Offline regression tests use the latest failed
+export and the authored reference; fresh model interpretation accuracy remains unverified.

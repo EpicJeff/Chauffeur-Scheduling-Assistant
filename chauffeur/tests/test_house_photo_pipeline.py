@@ -62,13 +62,17 @@ class PipelineTests(unittest.TestCase):
             self.assertIn('Return exactly this shape',api.call_args.args[2])
 
     def test_correction_accepts_authored_structure(self):
-        with patch('services.model_pools.call_pool_json', side_effect=self.provider([DATA['observations'],DATA['My house - photo'],{'revised':DATA['My house'],'reasons':['Fix second story']}])):
-            _, notes, err, token = hf.from_photo('image','image/png')
+        with patch('services.model_pools.call_pool_json', side_effect=self.provider(
+                [DATA['observations'], DATA['My house - photo'], DATA['My house']])) as api:
+            spec, notes, err, token = hf.from_photo('image','image/png')
             self.assertIsNone(err)
-            self.assertTrue(any('Needs review' in x for x in notes))
-            result, _ = hf.critique(token,'render')
-            self.assertIsNotNone(result['revised'])
-            self.assertEqual(structural_issues(result['revised'],DATA['observations']),[])
+            self.assertEqual(structural_issues(spec, DATA['observations']), [])
+            self.assertTrue(any('correction accepted' in x for x in notes))
+            self.assertEqual(api.call_count, 3)
+            self.assertEqual(api.call_args.kwargs['max_models'], 1)
+            self.assertEqual(hf._DRAFTS[token]['photo_trace']['automatic_correction']['status'], 'accepted')
+            hf.from_photo('image','image/png')
+            self.assertEqual(api.call_count, 3)
 
     def test_retry_reuses_observations_and_budget(self):
         def call(*args, **kw):

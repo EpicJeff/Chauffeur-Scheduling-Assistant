@@ -10,6 +10,8 @@ attic gable or dormer. Do not turn every tall gable into a second story.
 Return this exact shape:
 {"viewpoint":"left|centre|right", "garage_side":"left|right|unknown",
  "sections":[{"description":"visible section and roof direction", "at":0.0,"width":0.3}],
+ "roofs":[{"at":0.6,"width":0.35,"story":1,"ridge":"x|z|unknown",
+           "front_gable":"cross|end|none|unknown","evidence":"visible roof planes supporting this reading"}],
  "upper":[{"at":0.3,"width":0.4,"windows":3}],
  "porches":[{"at":0.3,"width":0.4}],
  "gables":[{"at":0.7,"width":0.3}],
@@ -18,6 +20,14 @@ Return this exact shape:
 Arrays may be empty. windows counts visible window units/groups, not panes.
 gables describes street-facing triangular roof ends, including those above upper stories.
 Do not infer a left/front garage merely because no garage door appears in the photo.
+Record each underlying roof volume separately in roofs. x means ridge parallel to the
+front facade; z means ridge running front-to-back. A visible front triangle does NOT
+establish ridge=z: a cross-gable can project from a ridge=x roof running behind it.
+Inspect the roof planes and continuous eave behind/beside the triangle. Use unknown
+when hidden; do not invent evidence. front_gable=cross means an added projecting gable;
+end means the end of the underlying ridge=z roof. story is the supporting rectangular
+wall's story count, NOT the count of window rows. A window in an attic triangle does
+not create an upper[] entry. Keep porch entrance gables separate from main roof volumes.
 Record unknown garage side explicitly. Describe porch slopes and entrance gables in sections.
 """
 
@@ -30,7 +40,9 @@ def validate_observations(value):
                          ('garage_side', ('left', 'right', 'unknown'))]:
         if value.get(key) not in choices:
             errors.append('invalid ' + key)
-    for key in ('sections', 'upper', 'porches', 'gables'):
+    for key in ('sections', 'upper', 'porches', 'gables', 'roofs'):
+        if key == 'roofs' and key not in value:
+            continue  # older cached observations remain usable
         rows = value.get(key)
         if not isinstance(rows, list) or len(rows) > 24:
             errors.append('invalid ' + key)
@@ -43,6 +55,15 @@ def validate_observations(value):
                     or not math.isfinite(a) or not math.isfinite(w)
                     or not 0 <= a < 1 or not 0 < w <= 1 or a + w > 1.01):
                 errors.append('invalid ' + key + ' bounds')
+            if key == 'roofs':
+                if (type(row.get('story')) is not int or row['story'] not in (1, 2)
+                        or row.get('ridge') not in ('x', 'z', 'unknown')
+                        or row.get('front_gable') not in ('cross', 'end', 'none', 'unknown')
+                        or not isinstance(row.get('evidence'), str) or not row['evidence'].strip()):
+                    errors.append('invalid roof interpretation')
+                if ((row.get('front_gable') == 'cross' and row.get('ridge') == 'z')
+                        or (row.get('front_gable') == 'end' and row.get('ridge') == 'x')):
+                    errors.append('contradictory roof interpretation')
             if key == 'upper' and (type(row.get('windows')) is not int or not 0 <= row['windows'] <= 40):
                 errors.append('invalid upstairs window count')
     for key in ('materials', 'uncertain'):
@@ -95,6 +116,26 @@ def structural_issues(spec, observations, slot_count=18):
         roof = spec['blocks'][name]['roof']
         if roof['form'] == 'gable' and roof['ridge'] == 'z':
             gables.append({'slot': start, 'span': count})
+    # Porch gables are real triangles too; do not demand a second roof feature.
+    for porch in porches:
+        if porch.get('roof') == 'gable':
+            gables.append(porch)
+        elif porch.get('roof') == 'mixed':
+            gables.append({'slot': porch['slot'] + porch.get('gable_offset', 0),
+                           'span': porch.get('gable_span', min(2, porch['span']))})
+    for i, observed in enumerate(observations.get('roofs', [])):
+        centre = observed['at'] + observed['width'] / 2
+        cell = (1 - centre if spec['mirror'] else centre) * slot_count
+        owner = next((u for u in spec['upper'] if u['slot'] <= cell < u['slot'] + u['span']), None)
+        roof = owner['roof'] if owner else spec['blocks']['garage' if cell < 6 else 'main']['roof']
+        if bool(owner) != (observed['story'] == 2):
+            issues.append(f"Roof region {i + 1} has the wrong supporting story count; attic windows are not full stories.")
+        if observed['ridge'] != 'unknown' and roof['ridge'] != observed['ridge']:
+            issues.append(f"Roof region {i + 1} needs underlying ridge={observed['ridge']}, independent of its front gable.")
+        if observed['front_gable'] == 'cross' and not any(
+                r['kind'] == 'gable' and observed['at'] <= region(r)[0] + region(r)[1] / 2
+                <= observed['at'] + observed['width'] for r in spec['roof']):
+            issues.append(f"Roof region {i + 1} needs a projecting cross-gable on its underlying roof.")
     for i, observed in enumerate(observations['gables']):
         if not any(matches(g, observed) for g in gables):
             issues.append(f'Gable region {i + 1} has the wrong position or width.')

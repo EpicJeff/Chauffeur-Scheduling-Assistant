@@ -1142,6 +1142,11 @@ Board-and-batten means cladding="batten". Use these exact enum values in every f
 A volume roof with form="gable", ridge="z" ALREADY supplies its street-facing gable.
 Never add a full-width gable feature on top of that end. For its attic opening use
 window=true on the block/upper roof object. Cross-gable features also accept window=true.
+Resolve roofs[] before openings: ridge=x runs across the facade behind a projecting
+cross-gable roof feature; ridge=z presents the block's own end gable. A triangle and
+attic window alone do not justify an upper story. Match the observed supporting story.
+If garage_side is unknown, choose the block mapping that fits visible roof volumes,
+not a default front garage. Do not invent a visible garage door.
 Check the observed upstairs window-group count against your story=2 entries before returning.
 Rules: colours are the NEAREST palette name, never hex.
 For a continuous sloping porch cover with a smaller front gable, use porch roof "mixed".
@@ -1336,6 +1341,43 @@ def from_photo(image_b64, mime):
         notes += restore_missing_upper_windows(spec, observed, len(slot_table()))
         normalization_notes = list(pre + notes)
         issues = structural_issues(spec, observed, len(slot_table()))
+        correction = {'initial_issues': list(issues), 'status': 'not_needed'}
+        if issues and len(attempts) - action_start < PHOTO_REQUEST_CAP:
+            # One bounded structural correction, sharing the upload's existing budget.
+            # Failure must leave a usable draft, and never silently accept regression.
+            correction['status'] = 'failed'
+            try:
+                repair = call(_photo_prompt() + '\nReturn ONE complete house using canonical slot/span, not fractions. '
+                              'Correct the listed structural discrepancies using the original photo. '
+                              'Recheck observations against visible roof planes; do not add stories for attic windows. '
+                              'Keep correctly represented features unchanged.',
+                              'Observations: ' + json.dumps(observed, separators=(',', ':'))
+                              + '\nDiscrepancies: ' + json.dumps(issues, separators=(',', ':'))
+                              + '\nNormalization changes: ' + json.dumps(normalization_notes, separators=(',', ':'))
+                              + '\nDraft: ' + json.dumps(spec, separators=(',', ':')), 1)
+                correction['raw_configuration'] = copy.deepcopy(repair)
+                repair_notes = []
+                candidate, errors = _validate_photo_model(copy.deepcopy(repair), repair_notes)
+                correction['validation_errors'] = list(errors)
+                if errors:
+                    raise ValueError('; '.join(errors[:3]))
+                candidate, clean_notes = normalize(candidate)
+                repair_notes += clean_notes + restore_missing_upper_windows(candidate, observed, len(slot_table()))
+                remaining = structural_issues(candidate, observed, len(slot_table()))
+                correction.update(normalization_notes=repair_notes, structural_issues=remaining)
+                if set(remaining) < set(issues):
+                    spec, issues = candidate, remaining
+                    notes += ['Automatic structural correction accepted.'] + repair_notes
+                    correction['status'] = 'accepted'
+                else:
+                    correction['status'] = 'withheld'
+                    notes.append('Automatic correction withheld: it did not reduce discrepancies without regressions.')
+            except Exception as ex:
+                correction['error'] = str(ex)
+                notes.append('Automatic structural correction unavailable; original draft retained.')
+        elif issues:
+            correction['status'] = 'budget_exhausted'
+            notes.append('Automatic structural correction skipped: upload request limit reached.')
         notes = pre + notes + ['Needs review: ' + x for x in issues] + observed['uncertain'] + [_requests_note(attempts)]
         if observed['garage_side'] == 'unknown':
             notes.append('Garage side is uncertain; block mapping is inferred from visible geometry.')
@@ -1344,7 +1386,7 @@ def from_photo(image_b64, mime):
         _DRAFTS[token]['photo_trace'] = {
             'observations': copy.deepcopy(observed), 'raw_configuration': raw_configuration,
             'before_normalization': before_normalization, 'normalization_notes': normalization_notes,
-            'structural_issues': list(issues), 'attempts': list(attempts)}
+            'structural_issues': list(issues), 'automatic_correction': correction, 'attempts': list(attempts)}
         _DRAFTS[token]['photo_run'] = run
         run.update(spec=copy.deepcopy(spec), notes=list(notes), token=token)
         return spec, notes, None, token

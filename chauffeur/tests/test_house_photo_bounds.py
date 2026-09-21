@@ -69,7 +69,7 @@ class PhotoBoundsTests(unittest.TestCase):
                 self.assertIsNotNone(spec)
                 self.assertEqual(hf.validate_block_model(spec),[])
                 for field in expected:self.assertTrue(any(field+' adjusted' in n for n in notes),field)
-                self.assertEqual(call.call_count,2 if stage=='describe' else 1)
+                self.assertEqual(call.call_count,3 if stage=='describe' else 1)
             self.assertEqual(obj,original)
 
     def test_invalid_types_and_nonfinite_heights_still_rejected(self):
