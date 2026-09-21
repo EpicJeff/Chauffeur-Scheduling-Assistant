@@ -1,5 +1,6 @@
 """Photo observations and structural checks, independent of provider and storage."""
 import copy
+import json
 import math
 
 OBSERVATION_PROMPT = """Inspect the attached house photo before designing anything. Return JSON only.
@@ -31,6 +32,37 @@ wall's story count, NOT the count of window rows. A window in an attic triangle 
 not create an upper[] entry. Keep porch entrance gables separate from main roof volumes.
 Record unknown garage side explicitly. Describe porch slopes and entrance gables in sections.
 """
+
+
+def normalize_observation_notes(value):
+    """Adapt descriptive annotations only; never coerce architectural geometry.
+
+    Structured descriptions stay compact JSON text so region/material relationships
+    survive without guessing a provider's object shape. Raw output lives in the trace.
+    """
+    if not isinstance(value, dict):
+        return value
+    result = copy.deepcopy(value)
+    warnings = []
+    for key in ('materials', 'uncertain'):
+        raw = result.get(key)
+        if isinstance(raw, list) and all(isinstance(row, str) for row in raw):
+            continue
+        rows = raw if isinstance(raw, list) else ([] if raw is None else [raw])
+        text = []
+        ignored = 0
+        for row in rows:
+            if isinstance(row, str):
+                text.append(row)
+            elif isinstance(row, (dict, list)):
+                text.append(json.dumps(row, ensure_ascii=False, separators=(',', ':')))
+            else:
+                ignored += 1
+        result[key] = text
+        detail = f'; ignored {ignored} non-descriptive value(s)' if ignored else ''
+        warnings.append(f'Photo {key} annotations converted to a text list{detail}; original response retained in trace.')
+    result['uncertain'].extend(warnings)
+    return result
 
 
 def validate_observations(value):

@@ -13,7 +13,7 @@ import secrets
 import threading
 import time
 import uuid
-from services.house_photo import OBSERVATION_PROMPT, validate_observations, reconcile_observations, structural_issues, restore_missing_upper_windows
+from services.house_photo import OBSERVATION_PROMPT, validate_observations, normalize_observation_notes, reconcile_observations, structural_issues, restore_missing_upper_windows
 
 SLOT_W = 1.85
 # West to east. Mirrors house.js: FULL_HOUSE, GARAGE_BLOCK, EXT_TOP4.
@@ -1312,10 +1312,12 @@ def from_photo(image_b64, mime):
             observed = call(OBSERVATION_PROMPT, 'Identify the visible architecture and proportions.', 3)
             if isinstance(observed, dict) and observed.get('error'):
                 raise ValueError(observed['error'])
+            raw_observed = copy.deepcopy(observed)
+            observed = normalize_observation_notes(observed)
             errors = validate_observations(observed)
             if errors:
                 raise ValueError('invalid photo observations: ' + '; '.join(errors[:3]))
-            run['raw_observations'] = copy.deepcopy(observed)
+            run['raw_observations'] = raw_observed
             run['observations'] = reconcile_observations(observed)
         observed = run['observations']
         res = call(_photo_prompt() + PHOTO_COORDINATES,

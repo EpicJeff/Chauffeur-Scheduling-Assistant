@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.121 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.122 (2026-09-21).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 This document covers Chauffeur's solver, integrations, family surfaces, automation, intelligence features, 3D house, and Study. It also serves as the primary context layer for agents that operate or extend the application.
 
@@ -8340,3 +8340,14 @@ validation. photo_trace.raw_observations retains the original response alongside
 reconciled observations. This adds no provider requests; cached observations are reused.
 Regression coverage verifies both conflict pairs, nonmutation, cache reuse and retained
 trace evidence. All 22 photo tests and 45 facade scenarios pass; no live Gemini calls.
+
+
+### Descriptive observation formats - v2.499.122 (2026-09-21)
+
+Before observation validation, materials/uncertain accept single strings, structured
+objects, mixed descriptive lists, and missing/null values. Objects become compact JSON
+text to preserve region/material relationships; non-descriptive scalars are ignored
+with an explicit note. Geometry, story counts and enum validation remain strict.
+Raw observations are captured before adaptation and retained in photo_trace. Conversion
+adds no model requests and cached observations are reused. 25 photo tests and 45 facade
+scenarios pass; no live Gemini requests were made.
