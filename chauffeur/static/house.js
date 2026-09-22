@@ -11493,7 +11493,11 @@
     // Photo/editor captures isolate the active design. Scenery is independent
     // of its mirror, shell masks, household state and room navigation.
     if (neighborhoodEnabled) {
-      function makeNeighborhood(layout) { return window.ChauffeurNeighborhood.build(T, CANONICAL_JS, {
+      function makeNeighborhood(layout) {
+        var west=Math.min(FULL_HOUSE.west,GARAGE_BLOCK.west),east=Math.max(FULL_HOUSE.east,GARAGE_BLOCK.east);
+        var north=Math.min(FULL_HOUSE.north,GARAGE_BLOCK.north),south=Math.max(FULL_HOUSE.south,GARAGE_BLOCK.south);
+        layout=window.ChauffeurNeighborhood.fitLayout(layout,{width:east-west,depth:south-north,x:(west+east)/2*(MIRROR?-1:1),z:(north+south)/2});
+        return window.ChauffeurNeighborhood.build(T, CANONICAL_JS, {
         main: Object.assign({}, FULL_HOUSE, {south: FULL_HOUSE.south - MAIN_DZ}),
         garage: Object.assign({}, GARAGE_BLOCK, {south: GARAGE_BLOCK.south - GAR_DZ})
       }, PALETTE, function (surface) { return makeMat(0xffffff, {rough:.95, map: surface === 'plain' ? null : cladTex(surface, 0xffffff)}); }, function(spec, footprintOnly) {

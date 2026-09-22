@@ -2,6 +2,24 @@
 (function (root) {
   'use strict';
   function clone(v) { return JSON.parse(JSON.stringify(v)); }
+  // Use the interactive home's wall area to establish one common map scale.
+  // A similarity transform preserves street angles and every size ratio while
+  // leaving room coordinates, picking and camera navigation in authored units.
+  function fitLayout(layout,body) {
+    if(!layout || !layout.home || !layout.home.footprint)return layout;
+    var out=clone(layout),home=layout.home,f=home.footprint;
+    var scale=Math.sqrt(body.width*body.depth/(f.width*f.depth));
+    var c=Math.cos(home.rotation),s=Math.sin(home.rotation);
+    function point(p){var x=p[0]-home.x,z=p[1]-home.z;return [body.x+(x*c-z*s)*scale,body.z+(x*s+z*c)*scale];}
+    out.roads=out.roads.map(function(line){return line.map(point);});
+    out.lots.forEach(function(l){
+      var p=point([l.x,l.z]);l.x=p[0];l.z=p[1];l.rotation-=home.rotation;
+      if(l.footprint){l.footprint.width*=scale;l.footprint.depth*=scale;l.footprint.outline=l.footprint.outline.map(point);}
+      else l.scale=(l.scale||1)*scale;
+    });
+    out.homeCalibration={scale:scale,rotation:-home.rotation,source:'home-footprint'};
+    return out;
+  }
   // Facade-compatible style recipes; placement and rendering do not choose style.
   var STYLES = [
     {name:'farmhouse',body:'white',cladding:'batten',roof:'gable',pitch:35,roofColor:'charcoal',frame:'black',trim:'white',porch:'shed',stories:2,count:2},
@@ -270,14 +288,20 @@
     function add(kind,size,pos,turn,color,lot) {
       (buckets[kind]||(buckets[kind]=[])).push({size:size,pos:pos,turn:turn,color:color,lot:lot});pieces++;
     }
-    add('box',[540,.15,540],[0,-.62,0],0,0x81966d,-1);
+    var mapScale=layout&&layout.homeCalibration?layout.homeCalibration.scale:1;
+    var sceneryRadius=270;
+    if(layout && layout.source==='mapbox'){
+      layout.roads.forEach(function(line){line.forEach(function(p){sceneryRadius=Math.max(sceneryRadius,Math.hypot(p[0],p[1])+30);});});
+      lots.forEach(function(l){sceneryRadius=Math.max(sceneryRadius,Math.hypot(l.x,l.z)+(l.footprint?Math.hypot(l.footprint.width,l.footprint.depth)/2:35*l.scale)+30);});
+    }
+    add('box',[sceneryRadius*2,.15,sceneryRadius*2],[0,-.62,0],0,0x81966d,-1);
     if(layout && layout.source==='mapbox') {
       layout.roads.forEach(function(segment){
         var a=segment[0],b=segment[1],dx=b[0]-a[0],dz=b[1]-a[1],length=Math.hypot(dx,dz),turn=-Math.atan2(dz,dx);
         // Overlapping round ends seal bends/junctions without a second renderer.
-        add('box',[length,.12,7.4],[(a[0]+b[0])/2,-.40,(a[1]+b[1])/2],turn,0xbebbb0,-1);
-        add('box',[length,.14,5],[(a[0]+b[0])/2,-.36,(a[1]+b[1])/2],turn,0x4a4f55,-1);
-        [a,b].forEach(function(p){add('disc',[7.4,.12,7.4],[p[0],-.40,p[1]],0,0xbebbb0,-1);add('disc',[5,.14,5],[p[0],-.36,p[1]],0,0x4a4f55,-1);});
+        add('box',[length,.12,7.4*mapScale],[(a[0]+b[0])/2,-.40,(a[1]+b[1])/2],turn,0xbebbb0,-1);
+        add('box',[length,.14,5*mapScale],[(a[0]+b[0])/2,-.36,(a[1]+b[1])/2],turn,0x4a4f55,-1);
+        [a,b].forEach(function(p){add('disc',[7.4*mapScale,.12,7.4*mapScale],[p[0],-.40,p[1]],0,0xbebbb0,-1);add('disc',[5*mapScale,.14,5*mapScale],[p[0],-.36,p[1]],0,0x4a4f55,-1);});
       });
     } else [-203.5,-87.5,28.5,144.5,260.5].forEach(function(z){
       // Keep the active parcel's existing road and curb uncovered.
@@ -369,12 +393,16 @@
       });
     });
     });
-    var horizon=paintedHorizon(T);if(horizon)group.add(horizon);
+    var horizon=paintedHorizon(T);if(horizon){
+      if(layout && layout.source==='mapbox')horizon.scale.set(sceneryRadius/250,1,sceneryRadius/250);
+      group.add(horizon);
+    }
     var hidden='',visibleLots=lots.length,zero=new T.Matrix4().makeScale(0,0,0);
     function update(camera,target,outside) {
       group.visible=outside;if(!outside)return;
       var dx=camera.x-target.x,dz=camera.z-target.z,len=dx*dx+dz*dz;
       var blocked=lots.map(function(l){
+        if(layout && layout.source==='mapbox')return false;
         var t=((l.x-target.x)*dx+(l.z-target.z)*dz)/len;
         var x=target.x+t*dx,z=target.z+t*dz;
         return t>0 && t<1.3 && Math.hypot(l.x-x,l.z-z)<24;
@@ -383,10 +411,10 @@
       visibleLots=blocked.filter(function(b){return !b;}).length;
       matrices.forEach(function(b){b.rows.forEach(function(r,i){b.mesh.setMatrixAt(i,r.lot>=0&&blocked[r.lot]?zero:b.saved[i]);});b.mesh.instanceMatrix.needsUpdate=true;});
     }
-    return {group:group,update:update,setNight:function(n){if(horizon)horizon.material.color.setHex(n?0x435063:0xcdcdcd);},stats:function(){return {layoutSource:layout&&layout.source==='mapbox'?'mapbox':'generated',roadSegments:layout&&layout.roads?layout.roads.length:0,lots:lots.length,visibleLots:visibleLots,visible:group.visible,nearSource:nearTemplate?'parametric-exterior':'simplified',nearDesigns:uniqueKits.length,nearGeometry:uniqueKits.map(function(k){return k.geometrySignature;}),nearTemplate:nearTemplate?{meshes:uniqueKits.reduce(function(n,k){return n+k.sourceMeshes;},0),instances:uniqueKits.reduce(function(n,k){return n+k.sourceInstances;},0),triangles:uniqueKits.reduce(function(n,k){return n+k.triangles;},0)}:null,nearLots:lots.filter(function(l){return l.detail==='near';}).length,farLots:lots.filter(function(l){return l.detail==='far';}).length,horizon:!!horizon,batches:meshes.length+(horizon?1:0),instances:pieces,
+    return {group:group,update:update,setNight:function(n){if(horizon)horizon.material.color.setHex(n?0x435063:0xcdcdcd);},stats:function(){return {homeCalibration:layout&&layout.homeCalibration||null,sceneryRadius:sceneryRadius,layoutSource:layout&&layout.source==='mapbox'?'mapbox':'generated',roadSegments:layout&&layout.roads?layout.roads.length:0,lots:lots.length,visibleLots:visibleLots,visible:group.visible,nearSource:nearTemplate?'parametric-exterior':'simplified',nearDesigns:uniqueKits.length,nearGeometry:uniqueKits.map(function(k){return k.geometrySignature;}),nearTemplate:nearTemplate?{meshes:uniqueKits.reduce(function(n,k){return n+k.sourceMeshes;},0),instances:uniqueKits.reduce(function(n,k){return n+k.sourceInstances;},0),triangles:uniqueKits.reduce(function(n,k){return n+k.triangles;},0)}:null,nearLots:lots.filter(function(l){return l.detail==='near';}).length,farLots:lots.filter(function(l){return l.detail==='far';}).length,horizon:!!horizon,batches:meshes.length+(horizon?1:0),instances:pieces,
       triangles:meshes.reduce(function(n,m){return n+(m.geometry.index?m.geometry.index.count:m.geometry.attributes.position.count)/3*m.count;},horizon?horizon.geometry.index.count/3:0),
       placements:lots.map(function(l){return {id:l.id,x:l.x,z:l.z,rotation:l.rotation,detail:l.detail,scale:l.scale,footprint:l.footprint,transform:l.transform,style:l.style};})};},
       dispose:function(){meshes.forEach(function(m){m.dispose();});Object.keys(geometries).forEach(function(k){geometries[k].dispose();});Object.keys(materials).forEach(function(k){materials[k].dispose();});reflected.forEach(function(g){g.dispose();});uniqueKits.forEach(function(k){k.dispose();});if(horizon){horizon.geometry.dispose();horizon.material.map.dispose();horizon.material.dispose();}group.clear();}};
   }
-  root.ChauffeurNeighborhood={plan:plan,exterior:exterior,captureExterior:captureExterior,build:build};
+  root.ChauffeurNeighborhood={plan:plan,fitLayout:fitLayout,exterior:exterior,captureExterior:captureExterior,build:build};
 })(typeof window!=='undefined'?window:globalThis);

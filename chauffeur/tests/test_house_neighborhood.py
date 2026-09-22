@@ -48,6 +48,24 @@ mapped.group.traverse(mesh=>{if(!mesh.isInstancedMesh)return;
   }
 });
 assert.deepEqual(yards.sort(),[.7,1]);mapped.dispose();
+// Mapped buildings remain present at every exterior angle, even inside the
+// former fixed 24-unit camera corridor.
+const visibleMap=ChauffeurNeighborhood.build(T,spec,envelopes,palette,null,null,{source:'mapbox',roads:[],lots:[
+  {x:0,z:55,rotation:0,detail:'far',scale:1},
+  {x:55,z:0,rotation:0,detail:'far',scale:1}
+]});
+for(const camera of [new T.Vector3(0,25,80),new T.Vector3(80,25,0)]){
+  visibleMap.update(camera,new T.Vector3(),true);assert.equal(visibleMap.stats().visibleLots,2);
+}
+visibleMap.dispose();
+const raw={source:'mapbox',home:{x:5,z:10,rotation:Math.PI/2,footprint:{width:10,depth:20}},
+  roads:[[[5,10],[15,10]]],lots:[{x:25,z:10,rotation:Math.PI/2,scale:1,
+  footprint:{width:5,depth:10,outline:[[25,10],[30,10],[30,20],[25,10]]}}]};
+const before=JSON.stringify(raw),calibrated=ChauffeurNeighborhood.fitLayout(raw,{x:-2,z:4,width:20,depth:40});
+assert.equal(JSON.stringify(raw),before);assert.equal(calibrated.homeCalibration.scale,2);
+assert(Math.abs(calibrated.lots[0].x+2)<1e-8);assert(Math.abs(calibrated.lots[0].z-44)<1e-8);
+assert.equal(calibrated.lots[0].footprint.width,10);assert.equal(calibrated.lots[0].rotation,0);
+assert(Math.abs(Math.hypot(...calibrated.roads[0][1].map((x,i)=>x-calibrated.roads[0][0][i]))-20)<1e-8);
 // Wall bounds land on the requested rotated footprint for both mirrored
 // and unmirrored designs; the source model's off-center origin is irrelevant.
 const footprintLayout={source:'mapbox',roads:[],lots:[0,1,2,3].map(i=>({

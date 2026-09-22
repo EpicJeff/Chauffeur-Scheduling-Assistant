@@ -103,6 +103,26 @@ removal, dense rows, MVT polygon decoding and provider timeout behavior. The old
 user-supplied API response contains no outlines and cannot validate actual new
 building coverage; the cache version forces a fresh lookup on the installation.
 
+## Shared home scale and visibility (v2.499.150)
+
+Retain the primary footprint instead of discarding it. On the client, a uniform
+similarity transform matches its bounding-box area to the interactive house's
+wall area, aligns its facing axis and centers it on the authored wall bounds.
+All map coordinates, road widths and neighbor dimensions share the transform;
+the interactive home and room picking/navigation remain in authored units.
+This approximates the fit without distorting street angles. Missing primary
+footprint data retains the earlier scale and is visible in diagnostics.
+
+Mapped houses are never removed by the generated scenery's 24-unit camera
+corridor. Ordinary mesh occlusion still applies. Extend ground and the painted
+horizon beyond all mapped roads and houses instead of cutting the scene at a
+fixed radius. API `home` and `buildingDiagnostics` preserve primary geometry
+and filter counts; `chfNeighborhood().homeCalibration` reports the applied fit.
+Cache version increments. The supplied refreshed layout contains 43 houses,
+all nine tiles, and no primary footprint (the previous version discarded it).
+Replay checks visibility for those 43 houses; a separate footprint fixture checks
+home scale. Provider completeness for lots absent from that file is not inferred.
+
 ## Proof
 
 `test_house_map.py` checks real MVT decoding, coordinate direction, request count,

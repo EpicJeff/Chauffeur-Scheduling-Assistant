@@ -25,13 +25,13 @@ def main():
         buildings = [building(x,z,18+(i%3)*2,22+(i%2)*4,identity=f'{x}:{z}')
                      for i,x in enumerate(range(-200,201,40)) for z in (-100,-30,65,155)
                      if abs(x)+abs(z)>40]
+        buildings.append(building(0,0,16,18,identity='home'))
         layout = house_map.compile_layout(streets,buildings)
     if os.environ.get('HOUSE_MAP_REPLAY'):
         saved = json.loads(Path(os.environ['HOUSE_MAP_REPLAY']).read_text(encoding='utf-8-sig'))
         saved = saved.get('layout',saved)
-        layout = house_map.compile_layout(saved['roads'])
+        layout = saved if saved.get('placement')=='footprints' else house_map.compile_layout(saved['roads'])
         assert layout['roads'] == saved['roads']
-        assert len(layout['lots']) > len(saved['lots'])
         print('Replay houses:',len(saved['lots']),'->',len(layout['lots']),flush=True)
     house_map.neighborhood_layout = lambda cached_only=False: {'source':'generated'} if cached_only else layout
     ha_api.get_states = lambda *a, **k: []
@@ -54,7 +54,11 @@ def main():
             assert stats['nearDesigns'] == 8 and len(set(stats['nearGeometry'])) == 8, stats
             assert stats['triangles'] < 2000000 and stats['batches'] <= 400, stats
             assert stats['roadSegments'] == len(layout['roads']) and stats['lots'] == len(layout['lots'])
-            assert [p['scale'] for p in stats['placements']] == [p['scale'] for p in layout['lots']]
+            if layout.get('home'):
+                assert stats['homeCalibration']['source']=='home-footprint'
+                assert stats['homeCalibration']['scale']>1,stats['homeCalibration']
+            assert all((p['x']**2+p['z']**2)**.5<stats['sceneryRadius'] for p in stats['placements'])
+            assert len(stats['placements']) == len(layout['lots'])
             rendered_scales=page.evaluate('''() => {let values=[];__hpScene.getObjectByName('neighborhood').traverse(m=>{
               if(!m.userData.nearExterior)return;let a=m.instanceMatrix.array;
               for(let i=0;i<m.count;i++){let scale=Math.hypot(a[i*16],a[i*16+1],a[i*16+2]);if(scale>.01)values.push(Math.round(scale*100)/100);}
@@ -67,6 +71,7 @@ def main():
             for stop in (2,4,6,0):
                 page.evaluate('(s)=>chfOrbitTo(s)', stop)
                 page.wait_for_function('chfNavProbe({settled:true})', timeout=20000)
+                assert page.evaluate('chfNeighborhood().visibleLots') == len(layout['lots'])
             page.evaluate("chfHouseEnterRoom('kitchen')")
             page.wait_for_function('chfNavProbe({settled:true})', timeout=20000)
             assert not page.evaluate('chfNeighborhood().visible')

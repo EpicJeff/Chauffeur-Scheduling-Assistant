@@ -19,7 +19,7 @@ _ROADS = {'street', 'street_limited', 'primary', 'secondary', 'tertiary'}
 _HOUSE_TYPES = {'building', 'house', 'detached', 'residential', 'bungalow', 'terrace', 'semidetached_house', 'cabin', ''}
 
 
-def footprint_lots(buildings, project, roads):
+def footprint_lots(buildings, project, roads, home=None, diagnostics=None):
     """Keep mapped centers; fit a street-facing oriented box to each outline.
 
     Building outlines describe walls, not yards. They must never be rejected
@@ -28,25 +28,33 @@ def footprint_lots(buildings, project, roads):
     from shapely.geometry import Polygon, Point
     from shapely.ops import unary_union
     from shapely.strtree import STRtree
+    stats = diagnostics if diagnostics is not None else {}
+    def skipped(reason):
+        stats[reason] = stats.get(reason,0)+1
     grouped = {}
     for i, item in enumerate(buildings):
         if not isinstance(item, dict) or item.get('type', 'building') not in _HOUSE_TYPES:
+            skipped('nonResidentialOrLegacy')
             continue
         try:
             polygon = Polygon(item['outline']).buffer(0)
             if polygon.is_empty:
+                skipped('invalidOutline')
                 continue
             grouped.setdefault(str(item.get('id') or f'unknown-{i}'), []).append(polygon)
         except (KeyError, TypeError, ValueError):
+            skipped('invalidOutline')
             continue
     possible = []
     for pieces in grouped.values():
         merged = unary_union(pieces)
         for poly in ([merged] if merged.geom_type == 'Polygon' else getattr(merged, 'geoms', [])):
             if poly.geom_type != 'Polygon' or not 30 <= poly.area <= 1200:
+                skipped('areaOrGeometry')
                 continue
             at = project((poly.centroid.x,poly.centroid.y))
             if max(abs(at[0]),abs(at[1])) > 260:
+                skipped('outsideScene')
                 continue
             possible.append(poly)
     # Restrict duplicate checks to intersecting bounds, not every building in
@@ -57,18 +65,19 @@ def footprint_lots(buildings, project, roads):
     for i,poly in enumerate(possible):
         if any(j in kept and poly.intersection(possible[j]).area > .7*min(poly.area,possible[j].area)
                for j in tree.query(poly)):
+            skipped('duplicate')
             continue
         kept.add(i)
         outlines.append(poly)
     lots = []
     for poly in outlines:
         polygon = Polygon([project(p) for p in poly.exterior.coords])
-        if polygon.covers(Point(0,0)) or polygon.distance(Point(0,0)) < 2:
-            continue  # The active house already represents this building.
+        is_home = polygon.covers(Point(0,0)) or polygon.distance(Point(0,0)) < 2
         rectangle = polygon.minimum_rotated_rectangle
         points = list(rectangle.exterior.coords)[:-1]
         center = rectangle.centroid
         if max(abs(center.x),abs(center.y)) > 230:
+            skipped('outsideScene')
             continue
         _, frontage = min((closest((center.x,center.y),a,b) for a,b in roads),key=lambda p:p[0])
         dx, dz = frontage[0]-center.x, frontage[1]-center.y
@@ -78,9 +87,15 @@ def footprint_lots(buildings, project, roads):
         c,s = math.cos(turn),math.sin(turn)
         u = [p[0]*c-p[1]*s for p in points]
         v = [p[0]*s+p[1]*c for p in points]
-        lots.append({'x':round(center.x,3),'z':round(center.y,3),'rotation':turn,'scale':1,
+        lot = {'x':round(center.x,3),'z':round(center.y,3),'rotation':turn,'scale':1,
                      'footprint':{'width':round(max(u)-min(u),3),'depth':round(max(v)-min(v),3),
-                                  'outline':[[round(x,3),round(z,3)] for x,z in polygon.exterior.coords]}})
+                                  'outline':[[round(x,3),round(z,3)] for x,z in polygon.exterior.coords]}}
+        if is_home:
+            skipped('primaryHome')
+            if home is not None:
+                home.append(lot)
+        else:
+            lots.append(lot)
     return lots
 
 
@@ -189,7 +204,8 @@ def compile_layout(lines, buildings=(), coverage=()):
     if not roads or len(roads) > 800:
         return None
 
-    mapped = footprint_lots(buildings,project,roads)
+    home, diagnostics = [], {}
+    mapped = footprint_lots(buildings,project,roads,home,diagnostics)
     footprint_mode = any(isinstance(b,dict) and b.get('outline') for b in buildings)
     from shapely.geometry import Point, Polygon
     mapped_coverage = [Polygon([project(p) for p in ring]) for ring in coverage]
@@ -256,6 +272,8 @@ def compile_layout(lines, buildings=(), coverage=()):
     if not lots and not footprint_mode:
         return None
     return {'source': 'mapbox', 'roads': roads, 'lots': lots,
+            'home': min(home,key=lambda p:math.hypot(p['x'],p['z'])) if home else None,
+            'buildingDiagnostics':dict(diagnostics,emitted=len(mapped[:128]),overLimit=max(0,len(mapped)-128)),
             'placement': 'footprints' if footprint_mode else 'frontage',
             'footprintCount':len(mapped), 'footprintCoverage':[[list(p) for p in shape.exterior.coords] for shape in mapped_coverage]}
 
@@ -333,7 +351,7 @@ def neighborhood_layout(cached_only=False):
     home, token = maps.get_home_location(), maps.get_mapbox_api_key()
     if not home or not token or maps.get_map_option('disable_mapbox', False):
         return {'source': 'generated'}
-    key = hashlib.sha256((home+'|'+token+'|4').encode()).hexdigest()
+    key = hashlib.sha256((home+'|'+token+'|5').encode()).hexdigest()
     path = Path(storage.DB_PATH).with_name('house_map.json')
     cached = _cached(path, key)
     if cached is not None or cached_only:

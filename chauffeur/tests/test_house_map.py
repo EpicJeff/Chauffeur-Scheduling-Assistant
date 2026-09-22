@@ -38,6 +38,8 @@ class HouseMapTests(unittest.TestCase):
         layout=hm.compile_layout([[(-265,28.5),(265,28.5)]],items)
         self.assertEqual(layout['placement'],'footprints')
         self.assertEqual(len(layout['lots']),2)
+        self.assertEqual(layout['home']['footprint']['width'],14)
+        self.assertEqual(layout['home']['footprint']['depth'],16)
         self.assertEqual(layout,hm.compile_layout([[(-265,28.5),(265,28.5)]],items))
         for lot,x in zip(layout['lots'],(50,90)):
             self.assertAlmostEqual(lot['x'],x,places=3)
@@ -189,7 +191,7 @@ class HouseMapTests(unittest.TestCase):
             precision = stack.enter_context(patch.object(hm.storage, 'get_cached_geocode', return_value={'precision': 'exact'}))
             fetch = stack.enter_context(patch.object(hm, '_fetch', return_value=hm.compile_layout(STREETS)))
             # An upgrade must not retain the sparse layout for twelve hours.
-            legacy_key = hm.hashlib.sha256(b'Test home|private-token|3').hexdigest()
+            legacy_key = hm.hashlib.sha256(b'Test home|private-token|4').hexdigest()
             (Path(directory)/'house_map.json').write_text(json.dumps({'key':legacy_key, 'until':hm.time.time()+3600,
                                                                     'layout':{'source':'mapbox','lots':[]}}))
             self.assertEqual(hm.neighborhood_layout(cached_only=True)['source'], 'generated')

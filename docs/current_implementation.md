@@ -12,7 +12,21 @@ Reduce the coordination work required to run a family. Chauffeur should understa
 
 The 3D house is the shared spatial interface. Rooms and real-world objects provide stable context for features. The house should also reflect the family's own life through carefully quality-gated, personalized objects and spaces.
 
-## Latest architecture change (2026-09-22, v2.499.149)
+## Latest architecture change (2026-09-22, v2.499.150)
+
+The primary mapped footprint now establishes the scene scale: its wall area is
+matched to the interactive home's wall bounds using a uniform map transform.
+Street lengths/widths, neighbor dimensions and spacing share that scale. The
+map rotates/translates to the home's body center; room coordinates and picking
+remain unchanged. This is an approximate area fit, preserving map angles and
+relative sizes rather than stretching street geometry. Without a primary
+footprint the previous street-based scale remains. Mapped houses no longer
+disappear inside the arbitrary camera corridor, and the painted horizon/ground
+extent now encloses all mapped geometry. API output retains the primary footprint
+and building omission counts; cache identity changes. The refreshed supplied
+layout has 43 houses and all nine tiles, below the count limit.
+
+## Earlier building fitting (v2.499.149)
 
 Mapped neighbors now retain building outlines, centers and alignment. Wall width
 and depth fit each outline's oriented bounds, with height scaled proportionally;
