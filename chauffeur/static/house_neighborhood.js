@@ -17,7 +17,7 @@
       placements.push([col*51,row*58,Math.abs(row)%2?Math.PI:0,
         Math.abs(row)<=1 && Math.abs(col)<=1?'near':'far']);
     }
-    if(layout && layout.source==='mapbox')placements=layout.lots.map(function(l){return [l.x,l.z,l.rotation,l.detail];});
+    if(layout && layout.source==='mapbox')placements=layout.lots.map(function(l){return [l.x,l.z,l.rotation,l.detail,l.scale||1];});
     var nearIndex=0;
     return placements.map(function (p,i) {
       var s=clone(canonical),recipe=STYLES[i%STYLES.length];
@@ -48,7 +48,7 @@
         s.ground=s.ground.filter(function(f){return f.story!==2;});
         if(s.upper.length)(variant?[9,11,13]:[8,10,12]).forEach(function(slot){s.ground.push({slot:slot,span:1,kind:'window',size:'standard',count:1,shutters:false,story:2});});
       }
-      return {id:'neighbor-'+i,x:p[0],z:p[1],rotation:p[2],detail:p[3],style:recipe.name,spec:s};
+      return {id:'neighbor-'+i,x:p[0],z:p[1],rotation:p[2],detail:p[3],scale:p[4]||1,style:recipe.name,spec:s};
     });
   }
 
@@ -322,10 +322,10 @@
         dummy.position.set.apply(dummy.position,r.pos);dummy.rotation.set(0,r.turn,0);dummy.scale.set.apply(dummy.scale,r.size);dummy.updateMatrix();
         var m=dummy.matrix.clone();
         if(r.lot>=0){
-          var l=lots[r.lot];placement.position.set(l.x,0,l.z);placement.rotation.set(0,l.rotation,0);placement.scale.set(l.spec.mirror?-1:1,1,1);placement.updateMatrix();
+          var l=lots[r.lot];placement.position.set(l.x,-.31*(1-l.scale),l.z);placement.rotation.set(0,l.rotation,0);placement.scale.set(l.spec.mirror?-l.scale:l.scale,l.scale,l.scale);placement.updateMatrix();
           // Negative determinant is unsupported by InstancedMesh: reflect local
           // position/rotation instead, so every instance retains positive scale.
-          if(l.spec.mirror){dummy.position.x=-r.pos[0];dummy.rotation.y=-r.turn;dummy.updateMatrix();m.copy(dummy.matrix);placement.scale.x=1;placement.updateMatrix();}
+          if(l.spec.mirror){dummy.position.x=-r.pos[0];dummy.rotation.y=-r.turn;dummy.updateMatrix();m.copy(dummy.matrix);placement.scale.x=l.scale;placement.updateMatrix();}
           m.premultiply(placement.matrix);
         }
         mesh.setMatrixAt(i,m);mesh.setColorAt(i,new T.Color(r.color));saved.push(m);
@@ -349,7 +349,7 @@
         var mesh=new T.InstancedMesh(geometry,part.material,rows.length),saved=[];
         mesh.castShadow=part.castShadow;mesh.receiveShadow=true;mesh.renderOrder=part.renderOrder;
         mesh.userData.yard=true;mesh.userData.nearExterior=true;mesh.frustumCulled=false;mesh.raycast=function(){};
-        rows.forEach(function(r,i){var l=lots[r.lot];placement.position.set(l.x,0,l.z);placement.rotation.set(0,l.rotation,0);placement.scale.set(1,1,1);placement.updateMatrix();saved.push(placement.matrix.clone());mesh.setMatrixAt(i,placement.matrix);});
+        rows.forEach(function(r,i){var l=lots[r.lot];placement.position.set(l.x,-.31*(1-l.scale),l.z);placement.rotation.set(0,l.rotation,0);placement.scale.set(l.scale,l.scale,l.scale);placement.updateMatrix();saved.push(placement.matrix.clone());mesh.setMatrixAt(i,placement.matrix);});
         group.add(mesh);meshes.push(mesh);matrices.push({mesh:mesh,rows:rows,saved:saved});pieces+=rows.length;
       });
     });
@@ -370,7 +370,7 @@
     }
     return {group:group,update:update,setNight:function(n){if(horizon)horizon.material.color.setHex(n?0x435063:0xcdcdcd);},stats:function(){return {layoutSource:layout&&layout.source==='mapbox'?'mapbox':'generated',roadSegments:layout&&layout.roads?layout.roads.length:0,lots:lots.length,visibleLots:visibleLots,visible:group.visible,nearSource:nearTemplate?'parametric-exterior':'simplified',nearDesigns:uniqueKits.length,nearGeometry:uniqueKits.map(function(k){return k.geometrySignature;}),nearTemplate:nearTemplate?{meshes:uniqueKits.reduce(function(n,k){return n+k.sourceMeshes;},0),instances:uniqueKits.reduce(function(n,k){return n+k.sourceInstances;},0),triangles:uniqueKits.reduce(function(n,k){return n+k.triangles;},0)}:null,nearLots:lots.filter(function(l){return l.detail==='near';}).length,farLots:lots.filter(function(l){return l.detail==='far';}).length,horizon:!!horizon,batches:meshes.length+(horizon?1:0),instances:pieces,
       triangles:meshes.reduce(function(n,m){return n+(m.geometry.index?m.geometry.index.count:m.geometry.attributes.position.count)/3*m.count;},horizon?horizon.geometry.index.count/3:0),
-      placements:lots.map(function(l){return {id:l.id,x:l.x,z:l.z,rotation:l.rotation,detail:l.detail,style:l.style};})};},
+      placements:lots.map(function(l){return {id:l.id,x:l.x,z:l.z,rotation:l.rotation,detail:l.detail,scale:l.scale,style:l.style};})};},
       dispose:function(){meshes.forEach(function(m){m.dispose();});Object.keys(geometries).forEach(function(k){geometries[k].dispose();});Object.keys(materials).forEach(function(k){materials[k].dispose();});reflected.forEach(function(g){g.dispose();});uniqueKits.forEach(function(k){k.dispose();});if(horizon){horizon.geometry.dispose();horizon.material.map.dispose();horizon.material.dispose();}group.clear();}};
   }
   root.ChauffeurNeighborhood={plan:plan,exterior:exterior,captureExterior:captureExterior,build:build};

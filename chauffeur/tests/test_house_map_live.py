@@ -1,5 +1,6 @@
 """Mapped neighborhood: async first load, cached load, orbit and room isolation."""
 import os
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -17,6 +18,13 @@ def main():
                [(-350,-100),(-100,-100),(40,-100),(85,-65),(100,45)],
                [(-350,110),(0,110),(55,140),(135,140)]]
     layout = house_map.compile_layout(streets)
+    if os.environ.get('HOUSE_MAP_REPLAY'):
+        saved = json.loads(Path(os.environ['HOUSE_MAP_REPLAY']).read_text(encoding='utf-8-sig'))
+        saved = saved.get('layout',saved)
+        layout = house_map.compile_layout(saved['roads'])
+        assert layout['roads'] == saved['roads']
+        assert len(layout['lots']) > len(saved['lots'])
+        print('Replay houses:',len(saved['lots']),'->',len(layout['lots']),flush=True)
     house_map.neighborhood_layout = lambda cached_only=False: {'source':'generated'} if cached_only else layout
     ha_api.get_states = lambda *a, **k: []
     ha_api.get_state = lambda *a, **k: None
@@ -38,6 +46,12 @@ def main():
             assert stats['nearDesigns'] == 8 and len(set(stats['nearGeometry'])) == 8, stats
             assert stats['triangles'] < 2000000 and stats['batches'] <= 400, stats
             assert stats['roadSegments'] == len(layout['roads']) and stats['lots'] == len(layout['lots'])
+            assert [p['scale'] for p in stats['placements']] == [p['scale'] for p in layout['lots']]
+            rendered_scales=page.evaluate('''() => {let values=[];__hpScene.getObjectByName('neighborhood').traverse(m=>{
+              if(!m.userData.nearExterior)return;let a=m.instanceMatrix.array;
+              for(let i=0;i<m.count;i++){let scale=Math.hypot(a[i*16],a[i*16+1],a[i*16+2]);if(scale>.01)values.push(Math.round(scale*100)/100);}
+            });return [...new Set(values)];}''')
+            assert rendered_scales and set(rendered_scales).issubset({p['scale'] for p in layout['lots'][:8]}),rendered_scales
             assert page.locator('#room canvas').count() == 1
             assert page.locator('#house-map-credit').is_visible()
             assert page.evaluate("__hpScene.getObjectByName('parcel-road').visible") is False

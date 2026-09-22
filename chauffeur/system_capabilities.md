@@ -1,6 +1,8 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.147 (2026-09-22).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.148 (2026-09-22).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**Mapped frontage fitting (v2.499.148).** A dense deterministic search finds usable frontage beside the home, bends and junctions. Mapped positions precede generated fill; full-size houses precede 85% and 70% gap-fill houses. Both detailed and lightweight exteriors, including their landscaping, use the collision-tested scale. Street geometry and the active home retain their dimensions. The nearest eight accepted houses retain detailed rendering, with a 48-house ceiling. A supplied 41-segment layout replays as 37 houses versus the former 20, without overlapping yards or crossing streets. This is frontage fitting, not exact building-outline reconstruction. Cached layouts from the earlier compiler are invalidated.
 
 **Mapped neighborhood density correction (v2.499.147).** Generated frontages fit the 52-unit yard envelope. Rotated yard overlap tests reserve space around houses, replacing redundant 58-unit neighbor and 60-unit home clearance circles that discarded valid immediate neighbors. Road-crossing checks and house-count/detail budgets remain. Cached layouts from the earlier compiler are invalidated. Regression fixtures preserve all 17 valid mapped frontages and place 13 generated neighbors where the earlier rules placed eight; the browser gate verifies navigation and fallback.
 

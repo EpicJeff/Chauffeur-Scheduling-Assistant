@@ -37,7 +37,8 @@ def closest(point, a, b):
 
 
 def parcel(lot):
-    c, s = math.cos(lot['rotation']), math.sin(lot['rotation'])
+    size = lot.get('scale', 1)
+    c, s = math.cos(lot['rotation'])*size, math.sin(lot['rotation'])*size
     return [(lot['x']+x*c+z*s, lot['z']-x*s+z*c)
             for x, z in ((-26,-18),(26,-18),(26,26),(-26,26))]
 
@@ -60,7 +61,9 @@ def street_crosses_parcel(lot, roads):
         points = [((p[0]-lot['x'])*c-(p[1]-lot['z'])*s,
                    (p[0]-lot['x'])*s+(p[1]-lot['z'])*c) for p in (a, b)]
         lo, hi = 0., 1.
-        for axis, bounds in enumerate(((-28.5,28.5),(-20.5,28.5))):
+        size = lot.get('scale', 1)
+        # Scale the yard, but retain the street's full asphalt half-width.
+        for axis, bounds in enumerate(((-26*size-2.5,26*size+2.5),(-18*size-2.5,26*size+2.5))):
             start, end = points[0][axis], points[1][axis]
             d = end-start
             if abs(d) < 1e-9:
@@ -129,37 +132,49 @@ def compile_layout(lines, buildings=()):
         if d > 70 or d < 4:
             continue
         nx, nz = (center[0]-frontage[0])/d, (center[1]-frontage[1])/d
-        candidates.append((frontage[0]+nx*29, frontage[1]+nz*29, math.atan2(-nx, -nz)))
+        candidates.append((frontage[0]+nx*29, frontage[1]+nz*29, math.atan2(-nx, -nz), 0))
     # Fill unmapped buildings and the outer ring from frontage, never a grid.
     for a, b in roads:
         length = math.dist(a, b)
         nx, nz = -(b[1]-a[1])/length, (b[0]-a[0])/length
-        # A yard is 52 units wide. Rounding UP the count makes candidates
-        # narrower than their own collision envelope and drops alternate lots.
-        count = max(1, math.floor(length/54))
+        # These are search positions, not prescribed lot centers. Sparse
+        # midpoints miss usable frontage beside the home and at junctions.
+        count = max(1, math.ceil(length/2))
         for step in range(count):
             t = (step+.5)/count
             for side in (-1, 1):
                 candidates.append((a[0]+(b[0]-a[0])*t+nx*29*side,
                                    a[1]+(b[1]-a[1])*t+nz*29*side,
-                                   math.atan2(-nx*side, -nz*side)))
-    candidates.sort(key=lambda p: (math.hypot(p[0], p[1]), p))
+                                   math.atan2(-nx*side, -nz*side), 1))
+    candidates.sort(key=lambda p: (p[3], math.hypot(p[0], p[1]), p))
     lots = []
     parcels = [parcel({'x': 0, 'z': 0, 'rotation': 0})]
-    for x, z, turn in candidates:
-        if max(abs(x), abs(z)) > 230:
-            continue
-        if min(closest((x, z), a, b)[0] for a, b in roads) < 27:
-            continue  # Keep yards and roofs clear of junctions/other streets.
-        lot = {'x': round(x, 2), 'z': round(z, 2), 'rotation': turn,
-               'detail': 'near' if len(lots) < 8 else 'far'}
-        shape = parcel(lot)
-        if any(parcels_overlap(shape, p) for p in parcels) or street_crosses_parcel(lot, roads):
-            continue
-        lots.append(lot)
-        parcels.append(shape)
+    # Preserve mapped frontages before adding illustrative fill. Prefer full
+    # size, then fill remaining usable gaps with modestly smaller exteriors.
+    # The active home's size and every street coordinate remain unchanged.
+    for priority in (0, 1):
+        for size in (1, .85, .7):
+            for bx, bz, turn, source in candidates:
+                if source != priority or len(lots) == 48:
+                    continue
+                setback = 26*size+3
+                x = bx+(29-setback)*math.sin(turn)
+                z = bz+(29-setback)*math.cos(turn)
+                if max(abs(x), abs(z)) > 230:
+                    continue
+                lot = {'x': round(x, 2), 'z': round(z, 2), 'rotation': turn, 'scale': size}
+                shape = parcel(lot)
+                if any(parcels_overlap(shape, p) for p in parcels) or street_crosses_parcel(lot, roads):
+                    continue
+                lots.append(lot)
+                parcels.append(shape)
+            if len(lots) == 48:
+                break
         if len(lots) == 48:
             break
+    lots.sort(key=lambda p: (math.hypot(p['x'], p['z']), p['x'], p['z']))
+    for i, lot in enumerate(lots):
+        lot['detail'] = 'near' if i < 8 else 'far'
     if not lots:
         return None
     return {'source': 'mapbox', 'roads': roads, 'lots': lots}
@@ -213,7 +228,7 @@ def neighborhood_layout(cached_only=False):
     home, token = maps.get_home_location(), maps.get_mapbox_api_key()
     if not home or not token or maps.get_map_option('disable_mapbox', False):
         return {'source': 'generated'}
-    key = hashlib.sha256((home+'|'+token+'|2').encode()).hexdigest()
+    key = hashlib.sha256((home+'|'+token+'|3').encode()).hexdigest()
     path = Path(storage.DB_PATH).with_name('house_map.json')
     cached = _cached(path, key)
     if cached is not None or cached_only:

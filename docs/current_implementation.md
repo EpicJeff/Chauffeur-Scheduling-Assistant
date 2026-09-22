@@ -12,7 +12,20 @@ Reduce the coordination work required to run a family. Chauffeur should understa
 
 The 3D house is the shared spatial interface. Rooms and real-world objects provide stable context for features. The house should also reflect the family's own life through carefully quality-gated, personalized objects and spaces.
 
-## Latest architecture change (2026-09-22, v2.499.147)
+## Latest architecture change (2026-09-22, v2.499.148)
+
+Mapped house placement searches frontage at two-unit intervals, rather than
+dropping a whole frontage when one midpoint conflicts. Mapped building positions
+take priority over generated fill. Full-size neighbors are placed first, then
+remaining gaps may receive uniformly scaled 85% or 70% exteriors and yards. The
+same scale is used for collision checks and both rendering tiers. Street width,
+street coordinates and the active home remain unchanged. The nearest eight lots
+are assigned detailed models after packing. Replaying the supplied 41-segment
+layout increases accepted houses from 20 to 37; nine use smaller exteriors.
+This fits available frontage, not exact real building outlines, which the
+current map pipeline does not retain. The layout cache identity is incremented.
+
+## Earlier spacing correction (v2.499.147)
 
 Mapped neighborhood placement now spaces generated frontages to fit the actual
 yard envelope and uses rotated yard overlap tests instead of circular clearance

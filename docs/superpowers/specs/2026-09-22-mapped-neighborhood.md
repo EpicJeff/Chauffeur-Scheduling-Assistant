@@ -53,12 +53,23 @@ The nearest street is a frontage assumption, especially on corner/deep lots.
 Compass heading selection, terrain, water, parks, exact property boundaries,
 building heights and real neighboring house appearances are outside this slice.
 
-Version 2.499.147 corrects candidate density: generated spacing is at least 54
+Version 2.499.147 partially corrected candidate density: generated spacing was at least 54
 units for 52-unit yards, rather than dividing roads into intervals of 52 or less.
 Redundant 58-unit neighbor and 60-unit home exclusion circles are removed;
 rotated yard overlap and street-crossing tests remain authoritative. This avoids
 rejecting alternate valid frontages and immediate neighbors. The layout cache
 identity is incremented so old sparse results do not survive the update.
+
+Version 2.499.148 replaces sparse midpoints with a two-unit frontage search.
+It gives mapped positions priority over generated fill, places full-size yards
+first, and fills remaining usable gaps with uniformly scaled 85% or 70% houses
+and landscaping. Collision rectangles scale with the models; asphalt retains its
+full width. The primary home is always reserved at full size. Scaled instances
+retain a common ground level, positive instance matrices, material detail and
+the existing near/far rendering tiers. The eight nearest accepted lots receive
+detailed rendering after all placement passes. This is an available-space fit,
+not reconstruction of exact building outlines: only building centers are
+currently retained by the decoder. The layout cache identity changes again.
 
 Mapbox logo and linked attribution appear only for the mapped scene, with a
 tooltip explaining that houses and yards are illustrative. Provider references:
@@ -76,6 +87,11 @@ distinct detailed geometry signatures, one canvas, resource replacement, hidden
 original road, orbit, rooms, editor isolation and provider failure fallback.
 Existing facade and generated-neighborhood tests remain required.
 
-Visual checks use an offline street fixture with bends and intersections. The
-local development database has no home location, so the user's actual
-neighborhood has not been verified here and no live map requests were spent.
+Initial visual checks used an offline street fixture with bends and intersections.
+The later user-supplied API response contains 41 road segments and 20 accepted
+houses; replaying those roads with the old compiler reproduces all 20 positions
+exactly. The new compiler produces 37 houses (28 full-size, three at 85%, six at
+70%) on identical roads. No additional map requests are needed for this replay.
+Run the browser gate with `HOUSE_MAP_REPLAY` pointing to the supplied JSON to
+verify its actual rendering, including instance scales, and `HOUSE_SHOTS` to
+capture it. The supplied private layout is not committed as a fixture.

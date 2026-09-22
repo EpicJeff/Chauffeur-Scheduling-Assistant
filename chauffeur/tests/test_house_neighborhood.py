@@ -31,6 +31,23 @@ assert(n.stats().visibleLots<48);
 n.update(new T.Vector3(0,25,80),new T.Vector3(0,0,0),false);
 assert.equal(n.group.visible,false);
 n.dispose();assert.equal(n.group.children.length,0);assert.equal(disposed,materials.size);
+// Compact far exteriors, including mirrored yards, retain positive matrices
+// and the common turf elevation used by full-size houses.
+const mapped=ChauffeurNeighborhood.build(T,spec,envelopes,palette,null,null,{source:'mapbox',roads:[],lots:[
+  {x:0,z:100,rotation:0,detail:'far',scale:1},
+  {x:100,z:100,rotation:0,detail:'far',scale:.7}
+]});
+let yards=[];
+mapped.group.traverse(mesh=>{if(!mesh.isInstancedMesh)return;
+  for(let i=0;i<mesh.count;i++){
+    let m=new T.Matrix4();mesh.getMatrixAt(i,m);assert(m.determinant()>0);
+    let e=m.elements,w=Math.hypot(e[0],e[1],e[2]),h=Math.hypot(e[4],e[5],e[6]),d=Math.hypot(e[8],e[9],e[10]);
+    if(Math.abs(w/d-50/44)<.0001 && Math.abs(h/d-.38/44)<.0001){
+      assert(Math.abs(e[13]+h/2+.31)<.0001);yards.push(Math.round(w/50*100)/100);
+    }
+  }
+});
+assert.deepEqual(yards.sort(),[.7,1]);mapped.dispose();
 '''
         subprocess.run(['node','-e',script,str((base/'vendor/three.min.js').resolve()),str((base/'house_neighborhood.js').resolve()),json.dumps(hf.CANONICAL)],check=True)
 
