@@ -23,6 +23,9 @@ def scenario_house_life():
     # waiting proposal lands in the intake tray
     storage.add_thread({'title': 'Call the plumber back', 'kind': 'vendor'})
     storage.add_proposal({'title': 'Dentist reminder for Maya'})
+    import time as _time
+    storage.set_trip_metadata('trip-1', {'id': 'trip-1', 'title': 'Lake weekend', 'location': 'Bear Lake',
+                                         'mock_start_date': _time.time() + 9 * 86400, 'audience': 'household'})
     with served.browser() as page:
         def packs(route):
             response = route.fetch()
@@ -182,6 +185,47 @@ def scenario_house_life():
         page.wait_for_selector('#focus-overlay', state='hidden', timeout=8000)
         check(page.evaluate("document.getElementById('overlay-study').textContent") == '',
               'leaning out empties the card')
+        # the map is a CARD (its painted labels were the janky part) and an
+        # empty card zone says so instead of showing nothing
+        target = page.evaluate("chfNavProbe({zone:'study_map'})")
+        page.mouse.click(target['cx'], target['cy'])
+        page.wait_for_function("(() => { const p=chfNavProbe({settled:true}); return p && p.focused === 'study_map'; })()")
+        page.wait_for_selector('#overlay-study >> text=Lake weekend', timeout=8000)
+        check('Bear Lake' in page.inner_text('#overlay-study'), 'the trip card carries the location')
+        check(page.evaluate("chfStudyDetail('study_map')")['visible'] == 0, 'the map paint stays down under its card')
+        if shots:
+            page.screenshot(path=os.path.join(shots, 'study-map-card.png'))
+        page.keyboard.press('Escape')
+        page.wait_for_function("(() => { const p=chfNavProbe({settled:true}); return p && !p.focused && p.mode === 'study'; })()")
+        target = page.evaluate("chfNavProbe({zone:'study_contracts'})")
+        page.mouse.click(target['cx'], target['cy'])
+        page.wait_for_function("(() => { const p=chfNavProbe({settled:true}); return p && p.focused === 'study_contracts'; })()")
+        page.wait_for_selector('#overlay-study >> text=No open deals', timeout=8000)
+        check(page.is_visible('#focus-overlay'), 'an empty card zone wears an honest empty card')
+        if shots:
+            page.screenshot(path=os.path.join(shots, 'study-empty-card.png'))
+        page.keyboard.press('Escape')
+        page.wait_for_function("(() => { const p=chfNavProbe({settled:true}); return p && !p.focused && p.mode === 'study'; })()")
+        # the baseline card hangs on the window GLASS (a face tall enough for
+        # six signs), read square-on, not on the little sill card
+        target = page.evaluate("chfNavProbe({zone:'study_window'})")
+        page.mouse.click(target['cx'], target['cy'])
+        page.wait_for_function("(() => { const p=chfNavProbe({settled:true}); return p && p.focused === 'study_window'; })()")
+        page.wait_for_selector('#overlay-study >> text=Family baseline', timeout=8000)
+        win = page.evaluate("""() => {
+          const o = document.getElementById('focus-overlay').getBoundingClientRect();
+          const d = chfStudyDetail('study_window');
+          return {h: o.height, w: o.width, facing: d.facing};
+        }""")
+        check(win['facing'] > 0.9 and win['h'] > 60, 'the baseline card stands square on the glass: ' + str(win))
+        if shots:
+            page.screenshot(path=os.path.join(shots, 'study-window-card.png'))
+        page.keyboard.press('Escape')
+        page.wait_for_function("(() => { const p=chfNavProbe({settled:true}); return p && !p.focused && p.mode === 'study'; })()")
+        # the monitor's graph is DRAWN in the house (it never was: stepGraph
+        # lived in the standalone frame loop) and animates while leaned into
+        draws0 = page.evaluate("chfStudyDetail('study_monitor')")['graphDraws']
+        check(draws0 > 0, 'the monitor graph drew at least once in the room: ' + str(draws0))
         target = page.evaluate("chfNavProbe({zone:'study_monitor'})")
         page.mouse.click(target['cx'], target['cy'])
         page.wait_for_function("(() => { const p=chfNavProbe({settled:true}); return p && p.focused === 'study_monitor'; })()")
@@ -189,6 +233,7 @@ def scenario_house_life():
         check(ds and ds['panels'] > 0 and ds['painted'] == ds['panels'] and ds['visible'] == ds['panels'],
               'the monitor shows its own painted labels when leaned into: ' + str(ds))
         check(ds['facing'] > 0.95, 'the monitor is read dead on: ' + str(ds))
+        page.wait_for_function("(n) => chfStudyDetail('study_monitor').graphDraws > n + 3", arg=draws0, timeout=8000)
         check(not page.is_visible('#focus-overlay'), 'an instrument zone wears no card')
         if shots:
             page.screenshot(path=os.path.join(shots, 'study-monitor-detail.png'))

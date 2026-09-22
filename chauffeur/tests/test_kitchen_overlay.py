@@ -111,7 +111,8 @@ def scenario_the_study_card_is_pin_scoped_and_text_only():
           "the kitchen page carries no study surface (the branch is inert there)")
     ov = _src('static', 'kitchen_overlay.js')
     for needed in ('overlay-study', 'chfStudyCard', 'renderStudy', '/^study_/',
-                   "study_tray: 'intake'", 'study_board: { mode'):
+                   "study_tray: 'intake'", 'study_board: { mode', "study_map: 'trips'",
+                   'card.empty'):
         check(needed in ov, f"kitchen_overlay.js carries {needed}")
     tiles = re.search(r'var ZONE_TILES = \{(.*?)\};', ov, re.S)
     check(tiles and 'study' not in tiles.group(1),
@@ -130,12 +131,15 @@ def scenario_the_study_card_is_pin_scoped_and_text_only():
     sj = _src('static', 'study.js')
     check('detail: { paint: detailPaint, show: detailShow }' in sj,
           "study.js hands its detail layer to the embed host")
+    check('tick: t => stepGraph(t)' in sj, "study.js hands the monitor graph's tick to the host")
+    check('glass: sky' in sj, "the window names its pane as the face a card hangs on")
     check('m.material.map = t; m.material.needsUpdate = true;' in sj,
           "a panel paints the mesh's CURRENT material (the house clones them per zone)")
     check('mat.map = t' not in sj, "no paint writes to the captured original material")
     house = _src('static', 'house.js')
     for needed in ('window.chfStudyCard', 'window.chfStudyDetail',
                    'webgl.studyWorld.focus(key)', 'webgl.studyWorld.face(key)',
+                   'webgl.studyWorld.tick(', 'study_tray: 0.7',
                    "calc(var(--panel-shelf-h, 0px) + 64px)"):
         check(needed in house, f"house.js carries {needed}")
 

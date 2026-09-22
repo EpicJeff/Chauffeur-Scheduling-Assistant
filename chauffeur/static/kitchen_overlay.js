@@ -91,7 +91,7 @@ window.kitchenTileIsland = function () {
                 study_board: 'mind', study_desk: 'mind', study_tray: 'intake',
                 study_stickies: 'dashboard', study_calendar: 'dashboard',
                 study_window: 'mind', study_contracts: 'dashboard',
-                study_binders: 'programs' };
+                study_binders: 'programs', study_map: 'trips' };
   /* ADMIN destinations are desktop-only. A wall panel is the most shared
      screen in the house and must never land on Config, so the open-chip
      simply does not appear there — the fleet card already answers. */
@@ -203,7 +203,8 @@ window.kitchenTileIsland = function () {
   var STUDY_TITLE = { study_board: 'Connections board', study_desk: 'Plans in hand',
                       study_tray: 'Intake tray', study_stickies: 'Findings',
                       study_calendar: 'Coverage calendar', study_window: 'Family baseline',
-                      study_contracts: 'Agreements', study_binders: 'Program binders' };
+                      study_contracts: 'Agreements', study_binders: 'Program binders',
+                      study_map: 'Travel map' };
   function renderStudy(card) {
     STUDY.textContent = '';
     var head = document.createElement('div');
@@ -212,13 +213,24 @@ window.kitchenTileIsland = function () {
     title.className = 'text-sm font-bold panel-text';
     title.textContent = STUDY_TITLE[card.zone] || 'Study';
     head.appendChild(title);
-    if (card.summary) {
+    /* the header's summary only beside rows: an empty card's one sentence
+       is the summary already, and it must not be said twice */
+    if (card.summary && card.rows.length) {
       var sum = document.createElement('div');
       sum.className = 'text-[11px] font-semibold panel-dim ml-auto text-right';
       sum.textContent = card.summary;
       head.appendChild(sum);
     }
     STUDY.appendChild(head);
+    if (!card.rows.length) {
+      /* the honest empty state (docs/ui_design_guide.md): a muted sentence,
+         never a blank card -- the /study fallback's own 'All quiet' stance */
+      var empty = document.createElement('div');
+      empty.className = 'text-xs italic panel-dim';
+      empty.textContent = card.empty || 'Nothing here';
+      STUDY.appendChild(empty);
+      return;
+    }
     var list = document.createElement('div');
     list.className = 'flex flex-col gap-1';
     card.rows.forEach(function (r) {
@@ -317,7 +329,12 @@ window.kitchenTileIsland = function () {
        desk or shelf and takes its height from what it has to say. */
     study_board: { mode: 'fill', top: 0.07, bottom: 0.93 },
     study_calendar: { mode: 'fill', top: 0.12, bottom: 0.96 },
-    study_window: { mode: 'fit', top: 0.52 }
+    /* the baseline list hangs on the window GLASS (the face is the pane,
+       not the sill card): anchored high, as tall as its six signs */
+    study_window: { mode: 'fit', top: 0.06 },
+    /* the wall map: the trip list hangs from the top of the sheet and is
+       as tall as its trips (one trip is not a sheet of empty paper) */
+    study_map: { mode: 'fit', top: 0.08 }
   };
 
   function placeQuad(q, zone) {
@@ -474,7 +491,7 @@ window.kitchenTileIsland = function () {
          room shows its painted detail instead -- house_study.js's `card`
          is the one predicate both sides read. */
       var sc = window.chfStudyCard ? window.chfStudyCard(d.zone) : null;
-      if (!sc || !sc.rows || !sc.rows.length) { hide(); return; }
+      if (!sc) { hide(); return; }   /* an instrument zone: its paint answers */
       renderStudy(sc);
       show(d.zone, d);
     } else if (ZONE_TILES[d.zone]) {

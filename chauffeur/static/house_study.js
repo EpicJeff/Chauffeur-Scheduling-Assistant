@@ -277,9 +277,32 @@
           return {text: b.title || '', note: (b.pulled ? 'needs a look' : '') + (b.pulled && b.detail ? ' · ' : '') + (b.detail || ''),
                   tone: b.pulled ? 'warn' : null};
         });
+      },
+      // The map's pins stay on the paper; what they SAY moves to the card.
+      // The painted labels (leaders crossing, a date running into the sill)
+      // were the janky part of the map, and a list is what they were.
+      map: function (d) {
+        return (d.trips || []).map(function (t) {
+          var when = dayLabelTs(t.start_ts);
+          return {text: t.title || '', tone: t.upcoming ? 'warn' : null,
+                  note: [t.location || '', when].filter(Boolean).join(' · ') || 'no date yet'};
+        });
       }
     };
+    /* What an EMPTY card says. Rule (docs/ui_design_guide.md): an honest
+       sentence in the muted empty style, never a blank panel -- the user
+       could not tell an empty in-tray from a broken one. study.js's own
+       summary is that sentence where it has one ('Tray empty', 'Board
+       clear'); three zones summarise to '' when empty and get theirs here. */
+    var EMPTY = { binders: 'No programs running', window: 'No signs yet', map: 'No trips planned' };
     var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    var MONS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    function dayLabelTs(ts) {   // epoch seconds -> 'Sep 12', or '' (study.js dayChip)
+      var n = Number(ts);
+      if (!isFinite(n) || n <= 0) return '';
+      var d = new Date(n * 1000);
+      return MONS[d.getMonth()] + ' ' + d.getDate();
+    }
     function dayLabel(iso) {
       var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
       if (!m) return String(iso || '');
@@ -308,7 +331,7 @@
     }
     var Z = built.zones, FACE = {
       board: Z.board.parts.cork, calendar: Z.calendar.parts.face,
-      window: Z.window.parts.text, tray: Z.tray.parts.label,
+      window: Z.window.parts.glass, tray: Z.tray.parts.label,
       contracts: Z.contracts.parts.label, stickies: Z.monitor.parts.labels,
       monitor: Z.monitor.parts.labels, gauges: Z.gauges.parts.face,
       map: Z.map.parts.labels
@@ -347,7 +370,9 @@
       var rows;
       try { rows = fn(built.data(n)) || []; } catch (e) { rows = []; }
       rows = rows.filter(function (r) { return r && r.text; });
-      return rows.length ? {zone: key, rows: rows, summary: built.summary(n)} : null;
+      var summary = built.summary(n);
+      return {zone: key, rows: rows, summary: summary,
+              empty: rows.length ? '' : (summary || EMPTY[n] || 'Nothing here')};
     }
     /* the one place a study zone's paint is shown or hidden: the host says
        which zone (if any) is being read, and the paint stands up only for a
@@ -370,6 +395,7 @@
     }
     return{group:root,architecture:arch,proxies:proxies,zones:zones,count:count,update:update,
       card:card,focus:focus,face:face,detailState:detailState,summary:function(key){return built.summary(name(key));},
+      tick:function(t){built.tick(t);},graphDraws:function(){return built.graphDraws();},animates:built.animates,
       dispose:function(){
       var gs=new Set(),ms=new Set(),ts=new Set();
       [root,arch,proxies].forEach(function(top){top.traverse(function(o){if(o.geometry)gs.add(o.geometry);var a=Array.isArray(o.material)?o.material:[o.material];a.forEach(function(m){if(!m)return;ms.add(m);if(m.map)ts.add(m.map);});});});

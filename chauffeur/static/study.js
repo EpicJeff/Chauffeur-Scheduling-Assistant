@@ -760,7 +760,9 @@
   winText.position.set(0, 0, .05);
   winCard.add(winText);
   reg('window', winBack); reg('window', winText);
-  ZONES.window.parts = { card: winBack, prop: winProp, text: winText };
+  // `glass` is the face a host lays a card on: the sill card is 1.4 x .72,
+  // a list of six signs is not, and the pane behind it is
+  ZONES.window.parts = { card: winBack, prop: winProp, text: winText, glass: sky };
   // the light the window throws into the room
   put(new THREE.Mesh(new THREE.PlaneGeometry(5.6, 3.6),
     new THREE.MeshBasicMaterial({
@@ -937,11 +939,13 @@
     g.fill();
   }
 
+  let grDraws = 0;
   function stepGraph(t) {
     if (document.hidden) return;              // a hidden tab draws nothing
     if (!grDirty && (t < grNext || !grClusters.length)) return;
     grNext = t + GR_STEP; grDirty = false;
     drawGraph(t);
+    grDraws++;
     grTex.needsUpdate = true;                 // a texture upload, not geometry
   }
 
@@ -2326,7 +2330,18 @@
              windowSize: { w: WIN.w, h: WIN.h },
              detail: { paint: detailPaint, show: detailShow },
              data: name => (LAST || normal(null))[name],
-             summary: name => (ZONES[name] && ZONES[name].summary) || '' };
+             summary: name => (ZONES[name] && ZONES[name].summary) || '',
+             // The monitor's graph (dots, links, the pulse between two
+             // people) is drawn by stepGraph from the standalone page's
+             // frame loop, which lives below this return -- so a host
+             // that never ticked it showed the screen's initial dark fill
+             // and nothing else. The host calls this from its own frame;
+             // stepGraph gates itself (a dirty graph draws once, an
+             // animated one every GR_STEP), and `graphDraws` lets a test
+             // see that it did.
+             tick: t => stepGraph(t),
+             graphDraws: () => grDraws,
+             animates: !reducedMotion };
   }
   R.domElement.addEventListener('webglcontextlost', e => {
     if (contextLost) return;

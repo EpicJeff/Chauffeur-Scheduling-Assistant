@@ -12515,6 +12515,14 @@
 
     if (webgl.neighborhood) webgl.neighborhood.update(webgl.cam.position, webgl.EXT_AT, mode === 'exterior');
     if (webgl.weather.update((tms || 0)/1000, mode === 'exterior', WEATHER_MOTION.matches)) keep = true;
+    /* the study's monitor graph: drawn once whenever its data moved, and
+       animated (ten frames a second, the standalone page's own rate and
+       law) only while somebody is leaned into the monitor and motion is
+       not reduced -- a settled study costs the GPU nothing */
+    if (mode === 'study' && webgl.studyWorld && webgl.studyWorld.tick) {
+      webgl.studyWorld.tick((tms || 0) / 1000);
+      if (focused === 'study_monitor' && webgl.studyWorld.animates && !tween) keep = true;
+    }
     webgl.R.render(webgl.scene, webgl.cam);
     if (keep) { rafLive = true; requestAnimationFrame(frame); }
   }
@@ -13005,7 +13013,13 @@
      doll's house with a notice over it instead of a garage with a list on
      the wall. 0.78 is the closest the eye can come and still stay behind a
      car parked on the apron (row one sits at z 13.4, tail near 15.4). */
-  var FACE_DIST_MAP = { garage: 0.78 };
+  var FACE_DIST_MAP = { garage: 0.78,
+    /* the study's desk sheets are small faces (a signature slip is a
+       quarter of a unit across): frameZone's fixed 0.8 stand-off dominates
+       and the card composed on them reads as a postage stamp. Closer, so
+       the sheet fills a readable share of the frame; the camera still
+       stands well above the desk. */
+    study_tray: 0.7, study_contracts: 0.6 };
 
   /* the mesh a zone's card sits on: the kitchen's from the table above,
      a study zone's from the study itself (house_study.js `face`) */
@@ -13861,6 +13875,7 @@
   window.chfStudyDetail = function (key) {
     var sw = webgl && webgl.studyWorld;
     var out = sw && sw.detailState ? sw.detailState(key) : null;
+    if (out && sw.graphDraws) out.graphDraws = sw.graphDraws();
     /* `facing`: how square the eye is to the zone's face right now (1 =
        dead on), so a test can pin the face-on convention */
     var f = out && sw.face ? sw.face(key) : null;
