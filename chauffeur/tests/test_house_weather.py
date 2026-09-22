@@ -8,6 +8,35 @@ from services import kitchen_room
 
 
 class OutdoorWeatherTests(unittest.TestCase):
+    def test_portrait_exterior_keeps_horizontal_field_of_view(self):
+        source=(Path(__file__).parents[1]/'static/house.js').read_text(encoding='utf-8')
+        function=source[source.index('  function exteriorFov('):source.index('  function size()')]
+        script="const assert=require('node:assert/strict');\n"+function+'''
+assert(Math.abs(exteriorFov(1.5)-24)<1e-9);
+const horizontal=(a)=>Math.tan(exteriorFov(a)*Math.PI/360)*a;
+assert(Math.abs(horizontal(.5)-horizontal(1.25))<1e-9);
+assert(exteriorFov(.5)>24 && exteriorFov(.1)<=70);
+'''
+        subprocess.run(['node','-e',script],check=True)
+
+    def test_weather_light_restores_clear_values_without_compounding(self):
+        source=(Path(__file__).parents[1]/'static/house.js').read_text(encoding='utf-8')
+        function=source[source.index('    function setOutdoorLight('):source.index('    function setNight(')]
+        script='''const assert=require('node:assert/strict');
+const sun={color:{setHex(v){this.value=v;}}}, hemi={};
+const SUN_I=.56, HEMI_I=.8, SUN_C=0xfff0d6, NIGHT_F={sun:.22,hemi:.46};
+let nightNow=false,outdoorCondition=''; function shadowDirty(){}
+'''+function+'''
+setOutdoorLight('sunny');const clear=sun.intensity;
+setOutdoorLight('cloudy');const cloudy=sun.intensity;assert(cloudy<clear);
+setOutdoorLight('rainy');const rain=sun.intensity;assert(rain<cloudy);
+setOutdoorLight('rainy');assert.equal(sun.intensity,rain);
+setOutdoorLight('sunny');assert.equal(sun.intensity,clear);assert.equal(hemi.intensity,HEMI_I);
+nightNow=true;setOutdoorLight('rainy');assert(sun.intensity<rain);
+setOutdoorLight('clear-night');assert.equal(sun.intensity,SUN_I*NIGHT_F.sun);
+'''
+        subprocess.run(['node','-e',script],check=True)
+
     def test_effect_buffers_motion_and_disposal(self):
         base=Path(__file__).parents[1]/'static'
         script=r'''

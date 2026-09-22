@@ -1,6 +1,8 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.153 (2026-09-22).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.154 (2026-09-22).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**Visible outdoor atmosphere (v2.499.154).** A lower exterior orbit and higher aim reveal a band of sky; the painted distant skyline is reduced to a thin backdrop. Portrait exteriors widen their lens to retain house width while room views keep their existing lenses. Cloud/wet conditions reduce and cool direct sunlight, with clear-weather restoration and unchanged neighborhood object/distance caps.
 
 **House structure and outdoor weather (v2.499.153).** Structure-first photo compilation preserves optional ground-mass roof spans and main-house front projections, including editor and detail-lock support; hip ends and stepped upper-wall returns remain closed. General bounded model trials and label uncertainty are recorded in the evaluation reports; production prompts and Flash routing were not promoted from inconclusive results. Outdoors uses current Home Assistant weather and the theme's sun resolver with zero offsets, replacing forecast conditions and fixed day/night hours. Rain, snow and fog respect quality tiers, reduced motion, indoor views and hidden tabs. See [weather contract](../docs/superpowers/specs/2026-09-22-house-current-weather.md) and [photo contract](../docs/superpowers/specs/2026-09-21-structure-first-photo-pipeline.md).
 

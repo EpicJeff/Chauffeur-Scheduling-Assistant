@@ -256,8 +256,9 @@
     var texture=new T.CanvasTexture(canvas);
     texture.wrapS=T.RepeatWrapping;
     var material=new T.MeshBasicMaterial({map:texture,color:0xcdcdcd,toneMapped:false,transparent:true,alphaTest:.02,side:T.BackSide,depthWrite:false});
-    var mesh=new T.Mesh(new T.CylinderGeometry(250,250,90,96,1,true),material);
-    mesh.name='neighborhood-horizon';mesh.position.y=35;mesh.userData.yard=true;mesh.raycast=function(){};
+    // A distant skyline, not a tall wall of scenery above the nearby rooftops.
+    var mesh=new T.Mesh(new T.CylinderGeometry(250,250,24,96,1,true),material);
+    mesh.name='neighborhood-horizon';mesh.position.y=8;mesh.userData.yard=true;mesh.raycast=function(){};
     return mesh;
   }
 

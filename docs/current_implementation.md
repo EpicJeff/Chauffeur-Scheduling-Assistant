@@ -12,7 +12,14 @@ Reduce the coordination work required to run a family. Chauffeur should understa
 
 The 3D house is the shared spatial interface. Rooms and real-world objects provide stable context for features. The house should also reflect the family's own life through carefully quality-gated, personalized objects and spaces.
 
-## Latest architecture change (2026-09-22, v2.499.153)
+## Latest architecture change (2026-09-22, v2.499.154)
+
+The exterior camera now shows sky above a thinner distant skyline. Portrait views
+preserve house width through a wider exterior lens; room lenses are unchanged.
+Clouds and wet weather reduce direct sunlight, making the conditions visible on
+walls and roofs. Existing neighborhood distance and object caps remain in place.
+
+## Previous architecture change (2026-09-22, v2.499.153)
 
 Photo compilation preserves separate ground masses, roof directions and main-house
 projections through preview, editing and the detail geometry lock. Shared hip ends

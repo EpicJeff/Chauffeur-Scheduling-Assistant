@@ -396,13 +396,11 @@
        features on them. HOME_AT is unchanged. */
     var HOME_POS = new T.Vector3(4.64, 13.8, 23.0);
     var HOME_AT = new T.Vector3(-1.3, 1.7, -0.2);
-    /* the house from the yard: the panel's resting view. The old pose
-       aimed a metre off the ground and spent the bottom-left fifth of
-       the frame on tarmac; raised and swung a little north it crops the
-       road to a corner and the house and its garden fill the frame
-       (bible S5.1). */
-    var EXT_POS = new T.Vector3(59.0, 31.0, 62.0);
-    var EXT_AT = new T.Vector3(-3.9, 4.0, 7.0);
+    /* Resting exterior: a shallow downward angle leaves a band of horizon above
+       the roofs. Keep the same horizontal distance/FOV and bounded scenery;
+       raise the aim slightly so the front walls stay readable below the sky. */
+    var EXT_POS = new T.Vector3(59.0, 18.0, 62.0);
+    var EXT_AT = new T.Vector3(-3.9, 6.5, 7.0);
     /* MASSING ARC 1 (orbit spec section 4): the exterior is eight stops at
        45 degrees around one pivot, not one fixed pose. The pivot is the
        TWO-BLOCK bounding box centre in x/z (main -7.15..14.65 / garage
@@ -417,8 +415,8 @@
        and 2.8 north): a ring cannot keep a per-stop aim point and stay a
        ring, and the spec ruled the pivot for every stop. */
     var ORBIT = {
-      pivot: new T.Vector3(-1.8, 4.0, 4.2),
-      height: 31.0,
+      pivot: new T.Vector3(-1.8, EXT_AT.y, 4.2),
+      height: EXT_POS.y,
       radius: 0, a0: 0,
       /* the CURRENT stop, 0..7. ?angle=N boots here; chfOrbitTo moves it. */
       stop: 0
@@ -11917,6 +11915,17 @@
       ? { sun: 0.22, hemi: 0.46, amb: 0.70, ambC: 0xdfe6f0, sky: 0x2c3d6b }
       : { sun: 0.34, hemi: 0.62, amb: 1.90, ambC: 0xffd3a4, sky: 0x41537f };
     var nightNow = null;
+    var outdoorCondition = '';
+    function setOutdoorLight(condition) {
+      outdoorCondition = condition || '';
+      var heavy = /rain|pouring|lightning|snow|hail|fog/.test(outdoorCondition);
+      var cloudy = /cloud/.test(outdoorCondition);
+      var direct = heavy ? .32 : cloudy ? .58 : 1;
+      sun.intensity = SUN_I * (nightNow ? NIGHT_F.sun : 1) * direct;
+      hemi.intensity = HEMI_I * (nightNow ? NIGHT_F.hemi : 1) * (heavy ? .85 : 1);
+      sun.color.setHex(nightNow ? 0x9db4dd : (heavy || cloudy) ? 0xd3dfe9 : SUN_C);
+      shadowDirty();
+    }
     function setNight(n) {
       if (n === nightNow) return;
       nightNow = n;
@@ -11928,6 +11937,7 @@
       amb.color.setHex(n ? NIGHT_F.ambC : (PBR ? 0xdfe6f0 : 0xe4eaf2));
       sun.intensity = n ? SUN_I * NIGHT_F.sun : SUN_I;
       sun.color.setHex(n ? 0x9db4dd : SUN_C);   /* a moon, not a sun */
+      setOutdoorLight(outdoorCondition);
       poolLamps.forEach(function(l) { l.intensity=n ? l.userData.dayI*2.1 : l.userData.dayI; });
       exteriorLamps.forEach(function(l) { l.intensity=n ? l.userData.nightI : 0; });
       porchPools.forEach(function(m) { m.material.opacity=n ? (DETAIL >= 2 ? 0.50 : 0.75) : 0; });
@@ -12324,6 +12334,7 @@
       extG: extG, skyDome: skyDome, skyDomeTex: skyDomeTex,
       aimShadow: aimShadow, shadowDirty: shadowDirty,
       setNight: setNight, isNight: isNight,
+      setOutdoorLight: setOutdoorLight,
       garageDoorG: garageDoorG, garageInterior: garageInterior,
       pantryJars: pantryJars, pantryDoor: pantryDoor,
       garageBackWall: webgl_garageBackWall,
@@ -12507,11 +12518,16 @@
     if (keep) { rafLive = true; requestAnimationFrame(frame); }
   }
 
+  function exteriorFov(aspect) {
+    // Preserve the house's horizontal framing on portrait panels.
+    return Math.min(70, 2 * Math.atan(Math.tan(12 * Math.PI / 180) * Math.max(1, 1.25 / aspect)) * 180 / Math.PI);
+  }
   function size() {
     if (!webgl) return;
     var w = ROOT.clientWidth || 1, h = ROOT.clientHeight || 1;
     webgl.R.setSize(w, h, false);
     webgl.cam.aspect = w / h;
+    if (mode === 'exterior') webgl.cam.fov = exteriorFov(webgl.cam.aspect);
     webgl.cam.updateProjectionMatrix();
     if (focused && !tween) announceFocus(focused);
     requestFrame();
@@ -12614,6 +12630,7 @@
 
     /* dusk and dawn ride the same tick the sky dome does */
     webgl.setNight(webgl.isNight());
+    webgl.setOutdoorLight((s.window || {}).cond);
     webgl.weather.set(s.window || {}, webgl.isNight());
     /* the only path that can change what the depth pass would draw */
     webgl.shadowDirty();
@@ -13137,7 +13154,7 @@
       if (webgl.studyWorld.architecture) webgl.studyWorld.architecture.visible = false;
       if (webgl.studyWorld.proxies) webgl.studyWorld.proxies.visible = false;
     }
-    webgl.cam.fov = 24;
+    webgl.cam.fov = exteriorFov(webgl.cam.aspect);
     webgl.cam.updateProjectionMatrix();
     focused = null;
     updateBack();
@@ -14268,6 +14285,14 @@
         var rect = webgl.R.domElement.getBoundingClientRect();
         point = point || {cx:rect.left + rect.width*(i+1)/(choices.length+1), cy:rect.top+rect.height/2};
         var left = rect.left+50, right = rect.right-50, top = rect.top+60, bottom = rect.bottom-125;
+        if (rect.width < 600) {
+          bottom = rect.bottom - 180;
+          top = Math.max(top, 105);
+          document.querySelectorAll('#house-glance:not([hidden]) .glance-clock, #house-glance:not([hidden]) .glance-next:not([hidden])').forEach(function (card) {
+            top = Math.max(top, card.getBoundingClientRect().bottom + 45);
+          });
+          top = Math.min(top, bottom - 210);
+        }
         point.cx = Math.max(left,Math.min(right,point.cx));
         point.cy = Math.max(top,Math.min(bottom,point.cy));
         for (var attempt=0; attempt<40; attempt++) {
