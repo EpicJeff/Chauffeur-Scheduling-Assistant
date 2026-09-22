@@ -77,6 +77,7 @@ def main():
                 page.evaluate('chfOrbitTo(7)')
                 page.wait_for_function('chfNavProbe({settled:true})',timeout=20000)
                 page.locator('#house-hints button[data-room="kitchen"]').click()
+                page.locator('#house-hints button[data-room="kitchen"]').click()
                 page.wait_for_function("chfHouseMode()==='kitchen' && chfNavProbe({settled:true})",timeout=20000)
                 assert not page.evaluate('chfNeighborhood().visible')
                 page.evaluate('chfHouseExit()')

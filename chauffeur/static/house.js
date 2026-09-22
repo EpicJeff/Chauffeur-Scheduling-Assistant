@@ -13420,6 +13420,26 @@
       frameZone(key, function () { announceFocus(key); solveLeanIn(key); });
     });
   };
+  window.chfHouseVisit = function (key, room) {
+    if (!webgl) return;
+    hideHint();
+    if (room === 'study') { window.dispatchEvent(new CustomEvent('chf-house-open', {detail:'study'})); return; }
+    enterRoom(room, null);
+    if (ZONES[key]) {
+      focused = key; updateBack(); announceFocus(null);
+      frameZone(key, function () { announceFocus(key); solveLeanIn(key); });
+      return;
+    }
+    var entry = world && world.entries.find(function(e){return e.action === key;});
+    if (!entry) return;
+    var box = new webgl.T.Box3().setFromObject(entry.group), center = box.getCenter(new webgl.T.Vector3());
+    var direction = webgl.toWorld(roomsReg()[room].pos).sub(center).normalize();
+    var distance = Math.max(5, box.getSize(new webgl.T.Vector3()).length()*2.5);
+    tween = {fromP:webgl.cam.position.clone(),toP:center.clone().add(direction.multiplyScalar(distance)),
+      fromA:(lookAt || webgl.EXT_AT).clone(),toA:center,t0:performance.now(),ms:650,
+      cb:function(){webgl.solveShell(webgl.cam.position,{point:center,room:room});scheduleHint();}};
+    requestFrame();
+  };
   window.chfHouseEnter = function () { if (webgl) enterRoom('kitchen', null); };
   window.chfHouseEnterGarage = function () { if (webgl) enterRoom('garage', null); };
   window.chfHouseEnterRoom = function (name) { if (webgl) enterRoom(name, null); };
@@ -14243,6 +14263,7 @@
     });
   }
   function hideHint() {
+    if (window.ChauffeurMarkers) window.ChauffeurMarkers.collapse();
     if (HINT) { HINT.hidden = true; HINT.textContent = ''; }
   }
   function hintChoices() {
@@ -14269,6 +14290,7 @@
     });
     return choices;
   }
+  function markerForRoom(room) { return HINT.querySelector('[data-room="' + room + '"]'); }
   function hintIcon(name) {
     return '<svg viewBox="0 0 24 24" aria-hidden="true">' +
       (HINT_PATHS[name] || '') + '</svg>';
@@ -14307,10 +14329,12 @@
       var marker = document.createElement(choice.room ? 'button' : 'div');
       if (choice.room) {
         marker.type = 'button'; marker.dataset.room = choice.room;
-        marker.setAttribute('aria-label', 'Open ' + choice.label);
+        marker.setAttribute('aria-label', 'Expand ' + choice.label);
+        marker.setAttribute('aria-expanded', 'false');
         marker.style.pointerEvents = 'auto';
         marker.addEventListener('click', (function(room) { return function(event) {
           event.stopPropagation();
+          if (window.ChauffeurMarkers && window.ChauffeurMarkers.expand(markerForRoom(room), room)) return;
           if (room === 'study') window.dispatchEvent(new CustomEvent('chf-house-open', {detail:'study'}));
           else enterRoom(room,null);
         }; })(choice.room));
@@ -14400,6 +14424,7 @@
   function onTap(ev) {
     if (!webgl) return;
     if (swiped) { swiped = false; return; }
+    if (window.ChauffeurMarkers && window.ChauffeurMarkers.collapse()) return;
     var primaryHit = anyHit(ev.clientX, ev.clientY);
     for (var actionPart = primaryHit; actionPart; actionPart = actionPart.parent) {
       if (actionPart.userData.houseAction) {

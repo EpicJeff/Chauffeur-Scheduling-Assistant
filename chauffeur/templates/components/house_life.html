@@ -16,7 +16,11 @@
       <template x-if="active === 'routines'"><div class="house-life-lanes" x-data="routineLanesCard({data:{interactive:true}}, apiBase)" x-init="startRoutineLanes()">{{ house_routines.lane_grid(interactive='lanesInteractive') }}</div></template>
       <template x-if="active === 'programs'"><div x-data="programsCard({data:{}}, apiBase)" x-init="startPrograms()">{{ house_programs.rows() }}</div></template>
       <template x-if="active === 'packing'"><div x-data="packingCard({data:{interactive:true,days:1}}, apiBase)" x-init="startPacking()">{{ house_packing.rows() }}</div></template>
-      <template x-if="(active === 'tasks' || active === 'errands') && t"><div>{% include 'components/board_tile_body.html' %}</div></template>
+      <template x-if="t"><div>{% include 'components/board_tile_body.html' %}</div></template>
+      <template x-if="active === 'calendar'"><div x-data="packingCard({data:{interactive:true,days:1}}, apiBase)" x-init="startPacking()">{{ house_packing.rows() }}</div></template>
+      <div x-show="active === 'music'" x-ref="music"></div>
+      <template x-if="active === 'study_preview'"><div><p>The Study contains parent information and requires your PIN.</p><button type="button" class="house-life-manage" @click="study()">Unlock Study</button></div></template>
+      <p x-show="t && t.data && t.data.empty" class="house-life-message">Nothing to show here yet.</p>
       <p x-show="loading" class="house-life-message">Loading…</p>
       <p x-show="error" x-text="error" role="status" class="house-life-message"></p>
       <button x-show="active === 'tasks' || active === 'errands'" type="button" class="house-life-manage" @click="study('errands')">Manage with parent PIN</button>

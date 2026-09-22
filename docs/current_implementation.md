@@ -12,7 +12,16 @@ Reduce the coordination work required to run a family. Chauffeur should understa
 
 The 3D house is the shared spatial interface. Rooms and real-world objects provide stable context for features. The house should also reflect the family's own life through carefully quality-gated, personalized objects and spaces.
 
-## Latest architecture change (2026-09-22, v2.499.156)
+## Latest architecture change (2026-09-22, v2.499.157)
+
+Exterior room markers expand into labeled shortcuts. Taps open existing cards
+without camera travel; a 500 ms hold with ring feedback visits the associated
+zone, and another tap on the central marker enters the room. Touch targets are
+larger, previews preserve the expanded marker, and keyboard visits use Shift+Enter.
+Study access remains PIN-protected. Browser proof covers every preview, mobile
+layout, hold/cancel behavior, room entry and direct visits to zones and fixtures.
+
+## Previous architecture change (2026-09-22, v2.499.156)
 
 Config ? Boards offers ?Use The House as Home?, off by default. `/home` selects
 The House for capable browsers and retains the selected Home board on 3D failure.

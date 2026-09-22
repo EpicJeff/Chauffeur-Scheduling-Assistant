@@ -10,6 +10,7 @@
     <script src="{{ 'static/house_home.js'|ver }}" data-surface="house"></script>
     {% endif %}
     <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
+    <link href="{{ 'static/house_markers.css'|ver }}" rel="stylesheet">
     <link href="{{ 'static/vendor/mapbox-gl.css'|ver }}" rel="stylesheet">
     {% include 'ha_theme.html' %}
     <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
@@ -85,7 +86,7 @@
           outline: 2px solid #e3d3ab; outline-offset: 2px; }
         .house-orbit[hidden] { display: none; }
         #house-hints { position: fixed; inset: 0; z-index: 39; pointer-events: none; }
-        .house-hint { position: absolute; width: 62px; height: 62px;
+        .house-hint { position: absolute; width: 78px; height: 78px;
           transform: translate(-50%,-50%); border: 2px solid rgba(240,184,110,.92);
           border-radius: 50%; display: grid; place-items: center;
           color: #fff4dc; background: rgba(28,23,16,.30);
@@ -95,12 +96,12 @@
         .house-hint::before { content: ''; position: absolute; inset: -2px;
           border: 2px solid rgba(240,184,110,.72); border-radius: inherit;
           animation: house-hint-wave 3.6s ease-out var(--hint-delay, 0s) infinite; }
-        .house-hint-icons { width: 48px; display: flex; flex-wrap: wrap;
+        .house-hint-icons { width: 60px; display: flex; flex-wrap: wrap;
           align-items: center; justify-content: center; gap: 2px; }
-        .house-hint svg { width: 19px; height: 19px; fill: none;
+        .house-hint svg { width: 25px; height: 25px; fill: none;
           stroke: currentColor; stroke-width: 1.8; stroke-linecap: round;
           stroke-linejoin: round; }
-        .house-hint.crowded svg { width: 14px; height: 14px; }
+        .house-hint.crowded svg { width: 21px; height: 21px; }
         .house-hint-label { position: absolute; left: 50%; top: calc(100% + 8px);
           transform: translateX(-50%); white-space: nowrap; padding: 4px 8px;
           border-radius: 999px; background: rgba(28,23,16,.88); color: #f0e6cf;
@@ -278,6 +279,7 @@
     <script src="{{ 'static/house_clip.js'|ver }}"></script>
     <script src="{{ 'static/house_neighborhood.js'|ver }}"></script>
     <script src="{{ 'static/house_weather.js'|ver }}"></script>
+    <script src="{{ 'static/house_markers.js'|ver }}"></script>
     <script src="{{ 'static/house.js'|ver }}" onerror="if(window.ChauffeurHome) window.ChauffeurHome.fallback()"></script>
     <script src="{{ 'static/house_glance.js'|ver }}"></script>
     <script src="{{ 'static/kitchen_overlay.js'|ver }}"></script>
