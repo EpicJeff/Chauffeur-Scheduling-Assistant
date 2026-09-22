@@ -8,6 +8,17 @@
   calls `savePanel()`. No state of its own.
 #}
 <div class="space-y-6 max-w-2xl">
+    <div>
+        <label class="flex items-center gap-2 text-sm text-gray-300">
+            <input id="panel-house-home" type="checkbox" x-model="panel.panel_house_home" @change="savePanel()">
+            Use The House as Home
+        </label>
+        <p class="text-xs text-gray-500 mt-1">
+            Open The House from Home and when the panel returns home. Devices that
+            cannot show 3D use the Home board selected above. Off by default.
+        </p>
+        <a href="home?panel=false&amp;home_view=board" class="text-xs text-sky-300 underline">Open Home board</a>
+    </div>
 
     <div>
         <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
@@ -92,8 +103,8 @@
             seconds
         </label>
         <p class="text-xs text-gray-500 mt-1">
-            A panel somebody walked away from goes back to the home board. 0 turns it
-            off. Home is whichever board wears the ⌂ above.
+            A panel somebody walked away from returns home. 0 turns it off.
+            Home uses The House when enabled, otherwise the board marked as Home above.
         </p>
     </div>
 

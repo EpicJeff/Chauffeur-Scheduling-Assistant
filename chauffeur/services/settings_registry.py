@@ -113,6 +113,9 @@ ENTRIES: List[dict] = [
        'still have an address — they just do not get a button on the wall '
        'panel shelf.',
        page='config', anchor='boards'),
+    _e('panel_house_home', 'panel', 'Use The House as Home',
+       'Open the 3D house as Home, with the selected Home board as fallback on unsupported devices.',
+       page='config', anchor='boards'),
     _e('panel_home_board', 'panel', 'Home board',
        'Which board the wall panel treats as home: what /home shows, where an '
        'idle panel returns to, and what the shelf Home button opens. Set it '

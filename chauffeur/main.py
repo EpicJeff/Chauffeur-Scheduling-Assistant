@@ -1432,7 +1432,8 @@ def home_board_page(request: Request):
     glances. Opened with ?panel=true it is the panel's resting state; opened
     in an ordinary browser it is also where the panel gets configured (the
     tiles are picked while you look at them)."""
-    response = templates.TemplateResponse(request=request, name="home.html")
+    response = templates.TemplateResponse(request=request, name="home.html",
+                                          context={"house_home_enabled": bool((storage.get_settings() or {}).get("panel_house_home"))})
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
 
@@ -1719,7 +1720,7 @@ def kitchen_page(request: Request):
 @app.get("/house")
 def house_page(request: Request):
     """The Home: the dollhouse the panel lives in (spec
-    2026-09-08-house-design.md). URL-only until H4 flips the panel home.
+    2026-09-08-house-design.md). Optionally selected as Home in config.
     The active facade rides the page: the scene builds before its first
     state fetch, so build-once means the spec arrives with the HTML."""
     import json as _json
@@ -1745,7 +1746,8 @@ def house_page(request: Request):
     from services.house_map import neighborhood_layout
     layout = neighborhood_layout(cached_only=True) if request.query_params.get('editor') != '1' else {'source': 'generated'}
     return templates.TemplateResponse(request=request, name="house.html",
-                                      context={'facade_json': facade_json, 'neighborhood_json': _json.dumps(layout)})
+                                      context={'facade_json': facade_json, 'neighborhood_json': _json.dumps(layout),
+                                               'house_home_enabled': bool((storage.get_settings() or {}).get('panel_house_home'))})
 
 @app.get("/threads")
 def threads_page(request: Request):

@@ -12,7 +12,15 @@ Reduce the coordination work required to run a family. Chauffeur should understa
 
 The 3D house is the shared spatial interface. Rooms and real-world objects provide stable context for features. The house should also reflect the family's own life through carefully quality-gated, personalized objects and spaces.
 
-## Latest architecture change (2026-09-22, v2.499.155)
+## Latest architecture change (2026-09-22, v2.499.156)
+
+Config ? Boards offers ?Use The House as Home?, off by default. `/home` selects
+The House for capable browsers and retains the selected Home board on 3D failure.
+Fallback is remembered per tab; explicit board access prevents redirect loops
+without storage. Existing Home links and idle return share that route. The House
+resets its exterior in place when idle. Editor previews remain isolated.
+
+## Previous architecture change (2026-09-22, v2.499.155)
 
 Neighbor visibility now has three states: hidden when the camera is inside or
 near a building, 20% opacity when it blocks the house from farther away, and

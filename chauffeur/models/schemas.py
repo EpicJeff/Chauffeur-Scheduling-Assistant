@@ -1371,6 +1371,7 @@ class Settings(BaseModel):
     # needed this to not strand the wall: the designation moves, and hiding
     # becomes an ordinary toggle with no special case.
     panel_home_board: str = ''
+    panel_house_home: bool = False  # Prefer 3D; selected board remains the fallback.
     # The Home's street elevation (facade generator, spec 2026-09-15). Saved
     # facades are whole specs; the active id selects one, 'canonical' = the
     # built-in elevation. Never edited by hand outside services/house_facade.

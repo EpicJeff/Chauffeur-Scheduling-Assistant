@@ -280,6 +280,7 @@
   /* textContent only — captions and dish names are family-typed strings and
    * this page renders on the most shared screen in the house. */
   function drawFallback(state) {
+    if (window.ChauffeurHome && window.ChauffeurHome.fallback()) return;
     FALLROWS.textContent = '';
     var h = document.createElement('h1');
     h.textContent = 'The Home';
@@ -14513,6 +14514,7 @@
        silent — that is how a broken room masquerades as weak hardware */
     if (window.console && console.error) console.error('[house] buildRoom failed:', e);
   }
+  if (webgl && window.ChauffeurHome) window.ChauffeurHome.ready();
   window.chfHouseState = function () { return state; };
   window.chfHouseWeather = function () { return webgl ? webgl.weather.stats() : null; };
   window.chfHouseRefresh = poll;

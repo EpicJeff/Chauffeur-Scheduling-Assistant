@@ -1,6 +1,8 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.155 (2026-09-22).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.156 (2026-09-22).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**Optional House home (v2.499.156).** Config ? Boards ? The wall panel has an off-by-default ?Use The House as Home? toggle. Home selects the 3D house when supported; unavailable WebGL, scene startup failure, a missing main scene script or lost graphics context returns to the selected Home board. A tab-local failure marker prevents repeated retries, and `home?home_view=board` always opens the board, including when browser storage is blocked. A successful explicit House visit clears the failure marker. The saved 2D quality preference uses the board. Existing Home links, bare-host landing and panel idle return share this selection; idle within The House resets its exterior/orbit without reloading. Editor/draft previews retain their own fallback. Disabling restores existing board landing and standalone House behavior.
 
 **Camera inside neighboring buildings (v2.499.155).** Neighbors fully hide when the camera enters their building bounds or comes within 0.75 scene units. They return after 1.5 units of clearance, preventing boundary flicker. Bounds follow lot rotation, mirroring, scale and roof height while excluding yard scenery. Outside this buffer, sight-line blockers retain 20% opacity and clear neighbors remain opaque. The camera stays on its chosen orbit; room/editor isolation and scenery budgets remain. Bounds are conservative building envelopes, not exact roof-surface collision.
 

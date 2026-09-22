@@ -6,6 +6,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>The Home</title>
+    {% if house_home_enabled|default(false) %}
+    <script src="{{ 'static/house_home.js'|ver }}" data-surface="house"></script>
+    {% endif %}
     <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
     <link href="{{ 'static/vendor/mapbox-gl.css'|ver }}" rel="stylesheet">
     {% include 'ha_theme.html' %}
@@ -275,7 +278,7 @@
     <script src="{{ 'static/house_clip.js'|ver }}"></script>
     <script src="{{ 'static/house_neighborhood.js'|ver }}"></script>
     <script src="{{ 'static/house_weather.js'|ver }}"></script>
-    <script src="{{ 'static/house.js'|ver }}"></script>
+    <script src="{{ 'static/house.js'|ver }}" onerror="if(window.ChauffeurHome) window.ChauffeurHome.fallback()"></script>
     <script src="{{ 'static/house_glance.js'|ver }}"></script>
     <script src="{{ 'static/kitchen_overlay.js'|ver }}"></script>
 </body>

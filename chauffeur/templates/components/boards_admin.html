@@ -127,7 +127,7 @@ function boardsAdmin() {
             panel_background: '', panel_shipped_backgrounds: {},
             panel_theme: 'dark', panel_theme_sunset_offset_minutes: 0,
             panel_theme_sunrise_offset_minutes: 0,
-            panel_idle_return_seconds: 180,
+            panel_idle_return_seconds: 180, panel_house_home: false,
             panel_screensaver_enabled: true,
             panel_screensaver_idle_seconds: 600,
             panel_screensaver_source: 'photos',
@@ -256,7 +256,8 @@ function boardsAdmin() {
             // would land back in kiosk and be unable to edit anything.
             const href = b.slug === 'home' ? 'home'
                 : (b.shipped ? b.slug : 'board/' + b.slug);
-            window.location.href = this.apiBase + href + '?panel=false';
+            window.location.href = this.apiBase + href + '?panel=false'
+                + (b.slug === 'home' ? '&home_view=board' : '');
         },
 
         setShelf(b, on) {

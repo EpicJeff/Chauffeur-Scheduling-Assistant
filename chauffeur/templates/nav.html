@@ -1013,6 +1013,7 @@
                 if (window._chfSsPendingHome) {
                     window._chfSsPendingHome = false;
                     const here = window.location.pathname.split('/').filter(Boolean).pop() || '';
+                    if (window.ChauffeurHome && window.ChauffeurHome.rest()) { ssArm(); return; }
                     if (here !== 'home') { window.location.href = 'home' + window.location.search; return; }
                 }
                 ssArm();
@@ -1125,6 +1126,7 @@
                             // down for a page nobody is looking at. Note it,
                             // and let wake-up do the navigating.
                             if (window._chfSsActive) { window._chfSsPendingHome = true; return; }
+                            if (window.ChauffeurHome && window.ChauffeurHome.rest()) return;
                             // Through _up: from /board/<slug> a bare 'home'
                             // resolves to /board/home, which only renders by
                             // the grace of find_page()'s fallback.
