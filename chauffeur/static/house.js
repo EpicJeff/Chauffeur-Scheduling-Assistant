@@ -13007,9 +13007,16 @@
      car parked on the apron (row one sits at z 13.4, tail near 15.4). */
   var FACE_DIST_MAP = { garage: 0.78 };
 
+  /* the mesh a zone's card sits on: the kitchen's from the table above,
+     a study zone's from the study itself (house_study.js `face`) */
+  function faceMeshOf(key) {
+    var m = FACE_MESH_MAP[key] && webgl[FACE_MESH_MAP[key]];
+    if (!m && webgl.studyWorld && webgl.studyWorld.face) m = webgl.studyWorld.face(key);
+    return m || null;
+  }
   function zoneFaceNormal(key) {
     if (!webgl) return null;
-    var fmesh = FACE_MESH_MAP[key] && webgl[FACE_MESH_MAP[key]];
+    var fmesh = faceMeshOf(key);
     if (fmesh && fmesh.getWorldQuaternion) {
       /* a plane's front is its local +z; the cork face's rotation carries
          it to +x, the laptop screen's tilt carries it up-forward */
@@ -13029,7 +13036,7 @@
 
   function frameZone(key, cb) {
     var g = webgl.groups[key];
-    var fmesh = FACE_MESH_MAP[key] && webgl[FACE_MESH_MAP[key]];
+    var fmesh = faceMeshOf(key);
     var boxb = new webgl.T.Box3().setFromObject(fmesh || g);
     var center = boxb.getCenter(new webgl.T.Vector3());
     var size3 = boxb.getSize(new webgl.T.Vector3());
@@ -13048,6 +13055,17 @@
     var dir = fn
       ? fn.clone().add(new webgl.T.Vector3(0, 0.22, 0)).normalize()
       : new webgl.T.Vector3().subVectors(webgl.cam.position, center).normalize();
+    /* a face that looks UP (the study's in-tray, its desk piles, its
+       signature slips) would put the eye straight above it, where lookAt
+       has no roll to choose and the room has no depth: lean the approach
+       toward where the visitor already stands, ~63 degrees down -- still
+       square enough that the pasted card reads flat on the sheet. */
+    if (fn && Math.abs(fn.y) > 0.9) {
+      var toward = new webgl.T.Vector3().subVectors(webgl.cam.position, center);
+      toward.y = 0;
+      if (toward.lengthSq() < 1e-6) toward.set(0, 0, 1);
+      dir = fn.clone().add(toward.normalize().multiplyScalar(0.5)).normalize();
+    }
     var toP = center.clone().add(dir.multiplyScalar(dist));
     toP.y = Math.max(toP.y, center.y + 0.6);
     tween = { fromP: webgl.cam.position.clone(), toP: toP,
@@ -13319,7 +13337,7 @@
        tilted screen (an axis-aligned bbox face floats in front of it).
        A PlaneGeometry's four corners, world-transformed, give the TRUE
        quad — tilt included. */
-    var fm = FACE_MESH_MAP[key] && webgl[FACE_MESH_MAP[key]];
+    var fm = faceMeshOf(key);
     if (fm && !(fm.geometry && fm.geometry.parameters
                 && fm.geometry.parameters.width)) {
       /* no clean plane params (rounded/extruded door): the face is still
@@ -13828,6 +13846,30 @@
     var b = new webgl.T.Box3().setFromObject(g);
     return b.isEmpty() ? null
       : [b.min.x, b.max.x, b.min.y, b.max.y, b.min.z, b.max.z];
+  };
+  /* STUDY LEAN-IN (2026-09-22): read-only, like the two above. chfStudyCard
+     is what the focus overlay draws a study zone's card FROM -- rows built
+     off the furniture this page fetched with the parent's own token, never
+     off the wall-readable board payload, so a study card can only exist on
+     a page that already unlocked the study; leaving it empties the
+     furniture (see the BACK/Escape handlers) and the card with it.
+     chfStudyDetail reports one zone's painted-detail state for a test. */
+  window.chfStudyCard = function (key) {
+    var sw = webgl && webgl.studyWorld;
+    return sw && sw.card ? sw.card(key) : null;
+  };
+  window.chfStudyDetail = function (key) {
+    var sw = webgl && webgl.studyWorld;
+    var out = sw && sw.detailState ? sw.detailState(key) : null;
+    /* `facing`: how square the eye is to the zone's face right now (1 =
+       dead on), so a test can pin the face-on convention */
+    var f = out && sw.face ? sw.face(key) : null;
+    if (out && f) {
+      var n = new webgl.T.Vector3(0, 0, 1)
+        .applyQuaternion(f.getWorldQuaternion(new webgl.T.Quaternion()));
+      out.facing = -n.dot(webgl.cam.getWorldDirection(new webgl.T.Vector3()));
+    }
+    return out;
   };
   /* FACADE/arc 4 (facade spec section 6, "hand path parity"): read-only
      like the two above -- the spec the scene was actually built from and
@@ -14365,6 +14407,12 @@
   }
   function announceFocus(key) {
     if (webgl && state) applyState(state);   /* blank/restore the faces */
+    /* STUDY LEAN-IN (2026-09-22): the study's own painted detail stands up
+       for the zone being read (and only for a zone that wears no card --
+       house_study.js holds the one predicate) and stands down with the
+       focus. Until this the 41 detail panels study.js builds were never
+       painted or shown in the house at all. */
+    if (webgl && webgl.studyWorld) webgl.studyWorld.focus(key);
     var shape = (key && webgl) ? zoneFaceQuad(key) : null;
     try {
       window.dispatchEvent(new CustomEvent('chf-kitchen-focus',
@@ -14496,7 +14544,9 @@
       if (state) {
         TIP.textContent = ZONES[key].label + ' — ' + ZONES[key].headline(state);
         TIP.style.left = '16px';
-        TIP.style.bottom = '64px';
+        /* clear of the panel shelf (the wall's tab bar), the same
+           expression .house-orbit derives its bottom from; 0px off a panel */
+        TIP.style.bottom = 'calc(var(--panel-shelf-h, 0px) + 64px)';
         TIP.style.top = 'auto';
         TIP.style.opacity = 1;
       }

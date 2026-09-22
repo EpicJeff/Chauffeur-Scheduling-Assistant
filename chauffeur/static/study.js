@@ -506,13 +506,18 @@
         t.generateMipmaps = false;
         t.minFilter = t.magFilter = THREE.LinearFilter;
         try { t.anisotropy = R.capabilities.getMaxAnisotropy(); } catch (e) { }
-        mat.map = t; mat.needsUpdate = true;
+        // The mesh's CURRENT material, not the `mat` built above: the house
+        // (house_study.js) swaps every zone mesh onto a per-zone clone before
+        // anybody leans in, and a paint that wrote to the captured original
+        // landed on an orphan while the clone the room draws stayed blank.
+        // On the standalone page the two are the same object.
+        m.material.map = t; m.material.needsUpdate = true;
       }
       g.setTransform(g.canvas.width / cw, 0, 0, g.canvas.height / ch, 0, 0);
       g.clearRect(0, 0, cw, ch);
       g.textAlign = 'left'; g.textBaseline = 'alphabetic';
       draw(g, cw, ch);
-      mat.map.needsUpdate = true;
+      m.material.map.needsUpdate = true;
     };
     return m;
   }
@@ -1136,7 +1141,7 @@
   const BD = { x: .5, y: 4.6, z: -6.13, w: 5.4, h: 3.3, d: .12, rail: .2 };
   const boardStart = scene.children.length;
   corkTex.repeat.set(2, 1);
-  reg('board', box(BD.w, BD.h, BD.d, 0, BD.x, BD.y, BD.z,
+  const corkBoard = reg('board', box(BD.w, BD.h, BD.d, 0, BD.x, BD.y, BD.z,
     { noCast: true, mat: M(0xffffff, { map: corkTex, roughness: 1 }) }));
   const railMat = M(0x5a4029, { roughness: .8 });
   const railZ = BD.z + BD.d / 2 + .02, railD = BD.rail * 1.2;
@@ -1195,7 +1200,9 @@
       pins.push({ group: g, card: card, tail: tail, rest: rest, note: note });
     }
   }
-  ZONES.board.parts = { pins: pins, face: pinFace };
+  // `cork` is the surface a host lays a card on (the house's lean-in
+  // approaches it face-on, the way the kitchen's own corkboard is framed)
+  ZONES.board.parts = { pins: pins, face: pinFace, cork: corkBoard };
   ZONES.board.detail = { on: pins.map(p => p.note), off: boardRules };
   // The corkboard, its four rails and all fourteen pin groups. Held apart
   // from the rest of the wall because the house lifts the board assembly
@@ -2309,9 +2316,17 @@
   let contextLost = false;
   if (EMBED) {
     applyState(null);
+    // The detail layer rides along. `leaned` never leaves null in embed, so
+    // applyState's own repaint-on-lean never fires here; the host decides
+    // when a zone is being read and calls paint + show itself, and reads
+    // the same normalised slice (`data`) and one-line summary the room's
+    // own tip speaks, so a card the host draws cannot drift from the paint.
     return { group: scene, zones: ZONES, shell: shellG, update: applyState,
              windowWall: WINDOW_WALL, windowAt: WIN_AT,
-             windowSize: { w: WIN.w, h: WIN.h } };
+             windowSize: { w: WIN.w, h: WIN.h },
+             detail: { paint: detailPaint, show: detailShow },
+             data: name => (LAST || normal(null))[name],
+             summary: name => (ZONES[name] && ZONES[name].summary) || '' };
   }
   R.domElement.addEventListener('webglcontextlost', e => {
     if (contextLost) return;

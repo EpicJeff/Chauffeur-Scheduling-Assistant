@@ -132,7 +132,7 @@
           color: #2b2318; font-family: Inter, system-ui, sans-serif;
           box-shadow: 0 3px 14px rgba(30,20,10,.30); scrollbar-width: thin; }
         #focus-overlay.on { opacity: 1; }
-        #overlay-door, #overlay-calendar, #overlay-tile, #overlay-music { display: none; }
+        #overlay-door, #overlay-calendar, #overlay-tile, #overlay-music, #overlay-study { display: none; }
         #overlay-open { position: sticky; top: 0; float: right; z-index: 5;
           display: inline-grid; place-items: center; width: 28px; height: 28px;
           margin: -4px -6px 0 8px; border-radius: 8px; background: rgba(43,35,24,.10);
@@ -240,6 +240,11 @@
         <div id="focus-overlay">
             <a id="overlay-open" href="#" title="Open the page">&#8599;</a>
             <div id="overlay-door"></div>
+            <!-- The study's card: rows house.js builds off the furniture this
+                 page fetched with the parent's token, drawn by
+                 kitchen_overlay.js through textContent only. Empty and
+                 hidden whenever no study zone is being read. -->
+            <div id="overlay-study"></div>
             <div id="overlay-calendar"
                 x-data="packingCard({ data: { interactive: true, days: 1 } }, (window.chfBase !== undefined ? window.chfBase : ''))">
                 {{ packing.rows() }}

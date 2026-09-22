@@ -73,6 +73,9 @@ window.kitchenTileIsland = function () {
   var TILE = document.getElementById('overlay-tile');
   var MUSIC = document.getElementById('overlay-music');
   var OPEN = document.getElementById('overlay-open');
+  /* the study's card surface: only the house page carries it (the kitchen
+     has no study zones), so every study branch below is inert without it */
+  var STUDY = document.getElementById('overlay-study');
   if (!WRAP || !OV || !DOOR || !CAL || !TILE) return;
 
   /* where the open-chip goes: the zone's own family page. Card taps now do
@@ -82,7 +85,13 @@ window.kitchenTileIsland = function () {
                 window: 'calendar', radio: 'music',
                 /* the garage's page is the CAR EDITOR: /cars is not a route,
                    the fleet lives in Config beside the drivers */
-                garage: 'config' };
+                garage: 'config',
+                /* the study's zones open the same pages the room's own
+                   second tap does (house.js STUDY_ZONE_META) */
+                study_board: 'mind', study_desk: 'mind', study_tray: 'intake',
+                study_stickies: 'dashboard', study_calendar: 'dashboard',
+                study_window: 'mind', study_contracts: 'dashboard',
+                study_binders: 'programs' };
   /* ADMIN destinations are desktop-only. A wall panel is the most shared
      screen in the house and must never land on Config, so the open-chip
      simply does not appear there — the fleet card already answers. */
@@ -173,6 +182,70 @@ window.kitchenTileIsland = function () {
     renderDoorMessage('Checking what’s next…', '');
   }
 
+  /* ---- the study's card -------------------------------------------------
+     PIN-scoped by construction: the rows come from window.chfStudyCard,
+     which house.js builds off the furniture it fetched with the parent's
+     own visit token -- never from api/home_board, which a wall device reads
+     without a person. Every word here is family-typed (a thread title, a
+     finding's sentence) and every one of them lands through textContent;
+     this function assigns no innerHTML (the escaping-sink pin in
+     tests/test_kitchen_overlay.py holds for the whole file).
+
+     Shape, by sibling: the heading is the door card's own two-line message
+     (renderDoorMessage above -- panel-text over panel-dim, the overlay's
+     paper inks); each row is the agenda's row vocabulary (docs/
+     ui_design_guide.md, components/agenda_row.html: `rounded-lg px-2.5
+     py-1.5` on the `.agenda-event` fill the overlay already remaps to
+     paper, a 4px left bar carrying the row's state) with the study's OWN
+     painted inks on the bar -- the red its calendar face gives an uncovered
+     day, the amber its desk gives a due step (study.js DETAIL). */
+  var STUDY_TONE = { bad: '#a8452e', warn: '#a05a18' };
+  var STUDY_TITLE = { study_board: 'Connections board', study_desk: 'Plans in hand',
+                      study_tray: 'Intake tray', study_stickies: 'Findings',
+                      study_calendar: 'Coverage calendar', study_window: 'Family baseline',
+                      study_contracts: 'Agreements', study_binders: 'Program binders' };
+  function renderStudy(card) {
+    STUDY.textContent = '';
+    var head = document.createElement('div');
+    head.className = 'flex items-start gap-2 mb-2';
+    var title = document.createElement('div');
+    title.className = 'text-sm font-bold panel-text';
+    title.textContent = STUDY_TITLE[card.zone] || 'Study';
+    head.appendChild(title);
+    if (card.summary) {
+      var sum = document.createElement('div');
+      sum.className = 'text-[11px] font-semibold panel-dim ml-auto text-right';
+      sum.textContent = card.summary;
+      head.appendChild(sum);
+    }
+    STUDY.appendChild(head);
+    var list = document.createElement('div');
+    list.className = 'flex flex-col gap-1';
+    card.rows.forEach(function (r) {
+      var row = document.createElement('div');
+      row.className = 'agenda-event rounded-lg px-2.5 py-1.5 flex items-start gap-2';
+      var bar = document.createElement('div');
+      bar.className = 'w-1 self-stretch rounded shrink-0';
+      bar.style.background = STUDY_TONE[r.tone] || 'rgba(43,35,24,.18)';
+      row.appendChild(bar);
+      var body = document.createElement('div');
+      body.className = 'min-w-0 flex-1';
+      var text = document.createElement('div');
+      text.className = 'text-sm font-bold panel-text break-words leading-snug';
+      text.textContent = r.text;
+      body.appendChild(text);
+      if (r.note) {
+        var note = document.createElement('div');
+        note.className = 'text-[11px] font-semibold panel-dim';
+        note.textContent = r.note;
+        body.appendChild(note);
+      }
+      row.appendChild(body);
+      list.appendChild(row);
+    });
+    STUDY.appendChild(list);
+  }
+
   /* ---- pasting the card ONTO the surface -------------------------------
      The room announces the projected QUAD of the furniture's face. The
      card lays out flat at a readable width, then a projective transform
@@ -236,7 +309,15 @@ window.kitchenTileIsland = function () {
        the workbench, and a card hung down there would be reading a list off
        a bonnet. `fill` because the rows scroll: a fourth car lengthens the
        scroll inside the card, never the card. */
-    garage: { mode: 'fill', top: 0.15, bottom: 0.66 }
+    garage: { mode: 'fill', top: 0.15, bottom: 0.66 },
+    /* the study's card zones. The connections board is a cork face like
+       the kitchen's, so it takes the same band; the wall calendar is a
+       sheet; the window's card stands on the sill, so it anchors low on
+       the glass rather than across it; everything else is a prop on the
+       desk or shelf and takes its height from what it has to say. */
+    study_board: { mode: 'fill', top: 0.07, bottom: 0.93 },
+    study_calendar: { mode: 'fill', top: 0.12, bottom: 0.96 },
+    study_window: { mode: 'fit', top: 0.52 }
   };
 
   function placeQuad(q, zone) {
@@ -307,6 +388,7 @@ window.kitchenTileIsland = function () {
   function show(zone, d) {
     DOOR.style.display = zone === 'door' ? 'block' : 'none';
     CAL.style.display = zone === 'calendar' ? 'block' : 'none';
+    if (STUDY) STUDY.style.display = /^study_/.test(zone) ? 'block' : 'none';
     TILE.style.display = ZONE_TILES[zone] ? 'flex' : 'none';   /* flex: the height chain collage grids need */
     /* leaving a tile zone for the door, the calendar or the radio hides the
        island but does NOT unmount the card — only `hide()` cleared `t`, and
@@ -338,6 +420,9 @@ window.kitchenTileIsland = function () {
     DOOR.style.display = 'none';
     CAL.style.display = 'none';
     TILE.style.display = 'none';
+    /* emptied, not just hidden: the rows are parent-only words and the
+       card must not outlive the focus that earned it */
+    if (STUDY) { STUDY.style.display = 'none'; STUDY.textContent = ''; }
     if (MUSIC) MUSIC.style.display = 'none';
     var c = tileScope();
     if (c && c.t) c.t = null;
@@ -382,6 +467,16 @@ window.kitchenTileIsland = function () {
           widget's own empty states answer */ }
       }
       show('radio', d);
+    } else if (STUDY && /^study_/.test(d.zone)) {
+      /* no fetch: the rows are already on the page, fetched with the
+         parent's token when the study was unlocked. A zone with nothing to
+         list keeps the tip (the kitchen's own quiet-tile rule) and the
+         room shows its painted detail instead -- house_study.js's `card`
+         is the one predicate both sides read. */
+      var sc = window.chfStudyCard ? window.chfStudyCard(d.zone) : null;
+      if (!sc || !sc.rows || !sc.rows.length) { hide(); return; }
+      renderStudy(sc);
+      show(d.zone, d);
     } else if (ZONE_TILES[d.zone]) {
       var want = ZONE_TILES[d.zone];
       fetchBoard(function (b) {

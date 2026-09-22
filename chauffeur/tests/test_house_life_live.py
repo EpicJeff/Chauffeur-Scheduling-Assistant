@@ -19,6 +19,10 @@ def scenario_house_life():
     storage.add_routine(RoutineItem(member_id='k1', title='Brush teeth', time_of_day='07:00').model_dump())
     storage.add_household_task({'id': 'house-task', 'title': 'Replace the air filter', 'due_date': '2020-01-01', 'status': 'open'})
     storage.add_prep_kit(PrepKit(id='house-kit', name='Soccer bag', items=['Water bottle'], keywords=['soccer'], per_person=False).model_dump())
+    # the study's lean-in cards: a thread pins the connections board, a
+    # waiting proposal lands in the intake tray
+    storage.add_thread({'title': 'Call the plumber back', 'kind': 'vendor'})
+    storage.add_proposal({'title': 'Dentist reminder for Maya'})
     with served.browser() as page:
         def packs(route):
             response = route.fetch()
@@ -144,9 +148,50 @@ def scenario_house_life():
               'Study uses the house back affordance')
         if shots:
             page.screenshot(path=os.path.join(shots, 'integrated-study.png'))
+        # LEAN-IN CARDS (v2.499.158): a list-shaped zone wears an HTML card
+        # built off the token-fetched furniture (never api/home_board); an
+        # instrument zone shows the room's own painted detail instead; and
+        # the zone tip clears the panel shelf rather than hiding under it.
+        target = page.evaluate("chfNavProbe({zone:'study_tray'})")
+        page.mouse.click(target['cx'], target['cy'])
+        page.wait_for_function("(() => { const p=chfNavProbe({settled:true}); return p && p.focused === 'study_tray'; })()")
+        page.wait_for_selector('#overlay-study >> text=Dentist reminder for Maya', timeout=8000)
+        check(page.is_visible('#focus-overlay'), 'the intake tray wears its card')
+        check(page.evaluate("document.getElementById('overlay-open').getAttribute('href')").endswith('intake'),
+              'the card opens the intake page')
+        tray_state = page.evaluate("chfStudyDetail('study_tray')")
+        check(tray_state['visible'] == 0, 'the painted detail stays down under the card')
+        # FACE-ON: the kitchen's convention -- the eye approaches along the
+        # card face's normal. An up-facing sheet is read steeply (~63
+        # degrees), a wall face dead on.
+        check(tray_state['facing'] > 0.85, 'the in-tray is read square-on: ' + str(tray_state))
+        check(page.evaluate("chfStudyCard('study_board').rows[0].text") == 'Call the plumber back',
+              'the board card carries the thread by its own title')
+        clear = page.evaluate("""() => {
+          const t = document.getElementById('tip').getBoundingClientRect();
+          const s = document.getElementById('panel-shelf');
+          return {tipBottom: t.bottom, shelfTop: s ? s.getBoundingClientRect().top : innerHeight,
+                  text: document.getElementById('tip').textContent};
+        }""")
+        check(clear['tipBottom'] <= clear['shelfTop'] + 0.5,
+              'the zone tip clears the panel shelf: ' + str(clear))
+        if shots:
+            page.screenshot(path=os.path.join(shots, 'study-tray-card.png'))
+        page.keyboard.press('Escape')
+        page.wait_for_function("(() => { const p=chfNavProbe({settled:true}); return p && !p.focused && p.mode === 'study'; })()")
+        page.wait_for_selector('#focus-overlay', state='hidden', timeout=8000)
+        check(page.evaluate("document.getElementById('overlay-study').textContent") == '',
+              'leaning out empties the card')
         target = page.evaluate("chfNavProbe({zone:'study_monitor'})")
         page.mouse.click(target['cx'], target['cy'])
         page.wait_for_function("(() => { const p=chfNavProbe({settled:true}); return p && p.focused === 'study_monitor'; })()")
+        ds = page.evaluate("chfStudyDetail('study_monitor')")
+        check(ds and ds['panels'] > 0 and ds['painted'] == ds['panels'] and ds['visible'] == ds['panels'],
+              'the monitor shows its own painted labels when leaned into: ' + str(ds))
+        check(ds['facing'] > 0.95, 'the monitor is read dead on: ' + str(ds))
+        check(not page.is_visible('#focus-overlay'), 'an instrument zone wears no card')
+        if shots:
+            page.screenshot(path=os.path.join(shots, 'study-monitor-detail.png'))
         target = page.evaluate("chfNavProbe({zone:'study_monitor'})")
         page.mouse.click(target['cx'], target['cy'])
         page.wait_for_url(lambda url: urlparse(url).path.endswith('/mind'))

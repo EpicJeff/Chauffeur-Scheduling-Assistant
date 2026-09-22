@@ -97,9 +97,53 @@ def scenario_kitchen_template_renders_with_overlay():
         check(needed in html, f"rendered kitchen page carries {needed}")
 
 
+def scenario_the_study_card_is_pin_scoped_and_text_only():
+    """The study's lean-in card (v2.499.158). Its rows are built off the
+    furniture the house fetched with the parent's own visit token -- never
+    off api/home_board, which a wall device reads without a person -- and
+    every family-typed word lands through textContent. The room's painted
+    detail layer, which study.js never handed to the house before, stands
+    up only for a zone that wears no card."""
+    html = _src('templates', 'house.html')
+    check('id="overlay-study"' in html, "house.html carries the study card surface")
+    check('#overlay-study' in html, "the study surface starts hidden like its siblings")
+    check('overlay-study' not in _src('templates', 'kitchen.html'),
+          "the kitchen page carries no study surface (the branch is inert there)")
+    ov = _src('static', 'kitchen_overlay.js')
+    for needed in ('overlay-study', 'chfStudyCard', 'renderStudy', '/^study_/',
+                   "study_tray: 'intake'", 'study_board: { mode'):
+        check(needed in ov, f"kitchen_overlay.js carries {needed}")
+    tiles = re.search(r'var ZONE_TILES = \{(.*?)\};', ov, re.S)
+    check(tiles and 'study' not in tiles.group(1),
+          "study zones never wear a board tile (the board payload is wall-readable)")
+    body = re.search(r'function renderStudy\(card\) \{(.*?)\n  \}\n', ov, re.S)
+    check(body, "the study renderer is where the pin expects it")
+    for banned in ('innerHTML', 'outerHTML', 'insertAdjacentHTML', 'fetch('):
+        check(banned not in body.group(1), f"renderStudy never uses {banned}")
+    check(body.group(1).count('.textContent = ') >= 4,
+          "every word on the study card lands through textContent")
+    hs = _src('static', 'house_study.js')
+    for needed in ('card:card', 'focus:focus', 'face:face', 'detailState:detailState',
+                   'built.detail.paint', 'built.detail.show', 'built.data(', 'built.summary('):
+        check(needed in hs, f"house_study.js carries {needed}")
+    check('innerHTML' not in hs, "house_study.js is data and geometry, never markup")
+    sj = _src('static', 'study.js')
+    check('detail: { paint: detailPaint, show: detailShow }' in sj,
+          "study.js hands its detail layer to the embed host")
+    check('m.material.map = t; m.material.needsUpdate = true;' in sj,
+          "a panel paints the mesh's CURRENT material (the house clones them per zone)")
+    check('mat.map = t' not in sj, "no paint writes to the captured original material")
+    house = _src('static', 'house.js')
+    for needed in ('window.chfStudyCard', 'window.chfStudyDetail',
+                   'webgl.studyWorld.focus(key)', 'webgl.studyWorld.face(key)',
+                   "calc(var(--panel-shelf-h, 0px) + 64px)"):
+        check(needed in house, f"house.js carries {needed}")
+
+
 if __name__ == '__main__':
     scenario_overlay_layer_present_and_wired()
     scenario_overlay_never_writes_and_stays_escaped()
     scenario_overlay_sources_stay_wall_reachable()
     scenario_kitchen_template_renders_with_overlay()
+    scenario_the_study_card_is_pin_scoped_and_text_only()
     print("test_kitchen_overlay OK")

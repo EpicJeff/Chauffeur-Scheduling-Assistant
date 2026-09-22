@@ -211,8 +211,166 @@
       if(key==='study_map')return((f.map||{}).trips||[]).filter(function(t){return t.upcoming;}).length;
       return 0;
     }
-    function update(f){built.update(f||{});(built.zones.keys.meshes||[]).forEach(function(m){m.visible=false;});}
-    return{group:root,architecture:arch,proxies:proxies,zones:zones,count:count,update:update,dispose:function(){
+    function update(f){built.update(f||{});(built.zones.keys.meshes||[]).forEach(function(m){m.visible=false;});
+      // a zone being read when the payload moved owes a fresh paint
+      if(shown)built.detail.paint(shown);}
+
+    /* LEAN-IN CARDS (2026-09-22). What a study zone says when the house
+       leans into it. Two surfaces, one law -- the kitchen's: a zone whose
+       data is a LIST wears an HTML card on its face (the overlay draws it,
+       textContent only, from the slice below), and while the card is up
+       the room's own painted detail stays down, so the wall never says the
+       same thing twice at two sizes. A zone whose signal IS its painted
+       surface -- the monitor's cluster labels, the gauge readouts, the
+       map's pin labels -- has no card and shows its paint instead. `card`
+       is the single predicate both sides read: rows -> card; null -> paint.
+
+       The rows carry the same words the room's own DETAIL paints and the
+       /study fallback list prints (kind words, step counts, 'waiting',
+       'awaiting answers'), read off study.js's normalised slice so a
+       missing section is the calm form, never a throw. Everything here is
+       plain data; the overlay owns the DOM. */
+    var CARD = {
+      board: function (d) {
+        return (d.pins || []).map(function (p) {
+          return {text: p.label || '', note: p.kind === 'insight' ? 'Argyle noticed' : 'Thread',
+                  tone: p.bad ? 'bad' : (p.warn ? 'warn' : null)};
+        });
+      },
+      desk: function (d) {
+        return (d || []).map(function (p) {
+          var n = p.open_steps | 0;
+          return {text: p.line || '', tone: p.due ? 'warn' : null,
+                  note: n + ' step' + (n === 1 ? '' : 's') + ' open' + (p.due ? ' · one due' : '')};
+        });
+      },
+      tray: function (d) {
+        return (d.items || []).map(function (it) { return {text: it.title || '', note: 'waiting', tone: null}; });
+      },
+      stickies: function (d) {
+        return (d.items || []).map(function (it) {
+          return {text: it.line || '', note: it.severity || 'fyi',
+                  tone: it.severity === 'decide' ? 'bad' : (it.severity === 'approve' ? 'warn' : null)};
+        });
+      },
+      calendar: function (d) {
+        // one row per day the solver answered for, the way the wall
+        // calendar's own face draws it: red is a day nobody is covering
+        return (d.days || []).map(function (day) {
+          var evs = (day.events || []).map(function (e) { return e.title || ''; }).filter(Boolean);
+          var extra = (day.more | 0) || 0;
+          var note = evs.join(' · ') + (extra > 0 ? (evs.length ? ' · ' : '') + '+' + extra : '');
+          var un = day.unassigned | 0;
+          return {text: dayLabel(day.date), tone: un > 0 ? 'bad' : null,
+                  note: un > 0 ? un + ' uncovered' + (note ? ' · ' + note : '') : (note || 'nothing on')};
+        });
+      },
+      window: function (d) {
+        var signs = d.signs || [], nBad = d.ready ? Math.min((d.worse || []).length, signs.length) : 0;
+        return signs.map(function (s, k) { return {text: s, note: k < nBad ? 'worse than your baseline' : '', tone: k < nBad ? 'bad' : null}; });
+      },
+      contracts: function (d) {
+        return (d.items || []).map(function (it) { return {text: it.title || '', note: 'awaiting an answer', tone: null}; });
+      },
+      binders: function (d) {
+        return (d || []).map(function (b) {
+          return {text: b.title || '', note: (b.pulled ? 'needs a look' : '') + (b.pulled && b.detail ? ' · ' : '') + (b.detail || ''),
+                  tone: b.pulled ? 'warn' : null};
+        });
+      }
+    };
+    var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    function dayLabel(iso) {
+      var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+      if (!m) return String(iso || '');
+      var dt = new Date(+m[1], +m[2] - 1, +m[3]);
+      return DAYS[dt.getDay()] + ' ' + (+m[3]);
+    }
+    function name(key) { return String(key || '').replace(/^study_/, ''); }
+
+    /* FACE-ON (2026-09-22). The kitchen's card zones each name the mesh
+       their card sits on (house.js FACE_MESH_MAP) and the lean-in
+       approaches along that face's normal, so the pasted card reads square
+       -- an oblique wall card reads as a misaligned web element. Study
+       zones named nothing and were approached from wherever the camera
+       happened to stand. Every zone names its face here: the painted
+       detail plane where there is one (a PlaneGeometry, so zoneFaceQuad
+       reads the TRUE quad, tilt included), the cork for the board, and for
+       the two zones whose signal is spread over several small sheets (the
+       desk's three piles, the five binders) one invisible plane spanning
+       them, built once, in the parent the sheets already live in so the
+       shelf wall's turn carries it. */
+    function facePlane(parent, w, h) {
+      var m = new T.Mesh(new T.PlaneGeometry(Math.max(w, .05), Math.max(h, .05)),
+                         new T.MeshBasicMaterial({visible:false}));
+      m.visible = false; m.raycast = function () {}; m.userData.noMirror = true;
+      parent.add(m); return m;
+    }
+    var Z = built.zones, FACE = {
+      board: Z.board.parts.cork, calendar: Z.calendar.parts.face,
+      window: Z.window.parts.text, tray: Z.tray.parts.label,
+      contracts: Z.contracts.parts.label, stickies: Z.monitor.parts.labels,
+      monitor: Z.monitor.parts.labels, gauges: Z.gauges.parts.face,
+      map: Z.map.parts.labels
+    };
+    (function () {   /* the desk: one plane over the three paper piles */
+      var labels = Z.desk.parts.stacks.map(function (st) { return st.label; });
+      if (!labels.length) return;
+      var b = new T.Box3();
+      labels.forEach(function (l) {
+        var pw = l.geometry.parameters.width / 2, ph = l.geometry.parameters.height / 2;
+        b.expandByPoint(new T.Vector3(l.position.x - pw, l.position.y, l.position.z - ph));
+        b.expandByPoint(new T.Vector3(l.position.x + pw, l.position.y, l.position.z + ph));
+      });
+      var m = facePlane(labels[0].parent, b.max.x - b.min.x, b.max.z - b.min.z);
+      m.rotation.x = -Math.PI / 2;
+      m.position.set((b.min.x + b.max.x) / 2, b.max.y + .01, (b.min.z + b.max.z) / 2);
+      FACE.desk = m;
+    })();
+    (function () {   /* the binders: one plane across their spines */
+      var bs = Z.binders.parts.binders;
+      if (!bs.length) return;
+      var b = new T.Box3();
+      bs.forEach(function (bd) {
+        bd.updateMatrix();
+        if (!bd.geometry.boundingBox) bd.geometry.computeBoundingBox();
+        b.union(bd.geometry.boundingBox.clone().applyMatrix4(bd.matrix));
+      });
+      var m = facePlane(bs[0].parent, b.max.x - b.min.x, b.max.y - b.min.y);
+      m.position.set((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, b.max.z + .01);
+      FACE.binders = m;
+    })();
+    function face(key) { return FACE[name(key)] || null; }
+    function card(key) {
+      var n = name(key), fn = CARD[n];
+      if (!fn || !built.zones[n]) return null;
+      var rows;
+      try { rows = fn(built.data(n)) || []; } catch (e) { rows = []; }
+      rows = rows.filter(function (r) { return r && r.text; });
+      return rows.length ? {zone: key, rows: rows, summary: built.summary(n)} : null;
+    }
+    /* the one place a study zone's paint is shown or hidden: the host says
+       which zone (if any) is being read, and the paint stands up only for a
+       zone that wears no card */
+    var shown = null;
+    function focus(key) {
+      var n = name(key);
+      if (shown && shown !== n) { built.detail.show(shown, false); shown = null; }
+      if (!n || !built.zones[n] || n === 'keys' || card(key)) return;
+      built.detail.paint(n);
+      built.detail.show(n, true);
+      shown = n;
+    }
+    function detailState(key) {
+      var z = built.zones[name(key)];
+      if (!z || !z.detail) return null;
+      var on = z.detail.on || [], vis = 0, painted = 0;
+      on.forEach(function (m) { if (m.visible) vis++; if (m.userData && m.userData.g) painted++; });
+      return {panels: on.length, visible: vis, painted: painted, shown: shown === name(key)};
+    }
+    return{group:root,architecture:arch,proxies:proxies,zones:zones,count:count,update:update,
+      card:card,focus:focus,face:face,detailState:detailState,summary:function(key){return built.summary(name(key));},
+      dispose:function(){
       var gs=new Set(),ms=new Set(),ts=new Set();
       [root,arch,proxies].forEach(function(top){top.traverse(function(o){if(o.geometry)gs.add(o.geometry);var a=Array.isArray(o.material)?o.material:[o.material];a.forEach(function(m){if(!m)return;ms.add(m);if(m.map)ts.add(m.map);});});});
       ts.forEach(function(t){t.dispose();});ms.forEach(function(m){m.dispose();});gs.forEach(function(g){g.dispose();});
