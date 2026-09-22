@@ -12,7 +12,21 @@ Reduce the coordination work required to run a family. Chauffeur should understa
 
 The 3D house is the shared spatial interface. Rooms and real-world objects provide stable context for features. The house should also reflect the family's own life through carefully quality-gated, personalized objects and spaces.
 
-## Latest architecture change (2026-09-22, v2.499.150)
+## Latest architecture change (2026-09-22, v2.499.151)
+
+House-number points now fill gaps where Mapbox has an address but no building
+outline. The existing z16 tile requests also decode `housenum_label`; no extra
+requests are added. Nearby real residential footprints supply median dimensions.
+Estimated rectangles avoid all source buildings, roads and earlier estimates,
+preventing duplicate houses for multiple labels on one building. No nearby
+residential size evidence means no address estimate. Estimates carry
+`placementSource: house-number` and `footprint.estimated: true`; real outlines
+and primary-home calibration remain authoritative. Cache identity refreshes.
+Source-tile replay of the supplied neighborhood preserves 43 outlines and adds
+13 estimates, including the missing house immediately to the left, for 56 total.
+Neither an outline nor a house-number point still leaves a source-data gap.
+
+## Earlier shared scale correction (v2.499.150)
 
 The primary mapped footprint now establishes the scene scale: its wall area is
 matched to the interactive home's wall bounds using a uniform map transform.

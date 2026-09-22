@@ -6,6 +6,7 @@ Mapbox accounting are reused; no routing, imagery or model calls are involved.
 import hashlib
 import json
 import math
+from statistics import median
 from pathlib import Path
 import threading
 import time
@@ -109,6 +110,62 @@ def _cached(path, key):
     return None
 
 
+def address_lots(addresses, buildings, project, roads, mapped, home):
+    """Fill a missing outline only where a map house-number point exists.
+
+    Size is an estimate from nearby real houses, never a measured footprint.
+    All source buildings reserve space, including nonresidential buildings.
+    """
+    from shapely.geometry import Polygon, Point, LineString
+    from shapely.ops import unary_union
+    from shapely.strtree import STRtree
+    occupied = []
+    for item in buildings:
+        if not isinstance(item,dict):
+            continue
+        try:
+            poly = Polygon([project(p) for p in item['outline']]).buffer(0)
+            if not poly.is_empty:
+                occupied.append(poly)
+        except (KeyError,TypeError,ValueError):
+            continue
+    street = unary_union([LineString([a,b]).buffer(2.5) for a,b in roads])
+    tree = STRtree(occupied)
+    estimates = []
+    samples = mapped+home
+    result = []
+    points = sorted(set(tuple(project(p)) for p in addresses),key=lambda p:(math.hypot(*p),p))
+    for x,z in points:
+        if max(abs(x),abs(z))>230:
+            continue
+        point = Point(x,z)
+        if len(tree.query(point.buffer(2),predicate='intersects')) or any(p.distance(point)<2 for p in estimates):
+            continue
+        donors = sorted((p for p in samples if math.hypot(p['x']-x,p['z']-z)<80),
+                        key=lambda p:math.hypot(p['x']-x,p['z']-z))[:5]
+        if not donors:
+            continue  # No local residential size evidence.
+        width = median(p['footprint']['width'] for p in donors)
+        depth = median(p['footprint']['depth'] for p in donors)
+        distance,front = min((closest((x,z),a,b) for a,b in roads),key=lambda p:p[0])
+        if not 4<=distance<=70:
+            continue
+        turn = math.atan2(front[0]-x,front[1]-z)
+        c,s = math.cos(turn),math.sin(turn)
+        for size in (1,.85,.7):
+            w,d = width*size,depth*size
+            outline = [(x+u*c+v*s,z-u*s+v*c) for u,v in ((-w/2,-d/2),(w/2,-d/2),(w/2,d/2),(-w/2,d/2))]
+            polygon = Polygon(outline)
+            if polygon.intersects(street) or len(tree.query(polygon,predicate='intersects')) or any(polygon.intersects(p) for p in estimates):
+                continue
+            estimates.append(polygon)
+            result.append({'x':x,'z':z,'rotation':turn,'scale':1,'placementSource':'house-number',
+                           'footprint':{'width':round(w,3),'depth':round(d,3),'estimated':True,
+                                        'outline':[[round(a,3),round(b,3)] for a,b in outline+[outline[0]]]}})
+            break
+    return result
+
+
 def closest(point, a, b):
     dx, dz = b[0] - a[0], b[1] - a[1]
     length = dx * dx + dz * dz
@@ -158,7 +215,7 @@ def street_crosses_parcel(lot, roads):
     return False
 
 
-def compile_layout(lines, buildings=(), coverage=()):
+def compile_layout(lines, buildings=(), coverage=(), addresses=()):
     """Input: east/south meters about home. Preserve street shape and handedness.
 
     Rotate the closest street to the facade and preserve mapped wall outlines.
@@ -206,6 +263,9 @@ def compile_layout(lines, buildings=(), coverage=()):
 
     home, diagnostics = [], {}
     mapped = footprint_lots(buildings,project,roads,home,diagnostics)
+    footprint_count = len(mapped)
+    address_fill = address_lots(addresses,buildings,project,roads,mapped,home) if addresses else []
+    mapped.extend(address_fill)
     footprint_mode = any(isinstance(b,dict) and b.get('outline') for b in buildings)
     from shapely.geometry import Point, Polygon
     mapped_coverage = [Polygon([project(p) for p in ring]) for ring in coverage]
@@ -275,7 +335,8 @@ def compile_layout(lines, buildings=(), coverage=()):
             'home': min(home,key=lambda p:math.hypot(p['x'],p['z'])) if home else None,
             'buildingDiagnostics':dict(diagnostics,emitted=len(mapped[:128]),overLimit=max(0,len(mapped)-128)),
             'placement': 'footprints' if footprint_mode else 'frontage',
-            'footprintCount':len(mapped), 'footprintCoverage':[[list(p) for p in shape.exterior.coords] for shape in mapped_coverage]}
+            'footprintCount':footprint_count,'addressCount':len(address_fill),
+            'footprintCoverage':[[list(p) for p in shape.exterior.coords] for shape in mapped_coverage]}
 
 
 def _fetch(lat, lon, token):
@@ -287,7 +348,7 @@ def _fetch(lat, lon, token):
     cy = (1-math.asinh(math.tan(math.radians(lat)))/math.pi)/2*n
     meters = 40075016.686*math.cos(math.radians(lat))/n
     radius = 500/meters
-    lines, buildings, coverage = [], [], []
+    lines, buildings, coverage, addresses = [], [], [], []
 
     def tile_at(z, x, y):
         if not maps.check_usage_limits_and_spikes('vector_tiles', 1):
@@ -319,13 +380,21 @@ def _fetch(lat, lon, token):
     tiles.sort(key=lambda t:(t[0]+.5-hx)**2+(t[1]+.5-hy)**2)
     for tx,ty in tiles:
         try:
-            layer = tile_at(16,tx,ty).get('building',{})
+            tile = tile_at(16,tx,ty)
+            layer = tile.get('building',{})
         except Exception:
             break  # Preserve roads and successful tiles; no retry storm.
         extent = layer.get('extent',4096)
         def local(p):
             return ((tx+p[0]/extent-hx)*hm,(ty+p[1]/extent-hy)*hm)
         coverage.append([local(p) for p in ((0,0),(extent,0),(extent,extent),(0,extent))])
+        labels = tile.get('housenum_label',{})
+        label_extent = labels.get('extent',4096)
+        for feature in labels.get('features',[]):
+            geo = feature.get('geometry',{})
+            if geo.get('type')=='Point' and feature.get('properties',{}).get('house_num'):
+                p = geo['coordinates']
+                addresses.append(((tx+p[0]/label_extent-hx)*hm,(ty+p[1]/label_extent-hy)*hm))
         for feature in layer.get('features',[]):
             props, geo = feature.get('properties',{}), feature['geometry']
             if props.get('type') == 'building:part':
@@ -335,7 +404,7 @@ def _fetch(lat, lon, token):
                 if polygon and len(polygon[0])>=4:
                     buildings.append({'id':feature.get('id'), 'type':props.get('type','building'),
                                       'outline':[local(p) for p in polygon[0]]})
-    result = compile_layout(lines, buildings, coverage)
+    result = compile_layout(lines, buildings, coverage, addresses)
     if result is not None:
         result['footprintStatus'] = 'available' if len(coverage)==9 else 'partial' if coverage else 'unavailable'
     return result
@@ -351,7 +420,7 @@ def neighborhood_layout(cached_only=False):
     home, token = maps.get_home_location(), maps.get_mapbox_api_key()
     if not home or not token or maps.get_map_option('disable_mapbox', False):
         return {'source': 'generated'}
-    key = hashlib.sha256((home+'|'+token+'|5').encode()).hexdigest()
+    key = hashlib.sha256((home+'|'+token+'|6').encode()).hexdigest()
     path = Path(storage.DB_PATH).with_name('house_map.json')
     cached = _cached(path, key)
     if cached is not None or cached_only:

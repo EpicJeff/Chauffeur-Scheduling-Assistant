@@ -28,6 +28,23 @@ def building(cx, cz, width=10, depth=16, turn=0, identity=None, kind='house'):
 
 
 class HouseMapTests(unittest.TestCase):
+    def test_house_number_fills_missing_outline_without_duplicates(self):
+        road = [[(-265,28.5),(265,28.5)]]
+        buildings = [building(0,0,identity='home'),building(50,0,identity='neighbor'),
+                     building(80,0,identity='shop',kind='commercial')]
+        original = hm.compile_layout(road,buildings)
+        result = hm.compile_layout(road,buildings,addresses=[(25,0),(25.2,.1),(0,0),(50,0),(80,0),(100,28.5)])
+        self.assertEqual(result['home'],original['home'])
+        self.assertEqual(result['footprintCount'],1)
+        self.assertEqual(result['addressCount'],1)
+        estimate = next(p for p in result['lots'] if p.get('placementSource')=='house-number')
+        self.assertEqual((estimate['x'],estimate['z']),(25,0))
+        self.assertTrue(estimate['footprint']['estimated'])
+        self.assertEqual(estimate['footprint']['width'],10)
+        self.assertEqual([p for p in result['lots'] if not p.get('placementSource')],original['lots'])
+        self.assertFalse(any(p['x']<0 for p in result['lots']))  # No invented unlabeled houses.
+        self.assertEqual(hm.address_lots([(25,0)],[],lambda p:p,road,[],[]),[])
+
     def test_real_outlines_keep_position_dimensions_and_tile_identity(self):
         a=building(50,0,10,18,.3,'a')
         # The second building straddles a tile boundary. Rejoin its two pieces.
@@ -61,10 +78,11 @@ class HouseMapTests(unittest.TestCase):
     def test_building_decode_uses_z16_and_preserves_polygons(self):
         poly={'type':'Polygon','coordinates':[[[100,100],[300,100],[300,500],[100,500],[100,100]]]}
         multi={'type':'MultiPolygon','coordinates':[poly['coordinates'],[[[700,100],[900,100],[900,500],[700,500],[700,100]]]]}
-        raw=mapbox_vector_tile.encode({'name':'building','features':[
+        raw=mapbox_vector_tile.encode([{'name':'building','features':[
             {'id':1,'geometry':poly,'properties':{'type':'house'}},
             {'id':2,'geometry':multi,'properties':{'type':'building'}},
-            {'id':3,'geometry':poly,'properties':{'type':'building:part'}}]},default_options={'y_coord_down':True})
+            {'id':3,'geometry':poly,'properties':{'type':'building:part'}}]},
+            {'name':'housenum_label','features':[{'geometry':{'type':'Point','coordinates':[200,300]},'properties':{'house_num':'17'}}]}],default_options={'y_coord_down':True})
         response=MagicMock();response.__enter__.return_value=response;response.content=raw
         with patch.object(hm.requests,'get',return_value=response) as get,patch.object(hm.maps,'check_usage_limits_and_spikes',return_value=True),patch.object(hm,'compile_layout',return_value={'source':'mapbox'}) as compile_:
             result=hm._fetch(40,-75,'test-token')
@@ -73,6 +91,7 @@ class HouseMapTests(unittest.TestCase):
             self.assertTrue(all(len(b['outline'])==5 for b in items))
             self.assertEqual({b['id'] for b in items},{1,2})
             self.assertEqual(len(compile_.call_args.args[2]),9)
+            self.assertEqual(len(compile_.call_args.args[3]),9)
             self.assertEqual(result['footprintStatus'],'available')
             self.assertEqual(sum('/16/' in call.args[0] for call in get.call_args_list),9)
 
@@ -191,7 +210,7 @@ class HouseMapTests(unittest.TestCase):
             precision = stack.enter_context(patch.object(hm.storage, 'get_cached_geocode', return_value={'precision': 'exact'}))
             fetch = stack.enter_context(patch.object(hm, '_fetch', return_value=hm.compile_layout(STREETS)))
             # An upgrade must not retain the sparse layout for twelve hours.
-            legacy_key = hm.hashlib.sha256(b'Test home|private-token|4').hexdigest()
+            legacy_key = hm.hashlib.sha256(b'Test home|private-token|5').hexdigest()
             (Path(directory)/'house_map.json').write_text(json.dumps({'key':legacy_key, 'until':hm.time.time()+3600,
                                                                     'layout':{'source':'mapbox','lots':[]}}))
             self.assertEqual(hm.neighborhood_layout(cached_only=True)['source'], 'generated')

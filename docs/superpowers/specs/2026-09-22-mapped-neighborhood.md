@@ -123,6 +123,30 @@ all nine tiles, and no primary footprint (the previous version discarded it).
 Replay checks visibility for those 43 houses; a separate footprint fixture checks
 home scale. Provider completeness for lots absent from that file is not inferred.
 
+## Missing outlines with house-number evidence (v2.499.151)
+
+The updated user layout and matching source tiles confirmed that the immediately
+left neighbor has a `housenum_label` point but no building polygon. Its omission
+was a source-layer gap, not the rendering limit or primary-home exclusion.
+
+Decode Point geometry with `house_num` from the same nine z16 tiles, respecting
+the layer's own extent. After real building placement, consider uncovered label
+points within the scene. Estimate width/depth from the median of the nearest five
+real residential outlines within 80 scene units (including the home). Face the
+nearest street. Try the estimate at 100%, 85%, then 70% only if necessary to avoid
+known building outlines, roads and earlier estimates. A spatial index checks all
+source building types so a label on a commercial building cannot create a house.
+Multiple labels covered by one estimate do not create duplicate houses. Unlabeled
+gaps in covered tiles remain empty; this is not indiscriminate street infill.
+
+Estimates use `placementSource: house-number` and `footprint.estimated: true`,
+with `addressCount` separate from `footprintCount`. Real outlines and home scale
+do not change. No extra requests or dependencies are needed. Cache identity
+increments. The matched source replay produces 43 real outlines plus 13 estimated
+houses, including the left neighbor. Private map data remains an ignored local
+fixture. Unit coverage checks duplicates, nonresidential reservations, road
+exclusion, no invented unlabeled houses, absent donors and MVT label decoding.
+
 ## Proof
 
 `test_house_map.py` checks real MVT decoding, coordinate direction, request count,
