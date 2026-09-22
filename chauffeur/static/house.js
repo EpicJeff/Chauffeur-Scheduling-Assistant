@@ -8408,8 +8408,9 @@
       roadT.wrapS = roadT.wrapT = T.RepeatWrapping;
       roadT.repeat.set(6, 1);
     }
-    ebox(50, 0.38, 5, NICE ? 0xffffff : 0x4a4f55, 0.5, -0.50, 28.5,
+    var parcelRoad = ebox(50, 0.38, 5, NICE ? 0xffffff : 0x4a4f55, 0.5, -0.50, 28.5,
          { rough: 0.95, map: roadT });
+    parcelRoad.name='parcel-road';
     if (GARAGE_SIDE) {
       var entry=sideDriveSection(25.85);
       [[-24.5,entry.left-0.1],[entry.right+0.1,25.5]].forEach(function(run) {
@@ -10993,6 +10994,7 @@
       });
     });
     var EXT_NO_MERGE = new Set(NO_MERGE);
+    if(neighborhoodEnabled)EXT_NO_MERGE.add(parcelRoad);
     /* SHELL (shell spec section 3): the registry feeds both fence sets
        so shell membership is declared exactly once, replacing the four
        hand adds this loop used to be. EFFECTIVE membership is unchanged:
@@ -11490,14 +11492,34 @@
     // Photo/editor captures isolate the active design. Scenery is independent
     // of its mirror, shell masks, household state and room navigation.
     if (neighborhoodEnabled) {
-      neighborhood = window.ChauffeurNeighborhood.build(T, CANONICAL_JS, {
+      function makeNeighborhood(layout) { return window.ChauffeurNeighborhood.build(T, CANONICAL_JS, {
         main: Object.assign({}, FULL_HOUSE, {south: FULL_HOUSE.south - MAIN_DZ}),
         garage: Object.assign({}, GARAGE_BLOCK, {south: GARAGE_BLOCK.south - GAR_DZ})
       }, PALETTE, function (surface) { return makeMat(0xffffff, {rough:.95, map: surface === 'plain' ? null : cladTex(surface, 0xffffff)}); }, function(spec) {
         return buildDetailedExterior(spec, R);
-      });
+      }, layout); }
+      var initialLayout=window.HOUSE_NEIGHBORHOOD;
+      neighborhood = makeNeighborhood(initialLayout);
       scene.add(neighborhood.group);
       neighborhood.update(cam.position, toWorld(ORBIT.pivot), true);
+      if(initialLayout && initialLayout.source==='mapbox'){
+        parcelRoad.visible=false;
+        var mapCredit=document.getElementById('house-map-credit');if(mapCredit)mapCredit.hidden=false;
+      }
+      // Fetch independently of household state. The room is usable throughout;
+      // a failed lookup leaves the existing neighborhood intact, without retry.
+      if(!initialLayout || initialLayout.source!=='mapbox')fetch((window.chfBase !== undefined ? window.chfBase : '')+'api/house/neighborhood')
+        .then(function(r){if(!r.ok)throw new Error('Map unavailable');return r.json();})
+        .then(function(layout){
+          if(layout.source!=='mapbox' || !webgl || webgl.R!==R)return;
+          var next=makeNeighborhood(layout),previous=neighborhood;
+          scene.add(next.group);scene.remove(previous.group);
+          neighborhood=next;webgl.neighborhood=next;previous.dispose();
+          parcelRoad.visible=false;
+          next.setNight(isNight());
+          next.update(cam.position,toWorld(ORBIT.pivot),mode==='exterior');
+          var credit=document.getElementById('house-map-credit');if(credit)credit.hidden=false;
+        }).catch(function(){/* Generated neighborhood remains usable. */});
     }
     function noMirrorCount() {
       var n = 0;

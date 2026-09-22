@@ -7,6 +7,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>The Home</title>
     <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
+    <link href="{{ 'static/vendor/mapbox-gl.css'|ver }}" rel="stylesheet">
     {% include 'ha_theme.html' %}
     <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
     <!-- before the body: the music widget's inline script reads MusicLogic
@@ -15,6 +16,12 @@
     <style>
         body { background-color: #111827; color: #e5e7eb; }
         [x-cloak] { display: none !important; }
+        #house-map-credit { position:fixed; bottom:3px; right:6px; z-index:40;
+          padding:2px 5px; border-radius:4px; background:rgba(255,255,255,.85);
+          color:#263029; font:10px/20px system-ui; }
+        #house-map-credit[hidden] { display:none; }
+        #house-map-credit .mapboxgl-ctrl-logo { display:inline-block; vertical-align:middle; }
+        #house-map-credit a { color:inherit; }
         #kitchen-wrap { position: fixed; inset: 0; background: #14110c; }
         /* product-shot vignette: pure CSS, zero render cost */
         #kitchen-wrap::after { content: ''; position: absolute; inset: 0; pointer-events: none;
@@ -190,6 +197,12 @@
 
 <body class="flex flex-col h-screen overflow-hidden">
     <div class="editor-chrome">{% include 'nav.html' %}</div>
+    <aside id="house-map-credit" hidden aria-label="Neighborhood map credits" title="Mapped streets; illustrative houses and yards">
+      <a class="mapboxgl-ctrl-logo" href="https://www.mapbox.com/" target="_blank" rel="noopener" aria-label="Mapbox"></a>
+      <a href="https://www.mapbox.com/about/maps" target="_blank" rel="noopener">© Mapbox</a> ·
+      <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap</a> ·
+      <a href="https://apps.mapbox.com/feedback/" target="_blank" rel="noopener">Improve this map</a>
+    </aside>
 
     <div id="kitchen-wrap" class="panel-page">
         <h1 id="kitchen-title" class="panel-page-title">The Home</h1>
@@ -251,6 +264,7 @@
     {% include 'components/pet_editor.html' %}
     {% include 'components/pet_battle.html' %}
 
+    <script>window.HOUSE_NEIGHBORHOOD = {{ neighborhood_json|default('{}')|safe }};</script>
     <script>window.HOUSE_STATE_URL = (window.chfBase !== undefined ? window.chfBase : '') + 'api/house/state';
             window.HOUSE_FACADE = {{ facade_json|safe }};</script>
     <script src="{{ 'static/vendor/three.min.js'|ver }}"></script>

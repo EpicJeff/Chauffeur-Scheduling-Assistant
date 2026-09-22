@@ -84,3 +84,7 @@ editor isolation and the rendered panorama. The browser gate requires eight dist
 geometry fingerprints and exactly one mounted renderer canvas. No live model calls are required.
 
 Neighbor interiors, roaming and saved neighbor editing remain outside this slice.
+
+The generated grid remains the fallback. Version 2.499.146 adds
+[map-derived street placement](2026-09-22-mapped-neighborhood.md) while retaining
+these rendering tiers and distinct designs.

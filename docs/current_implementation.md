@@ -12,7 +12,19 @@ Reduce the coordination work required to run a family. Chauffeur should understa
 
 The 3D house is the shared spatial interface. Rooms and real-world objects provide stable context for features. The house should also reflect the family's own life through carefully quality-gated, personalized objects and spaces.
 
-## Latest architecture change (2026-09-21, v2.499.145)
+## Latest architecture change (2026-09-22, v2.499.146)
+
+The neighborhood can follow real streets around the configured home using the
+existing Mapbox key. A deterministic compiler aligns and clips road geometry,
+uses building centers to guide frontage, and packs varied parametric houses
+without overlapping yards or crossing streets. Up to eight nearest houses retain
+the detailed renderer. The first lookup is asynchronous, subsequent visits use a
+twelve-hour local cache, and missing data/provider failures retain the generated
+neighborhood. Lookups are capped at four tiles and use existing usage accounting.
+Street geometry is mapped; house appearances and lot spacing remain illustrative.
+See [mapped neighborhood scope](superpowers/specs/2026-09-22-mapped-neighborhood.md).
+
+## Detailed neighborhood rendering (v2.499.145)
 
 The eight immediate neighbors now have distinct parametric specifications, built through
 the active home's detailed geometry code via an explicit exterior entry point. Roofs,

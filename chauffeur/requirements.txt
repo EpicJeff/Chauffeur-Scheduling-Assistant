@@ -14,6 +14,7 @@ pywebpush
 cryptography
 google-search-results
 requests
+mapbox-vector-tile>=2.2,<3
 websockets
 icalendar
 recurring-ical-events

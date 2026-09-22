@@ -1742,8 +1742,10 @@ def house_page(request: Request):
         bundle = {'id': 'canonical', 'name': 'Canonical', 'spec': _hf.CANONICAL,
                   'slots': _hf.slot_table(_hf.CANONICAL['blocks'], _hf.CANONICAL['upper'])}
     facade_json = _json.dumps(bundle).replace('</', '<\\/')
+    from services.house_map import neighborhood_layout
+    layout = neighborhood_layout(cached_only=True) if request.query_params.get('editor') != '1' else {'source': 'generated'}
     return templates.TemplateResponse(request=request, name="house.html",
-                                      context={'facade_json': facade_json})
+                                      context={'facade_json': facade_json, 'neighborhood_json': _json.dumps(layout)})
 
 @app.get("/threads")
 def threads_page(request: Request):
@@ -5471,6 +5473,12 @@ def kitchen_state_api(since: float = 0, request: Request = None):
     (pinned in test_kitchen_state), so this read needs no person."""
     from services import kitchen_room as _kitchen
     return _kitchen.state(since_ts=float(since or 0))
+
+
+@app.get("/api/house/neighborhood")
+def house_neighborhood_api():
+    from services.house_map import neighborhood_layout
+    return JSONResponse(neighborhood_layout(), headers={'Cache-Control': 'no-store'})
 
 
 @app.get("/api/house/state")
