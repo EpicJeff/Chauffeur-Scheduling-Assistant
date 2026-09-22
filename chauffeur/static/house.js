@@ -11520,7 +11520,7 @@
       });
       var kit = window.ChauffeurNeighborhood.captureExterior(T, extG,
         [garageInterior, carsG, busG, skyDome, webgl_garageBackWall].concat(options.footprintOnly?[yardG]:[]),
-        {front:26, buildingOnly:options.footprintOnly});
+        {front:26, buildingOnly:options.footprintOnly, scenery:[yardG]});
       var retainedTextures = new Set(), sourceMaterials = new Set(), sourceGeometry = new Set(), sourceTextures = new Set();
       function textures(material, output) {
         Object.keys(material).forEach(function(k){if(material[k] && material[k].isTexture)output.add(material[k]);});

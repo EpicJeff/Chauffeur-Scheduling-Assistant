@@ -12,7 +12,16 @@ Reduce the coordination work required to run a family. Chauffeur should understa
 
 The 3D house is the shared spatial interface. Rooms and real-world objects provide stable context for features. The house should also reflect the family's own life through carefully quality-gated, personalized objects and spaces.
 
-## Latest architecture change (2026-09-22, v2.499.154)
+## Latest architecture change (2026-09-22, v2.499.155)
+
+Neighbor visibility now has three states: hidden when the camera is inside or
+near a building, 20% opacity when it blocks the house from farther away, and
+opaque when clear. Building-only bounds follow lot rotation and scale, include
+roofs, and exclude landscaping. A 0.75-unit entry / 1.5-unit exit buffer prevents
+boundary flicker without moving the camera. Geometry and high/low browser gates
+cover hiding, restoration, rendering budgets and room/editor isolation.
+
+## Previous architecture change (2026-09-22, v2.499.154)
 
 The exterior camera now shows sky above a thinner distant skyline. Portrait views
 preserve house width through a wider exterior lens; room lenses are unchanged.

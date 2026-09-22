@@ -68,7 +68,43 @@ assert(ghosts.length);assert(ghosts.every(m=>m.material.transparent&&m.material.
 fadeMap.update(new T.Vector3(0,7,-80),new T.Vector3(0,4,0),true);
 assert.equal(fadeMap.stats().fadedLots,0);assert(ghosts.every(m=>!m.visible&&m.count===0));
 fadeMap.update(new T.Vector3(0,150,80),new T.Vector3(0,4,0),true);
-assert.equal(fadeMap.stats().fadedLots,0);fadeMap.dispose();
+assert.equal(fadeMap.stats().fadedLots,0);
+fadeMap.update(new T.Vector3(0,3,45),new T.Vector3(0,4,0),true);
+assert.equal(fadeMap.stats().hiddenLots,1,'camera inside must hide the neighbor');
+assert.equal(fadeMap.stats().visibleLots,0);assert.equal(fadeMap.stats().fadedLots,0);
+assert(ghosts.every(m=>!m.visible&&m.count===0),'inside must not leave ghost surfaces');
+fadeMap.update(new T.Vector3(0,7,80),new T.Vector3(0,4,0),true);
+assert.equal(fadeMap.stats().hiddenLots,0);assert.equal(fadeMap.stats().fadedLots,1);
+fadeMap.dispose();
+// Finished geometry bounds exclude landscaping, include tall roofs and follow
+// rotation, mirroring and nonuniform footprint fitting. Distances are world units.
+for(const rotation of [0,.7]){
+ const root=new T.Group(),material=new T.MeshStandardMaterial();
+ const body=new T.Mesh(new T.BoxGeometry(10,20,8),material);body.position.set(2,10,0);root.add(body);
+ const yard=new T.Group();yard.add(new T.Mesh(new T.BoxGeometry(100,1,100),material));root.add(yard);
+ const kit=ChauffeurNeighborhood.captureExterior(T,root,[],{front:200,scenery:[yard]});
+ const layout={source:'mapbox',roads:[],lots:[
+   {x:0,z:60,rotation,detail:'near',scale:1,footprint:{width:24,depth:17}}
+ ]};
+ if(rotation)layout.lots.unshift({x:300,z:300,rotation:0,detail:'far',scale:1});
+ const scene=ChauffeurNeighborhood.build(T,spec,envelopes,palette,null,kit,layout);
+ const p=scene.stats().placements[rotation?1:0],t=p.transform,c=Math.cos(rotation),sn=Math.sin(rotation);
+ const eye=(x,y,z)=>new T.Vector3(t.x+x*c+z*sn,-.31*(1-t.sy)+y,t.z-x*sn+z*c);
+ const move=(x,y,z)=>scene.update(eye(x,y,z),new T.Vector3(0,4,0),true);
+ const edge=(rotation?3:7)*t.sx;
+ move(0,19*t.sy,0);assert.equal(scene.stats().hiddenLots,1,'roof height is included');
+ scene.group.children.filter(m=>m.userData.nearExterior).forEach(m=>{
+   const matrix=new T.Matrix4();m.getMatrixAt(0,matrix);assert.equal(matrix.determinant(),0,'hidden opaque geometry is removed');
+ });
+ move(edge+1,3*t.sy,0);assert.equal(scene.stats().hiddenLots,1,'exit buffer holds');
+ move(edge+1.6,3*t.sy,0);assert.equal(scene.stats().hiddenLots,0,'clearance restores');
+ move(edge+1,3*t.sy,0);assert.equal(scene.stats().hiddenLots,0,'outside buffer holds');
+ move(edge+.7,3*t.sy,0);assert.equal(scene.stats().hiddenLots,1,'near surface hides');
+ move(0,20*t.sy+1.6,0);assert.equal(scene.stats().hiddenLots,0,'above roof restores');
+ move(20*t.sx,.2,0);assert.equal(scene.stats().hiddenLots,0,'yard is not building volume');
+ scene.dispose();body.geometry.dispose();yard.children[0].geometry.dispose();material.dispose();
+}
+
 const raw={source:'mapbox',home:{x:5,z:10,rotation:Math.PI/2,footprint:{width:10,depth:20}},
   roads:[[[5,10],[15,10]]],lots:[{x:25,z:10,rotation:Math.PI/2,scale:1,
   footprint:{width:5,depth:10,outline:[[25,10],[30,10],[30,20],[25,10]]}}]};

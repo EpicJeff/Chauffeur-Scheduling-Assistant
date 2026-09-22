@@ -172,11 +172,13 @@
     root.updateMatrixWorld(true);
     var skip=new Set(excluded||[]),buckets={},inverse=root.matrixWorld.clone().invert();
     var matrix=new T.Matrix4(),instance=new T.Matrix4(),normal=new T.Matrix3(),v=new T.Vector3(),tint=new T.Color();
-    var sourceMeshes=0,sourceInstances=0;
+    var sourceMeshes=0,sourceInstances=0,buildingBounds=new T.Box3();
     root.updateMatrixWorld(true);
     root.traverse(function(o){
       if(!o.isMesh || !o.geometry)return;
+      var scenery=false;
       for(var parent=o;parent;parent=parent.parent){
+        if(parent.userData.yard || parcel && (parcel.scenery||[]).indexOf(parent)>=0)scenery=true;
         if(skip.has(parent) || !parent.visible || parent.userData.maskOnly || parent.userData.noMirror)return;
         if(parent===root)break;
       }
@@ -211,6 +213,7 @@
             var vertex=i,cornerIndex=(i-part.start)%3;
             if(reverse && cornerIndex)vertex=i+(cornerIndex===1?1:-1);
             v.fromBufferAttribute(attrs.position,vertex).applyMatrix4(matrix);b.position.push(v.x,v.y,v.z);
+            if(!scenery)buildingBounds.expandByPoint(v);
             if(attrs.normal)v.fromBufferAttribute(attrs.normal,vertex).applyMatrix3(normal).normalize();else v.set(0,1,0);
             b.normal.push(v.x,v.y,v.z);
             b.uv.push(attrs.uv?attrs.uv.getX(vertex):0,attrs.uv?attrs.uv.getY(vertex):0);
@@ -228,7 +231,7 @@
     });
     var geometryHash=2166136261;
     parts.forEach(function(p){var a=p.geometry.attributes.position.array;for(var i=0;i<a.length;i++)geometryHash=Math.imul(geometryHash^Math.round(a[i]*1000),16777619);});
-    return exteriorKit(parts,{geometrySignature:(geometryHash>>>0).toString(16),sourceMeshes:sourceMeshes,sourceInstances:sourceInstances,
+    return exteriorKit(parts,{buildingBounds:buildingBounds,geometrySignature:(geometryHash>>>0).toString(16),sourceMeshes:sourceMeshes,sourceInstances:sourceInstances,
       triangles:parts.reduce(function(n,p){return n+p.geometry.attributes.position.count/3;},0)});
   }
 
@@ -288,8 +291,8 @@
       lotKits[i]=kits.get(key);
     });
     var uniqueKits=Array.from(new Set(kits.values()));
-    function add(kind,size,pos,turn,color,lot) {
-      (buckets[kind]||(buckets[kind]=[])).push({size:size,pos:pos,turn:turn,color:color,lot:lot});pieces++;
+    function add(kind,size,pos,turn,color,lot,building) {
+      (buckets[kind]||(buckets[kind]=[])).push({size:size,pos:pos,turn:turn,color:color,lot:lot,building:!!building});pieces++;
     }
     var mapScale=layout&&layout.homeCalibration?layout.homeCalibration.scale:1;
     var sceneryRadius=270;
@@ -358,7 +361,7 @@
       function emit(kind,size,pos,turn,c) {add(kind,size,pos,turn,c,index);}
       if(nearTemplate && lot.detail==='near')return;
       exterior(lot.spec,envelopes,palette,function(kind,size,pos,turn,c){
-        emit(kind,size,pos,turn,c);
+        add(kind,size,pos,turn,c,index,true);
       },lot.detail==='near');
       if(lot.footprint)return; // No fixed-size yard attached to a mapped building.
       emit('box',[50,.38,44],[.5,-.50,4],0,0x81966d);
@@ -442,6 +445,19 @@
     }
     // Bounds come from rendered geometry, including roof height and transforms.
     var bounds=lots.map(function(){return new T.Box3();});
+    // Proximity uses building-only bounds in rotated lot axes, measured in world
+    // units. Yard geometry must not make an entire parcel count as "inside".
+    var buildingBounds=lots.map(function(){return new T.Box3();});
+    var lotFrames=lots.map(function(l){
+      var p=l.transform;
+      return new T.Matrix4().makeRotationY(l.rotation).setPosition(p.x,0,p.z).invert();
+    });
+    lots.forEach(function(l,i){
+      var kit=lotKits[i];if(!kit || !kit.buildingBounds)return;
+      var p=l.transform,m=new T.Matrix4().makeScale(p.sx*(l.spec.mirror?-1:1),p.sy,p.sz);
+      m.setPosition(0,-.31*(1-p.sy),0);
+      buildingBounds[i].copy(kit.buildingBounds).applyMatrix4(m);
+    });
     focus=focus||{west:envelopes.garage.west,east:envelopes.main.east,north:envelopes.main.north,south:envelopes.main.south,top:16};
     var focusSamples=[];
     [focus.west+1,(focus.west+focus.east)/2,focus.east-1].forEach(function(x){
@@ -451,9 +467,15 @@
     });
     matrices.forEach(function(b){
       if(!b.mesh.geometry.boundingBox)b.mesh.geometry.computeBoundingBox();
-      b.rows.forEach(function(r,i){if(r.lot>=0)bounds[r.lot].union(b.mesh.geometry.boundingBox.clone().applyMatrix4(b.saved[i]));});
+      b.rows.forEach(function(r,i){if(r.lot<0)return;
+        bounds[r.lot].union(b.mesh.geometry.boundingBox.clone().applyMatrix4(b.saved[i]));
+        if(r.building || b.mesh.userData.nearExterior && !lotKits[r.lot].buildingBounds){
+          var local=lotFrames[r.lot].clone().multiply(b.saved[i]);
+          buildingBounds[r.lot].union(b.mesh.geometry.boundingBox.clone().applyMatrix4(local));
+        }
+      });
     });
-    var hidden='',visibleLots=lots.length,fadedLots=0,zero=new T.Matrix4().makeScale(0,0,0),ghostMaterials=new Map(),ghosts=[];
+    var visibilityKey='',hiddenLots=0,inside=lots.map(function(){return false;}),eye=new T.Vector3(),visibleLots=lots.length,fadedLots=0,zero=new T.Matrix4().makeScale(0,0,0),ghostMaterials=new Map(),ghosts=[];
     var ray=new T.Ray(),hit=new T.Vector3(),color=new T.Color();
     function translucent(b){
       if(b.ghost)return b.ghost;
@@ -466,22 +488,28 @@
     }
     function update(camera,target,outside) {
       group.visible=outside;if(!outside)return;
-      var blocked=bounds.map(function(box){
+      var states=bounds.map(function(box,i){
+        // Enter near the surface; require more clearance to restore it. This
+        // keeps tiny camera movements at a wall/roof from toggling visibility.
+        var distance=buildingBounds[i].distanceToPoint(eye.copy(camera).applyMatrix4(lotFrames[i]));
+        inside[i]=distance<=(inside[i]?1.5:.75);
+        if(inside[i])return 2;
         return focusSamples.some(function(p){ray.origin.copy(camera);ray.direction.copy(p).sub(camera).normalize();
           return ray.intersectBox(box,hit)!==null&&hit.distanceTo(camera)<p.distanceTo(camera)-.5;
-        });
+        })?1:0;
       });
-      var key=blocked.join(',');if(key===hidden)return;hidden=key;
-      fadedLots=blocked.filter(Boolean).length;
+      var key=states.join(',');if(key===visibilityKey)return;visibilityKey=key;
+      hiddenLots=states.filter(function(s){return s===2;}).length;visibleLots=lots.length-hiddenLots;
+      fadedLots=states.filter(function(s){return s===1;}).length;
       matrices.forEach(function(b){var count=0;
-        b.rows.forEach(function(r,i){var fade=r.lot>=0&&blocked[r.lot];b.mesh.setMatrixAt(i,fade?zero:b.saved[i]);
+        b.rows.forEach(function(r,i){var state=r.lot>=0?states[r.lot]:0,fade=state===1;b.mesh.setMatrixAt(i,state?zero:b.saved[i]);
           if(fade){var ghost=translucent(b);ghost.setMatrixAt(count,b.saved[i]);if(b.mesh.instanceColor){b.mesh.getColorAt(i,color);ghost.setColorAt(count,color);}count++;}
         });
         b.mesh.instanceMatrix.needsUpdate=true;
         if(b.ghost){b.ghost.count=count;b.ghost.visible=count>0;b.ghost.instanceMatrix.needsUpdate=true;if(b.ghost.instanceColor)b.ghost.instanceColor.needsUpdate=true;}
       });
     }
-    return {group:group,update:update,setNight:function(n){if(horizon)horizon.material.color.setHex(n?0x435063:0xcdcdcd);},stats:function(){return {homeCalibration:layout&&layout.homeCalibration||null,sceneryRadius:sceneryRadius,layoutSource:layout&&layout.source==='mapbox'?'mapbox':'generated',roadSegments:layout&&layout.roads?layout.roads.length:0,lots:lots.length,visibleLots:visibleLots,fadedLots:fadedLots,terrainPolygons:terrainMeshes.length,terrainTrees:treeCount,visible:group.visible,nearSource:nearTemplate?'parametric-exterior':'simplified',nearDesigns:uniqueKits.length,nearGeometry:uniqueKits.map(function(k){return k.geometrySignature;}),nearTemplate:nearTemplate?{meshes:uniqueKits.reduce(function(n,k){return n+k.sourceMeshes;},0),instances:uniqueKits.reduce(function(n,k){return n+k.sourceInstances;},0),triangles:uniqueKits.reduce(function(n,k){return n+k.triangles;},0)}:null,nearLots:lots.filter(function(l){return l.detail==='near';}).length,farLots:lots.filter(function(l){return l.detail==='far';}).length,horizon:!!horizon,batches:meshes.length+terrainMeshes.length+ghosts.filter(function(m){return m.visible;}).length+(horizon?1:0),instances:pieces,
+    return {group:group,update:update,setNight:function(n){if(horizon)horizon.material.color.setHex(n?0x435063:0xcdcdcd);},stats:function(){return {homeCalibration:layout&&layout.homeCalibration||null,sceneryRadius:sceneryRadius,layoutSource:layout&&layout.source==='mapbox'?'mapbox':'generated',roadSegments:layout&&layout.roads?layout.roads.length:0,lots:lots.length,visibleLots:visibleLots,fadedLots:fadedLots,hiddenLots:hiddenLots,terrainPolygons:terrainMeshes.length,terrainTrees:treeCount,visible:group.visible,nearSource:nearTemplate?'parametric-exterior':'simplified',nearDesigns:uniqueKits.length,nearGeometry:uniqueKits.map(function(k){return k.geometrySignature;}),nearTemplate:nearTemplate?{meshes:uniqueKits.reduce(function(n,k){return n+k.sourceMeshes;},0),instances:uniqueKits.reduce(function(n,k){return n+k.sourceInstances;},0),triangles:uniqueKits.reduce(function(n,k){return n+k.triangles;},0)}:null,nearLots:lots.filter(function(l){return l.detail==='near';}).length,farLots:lots.filter(function(l){return l.detail==='far';}).length,horizon:!!horizon,batches:meshes.length+terrainMeshes.length+ghosts.filter(function(m){return m.visible;}).length+(horizon?1:0),instances:pieces,
       triangles:meshes.concat(ghosts.filter(function(m){return m.visible;})).reduce(function(n,m){return n+(m.geometry.index?m.geometry.index.count:m.geometry.attributes.position.count)/3*m.count;},terrainMeshes.reduce(function(n,m){return n+m.geometry.index.count/3;},horizon?horizon.geometry.index.count/3:0)),
       placements:lots.map(function(l){return {id:l.id,x:l.x,z:l.z,rotation:l.rotation,detail:l.detail,scale:l.scale,footprint:l.footprint,transform:l.transform,style:l.style};})};},
       dispose:function(){terrainMeshes.forEach(function(m){m.geometry.dispose();});Object.keys(terrainMaterials).forEach(function(k){terrainMaterials[k].dispose();});ghosts.forEach(function(m){m.dispose();});ghostMaterials.forEach(function(m){m.dispose();});meshes.forEach(function(m){m.dispose();});Object.keys(geometries).forEach(function(k){geometries[k].dispose();});Object.keys(materials).forEach(function(k){materials[k].dispose();});reflected.forEach(function(g){g.dispose();});uniqueKits.forEach(function(k){k.dispose();});if(horizon){horizon.geometry.dispose();horizon.material.map.dispose();horizon.material.dispose();}group.clear();}};

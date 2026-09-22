@@ -17,7 +17,7 @@ def main():
     served=live_app(_seed)
     if not served:raise RuntimeError('Browser unavailable')
     try:
-        with served.browser() as page:
+        with served.browser(reduced_motion='reduce') as page:
             vendor=(Path(__file__).parents[1]/'static/vendor/three.min.js').read_bytes()+THREE_WRAP
             page.route('**/static/vendor/three.min.js*',lambda r:r.fulfill(content_type='application/javascript',body=vendor))
             page.add_init_script(DAY_LOCK_JS)
@@ -25,10 +25,10 @@ def main():
             page.set_viewport_size({'width':1400,'height':1000})
             errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
             for quality in ('high','low'):
-                page.goto(served.url('house')+'?quality='+quality+'&day=1')
+                page.goto(served.url('house')+'?quality='+quality+'&day=1',wait_until='domcontentloaded',timeout=120000)
                 page.wait_for_function('window.chfNeighborhood && window.chfNeighborhood() && window.chfNavProbe({settled:true})',timeout=120000)
                 assert page.locator('#room canvas').count()==1
-                stats=page.evaluate('chfNeighborhood()');print(quality,{k:v for k,v in stats.items() if k!='placements'})
+                stats=page.evaluate('chfNeighborhood()');print(quality,{k:v for k,v in stats.items() if k!='placements'},flush=True)
                 assert stats['lots']==48 and stats['nearLots']==8 and stats['farLots']==40 and stats['horizon'] and stats['nearSource']=='parametric-exterior' and stats['nearDesigns']==8 and len(set(stats['nearGeometry']))==8 and stats['nearTemplate']['meshes']>50 and stats['batches']<=400 and stats['triangles']<2000000,stats
                 budget=page.evaluate('''() => {
                   const s=window.__hpScene,r=window.__hpR,c=window.__hpCam,g=s.getObjectByName('neighborhood');
@@ -36,7 +36,7 @@ def main():
                   g.visible=false;r.render(s,c);const alone=r.info.render.calls;
                   g.visible=true;r.render(s,c);return {added:withNeighbors-alone,withNeighbors,alone};
                 }''')
-                print('draw calls',quality,budget)
+                print('draw calls',quality,budget,flush=True)
                 assert 0<=budget['added']<=800,budget
                 for stop in range(8):
                     page.evaluate('(s)=>chfOrbitTo(s)',stop)
@@ -45,12 +45,37 @@ def main():
                     if os.environ.get('HOUSE_SHOTS'):
                         out=Path(os.environ['HOUSE_SHOTS']);out.mkdir(parents=True,exist_ok=True)
                         page.screenshot(path=str(out/f'neighborhood-{quality}-{stop}.png'))
+                # Put the real camera inside a finished neighboring house.
+                placement=next(p for p in stats['placements'] if p['detail']=='near' and p['z']>30)
+                t=placement['transform']
+                page.evaluate('(t)=>chfHouseCam(t.x,3,t.z,0,4,0)',t)
+                page.wait_for_function('chfNeighborhood().hiddenLots>0',timeout=20000)
+                assert page.evaluate('chfNeighborhood().visibleLots+chfNeighborhood().hiddenLots===chfNeighborhood().lots')
+                assert page.evaluate('''t => {
+                  const g=__hpScene.getObjectByName('neighborhood'),m=new THREE.Matrix4();
+                  return g.children.filter(o=>o.userData.occlusionGhost).every(o=>{
+                    for(let i=0;i<o.count;i++){
+                      o.getMatrixAt(i,m);
+                      if(Math.abs(m.elements[12]-t.x)<.01 && Math.abs(m.elements[14]-t.z)<.01)return false;
+                    }
+                    return true;
+                  });
+                }''',t)
+                if os.environ.get('HOUSE_SHOTS'):
+                    page.screenshot(path=str(out/f'neighborhood-{quality}-inside.png'),timeout=120000)
+                print('inside camera and ghosts',quality,'PASS',flush=True)
+                page.evaluate('(t)=>chfHouseCam(t.x,150,t.z,0,4,0)',t)
+                page.wait_for_function('chfNeighborhood().hiddenLots===0',timeout=20000)
+                page.evaluate('chfOrbitTo(7)')
+                page.wait_for_function('chfNavProbe({settled:true})',timeout=20000)
                 for room in ('kitchen','garage','living'):
                     page.evaluate('(r)=>chfHouseEnterRoom(r)',room)
                     page.wait_for_function('chfNavProbe({settled:true})',timeout=20000)
                     assert not page.evaluate('chfNeighborhood().visible')
                     page.evaluate('chfHouseExit()')
                     page.wait_for_function('chfNavProbe({settled:true})',timeout=20000)
+                page.evaluate('chfOrbitTo(7)')
+                page.wait_for_function('chfNavProbe({settled:true})',timeout=20000)
                 page.locator('#house-hints button[data-room="kitchen"]').click()
                 page.wait_for_function("chfHouseMode()==='kitchen' && chfNavProbe({settled:true})",timeout=20000)
                 assert not page.evaluate('chfNeighborhood().visible')

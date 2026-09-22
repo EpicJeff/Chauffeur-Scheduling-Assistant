@@ -174,6 +174,28 @@ exclusion, tree bounds/road clearance and optional terrain failures. Source-data
 replay for the supplied neighborhood contains a pond and multiple vegetation
 polygons. The browser gate covers high/low quality, room isolation and disposal.
 
+## Camera proximity hiding (v2.499.155)
+
+Before sight-line fading, test the camera against building-only bounds in each
+lot's rotated axes, after applying mirror and scale. Detailed kits capture these
+bounds from finished architecture, excluding the yard; simplified houses tag
+building pieces separately. Roof height is included. These conservative envelopes
+can hide a house in empty space near a sloping roof or recessed facade; they are
+not triangle-level collision volumes.
+
+Hide the lot's instances completely within 0.75 scene units of the envelope,
+including any existing ghost instances. Restore only beyond 1.5 units to avoid
+boundary flicker. On restoration, use the existing sight-line result to choose
+20% opacity or opaque rendering. Keep the camera unchanged. Expose hiddenLots
+separately from fadedLots and count visibleLots as lots minus hiddenLots.
+Shared terrain remains visible. No additional draw batches or provider calls.
+
+Regression proof covers inside-to-faded-to-opaque restoration, roof clearance,
+rotated/nonuniform placement, yard exclusion and both sides of the hysteresis
+band. The browser gate also moves the real camera inside a detailed neighbor in
+both quality tiers, verifies ghost removal and restores the camera before room
+navigation and editor isolation checks.
+
 ## Proof
 
 `test_house_map.py` checks real MVT decoding, coordinate direction, request count,
