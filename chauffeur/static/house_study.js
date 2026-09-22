@@ -48,6 +48,10 @@
        north edge and everything the room hangs there -- the wall map,
        and the whole turned shelf wall -- stands in front of it. */
     var EFACE = 14.30, EGAP = .06, NFACE = NORTH, EWF = EFACE - .12;
+    /* the chair rail every wall in this room wears: centre height and
+       thickness (the three rail boxes below read these), and the clear
+       air anything hung on a wall keeps above it */
+    var RAIL_Y = 1.62, RAIL_H = .11, RAIL_CLEAR = .08;
     root.rotation.y = -Math.PI / 2;
     root.scale.setScalar(SCALE);
     root.position.set(EFACE - EGAP - 6.10 * SCALE, .12, NORTH + 7.09 * SCALE);
@@ -91,6 +95,25 @@
       if (o.userData && o.userData.studyGroup === 'board') boardG = o;
     });
     if (boardG) boardG.position.y += .72 / SCALE;
+    /* The wall map hangs lower than the board (study y 4.45, 1.9 tall, a
+       .15 rail) and its bottom rail landed 0.15 INSIDE this room's chair
+       rail -- user report from the wall, 2026-09-22. Lifted like the
+       board, but measured rather than copied: the map's own world box
+       against the rail the room builds below (RAIL_Y/RAIL_H), plus the
+       clearance the style guide asks for ("mount it above wall trim with
+       visible clearance"). Lift only what is needed, so the standalone
+       page's authored height is untouched and a later map move cannot
+       leave a stale constant behind. */
+    var mapG = null;
+    root.children.forEach(function (o) {
+      if (o.userData && o.userData.studyGroup === 'map') mapG = o;
+    });
+    if (mapG) {
+      root.updateMatrixWorld(true);
+      var mb = new T.Box3().setFromObject(mapG);
+      var need = (RAIL_Y + RAIL_H / 2 + RAIL_CLEAR) - mb.min.y;
+      if (need > 0) mapG.position.y += need / SCALE;
+    }
 
     var zoneMaterials = new Map();
     root.updateMatrixWorld(true);
@@ -192,9 +215,9 @@
     box('east-wainscot-south',.05,1.55,southW,sage,EWF-.025,.83,wz+ww/2+southW/2,.9);
     box('north-base',EAST-WEST,.13,.18,trim,(WEST+EAST)/2,.16,NFACE+.09,.8);
     box('east-base',.18,.13,SOUTH-NORTH,trim,EWF-.09,.16,(NORTH+SOUTH)/2,.8);
-    box('north-rail',EAST-WEST,.11,.17,trim,(WEST+EAST)/2,1.62,NFACE+.085,.8);
-    box('east-rail-north',.17,.11,northW,trim,EWF-.085,1.62,NORTH+northW/2,.8);
-    box('east-rail-south',.17,.11,southW,trim,EWF-.085,1.62,wz+ww/2+southW/2,.8);
+    box('north-rail',EAST-WEST,RAIL_H,.17,trim,(WEST+EAST)/2,RAIL_Y,NFACE+.085,.8);
+    box('east-rail-north',.17,RAIL_H,northW,trim,EWF-.085,RAIL_Y,NORTH+northW/2,.8);
+    box('east-rail-south',.17,RAIL_H,southW,trim,EWF-.085,RAIL_Y,wz+ww/2+southW/2,.8);
 
     function count(f,key){
       f=f||{};var gauges=f.gauges||{};

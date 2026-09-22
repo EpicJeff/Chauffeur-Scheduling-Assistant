@@ -185,6 +185,12 @@ def scenario_house_life():
         page.wait_for_selector('#focus-overlay', state='hidden', timeout=8000)
         check(page.evaluate("document.getElementById('overlay-study').textContent") == '',
               'leaning out empties the card')
+        # the map hangs CLEAR of the room's chair rail (its bottom rail used
+        # to sit 0.15 inside it): the zone's world box against the rail the
+        # adapter builds at y 1.62, .11 thick, plus the .08 clearance
+        mp = page.evaluate("chfStudyZone('study_map')")
+        check(mp and mp[2] >= 1.62 + .055 + .08 - 1e-3,
+              'the wall map clears the chair rail: min y ' + str(mp and mp[2]))
         # the map is a CARD (its painted labels were the janky part) and an
         # empty card zone says so instead of showing nothing
         target = page.evaluate("chfNavProbe({zone:'study_map'})")

@@ -1583,6 +1583,9 @@
   const mapGrp = new THREE.Group();
   mapGrp.position.set(MAP.x, MAP.y, MAP.z);
   mapGrp.rotation.y = Math.PI / 2;
+  // tagged like the board and the keys, so the house can lift the whole
+  // map (sheet, rails, pins, strings, labels) clear of its own chair rail
+  mapGrp.userData.studyGroup = 'map';
   scene.add(mapGrp);
   // The sun comes IN this wall, so its inner face is never lit by it: the
   // sheet carries its own faint emissive so the map is readable at night as
