@@ -1,0 +1,1842 @@
+{
+  "raw_run": {
+    "models": [
+      "gemini-3.1-flash-lite",
+      "gemini-2.5-flash"
+    ],
+    "max_requests": 16,
+    "deadline_seconds": 360,
+    "structure_only": true,
+    "score_version": 3,
+    "prompts": {
+      "baseline": "Describe only the house's architecture in the supplied schema.\nImage 1 establishes the FRONT and the single left-to-right 0..1 facade axis.\nOther images show the SAME house: use them to resolve roof planes, depth and garage\nentry, never transfer their image coordinates or side-facing features to the front.\nVolumes are non-overlapping FRONT rectangular wall regions up to their eaves.\nCount full wall stories below the eaves, NOT windows or attic triangles. Separate\none-story wings from a narrower two-story centre when the eave heights differ.\nEach volume has an underlying roof: parallel is across the house front;\nperpendicular is front-to-back. Read the roof planes behind visible triangles.\nA front triangle can be a cross-gable on a parallel ridge or the end of a\nperpendicular ridge. Porch gables belong to porches. Dormers belong to volumes.\nDescribe one continuous porch cover, including a small entrance gable separately.\nKeep relative facade widths and forward/recessed wall relationships. An L-shaped\nwing can have intersecting ridges: record its dominant underlying ridge and explain\nthe intersection in evidence/limitations. Do not invent another story to encode it.\nUse unknown for unseen geometry. Garage side is house-front left/right; garage_entry\nis front, side, or unknown. A hidden garage must not determine visible roof geometry.\nIDs are unique; owners reference existing volumes or porches. Explain story and roof\ndecisions briefly in evidence, citing image numbers. No windows, doors, materials,\nbounding boxes, renderer slots or configuration. Do not optimize for a particular style.\n",
+      "candidate": "Describe only the house's architecture in the supplied schema.\nImage 1 establishes the FRONT and the single left-to-right 0..1 facade axis.\nOther images show the SAME house: use them to resolve roof planes, depth and garage\nentry, never transfer their image coordinates or side-facing features to the front.\nVolumes are non-overlapping FRONT rectangular wall regions up to their eaves.\nCount full wall stories below the eaves, NOT windows or attic triangles. Separate\none-story wings from a narrower two-story centre when the eave heights differ.\nEach volume has an underlying roof: parallel is across the house front;\nperpendicular is front-to-back. Read the roof planes behind visible triangles.\nA front triangle can be a cross-gable on a parallel ridge or the end of a\nperpendicular ridge. Porch gables belong to porches. Dormers belong to volumes.\nDescribe one continuous porch cover, including a small entrance gable separately.\nKeep relative facade widths and forward/recessed wall relationships. An L-shaped\nwing can have intersecting ridges: record its dominant underlying ridge and explain\nthe intersection in evidence/limitations. Do not invent another story to encode it.\nUse unknown for unseen geometry. Garage side is house-front left/right; garage_entry\nis front, side, or unknown. A hidden garage must not determine visible roof geometry.\nIDs are unique; owners reference existing volumes or porches. Explain story and roof\ndecisions briefly in evidence, citing image numbers. No windows, doors, materials,\nbounding boxes, renderer slots or configuration. Do not optimize for a particular style.\n\nBefore assigning roof directions, identify the FRONT wall plane from the main entry,\nwall corners, and window rows. In an oblique photo the side wall is also visible:\na triangular end on that side is not a front-facing gable. Judge parallel versus\nperpendicular relative to the physical front wall, not the image's horizontal axis.\nBriefly identify the front plane and distinguish any visible side plane in evidence.\nDo not allocate a front volume merely because a side wall is visible.\n"
+    },
+    "manifest": {
+      "protocol": "Assistant visual labels fixed before these model trials; not independently human-adjudicated. Labels never included in provider prompts. Existing brick case is development, remaining cases are evaluation references. Bungalow is a difficult oblique holdout: its roof partition is provisional and must be visually adjudicated, not treated as definitive ground truth.",
+      "cases": [
+        {
+          "id": "brick",
+          "image": "docs/superpowers/specs/assets/2026-09-17-photo-brick.jpg",
+          "download_url": null,
+          "source": "Existing non-household repository reference",
+          "sha256": "5cd057ffb3631a99d2b403f3c432dee715b9b9fbd5e0fb9a2bc3558345303e5d",
+          "regions": [
+            {
+              "at": 0,
+              "width": 0.4,
+              "stories": "one",
+              "form": "gable",
+              "ridge": "perpendicular"
+            },
+            {
+              "at": 0.4,
+              "width": 0.32,
+              "stories": "one",
+              "form": "hip",
+              "ridge": "parallel"
+            },
+            {
+              "at": 0.72,
+              "width": 0.28,
+              "stories": "one",
+              "form": "gable",
+              "ridge": "perpendicular"
+            }
+          ],
+          "covered_porch": false,
+          "label_notes": "Central small entry; right window awning is not a porch. Width tolerance .12; attic triangles are not full stories."
+        },
+        {
+          "id": "sheldrew",
+          "image": "scratch/house-eval-2026-09-22/sheldrew.jpg",
+          "download_url": "https://tile.loc.gov/storage-services/service/pnp/habshaer/id/id0000/id0053/photos/059262pv.jpg",
+          "source": "https://www.loc.gov/item/id0053/",
+          "sha256": "ca8418be5715c91971530ba8b23b319a8f420c4672f7cd42efb031c44dd46ce2",
+          "regions": [
+            {
+              "at": 0,
+              "width": 0.33,
+              "stories": "one",
+              "form": "gable",
+              "ridge": "perpendicular"
+            },
+            {
+              "at": 0.33,
+              "width": 0.34,
+              "stories": "one",
+              "form": "gable",
+              "ridge": "parallel"
+            },
+            {
+              "at": 0.67,
+              "width": 0.33,
+              "stories": "one",
+              "form": "gable",
+              "ridge": "perpendicular"
+            }
+          ],
+          "covered_porch": false,
+          "label_notes": "Two projecting wings, recessed middle. Small door canopy only; courtyard is open."
+        },
+        {
+          "id": "reid",
+          "image": "scratch/house-eval-general/reid.jpg",
+          "download_url": "https://tile.loc.gov/storage-services/service/pnp/habshaer/va/va0900/va0904/photos/165433pv.jpg",
+          "source": "https://www.loc.gov/item/va0904/",
+          "sha256": "771138df0a5de9bb0362203f02fa6e28fb648ab5438c353b74ceabea17aea9cd",
+          "regions": [
+            {
+              "at": 0,
+              "width": 1,
+              "stories": "two",
+              "form": "gable",
+              "ridge": "parallel"
+            }
+          ],
+          "covered_porch": false,
+          "label_notes": "Two full front wall stories. Small entry porch roughly .2 of facade, no broad cover. Parapets/chimneys are unsupported; foliage obscures far left. Side wall is not another front region."
+        },
+        {
+          "id": "hood",
+          "image": "scratch/house-eval-general/hood-elevation.jpg",
+          "download_url": "https://tile.loc.gov/storage-services/service/pnp/habshaer/al/al0200/al0259/photos/003096pv.jpg",
+          "source": "https://www.loc.gov/item/al0259/",
+          "sha256": "6f79b17d8a38d175a7bd1195bc409af5734316b780dd3d0f2badeb9f259f1fe0",
+          "regions": [
+            {
+              "at": 0,
+              "width": 0.34,
+              "stories": "one",
+              "form": "gable",
+              "ridge": "parallel"
+            },
+            {
+              "at": 0.34,
+              "width": 0.52,
+              "stories": "two",
+              "form": "gable",
+              "ridge": "parallel"
+            },
+            {
+              "at": 0.86,
+              "width": 0.14,
+              "stories": "one",
+              "form": "gable",
+              "ridge": "parallel",
+              "score_roof": false
+            }
+          ],
+          "covered_porch": false,
+          "label_notes": "Mixed full wall stories; front runs from left-wing front corner to right-wing front end. Exclude left side-facing gable/porch. Strong perspective: .15 boundary tolerance. Ridge of partly obscured right wing less certain. Reinspection: entrance and rows of windows establish the long front wall; triangular masonry ends and chimney stacks are on the left SIDE. Far-right wing roof is excluded from scoring because foliage obscures it."
+        },
+        {
+          "id": "bungalow",
+          "image": "scratch/house-eval-2026-09-22/bungalow.jpg",
+          "download_url": "https://cdn4.picryl.com/photo/1900/01/01/typical-california-bungalow-1024.jpg",
+          "source": "https://loc.getarchive.net/media/typical-california-bungalow",
+          "sha256": "88e2f1167ba7bbc7af2dcd5ced812c669154bb0269605e7a4849fc81c90b9815",
+          "regions": [
+            {
+              "at": 0,
+              "width": 1,
+              "stories": "one",
+              "form": "gable",
+              "ridge": "perpendicular",
+              "score_roof": false
+            }
+          ],
+          "covered_porch": true,
+          "label_notes": "Held out from first comparison: one-story front-gable bungalow, attic opening is not a second wall story; recessed right porch covers roughly .35-.5. Strong perspective and foliage limit exact widths. Main gable continues behind porch; no separate full second story. Reinspection: one wall story and covered entry are visible; exact roof partition/front-plane extent is ambiguous. Roof and mass-count labels are provisional and excluded from automatic scoring.",
+          "score_massing": false
+        }
+      ],
+      "label_revision": "2026-09-22 front-plane adjudication; second assistant visual inspection, not independent human review; historical result snapshots remain unchanged."
+    },
+    "events": [
+      {
+        "case": "sheldrew",
+        "model": "gemini-3.1-flash-lite",
+        "variant": "baseline",
+        "repeat": 1,
+        "stage": "structure",
+        "wire_requests": 1,
+        "seconds": 2.74,
+        "image_count": 1,
+        "response": {
+          "error": "Gemini API request failed: HTTP Error 503: Service Unavailable\nDetails: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n",
+          "transient": true
+        }
+      },
+      {
+        "case": "sheldrew",
+        "model": "gemini-2.5-flash",
+        "variant": "baseline",
+        "repeat": 1,
+        "stage": "structure",
+        "wire_requests": 1,
+        "seconds": 18.57,
+        "image_count": 1,
+        "response": {
+          "viewpoint": "centre",
+          "garage_side": "unknown",
+          "volumes": [
+            {
+              "id": "volume_1",
+              "at": 0,
+              "width": 0.3,
+              "stories": "one",
+              "projection": "forward",
+              "roof": {
+                "form": "gable",
+                "ridge": "perpendicular",
+                "pitch": "medium",
+                "evidence": "Front-facing gable visible on the left wing in image 1, indicating a perpendicular ridge."
+              },
+              "evidence": "Single story visible on the left wing in image 1."
+            },
+            {
+              "id": "volume_2",
+              "at": 0.3,
+              "width": 0.4,
+              "stories": "one",
+              "projection": "recessed",
+              "roof": {
+                "form": "hip",
+                "ridge": "parallel",
+                "pitch": "medium",
+                "evidence": "The roof over the central recessed section appears to be a hip roof, sloping back from the facade, with a chimney visible on this section. The main ridge runs parallel to the facade, behind the projecting gables of the side volumes (image 1)."
+              },
+              "evidence": "Single story visible on the central recessed section in image 1."
+            },
+            {
+              "id": "volume_3",
+              "at": 0.7,
+              "width": 0.3,
+              "stories": "one",
+              "projection": "forward",
+              "roof": {
+                "form": "gable",
+                "ridge": "perpendicular",
+                "pitch": "medium",
+                "evidence": "Front-facing gable visible on the right wing in image 1, indicating a perpendicular ridge."
+              },
+              "evidence": "Single story visible on the right wing in image 1."
+            }
+          ],
+          "porches": [
+            {
+              "id": "porch_1",
+              "owner": "volume_2",
+              "at": 0.3,
+              "width": 0.4,
+              "roof": "shed"
+            }
+          ],
+          "gables": [
+            {
+              "id": "gable_1",
+              "owner": "volume_1",
+              "at": 0,
+              "width": 0.3,
+              "kind": "end",
+              "evidence": "This is the end gable of the left projecting volume (image 1)."
+            },
+            {
+              "id": "gable_2",
+              "owner": "porch_1",
+              "at": 0.47,
+              "width": 0.06,
+              "kind": "cross",
+              "evidence": "Small gable over the main entrance, part of the porch structure (image 1)."
+            },
+            {
+              "id": "gable_3",
+              "owner": "volume_3",
+              "at": 0.7,
+              "width": 0.3,
+              "kind": "end",
+              "evidence": "This is the end gable of the right projecting volume (image 1)."
+            }
+          ],
+          "dormers": [],
+          "limitations": [
+            "The exact depth of the volumes and the full extent of the hip roof are not entirely clear from the single front image, but the visible roof forms and projections are consistent with the description."
+          ],
+          "schema_version": 3,
+          "garage_entry": "unknown",
+          "_model": "gemini-2.5-flash"
+        }
+      },
+      {
+        "case": "sheldrew",
+        "model": "gemini-2.5-flash",
+        "variant": "candidate",
+        "repeat": 1,
+        "stage": "structure",
+        "wire_requests": 1,
+        "seconds": 6.84,
+        "image_count": 1,
+        "response": {
+          "error": "Gemini API request failed: HTTP Error 503: Service Unavailable\nDetails: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n",
+          "transient": true
+        }
+      },
+      {
+        "case": "sheldrew",
+        "model": "gemini-3.1-flash-lite",
+        "variant": "candidate",
+        "repeat": 1,
+        "stage": "structure",
+        "wire_requests": 1,
+        "seconds": 3.37,
+        "image_count": 1,
+        "response": {
+          "error": "Gemini API request failed: HTTP Error 503: Service Unavailable\nDetails: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n",
+          "transient": true
+        }
+      },
+      {
+        "case": "hood",
+        "model": "gemini-2.5-flash",
+        "variant": "baseline",
+        "repeat": 1,
+        "stage": "structure",
+        "wire_requests": 1,
+        "seconds": 9.34,
+        "image_count": 1,
+        "response": {
+          "viewpoint": "left",
+          "garage_side": "unknown",
+          "volumes": [
+            {
+              "id": "volume_main",
+              "at": 0.38,
+              "width": 0.62,
+              "stories": "two",
+              "projection": "flush",
+              "roof": {
+                "form": "gable",
+                "ridge": "perpendicular",
+                "pitch": "medium",
+                "evidence": "The main roof ridge runs perpendicular to the facade, visible from the side angle in image 1. The gable end is on the right side of the volume."
+              },
+              "evidence": "This is the primary two-story section of the house, flush with the main facade plane (image 1)."
+            },
+            {
+              "id": "volume_left_forward",
+              "at": 0.15,
+              "width": 0.23,
+              "stories": "one",
+              "projection": "forward",
+              "roof": {
+                "form": "gable",
+                "ridge": "perpendicular",
+                "pitch": "medium",
+                "evidence": "The roof has a gable end facing the front, indicating a perpendicular ridge (image 1)."
+              },
+              "evidence": "This one-story volume projects forward from the main house, to the left of the main volume (image 1)."
+            },
+            {
+              "id": "volume_left_recessed",
+              "at": 0.0,
+              "width": 0.15,
+              "stories": "one",
+              "projection": "recessed",
+              "roof": {
+                "form": "shed",
+                "ridge": "parallel",
+                "pitch": "low",
+                "evidence": "The roof slopes downwards towards the left, appearing as a shed roof with a parallel ridge (image 1)."
+              },
+              "evidence": "This one-story volume is recessed behind the 'volume_left_forward' and extends to the far left (image 1)."
+            }
+          ],
+          "porches": [
+            {
+              "id": "porch_entry",
+              "owner": "volume_main",
+              "at": 0.55,
+              "width": 0.1,
+              "roof": "gable"
+            }
+          ],
+          "gables": [
+            {
+              "id": "gable_left_forward",
+              "owner": "volume_left_forward",
+              "at": 0.15,
+              "width": 0.23,
+              "kind": "cross",
+              "evidence": "This is the gable end of the 'volume_left_forward' facing the front facade (image 1)."
+            }
+          ],
+          "dormers": [],
+          "limitations": [
+            "The rear of the house is not visible, limiting full roof and volume assessment.",
+            "The exact connection and full extent of the leftmost recessed volume are partially obscured and not fully clear from the provided view."
+          ],
+          "schema_version": 3,
+          "garage_entry": "unknown",
+          "_model": "gemini-2.5-flash"
+        }
+      },
+      {
+        "case": "sheldrew",
+        "model": "gemini-2.5-flash",
+        "variant": "candidate",
+        "repeat": 1,
+        "stage": "structure",
+        "wire_requests": 1,
+        "seconds": 0.29,
+        "image_count": 1,
+        "response": {
+          "error": "429 Too Many Requests: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-2.5-flash\\nPlease retry in 5.905754289s.\",\n    \"status\": \"RESOURCE_EXHAUSTED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.Help\",\n        \"links\": [\n          {\n            \"description\": \"Learn more about Gemini API quotas\",\n            \"url\": \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.QuotaFailure\",\n        \"violations\": [\n          {\n            \"quotaMetric\": \"generativelanguage.googleapis.com/generate_content_free_tier_requests\",\n            \"quotaId\": \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\",\n            \"quotaDimensions\": {\n              \"location\": \"global\",\n              \"model\": \"gemini-2.5-flash\"\n            },\n            \"quotaValue\": \"20\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.RetryInfo\",\n        \"retryDelay\": \"5s\"\n      }\n    ]\n  }\n}\n",
+          "transient": true
+        }
+      },
+      {
+        "case": "sheldrew",
+        "model": "gemini-3.1-flash-lite",
+        "variant": "baseline",
+        "repeat": 1,
+        "stage": "structure",
+        "wire_requests": 1,
+        "seconds": 6.75,
+        "image_count": 1,
+        "response": {
+          "viewpoint": "centre",
+          "garage_side": "unknown",
+          "volumes": [
+            {
+              "id": "left_wing",
+              "at": 0,
+              "width": 0.3,
+              "stories": "one",
+              "projection": "forward",
+              "roof": {
+                "form": "gable",
+                "ridge": "perpendicular",
+                "pitch": "medium",
+                "evidence": "The left wing projects forward with a gable end facing the front, indicating a perpendicular ridge."
+              },
+              "evidence": "One-story volume on the left, projecting forward relative to the central section."
+            },
+            {
+              "id": "centre_section",
+              "at": 0.3,
+              "width": 0.4,
+              "stories": "one",
+              "projection": "recessed",
+              "roof": {
+                "form": "hip",
+                "ridge": "parallel",
+                "pitch": "medium",
+                "evidence": "The central section connects the two wings and appears to have a hip roof structure with a parallel ridge."
+              },
+              "evidence": "Recessed central section connecting the two projecting wings."
+            },
+            {
+              "id": "right_wing",
+              "at": 0.7,
+              "width": 0.3,
+              "stories": "one",
+              "projection": "forward",
+              "roof": {
+                "form": "gable",
+                "ridge": "perpendicular",
+                "pitch": "medium",
+                "evidence": "The right wing projects forward with a gable end facing the front, indicating a perpendicular ridge."
+              },
+              "evidence": "One-story volume on the right, projecting forward relative to the central section."
+            }
+          ],
+          "porches": [
+            {
+              "id": "entry_porch",
+              "owner": "centre_section",
+              "at": 0.45,
+              "width": 0.1,
+              "roof": "gable"
+            }
+          ],
+          "gables": [
+            {
+              "id": "left_gable",
+              "owner": "left_wing",
+              "at": 0,
+              "width": 0.3,
+              "kind": "end",
+              "evidence": "Gable end of the left projecting wing."
+            },
+            {
+              "id": "right_gable",
+              "owner": "right_wing",
+              "at": 0.7,
+              "width": 0.3,
+              "kind": "end",
+              "evidence": "Gable end of the right projecting wing."
+            },
+            {
+              "id": "entry_gable",
+              "owner": "entry_porch",
+              "at": 0.45,
+              "width": 0.1,
+              "kind": "cross",
+              "evidence": "Small gable over the central entrance."
+            }
+          ],
+          "dormers": [],
+          "limitations": [
+            "The roof structure of the central section is partially obscured by the entrance gable and trees, making the hip roof classification an estimation.",
+            "Garage presence and entry location are not visible from the front view."
+          ],
+          "schema_version": 3,
+          "garage_entry": "unknown",
+          "_model": "gemini-3.1-flash-lite"
+        }
+      },
+      {
+        "case": "sheldrew",
+        "model": "gemini-3.1-flash-lite",
+        "variant": "candidate",
+        "repeat": 1,
+        "stage": "structure",
+        "wire_requests": 1,
+        "seconds": 9.61,
+        "image_count": 1,
+        "response": {
+          "viewpoint": "centre",
+          "garage_side": "unknown",
+          "volumes": [
+            {
+              "id": "left_wing",
+              "at": 0,
+              "width": 0.3,
+              "stories": "one",
+              "projection": "forward",
+              "roof": {
+                "form": "gable",
+                "ridge": "perpendicular",
+                "pitch": "medium",
+                "evidence": "The left wing projects forward with a gable roof oriented perpendicular to the main ridge, visible in image 1."
+              },
+              "evidence": "The left wing is a distinct, forward-projecting volume with a gable roof, one story high."
+            },
+            {
+              "id": "center_section",
+              "at": 0.3,
+              "width": 0.4,
+              "stories": "one",
+              "projection": "recessed",
+              "roof": {
+                "form": "gable",
+                "ridge": "parallel",
+                "pitch": "medium",
+                "evidence": "The central section connects the two wings with a parallel ridge roof, visible in image 1."
+              },
+              "evidence": "The central section is recessed between the two wings, one story high."
+            },
+            {
+              "id": "right_wing",
+              "at": 0.7,
+              "width": 0.3,
+              "stories": "one",
+              "projection": "forward",
+              "roof": {
+                "form": "gable",
+                "ridge": "perpendicular",
+                "pitch": "medium",
+                "evidence": "The right wing projects forward with a gable roof oriented perpendicular to the main ridge, visible in image 1."
+              },
+              "evidence": "The right wing is a distinct, forward-projecting volume with a gable roof, one story high."
+            }
+          ],
+          "porches": [
+            {
+              "id": "main_porch",
+              "owner": "center_section",
+              "at": 0.45,
+              "width": 0.1,
+              "roof": "gable"
+            }
+          ],
+          "gables": [
+            {
+              "id": "left_gable",
+              "owner": "left_wing",
+              "at": 0.15,
+              "width": 0.3,
+              "kind": "end",
+              "evidence": "The gable end of the perpendicular roof on the left wing, visible in image 1."
+            },
+            {
+              "id": "right_gable",
+              "owner": "right_wing",
+              "at": 0.85,
+              "width": 0.3,
+              "kind": "end",
+              "evidence": "The gable end of the perpendicular roof on the right wing, visible in image 1."
+            },
+            {
+              "id": "porch_gable",
+              "owner": "main_porch",
+              "at": 0.5,
+              "width": 0.1,
+              "kind": "cross",
+              "evidence": "Small gable over the entrance, visible in image 1."
+            }
+          ],
+          "dormers": [],
+          "limitations": [
+            "The garage location and entry are not visible in the provided image.",
+            "The depth of the wings is inferred from the front projection."
+          ],
+          "schema_version": 3,
+          "garage_entry": "unknown",
+          "_model": "gemini-3.1-flash-lite"
+        }
+      },
+      {
+        "case": "hood",
+        "model": "gemini-3.1-flash-lite",
+        "variant": "baseline",
+        "repeat": 1,
+        "stage": "structure",
+        "wire_requests": 1,
+        "seconds": 5.7,
+        "image_count": 1,
+        "response": {
+          "error": "Gemini API request failed: HTTP Error 503: Service Unavailable\nDetails: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n",
+          "transient": true
+        }
+      }
+    ],
+    "jobs": [
+      {
+        "id": "sheldrew",
+        "model": "gemini-3.1-flash-lite",
+        "variant": "baseline",
+        "repeat": 1,
+        "state": "complete",
+        "retries": 1,
+        "notes": [
+          "The roof structure of the central section is partially obscured by the entrance gable and trees, making the hip roof classification an estimation.",
+          "Garage presence and entry location are not visible from the front view.",
+          "Garage side is unseen; block mapping chosen from wall/porch/entry fit, not inferred as a visible garage.",
+          "Facade proportions fitted to the fixed block boundary at an observed wall-volume seam.",
+          "centre_section: absolute depth is not observable; using default depth.",
+          "main: distinct wall masses retained; relative depths use qualitative offsets, not measured distances.",
+          "Structure preview; windows and materials are added after the roof and story review.",
+          "1 model request(s): gemini-3.1-flash-lite this upload; 1 cumulative across actions."
+        ],
+        "upload_error": null,
+        "last_error": "could not match the photo (Gemini API request failed: HTTP Error 503: Service Unavailable\nDetails: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n)",
+        "retry_at": 1790088621.4173064,
+        "initial_spec": {
+          "version": 3,
+          "mirror": false,
+          "pitch_deg": 30.0,
+          "blocks": {
+            "main": {
+              "depth": 0.0,
+              "roof": {
+                "form": "hip",
+                "ridge": "x",
+                "pitch_deg": 30.0
+              },
+              "cladding": "batten",
+              "base": null,
+              "body": "white"
+            },
+            "garage": {
+              "depth": 1.5,
+              "roof": {
+                "form": "gable",
+                "ridge": "z",
+                "pitch_deg": 30.0
+              },
+              "cladding": "batten",
+              "base": null,
+              "body": "white",
+              "orientation": "side"
+            }
+          },
+          "upper": [],
+          "masses": [
+            {
+              "slot": 6,
+              "span": 7,
+              "depth": 0.0,
+              "roof": {
+                "form": "hip",
+                "ridge": "x",
+                "pitch_deg": 30.0
+              }
+            },
+            {
+              "slot": 13,
+              "span": 5,
+              "depth": 1.5,
+              "roof": {
+                "form": "gable",
+                "ridge": "z",
+                "pitch_deg": 30.0
+              }
+            }
+          ],
+          "style": {
+            "roof": "charcoal",
+            "frame": "black",
+            "door": "wood",
+            "trim": "white"
+          },
+          "ground": [
+            {
+              "slot": 1,
+              "span": 1,
+              "kind": "window",
+              "size": "standard",
+              "shutters": false,
+              "story": 1
+            },
+            {
+              "slot": 9,
+              "span": 1,
+              "kind": "porch",
+              "type": "covered",
+              "roof": "mixed",
+              "gable_offset": 0,
+              "gable_span": 1
+            },
+            {
+              "slot": 10,
+              "span": 1,
+              "kind": "door"
+            }
+          ],
+          "roof": [],
+          "unexpressed": [
+            "The roof structure of the central section is partially obscured by the entrance ",
+            "Garage presence and entry location are not visible from the front view.",
+            "Garage side is unseen; block mapping chosen from wall/porch/entry fit, not infer",
+            "Facade proportions fitted to the fixed block boundary at an observed wall-volume",
+            "centre_section: absolute depth is not observable; using default depth.",
+            "main: distinct wall masses retained; relative depths use qualitative offsets, no",
+            "Structure preview; windows and materials are added after the roof and story revi"
+          ]
+        },
+        "initial_score": {
+          "regions": [
+            {
+              "at": 0.0825,
+              "stories": true,
+              "roof": true
+            },
+            {
+              "at": 0.165,
+              "stories": true,
+              "roof": true
+            },
+            {
+              "at": 0.2475,
+              "stories": true,
+              "roof": true
+            },
+            {
+              "at": 0.41500000000000004,
+              "stories": true,
+              "roof": false
+            },
+            {
+              "at": 0.5,
+              "stories": true,
+              "roof": false
+            },
+            {
+              "at": 0.585,
+              "stories": true,
+              "roof": false
+            },
+            {
+              "at": 0.7525000000000001,
+              "stories": true,
+              "roof": true
+            },
+            {
+              "at": 0.8350000000000001,
+              "stories": true,
+              "roof": true
+            },
+            {
+              "at": 0.9175,
+              "stories": true,
+              "roof": true
+            }
+          ],
+          "stories": true,
+          "roof_directions": false,
+          "massing_widths": true,
+          "broad_porch": true,
+          "note": "Three samples per labeled region; requires visual adjudication. Small entry covers and projections are not scored automatically."
+        },
+        "deterministic": true
+      },
+      {
+        "id": "sheldrew",
+        "model": "gemini-3.1-flash-lite",
+        "variant": "candidate",
+        "repeat": 1,
+        "state": "complete",
+        "retries": 1,
+        "notes": [
+          "The garage location and entry are not visible in the provided image.",
+          "The depth of the wings is inferred from the front projection.",
+          "left_gable: approximate gable bounds fitted to declared owner left_wing.",
+          "right_gable: approximate gable bounds fitted to declared owner right_wing.",
+          "porch_gable: approximate gable bounds fitted to declared owner main_porch.",
+          "Garage side is unseen; block mapping chosen from wall/porch/entry fit, not inferred as a visible garage.",
+          "Facade proportions fitted to the fixed block boundary at an observed wall-volume seam.",
+          "center_section: absolute depth is not observable; using default depth.",
+          "main: distinct wall masses retained; relative depths use qualitative offsets, not measured distances.",
+          "Structure preview; windows and materials are added after the roof and story review.",
+          "1 model request(s): gemini-3.1-flash-lite this upload; 1 cumulative across actions."
+        ],
+        "upload_error": null,
+        "last_error": "could not match the photo (Gemini API request failed: HTTP Error 503: Service Unavailable\nDetails: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n)",
+        "retry_at": 1790088746.2361107,
+        "initial_spec": {
+          "version": 3,
+          "mirror": false,
+          "pitch_deg": 30.0,
+          "blocks": {
+            "main": {
+              "depth": 0.0,
+              "roof": {
+                "form": "gable",
+                "ridge": "x",
+                "pitch_deg": 30.0
+              },
+              "cladding": "batten",
+              "base": null,
+              "body": "white"
+            },
+            "garage": {
+              "depth": 1.5,
+              "roof": {
+                "form": "gable",
+                "ridge": "z",
+                "pitch_deg": 30.0
+              },
+              "cladding": "batten",
+              "base": null,
+              "body": "white",
+              "orientation": "side"
+            }
+          },
+          "upper": [],
+          "masses": [
+            {
+              "slot": 6,
+              "span": 7,
+              "depth": 0.0,
+              "roof": {
+                "form": "gable",
+                "ridge": "x",
+                "pitch_deg": 30.0
+              }
+            },
+            {
+              "slot": 13,
+              "span": 5,
+              "depth": 1.5,
+              "roof": {
+                "form": "gable",
+                "ridge": "z",
+                "pitch_deg": 30.0
+              }
+            }
+          ],
+          "style": {
+            "roof": "charcoal",
+            "frame": "black",
+            "door": "wood",
+            "trim": "white"
+          },
+          "ground": [
+            {
+              "slot": 1,
+              "span": 1,
+              "kind": "window",
+              "size": "standard",
+              "shutters": false,
+              "story": 1
+            },
+            {
+              "slot": 9,
+              "span": 1,
+              "kind": "porch",
+              "type": "covered",
+              "roof": "mixed",
+              "gable_offset": 0,
+              "gable_span": 1
+            },
+            {
+              "slot": 10,
+              "span": 1,
+              "kind": "door"
+            }
+          ],
+          "roof": [],
+          "unexpressed": [
+            "The garage location and entry are not visible in the provided image.",
+            "The depth of the wings is inferred from the front projection.",
+            "left_gable: approximate gable bounds fitted to declared owner left_wing.",
+            "right_gable: approximate gable bounds fitted to declared owner right_wing.",
+            "porch_gable: approximate gable bounds fitted to declared owner main_porch.",
+            "Garage side is unseen; block mapping chosen from wall/porch/entry fit, not infer",
+            "Facade proportions fitted to the fixed block boundary at an observed wall-volume",
+            "center_section: absolute depth is not observable; using default depth."
+          ]
+        },
+        "initial_score": {
+          "regions": [
+            {
+              "at": 0.0825,
+              "stories": true,
+              "roof": true
+            },
+            {
+              "at": 0.165,
+              "stories": true,
+              "roof": true
+            },
+            {
+              "at": 0.2475,
+              "stories": true,
+              "roof": true
+            },
+            {
+              "at": 0.41500000000000004,
+              "stories": true,
+              "roof": true
+            },
+            {
+              "at": 0.5,
+              "stories": true,
+              "roof": true
+            },
+            {
+              "at": 0.585,
+              "stories": true,
+              "roof": true
+            },
+            {
+              "at": 0.7525000000000001,
+              "stories": true,
+              "roof": true
+            },
+            {
+              "at": 0.8350000000000001,
+              "stories": true,
+              "roof": true
+            },
+            {
+              "at": 0.9175,
+              "stories": true,
+              "roof": true
+            }
+          ],
+          "stories": true,
+          "roof_directions": true,
+          "massing_widths": true,
+          "broad_porch": true,
+          "note": "Three samples per labeled region; requires visual adjudication. Small entry covers and projections are not scored automatically."
+        },
+        "deterministic": true
+      },
+      {
+        "id": "sheldrew",
+        "model": "gemini-2.5-flash",
+        "variant": "baseline",
+        "repeat": 1,
+        "state": "complete",
+        "retries": 0,
+        "notes": [
+          "The exact depth of the volumes and the full extent of the hip roof are not entirely clear from the single front image, but the visible roof forms and projections are consistent with the description.",
+          "Garage side is unseen; block mapping chosen from wall/porch/entry fit, not inferred as a visible garage.",
+          "Facade proportions fitted to the fixed block boundary at an observed wall-volume seam.",
+          "volume_2: absolute depth is not observable; using default depth.",
+          "main: distinct wall masses retained; relative depths use qualitative offsets, not measured distances.",
+          "Structure preview; windows and materials are added after the roof and story review.",
+          "1 model request(s): gemini-2.5-flash this upload; 1 cumulative across actions."
+        ],
+        "upload_error": null,
+        "initial_spec": {
+          "version": 3,
+          "mirror": false,
+          "pitch_deg": 30.0,
+          "blocks": {
+            "main": {
+              "depth": 0.0,
+              "roof": {
+                "form": "hip",
+                "ridge": "x",
+                "pitch_deg": 30.0
+              },
+              "cladding": "batten",
+              "base": null,
+              "body": "white"
+            },
+            "garage": {
+              "depth": 1.5,
+              "roof": {
+                "form": "gable",
+                "ridge": "z",
+                "pitch_deg": 30.0
+              },
+              "cladding": "batten",
+              "base": null,
+              "body": "white",
+              "orientation": "side"
+            }
+          },
+          "upper": [],
+          "masses": [
+            {
+              "slot": 6,
+              "span": 7,
+              "depth": 0.0,
+              "roof": {
+                "form": "hip",
+                "ridge": "x",
+                "pitch_deg": 30.0
+              }
+            },
+            {
+              "slot": 13,
+              "span": 5,
+              "depth": 1.5,
+              "roof": {
+                "form": "gable",
+                "ridge": "z",
+                "pitch_deg": 30.0
+              }
+            }
+          ],
+          "style": {
+            "roof": "charcoal",
+            "frame": "black",
+            "door": "wood",
+            "trim": "white"
+          },
+          "ground": [
+            {
+              "slot": 1,
+              "span": 1,
+              "kind": "window",
+              "size": "standard",
+              "shutters": false,
+              "story": 1
+            },
+            {
+              "slot": 6,
+              "span": 7,
+              "kind": "porch",
+              "type": "covered",
+              "roof": "mixed",
+              "gable_offset": 3,
+              "gable_span": 1
+            },
+            {
+              "slot": 10,
+              "span": 1,
+              "kind": "door"
+            }
+          ],
+          "roof": [],
+          "unexpressed": [
+            "The exact depth of the volumes and the full extent of the hip roof are not entir",
+            "Garage side is unseen; block mapping chosen from wall/porch/entry fit, not infer",
+            "Facade proportions fitted to the fixed block boundary at an observed wall-volume",
+            "volume_2: absolute depth is not observable; using default depth.",
+            "main: distinct wall masses retained; relative depths use qualitative offsets, no",
+            "Structure preview; windows and materials are added after the roof and story revi"
+          ]
+        },
+        "initial_score": {
+          "regions": [
+            {
+              "at": 0.0825,
+              "stories": true,
+              "roof": true
+            },
+            {
+              "at": 0.165,
+              "stories": true,
+              "roof": true
+            },
+            {
+              "at": 0.2475,
+              "stories": true,
+              "roof": true
+            },
+            {
+              "at": 0.41500000000000004,
+              "stories": true,
+              "roof": false
+            },
+            {
+              "at": 0.5,
+              "stories": true,
+              "roof": false
+            },
+            {
+              "at": 0.585,
+              "stories": true,
+              "roof": false
+            },
+            {
+              "at": 0.7525000000000001,
+              "stories": true,
+              "roof": true
+            },
+            {
+              "at": 0.8350000000000001,
+              "stories": true,
+              "roof": true
+            },
+            {
+              "at": 0.9175,
+              "stories": true,
+              "roof": true
+            }
+          ],
+          "stories": true,
+          "roof_directions": false,
+          "massing_widths": true,
+          "broad_porch": false,
+          "note": "Three samples per labeled region; requires visual adjudication. Small entry covers and projections are not scored automatically."
+        },
+        "deterministic": true
+      },
+      {
+        "id": "sheldrew",
+        "model": "gemini-2.5-flash",
+        "variant": "candidate",
+        "repeat": 1,
+        "state": "failed",
+        "retries": 1,
+        "notes": [
+          "1 model request(s): gemini-2.5-flash this upload; 1 cumulative across actions."
+        ],
+        "upload_error": "could not match the photo (429 Too Many Requests: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-2.5-flash\\nPlease retry in 5.905754289s.\",\n    \"status\": \"RESOURCE_EXHAUSTED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.Help\",\n        \"links\": [\n          {\n            \"description\": \"Learn more about Gemini API quotas\",\n            \"url\": \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.QuotaFailure\",\n        \"violations\": [\n          {\n            \"quotaMetric\": \"generativelanguage.googleapis.com/generate_content_free_tier_requests\",\n            \"quotaId\": \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\",\n            \"quotaDimensions\": {\n              \"location\": \"global\",\n              \"model\": \"gemini-2.5-flash\"\n            },\n            \"quotaValue\": \"20\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.RetryInfo\",\n        \"retryDelay\": \"5s\"\n      }\n    ]\n  }\n}\n)",
+        "last_error": "could not match the photo (429 Too Many Requests: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-2.5-flash\\nPlease retry in 5.905754289s.\",\n    \"status\": \"RESOURCE_EXHAUSTED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.Help\",\n        \"links\": [\n          {\n            \"description\": \"Learn more about Gemini API quotas\",\n            \"url\": \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.QuotaFailure\",\n        \"violations\": [\n          {\n            \"quotaMetric\": \"generativelanguage.googleapis.com/generate_content_free_tier_requests\",\n            \"quotaId\": \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\",\n            \"quotaDimensions\": {\n              \"location\": \"global\",\n              \"model\": \"gemini-2.5-flash\"\n            },\n            \"quotaValue\": \"20\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.RetryInfo\",\n        \"retryDelay\": \"5s\"\n      }\n    ]\n  }\n}\n)",
+        "retry_at": 1790088646.8409479
+      },
+      {
+        "id": "hood",
+        "model": "gemini-3.1-flash-lite",
+        "variant": "baseline",
+        "repeat": 1,
+        "state": "upload",
+        "retries": 1,
+        "notes": [
+          "1 model request(s): gemini-3.1-flash-lite this upload; 1 cumulative across actions."
+        ],
+        "upload_error": "could not match the photo (Gemini API request failed: HTTP Error 503: Service Unavailable\nDetails: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n)",
+        "last_error": "could not match the photo (Gemini API request failed: HTTP Error 503: Service Unavailable\nDetails: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n)",
+        "retry_at": 1790088890.0051818
+      },
+      {
+        "id": "hood",
+        "model": "gemini-3.1-flash-lite",
+        "variant": "candidate",
+        "repeat": 1,
+        "state": "upload",
+        "retries": 0
+      },
+      {
+        "id": "hood",
+        "model": "gemini-2.5-flash",
+        "variant": "baseline",
+        "repeat": 1,
+        "state": "complete",
+        "retries": 0,
+        "notes": [
+          "The rear of the house is not visible, limiting full roof and volume assessment.",
+          "The exact connection and full extent of the leftmost recessed volume are partially obscured and not fully clear from the provided view.",
+          "Garage side is unseen; block mapping chosen from wall/porch/entry fit, not inferred as a visible garage.",
+          "Facade proportions fitted to the fixed block boundary at an observed wall-volume seam.",
+          "Garage-side wall regions retain the fixed bay depth; independent garage-side setbacks are not supported.",
+          "volume_left_recessed: underlying shed roof approximated by a gable; renderer limitation.",
+          "garage: distinct wall masses retained; relative depths use qualitative offsets, not measured distances.",
+          "gable_left_forward: cross-gable conflicts with perpendicular underlying ridge; omitted for review.",
+          "Structure preview; windows and materials are added after the roof and story review.",
+          "1 model request(s): gemini-2.5-flash this upload; 1 cumulative across actions."
+        ],
+        "upload_error": null,
+        "initial_spec": {
+          "version": 3,
+          "mirror": false,
+          "pitch_deg": 30.0,
+          "blocks": {
+            "main": {
+              "depth": 0.0,
+              "roof": {
+                "form": "gable",
+                "ridge": "z",
+                "pitch_deg": 30.0
+              },
+              "cladding": "batten",
+              "base": null,
+              "body": "white"
+            },
+            "garage": {
+              "depth": 1.5,
+              "roof": {
+                "form": "gable",
+                "ridge": "z",
+                "pitch_deg": 30.0
+              },
+              "cladding": "batten",
+              "base": null,
+              "body": "white",
+              "orientation": "side"
+            }
+          },
+          "upper": [
+            {
+              "slot": 6,
+              "span": 12,
+              "roof": {
+                "form": "gable",
+                "ridge": "z",
+                "pitch_deg": 30.0
+              }
+            }
+          ],
+          "masses": [
+            {
+              "slot": 0,
+              "span": 2,
+              "depth": 1.5,
+              "roof": {
+                "form": "gable",
+                "ridge": "x",
+                "pitch_deg": 22.5
+              }
+            },
+            {
+              "slot": 2,
+              "span": 4,
+              "depth": 1.5,
+              "roof": {
+                "form": "gable",
+                "ridge": "z",
+                "pitch_deg": 30.0
+              }
+            }
+          ],
+          "style": {
+            "roof": "charcoal",
+            "frame": "black",
+            "door": "wood",
+            "trim": "white"
+          },
+          "ground": [
+            {
+              "slot": 1,
+              "span": 1,
+              "kind": "window",
+              "size": "standard",
+              "shutters": false,
+              "story": 1
+            },
+            {
+              "slot": 9,
+              "span": 2,
+              "kind": "porch",
+              "type": "covered",
+              "roof": "gable"
+            },
+            {
+              "slot": 10,
+              "span": 1,
+              "kind": "door"
+            }
+          ],
+          "roof": [],
+          "unexpressed": [
+            "The rear of the house is not visible, limiting full roof and volume assessment.",
+            "The exact connection and full extent of the leftmost recessed volume are partial",
+            "Garage side is unseen; block mapping chosen from wall/porch/entry fit, not infer",
+            "Facade proportions fitted to the fixed block boundary at an observed wall-volume",
+            "Garage-side wall regions retain the fixed bay depth; independent garage-side set",
+            "volume_left_recessed: underlying shed roof approximated by a gable; renderer lim",
+            "garage: distinct wall masses retained; relative depths use qualitative offsets, ",
+            "gable_left_forward: cross-gable conflicts with perpendicular underlying ridge; o"
+          ]
+        },
+        "initial_score": {
+          "regions": [
+            {
+              "at": 0.085,
+              "stories": true,
+              "roof": false
+            },
+            {
+              "at": 0.17,
+              "stories": true,
+              "roof": false
+            },
+            {
+              "at": 0.255,
+              "stories": true,
+              "roof": false
+            },
+            {
+              "at": 0.47000000000000003,
+              "stories": true,
+              "roof": false
+            },
+            {
+              "at": 0.6000000000000001,
+              "stories": true,
+              "roof": false
+            },
+            {
+              "at": 0.73,
+              "stories": true,
+              "roof": false
+            },
+            {
+              "at": 0.895,
+              "stories": false,
+              "roof": null
+            },
+            {
+              "at": 0.9299999999999999,
+              "stories": false,
+              "roof": null
+            },
+            {
+              "at": 0.965,
+              "stories": false,
+              "roof": null
+            }
+          ],
+          "stories": false,
+          "roof_directions": false,
+          "massing_widths": false,
+          "broad_porch": true,
+          "note": "Three samples per labeled region; requires visual adjudication. Small entry covers and projections are not scored automatically."
+        },
+        "deterministic": true
+      },
+      {
+        "id": "hood",
+        "model": "gemini-2.5-flash",
+        "variant": "candidate",
+        "repeat": 1,
+        "state": "upload",
+        "retries": 0
+      },
+      {
+        "id": "sheldrew",
+        "model": "gemini-3.1-flash-lite",
+        "variant": "candidate",
+        "repeat": 2,
+        "state": "upload",
+        "retries": 0
+      },
+      {
+        "id": "sheldrew",
+        "model": "gemini-3.1-flash-lite",
+        "variant": "baseline",
+        "repeat": 2,
+        "state": "upload",
+        "retries": 0
+      },
+      {
+        "id": "sheldrew",
+        "model": "gemini-2.5-flash",
+        "variant": "candidate",
+        "repeat": 2,
+        "state": "upload",
+        "retries": 0
+      },
+      {
+        "id": "sheldrew",
+        "model": "gemini-2.5-flash",
+        "variant": "baseline",
+        "repeat": 2,
+        "state": "upload",
+        "retries": 0
+      },
+      {
+        "id": "hood",
+        "model": "gemini-3.1-flash-lite",
+        "variant": "candidate",
+        "repeat": 2,
+        "state": "upload",
+        "retries": 0
+      },
+      {
+        "id": "hood",
+        "model": "gemini-3.1-flash-lite",
+        "variant": "baseline",
+        "repeat": 2,
+        "state": "upload",
+        "retries": 0
+      },
+      {
+        "id": "hood",
+        "model": "gemini-2.5-flash",
+        "variant": "candidate",
+        "repeat": 2,
+        "state": "upload",
+        "retries": 0
+      },
+      {
+        "id": "hood",
+        "model": "gemini-2.5-flash",
+        "variant": "baseline",
+        "repeat": 2,
+        "state": "upload",
+        "retries": 0
+      }
+    ],
+    "structure_prompt_sha256": "6166ed340a0fb6f162f5bb93887879c5b6352dc29f3ae9ff6b20750270b6f1ec",
+    "detail_prompt_sha256": "57b561695bd4da43392ebfa39f9897fa4dbccb3541c217d41527fea2286dabb7",
+    "wire_requests": 9,
+    "stopped_with_pending": true
+  },
+  "rescoring_version": 4,
+  "reviewed_manifest": {
+    "protocol": "Assistant visual labels fixed before these model trials; not independently human-adjudicated. Labels never included in provider prompts. Existing brick case is development, remaining cases are evaluation references. Bungalow is a difficult oblique holdout: its roof partition is provisional and must be visually adjudicated, not treated as definitive ground truth.",
+    "cases": [
+      {
+        "id": "brick",
+        "image": "docs/superpowers/specs/assets/2026-09-17-photo-brick.jpg",
+        "download_url": null,
+        "source": "Existing non-household repository reference",
+        "sha256": "5cd057ffb3631a99d2b403f3c432dee715b9b9fbd5e0fb9a2bc3558345303e5d",
+        "regions": [
+          {
+            "at": 0,
+            "width": 0.4,
+            "stories": "one",
+            "form": "gable",
+            "ridge": "perpendicular"
+          },
+          {
+            "at": 0.4,
+            "width": 0.32,
+            "stories": "one",
+            "form": "hip",
+            "ridge": "parallel"
+          },
+          {
+            "at": 0.72,
+            "width": 0.28,
+            "stories": "one",
+            "form": "gable",
+            "ridge": "perpendicular"
+          }
+        ],
+        "covered_porch": false,
+        "label_notes": "Central small entry; right window awning is not a porch. Width tolerance .12; attic triangles are not full stories."
+      },
+      {
+        "id": "sheldrew",
+        "image": "scratch/house-eval-2026-09-22/sheldrew.jpg",
+        "download_url": "https://tile.loc.gov/storage-services/service/pnp/habshaer/id/id0000/id0053/photos/059262pv.jpg",
+        "source": "https://www.loc.gov/item/id0053/",
+        "sha256": "ca8418be5715c91971530ba8b23b319a8f420c4672f7cd42efb031c44dd46ce2",
+        "regions": [
+          {
+            "at": 0,
+            "width": 0.33,
+            "stories": "one",
+            "form": "gable",
+            "ridge": "perpendicular"
+          },
+          {
+            "at": 0.33,
+            "width": 0.34,
+            "stories": "one",
+            "form": "gable",
+            "ridge": "parallel",
+            "score_form": false
+          },
+          {
+            "at": 0.67,
+            "width": 0.33,
+            "stories": "one",
+            "form": "gable",
+            "ridge": "perpendicular"
+          }
+        ],
+        "covered_porch": false,
+        "label_notes": "Two projecting wings, recessed middle. Small door canopy only; courtyard is open."
+      },
+      {
+        "id": "reid",
+        "image": "scratch/house-eval-general/reid.jpg",
+        "download_url": "https://tile.loc.gov/storage-services/service/pnp/habshaer/va/va0900/va0904/photos/165433pv.jpg",
+        "source": "https://www.loc.gov/item/va0904/",
+        "sha256": "771138df0a5de9bb0362203f02fa6e28fb648ab5438c353b74ceabea17aea9cd",
+        "regions": [
+          {
+            "at": 0,
+            "width": 1,
+            "stories": "two",
+            "form": "gable",
+            "ridge": "parallel",
+            "score_form": false
+          }
+        ],
+        "covered_porch": false,
+        "label_notes": "Two full front wall stories. Small entry porch roughly .2 of facade, no broad cover. Parapets/chimneys are unsupported; foliage obscures far left. Side wall is not another front region."
+      },
+      {
+        "id": "hood",
+        "image": "scratch/house-eval-general/hood-elevation.jpg",
+        "download_url": "https://tile.loc.gov/storage-services/service/pnp/habshaer/al/al0200/al0259/photos/003096pv.jpg",
+        "source": "https://www.loc.gov/item/al0259/",
+        "sha256": "6f79b17d8a38d175a7bd1195bc409af5734316b780dd3d0f2badeb9f259f1fe0",
+        "regions": [
+          {
+            "at": 0,
+            "width": 0.34,
+            "stories": "one",
+            "form": "gable",
+            "ridge": "parallel"
+          },
+          {
+            "at": 0.34,
+            "width": 0.52,
+            "stories": "two",
+            "form": "gable",
+            "ridge": "parallel"
+          },
+          {
+            "at": 0.86,
+            "width": 0.14,
+            "stories": "one",
+            "form": "gable",
+            "ridge": "parallel",
+            "score_roof": false
+          }
+        ],
+        "covered_porch": false,
+        "label_notes": "Mixed full wall stories; front runs from left-wing front corner to right-wing front end. Exclude left side-facing gable/porch. Strong perspective: .15 boundary tolerance. Ridge of partly obscured right wing less certain. Reinspection: entrance and rows of windows establish the long front wall; triangular masonry ends and chimney stacks are on the left SIDE. Far-right wing roof is excluded from scoring because foliage obscures it."
+      },
+      {
+        "id": "bungalow",
+        "image": "scratch/house-eval-2026-09-22/bungalow.jpg",
+        "download_url": "https://cdn4.picryl.com/photo/1900/01/01/typical-california-bungalow-1024.jpg",
+        "source": "https://loc.getarchive.net/media/typical-california-bungalow",
+        "sha256": "88e2f1167ba7bbc7af2dcd5ced812c669154bb0269605e7a4849fc81c90b9815",
+        "regions": [
+          {
+            "at": 0,
+            "width": 1,
+            "stories": "one",
+            "form": "gable",
+            "ridge": "perpendicular",
+            "score_roof": false
+          }
+        ],
+        "covered_porch": true,
+        "label_notes": "Held out from first comparison: one-story front-gable bungalow, attic opening is not a second wall story; recessed right porch covers roughly .35-.5. Strong perspective and foliage limit exact widths. Main gable continues behind porch; no separate full second story. Reinspection: one wall story and covered entry are visible; exact roof partition/front-plane extent is ambiguous. Roof and mass-count labels are provisional and excluded from automatic scoring.",
+        "score_massing": false
+      }
+    ],
+    "label_revision": "2026-09-22 front-plane adjudication; second assistant visual inspection, not independent human review; historical result snapshots remain unchanged."
+  },
+  "rescored_structure_events": [
+    {
+      "case": "sheldrew",
+      "model": "gemini-2.5-flash",
+      "variant": "baseline",
+      "repeat": 1,
+      "score": {
+        "regions": [
+          {
+            "at": 0.0825,
+            "stories": true,
+            "ridge": true,
+            "form": true
+          },
+          {
+            "at": 0.165,
+            "stories": true,
+            "ridge": true,
+            "form": true
+          },
+          {
+            "at": 0.2475,
+            "stories": true,
+            "ridge": true,
+            "form": true
+          },
+          {
+            "at": 0.41500000000000004,
+            "stories": true,
+            "ridge": true,
+            "form": null
+          },
+          {
+            "at": 0.5,
+            "stories": true,
+            "ridge": true,
+            "form": null
+          },
+          {
+            "at": 0.585,
+            "stories": true,
+            "ridge": true,
+            "form": null
+          },
+          {
+            "at": 0.7525000000000001,
+            "stories": true,
+            "ridge": true,
+            "form": true
+          },
+          {
+            "at": 0.8350000000000001,
+            "stories": true,
+            "ridge": true,
+            "form": true
+          },
+          {
+            "at": 0.9175,
+            "stories": true,
+            "ridge": true,
+            "form": true
+          }
+        ],
+        "stories": true,
+        "roof_directions": true,
+        "roof_forms": true,
+        "massing_widths": true,
+        "broad_porch": false,
+        "note": "Three samples per labeled region; requires visual adjudication. Small entry covers and projections are not scored automatically."
+      }
+    },
+    {
+      "case": "hood",
+      "model": "gemini-2.5-flash",
+      "variant": "baseline",
+      "repeat": 1,
+      "score": {
+        "regions": [
+          {
+            "at": 0.085,
+            "stories": true,
+            "ridge": true,
+            "form": false
+          },
+          {
+            "at": 0.17,
+            "stories": true,
+            "ridge": false,
+            "form": true
+          },
+          {
+            "at": 0.255,
+            "stories": true,
+            "ridge": false,
+            "form": true
+          },
+          {
+            "at": 0.47000000000000003,
+            "stories": true,
+            "ridge": false,
+            "form": true
+          },
+          {
+            "at": 0.6000000000000001,
+            "stories": true,
+            "ridge": false,
+            "form": true
+          },
+          {
+            "at": 0.73,
+            "stories": true,
+            "ridge": false,
+            "form": true
+          },
+          {
+            "at": 0.895,
+            "stories": false,
+            "ridge": null,
+            "form": null
+          },
+          {
+            "at": 0.9299999999999999,
+            "stories": false,
+            "ridge": null,
+            "form": null
+          },
+          {
+            "at": 0.965,
+            "stories": false,
+            "ridge": null,
+            "form": null
+          }
+        ],
+        "stories": false,
+        "roof_directions": false,
+        "roof_forms": false,
+        "massing_widths": false,
+        "broad_porch": true,
+        "note": "Three samples per labeled region; requires visual adjudication. Small entry covers and projections are not scored automatically."
+      }
+    },
+    {
+      "case": "sheldrew",
+      "model": "gemini-3.1-flash-lite",
+      "variant": "baseline",
+      "repeat": 1,
+      "score": {
+        "regions": [
+          {
+            "at": 0.0825,
+            "stories": true,
+            "ridge": true,
+            "form": true
+          },
+          {
+            "at": 0.165,
+            "stories": true,
+            "ridge": true,
+            "form": true
+          },
+          {
+            "at": 0.2475,
+            "stories": true,
+            "ridge": true,
+            "form": true
+          },
+          {
+            "at": 0.41500000000000004,
+            "stories": true,
+            "ridge": true,
+            "form": null
+          },
+          {
+            "at": 0.5,
+            "stories": true,
+            "ridge": true,
+            "form": null
+          },
+          {
+            "at": 0.585,
+            "stories": true,
+            "ridge": true,
+            "form": null
+          },
+          {
+            "at": 0.7525000000000001,
+            "stories": true,
+            "ridge": true,
+            "form": true
+          },
+          {
+            "at": 0.8350000000000001,
+            "stories": true,
+            "ridge": true,
+            "form": true
+          },
+          {
+            "at": 0.9175,
+            "stories": true,
+            "ridge": true,
+            "form": true
+          }
+        ],
+        "stories": true,
+        "roof_directions": true,
+        "roof_forms": true,
+        "massing_widths": true,
+        "broad_porch": true,
+        "note": "Three samples per labeled region; requires visual adjudication. Small entry covers and projections are not scored automatically."
+      }
+    },
+    {
+      "case": "sheldrew",
+      "model": "gemini-3.1-flash-lite",
+      "variant": "candidate",
+      "repeat": 1,
+      "score": {
+        "regions": [
+          {
+            "at": 0.0825,
+            "stories": true,
+            "ridge": true,
+            "form": true
+          },
+          {
+            "at": 0.165,
+            "stories": true,
+            "ridge": true,
+            "form": true
+          },
+          {
+            "at": 0.2475,
+            "stories": true,
+            "ridge": true,
+            "form": true
+          },
+          {
+            "at": 0.41500000000000004,
+            "stories": true,
+            "ridge": true,
+            "form": null
+          },
+          {
+            "at": 0.5,
+            "stories": true,
+            "ridge": true,
+            "form": null
+          },
+          {
+            "at": 0.585,
+            "stories": true,
+            "ridge": true,
+            "form": null
+          },
+          {
+            "at": 0.7525000000000001,
+            "stories": true,
+            "ridge": true,
+            "form": true
+          },
+          {
+            "at": 0.8350000000000001,
+            "stories": true,
+            "ridge": true,
+            "form": true
+          },
+          {
+            "at": 0.9175,
+            "stories": true,
+            "ridge": true,
+            "form": true
+          }
+        ],
+        "stories": true,
+        "roof_directions": true,
+        "roof_forms": true,
+        "massing_widths": true,
+        "broad_porch": true,
+        "note": "Three samples per labeled region; requires visual adjudication. Small entry covers and projections are not scored automatically."
+      }
+    }
+  ],
+  "decision": "Inconclusive: no oblique pair and no repeated pairs completed; no prompt or routing promotion."
+}

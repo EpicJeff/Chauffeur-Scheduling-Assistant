@@ -53,7 +53,11 @@ INVARIANT_JS = """() => {
 
 # Freezes the wall clock at 14:00 so a day/night repaint (or a live
 # hero countdown) cannot perturb a scenario's pixels or counts run to run.
-DAY_LOCK_JS = 'Date.prototype.getHours = function () { return 14; };'
+DAY_LOCK_JS = '''Date.prototype.getHours = function () { return 14; };
+// Outdoor daylight now follows HA, so visual fixtures use the explicit preview override.
+try { const url = new URL(location.href); if (url.protocol.startsWith('http')) {
+  url.searchParams.set('day', '1'); history.replaceState(null, '', url);
+} } catch (e) {}'''
 
 
 # Textures (grass, drive, wood) paint with Math.random; a pixel pin needs

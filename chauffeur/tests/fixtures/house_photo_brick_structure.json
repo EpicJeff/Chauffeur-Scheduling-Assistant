@@ -1,0 +1,95 @@
+{
+  "viewpoint": "centre",
+  "garage_side": "left",
+  "volumes": [
+    {
+      "id": "volume_1",
+      "at": 0.0,
+      "width": 0.38,
+      "stories": "one",
+      "projection": "flush",
+      "roof": {
+        "form": "gable",
+        "ridge": "perpendicular",
+        "pitch": "medium",
+        "evidence": "Gable end visible on the left in image 1. The ridge runs perpendicular to the facade."
+      },
+      "evidence": "One story wall below the eaves, visible in image 1. This volume contains the garage."
+    },
+    {
+      "id": "volume_2",
+      "at": 0.38,
+      "width": 0.32,
+      "stories": "one",
+      "projection": "recessed",
+      "roof": {
+        "form": "hip",
+        "ridge": "parallel",
+        "pitch": "medium",
+        "evidence": "The main roof behind the gables appears to be a hip roof, with the ridge running parallel to the facade, visible in image 1."
+      },
+      "evidence": "One story wall below the eaves, visible in image 1. This central volume is set back from the adjacent volumes."
+    },
+    {
+      "id": "volume_3",
+      "at": 0.7,
+      "width": 0.3,
+      "stories": "one",
+      "projection": "forward",
+      "roof": {
+        "form": "gable",
+        "ridge": "perpendicular",
+        "pitch": "medium",
+        "evidence": "Gable end visible on the right in image 1. The ridge runs perpendicular to the facade."
+      },
+      "evidence": "One story wall below the eaves, visible in image 1. This volume projects forward from the central volume."
+    }
+  ],
+  "porches": [
+    {
+      "id": "porch_1",
+      "owner": "volume_2",
+      "at": 0.5,
+      "width": 0.1,
+      "roof": "open"
+    },
+    {
+      "id": "porch_2",
+      "owner": "volume_3",
+      "at": 0.75,
+      "width": 0.2,
+      "roof": "shed"
+    }
+  ],
+  "gables": [
+    {
+      "id": "gable_1",
+      "owner": "volume_1",
+      "at": 0.19,
+      "width": 0.38,
+      "kind": "end",
+      "evidence": "This is the end gable of volume 1, facing the front, visible in image 1."
+    },
+    {
+      "id": "gable_2",
+      "owner": "volume_2",
+      "at": 0.5,
+      "width": 0.15,
+      "kind": "cross",
+      "evidence": "This is a cross-gable projecting from the main roof of volume 2, visible in image 1."
+    },
+    {
+      "id": "gable_3",
+      "owner": "volume_3",
+      "at": 0.85,
+      "width": 0.3,
+      "kind": "end",
+      "evidence": "This is the end gable of volume 3, facing the front, visible in image 1."
+    }
+  ],
+  "dormers": [],
+  "limitations": [],
+  "schema_version": 3,
+  "garage_entry": "front",
+  "_model": "gemini-2.5-flash"
+}

@@ -27,7 +27,7 @@ target architecture or proof of recognition quality.
 
 All renderer configuration is deterministic. Existing compiler approximation notes
 remain visible. No photo-specific roof heuristic or house-style template was added.
-Legacy analysis schemas remain replayable; saved facade format remains unchanged.
+Legacy analysis schemas remain replayable; saved facade version remains 3.
 
 ## Requests and diagnostics
 
@@ -63,6 +63,31 @@ was performed for this release.
 Renderer limits persist: two fixed blocks and slot quantization cannot reproduce every
 L-shaped footprint, intersecting roof, split level or setback. Unknown structures and
 unsupported intersections remain explicit limitations rather than invented extra stories.
+
+## Ground mass preservation and live evaluation (2026-09-22)
+
+Structure-first compilation now uses compiler version 5. Optional `masses` entries
+(`slot`, `span`, `depth`, `roof`) preserve distinct observed regions within each base
+block. Main-house regions can retain separate front planes and roofs; upper-story
+spans still determine story count and override the underlying mass roof. Projection
+offsets are bounded qualitative approximations, not photogrammetric measurements.
+Garage-side masses share the fixed bay depth. The two base envelopes, rear extents
+and 18-slot quantization remain limitations.
+
+Normalization preserves mass boundaries, clips openings at those boundaries, and
+splits porch coverage when it crosses them. The detail geometry lock includes masses.
+The editor exposes section roof and main-house projection controls. Old facades
+without masses do not gain them, and legacy `compile_analysis` defaults to version 4.
+No saved facade is rewritten by this change.
+
+The renderer reuses its existing volume roof clipping for ground masses and retains
+the exposed sloped end of hip roofs at shared block seams. Forward upper-story
+sections retain their exposed side returns.
+
+The bounded comparison and prompt-trial findings are recorded in
+[the evaluation report](../reports/2026-09-22-house-photo-general-evaluation.md).
+Production prompts and Flash-only routing remain unchanged: the trial did not
+establish a reliable accuracy improvement or a sound default switch to Flash-Lite.
 
 ## Gable bounds correction (2.499.137)
 

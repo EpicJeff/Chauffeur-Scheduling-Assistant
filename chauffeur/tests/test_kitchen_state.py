@@ -211,30 +211,21 @@ def scenario_mixed_timezone_stamps_do_not_blank_the_day():
 
 
 def scenario_window_reads_the_sky_and_degrades():
+    from unittest.mock import patch
     _reset()
     storage.get_cached_schedule = lambda: {}
-    from services import ha_api
-    orig = ha_api.get_weather_forecast
-    try:
-        ha_api.get_weather_forecast = lambda e=None, kind='daily': [
-            {'condition': 'rainy', 'temperature': 64,
-             'precipitation_probability': 80}]
-        st = kitchen.state(since_ts=0)
-        check(st['window']['calm'] is False and st['window']['cond'] == 'rainy'
-              and st['window']['temp'] == 64,
-              "rain outside lights the window")
-        ha_api.get_weather_forecast = lambda e=None, kind='daily': [
-            {'condition': 'sunny', 'temperature': 75,
-             'precipitation_probability': 0}]
-        st = kitchen.state(since_ts=0)
-        check(st['window']['calm'] is True and st['window']['temp'] == 75,
-              "a sunny day is calm but still shows its temperature")
-        ha_api.get_weather_forecast = lambda e=None, kind='daily': (
-            (_ for _ in ()).throw(RuntimeError('no HA')))
-        st = kitchen.state(since_ts=0)
-        check(st['window'].get('calm') is True, "no HA = calm window, never broken")
-    finally:
-        ha_api.get_weather_forecast = orig
+    with patch('services.ha_api.get_entities', return_value=[{'entity_id':'weather.home'}]), \
+         patch('services.home_board.sun_theme', return_value={'theme':'light','next_flip':None}), \
+         patch('services.ha_api.get_weather_forecast', side_effect=AssertionError('no forecast')), \
+         patch('services.ha_api.get_state') as current:
+        current.return_value={'state':'rainy','attributes':{'temperature':64}}
+        st=kitchen.state(since_ts=0)['window']
+        check(not st['calm'] and st['cond']=='rainy' and st['temp']==64, 'current rain')
+        current.return_value={'state':'sunny','attributes':{'temperature':75}}
+        st=kitchen.state(since_ts=0)['window']
+        check(st['calm'] and st['temp']==75, 'current sun')
+        current.side_effect=RuntimeError('no HA')
+        check(kitchen.state(since_ts=0)['window']['calm'], 'HA failure stays calm')
 
 if __name__ == '__main__':
     scenario_all_seven_sections_present_and_calm_on_empty()

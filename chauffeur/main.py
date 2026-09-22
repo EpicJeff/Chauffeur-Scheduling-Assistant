@@ -1735,7 +1735,7 @@ def house_page(request: Request):
         entry = _hf.draft_for(tok) if tok else None
         if entry is not None:
             bundle = {'id': 'draft', 'name': 'Draft', 'spec': entry['spec'],
-                      'slots': _hf.slot_table(entry['spec']['blocks'], entry['spec']['upper'])}
+                      'slots': _hf.slot_table(entry['spec']['blocks'], entry['spec']['upper'], entry['spec'].get('masses'))}
         if bundle is None:
             bundle = _hf.active_bundle()
     except Exception:

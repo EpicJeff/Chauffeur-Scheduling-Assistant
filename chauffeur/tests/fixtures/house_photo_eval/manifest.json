@@ -1,0 +1,143 @@
+{
+  "protocol": "Assistant visual labels fixed before these model trials; not independently human-adjudicated. Labels never included in provider prompts. Existing brick case is development, remaining cases are evaluation references. Bungalow is a difficult oblique holdout: its roof partition is provisional and must be visually adjudicated, not treated as definitive ground truth.",
+  "cases": [
+    {
+      "id": "brick",
+      "image": "docs/superpowers/specs/assets/2026-09-17-photo-brick.jpg",
+      "download_url": null,
+      "source": "Existing non-household repository reference",
+      "sha256": "5cd057ffb3631a99d2b403f3c432dee715b9b9fbd5e0fb9a2bc3558345303e5d",
+      "regions": [
+        {
+          "at": 0,
+          "width": 0.4,
+          "stories": "one",
+          "form": "gable",
+          "ridge": "perpendicular"
+        },
+        {
+          "at": 0.4,
+          "width": 0.32,
+          "stories": "one",
+          "form": "hip",
+          "ridge": "parallel"
+        },
+        {
+          "at": 0.72,
+          "width": 0.28,
+          "stories": "one",
+          "form": "gable",
+          "ridge": "perpendicular"
+        }
+      ],
+      "covered_porch": false,
+      "label_notes": "Central small entry; right window awning is not a porch. Width tolerance .12; attic triangles are not full stories."
+    },
+    {
+      "id": "sheldrew",
+      "image": "scratch/house-eval-2026-09-22/sheldrew.jpg",
+      "download_url": "https://tile.loc.gov/storage-services/service/pnp/habshaer/id/id0000/id0053/photos/059262pv.jpg",
+      "source": "https://www.loc.gov/item/id0053/",
+      "sha256": "ca8418be5715c91971530ba8b23b319a8f420c4672f7cd42efb031c44dd46ce2",
+      "regions": [
+        {
+          "at": 0,
+          "width": 0.33,
+          "stories": "one",
+          "form": "gable",
+          "ridge": "perpendicular"
+        },
+        {
+          "at": 0.33,
+          "width": 0.34,
+          "stories": "one",
+          "form": "gable",
+          "ridge": "parallel",
+          "score_form": false
+        },
+        {
+          "at": 0.67,
+          "width": 0.33,
+          "stories": "one",
+          "form": "gable",
+          "ridge": "perpendicular"
+        }
+      ],
+      "covered_porch": false,
+      "label_notes": "Two projecting wings, recessed middle. Small door canopy only; courtyard is open."
+    },
+    {
+      "id": "reid",
+      "image": "scratch/house-eval-general/reid.jpg",
+      "download_url": "https://tile.loc.gov/storage-services/service/pnp/habshaer/va/va0900/va0904/photos/165433pv.jpg",
+      "source": "https://www.loc.gov/item/va0904/",
+      "sha256": "771138df0a5de9bb0362203f02fa6e28fb648ab5438c353b74ceabea17aea9cd",
+      "regions": [
+        {
+          "at": 0,
+          "width": 1,
+          "stories": "two",
+          "form": "gable",
+          "ridge": "parallel",
+          "score_form": false
+        }
+      ],
+      "covered_porch": false,
+      "label_notes": "Two full front wall stories. Small entry porch roughly .2 of facade, no broad cover. Parapets/chimneys are unsupported; foliage obscures far left. Side wall is not another front region."
+    },
+    {
+      "id": "hood",
+      "image": "scratch/house-eval-general/hood-elevation.jpg",
+      "download_url": "https://tile.loc.gov/storage-services/service/pnp/habshaer/al/al0200/al0259/photos/003096pv.jpg",
+      "source": "https://www.loc.gov/item/al0259/",
+      "sha256": "6f79b17d8a38d175a7bd1195bc409af5734316b780dd3d0f2badeb9f259f1fe0",
+      "regions": [
+        {
+          "at": 0,
+          "width": 0.34,
+          "stories": "one",
+          "form": "gable",
+          "ridge": "parallel"
+        },
+        {
+          "at": 0.34,
+          "width": 0.52,
+          "stories": "two",
+          "form": "gable",
+          "ridge": "parallel"
+        },
+        {
+          "at": 0.86,
+          "width": 0.14,
+          "stories": "one",
+          "form": "gable",
+          "ridge": "parallel",
+          "score_roof": false
+        }
+      ],
+      "covered_porch": false,
+      "label_notes": "Mixed full wall stories; front runs from left-wing front corner to right-wing front end. Exclude left side-facing gable/porch. Strong perspective: .15 boundary tolerance. Ridge of partly obscured right wing less certain. Reinspection: entrance and rows of windows establish the long front wall; triangular masonry ends and chimney stacks are on the left SIDE. Far-right wing roof is excluded from scoring because foliage obscures it."
+    },
+    {
+      "id": "bungalow",
+      "image": "scratch/house-eval-2026-09-22/bungalow.jpg",
+      "download_url": "https://cdn4.picryl.com/photo/1900/01/01/typical-california-bungalow-1024.jpg",
+      "source": "https://loc.getarchive.net/media/typical-california-bungalow",
+      "sha256": "88e2f1167ba7bbc7af2dcd5ced812c669154bb0269605e7a4849fc81c90b9815",
+      "regions": [
+        {
+          "at": 0,
+          "width": 1,
+          "stories": "one",
+          "form": "gable",
+          "ridge": "perpendicular",
+          "score_roof": false
+        }
+      ],
+      "covered_porch": true,
+      "label_notes": "Held out from first comparison: one-story front-gable bungalow, attic opening is not a second wall story; recessed right porch covers roughly .35-.5. Strong perspective and foliage limit exact widths. Main gable continues behind porch; no separate full second story. Reinspection: one wall story and covered entry are visible; exact roof partition/front-plane extent is ambiguous. Roof and mass-count labels are provisional and excluded from automatic scoring.",
+      "score_massing": false
+    }
+  ],
+  "label_revision": "2026-09-22 front-plane adjudication; second assistant visual inspection, not independent human review; historical result snapshots remain unchanged."
+}

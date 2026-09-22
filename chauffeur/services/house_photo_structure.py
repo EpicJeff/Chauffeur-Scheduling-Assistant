@@ -92,7 +92,7 @@ def as_analysis(structure):
 
 
 def compile_structure(structure):
-    spec, notes, trace = compile_analysis(as_analysis(structure))
+    spec, notes, trace = compile_analysis(as_analysis(structure), preserve_masses=True)
     # Entry is architectural evidence, never inferred from the detail inventory.
     spec['blocks']['garage']['orientation'] = 'front' if structure['garage_entry'] == 'front' else 'side'
     notes = [n for n in notes if 'colour unknown' not in n and 'canonical one' not in n]
@@ -109,6 +109,7 @@ def geometry(spec):
             'blocks': {k: {f: copy.deepcopy(v[f]) for f in ('depth', 'orientation') if f in v} |
                        {'roof': roof(v['roof'])} for k, v in spec['blocks'].items()},
             'upper': [{**u, 'roof': roof(u['roof'])} for u in spec['upper']],
+            'masses': [{**m, 'roof': roof(m['roof'])} for m in spec.get('masses', [])],
             'roof': [roof(r) for r in spec['roof']],
             'porches': [copy.deepcopy(g) for g in spec['ground'] if g['kind'] == 'porch']}
 
@@ -151,7 +152,7 @@ def apply_details(structure, locked, details):
     a['garage_side'] = 'right' if locked['mirror'] else 'left'
     if structure['garage_entry'] != 'front' and isinstance(a['openings'], list):
         a['openings'] = [o for o in a['openings'] if not isinstance(o, dict) or o.get('kind') != 'garage_door']
-    revised, notes, trace = compile_analysis(a)
+    revised, notes, trace = compile_analysis(a, preserve_masses=True)
     trace['detail_ownership_adjustments'] = adjustments
     revised['blocks']['garage']['orientation'] = locked['blocks']['garage']['orientation']
     if geometry(revised) != geometry(locked):

@@ -168,25 +168,32 @@ def _radio() -> dict:
 
 
 def _window() -> dict:
-    """The weather outside the glass. HA-degrades-gracefully: any problem —
-    no HA, no weather entity, a changed forecast shape — is a calm window,
-    never a broken one. calm=False only when the sky needs attention (rain/
-    snow likely), matching attention-only furniture."""
-    from services import ha_api
-    fc = ha_api.get_weather_forecast(None) or []
-    if not fc:
-        return _calm(cond='', temp=None, precip=0)
-    f0 = fc[0] or {}
-    cond = str(f0.get('condition') or '').lower()
-    temp = f0.get('temperature')
+    """Current outdoor conditions and the theme's HA sun clock, without UI offsets."""
+    from services import ha_api, home_board
+    result = _calm(cond='', temp=None, precip=0, night=True, next_sun_change=None)
     try:
-        precip = int(f0.get('precipitation_probability') or 0)
-    except (TypeError, ValueError):
-        precip = 0
-    wet = cond in ('rainy', 'pouring', 'lightning', 'lightning-rainy', 'hail',
-                   'snowy', 'snowy-rainy') or precip >= 40
-    return {'calm': (not wet), 'cond': cond or 'unknown',
-            'temp': temp, 'precip': precip}
+        sun = home_board.sun_theme({})  # physical sunrise/sunset, not theme preferences
+        result['night'] = sun['theme'] == 'dark'
+        result['next_sun_change'] = sun['next_flip']
+    except Exception:
+        logger.debug('House sun unavailable', exc_info=True)
+    try:
+        settings = storage.get_settings() or {}
+        entity = (settings.get('weather_entity') or '').strip()
+        if not entity:
+            entities = ha_api.get_entities('weather') or []
+            entity = entities[0].get('entity_id') if entities else None
+        current = (ha_api.get_state(entity) or {}) if entity else {}
+        cond = str(current.get('state') or '').lower()
+        if cond in ('', 'unknown', 'unavailable'):
+            return result
+        attrs = current.get('attributes') or {}
+        wet = cond in ('rainy', 'pouring', 'lightning', 'lightning-rainy',
+                       'hail', 'snowy', 'snowy-rainy')
+        result = {**result, 'calm':not wet, 'cond':cond, 'temp':attrs.get('temperature')}
+    except Exception:
+        logger.debug('House current weather unavailable', exc_info=True)
+    return result
 
 
 def _pet() -> dict:

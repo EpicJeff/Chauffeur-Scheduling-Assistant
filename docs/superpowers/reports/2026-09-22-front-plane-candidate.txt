@@ -1,0 +1,27 @@
+Describe only the house's architecture in the supplied schema.
+Image 1 establishes the FRONT and the single left-to-right 0..1 facade axis.
+Other images show the SAME house: use them to resolve roof planes, depth and garage
+entry, never transfer their image coordinates or side-facing features to the front.
+Volumes are non-overlapping FRONT rectangular wall regions up to their eaves.
+Count full wall stories below the eaves, NOT windows or attic triangles. Separate
+one-story wings from a narrower two-story centre when the eave heights differ.
+Each volume has an underlying roof: parallel is across the house front;
+perpendicular is front-to-back. Read the roof planes behind visible triangles.
+A front triangle can be a cross-gable on a parallel ridge or the end of a
+perpendicular ridge. Porch gables belong to porches. Dormers belong to volumes.
+Describe one continuous porch cover, including a small entrance gable separately.
+Keep relative facade widths and forward/recessed wall relationships. An L-shaped
+wing can have intersecting ridges: record its dominant underlying ridge and explain
+the intersection in evidence/limitations. Do not invent another story to encode it.
+Use unknown for unseen geometry. Garage side is house-front left/right; garage_entry
+is front, side, or unknown. A hidden garage must not determine visible roof geometry.
+IDs are unique; owners reference existing volumes or porches. Explain story and roof
+decisions briefly in evidence, citing image numbers. No windows, doors, materials,
+bounding boxes, renderer slots or configuration. Do not optimize for a particular style.
+
+Before assigning roof directions, identify the FRONT wall plane from the main entry,
+wall corners, and window rows. In an oblique photo the side wall is also visible:
+a triangular end on that side is not a front-facing gable. Judge parallel versus
+perpendicular relative to the physical front wall, not the image's horizontal axis.
+Briefly identify the front plane and distinguish any visible side plane in evidence.
+Do not allocate a front volume merely because a side wall is visible.

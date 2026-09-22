@@ -12,6 +12,7 @@ const roof = {form:'gable', ridge:'x', pitch_deg:22.5};
 editor.facadeDraft = {
   blocks:{main:{roof},garage:{roof}},
   upper:[{slot:9,span:4,roof}],
+  masses:[{slot:6,span:7,depth:0,roof},{slot:13,span:5,depth:1.5,roof}],
   ground:[{slot:9,span:4,kind:'window',size:'standard',story:1},
           {slot:9,span:4,kind:'porch',type:'covered',roof:'gable'}],
   roof:[{slot:9,span:4,kind:'shed',window:false}]
@@ -26,6 +27,7 @@ assert.deepEqual(editor.facadeDraft,before,'selection alone changes no layer');
 editor.facadeCell.ground.size = 'small';
 editor.facadeCellApply();
 assert.deepEqual(editor.facadeDraft.upper,before.upper,'ground edits preserve upper anchor');
+assert.deepEqual(editor.facadeDraft.masses,before.masses,'ground edits preserve ground masses');
 assert.deepEqual(editor.facadeDraft.roof,before.roof,'ground edits preserve roof span');
 assert.deepEqual(editor.facadeDraft.ground.filter(e=>e.kind==='porch'),before.ground.filter(e=>e.kind==='porch'));
 assert.deepEqual(editor.facadeDraft.ground.filter(e=>e.kind==='window').map(e=>[e.slot,e.span,e.size]),

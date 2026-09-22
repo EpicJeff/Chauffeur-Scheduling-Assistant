@@ -140,7 +140,7 @@ def block_face(name):
     return FACE_OF_BLOCK.get(name)
 
 
-def slot_table(blocks=None, upper=None):
+def slot_table(blocks=None, upper=None, masses=None):
     """Slots per street face. Blocks move faces; upper spans raise eaves."""
     blocks = blocks or CANONICAL['blocks']
     upper = CANONICAL.get('upper', []) if upper is None else upper
@@ -159,8 +159,10 @@ def slot_table(blocks=None, upper=None):
         w = width / n
         for k in range(n):
             x0 = f['x0'] + k * w
+            mass = next((m for m in (masses or []) if m['slot'] <= i < m['slot'] + m['span']), None)
+            face_z = f['z'] + mass['depth'] if mass else z
             out.append({'i': i, 'face': f['face'], 'x0': round(x0, 6), 'x1': round(x0 + w, 6),
-                        'cx': round(x0 + w / 2, 6), 'z': round(z, 6),
+                        'cx': round(x0 + w / 2, 6), 'z': round(face_z, 6),
                         'eave': f['eave'] * (2 if i in upper_slots else 1),
                         'room': f['room'], 'roof': f['roof']})
             i += 1
@@ -328,6 +330,33 @@ def validate_block_model(obj, *, _range_notes=None):
                 errs.append(f'{path}.story must be 1 or 2')
             if start is not None and count is not None and not (0 <= start < len(slot_table()) and 1 <= count <= len(slot_table()) - start):
                 errs.append(f'{path} outside elevation')
+    if 'masses' in obj:
+        masses = need(obj, 'masses', list, 'house')
+        taken = set()
+        for i, mass in enumerate(masses or []):
+            path = f'masses[{i}]'
+            if not isinstance(mass, dict):
+                errs.append(path + ' not an object'); continue
+            start = need(mass, 'slot', int, path)
+            count = need(mass, 'span', int, path)
+            rng(mass, 'depth', 0, DEPTH_MAX, path)
+            garage = blocks.get('garage') if blocks else None
+            if type(start) is int and start < 6 and isinstance(garage, dict) and mass.get('depth') != garage.get('depth'):
+                errs.append(path + ' garage mass must retain the fixed bay depth')
+            roof = need(mass, 'roof', dict, path)
+            if roof is not None:
+                enum(roof, 'form', ROOF_FORMS, path + '.roof')
+                enum(roof, 'ridge', RIDGES, path + '.roof')
+                rng(roof, 'pitch_deg', PITCH_MIN, PITCH_MAX, path + '.roof')
+                if 'window' in roof:
+                    need(roof, 'window', bool, path + '.roof')
+            if start is not None and count is not None:
+                if not (0 <= start < 18 and 1 <= count <= (6 if start < 6 else 18) - start):
+                    errs.append(path + ' outside its face')
+                cells = set(range(start, start + max(0, min(count, 18))))
+                if cells & taken:
+                    errs.append(path + ' overlaps another mass')
+                taken.update(cells)
     upper = need(obj, 'upper', list, 'house')
     if upper is not None:
         slots = slot_table()
@@ -639,6 +668,35 @@ def _upper_entries(raw_upper, blocks, notes):
     return _resolve_upper_spans(shaped, notes)
 
 
+def _mass_entries(raw, blocks, notes):
+    """Optional ground footprints; absent on legacy facades. First span owns a cell."""
+    result, taken = [], set()
+    for row in raw if isinstance(raw, list) else []:
+        if not isinstance(row, dict):
+            continue
+        for piece in _upper_entries([row], blocks, notes):
+            block = 'garage' if piece['slot'] < 6 else 'main'
+            depth = round(min(DEPTH_MAX, max(blocks[block]['depth'],
+                        _num(row.get('depth'), blocks[block]['depth']))), 2)
+            if block == 'garage':
+                if depth != blocks[block]['depth']:
+                    notes.append('garage ground mass depth retained at fixed bay depth')
+                depth = blocks[block]['depth']
+            cells = range(piece['slot'], piece['slot'] + piece['span'])
+            free = [i for i in cells if i not in taken]
+            if len(free) != piece['span']:
+                notes.append('ground mass overlap trimmed to earlier footprint')
+            last = None
+            for cell in free:
+                if last is not None and last['slot'] + last['span'] == cell:
+                    last['span'] += 1
+                else:
+                    last = dict(slot=cell, span=1, depth=depth, roof=copy.deepcopy(piece['roof']))
+                    result.append(last)
+                taken.add(cell)
+    return sorted(result, key=lambda row: row['slot'])
+
+
 def _finish_fields(raw):
     if not isinstance(raw, dict):
         return {}
@@ -725,6 +783,9 @@ def normalize(raw):
                 raw_upper.append({'slot': lo, 'span': hi - lo + 1,
                                   'roof': copy.deepcopy(spec['blocks'][block]['roof'])})
     spec['upper'] = _upper_entries(raw_upper, spec['blocks'], notes)
+    masses = _mass_entries(raw.get('masses'), spec['blocks'], notes)
+    if masses:
+        spec['masses'] = masses
     _normalize_finishes(raw, spec, notes)
     st = raw.get('style') if isinstance(raw.get('style'), dict) else {}
     spec['style'] = {k: _pick(st.get(k), allowed, CANONICAL['style'][k])
@@ -732,7 +793,7 @@ def normalize(raw):
 
     ground = _entries(raw.get('ground'), GROUND_KINDS, notes, 'ground')
     roof = _entries(raw.get('roof'), ROOF_KINDS, notes, 'roof')
-    slots = slot_table(spec['blocks'], spec['upper'])
+    slots = slot_table(spec['blocks'], spec['upper'], spec.get('masses'))
 
     # pin openings to their room's face (spec 4.4)
     g_lo, g_hi = GARAGE_BAY_SLOTS
@@ -775,21 +836,54 @@ def normalize(raw):
             continue
         kept.append(g)
     ground = kept
+    # A feature cannot lie on two different front planes. Preserve porch coverage
+    # by splitting it; openings remain single assemblies on their starting mass.
+    if masses:
+        split_ground = []
+        boundaries = sorted({m['slot'] for m in masses} | {m['slot'] + m['span'] for m in masses})
+        for g in ground:
+            end = g['slot'] + g['span']
+            edges = [g['slot']] + [b for b in boundaries if g['slot'] < b < end] + [end]
+            if len(edges) == 2:
+                split_ground.append(g); continue
+            if g['kind'] != 'porch':
+                g['span'] = edges[1] - edges[0]
+                split_ground.append(g)
+                notes.append('opening clipped at ground mass boundary')
+                continue
+            for start, stop in zip(edges, edges[1:]):
+                piece = copy.deepcopy(g)
+                piece.update(slot=start, span=stop-start)
+                if g.get('roof') == 'mixed':
+                    gs = g['slot'] + g.get('gable_offset', 0)
+                    ge = gs + g.get('gable_span', 2)
+                    if max(start, gs) < min(stop, ge):
+                        piece.update(gable_offset=max(start, gs)-start, gable_span=min(stop, ge)-max(start, gs))
+                    else:
+                        piece['roof'] = 'shed'
+                        piece.pop('gable_offset', None); piece.pop('gable_span', None)
+                split_ground.append(piece)
+            notes.append('porch coverage split at ground mass boundary')
+        ground = split_ground
     for r in roof:
         _clip_to_face(r, notes, roof=True)
         end = r['slot'] + r['span']
-        boundaries = sorted({u['slot'] for u in spec['upper']} |
-                            {u['slot'] + u['span'] for u in spec['upper']})
+        regions = spec['upper'] + spec.get('masses', [])
+        boundaries = sorted({u['slot'] for u in regions} |
+                            {u['slot'] + u['span'] for u in regions})
         seam = next((edge for edge in boundaries if r['slot'] < edge < end), None)
         if seam is not None:
             r['span'] = seam - r['slot']
-            notes.append(f"trimmed a {r['kind']} at slot {r['slot']} at an upper-story seam")
+            label = 'ground-mass' if masses else 'upper-story'
+            notes.append(f"trimmed a {r['kind']} at slot {r['slot']} at a {label} seam")
 
     # A full-width gable end already belongs to its volume's roof. Keep
     # its opening on that roof instead of constructing a second cross-gable.
     kept = []
     for r in roof:
         owner = next((u for u in spec['upper'] if u['slot'] <= r['slot'] < u['slot'] + u['span']), None)
+        if owner is None:
+            owner = next((m for m in masses if m['slot'] <= r['slot'] < m['slot'] + m['span']), None)
         if owner is None:
             face = slots[r['slot']]['face']
             lo, hi = _face_range(face)
@@ -855,6 +949,15 @@ def normalize(raw):
         if spec['blocks'][bname]['depth'] > DEPTH_MAX_WITH_PORCH:
             spec['blocks'][bname]['depth'] = DEPTH_MAX_WITH_PORCH
             notes.append(f'{bname} depth clamped to {DEPTH_MAX_WITH_PORCH}: its porch must stay behind the curb')
+        for mass in masses:
+            if (mass['slot'] < pch['slot'] + pch['span'] and pch['slot'] < mass['slot'] + mass['span']
+                    and mass['depth'] > DEPTH_MAX_WITH_PORCH):
+                mass['depth'] = DEPTH_MAX_WITH_PORCH
+                notes.append('ground mass depth clamped: porch must stay behind the curb')
+    # The garage bay moves as one enclosing wall, including after a porch clamp.
+    for mass in masses:
+        if mass['slot'] < 6:
+            mass['depth'] = spec['blocks']['garage']['depth']
 
     # budget caps, east-most first (spec 4.7)
     def cap(items, kind, limit, extra=0):
@@ -1711,7 +1814,7 @@ def active_bundle():
     if rec is None:
         spec = copy.deepcopy(CANONICAL)
         return {'id': CANONICAL_ID, 'name': 'Canonical', 'spec': spec,
-                'slots': slot_table(spec['blocks'], spec['upper'])}
+                'slots': slot_table(spec['blocks'], spec['upper'], spec.get('masses'))}
     spec, _ = normalize(rec.get('spec'))
     # MASSING ARC 2 task 10: every bundle's slots follow ITS OWN blocks. A
     # deeper or two-storey block moves its face's z and raises its eave, and
@@ -1719,7 +1822,7 @@ def active_bundle():
     # canonical table under a non-canonical spec put every window on the
     # wrong plane.
     return {'id': rec['id'], 'name': rec.get('name') or 'Saved facade', 'spec': spec,
-            'slots': slot_table(spec['blocks'], spec['upper'])}
+            'slots': slot_table(spec['blocks'], spec['upper'], spec.get('masses'))}
 
 
 # --- drafts (spec 2026-09-17 section 4: token lifecycle) ---

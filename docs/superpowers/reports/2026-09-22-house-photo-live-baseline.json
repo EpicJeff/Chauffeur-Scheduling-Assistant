@@ -1,0 +1,217 @@
+{
+  "date": "2026-09-22",
+  "status": "partial; structural review unavailable (503), no details attempted",
+  "model": "gemini-2.5-flash",
+  "reference": "docs/superpowers/specs/assets/2026-09-17-photo-brick.jpg",
+  "photo_sha256": "5cd057ffb3631a99d2b403f3c432dee715b9b9fbd5e0fb9a2bc3558345303e5d",
+  "labels": {
+    "id": "brick",
+    "path": "docs/superpowers/specs/assets/2026-09-17-photo-brick.jpg",
+    "source": "existing repository reference, not fresh holdout",
+    "stories": "one throughout; attic triangle does not add story",
+    "roof": "central hip with lateral ridge; left and right front gabled projections run front-to-back",
+    "massing": "left garage roughly .40, centre roughly .32, right wing roughly .28; garage and right wing forward",
+    "porch": "small central entry only, no broad porch"
+  },
+  "raw_analysis": {
+    "viewpoint": "centre",
+    "garage_side": "left",
+    "volumes": [
+      {
+        "id": "volume_1",
+        "at": 0.0,
+        "width": 0.38,
+        "stories": "one",
+        "projection": "flush",
+        "roof": {
+          "form": "gable",
+          "ridge": "perpendicular",
+          "pitch": "medium",
+          "evidence": "Gable end visible on the left in image 1. The ridge runs perpendicular to the facade."
+        },
+        "evidence": "One story wall below the eaves, visible in image 1. This volume contains the garage."
+      },
+      {
+        "id": "volume_2",
+        "at": 0.38,
+        "width": 0.32,
+        "stories": "one",
+        "projection": "recessed",
+        "roof": {
+          "form": "hip",
+          "ridge": "parallel",
+          "pitch": "medium",
+          "evidence": "The main roof behind the gables appears to be a hip roof, with the ridge running parallel to the facade, visible in image 1."
+        },
+        "evidence": "One story wall below the eaves, visible in image 1. This central volume is set back from the adjacent volumes."
+      },
+      {
+        "id": "volume_3",
+        "at": 0.7,
+        "width": 0.3,
+        "stories": "one",
+        "projection": "forward",
+        "roof": {
+          "form": "gable",
+          "ridge": "perpendicular",
+          "pitch": "medium",
+          "evidence": "Gable end visible on the right in image 1. The ridge runs perpendicular to the facade."
+        },
+        "evidence": "One story wall below the eaves, visible in image 1. This volume projects forward from the central volume."
+      }
+    ],
+    "porches": [
+      {
+        "id": "porch_1",
+        "owner": "volume_2",
+        "at": 0.5,
+        "width": 0.1,
+        "roof": "open"
+      },
+      {
+        "id": "porch_2",
+        "owner": "volume_3",
+        "at": 0.75,
+        "width": 0.2,
+        "roof": "shed"
+      }
+    ],
+    "gables": [
+      {
+        "id": "gable_1",
+        "owner": "volume_1",
+        "at": 0.19,
+        "width": 0.38,
+        "kind": "end",
+        "evidence": "This is the end gable of volume 1, facing the front, visible in image 1."
+      },
+      {
+        "id": "gable_2",
+        "owner": "volume_2",
+        "at": 0.5,
+        "width": 0.15,
+        "kind": "cross",
+        "evidence": "This is a cross-gable projecting from the main roof of volume 2, visible in image 1."
+      },
+      {
+        "id": "gable_3",
+        "owner": "volume_3",
+        "at": 0.85,
+        "width": 0.3,
+        "kind": "end",
+        "evidence": "This is the end gable of volume 3, facing the front, visible in image 1."
+      }
+    ],
+    "dormers": [],
+    "limitations": [],
+    "schema_version": 3,
+    "garage_entry": "front",
+    "_model": "gemini-2.5-flash"
+  },
+  "compiled_spec": {
+    "version": 3,
+    "mirror": false,
+    "pitch_deg": 30.0,
+    "blocks": {
+      "main": {
+        "depth": 0.0,
+        "roof": {
+          "form": "hip",
+          "ridge": "x",
+          "pitch_deg": 30.0
+        },
+        "cladding": "batten",
+        "base": null,
+        "body": "white"
+      },
+      "garage": {
+        "depth": 0.0,
+        "roof": {
+          "form": "gable",
+          "ridge": "z",
+          "pitch_deg": 30.0
+        },
+        "cladding": "batten",
+        "base": null,
+        "body": "white",
+        "orientation": "front"
+      }
+    },
+    "upper": [],
+    "style": {
+      "roof": "charcoal",
+      "frame": "black",
+      "door": "wood",
+      "trim": "white"
+    },
+    "ground": [
+      {
+        "slot": 1,
+        "span": 1,
+        "kind": "window",
+        "size": "standard",
+        "shutters": false,
+        "story": 1
+      },
+      {
+        "slot": 8,
+        "span": 2,
+        "kind": "porch",
+        "type": "stoop",
+        "roof": "flat"
+      },
+      {
+        "slot": 10,
+        "span": 1,
+        "kind": "door"
+      },
+      {
+        "slot": 13,
+        "span": 4,
+        "kind": "porch",
+        "type": "covered",
+        "roof": "shed"
+      }
+    ],
+    "roof": [
+      {
+        "slot": 8,
+        "span": 3,
+        "kind": "gable"
+      }
+    ],
+    "unexpressed": [
+      "gable_1: approximate gable bounds fitted to declared owner volume_1.",
+      "gable_3: approximate gable bounds fitted to declared owner volume_3.",
+      "Facade proportions fitted to the fixed block boundary at an observed wall-volume",
+      "volume_2: absolute depth is not observable; using default depth.",
+      "volume_3: differing ground roof within main cannot be represented independently.",
+      "porch_1: open porch roof uses the default renderer cover; review required.",
+      "Structure preview; windows and materials are added after the roof and story revi"
+    ]
+  },
+  "compiler_notes": [
+    "gable_1: approximate gable bounds fitted to declared owner volume_1.",
+    "gable_3: approximate gable bounds fitted to declared owner volume_3.",
+    "Facade proportions fitted to the fixed block boundary at an observed wall-volume seam.",
+    "volume_2: absolute depth is not observable; using default depth.",
+    "volume_3: differing ground roof within main cannot be represented independently.",
+    "porch_1: open porch roof uses the default renderer cover; review required.",
+    "Structure preview; windows and materials are added after the roof and story review.",
+    "1 model request(s): gemini-2.5-flash this upload; 1 cumulative across actions."
+  ],
+  "deterministic_initial": true,
+  "requests": {
+    "invalid_local_credential": 1,
+    "gemini-3.5-flash_503": 2,
+    "gemini-2.5-flash_structure_success": 1,
+    "gemini-2.5-flash_review_503": 1,
+    "gemini-2.5-flash_other_structure_503": 1
+  },
+  "flash_lite_followup": {
+    "model": "gemini-3.1-flash-lite",
+    "requests": 1,
+    "outcome": "503; no structure output",
+    "seconds": 4.11
+  }
+}

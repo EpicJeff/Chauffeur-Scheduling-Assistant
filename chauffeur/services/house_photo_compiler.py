@@ -290,7 +290,7 @@ def prepare_analysis(value):
     return a,notes
 
 
-def compile_analysis(analysis):
+def compile_analysis(analysis, *, preserve_masses=False):
     """Return spec, notes, provenance; identical analysis always yields identical output."""
     from services import house_facade as h
     a,adjustments=prepare_analysis(analysis)
@@ -357,8 +357,29 @@ def compile_analysis(analysis):
         if dominant['projection'] in ('recessed','unknown'):notes.append(dominant['id']+': absolute depth is not observable; using default depth.')
         for v in ranked[1:]:
             start,end=interval(v,mirror)
-            if max(start,lo)<min(end,hi) and v['stories']!='two' and roof_of(v)!=spec['blocks'][name]['roof']:
+            if not preserve_masses and max(start,lo)<min(end,hi) and v['stories']!='two' and roof_of(v)!=spec['blocks'][name]['roof']:
                 notes.append(v['id']+': differing ground roof within '+name+' cannot be represented independently.')
+    if preserve_masses:
+        masses=[]
+        for name,lo,hi in [('garage',0,6),('main',6,18)]:
+            owners=[v for v in a['volumes'] if any(s<hi and e>lo for s,e in parts(v))]
+            if len(owners)<2:
+                continue
+            # Preserve observed regions without letting details choose topology.
+            # Depth remains a qualitative, bounded approximation, not a measurement.
+            depths={v['id']:{'recessed':0.,'flush':.75,'forward':1.5,'unknown':.75}[v['projection']] for v in owners}
+            if name=='garage':
+                depths={v['id']:spec['blocks'][name]['depth'] for v in owners}
+                notes.append('Garage-side wall regions retain the fixed bay depth; independent garage-side setbacks are not supported.')
+            base=min(depths.values())
+            spec['blocks'][name]['depth']=base
+            for v in sorted(owners,key=lambda v:(interval(v,mirror)[0],v['id'])):
+                for start,end in parts(v):
+                    if lo<=start<hi:
+                        masses.append({'slot':start,'span':end-start,'depth':depths[v['id']],'roof':roof_of(v)})
+            notes.append(name+': distinct wall masses retained; relative depths use qualitative offsets, not measured distances.')
+        if masses:
+            spec['masses']=masses
     spec['pitch_deg']=spec['blocks']['main']['roof']['pitch_deg']
     for name,lo,hi in [('garage',0,6),('main',6,18)]:
         ground_finishes=[f for f in a['finishes'] if f['story']=='ground' and
@@ -402,7 +423,7 @@ def compile_analysis(analysis):
         if g['kind']=='cross':
             spec['roof'].append({'slot':start,'span':end-start,'kind':'gable','window':bool(attic)})
         elif attic:
-            parent=next((u['roof'] for u in spec['upper'] if u['slot']<=start<u['slot']+u['span']),spec['blocks']['garage' if start<6 else 'main']['roof'])
+            parent=next((u['roof'] for u in spec['upper']+spec.get('masses',[]) if u['slot']<=start<u['slot']+u['span']),spec['blocks']['garage' if start<6 else 'main']['roof'])
             if parent['ridge']=='z' and parent['form']=='gable':parent['window']=True
             else:notes.append(g['id']+': end-gable window conflicts with the underlying roof; omitted.')
         mapping.append({'id':g['id'],'kind':'gable','owner':g['owner'],'slot':start,'span':end-start})
@@ -468,5 +489,5 @@ def compile_analysis(analysis):
     if errors:raise ValueError('Compiled house failed validation: '+'; '.join(errors[:6]))
     # Capture normalization losses explicitly; never claim the analysis was reproduced exactly.
     spec['unexpressed']=[n[:h.UNEXPRESSED_LEN] for n in notes[:h.UNEXPRESSED_MAX]]
-    return spec,notes,{'compiler_version':4,'face_projection':projection,'prepared_analysis':copy.deepcopy(a),'analysis_adjustments':adjustments,'block_seam':seams[mirror],'mirror_scores':{'normal':score(False),'mirrored':score(True)},
+    return spec,notes,{'compiler_version':5 if preserve_masses else 4,'face_projection':projection,'prepared_analysis':copy.deepcopy(a),'analysis_adjustments':adjustments,'block_seam':seams[mirror],'mirror_scores':{'normal':score(False),'mirrored':score(True)},
                        'mapping':mapping,'before_normalization':before,'normalization_notes':normalization}

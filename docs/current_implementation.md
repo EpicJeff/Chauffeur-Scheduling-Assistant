@@ -12,7 +12,20 @@ Reduce the coordination work required to run a family. Chauffeur should understa
 
 The 3D house is the shared spatial interface. Rooms and real-world objects provide stable context for features. The house should also reflect the family's own life through carefully quality-gated, personalized objects and spaces.
 
-## Latest architecture change (2026-09-22, v2.499.152)
+## Latest architecture change (2026-09-22, v2.499.153)
+
+Photo compilation preserves separate ground masses, roof directions and main-house
+projections through preview, editing and the detail geometry lock. Shared hip ends
+and stepped upper side walls close correctly. Bounded public-reference trials remain
+inconclusive for prompt/model promotion; production prompts and Flash routing stay.
+
+The outdoor scene uses current HA weather and actual sun transitions from the existing
+theme resolver, without theme timing offsets. Rain/snow/fog effects have fixed buffers,
+quality limits and reduced-motion support, and stop indoors or when hidden. Saved
+facades are unchanged. Contracts and evidence are in the dated photo/weather specs
+and evaluation reports.
+
+## Previous architecture change (2026-09-22, v2.499.152)
 
 Neighbors intersecting sight lines to the active house now render at 20% of their
 original opacity. Bounds include actual transformed roofs and walls; elevated

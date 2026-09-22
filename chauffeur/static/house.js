@@ -12,7 +12,7 @@
  * RENDER ON DEMAND. No perpetual RAF loop. The scene draws a frame when
  * state changes, while a camera tween runs, or while an HONEST animation is
  * active (pot steam only when dinner is planned; the radio needle only while
- * music actually plays). Because frames are rare, each one can be expensive:
+ * music actually plays; outdoor precipitation while visible). Because frames are rare, each one can be expensive:
  * the high tier runs real soft shadow maps, physically-based materials,
  * rounded-edge geometry and filmic tone mapping without costing an idle
  * panel anything.
@@ -45,6 +45,7 @@
   var VISIT_KEY = 'chf_kitchen_last_visit';
   var QUALITY_KEY = 'chf_kitchen_quality2';  // v2: the v1 benchmark measured shader-compile and demoted everyone
   var POLL_MS = 60000;
+  var WEATHER_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)');
   var TIERS = ['high', 'medium', 'low', '2d'];
 
   /* ---- quality tier: stored, overridable, benchmarked ------------------ */
@@ -587,8 +588,10 @@
       try {
         if (new URLSearchParams(location.search).get('day') === '1') return false;
       } catch (e) {}
-      var h = new Date().getHours();
-      return h < 7 || h >= 19;
+      var outside = state && state.window;
+      if (!outside || typeof outside.night !== 'boolean') return true;
+      var flip = Date.parse(outside.next_sun_change || '');
+      return Number.isFinite(flip) && Date.now() >= flip ? !outside.night : outside.night;
     }
     var SKY_C = 0xcbdcf2, GND_C = 0x9a8b74, SUN_C = 0xfff0d6;
     var HEMI_I = PBR ? 0.34 : (DETAIL >= 2 ? 0.44 : 0.52);
@@ -4133,6 +4136,7 @@
     var SPEC0 = FACADE ? FACADE.spec : CANONICAL_JS;
     var BLOCKS = SPEC0.blocks || CANONICAL_JS.blocks;
     var UPPER = SPEC0.upper || [];
+    var MASSES = SPEC0.masses || [];
     function upperOverlapsX(name, x0, x1) {
       var first = name === 'garage' ? 0 : 6, count = name === 'garage' ? 6 : 12;
       var west = name === 'garage' ? -18.20 : -7.15;
@@ -5693,7 +5697,9 @@
         for (var k = 0; k < n; k++) {
           var x0 = f.x0 + k * w, gi = i++;
           var raised = UPPER.some(function (u) { return gi >= u.slot && gi < u.slot + u.span; });
-          out.push({ i: gi, face: f.face, x0: x0, x1: x0 + w, cx: x0 + w / 2, z: f.z,
+          var mass = MASSES.find(function (m) { return gi >= m.slot && gi < m.slot + m.span; });
+          var dz = mass ? mass.depth - (BLOCKS[BLOCK_OF_FACE[f.face]].depth || 0) : 0;
+          out.push({ i: gi, face: f.face, x0: x0, x1: x0 + w, cx: x0 + w / 2, z: f.z + dz,
                      eave: raised ? 2 * EXT_TOP4 : EXT_TOP4, room: f.room, roof: f.roof });
         }
       });
@@ -5707,25 +5713,28 @@
       var spans = UPPER.filter(function (u) {
         return cells.some(function (s) { return s.i === u.slot; });
       });
-      if (!spans.length) return [{ name: name, block: name, k: 0,
+      var masses = MASSES.filter(function (m) { return cells.some(function (s) { return s.i === m.slot; }); });
+      if (!spans.length && !masses.length) return [{ name: name, block: name, k: 0,
         x0: B.west, x1: B.east, north: B.north, south: B.south,
         eave: EXT_TOP4, roof: { form: ROOF_FORMS[name].form,
           ridge: ROOF_FORMS[name].ridge, window: BLOCKS[name].roof.window, pitch_deg: BLOCKS[name].roof.pitch_deg },
         upper: false, canonical: true }];
       function owner(i) {
-        return spans.find(function (u) { return i >= u.slot && i < u.slot + u.span; }) || null;
+        return { upper: spans.find(function (u) { return i >= u.slot && i < u.slot + u.span; }) || null,
+                 mass: masses.find(function (m) { return i >= m.slot && i < m.slot + m.span; }) || null };
       }
       var runs = [], start = 0, prior = owner(cells[0].i);
       for (var j = 1; j <= cells.length; j++) {
         var next = j < cells.length ? owner(cells[j].i) : null;
-        if (j === cells.length || next !== prior) {
-          var roof = prior ? prior.roof : { form: ROOF_FORMS[name].form,
+        if (j === cells.length || next.upper !== prior.upper || next.mass !== prior.mass) {
+          var region = prior.upper || prior.mass;
+          var roof = region ? region.roof : { form: ROOF_FORMS[name].form,
             ridge: ROOF_FORMS[name].ridge, window: BLOCKS[name].roof.window, pitch_deg: BLOCKS[name].roof.pitch_deg };
           var k = runs.length;
-          runs.push({ name: name + '_' + (prior ? 'u' : 'w') + k, block: name, k: k,
+          runs.push({ name: name + '_' + (prior.upper ? 'u' : 'w') + k, block: name, k: k,
             x0: cells[start].x0, x1: cells[j - 1].x1,
-            north: B.north, south: B.south, eave: prior ? 2 * EXT_TOP4 : EXT_TOP4,
-            roof: roof, upper: !!prior, canonical: false });
+            north: B.north, south: cells[start].z, eave: prior.upper ? 2 * EXT_TOP4 : EXT_TOP4,
+            roof: roof, upper: !!prior.upper, canonical: false });
           start = j; prior = next;
         }
       }
@@ -6792,7 +6801,7 @@
       return a.x0 < b.x0 ? a : b;
     }
     function sameRoofVolume(a, b) {
-      return a.south - a.north === b.south - b.north && a.eave === b.eave &&
+      return a.south === b.south && a.north === b.north && a.eave === b.eave &&
              a.roof.form === b.roof.form && a.roof.ridge === b.roof.ridge &&
              a.roof.pitch_deg === b.roof.pitch_deg;
     }
@@ -6822,7 +6831,8 @@
                active: !!regions, regions: regions || [] };
     });
     function volumeClosureEnds(v) {
-      if (v.roof.ridge !== 'x') return null;
+      // Hip ends are sloped decks, not shared vertical gable closures.
+      if (v.roof.form === 'hip' || v.roof.ridge !== 'x') return null;
       var neighbours = adjacentVolumes(v), signs = [];
       [-1, 1].forEach(function (sign) {
         var edge = sign < 0 ? v.x0 : v.x1;
@@ -6861,7 +6871,12 @@
                  decks: pl.map(function (q) { return { n: q.n, d: q.d }; }) };
       }
       return { main: row('main', FULL_HOUSE, 'main'),
-               garage: row('garage', GARAGE_BLOCK, 'garage_block') };
+               garage: row('garage', GARAGE_BLOCK, 'garage_block'),
+               volumes: ALL_VOLUMES.map(function (v) {
+                 return { name: v.name, block: v.block, x0:v.x0, x1:v.x1,
+                          north:v.north, south:v.south, eave:v.eave, upper:v.upper,
+                          roof:JSON.parse(JSON.stringify(v.roof)) };
+               }) };
     }
 
     /* ---- the two block roofs (spec section 3) -------------------------
@@ -6885,7 +6900,7 @@
        into the room the deck faces, and the study's PIN is not
        something a roof tap may step around. Reads ROOF_FORMS.main, so
        form and ridge stay one parameter. */
-    if (!UPPER.length) {
+    if (!UPPER.length && !MASSES.some(function (m) { return m.slot >= 6; })) {
       shellGable('roof_main', FULL_HOUSE.west, FULL_HOUSE.east,
                  FULL_HOUSE.north, FULL_HOUSE.south, FULL_HOUSE.eave,
                  ROOF_FORMS.main.ridge, null, null, BLOCK_PITCH,
@@ -6981,7 +6996,7 @@
     var mudroomFrontG = shellWall('mudroom_front', -12.60, GARAGE_BLOCK.south,
               GARAGE_BLOCK.east, GARAGE_BLOCK.south, EXT_TOP4,
               [0, 0, 1], [], 'mudroom');
-    if (!UPPER.length) {
+    if (!UPPER.length && !MASSES.some(function (m) { return m.slot < 6; })) {
       shellGable('garage_block_roof', GARAGE_BLOCK.west, GARAGE_BLOCK.east,
                  GARAGE_BLOCK.north, GARAGE_BLOCK.south, GARAGE_BLOCK.eave,
                  ROOF_FORMS.garage.ridge, null, null, blockPitch('garage'),
@@ -7003,7 +7018,7 @@
       var volumePrefix = base === 'roof_main' ? 'main_' : 'garage_';
       var rows = FABRIC.filter(function (f) {
         return f.name.indexOf(base + '_') === 0 ||
-          (UPPER.length && f.name.indexOf(volumePrefix) === 0 && /^(main|garage)_[uw]\d+_roof_/.test(f.name));
+          ((UPPER.length || MASSES.length) && f.name.indexOf(volumePrefix) === 0 && /^(main|garage)_[uw]\d+_roof_/.test(f.name));
       });
       function pick(sel) {
         var best = null;
@@ -7277,6 +7292,30 @@
        block owns it is sharedFaceOwner()'s answer, already given for the
        block-meet clip above -- see the rule written out at the two side
        walls below. */
+    // An observed forward mass extends the street shell, not the rooms behind it.
+    // The old face stays inside the extension, as the existing block-depth void does.
+    function groundProjection(v) {
+      var B = v.block === 'main' ? FULL_HOUSE : GARAGE_BLOCK;
+      if (v.south <= B.south + 1e-6) return;
+      var io = WALL_T4 / 2, front = v.south - io;
+      shellWall(v.name + '_mass_front', v.x0, front, v.x1, front, EXT_TOP4,
+                [0, 0, 1], [], null, v.block);
+      [-1, 1].forEach(function (sign) {
+        var edge = sign < 0 ? v.x0 : v.x1;
+        var neighbour = adjacentVolumes(v).find(function (n) {
+          return Math.abs((sign < 0 ? n.x1 : n.x0) - edge) < 1e-5;
+        });
+        var start = Math.max(B.south - io, neighbour ? neighbour.south - io : B.south - io);
+        if (start >= front - 1e-6) return;
+        shellWall(v.name + '_mass_return_' + sign, edge, start, edge, front, EXT_TOP4,
+                  [sign, 0, 0], [], null, v.block);
+      });
+      var floor = shellGroup();
+      shellBox(floor, v.x1-v.x0, .12, v.south-B.south, FARMHOUSE.stoop,
+               (v.x0+v.x1)/2, -.06, (v.south+B.south)/2);
+      shellRegister(floor, v.name + '_mass_floor', [0,1,0], null);
+    }
+    ALL_VOLUMES.forEach(groundProjection);
     function storyBox(v) {
       if (!v.upper) return;
       var name = v.block, B = name === 'main' ? FULL_HOUSE : GARAGE_BLOCK;
@@ -7284,7 +7323,7 @@
       /* the main block's envelope lines are outer faces, the garage
          block's are wall centres (see the paragraph above) */
       var io = name === 'main' ? WALL_T4 / 2 : 0;
-      var south = B.south - io, north = B.north + io;
+      var south = v.south - io, north = v.north + io;
       var west = B.west + io, east = B.east - io;
       function wall(suffix, x0, z0, x1, z1, normal) {
         var g = shellGroup(), alongX = x0 !== x1;
@@ -7317,12 +7356,23 @@
         var neighbour = adjacentVolumes(v).find(function (n) {
           return Math.abs((sign < 0 ? n.x1 : n.x0) - edge) < 1e-5;
         });
-        if (neighbour && seamOwner(v, neighbour) !== v) return;
+        var x = side === 'west' ? west : east;
+        var normal = side === 'west' ? [-1, 0, 0] : [1, 0, 0];
+        if (neighbour && seamOwner(v, neighbour) !== v) {
+          if (v.south > neighbour.south)
+            wall(side + '_forward', x, neighbour.south, x, south, normal);
+          if (v.north < neighbour.north)
+            wall(side + '_rear', x, north, x, neighbour.north, normal);
+          return;
+        }
         var across = neighbour && neighbour.block !== v.block;
         var both = across && neighbour.upper;
-        var x = side === 'west' ? west : east;
         var z0 = both ? sharedEnd(-1) : north;
         var z1 = both ? sharedEnd(1) : south;
+        if (both && MASSES.length) {
+          z0 = Math.min(north, neighbour.north);
+          z1 = Math.max(south, neighbour.south);
+        }
         wall(side, x, z0, x, z1, side === 'west' ? [-1, 0, 0] : [1, 0, 0]);
       });
     }
@@ -11793,7 +11843,10 @@
       var payload = ['dome', cond, night].join('|');
       return mkTex('skydome', 512, 256, payload, function (g, w, h) {
         var top = '#7cc4f0', bot = '#d8ecf7';
-        if (night) { top = '#1c2748'; bot = '#3a4a78'; }
+        if (night) {
+          var overcast = /cloud|fog|rain|snow|pouring|lightning|hail/.test(cond);
+          top = overcast ? '#252d38' : '#1c2748'; bot = overcast ? '#46515c' : '#3a4a78';
+        }
         else if (cond.indexOf('rain') !== -1 || cond === 'pouring' ||
                  cond.indexOf('lightning') !== -1) { top = '#5b6c7d'; bot = '#8fa0af'; }
         else if (cond.indexOf('snow') !== -1) { top = '#aebfd0'; bot = '#e8eef4'; }
@@ -11802,14 +11855,13 @@
         grad.addColorStop(0, top); grad.addColorStop(0.75, bot);
         grad.addColorStop(1, bot);
         g.fillStyle = grad; g.fillRect(0, 0, w, h);
-        if (night) {
+        if (night && !/cloud|fog|rain|snow|pouring|lightning|hail/.test(cond)) {
           g.fillStyle = 'rgba(255,255,255,0.9)';
           for (var st = 0; st < 40; st++) {
             g.fillRect(((st * 131) % w), ((st * 67) % (h * 0.55)), 3, 3);
           }
         }
-        if (!night && cond.indexOf('cloud') === -1 && cond !== 'fog' &&
-            cond.indexOf('rain') === -1 && cond.indexOf('snow') === -1) {
+        if (!night && !/cloud|fog|rain|snow|pouring|lightning|hail/.test(cond)) {
           g.fillStyle = 'rgba(255,240,200,0.5)';
           g.beginPath(); g.arc(w * 0.68, h * 0.3, 26, 0, 7); g.fill();
         }
@@ -11831,8 +11883,8 @@
     /* ---- NIGHT (plate 1: warm interiors against a cool night) ----------
        The exterior builder left the hooks and this is the pass that lights
        them: every pane carries userData.glazing, the coach lamp carries
-       userData.lamp, and the sky dome already repaints itself at 07:00 and
-       19:00 because skyDomeTex bakes `night` into its cache payload.
+       userData.lamp, and the sky dome already repaints itself at sunrise and
+       sunset because skyDomeTex bakes `night` into its cache payload.
 
        It is a STATE CHANGE, not an animation. applyState is the only caller
        and it already runs on the 60s poll, so the house crosses into
@@ -12268,6 +12320,7 @@
       radioFace: radioFace, fridgeDoorTop: fridgeDoorTop,
       paneMesh: paneMesh, heroTex: heroTex, calendarTex: calendarTex,
       weatherTex: weatherTex, clearPaint: clearPaint,
+      weather: window.HouseWeather.build(T, scene, DETAIL),
       extG: extG, skyDome: skyDome, skyDomeTex: skyDomeTex,
       aimShadow: aimShadow, shadowDirty: shadowDirty,
       setNight: setNight, isNight: isNight,
@@ -12414,6 +12467,7 @@
   function frame(tms) {
     rafLive = false;
     if (!webgl) return;
+    if (document.visibilityState === 'hidden') return;
     var keep = false;
 
     if (tween) {
@@ -12448,6 +12502,7 @@
     }
 
     if (webgl.neighborhood) webgl.neighborhood.update(webgl.cam.position, webgl.EXT_AT, mode === 'exterior');
+    if (webgl.weather.update((tms || 0)/1000, mode === 'exterior', WEATHER_MOTION.matches)) keep = true;
     webgl.R.render(webgl.scene, webgl.cam);
     if (keep) { rafLive = true; requestAnimationFrame(frame); }
   }
@@ -12559,6 +12614,7 @@
 
     /* dusk and dawn ride the same tick the sky dome does */
     webgl.setNight(webgl.isNight());
+    webgl.weather.set(s.window || {}, webgl.isNight());
     /* the only path that can change what the depth pass would draw */
     webgl.shadowDirty();
 
@@ -14433,6 +14489,7 @@
     if (window.console && console.error) console.error('[house] buildRoom failed:', e);
   }
   window.chfHouseState = function () { return state; };
+  window.chfHouseWeather = function () { return webgl ? webgl.weather.stats() : null; };
   window.chfHouseRefresh = poll;
   if (webgl) {
     if (webgl.studyWorld) {
@@ -14491,6 +14548,7 @@
       announceFocus(null);
       try { ROOT.style.display = 'none'; } catch (err) {}
       if (webgl && webgl.neighborhood) webgl.neighborhood.dispose();
+      if (webgl) webgl.weather.dispose();
       webgl = null;
       drawFallback(state);
     });
@@ -14540,6 +14598,10 @@
   }
 
   poll();
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') { poll(); requestFrame(); }
+  });
+  WEATHER_MOTION.addEventListener('change', requestFrame);
   setInterval(function () {
     if (document.visibilityState === 'visible') poll();
   }, POLL_MS);
