@@ -21,6 +21,24 @@ STREETS = [
 
 
 class HouseMapTests(unittest.TestCase):
+    def test_adjacent_frontages_are_not_alternately_discarded(self):
+        road = [[(-265, 28.5), (265, 28.5)]]
+        # These 52-wide yards fit at all 54-unit frontages. Include the home
+        # footprint: only that parcel should be excluded, not its neighbors.
+        buildings = [(x, z) for x in range(-216, 217, 54) for z in (0, 57)]
+        lots = hm.compile_layout(road, buildings)['lots']
+        for x in range(-216, 217, 54):
+            for z in (-.5, 57.5):
+                if x == 0 and z == -.5:
+                    continue
+                self.assertTrue(any(math.dist((x, z), (p['x'], p['z'])) < .02 for p in lots), (x, z, lots))
+
+    def test_sampled_frontages_fit_the_collision_envelope(self):
+        lots = hm.compile_layout([[(-265, 28.5), (265, 28.5)]])['lots']
+        # Seven frontages per side inside the scenery boundary, with only
+        # the user's own parcel reserved. The old rules accepted just eight.
+        self.assertEqual(len(lots), 13)
+
     def test_topology_orientation_packing_and_bounds(self):
         layout = hm.compile_layout(STREETS)
         self.assertEqual(layout, hm.compile_layout(STREETS))
@@ -34,10 +52,9 @@ class HouseMapTests(unittest.TestCase):
         self.assertTrue(any(p['z'] < 0 for p in layout['lots'][:8]))
         for i, lot in enumerate(layout['lots']):
             p = (lot['x'], lot['z'])
-            self.assertGreaterEqual(math.hypot(*p), 59.99)
+            self.assertFalse(hm.parcels_overlap(hm.parcel(lot), hm.parcel({'x':0, 'z':0, 'rotation':0})))
             self.assertGreaterEqual(min(hm.closest(p, a, b)[0] for a, b in layout['roads']), 26.99)
             for other in layout['lots'][:i]:
-                self.assertGreaterEqual(math.dist(p, (other['x'], other['z'])), 57.99)
                 self.assertFalse(hm.parcels_overlap(hm.parcel(lot), hm.parcel(other)))
             self.assertFalse(hm.street_crosses_parcel(lot, layout['roads']))
             # Front of every house reaches its street, with the correct yaw.
@@ -80,6 +97,10 @@ class HouseMapTests(unittest.TestCase):
             stack.enter_context(patch.object(hm.maps, 'geocode_address', return_value=(40, -75)))
             precision = stack.enter_context(patch.object(hm.storage, 'get_cached_geocode', return_value={'precision': 'exact'}))
             fetch = stack.enter_context(patch.object(hm, '_fetch', return_value=hm.compile_layout(STREETS)))
+            # An upgrade must not retain the sparse layout for twelve hours.
+            legacy_key = hm.hashlib.sha256(b'Test home|private-token|1').hexdigest()
+            (Path(directory)/'house_map.json').write_text(json.dumps({'key':legacy_key, 'until':hm.time.time()+3600,
+                                                                    'layout':{'source':'mapbox','lots':[]}}))
             self.assertEqual(hm.neighborhood_layout(cached_only=True)['source'], 'generated')
             fetch.assert_not_called()
             result = hm.neighborhood_layout()

@@ -53,6 +53,13 @@ The nearest street is a frontage assumption, especially on corner/deep lots.
 Compass heading selection, terrain, water, parks, exact property boundaries,
 building heights and real neighboring house appearances are outside this slice.
 
+Version 2.499.147 corrects candidate density: generated spacing is at least 54
+units for 52-unit yards, rather than dividing roads into intervals of 52 or less.
+Redundant 58-unit neighbor and 60-unit home exclusion circles are removed;
+rotated yard overlap and street-crossing tests remain authoritative. This avoids
+rejecting alternate valid frontages and immediate neighbors. The layout cache
+identity is incremented so old sparse results do not survive the update.
+
 Mapbox logo and linked attribution appear only for the mapped scene, with a
 tooltip explaining that houses and yards are illustrative. Provider references:
 [Streets v8](https://docs.mapbox.com/data/tilesets/reference/mapbox-streets-v8/),

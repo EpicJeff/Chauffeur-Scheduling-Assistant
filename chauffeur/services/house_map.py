@@ -134,8 +134,11 @@ def compile_layout(lines, buildings=()):
     for a, b in roads:
         length = math.dist(a, b)
         nx, nz = -(b[1]-a[1])/length, (b[0]-a[0])/length
-        for step in range(max(1, math.ceil(length/52))):
-            t = (step+.5)/max(1, math.ceil(length/52))
+        # A yard is 52 units wide. Rounding UP the count makes candidates
+        # narrower than their own collision envelope and drops alternate lots.
+        count = max(1, math.floor(length/54))
+        for step in range(count):
+            t = (step+.5)/count
             for side in (-1, 1):
                 candidates.append((a[0]+(b[0]-a[0])*t+nx*29*side,
                                    a[1]+(b[1]-a[1])*t+nz*29*side,
@@ -144,9 +147,7 @@ def compile_layout(lines, buildings=()):
     lots = []
     parcels = [parcel({'x': 0, 'z': 0, 'rotation': 0})]
     for x, z, turn in candidates:
-        if max(abs(x), abs(z)) > 230 or math.hypot(x, z) < 60:
-            continue
-        if any(math.hypot(x-p['x'], z-p['z']) < 58 for p in lots):
+        if max(abs(x), abs(z)) > 230:
             continue
         if min(closest((x, z), a, b)[0] for a, b in roads) < 27:
             continue  # Keep yards and roofs clear of junctions/other streets.
@@ -212,7 +213,7 @@ def neighborhood_layout(cached_only=False):
     home, token = maps.get_home_location(), maps.get_mapbox_api_key()
     if not home or not token or maps.get_map_option('disable_mapbox', False):
         return {'source': 'generated'}
-    key = hashlib.sha256((home+'|'+token+'|1').encode()).hexdigest()
+    key = hashlib.sha256((home+'|'+token+'|2').encode()).hexdigest()
     path = Path(storage.DB_PATH).with_name('house_map.json')
     cached = _cached(path, key)
     if cached is not None or cached_only:

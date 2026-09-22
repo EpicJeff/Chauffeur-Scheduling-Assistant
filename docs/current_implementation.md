@@ -12,7 +12,15 @@ Reduce the coordination work required to run a family. Chauffeur should understa
 
 The 3D house is the shared spatial interface. Rooms and real-world objects provide stable context for features. The house should also reflect the family's own life through carefully quality-gated, personalized objects and spaces.
 
-## Latest architecture change (2026-09-22, v2.499.146)
+## Latest architecture change (2026-09-22, v2.499.147)
+
+Mapped neighborhood placement now spaces generated frontages to fit the actual
+yard envelope and uses rotated yard overlap tests instead of circular clearance
+rules. The previous 58-unit rejection radius discarded roughly alternate
+candidates sampled at 52 units or less; a 60-unit home exclusion also removed
+valid immediate neighbors. Both redundant radius rules are removed. Road-crossing
+checks, the scenery boundary and rendering budgets remain. The cache identity
+changes so installations regenerate sparse cached layouts on their next visit.
 
 The neighborhood can follow real streets around the configured home using the
 existing Mapbox key. A deterministic compiler aligns and clips road geometry,
