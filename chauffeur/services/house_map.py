@@ -110,7 +110,7 @@ def _cached(path, key):
     return None
 
 
-def address_lots(addresses, buildings, project, roads, mapped, home):
+def address_lots(addresses, buildings, project, roads, mapped, home, excluded=()):
     """Fill a missing outline only where a map house-number point exists.
 
     Size is an estimate from nearby real houses, never a measured footprint.
@@ -119,7 +119,7 @@ def address_lots(addresses, buildings, project, roads, mapped, home):
     from shapely.geometry import Polygon, Point, LineString
     from shapely.ops import unary_union
     from shapely.strtree import STRtree
-    occupied = []
+    occupied = list(excluded)
     for item in buildings:
         if not isinstance(item,dict):
             continue
@@ -215,7 +215,37 @@ def street_crosses_parcel(lot, roads):
     return False
 
 
-def compile_layout(lines, buildings=(), coverage=(), addresses=()):
+def terrain_shapes(features, project):
+    """Merge tile seams and clip mapped land cover, retaining polygon holes."""
+    from shapely.geometry import Polygon, box
+    from shapely.ops import unary_union
+    grouped = {}
+    for feature in features:
+        try:
+            rings = [[project(p) for p in ring] for ring in feature['rings']]
+            poly = Polygon(rings[0],rings[1:]).buffer(0).intersection(box(-265,-265,265,265))
+            if not poly.is_empty:
+                grouped.setdefault(feature['kind'],[]).append(poly)
+        except (KeyError,TypeError,ValueError):
+            continue
+    result = []
+    budget = 20000
+    for kind in ('grass','crop','snow','park','scrub','wood','water'):
+        if kind not in grouped:
+            continue
+        merged = unary_union(grouped[kind]).simplify(.35,preserve_topology=True)
+        polys = [merged] if merged.geom_type=='Polygon' else getattr(merged,'geoms',[])
+        for poly in sorted((p for p in polys if p.geom_type=='Polygon'),key=lambda p:-p.area):
+            rings = [list(poly.exterior.coords)]+[list(r.coords) for r in poly.interiors]
+            count = sum(map(len,rings))
+            if poly.area<2 or count>budget or len(result)>=128:
+                continue
+            budget -= count
+            result.append({'kind':kind,'rings':[[[round(x,3),round(z,3)] for x,z in r] for r in rings]})
+    return result
+
+
+def compile_layout(lines, buildings=(), coverage=(), addresses=(), terrain=()):
     """Input: east/south meters about home. Preserve street shape and handedness.
 
     Rotate the closest street to the facade and preserve mapped wall outlines.
@@ -261,13 +291,15 @@ def compile_layout(lines, buildings=(), coverage=(), addresses=()):
     if not roads or len(roads) > 800:
         return None
 
+    from shapely.geometry import Point, Polygon
+    land = terrain_shapes(terrain,project)
+    water = [Polygon(f['rings'][0],f['rings'][1:]) for f in land if f['kind']=='water']
     home, diagnostics = [], {}
     mapped = footprint_lots(buildings,project,roads,home,diagnostics)
     footprint_count = len(mapped)
-    address_fill = address_lots(addresses,buildings,project,roads,mapped,home) if addresses else []
+    address_fill = address_lots(addresses,buildings,project,roads,mapped,home,water) if addresses else []
     mapped.extend(address_fill)
     footprint_mode = any(isinstance(b,dict) and b.get('outline') for b in buildings)
-    from shapely.geometry import Point, Polygon
     mapped_coverage = [Polygon([project(p) for p in ring]) for ring in coverage]
     candidates = []
     # Existing buildings help choose frontage along a street. Our 50-unit
@@ -318,6 +350,8 @@ def compile_layout(lines, buildings=(), coverage=(), addresses=()):
                     continue  # Do not invent houses in mapped parks/empty lots.
                 lot = {'x': round(x, 2), 'z': round(z, 2), 'rotation': turn, 'scale': size}
                 shape = parcel(lot)
+                if any(Polygon(shape).intersects(p) for p in water):
+                    continue
                 if any(parcels_overlap(shape, p) for p in parcels) or street_crosses_parcel(lot, roads):
                     continue
                 lots.append(lot)
@@ -332,6 +366,7 @@ def compile_layout(lines, buildings=(), coverage=(), addresses=()):
     if not lots and not footprint_mode:
         return None
     return {'source': 'mapbox', 'roads': roads, 'lots': lots,
+            'terrain':land,
             'home': min(home,key=lambda p:math.hypot(p['x'],p['z'])) if home else None,
             'buildingDiagnostics':dict(diagnostics,emitted=len(mapped[:128]),overLimit=max(0,len(mapped)-128)),
             'placement': 'footprints' if footprint_mode else 'frontage',
@@ -341,28 +376,43 @@ def compile_layout(lines, buildings=(), coverage=(), addresses=()):
 
 def _fetch(lat, lon, token):
     import mapbox_vector_tile
-    # Up to four road tiles plus nine building tiles; thirteen requests maximum.
+    # Up to four road tiles plus nine building tiles; seventeen requests maximum including four land-cover tiles.
     zoom = min(15, max(8, int(math.log2(40075016.686*math.cos(math.radians(lat))/1200))))
     n = 2**zoom
     cx = (lon+180)/360*n
     cy = (1-math.asinh(math.tan(math.radians(lat)))/math.pi)/2*n
     meters = 40075016.686*math.cos(math.radians(lat))/n
     radius = 500/meters
-    lines, buildings, coverage, addresses = [], [], [], []
+    lines, buildings, coverage, addresses, terrain = [], [], [], [], []
 
-    def tile_at(z, x, y):
+    def tile_at(z, x, y, tileset='mapbox.mapbox-streets-v8'):
         if not maps.check_usage_limits_and_spikes('vector_tiles', 1):
             raise ValueError('Map allowance reached')
-        with requests.get(f'https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/{z}/{x % (2**z)}/{y}.mvt',
+        with requests.get(f'https://api.mapbox.com/v4/{tileset}/{z}/{x % (2**z)}/{y}.mvt',
                           params={'access_token': token}, timeout=(3, 5)) as response:
             response.raise_for_status()
             if len(response.content) > 4_000_000:
                 raise ValueError('Tile too large')
             return mapbox_vector_tile.decode(response.content, default_options={'y_coord_down': True})
 
+    def collect_land(tile,names,tx,ty,factor=1):
+        for name in names:
+            land = tile.get(name,{})
+            land_extent = land.get('extent',4096)
+            for feature in land.get('features',[]):
+                kind = 'water' if name=='water' else feature.get('properties',{}).get('class')
+                if kind not in ('water','wood','grass','park','scrub','crop','snow'):
+                    continue
+                geo = feature.get('geometry',{})
+                polygons = [geo['coordinates']] if geo.get('type')=='Polygon' else geo.get('coordinates',[]) if geo.get('type')=='MultiPolygon' else []
+                for polygon in polygons:
+                        terrain.append({'kind':kind,'rings':[[(((tx+p[0]/land_extent)*factor-cx)*meters,((ty+p[1]/land_extent)*factor-cy)*meters) for p in ring] for ring in polygon]})
+
     for tx in range(math.floor(cx-radius), math.floor(cx+radius)+1):
         for ty in range(math.floor(cy-radius), math.floor(cy+radius)+1):
-            layer = tile_at(zoom,tx,ty).get('road',{})
+            tile = tile_at(zoom,tx,ty)
+            layer = tile.get('road',{})
+            collect_land(tile,('landuse','water'),tx,ty)
             extent = layer.get('extent',4096)
             for feature in layer.get('features',[]):
                 props, geo = feature.get('properties',{}), feature['geometry']
@@ -384,6 +434,7 @@ def _fetch(lat, lon, token):
             layer = tile.get('building',{})
         except Exception:
             break  # Preserve roads and successful tiles; no retry storm.
+        collect_land(tile,('landuse','water'),tx,ty,1/ratio)
         extent = layer.get('extent',4096)
         def local(p):
             return ((tx+p[0]/extent-hx)*hm,(ty+p[1]/extent-hy)*hm)
@@ -404,8 +455,21 @@ def _fetch(lat, lon, token):
                 if polygon and len(polygon[0])>=4:
                     buildings.append({'id':feature.get('id'), 'type':props.get('type','building'),
                                       'outline':[local(p) for p in polygon[0]]})
-    result = compile_layout(lines, buildings, coverage, addresses)
+    land_zoom = min(zoom,14)
+    factor = 2**(zoom-land_zoom)
+    land_tiles = sorted({(x//factor,y//factor) for x in range(math.floor(cx-radius),math.floor(cx+radius)+1)
+                        for y in range(math.floor(cy-radius),math.floor(cy+radius)+1)})
+    land_count = 0
+    for tx,ty in land_tiles:
+        try:
+            tile = tile_at(land_zoom,tx,ty,'mapbox.mapbox-terrain-v2')
+        except Exception:
+            break  # Optional vegetation cannot discard houses or water.
+        collect_land(tile,('landcover',),tx,ty,factor)
+        land_count += 1
+    result = compile_layout(lines, buildings, coverage, addresses, terrain)
     if result is not None:
+        result['terrainStatus'] = 'available' if land_count==len(land_tiles) else 'partial' if land_count else 'unavailable'
         result['footprintStatus'] = 'available' if len(coverage)==9 else 'partial' if coverage else 'unavailable'
     return result
 
@@ -420,7 +484,7 @@ def neighborhood_layout(cached_only=False):
     home, token = maps.get_home_location(), maps.get_mapbox_api_key()
     if not home or not token or maps.get_map_option('disable_mapbox', False):
         return {'source': 'generated'}
-    key = hashlib.sha256((home+'|'+token+'|6').encode()).hexdigest()
+    key = hashlib.sha256((home+'|'+token+'|7').encode()).hexdigest()
     path = Path(storage.DB_PATH).with_name('house_map.json')
     cached = _cached(path, key)
     if cached is not None or cached_only:

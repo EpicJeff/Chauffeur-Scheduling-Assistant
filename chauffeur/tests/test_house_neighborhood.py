@@ -26,8 +26,8 @@ ChauffeurNeighborhood.exterior(ChauffeurNeighborhood.plan(spec)[16].spec,envelop
 ChauffeurNeighborhood.exterior(ChauffeurNeighborhood.plan(spec)[16].spec,envelopes,palette,()=>far++,false);
 assert(near>far);
 assert(n.group.children.every(m=>{const hits=[];m.raycast(null,hits);return hits.length===0;}));
-n.update(new T.Vector3(0,25,80),new T.Vector3(0,0,0),true);
-assert(n.stats().visibleLots<48);
+n.update(new T.Vector3(0,8,80),new T.Vector3(0,4,0),true);
+assert.equal(n.stats().visibleLots,48);assert(n.stats().fadedLots>0);
 n.update(new T.Vector3(0,25,80),new T.Vector3(0,0,0),false);
 assert.equal(n.group.visible,false);
 n.dispose();assert.equal(n.group.children.length,0);assert.equal(disposed,materials.size);
@@ -58,6 +58,17 @@ for(const camera of [new T.Vector3(0,25,80),new T.Vector3(80,25,0)]){
   visibleMap.update(camera,new T.Vector3(),true);assert.equal(visibleMap.stats().visibleLots,2);
 }
 visibleMap.dispose();
+const fadeMap=ChauffeurNeighborhood.build(T,spec,envelopes,palette,null,null,{source:'mapbox',roads:[],lots:[
+  {x:0,z:45,rotation:0,detail:'far',scale:1}
+]});
+fadeMap.update(new T.Vector3(0,7,80),new T.Vector3(0,4,0),true);
+assert.equal(fadeMap.stats().fadedLots,1);assert.equal(fadeMap.stats().visibleLots,1);
+const ghosts=fadeMap.group.children.filter(m=>m.userData.occlusionGhost);
+assert(ghosts.length);assert(ghosts.every(m=>m.material.transparent&&m.material.opacity===.2&&!m.material.depthWrite));
+fadeMap.update(new T.Vector3(0,7,-80),new T.Vector3(0,4,0),true);
+assert.equal(fadeMap.stats().fadedLots,0);assert(ghosts.every(m=>!m.visible&&m.count===0));
+fadeMap.update(new T.Vector3(0,150,80),new T.Vector3(0,4,0),true);
+assert.equal(fadeMap.stats().fadedLots,0);fadeMap.dispose();
 const raw={source:'mapbox',home:{x:5,z:10,rotation:Math.PI/2,footprint:{width:10,depth:20}},
   roads:[[[5,10],[15,10]]],lots:[{x:25,z:10,rotation:Math.PI/2,scale:1,
   footprint:{width:5,depth:10,outline:[[25,10],[30,10],[30,20],[25,10]]}}]};
@@ -89,6 +100,23 @@ fitted.stats().placements.forEach((p,i)=>{
   }
 });
 fitted.dispose();
+const ring=(x,z,w,d)=>[[x,z],[x+w,z],[x+w,z+d],[x,z+d],[x,z]];
+const terrainLayout={source:'mapbox',roads:[[[-110,80],[110,80]]],lots:[],terrain:[
+  {kind:'wood',rings:[ring(-100,40,200,140)]},
+  {kind:'water',rings:[ring(20,100,30,30),ring(30,110,10,10)]}
+]};
+const land=ChauffeurNeighborhood.build(T,spec,envelopes,palette,null,null,terrainLayout);
+assert.equal(land.stats().terrainPolygons,2);assert(land.stats().terrainTrees>0&&land.stats().terrainTrees<=350);
+const lake=land.group.children.find(m=>m.name==='mapped-water-1'),pos=lake.geometry.attributes.position,idx=lake.geometry.index;
+let area=0;for(let i=0;i<idx.count;i+=3){let a=new T.Vector3().fromBufferAttribute(pos,idx.getX(i)),b=new T.Vector3().fromBufferAttribute(pos,idx.getX(i+1)),c=new T.Vector3().fromBufferAttribute(pos,idx.getX(i+2));area+=b.sub(a).cross(c.sub(a)).length()/2;}
+assert(Math.abs(area-800)<.001);
+land.group.children.filter(m=>m.isInstancedMesh&&m.geometry.type==='IcosahedronGeometry').forEach(m=>{
+ for(let i=0;i<m.count;i++){const matrix=new T.Matrix4();m.getMatrixAt(i,matrix);const x=matrix.elements[12],z=matrix.elements[14];
+  assert(x>=-100&&x<=100&&z>=40&&z<=180);assert(Math.abs(z-80)>=7);
+  assert(!(x>20&&x<50&&z>100&&z<130)||x>=30&&x<=40&&z>=110&&z<=120);
+ }
+});
+land.dispose();
 '''
         subprocess.run(['node','-e',script,str((base/'vendor/three.min.js').resolve()),str((base/'house_neighborhood.js').resolve()),json.dumps(hf.CANONICAL)],check=True)
 

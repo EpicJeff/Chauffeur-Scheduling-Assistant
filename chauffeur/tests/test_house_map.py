@@ -28,6 +28,20 @@ def building(cx, cz, width=10, depth=16, turn=0, identity=None, kind='house'):
 
 
 class HouseMapTests(unittest.TestCase):
+    def test_terrain_unions_tile_seams_preserves_holes_and_excludes_water_fill(self):
+        from shapely.geometry import Polygon
+        rings = [[[-60,-20],[0,-20],[0,20],[-60,20],[-60,-20]],
+                 [[-45,-5],[-35,-5],[-35,5],[-45,5],[-45,-5]]]
+        features = [{'kind':'water','rings':rings},
+                    {'kind':'water','rings':[[[0,-20],[20,-20],[20,20],[0,20],[0,-20]]]}]
+        shapes=hm.terrain_shapes(features,lambda p:p)
+        self.assertEqual(len(shapes),1)
+        self.assertEqual(len(shapes[0]['rings']),2)
+        self.assertAlmostEqual(Polygon(shapes[0]['rings'][0],shapes[0]['rings'][1:]).area,3100)
+        layout=hm.compile_layout([[(-265,28.5),(265,28.5)]],[building(40,0,identity='house')],addresses=[(-15,0)],terrain=features)
+        self.assertEqual(layout['addressCount'],0)
+        self.assertEqual(layout['terrain'],shapes)
+
     def test_house_number_fills_missing_outline_without_duplicates(self):
         road = [[(-265,28.5),(265,28.5)]]
         buildings = [building(0,0,identity='home'),building(50,0,identity='neighbor'),
@@ -82,7 +96,9 @@ class HouseMapTests(unittest.TestCase):
             {'id':1,'geometry':poly,'properties':{'type':'house'}},
             {'id':2,'geometry':multi,'properties':{'type':'building'}},
             {'id':3,'geometry':poly,'properties':{'type':'building:part'}}]},
-            {'name':'housenum_label','features':[{'geometry':{'type':'Point','coordinates':[200,300]},'properties':{'house_num':'17'}}]}],default_options={'y_coord_down':True})
+            {'name':'housenum_label','features':[{'geometry':{'type':'Point','coordinates':[200,300]},'properties':{'house_num':'17'}}]},
+            {'name':'water','features':[{'geometry':poly,'properties':{}}]},
+            {'name':'landcover','features':[{'geometry':poly,'properties':{'class':'wood'}}]}],default_options={'y_coord_down':True})
         response=MagicMock();response.__enter__.return_value=response;response.content=raw
         with patch.object(hm.requests,'get',return_value=response) as get,patch.object(hm.maps,'check_usage_limits_and_spikes',return_value=True),patch.object(hm,'compile_layout',return_value={'source':'mapbox'}) as compile_:
             result=hm._fetch(40,-75,'test-token')
@@ -92,6 +108,7 @@ class HouseMapTests(unittest.TestCase):
             self.assertEqual({b['id'] for b in items},{1,2})
             self.assertEqual(len(compile_.call_args.args[2]),9)
             self.assertEqual(len(compile_.call_args.args[3]),9)
+            self.assertEqual({f['kind'] for f in compile_.call_args.args[4]},{'water','wood'})
             self.assertEqual(result['footprintStatus'],'available')
             self.assertEqual(sum('/16/' in call.args[0] for call in get.call_args_list),9)
 
@@ -109,6 +126,20 @@ class HouseMapTests(unittest.TestCase):
             self.assertEqual(result['footprintStatus'],'unavailable')
             self.assertEqual(sum('/16/' in url for url in attempts),1)
             self.assertEqual(compile_.call_args.args[2],[])
+
+    def test_optional_landcover_failure_keeps_the_neighborhood(self):
+        response=MagicMock();response.__enter__.return_value=response;response.content=b'tile'
+        attempts=[]
+        def get(url,**kwargs):
+            attempts.append(url)
+            if 'mapbox-terrain-v2' in url:
+                raise hm.requests.Timeout('fixture')
+            return response
+        with patch.object(hm.requests,'get',side_effect=get),patch.object(hm.maps,'check_usage_limits_and_spikes',return_value=True),patch.object(mapbox_vector_tile,'decode',return_value={}),patch.object(hm,'compile_layout',return_value={'source':'mapbox','lots':['preserved']}):
+            result=hm._fetch(40,-75,'test-token')
+        self.assertEqual(result['lots'],['preserved'])
+        self.assertEqual(result['terrainStatus'],'unavailable')
+        self.assertEqual(sum('mapbox-terrain-v2' in url for url in attempts),1)
 
     def test_adjacent_frontages_are_not_alternately_discarded(self):
         road = [[(-265, 28.5), (265, 28.5)]]
@@ -192,10 +223,11 @@ class HouseMapTests(unittest.TestCase):
         response.content = tile
         with patch.object(hm.requests, 'get', return_value=response) as fetch, patch.object(hm.maps, 'check_usage_limits_and_spikes', return_value=True) as budget, patch.object(hm, 'compile_layout', return_value={'source': 'mapbox'}) as compile_:
             hm._fetch(40, -75, 'test-token')
-            self.assertLessEqual(fetch.call_count, 13)
+            self.assertLessEqual(fetch.call_count, 17)
             self.assertEqual(fetch.call_count, budget.call_count)
             lines = compile_.call_args.args[0]
-            self.assertEqual(len(lines), fetch.call_count-9)
+            land_calls=sum('mapbox-terrain-v2' in call.args[0] for call in fetch.call_args_list)
+            self.assertEqual(len(lines), fetch.call_count-9-land_calls)
             self.assertEqual(sum('/16/' in call.args[0] for call in fetch.call_args_list),9)
             self.assertTrue(all(b[1] > a[1] for a, b in lines))
             self.assertTrue(all(call.kwargs['timeout'] == (3, 5) for call in fetch.call_args_list))
@@ -210,7 +242,7 @@ class HouseMapTests(unittest.TestCase):
             precision = stack.enter_context(patch.object(hm.storage, 'get_cached_geocode', return_value={'precision': 'exact'}))
             fetch = stack.enter_context(patch.object(hm, '_fetch', return_value=hm.compile_layout(STREETS)))
             # An upgrade must not retain the sparse layout for twelve hours.
-            legacy_key = hm.hashlib.sha256(b'Test home|private-token|5').hexdigest()
+            legacy_key = hm.hashlib.sha256(b'Test home|private-token|6').hexdigest()
             (Path(directory)/'house_map.json').write_text(json.dumps({'key':legacy_key, 'until':hm.time.time()+3600,
                                                                     'layout':{'source':'mapbox','lots':[]}}))
             self.assertEqual(hm.neighborhood_layout(cached_only=True)['source'], 'generated')

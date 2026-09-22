@@ -12,7 +12,25 @@ Reduce the coordination work required to run a family. Chauffeur should understa
 
 The 3D house is the shared spatial interface. Rooms and real-world objects provide stable context for features. The house should also reflect the family's own life through carefully quality-gated, personalized objects and spaces.
 
-## Latest architecture change (2026-09-22, v2.499.151)
+## Latest architecture change (2026-09-22, v2.499.152)
+
+Neighbors intersecting sight lines to the active house now render at 20% of their
+original opacity. Bounds include actual transformed roofs and walls; elevated
+views clear low roofs, and houses return to opaque when they stop blocking the
+view. Transparent instance batches reuse geometry, suppress depth writes and
+shadows, and leave nonblocking neighbors and terrain opaque. Room entry still
+hides scenery, and disposal releases the additional materials/instance buffers.
+
+Mapped water and land use from Streets tiles now combine with generalized
+vegetation from up to four Terrain v2 tiles (17 total requests maximum per cache
+refresh). Land polygons retain holes and merge across tile edges. Flat water,
+grass, scrub, woodland and agricultural/snow cover replace generic ground where
+data exists. Up to 350 deterministic trees occupy mapped woodland/scrub, clear of
+roads, water and houses. Terrain and trees share primary-home map calibration.
+Optional land-cover failure preserves the neighborhood. This is land cover, not
+elevation reconstruction or individually mapped trees. Cache identity refreshes.
+
+## Earlier missing-outline correction (v2.499.151)
 
 House-number points now fill gaps where Mapbox has an address but no building
 outline. The existing z16 tile requests also decode `housenum_label`; no extra

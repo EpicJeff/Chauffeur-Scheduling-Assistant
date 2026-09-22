@@ -44,6 +44,11 @@ def main():
             vendor = (Path(__file__).parents[1]/'static/vendor/three.min.js').read_bytes()+THREE_WRAP
             page.route('**/static/vendor/three.min.js*', lambda r: r.fulfill(content_type='application/javascript', body=vendor))
             page.add_init_script(DAY_LOCK_JS)
+            page.add_init_script('''(() => {
+              let api;Object.defineProperty(window,'ChauffeurNeighborhood',{configurable:true,get:()=>api,set:value=>{
+                const build=value.build;value.build=function(...args){const result=build(...args);window.__hn=result;return result;};api=value;
+              }});
+            })();''')
             page.route('**/api/v2/chat/stream*', lambda r: r.fulfill(status=200, body=''))
             page.set_viewport_size({'width':1400, 'height':1000})
             errors=[]
@@ -68,10 +73,21 @@ def main():
             assert page.locator('#house-map-credit').is_visible()
             assert page.evaluate("__hpScene.getObjectByName('parcel-road').visible") is False
             assert page.evaluate("__hpScene.children.filter(g=>g.name==='neighborhood').length") == 1
+            faded=[]
             for stop in (2,4,6,0):
                 page.evaluate('(s)=>chfOrbitTo(s)', stop)
                 page.wait_for_function('chfNavProbe({settled:true})', timeout=20000)
                 assert page.evaluate('chfNeighborhood().visibleLots') == len(layout['lots'])
+                faded.append(page.evaluate('chfNeighborhood().fadedLots'))
+                if faded[-1] and os.environ.get('HOUSE_SHOTS'):
+                    out=Path(os.environ['HOUSE_SHOTS']);out.mkdir(parents=True,exist_ok=True)
+                    page.screenshot(path=str(out/'mapped-neighborhood-faded.png'))
+            if layout.get('terrain'):
+                assert stats['terrainPolygons']==len(layout['terrain'])
+                assert stats['terrainTrees']>0 if any(f['kind']=='wood' for f in layout['terrain']) else True
+            assert any(faded),faded
+            page.evaluate('''() => {__hn.update(new THREE.Vector3(0,200,0),new THREE.Vector3(0,4,0),true);}''')
+            assert page.evaluate('chfNeighborhood().fadedLots')==0
             page.evaluate("chfHouseEnterRoom('kitchen')")
             page.wait_for_function('chfNavProbe({settled:true})', timeout=20000)
             assert not page.evaluate('chfNeighborhood().visible')
@@ -80,7 +96,7 @@ def main():
             if os.environ.get('HOUSE_SHOTS'):
                 out=Path(os.environ['HOUSE_SHOTS']);out.mkdir(parents=True,exist_ok=True)
                 page.screenshot(path=str(out/'mapped-neighborhood-front.png'))
-                page.evaluate('''() => {let c=__hpCam;c.position.set(130,160,250);c.fov=65;c.updateProjectionMatrix();c.lookAt(0,0,0);__hpR.render(__hpScene,c);}''')
+                page.evaluate('''() => {let c=__hpCam;c.position.set(130,160,250);c.fov=65;c.updateProjectionMatrix();c.lookAt(0,0,0);__hn.update(c.position,new THREE.Vector3(0,4,0),true);__hpR.render(__hpScene,c);}''')
                 page.locator('#room canvas').screenshot(path=str(out/'mapped-neighborhood-overview.png'))
             # Warm page embeds the geometry: no new API request or second build.
             house_map.neighborhood_layout = lambda cached_only=False: layout

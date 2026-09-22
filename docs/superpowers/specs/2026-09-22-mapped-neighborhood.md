@@ -147,6 +147,33 @@ houses, including the left neighbor. Private map data remains an ignored local
 fixture. Unit coverage checks duplicates, nonresidential reservations, road
 exclusion, no invented unlabeled houses, absent donors and MVT label decoding.
 
+## Neighbor transparency and land cover (v2.499.152)
+
+Build bounds from actual rendered instance geometry. Rays from the camera
+to samples spanning the home walls and roof height test these bounds before reaching the home. This is
+height-aware conservative occlusion detection, not per-pixel visibility. Blocking
+neighbors move from opaque batches into compact transparent batches sharing the
+same geometry at 20% material opacity. Disable transparent depth writes/shadows;
+restore the opaque instance when clear. Material clones preserve texture/color
+and scale alpha-test thresholds. Nothing is removed from the neighborhood count.
+Additional instance buffers/materials are owned by the neighborhood and disposed.
+
+Decode Streets `water`/`landuse` and up to four optional Terrain v2 `landcover`
+tiles at zoom 14 or lower. Maximum requests are now 17, using existing accounting,
+twelve-hour cache and attribution. Optional vegetation failure preserves houses
+and water; expose terrainStatus. Merge polygons by class, clip to the scene and
+simplify while preserving holes, bounded to 128 polygons/20,000 vertices. Render
+flat ground patches and water, then place up to 350 deterministic instanced trees
+inside woodland/scrub. Exclude water, roads and building footprints/primary yard.
+Water also excludes inferred address and generated frontage houses. All terrain
+shares home calibration. These are generalized land-cover shapes and illustrative
+trees, not elevations or a tree inventory. See [Terrain v2](https://docs.mapbox.com/data/tilesets/reference/mapbox-terrain-v2/).
+
+Geometry tests cover fade/restoration/overhead views, polygon holes, water house
+exclusion, tree bounds/road clearance and optional terrain failures. Source-data
+replay for the supplied neighborhood contains a pond and multiple vegetation
+polygons. The browser gate covers high/low quality, room isolation and disposal.
+
 ## Proof
 
 `test_house_map.py` checks real MVT decoding, coordinate direction, request count,

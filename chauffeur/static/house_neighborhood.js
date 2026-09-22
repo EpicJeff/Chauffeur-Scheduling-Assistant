@@ -12,6 +12,7 @@
     var c=Math.cos(home.rotation),s=Math.sin(home.rotation);
     function point(p){var x=p[0]-home.x,z=p[1]-home.z;return [body.x+(x*c-z*s)*scale,body.z+(x*s+z*c)*scale];}
     out.roads=out.roads.map(function(line){return line.map(point);});
+    out.terrain=(out.terrain||[]).map(function(f){return {kind:f.kind,rings:f.rings.map(function(r){return r.map(point);})};});
     out.lots.forEach(function(l){
       var p=point([l.x,l.z]);l.x=p[0];l.z=p[1];l.rotation-=home.rotation;
       if(l.footprint){l.footprint.width*=scale;l.footprint.depth*=scale;l.footprint.outline=l.footprint.outline.map(point);}
@@ -260,9 +261,10 @@
     return mesh;
   }
 
-  function build(T,canonical,envelopes,palette,materialFactory,nearTemplate,layout) {
+  function build(T,canonical,envelopes,palette,materialFactory,nearTemplate,layout,focus) {
     var group=new T.Group();group.name='neighborhood';group.userData.yard=true;
     var lots=plan(canonical,layout),buckets={},pieces=0;
+    var terrainMeshes=[],terrainMaterials={},treeCount=0;
     lots.forEach(function(l){
       var size=l.scale;
       l.transform={sx:size,sy:size,sz:size,x:l.x,z:l.z};
@@ -292,9 +294,49 @@
     var sceneryRadius=270;
     if(layout && layout.source==='mapbox'){
       layout.roads.forEach(function(line){line.forEach(function(p){sceneryRadius=Math.max(sceneryRadius,Math.hypot(p[0],p[1])+30);});});
+      (layout.terrain||[]).forEach(function(f){f.rings.forEach(function(r){r.forEach(function(p){sceneryRadius=Math.max(sceneryRadius,Math.hypot(p[0],p[1])+15);});});});
       lots.forEach(function(l){sceneryRadius=Math.max(sceneryRadius,Math.hypot(l.x,l.z)+(l.footprint?Math.hypot(l.footprint.width,l.footprint.depth)/2:35*l.scale)+30);});
     }
     add('box',[sceneryRadius*2,.15,sceneryRadius*2],[0,-.62,0],0,0x81966d,-1);
+    var terrain=layout&&layout.terrain||[];
+    var landColors={grass:0x8a9d72,crop:0xa5a178,snow:0xd8e3df,park:0x91a778,scrub:0x758d60,wood:0x60794f,water:0x568e9d};
+    terrain.forEach(function(f,index){
+      function path(r,Type){var p=new Type();r.forEach(function(v,i){if(i)p.lineTo(v[0],-v[1]);else p.moveTo(v[0],-v[1]);});return p;}
+      var shape=path(f.rings[0],T.Shape);f.rings.slice(1).forEach(function(r){shape.holes.push(path(r,T.Path));});
+      var geometry=new T.ShapeGeometry(shape);
+      if(!terrainMaterials[f.kind])terrainMaterials[f.kind]=new T.MeshStandardMaterial({color:landColors[f.kind],roughness:f.kind==='water'?.3:1,metalness:f.kind==='water'?.12:0,side:T.DoubleSide});
+      var mesh=new T.Mesh(geometry,terrainMaterials[f.kind]);mesh.rotation.x=-Math.PI/2;
+      mesh.position.y=-.53+['grass','crop','snow','park','scrub','wood','water'].indexOf(f.kind)*.008;
+      mesh.name='mapped-'+f.kind+'-'+index;mesh.userData.yard=true;mesh.receiveShadow=true;mesh.raycast=function(){};
+      terrainMeshes.push(mesh);group.add(mesh);
+    });
+    function insideRing(x,z,ring){var yes=false;for(var i=0,j=ring.length-1;i<ring.length;j=i++){
+      var a=ring[i],b=ring[j];if((a[1]>z)!==(b[1]>z) && x<(b[0]-a[0])*(z-a[1])/(b[1]-a[1])+a[0])yes=!yes;
+    }return yes;}
+    function insideLand(x,z,f){return insideRing(x,z,f.rings[0])&&!f.rings.slice(1).some(function(r){return insideRing(x,z,r);});}
+    var woods=terrain.filter(function(f){return f.kind==='wood'||f.kind==='scrub';}),water=terrain.filter(function(f){return f.kind==='water';});
+    if(woods.length){
+      var candidates=[],step=11*mapScale;
+      for(var gx=-sceneryRadius;gx<sceneryRadius;gx+=step)for(var gz=-sceneryRadius;gz<sceneryRadius;gz+=step){
+        var seed=Math.sin(gx*12.9898+gz*78.233)*43758.5453,noise=seed-Math.floor(seed);
+        var x=gx+(noise-.5)*step*.75,z=gz+(Math.sin(seed)*.5)*step*.75;
+        if(Math.abs(x)<30&&z>-24&&z<34)continue;
+        if(!woods.some(function(f){return insideLand(x,z,f);})||water.some(function(f){return insideLand(x,z,f);}))continue;
+        if(lots.some(function(l){var dx=x-l.x,dz=z-l.z,c=Math.cos(l.rotation),s=Math.sin(l.rotation);
+          return Math.abs(dx*c-dz*s)<(l.footprint?l.footprint.width/2:26*l.scale)+4*mapScale&&Math.abs(dx*s+dz*c)<(l.footprint?l.footprint.depth/2:24*l.scale)+4*mapScale;
+        }))continue;
+        if((layout.roads||[]).some(function(line){var a=line[0],b=line[1],dx=b[0]-a[0],dz=b[1]-a[1],len=dx*dx+dz*dz;
+          var t=Math.max(0,Math.min(1,((x-a[0])*dx+(z-a[1])*dz)/len));return Math.hypot(x-a[0]-t*dx,z-a[1]-t*dz)<7*mapScale;
+        }))continue;
+        candidates.push({x:x,z:z,n:noise});
+      }
+      candidates.sort(function(a,b){return Math.hypot(a.x,a.z)-Math.hypot(b.x,b.z);});
+      candidates.slice(0,350).forEach(function(p){
+        var h=(5.5+p.n*3)*mapScale,w=(4+p.n*2)*mapScale;
+        add('box',[.5*mapScale,h*.6,.5*mapScale],[p.x,h*.3-.5,p.z],0,0x66523a,-1);
+        add('tree',[w,h*.8,w],[p.x,h*.65-.5,p.z],0,p.n>.5?0x527444:0x42673c,-1);treeCount++;
+      });
+    }
     if(layout && layout.source==='mapbox') {
       layout.roads.forEach(function(segment){
         var a=segment[0],b=segment[1],dx=b[0]-a[0],dz=b[1]-a[1],length=Math.hypot(dx,dz),turn=-Math.atan2(dz,dx);
@@ -397,24 +439,51 @@
       if(layout && layout.source==='mapbox')horizon.scale.set(sceneryRadius/250,1,sceneryRadius/250);
       group.add(horizon);
     }
-    var hidden='',visibleLots=lots.length,zero=new T.Matrix4().makeScale(0,0,0);
+    // Bounds come from rendered geometry, including roof height and transforms.
+    var bounds=lots.map(function(){return new T.Box3();});
+    focus=focus||{west:envelopes.garage.west,east:envelopes.main.east,north:envelopes.main.north,south:envelopes.main.south,top:16};
+    var focusSamples=[];
+    [focus.west+1,(focus.west+focus.east)/2,focus.east-1].forEach(function(x){
+      [focus.north+1,(focus.north+focus.south)/2,focus.south-1].forEach(function(z){
+        [2,focus.top/2,focus.top-.5].forEach(function(y){focusSamples.push(new T.Vector3(x,y,z));});
+      });
+    });
+    matrices.forEach(function(b){
+      if(!b.mesh.geometry.boundingBox)b.mesh.geometry.computeBoundingBox();
+      b.rows.forEach(function(r,i){if(r.lot>=0)bounds[r.lot].union(b.mesh.geometry.boundingBox.clone().applyMatrix4(b.saved[i]));});
+    });
+    var hidden='',visibleLots=lots.length,fadedLots=0,zero=new T.Matrix4().makeScale(0,0,0),ghostMaterials=new Map(),ghosts=[];
+    var ray=new T.Ray(),hit=new T.Vector3(),color=new T.Color();
+    function translucent(b){
+      if(b.ghost)return b.ghost;
+      var source=b.mesh.material,material=ghostMaterials.get(source);
+      if(!material){material=source.clone();material.transparent=true;material.opacity=source.opacity*.2;material.alphaTest=source.alphaTest*.2;material.depthWrite=false;ghostMaterials.set(source,material);}
+      var mesh=new T.InstancedMesh(b.mesh.geometry,material,b.rows.length);
+      mesh.frustumCulled=false;mesh.receiveShadow=false;mesh.castShadow=false;mesh.renderOrder=b.mesh.renderOrder;
+      mesh.userData.yard=true;mesh.userData.occlusionGhost=true;mesh.raycast=function(){};mesh.count=0;
+      group.add(mesh);ghosts.push(mesh);b.ghost=mesh;return mesh;
+    }
     function update(camera,target,outside) {
       group.visible=outside;if(!outside)return;
-      var dx=camera.x-target.x,dz=camera.z-target.z,len=dx*dx+dz*dz;
-      var blocked=lots.map(function(l){
-        if(layout && layout.source==='mapbox')return false;
-        var t=((l.x-target.x)*dx+(l.z-target.z)*dz)/len;
-        var x=target.x+t*dx,z=target.z+t*dz;
-        return t>0 && t<1.3 && Math.hypot(l.x-x,l.z-z)<24;
+      var blocked=bounds.map(function(box){
+        return focusSamples.some(function(p){ray.origin.copy(camera);ray.direction.copy(p).sub(camera).normalize();
+          return ray.intersectBox(box,hit)!==null&&hit.distanceTo(camera)<p.distanceTo(camera)-.5;
+        });
       });
       var key=blocked.join(',');if(key===hidden)return;hidden=key;
-      visibleLots=blocked.filter(function(b){return !b;}).length;
-      matrices.forEach(function(b){b.rows.forEach(function(r,i){b.mesh.setMatrixAt(i,r.lot>=0&&blocked[r.lot]?zero:b.saved[i]);});b.mesh.instanceMatrix.needsUpdate=true;});
+      fadedLots=blocked.filter(Boolean).length;
+      matrices.forEach(function(b){var count=0;
+        b.rows.forEach(function(r,i){var fade=r.lot>=0&&blocked[r.lot];b.mesh.setMatrixAt(i,fade?zero:b.saved[i]);
+          if(fade){var ghost=translucent(b);ghost.setMatrixAt(count,b.saved[i]);if(b.mesh.instanceColor){b.mesh.getColorAt(i,color);ghost.setColorAt(count,color);}count++;}
+        });
+        b.mesh.instanceMatrix.needsUpdate=true;
+        if(b.ghost){b.ghost.count=count;b.ghost.visible=count>0;b.ghost.instanceMatrix.needsUpdate=true;if(b.ghost.instanceColor)b.ghost.instanceColor.needsUpdate=true;}
+      });
     }
-    return {group:group,update:update,setNight:function(n){if(horizon)horizon.material.color.setHex(n?0x435063:0xcdcdcd);},stats:function(){return {homeCalibration:layout&&layout.homeCalibration||null,sceneryRadius:sceneryRadius,layoutSource:layout&&layout.source==='mapbox'?'mapbox':'generated',roadSegments:layout&&layout.roads?layout.roads.length:0,lots:lots.length,visibleLots:visibleLots,visible:group.visible,nearSource:nearTemplate?'parametric-exterior':'simplified',nearDesigns:uniqueKits.length,nearGeometry:uniqueKits.map(function(k){return k.geometrySignature;}),nearTemplate:nearTemplate?{meshes:uniqueKits.reduce(function(n,k){return n+k.sourceMeshes;},0),instances:uniqueKits.reduce(function(n,k){return n+k.sourceInstances;},0),triangles:uniqueKits.reduce(function(n,k){return n+k.triangles;},0)}:null,nearLots:lots.filter(function(l){return l.detail==='near';}).length,farLots:lots.filter(function(l){return l.detail==='far';}).length,horizon:!!horizon,batches:meshes.length+(horizon?1:0),instances:pieces,
-      triangles:meshes.reduce(function(n,m){return n+(m.geometry.index?m.geometry.index.count:m.geometry.attributes.position.count)/3*m.count;},horizon?horizon.geometry.index.count/3:0),
+    return {group:group,update:update,setNight:function(n){if(horizon)horizon.material.color.setHex(n?0x435063:0xcdcdcd);},stats:function(){return {homeCalibration:layout&&layout.homeCalibration||null,sceneryRadius:sceneryRadius,layoutSource:layout&&layout.source==='mapbox'?'mapbox':'generated',roadSegments:layout&&layout.roads?layout.roads.length:0,lots:lots.length,visibleLots:visibleLots,fadedLots:fadedLots,terrainPolygons:terrainMeshes.length,terrainTrees:treeCount,visible:group.visible,nearSource:nearTemplate?'parametric-exterior':'simplified',nearDesigns:uniqueKits.length,nearGeometry:uniqueKits.map(function(k){return k.geometrySignature;}),nearTemplate:nearTemplate?{meshes:uniqueKits.reduce(function(n,k){return n+k.sourceMeshes;},0),instances:uniqueKits.reduce(function(n,k){return n+k.sourceInstances;},0),triangles:uniqueKits.reduce(function(n,k){return n+k.triangles;},0)}:null,nearLots:lots.filter(function(l){return l.detail==='near';}).length,farLots:lots.filter(function(l){return l.detail==='far';}).length,horizon:!!horizon,batches:meshes.length+terrainMeshes.length+ghosts.filter(function(m){return m.visible;}).length+(horizon?1:0),instances:pieces,
+      triangles:meshes.concat(ghosts.filter(function(m){return m.visible;})).reduce(function(n,m){return n+(m.geometry.index?m.geometry.index.count:m.geometry.attributes.position.count)/3*m.count;},terrainMeshes.reduce(function(n,m){return n+m.geometry.index.count/3;},horizon?horizon.geometry.index.count/3:0)),
       placements:lots.map(function(l){return {id:l.id,x:l.x,z:l.z,rotation:l.rotation,detail:l.detail,scale:l.scale,footprint:l.footprint,transform:l.transform,style:l.style};})};},
-      dispose:function(){meshes.forEach(function(m){m.dispose();});Object.keys(geometries).forEach(function(k){geometries[k].dispose();});Object.keys(materials).forEach(function(k){materials[k].dispose();});reflected.forEach(function(g){g.dispose();});uniqueKits.forEach(function(k){k.dispose();});if(horizon){horizon.geometry.dispose();horizon.material.map.dispose();horizon.material.dispose();}group.clear();}};
+      dispose:function(){terrainMeshes.forEach(function(m){m.geometry.dispose();});Object.keys(terrainMaterials).forEach(function(k){terrainMaterials[k].dispose();});ghosts.forEach(function(m){m.dispose();});ghostMaterials.forEach(function(m){m.dispose();});meshes.forEach(function(m){m.dispose();});Object.keys(geometries).forEach(function(k){geometries[k].dispose();});Object.keys(materials).forEach(function(k){materials[k].dispose();});reflected.forEach(function(g){g.dispose();});uniqueKits.forEach(function(k){k.dispose();});if(horizon){horizon.geometry.dispose();horizon.material.map.dispose();horizon.material.dispose();}group.clear();}};
   }
   root.ChauffeurNeighborhood={plan:plan,fitLayout:fitLayout,exterior:exterior,captureExterior:captureExterior,build:build};
 })(typeof window!=='undefined'?window:globalThis);

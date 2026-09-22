@@ -11502,7 +11502,8 @@
         garage: Object.assign({}, GARAGE_BLOCK, {south: GARAGE_BLOCK.south - GAR_DZ})
       }, PALETTE, function (surface) { return makeMat(0xffffff, {rough:.95, map: surface === 'plain' ? null : cladTex(surface, 0xffffff)}); }, function(spec, footprintOnly) {
         return buildDetailedExterior(spec, R, footprintOnly);
-      }, layout); }
+      }, layout, {west:MIRROR?-east:west,east:MIRROR?-west:east,north:north,south:south,
+                   top:(SPEC0.upper&&SPEC0.upper.length?11.2:5.6)+Math.tan((SPEC0.pitch_deg||35)*Math.PI/180)*11}); }
       var initialLayout=window.HOUSE_NEIGHBORHOOD;
       neighborhood = makeNeighborhood(initialLayout);
       scene.add(neighborhood.group);
