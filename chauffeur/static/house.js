@@ -304,19 +304,35 @@
 
   /* ---- WebGL room ------------------------------------------------------ */
   var webgl = null;
-  function buildRoom() {
+  // Both the interactive home and scenery use the same parametric geometry.
+  // Exterior builds accept explicit input, share the renderer, and return only
+  // an owned static kit; they never attach UI or start household behavior.
+  function ownExteriorTextures(kit, textures) {
+    var release = kit.dispose;
+    kit.dispose = function () { release(); textures.forEach(function(t){t.dispose();}); };
+    return kit;
+  }
+  function buildDetailedExterior(spec, renderer) {
+    return buildRoom({ exteriorOnly: true, spec: spec, renderer: renderer });
+  }
+  function buildRoom(options) {
+    options = options || {};
+    var exteriorOnly = !!options.exteriorOnly;
+    var facadeInput = options.spec ? {spec: options.spec} : window.HOUSE_FACADE;
     var T = window.THREE;
     if (!T || DETAIL < 1) return null;
-    var canvasProbe = document.createElement('canvas');
-    var gl = canvasProbe.getContext('webgl2') || canvasProbe.getContext('webgl');
-    if (!gl) return null;
+    if (!exteriorOnly) {
+      var canvasProbe = document.createElement('canvas');
+      var gl = canvasProbe.getContext('webgl2') || canvasProbe.getContext('webgl');
+      if (!gl) return null;
+    }
 
     var SHADOWS = DETAIL >= 3;            // real soft shadow maps: high only
     var PBR = DETAIL >= 3;                // standard materials vs lambert
 
     var scene = new T.Scene();
     scene.background = new T.Color(0xbdb3c7);          // the soft lilac of the reference
-    var neighborhoodEnabled = !!window.ChauffeurNeighborhood && new URLSearchParams(location.search).get('editor') !== '1';
+    var neighborhoodEnabled = !exteriorOnly && !!window.ChauffeurNeighborhood && new URLSearchParams(location.search).get('editor') !== '1';
     var cam = new T.PerspectiveCamera(24, 1, 0.1, neighborhoodEnabled ? 1000 : 200);
     var neighborhood = null;
     /* ---- THE MIRROR (spec 2026-09-17 section 3.4) ----------------------
@@ -338,8 +354,7 @@
        down), long before SPEC0 exists. It is `!!SPEC0.mirror` by
        construction -- SPEC0 is `FACADE ? FACADE.spec : CANONICAL_JS` and
        CANONICAL_JS.mirror is false. */
-    var MIRROR = !!(window.HOUSE_FACADE && window.HOUSE_FACADE.spec &&
-                    window.HOUSE_FACADE.spec.mirror);
+    var MIRROR = !!(facadeInput && facadeInput.spec && facadeInput.spec.mirror);
     function toWorldX(x) { return MIRROR ? -x : x; }
     function toWorld(v) {
       return MIRROR ? new T.Vector3(-v.x, v.y, v.z) : v.clone();
@@ -464,7 +479,8 @@
     cam.position.copy(orbitPos(ORBIT.stop));
     cam.lookAt(toWorld(ORBIT.pivot));   /* the camera lives in world space */
 
-    var R = new T.WebGLRenderer({ antialias: DETAIL >= 2 });
+    var R = exteriorOnly ? options.renderer : new T.WebGLRenderer({ antialias: DETAIL >= 2 });
+    if (!exteriorOnly) {
     R.setPixelRatio(1);                                // the Pi law: never a retina multiplier
     if (PBR) {
       /* TONE MAPPING (lighting pass). ACES lived here, and it was the
@@ -499,6 +515,7 @@
       R.shadowMap.needsUpdate = true;
     }
     ROOT.appendChild(R.domElement);
+    }
 
     /* ---- the rig: one budget, three tiers ------------------------------
        COOL FILL, WARM KEY. The old rig was warm everywhere (hemisphere
@@ -4059,7 +4076,7 @@
        §3.1/§6: build-once, from the payload the page already fetched). A
        page served without it -- only the 2D fallback path can reach that
        -- falls back to CANONICAL_JS, the V2 literal just below. */
-    var FACADE = (window.HOUSE_FACADE && window.HOUSE_FACADE.spec) ? window.HOUSE_FACADE : null;
+    var FACADE = (facadeInput && facadeInput.spec) ? facadeInput : null;
     /* THE CANONICAL FACADE, field for field services/house_facade.py's
        own CANONICAL (arc-2 spec plus the upper-span insert: VERSION 3,
        with per-block depth/roof/cladding/base/body and top-level upper,
@@ -4792,7 +4809,7 @@
     var ROOF_FORMS = { main:   { form: BLOCKS.main.roof.form,   ridge: BLOCKS.main.roof.ridge },
                        garage: { form: BLOCKS.garage.roof.form, ridge: BLOCKS.garage.roof.ridge } };
     (function () {
-      var o = window.HOUSE_ROOF_FORMS;
+      var o = exteriorOnly ? null : window.HOUSE_ROOF_FORMS;
       if (!o) return;
       Object.keys(ROOF_FORMS).forEach(function (k) {
         if (!o[k]) return;
@@ -5487,6 +5504,11 @@
             s.closePath();
             var geo = new T.ExtrudeGeometry(s, { depth: 0.18, bevelEnabled: false });
             geo.translate(0, 0, -0.09); geo.rotateX(Math.PI / 2);
+            // Match box roof decks' world-scaled shingle density. Extrude's
+            // default world-unit UVs otherwise shrink the pattern into noise.
+            var uv=geo.attributes.uv, positions=geo.attributes.position;
+            for(var vertex=0;vertex<uv.count;vertex++)uv.setXY(vertex,
+              positions.getX(vertex)/SHINGLE_UV_REF[0],positions.getZ(vertex)/SHINGLE_UV_REF[2]);
             return geo;
           });
           deck = new T.Mesh(gt, mat(NICE ? 0xffffff : FARMHOUSE.roofTone,
@@ -5548,6 +5570,11 @@
             s.lineTo(-sign * spanEnd, 0); s.closePath();
             var geo = new T.ExtrudeGeometry(s, { depth: 0.18, bevelEnabled: false });
             geo.translate(0, 0, -0.09); geo.rotateX(Math.PI / 2);
+            // Match box roof decks' world-scaled shingle density. Extrude's
+            // default world-unit UVs otherwise shrink the pattern into noise.
+            var uv=geo.attributes.uv, positions=geo.attributes.position;
+            for(var vertex=0;vertex<uv.count;vertex++)uv.setXY(vertex,
+              positions.getX(vertex)/SHINGLE_UV_REF[0],positions.getZ(vertex)/SHINGLE_UV_REF[2]);
             return geo;
           });
           var hm = new T.Mesh(ge, mat(NICE ? 0xffffff : FARMHOUSE.roofTone,
@@ -10472,7 +10499,7 @@
        and adding it early would have baked ~500 study meshes and changed
        the study's look. Only the factory call and the zone registration
        moved. */
-    if (window.HouseStudy) {
+    if (!exteriorOnly && window.HouseStudy) {
       /* VAULTED PARTITIONS: the study's own architecture is authored
          4.45 tall, against a house whose eave is 5.6 and whose roof
          clears 8.5 over this room's north wall -- so from the east room
@@ -10933,7 +10960,7 @@
       });
       if (f.g.userData.maskPattern && MASK_TOGGLES.indexOf(f.g) < 0) MASK_TOGGLES.push(f.g);
     }
-    buildRoomShells();
+    if (!exteriorOnly) buildRoomShells();
 
     /* Each registered piece owns one merge pass. No roof can be omitted
        from batching when the envelope grows. Groups are sibling merge
@@ -11430,14 +11457,45 @@
     counterFlip(houseRoot);
     houseRoot.updateMatrixWorld(true);
     REFLECTED = true;
+    if (exteriorOnly) {
+      // The active home's night pass initializes glazing after construction.
+      // Static kits return before that runtime pass, so capture its daytime
+      // finish rather than the bright construction-placeholder glass.
+      extG.traverse(function(o){
+        if(!o.isMesh || !o.material || !o.material.emissive || o.userData.lamp)return;
+        if(o.userData.glazing || o.userData.shellWindow){
+          o.material.color.setHex(FARMHOUSE.windowDark);
+          o.material.emissive.setHex(0x000000);o.material.emissiveIntensity=0;
+        }
+      });
+      var kit = window.ChauffeurNeighborhood.captureExterior(T, extG,
+        [garageInterior, carsG, busG, skyDome, webgl_garageBackWall], {front:26});
+      var retainedTextures = new Set(), sourceMaterials = new Set(), sourceGeometry = new Set(), sourceTextures = new Set();
+      function textures(material, output) {
+        Object.keys(material).forEach(function(k){if(material[k] && material[k].isTexture)output.add(material[k]);});
+      }
+      kit.parts.forEach(function(p){textures(p.material, retainedTextures);});
+      scene.traverse(function(o){
+        if(o.geometry)sourceGeometry.add(o.geometry);
+        if(o.material)(Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){sourceMaterials.add(m);textures(m,sourceTextures);});
+        if(o.isInstancedMesh)o.dispose();
+      });
+      sourceGeometry.forEach(function(g){g.dispose();});
+      sourceMaterials.forEach(function(m){m.dispose();});
+      sourceTextures.forEach(function(t){if(!retainedTextures.has(t))t.dispose();});
+      scene.clear();
+      kit.spec = JSON.parse(JSON.stringify(options.spec));
+      return ownExteriorTextures(kit, retainedTextures);
+    }
     // Photo/editor captures isolate the active design. Scenery is independent
     // of its mirror, shell masks, household state and room navigation.
     if (neighborhoodEnabled) {
       neighborhood = window.ChauffeurNeighborhood.build(T, CANONICAL_JS, {
         main: Object.assign({}, FULL_HOUSE, {south: FULL_HOUSE.south - MAIN_DZ}),
         garage: Object.assign({}, GARAGE_BLOCK, {south: GARAGE_BLOCK.south - GAR_DZ})
-      }, PALETTE, function (surface) { return makeMat(0xffffff, {rough:.95, map: surface === 'plain' ? null : cladTex(surface, 0xffffff)}); }, window.ChauffeurNeighborhood.captureExterior(T, extG,
-        [garageInterior, carsG, busG, skyDome, webgl_garageBackWall], {front:26}));
+      }, PALETTE, function (surface) { return makeMat(0xffffff, {rough:.95, map: surface === 'plain' ? null : cladTex(surface, 0xffffff)}); }, function(spec) {
+        return buildDetailedExterior(spec, R);
+      });
       scene.add(neighborhood.group);
       neighborhood.update(cam.position, toWorld(ORBIT.pivot), true);
     }

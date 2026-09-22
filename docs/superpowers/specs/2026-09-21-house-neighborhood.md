@@ -1,17 +1,17 @@
 # Layered neighborhood street scene
 
-Version 2.499.144 upgrades the nearest houses to the active home's exterior quality.
+Version 2.499.145 builds eight distinct nearby designs through the detailed parametric renderer.
 The objective is a full neighborhood surrounding the active home, including its rear.
 
 ## Layout and styles
 
 A deterministic seven-by-seven parcel grid leaves the center for the active home:
-eight detailed matching-home neighbors, forty simpler mixed-style outer houses, then a continuous painted
+eight distinct detailed neighbors, forty simpler mixed-style outer houses, then a continuous painted
 panorama of distant roofs and trees. Paired rows face shared streets. The ground,
 sidewalks and road extensions reach the horizon instead of ending beside the home.
 
-The nearest houses reuse the user's finished exterior. Four facade-compatible recipes
-remain independent of parcel placement for the outer ring:
+Four facade-compatible recipes supply both rings; nearby variants also change block
+depth, garage ridge, porch span and upper-story extent:
 
 | Style | Distinguishing features |
 | --- | --- |
@@ -21,26 +21,34 @@ remain independent of parcel placement for the outer ring:
 | Ranch | Single story, pale brick, low hip roofs, grouped windows and shutters |
 
 The modern recipe respects the existing schema's 22.5-degree minimum and hip/gable
-main-roof vocabulary; it does not introduce flat main roofs. The outer ring uses a
-mixed neighborhood; the inner ring matches the actual rendered home without a
-style classifier or a style-selection UI.
+main-roof vocabulary; it does not introduce flat main roofs. Both rings use mixed styles. The eight nearby designs differ in geometry, not only
+paint or mirrored placement. The user's active design is not used as a template.
 
 ## Rendering
 
-`captureExterior` freezes the active renderer's finished exterior after its geometry,
-clipping, merging and ambient-occlusion passes. This replaces the earlier simplified
-projection for the eight nearest lots: roofs, openings, porch details, authored
-landscaping, texture UVs, normal maps and baked vertex shading are retained. Neighbors
-follow the active rendering tier (high on high, reduced alongside the home on low).
-No second house build or renderer/context is created.
+`buildDetailedExterior(spec, renderer)` is the exterior entry point into the same
+parametric construction code used by the active home. Explicit facade input replaces
+reads from the active home's injection; neighboring construction cannot mutate that
+injection. Each distinct near spec is built once. It reuses the active WebGL renderer
+without attaching another canvas, constructing Study, building room cutaway masks,
+starting household behavior or recursively creating another neighborhood.
 
-The capture excludes garage contents, vehicles, sky, runtime labels/screens, room-only
-cutaways and lights. Shared road triangles are omitted. Meshes and existing instanced
-scenery are flattened into material batches, then instanced across nearby lots.
-Mirrors reverse triangle winding while keeping instance matrices positive. Maps are
-borrowed; materials and geometry are owned copies, so room navigation and source
-material changes cannot mutate the frozen neighbors. Source resources are not disposed
-when the neighborhood is released. Further houses retain the low-detail projection.
+The shared legacy construction still creates temporary room scaffolding while supplying
+its geometry helpers. That scaffolding is not retained or rendered: the exterior path
+returns before household painters/runtime wiring, captures only exterior geometry and
+releases its temporary scene. Eight separate builds increase startup work as well as
+rendering cost. This is an explicit exterior entry point, not a complete physical
+extraction of every legacy geometry helper into a separate module.
+
+`captureExterior` preserves detailed roofs, openings, porches, landscaping, UVs, normal
+maps and baked shading, excluding vehicles, garage contents, labels, lights, cutaways
+and duplicated roads. Owned material/geometry kits also own the retained textures from
+their temporary builds. Disposal closures are outside construction/capture scopes so
+they do not retain temporary scenes and work arrays. Mirrored instances reverse winding
+without negative instance scales. Far houses continue to use the simplified projection.
+
+Hip deck UVs now use the shared roof texture's world scale; the previous extrusion UVs
+made shingles so dense that hip roofs read as flat-colored surfaces.
 
 The horizon is a deterministic 4096x512 canvas on a continuous cylindrical surface;
 wrapped painter copies prevent a seam. Transparent sky reveals the existing weather
@@ -59,10 +67,10 @@ visibility; lots can appear/disappear while orbiting. Photo/editor captures (`ed
 exclude all scenery and retain the original sky and far plane.
 
 `chfNeighborhood()` reports near/far counts, style, placement, visibility and geometry
-budgets, including source exterior mesh/instance/triangle counts. A canonical high-tier
-capture contains about 144,000 triangles; all scenery totals about 1.2 million triangles.
-The first browser measurement added 151 draws on high. Costs depend on the user's
-facade and quality tier. Device-level Raspberry Pi frame times remain unverified.
+budgets, including distinct kit counts and fingerprints of the actual captured vertex
+positions. The first high-tier measurement has eight distinct geometry fingerprints,
+about 1.22 million total triangles, and 547 extra draw calls. Costs depend on quality;
+Raspberry Pi frame times remain unverified.
 
 ## Verification
 
@@ -72,8 +80,7 @@ picking, camera/room visibility and resource disposal. Capture tests cover full
 single-material geometry groups, transformed instances, mirrored triangle winding,
 retained UV/color attributes, road exclusion and ownership of copied resources. Browser checks cover high/low
 quality, all eight orbit stops, room entry/exit and marker clicks, narrow-screen layout,
-editor isolation and the rendered panorama. No live model calls are required.
+editor isolation and the rendered panorama. The browser gate requires eight distinct
+geometry fingerprints and exactly one mounted renderer canvas. No live model calls are required.
 
-Neighbor interiors, roaming, saved neighbor editing and varied high-detail style
-recipes remain outside this slice. The immediate neighbors currently repeat the
-active exterior with mirrored placements; the outer ring supplies style variety.
+Neighbor interiors, roaming and saved neighbor editing remain outside this slice.

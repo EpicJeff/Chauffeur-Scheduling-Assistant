@@ -61,10 +61,10 @@ const spec=JSON.parse(process.argv[3]);
 const envelopes={main:{west:-7.15,east:14.65,north:-6.1,south:14.55,eave:5.6},garage:{west:-18.2,east:-7.15,north:-6.1,south:10.1,eave:5.6}};
 const palette={body:{white:0xffffff},roof:{charcoal:0x333333},frame:{white:0xffffff},trim:{white:0xffffff},door:{wood:0x885522}};
 const n=ChauffeurNeighborhood.build(T,spec,envelopes,palette,null,kit);
-assert.equal(n.stats().nearSource,'active-exterior');
+assert.equal(n.stats().nearSource,'parametric-exterior');
 const detailed=n.group.children.filter(m=>m.userData.nearExterior);assert.equal(detailed.reduce((sum,m)=>sum+m.count,0),8);
 const transform=new T.Matrix4();detailed.forEach(m=>{for(let i=0;i<m.count;i++){m.getMatrixAt(i,transform);assert(transform.determinant()>0);}});
-assert(n.stats().placements.filter(l=>l.detail==='near').every(l=>l.style==='matching-home'));
+assert.equal(n.stats().nearDesigns,1);
 n.dispose();assert.equal(copiesDisposed,2);assert.equal(sourceDisposals,0);
 '''
         subprocess.run(['node','-e',script,str((base/'vendor/three.min.js').resolve()),str((base/'house_neighborhood.js').resolve()),json.dumps(hf.CANONICAL)],check=True)
@@ -76,6 +76,8 @@ n.dispose();assert.equal(copiesDisposed,2);assert.equal(sourceDisposals,0);
         self.assertEqual(len(rows),48)
         self.assertEqual(len({(r['x'],r['z']) for r in rows}),48)
         self.assertEqual(sum(r['detail']=='near' for r in rows),8)
+        structures=[json.dumps({k:r['spec'][k] for k in ('upper','ground','roof','blocks')},sort_keys=True) for r in rows if r['detail']=='near']
+        self.assertEqual(len(set(structures)),8)
         self.assertEqual({r['style'] for r in rows if r['detail']=='near'}, {'farmhouse','craftsman','modern','ranch'})
         self.assertTrue(any(r['z']<0 and r['detail']=='near' for r in rows))
         for r in rows:

@@ -12,16 +12,17 @@ Reduce the coordination work required to run a family. Chauffeur should understa
 
 The 3D house is the shared spatial interface. Rooms and real-world objects provide stable context for features. The house should also reflect the family's own life through carefully quality-gated, personalized objects and spaces.
 
-## Latest architecture change (2026-09-21, v2.499.144)
+## Latest architecture change (2026-09-21, v2.499.145)
 
-The eight immediate neighbors now reuse the active home's finished exterior geometry,
-materials and landscaping, replacing the simplified projection. They match the user's
-house and rendering tier, while forty outer houses retain lightweight mixed styles
-and a painted horizon. Exterior capture copies geometry/materials and borrows textures;
-vehicles, garage contents, labels, cutaways and lights are excluded. Nearby lots use
-shared material batches with mirrored instances. High-tier canonical scenery totals
-about 1.2 million triangles; hardware frame-time testing remains outstanding.
-See the [neighborhood scope and checks](superpowers/specs/2026-09-21-house-neighborhood.md).
+The eight immediate neighbors now have distinct parametric specifications, built through
+the active home's detailed geometry code via an explicit exterior entry point. Roofs,
+stories, porches and depths vary as well as materials. Nearby houses no longer copy the
+user's design. One renderer is shared, temporary construction resources are released,
+and room cutaways/Study/household runtime are excluded from the exterior path. Forty
+outer houses and the painted horizon retain their existing lightweight rendering.
+Browser verification requires eight different built geometry fingerprints. First high-tier
+measurement: about 1.22 million triangles and 547 added draw calls; hardware frame times
+remain unverified. See the [neighborhood scope](superpowers/specs/2026-09-21-house-neighborhood.md).
 
 House photo matching uses three bounded stages: compact structure analysis, a rendered
 structure review, then details constrained to that architecture. Code compiles all

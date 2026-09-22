@@ -17,6 +17,7 @@
       placements.push([col*51,row*58,Math.abs(row)%2?Math.PI:0,
         Math.abs(row)<=1 && Math.abs(col)<=1?'near':'far']);
     }
+    var nearIndex=0;
     return placements.map(function (p,i) {
       var s=clone(canonical),recipe=STYLES[i%STYLES.length];
       s.mirror=i%2===1;
@@ -36,6 +37,16 @@
         [8,10,12].forEach(function (slot) { s.ground.push({slot:slot,span:1,kind:'window',size:'standard',shutters:false,story:2}); });
       }
       if (recipe.name==='farmhouse' || recipe.name==='craftsman') s.roof.push({slot:3,span:3,kind:'gable',window:true});
+      if(p[3]==='near'){
+        var variant=Math.floor(nearIndex++/4);
+        s.blocks.main.depth=variant?2.4:0;
+        s.blocks.garage.depth=variant?0:1.2;
+        s.blocks.garage.roof.ridge=variant?'z':'x';
+        s.ground.forEach(function(f){if(f.kind==='porch'){f.slot=variant?8:9;f.span=variant?6:4;}});
+        s.upper.forEach(function(u){u.slot=variant?8:7;u.span=variant?8:6;});
+        s.ground=s.ground.filter(function(f){return f.story!==2;});
+        if(s.upper.length)(variant?[9,11,13]:[8,10,12]).forEach(function(slot){s.ground.push({slot:slot,span:1,kind:'window',size:'standard',count:1,shutters:false,story:2});});
+      }
       return {id:'neighbor-'+i,x:p[0],z:p[1],rotation:p[2],detail:p[3],style:recipe.name,spec:s};
     });
   }
@@ -128,8 +139,15 @@
     });
   }
 
-  // Freeze the already-built active exterior. No second house build, household
+  // Freeze a finished parametric exterior. No second house build, household
   // state, cutaway groups or lights. Geometry/UV/AO are copied; maps are borrowed.
+  function exteriorKit(parts, stats) {
+    // Keep disposal outside the capture's scope: a kit must not retain its
+    // temporary source scene, attribute work arrays or material buckets.
+    stats.parts=parts;
+    stats.dispose=function(){parts.forEach(function(p){p.geometry.dispose();p.material.dispose();});};
+    return stats;
+  }
   function captureExterior(T,root,excluded,parcel) {
     root.updateMatrixWorld(true);
     var skip=new Set(excluded||[]),buckets={},inverse=root.matrixWorld.clone().invert();
@@ -188,9 +206,10 @@
       ['position','normal','uv','color'].forEach(function(k){g.setAttribute(k,new T.Float32BufferAttribute(b[k],k==='uv'?2:3));});
       g.computeBoundingSphere();return {geometry:g,material:b.material,castShadow:b.castShadow,renderOrder:b.renderOrder};
     });
-    return {parts:parts,sourceMeshes:sourceMeshes,sourceInstances:sourceInstances,
-      triangles:parts.reduce(function(n,p){return n+p.geometry.attributes.position.count/3;},0),
-      dispose:function(){parts.forEach(function(p){p.geometry.dispose();p.material.dispose();});}};
+    var geometryHash=2166136261;
+    parts.forEach(function(p){var a=p.geometry.attributes.position.array;for(var i=0;i<a.length;i++)geometryHash=Math.imul(geometryHash^Math.round(a[i]*1000),16777619);});
+    return exteriorKit(parts,{geometrySignature:(geometryHash>>>0).toString(16),sourceMeshes:sourceMeshes,sourceInstances:sourceInstances,
+      triangles:parts.reduce(function(n,p){return n+p.geometry.attributes.position.count/3;},0)});
   }
 
   function paintedHorizon(T) {
@@ -225,6 +244,15 @@
   function build(T,canonical,envelopes,palette,materialFactory,nearTemplate) {
     var group=new T.Group();group.name='neighborhood';group.userData.yard=true;
     var lots=plan(canonical),buckets={},pieces=0;
+    var kits=new Map(),lotKits={};
+    lots.forEach(function(l,i){
+      if(!nearTemplate || l.detail!=='near')return;
+      var spec=clone(l.spec);spec.mirror=false;
+      var key=JSON.stringify(spec);
+      if(!kits.has(key))kits.set(key,typeof nearTemplate==='function'?nearTemplate(spec):nearTemplate);
+      lotKits[i]=kits.get(key);
+    });
+    var uniqueKits=Array.from(new Set(kits.values()));
     function add(kind,size,pos,turn,color,lot) {
       (buckets[kind]||(buckets[kind]=[])).push({size:size,pos:pos,turn:turn,color:color,lot:lot});pieces++;
     }
@@ -299,9 +327,9 @@
     // Mirrored geometry gets reversed triangle winding (negative instance scales
     // are unsupported by THREE.InstancedMesh).
     var reflected=[];
-    if(nearTemplate)nearTemplate.parts.forEach(function(part){
+    uniqueKits.forEach(function(kit){kit.parts.forEach(function(part){
       [false,true].forEach(function(mirror){
-        var rows=[];lots.forEach(function(l,i){if(l.detail==='near' && l.spec.mirror===mirror)rows.push({lot:i});});
+        var rows=[];lots.forEach(function(l,i){if(lotKits[i]===kit && l.spec.mirror===mirror)rows.push({lot:i});});
         if(!rows.length)return;
         var geometry=part.geometry;
         if(mirror){
@@ -315,6 +343,7 @@
         rows.forEach(function(r,i){var l=lots[r.lot];placement.position.set(l.x,0,l.z);placement.rotation.set(0,l.rotation,0);placement.scale.set(1,1,1);placement.updateMatrix();saved.push(placement.matrix.clone());mesh.setMatrixAt(i,placement.matrix);});
         group.add(mesh);meshes.push(mesh);matrices.push({mesh:mesh,rows:rows,saved:saved});pieces+=rows.length;
       });
+    });
     });
     var horizon=paintedHorizon(T);if(horizon)group.add(horizon);
     var hidden='',visibleLots=lots.length,zero=new T.Matrix4().makeScale(0,0,0);
@@ -330,10 +359,10 @@
       visibleLots=blocked.filter(function(b){return !b;}).length;
       matrices.forEach(function(b){b.rows.forEach(function(r,i){b.mesh.setMatrixAt(i,r.lot>=0&&blocked[r.lot]?zero:b.saved[i]);});b.mesh.instanceMatrix.needsUpdate=true;});
     }
-    return {group:group,update:update,setNight:function(n){if(horizon)horizon.material.color.setHex(n?0x435063:0xcdcdcd);},stats:function(){return {lots:lots.length,visibleLots:visibleLots,visible:group.visible,nearSource:nearTemplate?'active-exterior':'simplified',nearTemplate:nearTemplate?{meshes:nearTemplate.sourceMeshes,instances:nearTemplate.sourceInstances,triangles:nearTemplate.triangles}:null,nearLots:lots.filter(function(l){return l.detail==='near';}).length,farLots:lots.filter(function(l){return l.detail==='far';}).length,horizon:!!horizon,batches:meshes.length+(horizon?1:0),instances:pieces,
+    return {group:group,update:update,setNight:function(n){if(horizon)horizon.material.color.setHex(n?0x435063:0xcdcdcd);},stats:function(){return {lots:lots.length,visibleLots:visibleLots,visible:group.visible,nearSource:nearTemplate?'parametric-exterior':'simplified',nearDesigns:uniqueKits.length,nearGeometry:uniqueKits.map(function(k){return k.geometrySignature;}),nearTemplate:nearTemplate?{meshes:uniqueKits.reduce(function(n,k){return n+k.sourceMeshes;},0),instances:uniqueKits.reduce(function(n,k){return n+k.sourceInstances;},0),triangles:uniqueKits.reduce(function(n,k){return n+k.triangles;},0)}:null,nearLots:lots.filter(function(l){return l.detail==='near';}).length,farLots:lots.filter(function(l){return l.detail==='far';}).length,horizon:!!horizon,batches:meshes.length+(horizon?1:0),instances:pieces,
       triangles:meshes.reduce(function(n,m){return n+(m.geometry.index?m.geometry.index.count:m.geometry.attributes.position.count)/3*m.count;},horizon?horizon.geometry.index.count/3:0),
-      placements:lots.map(function(l){return {id:l.id,x:l.x,z:l.z,rotation:l.rotation,detail:l.detail,style:nearTemplate&&l.detail==='near'?'matching-home':l.style};})};},
-      dispose:function(){meshes.forEach(function(m){m.dispose();});Object.keys(geometries).forEach(function(k){geometries[k].dispose();});Object.keys(materials).forEach(function(k){materials[k].dispose();});reflected.forEach(function(g){g.dispose();});if(nearTemplate)nearTemplate.dispose();if(horizon){horizon.geometry.dispose();horizon.material.map.dispose();horizon.material.dispose();}group.clear();}};
+      placements:lots.map(function(l){return {id:l.id,x:l.x,z:l.z,rotation:l.rotation,detail:l.detail,style:l.style};})};},
+      dispose:function(){meshes.forEach(function(m){m.dispose();});Object.keys(geometries).forEach(function(k){geometries[k].dispose();});Object.keys(materials).forEach(function(k){materials[k].dispose();});reflected.forEach(function(g){g.dispose();});uniqueKits.forEach(function(k){k.dispose();});if(horizon){horizon.geometry.dispose();horizon.material.map.dispose();horizon.material.dispose();}group.clear();}};
   }
   root.ChauffeurNeighborhood={plan:plan,exterior:exterior,captureExterior:captureExterior,build:build};
 })(typeof window!=='undefined'?window:globalThis);
