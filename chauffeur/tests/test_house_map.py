@@ -20,7 +20,75 @@ STREETS = [
 ]
 
 
+def building(cx, cz, width=10, depth=16, turn=0, identity=None, kind='house'):
+    c,s=math.cos(turn),math.sin(turn)
+    ring=[(cx+x*c+z*s,cz-x*s+z*c) for x,z in
+          ((-width/2,-depth/2),(width/2,-depth/2),(width/2,depth/2),(-width/2,depth/2),(-width/2,-depth/2))]
+    return {'id':identity,'type':kind,'outline':ring}
+
+
 class HouseMapTests(unittest.TestCase):
+    def test_real_outlines_keep_position_dimensions_and_tile_identity(self):
+        a=building(50,0,10,18,.3,'a')
+        # The second building straddles a tile boundary. Rejoin its two pieces.
+        items=[building(0,0,14,16,identity='home'),a,dict(a,id='buffer-duplicate'),
+               building(87.5,0,5,18,identity='b'),building(92.5,0,5,18,identity='b'),
+               building(130,0,12,12,identity='garage',kind='garage'),
+               building(160,0,12,12,identity='part',kind='building:part')]
+        layout=hm.compile_layout([[(-265,28.5),(265,28.5)]],items)
+        self.assertEqual(layout['placement'],'footprints')
+        self.assertEqual(len(layout['lots']),2)
+        self.assertEqual(layout,hm.compile_layout([[(-265,28.5),(265,28.5)]],items))
+        for lot,x in zip(layout['lots'],(50,90)):
+            self.assertAlmostEqual(lot['x'],x,places=3)
+            self.assertAlmostEqual(lot['z'],0,places=3)
+            self.assertAlmostEqual(lot['footprint']['width'],10,delta=.002)
+            self.assertAlmostEqual(lot['footprint']['depth'],18,delta=.002)
+        self.assertAlmostEqual(math.cos(layout['lots'][0]['rotation']-.3),1,places=6)
+
+    def test_dense_mapped_houses_are_not_packed_into_standard_yards(self):
+        buildings=[building(x,z,10,16,identity=f'{x}:{z}')
+                   for x in range(-208,209,26) for z in (-60,0,60,120)]
+        layout=hm.compile_layout(STREETS,buildings)
+        # These footprints are narrower than the prior minimum 70% garden.
+        self.assertGreater(len(layout['lots']),48)
+        self.assertLessEqual(len(layout['lots']),128)
+        self.assertTrue(all('footprint' in lot for lot in layout['lots']))
+        self.assertEqual(sum(p['detail']=='near' for p in layout['lots']),8)
+
+    def test_building_decode_uses_z16_and_preserves_polygons(self):
+        poly={'type':'Polygon','coordinates':[[[100,100],[300,100],[300,500],[100,500],[100,100]]]}
+        multi={'type':'MultiPolygon','coordinates':[poly['coordinates'],[[[700,100],[900,100],[900,500],[700,500],[700,100]]]]}
+        raw=mapbox_vector_tile.encode({'name':'building','features':[
+            {'id':1,'geometry':poly,'properties':{'type':'house'}},
+            {'id':2,'geometry':multi,'properties':{'type':'building'}},
+            {'id':3,'geometry':poly,'properties':{'type':'building:part'}}]},default_options={'y_coord_down':True})
+        response=MagicMock();response.__enter__.return_value=response;response.content=raw
+        with patch.object(hm.requests,'get',return_value=response) as get,patch.object(hm.maps,'check_usage_limits_and_spikes',return_value=True),patch.object(hm,'compile_layout',return_value={'source':'mapbox'}) as compile_:
+            result=hm._fetch(40,-75,'test-token')
+            items=compile_.call_args.args[1]
+            self.assertEqual(len(items),27)
+            self.assertTrue(all(len(b['outline'])==5 for b in items))
+            self.assertEqual({b['id'] for b in items},{1,2})
+            self.assertEqual(len(compile_.call_args.args[2]),9)
+            self.assertEqual(result['footprintStatus'],'available')
+            self.assertEqual(sum('/16/' in call.args[0] for call in get.call_args_list),9)
+
+    def test_building_timeout_retains_roads_and_stops_requests(self):
+        response=MagicMock();response.__enter__.return_value=response;response.content=b'tile'
+        attempts=[]
+        def get(url,**kwargs):
+            attempts.append(url)
+            if '/16/' in url:
+                raise hm.requests.Timeout('offline fixture')
+            return response
+        with patch.object(hm.requests,'get',side_effect=get),patch.object(hm.maps,'check_usage_limits_and_spikes',return_value=True),patch.object(mapbox_vector_tile,'decode',return_value={}),patch.object(hm,'compile_layout',return_value={'source':'mapbox','roads':['preserved']}) as compile_:
+            result=hm._fetch(40,-75,'test-token')
+            self.assertEqual(result['roads'],['preserved'])
+            self.assertEqual(result['footprintStatus'],'unavailable')
+            self.assertEqual(sum('/16/' in url for url in attempts),1)
+            self.assertEqual(compile_.call_args.args[2],[])
+
     def test_adjacent_frontages_are_not_alternately_discarded(self):
         road = [[(-265, 28.5), (265, 28.5)]]
         # These 52-wide yards fit at all 54-unit frontages. Include the home
@@ -103,10 +171,11 @@ class HouseMapTests(unittest.TestCase):
         response.content = tile
         with patch.object(hm.requests, 'get', return_value=response) as fetch, patch.object(hm.maps, 'check_usage_limits_and_spikes', return_value=True) as budget, patch.object(hm, 'compile_layout', return_value={'source': 'mapbox'}) as compile_:
             hm._fetch(40, -75, 'test-token')
-            self.assertLessEqual(fetch.call_count, 4)
+            self.assertLessEqual(fetch.call_count, 13)
             self.assertEqual(fetch.call_count, budget.call_count)
             lines = compile_.call_args.args[0]
-            self.assertEqual(len(lines), fetch.call_count)
+            self.assertEqual(len(lines), fetch.call_count-9)
+            self.assertEqual(sum('/16/' in call.args[0] for call in fetch.call_args_list),9)
             self.assertTrue(all(b[1] > a[1] for a, b in lines))
             self.assertTrue(all(call.kwargs['timeout'] == (3, 5) for call in fetch.call_args_list))
 
@@ -120,7 +189,7 @@ class HouseMapTests(unittest.TestCase):
             precision = stack.enter_context(patch.object(hm.storage, 'get_cached_geocode', return_value={'precision': 'exact'}))
             fetch = stack.enter_context(patch.object(hm, '_fetch', return_value=hm.compile_layout(STREETS)))
             # An upgrade must not retain the sparse layout for twelve hours.
-            legacy_key = hm.hashlib.sha256(b'Test home|private-token|2').hexdigest()
+            legacy_key = hm.hashlib.sha256(b'Test home|private-token|3').hexdigest()
             (Path(directory)/'house_map.json').write_text(json.dumps({'key':legacy_key, 'until':hm.time.time()+3600,
                                                                     'layout':{'source':'mapbox','lots':[]}}))
             self.assertEqual(hm.neighborhood_layout(cached_only=True)['source'], 'generated')

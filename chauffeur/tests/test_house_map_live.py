@@ -18,6 +18,14 @@ def main():
                [(-350,-100),(-100,-100),(40,-100),(85,-65),(100,45)],
                [(-350,110),(0,110),(55,140),(135,140)]]
     layout = house_map.compile_layout(streets)
+    if os.environ.get('HOUSE_MAP_FOOTPRINTS'):
+        from test_house_map import building
+        streets = [[(-350,28.5),(350,28.5)],[(-350,-65),(350,-65)],
+                   [(-350,120),(350,120)]]
+        buildings = [building(x,z,18+(i%3)*2,22+(i%2)*4,identity=f'{x}:{z}')
+                     for i,x in enumerate(range(-200,201,40)) for z in (-100,-30,65,155)
+                     if abs(x)+abs(z)>40]
+        layout = house_map.compile_layout(streets,buildings)
     if os.environ.get('HOUSE_MAP_REPLAY'):
         saved = json.loads(Path(os.environ['HOUSE_MAP_REPLAY']).read_text(encoding='utf-8-sig'))
         saved = saved.get('layout',saved)
@@ -51,7 +59,7 @@ def main():
               if(!m.userData.nearExterior)return;let a=m.instanceMatrix.array;
               for(let i=0;i<m.count;i++){let scale=Math.hypot(a[i*16],a[i*16+1],a[i*16+2]);if(scale>.01)values.push(Math.round(scale*100)/100);}
             });return [...new Set(values)];}''')
-            assert rendered_scales and set(rendered_scales).issubset({p['scale'] for p in layout['lots'][:8]}),rendered_scales
+            assert rendered_scales and set(rendered_scales).issubset({round(p['transform']['sx'],2) for p in stats['placements'][:8]}),rendered_scales
             assert page.locator('#room canvas').count() == 1
             assert page.locator('#house-map-credit').is_visible()
             assert page.evaluate("__hpScene.getObjectByName('parcel-road').visible") is False

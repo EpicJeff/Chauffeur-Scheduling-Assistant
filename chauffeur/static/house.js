@@ -312,8 +312,8 @@
     kit.dispose = function () { release(); textures.forEach(function(t){t.dispose();}); };
     return kit;
   }
-  function buildDetailedExterior(spec, renderer) {
-    return buildRoom({ exteriorOnly: true, spec: spec, renderer: renderer });
+  function buildDetailedExterior(spec, renderer, footprintOnly) {
+    return buildRoom({ exteriorOnly: true, spec: spec, renderer: renderer, footprintOnly: footprintOnly });
   }
   function buildRoom(options) {
     options = options || {};
@@ -11471,7 +11471,8 @@
         }
       });
       var kit = window.ChauffeurNeighborhood.captureExterior(T, extG,
-        [garageInterior, carsG, busG, skyDome, webgl_garageBackWall], {front:26});
+        [garageInterior, carsG, busG, skyDome, webgl_garageBackWall].concat(options.footprintOnly?[yardG]:[]),
+        {front:26, buildingOnly:options.footprintOnly});
       var retainedTextures = new Set(), sourceMaterials = new Set(), sourceGeometry = new Set(), sourceTextures = new Set();
       function textures(material, output) {
         Object.keys(material).forEach(function(k){if(material[k] && material[k].isTexture)output.add(material[k]);});
@@ -11495,8 +11496,8 @@
       function makeNeighborhood(layout) { return window.ChauffeurNeighborhood.build(T, CANONICAL_JS, {
         main: Object.assign({}, FULL_HOUSE, {south: FULL_HOUSE.south - MAIN_DZ}),
         garage: Object.assign({}, GARAGE_BLOCK, {south: GARAGE_BLOCK.south - GAR_DZ})
-      }, PALETTE, function (surface) { return makeMat(0xffffff, {rough:.95, map: surface === 'plain' ? null : cladTex(surface, 0xffffff)}); }, function(spec) {
-        return buildDetailedExterior(spec, R);
+      }, PALETTE, function (surface) { return makeMat(0xffffff, {rough:.95, map: surface === 'plain' ? null : cladTex(surface, 0xffffff)}); }, function(spec, footprintOnly) {
+        return buildDetailedExterior(spec, R, footprintOnly);
       }, layout); }
       var initialLayout=window.HOUSE_NEIGHBORHOOD;
       neighborhood = makeNeighborhood(initialLayout);

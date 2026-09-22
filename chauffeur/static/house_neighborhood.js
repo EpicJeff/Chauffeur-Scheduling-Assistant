@@ -17,7 +17,7 @@
       placements.push([col*51,row*58,Math.abs(row)%2?Math.PI:0,
         Math.abs(row)<=1 && Math.abs(col)<=1?'near':'far']);
     }
-    if(layout && layout.source==='mapbox')placements=layout.lots.map(function(l){return [l.x,l.z,l.rotation,l.detail,l.scale||1];});
+    if(layout && layout.source==='mapbox')placements=layout.lots.map(function(l){return [l.x,l.z,l.rotation,l.detail,l.scale||1,l.footprint];});
     var nearIndex=0;
     return placements.map(function (p,i) {
       var s=clone(canonical),recipe=STYLES[i%STYLES.length];
@@ -48,7 +48,7 @@
         s.ground=s.ground.filter(function(f){return f.story!==2;});
         if(s.upper.length)(variant?[9,11,13]:[8,10,12]).forEach(function(slot){s.ground.push({slot:slot,span:1,kind:'window',size:'standard',count:1,shutters:false,story:2});});
       }
-      return {id:'neighbor-'+i,x:p[0],z:p[1],rotation:p[2],detail:p[3],scale:p[4]||1,style:recipe.name,spec:s};
+      return {id:'neighbor-'+i,x:p[0],z:p[1],rotation:p[2],detail:p[3],scale:p[4]||1,footprint:p[5],style:recipe.name,spec:s};
     });
   }
 
@@ -187,7 +187,7 @@
               var front=0,top=-Infinity;
               for(var corner=0;corner<3;corner++){v.fromBufferAttribute(attrs.position,i+corner).applyMatrix4(matrix);front+=v.z/3;top=Math.max(top,v.y);}
               // Shared streets are built once by the neighborhood, not per lot.
-              if(front>=parcel.front && top<.5){i+=2;continue;}
+              if((front>=parcel.front && top<.5) || (parcel.buildingOnly && top<.05)){i+=2;continue;}
             }
             var vertex=i,cornerIndex=(i-part.start)%3;
             if(reverse && cornerIndex)vertex=i+(cornerIndex===1?1:-1);
@@ -245,12 +245,25 @@
   function build(T,canonical,envelopes,palette,materialFactory,nearTemplate,layout) {
     var group=new T.Group();group.name='neighborhood';group.userData.yard=true;
     var lots=plan(canonical,layout),buckets={},pieces=0;
+    lots.forEach(function(l){
+      var size=l.scale;
+      l.transform={sx:size,sy:size,sz:size,x:l.x,z:l.z};
+      if(!l.footprint)return;
+      // Fit the walls, not the much larger authored garden. The body center
+      // is off-origin and reverses when mirrored; compensate before rotation.
+      var west=Math.min(envelopes.main.west,envelopes.garage.west),east=Math.max(envelopes.main.east,envelopes.garage.east);
+      var north=Math.min(envelopes.main.north,envelopes.garage.north);
+      var south=Math.max(envelopes.main.south+l.spec.blocks.main.depth,envelopes.garage.south+l.spec.blocks.garage.depth);
+      var sx=l.footprint.width/(east-west),sz=l.footprint.depth/(south-north),sy=Math.sqrt(sx*sz);
+      var cx=(west+east)/2*sx*(l.spec.mirror?-1:1),cz=(north+south)/2*sz,c=Math.cos(l.rotation),s=Math.sin(l.rotation);
+      l.transform={sx:sx,sy:sy,sz:sz,x:l.x-cx*c-cz*s,z:l.z+cx*s-cz*c};
+    });
     var kits=new Map(),lotKits={};
     lots.forEach(function(l,i){
       if(!nearTemplate || l.detail!=='near')return;
       var spec=clone(l.spec);spec.mirror=false;
-      var key=JSON.stringify(spec);
-      if(!kits.has(key))kits.set(key,typeof nearTemplate==='function'?nearTemplate(spec):nearTemplate);
+      var key=JSON.stringify(spec)+'|'+!!l.footprint;
+      if(!kits.has(key))kits.set(key,typeof nearTemplate==='function'?nearTemplate(spec,!!l.footprint):nearTemplate);
       lotKits[i]=kits.get(key);
     });
     var uniqueKits=Array.from(new Set(kits.values()));
@@ -280,6 +293,7 @@
       exterior(lot.spec,envelopes,palette,function(kind,size,pos,turn,c){
         emit(kind,size,pos,turn,c);
       },lot.detail==='near');
+      if(lot.footprint)return; // No fixed-size yard attached to a mapped building.
       emit('box',[50,.38,44],[.5,-.50,4],0,0x81966d);
       emit('box',[5,.10,18],[-12,-.25,17],0,0xb0afa8);
       emit('box',[1.5,.10,12],[3,-.24,20],0,0xc8bfae);
@@ -313,6 +327,7 @@
       return materials[surface];
     }
     var matrices=[],meshes=[],dummy=new T.Object3D(),placement=new T.Object3D();
+    function place(l){var p=l.transform;placement.position.set(p.x,-.31*(1-p.sy),p.z);placement.rotation.set(0,l.rotation,0);placement.scale.set(p.sx,p.sy,p.sz);placement.updateMatrix();}
     Object.keys(buckets).forEach(function(kind){
       var shape=kind.indexOf('wall_')===0?'box':kind.replace('roof_','');
       var rows=buckets[kind],mesh=new T.InstancedMesh(geometries[shape],materialFor(kind),rows.length),saved=[];
@@ -322,10 +337,10 @@
         dummy.position.set.apply(dummy.position,r.pos);dummy.rotation.set(0,r.turn,0);dummy.scale.set.apply(dummy.scale,r.size);dummy.updateMatrix();
         var m=dummy.matrix.clone();
         if(r.lot>=0){
-          var l=lots[r.lot];placement.position.set(l.x,-.31*(1-l.scale),l.z);placement.rotation.set(0,l.rotation,0);placement.scale.set(l.spec.mirror?-l.scale:l.scale,l.scale,l.scale);placement.updateMatrix();
+          var l=lots[r.lot];place(l);
           // Negative determinant is unsupported by InstancedMesh: reflect local
           // position/rotation instead, so every instance retains positive scale.
-          if(l.spec.mirror){dummy.position.x=-r.pos[0];dummy.rotation.y=-r.turn;dummy.updateMatrix();m.copy(dummy.matrix);placement.scale.x=l.scale;placement.updateMatrix();}
+          if(l.spec.mirror){dummy.position.x=-r.pos[0];dummy.rotation.y=-r.turn;dummy.updateMatrix();m.copy(dummy.matrix);}
           m.premultiply(placement.matrix);
         }
         mesh.setMatrixAt(i,m);mesh.setColorAt(i,new T.Color(r.color));saved.push(m);
@@ -349,7 +364,7 @@
         var mesh=new T.InstancedMesh(geometry,part.material,rows.length),saved=[];
         mesh.castShadow=part.castShadow;mesh.receiveShadow=true;mesh.renderOrder=part.renderOrder;
         mesh.userData.yard=true;mesh.userData.nearExterior=true;mesh.frustumCulled=false;mesh.raycast=function(){};
-        rows.forEach(function(r,i){var l=lots[r.lot];placement.position.set(l.x,-.31*(1-l.scale),l.z);placement.rotation.set(0,l.rotation,0);placement.scale.set(l.scale,l.scale,l.scale);placement.updateMatrix();saved.push(placement.matrix.clone());mesh.setMatrixAt(i,placement.matrix);});
+        rows.forEach(function(r,i){place(lots[r.lot]);saved.push(placement.matrix.clone());mesh.setMatrixAt(i,placement.matrix);});
         group.add(mesh);meshes.push(mesh);matrices.push({mesh:mesh,rows:rows,saved:saved});pieces+=rows.length;
       });
     });
@@ -370,7 +385,7 @@
     }
     return {group:group,update:update,setNight:function(n){if(horizon)horizon.material.color.setHex(n?0x435063:0xcdcdcd);},stats:function(){return {layoutSource:layout&&layout.source==='mapbox'?'mapbox':'generated',roadSegments:layout&&layout.roads?layout.roads.length:0,lots:lots.length,visibleLots:visibleLots,visible:group.visible,nearSource:nearTemplate?'parametric-exterior':'simplified',nearDesigns:uniqueKits.length,nearGeometry:uniqueKits.map(function(k){return k.geometrySignature;}),nearTemplate:nearTemplate?{meshes:uniqueKits.reduce(function(n,k){return n+k.sourceMeshes;},0),instances:uniqueKits.reduce(function(n,k){return n+k.sourceInstances;},0),triangles:uniqueKits.reduce(function(n,k){return n+k.triangles;},0)}:null,nearLots:lots.filter(function(l){return l.detail==='near';}).length,farLots:lots.filter(function(l){return l.detail==='far';}).length,horizon:!!horizon,batches:meshes.length+(horizon?1:0),instances:pieces,
       triangles:meshes.reduce(function(n,m){return n+(m.geometry.index?m.geometry.index.count:m.geometry.attributes.position.count)/3*m.count;},horizon?horizon.geometry.index.count/3:0),
-      placements:lots.map(function(l){return {id:l.id,x:l.x,z:l.z,rotation:l.rotation,detail:l.detail,scale:l.scale,style:l.style};})};},
+      placements:lots.map(function(l){return {id:l.id,x:l.x,z:l.z,rotation:l.rotation,detail:l.detail,scale:l.scale,footprint:l.footprint,transform:l.transform,style:l.style};})};},
       dispose:function(){meshes.forEach(function(m){m.dispose();});Object.keys(geometries).forEach(function(k){geometries[k].dispose();});Object.keys(materials).forEach(function(k){materials[k].dispose();});reflected.forEach(function(g){g.dispose();});uniqueKits.forEach(function(k){k.dispose();});if(horizon){horizon.geometry.dispose();horizon.material.map.dispose();horizon.material.dispose();}group.clear();}};
   }
   root.ChauffeurNeighborhood={plan:plan,exterior:exterior,captureExterior:captureExterior,build:build};

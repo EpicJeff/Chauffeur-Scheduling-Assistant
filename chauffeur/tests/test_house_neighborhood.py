@@ -48,6 +48,29 @@ mapped.group.traverse(mesh=>{if(!mesh.isInstancedMesh)return;
   }
 });
 assert.deepEqual(yards.sort(),[.7,1]);mapped.dispose();
+// Wall bounds land on the requested rotated footprint for both mirrored
+// and unmirrored designs; the source model's off-center origin is irrelevant.
+const footprintLayout={source:'mapbox',roads:[],lots:[0,1,2,3].map(i=>({
+  x:60+i*40,z:90,rotation:.35+i*.4,detail:'far',scale:1,
+  footprint:{width:12+i*2,depth:19+i*3}
+}))};
+const fitted=ChauffeurNeighborhood.build(T,spec,envelopes,palette,null,null,footprintLayout);
+const designs=ChauffeurNeighborhood.plan(spec,footprintLayout);
+fitted.stats().placements.forEach((p,i)=>{
+  const s=designs[i].spec,t=p.transform,c=Math.cos(p.rotation),sn=Math.sin(p.rotation);
+  const south=Math.max(14.55+s.blocks.main.depth,10.1+s.blocks.garage.depth);
+  const local=[[-18.2,-6.1],[14.65,south]].map(([x,z])=>{
+    x*=s.mirror?-1:1;
+    const wx=t.x+x*t.sx*c+z*t.sz*sn-p.x,wz=t.z-x*t.sx*sn+z*t.sz*c-p.z;
+    return [wx*c-wz*sn,wx*sn+wz*c];
+  });
+  for(let axis=0;axis<2;axis++){
+    const half=(axis?p.footprint.depth:p.footprint.width)/2;
+    assert(Math.abs(Math.min(...local.map(a=>a[axis]))+half)<1e-8);
+    assert(Math.abs(Math.max(...local.map(a=>a[axis]))-half)<1e-8);
+  }
+});
+fitted.dispose();
 '''
         subprocess.run(['node','-e',script,str((base/'vendor/three.min.js').resolve()),str((base/'house_neighborhood.js').resolve()),json.dumps(hf.CANONICAL)],check=True)
 

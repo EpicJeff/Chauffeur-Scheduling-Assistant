@@ -13,10 +13,11 @@ Only exact geocodes are eligible. A nearest street too close to the pin, too far
 away, or requiring extreme scaling is rejected rather than inventing frontage.
 The existing Mapbox disable switch and usage accounting apply.
 
-One lookup fetches at most four latitude-adjusted vector tiles, sequentially,
+One lookup fetches up to four latitude-adjusted road tiles and nine zoom-16
+building tiles (thirteen total), sequentially,
 with connect/read timeouts of 3/5 seconds. It includes ordinary surface streets;
 motorways, service alleys, tunnels and bridges are not residential frontage.
-Mapbox `road` geometry and `building` polygon centers are decoded with
+Mapbox `road` geometry and full `building` polygon outlines are decoded with
 `mapbox-vector-tile`. No Directions, Matrix, imagery, or LLM calls are made.
 The dependency's Python 3.11/aarch64 binary wheels were checked; a container build
 and hardware frame times were not exercised.
@@ -76,6 +77,31 @@ tooltip explaining that houses and yards are illustrative. Provider references:
 [Streets v8](https://docs.mapbox.com/data/tilesets/reference/mapbox-streets-v8/),
 [Vector Tiles API](https://docs.mapbox.com/api/maps/vector-tiles/), and
 [attribution](https://docs.mapbox.com/help/dive-deeper/attribution/).
+
+## Footprint fitting (v2.499.149)
+
+Mapbox only includes all buildings at zoom 16 and above. The previous road zoom
+omitted small residential houses. Fetch the home tile and eight neighbors at z16;
+retain successful coverage if a request fails and stop further building requests.
+Road-only or partial mapped results retain the twelve-hour success cache.
+
+Join building fragments by ID, deduplicate overlapping copies and omit building
+parts, known non-house types, implausible areas and the building covering home.
+Mapped centers are not snapped to a fixed street setback. Fit house wall bounds
+to each polygon's minimum rotated rectangle, compensating for off-center and
+mirrored source geometry. Height uses the geometric mean of width/depth scale.
+Attached template gardens are omitted. Outline bounds approximate irregular
+shapes; neither exact wall reconstruction nor parcel boundaries are implied.
+Accept up to 128 mapped neighbors, nearest eight detailed. Generated frontage
+fill is restricted to outside successful building coverage when outlines exist.
+Corner frontage uses the nearest street and can still choose the wrong street.
+The interactive primary home retains its authored size and navigation.
+
+Use `HOUSE_MAP_FOOTPRINTS=1` with the browser gate for a dense offline footprint
+fixture. Geometry tests check rotated/mirrored wall bounds, tile joins, duplicate
+removal, dense rows, MVT polygon decoding and provider timeout behavior. The old
+user-supplied API response contains no outlines and cannot validate actual new
+building coverage; the cache version forces a fresh lookup on the installation.
 
 ## Proof
 

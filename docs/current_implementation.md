@@ -12,7 +12,21 @@ Reduce the coordination work required to run a family. Chauffeur should understa
 
 The 3D house is the shared spatial interface. Rooms and real-world objects provide stable context for features. The house should also reflect the family's own life through carefully quality-gated, personalized objects and spaces.
 
-## Latest architecture change (2026-09-22, v2.499.148)
+## Latest architecture change (2026-09-22, v2.499.149)
+
+Mapped neighbors now retain building outlines, centers and alignment. Wall width
+and depth fit each outline's oriented bounds, with height scaled proportionally;
+fixed-size model gardens are omitted for these houses. The nearest eight remain
+detailed, with up to 128 mapped neighbors. Residential outlines require zoom 16,
+so the lookup now includes nine building tiles plus up to four road tiles using
+existing accounting and caching. Successful partial coverage is retained after
+a building request failure. Frontage remains a nearest-street inference, including
+at corners. Building outlines are not property boundaries or exact house designs.
+The new cache identity replaces earlier center-only layouts. Generated frontage
+packing remains the fallback outside mapped coverage. Browser and geometry tests
+use offline fixtures; the user's next fetched outline data remains unverified.
+
+## Earlier frontage fitting (v2.499.148)
 
 Mapped house placement searches frontage at two-unit intervals, rather than
 dropping a whole frontage when one midpoint conflicts. Mapped building positions
@@ -22,8 +36,7 @@ same scale is used for collision checks and both rendering tiers. Street width,
 street coordinates and the active home remain unchanged. The nearest eight lots
 are assigned detailed models after packing. Replaying the supplied 41-segment
 layout increases accepted houses from 20 to 37; nine use smaller exteriors.
-This fits available frontage, not exact real building outlines, which the
-current map pipeline does not retain. The layout cache identity is incremented.
+This earlier version fitted frontage without retaining real building outlines.
 
 ## Earlier spacing correction (v2.499.147)
 
@@ -41,7 +54,7 @@ uses building centers to guide frontage, and packs varied parametric houses
 without overlapping yards or crossing streets. Up to eight nearest houses retain
 the detailed renderer. The first lookup is asynchronous, subsequent visits use a
 twelve-hour local cache, and missing data/provider failures retain the generated
-neighborhood. Lookups are capped at four tiles and use existing usage accounting.
+neighborhood. The original lookup used four tiles and existing usage accounting.
 Street geometry is mapped; house appearances and lot spacing remain illustrative.
 See [mapped neighborhood scope](superpowers/specs/2026-09-22-mapped-neighborhood.md).
 
