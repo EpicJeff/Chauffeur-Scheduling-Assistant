@@ -1,4 +1,6 @@
 {% import 'components/packing_card.html' as packing %}
+{% set house_comparison = request.query_params.get('compare') == 'living' %}
+{% set house_hybrid = house_comparison and request.query_params.get('render') != '3d' %}
 <!DOCTYPE html>
 <html lang="en" class="dark">
 
@@ -6,7 +8,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>The Home</title>
-    {% if house_home_enabled|default(false) %}
+    {% if house_home_enabled|default(false) and not house_comparison %}
     <script src="{{ 'static/house_home.js'|ver }}" data-surface="house"></script>
     {% endif %}
     <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
@@ -200,9 +202,13 @@
     </style>
     <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
     <link rel="stylesheet" href="{{ 'static/house_life.css'|ver }}">
+    {% if house_comparison %}
+    <link rel="stylesheet" href="{{ 'static/house_comparison.css'|ver }}">
+    <script>window.HOUSE_COMPARE_NIGHT = {{ 'true' if request.query_params.get('light') == 'night' else ('false' if request.query_params.get('light') == 'day' else 'null') }};</script>
+    {% endif %}
 </head>
 
-<body class="flex flex-col h-screen overflow-hidden">
+<body class="flex flex-col h-screen overflow-hidden{% if house_comparison %} house-comparison-page{% endif %}"{% if house_comparison %} data-house-render="{{ 'hybrid' if house_hybrid else '3d' }}"{% endif %}>
     <div class="editor-chrome">{% include 'nav.html' %}</div>
     <aside id="house-map-credit" hidden aria-label="Neighborhood map credits" title="Mapped streets and available building outlines; illustrative house designs and inferred frontage">
       <a class="mapboxgl-ctrl-logo" href="https://www.mapbox.com/" target="_blank" rel="noopener" aria-label="Mapbox"></a>
@@ -212,6 +218,7 @@
     </aside>
 
     <div id="kitchen-wrap" class="panel-page">
+        {% if house_comparison %}{% include 'components/house_comparison.html' %}{% endif %}
         <h1 id="kitchen-title" class="panel-page-title">The Home</h1>
         <button id="house-back" type="button" hidden aria-label="Go back"></button>
         <div id="house-hints" hidden aria-label="House rooms and features"></div>
@@ -279,6 +286,7 @@
     <script>window.HOUSE_NEIGHBORHOOD = {{ neighborhood_json|default('{}')|safe }};</script>
     <script>window.HOUSE_STATE_URL = (window.chfBase !== undefined ? window.chfBase : '') + 'api/house/state';
             window.HOUSE_FACADE = {{ facade_json|safe }};</script>
+    {% if not house_hybrid %}
     <script src="{{ 'static/vendor/three.min.js'|ver }}"></script>
     <script src="{{ 'static/house_features.js'|ver }}"></script>
     <script>window.STUDY_EMBED_MODE = true;</script>
@@ -290,6 +298,8 @@
     <script src="{{ 'static/house_markers.js'|ver }}"></script>
     <script src="{{ 'static/house.js'|ver }}" onerror="if(window.ChauffeurHome) window.ChauffeurHome.fallback()"></script>
     <script src="{{ 'static/house_glance.js'|ver }}"></script>
+    {% endif %}
     <script src="{{ 'static/kitchen_overlay.js'|ver }}"></script>
+    {% if house_comparison %}<script src="{{ 'static/house_comparison.js'|ver }}"></script>{% endif %}
 </body>
 </html>

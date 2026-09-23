@@ -1,0 +1,30 @@
+<section id="house-comparison" aria-label="Living room comparison">
+  <div class="house-compare-title"><span>THE HOUSE · COMPARISON</span><strong>Living room</strong></div>
+  <nav class="house-compare-modes" aria-label="Rendering style">
+    <a data-render="hybrid" href="?compare=living&amp;render=hybrid"{% if house_hybrid %} aria-current="page"{% endif %}>Hybrid</a>
+    <a data-render="3d" href="?compare=living&amp;render=3d"{% if not house_hybrid %} aria-current="page"{% endif %}>3D</a>
+  </nav>
+  <label class="house-compare-light">Light
+    <select id="house-compare-light">
+      <option value="auto">Follow the sun</option><option value="day">Day preview</option><option value="night">Night preview</option>
+    </select>
+  </label>
+  <a id="house-compare-exit" href="house">Full house ↗</a>
+</section>
+{% if house_hybrid %}
+<section id="hybrid-room" aria-label="Living room">
+  <div id="hybrid-room-frame">
+    <img id="hybrid-day" data-src="{{ 'static/house_hybrid/living-day.png'|ver }}" alt="" aria-hidden="true" decoding="async">
+    <img id="hybrid-night" data-src="{{ 'static/house_hybrid/living-night.png'|ver }}" alt="A furnished living room with a fireplace, radio, coffee table and household books" decoding="async">
+    <div id="hybrid-hotspots" aria-label="Living room cards"></div>
+  </div>
+  <div id="hybrid-shortcuts" aria-label="Living room cards"></div>
+  <p id="hybrid-status" role="status">Opening the living room…</p>
+</section>
+{% endif %}
+<details id="house-compare-measurements">
+  <summary>Comparison notes</summary>
+  <p>Same live cards; a curated room image versus the current 3D room. This artwork is not a reconstruction of your interior.</p>
+  <p id="house-compare-ready">Measuring room readiness…</p>
+  <p>Compare appearance, time to open a card, and day/night changes on this device. Loading depends on cache and connection; this is not an FPS measurement.</p>
+</details>

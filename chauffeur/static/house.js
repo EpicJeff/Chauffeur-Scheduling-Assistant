@@ -579,6 +579,8 @@
     /* one clock for the whole scene: the sky dome and the rig must never
        disagree about whether it is dark out */
     function isNight() {
+      /* Only the explicit comparison page supplies this temporary preview. */
+      if (typeof window.HOUSE_COMPARE_NIGHT === 'boolean') return window.HOUSE_COMPARE_NIGHT;
       /* MASSING ARC 2 task 10: ?day=1 pins the scene to daylight. A
          screenshot taken after seven in the evening photographed a dark
          house, so every probe and live test had to monkey-patch
