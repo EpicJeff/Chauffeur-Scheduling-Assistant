@@ -1073,8 +1073,10 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
                 # than teaching create_event a new parameter for one caller.
                 naive_start = datetime.datetime.fromisoformat(
                     f"{baseline['target_date']}T09:00:00")
-                start_iso = naive_start.astimezone().isoformat()
-                end_iso = (naive_start + datetime.timedelta(hours=1)).astimezone().isoformat()
+                # 09:00 on the family's clock (services/tz.py), not the box's
+                from services import tz as _tz
+                start_iso = _tz.localize(naive_start, cal_id).isoformat()
+                end_iso = _tz.localize(naive_start + datetime.timedelta(hours=1), cal_id).isoformat()
                 ev_id = _cal.create_event(cal_id, row.get('title') or 'Program',
                                           start_iso, end_iso)
                 # create_event catches every Google API exception itself and

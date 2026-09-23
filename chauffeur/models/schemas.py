@@ -1120,6 +1120,12 @@ class Settings(BaseModel):
     # allowance. Only shorten this if a traffic-aware profile is introduced.
     route_cache_duration_mins: int = 43200  # 30 days
     time_format_24h: bool = False
+    # The family's IANA time zone ("America/Chicago"). Blank = follow the
+    # default calendar's own zone, then the box's TZ. services/tz.py is the
+    # one reader; every calendar write stamps it, and clock times from
+    # email intake, programs and stays are read in it -- so Google never
+    # pins a Chauffeur-made event to a fixed GMT offset.
+    timezone: str = ""
     disable_mapbox: bool = False
     disable_mapbox_matrix: bool = False
     disable_mapbox_directions: bool = False

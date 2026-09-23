@@ -350,11 +350,15 @@ def normalize_item(item: dict, now=None) -> dict:
         end = (day + datetime.timedelta(days=1)).isoformat()
     else:
         try:
+            # The email says "3:00 PM": that is the FAMILY's clock, read in
+            # the family's zone (services/tz.py), not the box's -- the two
+            # used to be assumed equal
+            from services import tz as _tz
             h, m = [int(x) for x in start_time.split(':')[:2]]
-            start_dt = datetime.datetime.combine(day, datetime.time(h, m)).astimezone()
+            start_dt = _tz.localize(datetime.datetime.combine(day, datetime.time(h, m)))
             if end_time:
                 eh, em = [int(x) for x in end_time.split(':')[:2]]
-                end_dt = datetime.datetime.combine(day, datetime.time(eh, em)).astimezone()
+                end_dt = _tz.localize(datetime.datetime.combine(day, datetime.time(eh, em)))
                 if end_dt <= start_dt:
                     end_dt = start_dt + datetime.timedelta(hours=1)
             else:

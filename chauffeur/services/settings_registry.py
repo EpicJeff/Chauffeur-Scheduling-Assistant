@@ -78,6 +78,10 @@ ENTRIES: List[dict] = [
     _e('days_to_show', 'daily', 'Days shown', 'How far ahead the dashboard displays.'),
     _e('days_to_build', 'daily', 'Days solved', 'How far ahead the solver plans drivers.'),
     _e('time_format_24h', 'daily', '24-hour clock', 'Show times as 14:30 rather than 2:30pm.'),
+    _e('timezone', 'daily', 'Time zone',
+       "The family's time zone, like America/Chicago. Clock times from email intake, "
+       "programs and stays are read in it and every event Chauffeur creates is stamped "
+       "with it. Blank follows the default calendar's own zone."),
     _e('home_location', 'household', 'Home address',
        'The address every route starts and ends at. Re-saving forces a fresh geocode.'),
     _e('trip_hashtags', 'household', 'Trip hashtags',

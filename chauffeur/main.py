@@ -16523,6 +16523,14 @@ def update_settings(settings: Settings, background_tasks: BackgroundTasks):
     # the Calendar IDs box it becomes a permanent 404 that used to abort the
     # whole event fetch and leave the household with no schedule at all
     # (v2.273.6). Refuse it here and point at the field that actually wants it.
+    # A zone Google would reject must not be saved: validated against the
+    # same zoneinfo services/tz.py reads it back with.
+    if incoming.get('timezone'):
+        from services import tz as _tz
+        if not _tz._valid(incoming['timezone']):
+            raise HTTPException(status_code=400,
+                                detail=f"'{incoming['timezone']}' is not a time zone name "
+                                       "(try one like America/Chicago)")
     if 'calendar_ids' in incoming:
         from services import calendar as _gcal
         bad = [c for c in (incoming.get('calendar_ids') or [])

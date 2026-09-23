@@ -474,7 +474,12 @@ def create_event(calendar_id: str, title: str, start: str, end: str, location: s
         
     if extended_props:
         event_body['extendedProperties'] = {'private': extended_props}
-        
+
+    # the one place every dateTime learns its zone (services/tz.py): an
+    # offset-only or naive dateTime with no timeZone is what pins an event
+    # to "GMT-05:00" in Google's editor
+    from services import tz as _tz
+    _tz.stamp(event_body, calendar_id)
     try:
         created_event = service.events().insert(calendarId=calendar_id, body=event_body).execute()
         return created_event.get('id')
@@ -507,6 +512,8 @@ def insert_event(calendar_id: str, body: dict):
     properties, etc. — unlike create_event's dateTime-only signature).
     Returns the new event id or None."""
     service = get_calendar_service()
+    from services import tz as _tz
+    _tz.stamp(body, calendar_id)
     try:
         created = service.events().insert(calendarId=calendar_id, body=body).execute()
         return created.get('id')
@@ -517,6 +524,8 @@ def insert_event(calendar_id: str, body: dict):
 def patch_event(calendar_id: str, event_id: str, body: dict) -> bool:
     """Patch an existing event with a partial/full body."""
     service = get_calendar_service()
+    from services import tz as _tz
+    _tz.stamp(body, calendar_id)
     try:
         service.events().patch(calendarId=calendar_id, eventId=event_id, body=body).execute()
         return True
