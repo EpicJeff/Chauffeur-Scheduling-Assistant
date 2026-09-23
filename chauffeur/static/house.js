@@ -948,11 +948,22 @@
             metalness: 0, clearcoat: 1.0, clearcoatRoughness: 0.09 });
           pm.envMapIntensity = opts.envInt !== undefined ? opts.envInt : 0.4;
         } else if (opts.finish === 'glassy') {
-          pm = new T.MeshPhysicalMaterial({ color: c,
-            roughness: 0.06, metalness: 0, transmission: 0.92,
-            thickness: opts.thick !== undefined ? opts.thick : 0.25,
-            ior: 1.45, transparent: true });
-          pm.envMapIntensity = 1.0;
+          /* Tinted glass by ALPHA, never `transmission`. One visible
+             transmissive material makes three render every opaque object
+             a second time, into an offscreen target, on every frame -- and
+             the jars sit inside the frustum from every view, the exterior
+             included, behind walls that hide them. Measured on a desktop
+             GPU: exterior 3502 draw calls / 47 ms with them, 1838 / 18.5
+             ms without; kitchen 16 -> 6.5 ms. Pinned in test_house_live
+             (scenario_high_tier_draws_the_scene_once_per_frame). The tint
+             is deepened and the env dimmed because alpha lightens toward
+             the pale wall behind, where transmission darkened; `thick` is
+             unread now. */
+          pm = new T.MeshPhysicalMaterial({
+            color: new T.Color(c).multiplyScalar(0.45),
+            roughness: 0.06, metalness: 0,
+            transparent: true, opacity: 0.62, depthWrite: false });
+          pm.envMapIntensity = 0.5;
         } else {                                   /* ceramic */
           pm = new T.MeshPhysicalMaterial({ color: c,
             roughness: opts.rough !== undefined ? opts.rough : 0.2,
@@ -3559,8 +3570,8 @@
       var JAR_C = [C.terracotta, C.oxblood, C.teal, C.brass];
       /* K3: a private opts literal, not GLOSS — GLOSS is a shared constant
          read by ~95 other call sites, and glassy ignores rough/metal/envInt
-         anyway (transmission/ior/thickness only), so nothing of GLOSS's
-         intent carries over. jar.visible count semantics (below, in the
+         anyway (its own alpha-glass recipe in makeMat), so nothing of
+         GLOSS's intent carries over. jar.visible count semantics (below, in the
          webgl runtime) are untouched by this — only the material changes. */
       var JAR_GLASS = { finish: 'glassy', thick: 0.1 };
       var JR = 0.1, JH = 0.26;

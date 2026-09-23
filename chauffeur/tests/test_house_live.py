@@ -859,7 +859,75 @@ def scenario_garage_rebuild_does_not_touch_plaque_textures():
         check(not errs, 'no console errors: ' + '; '.join(errs[:3]))
 
 
+def scenario_high_tier_draws_the_scene_once_per_frame():
+    """One frame, one pass over the scene.
+
+    A single visible material with `transmission > 0` makes three.js run a
+    transmission pre-pass: it renders EVERY opaque object a second time into
+    an offscreen target before the main pass. The kitchen's 33 glass jars
+    did exactly that, from every view including the exterior (they sit
+    inside the frustum behind the walls), so each frame was two frames:
+    measured on a desktop GPU, exterior 3502 draw calls for 1836 in-frustum
+    meshes at 47 ms, versus 1838 calls at 18.5 ms with the jars' transmission
+    off (kitchen 16 -> 6.5 ms, living 18 -> 7 ms). Pinned at quality=high,
+    the only tier that builds physical materials; any future `transmission`
+    anywhere in the house trips it.
+    """
+    served = live_app()
+    if served is None:
+        return
+    _seed()
+    with served.browser() as page:
+        from house_probe import THREE_WRAP, BUDGET_JS
+        with open('static/vendor/three.min.js', 'rb') as fh:
+            _patched = fh.read() + THREE_WRAP
+        page.route('**/three.min.js*', lambda route: route.fulfill(
+            status=200, content_type='application/javascript', body=_patched))
+        # high on software WebGL spends seconds per frame; load can trail
+        page.goto(served.url('house?quality=high'), timeout=120000)
+        page.wait_for_function('window.__hpR && window.__hpR.info.render.frame > 1',
+                               timeout=60000)
+        if not page.evaluate("typeof window.chfHouseEnter === 'function'"):
+            print("  skip  no WebGL room here — the fallback owns the page")
+            return
+        transmissive = page.evaluate("""() => {
+          const out = [];
+          window.__hpScene.traverse(o => {
+            if (o.isMesh && o.material && o.material.transmission > 0)
+              out.push(o.material.type + ':' + o.material.transmission);
+          });
+          return out;
+        }""")
+        check(not transmissive,
+              'no house material uses transmission (it re-renders the whole '
+              'opaque scene every frame): %d meshes, e.g. %r'
+              % (len(transmissive), transmissive[:3]))
+        for view in ('exterior', 'kitchen'):
+            if view == 'kitchen':
+                page.evaluate('window.chfHouseEnter()')
+                page.wait_for_function('chfNavProbe({settled:true})',
+                                       timeout=60000)
+            # a resize re-renders the settled view without moving it;
+            # renderer.info is per-render (autoReset), so after that frame
+            # lands it holds exactly this view's draw calls
+            f0 = page.evaluate("window.__hpR.info.render.frame")
+            page.evaluate("window.dispatchEvent(new Event('resize'))")
+            page.wait_for_function('(f) => window.__hpR.info.render.frame > f',
+                                   arg=f0, timeout=60000)
+            b = page.evaluate(BUDGET_JS)
+            b['calls'] = page.evaluate("window.__hpR.info.render.calls")
+            # a transparent DoubleSide material legitimately draws twice,
+            # and the budget counts shadow-map draws only when dirty: 5%
+            # headroom over one draw per in-frustum mesh, far under the
+            # 1.9x a transmission pre-pass costs
+            check(b['calls'] <= b['inFrustum'] * 1.05,
+                  '%s: %d draw calls for %d in-frustum meshes — something '
+                  'renders the scene twice' % (view, b['calls'], b['inFrustum']))
+        page.unroute_all(behavior='ignoreErrors')
+
+
 if __name__ == '__main__':
+    scenario_high_tier_draws_the_scene_once_per_frame()
     scenario_the_house_boots_enters_and_leans_in()
     scenario_leanin_focus_cycles_do_not_leak_textures()
     scenario_fridge_magnets_rebuild_shares_geometry()
