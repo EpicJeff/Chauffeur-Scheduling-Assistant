@@ -14125,7 +14125,10 @@
       return { cx: p.x + rect.left, cy: p.y + rect.top, z: p.z };
     }
     function onCanvas(p) {
-      return document.elementFromPoint(p.cx, p.cy) === webgl.R.domElement;
+      var el = document.elementFromPoint(p.cx, p.cy);
+      /* the room's own markers stand ON its objects (they are buttons
+         now): a point under one is on the room, not behind chrome */
+      return el === webgl.R.domElement || !!(el && el.closest && el.closest('#house-hints'));
     }
     /* THE MIRROR (spec 2026-09-17 section 3.4): this hook speaks
        HOUSE-LOCAL, because that is what its callers hold -- an authored
@@ -14383,9 +14386,60 @@
         placed.push({cx:point.cx,cy:point.cy});
       }
       if (!point) continue;
-      var marker = document.createElement(choice.room ? 'button' : 'div');
+      /* IN-ROOM MARKERS ARE BUTTONS (2026-09-22). User report: "Home ledger"
+         in the living room did nothing while the exterior Tasks shortcut --
+         a real button -- worked. These used to be drawings: #house-hints is
+         pointer-events:none, so a tap fell through to whatever mesh lay
+         behind the ring. Only its exact centre reached the ledger (a book
+         a few pixels wide); 25px off-centre hit the console and did
+         nothing, 25px up hit the kitchen floor and WALKED TO THE KITCHEN,
+         and the label below the ring was dead. A marker is a promise that
+         tapping it does the thing it names, so now it does: a feature
+         marker opens its feature exactly as the object does, a zone marker
+         leans in exactly as the furniture does.
+
+         And two markers cannot share a spot: the Program book sits 1.9
+         units down the same console, and its ring covered the ledger's
+         label. A marker that collides with one already placed steps
+         straight away from it by just the overlap (the ring still sits on
+         its object -- the nudge is a fraction of the ring). */
+      if (!choice.room) {
+        /* the 78px ring plus its label, which hangs from 8px under the
+           ring to ~71px below the centre: two markers stacked need 110px */
+        var FOOT_W = 96, FOOT_H = 110;
+        for (var step = 0; step < 6; step++) {
+          var clash = null;
+          for (var pi = 0; pi < placed.length; pi++) {
+            var q = placed[pi];
+            if (Math.abs(q.cx - point.cx) < FOOT_W && Math.abs(q.cy - point.cy) < FOOT_H) { clash = q; break; }
+          }
+          if (!clash) break;
+          var dxp = point.cx - clash.cx, dyp = point.cy - clash.cy;
+          var byY = FOOT_H - Math.abs(dyp), byX = FOOT_W - Math.abs(dxp);
+          if (byY <= byX) point.cy += (dyp >= 0 ? 1 : -1) * (byY + 4);
+          else point.cx += (dxp >= 0 ? 1 : -1) * (byX + 4);
+        }
+        placed.push({cx: point.cx, cy: point.cy});
+      }
+      var marker = document.createElement('button');
+      marker.type = 'button';
+      if (!choice.room) {
+        marker.setAttribute('aria-label', choice.label);
+        marker.style.pointerEvents = 'auto';
+        marker.addEventListener('click', (function (c) { return function (event) {
+          event.stopPropagation();
+          /* markers stay: a feature's card opens OVER the room and closing
+             it returns to the same room (a lean-in hides them itself,
+             through leanIn's own scheduleHint) */
+          if (c.action) {
+            window.dispatchEvent(new CustomEvent('chf-house-open', {detail: c.action}));
+          } else if (c.spec && c.spec.zone && ZONES[c.spec.zone]) {
+            leanIn(c.spec.zone);
+          }
+        }; })(choice));
+      }
       if (choice.room) {
-        marker.type = 'button'; marker.dataset.room = choice.room;
+        marker.dataset.room = choice.room;
         marker.setAttribute('aria-label', 'Expand ' + choice.label);
         marker.setAttribute('aria-expanded', 'false');
         marker.style.pointerEvents = 'auto';
@@ -14549,6 +14603,12 @@
       if (through) go(through);                            // panel: nowhere to go
       return;
     }
+    leanIn(key);
+  }
+  /* The first tap on a zone: frame it, announce it, say its one line. Shared
+     by a tap on the furniture itself and a tap on its in-room marker, so the
+     two can never lean in differently. */
+  function leanIn(key) {
     focused = key;
     updateBack();
     scheduleHint();

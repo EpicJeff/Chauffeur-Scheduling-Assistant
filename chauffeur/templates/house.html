@@ -95,7 +95,10 @@
         button.house-hint:focus-visible { outline: 3px solid #fff4dc; outline-offset: 5px; }
         .house-hint::before { content: ''; position: absolute; inset: -2px;
           border: 2px solid rgba(240,184,110,.72); border-radius: inherit;
-          animation: house-hint-wave 3.6s ease-out var(--hint-delay, 0s) infinite; }
+          animation: house-hint-wave 3.6s ease-out var(--hint-delay, 0s) infinite;
+          /* the wave grows to 1.85x: as a hit area it was an invisible 72px
+             radius that stole taps from a neighbouring marker's label */
+          pointer-events: none; }
         .house-hint-icons { width: 60px; display: flex; flex-wrap: wrap;
           align-items: center; justify-content: center; gap: 2px; }
         .house-hint svg { width: 25px; height: 25px; fill: none;

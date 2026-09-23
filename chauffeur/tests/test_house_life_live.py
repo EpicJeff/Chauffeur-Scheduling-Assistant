@@ -101,6 +101,33 @@ def scenario_house_life():
                 "(n) => chfShellFabric().find(f => f.name === n).maskedFraction.kitchen", piece) == 0,
                 piece + " must stand from the kitchen: the east partition is "
                 "the study's enclosure, not the kitchen's")
+        # IN-ROOM MARKERS ARE BUTTONS (v2.499.162). User report: "Home
+        # ledger" in the living room did nothing -- the marker was a drawing
+        # over a tiny book, so only its exact centre reached the object, a
+        # tap 25px up walked into the kitchen, and the label was dead. Tap
+        # the ring OFF-centre and the label: both must open the feature.
+        page.evaluate("chfHouseEnterRoom('living')")
+        page.wait_for_function("chfHouseMode() === 'living' && chfNavProbe({settled:true})")
+        page.wait_for_selector('.house-hint[data-house-action="tasks"]', state='visible')
+        for where in ('ring', 'label'):
+            m = page.evaluate("""(w) => { const e = document.querySelector('.house-hint[data-house-action="tasks"]');
+                const r = (w === 'label' ? e.querySelector('.house-hint-label') : e).getBoundingClientRect();
+                return {x: r.left + r.width / 2 + (w === 'ring' ? 25 : 0), y: r.top + r.height / 2 - (w === 'ring' ? 20 : 0)}; }""", where)
+            page.mouse.click(m['x'], m['y'])
+            page.wait_for_function("document.body.classList.contains('house-card-open')", timeout=8000)
+            check(page.evaluate("chfHouseMode()") == 'living', 'a marker tap never walks to another room')
+            check('Household tasks' in page.inner_text('.house-life-panel'),
+                  'the Home ledger marker opens tasks from its ' + where)
+            page.locator('.house-life-panel header button').click()
+            page.wait_for_selector('.house-life-shade', state='hidden')
+            page.wait_for_selector('.house-hint[data-house-action="tasks"]', state='visible')
+        # and the program book's marker no longer covers the ledger's label
+        boxes = page.evaluate("""() => ['tasks','programs'].map(k => {
+            const e = document.querySelector('.house-hint[data-house-action="'+k+'"]');
+            const r = e.getBoundingClientRect(), l = e.querySelector('.house-hint-label').getBoundingClientRect();
+            return {top: r.top, bottom: l.bottom}; })""")
+        check(boxes[0]['bottom'] <= boxes[1]['top'] or boxes[1]['bottom'] <= boxes[0]['top'],
+              'neighbouring markers do not overlap: ' + str(boxes))
         page.evaluate("chfHouseFindFeature('study')")
         page.wait_for_function('chfNavProbe({settled:true})')
         point = page.evaluate("chfNavProbe({action:'study'})")
