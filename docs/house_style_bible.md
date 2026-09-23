@@ -5,6 +5,15 @@
 **Binding on:** every set builder, the vehicle artist, the lighting artist.
 **Graded against:** the ten reference plates transcribed below.
 
+**2026-09-23 living-room comparison prototype:** `feature/living-room-atmosphere`
+tests rounded cushions, curved leaf meshes, more detailed materials, localized
+light, and a hearth-facing camera against the newer marketing reference. In this
+room, one larger painting replaces the five-print grid and cream upholstery
+replaces sage. The kitchen/living floor retains a continuous finish with finer
+boards. This is an experiment, not a whole-house style migration; see the
+[visual review](superpowers/reports/2026-09-23-living-room-visual-prototype.md)
+for performance limits and the proposed rendered-background alternative.
+
 This document exists because the first architect pass (v2.463–v2.466) built
 correct geometry that did not look like the reference. Each prop invented its
 own proportions and bevels, so built-ins came out as featureless blocks. This
