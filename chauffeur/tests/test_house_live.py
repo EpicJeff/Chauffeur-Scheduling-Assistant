@@ -926,7 +926,145 @@ def scenario_high_tier_draws_the_scene_once_per_frame():
         page.unroute_all(behavior='ignoreErrors')
 
 
+def scenario_rooms_are_compiled_before_they_are_entered():
+    """The first walk into a room must not stall on shader compiles.
+
+    A room turns on the interior pool lamps, and three.js keys every
+    program on the scene's light count, so the first room entry used to
+    compile the whole house's materials again for the new light set:
+    measured on a desktop GPU, programs 61 -> 90 and 3.8 s of blocked main
+    thread in getProgramInfoLog, right in the middle of the walk-in tween.
+    The house now compiles that light set in idle slices after boot
+    (house.js warmInterior); by the time boot is idle, entering a room
+    compiles nothing.
+    """
+    served = live_app()
+    if served is None:
+        return
+    _seed()
+    with served.browser() as page:
+        from house_probe import THREE_WRAP
+        with open('static/vendor/three.min.js', 'rb') as fh:
+            _patched = fh.read() + THREE_WRAP
+        page.route('**/three.min.js*', lambda route: route.fulfill(
+            status=200, content_type='application/javascript', body=_patched))
+        page.goto(served.url('house?quality=high'), timeout=120000)
+        page.wait_for_function('window.__hpR && window.__hpR.info.render.frame > 1',
+                               timeout=60000)
+        if not page.evaluate("typeof window.chfHouseEnter === 'function'"):
+            print("  skip  no WebGL room here — the fallback owns the page")
+            return
+        page.wait_for_function("window.chfShadersWarm && chfShadersWarm() === 'done'",
+                               timeout=180000)
+        before = page.evaluate('window.__hpR.info.programs.length')
+        page.evaluate('window.chfHouseEnter()')
+        page.wait_for_function('chfNavProbe({settled:true})', timeout=120000)
+        after = page.evaluate('window.__hpR.info.programs.length')
+        check(after == before,
+              'entering the kitchen compiled %d new shader programs '
+              '(%d -> %d); the idle warm-up missed them'
+              % (after - before, before, after))
+        page.unroute_all(behavior='ignoreErrors')
+
+
+ENCLOSED_PAIR_JS = """() => {
+  const R = window.__hpR, S = window.__hpScene, C = window.__hpCam;
+  const on = C.layers.isEnabled(1);
+  function shot(layer) {
+    if (layer) C.layers.enable(1); else C.layers.disable(1);
+    R.shadowMap.needsUpdate = true;
+    R.render(S, C);
+    const calls = R.info.render.calls;
+    return { calls, url: R.domElement.toDataURL('image/png') };
+  }
+  const a = shot(true), b = shot(false);
+  if (on) C.layers.enable(1); else C.layers.disable(1);
+  return { withCalls: a.calls, withoutCalls: b.calls, a: a.url, b: b.url };
+}"""
+
+
+def _changed_pixels(url_a, url_b):
+    import base64
+    import io
+    from PIL import Image, ImageChops
+    ims = [Image.open(io.BytesIO(base64.b64decode(u.split(',', 1)[1]))).convert('RGB')
+           for u in (url_a, url_b)]
+    diff = ImageChops.difference(*ims).convert('L').point(lambda v: 255 if v > 8 else 0)
+    return diff.histogram()[255]
+
+
+def scenario_enclosed_interiors_are_skipped_only_where_unseen():
+    """The sealed exterior does not draw what its walls hide.
+
+    At the exterior every shell piece is solid and every pane opaque, so a
+    room's furniture was drawn only to be painted over: ~630 of ~1840 draw
+    calls on the canonical house. markEnclosed puts a mesh the block
+    volumes wholly enclose on its own layer and frame() leaves that layer
+    out at the landed exterior. The promise is that the picture does not
+    change, so the pin is pixels: at every orbit stop the frame without
+    the layer matches the frame with it (a seam sliver is the only
+    measured difference, 114 px at worst of 1.4 M). Also: the layer is
+    back inside a room, stays on through the exit tween (the camera is
+    still inside), and goes off when it lands.
+    """
+    try:
+        import PIL  # noqa: F401
+    except ImportError:
+        print("  skip  Pillow not installed")
+        return
+    served = live_app()
+    if served is None:
+        return
+    _seed()
+    with served.browser() as page:
+        from house_probe import THREE_WRAP
+        with open('static/vendor/three.min.js', 'rb') as fh:
+            _patched = fh.read() + THREE_WRAP
+        page.route('**/three.min.js*', lambda route: route.fulfill(
+            status=200, content_type='application/javascript', body=_patched))
+        page.add_init_script(DAY_LOCK_JS)
+        page.goto(served.url('house?quality=high'), timeout=120000)
+        page.wait_for_function('window.__hpR && window.__hpR.info.render.frame > 1',
+                               timeout=60000)
+        if not page.evaluate("typeof window.chfHouseEnter === 'function'"):
+            print("  skip  no WebGL room here — the fallback owns the page")
+            return
+        page.wait_for_function('chfNavProbe({settled:true})', timeout=120000)
+        check(page.evaluate('chfEnclosed().count') > 300,
+              'the canonical house encloses its furniture: %r'
+              % page.evaluate('chfEnclosed()'))
+        check(page.evaluate('chfEnclosed().drawn') is False,
+              'the landed exterior leaves the enclosed layer out')
+        for k in range(8):
+            page.evaluate('(k) => new Promise(r => chfOrbitTo(k, r))', k)
+            pair = page.evaluate(ENCLOSED_PAIR_JS)
+            px = _changed_pixels(pair['a'], pair['b'])
+            check(pair['withoutCalls'] < pair['withCalls'] * 0.8,
+                  'stop %d: the exterior skips the enclosed draws (%d -> %d)'
+                  % (k, pair['withCalls'], pair['withoutCalls']))
+            check(px <= 300,
+                  'stop %d: leaving the enclosed layer out changed %d pixels '
+                  '— something the walls enclose can be seen' % (k, px))
+        page.evaluate('window.chfHouseEnter()')
+        page.wait_for_function('chfNavProbe({settled:true})', timeout=120000)
+        check(page.evaluate('chfEnclosed().drawn') is True,
+              'a room draws its enclosed furniture')
+        # the frame after the exit starts: camera still inside the room
+        mid = page.evaluate('''() => new Promise(done => {
+          window.chfHouseExit();
+          requestAnimationFrame(() => done(chfEnclosed()));
+        })''')
+        check(mid['exiting'] and mid['drawn'],
+              'the exit tween keeps the room furnished until it lands: %r' % mid)
+        page.wait_for_function('chfNavProbe({settled:true})', timeout=120000)
+        check(page.evaluate('chfEnclosed().drawn') is False,
+              'landing at the exterior leaves the enclosed layer out again')
+        page.unroute_all(behavior='ignoreErrors')
+
+
 if __name__ == '__main__':
+    scenario_enclosed_interiors_are_skipped_only_where_unseen()
+    scenario_rooms_are_compiled_before_they_are_entered()
     scenario_high_tier_draws_the_scene_once_per_frame()
     scenario_the_house_boots_enters_and_leans_in()
     scenario_leanin_focus_cycles_do_not_leak_textures()

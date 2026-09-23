@@ -336,6 +336,12 @@
     scene.background = new T.Color(0xbdb3c7);          // the soft lilac of the reference
     var neighborhoodEnabled = !exteriorOnly && !!window.ChauffeurNeighborhood && new URLSearchParams(location.search).get('editor') !== '1';
     var cam = new T.PerspectiveCamera(24, 1, 0.1, neighborhoodEnabled ? 1000 : 200);
+    /* ENCLOSED interiors ride layer 1 (markEnclosed, end of the build).
+       On by default, so any render that is not the frame loop's -- the
+       boot benchmark, a capture -- draws everything, as it always did;
+       frame() alone turns it off, at the sealed exterior. */
+    var ENCLOSED_LAYER = 1;
+    cam.layers.enable(ENCLOSED_LAYER);
     var neighborhood = null;
     /* ---- THE MIRROR (spec 2026-09-17 section 3.4) ----------------------
        A mirrored plan is ONE reflection of the finished house, applied to
@@ -1240,6 +1246,79 @@
         roomShellGroups[r].visible = (r === room);
       });
       if (webgl) webgl.shadowDirty();
+    }
+    /* ---- SHADER WARM-UP: compile the rooms before anyone walks in ------
+       three keys every program on the scene's light count, and a room
+       turns the interior pool lamps on (solveShell, above) -- so the first
+       walk into ANY room used to compile the whole house's materials a
+       second time, mid-tween: measured on a desktop GPU, programs 61 -> 90
+       and 3.8 s of blocked main thread in getProgramInfoLog. Every room
+       shares that one interior light set, so it is compiled once, here, in
+       idle slices after boot. Each slice swaps to the interior lamps,
+       compiles meshes one at a time through renderer.compile for ~8 ms or
+       until one new program is queued, and swaps back in the same task,
+       so no frame ever draws with the
+       wrong lights; a slice that finds a tween running waits for the next
+       idle moment. The
+       picture is untouched: these are the programs the room would have
+       compiled anyway, just earlier. `busy` is the caller's "a frame is
+       animating" test; warmState is read by chfShadersWarm. */
+    var warmState = 'idle';
+    function warmInterior(busy) {
+      if (warmState !== 'idle') return;
+      if (!interiorLightRoot.children.length) { warmState = 'done'; return; }
+      warmState = 'running';
+      var meshes = [], lamps = [];
+      scene.traverse(function (o) {
+        if (o.material) meshes.push(o);
+        if (o.isLight) lamps.push(o);
+      });
+      var one = null;
+      /* renderer.compile reads lights through traverseVisible and
+         materials through traverse: a view of the real scene (so
+         isScene, environment and fog all carry) whose traverse walks one
+         mesh and whose traverseVisible walks only the lamps that are lit
+         right now -- so a compile call costs one material, not a walk of
+         the whole house, and a slice can stop after any single program
+         (one program is the smallest unit a compile can be cut to) */
+      var view = Object.create(scene);
+      view.traverse = function (cb) { if (one) cb(one); };
+      view.traverseVisible = function (cb) {
+        lamps.forEach(function (l) {
+          for (var p = l; p; p = p.parent) if (!p.visible) return;
+          cb(l);
+        });
+      };
+      var next = 0;
+      var idle = window.requestIdleCallback
+        ? function (f) { window.requestIdleCallback(f, { timeout: 1000 }); }
+        : function (f) { setTimeout(f, 50); };
+      /* r150 cannot compile in the background: getProgram reads the new
+         program's uniforms at once, a synchronous wait for the compile
+         (~130-300 ms a program on a desktop GPU). So a slice starts at
+         most ONE new program, and slices are spaced, leaving idle gaps
+         for a tap to land in between */
+      function later(f) { setTimeout(function () { idle(f); }, 150); }
+      function slice() {
+        if (!webgl) return;
+        if (busy && busy()) { later(slice); return; }
+        var t0 = performance.now(), progs = R.info.programs.length;
+        var inside = interiorLightRoot.visible, outside = exteriorLightRoot.visible;
+        interiorLightRoot.visible = true; exteriorLightRoot.visible = false;
+        try {
+          while (next < meshes.length && performance.now() - t0 < 8 &&
+                 R.info.programs.length === progs) {
+            one = meshes[next++];
+            R.compile(view, cam);
+          }
+        } finally {
+          interiorLightRoot.visible = inside; exteriorLightRoot.visible = outside;
+          one = null;
+        }
+        if (next < meshes.length) later(slice);
+        else warmState = 'done';
+      }
+      later(slice);
     }
     /* ---- SHELL (spec section 3): the one shared ghost-line material ----
        LineBasicMaterial (LineSegments only, never a fill) — ONE instance
@@ -12326,7 +12405,58 @@
        millimetre (the living floor's y-min moved 4mm, pre-merge vs
        merged box of one floor-level prop). */
 
+    /* ---- ENCLOSED INTERIORS: the sealed exterior skips what it cannot see
+       At the exterior every shell piece is solid and every pane is an
+       opaque box, so a room's furniture is drawn only to be painted over
+       by its own walls and roof -- ~630 of the exterior's ~1840 draw
+       calls, measured on the canonical house (1838 -> 1211 at stop 0),
+       with a pixel diff of the eight orbit stops, day and night, showing
+       nothing but a one-pixel seam sliver. So a mesh the walls fully
+       enclose moves to its own layer, and frame() leaves that layer out
+       at the exterior only.
+
+       "Enclosed" is geometric, never a room list: a mesh tagged to a room
+       (or a zone), not fabric, whose house-local box sits wholly inside
+       one of the block volumes and under that volume's eave. Anything
+       that pokes through a wall, stands on the porch, sits in the garage's
+       projecting bay or in the driveway fails the test and stays drawn.
+       The Study is left alone: goExterior already hides its world.
+
+       A LAYER, not `.visible`: pantry stock, magnets, plaques and pendants
+       all own their meshes' visibility, and none of that is touched. Every
+       Raycaster in this file enables all layers, so what a tap finds is
+       exactly what it found before. */
+    function markEnclosed(root) {
+      houseRoot.updateMatrixWorld(true);
+      var inv = new T.Matrix4().copy(houseRoot.matrixWorld).invert();
+      var box = new T.Box3(), n = 0;
+      var studyRoots = studyWorld
+        ? [studyWorld.group, studyWorld.architecture, studyWorld.proxies] : [];
+      root.traverse(function (o) {
+        if (!o.isMesh || o.isInstancedMesh) return;
+        var tagged = false;
+        for (var p = o; p && p !== scene; p = p.parent) {
+          if (p.userData.fabric || studyRoots.indexOf(p) >= 0) return;
+          if (p.userData.room || p.userData.zone) tagged = true;
+        }
+        if (!tagged) return;
+        box.setFromObject(o);
+        if (box.isEmpty()) return;
+        box.applyMatrix4(inv);
+        var inside = ALL_VOLUMES.some(function (v) {
+          return box.min.x >= v.x0 && box.max.x <= v.x1 &&
+                 box.min.z >= v.north && box.max.z <= v.south &&
+                 box.max.y <= v.eave;
+        });
+        if (inside) { o.layers.set(ENCLOSED_LAYER); n++; }
+      });
+      return n;
+    }
+    var enclosedCount = exteriorOnly ? 0 : markEnclosed(houseRoot);
+
     return {
+      markEnclosed: markEnclosed, ENCLOSED_LAYER: ENCLOSED_LAYER,
+      enclosedCount: function () { return enclosedCount; },
       applyScenery: applyScenery,
       T: T, scene: scene, cam: cam, R: R, groups: groups,
       /* THE MIRROR (spec 2026-09-17 section 3.4): the reflection root, the
@@ -12345,6 +12475,7 @@
       weather: window.HouseWeather.build(T, scene, DETAIL),
       extG: extG, skyDome: skyDome, skyDomeTex: skyDomeTex,
       aimShadow: aimShadow, shadowDirty: shadowDirty,
+      warmInterior: warmInterior, warmState: function () { return warmState; },
       setNight: setNight, isNight: isNight,
       setOutdoorLight: setOutdoorLight,
       garageDoorG: garageDoorG, garageInterior: garageInterior,
@@ -12524,6 +12655,14 @@
       webgl.steam2.material.opacity = 0;
     }
 
+    /* enclosed interiors (markEnclosed): drawn in every room, and on the
+       way OUT of one -- the walls close the moment goExterior solves, but
+       the camera is still inside until its tween lands */
+    var enclosedOn = mode !== 'exterior' || !!(tween && tween.exit);
+    if (webgl.cam.layers.isEnabled(webgl.ENCLOSED_LAYER) !== enclosedOn) {
+      webgl.cam.layers[enclosedOn ? 'enable' : 'disable'](webgl.ENCLOSED_LAYER);
+      webgl.shadowDirty();   /* the depth pass reads the same camera layers */
+    }
     if (webgl.neighborhood) webgl.neighborhood.update(webgl.cam.position, webgl.EXT_AT, mode === 'exterior');
     if (webgl.weather.update((tms || 0)/1000, mode === 'exterior', WEATHER_MOTION.matches)) keep = true;
     /* the study's monitor graph: drawn once whenever its data moved, and
@@ -12913,6 +13052,8 @@
         plate.userData.room = 'garage';
         carPlates.push(plate);
       });
+      /* a car parked in the bay is behind the garage door from outside */
+      webgl.markEnclosed(webgl.carsG);
     }
     if (webgl.busG) webgl.busG.visible = !!((s.curb || {}).bus);
   }
@@ -13214,7 +13355,7 @@
     tween = { fromP: webgl.cam.position.clone(), toP: webgl.EXT_POS.clone(),
               fromA: (lookAt || webgl.toWorld(webgl.HOME_AT)).clone(),
               toA: webgl.EXT_AT.clone(),
-              t0: performance.now(), ms: 850, cb: null };
+              t0: performance.now(), ms: 850, cb: null, exit: true };
     requestFrame();
   }
   /* ---- ORBIT (massing arc 1, spec section 4) ---------------------------
@@ -13314,6 +13455,7 @@
     var v = new webgl.T.Vector2(((clientX - rect.left) / rect.width) * 2 - 1,
                                 -((clientY - rect.top) / rect.height) * 2 + 1);
     var ray = new webgl.T.Raycaster();
+    ray.layers.enableAll();   /* enclosed interiors too (markEnclosed) */
     ray.setFromCamera(v, webgl.cam);
     var hits = ray.intersectObjects(webgl.scene.children, true);
     for (var i = 0; i < hits.length; i++) {
@@ -13511,6 +13653,16 @@
   };
   /* read-only, the chfHouseScenery stance: reports, never moves */
   window.chfHouseMode = function () { return mode; };
+  /* read-only: 'idle' | 'running' | 'done' -- the room shader warm-up */
+  window.chfShadersWarm = function () { return webgl ? webgl.warmState() : null; };
+  /* read-only: how many meshes the walls enclose, whether this frame draws
+     them, and whether the exit tween is still carrying them out */
+  window.chfEnclosed = function () {
+    if (!webgl) return null;
+    return { count: webgl.enclosedCount(),
+             drawn: webgl.cam.layers.isEnabled(webgl.ENCLOSED_LAYER),
+             exiting: !!(tween && tween.exit) };
+  };
   window.chfNeighborhood = function () { return webgl && webgl.neighborhood ? webgl.neighborhood.stats() : null; };
   /* ORBIT (spec section 4). chfOrbitStop reports; chfOrbitTo/chfOrbitStep
      move the eye and nothing else — the same read-only-about-the-house
@@ -13660,6 +13812,7 @@
     var cam = webgl.ROOM_CAMS[room].clone(), at = webgl.ROOM_AT[room].clone();
     var far = cam.distanceTo(at);
     var ray = new webgl.T.Raycaster(cam, at.clone().sub(cam).normalize());
+    ray.layers.enableAll();   /* enclosed interiors too (markEnclosed) */
     var upper = [], owner = {};
     function drawn(o) {
       for (var p = o; p; p = p.parent) if (!p.visible) return false;
@@ -13815,6 +13968,7 @@
     var rc = new T3.Raycaster(
       new T3.Vector3(from[0], from[1], from[2]),
       new T3.Vector3(dir[0], dir[1], dir[2]).normalize(), 0.01, 400);
+    rc.layers.enableAll();    /* enclosed interiors too (markEnclosed) */
     var best = null;
     webgl.FABRIC.forEach(function (f) {
       var hits = rc.intersectObject(f.g, true);
@@ -14508,6 +14662,7 @@
     var v = new webgl.T.Vector2(((clientX - rect.left) / rect.width) * 2 - 1,
                                 -((clientY - rect.top) / rect.height) * 2 + 1);
     var ray = new webgl.T.Raycaster();
+    ray.layers.enableAll();   /* enclosed interiors too (markEnclosed) */
     ray.setFromCamera(v, webgl.cam);
     var hits = ray.intersectObjects(webgl.scene.children, true);
     for (var i = 0; i < hits.length; i++) {
@@ -14776,6 +14931,13 @@
     scheduleHint();
     size();
     benchmark();
+    /* after the boot benchmark has had its frames (it may still reload
+       the page into a lower tier), and never while the camera moves */
+    setTimeout(function () {
+      if (webgl) webgl.warmInterior(function () {
+        return !!tween || document.visibilityState === 'hidden';
+      });
+    }, 2500);
     if (document.fonts && document.fonts.ready) {
       document.fonts.ready.then(function () {
         if (webgl) { webgl.clearPaint(); if (state) applyState(state); }
