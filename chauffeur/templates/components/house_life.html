@@ -7,7 +7,7 @@
      @chf-house-open.window="open($event.detail)"
      @chf-house-close.window="close()"
      @chf-house-study.window="study()">
-  <div x-show="active && !bookMode()" x-cloak class="house-life-shade" @click.self="close()">
+  <div x-show="active && !bookMode() && !habitatMode()" x-cloak class="house-life-shade" @click.self="close()">
   <section x-ref="panel" class="panel-modal house-life-panel" role="{{ 'region' if house_hybrid|default(false) else 'dialog' }}"{% if not house_hybrid|default(false) %} aria-modal="true"{% endif %}
            @keydown.escape.stop="close()"{% if not house_hybrid|default(false) %} @keydown.tab="trap($event)"{% endif %} aria-labelledby="house-life-title">
     <header><div><h2 id="house-life-title" x-text="title()"></h2><p x-text="explanation()"></p></div>
@@ -17,7 +17,7 @@
       <template x-if="active === 'routines'"><div class="house-life-lanes" x-data="routineLanesCard({data:{interactive:true}}, apiBase)" x-init="startRoutineLanes()">{{ house_routines.lane_grid(interactive='lanesInteractive') }}</div></template>
       <template x-if="active === 'programs' && !bookMode()"><div x-data="programsCard({data:{}}, apiBase)" x-init="startPrograms()">{{ house_programs.rows() }}</div></template>
       <template x-if="active === 'packing'"><div x-data="packingCard({data:{interactive:true,days:1}}, apiBase)" x-init="startPacking()">{{ house_packing.rows() }}</div></template>
-      <template x-if="t && !bookMode()"><div>{% include 'components/board_tile_body.html' %}</div></template>
+      <template x-if="t && !bookMode() && !habitatMode()"><div>{% include 'components/board_tile_body.html' %}</div></template>
       <template x-if="active === 'calendar'"><div x-data="packingCard({data:{interactive:true,days:1}}, apiBase)" x-init="startPacking()">{{ house_packing.rows() }}</div></template>
       <div x-show="active === 'music'" x-ref="music"></div>
       <template x-if="active === 'study_preview'"><div><p>The Study contains parent information and requires your PIN.</p><button type="button" class="house-life-manage" @click="study()">Unlock Study</button></div></template>
@@ -29,6 +29,7 @@
   </section>
   </div>
   {% if house_hybrid|default(false) %}{% include 'components/house_books.html' %}{% endif %}
+  {% if house_hybrid|default(false) %}{% include 'components/house_habitat.html' %}{% endif %}
 </div>
 {% include 'components/chores_lanes.html' %}
 {% include 'components/kid_glyphs.html' %}

@@ -71,7 +71,8 @@ window.openPetEditor = async function (m) {
         ? await chfMemberToken(member) : '';
     if (token === null) return;              // asked, and they backed out
     window.dispatchEvent(new CustomEvent('pet-editor-open',
-        { detail: { memberId: member.id, memberName: member.name, token: token || null } }));
+        { detail: { memberId: member.id, memberName: member.name, token: token || null,
+                    petId: member.petId || null, newPet: !!member.newPet } }));
 };
 
 // Buying room for a second critter, then going straight into naming it.
@@ -99,7 +100,7 @@ window.buyPetSlot = async function (m) {
             showGlobalAlert(d.detail || 'Could not buy a slot');
             return;
         }
-        window.openPetEditor({ id: m.member_id, name: m.name, has_pin: m.has_pin });
+        window.openPetEditor({ id: m.member_id, name: m.name, has_pin: m.has_pin, newPet: true });
     } catch (e) {
         showGlobalAlert('Could not buy a slot');
     }
@@ -209,7 +210,8 @@ function petEditorPanel() {
                     + encodeURIComponent(this.memberId) + '&include_retired=true')
                     .then(r => r.json());
                 const all = list.pets || [];
-                this.pet = all.find(p => p.active !== false) || null;
+                this.pet = detail.newPet ? null : (all.find(p => p.active !== false && (!detail.petId || p.id === detail.petId)) || null);
+                if (detail.petId && !this.pet && !detail.newPet) { this.show = false; showGlobalAlert('That critter is no longer available.'); return; }
                 this.shelf = all.filter(p => p.active === false);
                 // Level and xp are the MEMBER's, not the creature's -- every
                 // pet they own shares what their effort bought, so a second
@@ -245,7 +247,7 @@ function petEditorPanel() {
             }
         },
 
-        close() { this.show = false; },
+        close() { this.show = false; window.dispatchEvent(new CustomEvent('pet-overlay-closed')); },
 
         pick(slot, key) {
             this.push();
@@ -469,7 +471,8 @@ function petEditorPanel() {
 }
 </script>
 
-<div x-data="petEditorPanel()" x-cloak x-show="show"
+<div id="pet-editor-panel" x-data="petEditorPanel()" x-cloak x-show="show"
+     @keydown.escape.prevent.stop="close()"
      @pet-editor-open.window="open($event.detail)"
      class="panel-modal fixed inset-0 z-[100] bg-gray-950 flex flex-col h-full min-h-0 select-none">
 
@@ -705,7 +708,7 @@ function petEditorPanel() {
              where a kid is already looking at their critter, so it is the
              obvious door. -->
         <button type="button" x-show="pet && typeof openPetBattle !== 'undefined'"
-                @click="close(); openPetBattle({ id: memberId, name: memberName })"
+                @click="close(); openPetBattle({ id: memberId, name: memberName, petId: pet && pet.id })"
                 class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-200" title="Battle">⚔️</button>
         <button type="button" @click="save()" :disabled="saving"
                 class="flex-1 h-11 rounded-xl bg-blue-600 text-white font-bold disabled:opacity-50"

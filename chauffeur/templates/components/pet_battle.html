@@ -96,6 +96,7 @@ window.openPetBattle = async function (m, opts) {
     if (token === null) return;              // asked, and they backed out
     window.dispatchEvent(new CustomEvent('pet-battle-open',
         { detail: { memberId: member.id, memberName: member.name, token: token || null,
+                    petId: member.petId || null,
                     watch: (opts && opts.watch) || null } }));
 };
 
@@ -145,7 +146,7 @@ function petBattlePanel() {
             try {
                 const list = await fetch(this.api + 'api/pets?member_id='
                     + encodeURIComponent(this.memberId)).then(r => r.json());
-                this.pet = (list.pets || [])[0] || null;
+                this.pet = (list.pets || []).find(p => !detail.petId || p.id === detail.petId) || null;
                 if (!this.pet) {
                     showGlobalAlert('Hatch a critter first!');
                     this.show = false; return;
@@ -177,6 +178,7 @@ function petBattlePanel() {
         close() {
             if (this.timer) { clearTimeout(this.timer); this.timer = null; }
             this.show = false;
+            window.dispatchEvent(new CustomEvent('pet-overlay-closed'));
         },
 
         headers() {
@@ -420,7 +422,8 @@ function petBattlePanel() {
 }
 </script>
 
-<div x-data="petBattlePanel()" x-cloak x-show="show"
+<div id="pet-battle-panel" x-data="petBattlePanel()" x-cloak x-show="show"
+     @keydown.escape.prevent.stop="close()"
      @pet-battle-open.window="open($event.detail)"
      class="panel-modal fixed inset-0 z-[110] bg-gray-950 flex flex-col select-none">
 
@@ -446,7 +449,7 @@ function petBattlePanel() {
                      The PIN gate is already satisfied (chfMemberToken caches
                      it), so this reopens silently. -->
                 <button type="button" x-show="pet && typeof openPetEditor !== 'undefined'"
-                        @click="close(); openPetEditor({ id: memberId, name: memberName })"
+                        @click="close(); openPetEditor({ id: memberId, name: memberName, petId: pet && pet.id })"
                         class="w-10 h-10 rounded-full bg-gray-800 border border-gray-700 text-gray-200"
                         title="Train &amp; customise">🛠️</button>
                 <button type="button" x-show="typeof openPetGuide !== 'undefined'"
@@ -661,7 +664,7 @@ function petBattlePanel() {
                                      door: the way to act on it was to close the
                                      arena and find the critter again. -->
                                 <button type="button" x-show="pet && typeof openPetEditor !== 'undefined'"
-                                        @click="close(); openPetEditor({ id: memberId, name: memberName })"
+                                        @click="close(); openPetEditor({ id: memberId, name: memberName, petId: pet && pet.id })"
                                         class="px-5 h-11 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 font-bold">Train</button>
                                 <button type="button" @click="close()"
                                         class="px-5 h-11 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 font-bold">Done</button>

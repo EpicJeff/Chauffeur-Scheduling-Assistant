@@ -10937,6 +10937,13 @@ def _require_pet_owner(member_id: str, token: Optional[str]):
     return _require_avatar_owner(member_id, token)
 
 
+def _invalidate_pet_board():
+    # Returning to a habitat after an edit must show the saved creature,
+    # rather than the board's brief cached projection from before the edit.
+    from services import home_board
+    home_board.invalidate_cache()
+
+
 def _pet_payload(pet: dict) -> dict:
     """A pet as the UI wants it: the record, plus the drawing. Rendering
     server-side keeps the wall panel, a digest and a phone drawing the same
@@ -11089,6 +11096,7 @@ def pet_battle_endpoint(req: PetBattleRequest,
     res = storage.run_pet_battle(req.pet_id, req.opponent, seed=req.seed)
     if res.get('error'):
         raise HTTPException(status_code=400, detail=res['error'])
+    _invalidate_pet_board()
     return res
 
 
@@ -11334,6 +11342,7 @@ def create_pet_endpoint(req: PetCreateRequest,
                              req.look, req.type)
     if res.get('error'):
         raise HTTPException(status_code=400, detail=res['error'])
+    _invalidate_pet_board()
     return {'status': 'ok', 'pet': _pet_payload(res['pet']),
             'rejected': res.get('rejected') or []}
 
@@ -11351,6 +11360,7 @@ def buy_pet_slot_endpoint(req: PetSlotRequest,
     res = storage.buy_pet_slot(req.member_id)
     if res.get('error'):
         raise HTTPException(status_code=400, detail=res['error'])
+    _invalidate_pet_board()
     return {'status': 'ok', **res,
             'balance': storage.get_pet_xp_balance(req.member_id)}
 
@@ -11381,6 +11391,7 @@ def update_pet_endpoint(pet_id: str, req: PetUpdateRequest,
     res = storage.update_pet(pet_id, fields)
     if res.get('error'):
         raise HTTPException(status_code=400, detail=res['error'])
+    _invalidate_pet_board()
     return {'status': 'ok', 'pet': _pet_payload(res['pet']),
             'rejected': res.get('rejected') or []}
 
@@ -11446,6 +11457,7 @@ def learn_pet_move_endpoint(pet_id: str, req: PetLearnRequest,
     res = storage.learn_pet_move(pet_id, req.move)
     if res.get('error'):
         raise HTTPException(status_code=400, detail=res['error'])
+    _invalidate_pet_board()
     return {'status': 'ok', 'pet': _pet_payload(res['pet']),
             'spent': res['spent'],
             'balance': storage.get_pet_xp_balance(pet['member_id'])}
@@ -11464,6 +11476,7 @@ def retire_pet_endpoint(pet_id: str, req: PetRetireRequest,
     if not out:
         raise HTTPException(status_code=400,
                             detail="No free pet slot to bring it back to")
+    _invalidate_pet_board()
     return {'status': 'ok', 'pet': _pet_payload(out)}
 
 

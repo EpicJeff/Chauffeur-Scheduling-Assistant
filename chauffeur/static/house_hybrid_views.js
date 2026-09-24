@@ -58,6 +58,7 @@
       images.forEach(function (other) { other.classList.toggle('is-active', other === img); });
       img.alt = entry.label + ' seen from close by in the living room';
       detail.dataset.light = img.dataset.light;
+      if (entry.key === 'pets') frame.style.setProperty('--habitat-art', 'url("' + img.src + '")');
       if (entry.key === 'tasks' || entry.key === 'programs') frame.style.setProperty('--book-art', 'url("' + img.src + '")');
       if (entry.key === 'music') {
         frame.style.setProperty('--radio-art', 'url("' + img.src + '")');
@@ -129,6 +130,7 @@
   back.addEventListener('click', function () { leave(false); });
   window.addEventListener('chf-house-closed', function () { leave(false); });
   document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && active?.key === 'pets' && !event.defaultPrevented && window.chfHabitatCloseOverlay?.()) { event.preventDefault(); return; }
     if (event.key === 'Escape' && active && !event.defaultPrevented && window.chfBookCloseLesson?.()) { event.preventDefault(); return; }
     if (event.key === 'Escape' && active && !event.defaultPrevented) { event.preventDefault(); leave(false); }
   });

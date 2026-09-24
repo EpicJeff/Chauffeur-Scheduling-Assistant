@@ -13,19 +13,20 @@ window.houseLife = function () {
     accept: function (data) { this.state = data || {}; },
     title: function () { return labels[this.active] || ''; },
     bookMode: function () { return document.body.dataset.houseRender === 'hybrid' && ['tasks', 'programs'].includes(this.active); },
+    habitatMode: function () { return document.body.dataset.houseRender === 'hybrid' && this.active === 'pets'; },
     explanation: function () {
       return ({ packing:'Ready for the next outing.', chores:'Choose a job, finish it, or check completed work.',
         routines:'Today’s steps, at your own pace.', programs:'Practice, lessons, and things worth celebrating.',
         tasks:'Household work, with due items first.', errands:'What needs a trip out of the house.' })[this.active] || '';
     },
-    open: async function (key) {
+    open: async function (key, focus = true) {
       if (key === 'study') { this.study(); return; }
       if (!labels[key]) return;
-      this.trigger = document.activeElement;
+      if (focus) this.trigger = document.activeElement;
       this.active = key; this.t = null; this.error = ''; this.loading = false;
       var generation = ++this.generation;
       document.body.classList.add('house-card-open');
-      this.$nextTick(() => (this.bookMode() ? document.querySelector('#house-book h2') : this.$refs.panel.querySelector('header button'))?.focus());
+      if (focus) this.$nextTick(() => (this.bookMode() ? document.querySelector('#house-book h2') : this.habitatMode() ? document.getElementById('house-habitat') : this.$refs.panel.querySelector('header button'))?.focus({preventScroll:true}));
       if (key === 'music') {
         this.$nextTick(() => {
           if (this.active !== 'music') return;

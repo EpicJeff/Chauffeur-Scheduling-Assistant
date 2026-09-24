@@ -23,7 +23,7 @@
       <div id="hybrid-detail-picture">
         {% for key in ['music', 'pets', 'tasks', 'programs'] %}
         {% for light in ['day', 'night'] %}
-        <img data-view="{{ key }}" data-light="{{ light }}" data-src="{{ ('static/house_hybrid/' ~ ({'music':'radio-bay', 'tasks':'ledger-pages', 'programs':'program-pages'}.get(key, key)) ~ '-' ~ light ~ '.png')|ver }}" alt="" decoding="async">
+        <img data-view="{{ key }}" data-light="{{ light }}" data-src="{{ ('static/house_hybrid/' ~ ({'music':'radio-bay', 'pets':'habitat', 'tasks':'ledger-pages', 'programs':'program-pages'}.get(key, key)) ~ '-' ~ light ~ '.png')|ver }}" alt="" decoding="async">
         {% endfor %}
         {% endfor %}
       </div>

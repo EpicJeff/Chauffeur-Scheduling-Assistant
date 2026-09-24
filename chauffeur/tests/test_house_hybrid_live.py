@@ -93,7 +93,7 @@ def main():
                 trigger = page.locator(f'#hybrid-hotspots [data-card="{key}"]')
                 trigger.click()
                 page.wait_for_selector(f'#hybrid-room-frame[data-view="{key}"][data-phase="detail"]')
-                surface = page.locator('#house-radio' if key == 'music' else '#house-book' if key in ('tasks', 'programs') else '#house-life .house-life-panel')
+                surface = page.locator('#house-radio' if key == 'music' else '#house-book' if key in ('tasks', 'programs') else '#house-habitat')
                 surface.wait_for(state='visible')
                 check_full_viewport(page)
                 assert page.locator('#house-life [role="dialog"]').count() == 0
@@ -112,7 +112,7 @@ def main():
                     page.go_back()
                 elif key == 'music':
                     page.keyboard.press('Escape')
-                elif key == 'programs':
+                elif key in ('programs', 'pets'):
                     page.locator('#hybrid-view-back').click()
                 else:
                     page.get_by_role('button', name='Return to living room', exact=True).click()
@@ -139,7 +139,7 @@ def main():
                 shortcuts.nth(i).tap()
                 page.wait_for_selector('#hybrid-room-frame[data-phase="detail"]')
                 key = shortcuts.nth(i).get_attribute('data-card')
-                page.locator('#house-radio' if key == 'music' else '#house-book' if key in ('tasks', 'programs') else '#house-life .house-life-panel').wait_for(state='visible')
+                page.locator('#house-radio' if key == 'music' else '#house-book' if key in ('tasks', 'programs') else '#house-habitat').wait_for(state='visible')
                 check_full_viewport(page)
                 page.screenshot(path=str(out / ('detail-' + str(i) + '-phone.png')))
                 page.locator('#hybrid-view-back').tap()
