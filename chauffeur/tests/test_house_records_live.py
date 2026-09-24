@@ -71,8 +71,31 @@ def main():
             assert page.locator('.record-jacket').count() == 0 and not writes
             page.locator('#radio-member').select_option('a')
             page.locator('.record-jacket').nth(5).wait_for()
+            assert page.locator('.record-jacket.is-selected').count() == 1
+            before = len(writes)
+            page.get_by_role('button', name='Browse Blue Train', exact=True).click()
+            assert page.get_by_role('button', name='Play Blue Train', exact=True).is_visible()
+            assert len(writes) == before, 'Browsing a spine must not play it'
+            page.locator('#radio-record-prev').click()
+            before = len(writes)
+            front = page.locator('.is-selected .record-cover').bounding_box()
+            x, y = front['x'] + front['width']*.7, front['y'] + front['height']*.5
+            page.mouse.move(x, y)
+            page.mouse.down()
+            page.mouse.move(x - 85, y, steps=8)
+            page.mouse.up()
+            assert page.locator('#radio-records').get_attribute('data-selected') == '1'
+            assert len(writes) == before, 'Swiping selects without playing'
+            page.locator('#radio-record-prev').click()
+            assert page.locator('#radio-library').evaluate('el => el.parentElement.id === "house-radio" && getComputedStyle(el,"::after").display === "none"')
+            assert page.locator('#house-radio').bounding_box() == page.locator('#hybrid-detail-picture').bounding_box()
             assert 'api/ha/image64/' in page.locator('.record-art').first.get_attribute('src')
             page.screenshot(path=str(out/'records-desktop.png'))
+            page.locator('#house-compare-light').select_option('night')
+            page.wait_for_selector('#house-radio[data-light="night"]')
+            page.screenshot(path=str(out/'records-night-desktop.png'))
+            page.locator('#house-compare-light').select_option('day')
+            page.wait_for_selector('#house-radio[data-light="day"]')
             page.get_by_role('button', name='Play Kind of Blue', exact=True).click()
             page.wait_for_function('document.getElementById("house-radio").getAttribute("aria-busy")==="false"')
             assert writes[-1]['entity_id'] == 'media_player.living' and writes[-1]['member_id'] == 'a'
@@ -98,14 +121,15 @@ def main():
             box = page.locator('#radio-query').bounding_box()
             assert box['x'] >= 0 and box['x'] + box['width'] <= 390 and box['height'] >= 40, box
             page.screenshot(path=str(out/'search-phone.png'))
+            page.locator('#radio-camera [data-radio-camera="records"]').tap()
             page.locator('#radio-record-next').tap()
-            page.wait_for_function('document.getElementById("radio-records").scrollLeft>0')
-            page.locator('#radio-search-close').tap()
+            page.wait_for_function('document.getElementById("radio-records").dataset.selected==="1"')
             page.locator('#radio-favorites').tap()
             page.locator('#radio-member').select_option('a')
             page.locator('.record-jacket').nth(5).wait_for()
             page.screenshot(path=str(out/'records-phone.png'))
             # Superseded and late search responses must never restore stale content.
+            page.locator('#radio-camera [data-radio-camera="radio"]').tap()
             page.locator('#radio-search-open').tap()
             hold = True
             page.locator('#radio-query').fill('old')
@@ -124,6 +148,7 @@ def main():
             page.keyboard.press('Escape')
             assert page.locator('#house-radio').is_visible() and not page.locator('#radio-search-form').is_visible()
             page.set_viewport_size({'width':844,'height':390})
+            page.locator('#radio-records').press('End')
             page.get_by_role('button', name='Play Night Train', exact=True).click()
             page.wait_for_function('document.getElementById("house-radio").getAttribute("aria-busy")==="false"')
             assert writes[-1]['item']['name'] == 'Night Train'

@@ -63,14 +63,14 @@ def main():
     def ready(page):
         page.wait_for_function('document.getElementById("house-radio").getAttribute("aria-busy")==="false"')
     def geometry(page):
-        for selector, x in (('#radio-power', .2645), ('#radio-volume', .5), ('#radio-tune', .739)):
+        for selector, x in (('#radio-power', .1764), ('#radio-volume', .3118), ('#radio-tune', .453)):
             box = page.locator(selector).bounding_box()
             plane = page.locator('#house-radio').bounding_box()
             assert box['width'] >= 44 and box['height'] >= 44, box
             assert 0 <= box['x'] <= page.viewport_size['width'] - box['width'], box
             assert 0 <= box['y'] <= page.viewport_size['height'] - box['height'], box
             assert abs(box['x'] + box['width']/2 - (plane['x'] + plane['width']*x)) < 1
-            assert abs(box['y'] + box['height']/2 - (plane['y'] + plane['height']*.661)) < 1
+            assert abs(box['y'] + box['height']/2 - (plane['y'] + plane['height']*.584)) < 1
     try:
         with served.browser(reduced_motion='reduce', has_touch=True) as page:
             page.route('**/api/v2/chat/stream*', lambda r: r.fulfill(status=204, body=''))

@@ -2,6 +2,9 @@
 
 Version 2.499.168 · `feature/living-room-atmosphere`
 
+Superseded visually in v2.499.169 by [albums inside the photographed shelf](2026-09-24-house-record-bay.md).
+The shared music behavior below is retained; the separate record strip is replaced.
+
 The radio now has a wooden record ledge beneath it. HTML/CSS sleeves carry live
 Music Assistant cover art, titles and artist/type labels. They have slight depth,
 straighten on hover/focus, and browse horizontally with touch, keyboard or the

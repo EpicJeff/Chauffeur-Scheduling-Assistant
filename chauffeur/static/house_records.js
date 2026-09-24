@@ -11,16 +11,39 @@
   var active = false, visit = 0, searchTicket = 0, shelfTicket = 0;
   var mode = 'favorites', data = {favorites:[], recent:[]}, results = [], available = false, busy = false;
   var favoriteWrites = new Set();
+  var selectedIndex = 0, selectedUri = '', gesture = null, suppressClickUntil = 0;
+  function aim(at) { frame.dataset.radioCamera = at; }
+  function arrange(index) {
+    var jackets = Array.from(records.children);
+    selectedIndex = Math.max(0, Math.min(index, jackets.length - 1));
+    jackets.forEach(function (jacket, i) {
+      var distance = i - selectedIndex, chosen = distance === 0;
+      jacket.classList.toggle('is-selected', chosen);
+      jacket.style.setProperty('--record-x', (chosen ? 50 : 50 + Math.sign(distance) * (31 + Math.min(Math.abs(distance), 6) * 2.8)) + '%');
+      jacket.style.setProperty('--record-angle', (chosen ? -3 : -Math.sign(distance) * (Math.abs(distance) === 1 ? 82 : 88)) + 'deg');
+      jacket.style.zIndex = chosen ? 100 : 50 - Math.abs(distance);
+      jacket.hidden = Math.abs(distance) > 6;
+      var button = jacket.querySelector('.record-play');
+      button.tabIndex = chosen ? 0 : -1;
+      button.setAttribute('aria-label', (chosen ? 'Play ' : 'Browse ') + jacket.dataset.name);
+      var save = jacket.querySelector('.record-save'); save.hidden = !chosen;
+      if (chosen) selectedUri = button.dataset.uri;
+    });
+    records.dataset.selected = String(selectedIndex);
+    document.getElementById('radio-record-prev').disabled = !jackets.length || selectedIndex === 0;
+    document.getElementById('radio-record-next').disabled = !jackets.length || selectedIndex === jackets.length - 1;
+    paintButtons();
+  }
   function message(text) { status.textContent = text; }
   function el(tag, cls, text) { var node = document.createElement(tag); node.className = cls; if (text) node.textContent = text; return node; }
   function searchMode(on) {
     frame.classList.toggle('radio-searching', on);
     form.hidden = !on;
-    Array.from(radio.children).forEach(function (child) { if (!child.classList.contains('radio-glass')) child.inert = on; });
-    if (on) query.focus({preventScroll:true});
+    Array.from(radio.children).forEach(function (child) { if (!child.classList.contains('radio-glass') && child.id !== 'radio-library') child.inert = on; });
+    if (on) { aim('search'); query.focus({preventScroll:true}); }
   }
   function paintButtons() {
-    records.querySelectorAll('.record-play').forEach(function (b) { b.disabled = !available || busy; });
+    records.querySelectorAll('.record-play').forEach(function (b) { b.disabled = b.parentElement.classList.contains('is-selected') && (!available || busy); });
     records.querySelectorAll('.record-save').forEach(function (b) { b.disabled = !member.value || favoriteWrites.has(b.dataset.uri); });
   }
   function render() {
@@ -32,6 +55,7 @@
     document.getElementById('radio-recent').setAttribute('aria-pressed', String(mode === 'recent'));
     items.filter(function (item) { return item && typeof item.uri === 'string' && item.uri; }).forEach(function (item, i) {
       var jacket = el('article', 'record-jacket');
+      jacket.dataset.name = item.name || 'Untitled record';
       jacket.style.setProperty('--record-hue', (i * 47 + 24) % 360);
       var play = el('button', 'record-play'); play.type = 'button'; play.dataset.uri = item.uri;
       play.setAttribute('aria-label', 'Play ' + (item.name || 'Untitled record'));
@@ -45,6 +69,8 @@
       play.append(cover, el('span', 'record-name', item.name || 'Untitled record'),
         el('span', 'record-credit', (MusicLogic.GROUP_LABEL[item.media_type] || 'Music') + ' · ' + (MusicLogic.subtitleOf(item) || 'Music Assistant')));
       play.addEventListener('click', async function () {
+        if (Date.now() < suppressClickUntil) return;
+        if (i !== selectedIndex) { arrange(i); return; }
         if (!active || !available || busy) return;
         var v = visit, owner = member.value;
         await window.HouseRadio.playItem(item, owner);
@@ -57,7 +83,8 @@
       save.addEventListener('click', function () { toggleFavorite(item, saved); });
       jacket.append(play, save); records.append(jacket);
     });
-    paintButtons();
+    var rememberedIndex = items.findIndex(function (item) { return item.uri === selectedUri; });
+    arrange(rememberedIndex < 0 ? selectedIndex : rememberedIndex);
     if (focused) {
       var target = Array.from(records.querySelectorAll('button')).find(function (b) {
         return b.dataset.uri === focused && b.className === focusClass && !b.disabled;
@@ -67,7 +94,7 @@
     if (!items.length) message(mode === 'search' ? 'No records found. Try another search.' : !member.value
       ? 'Choose whose records to browse. Search works without a personal shelf.'
       : mode === 'recent' ? 'Records you play will appear here.' : 'Search for music, then save a record to this shelf.');
-    else message(mode === 'search' ? items.length + ' search results · tap a sleeve to play' : 'Swipe through ' + items.length + ' records · tap a sleeve to play');
+    else message(items.length + (mode === 'search' ? ' results' : ' records') + ' · swipe to browse · tap the front album to play');
   }
   async function loadShelf() {
     var v = visit, ticket = ++shelfTicket, owner = member.value;
@@ -89,18 +116,18 @@
     } finally { favoriteWrites.delete(item.uri); paintButtons(); }
   }
   member.addEventListener('change', function () {
-    ++shelfTicket; data = {favorites:[], recent:[]}; render();
+    ++shelfTicket; selectedIndex = 0; selectedUri = ''; data = {favorites:[], recent:[]}; render();
     try { localStorage.setItem('chauffeur_radio_member', member.value); } catch (_) {}
     loadShelf();
   });
   ['favorites', 'recent'].forEach(function (name) {
     document.getElementById('radio-' + name).addEventListener('click', function () {
-      ++searchTicket; mode = name; searchMode(false); render(); records.scrollLeft = 0; loadShelf();
+      ++searchTicket; mode = name; selectedIndex = 0; selectedUri = ''; searchMode(false); aim('records'); render(); loadShelf();
     });
   });
   document.getElementById('radio-search-open').addEventListener('click', function () { searchMode(true); });
   function endSearch() {
-    ++searchTicket; searchMode(false); mode = 'favorites'; render();
+    ++searchTicket; searchMode(false); aim('radio'); mode = 'favorites'; render();
     document.getElementById('radio-search-open').focus({preventScroll:true});
   }
   document.getElementById('radio-search-close').addEventListener('click', endSearch);
@@ -113,7 +140,8 @@
     try {
       var found = await MusicLogic.search(q, {limit:20, types:['artist','album','track','playlist','radio']}, opts);
       if (!active || v !== visit || ticket !== searchTicket) return;
-      results = MusicLogic.flatten(found); render(); records.scrollLeft = 0;
+      results = MusicLogic.flatten(found); selectedIndex = 0; selectedUri = ''; render();
+      if (matchMedia('(max-width:700px)').matches) { searchMode(false); aim('records'); }
     } catch (_) {
       if (active && v === visit && ticket === searchTicket) message('Search could not connect. Try again.');
     }
@@ -121,14 +149,39 @@
   query.addEventListener('input', function () { ++searchTicket; if (mode === 'search') message('Press Find to search.'); });
   ['prev', 'next'].forEach(function (direction) {
     document.getElementById('radio-record-' + direction).addEventListener('click', function () {
-      records.scrollBy({left:(direction === 'next' ? 1 : -1) * records.clientWidth * .8,
-        behavior:matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'});
+      arrange(selectedIndex + (direction === 'next' ? 1 : -1));
     });
+  });
+  records.addEventListener('keydown', function (event) {
+    suppressClickUntil = 0;
+    var index = {ArrowLeft:selectedIndex - 1, ArrowRight:selectedIndex + 1, Home:0, End:records.children.length - 1}[event.key];
+    if (index === undefined) return;
+    event.preventDefault(); arrange(index);
+    var chosen = records.querySelector('.is-selected .record-play');
+    if (chosen && !chosen.disabled) chosen.focus({preventScroll:true});
+  });
+  records.addEventListener('pointerdown', function (event) {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    suppressClickUntil = 0;
+    gesture = {id:event.pointerId, x:event.clientX, y:event.clientY};
+  });
+  records.addEventListener('pointermove', function (event) {
+    if (!gesture || gesture.id !== event.pointerId) return;
+    if (Math.abs(event.clientX - gesture.x) > 12 && Math.abs(event.clientX - gesture.x) > Math.abs(event.clientY - gesture.y)) records.setPointerCapture(event.pointerId);
+  });
+  records.addEventListener('pointerup', function (event) {
+    if (!gesture || gesture.id !== event.pointerId) return;
+    var dx = event.clientX - gesture.x, dy = event.clientY - gesture.y; gesture = null;
+    if (Math.abs(dx) > 30 && Math.abs(dx) > Math.abs(dy)) { suppressClickUntil = Date.now() + 350; arrange(selectedIndex + (dx < 0 ? 1 : -1)); }
+  });
+  records.addEventListener('pointercancel', function () { gesture = null; });
+  document.querySelectorAll('[data-radio-camera]').forEach(function (button) {
+    button.addEventListener('click', function () { searchMode(false); aim(button.dataset.radioCamera); });
   });
   window.addEventListener('radio-player-state', function (event) { available = event.detail.available; busy = event.detail.busy; paintButtons(); });
   window.HouseRecords = {
     open: async function () {
-      active = true; var v = ++visit; shelf.hidden = false; mode = 'favorites'; data = {favorites:[], recent:[]}; results = []; render();
+      active = true; var v = ++visit; shelf.hidden = false; aim('radio'); selectedIndex = 0; selectedUri = ''; mode = 'favorites'; data = {favorites:[], recent:[]}; results = []; render();
       member.replaceChildren(new Option('Whose records?', ''));
       try {
         var response = await fetch(opts.apiBase + 'api/members'); if (!response.ok) throw new Error();
@@ -139,6 +192,6 @@
         loadShelf();
       } catch (_) { if (active && v === visit) message('Personal shelves unavailable. You can still search and play.'); }
     },
-    close: function () { active = false; ++visit; ++searchTicket; ++shelfTicket; shelf.hidden = true; searchMode(false); query.value = ''; records.replaceChildren(); }
+    close: function () { active = false; ++visit; ++searchTicket; ++shelfTicket; gesture = null; shelf.hidden = true; searchMode(false); query.value = ''; records.replaceChildren(); }
   };
 })();
