@@ -73,7 +73,7 @@
      x-init="$watch('openFlag', value => lessonChanged(value, $el))"
      @chf-house-close.window="close()"
      @keydown.escape.prevent.stop="close()"{% endif %}
-     @lesson-player:open.window="open($event.detail.window, $event.detail.lesson, $event.detail.preview)"
+     @lesson-player:open.window="{% if house_exterior_quick_lesson|default(false) %}if (document.body.dataset.houseScene === 'exterior') {% elif house_hybrid|default(false) %}if (document.body.dataset.houseScene !== 'exterior') {% endif %}open($event.detail.window, $event.detail.lesson, $event.detail.preview)"
      class="panel-modal fixed inset-0 z-[90] bg-gray-950/95 flex flex-col select-none"
      :class="panel ? 'text-2xl' : 'text-base'">
 

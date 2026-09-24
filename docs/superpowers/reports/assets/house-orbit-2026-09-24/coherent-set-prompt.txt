@@ -1,0 +1,44 @@
+Photograph the SAME physical farmhouse from this requested camera: {label}, view {angle}.
+IMAGE 1 is the canonical appearance photograph. IMAGE 2 (LAST) is the target
+camera and geometry render. Output one photorealistic landscape 3:2 image.
+This is continuity, not redesign. Transfer the finish of IMAGE 1 onto IMAGE 2's
+building surfaces while preserving IMAGE 2's camera, silhouette, face widths,
+roof ridges, story heights, projections, opening locations and scale in frame.
+CAMERA: {camera}
+The final image must match that screen-side layout and the LAST image's camera,
+NOT the first photograph's camera. Do not change elevation, crop tighter or invent
+a different angle. Preserve the target's full house including its garage.
+
+SHARED SURFACES: sample EXACT warm light gray/greige vertical board-and-batten
+siding, batten width and spacing from IMAGE 1. Use the SAME charcoal-blue asphalt
+shingles, off-white trim/fascia/gutters/window frames and dark brown wood doors.
+No warmer beige paint, brown roof shingles, horizontal lap siding or white brick
+foundation band. The front porch roof uses dark charcoal standing-seam metal,
+and model shutters use muted blue-gray paint. Front door is dark wood with glazing.
+Porch columns stay in their modeled positions and use the same off-white trim.
+Siding reaches the foundation just as in IMAGE 1 on front, rear and side walls.
+
+FIXED GEOMETRY: use only openings from the LAST model image. No added attic or
+gable windows, dormers, chimneys, extra floors, resized upper front windows,
+missing garage doors or altered roof projections. Side-entry garage doors stay
+attached to the driveway in their modeled positions. The tall rear upper wall
+stays completely blank. The front porch belongs ONLY to the front of the house.
+The rear door has a small uncovered light-gray rectangular CONCRETE landing at
+ground level. No wood deck, stairs, railing, canopy, porch roof or rear columns.
+The rear's narrow concrete walk continues from that landing to the right-hand
+side of the rear facade as seen in IMAGE 1. Preserve this walk in oblique views.
+
+SHARED GROUNDS: same open green lawn, continuous low mixed evergreen foundation
+planting beds, and small deciduous tree near the tall rear window as IMAGE 1.
+No mature trees in the middle of the back lawn. Ignore the model's stylized rear
+foreground trees. Tall pines and deciduous trees belong beyond the property.
+Front and side paths, driveway, white picket fence and planting bed locations
+follow the LAST model image. Use the same evergreen shrub species, size and
+spacing throughout the property; never replace white pickets with timber privacy
+fencing. The ground extends naturally beyond the model slab into one wooded
+neighborhood. No blue void, floating platform or artificial edges.
+
+Same soft sunny afternoon, season, exposure, restrained colors, material roughness
+and photographic realism as IMAGE 1. Camera movement can change surface brightness,
+but not paint or materials. Realistic glass, detailed plants, contact shadows.
+No text, captions, diagrams, UI, people, cars, watermarks or polygon foliage.

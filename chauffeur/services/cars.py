@@ -125,6 +125,7 @@ def fleet_status(cars=None, settings=None):
             'name': _get(c, 'name') or 'Car',
             'color': _get(c, 'color_code') or '',
             'body': _get(c, 'body_type') or '',
+            'exterior_image': _get(c, 'exterior_image') or None,
             'seats': int(_get(c, 'seat_capacity') or 4),
             # No tracker is not "missing"; it is a car that never says where
             # it is, and the household's answer to that has always been home.

@@ -127,6 +127,7 @@ class Car(BaseModel):
     name: str
     icon: Optional[str] = None      # emoji; None -> generic car glyph
     image: Optional[str] = None     # small data-URL photo (~128px); shown where chips have room
+    exterior_image: Optional[str] = None  # transparent vehicle cutout for the hybrid driveway
     color_code: str = '#6b7280'
     seat_capacity: int = 4          # passenger seats, excluding the driver
     # sedan|suv|truck|minivan|hatch|wagon|van; None/'' = generic (the house

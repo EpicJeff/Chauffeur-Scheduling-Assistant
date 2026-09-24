@@ -1,4 +1,4 @@
-"""Eight saved exterior angles connect to existing hybrid rooms without WebGL."""
+"""Single exterior, shared markers, live vehicles and hybrid rooms without WebGL."""
 import argparse
 import json
 from pathlib import Path
@@ -20,6 +20,16 @@ def main():
             page.route('**/api/v2/chat/stream*', lambda r: r.fulfill(status=204, body=''))
             page.route('**/api/music/favorites*', lambda r: r.fulfill(
                 status=200, content_type='application/json', body='{"items":[]}'))
+            fleet = [
+                {'id':'suv','name':'White 2022 Mercedes GLS','body':'suv','color':'#ffffff','present':True,'battery_pct':14,'warn':True,
+                 'exterior_image':'static/house_hybrid/vehicles/mercedes-gls-2022-white.png'},
+                {'id':'van','name':'Gray 2026 Kia EV9','body':'suv','present':True,'battery_pct':65,'warn':False,
+                 'exterior_image':'static/house_hybrid/vehicles/kia-ev9-2026-gray.png'},
+                {'id':'murano','name':'Blue 2021 Nissan Murano','body':'suv','present':True,'fuel_pct':65,'warn':False,
+                 'exterior_image':'static/house_hybrid/vehicles/nissan-murano-2021-blue.png'},
+                {'id':'away','name':'Away car','body':'sedan','present':False,'warn':False}]
+            payload = {'garage':{'cars':fleet}, 'curb':{'bus':True}, 'window':{'night':False}}
+            page.route('**/api/house/state*', lambda r:r.fulfill(status=200, content_type='application/json', body=json.dumps(payload)))
             page.add_init_script('''window.webglAttempts=0;
                 const context=HTMLCanvasElement.prototype.getContext;
                 HTMLCanvasElement.prototype.getContext=function(kind,...args){
@@ -28,30 +38,54 @@ def main():
                 };''')
             def mode(value):
                 page.wait_for_function('(m)=>window.chfExteriorProbe?.().mode===m', arg=value)
-            def angle(value):
-                page.wait_for_function('(a)=>window.chfExteriorProbe?.().angle===a', arg=value)
+            def ready():
+                page.wait_for_function('window.chfExteriorProbe?.().ready')
             page.goto(served.url('house?compare=exterior&light=day'))
-            angle(0)
+            ready()
             assert page.locator('#hybrid-room').evaluate('el=>el.inert')
             assert page.evaluate('typeof THREE') == 'undefined'
             assert page.evaluate('webglAttempts') == 0
             assert page.locator('#exterior-pictures').bounding_box() == {'x':0,'y':0,'width':1400,'height':1000}
-            for value in range(8):
-                page.locator(f'#exterior-stops [data-angle="{value}"]').click()
-                angle(value)
-                assert page.locator('#exterior-pictures img.is-active').count() == 1
-            page.keyboard.press('ArrowRight')
-            angle(0)
-            page.keyboard.press('ArrowLeft')
-            angle(7)
-            # Repeated input must end on the last requested angle.
-            page.evaluate("for(let i=0;i<4;i++)document.getElementById('exterior-right').click()")
-            angle(3)
-            page.locator('#exterior-stops [data-angle="0"]').click()
-            angle(0)
+            assert page.locator('#exterior-pictures > img').count() == 1
+            assert page.locator('.exterior-orbit').count() == 0
+            page.wait_for_selector('[data-vehicle="school-bus"]')
+            assert page.locator('.exterior-vehicle').count() == 4
+            page.wait_for_function("Array.from(document.querySelectorAll('.exterior-vehicle-art img')).length === 3 && Array.from(document.querySelectorAll('.exterior-vehicle-art img')).every(i=>i.complete && i.naturalWidth > 0)")
+            assert page.locator('[data-vehicle="away"]').count() == 0
+            assert '14% charge' in page.locator('[data-vehicle="suv"]').get_attribute('aria-label')
+            page.locator('#exterior-cars-shortcut').click()
+            page.wait_for_selector('.house-life-panel:visible')
+            mode('exterior')
+            page.get_by_role('button', name='Close and return to house', exact=True).click()
+            page.locator('#exterior-bus-shortcut').click()
+            page.wait_for_selector('.house-life-panel:visible')
+            mode('exterior')
+            page.get_by_role('button', name='Close and return to house', exact=True).click()
+            page.evaluate('async () => { await chfHouseRefresh(); }')
+            payload['curb']['bus'] = False
+            fleet[0]['present'] = False
+            page.evaluate('async () => { await chfHouseRefresh(); }')
+            page.wait_for_function("!document.querySelector('[data-vehicle=\"school-bus\"]') && !document.querySelector('[data-vehicle=\"suv\"]')")
+            payload['curb']['bus'] = True
+            fleet[0]['present'] = True
+            page.evaluate('async () => { await chfHouseRefresh(); }')
+            page.wait_for_selector('[data-vehicle="school-bus"]')
             page.screenshot(path=str(out/'exterior-desktop.png'))
             page.evaluate('window.documentToken="same-document"')
-            page.locator('#exterior-enter').click()
+            page.locator('#exterior-room-marker').click()
+            assert page.locator('#exterior-room-marker').get_attribute('aria-expanded') == 'true'
+            for key in ('music', 'pets', 'tasks', 'programs'):
+                page.locator(f'.house-marker-feature[data-preview="{key}"]').click()
+                page.wait_for_selector('.house-life-panel:visible')
+                page.wait_for_function("!Alpine.$data(document.getElementById('house-life')).loading")
+                mode('exterior')
+                assert page.locator('.house-life-panel').get_attribute('role') == 'dialog'
+                assert not page.locator('#house-book').is_visible()
+                assert not page.locator('#house-habitat').is_visible()
+                page.get_by_role('button', name='Close and return to house', exact=True).click()
+                assert page.locator('#exterior-room-marker').get_attribute('aria-expanded') == 'true'
+            page.screenshot(path=str(out/'exterior-expanded.png'))
+            page.locator('#exterior-room-marker').click()
             mode('living')
             assert 'scene=living' in page.url
             assert page.locator('#house-exterior').is_hidden()
@@ -66,7 +100,7 @@ def main():
                 mode('living')
             page.keyboard.press('Escape')
             mode('exterior')
-            angle(0)
+            ready()
             page.go_forward()
             mode('living')
             page.locator('#hybrid-outside').click()
@@ -75,50 +109,65 @@ def main():
             # Deep links/reloads preserve both scene and exterior angle.
             page.goto(served.url('house?compare=exterior&light=day&angle=6&scene=living'))
             mode('living')
-            angle(6)
+            ready()
             page.reload()
             mode('living')
             assert 'scene=living' in page.url
             page.locator('#hybrid-outside').click()
             mode('exterior')
-            angle(6)
+            ready()
             page.set_viewport_size({'width':390,'height':844})
             assert page.locator('#exterior-enter').is_visible()
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
-            # Touch pointer events use the same swipe path as a phone.
-            surface = page.locator('#house-exterior')
-            surface.dispatch_event('pointerdown', {'pointerId':1,'isPrimary':True,'button':0,'clientX':300,'clientY':450})
-            surface.dispatch_event('pointerup', {'pointerId':1,'isPrimary':True,'button':0,'clientX':100,'clientY':450})
-            angle(7)
             page.screenshot(path=str(out/'exterior-phone.png'))
             page.locator('#exterior-enter').tap()
+            page.screenshot(path=str(out/'exterior-expanded-phone.png'))
+            buttons = page.locator('.house-marker-feature')
+            assert buttons.count() == 4
+            for box in buttons.evaluate_all('(els)=>els.map(el=>{const r=el.getBoundingClientRect();return [r.left,r.top,r.right,r.bottom]})'):
+                assert 0 <= box[0] < box[2] <= 390 and 0 <= box[1] < box[3] <= 844, box
+            button = page.locator('.house-marker-feature[data-preview="music"]')
+            box = button.bounding_box()
+            x, y = box['x'] + box['width']/2, box['y'] + 25
+            page.mouse.move(x,y)
+            page.mouse.down()
+            page.mouse.move(x+35,y)
+            page.mouse.up()
+            mode('exterior')
+            assert not page.locator('.house-life-panel').is_visible()
+            page.mouse.move(x,y)
+            page.mouse.down()
+            page.wait_for_timeout(650)
+            page.mouse.up()
             mode('living')
-            page.locator('#hybrid-shortcuts [data-card="music"]').tap()
             page.wait_for_selector('#hybrid-room-frame[data-view="music"][data-phase="detail"]')
+            page.locator('#hybrid-view-back').tap()
+            page.wait_for_selector('#hybrid-room-frame[data-phase="room"]')
+            page.locator('#hybrid-outside').tap()
+            mode('exterior')
+            # The keyboard alternative uses the same controller and destination.
+            page.locator('#exterior-enter').tap()
+            page.locator('.house-marker-feature[data-preview="tasks"]').focus()
+            page.keyboard.press('Shift+Enter')
+            page.wait_for_selector('#hybrid-room-frame[data-view="tasks"][data-phase="detail"]')
             page.locator('#hybrid-view-back').tap()
             page.wait_for_selector('#hybrid-room-frame[data-phase="room"]')
             page.locator('#hybrid-outside').tap()
             mode('exterior')
             assert page.evaluate('webglAttempts') == 0
             assert not served.errors(), served.errors()
-            # Deliberate missing asset retains the last good image and can retry.
-            page.route('**/exterior-orbit/view-4.jpg*', lambda r:r.abort())
-            page.goto(served.url('house?compare=exterior&light=day'))
-            angle(0)
-            page.locator('#exterior-stops [data-angle="4"]').tap()
-            page.wait_for_function("document.getElementById('exterior-status').textContent.includes('could not load')")
-            angle(0)
-            page.unroute('**/exterior-orbit/view-4.jpg*')
-            page.locator('#exterior-stops [data-angle="4"]').tap()
-            angle(4)
             # Exercise the actual transition as well as reduced motion.
             page.emulate_media(reduced_motion='no-preference')
             page.locator('#exterior-enter').tap()
+            page.locator('#exterior-room-marker').tap()
             mode('entering')
             mode('living')
             assert not [e for e in served.errors() if 'net::ERR_FAILED' not in e], served.errors()
-            (out/'results.json').write_text(json.dumps({'passed':True,'views':8,'webglAttempts':0}, indent=2))
-            print('PASS: exterior orbit, room destinations, history, reload, touch, motion and asset retry')
+            (out/'results.json').write_text(json.dumps({'passed':True,'views':1,'webglAttempts':0}, indent=2))
+            print('PASS: single exterior, shared previews and hold visits, history, touch and live traffic')
+    except Exception:
+        print('BROWSER ERRORS', served.errors(), flush=True)
+        raise
     finally:
         served.stop()
 

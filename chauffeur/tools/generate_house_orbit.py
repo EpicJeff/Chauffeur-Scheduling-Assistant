@@ -16,6 +16,16 @@ from evaluate_house_images import request, ROOT
 MODEL = 'gemini-3.1-flash-image'
 LABELS = ['Front right', 'Front', 'Front left', 'Left side',
           'Rear left', 'Rear', 'Rear right', 'Right side']
+CAMERAS = [
+    'Front facade recedes to screen LEFT. Right garage side is on screen RIGHT.',
+    'Straight-on FRONT: symmetrical camera, front facade horizontal, no large side wall visible.',
+    'Front facade recedes to screen RIGHT. Left side with stacked gables is on screen LEFT.',
+    'Straight-on LEFT SIDE: stacked gable ends face the camera. Front porch is only a sliver on screen RIGHT.',
+    'Rear wall and rear door recede to screen LEFT. Left side with stacked gable ends is on screen RIGHT.',
+    'Straight-on REAR: blank upper rear wall centered, roof eaves horizontal, no large side wall visible.',
+    'Rear wall and rear door recede to screen RIGHT. Right garage side with stacked gables is on screen LEFT.',
+    'Straight-on RIGHT SIDE: stacked gable ends face the camera. Garage door and small projecting bay are visible; front porch only at screen LEFT.'
+]
 PROMPT = '''Create one coherent photorealistic architectural exterior, landscape 3:2.
 This is one of eight fixed camera views of the SAME personalized farmhouse.
 IMAGE 1 is the exact rendered model for THIS VIEW. Match its camera direction,
@@ -103,7 +113,7 @@ floating platforms or toy appearance. Landscape 3:2. Show the entire house.
         paths = [captures/f'model-{angle}.png'] + common
         if args.model_last:
             paths = common + [captures/f'model-{angle}.png']
-        parts = [{'text': prompt.format(angle=angle, label=label)}]
+        parts = [{'text': prompt.format(angle=angle, label=label, camera=CAMERAS[angle])}]
         entry = {'angle': angle, 'label': label, 'status': 'started', 'inputs': []}
         for path in paths:
             raw = path.read_bytes()

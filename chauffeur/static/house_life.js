@@ -5,15 +5,15 @@ window.houseLife = function () {
     moments:'Moments', meals:'Meals', lists:'Shopping list', calendar:'Calendar',
     weather:'Weather', cars:'Cars', pets:'Critters', schedule:'Next up', music:'Music', study_preview:'Study' };
   return Object.assign(window.kitchenTileIsland ? window.kitchenTileIsland() : {}, {
-    state: {}, active: null, t: null, error: '', loading: false, busy: false, trigger: null,
+    state: {}, active: null, t: null, error: '', loading: false, busy: false, trigger: null, quickView: false,
     apiBase: window.chfBase || '', generation: 0,
     collageSpan: function () { return ''; }, fillsHere: function () { return false; },
     link: function (url) { return this.apiBase + String(url || '').replace(/^\//, ''); },
     init: function () { if (window.chfHouseState) this.accept(window.chfHouseState() || {}); },
     accept: function (data) { this.state = data || {}; },
     title: function () { return labels[this.active] || ''; },
-    bookMode: function () { return document.body.dataset.houseRender === 'hybrid' && ['tasks', 'programs'].includes(this.active); },
-    habitatMode: function () { return document.body.dataset.houseRender === 'hybrid' && this.active === 'pets'; },
+    bookMode: function () { return !this.quickView && document.body.dataset.houseRender === 'hybrid' && ['tasks', 'programs'].includes(this.active); },
+    habitatMode: function () { return !this.quickView && document.body.dataset.houseRender === 'hybrid' && this.active === 'pets'; },
     explanation: function () {
       return ({ packing:'Ready for the next outing.', chores:'Choose a job, finish it, or check completed work.',
         routines:'Today’s steps, at your own pace.', programs:'Practice, lessons, and things worth celebrating.',
@@ -22,6 +22,7 @@ window.houseLife = function () {
     open: async function (key, focus = true) {
       if (key === 'study') { this.study(); return; }
       if (!labels[key]) return;
+      this.quickView = document.body.dataset.houseScene === 'exterior';
       if (focus) this.trigger = document.activeElement;
       this.active = key; this.t = null; this.error = ''; this.loading = false;
       var generation = ++this.generation;

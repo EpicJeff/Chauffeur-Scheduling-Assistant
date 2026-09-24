@@ -103,6 +103,10 @@
     document.getElementById('hybrid-hotspots').appendChild(button(entry, true));
     document.getElementById('hybrid-shortcuts').appendChild(button(entry, false));
   });
+  window.chfHybridVisit = function (key) {
+    var entry = entries.find(function (item) { return item.key === key; });
+    if (entry) window.chfHybridEnter(entry, document.querySelector('#hybrid-hotspots [data-card="' + key + '"]'));
+  };
   function placeMarkers() {
     entries.forEach(function (entry) {
       var point = window.chfHybridProject(entry);

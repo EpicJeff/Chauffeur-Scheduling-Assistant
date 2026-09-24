@@ -1,0 +1,447 @@
+{
+  "model": "gemini-3.1-flash-image",
+  "max_requests": 8,
+  "automatic_retries": 0,
+  "views": [
+    {
+      "angle": 0,
+      "label": "Front right",
+      "status": "ok",
+      "inputs": [
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/appearance-anchor.jpg",
+          "sha256": "6dc60c6c3fea137bd515d98ce79ea63d468efaf9758d0101b50e5399218e18cf"
+        },
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/model-0.png",
+          "sha256": "7f89bcab70a03bd86b01549924f42ea5d2c0eab902ecd67f06c8f8fe38c6d04a"
+        }
+      ],
+      "generation_config": {
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "imageConfig": {
+          "aspectRatio": "3:2",
+          "imageSize": "1K"
+        }
+      },
+      "model_version": "gemini-3.1-flash-image",
+      "usage": {
+        "promptTokenCount": 1215,
+        "candidatesTokenCount": 1649,
+        "totalTokenCount": 2864,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 699
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 516
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1120
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "dimensions": [
+        1264,
+        848
+      ],
+      "file": "view-0.jpg",
+      "sha256": "fadfbb1bae0976c7e6ac1848cc4ccc3591a60a784ac1e9026c743ac7b2818c4c",
+      "seconds": 9.06
+    },
+    {
+      "angle": 1,
+      "label": "Front",
+      "status": "ok",
+      "inputs": [
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/appearance-anchor.jpg",
+          "sha256": "6dc60c6c3fea137bd515d98ce79ea63d468efaf9758d0101b50e5399218e18cf"
+        },
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/model-1.png",
+          "sha256": "d1494198d32bbe0954a1fb18b6c82d86384eb54fc6ac7e648df4aee7ee793dca"
+        }
+      ],
+      "generation_config": {
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "imageConfig": {
+          "aspectRatio": "3:2",
+          "imageSize": "1K"
+        }
+      },
+      "model_version": "gemini-3.1-flash-image",
+      "usage": {
+        "promptTokenCount": 1216,
+        "candidatesTokenCount": 1528,
+        "totalTokenCount": 2744,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 700
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 516
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1120
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "dimensions": [
+        1264,
+        848
+      ],
+      "file": "view-1.jpg",
+      "sha256": "7d4c41efc6f3e0c79360d9bfc806807837295139da37c8038c8399b4a3d153ea",
+      "seconds": 7.11
+    },
+    {
+      "angle": 2,
+      "label": "Front left",
+      "status": "ok",
+      "inputs": [
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/appearance-anchor.jpg",
+          "sha256": "6dc60c6c3fea137bd515d98ce79ea63d468efaf9758d0101b50e5399218e18cf"
+        },
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/model-2.png",
+          "sha256": "6120f3a23fb002974d2490a69cec35bf4322d1ab320054af2aa6ee2ca59f5a91"
+        }
+      ],
+      "generation_config": {
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "imageConfig": {
+          "aspectRatio": "3:2",
+          "imageSize": "1K"
+        }
+      },
+      "model_version": "gemini-3.1-flash-image",
+      "usage": {
+        "promptTokenCount": 1218,
+        "candidatesTokenCount": 1651,
+        "totalTokenCount": 2869,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 702
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 516
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1120
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "dimensions": [
+        1264,
+        848
+      ],
+      "file": "view-2.jpg",
+      "sha256": "a9c6a03c9442972b8d7ebe1ff0fb4e2913a3b4bf6e8f09ba53ea8085abf2b2a6",
+      "seconds": 7.5
+    },
+    {
+      "angle": 3,
+      "label": "Left side",
+      "status": "ok",
+      "inputs": [
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/appearance-anchor.jpg",
+          "sha256": "6dc60c6c3fea137bd515d98ce79ea63d468efaf9758d0101b50e5399218e18cf"
+        },
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/model-3.png",
+          "sha256": "739a7af8bcb539aceb98e9a402fe7b903f585830f3627509e48c5215c8241ef3"
+        }
+      ],
+      "generation_config": {
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "imageConfig": {
+          "aspectRatio": "3:2",
+          "imageSize": "1K"
+        }
+      },
+      "model_version": "gemini-3.1-flash-image",
+      "usage": {
+        "promptTokenCount": 1223,
+        "candidatesTokenCount": 1613,
+        "totalTokenCount": 2836,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 707
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 516
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1120
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "dimensions": [
+        1264,
+        848
+      ],
+      "file": "view-3.jpg",
+      "sha256": "5b7eabd81026ac0209e9ac9d304d2eb1f804a076ac86f2444d551b2e33fa3337",
+      "seconds": 8.13
+    },
+    {
+      "angle": 4,
+      "label": "Rear left",
+      "status": "ok",
+      "inputs": [
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/appearance-anchor.jpg",
+          "sha256": "6dc60c6c3fea137bd515d98ce79ea63d468efaf9758d0101b50e5399218e18cf"
+        },
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/model-4.png",
+          "sha256": "5d54d2fb12f66dbf01327d828537f242a9dc9761fd20c670ea7d87f862a4199e"
+        }
+      ],
+      "generation_config": {
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "imageConfig": {
+          "aspectRatio": "3:2",
+          "imageSize": "1K"
+        }
+      },
+      "model_version": "gemini-3.1-flash-image",
+      "usage": {
+        "promptTokenCount": 1221,
+        "candidatesTokenCount": 1605,
+        "totalTokenCount": 2826,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 705
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 516
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1120
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "dimensions": [
+        1264,
+        848
+      ],
+      "file": "view-4.jpg",
+      "sha256": "bc25d25ee2dcb681027044feaa7a28bb1171b1dc5013987d806e1e62fc809159",
+      "seconds": 8.14
+    },
+    {
+      "angle": 5,
+      "label": "Rear",
+      "status": "ok",
+      "inputs": [
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/appearance-anchor.jpg",
+          "sha256": "6dc60c6c3fea137bd515d98ce79ea63d468efaf9758d0101b50e5399218e18cf"
+        },
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/model-5.png",
+          "sha256": "62cea6c82ada05990b11c516dcef5e08fd2b5c6c9fff4ce5f53c895d5aad16cd"
+        }
+      ],
+      "generation_config": {
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "imageConfig": {
+          "aspectRatio": "3:2",
+          "imageSize": "1K"
+        }
+      },
+      "model_version": "gemini-3.1-flash-image",
+      "usage": {
+        "promptTokenCount": 1220,
+        "candidatesTokenCount": 1540,
+        "totalTokenCount": 2760,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 704
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 516
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1120
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "dimensions": [
+        1264,
+        848
+      ],
+      "file": "view-5.jpg",
+      "sha256": "556b5dd5278b8ecc52f2455987a48baa5a00c1bf6771c3069bf92f9dec316330",
+      "seconds": 8.74
+    },
+    {
+      "angle": 6,
+      "label": "Rear right",
+      "status": "ok",
+      "inputs": [
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/appearance-anchor.jpg",
+          "sha256": "6dc60c6c3fea137bd515d98ce79ea63d468efaf9758d0101b50e5399218e18cf"
+        },
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/model-6.png",
+          "sha256": "0ceb7d1437954c53e42ff9d2577cd45887c3bfd9a356ba874fe8b849d5ff7762"
+        }
+      ],
+      "generation_config": {
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "imageConfig": {
+          "aspectRatio": "3:2",
+          "imageSize": "1K"
+        }
+      },
+      "model_version": "gemini-3.1-flash-image",
+      "usage": {
+        "promptTokenCount": 1222,
+        "candidatesTokenCount": 1698,
+        "totalTokenCount": 2920,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 706
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 516
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1120
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "dimensions": [
+        1264,
+        848
+      ],
+      "file": "view-6.jpg",
+      "sha256": "a22d65182943e424be24af63fdb90e56671e03051b892c2f789a302078323656",
+      "seconds": 8.35
+    },
+    {
+      "angle": 7,
+      "label": "Right side",
+      "status": "ok",
+      "inputs": [
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/appearance-anchor.jpg",
+          "sha256": "6dc60c6c3fea137bd515d98ce79ea63d468efaf9758d0101b50e5399218e18cf"
+        },
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/model-7.png",
+          "sha256": "2bff7027187af8fa8072eadd0f56b47f9c0b7aa971759a03b8b17c1c9b23bef2"
+        }
+      ],
+      "generation_config": {
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "imageConfig": {
+          "aspectRatio": "3:2",
+          "imageSize": "1K"
+        }
+      },
+      "model_version": "gemini-3.1-flash-image",
+      "usage": {
+        "promptTokenCount": 1228,
+        "candidatesTokenCount": 1794,
+        "totalTokenCount": 3022,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 712
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 516
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1120
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "dimensions": [
+        1264,
+        848
+      ],
+      "file": "view-7.jpg",
+      "sha256": "e0eb72b04a00be4acc07195318f50ad1708d987fd7f88aa7aaee72ad5dd9ed90",
+      "seconds": 8.67
+    }
+  ]
+}
