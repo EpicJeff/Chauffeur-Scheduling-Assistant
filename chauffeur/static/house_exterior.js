@@ -73,6 +73,7 @@
   }
   function setMode(next) {
     mode = next; document.body.dataset.houseScene = next;
+    if (next === 'exterior') window.chfGarageReset?.();
     hints.hidden = next !== 'exterior';
     var destination = next === 'living' ? lifeHome : quickviews;
     if (life.parentNode !== destination) {
@@ -141,6 +142,7 @@
     (visiting === 'garage' ? garageMarker : enterButton).focus();
   }
   function goOutside() {
+    if (mode === 'garage' && window.chfGarageBack?.()) return;
     if (!['living', 'garage'].includes(mode) || (mode === 'living' && window.chfHybridViewing?.())) return;
     if (history.state?.chfExteriorRoom) history.back();
     else revealOutside();

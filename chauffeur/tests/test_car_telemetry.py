@@ -73,6 +73,9 @@ def scenario_level_parsing():
     check(lv['battery_pct'] == 78.5, f"numeric battery, got {lv}")
     check(lv['fuel_pct'] == 45.0, f"percent-suffixed fuel, got {lv}")
     check(lv['range'] is None, f"unavailable -> None, got {lv}")
+    _stub_states({'sensor.range': {'state':'218', 'attributes':{'unit_of_measurement':'km'}}})
+    lv = cars.car_levels(car)
+    check(lv['range'] == 218 and lv['range_unit'] == 'km', 'range preserves its actual sensor unit')
 
 
 def scenario_location_read():

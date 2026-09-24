@@ -1,0 +1,13 @@
+Photorealistic close-up from the driver's seat of a
+gray 2026 Kia EV9 parked in a warm residential garage. Landscape 3:2.
+Camera square-on to the instrument cluster, slightly above the steering wheel,
+natural close lean-in view. Focus on the actual driver instrument display behind
+the wheel, not the infotainment screen. The large rectangular digital instrument
+screen must be UNLIT blank near-black, unobstructed, front-on without perspective
+skew, spanning approximately x=20% to 80%, y=30% to 58% of the image. No text,
+gauges, icons or numbers anywhere on screen: live UI will be placed there later.
+Steering wheel visible along bottom foreground BELOW the display, never crossing
+or obscuring the screen. Real stitched leather, dark dashboard texture, believable
+glass reflections, warm light from the garage entrance. Softly blurred garage
+cabinetry visible through windscreen at top. Parked domestic vehicle interior,
+not driving, not a car advertisement. No people, hands, labels or watermarks.

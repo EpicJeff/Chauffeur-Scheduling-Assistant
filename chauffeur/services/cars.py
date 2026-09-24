@@ -64,10 +64,16 @@ def car_location(car):
 
 
 def car_levels(car):
+    range_state = _state_obj(_get(car, 'ha_range_entity'))
+    try:
+        range_value = float(range_state['state']) if range_state else None
+    except (ValueError, TypeError):
+        range_value = None
     return {
         'battery_pct': _num(_get(car, 'ha_battery_entity')),
         'fuel_pct': _num(_get(car, 'ha_fuel_entity')),
-        'range': _num(_get(car, 'ha_range_entity')),
+        'range': range_value,
+        'range_unit': (range_state.get('attributes') or {}).get('unit_of_measurement') if range_state else None,
     }
 
 
@@ -133,6 +139,7 @@ def fleet_status(cars=None, settings=None):
             'battery_pct': batt,
             'fuel_pct': fuel,
             'range': lv.get('range'),
+            'range_unit': lv.get('range_unit'),
             'warn': warn,
         })
     return rows

@@ -1,0 +1,16 @@
+Edit the supplied empty two-car garage photograph. Park exactly ONE
+gray 2026 Kia EV9 in the LEFT parking bay ONLY, centered horizontally at
+x=27% of the full image. Other bay MUST remain completely empty and unchanged.
+Back the car in STRAIGHT, longitudinal axis parallel to side walls, front facing
+the open garage doorway, wheels straight, bumper parallel to back wall. This is
+ordinary garage parking, not a rotated three-quarter showroom pose. Vehicle must
+fit completely inside its half of the garage, with realistic side clearances and
+no part crossing the center floor joint. Preserve the original centered camera:
+do not recenter camera on the car or crop the other bay. Scale the SUV naturally
+to the garage, about 2 meters wide in its 3.5 meter wide bay. Accurate model/year
+body and gray painted panels, natural glass, rubber and trim. Integrate actual
+garage light, window/ceiling reflections, tire contact shadows, underbody occlusion
+and subtle floor reflections, all in the occupied bay. Keep ALL architecture,
+floor joints, cabinets, lighting, wall objects, camera and framing exactly aligned
+with the source. Modify only the vehicle and its local shadows/reflections. Same
+3:2 output. No people, no text, no second car, no scenery changes.

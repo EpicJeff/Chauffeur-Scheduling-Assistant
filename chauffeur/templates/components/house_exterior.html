@@ -8,13 +8,25 @@
   <div id="exterior-traffic-shortcuts"></div>
   <p id="exterior-status" role="status">Opening your house…</p>
 </section>
-<section id="hybrid-garage" hidden inert aria-label="Garage bay prototype">
-  <div id="garage-images" aria-hidden="true">
+<section id="hybrid-garage" data-car-id="{{ request.query_params.get('garage_car', '') }}" hidden inert aria-label="Garage bay prototype">
+  <div id="garage-images">
     <img id="garage-empty" data-src="{{ 'static/house_hybrid/garage-empty.png'|ver }}" alt="">
-    <img id="garage-occupied" data-src="{{ 'static/house_hybrid/garage-ev9.png'|ver }}" alt="">
+    <button id="garage-car" type="button" aria-label="View instrument cluster"><span>Instrument cluster</span></button>
+    <img id="garage-occupied" data-src="{{ 'static/house_hybrid/garage-left-ev9-gemini.jpg'|ver }}" alt="">
   </div>
-  <header class="garage-heading"><span>ONE-BAY PROTOTYPE</span><h1>Garage</h1><p>Gray 2026 Kia EV9</p></header>
-  <button id="garage-car" type="button" aria-label="Open vehicle information"><span>Vehicle information</span></button>
+  <header class="garage-heading"><span>TWO-BAY PROTOTYPE</span><h1>Garage</h1><p>Left bay · Gray 2026 Kia EV9</p></header>
+  <div id="garage-dashboard" hidden>
+    <div id="garage-dashboard-plane">
+      <img id="garage-cluster-photo" data-src="{{ 'static/house_hybrid/garage-ev9-cluster.jpg'|ver }}" alt="Driver instrument cluster">
+      <section id="garage-cluster-ui" aria-label="Vehicle instruments">
+        <div class="cluster-top"><span id="cluster-vehicle">Vehicle</span><span id="cluster-presence">—</span></div>
+        <div class="cluster-readings"><div><span id="cluster-energy-label">BATTERY</span><strong id="cluster-energy">—</strong><div class="cluster-charge-track"><i id="cluster-charge-bar"></i></div></div><div><span>RANGE</span><strong id="cluster-range">—</strong><small id="cluster-range-unit"></small></div></div>
+        <p id="cluster-notice">Telemetry unavailable</p>
+        <button id="cluster-more" type="button">Vehicle details ›</button>
+      </section>
+    </div>
+    <button id="garage-dashboard-back" type="button">← Garage</button>
+  </div>
   <div class="garage-controls">
     <p id="garage-state" role="status"></p>
     <label>Preview state <select id="garage-presence"><option value="live">Follow vehicle presence</option><option value="home">Parked</option><option value="away">Away</option></select></label>
