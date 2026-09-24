@@ -1,0 +1,30 @@
+#house-exterior{position:fixed;inset:0;z-index:45;background:#1b2925;color:#fff5df;overflow:hidden;touch-action:pan-y;font:15px system-ui}
+#house-exterior[hidden],#hybrid-outside[hidden]{display:none}
+#exterior-pictures{position:absolute;inset:0;transition:transform .7s cubic-bezier(.2,.65,.2,1),opacity .6s ease;transform-origin:var(--entry-x,50%) var(--entry-y,60%)}
+#exterior-pictures img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .4s ease;pointer-events:none}
+#exterior-pictures img.is-active{opacity:1}
+.exterior-heading{position:absolute;top:88px;left:28px;text-shadow:0 2px 12px #000;background:linear-gradient(110deg,#15251cd6,transparent);padding:16px 50px 20px 20px;border-radius:16px;pointer-events:none}
+.exterior-heading>span{font-size:10px;letter-spacing:.22em}.exterior-heading h1{font:500 30px Georgia,serif;margin:7px 0}.exterior-heading p{margin:0;color:#e0dccf;font-size:13px}
+#house-exterior button,#hybrid-outside{border:1px solid #e5d3ab80;background:#192b26ed;color:#fff4da;cursor:pointer;font:600 14px system-ui;min-width:44px;min-height:44px;border-radius:30px;box-shadow:0 4px 18px #0003}
+#house-exterior button:focus-visible,#hybrid-outside:focus-visible{outline:3px solid #f0d09c;outline-offset:4px}
+#exterior-room-marker{position:absolute;transform:translate(-50%,-50%);display:flex;align-items:center;gap:10px;padding:9px 17px 9px 10px}
+#exterior-room-marker[hidden]{display:none}#exterior-room-marker>span{display:grid;place-items:center;width:38px;height:38px;border-radius:50%;background:#e7c68f;color:#233026;font-size:22px}
+.exterior-orbit{position:absolute;bottom:190px;left:50%;transform:translateX(-50%);display:flex;gap:12px;align-items:center;padding:7px;border:1px solid #e5d3ab30;border-radius:40px;background:#14271dd9}
+#exterior-left,#exterior-right{font-size:30px!important;width:48px;height:48px;padding-bottom:4px}
+#exterior-stops{display:flex}#exterior-stops button{min-width:28px;min-height:44px;width:28px;border:0;box-shadow:none;background:none;padding:0;display:grid;place-items:center}
+#exterior-stops span{width:7px;height:7px;border-radius:50%;background:#d4d6cb77;transition:transform .2s,background .2s}
+#exterior-stops button[aria-pressed="true"] span{background:#f4d6a0;transform:scale(1.5)}
+#exterior-enter{position:absolute;bottom:126px;left:50%;transform:translateX(-50%);padding:13px 25px;white-space:nowrap;background:#f1dbb4!important;color:#203129!important}
+#exterior-status{position:absolute;bottom:94px;left:0;right:0;text-align:center;font-size:12px;margin:0;text-shadow:0 1px 4px #000;background:#12251c99;width:max-content;max-width:90%;padding:4px 10px;border-radius:10px;margin:auto}
+body[data-house-scene="exterior"] #hybrid-room,body[data-house-scene="entering"] #hybrid-room{pointer-events:none}
+body[data-house-scene="exterior"] #house-comparison,body[data-house-scene="entering"] #house-comparison,body[data-house-scene] #house-compare-measurements{display:none}
+body[data-house-scene="entering"] #exterior-pictures{transform:scale(1.85);opacity:0}
+body[data-house-scene="entering"] #house-exterior{background:transparent;pointer-events:none}
+body[data-house-scene="entering"] #house-exterior>header,body[data-house-scene="entering"] #house-exterior>button,body[data-house-scene="entering"] #house-exterior>nav,body[data-house-scene="entering"] #exterior-status{opacity:0}
+body[data-house-scene] #hybrid-room{transition:transform .7s ease;transform:scale(1)}
+body[data-house-scene="exterior"] #hybrid-room{transform:scale(1.08)}
+#hybrid-outside{position:fixed;left:20px;top:84px;z-index:49;padding:10px 18px}
+body:has(#hybrid-room-frame:not([data-phase="room"])) #hybrid-outside{display:none}
+@media(max-width:700px){.exterior-heading{top:84px;left:12px;padding:12px 24px 14px 14px}.exterior-heading h1{font-size:24px}.exterior-orbit{gap:4px}#exterior-stops button{min-width:25px;width:25px}#hybrid-outside{top:145px;left:12px}#exterior-room-marker{display:none}}
+@media(max-height:550px){.exterior-heading{top:72px;padding:8px 18px}.exterior-heading h1{font-size:20px}.exterior-orbit{bottom:182px}#exterior-enter{bottom:120px}}
+@media(prefers-reduced-motion:reduce){#exterior-pictures,#exterior-pictures img,body[data-house-scene] #hybrid-room,#exterior-stops span{transition:none}}

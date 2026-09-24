@@ -1,6 +1,7 @@
 {% import 'components/packing_card.html' as packing %}
-{% set house_comparison = request.query_params.get('compare') == 'living' %}
+{% set house_comparison = request.query_params.get('compare') in ['living', 'exterior'] %}
 {% set house_hybrid = house_comparison and request.query_params.get('render') != '3d' %}
+{% set house_exterior = house_hybrid and request.query_params.get('compare') == 'exterior' %}
 <!DOCTYPE html>
 <html lang="en" class="dark">
 
@@ -204,6 +205,7 @@
     <link rel="stylesheet" href="{{ 'static/house_life.css'|ver }}">
     {% if house_comparison %}
     <link rel="stylesheet" href="{{ 'static/house_comparison.css'|ver }}">
+    {% if house_exterior %}<link rel="stylesheet" href="{{ 'static/house_exterior.css'|ver }}">{% endif %}
     {% if house_hybrid %}<link rel="stylesheet" href="{{ 'static/house_radio.css'|ver }}"><link rel="stylesheet" href="{{ 'static/house_record_bay.css'|ver }}"><link rel="stylesheet" href="{{ 'static/house_books.css'|ver }}"><script src="{{ 'static/house_books.js'|ver }}"></script>{% endif %}
     {% if house_hybrid %}<link rel="stylesheet" href="{{ 'static/house_habitat.css'|ver }}"><script src="{{ 'static/house_habitat.js'|ver }}"></script>{% endif %}
     {% if house_hybrid %}<link rel="stylesheet" href="{{ 'static/house_workbench.css'|ver }}">{% endif %}
@@ -212,7 +214,7 @@
     {% endif %}
 </head>
 
-<body class="flex flex-col h-screen overflow-hidden{% if house_comparison %} house-comparison-page{% endif %}"{% if house_comparison %} data-house-render="{{ 'hybrid' if house_hybrid else '3d' }}"{% endif %}>
+<body class="flex flex-col h-screen overflow-hidden{% if house_comparison %} house-comparison-page{% endif %}"{% if house_comparison %} data-house-render="{{ 'hybrid' if house_hybrid else '3d' }}"{% endif %}{% if house_exterior %} data-house-scene="exterior"{% endif %}>
     <div class="editor-chrome">{% include 'nav.html' %}</div>
     <aside id="house-map-credit" hidden aria-label="Neighborhood map credits" title="Mapped streets and available building outlines; illustrative house designs and inferred frontage">
       <a class="mapboxgl-ctrl-logo" href="https://www.mapbox.com/" target="_blank" rel="noopener" aria-label="Mapbox"></a>
@@ -223,6 +225,7 @@
 
     <div id="kitchen-wrap" class="panel-page">
         {% if house_comparison %}{% include 'components/house_comparison.html' %}{% endif %}
+        {% if house_exterior %}{% include 'components/house_exterior.html' %}{% endif %}
         <h1 id="kitchen-title" class="panel-page-title">The Home</h1>
         <button id="house-back" type="button" hidden aria-label="Go back"></button>
         <div id="house-hints" hidden aria-label="House rooms and features"></div>
@@ -306,5 +309,6 @@
     <script src="{{ 'static/kitchen_overlay.js'|ver }}"></script>
     {% if house_hybrid %}<script src="{{ 'static/house_records.js'|ver }}"></script><script src="{{ 'static/house_radio.js'|ver }}"></script><script src="{{ 'static/house_hybrid_views.js'|ver }}"></script>{% endif %}
     {% if house_comparison %}<script src="{{ 'static/house_comparison.js'|ver }}"></script>{% endif %}
+    {% if house_exterior %}<script src="{{ 'static/house_exterior.js'|ver }}"></script>{% endif %}
 </body>
 </html>

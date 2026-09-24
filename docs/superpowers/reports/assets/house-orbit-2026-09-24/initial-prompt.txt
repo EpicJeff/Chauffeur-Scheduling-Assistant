@@ -1,0 +1,28 @@
+Create one coherent photorealistic architectural exterior, landscape 3:2.
+This is one of eight fixed camera views of the SAME personalized farmhouse.
+IMAGE 1 is the exact rendered model for THIS VIEW. Match its camera direction,
+elevation, framing, building silhouette, roof ridges, story heights, proportions,
+doors, windows, garage bays and yard layout. It is the authority for geometry.
+IMAGE 2 is the real front photograph: use its greige board-and-batten, cream/white
+masonry, white trim, charcoal shingles, dark standing-seam porch roof, dark wood
+glazed front doors and muted blue-gray shutters as surface references only.
+IMAGE 3 is the furnished living room: use its warm natural photographic quality,
+tactile materials, restrained colors and soft shadows as the shared art direction.
+IMAGE 4 is an earlier photographic treatment: match its natural material finish
+and level of realism ONLY. Do not copy its camera or its invented side windows.
+Convert all low-poly foliage into real trees and shrubs. Replace the floating
+lot and blue void with continuous ground, a wooded residential setting and sky.
+Keep the model's fence, walks, planting areas, street and right-side driveway
+in their world positions. Same warm afternoon and season across the series.
+Do not add windows, doors, floors, dormers, chimneys, roof changes or projections.
+Blank walls in IMAGE 1 MUST remain blank. The right front gable is low with no
+upper window. Use only openings visible in the model for this viewpoint, even
+when the photo or photographic treatment has more. On rear views DO NOT copy
+the front entrance or front gables to the rear. Preserve any model rear openings.
+Keep side-entry garage doors where visible in the model and connected to the
+driveway. Do not turn garage doors into windows. Preserve all eight-view model
+relationships, even if you would prefer a different design. Photographic detail,
+realistic window reflections, siding grain, shingles and contact shadows.
+No floating platform, toy appearance, polygonal trees, people, cars, text, signs,
+watermarks, UI, cutaway, collage or room objects outside. Show the whole house.
+Requested viewpoint: {label}, orbit stop {angle}. Image 1 determines the view.

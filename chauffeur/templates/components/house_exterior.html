@@ -1,0 +1,21 @@
+<section id="house-exterior" aria-label="Your house exterior" aria-busy="true">
+  <div id="exterior-pictures" aria-hidden="true">
+    {% for angle in range(8) %}
+    <img data-angle="{{ angle }}" data-src="{{ ('static/house_hybrid/exterior-orbit/view-' ~ angle ~ '.jpg')|ver }}" alt="" decoding="async">
+    {% endfor %}
+  </div>
+  <header class="exterior-heading"><span>THE HOUSE</span><h1>My house</h1><p id="exterior-angle">Front right</p></header>
+  <button id="exterior-room-marker" type="button" aria-label="Enter living room"><span aria-hidden="true">↗</span><strong>Living room</strong></button>
+  <nav class="exterior-orbit" aria-label="Explore the exterior">
+    <button id="exterior-left" type="button" aria-label="Rotate left">‹</button>
+    <div id="exterior-stops" aria-label="Exterior views">
+      {% for label in ['Front right', 'Front', 'Front left', 'Left side', 'Rear left', 'Rear', 'Rear right', 'Right side'] %}
+      <button type="button" data-angle="{{ loop.index0 }}" aria-label="{{ label }} view" aria-pressed="false"><span></span></button>
+      {% endfor %}
+    </div>
+    <button id="exterior-right" type="button" aria-label="Rotate right">›</button>
+  </nav>
+  <button id="exterior-enter" type="button">Enter living room <span aria-hidden="true">→</span></button>
+  <p id="exterior-status" role="status">Opening your house…</p>
+</section>
+<button id="hybrid-outside" type="button" hidden>← Outside</button>

@@ -18,7 +18,7 @@
       link.href = url.href;
     });
     var exit = new URL(location.href);
-    ['compare', 'render', 'light'].forEach(function (key) { exit.searchParams.delete(key); });
+    ['compare', 'render', 'light', 'scene', 'angle'].forEach(function (key) { exit.searchParams.delete(key); });
     document.getElementById('house-compare-exit').href = exit.href;
   }
   function ready() {
