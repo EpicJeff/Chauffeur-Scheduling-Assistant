@@ -1,6 +1,20 @@
 # Hybrid living-room comparison
 
-2026-09-23 · updated v2.499.165 · `feature/living-room-atmosphere`
+2026-09-23 · updated v2.499.166 · `feature/living-room-atmosphere`
+
+## Matching viewport framing
+
+The hybrid now occupies the same full viewport as the 3D canvas. The rounded
+inset stage and surrounding page margins are removed. Both modes share compact
+overlay comparison controls. Room images fill the viewport with a centered cover
+crop; marker placement and approach origins account for that crop after resizing.
+Narrow, short and extreme-wide displays use a destination overlay so every
+object stays reachable even when its image location is cropped out. Close-up
+controls sit over the scene and scroll within their available space.
+
+The live test verifies exact viewport bounds for the overview and destinations,
+checks projected marker positions at 1400×1000 and 2560×1080, and exercises phone
+controls at 390×844. Review captures: `scratch/fullscreen-review/`.
 
 ## Spatial navigation revision
 

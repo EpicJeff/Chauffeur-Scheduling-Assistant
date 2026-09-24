@@ -2,8 +2,8 @@
 .house-comparison-page[data-house-render="hybrid"] #room{display:none}
 .house-comparison-page #kitchen-wrap{background:#0c151b}
 .house-comparison-page #kitchen-wrap::after{display:none}
-#house-comparison{position:absolute;top:76px;left:20px;right:20px;z-index:48;display:flex;align-items:center;gap:22px;padding:12px 18px;border:1px solid #c5baa330;border-radius:18px;background:#111c24ed;color:#f7eedc;box-shadow:0 8px 30px #0003;font:14px system-ui}
-.house-compare-title{display:flex;flex-direction:column;gap:3px;margin-right:auto}
+#house-comparison{position:absolute;top:76px;right:16px;z-index:48;display:flex;align-items:center;gap:12px;padding:6px 12px;border:1px solid #c5baa330;border-radius:14px;background:#111c24d9;color:#f7eedc;box-shadow:0 8px 30px #0003;font:14px system-ui}
+.house-compare-title{display:none}
 .house-compare-title span{font-size:10px;letter-spacing:.16em;color:#d8c39a}.house-compare-title strong{font-size:19px;font-weight:600}
 .house-compare-modes{display:flex;padding:4px;border-radius:12px;background:#ffffff0b;gap:3px}
 .house-compare-modes a{padding:10px 18px;min-height:44px;border-radius:9px;text-decoration:none;color:#d1d7db}
@@ -12,10 +12,10 @@
 .house-compare-light select{min-height:44px;background:#253039;color:#f7eedc;border:1px solid #b5bec34d;border-radius:10px;padding:8px 12px}
 #house-compare-exit{color:#d8c39a;text-decoration:none;padding:12px 0;white-space:nowrap}
 #house-comparison a:focus-visible,#house-comparison select:focus-visible,.hybrid-marker:focus-visible,#hybrid-shortcuts button:focus-visible{outline:3px solid #f4d99c;outline-offset:3px}
-.house-comparison-page[data-house-render="3d"] #house-back{top:165px}
-#hybrid-room{position:absolute;inset:162px 20px 112px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:15px}
-#hybrid-room-frame{position:relative;width:min(100%,calc((100dvh - 310px)*1.5));aspect-ratio:3/2;flex:none;overflow:hidden;border-radius:18px;background:#1d2427;box-shadow:0 25px 80px #0007;border:1px solid #bdae8c26}
-#hybrid-room-frame img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;opacity:0;transition:opacity .65s ease;pointer-events:none}
+.house-comparison-page[data-house-render="3d"] #house-back{top:84px}
+#hybrid-room{position:absolute;inset:0;overflow:hidden}
+#hybrid-room-frame{position:absolute;inset:0;width:100%;height:100%;overflow:hidden;background:#1d2427}
+#hybrid-room-frame img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .65s ease;pointer-events:none}
 #hybrid-room-frame img.is-active{opacity:1}
 #hybrid-overview{position:absolute;inset:0;transition:transform .56s cubic-bezier(.2,.65,.2,1),opacity .45s ease}
 #hybrid-room-frame[data-phase="loading"] #hybrid-overview,#hybrid-room-frame[data-phase="entering"] #hybrid-overview,#hybrid-room-frame[data-phase="detail"] #hybrid-overview{transform:translate(var(--approach-x),var(--approach-y)) scale(2.15)}
@@ -26,7 +26,7 @@
 #hybrid-room-frame[data-phase="entering"] #hybrid-detail,#hybrid-room-frame[data-phase="detail"] #hybrid-detail{opacity:1;transform:none}
 #hybrid-detail-picture{position:absolute;inset:0}
 #hybrid-room-frame[data-view="tasks"] #hybrid-detail-picture img,#hybrid-room-frame[data-view="programs"] #hybrid-detail-picture img{transform:translateX(-18%)}
-#hybrid-detail-controls{position:absolute;top:0;bottom:0;right:0;width:43%;padding:18px 0 0 28px;background:linear-gradient(90deg,transparent,#111c23ed 9%,#111c23f5);opacity:0;transform:translateX(18px);transition:opacity .22s ease,transform .22s ease;pointer-events:none}
+#hybrid-detail-controls{position:absolute;top:0;bottom:0;right:0;width:43%;padding:148px 0 104px 28px;background:linear-gradient(90deg,transparent,#111c23dd 9%,#111c23ed);opacity:0;transform:translateX(18px);transition:opacity .22s ease,transform .22s ease;pointer-events:none}
 #hybrid-room-frame[data-phase="detail"] #hybrid-detail-controls{opacity:1;transform:none;pointer-events:auto}
 #hybrid-detail-controls #house-life,#hybrid-detail-controls .house-life-shade{height:100%}
 #hybrid-detail-controls .house-life-shade{position:static;inset:auto;display:block;background:none;backdrop-filter:none}
@@ -35,7 +35,7 @@
 #hybrid-detail-controls .house-life-panel h2{font-size:21px}
 #hybrid-detail-controls .house-life-body{padding:16px 18px}
 #hybrid-detail-controls .house-life-panel header button{min-width:44px;min-height:44px}
-#hybrid-view-back{position:absolute;top:16px;left:16px;z-index:6;min-height:44px;padding:10px 16px;border:1px solid #efd29b88;border-radius:24px;background:#142028ee;color:#fff1d6;cursor:pointer;font:600 14px system-ui}
+#hybrid-view-back{position:absolute;top:84px;left:16px;z-index:6;min-height:44px;padding:10px 16px;border:1px solid #efd29b88;border-radius:24px;background:#142028ee;color:#fff1d6;cursor:pointer;font:600 14px system-ui}
 #hybrid-view-back[hidden]{display:none}
 #hybrid-view-back:focus-visible{outline:3px solid #f4d99c;outline-offset:3px}
 #hybrid-room:has(#hybrid-room-frame:not([data-phase="room"])) #hybrid-shortcuts{display:none}
@@ -46,31 +46,32 @@
 .hybrid-marker .hybrid-marker-label{position:absolute;top:calc(100% + 8px);left:50%;transform:translateX(-50%);padding:5px 9px;background:#142028ed;border:1px solid #e6c4884a;color:#fff3dc;border-radius:8px;white-space:nowrap;font:600 12px system-ui}
 .hybrid-count{position:absolute;right:-6px;top:-6px;border-radius:20px;padding:3px 6px;font:700 11px system-ui;color:#302718;background:#efd09b}
 .hybrid-count[hidden]{display:none}
-#hybrid-shortcuts{display:none}
-#hybrid-status{font:13px system-ui;color:#c5c2b9;text-align:center;margin:0;min-height:18px}
+#hybrid-shortcuts{display:none;position:absolute;bottom:112px;left:50%;transform:translateX(-50%);grid-template-columns:1fr 1fr;gap:8px;width:min(460px,calc(100% - 24px))}
+#hybrid-shortcuts button{position:relative;display:flex;align-items:center;gap:10px;min-height:54px;padding:12px;border:1px solid #c6b38c60;border-radius:12px;color:#f2dbb3;background:#142028d9;font:600 13px system-ui;cursor:pointer}
+#hybrid-shortcuts .hybrid-count{position:static;margin-left:auto}
+#hybrid-status{position:absolute;bottom:88px;left:50%;transform:translateX(-50%);max-width:calc(100% - 32px);padding:5px 10px;border-radius:9px;background:#111c24b8;text-shadow:0 1px 3px #000;font:13px system-ui;color:#efe6d3;text-align:center;margin:0;pointer-events:none}
 #house-compare-measurements{position:fixed;bottom:12px;left:18px;z-index:49;max-width:min(430px,calc(100vw - 36px));padding:9px 12px;border-radius:12px;background:#142029f2;border:1px solid #b3bfc12b;color:#c5d1d7;font:12px/1.5 system-ui}
 #house-compare-measurements summary{cursor:pointer;min-height:24px;display:list-item;padding:3px 0}
 #house-compare-measurements p{margin:8px 0}
-@media(max-width:700px){
- #house-comparison{top:72px;left:10px;right:10px;gap:8px;flex-wrap:wrap;padding:10px 12px}
- .house-compare-title{flex:1}.house-compare-title strong{font-size:17px}.house-compare-modes a{padding:10px 14px}
- .house-compare-light{font-size:12px;margin-right:auto}.house-compare-light select{padding:6px;font-size:12px}
- #house-compare-exit{font-size:12px}
- #hybrid-room{inset:211px 10px 118px;justify-content:flex-start;overflow:auto;padding:3px 0 12px;gap:14px}
- #hybrid-room-frame{width:100%;border-radius:12px}
- #hybrid-room-frame:not([data-view="room"]){aspect-ratio:auto;min-height:calc((100vw - 20px)*2/3)}
- #hybrid-room-frame:not([data-view="room"]) #hybrid-overview{height:calc((100vw - 20px)*2/3)}
- #hybrid-detail{position:relative}
- #hybrid-detail-picture{position:relative;aspect-ratio:3/2}
+@media(max-width:700px),(max-aspect-ratio:4/3){
+ #house-comparison{top:72px;left:auto;right:10px;max-width:calc(100% - 20px);gap:8px;flex-wrap:wrap;justify-content:flex-end;padding:6px 10px}
+ .house-compare-modes a{padding:10px}
+ .house-compare-light{font-size:0;gap:0}.house-compare-light select{padding:6px;font-size:12px}
+ #house-compare-exit{font-size:0;min-width:32px;text-align:center}
+ #house-compare-exit::after{content:'↗';font:18px system-ui}
+ #hybrid-detail-picture{bottom:30%}
+ #hybrid-detail-picture img{object-position:35% center}
  #hybrid-room-frame[data-view="tasks"] #hybrid-detail-picture img,#hybrid-room-frame[data-view="programs"] #hybrid-detail-picture img{transform:none}
- #hybrid-detail-controls{position:relative;inset:auto;width:100%;min-height:320px;padding:0;background:#111c23;transform:translateY(12px)}
- #hybrid-detail-controls .house-life-panel{max-height:none;height:auto}
- #hybrid-view-back{top:10px;left:10px}
+ #hybrid-room-frame[data-view="tasks"] #hybrid-detail-picture img,#hybrid-room-frame[data-view="programs"] #hybrid-detail-picture img{object-position:55% center}
+ #hybrid-detail-controls{top:56%;bottom:0;width:100%;padding:16px 0 104px;background:linear-gradient(transparent,#111c23ed 18px);transform:translateY(12px)}
+ #hybrid-view-back{top:144px;left:12px}
  #hybrid-hotspots{display:none}
- #hybrid-shortcuts{display:grid;grid-template-columns:1fr 1fr;gap:9px;width:100%}
- #hybrid-shortcuts button{position:relative;display:flex;align-items:center;gap:10px;min-height:54px;padding:12px;border:1px solid #c6b38c60;border-radius:12px;color:#f2dbb3;background:#1e2b33;font:600 13px system-ui;cursor:pointer}
- #hybrid-shortcuts .hybrid-count{position:static;margin-left:auto}
- .house-comparison-page[data-house-render="3d"] #house-back{top:210px}
- #house-compare-measurements{bottom:86px;left:10px;max-width:calc(100vw - 20px)}
+ #hybrid-shortcuts{display:grid}
+ #hybrid-status{bottom:236px;width:max-content}
+ #hybrid-room:has(#hybrid-room-frame:not([data-phase="room"])) #hybrid-status{bottom:80px;font-size:11px}
+ .house-comparison-page[data-house-render="3d"] #house-back{top:144px}
+ #house-compare-measurements{top:144px;bottom:auto;left:auto;right:10px;max-width:calc(100vw - 165px)}
 }
+@media(min-aspect-ratio:5/2){#hybrid-hotspots{display:none}#hybrid-shortcuts{display:grid}#hybrid-status{bottom:236px}}
+@media(max-height:600px){#hybrid-hotspots{display:none}#hybrid-shortcuts{display:grid}#hybrid-status{bottom:236px}}
 @media(prefers-reduced-motion:reduce){#hybrid-room-frame img,.hybrid-marker,#hybrid-overview,#hybrid-detail,#hybrid-detail-controls{transition:none}}

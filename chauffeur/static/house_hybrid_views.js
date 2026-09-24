@@ -20,6 +20,15 @@
   var initial = Object.assign({}, history.state); delete initial.chfHybridView;
   history.replaceState(initial, '', location.href);
 
+  // The artwork fills the viewport with a centered cover crop. Project both
+  // markers and the approach origin through the same crop as the visible image.
+  window.chfHybridProject = function (entry) {
+    var width = frame.clientWidth, height = frame.clientHeight;
+    var scale = Math.max(width / 1536, height / 1024);
+    return {x:(entry.x * 1536 * scale + (width - 1536 * scale) / 2) / width,
+      y:(entry.y * 1024 * scale + (height - 1024 * scale) / 2) / height};
+  };
+
   function picture(key) {
     return images.find(function (img) { return img.dataset.view === key && img.dataset.light === (dark ? 'night' : 'day'); });
   }
@@ -74,9 +83,10 @@
     visited.set(entry.key, {entry:entry, trigger:button});
     if (remember) history.pushState(Object.assign({}, history.state, {chfHybridView:entry.key}), '', location.href);
     frame.dataset.view = entry.key;
-    overview.style.transformOrigin = (entry.x * 100) + '% ' + (entry.y * 100) + '%';
-    overview.style.setProperty('--approach-x', ((.35 - entry.x) * 100) + '%');
-    overview.style.setProperty('--approach-y', ((.5 - entry.y) * 100) + '%');
+    var point = window.chfHybridProject(entry);
+    overview.style.transformOrigin = (point.x * 100) + '% ' + (point.y * 100) + '%';
+    overview.style.setProperty('--approach-x', ((.35 - point.x) * 100) + '%');
+    overview.style.setProperty('--approach-y', ((.5 - point.y) * 100) + '%');
     overview.inert = true; shortcuts.inert = true;
     detail.hidden = false; detail.setAttribute('aria-label', entry.label + ' close-up');
     back.hidden = false; back.focus();

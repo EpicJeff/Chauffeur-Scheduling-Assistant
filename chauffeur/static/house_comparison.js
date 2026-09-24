@@ -103,6 +103,15 @@
     document.getElementById('hybrid-hotspots').appendChild(button(entry, true));
     document.getElementById('hybrid-shortcuts').appendChild(button(entry, false));
   });
+  function placeMarkers() {
+    entries.forEach(function (entry) {
+      var point = window.chfHybridProject(entry);
+      var marker = document.querySelector('#hybrid-hotspots [data-card="' + entry.key + '"]');
+      marker.style.left = point.x * 100 + '%'; marker.style.top = point.y * 100 + '%';
+    });
+  }
+  placeMarkers();
+  window.addEventListener('resize', placeMarkers);
   function message() {
     if (window.chfHybridViewing && window.chfHybridViewing()) return;
     status.textContent = pictureError ? 'Room artwork could not load. The cards are still available.'

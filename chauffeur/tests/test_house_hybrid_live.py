@@ -38,6 +38,13 @@ def main():
     payload = house_room.state(since_ts=0)
     payload['window'] = {'night': False, 'next_sun_change': None}
     results = {}
+    def check_full_viewport(page):
+        assert page.locator('#hybrid-room-frame').evaluate('''el => {
+            const r=el.getBoundingClientRect(), css=getComputedStyle(el);
+            return r.x===0 && r.y===0 && r.width===innerWidth && r.height===innerHeight
+                && css.borderRadius==='0px' && css.borderTopWidth==='0px';
+        }'''), 'hybrid must fill the same viewport as the 3D canvas'
+        assert page.locator('#hybrid-day').evaluate("el=>getComputedStyle(el).objectFit==='cover'")
     try:
         with served.browser(reduced_motion='reduce', has_touch=True) as page:
             page.set_default_timeout(30000)
@@ -58,6 +65,7 @@ def main():
             page.wait_for_function('window.chfHouseComparison?.readyMs > 0')
             assert page.evaluate('typeof THREE') == 'undefined'
             assert page.evaluate('webglAttempts') == 0
+            check_full_viewport(page)
             assert 'compare=' not in page.locator('#house-compare-exit').get_attribute('href')
             resources = page.evaluate('performance.getEntriesByType("resource").map(r=>({name:r.name,size:r.encodedBodySize}))')
             assert not any('/three.min.js' in r['name'] or '/house.js?' in r['name'] for r in resources)
@@ -67,11 +75,24 @@ def main():
             page.screenshot(path=str(out / 'hybrid-day-desktop.png'))
             desktop = page.locator('#hybrid-hotspots [data-card]')
             assert desktop.count() == 4
+            # Marker coordinates must follow cover cropping, not viewport %.
+            for width, height in ((2560, 1080), (1400, 1000)):
+                page.set_viewport_size({'width':width,'height':height})
+                page.wait_for_function('''() => {
+                    const el=document.querySelector('#hybrid-hotspots [data-card="music"]');
+                    const r=el.getBoundingClientRect(), scale=Math.max(innerWidth/1536,innerHeight/1024);
+                    return Math.abs(r.x+r.width/2-(.218*1536*scale+(innerWidth-1536*scale)/2))<1
+                        && Math.abs(r.y+r.height/2-(.256*1024*scale+(innerHeight-1024*scale)/2))<1;
+                }''')
+                check_full_viewport(page)
+                if width == 2560:
+                    page.screenshot(path=str(out / 'hybrid-wide-desktop.png'))
             for key in ('music', 'pets', 'tasks', 'programs'):
                 trigger = page.locator(f'#hybrid-hotspots [data-card="{key}"]')
                 trigger.click()
                 page.wait_for_selector(f'#hybrid-room-frame[data-view="{key}"][data-phase="detail"]')
                 page.locator('#house-life [role="region"]').wait_for(state='visible')
+                check_full_viewport(page)
                 assert page.locator('#house-life [role="dialog"]').count() == 0
                 assert page.locator(f'#hybrid-detail img[data-view="{key}"][data-light="day"]').evaluate('(el)=>el.naturalWidth > 0 && el.classList.contains("is-active")')
                 page.wait_for_function("!Alpine.$data(document.getElementById('house-life')).loading")
@@ -105,6 +126,7 @@ def main():
             page.wait_for_selector('#hybrid-room-frame[data-light="day"]')
             page.wait_for_selector('#hybrid-room-frame[data-light="night"]', timeout=12000)
             page.set_viewport_size({'width': 390, 'height': 844})
+            check_full_viewport(page)
             shortcuts = page.locator('#hybrid-shortcuts [data-card]')
             for i in range(4):
                 box = shortcuts.nth(i).bounding_box()
@@ -112,6 +134,7 @@ def main():
                 shortcuts.nth(i).tap()
                 page.wait_for_selector('#hybrid-room-frame[data-phase="detail"]')
                 page.locator('#house-life [role="region"]').wait_for(state='visible')
+                check_full_viewport(page)
                 page.screenshot(path=str(out / ('detail-' + str(i) + '-phone.png')))
                 page.get_by_role('button', name='Return to living room', exact=True).tap()
                 page.wait_for_selector('#hybrid-room-frame[data-phase="room"]')
