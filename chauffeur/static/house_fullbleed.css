@@ -1,0 +1,33 @@
+/* Cover the viewport with the registered photograph, never a second blurred copy. */
+.house-comparison-page[data-house-render="hybrid"] :is(#chip,#tip) {display:none}
+#hybrid-room-frame:is([data-view="tasks"],[data-view="programs"]) {--book-width:max(100vw,150dvh);--book-top:50%}
+#hybrid-room-frame[data-view="pets"] {--habitat-width:max(100vw,150dvh)}
+#hybrid-room-frame:is([data-view="tasks"],[data-view="programs"],[data-view="pets"]) #hybrid-detail::before {display:none}
+#hybrid-room-frame:is([data-view="tasks"],[data-view="programs"],[data-view="pets"]) {overflow:clip}
+#hybrid-room-frame[data-view="pets"] #hybrid-detail-picture,#house-habitat {top:50%}
+body.habitat-editing {--workbench-width:max(100vw,225dvh);--workbench-top:calc(100dvh - var(--workbench-width) / 3)}
+body.habitat-editing #hybrid-room-frame[data-view="pets"] #hybrid-detail-picture,body.habitat-editing #house-habitat,.pet-workbench .pet-editor-surface {left:50%}
+.pet-workbench .pet-preview {width:min(17%,240px)}
+.pet-workbench .pet-nameplate {left:50%;transform:translateX(-50%);width:min(400px,90vw)}
+.pet-workbench .pet-drawer {top:calc(50% - var(--workbench-top) + 60dvh);height:calc(40dvh - 20px)}
+@media(max-width:800px),(max-height:600px) {
+ #hybrid-room-frame:is([data-view="tasks"],[data-view="programs"]) {--book-width:max(162vw,150dvh);--book-top:50%}
+}
+@media(max-width:700px) {
+ .habitat-plaque {left:50%;transform:translateX(-50%);width:80vw}
+ .habitat-previous {left:calc(50% - 47vw)}.habitat-next {left:calc(50% + 35vw)}
+ .habitat-actions {left:50%;transform:translateX(-50%);width:90vw;top:76%}
+ .pet-workbench .pet-drawer {top:calc(50% - var(--workbench-top) + 57dvh);height:calc(43dvh - 12px)}
+ .pet-workbench .pet-tabs button {min-height:36px}
+ .pet-workbench .pet-footer {padding:6px 0}
+ .pet-workbench .pet-footer button {height:36px;min-height:36px}
+}
+@media(max-height:600px) {
+ .book-page,#house-book-lesson {top:calc(50% - 50dvh + 80px);height:calc(100dvh - 170px)}
+ .habitat-actions {top:73%}.habitat-actions p {display:none}
+}
+@media(max-height:600px) and (min-width:701px) {
+ .pet-workbench .pet-preview {left:calc(50% - 17vw);width:130px}
+ .pet-workbench .pet-nameplate {left:calc(50% - 17vw);width:210px}
+ .pet-workbench .pet-drawer {top:calc(50% - var(--workbench-top) + 12px);left:auto;right:calc(50% - 50vw + 12px);height:calc(100dvh - 24px);transform:none;width:46vw}
+}

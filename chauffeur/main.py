@@ -11207,6 +11207,10 @@ def respond_pet_challenge_endpoint(challenge_id: str,
     if res.get('error'):
         raise HTTPException(status_code=400, detail=res['error'])
     if req.accept:
+        battle = res.get('battle') or {}
+        res['a_svg'] = _battle_side_svg(battle.get('a_in') or {}, 'family_a')
+        res['b_svg'] = _battle_side_svg(battle.get('b_in') or {}, 'family_b')
+        _invalidate_pet_board()
         # The one who asked gets told -- they were not there for the fight.
         # No 'notified' key at all on a decline: silence, not a False.
         res['notified'] = _notify_challenge_answered(

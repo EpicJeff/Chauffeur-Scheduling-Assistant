@@ -65,7 +65,8 @@ def main():
                   return ['x','y','width','height'].every(k=>Math.abs(a[k]-b[k])<1);
                 }'''), 'ink must share the photo camera'
                 page.screenshot(path=str(OUT/'latest.png'))
-                assert page.locator('#hybrid-room-frame').evaluate("el=>getComputedStyle(el).overflow==='hidden'")
+                assert page.locator('#hybrid-room-frame').evaluate("el=>getComputedStyle(el).overflow==='clip'")
+                assert page.evaluate("() => {const r=document.getElementById('hybrid-detail-picture').getBoundingClientRect();return r.x<=1 && r.y<=1 && r.right>=innerWidth-1 && r.bottom>=innerHeight-1;}")
                 if page.viewport_size['width'] < 700:
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
 

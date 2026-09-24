@@ -207,6 +207,7 @@
     {% if house_hybrid %}<link rel="stylesheet" href="{{ 'static/house_radio.css'|ver }}"><link rel="stylesheet" href="{{ 'static/house_record_bay.css'|ver }}"><link rel="stylesheet" href="{{ 'static/house_books.css'|ver }}"><script src="{{ 'static/house_books.js'|ver }}"></script>{% endif %}
     {% if house_hybrid %}<link rel="stylesheet" href="{{ 'static/house_habitat.css'|ver }}"><script src="{{ 'static/house_habitat.js'|ver }}"></script>{% endif %}
     {% if house_hybrid %}<link rel="stylesheet" href="{{ 'static/house_workbench.css'|ver }}">{% endif %}
+    {% if house_hybrid %}<link rel="stylesheet" href="{{ 'static/house_arena.css'|ver }}"><link rel="stylesheet" href="{{ 'static/house_fullbleed.css'|ver }}">{% endif %}
     <script>window.HOUSE_COMPARE_NIGHT = {{ 'true' if request.query_params.get('light') == 'night' else ('false' if request.query_params.get('light') == 'day' else 'null') }};</script>
     {% endif %}
 </head>
