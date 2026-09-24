@@ -417,7 +417,9 @@
       return {panels: on.length, visible: vis, painted: painted, shown: shown === name(key)};
     }
     return{group:root,architecture:arch,proxies:proxies,zones:zones,count:count,update:update,
-      card:card,focus:focus,face:face,detailState:detailState,summary:function(key){return built.summary(name(key));},
+      card:card,focus:focus,face:face,detailState:detailState,
+      /* read-only: a zone's own parts (screen, labels) for chfStudyLabelAnchors */
+      parts:function(key){var z=built.zones[name(key)];return z&&z.parts?z.parts:null;},summary:function(key){return built.summary(name(key));},
       tick:function(t){built.tick(t);},graphDraws:function(){return built.graphDraws();},animates:built.animates,
       dispose:function(){
       var gs=new Set(),ms=new Set(),ts=new Set();

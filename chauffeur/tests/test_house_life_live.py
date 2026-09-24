@@ -287,6 +287,64 @@ def scenario_house_life():
         check(not served.errors(), 'no browser errors: ' + str(served.errors()))
 
 
+def scenario_study_monitor_labels_meet_their_clusters_in_a_mirrored_house():
+    """Each monitor label sits on its own nebula, mirrored plan included.
+
+    The label panel is a text panel, so on a mirrored house counterFlip()
+    turns it back to read forward -- while the graph screen behind it is
+    reflected with the room. Anchors computed in the panel's own canvas
+    then landed at the mirror image of their clusters (user report, with
+    a screenshot: Lily's label on the far side of the glass from Lily's
+    cluster). The pin is world space: the point each label was anchored
+    at and the point its cluster is drawn at must be the same point.
+    """
+    import copy
+    from services import house_facade as hf
+    served = live_app()
+    _seed()
+    # scenario_house_life seeds the same parent into the same data dir
+    if not storage.get_member('house-parent'):
+        storage.add_member({'id': 'house-parent', 'name': 'Jordan', 'role': 'parent'})
+    storage.set_member_pin('house-parent', '1234')
+    spec = copy.deepcopy(hf.CANONICAL)
+    spec['mirror'] = True
+    spec, _notes = hf.normalize(spec)
+    names = ['Jeff', 'Lily', 'James', 'Grandpa', 'Celma', 'Addison']
+    with served.browser() as page:
+        def study(route):
+            response = route.fetch()
+            data = response.json()
+            data.setdefault('furniture', {})['monitor'] = {'clusters': [
+                {'name': n, 'count': (i * 2) % 7} for i, n in enumerate(names)]}
+            route.fulfill(response=response, json=data)
+        page.route('**/api/study/state*', study)
+        page.goto(served.url('house?quality=low&draft=' + hf.issue_draft(spec)))
+        page.wait_for_function('window.chfHouseState && chfHouseState() && window.Alpine')
+        check(page.evaluate('chfMirror().mirror'), 'the house is mirrored')
+        page.evaluate("chfHouseEnterRoom('living')")
+        page.wait_for_function('chfNavProbe({settled:true})')
+        page.evaluate("window.dispatchEvent(new CustomEvent('chf-house-open', {detail: 'study'}))")
+        page.wait_for_selector('#cc-input-field', state='visible')
+        page.fill('#cc-input-field', '1234')
+        page.click('#cc-input-ok-btn')
+        page.wait_for_function("chfHouseMode() === 'study' && chfNavProbe({settled:true})")
+        page.evaluate("chfKitchenFocus('study_monitor')")
+        page.wait_for_function("(chfStudyLabelAnchors('study_monitor') || []).length === %d"
+                               % len(names), timeout=20000)
+        rows = page.evaluate("chfStudyLabelAnchors('study_monitor')")
+        for name, r in zip(names, rows):
+            off = sum((a - b) ** 2 for a, b in zip(r['cluster'], r['label'])) ** 0.5
+            check(off < 0.01, '%s: label anchored %.3f units from its cluster '
+                  '(cluster %r, label %r)' % (name, off, r['cluster'], r['label']))
+        # leave the study the way a family does, which ends the parent
+        # visit -- a live one outlasts this page and leaves the next
+        # scenario's study door with no PIN prompt to show
+        page.evaluate('chfHouseExit()')
+        page.wait_for_function("sessionStorage.getItem('chauffeur_house_parent') === null")
+        check(not served.errors(), 'no browser errors: ' + str(served.errors()))
+
+
 if __name__ == '__main__':
     scenario_house_life()
+    scenario_study_monitor_labels_meet_their_clusters_in_a_mirrored_house()
     print('House life browser passed')

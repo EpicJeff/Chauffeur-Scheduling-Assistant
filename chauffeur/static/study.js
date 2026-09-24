@@ -478,6 +478,15 @@
   // standalone /study page there is no reflection and the stamp is inert.
   // The study is built before house.js's `webgl` object exists, which is
   // why it stamps rather than calling webgl.textMesh directly.
+  // A panel that has been counter-flipped sits reflected against its own
+  // parent: its canvas runs left-to-right while the parent's x axis runs
+  // right-to-left. The WORDS read forward -- that was the point -- but
+  // anything a painter places BESIDE something else on the parent (a label
+  // at a graph cluster drawn on the reflected screen, a chip at a pin on
+  // the reflected map) has to mirror its x to land on it. Measured on the
+  // mirrored house: every monitor label sat at the mirror image of its
+  // nebula. On the standalone page this is always false.
+  function counterFlipped(m) { return m.scale.x < 0; }
   /* TEXT_PAINTERS: studyPanelPaint */
   function panel(pw, ph, cw, ch, o) {
     o = o || {};
@@ -2156,34 +2165,64 @@
     monitor: (d, z) => {
       const rows = (d.clusters || []).slice(0, CAPS.clusters);
       z.parts.labels.userData.paint((g, w, h) => {
-        const sx = w / GR.w, sy = h / GR.h, placed = [];
+        const sx = w / GR.w, sy = h / GR.h, placed = [], anchors = [];
+        const flip = counterFlipped(z.parts.labels);
         g.textBaseline = 'middle'; g.font = FB(17);
+        // Where each cluster sits on this canvas and how far its DOTS reach
+        // (buildGraph's own spread, plus the wobble) -- not the halo, which
+        // fades out well past the last dot. Every cloud is an obstacle: a
+        // label never sits on somebody else's nebula.
+        const clouds = grClusters.map(cl => {
+          const x = (flip ? GR.w - cl.cx : cl.cx) * sx, y = cl.cy * sy;
+          const r = (2 + 4 + Math.sqrt(cl.nodes.length) * 3.2 + 1.1) * sx;
+          return { x, y, r, box: { x: x - r, y: y - r * .88, w: r * 2, h: r * 1.76 } };
+        });
+        const hits = (b, list) => list.some(r => b.x < r.x + r.w && b.x + b.w > r.x &&
+          b.y < r.y + r.h && b.y + b.h > r.y);
         grClusters.forEach((cl, i) => {
           const row = rows[i];
           if (!row) return;
-          const x = cl.cx * sx, y = cl.cy * sy;
-          const rad = (9 + cl.nodes.length * .8) * sx;
+          const { x, y, r } = clouds[i];
+          anchors.push({ u: cl.cx / GR.w, v: cl.cy / GR.h, x: x / w, y: y / h });
           const text = `${row.name || ''} ${row.count | 0}`;
           const tw = g.measureText(text).width;
-          let tx = x + rad + 8;
-          if (tx + tw > w - 6) tx = x - rad - 8 - tw;
-          tx = Math.max(6, Math.min(tx, w - tw - 6));
-          // Two people whose weeks landed near each other on the glass get
-          // two labels, not one on top of the other.
-          let ty = y;
-          for (let n = 0; n < 8; n++) {
-            const clash = placed.some(r => tx < r.x + r.w && tx + tw > r.x &&
-              ty - 13 < r.y + r.h && ty + 13 > r.y);
-            if (!clash) break;
-            ty += 29;
-            if (ty > h - 16) ty = y - (n + 1) * 29;
+          // Nearest first: beside the cloud at its own height (right, then
+          // left), then just above it, then just below -- and only when all
+          // four are taken, stepped rows beside it, alternating up and down.
+          // (It used to step DOWN only, so a label blocked beside its cloud
+          // walked down past everything below it instead of sitting just
+          // above its own nebula.)
+          const cands = [[x + r + 12, y], [x - r - 12 - tw, y],
+                         [x - tw / 2, y - r * .88 - 19], [x - tw / 2, y + r * .88 + 19]];
+          for (let n = 1; n <= 6; n++) [-1, 1].forEach(s => {
+            cands.push([x + r + 12, y + s * n * 29]);
+            cands.push([x - r - 12 - tw, y + s * n * 29]);
+          });
+          const others = clouds.filter((c, k) => k !== i).map(c => c.box);
+          const box = c => ({ x: c[0] - 6, y: c[1] - 13, w: tw + 12, h: 26 });
+          const fits = c => c[0] >= 6 && c[0] + tw <= w - 6 && c[1] >= 15 && c[1] <= h - 15;
+          let pick = cands.findIndex(c => fits(c) && !hits(box(c), placed) && !hits(box(c), others));
+          if (pick < 0) pick = cands.findIndex(c => fits(c) && !hits(box(c), placed));
+          if (pick < 0) pick = 0;
+          const tx = Math.max(6, Math.min(cands[pick][0], w - tw - 6));
+          const ty = Math.max(15, Math.min(cands[pick][1], h - 15));
+          placed.push(box([tx, ty]));
+          // A label that had to step away from its cluster says which one it
+          // came from -- the map's own rule -- or it reads as naming whatever
+          // nebula it landed beside.
+          if (pick >= 4) {
+            g.strokeStyle = `hsla(${cl.hue},70%,70%,.6)`; g.lineWidth = 1.4;
+            g.beginPath();
+            g.moveTo(tx > x ? tx - 6 : tx + tw + 6, ty);
+            g.lineTo(x, y);
+            g.stroke();
           }
-          placed.push({ x: tx - 6, y: ty - 13, w: tw + 12, h: 26 });
           g.fillStyle = 'rgba(6,10,18,.74)';
           g.fillRect(tx - 6, ty - 13, tw + 12, 26);
           g.fillStyle = `hsl(${cl.hue},82%,76%)`;
           g.fillText(text, tx, ty);
         });
+        z.parts.labels.userData.anchors = anchors;   /* read by a test */
       });
     },
 
@@ -2191,7 +2230,9 @@
       const trips = (d.trips || []).slice(0, CAPS.trips);
       z.parts.labels.userData.paint((g, w, h) => {
         const pw = z.parts.labels.userData.pw, ph = z.parts.labels.userData.ph;
-        const toX = lx => (lx / pw + .5) * w, toY = ly => (.5 - ly / ph) * h;
+        const flip = counterFlipped(z.parts.labels);
+        const toX = lx => (flip ? .5 - lx / pw : lx / pw + .5) * w;
+        const toY = ly => (.5 - ly / ph) * h;
         g.textBaseline = 'middle';
         // Where a pin SITS is a hash of its own name, so two of them can
         // land close enough that their labels sit on top of each other.

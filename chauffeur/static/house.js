@@ -14037,6 +14037,24 @@
     var sw = webgl && webgl.studyWorld;
     return sw && sw.card ? sw.card(key) : null;
   };
+  /* read-only: where each monitor label was anchored and where the
+     cluster it names is drawn, both in WORLD space -- the label panel is
+     counter-flipped on a mirrored plan and the screen is not, so only a
+     world-space comparison can say the two still meet */
+  window.chfStudyLabelAnchors = function (key) {
+    var sw = webgl && webgl.studyWorld;
+    var parts = sw && sw.parts ? sw.parts(key) : null;
+    var L = parts ? parts.labels : null, S = parts ? parts.screen : null;
+    if (!L || !S || !L.userData.anchors) return null;
+    L.updateWorldMatrix(true, false); S.updateWorldMatrix(true, false);
+    var W = S.geometry.parameters.width, H = S.geometry.parameters.height;
+    var pw = L.userData.pw, ph = L.userData.ph;
+    return L.userData.anchors.map(function (a) {
+      var c = S.localToWorld(new webgl.T.Vector3((a.u - .5) * W, (.5 - a.v) * H, 0));
+      var l = L.localToWorld(new webgl.T.Vector3((a.x - .5) * pw, (.5 - a.y) * ph, 0));
+      return { cluster: [c.x, c.y, c.z], label: [l.x, l.y, l.z] };
+    });
+  };
   window.chfStudyDetail = function (key) {
     var sw = webgl && webgl.studyWorld;
     var out = sw && sw.detailState ? sw.detailState(key) : null;
