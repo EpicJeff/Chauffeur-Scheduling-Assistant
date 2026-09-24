@@ -50,6 +50,8 @@ def main():
             page.set_default_timeout(30000)
             page.route('**/api/v2/chat/stream*', lambda r: r.fulfill(
                 status=204, content_type='text/event-stream', body=''))
+            page.route('**/api/music/favorites*', lambda r: r.fulfill(
+                status=200, content_type='application/json', body='{"items":[]}'))
             page.route('**/api/house/state*', lambda r: r.fulfill(
                 status=200, content_type='application/json', body=json.dumps(payload)))
             page.add_init_script('''(() => {
@@ -91,7 +93,8 @@ def main():
                 trigger = page.locator(f'#hybrid-hotspots [data-card="{key}"]')
                 trigger.click()
                 page.wait_for_selector(f'#hybrid-room-frame[data-view="{key}"][data-phase="detail"]')
-                page.locator('#house-life [role="region"]').wait_for(state='visible')
+                surface = page.locator('#house-radio' if key == 'music' else '#house-life [role="region"]')
+                surface.wait_for(state='visible')
                 check_full_viewport(page)
                 assert page.locator('#house-life [role="dialog"]').count() == 0
                 assert page.locator(f'#hybrid-detail img[data-view="{key}"][data-light="day"]').evaluate('(el)=>el.naturalWidth > 0 && el.classList.contains("is-active")')
@@ -103,7 +106,7 @@ def main():
                 page.locator('#house-compare-light').select_option('night')
                 page.wait_for_selector('#hybrid-detail[data-light="night"]')
                 assert page.locator(f'#hybrid-detail img[data-view="{key}"][data-light="night"]').evaluate('(el)=>el.naturalWidth > 0 && el.classList.contains("is-active")')
-                assert page.locator('#house-life [role="region"]').is_visible()
+                assert surface.is_visible()
                 page.screenshot(path=str(out / (key + '-night-desktop.png')))
                 if key == 'tasks':
                     page.go_back()
@@ -133,10 +136,11 @@ def main():
                 assert box and box['width'] >= 44 and box['height'] >= 44
                 shortcuts.nth(i).tap()
                 page.wait_for_selector('#hybrid-room-frame[data-phase="detail"]')
-                page.locator('#house-life [role="region"]').wait_for(state='visible')
+                key = shortcuts.nth(i).get_attribute('data-card')
+                page.locator('#house-radio' if key == 'music' else '#house-life [role="region"]').wait_for(state='visible')
                 check_full_viewport(page)
                 page.screenshot(path=str(out / ('detail-' + str(i) + '-phone.png')))
-                page.get_by_role('button', name='Return to living room', exact=True).tap()
+                page.locator('#hybrid-view-back').tap()
                 page.wait_for_selector('#hybrid-room-frame[data-phase="room"]')
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             page.screenshot(path=str(out / 'hybrid-night-phone.png'))

@@ -1,0 +1,26 @@
+<section id="house-radio" aria-label="Living room radio" hidden>
+  <div class="radio-glass">
+    <div class="radio-band"><span id="radio-state">CONNECTING</span><span class="radio-lamp" aria-hidden="true"></span></div>
+    <div id="radio-title">Finding your speakers…</div>
+    <div id="radio-subtitle"></div>
+    <select id="radio-stations" aria-label="Saved radio stations" title="Choose a saved station"><option>No saved stations</option></select>
+    <span class="radio-glass-hint" aria-hidden="true">TOUCH GLASS FOR STATIONS</span>
+    <div id="radio-notice" role="status" aria-live="polite"></div>
+  </div>
+  <label class="radio-output"><span>LISTEN IN</span><select id="radio-output" aria-label="Radio speaker"><option value="">Choose a speaker</option></select></label>
+  <div class="radio-hardware radio-power">
+    <span class="radio-engraving">POWER</span>
+    <button id="radio-power" class="radio-knob" type="button" aria-label="Play music" aria-pressed="false" disabled><span class="radio-power-mark" aria-hidden="true"></span></button>
+    <span class="radio-caption">PLAY / PAUSE</span>
+  </div>
+  <div class="radio-hardware radio-volume">
+    <span class="radio-engraving">VOLUME</span>
+    <button id="radio-volume" class="radio-knob radio-rotary" type="button" role="slider" aria-label="Radio volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Unavailable" disabled title="Drag up or down, or use arrow keys"><span class="radio-pointer" aria-hidden="true"></span></button>
+    <span id="radio-volume-label" class="radio-caption">—</span>
+  </div>
+  <div class="radio-hardware radio-tune">
+    <span class="radio-engraving">TUNING</span>
+    <button id="radio-tune" class="radio-knob radio-rotary" type="button" role="slider" aria-label="Tune saved stations" aria-valuemin="1" aria-valuemax="1" aria-valuenow="1" aria-valuetext="No saved stations" disabled title="Drag to tune; press to play. Arrow keys browse; Enter plays."><span class="radio-pointer" aria-hidden="true"></span></button>
+    <span class="radio-caption">TURN · PRESS TO PLAY</span>
+  </div>
+</section>

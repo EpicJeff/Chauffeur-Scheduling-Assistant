@@ -58,6 +58,10 @@
       images.forEach(function (other) { other.classList.toggle('is-active', other === img); });
       img.alt = entry.label + ' seen from close by in the living room';
       detail.dataset.light = img.dataset.light;
+      if (entry.key === 'music') {
+        frame.style.setProperty('--radio-art', 'url("' + img.src + '")');
+        document.getElementById('house-radio').dataset.light = img.dataset.light;
+      }
       if (frame.dataset.phase !== 'detail') {
         phase('entering');
         await waitForMove();
@@ -68,7 +72,8 @@
       status.textContent = entry.label + ' · Return to the living room to choose another object.';
       if (card !== entry.key) {
         card = entry.key;
-        window.dispatchEvent(new CustomEvent('chf-house-open', { detail: entry.key }));
+        if (entry.key === 'music') window.HouseRadio.open();
+        else window.dispatchEvent(new CustomEvent('chf-house-open', { detail: entry.key }));
       }
     }).catch(function () {
       if (ticket !== revision || active !== entry) return;
@@ -97,6 +102,7 @@
   async function leave(fromHistory) {
     if (!active) return;
     active = null; card = null; ++revision;
+    window.HouseRadio.close();
     var ticket = ++navigation;
     phase('leaving');
     frame.setAttribute('aria-busy', 'false');

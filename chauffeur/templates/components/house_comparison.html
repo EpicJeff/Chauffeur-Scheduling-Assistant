@@ -23,11 +23,12 @@
       <div id="hybrid-detail-picture">
         {% for key in ['music', 'pets', 'tasks', 'programs'] %}
         {% for light in ['day', 'night'] %}
-        <img data-view="{{ key }}" data-light="{{ light }}" data-src="{{ ('static/house_hybrid/' ~ key ~ '-' ~ light ~ '.png')|ver }}" alt="" decoding="async">
+        <img data-view="{{ key }}" data-light="{{ light }}" data-src="{{ ('static/house_hybrid/' ~ ('radio-face' if key == 'music' else key) ~ '-' ~ light ~ '.png')|ver }}" alt="" decoding="async">
         {% endfor %}
         {% endfor %}
       </div>
       <div id="hybrid-detail-controls"></div>
+      {% include 'components/house_radio.html' %}
     </section>
     <button id="hybrid-view-back" type="button" hidden>← Living room</button>
   </div>

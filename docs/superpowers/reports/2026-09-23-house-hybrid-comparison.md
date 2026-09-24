@@ -2,6 +2,10 @@
 
 2026-09-23 · updated v2.499.166 · `feature/living-room-atmosphere`
 
+Follow-up v2.499.167: the radio now has controls built into its face. See the
+[working radio review](2026-09-23-house-radio.md). The description below records
+the earlier comparison; other object destinations retain that treatment.
+
 ## Matching viewport framing
 
 The hybrid now occupies the same full viewport as the 3D canvas. The rounded
