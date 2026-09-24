@@ -6,6 +6,12 @@
     <select id="radio-stations" aria-label="Saved radio stations" title="Choose a saved station"><option>No saved stations</option></select>
     <span class="radio-glass-hint" aria-hidden="true">TOUCH GLASS FOR STATIONS</span>
     <div id="radio-notice" role="status" aria-live="polite"></div>
+    <button id="radio-search-open" type="button" aria-label="Search music" title="Search music">⌕</button>
+    <form id="radio-search-form" hidden role="search" aria-label="Search Music Assistant">
+      <label for="radio-query">FIND A RECORD</label>
+      <div><input id="radio-query" type="search" placeholder="Artist, album, song…" autocomplete="off" maxlength="200"><button type="submit">Find</button></div>
+      <button id="radio-search-close" type="button">← Radio</button>
+    </form>
   </div>
   <label class="radio-output"><span>LISTEN IN</span><select id="radio-output" aria-label="Radio speaker"><option value="">Choose a speaker</option></select></label>
   <div class="radio-hardware radio-power">
@@ -23,4 +29,15 @@
     <button id="radio-tune" class="radio-knob radio-rotary" type="button" role="slider" aria-label="Tune saved stations" aria-valuemin="1" aria-valuemax="1" aria-valuenow="1" aria-valuetext="No saved stations" disabled title="Drag to tune; press to play. Arrow keys browse; Enter plays."><span class="radio-pointer" aria-hidden="true"></span></button>
     <span class="radio-caption">TURN · PRESS TO PLAY</span>
   </div>
+</section>
+<section id="radio-library" aria-label="Record shelf" hidden>
+  <div class="radio-shelf-rail">
+    <select id="radio-member" aria-label="Whose record shelf"><option value="">Whose records?</option></select>
+    <button id="radio-favorites" type="button" aria-pressed="true">Favorites</button>
+    <button id="radio-recent" type="button" aria-pressed="false">Recent</button>
+    <button id="radio-record-prev" type="button" aria-label="Previous records">‹</button>
+    <button id="radio-record-next" type="button" aria-label="Next records">›</button>
+  </div>
+  <p id="radio-library-status" role="status" aria-live="polite"></p>
+  <div id="radio-records" tabindex="0" role="region" aria-label="Swipe through records"></div>
 </section>

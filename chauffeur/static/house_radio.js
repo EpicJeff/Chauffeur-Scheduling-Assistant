@@ -35,6 +35,7 @@
     tune.disabled = !available || busy || !stations.length;
     stationSelect.disabled = !available || busy || !stations.length;
     root.setAttribute('aria-busy', String(busy));
+    window.dispatchEvent(new CustomEvent('radio-player-state', {detail:{available:!!available, busy:busy}}));
     if (!drag || drag.el !== volume) {
       var v = p && Number.isFinite(p.volume_level) ? Math.round(clamp(p.volume_level * 100, 100)) : 0;
       dial(volume, v, 100, volume.disabled && !busy ? 'Unavailable' : v + ' percent');
@@ -154,10 +155,15 @@
   function stopPolling() { clearInterval(timer); timer = null; }
   function startPolling() { stopPolling(); if (active && !document.hidden) { refresh(); timer = setInterval(refresh, 5000); } }
   window.HouseRadio = {
+    playItem: function (item, member) {
+      return action(function (target) { return MusicLogic.play(target, item.uri, item.media_type || 'track', opts,
+        {memberId:member || null, item:item}); });
+    },
     open: function () {
       if (active) return;
       active = true; ++epoch; ++visitSerial; root.hidden = false; error = ''; preview = false; busy = false;
       paint(); startPolling();
+      window.HouseRecords.open();
       var visit = visitSerial;
       MusicLogic.favorites('radio', 50, opts).then(function (items) {
         if (!active || visit !== visitSerial) return;
@@ -169,7 +175,7 @@
         paint();
       });
     },
-    close: function () { active = false; ++epoch; ++readTicket; drag = null; busy = false; root.hidden = true; stopPolling(); }
+    close: function () { active = false; ++epoch; ++readTicket; drag = null; busy = false; root.hidden = true; stopPolling(); window.HouseRecords.close(); }
   };
   document.addEventListener('visibilitychange', function () { drag = null; if (document.hidden) stopPolling(); else startPolling(); });
   window.addEventListener('pagehide', stopPolling);

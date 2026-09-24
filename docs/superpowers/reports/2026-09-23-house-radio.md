@@ -2,6 +2,8 @@
 
 Version 2.499.167 · `feature/living-room-atmosphere`
 
+Follow-up v2.499.168 adds a [personal record shelf and search](2026-09-24-house-record-shelf.md).
+
 The hybrid radio now has its own head-on camera destination and live controls
 embedded in the depicted hardware. Its glass displays playback state, track,
 artist and failures. The brass plaque selects an existing speaker. The power
