@@ -1,4 +1,4 @@
-"""Opt-in hybrid room: real cards, sun boundary, touch layout and no WebGL.
+"""Hybrid camera destinations: live controls, navigation, sun, touch and no WebGL.
 
 Run from chauffeur/: python tests/test_house_hybrid_live.py --out <directory>
 """
@@ -70,14 +70,30 @@ def main():
             for key in ('music', 'pets', 'tasks', 'programs'):
                 trigger = page.locator(f'#hybrid-hotspots [data-card="{key}"]')
                 trigger.click()
-                page.locator('#house-life [role="dialog"]').wait_for(state='visible')
+                page.wait_for_selector(f'#hybrid-room-frame[data-view="{key}"][data-phase="detail"]')
+                page.locator('#house-life [role="region"]').wait_for(state='visible')
+                assert page.locator('#house-life [role="dialog"]').count() == 0
+                assert page.locator(f'#hybrid-detail img[data-view="{key}"][data-light="day"]').evaluate('(el)=>el.naturalWidth > 0 && el.classList.contains("is-active")')
                 page.wait_for_function("!Alpine.$data(document.getElementById('house-life')).loading")
                 if key == 'tasks':
                     page.get_by_text('Replace the air filter', exact=True).wait_for(state='visible')
                     assert page.get_by_role('button', name='Manage with parent PIN').is_visible()
-                page.get_by_role('button', name='Close and return to house').click()
-                page.locator('#house-life [role="dialog"]').wait_for(state='hidden')
+                page.screenshot(path=str(out / (key + '-day-desktop.png')))
+                page.locator('#house-compare-light').select_option('night')
+                page.wait_for_selector('#hybrid-detail[data-light="night"]')
+                assert page.locator(f'#hybrid-detail img[data-view="{key}"][data-light="night"]').evaluate('(el)=>el.naturalWidth > 0 && el.classList.contains("is-active")')
+                assert page.locator('#house-life [role="region"]').is_visible()
+                page.screenshot(path=str(out / (key + '-night-desktop.png')))
+                if key == 'tasks':
+                    page.go_back()
+                elif key == 'music':
+                    page.keyboard.press('Escape')
+                else:
+                    page.get_by_role('button', name='Return to living room', exact=True).click()
+                page.wait_for_selector('#hybrid-room-frame[data-view="room"][data-phase="room"]')
+                page.locator('#house-life [role="region"]').wait_for(state='hidden')
                 assert trigger.evaluate('(el)=>document.activeElement === el')
+                page.locator('#house-compare-light').select_option('day')
             before = [desktop.nth(i).bounding_box() for i in range(4)]
             page.locator('#house-compare-light').select_option('night')
             page.wait_for_selector('#hybrid-room-frame[data-light="night"]')
@@ -94,16 +110,33 @@ def main():
                 box = shortcuts.nth(i).bounding_box()
                 assert box and box['width'] >= 44 and box['height'] >= 44
                 shortcuts.nth(i).tap()
-                page.locator('#house-life [role="dialog"]').wait_for(state='visible')
-                page.get_by_role('button', name='Close and return to house').tap()
+                page.wait_for_selector('#hybrid-room-frame[data-phase="detail"]')
+                page.locator('#house-life [role="region"]').wait_for(state='visible')
+                page.screenshot(path=str(out / ('detail-' + str(i) + '-phone.png')))
+                page.get_by_role('button', name='Return to living room', exact=True).tap()
+                page.wait_for_selector('#hybrid-room-frame[data-phase="room"]')
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             page.screenshot(path=str(out / 'hybrid-night-phone.png'))
             assert not served.errors(), served.errors()
             page.set_viewport_size({'width': 1400, 'height': 1000})
+            page.emulate_media(reduced_motion='no-preference')
+            page.locator('#hybrid-hotspots [data-card="music"]').click()
+            page.wait_for_selector('#hybrid-room-frame[data-phase="entering"]')
+            assert page.locator('#hybrid-overview').evaluate('(el)=>getComputedStyle(el).transform') != 'none'
+            page.screenshot(path=str(out / 'approach-radio.png'))
+            page.wait_for_selector('#hybrid-room-frame[data-phase="detail"]')
+            page.locator('#hybrid-view-back').click()
+            page.wait_for_selector('#hybrid-room-frame[data-phase="room"]')
+            page.emulate_media(reduced_motion='reduce')
             page.locator('[data-render="3d"]').click()
             page.wait_for_function('window.chfHouseComparison?.renderer === "3d" && chfHouseComparison.readyMs > 0', timeout=120000)
             assert page.evaluate('chfHouseMode()') == 'living'
             assert 'quality=low' in page.url
+            page.locator('.house-hint[data-house-action="tasks"]').click()
+            page.locator('#house-life [role="dialog"]').wait_for(state='visible')
+            page.get_by_text('Replace the air filter', exact=True).wait_for(state='visible')
+            page.get_by_role('button', name='Close and return to house').click()
+            page.locator('#house-life [role="dialog"]').wait_for(state='hidden')
             results['3d-low'] = page.evaluate('chfHouseComparison')
             results['3d-low']['resourceBytes'] = page.evaluate('performance.getEntriesByType("resource").reduce((n,r)=>n+r.encodedBodySize,0)')
             page.screenshot(path=str(out / '3d-low-desktop.png'))
@@ -117,9 +150,25 @@ def main():
                 raise
             assert page.evaluate('typeof THREE') == 'undefined'
             assert not served.errors(), served.errors()
+            # A late image must not reopen a destination after the user left it.
+            held = []
+            page.route('**/tasks-day.png*', lambda route: held.append(route))
+            page.goto(served.url('house?compare=living&light=day'), wait_until='domcontentloaded')
+            page.wait_for_function('window.chfHouseComparison?.readyMs > 0')
+            page.locator('#hybrid-hotspots [data-card="tasks"]').click()
+            page.wait_for_selector('#hybrid-room-frame[data-phase="loading"]')
+            page.locator('#hybrid-view-back').click()
+            page.wait_for_selector('#hybrid-room-frame[data-phase="room"]')
+            assert held, 'the destination request must have been held'
+            for route in held:
+                route.fulfill(status=200, content_type='image/png', path=str(ROOT / 'static/house_hybrid/tasks-day.png'))
+            page.wait_for_function('document.querySelector("#hybrid-detail img[data-view=tasks][data-light=day]").naturalWidth > 0')
+            assert page.locator('#hybrid-room-frame').get_attribute('data-phase') == 'room'
+            assert not page.locator('#house-life [role="region"]').is_visible()
+            assert not served.errors(), served.errors()
         (out / 'stats.json').write_text(json.dumps(results, indent=2), encoding='utf-8')
         print(json.dumps(results, indent=2), flush=True)
-        print('PASS: live cards, focus return, sun boundary, touch, no-WebGL and renderer switch', flush=True)
+        print('PASS: four day/night perspectives, in-scene controls, animated/reduced-motion navigation, focus, sun boundary, touch, no-WebGL and renderer switch', flush=True)
     finally:
         served.stop()
 

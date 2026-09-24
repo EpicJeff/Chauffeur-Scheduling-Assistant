@@ -13,10 +13,23 @@
 </section>
 {% if house_hybrid %}
 <section id="hybrid-room" aria-label="Living room">
-  <div id="hybrid-room-frame">
+  <div id="hybrid-room-frame" data-view="room" data-phase="room">
+    <div id="hybrid-overview">
     <img id="hybrid-day" data-src="{{ 'static/house_hybrid/living-day.png'|ver }}" alt="" aria-hidden="true" decoding="async">
     <img id="hybrid-night" data-src="{{ 'static/house_hybrid/living-night.png'|ver }}" alt="A furnished living room with a fireplace, radio, coffee table and household books" decoding="async">
     <div id="hybrid-hotspots" aria-label="Living room cards"></div>
+    </div>
+    <section id="hybrid-detail" aria-label="Object view" hidden>
+      <div id="hybrid-detail-picture">
+        {% for key in ['music', 'pets', 'tasks', 'programs'] %}
+        {% for light in ['day', 'night'] %}
+        <img data-view="{{ key }}" data-light="{{ light }}" data-src="{{ ('static/house_hybrid/' ~ key ~ '-' ~ light ~ '.png')|ver }}" alt="" decoding="async">
+        {% endfor %}
+        {% endfor %}
+      </div>
+      <div id="hybrid-detail-controls"></div>
+    </section>
+    <button id="hybrid-view-back" type="button" hidden>← Living room</button>
   </div>
   <div id="hybrid-shortcuts" aria-label="Living room cards"></div>
   <p id="hybrid-status" role="status">Opening the living room…</p>
@@ -24,7 +37,7 @@
 {% endif %}
 <details id="house-compare-measurements">
   <summary>Comparison notes</summary>
-  <p>Same live cards; a curated room image versus the current 3D room. This artwork is not a reconstruction of your interior.</p>
+  <p>Approach each object through its own perspective, then use its live controls. These curated room views are not a reconstruction of your interior.</p>
   <p id="house-compare-ready">Measuring room readiness…</p>
   <p>Compare appearance, time to open a card, and day/night changes on this device. Loading depends on cache and connection; this is not an FPS measurement.</p>
 </details>

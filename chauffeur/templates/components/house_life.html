@@ -5,12 +5,13 @@
 <div id="house-life" x-data="houseLife()"
      @chf-house-state.window="accept($event.detail)"
      @chf-house-open.window="open($event.detail)"
+     @chf-house-close.window="close()"
      @chf-house-study.window="study()">
   <div x-show="active" x-cloak class="house-life-shade" @click.self="close()">
-  <section x-ref="panel" class="panel-modal house-life-panel" role="dialog" aria-modal="true"
-           @keydown.escape.stop="close()" @keydown.tab="trap($event)" aria-labelledby="house-life-title">
+  <section x-ref="panel" class="panel-modal house-life-panel" role="{{ 'region' if house_hybrid|default(false) else 'dialog' }}"{% if not house_hybrid|default(false) %} aria-modal="true"{% endif %}
+           @keydown.escape.stop="close()"{% if not house_hybrid|default(false) %} @keydown.tab="trap($event)"{% endif %} aria-labelledby="house-life-title">
     <header><div><h2 id="house-life-title" x-text="title()"></h2><p x-text="explanation()"></p></div>
-      <button type="button" @click="close()" aria-label="Close and return to house">✕</button></header>
+      <button type="button" @click="close()" aria-label="{{ 'Return to living room' if house_hybrid|default(false) else 'Close and return to house' }}">{{ '↩' if house_hybrid|default(false) else '✕' }}</button></header>
     <div class="house-life-body">
       <template x-if="active === 'chores'"><div class="house-life-lanes" x-data="choresLanesCard({data:{interactive:true}}, apiBase)" x-init="startLanes()">{{ house_chores.lane_grid(interactive='lanesInteractive') }}</div></template>
       <template x-if="active === 'routines'"><div class="house-life-lanes" x-data="routineLanesCard({data:{interactive:true}}, apiBase)" x-init="startRoutineLanes()">{{ house_routines.lane_grid(interactive='lanesInteractive') }}</div></template>

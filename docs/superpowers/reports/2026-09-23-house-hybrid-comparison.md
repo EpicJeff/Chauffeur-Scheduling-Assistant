@@ -1,6 +1,45 @@
 # Hybrid living-room comparison
 
-2026-09-23 · v2.499.164 · `feature/living-room-atmosphere`
+2026-09-23 · updated v2.499.165 · `feature/living-room-atmosphere`
+
+## Spatial navigation revision
+
+The first iteration only placed card buttons over a room image. That tested
+appearance but missed the intended simulated-3D experience. Version 2.499.165
+adds four dedicated camera perspectives: the radio shelf, the pet-treat table,
+the opened teal ledger and the opened burgundy program book. Each has day and
+night artwork derived from the same room reference.
+
+Selecting an object pans/zooms toward its overview anchor, blends into the
+new perspective, and presents the existing controls within that destination.
+There is no modal backdrop or floating dialog in hybrid mode. Controls occupy
+the right side of the destination on desktop and continue below the close-up on
+phones. Returning reverses the camera movement. Escape, Living room, and browser
+Back work; focus returns to the originating marker or its visible phone equivalent.
+Reduced motion removes the camera movement. The 3D mode retains its ordinary cards.
+
+Camera movement is a 560 ms transform/blend between separately generated views,
+not a continuous reconstruction. Close-ups preserve recognizable furnishings,
+but generated details can drift and are not a geometrically exact shared scene.
+The books intentionally open in their destination views. Controls are not yet
+projected onto the drawn book pages or radio face; that is a separate refinement.
+
+Close-up images load on hover/focus intent or visit, and matching night variants
+load when needed. All ten PNGs total 24,835,503 bytes on disk; initial loading
+still needs only one overview. Visiting every day/night destination can retain
+about 60 MiB of decoded RGBA pixels before browser/compositor overhead. Delivery
+compression and memory profiling remain necessary before production promotion.
+
+The [new prompt set](2026-09-23-house-perspective-prompts.md) records built-in
+ImageGen use and all eight new asset paths. No external generation API was used.
+
+The revised live browser test checks each perspective and live controls in day
+and night, desktop and 390×844 touch layouts, animated and reduced-motion entry,
+focus restoration, sun changes, no-WebGL operation and renderer switching.
+It also checks that 3D still uses its ordinary modal card and that a late image
+cannot reopen a cancelled destination. Local captures: `scratch/perspective-review/`.
+
+## First-iteration record (v2.499.164)
 
 ## Try it
 

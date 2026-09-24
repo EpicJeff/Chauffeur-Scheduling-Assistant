@@ -42,6 +42,13 @@
     if (hybrid) paintLight();
     else if (window.chfHouseRefresh) window.chfHouseRefresh();
   });
+  window.addEventListener('popstate', function () {
+    var choice = new URL(location.href).searchParams.get('light');
+    light.value = ['day', 'night'].indexOf(choice) >= 0 ? choice : 'auto';
+    window.HOUSE_COMPARE_NIGHT = light.value === 'auto' ? null : light.value === 'night';
+    links();
+    if (hybrid) paintLight();
+  });
 
   if (!hybrid) {
     if (window.chfHouseEnterRoom) window.chfHouseEnterRoom('living');
@@ -86,8 +93,10 @@
     var count = document.createElement('span'); count.className = 'hybrid-count'; count.hidden = true;
     el.appendChild(count);
     el.addEventListener('click', function () {
-      window.dispatchEvent(new CustomEvent('chf-house-open', { detail: entry.key }));
+      window.chfHybridEnter(entry, el);
     });
+    el.addEventListener('pointerenter', function () { window.chfHybridWarm(entry.key); });
+    el.addEventListener('focus', function () { window.chfHybridWarm(entry.key); });
     return el;
   }
   entries.forEach(function (entry) {
@@ -95,9 +104,10 @@
     document.getElementById('hybrid-shortcuts').appendChild(button(entry, false));
   });
   function message() {
+    if (window.chfHybridViewing && window.chfHybridViewing()) return;
     status.textContent = pictureError ? 'Room artwork could not load. The cards are still available.'
       : stateError ? 'Live updates are unavailable. Showing the last room lighting.'
-      : 'Tap a destination to open its live card.';
+      : 'Choose an object to move closer.';
   }
   function load(image) {
     if (image.complete && image.naturalWidth) return Promise.resolve();
@@ -122,6 +132,7 @@
   }
   function paintLight() {
     var dark = outsideNight(), image = dark ? night : day, revision = ++paintRevision;
+    window.chfHybridLight(dark);
     load(image).then(function () {
       if (revision !== paintRevision || stopped) return;
       day.classList.toggle('is-active', !dark); night.classList.toggle('is-active', dark);

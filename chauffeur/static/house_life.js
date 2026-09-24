@@ -57,6 +57,7 @@ window.houseLife = function () {
       document.body.classList.remove('house-card-open');
       if (this.trigger && this.trigger.focus) this.trigger.focus();
       if (window.chfHouseRefresh) window.chfHouseRefresh();
+      window.dispatchEvent(new CustomEvent('chf-house-closed'));
     },
     trap: function (event) {
       var buttons = Array.from(this.$refs.panel.querySelectorAll('button,a[href],input,select,textarea,[tabindex="0"]'))
