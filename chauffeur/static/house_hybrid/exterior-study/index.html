@@ -35,7 +35,9 @@
       <div class="options"><label><input id="fit" type="checkbox"> Fit whole image</label><a href="../../../house?compare=living&amp;light=day">Open living room</a></div>
     </div>
     <nav aria-label="Compare exterior treatments">
-      <button data-view="combined" aria-pressed="true">Model + photo</button>
+      <button data-view="nano2" aria-pressed="false">Nano Banana 2</button>
+      <button data-view="nano" aria-pressed="false">Nano Banana</button>
+      <button data-view="combined" aria-pressed="true">ImageGen · Model + photo</button>
       <button data-view="photoangle" aria-pressed="false">Photo only · ¾ view</button>
       <button data-view="angle" aria-pressed="false">3D angle reference</button>
       <button data-view="photo" aria-pressed="false">Photo treatment</button>
@@ -48,6 +50,8 @@
   <footer aria-live="polite"><strong id="title">Your model + your photo</strong><p id="caption">The model supplies the three-quarter viewpoint and structure; the photo supplies materials. The living room sets the shared atmosphere.</p><span id="status"></span></footer>
   <script>
     const views = {
+      nano2: ['nano-banana-2.jpg', 'Nano Banana 2 · Paid Gemini API', 'Same model, photo and interior inputs. 10.0 seconds · 1264 × 848. More photographic, but invented right-side windows still need review.'],
+      nano: ['nano-banana.png', 'Nano Banana · Paid Gemini API', 'Same model, photo and interior inputs. 10.5 seconds · 1248 × 832. Retains low-poly vegetation and the floating lot; also adds side windows.'],
       combined: ['combined-three-quarter.png', 'Your model + your photo', 'The model supplies the three-quarter viewpoint and structure; the photo supplies materials. The living room sets the shared atmosphere.'],
       photoangle: ['photo-only-three-quarter.png', 'A new angle from only the photo', 'Only the farmhouse photo was supplied. The camera was described in words; unseen side walls and depth are inferred.'],
       angle: ['model-three-quarter.png', 'The three-quarter camera reference', 'An unretouched render of My house at exterior orbit stop 0. Compare the generated view against this camera and roof geometry.'],

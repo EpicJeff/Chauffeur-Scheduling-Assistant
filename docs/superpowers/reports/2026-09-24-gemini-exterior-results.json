@@ -1,0 +1,118 @@
+{
+  "api_version": "v1beta",
+  "inputs": [
+    {
+      "path": "chauffeur/static/house_hybrid/exterior-study/model-three-quarter.png",
+      "sha256": "7f89bcab70a03bd86b01549924f42ea5d2c0eab902ecd67f06c8f8fe38c6d04a"
+    },
+    {
+      "path": "docs/superpowers/specs/assets/2026-09-17-photo-farmhouse.jpg",
+      "sha256": "a6a94efc828636370ec1db2f7f4aadcc5c26af90b068b6ad24086eb765a3d150"
+    },
+    {
+      "path": "chauffeur/static/house_hybrid/living-habitat-day.png",
+      "sha256": "4709066af1b4fc86d4576f421c05ac55d63db70f8292a95f4fd99c8aeaf5b2aa"
+    }
+  ],
+  "max_requests": 2,
+  "retries": 0,
+  "results": [
+    {
+      "model": "gemini-2.5-flash-image",
+      "generation_config": {
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "imageConfig": {
+          "aspectRatio": "3:2"
+        }
+      },
+      "status": "ok",
+      "model_version": "gemini-2.5-flash-image",
+      "usage": {
+        "promptTokenCount": 1283,
+        "candidatesTokenCount": 1303,
+        "totalTokenCount": 2586,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 509
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 774
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1290
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "images": [
+        {
+          "file": "gemini-2.5-flash-image-1.png",
+          "dimensions": [
+            1248,
+            832
+          ],
+          "sha256": "0d21422573f4416a7dbf664d7de46b4cb317bc0d8944afcae8d57193ba53c0f2"
+        }
+      ],
+      "finish_reason": "STOP",
+      "seconds": 10.45
+    },
+    {
+      "model": "gemini-3.1-flash-image",
+      "generation_config": {
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "imageConfig": {
+          "aspectRatio": "3:2",
+          "imageSize": "1K"
+        }
+      },
+      "status": "ok",
+      "model_version": "gemini-3.1-flash-image",
+      "usage": {
+        "promptTokenCount": 1283,
+        "candidatesTokenCount": 1624,
+        "totalTokenCount": 2907,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 509
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 774
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1120
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "images": [
+        {
+          "file": "gemini-3.1-flash-image-1.jpg",
+          "dimensions": [
+            1264,
+            848
+          ],
+          "sha256": "7d52fb76095295b4980b9ad980b17f08163ddc002dc8cacea2372a66c206695d"
+        }
+      ],
+      "finish_reason": "STOP",
+      "seconds": 9.97
+    }
+  ]
+}
