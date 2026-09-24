@@ -58,6 +58,7 @@
       images.forEach(function (other) { other.classList.toggle('is-active', other === img); });
       img.alt = entry.label + ' seen from close by in the living room';
       detail.dataset.light = img.dataset.light;
+      if (entry.key === 'tasks' || entry.key === 'programs') frame.style.setProperty('--book-art', 'url("' + img.src + '")');
       if (entry.key === 'music') {
         frame.style.setProperty('--radio-art', 'url("' + img.src + '")');
         document.getElementById('house-radio').dataset.light = img.dataset.light;
@@ -128,6 +129,7 @@
   back.addEventListener('click', function () { leave(false); });
   window.addEventListener('chf-house-closed', function () { leave(false); });
   document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && active && !event.defaultPrevented && window.chfBookCloseLesson?.()) { event.preventDefault(); return; }
     if (event.key === 'Escape' && active && !event.defaultPrevented) { event.preventDefault(); leave(false); }
   });
   window.addEventListener('popstate', function () {

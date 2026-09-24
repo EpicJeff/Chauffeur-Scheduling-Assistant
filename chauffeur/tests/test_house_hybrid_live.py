@@ -93,7 +93,7 @@ def main():
                 trigger = page.locator(f'#hybrid-hotspots [data-card="{key}"]')
                 trigger.click()
                 page.wait_for_selector(f'#hybrid-room-frame[data-view="{key}"][data-phase="detail"]')
-                surface = page.locator('#house-radio' if key == 'music' else '#house-life [role="region"]')
+                surface = page.locator('#house-radio' if key == 'music' else '#house-book' if key in ('tasks', 'programs') else '#house-life .house-life-panel')
                 surface.wait_for(state='visible')
                 check_full_viewport(page)
                 assert page.locator('#house-life [role="dialog"]').count() == 0
@@ -112,10 +112,12 @@ def main():
                     page.go_back()
                 elif key == 'music':
                     page.keyboard.press('Escape')
+                elif key == 'programs':
+                    page.locator('#hybrid-view-back').click()
                 else:
                     page.get_by_role('button', name='Return to living room', exact=True).click()
                 page.wait_for_selector('#hybrid-room-frame[data-view="room"][data-phase="room"]')
-                page.locator('#house-life [role="region"]').wait_for(state='hidden')
+                surface.wait_for(state='hidden')
                 assert trigger.evaluate('(el)=>document.activeElement === el')
                 page.locator('#house-compare-light').select_option('day')
             before = [desktop.nth(i).bounding_box() for i in range(4)]
@@ -137,7 +139,7 @@ def main():
                 shortcuts.nth(i).tap()
                 page.wait_for_selector('#hybrid-room-frame[data-phase="detail"]')
                 key = shortcuts.nth(i).get_attribute('data-card')
-                page.locator('#house-radio' if key == 'music' else '#house-life [role="region"]').wait_for(state='visible')
+                page.locator('#house-radio' if key == 'music' else '#house-book' if key in ('tasks', 'programs') else '#house-life .house-life-panel').wait_for(state='visible')
                 check_full_viewport(page)
                 page.screenshot(path=str(out / ('detail-' + str(i) + '-phone.png')))
                 page.locator('#hybrid-view-back').tap()
@@ -179,7 +181,7 @@ def main():
             assert not served.errors(), served.errors()
             # A late image must not reopen a destination after the user left it.
             held = []
-            page.route('**/tasks-day.png*', lambda route: held.append(route))
+            page.route('**/ledger-pages-day.png*', lambda route: held.append(route))
             page.goto(served.url('house?compare=living&light=day'), wait_until='domcontentloaded')
             page.wait_for_function('window.chfHouseComparison?.readyMs > 0')
             page.locator('#hybrid-hotspots [data-card="tasks"]').click()
@@ -188,10 +190,10 @@ def main():
             page.wait_for_selector('#hybrid-room-frame[data-phase="room"]')
             assert held, 'the destination request must have been held'
             for route in held:
-                route.fulfill(status=200, content_type='image/png', path=str(ROOT / 'static/house_hybrid/tasks-day.png'))
+                route.fulfill(status=200, content_type='image/png', path=str(ROOT / 'static/house_hybrid/ledger-pages-day.png'))
             page.wait_for_function('document.querySelector("#hybrid-detail img[data-view=tasks][data-light=day]").naturalWidth > 0')
             assert page.locator('#hybrid-room-frame').get_attribute('data-phase') == 'room'
-            assert not page.locator('#house-life [role="region"]').is_visible()
+            assert not page.locator('#house-book').is_visible()
             assert not served.errors(), served.errors()
         (out / 'stats.json').write_text(json.dumps(results, indent=2), encoding='utf-8')
         print(json.dumps(results, indent=2), flush=True)

@@ -1,0 +1,70 @@
+<section id="house-book" class="house-book" x-data="houseBookPages()" x-show="bookMode()" x-cloak
+         :data-lesson="lessonOpen ? 'open' : 'closed'" role="region" aria-label="Open household book">
+  <template x-if="active === 'tasks'">
+    <div class="book-spread">
+      {% for side in ['left', 'right'] %}
+      <section class="book-page book-page-{{ side }}" :inert="lessonOpen" aria-label="{{ 'Household tasks' if side == 'left' else 'More household tasks' }}">
+        <header class="book-heading"><span class="book-eyebrow">THE HOUSE · HOME LEDGER</span>
+          {% if side == 'left' %}<h2 x-ref="bookTitle" tabindex="-1">A little care<br>for our home.</h2>{% else %}<h2>In good hands.</h2>{% endif %}
+          <p>{{ 'The next things that need doing.' if side == 'left' else 'Every small thing makes a difference.' }}</p>
+        </header>
+        <div class="book-entries" aria-live="polite">
+          {% if side == 'left' %}
+          <p x-show="loading">Opening the ledger…</p>
+          <p x-show="error" x-text="error"></p>
+          <button type="button" class="book-link" x-show="error" @click="open('tasks')">Try again</button>
+          <p x-show="!loading && !error && !taskRows.length" x-text="t?.data?.empty || 'Nothing owed right now.'"></p>
+          {% endif %}
+          <template x-for="(task, index) in taskRows.slice({{ '0, 3' if side == 'left' else '3, 6' }})" :key="index">
+            <article class="book-task" :class="{'is-overdue':task.past_due}">
+              <span class="book-number" x-text="String(index + {{ '1' if side == 'left' else '4' }}).padStart(2, '0')"></span>
+              <div><h3 x-text="task.title"></h3><p x-text="task.who || 'Nobody yet'"></p><small x-text="dueLabel(task)"></small></div>
+            </article>
+          </template>
+          {% if side == 'right' %}
+          <p class="book-note" x-show="!loading && taskRows.length > 0 && taskRows.length <= 3">A place for the things we take care of together.</p>
+          <p class="book-note" x-show="!loading && taskTotal > taskRows.slice(0, 6).length" x-text="'Showing the next ' + taskRows.slice(0, 6).length + ' of ' + taskTotal + ' tasks. Open management for the full ledger.'"></p>
+          {% endif %}
+        </div>
+        <footer class="book-footer">
+          {% if side == 'left' %}<span>Past due first · then unclaimed</span>{% else %}<button type="button" class="book-link" @click="study('errands')">Manage with parent PIN</button>{% endif %}
+          <span>{{ '01' if side == 'left' else '02' }}</span>
+        </footer>
+      </section>
+      {% endfor %}
+    </div>
+  </template>
+  <template x-if="active === 'programs'">
+    <div class="book-spread" x-data="houseProgramBook(apiBase)" x-init="startPrograms()">
+      <section class="book-page book-page-left" :inert="lessonOpen" aria-label="Today's practice">
+        <header class="book-heading"><span class="book-eyebrow">THE HOUSE · PROGRAM BOOK</span><h2 x-ref="bookTitle" tabindex="-1">A little practice.<br>A new possibility.</h2><p>Today's sessions, at your own pace.</p></header>
+        <div class="book-entries" aria-live="polite">
+          <p x-show="!pgPracticeLoaded">Finding today's pages…</p>
+          <p x-show="pgPracticeLoaded && !pgPracticeError && !pgToday.length">No practice planned for today.</p>
+          <p x-show="pgPracticeError">Today's practice could not refresh. <button class="book-link" type="button" @click="loadPracticeToday()">Try again</button></p>
+          <template x-for="w in practices" :key="w.key"><article class="book-practice">
+            <span class="book-eyebrow" x-text="[w.who, w.when].filter(Boolean).join(' · ')"></span>
+            <h3 x-text="w.title"></h3><p x-text="[w.label, w.lesson].filter(Boolean).join(' · ')"></p>
+            <button type="button" class="book-link" @click="startSession(w)">Start session ↗</button>
+          </article></template>
+        </div>
+        <footer class="book-footer"><button type="button" class="book-link" x-show="practicePages > 1" @click="practicePage = (Math.min(practicePage, practicePages - 1) + 1) % practicePages" x-text="'Turn practice page · ' + (Math.min(practicePage, practicePages - 1) + 1) + '/' + practicePages"></button><span>01 · TODAY</span></footer>
+      </section>
+      <section class="book-page book-page-right book-journal" :inert="lessonOpen" aria-label="Practice journal">
+        <header class="book-heading"><span class="book-eyebrow">THINGS WORTH REMEMBERING</span><h2>Look how far<br>you've come.</h2><p>Small steps, shared celebrations.</p></header>
+        <div class="book-entries" aria-live="polite">
+          <p x-show="!pgLoaded">Opening the journal…</p>
+          <p x-show="pgLoaded && !pgProgramsError && !journal.length">The next little victory belongs here.</p>
+          <p x-show="pgProgramsError">The journal could not refresh. <button class="book-link" type="button" @click="loadPrograms()">Try again</button></p>
+          <template x-for="(entry, index) in journalRows" :key="index"><article class="book-journal-entry"><span class="book-eyebrow" x-text="entry.heading"></span><h3 x-text="entry.line"></h3><p x-show="entry.detail" x-text="entry.detail"></p></article></template>
+        </div>
+        <footer class="book-footer"><button type="button" class="book-link" x-show="journalPages > 1" @click="journalPage = (Math.min(journalPage, journalPages - 1) + 1) % journalPages" x-text="'Turn journal page · ' + (Math.min(journalPage, journalPages - 1) + 1) + '/' + journalPages"></button><span>02 · JOURNAL</span></footer>
+      </section>
+    </div>
+  </template>
+  {% include 'components/lesson_player.html' %}
+</section>
+<nav id="book-camera" x-show="bookMode()" x-cloak aria-label="Book pages" x-data="{}">
+  <button type="button" :aria-pressed="Alpine.$data(document.getElementById('house-book')).page === 'left'" @click="Alpine.$data(document.getElementById('house-book')).turn('left')" :disabled="Alpine.$data(document.getElementById('house-book')).lessonOpen" x-text="active === 'tasks' ? '← Tasks' : '← Today'"></button>
+  <button type="button" :aria-pressed="Alpine.$data(document.getElementById('house-book')).page === 'right'" @click="Alpine.$data(document.getElementById('house-book')).turn('right')" x-text="active === 'tasks' ? 'Notes & manage →' : (Alpine.$data(document.getElementById('house-book')).lessonOpen ? 'Session' : 'Journal →')"></button>
+</nav>

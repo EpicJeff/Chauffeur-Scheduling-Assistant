@@ -12,6 +12,7 @@ window.houseLife = function () {
     init: function () { if (window.chfHouseState) this.accept(window.chfHouseState() || {}); },
     accept: function (data) { this.state = data || {}; },
     title: function () { return labels[this.active] || ''; },
+    bookMode: function () { return document.body.dataset.houseRender === 'hybrid' && ['tasks', 'programs'].includes(this.active); },
     explanation: function () {
       return ({ packing:'Ready for the next outing.', chores:'Choose a job, finish it, or check completed work.',
         routines:'Today’s steps, at your own pace.', programs:'Practice, lessons, and things worth celebrating.',
@@ -24,7 +25,7 @@ window.houseLife = function () {
       this.active = key; this.t = null; this.error = ''; this.loading = false;
       var generation = ++this.generation;
       document.body.classList.add('house-card-open');
-      this.$nextTick(() => this.$refs.panel.querySelector('header button').focus());
+      this.$nextTick(() => (this.bookMode() ? document.querySelector('#house-book h2') : this.$refs.panel.querySelector('header button'))?.focus());
       if (key === 'music') {
         this.$nextTick(() => {
           if (this.active !== 'music') return;
