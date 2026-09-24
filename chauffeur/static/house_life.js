@@ -22,7 +22,7 @@ window.houseLife = function () {
     open: async function (key, focus = true) {
       if (key === 'study') { this.study(); return; }
       if (!labels[key]) return;
-      this.quickView = document.body.dataset.houseScene === 'exterior';
+      this.quickView = ['exterior', 'garage'].includes(document.body.dataset.houseScene);
       if (focus) this.trigger = document.activeElement;
       this.active = key; this.t = null; this.error = ''; this.loading = false;
       var generation = ++this.generation;

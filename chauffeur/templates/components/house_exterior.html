@@ -8,5 +8,18 @@
   <div id="exterior-traffic-shortcuts"></div>
   <p id="exterior-status" role="status">Opening your house…</p>
 </section>
+<section id="hybrid-garage" hidden inert aria-label="Garage bay prototype">
+  <div id="garage-images" aria-hidden="true">
+    <img id="garage-empty" data-src="{{ 'static/house_hybrid/garage-empty.png'|ver }}" alt="">
+    <img id="garage-occupied" data-src="{{ 'static/house_hybrid/garage-ev9.png'|ver }}" alt="">
+  </div>
+  <header class="garage-heading"><span>ONE-BAY PROTOTYPE</span><h1>Garage</h1><p>Gray 2026 Kia EV9</p></header>
+  <button id="garage-car" type="button" aria-label="Open vehicle information"><span>Vehicle information</span></button>
+  <div class="garage-controls">
+    <p id="garage-state" role="status"></p>
+    <label>Preview state <select id="garage-presence"><option value="live">Follow vehicle presence</option><option value="home">Parked</option><option value="away">Away</option></select></label>
+    <button id="garage-fleet" type="button">Vehicle information</button>
+  </div>
+</section>
 <div id="exterior-quickviews"></div>
 <button id="hybrid-outside" type="button" hidden>← Outside</button>

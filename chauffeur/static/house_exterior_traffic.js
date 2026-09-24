@@ -6,8 +6,6 @@
   var photo = document.getElementById('exterior-photo');
   var shortcuts = document.getElementById('exterior-traffic-shortcuts');
   var payload = '', parked = [];
-  var shapes = {sedan:0, crossover:1, suv:2, minivan:3, coupe:4, truck:5, pickup:5, wagon:6, hatch:1, hatchback:1, van:3};
-  var spots = [[.755,.835,.15],[.85,.90,.155],[.65,.89,.155]];
   function project() {
     if (!photo.naturalWidth) return;
     var scale = Math.max(innerWidth/photo.naturalWidth, innerHeight/photo.naturalHeight);
@@ -53,15 +51,7 @@
     if (next === payload) return;
     payload = next; scene.replaceChildren(); shortcuts.replaceChildren();
     parked = cars.filter(function (car) { return car.present === true; });
-    parked.slice(0,spots.length).forEach(function (car,i) {
-      var info = car.name || 'Car';
-      if (Number.isFinite(car.battery_pct)) info += ' · '+Math.round(car.battery_pct)+'% charge';
-      else if (Number.isFinite(car.fuel_pct)) info += ' · '+Math.round(car.fuel_pct)+'% fuel';
-      else info += ' · Resting';
-      if (car.warn) info += ' · Needs attention';
-      actor(shapes[car.body] ?? 0, spots[i], info, 'cars', String(car.id), car.warn, car.exterior_image);
-    });
-    if (cars.length) shortcut('Vehicles · '+parked.length+' home'+(parked.length > spots.length ? ' · +'+(parked.length-spots.length)+' more' : ''), 'cars', 'exterior-cars-shortcut');
+    if (cars.length) shortcut('Vehicles · '+parked.length+' home', 'cars', 'exterior-cars-shortcut');
     if (bus) {
       var busLabel = state.curb.demo ? 'Demo · School bus nearby' : 'School bus nearby';
       // Tire contacts sit below the curb, on the street, in source-photo coordinates.

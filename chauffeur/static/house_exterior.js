@@ -4,6 +4,8 @@
   var exterior = document.getElementById('house-exterior');
   if (!exterior) return;
   var room = document.getElementById('hybrid-room');
+  var garage = document.getElementById('hybrid-garage');
+  var visiting = 'living';
   var pictures = document.getElementById('exterior-pictures');
   var photo = document.getElementById('exterior-photo');
   var hints = document.getElementById('house-hints');
@@ -17,6 +19,12 @@
   marker.appendChild(icons);
   var markerLabel = document.createElement('span'); markerLabel.className = 'house-hint-label'; markerLabel.textContent = 'Living room';
   marker.appendChild(markerLabel); hints.appendChild(marker);
+  var garageMarker = marker.cloneNode(true);
+  garageMarker.id = 'exterior-garage-marker'; garageMarker.dataset.room = 'garage';
+  garageMarker.setAttribute('aria-label', 'Expand Garage');
+  garageMarker.querySelector('.house-hint-label').textContent = 'Garage';
+  garageMarker.querySelector('.house-hint-icons').innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m5 11 2-5h10l2 5M4 11h16v7H4zM7 14h2m6 0h2M6 18v3m12-3v3"/></svg><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 7h14l1 14H4L5 7zm3 0V5a4 4 0 0 1 8 0v2"/></svg>';
+  hints.appendChild(garageMarker);
   var life = document.getElementById('house-life');
   var lifeHome = life.parentNode;
   var quickviews = document.getElementById('exterior-quickviews');
@@ -29,12 +37,12 @@
   function urlFor(inside) {
     var url = new URL(location.href);
     url.searchParams.delete('angle');
-    if (inside) url.searchParams.set('scene', 'living'); else url.searchParams.delete('scene');
+    if (inside) url.searchParams.set('scene', visiting); else url.searchParams.delete('scene');
     return url.href;
   }
   function placeMarker() {
     var anchor = [.39,.63], img = photo;
-    if (marker.classList.contains('expanded')) return;
+    if (marker.classList.contains('expanded') || garageMarker.classList.contains('expanded')) return;
     marker.hidden = false;
     if (!img || !img.naturalWidth) { marker.hidden = true; return; }
     var scale = Math.max(innerWidth / img.naturalWidth, innerHeight / img.naturalHeight);
@@ -43,6 +51,8 @@
     x = Math.max(70, Math.min(innerWidth - 70, x));
     y = Math.max(235, Math.min(innerHeight - 320, y));
     marker.style.left = x + 'px'; marker.style.top = y + 'px';
+    garageMarker.style.left = Math.max(80, Math.min(innerWidth - 80, .73 * img.naturalWidth * scale + (innerWidth - img.naturalWidth * scale) / 2)) + 'px';
+    garageMarker.style.top = Math.max(235, Math.min(innerHeight - 270, .76 * img.naturalHeight * scale + innerHeight - img.naturalHeight * scale)) + 'px';
     pictures.style.setProperty('--entry-x', x + 'px');
     pictures.style.setProperty('--entry-y', y + 'px');
   }
@@ -64,7 +74,7 @@
   function setMode(next) {
     mode = next; document.body.dataset.houseScene = next;
     hints.hidden = next !== 'exterior';
-    var destination = next === 'exterior' ? quickviews : lifeHome;
+    var destination = next === 'living' ? lifeHome : quickviews;
     if (life.parentNode !== destination) {
       var move = function () { destination.appendChild(life); };
       if (window.Alpine) Alpine.mutateDom(move); else move();
@@ -73,7 +83,9 @@
     room.setAttribute('aria-hidden', String(next !== 'living'));
     exterior.inert = next !== 'exterior';
     exterior.setAttribute('aria-hidden', String(next !== 'exterior'));
-    outside.hidden = next !== 'living';
+    garage.hidden = next !== 'garage' && !(next === 'entering' && visiting === 'garage');
+    garage.inert = next !== 'garage';
+    outside.hidden = !['living', 'garage'].includes(next);
   }
   function waitRoom() {
     return new Promise(function (resolve, reject) {
@@ -87,17 +99,20 @@
       check();
     });
   }
-  async function enter(remember, feature) {
+  async function enter(remember, feature, targetRoom) {
     if (mode !== 'exterior' || opening) return;
-    opening = true;
+    opening = true; visiting = targetRoom === 'garage' ? 'garage' : 'living';
     var ticket = ++journey;
-    enterButton.disabled = marker.disabled = true;
-    status.textContent = 'Opening the living room…';
+    enterButton.disabled = marker.disabled = garageMarker.disabled = true;
+    status.textContent = 'Opening the ' + (visiting === 'garage' ? 'garage' : 'living room') + '…';
     try {
-      await waitRoom();
+      if (visiting === 'garage') await window.chfGarageReady(); else await waitRoom();
       if (ticket !== journey) return;
 
       window.ChauffeurMarkers.collapse();
+      var entryMarker = visiting === 'garage' ? garageMarker : marker;
+      pictures.style.setProperty('--entry-x', entryMarker.style.left);
+      pictures.style.setProperty('--entry-y', entryMarker.style.top);
       if (remember) history.pushState(Object.assign({}, history.state, {chfExteriorRoom:true}), '', urlFor(true));
       else history.replaceState(history.state, '', urlFor(true));
       exterior.hidden = false;
@@ -105,13 +120,14 @@
       await new Promise(function (resolve) { setTimeout(resolve, reduced.matches ? 0 : 700); });
       if (ticket !== journey) return;
       exterior.hidden = true;
-      setMode('living');
+      setMode(visiting);
       outside.focus();
-      if (feature) window.chfHybridVisit(feature);
+      if (feature && visiting === 'living') window.chfHybridVisit(feature);
+      if (visiting === 'garage' && feature === 'errands') window.dispatchEvent(new CustomEvent('chf-house-open', {detail:'errands'}));
     } catch (error) {
       if (ticket === journey) status.textContent = 'The room artwork could not load. Please try again.';
     } finally {
-      if (ticket === journey) { opening = false; enterButton.disabled = marker.disabled = false; }
+      if (ticket === journey) { opening = false; enterButton.disabled = marker.disabled = garageMarker.disabled = false; }
     }
   }
   function revealOutside() {
@@ -120,12 +136,12 @@
     setMode('exterior');
     opening = false;
     status.textContent = 'Tap the room to explore';
-    enterButton.disabled = marker.disabled = false;
+    enterButton.disabled = marker.disabled = garageMarker.disabled = false;
     placeMarker();
-    enterButton.focus();
+    (visiting === 'garage' ? garageMarker : enterButton).focus();
   }
   function goOutside() {
-    if (mode !== 'living' || window.chfHybridViewing?.()) return;
+    if (!['living', 'garage'].includes(mode) || (mode === 'living' && window.chfHybridViewing?.())) return;
     if (history.state?.chfExteriorRoom) history.back();
     else revealOutside();
   }
@@ -134,32 +150,41 @@
     if (window.ChauffeurMarkers.expand(marker, 'living')) return;
     enter(true);
   }
+  garageMarker.addEventListener('click', function (event) {
+    event.stopPropagation();
+    if (mode !== 'exterior') return;
+    if (window.ChauffeurMarkers.expand(garageMarker, 'garage')) return;
+    enter(true, null, 'garage');
+  });
   marker.addEventListener('click', function (event) { event.stopPropagation(); activateMarker(); });
   enterButton.addEventListener('click', function (event) { event.stopPropagation(); marker.focus(); activateMarker(); });
   window.chfHouseVisit = function (zone, targetRoom) {
     var key = {radio:'music', pet:'pets', tasks:'tasks', programs:'programs'}[zone];
     if (targetRoom === 'living' && key) enter(true, key);
+    if (targetRoom === 'garage') enter(true, zone, 'garage');
   };
   outside.addEventListener('click', goOutside);
   document.addEventListener('keydown', function (event) {
     if (document.body.classList.contains('house-card-open')) return;
     if (event.defaultPrevented || event.target.closest('input,textarea,select,[contenteditable="true"]')) return;
-    if (mode === 'living' && event.key === 'Escape' && !window.chfHybridViewing?.()) {
+    if (['living','garage'].includes(mode) && event.key === 'Escape' && (mode === 'garage' || !window.chfHybridViewing?.())) {
       event.preventDefault(); goOutside();
     }
   });
   window.addEventListener('popstate', function () {
-    if (history.state?.chfExteriorRoom) { if (mode === 'exterior') enter(false); }
+    if (history.state?.chfExteriorRoom) { if (mode === 'exterior') enter(false, null, new URL(location.href).searchParams.get('scene')); }
     else if (mode !== 'exterior' || opening) revealOutside();
   });
   window.addEventListener('resize', placeMarker);
-  window.chfHouseMode = function () { return mode === 'exterior' ? 'exterior' : 'living'; };
+  window.chfHouseMode = function () { return mode; };
   window.chfExteriorProbe = function () { return {mode:mode, ready:ready}; };
-  var initialInside = new URL(location.href).searchParams.get('scene') === 'living';
+  var initialRoom = new URL(location.href).searchParams.get('scene');
+  var initialInside = ['living','garage'].includes(initialRoom);
+  visiting = initialRoom === 'garage' ? 'garage' : 'living';
   setMode('exterior'); loadPhoto();
   if (initialInside) {
-    if (history.state?.chfExteriorRoom) enter(false);
-    else { history.replaceState(history.state, '', urlFor(false)); enter(true); }
+    if (history.state?.chfExteriorRoom) enter(false, null, initialRoom);
+    else { history.replaceState(history.state, '', urlFor(false)); enter(true, null, initialRoom); }
   } else {
     var initial = Object.assign({}, history.state); delete initial.chfExteriorRoom;
     history.replaceState(initial, '', urlFor(false));

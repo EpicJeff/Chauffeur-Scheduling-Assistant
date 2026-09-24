@@ -49,10 +49,9 @@ def main():
             assert page.locator('#exterior-pictures > img').count() == 1
             assert page.locator('.exterior-orbit').count() == 0
             page.wait_for_selector('[data-vehicle="school-bus"]')
-            assert page.locator('.exterior-vehicle').count() == 4
-            page.wait_for_function("Array.from(document.querySelectorAll('.exterior-vehicle-art img')).length === 3 && Array.from(document.querySelectorAll('.exterior-vehicle-art img')).every(i=>i.complete && i.naturalWidth > 0)")
+            assert page.locator('.exterior-vehicle').count() == 1  # Cars now live inside the garage.
             assert page.locator('[data-vehicle="away"]').count() == 0
-            assert '14% charge' in page.locator('[data-vehicle="suv"]').get_attribute('aria-label')
+            assert '3 home' in page.locator('#exterior-cars-shortcut').inner_text()
             page.locator('#exterior-cars-shortcut').click()
             page.wait_for_selector('.house-life-panel:visible')
             mode('exterior')
