@@ -59,8 +59,26 @@ def main():
             page.locator('#exterior-driveway-preview').select_option('home')
             page.wait_for_selector('[data-vehicle="driveway-car"]')
             page.wait_for_function("Array.from(document.querySelectorAll('.exterior-scene-patch')).every(i=>i.complete && i.naturalWidth)")
-            # Preserve the photographed contact shadow rather than scale a cutout.
-            assert page.locator('.exterior-scene-patch').evaluate("i=>i.src.includes('exterior-personal-vehicles.png') && getComputedStyle(i).clipPath.startsWith('polygon(')")
+            # Body and tires stay opaque, shadow feathers, surrounding pavement is absent.
+            assert page.locator('.exterior-scene-patch').evaluate('''async i=>{
+                const css=getComputedStyle(i), mask=new Image();
+                mask.src=css.maskImage.slice(5,-2);await mask.decode();
+                const c=document.createElement('canvas');c.width=1536;c.height=1024;
+                const x=c.getContext('2d');x.drawImage(mask,0,0);
+                const alpha=(px,py)=>x.getImageData(px,py,1,1).data[3];
+                return css.clipPath==='none' && alpha(820,800)>250 && alpha(855,860)>250
+                    && alpha(780,875)>0 && alpha(780,875)<240
+                    && alpha(700,900)===0 && alpha(1050,680)===0;
+            }'''), 'vehicle mask must preserve the body and feather only the contact shadow'
+            assert page.locator('.exterior-garage-layer').evaluate('''async el=>{
+                const css=getComputedStyle(el), mask=new Image();
+                mask.src=css.maskImage.slice(5,-2);await mask.decode();
+                const c=document.createElement('canvas');c.width=1536;c.height=1024;
+                const x=c.getContext('2d');x.drawImage(mask,0,0);
+                const alpha=(px,py)=>x.getImageData(px,py,1,1).data[3];
+                return css.clipPath==='none' && alpha(1000,690)>250
+                    && alpha(1000,765)>0 && alpha(1000,765)<240 && alpha(910,680)===0;
+            }'''), 'garage floor must blend without replacing the door jamb'
             page.screenshot(path=str(out/'vehicles-composite.png'))
             # The patch must retain the photograph's exact cover projection,
             # including its bottom alignment at narrow and ultrawide sizes.

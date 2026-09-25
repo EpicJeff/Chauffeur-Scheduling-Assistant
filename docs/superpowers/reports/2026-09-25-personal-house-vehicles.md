@@ -40,3 +40,10 @@ Final prompt specifications (normalized from the editing requests):
 | `cluster-murano-empty.png` | Preserve the Murano cockpit, house and windshield framing; remove both garage cars, restoring the empty garage. |
 
 The driveway uses a CSS-clipped section of the complete exterior photograph, retaining its photographed tire contact and shadow. The two interior garage bays share a source image and are clipped independently. Four complete Murano cockpit variants preserve the windshield background as the other cars leave or arrive. Rejected intermediate generations and browser screenshots remain in ignored scratch storage, outside the release.
+
+
+## Mask correction - v2.499.184
+
+The deployed close-up exposed a visible pavement polygon around the Murano. Replaced that clip with `driveway-vehicle-mask.svg`: an opaque body/tire contour plus a feathered contact-shadow ellipse. `exterior-garage-mask.svg` keeps the original doorway and blends the photographed floor below the cars. These are code-authored SVG opacity masks; the vehicle photographs are unchanged. Both are saved alongside the existing assets in `chauffeur/static/house_hybrid/`.
+
+Reviewed an enlarged 2x close-up matching the reported EV9-plus-Murano state, then ran the exterior browser regression and all eight live vehicle combinations. The exterior regression samples mask alpha to ensure solid car/tire pixels, translucent shadow/floor edges, and transparent pavement beyond the vehicle. It also checks phone and ultrawide image alignment.

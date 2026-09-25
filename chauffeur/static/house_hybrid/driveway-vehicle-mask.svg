@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1536" height="1024" viewBox="0 0 1536 1024">
+  <defs>
+    <filter id="body" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="0.7"/></filter>
+    <filter id="shadow" x="-40%" y="-100%" width="180%" height="300%"><feGaussianBlur stdDeviation="10"/></filter>
+  </defs>
+  <!-- The body stays opaque; only the contact shadow feathers onto the pavement. -->
+  <ellipse cx="839" cy="855" rx="123" ry="24" transform="rotate(-10 839 855)" fill="white" filter="url(#shadow)"/>
+  <path d="M715 825 L715 806 Q718 793 728 782 L742 763 Q750 749 796 736 Q821 728 855 735 L882 743 Q901 752 917 762 L929 763 L933 771 Q951 774 960 787 Q969 799 966 817 L959 832 Q953 844 941 842 L880 861 Q876 878 859 880 Q844 880 838 865 L767 858 Q759 868 746 866 L733 861 Q717 858 715 850 Z" fill="white" stroke="white" stroke-width="3" stroke-linejoin="round" filter="url(#body)"/>
+</svg>

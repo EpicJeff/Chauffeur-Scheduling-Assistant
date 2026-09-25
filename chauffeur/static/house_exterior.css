@@ -54,9 +54,9 @@ body[data-house-scene=exterior]:has(.house-hint.expanded) #exterior-enter,body[d
 #exterior-layer-controls small{display:block;max-width:240px;color:#ddd}
 @media(max-width:700px){#exterior-layer-controls{top:175px;right:12px;max-width:230px}}
 /* Occupied door interiors share the photograph's coordinate plane. */
-.exterior-garage-layer{position:absolute;inset:0;pointer-events:none;overflow:hidden}
-/* Keep the photographed tires and contact shadow in the same scene plane. */
-#exterior-pictures .exterior-scene-patch{object-fit:fill;transform:none;clip-path:polygon(46% 75%,49% 72%,54% 71%,59% 73%,63% 77%,64% 83%,63% 89%,54% 90%,46% 86%);transition:none}
+.exterior-garage-layer{position:absolute;inset:0;pointer-events:none;overflow:hidden;mask:url("house_hybrid/exterior-garage-mask.svg") 0 0/100% 100% no-repeat}
+/* Trace the vehicle body; feather the contact shadow without a pavement polygon. */
+#exterior-pictures .exterior-scene-patch{object-fit:fill;transform:none;mask:url("house_hybrid/driveway-vehicle-mask.svg") 0 0/100% 100% no-repeat;transition:none}
 .exterior-driveway-shadow{display:none}
 #exterior-pictures .exterior-garage-layer img{object-fit:fill;transform-origin:0 0;transition:none}
 #house-exterior .exterior-garage-car{z-index:2;min-width:44px;min-height:44px}

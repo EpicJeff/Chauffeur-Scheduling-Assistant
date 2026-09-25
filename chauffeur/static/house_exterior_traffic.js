@@ -13,9 +13,6 @@
     {key:'left',profile:'ev9-white-black-roof',box:[59.8,64.0,6.0,9.0]},
     {key:'right',profile:'gls450-white-23',box:[66.0,62.6,6.5,9.5]}
   ];
-  // Coordinates belong to the corrected 1536x1024 master, without warping.
-  function polygon(points) { return 'polygon('+points.map(p=>p[0]/1536*100+'% '+p[1]/1024*100+'%').join(',')+')'; }
-  var garageClip=polygon([[918,642],[1130,607],[1130,735],[995,762],[918,747]]);
   function project() {
     if (!photo.naturalWidth) return;
     var scale = Math.max(innerWidth/photo.naturalWidth, innerHeight/photo.naturalHeight);
@@ -73,7 +70,7 @@
     var key=items[0]&&items[1]?'both':items[0]?'left':items[1]?'right':'empty';
     scene.dataset.garageState=key;
     if(key==='empty')return;
-    var layer=document.createElement('div');layer.className='exterior-garage-layer';layer.style.clipPath=garageClip;layer.setAttribute('aria-hidden','true');
+    var layer=document.createElement('div');layer.className='exterior-garage-layer';layer.setAttribute('aria-hidden','true');
     var image=document.createElement('img');image.src=scene.dataset['garage'+key[0].toUpperCase()+key.slice(1)];image.alt='';image.className='is-active';layer.appendChild(image);scene.appendChild(layer);
     items.forEach(function(item,i){if(item)parkedBay(bays[i],item);});
     image.onerror=function(){layer.remove();scene.querySelectorAll('.exterior-garage-car').forEach(b=>b.remove());};
