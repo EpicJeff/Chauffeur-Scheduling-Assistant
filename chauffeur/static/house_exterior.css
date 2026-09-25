@@ -55,8 +55,9 @@ body[data-house-scene=exterior]:has(.house-hint.expanded) #exterior-enter,body[d
 @media(max-width:700px){#exterior-layer-controls{top:175px;right:12px;max-width:230px}}
 /* Occupied door interiors share the photograph's coordinate plane. */
 .exterior-garage-layer{position:absolute;inset:0;pointer-events:none;overflow:hidden}
-#exterior-pictures .exterior-scene-patch{object-fit:fill;transform-origin:0 0;transform:translate(24.88%,37.583%) scale(.55);transition:none}
-.exterior-driveway-shadow{position:absolute;left:46.8%;top:81.3%;width:15.8%;height:4.2%;border-radius:50%;background:radial-gradient(ellipse,#17160f70 0%,#17160f40 38%,transparent 73%);transform:rotate(-10deg);filter:blur(3px);pointer-events:none}
+/* Keep the photographed tires and contact shadow in the same scene plane. */
+#exterior-pictures .exterior-scene-patch{object-fit:fill;transform:none;clip-path:polygon(46% 75%,49% 72%,54% 71%,59% 73%,63% 77%,64% 83%,63% 89%,54% 90%,46% 86%);transition:none}
+.exterior-driveway-shadow{display:none}
 #exterior-pictures .exterior-garage-layer img{object-fit:fill;transform-origin:0 0;transition:none}
 #house-exterior .exterior-garage-car{z-index:2;min-width:44px;min-height:44px}
 .exterior-garage-car .exterior-vehicle-label{top:-12px;left:50%;max-width:250px;white-space:normal;text-align:center}
@@ -64,3 +65,6 @@ body[data-house-scene=exterior]:has(.house-hint.expanded) #exterior-enter,body[d
 .exterior-garage-car[data-warn=true]::after{content:'';position:absolute;inset:0;box-shadow:inset 0 0 12px #f0bd7166;pointer-events:none}
 #exterior-room-shortcuts,#exterior-traffic-shortcuts,#exterior-status{z-index:110}
 @media(max-width:700px){#exterior-pictures>img{object-position:80% bottom}#exterior-room-shortcuts{bottom:142px}#exterior-traffic-shortcuts{top:auto;right:auto;left:50%;transform:translateX(-50%);bottom:92px}#exterior-status{display:none}}
+
+/* Comparison tools never belong to the household-facing House. */
+body[data-house-preview="false"] [data-house-preview-only]{display:none!important}

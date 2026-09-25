@@ -37,3 +37,25 @@ body[data-house-scene=garage] #hybrid-outside{display:block;top:225px}
 body:has(#hybrid-garage[data-view=dashboard]) #hybrid-outside{display:none}
 @keyframes garage-dashboard-in{from{opacity:0;transform:scale(1.04)}to{opacity:1;transform:scale(1)}}
 @media(prefers-reduced-motion:reduce){#garage-images{transition:none}#garage-dashboard{animation:none}.cluster-charge-track i{transition:none}}
+
+/* One photographic source, independently visible left/right parking spaces. */
+#garage-occupied{mask-image:none;-webkit-mask-image:none;clip-path:inset(0 50% 0 0)}
+#garage-occupied-right{clip-path:inset(0 0 0 50%);transition:opacity 900ms ease}
+#hybrid-garage #garage-car-right{position:absolute;left:55%;top:27%;width:38%;height:46%;z-index:2;background:transparent;border:0;border-radius:20px}
+#garage-car-right span{opacity:0;background:#192b26e8;padding:10px;border-radius:20px}
+#garage-car-right:hover span,#garage-car-right:focus-visible span{opacity:1}
+#garage-car[hidden],#garage-car-right[hidden]{display:none}
+@media(prefers-reduced-motion:reduce){#garage-occupied-right{transition:none}}
+
+#garage-dashboard[data-profile="gls450-white-23"] #garage-cluster-ui{left:35.5%;top:44%;width:29%;height:19%}
+#garage-dashboard[data-profile="murano-white"] #garage-cluster-ui{left:44.6%;top:44%;width:11%;height:19.6%;gap:.15cqw;font-size:.65cqw}
+#garage-dashboard[data-profile="murano-white"] .cluster-top{font-size:.6cqw;gap:.2cqw}
+#garage-dashboard[data-profile="murano-white"] .cluster-top span:first-child{max-width:66%}
+#garage-dashboard[data-profile="murano-white"] .cluster-readings{grid-template-columns:1fr;gap:.3cqw}
+#garage-dashboard[data-profile="murano-white"] .cluster-readings>div{display:grid;grid-template-columns:1fr auto;align-items:center}
+#garage-dashboard[data-profile="murano-white"] .cluster-readings span{font-size:.65cqw;letter-spacing:.05em}
+#garage-dashboard[data-profile="murano-white"] .cluster-readings strong{font-size:1.7cqw}
+#garage-dashboard[data-profile="murano-white"] .cluster-readings small{font-size:.65cqw;grid-column:2;text-align:right}
+#garage-dashboard[data-profile="murano-white"] .cluster-charge-track{grid-column:1/-1;width:100%;height:.2cqw}
+#garage-dashboard[data-profile="murano-white"] #cluster-notice{font-size:.6cqw}
+#hybrid-garage #garage-dashboard[data-profile="murano-white"] #cluster-more{font-size:.65cqw;min-height:18px}

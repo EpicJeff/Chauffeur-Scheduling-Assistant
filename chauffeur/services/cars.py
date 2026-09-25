@@ -105,8 +105,8 @@ def fleet_status(cars=None, settings=None):
     THE single answer to that question. The garage draws these rows as
     plaques over the cars and the home board draws them as a card, and a
     fourth car must not mean two different things on two surfaces. Read
-    only, and honest with no Home Assistant: every level comes back None
-    and every car is home, which is what "resting" says on the plaque.
+    only: unavailable levels come back None. A car without a tracker rests
+    at home; an assigned but unavailable tracker reports unknown presence.
     """
     from services import storage
     batt_warn, fuel_warn = warn_thresholds(settings)
@@ -132,10 +132,13 @@ def fleet_status(cars=None, settings=None):
             'color': _get(c, 'color_code') or '',
             'body': _get(c, 'body_type') or '',
             'exterior_image': _get(c, 'exterior_image') or None,
+            'house_artwork': _get(c, 'house_artwork') or None,
             'seats': int(_get(c, 'seat_capacity') or 4),
             # No tracker is not "missing"; it is a car that never says where
             # it is, and the household's answer to that has always been home.
-            'present': (loc is None) or (str(loc.get('state') or 'home') == 'home'),
+            # An assigned tracker that cannot answer is unknown, never home.
+            'present': (None if _get(c, 'ha_device_tracker') else True) if loc is None
+                       else str(loc.get('state') or '') == 'home',
             'battery_pct': batt,
             'fuel_pct': fuel,
             'range': lv.get('range'),

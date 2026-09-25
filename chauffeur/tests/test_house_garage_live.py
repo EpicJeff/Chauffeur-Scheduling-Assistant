@@ -97,7 +97,9 @@ def main():
             # Without an explicit artwork-to-car binding, the stock scene does
             # not infer identity from a matching model name or fabricate values.
             page.goto(served.url('house?compare=exterior&light=day&scene=garage'))
-            mode('garage')
+            mode('garage'); occupied(False)
+            assert page.locator('#garage-car').is_hidden()
+            page.locator('#garage-presence').select_option('home'); occupied(True)
             page.locator('#garage-car').click()
             page.wait_for_selector('#garage-dashboard:visible')
             assert page.locator('#cluster-energy').inner_text() == '—'

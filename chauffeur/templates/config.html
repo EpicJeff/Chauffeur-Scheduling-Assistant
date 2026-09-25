@@ -2184,6 +2184,14 @@
                                         <button x-show="newCar.image" @click="newCar.image = null"
                                             class="text-red-400 hover:text-red-300 font-bold text-sm px-2">✕</button>
                                     </div>
+                                    <label for="car-house-artwork" class="block text-gray-400 mt-3 mb-1 text-sm">House vehicle appearance</label>
+                                    <select id="car-house-artwork" x-model="newCar.house_artwork" class="w-full bg-gray-900 border border-gray-600 rounded p-2">
+                                        <option value="">No scene assignment / uploaded artwork</option>
+                                        <option value="ev9-white-black-roof">White 2026 Kia EV9 GT-Line / black roof / left garage bay</option>
+                                        <option value="gls450-white-23">White 2022 Mercedes GLS 450 / 23-inch wheels / right garage bay</option>
+                                        <option value="murano-white">White 2021 Nissan Murano / driveway</option>
+                                    </select>
+                                    <p class="text-xs text-gray-500 mt-2">Assign each scene vehicle to its matching saved car. Both House views follow that car's Home/Away status and telemetry. No assignment leaves the space empty.</p>
                                     <label class="block text-gray-400 mt-3 mb-1 text-sm">House driveway artwork</label>
                                     <p class="text-xs text-gray-500 mb-2">Optional transparent PNG or WebP of the whole vehicle, facing toward the lower left.</p>
                                     <img x-show="newCar.exterior_image" :src="newCar.exterior_image" class="w-28 h-20 object-contain" alt="Vehicle driveway artwork">
@@ -4629,10 +4637,12 @@
                 newDriverHashtagInput: '',
                 newPassenger: { name: '', hashtags: [], calendar_ids: [], requires_attendance: false },
                 cars: [],
+                scopeTuneOpen: false,
+                scopeMeta: null,
                 showCarForm: false,
                 editCarId: null,
                 carPaxMode: 'any',
-                newCar: { name: '', icon: '', color_code: '#6b7280', seat_capacity: 4, body_type: '', allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '' },
+                newCar: { name: '', icon: '', exterior_image: '', house_artwork: '', color_code: '#6b7280', seat_capacity: 4, body_type: '', allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '' },
                 newCarRange: { start: '', end: '', reason: '' },
                 showDriverForm: false,
                 showPassengerForm: false,
@@ -5541,7 +5551,7 @@
                 },
 
                 blankCar() {
-                    return { name: '', icon: '', image: null, exterior_image: null, color_code: '#6b7280', seat_capacity: 4, body_type: '', allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '', ha_device_tracker: '', ha_battery_entity: '', ha_fuel_entity: '', ha_range_entity: '' };
+                    return { name: '', icon: '', image: null, exterior_image: null, house_artwork: '', color_code: '#6b7280', seat_capacity: 4, body_type: '', allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '', ha_device_tracker: '', ha_battery_entity: '', ha_fuel_entity: '', ha_range_entity: '' };
                 },
 
                 async onCarArtworkPicked(event) {
@@ -5609,6 +5619,7 @@
                         icon: car.icon || '',
                         image: car.image || null,
                         exterior_image: car.exterior_image || null,
+                        house_artwork: car.house_artwork || '',
                         color_code: car.color_code || '#6b7280',
                         seat_capacity: car.seat_capacity != null ? car.seat_capacity : 4,
                         body_type: car.body_type || '',
@@ -5677,6 +5688,7 @@
                             ? payload.allowed_passenger_ids : null;
                         payload.default_driver_id = payload.default_driver_id || null;
                         payload.body_type = payload.body_type || null;
+                        payload.house_artwork = payload.house_artwork || null;
                         for (const k of ['ha_device_tracker', 'ha_battery_entity', 'ha_fuel_entity', 'ha_range_entity']) {
                             payload[k] = (payload[k] || '').trim() || null;
                         }

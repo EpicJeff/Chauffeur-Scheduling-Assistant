@@ -6,16 +6,16 @@
   var photo = document.getElementById('exterior-photo');
   var shortcuts = document.getElementById('exterior-traffic-shortcuts');
   var payload = '', parked = [];
+  var vehicles = window.ChauffeurHouseVehicles;
   // Both parking spaces are inside the same photographed double garage.
   // Never put an unrelated vehicle into an occupied bay just because it is home.
   var bays = [
-    {key:'left',art:'kia-ev9-2026-gray.png',box:[59.8,64.0,6.0,9.0]},
-    {key:'right',art:'mercedes-gls-2022-white.png',box:[66.0,62.6,6.5,9.5]}
+    {key:'left',profile:'ev9-white-black-roof',box:[59.8,64.0,6.0,9.0]},
+    {key:'right',profile:'gls450-white-23',box:[66.0,62.6,6.5,9.5]}
   ];
   // Coordinates belong to the corrected 1536x1024 master, without warping.
   function polygon(points) { return 'polygon('+points.map(p=>p[0]/1536*100+'% '+p[1]/1024*100+'%').join(',')+')'; }
   var garageClip=polygon([[918,642],[1130,607],[1130,735],[995,762],[918,747]]);
-  function matches(item, filename) { return typeof item.exterior_image==='string' && item.exterior_image.split('?')[0].endsWith('/'+filename); }
   function project() {
     if (!photo.naturalWidth) return;
     var scale = Math.max(innerWidth/photo.naturalWidth, innerHeight/photo.naturalHeight);
@@ -45,7 +45,7 @@
     if (artwork && /^(data:image\/(png|webp);base64,|\/?static\/house_hybrid\/vehicles\/)/.test(artwork)) {
       var image = document.createElement('img'); image.alt = ''; image.draggable = false;
       image.src = artwork.startsWith('static/') ? (window.chfBase || '/') + artwork : artwork;
-      image.onerror = function () { image.remove(); art.style.removeProperty('background'); };
+      image.onerror = function () { button.remove(); };
       art.style.background = 'none'; art.appendChild(image);
     }
     button.appendChild(art);
@@ -53,11 +53,12 @@
     button.appendChild(tag); button.addEventListener('click', function () { open(key); });
     scene.appendChild(button);
   }
+  var isPreview = document.body.dataset.housePreview === 'true';
   var query = new URL(location.href);
-  var assigned = query.searchParams.get('driveway_car');
+  var assigned = isPreview ? query.searchParams.get('driveway_car') : null;
   var preview = document.getElementById('exterior-driveway-preview');
   var busPreview = document.getElementById('exterior-bus-preview');
-  if (query.searchParams.get('traffic_demo') === '1') preview.value = 'home';
+  if (isPreview && query.searchParams.get('traffic_demo') === '1') preview.value = 'home';
   var latest = {};
   function parkedBay(bay, item) {
     var button=document.createElement('button');button.type='button';button.className='exterior-patch-target exterior-garage-car';button.dataset.vehicle=item.id;button.dataset.bay=bay.key;button.dataset.warn=String(!!item.warn);
@@ -66,7 +67,7 @@
     button.setAttribute('aria-label',label);button.title=label;
     Object.assign(button.style,{left:bay.box[0]+'%',top:bay.box[1]+'%',width:bay.box[2]+'%',height:bay.box[3]+'%'});
     var tag=document.createElement('span');tag.className='exterior-vehicle-label';tag.textContent=label;button.appendChild(tag);
-    button.addEventListener('click',function(){open('cars');});scene.appendChild(button);
+    button.addEventListener('click',function(){window.chfVehicleCluster(item.id);});scene.appendChild(button);
   }
   function garage(items) {
     var key=items[0]&&items[1]?'both':items[0]?'left':items[1]?'right':'empty';
@@ -77,7 +78,7 @@
     items.forEach(function(item,i){if(item)parkedBay(bays[i],item);});
     image.onerror=function(){layer.remove();scene.querySelectorAll('.exterior-garage-car').forEach(b=>b.remove());};
   }
-  function patch(name, label, key, id, box) {
+  function patch(name, label, key, id, box, vehicleId) {
     var shadow=document.createElement('div');shadow.className='exterior-driveway-shadow';shadow.setAttribute('aria-hidden','true');scene.appendChild(shadow);
     var img = document.createElement('img');
     img.src = scene.dataset[name]; img.alt = ''; img.className = 'is-active exterior-scene-patch';
@@ -87,7 +88,7 @@
     button.setAttribute('aria-label',label); button.title = label;
     button.style.left = box[0]+'%'; button.style.top = box[1]+'%';
     button.style.width = box[2]+'%'; button.style.height = box[3]+'%';
-    button.addEventListener('click',function () { open(key); });
+    button.addEventListener('click',function () { if (vehicleId) window.chfVehicleCluster(vehicleId); else open(key); });
     img.onerror = function () { button.remove(); img.remove(); shadow.remove(); };
     scene.appendChild(button);
   }
@@ -96,24 +97,30 @@
   });
   function accept(state) {
     state = state || {}; latest = state;
+    var drivewayMode = isPreview ? preview.value : 'live';
+    var busMode = isPreview ? busPreview.value : 'live';
     var cars = Array.isArray(state.garage?.cars) ? state.garage.cars : [];
-    var bus = busPreview.value === 'home' || (busPreview.value === 'live' && state.curb?.bus === true);
-    var car = cars.find(function (item) { return assigned ? item.id === assigned : matches(item,'nissan-murano-2021-blue.png'); });
-    var driveway = preview.value === 'home' || (preview.value === 'live' && car?.present === true);
-    var next = JSON.stringify([cars,bus,driveway,!!state.curb?.demo,preview.value,busPreview.value]);
+    var bus = busMode === 'home' || (busMode === 'live' && state.curb?.bus === true);
+    var car = assigned ? cars.find(item => String(item.id) === assigned) : vehicles.assigned(cars, 'murano-white');
+    var driveway = drivewayMode === 'home' || (drivewayMode === 'live' && car?.present === true);
+    var next = JSON.stringify([cars,bus,driveway,!!state.curb?.demo,drivewayMode,busMode]);
     if (next === payload) return;
     payload = next; scene.replaceChildren(); shortcuts.replaceChildren();
     parked = cars.filter(function (car) { return car.present === true; });
     if (cars.length) shortcut('Vehicles · '+parked.length+' home', 'cars', 'exterior-cars-shortcut');
     garage(bays.map(function(bay){
-      var item=cars.find(c=>matches(c,bay.art));
+      var item=vehicles.assigned(cars,bay.profile);
       return item?.present===true && item!==car?item:null;
     }));
     if (driveway) {
-      patch('driveway', preview.value === 'home' ? 'Preview · Blue Nissan Murano' : car.name, 'cars', 'driveway-car', [46.7,71.5,16.3,14.3]);
+      patch('driveway', drivewayMode === 'home' ? 'Preview · White Nissan Murano' : car.name, 'cars', 'driveway-car', [46.7,71.5,16.3,14.3], car?.id);
     }
+    // Uploaded cutouts are real vehicle artwork too, independent of built-in slots.
+    cars.filter(item => item.present === true && item !== car && !vehicles.profile(item) && vehicles.uploaded(item)).forEach(function (item, index) {
+      actor(0, [.39 + (index % 3)*.17, .91 + Math.floor(index/3)*.06, .17], item.name || 'Vehicle', 'cars', item.id, item.warn, vehicles.uploaded(item));
+    });
     if (bus) {
-      var busLabel = (state.curb?.demo || busPreview.value === 'home') ? 'Demo · School bus nearby' : 'School bus nearby';
+      var busLabel = (state.curb?.demo || busMode === 'home') ? 'Demo · School bus nearby' : 'School bus nearby';
       actor(7,[.185,.99,.37], busLabel, 'schedule', 'school-bus', false);
       shortcut(busLabel, 'schedule', 'exterior-bus-shortcut');
     }

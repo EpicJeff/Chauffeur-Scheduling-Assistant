@@ -1,6 +1,8 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.181 (2026-09-25).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.183 (2026-09-25).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**Personal House vehicles (v2.499.183).** Config > Family > Vehicles assigns a saved car to the white EV9 GT-Line with black roof (left garage), white GLS 450 with 23-inch wheels (right garage), or white Murano (driveway). The photographic exterior and interior garage share those assignments and Home/Away state; an unassigned bay stays empty. Each car opens its own live battery/fuel and range instruments. Garage-car windshields match their garage bay; the driveway-car windshield looks toward the house and reflects both garage cars' presence. Missing telemetry stays unavailable. Preview controls and room shortcut bars appear only in comparison mode. Uploaded custom driveway cutouts also render for home vehicles. [Asset and validation record](../docs/superpowers/reports/2026-09-25-personal-house-vehicles.md).
 
 **House experience choice (v2.499.181).** Config > Boards includes "Use the new House experience" next to "Use The House as Home". The independent household setting defaults off; enabling it makes normal `/house` visits use the photographic exterior and connected rooms, without comparison controls or a WebGL requirement. Both switches together make this the Home experience. Disabling the new experience restores 3D on the next visit or refresh. Draft/editor views and explicit comparison URLs remain available.
 

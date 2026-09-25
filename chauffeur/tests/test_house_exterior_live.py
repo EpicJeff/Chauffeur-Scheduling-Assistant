@@ -59,13 +59,8 @@ def main():
             page.locator('#exterior-driveway-preview').select_option('home')
             page.wait_for_selector('[data-vehicle="driveway-car"]')
             page.wait_for_function("Array.from(document.querySelectorAll('.exterior-scene-patch')).every(i=>i.complete && i.naturalWidth)")
-            assert page.locator('.exterior-scene-patch').evaluate('''i=>{
-                const c=document.createElement('canvas');c.width=i.naturalWidth;c.height=i.naturalHeight;
-                const x=c.getContext('2d');x.drawImage(i,0,0);
-                const alpha=(px,py)=>x.getImageData(px,py,1,1).data[3];
-                return [[0,0],[500,800],[1200,900],[850,600],[1000,600]].every(p=>alpha(...p)===0)
-                    && alpha(800,780)>240 && getComputedStyle(i).clipPath==='none';
-            }'''), 'driveway uses real transparent pixels, not a clipped pavement patch'
+            # Preserve the photographed contact shadow rather than scale a cutout.
+            assert page.locator('.exterior-scene-patch').evaluate("i=>i.src.includes('exterior-personal-vehicles.png') && getComputedStyle(i).clipPath.startsWith('polygon(')")
             page.screenshot(path=str(out/'vehicles-composite.png'))
             # The patch must retain the photograph's exact cover projection,
             # including its bottom alignment at narrow and ultrawide sizes.
@@ -82,10 +77,10 @@ def main():
                         && Math.abs(plane.height-base.naturalHeight*s)<1
                         && Math.abs(plane.x-(innerWidth-plane.width)*(innerWidth<701?.8:.5))<1
                         && Math.abs(plane.bottom-innerHeight)<1
-                        && Math.abs(r.width-plane.width*.55)<1
-                        && Math.abs(r.height-plane.height*.55)<1
-                        && Math.abs(r.x-plane.x-plane.width*.2488)<1
-                        && Math.abs(r.y-plane.y-plane.height*.37583)<1;
+                        && Math.abs(r.width-plane.width)<1
+                        && Math.abs(r.height-plane.height)<1
+                        && Math.abs(r.x-plane.x)<1
+                        && Math.abs(r.y-plane.y)<1;
                 }''')
                 page.screenshot(path=str(out/f'vehicles-{width}.png'))
                 if width==390:
@@ -114,11 +109,13 @@ def main():
             page.locator('.exterior-garage-car[data-vehicle=suv]').hover()
             page.screenshot(path=str(out/'garage-hover.png'))
             page.locator('.exterior-garage-car[data-vehicle=suv]').click()
-            page.wait_for_selector('.house-life-panel:visible')
-            page.get_by_role('button', name='Close and return to house', exact=True).click()
+            page.wait_for_selector('#garage-dashboard:visible')
+            assert page.locator('#garage-dashboard').get_attribute('data-vehicle') == 'suv'
+            page.locator('#garage-dashboard-back').click(); mode('exterior')
             page.locator('[data-vehicle="driveway-car"]').click()
-            page.wait_for_selector('.house-life-panel:visible')
-            page.get_by_role('button', name='Close and return to house', exact=True).click()
+            page.wait_for_selector('#garage-dashboard:visible')
+            assert page.locator('#garage-dashboard').get_attribute('data-vehicle') == 'murano'
+            page.locator('#garage-dashboard-back').click(); mode('exterior')
             page.locator('#exterior-driveway-preview').select_option('away')
             assert page.locator('[data-vehicle="driveway-car"]').count() == 0
             page.locator('#exterior-bus-preview').select_option('away')

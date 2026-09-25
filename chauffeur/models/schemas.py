@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any, Dict, Literal
 from datetime import datetime
 import uuid
 import time
@@ -128,6 +128,7 @@ class Car(BaseModel):
     icon: Optional[str] = None      # emoji; None -> generic car glyph
     image: Optional[str] = None     # small data-URL photo (~128px); shown where chips have room
     exterior_image: Optional[str] = None  # transparent vehicle cutout for the hybrid driveway
+    house_artwork: Optional[Literal['ev9-white-black-roof', 'gls450-white-23', 'murano-white']] = None
     color_code: str = '#6b7280'
     seat_capacity: int = 4          # passenger seats, excluding the driver
     # sedan|suv|truck|minivan|hatch|wagon|van; None/'' = generic (the house
