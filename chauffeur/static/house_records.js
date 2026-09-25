@@ -29,6 +29,7 @@
       button.tabIndex = chosen ? 0 : -1;
       button.setAttribute('aria-label', (chosen ? 'Play ' : 'Browse ') + jacket.dataset.name);
       var save = jacket.querySelector('.record-save'); save.hidden = !chosen;
+      jacket.querySelector('.record-more').hidden = !chosen;
       if (chosen) selectedUri = button.dataset.uri;
     });
     records.dataset.selected = String(selectedIndex);
@@ -79,12 +80,15 @@
         await window.HouseRadio.playItem(item, owner);
         if (active && v === visit && member.value === owner) loadShelf();
       });
+      play.addEventListener('contextmenu',function(event){event.preventDefault();window.HouseRadioControls.openRecord(item,play);});
       var saved = data.favorites.some(function (f) { return f.uri === item.uri; });
       var save = el('button', 'record-save', saved ? '♥ Saved' : '♡ Save'); save.type = 'button'; save.dataset.uri = item.uri;
       save.setAttribute('aria-label', (saved ? 'Remove ' : 'Save ') + (item.name || 'record') + (saved ? ' from favorites' : ' to favorites'));
       save.setAttribute('aria-pressed', String(saved));
       save.addEventListener('click', function () { toggleFavorite(item, saved); });
-      jacket.append(back, play, save); records.append(jacket);
+      var more=el('button','record-more','More');more.type='button';more.setAttribute('aria-label','More options for '+jacket.dataset.name);
+      more.addEventListener('click',function(){window.HouseRadioControls.openRecord(item,more);});
+      jacket.append(back, play, save, more); records.append(jacket);
     });
     var rememberedIndex = items.findIndex(function (item) { return item.uri === selectedUri; });
     arrange(rememberedIndex < 0 ? selectedIndex : rememberedIndex);
@@ -179,10 +183,11 @@
   });
   records.addEventListener('pointercancel', function () { gesture = null; });
   document.querySelectorAll('[data-radio-camera]').forEach(function (button) {
-    button.addEventListener('click', function () { searchMode(false); aim(button.dataset.radioCamera); });
+    button.addEventListener('click', function () { window.HouseRadioControls?.close();searchMode(false); aim(button.dataset.radioCamera); });
   });
   window.addEventListener('radio-player-state', function (event) { available = event.detail.available; busy = event.detail.busy; paintButtons(); });
   window.HouseRecords = {
+    refresh: function () { if(active)return loadShelf(); },
     open: async function () {
       active = true; var v = ++visit; shelf.hidden = false; aim('radio'); selectedIndex = 0; selectedUri = ''; mode = 'favorites'; data = {favorites:[], recent:[]}; results = []; render();
       member.replaceChildren(new Option('Whose records?', ''));

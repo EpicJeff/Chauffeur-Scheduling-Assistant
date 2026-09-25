@@ -1,4 +1,5 @@
 """Record shelf and search: real UI/shared music logic, intercepted music APIs."""
+from playwright.sync_api import expect
 import json
 import base64
 from pathlib import Path
@@ -57,6 +58,8 @@ def main():
             page.route('**/api/v2/chat/stream*', lambda r: r.fulfill(status=204, body=''))
             page.route('**/api/members', lambda r: reply(r, [{'id':'a','name':'Alex'}, {'id':'b','name':'Sam'}]))
             page.route('**/api/ha/media_players', lambda r: reply(r, [dict(entity_id='media_player.living', name='Living room',state='paused',volume_level=.3)]))
+            page.route('**/api/music/**', lambda r: reply(r, {}))
+            page.route('**/api/music/playlists/editable', lambda r: reply(r, []))
             page.route('**/api/music/favorites*', lambda r: reply(r, {'items':[]}))
             page.route('**/api/music/my**', shelf)
             page.route('**/api/music/search*', search)
@@ -73,8 +76,16 @@ def main():
             page.locator('#hybrid-hotspots [data-card="music"]').click()
             page.locator('#radio-library').wait_for(state='visible')
             page.wait_for_function('document.querySelectorAll("#radio-member option").length===3')
+            def browse(owner, view='favorites'):
+                # The shelf's selectors now live inside the radio screen.
+                if page.viewport_size['width'] <= 700:
+                    page.locator('#radio-camera [data-radio-camera=radio]').click()
+                page.locator('#radio-queue-open').click()
+                page.locator('#radio-panel-member').select_option(owner)
+                page.locator('#radio-panel-view').select_option(view)
+                page.locator('#radio-show-records').click()
             assert page.locator('.record-jacket').count() == 0 and not writes
-            page.locator('#radio-member').select_option('a')
+            browse('a')
             page.locator('.record-jacket').nth(5).wait_for(state='attached')
             assert page.locator('.record-jacket.is-selected').count() == 1
             before = len(writes)
@@ -82,7 +93,7 @@ def main():
             page.mouse.click(neighbor['x'] + neighbor['width'] * .9, neighbor['y'] + neighbor['height'] * .5)
             assert page.get_by_role('button', name='Play Blue Train', exact=True).is_visible()
             assert len(writes) == before, 'Browsing a spine must not play it'
-            page.locator('#radio-record-prev').click()
+            page.locator('#radio-records').press('ArrowLeft')
             before = len(writes)
             front = page.locator('.is-selected .record-cover').bounding_box()
             x, y = front['x'] + front['width']*.7, front['y'] + front['height']*.5
@@ -92,7 +103,7 @@ def main():
             page.mouse.up()
             assert page.locator('#radio-records').get_attribute('data-selected') == '1'
             assert len(writes) == before, 'Swiping selects without playing'
-            page.locator('#radio-record-prev').click()
+            page.locator('#radio-records').press('ArrowLeft')
             assert page.locator('#radio-library').evaluate('el => el.parentElement.id === "house-radio" && getComputedStyle(el,"::after").display === "none"')
             assert page.locator('#house-radio').bounding_box() == page.locator('#hybrid-detail-picture').bounding_box()
             assert 'api/ha/image64/' in page.locator('.record-art').first.get_attribute('src')
@@ -119,9 +130,9 @@ def main():
             page.wait_for_function('document.getElementById("house-radio").getAttribute("aria-busy")==="false"')
             assert writes[-1]['entity_id'] == 'media_player.living' and writes[-1]['member_id'] == 'a'
             assert writes[-1]['item']['uri'] == albums[0]['uri']
-            page.locator('#radio-recent').click()
+            browse('a', 'recent')
             page.get_by_role('button', name='Play Kind of Blue', exact=True).wait_for()
-            page.locator('#radio-member').select_option('b')
+            browse('b', 'recent')
             page.wait_for_function('document.querySelectorAll(".record-jacket").length===0')
             page.locator('#radio-search-open').click()
             page.locator('#radio-query').fill('Miles Davis')
@@ -129,22 +140,32 @@ def main():
             page.locator('.record-jacket').nth(5).wait_for(state='attached')
             page.screenshot(path=str(out/'search-desktop.png'))
             assert 'q=Miles%20Davis' in searches[-1]
-            page.get_by_role('button', name='Save Kind of Blue to favorites', exact=True).click()
-            page.get_by_role('button', name='Remove Kind of Blue from favorites', exact=True).wait_for()
+            page.locator('#radio-search-close').click()
+            page.locator('#radio-queue-open').click()
+            page.locator('#radio-panel-view').select_option('search')
+            page.locator('#radio-panel-query').fill('Miles Davis')
+            page.locator('#radio-panel-search button[type=submit]').click()
+            favorite = page.get_by_role('button', name='Favorite Kind of Blue', exact=True)
+            favorite.click()
+            expect(favorite).to_have_attribute("aria-pressed", "true")
             assert writes[-1]['member_id'] == 'b'
             assert len(data['a']['favorites']) == 6 and len(data['b']['favorites']) == 1
-            page.get_by_role('button', name='Remove Kind of Blue from favorites', exact=True).click()
-            page.get_by_role('button', name='Save Kind of Blue to favorites', exact=True).wait_for()
+            favorite.click()
+            expect(favorite).to_have_attribute("aria-pressed", "false")
             assert data['b']['favorites'] == []
+            page.locator('#radio-panel-close').click()
+            page.locator('#radio-search-open').click()
+            page.locator('#radio-query').fill('Miles Davis')
+            page.locator('#radio-query').press('Enter')
+            page.locator('.record-jacket').nth(5).wait_for(state='attached')
             page.set_viewport_size({'width':390,'height':844})
             box = page.locator('#radio-query').bounding_box()
             assert box['x'] >= 0 and box['x'] + box['width'] <= 390 and box['height'] >= 40, box
             page.screenshot(path=str(out/'search-phone.png'))
             page.locator('#radio-camera [data-radio-camera="records"]').tap()
-            page.locator('#radio-record-next').tap()
+            page.locator('#radio-records').press('ArrowRight')
             page.wait_for_function('document.getElementById("radio-records").dataset.selected==="1"')
-            page.locator('#radio-favorites').tap()
-            page.locator('#radio-member').select_option('a')
+            browse('a')
             page.locator('.record-jacket').nth(5).wait_for(state='attached')
             page.locator('#radio-records').press('ArrowRight')
             page.locator('#radio-records').press('ArrowRight')

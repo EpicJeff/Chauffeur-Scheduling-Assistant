@@ -62,6 +62,59 @@
 }
 @media(max-height:650px) and (min-width:701px){
  #hybrid-room-frame[data-view="music"]{--radio-width:100vw}
- #hybrid-room-frame[data-view="music"] #hybrid-detail-picture,#house-radio{top:33%}
+ #hybrid-room-frame[data-view="music"] #hybrid-detail-picture,#hybrid-room-frame[data-view="music"] #house-radio{top:33%}
 }
 @media(prefers-reduced-motion:reduce){#hybrid-room-frame[data-view="music"] #hybrid-detail-picture,#hybrid-room-frame[data-view="music"] #house-radio,.record-jacket{transition:none}}
+
+/* Playback keys are brass hardware registered to the front of the radio. */
+#radio-transport[hidden],#radio-music-panel[hidden],#radio-music-panel [hidden],.record-more[hidden]{display:none!important}
+/* Hardware is baked into the photograph. These are transparent hit targets. */
+#radio-transport{position:absolute;left:33.3%;top:49.8%;width:19%;height:4.7%;display:flex;pointer-events:auto}
+#radio-transport button{flex:1;min-width:0;height:100%;border:0;border-radius:50%;background:transparent;box-shadow:none;color:transparent;font-size:0;padding:0;cursor:pointer}
+#radio-transport button:disabled{cursor:default}
+.radio-output{left:20%;top:51.3%;width:7.3%}
+#radio-queue-open{position:absolute;bottom:2%;right:46px;width:44px;height:44px;border:0;background:transparent;color:#ffd497;font:22px monospace;cursor:pointer}
+#radio-stations{width:calc(100% - 92px)}
+#radio-transport button:focus-visible,#radio-queue-open:focus-visible,.record-more:focus-visible{outline:2px solid #ffe0a0;outline-offset:3px}
+.record-more{position:absolute;left:4%;top:4%;min-height:44px;min-width:44px;padding:4px 8px;border:1px solid #b59b73;border-radius:2px;background:#e7d9b8;color:#3f2916;transform:translateZ(5px);font:12px Georgia;cursor:pointer}
+/* The library/queue is drawn INSIDE the amber tuning glass. Zoom the entire
+   photograph and its controls together, rather than placing a panel over it. */
+#hybrid-room-frame.radio-controls-open{--radio-control-zoom:2.7}
+#hybrid-room-frame.radio-controls-open #hybrid-detail-picture,#hybrid-room-frame.radio-controls-open #house-radio{top:50%;transform:translate(-42.85%,-40.75%) scale(var(--radio-control-zoom));transform-origin:42.85% 40.75%}
+.radio-controls-open .radio-glass>*:not(#radio-music-panel){visibility:hidden}
+#radio-music-panel{position:absolute;inset:0;width:calc(100% * var(--radio-control-zoom));height:calc(100% * var(--radio-control-zoom));transform:scale(calc(1 / var(--radio-control-zoom)));transform-origin:top left;display:flex;flex-direction:column;overflow:hidden;padding:10px 14px;color:#ffd497;background:transparent;font:13px/1.35 ui-monospace,monospace;text-shadow:0 0 5px #ffa83b66;box-sizing:border-box}
+#radio-music-panel header{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0;border-bottom:1px solid #e2ab5d55}
+#radio-music-panel header select{min-width:0;width:auto;max-width:42%;font-size:12px}
+#radio-music-panel h2{font:600 14px ui-monospace,monospace;letter-spacing:.15em;margin:0}
+.radio-display-body{flex:1;min-height:0;overflow:auto;scrollbar-width:thin;scrollbar-color:#ba8c48 #3a210e}
+#radio-music-panel button{min-height:36px;border:0;border-radius:0;padding:5px 8px;background:transparent;color:inherit;font:inherit;text-shadow:inherit;cursor:pointer}
+#radio-music-panel button:hover,#radio-music-panel button:focus-visible,#radio-music-panel button[aria-pressed=true]{background:#d3943429;outline:1px solid #e2ab5d88;outline-offset:-2px}
+#radio-music-panel button:disabled{opacity:.4;cursor:default}
+#radio-music-panel nav,.radio-item-actions,.radio-panel-now{display:flex;flex-wrap:wrap;align-items:center;gap:3px;border-bottom:1px solid #e2ab5d33}
+.radio-panel-now>span{flex:1;font-weight:600}
+#radio-now-favorite{font-size:22px!important}
+#radio-music-panel input:not([type=checkbox]),#radio-music-panel select{max-width:100%;min-height:36px;border:0;border-bottom:1px solid #e2ab5d88;border-radius:0;background:#38220de0;color:#ffd497;padding:4px;font:inherit}
+#radio-panel-search{display:flex;flex-wrap:wrap;gap:6px;align-items:end}
+#radio-panel-search label{display:flex;flex-direction:column;gap:3px;font-size:11px}
+#radio-panel-search label:first-child{flex:1 1 100%}
+#radio-panel-search label:has([type=checkbox]){flex-direction:row;align-items:center;min-height:36px}
+#radio-panel-items article{border-top:1px solid #e2ab5d44;padding:5px 0;display:flow-root}
+#radio-panel-items article>button{font-weight:600;text-align:left;max-width:100%}
+#radio-panel-items small{display:block;color:#d8ac70}
+#radio-panel-items img{display:none}
+#radio-panel-items .is-current{background:#e2ab5d12}
+#radio-panel-status{min-height:18px;margin:5px 0;font-size:11px}
+#radio-panel-playlists{padding:8px;border:1px solid #e2ab5d55}
+#radio-panel-playlists button{margin:3px}
+@media(max-width:700px){#hybrid-room-frame.radio-controls-open{--radio-control-zoom:1.6}#radio-music-panel{padding:5px 8px;font-size:12px}}
+@media(max-height:600px){#hybrid-room-frame.radio-controls-open{--radio-control-zoom:2.4}body:has(#radio-transport:not([hidden])) :is(#chat-overlay-container,#house-comparison,#hybrid-status,#house-compare-measurements){display:none!important}}
+
+/* Nothing is painted over the photographed knobs or onto the record shelf. */
+#house-radio .radio-knob,#house-radio .radio-knob:active{background:transparent;box-shadow:none;border:0;filter:none}
+#house-radio .radio-knob::before,.radio-knob>span,.radio-engraving,.radio-caption,.radio-output>span{display:none}
+.radio-shelf-rail[hidden],.record-save,.record-more,.record-name,.record-credit{display:none!important}
+#radio-library-status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+#radio-show-records{border-bottom:1px solid #e2ab5d55!important}
+@media(max-width:700px){#hybrid-room-frame[data-view="music"]{--radio-width:1160px}}
+
+#hybrid-room-frame.radio-controls-open #radio-camera{display:none}

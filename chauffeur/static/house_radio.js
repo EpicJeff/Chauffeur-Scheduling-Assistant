@@ -81,8 +81,8 @@
     try {
       if (!await send(target)) throw new Error('The speaker did not accept that change. Try again.');
       if (active && visit === epoch && selected === target) preview = false;
-    } catch (_) {
-      if (active && visit === epoch && selected === target) error = 'The speaker did not accept that change. Try again.';
+    } catch (failure) {
+      if (active && visit === epoch && selected === target) error = failure.message || 'The speaker did not accept that change. Try again.';
     } finally {
       if (active && visit === epoch && selected === target) { busy = false; paint(); await refresh(); }
     }
@@ -155,6 +155,10 @@
   function stopPolling() { clearInterval(timer); timer = null; }
   function startPolling() { stopPolling(); if (active && !document.hidden) { refresh(); timer = setInterval(refresh, 5000); } }
   window.HouseRadio = {
+    state: function () { return {active:active, available:!!usable(), busy:busy, player:current(), selected:selected, error:error}; },
+    action: action,
+    refresh: refresh,
+    command: function (command, extra) { return action(target=>MusicLogic.command(target,command,extra || {},opts)); },
     playItem: function (item, member) {
       return action(function (target) { return MusicLogic.play(target, item.uri, item.media_type || 'track', opts,
         {memberId:member || null, item:item}); });
@@ -175,7 +179,7 @@
         paint();
       });
     },
-    close: function () { active = false; ++epoch; ++readTicket; drag = null; busy = false; root.hidden = true; stopPolling(); window.HouseRecords.close(); }
+    close: function () { active = false; ++epoch; ++readTicket; drag = null; busy = false; root.hidden = true; stopPolling(); window.HouseRecords.close(); window.HouseRadioControls?.close(); }
   };
   document.addEventListener('visibilitychange', function () { drag = null; if (document.hidden) stopPolling(); else startPolling(); });
   window.addEventListener('pagehide', stopPolling);

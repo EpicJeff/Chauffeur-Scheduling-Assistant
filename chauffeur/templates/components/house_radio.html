@@ -1,9 +1,26 @@
 <section id="house-radio" aria-label="Living room radio" hidden>
   <div class="radio-glass">
-    <div class="radio-band"><span id="radio-state">CONNECTING</span><span class="radio-lamp" aria-hidden="true"></span></div>
+    <div class="radio-band"><span id="radio-state">CONNECTING</span><span id="radio-live-settings"></span><span class="radio-lamp" aria-hidden="true"></span></div>
     <div id="radio-title">Finding your speakers…</div>
     <div id="radio-subtitle"></div>
     <select id="radio-stations" aria-label="Saved radio stations" title="Choose a saved station"><option>No saved stations</option></select>
+<section id="radio-music-panel" aria-labelledby="radio-panel-title" hidden>
+  <header><h2 id="radio-panel-title" class="sr-only">MUSIC</h2><select id="radio-panel-view" aria-label="Music view"><option value="favorites">Favorites</option><option value="recent">Recent</option><option value="recommendations">Recommended</option><option value="search">Search</option><option value="queue">Queue</option></select><select id="radio-panel-member" aria-label="Music shelf owner"><option value="">House</option></select><button type="button" id="radio-panel-close" aria-label="Close music controls">Back</button></header><div class="radio-display-body">
+
+
+  <form id="radio-panel-search" role="search" hidden>
+    <label>Find music <input id="radio-panel-query" type="search" maxlength="200" placeholder="Artist, album, song" required></label>
+    <label>Type <select id="radio-panel-type"><option value="">All</option><option value="track">Songs</option><option value="album">Albums</option><option value="playlist">Playlists</option><option value="artist">Artists</option><option value="radio">Radio</option></select></label>
+    <label>Provider <select id="radio-panel-provider"><option value="">All providers</option></select></label>
+    <label><input id="radio-panel-library" type="checkbox"> In library</label><button type="submit">Find</button>
+  </form>
+  <p id="radio-panel-status" role="status" aria-live="polite"></p>
+  <div id="radio-panel-playlists" hidden></div>
+  <button type="button" id="radio-show-records">Browse these records on the shelf</button>
+  <div id="radio-panel-items"></div>
+  <div class="radio-panel-now"><button type="button" data-radio-command="radio" title="Start radio from this song">Radio</button><span id="radio-panel-now-title"></span><button type="button" id="radio-now-favorite" hidden>Favorite current song</button></div>
+</div></section>
+    <button id="radio-queue-open" type="button" aria-label="Open music queue" title="Queue">&#9776;</button>
     <span class="radio-glass-hint" aria-hidden="true">TOUCH GLASS FOR STATIONS</span>
     <div id="radio-notice" role="status" aria-live="polite"></div>
     <button id="radio-search-open" type="button" aria-label="Search music" title="Search music">⌕</button>
@@ -29,8 +46,15 @@
     <button id="radio-tune" class="radio-knob radio-rotary" type="button" role="slider" aria-label="Tune saved stations" aria-valuemin="1" aria-valuemax="1" aria-valuenow="1" aria-valuetext="No saved stations" disabled title="Drag to tune; press to play. Arrow keys browse; Enter plays."><span class="radio-pointer" aria-hidden="true"></span></button>
     <span class="radio-caption">TURN · PRESS TO PLAY</span>
   </div>
+<nav id="radio-transport" aria-label="Music controls" hidden>
+  <button type="button" data-radio-command="previous" aria-label="Previous song">&#9198;</button>
+  <button type="button" data-radio-command="next" aria-label="Next song">&#9197;</button>
+  <button type="button" data-radio-command="stop" aria-label="Stop music">&#9632;</button>
+  <button type="button" data-radio-command="shuffle" aria-pressed="false" aria-label="Shuffle" title="Shuffle">&#10536;</button>
+  <button type="button" data-radio-command="repeat" aria-label="Repeat: off" title="Repeat">&#8635;</button>
+</nav>
 <section id="radio-library" aria-label="Record shelf" hidden>
-  <div class="radio-shelf-rail">
+  <div class="radio-shelf-rail" hidden>
     <select id="radio-member" aria-label="Whose record shelf"><option value="">Whose records?</option></select>
     <button id="radio-favorites" type="button" aria-pressed="true">Favorites</button>
     <button id="radio-recent" type="button" aria-pressed="false">Recent</button>

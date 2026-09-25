@@ -308,7 +308,7 @@
     <script src="{{ 'static/house.js'|ver }}" onerror="if(window.ChauffeurHome) window.ChauffeurHome.fallback()"></script>
     {% endif %}
     <script src="{{ 'static/kitchen_overlay.js'|ver }}"></script>
-    {% if house_hybrid %}<script src="{{ 'static/house_records.js'|ver }}"></script><script src="{{ 'static/house_radio.js'|ver }}"></script><script src="{{ 'static/house_hybrid_views.js'|ver }}"></script>{% endif %}
+    {% if house_hybrid %}<script src="{{ 'static/house_records.js'|ver }}"></script><script src="{{ 'static/house_radio.js'|ver }}"></script><script src="{{ 'static/house_radio_controls.js'|ver }}"></script><script src="{{ 'static/house_hybrid_views.js'|ver }}"></script>{% endif %}
     {% if house_comparison %}<script src="{{ 'static/house_comparison.js'|ver }}"></script>{% endif %}
     {% if house_exterior %}<script src="{{ 'static/house_vehicle_artwork.js'|ver }}"></script><script src="{{ 'static/house_markers.js'|ver }}"></script><script src="{{ 'static/house_garage.js'|ver }}"></script><script src="{{ 'static/house_kitchen_surfaces.js'|ver }}"></script><script src="{{ 'static/house_kitchen.js'|ver }}"></script><script src="{{ 'static/house_study_monitor.js'|ver }}"></script><script src="{{ 'static/house_study_surfaces.js'|ver }}"></script><script src="{{ 'static/house_utility_rooms.js'|ver }}"></script><script src="{{ 'static/house_exterior.js'|ver }}"></script><script src="{{ 'static/house_exterior_traffic.js'|ver }}"></script>{% endif %}
     {% if not house_hybrid or house_exterior %}<script src="{{ 'static/house_glance.js'|ver }}"></script>{% endif %}
