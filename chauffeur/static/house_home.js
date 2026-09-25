@@ -33,9 +33,15 @@
     }
   };
   if (surface !== 'home' || query.get('home_view') === 'board') return;
+  // Home is a fresh landing, not a return to room state carried through boards.
+  // Direct /house room links and browser history keep their own destinations.
+  var house = new URL('house', location.href);
+  house.search = location.search;
+  ['scene', 'compare', 'angle'].forEach(function (key) {
+    if (house.searchParams.has(key)) house.searchParams.delete(key);
+  });
   if (hybrid && query.get('render') !== '3d') {
-    var destination = new URL('house', location.href); destination.search = location.search;
-    location.replace(destination.href); return;
+    location.replace(house.href); return;
   }
   if (unavailable()) return;
   // Honor this device's explicit 2D preference without loading the 3D scene.
@@ -49,7 +55,5 @@
     var release = gl.getExtension('WEBGL_lose_context');
     if (release) release.loseContext();
   } catch (_) { remember(); return; }
-  var house = new URL('house', location.href);
-  house.search = location.search;
   location.replace(house.href);
 })();

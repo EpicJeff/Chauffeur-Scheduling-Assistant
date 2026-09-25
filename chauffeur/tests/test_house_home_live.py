@@ -82,6 +82,18 @@ def verify_hybrid(served):
         assert page.evaluate('ChauffeurHome.rest()')
         page.wait_for_function("chfHouseMode()==='exterior'")
         assert 'scene=' not in page.url
+        # Room state carried to another panel page must not change Home's destination.
+        page.goto(served.url('chores?panel=true&scene=living&angle=90&light=night'),wait_until='domcontentloaded')
+        home_link=page.locator('#panel-shelf a[data-slug="home"]')
+        home_link.wait_for(state='visible')
+        assert 'scene=living' in home_link.get_attribute('href'), 'Exercise the intentionally inherited query'
+        home_link.click()
+        page.wait_for_url('**/house?*')
+        page.wait_for_function("window.chfHouseMode?.()==='exterior' && window.chfExteriorProbe?.().ready")
+        assert 'scene=' not in page.url and 'angle=' not in page.url
+        assert 'panel=true' in page.url and 'light=night' in page.url
+        page.goto(served.url('house?panel=true&scene=living'),wait_until='domcontentloaded')
+        page.wait_for_function("window.chfHouseMode?.()==='living'")
         other_context = page.context.browser.new_context(reduced_motion='reduce')
         try:
             other = other_context.new_page()

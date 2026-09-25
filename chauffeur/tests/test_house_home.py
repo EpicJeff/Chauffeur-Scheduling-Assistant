@@ -33,6 +33,14 @@ assert.equal(h.redirects[0],'https://example.test/api/hassio_ingress/abc/house?p
 assert.equal(h.calls.length,0,'Hybrid Home must not require WebGL');
 assert.equal(run({hybrid:true,supported:false,query:'?render=3d'}).redirects.length,0);
 assert.equal(run({hybrid:true,query:'?home_view=board'}).redirects.length,0);
+for(const hybrid of [true,false]) {
+ const query='?panel=true&kiosk=true&theme=ha&tabs=home,meals&scene=living&compare=living&angle=90&light=night';
+ const u=new URL(run({hybrid,prefix:'/api/hassio_ingress/abc',query}).redirects[0]);
+ assert.equal(u.pathname,'/api/hassio_ingress/abc/house');
+ for(const key of ['scene','compare','angle'])assert.equal(u.searchParams.has(key),false);
+ for(const key of ['panel','kiosk','theme','tabs','light'])assert.equal(u.searchParams.get(key),new URLSearchParams(query).get(key));
+ assert.equal(run({surface:'house',hybrid,query:'?panel=true&scene=living'}).redirects.length,0,'Direct room links still work');
+}
 let r=run({prefix:'/api/hassio_ingress/abc',query:'?panel=true&tabs=home,meals'});
 assert.equal(r.redirects[0],'https://example.test/api/hassio_ingress/abc/house?panel=true&tabs=home,meals');
 assert.deepEqual(r.calls,['release']);
