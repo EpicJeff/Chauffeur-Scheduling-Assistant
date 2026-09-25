@@ -37,11 +37,15 @@
     if (!root.hidden) { tick(); timer = setInterval(tick, 15000); }
   }
   window.addEventListener('chf-house-view', sync);
+  window.addEventListener('chf-hybrid-room', sync);
+  window.addEventListener('pageshow', sync);
   document.addEventListener('visibilitychange', sync);
-  document.addEventListener('chf-server-update', function () {
+  function invalidate() {
     fetchedAt = 0;
     refresh(true).catch(function () {});
-  });
+  }
+  document.addEventListener('chf-server-update', invalidate);
+  document.addEventListener('chf-pack-change', invalidate);
   window.addEventListener('pagehide', function () { clearInterval(timer); });
   sync();
 })();

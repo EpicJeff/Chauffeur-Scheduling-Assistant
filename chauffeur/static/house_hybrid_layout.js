@@ -3,7 +3,7 @@
   'use strict';
   var movable = '.hybrid-marker,#hybrid-outside,#study-lock,' +
     '#hybrid-shortcuts,#kitchen-shortcuts,.utility-shortcuts,.garage-controls,#panel-chat-orb,#house-comparison';
-  var fixed = '#top-nav-bar,#chat-overlay-container,#panel-shelf,#hybrid-walkthrough button';
+  var fixed = '#top-nav-bar,#chat-overlay-container,#panel-shelf,#hybrid-walkthrough button,.mudroom-pack,.mudroom-pack-pages';
   var pending = 0, gap = 8, margin = 8;
   function visible(el) {
     return el.checkVisibility({checkVisibilityCSS:true,checkOpacity:true});

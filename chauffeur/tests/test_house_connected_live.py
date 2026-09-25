@@ -28,8 +28,7 @@ def main():
             def mode(name):page.wait_for_function('(name)=>chfHouseMode()===name',arg=name)
             def walk(name):page.locator(f'#hybrid-walkthrough [data-room={name}]').click();mode(name)
             def open_object(room,key):
-                host='.utility-shortcuts' if page.viewport_size['width']<701 or page.viewport_size['height']<600 else '.utility-hotspots'
-                page.locator(f'#hybrid-{room} {host} [data-card={key}]').click()
+                page.locator(f'#hybrid-{room} :is(.utility-shortcuts,.utility-hotspots) [data-card={key}]:visible').click()
                 page.wait_for_selector(f'#hybrid-{room}[data-phase=detail]')
                 if room=='mudroom':page.wait_for_function('!Alpine.$data(document.getElementById("house-life")).loading')
             def close_object(room):

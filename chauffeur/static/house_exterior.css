@@ -68,3 +68,14 @@ body[data-house-scene=exterior]:has(.house-hint.expanded) #exterior-enter,body[d
 
 /* Comparison tools never belong to the household-facing House. */
 body[data-house-preview="false"] [data-house-preview-only]{display:none!important}
+
+/* Same clock and compact hero as the screensaver, above the photographic scene. */
+body[data-house-render=hybrid] #house-glance{position:fixed;z-index:46}
+@media(max-width:700px){body[data-house-render=hybrid] .exterior-heading{display:none}}
+
+@media(max-width:700px){body[data-house-render=hybrid] #house-glance .glance-next{top:72px}}
+@media(max-height:600px){
+  body[data-house-render=hybrid] .exterior-heading{display:none}
+  body[data-house-render=hybrid] #house-glance .glance-clock{top:0;bottom:auto;left:16px}
+  body[data-house-render=hybrid] #house-glance .glance-next{top:0;right:16px;left:auto;width:min(52vw,460px);transform:scale(.7);transform-origin:top right}
+}

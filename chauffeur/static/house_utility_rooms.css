@@ -119,3 +119,28 @@ body.house-card-open #hybrid-walkthrough{display:none}
 .constellation-sky{overflow-x:hidden;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#728d8266 transparent}
 
 @media(max-width:420px) and (max-height:600px){#hybrid-walkthrough button{font-size:12px;gap:4px}.walk-ring{width:32px;height:32px}#hybrid-outside{padding:10px}}
+
+/* Backpacks share the floor photograph's projection, with contact shadows in the art. */
+#mudroom-packing,.mudroom-pack-row{position:absolute;inset:0;pointer-events:none}
+#hybrid-mudroom .utility-overview>img{max-width:none}
+#mudroom-hotspots{pointer-events:none}#mudroom-hotspots button{pointer-events:auto}
+#mudroom-packing[hidden],.mudroom-pack[hidden],.mudroom-pack-pages[hidden]{display:none}
+.mudroom-pack{position:absolute;border:0;background:transparent;color:#342d22;cursor:pointer;padding:0;pointer-events:auto;text-align:center}
+.mudroom-pack-art{display:block;position:absolute;background:var(--open-day) 0 0/100% 100% no-repeat;mask-size:100% 100%;mask-repeat:no-repeat;pointer-events:none}
+.mudroom-pack[data-ready=true] .mudroom-pack-art{background-image:var(--closed-day)}
+#hybrid-mudroom[data-light=night] .mudroom-pack-art{background-image:var(--open-night)}
+#hybrid-mudroom[data-light=night] .mudroom-pack[data-ready=true] .mudroom-pack-art{background-image:var(--closed-night)}
+.mudroom-pack-label{position:absolute;left:8%;top:83%;width:84%;border:1px solid #ac9774;border-radius:3px;background:#f0e3c5;box-shadow:1px 2px 3px #0005;padding:4px 5px;font:600 clamp(10px,1vw,12px)/1.25 system-ui;transform:rotate(-3deg)}
+.mudroom-pack-label::before{content:'';position:absolute;left:8px;top:-8px;height:9px;width:1px;background:#725f43}
+.mudroom-pack-label strong{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.mudroom-pack-label small{display:block;font-size:10px;color:#5b513d;margin-top:2px}
+.mudroom-pack[data-ready=true] .mudroom-pack-label small{color:#365236}
+.mudroom-pack:focus-visible{outline:3px solid #f0d09c;outline-offset:3px;border-radius:12px}
+#hybrid-mudroom[data-light=night] .mudroom-pack-label{filter:brightness(.8)}
+.mudroom-pack-pages{position:absolute;bottom:145px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:9px;pointer-events:auto;padding:0 5px;background:#192b26e8;border-radius:24px;color:#fff4dc;font:12px system-ui;z-index:1000}
+.mudroom-pack-pages button{width:44px;height:44px;border:0;border-radius:50%;background:transparent;color:inherit;font-size:24px;cursor:pointer}.mudroom-pack-pages button:disabled{opacity:.3}
+@media(max-width:700px){#hybrid-mudroom:has(#mudroom-packing:not([hidden])) .utility-shortcuts{top:225px;bottom:auto;grid-template-columns:repeat(3,1fr)}#hybrid-mudroom .utility-shortcut{font-size:11px;gap:4px;padding:5px}.mudroom-pack-pages{bottom:116px}}
+@media(max-height:600px){#hybrid-mudroom .utility-overview>img{object-position:center bottom}#hybrid-mudroom:has(#mudroom-packing:not([hidden])) .utility-shortcuts{top:78px;bottom:auto;left:160px;grid-template-columns:repeat(3,1fr)}.mudroom-pack-label{font-size:9px;padding:2px}.mudroom-pack-label small{font-size:8px}.mudroom-pack-pages{bottom:102px;left:auto;right:12px;transform:none}}
+
+@media(max-height:600px){body:has(#hybrid-mudroom:not([hidden]) #mudroom-packing:not([hidden])) #house-comparison{display:none}}
+@media(min-aspect-ratio:2/1){#hybrid-mudroom:has(#mudroom-packing:not([hidden])) .utility-hotspots{display:none}#hybrid-mudroom[data-view=room]:has(#mudroom-packing:not([hidden])) .utility-shortcuts{display:grid;top:78px;bottom:auto;left:160px;grid-template-columns:repeat(3,1fr)}}

@@ -7,6 +7,10 @@
     {% if name == 'study' %}{% for state in ['drooping','wilting'] %}{% for light in ['day','night'] %}
     <img data-room-light="{{ light }}" data-plant="{{ state }}" data-src="{{ ('static/house_hybrid/study-' ~ state ~ '-' ~ light ~ '.png')|ver }}" alt="Study with a {{ state }} family baseline plant" decoding="async">
     {% endfor %}{% endfor %}{% endif %}
+    {% if name == 'mudroom' %}<div id="mudroom-packing" aria-label="Activity backpacks" hidden
+      {% for state in ['open','closed'] %}{% for light in ['day','night'] %}
+      data-{{ state }}-{{ light }}="{{ ('static/house_hybrid/mudroom-packs-' ~ state ~ '-' ~ light ~ '.png')|ver }}"
+      {% endfor %}{% endfor %}><div class="mudroom-pack-row"></div></div>{% endif %}
     <div id="{{ name }}-hotspots" class="utility-hotspots" aria-label="{{ label }} destinations"></div>
   </div>
   <section class="utility-detail" aria-label="{{ label }} close-up" hidden>

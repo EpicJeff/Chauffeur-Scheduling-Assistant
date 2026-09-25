@@ -63,7 +63,12 @@
   });
   function project(){
     var cover=Math.max(innerWidth/1536,innerHeight/1024);
-    Object.values(rooms).forEach(function(r){r.entries.forEach(function(e){var b=r.el.querySelector('.utility-hotspots [data-card="'+e.key+'"]');b.style.left=e.x*1536*cover+(innerWidth-1536*cover)/2+'px';b.style.top=e.y*1024*cover+(innerHeight-1024*cover)/2+'px';});});
+    Object.values(rooms).forEach(function(r){
+      var image=r.overview.querySelector('img');
+      var dx=r.name==='mudroom'&&image.style.left?parseFloat(image.style.left):(innerWidth-1536*cover)/2;
+      var dy=r.name==='mudroom'&&image.style.top?parseFloat(image.style.top):(innerHeight-1024*cover)/2;
+      r.entries.forEach(function(e){var b=r.el.querySelector('.utility-hotspots [data-card="'+e.key+'"]');b.style.left=e.x*1536*cover+dx+'px';b.style.top=e.y*1024*cover+dy+'px';});
+    });
     if(!active)return;
     var r=active.room,q=active.entry.rect,top=innerHeight<600?65:innerWidth<701?200:155,bottom=innerHeight<600?20:120;
     if(active.entry.key==='monitor'&&innerWidth<701&&innerHeight>=600)top=260;
@@ -181,6 +186,7 @@
   window.chfUtilityProbe=()=>({room:active?.room.name||document.body.dataset.houseScene,view:active?.entry.key||'room',privateLoaded:!!studyToken});
   document.getElementById('study-lock').addEventListener('click',function(){lock();reset(false);window.chfHybridGo('living');});
   window.addEventListener('resize',project);
+  window.addEventListener('chf-mudroom-frame',project);
   window.addEventListener('chf-house-closed',function(){if(active?.room.name==='mudroom')back();});
   window.addEventListener('chf-house-light',async function(e){dark=e.detail;var r=rooms[document.body.dataset.houseScene];if(!r)return;try{var light=dark?'night':'day',img=r.el.querySelector('[data-room-light="'+light+'"]'+(r.name==='study'?'[data-plant="'+overviewPlant()+'"]':''));await load(img);if(light!==(dark?'night':'day'))return;r.overview.querySelectorAll('img').forEach(i=>i.classList.toggle('is-active',i===img));r.el.dataset.light=light;if(active)show();}catch(_){r.status.textContent='Room lighting could not load.';}});
   window.addEventListener('popstate',function(){var key=history.state?.chfUtilityView;if(!key)reset(true);else if(!active&&rooms[document.body.dataset.houseScene])visit(key,false);});
