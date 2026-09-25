@@ -75,12 +75,14 @@
     if(['tray','map'].includes(active.entry.key)&&innerWidth<701&&innerHeight>=600)top=280;
     if(active.entry.key==='contracts'&&innerWidth<701)q=[307,280,390,448];
     var height=Math.max(160,innerHeight-top-bottom),zoom=Math.max(cover,Math.min((innerWidth-48)/(q[2]+45),height/(q[3]+45)));
-    // Wide wall panels read the paper up close. Keep the photograph uniform
-    // and crop its surrounding furniture instead of squeezing the lanes.
-    if(r.name==='mudroom' && ['chores','routines'].includes(active.entry.key) && innerWidth>=1100 && innerWidth>innerHeight) {
-      zoom=Math.max(cover,(innerWidth-64)/q[2]);
-    }
     var camera=q;
+    // Fit the photographed frame as well as its paper; retain the physical object.
+    if(r.name==='mudroom' && ['chores','routines'].includes(active.entry.key) && innerWidth>=1100 && innerWidth>innerHeight) {
+      q=active.entry.key==='chores'?[332,216,938,267]:[330,447,875,272];
+      camera=active.entry.key==='chores'?[224,125,1156,444]:[264,320,1014,475];
+      top=90; bottom=100; height=innerHeight-top-bottom;
+      zoom=Math.min((innerWidth-64)/camera[2],height/camera[3]);
+    }
     if(active.entry.key==='monitor'&&innerWidth<701)zoom=Math.max(cover,(height+120)/q[3]);
     if(['tray','map'].includes(active.entry.key)&&innerWidth<701&&innerHeight>=600)zoom=Math.max(cover,1.12);
     if(active.entry.key==='window'){

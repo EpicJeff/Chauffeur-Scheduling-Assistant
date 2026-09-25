@@ -16,7 +16,12 @@
   <section class="utility-detail" aria-label="{{ label }} close-up" hidden>
     <div class="utility-plane">
       {% for view in views %}{% for light in ['day','night'] %}
+      <picture>
+      {% if name == 'mudroom' and view in ['chores','routines'] %}
+      <source media="(min-width:1100px) and (orientation:landscape)" srcset="{{ ('static/house_hybrid/' ~ name ~ '-' ~ view ~ '-wide-' ~ light ~ '.png')|ver }}">
+      {% endif %}
       <img data-utility-view="{{ view }}" data-light="{{ light }}" data-src="{{ ('static/house_hybrid/' ~ name ~ '-' ~ view ~ '-' ~ light ~ '.png')|ver }}" alt="" decoding="async">
+      </picture>
       {% endfor %}{% endfor %}
       <div id="{{ name }}-controls" class="utility-controls"></div>
     </div>

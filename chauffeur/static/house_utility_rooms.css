@@ -7,8 +7,8 @@
 .utility-detail{position:absolute;inset:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:none;background:#57452d}
 .utility-detail::-webkit-scrollbar{display:none}
 .utility-plane{position:absolute;left:0;top:0}
-.utility-plane>img{position:absolute;inset:0;width:100%;height:100%;opacity:0;pointer-events:none}
-.utility-plane>img.is-active{opacity:1}
+.utility-plane>picture>img{position:absolute;inset:0;width:100%;height:100%;opacity:0;pointer-events:none}
+.utility-plane>picture>img.is-active{opacity:1}
 .utility-controls{position:absolute;display:flex;align-items:center;justify-content:center;visibility:hidden;--panel-fg:#342d22;--panel-dim:#675b48;--panel-line:#78644844;--panel-modal:#ede1c8;--panel-surface:#846f4110;--panel-surface-2:#846f4118;--panel-accent:#48654b}
 .hybrid-utility-room[data-phase=detail] .utility-controls{visibility:visible}
 .utility-controls>#house-life,.study-paper{width:var(--read-width);height:var(--read-height);max-width:100%;max-height:100%}
@@ -147,5 +147,9 @@ body.house-card-open #hybrid-walkthrough{display:none}
 
 /* Wide mudroom paper can fit five readable lanes on a 1080p wall panel. */
 @media(min-width:1100px) and (orientation:landscape){
- #hybrid-mudroom .house-life-lanes > .grid{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))!important}
+ #hybrid-mudroom .house-life-lanes > .grid{grid-template-columns:repeat(auto-fit,minmax(270px,1fr))!important}
 }
+
+/* Embedded paper is part of the photograph, not an opaque panel modal. */
+html[data-panel] #hybrid-mudroom .utility-controls .house-life-panel{background:transparent!important}
+#hybrid-mudroom .utility-controls{--panel-surface-1:#ffffff50;--panel-surface-3:#ffffff70}

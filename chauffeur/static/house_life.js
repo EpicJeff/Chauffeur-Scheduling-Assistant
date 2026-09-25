@@ -36,6 +36,8 @@ window.houseLife = function () {
           calendarPending=calendarPending || FamilyCalendar.mount({targetContainerId:'kitchen-wall-calendar',view:'dayGridMonth',toolbar:false,legend:false,details:true,base:this.apiBase});
           kitchenCalendar=await calendarPending;calendarPending=null;
         }
+        // Let Alpine reveal the retained calendar before FullCalendar measures it.
+        await new Promise(resolve=>requestAnimationFrame(resolve));
         if(generation!==this.generation){FamilyCalendar.pause('kitchen-wall-calendar',true);return;}
         FamilyCalendar.pause('kitchen-wall-calendar',false);kitchenCalendar.updateSize();kitchenCalendar.refetchEvents();
         this.calendarTitle=kitchenCalendar.calendar.view.title;

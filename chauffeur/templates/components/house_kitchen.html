@@ -19,7 +19,12 @@
     <div id="kitchen-detail-plane">
       {% for view in ['meals','moments','pantry','board','weather'] %}
       {% for light in ['day','night'] %}
+      <picture>
+      {% if view == 'board' %}
+      <source media="(min-width:1100px) and (orientation:landscape)" srcset="{{ ('static/house_hybrid/kitchen-board-wide-' ~ light ~ '.png')|ver }}">
+      {% endif %}
       <img data-kitchen-view="{{ view }}" data-light="{{ light }}" data-src="{{ ('static/house_hybrid/kitchen-' ~ view ~ '-' ~ light ~ '.png')|ver }}" alt="" decoding="async">
+      </picture>
       {% endfor %}
       {% endfor %}
       <div class="kitchen-outdoors" data-outdoors="detail" role="img" hidden></div>

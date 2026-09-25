@@ -200,7 +200,9 @@ def main():
                 page.locator('#kitchen-back').click();view('room');page.wait_for_function('!history.state?.chfKitchenView')
             page.set_viewport_size({'width':1400,'height':1000})
             for key in ('meals','calendar','weather','moments'):
-                page.set_viewport_size({'width':390,'height':844});open_card(key)
+                page.set_viewport_size({'width':390,'height':844})
+                page.evaluate('() => new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+                open_card(key)
                 if key=='calendar':page.wait_for_selector('#kitchen-wall-calendar .fc-daygrid-day')
                 if key=='calendar':
                     page.wait_for_function('''()=>{const days=document.querySelectorAll('#kitchen-wall-calendar .fc-daygrid-day');return days[days.length-1].getBoundingClientRect().bottom<=document.querySelector('#kitchen-wall-calendar').getBoundingClientRect().bottom+1;}''')
@@ -219,10 +221,17 @@ def main():
                         page.wait_for_function('''()=>Math.abs(document.querySelector('#kitchen-wall-calendar .fc-col-header').getBoundingClientRect().width-document.querySelector('#kitchen-wall-calendar').getBoundingClientRect().width)<4''')
                     if key=='calendar' and width>=1100:
                         box=page.locator('#kitchen-wall-calendar').bounding_box()
-                        assert box['width']>=width-80 and box['x']>=0 and box['x']+box['width']<=width+1,box
+                        assert box['width']>=1250 and box['x']>=0 and box['x']+box['width']<=width+1,box
                         assert box['y']>=0 and box['y']+box['height']<=height-90,box
+                        art=page.locator('#kitchen-detail-plane img.is-active')
+                        page.wait_for_function("document.querySelector('#kitchen-detail-plane img.is-active').currentSrc.includes('-wide-')")
+                        art.evaluate('e=>e.decode()')
+                        image=art.bounding_box();scale=image['width']/1536
+                        x=image['x']+272*scale;y=image['y']+190*scale
+                        assert x>=16 and x+1096*scale<=width-16,(width,x)
+                        assert y>=65 and y+487*scale<=height-80,(width,y)
                         cells=page.locator('#kitchen-wall-calendar .fc-daygrid-day')
-                        assert cells.first.bounding_box()['width']>250
+                        assert cells.first.bounding_box()['width']>175
                         assert cells.last.bounding_box()['y']+cells.last.bounding_box()['height']<=box['y']+box['height']+1
                     page.screenshot(path=str(out/f'{key}-{width}.png'))
                 page.locator('#kitchen-back').click();view('room');page.wait_for_function('!history.state?.chfKitchenView')
@@ -232,6 +241,16 @@ def main():
             page.goto(served.url('house?compare=exterior&scene=kitchen&light=night'));mode('kitchen')
             page.wait_for_function('chfKitchenProbe().light==="night"')
             page.screenshot(path=str(out/'kitchen-night.png'))
+            page.goto(served.url('house?compare=exterior&scene=kitchen&panel=true&light=night'));mode('kitchen')
+            page.set_viewport_size({'width':1920,'height':1080})
+            for i in range(3):
+                open_card('calendar')
+                page.wait_for_selector('#kitchen-wall-calendar .fc-daygrid-day')
+                art=page.locator('#kitchen-detail-plane img.is-active');art.evaluate('e=>e.decode()')
+                assert '-wide-night.png' in art.evaluate('e=>e.currentSrc')
+                assert page.locator('#kitchen-controls .house-life-panel').evaluate("e=>getComputedStyle(e).backgroundColor==='rgba(0, 0, 0, 0)'")
+                if i==0:page.screenshot(path=str(out/'calendar-panel-night.png'))
+                page.locator('#kitchen-back').click();view('room');page.wait_for_function('!history.state?.chfKitchenView')
             assert page.evaluate('typeof THREE')=='undefined'
             assert not served.errors(),served.errors()
             print('PASS: kitchen cards, day/night, paper registration, mobile, history, direct entry and no WebGL')

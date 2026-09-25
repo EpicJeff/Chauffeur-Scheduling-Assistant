@@ -14,8 +14,8 @@ body[data-house-scene=kitchen] .house-steam-toggle{display:flex}
 #kitchen-detail{position:absolute;inset:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:none;background:#57452d}
 #kitchen-detail::-webkit-scrollbar{display:none}
 #kitchen-detail-plane{position:absolute}
-#kitchen-detail-plane>img{position:absolute;inset:0;width:100%;height:100%;opacity:0;pointer-events:none}
-#kitchen-detail-plane>img.is-active{opacity:1}
+#kitchen-detail-plane>picture>img{position:absolute;inset:0;width:100%;height:100%;opacity:0;pointer-events:none}
+#kitchen-detail-plane>picture>img.is-active{opacity:1}
 #kitchen-controls{position:absolute;pointer-events:none;opacity:0;transition:opacity .25s ease;--panel-fg:#342d22;--panel-dim:#70624c;--panel-line:#78644844;--panel-modal:#ede1c8;--panel-surface:#846f4110;--panel-surface-2:#846f4118;--panel-accent:#48654b}
 #hybrid-kitchen[data-phase=detail] #kitchen-controls{opacity:1;pointer-events:auto}
 #kitchen-controls #house-life,#kitchen-controls .house-life-shade{height:100%}
@@ -106,3 +106,5 @@ body[data-house-scene=kitchen]:has(#hybrid-kitchen:not([data-view=room])) #hybri
 @media(prefers-reduced-motion:reduce){#kitchen-overview,#kitchen-overview>img,#kitchen-controls{transition:none}}
 @media(max-width:700px){.house-steam-toggle{position:absolute;top:calc(100% + 8px);right:0;padding:0 12px;border-radius:12px;background:#111c24d9}#hybrid-kitchen[data-view=meals] .house-life-body .grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-height:600px){body[data-house-scene=kitchen]:has(#hybrid-kitchen:not([data-view=room])) .editor-chrome{display:none}}
+
+html[data-panel] #hybrid-kitchen[data-view=calendar] #kitchen-controls .house-life-panel{background:transparent!important}
