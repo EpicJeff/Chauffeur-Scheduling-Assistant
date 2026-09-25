@@ -221,15 +221,16 @@ def main():
                         page.wait_for_function('''()=>Math.abs(document.querySelector('#kitchen-wall-calendar .fc-col-header').getBoundingClientRect().width-document.querySelector('#kitchen-wall-calendar').getBoundingClientRect().width)<4''')
                     if key=='calendar' and width>=1100:
                         box=page.locator('#kitchen-wall-calendar').bounding_box()
-                        assert box['width']>=1250 and box['x']>=0 and box['x']+box['width']<=width+1,box
+                        assert box['width']>=width-310 and box['x']>=0 and box['x']+box['width']<=width+1,box
                         assert box['y']>=0 and box['y']+box['height']<=height-90,box
                         art=page.locator('#kitchen-detail-plane img.is-active')
                         page.wait_for_function("document.querySelector('#kitchen-detail-plane img.is-active').currentSrc.includes('-wide-')")
                         art.evaluate('e=>e.decode()')
-                        image=art.bounding_box();scale=image['width']/1536
-                        x=image['x']+272*scale;y=image['y']+190*scale
-                        assert x>=16 and x+1096*scale<=width-16,(width,x)
-                        assert y>=65 and y+487*scale<=height-80,(width,y)
+                        frame=page.locator('#kitchen-detail-plane .house-paper-frame').bounding_box()
+                        assert frame['x']==20 and frame['width']==width-40,frame
+                        assert frame['y']==76 and frame['height']==height-172,frame
+                        assert box['height']>=height-440,box
+                        page.locator('#kitchen-detail-plane .house-paper-frame img').evaluate_all('els=>Promise.all(els.map(e=>e.decode()))')
                         cells=page.locator('#kitchen-wall-calendar .fc-daygrid-day')
                         assert cells.first.bounding_box()['width']>175
                         assert cells.last.bounding_box()['y']+cells.last.bounding_box()['height']<=box['y']+box['height']+1

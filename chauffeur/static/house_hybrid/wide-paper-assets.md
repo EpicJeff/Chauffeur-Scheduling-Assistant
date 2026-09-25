@@ -3,8 +3,10 @@
 Generated September 25, 2026 with the built-in image-generation tool in edit mode.
 Original portrait images remain the phone/narrow-layout assets. All images are
 1536 x 1024; geometry is registered in `house_utility_rooms.js` and
-`house_kitchen.js`. The camera fits the whole physical frame, while controls
-occupy only the blank paper. Day/night variants share registration.
+`house_kitchen.js`. The responsive renderer in `house_paper_frame.js` extends the paper and straight
+rails to the viewport edges, preserving corner hardware and the central brass
+clip at natural proportions. Controls occupy the enlarged paper. Day/night
+variants share registration. Narrow layouts retain the original camera.
 
 | Assets | Reference | Physical object |
 | --- | --- | --- |

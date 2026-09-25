@@ -76,13 +76,8 @@
     if(active.entry.key==='contracts'&&innerWidth<701)q=[307,280,390,448];
     var height=Math.max(160,innerHeight-top-bottom),zoom=Math.max(cover,Math.min((innerWidth-48)/(q[2]+45),height/(q[3]+45)));
     var camera=q;
-    // Fit the photographed frame as well as its paper; retain the physical object.
-    if(r.name==='mudroom' && ['chores','routines'].includes(active.entry.key) && innerWidth>=1100 && innerWidth>innerHeight) {
-      q=active.entry.key==='chores'?[332,216,938,267]:[330,447,875,272];
-      camera=active.entry.key==='chores'?[224,125,1156,444]:[264,320,1014,475];
-      top=90; bottom=100; height=innerHeight-top-bottom;
-      zoom=Math.min((innerWidth-64)/camera[2],height/camera[3]);
-    }
+    var widePaper=r.name==='mudroom' && ['chores','routines'].includes(active.entry.key) && innerWidth>=1100 && innerWidth>innerHeight;
+    window.chfPaperFrame(r.plane,r.controls,null);
     if(active.entry.key==='monitor'&&innerWidth<701)zoom=Math.max(cover,(height+120)/q[3]);
     if(['tray','map'].includes(active.entry.key)&&innerWidth<701&&innerHeight>=600)zoom=Math.max(cover,1.12);
     if(active.entry.key==='window'){
@@ -98,6 +93,10 @@
     r.controls.style.transformOrigin='0 0';r.controls.style.transform=corners?paperTransform(corners,q,zoom):'none';
     r.controls.style.setProperty('--read-width',Math.min(q[2]*zoom,innerWidth-56)+'px');
     r.controls.style.setProperty('--read-height',Math.min(q[3]*zoom,height)+'px');
+    if(widePaper)window.chfPaperFrame(r.plane,r.controls,
+      r.plane.querySelector('[data-utility-view="'+active.entry.view+'"][data-light="'+(dark?'night':'day')+'"]'),
+      active.entry.key==='chores'?[244,147,1115,400]:[282,342,974,430],
+      active.entry.key==='chores'?[332,230,938,235]:[330,447,875,272],active.entry.key==='routines');
   }
   function element(tag,text,host,cls){var e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;host.appendChild(e);return e;}
   function studyRows(key){

@@ -37,7 +37,7 @@ def main():
                     assert box['x']>=0 and box['x']+box['width']<=w+1,box
                     assert box['y']>=0 and box['y']+box['height']<=h+1,box
                     if w>=1100:
-                        assert box['width']>=w*.74,box
+                        assert box['width']>=w-240 and box['height']>=h-350,box
                     columns=grid.evaluate('e=>getComputedStyle(e).gridTemplateColumns.split(" ").filter(v=>parseFloat(v)>0).length')
                     if w>=1920:
                         assert columns==5, (key,w,columns)
@@ -49,13 +49,13 @@ def main():
                     art=page.locator('#hybrid-mudroom .utility-plane img.is-active')
                     page.wait_for_function("([selector,wide])=>document.querySelector(selector).currentSrc.includes('-wide-')===wide",arg=['#hybrid-mudroom .utility-plane img.is-active',w>=1100])
                     if w>=1100:
-                        # All four physical edges and the brass clip remain in view.
-                        frame=(244,147,1115,400) if key=='chores' else (282,342,974,430)
-                        scale=image['width']/1536
-                        x=image['x']+frame[0]*scale;y=image['y']+frame[1]*scale
-                        assert x>=16 and x+frame[2]*scale<=w-16,(key,w,x)
-                        assert y>=65 and y+frame[3]*scale<=h-80,(key,w,y)
+                        frame=page.locator('#hybrid-mudroom .house-paper-frame').bounding_box()
+                        assert frame['x']==20 and frame['width']==w-40,frame
+                        assert frame['y']==76 and frame['height']==h-172,frame
+                        page.locator('#hybrid-mudroom .house-paper-frame img').evaluate_all('els=>Promise.all(els.map(e=>e.decode()))')
                         assert art.evaluate('e=>e.complete && e.naturalWidth===1536')
+                        corner=page.locator('#hybrid-mudroom .house-paper-frame img').first.bounding_box()
+                        assert corner['width']==1536 and corner['height']==1024,corner
                     assert page.locator('#hybrid-mudroom .house-life-panel').evaluate("e=>getComputedStyle(e).backgroundColor==='rgba(0, 0, 0, 0)'")
                     page.screenshot(path=str(out/(key+'-'+str(w)+'.png')))
                     if w==1920:
