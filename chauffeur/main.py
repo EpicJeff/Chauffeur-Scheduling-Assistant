@@ -1433,7 +1433,8 @@ def home_board_page(request: Request):
     in an ordinary browser it is also where the panel gets configured (the
     tiles are picked while you look at them)."""
     response = templates.TemplateResponse(request=request, name="home.html",
-                                          context={"house_home_enabled": bool((storage.get_settings() or {}).get("panel_house_home"))})
+                                          context={"house_home_enabled": bool((storage.get_settings() or {}).get("panel_house_home")),
+                                                   "house_hybrid_enabled": bool((storage.get_settings() or {}).get("house_hybrid_enabled"))})
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
 
@@ -1747,7 +1748,8 @@ def house_page(request: Request):
     layout = neighborhood_layout(cached_only=True) if request.query_params.get('editor') != '1' else {'source': 'generated'}
     return templates.TemplateResponse(request=request, name="house.html",
                                       context={'facade_json': facade_json, 'neighborhood_json': _json.dumps(layout),
-                                               'house_home_enabled': bool((storage.get_settings() or {}).get('panel_house_home'))})
+                                               'house_home_enabled': bool((storage.get_settings() or {}).get('panel_house_home')),
+                                               'house_hybrid_enabled': bool((storage.get_settings() or {}).get('house_hybrid_enabled'))})
 
 @app.get("/threads")
 def threads_page(request: Request):
@@ -5623,6 +5625,26 @@ def study_state(request: Request = None):
     from services import study as _study
     actor = _mind_actor(request, None)
     return _study.state(actor)
+
+
+@app.post("/api/study/trips/{event_id}/locate")
+def study_locate_trip(event_id: str, request: Request = None):
+    """Resolve a visible trip on request using the app's existing geocoder."""
+    import math
+    from services import maps, scope
+    actor = _mind_actor(request, None)
+    trip = storage.get_trip_metadata(event_id)
+    if not trip or (actor is not None and not scope.audience_allows(trip, 'trip', actor)):
+        raise HTTPException(status_code=404, detail='Trip not found')
+    location = str(trip.get('location') or '').strip()
+    if not location:
+        raise HTTPException(status_code=400, detail='Add a destination to this trip first.')
+    coords = maps.geocode_address(location)
+    if not coords or not all(math.isfinite(v) for v in coords) or not (-90 <= coords[0] <= 90 and -180 <= coords[1] <= 180) or tuple(coords) == (0, 0):
+        raise HTTPException(status_code=400, detail='This destination could not be located. Add a more specific destination in the trip.')
+    # A cleaned-address cache hit may not have an alias for the trip's label.
+    storage.set_cached_geocode(location, coords[0], coords[1])
+    return {'status': 'success', 'message': 'Destination located.'}
 
 
 @app.post("/api/house/session/end")

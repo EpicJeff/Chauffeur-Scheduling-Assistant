@@ -362,6 +362,7 @@ RULES = [
     # The Study's one read (task 2): same discipline — SIGNED_IN at the
     # route, role decided in the handler (`_mind_actor`).
     (ANY, '/api/study/state', SIGNED_IN, None),
+    ('POST', '/api/study/trips/{event_id}/locate', SIGNED_IN, None),
     # The Kitchen: family-safe by construction, read by wall DEVICES.
     (ANY, '/api/kitchen/state', WALL_OR_SERVICE, None),
     # The Home: the dollhouse (H1) — same family-safe-by-construction read.

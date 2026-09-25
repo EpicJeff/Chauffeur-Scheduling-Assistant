@@ -1,0 +1,108 @@
+#hybrid-kitchen{position:fixed;inset:0;z-index:44;overflow:hidden;background:#4d4131;color:#342d22;font:16px/1.45 system-ui}
+#hybrid-kitchen[hidden],#kitchen-detail[hidden],#kitchen-back[hidden]{display:none}
+#kitchen-overview,#kitchen-hotspots{position:absolute;inset:0}
+#kitchen-overview{transition:transform .45s ease,opacity .4s ease}
+#kitchen-overview>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .4s ease}
+#kitchen-overview>img.is-active{opacity:1}
+#hybrid-kitchen:not([data-view=room]) #kitchen-overview{transform:scale(1.65);opacity:0}
+#hybrid-kitchen:not([data-view=room]) #kitchen-hotspots,#hybrid-kitchen:not([data-view=room]) #kitchen-shortcuts{display:none}
+#kitchen-hotspots{pointer-events:none}#kitchen-hotspots button{pointer-events:auto}
+#kitchen-steam{position:absolute;pointer-events:none;object-fit:fill}
+#kitchen-steam[hidden]{display:none}
+.house-steam-toggle{display:none;align-items:center;gap:6px;font:12px system-ui;min-height:44px;cursor:pointer}
+body[data-house-scene=kitchen] .house-steam-toggle{display:flex}
+#kitchen-detail{position:absolute;inset:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:none;background:#57452d}
+#kitchen-detail::-webkit-scrollbar{display:none}
+#kitchen-detail-plane{position:absolute}
+#kitchen-detail-plane>img{position:absolute;inset:0;width:100%;height:100%;opacity:0;pointer-events:none}
+#kitchen-detail-plane>img.is-active{opacity:1}
+#kitchen-controls{position:absolute;pointer-events:none;opacity:0;transition:opacity .25s ease;--panel-fg:#342d22;--panel-dim:#70624c;--panel-line:#78644844;--panel-modal:#ede1c8;--panel-surface:#846f4110;--panel-surface-2:#846f4118;--panel-accent:#48654b}
+#hybrid-kitchen[data-phase=detail] #kitchen-controls{opacity:1;pointer-events:auto}
+#kitchen-controls #house-life,#kitchen-controls .house-life-shade{height:100%}
+#kitchen-controls .house-life-shade{position:static;display:block;inset:auto;background:none;backdrop-filter:none}
+#kitchen-controls .house-life-panel{width:100%;height:100%;max-height:none;min-height:0;border:0;border-radius:0;background:transparent;box-shadow:none;color:#342d22;display:flex;flex-direction:column}
+#kitchen-controls .house-life-panel>header{padding:0 0 10px;background:none;border-bottom:1px solid #78644855;flex-shrink:0}
+#kitchen-controls .house-life-panel h2{font:500 clamp(22px,2.2vw,31px)/1.2 Georgia,serif;color:#423b2e}
+#kitchen-controls .house-life-panel header p:empty{display:none}
+#kitchen-controls .house-life-panel header button{min-width:44px;min-height:44px;background:#765b3012;color:#4b573c;border:1px solid #705b3433}
+#kitchen-controls .house-life-body{padding:14px 0 0;overflow:auto;min-height:0;flex:1;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#80694355 transparent}
+#kitchen-controls :is([class*="text-gray-"],[class*="text-white"],[class*="text-slate-"],[class*="text-blue-"],[class*="text-teal-"]){color:#3d4d3d}
+#kitchen-controls :is([class*="bg-gray-"],[class*="bg-slate-"],[class*="bg-white"]){background:#846f4110}
+#kitchen-controls :is([class*="border-gray-"],[class*="border-slate-"]){border-color:#7c674133}
+#kitchen-controls :is(.agenda-day,.agenda-event){background:#846f4114!important;color:#344833}
+#kitchen-controls :is([class*="text-amber-"],[class*="text-yellow-"]){color:#805115}
+#kitchen-controls button,#kitchen-controls a{min-height:40px}
+#kitchen-controls input,#kitchen-controls select{color:#302b21;background:#ffffff4d;border-color:#80715366}
+#kitchen-controls :is(button,a,input,select):focus-visible{outline:2px solid #476248;outline-offset:2px}
+/* These surfaces use the same 1536 by 1024 coordinates as the photographs. */
+.kitchen-art-surfaces,#kitchen-fridge-photos,#kitchen-moment-photos{position:absolute;inset:0;pointer-events:none}
+#kitchen-moment-photos[hidden],#kitchen-controls[hidden],.kitchen-outdoors[hidden]{display:none}
+.kitchen-photograph{position:absolute;display:block;pointer-events:auto;padding:.6%;border:0;background:#f8f3e8;box-shadow:2px 4px 7px #24190755;cursor:pointer}
+.kitchen-photograph img{width:100%;height:100%;object-fit:cover}
+.kitchen-photograph::before{content:"";position:absolute;top:-3%;left:46%;width:9%;aspect-ratio:1;border-radius:50%;background:radial-gradient(circle at 35% 25%,#b39662,#665333);box-shadow:1px 2px 3px #0006}
+.kitchen-photograph:focus-visible{outline:3px solid #e2b258;outline-offset:5px}
+.kitchen-photograph.is-unavailable{background:#c6bea9}
+#kitchen-fridge-photos .kitchen-photograph{padding:.12%;box-shadow:1px 1px 2px #24190766}
+#hybrid-kitchen[data-light=night] .kitchen-photograph{filter:brightness(.77) sepia(.12)}
+.kitchen-outdoors{position:absolute;pointer-events:none;background-repeat:no-repeat}
+.kitchen-outdoors[data-outdoors=detail]{inset:0;background-size:100% 100%;mask:url("house_hybrid/kitchen-window-mask.svg") 0 0/100% 100%;-webkit-mask:url("house_hybrid/kitchen-window-mask.svg") 0 0/100% 100%}
+.kitchen-outdoors[data-outdoors=room]{left:87.83%;top:5.66%;width:12.17%;height:34.67%;background-size:310% 118%;background-position:right top;mask:url("house_hybrid/kitchen-overview-window-mask.svg") 0 0/100% 100%;-webkit-mask:url("house_hybrid/kitchen-overview-window-mask.svg") 0 0/100% 100%}
+/* Night weather is lit in the artwork: filtering a daytime photograph also
+   darkened the clock and leaves crossing the panes. Keep the complete night
+   composition together so no pane edge cuts across a foreground object. */
+.kitchen-outdoors[data-outdoors=detail][data-light=night]{mask:none;-webkit-mask:none}
+#hybrid-kitchen[data-light=night] .kitchen-outdoors:not([data-light=night]),#hybrid-kitchen[data-light=day] .kitchen-outdoors[data-light=night]{visibility:hidden}
+#hybrid-kitchen[data-weather=clear] .kitchen-outdoors{display:none}
+#hybrid-kitchen[data-weather=unavailable] .kitchen-outdoors{display:none}
+#hybrid-kitchen[data-view=weather] #kitchen-controls{--panel-fg:#f1f2e9;--panel-dim:#c2cabc;font-size:13px}
+#hybrid-kitchen[data-view=weather] #kitchen-controls :is(.house-life-panel,.house-life-panel h2,[class*="text-gray-"],[class*="text-white"],[class*="text-slate-"]){color:#f1f2e9}
+#hybrid-kitchen[data-view=weather] #kitchen-controls .house-life-panel h2{font:600 19px/1.2 system-ui}
+#hybrid-kitchen[data-view=weather] #kitchen-controls .house-life-panel>header{padding-bottom:5px;border-color:#fff3;gap:2px}
+#hybrid-kitchen[data-view=weather] #kitchen-controls header button{color:#e4e9d5;border-color:#fff3;background:#ffffff0a}
+#hybrid-kitchen[data-view=weather] #kitchen-controls .house-life-body{padding-top:6px}
+#hybrid-kitchen[data-view=weather] .house-weather-days{flex-direction:column;gap:0}
+#hybrid-kitchen[data-view=weather] .house-weather-days>div{display:grid;grid-template-columns:1fr 30px 1.3fr;align-items:center;gap:3px;padding:10px 0;border-bottom:1px solid #ffffff25;text-align:left}
+#hybrid-kitchen[data-view=weather] .house-weather-days>div>div:last-child:not(.tabular-nums){grid-column:3;color:#add2e7;text-align:right}
+#hybrid-kitchen[data-view=weather] .house-weather-days .text-2xl{font-size:22px}
+@media(max-width:700px){#hybrid-kitchen[data-view=weather] .house-weather-days>div{padding:5px 0}}
+#kitchen-controls .photo-scrim [class*="text-white"]{color:white}
+#hybrid-kitchen[data-view=calendar] .house-life-body{display:flex;flex-direction:column;overflow:visible}
+#hybrid-kitchen[data-view=calendar] #kitchen-controls .house-life-panel>header{display:none}
+#hybrid-kitchen[data-view=calendar] #kitchen-controls .house-life-body{padding:0}
+.kitchen-calendar-paper{display:flex;flex-direction:column;flex:1;min-height:0}
+.kitchen-calendar-paper nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.kitchen-calendar-paper h3{font:600 27px/1.2 Georgia,serif;text-align:center}
+#kitchen-wall-calendar{flex:1;min-height:0}
+#kitchen-wall-calendar .fc :is(td,th,.fc-scrollgrid){border-color:#70593455!important}
+#kitchen-wall-calendar .fc-day{background:transparent!important}
+#kitchen-wall-calendar .fc-day-today{background:#74836122!important}
+#kitchen-wall-calendar :is(.fc-daygrid-day-number,.fc-col-header-cell-cushion){color:#384c38!important;font:600 13px/1.2 system-ui;padding:5px!important;min-height:0}
+#kitchen-wall-calendar .fc-day-other .fc-daygrid-day-number{color:#8c826c!important}
+#kitchen-wall-calendar .fc-event{font-size:10px!important;min-height:0;height:18px}
+#kitchen-wall-calendar .fc-daygrid-day-events{min-height:1.6em!important}
+#kitchen-wall-calendar .fc-event *{color:#3e4635!important;text-shadow:none!important}
+#kitchen-wall-calendar .fc-daygrid-more-link{color:#3e4635;min-height:0;font-size:11px}
+.kitchen-calendar-today{align-self:center;font:italic 14px Georgia,serif}
+#kitchen-controls .kitchen-calendar-today{min-height:28px}
+.kitchen-calendar-paper nav{margin-bottom:6px}
+.kitchen-calendar-paper nav button{min-width:44px}
+@media(max-width:700px){.kitchen-calendar-paper h3{font-size:20px}#kitchen-wall-calendar :is(.fc-daygrid-day-number,.fc-col-header-cell-cushion){font-size:11px;padding:3px!important}}
+#hybrid-kitchen[data-view=meals] .house-life-body .grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+#hybrid-kitchen[data-view=meals] .house-life-body .grid>div{aspect-ratio:auto;min-height:105px;justify-content:flex-start;background:none;border:0;border-bottom:1px solid #78644844;border-radius:0;box-shadow:none}
+#hybrid-kitchen[data-view=meals] .house-life-body .grid>div>img{position:static;height:76px;object-fit:cover;border-radius:4px}
+#hybrid-kitchen[data-view=meals] .house-life-body .grid>div>div.absolute{display:none!important}
+#hybrid-kitchen[data-view=meals] .house-life-body .grid>div>div.relative{padding:10px 0}
+#hybrid-kitchen[data-view=meals] .house-life-body :is(.board-ink,.board-ink-dim,.board-ink-faint,.board-accent){color:#425540;text-shadow:none}
+#kitchen-back{position:absolute;top:84px;left:20px;min-height:44px;padding:10px 18px;border:1px solid #e5d3ab80;border-radius:30px;background:#192b26ed;color:#fff4da;cursor:pointer;z-index:3;font:600 14px system-ui}
+#kitchen-status{position:absolute;bottom:88px;left:50%;transform:translateX(-50%);max-width:90%;padding:5px 12px;border-radius:9px;background:#192b26d9;color:#fff4da;font:13px system-ui;text-align:center;pointer-events:none}
+#kitchen-status:empty{display:none}
+#kitchen-shortcuts{display:none;position:absolute;bottom:115px;left:16px;right:16px;grid-template-columns:1fr 1fr;gap:8px}
+.kitchen-shortcut{display:flex;align-items:center;gap:10px;min-height:48px;padding:10px 12px;border:1px solid #d6c09177;border-radius:12px;color:#f2dbb3;background:#192b26e8;font:600 13px system-ui;cursor:pointer}
+.kitchen-shortcut svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.7}
+body[data-house-scene=kitchen] .house-fire-toggle,body[data-house-scene=kitchen] .house-compare-modes{display:none}
+body[data-house-scene=kitchen]:has(#hybrid-kitchen:not([data-view=room])) #hybrid-outside{display:none}
+@media(max-width:700px),(max-aspect-ratio:4/3){#kitchen-hotspots{display:none}#kitchen-shortcuts{display:grid}#kitchen-status{bottom:292px}#kitchen-back{top:145px;left:12px}}
+@media(max-height:600px){#kitchen-hotspots{display:none}#kitchen-shortcuts{display:grid;grid-template-columns:repeat(5,1fr);bottom:95px}#kitchen-shortcuts button{flex-direction:column;padding:8px}#kitchen-status{bottom:173px}body[data-house-scene=kitchen]:has(#hybrid-kitchen:not([data-view=room])) :is(#house-comparison,#house-chat){display:none}#kitchen-back{top:12px;left:12px}}
+@media(prefers-reduced-motion:reduce){#kitchen-overview,#kitchen-overview>img,#kitchen-controls{transition:none}}
+@media(max-width:700px){.house-steam-toggle{position:absolute;top:calc(100% + 8px);right:0;padding:0 12px;border-radius:12px;background:#111c24d9}#hybrid-kitchen[data-view=meals] .house-life-body .grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-height:600px){body[data-house-scene=kitchen]:has(#hybrid-kitchen:not([data-view=room])) .editor-chrome{display:none}}

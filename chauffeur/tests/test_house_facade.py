@@ -619,7 +619,12 @@ def scenario_side_door_settings_round_trip():
     check(hf.normalize(raw)[0]['blocks']['garage']['side_door']['front_setback'] == 0.6, 'setback safely clamped')
     raw['blocks']['garage']['side_door']['width'] = 100
     check(hf.validate_block_model(raw), 'photo model rejects oversize door')
-    check(hf.normalize(raw)[0]['blocks']['garage']['side_door']['width'] == 4.4, 'hand editor clamps safe opening')
+    check(hf.normalize(raw)[0]['blocks']['garage']['side_door']['width'] == 6.0, 'hand editor clamps safe opening')
+    raw['blocks']['garage']['side_door'].update(width=6.0, projection=1.8, front_setback=2.0)
+    spec, _ = hf.normalize(raw)
+    check(not hf.validate_block_model(spec), 'full double-width side door accepted')
+    check(spec['blocks']['garage']['side_door']['width'] == 6.0 and hf.normalize(spec)[0] == spec,
+          'full-width opening persists without shrinking on save')
 
 
 def scenario_finish_inheritance_and_round_trip():

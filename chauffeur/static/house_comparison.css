@@ -1,4 +1,5 @@
 .house-comparison-page #kitchen-title{display:none}
+#house-comparison[hidden],#house-compare-measurements[hidden]{display:none}
 .house-comparison-page[data-house-render="hybrid"] #room{display:none}
 .house-comparison-page #kitchen-wrap{background:#0c151b}
 .house-comparison-page #kitchen-wrap::after{display:none}
@@ -9,6 +10,7 @@
 .house-compare-modes a{padding:10px 18px;min-height:44px;border-radius:9px;text-decoration:none;color:#d1d7db}
 .house-compare-modes a[aria-current]{background:#e8d2a9;color:#21272a;box-shadow:0 2px 8px #0003}
 .house-compare-light{display:flex;align-items:center;gap:9px;color:#c4ccd1}
+.house-fire-toggle{display:flex;align-items:center;gap:6px;font:12px system-ui;min-height:44px;cursor:pointer}
 .house-compare-light select{min-height:44px;background:#253039;color:#f7eedc;border:1px solid #b5bec34d;border-radius:10px;padding:8px 12px}
 #house-compare-exit{color:#d8c39a;text-decoration:none;padding:12px 0;white-space:nowrap}
 #house-comparison a:focus-visible,#house-comparison select:focus-visible,.hybrid-marker:focus-visible,#hybrid-shortcuts button:focus-visible{outline:3px solid #f4d99c;outline-offset:3px}
@@ -18,6 +20,9 @@
 #hybrid-room-frame img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .65s ease;pointer-events:none}
 #hybrid-room-frame img.is-active{opacity:1}
 #hybrid-overview{position:absolute;inset:0;transition:transform .56s cubic-bezier(.2,.65,.2,1),opacity .45s ease}
+#hybrid-fire{position:absolute;z-index:1;pointer-events:none;object-fit:fill}
+#hybrid-fire[hidden]{display:none}
+@media(prefers-reduced-motion:reduce){#hybrid-fire{display:none}}
 #hybrid-room-frame[data-phase="loading"] #hybrid-overview,#hybrid-room-frame[data-phase="entering"] #hybrid-overview,#hybrid-room-frame[data-phase="detail"] #hybrid-overview{transform:translate(var(--approach-x),var(--approach-y)) scale(2.15)}
 #hybrid-room-frame[data-phase="detail"] #hybrid-overview{opacity:0}
 #hybrid-room-frame:not([data-phase="room"]) #hybrid-hotspots{opacity:0;pointer-events:none}
@@ -57,6 +62,7 @@
  #house-comparison{top:72px;left:auto;right:10px;max-width:calc(100% - 20px);gap:8px;flex-wrap:wrap;justify-content:flex-end;padding:6px 10px}
  .house-compare-modes a{padding:10px}
  .house-compare-light{font-size:0;gap:0}.house-compare-light select{padding:6px;font-size:12px}
+ .house-fire-toggle{position:absolute;top:calc(100% + 8px);right:0;padding:0 12px;border-radius:12px;background:#111c24d9}
  #house-compare-exit{font-size:0;min-width:32px;text-align:center}
  #house-compare-exit::after{content:'↗';font:18px system-ui}
  #hybrid-detail-picture{bottom:30%}
@@ -75,3 +81,13 @@
 @media(min-aspect-ratio:5/2){#hybrid-hotspots{display:none}#hybrid-shortcuts{display:grid}#hybrid-status{bottom:236px}}
 @media(max-height:600px){#hybrid-hotspots{display:none}#hybrid-shortcuts{display:grid}#hybrid-status{bottom:236px}}
 @media(prefers-reduced-motion:reduce){#hybrid-room-frame img,.hybrid-marker,#hybrid-overview,#hybrid-detail,#hybrid-detail-controls{transition:none}}
+/* Short landscape panels need a scrollable row, leaving room for room links. */
+@media(max-height:420px){#house-comparison{padding:4px 8px}.house-compare-modes{padding:0}}
+@media(max-height:420px),(max-width:420px) and (max-height:600px){
+ #house-comparison .house-fire-toggle,#house-comparison .house-steam-toggle{position:static;background:none;padding:0}
+ body.house-comparison-page #hybrid-shortcuts,body.house-comparison-page #kitchen-shortcuts,body.house-comparison-page .utility-shortcuts{display:flex;left:50%;right:auto;transform:translateX(-50%);width:calc(100% - 240px);max-height:76px;overflow:auto;gap:8px;padding:2px;box-sizing:border-box}
+ body.house-comparison-page #hybrid-shortcuts button,body.house-comparison-page #kitchen-shortcuts button,body.house-comparison-page .utility-shortcuts button{flex:0 0 140px;min-height:54px}
+ body.house-comparison-page .garage-controls{flex-wrap:nowrap;max-width:calc(100% - 160px);overflow:auto}
+ body.house-comparison-page .garage-controls p,body.house-comparison-page .garage-controls label,body.house-comparison-page .garage-controls button{width:auto;flex-shrink:0;white-space:nowrap}
+}
+@media(max-width:420px) and (max-height:600px){body.house-comparison-page #hybrid-shortcuts,body.house-comparison-page #kitchen-shortcuts,body.house-comparison-page .utility-shortcuts{width:calc(100% - 24px)}}

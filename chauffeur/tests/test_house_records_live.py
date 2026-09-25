@@ -1,6 +1,8 @@
 """Record shelf and search: real UI/shared music logic, intercepted music APIs."""
 import json
+import base64
 from pathlib import Path
+from urllib.parse import urlparse
 from test_house_hybrid_live import seed, live_app, ha_api
 
 
@@ -61,7 +63,10 @@ def main():
             page.route('**/api/music/play', play)
             def art(route):
                 # Deterministic test art through the real artwork proxy URL.
-                route.fulfill(content_type='image/svg+xml', body='<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240"><rect width="240" height="240" fill="#17434c"/><circle cx="130" cy="160" r="90" fill="#c99556"/><path d="M0 0L240 150V0" fill="#eee0b9"/></svg>')
+                token=urlparse(route.request.url).path.rsplit('/',1)[-1]
+                index=int(base64.urlsafe_b64decode(token+'='*((-len(token))%4)).decode().rsplit('/',1)[-1])
+                colors=['#17434c','#203d71','#ad6c35','#572c48','#50704a','#252831']
+                route.fulfill(content_type='image/svg+xml', body=f'<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240"><rect width="240" height="240" fill="{colors[index]}"/><circle cx="{65+index*20}" cy="160" r="80" fill="#c99556"/><path d="M0 0L240 130V0" fill="#eee0b9"/><text x="14" y="30" font-family="sans-serif" font-size="17" font-weight="bold" fill="#1c2329">{albums[index]["name"]}</text></svg>')
             page.route('**/api/ha/image64/*', art)
             page.goto(served.url('house?compare=living&light=day'), wait_until='domcontentloaded')
             page.wait_for_function('window.chfHouseComparison?.readyMs > 0')
@@ -70,10 +75,11 @@ def main():
             page.wait_for_function('document.querySelectorAll("#radio-member option").length===3')
             assert page.locator('.record-jacket').count() == 0 and not writes
             page.locator('#radio-member').select_option('a')
-            page.locator('.record-jacket').nth(5).wait_for()
+            page.locator('.record-jacket').nth(5).wait_for(state='attached')
             assert page.locator('.record-jacket.is-selected').count() == 1
             before = len(writes)
-            page.get_by_role('button', name='Browse Blue Train', exact=True).click()
+            neighbor = page.get_by_role('button', name='Browse Blue Train', exact=True).bounding_box()
+            page.mouse.click(neighbor['x'] + neighbor['width'] * .9, neighbor['y'] + neighbor['height'] * .5)
             assert page.get_by_role('button', name='Play Blue Train', exact=True).is_visible()
             assert len(writes) == before, 'Browsing a spine must not play it'
             page.locator('#radio-record-prev').click()
@@ -90,6 +96,19 @@ def main():
             assert page.locator('#radio-library').evaluate('el => el.parentElement.id === "house-radio" && getComputedStyle(el,"::after").display === "none"')
             assert page.locator('#house-radio').bounding_box() == page.locator('#hybrid-detail-picture').bounding_box()
             assert 'api/ha/image64/' in page.locator('.record-art').first.get_attribute('src')
+            page.locator('#radio-records').press('ArrowRight')
+            page.locator('#radio-records').press('ArrowRight')
+            assert len(writes)==before, 'Cover-flow browsing must never start playback'
+            assert page.locator('.is-selected').get_attribute('data-name')=='Time Out'
+            front=page.locator('.is-selected .record-cover').bounding_box()
+            scene=page.locator('#hybrid-detail-picture').bounding_box()
+            assert .39 < front['height']/scene['height'] < .44, 'Album height must match the photographed shelf records'
+            neighbor=page.locator('.record-jacket').nth(1).locator('.record-cover').bounding_box()
+            assert .24 < neighbor['width']/front['width'] < .8, 'Side albums must show artwork rather than edge-on strips'
+            assert page.locator('.is-selected').evaluate('e=>Math.abs(new DOMMatrix(getComputedStyle(e).transform).m13)<.001 && getComputedStyle(e).transformStyle==="preserve-3d"')
+            assert page.locator('.record-back').count()==6
+            page.screenshot(path=str(out/'cover-flow-middle-desktop.png'))
+            page.locator('#radio-records').press('Home')
             page.screenshot(path=str(out/'records-desktop.png'))
             page.locator('#house-compare-light').select_option('night')
             page.wait_for_selector('#house-radio[data-light="night"]')
@@ -107,7 +126,7 @@ def main():
             page.locator('#radio-search-open').click()
             page.locator('#radio-query').fill('Miles Davis')
             page.locator('#radio-query').press('Enter')
-            page.locator('.record-jacket').nth(5).wait_for()
+            page.locator('.record-jacket').nth(5).wait_for(state='attached')
             page.screenshot(path=str(out/'search-desktop.png'))
             assert 'q=Miles%20Davis' in searches[-1]
             page.get_by_role('button', name='Save Kind of Blue to favorites', exact=True).click()
@@ -126,7 +145,9 @@ def main():
             page.wait_for_function('document.getElementById("radio-records").dataset.selected==="1"')
             page.locator('#radio-favorites').tap()
             page.locator('#radio-member').select_option('a')
-            page.locator('.record-jacket').nth(5).wait_for()
+            page.locator('.record-jacket').nth(5).wait_for(state='attached')
+            page.locator('#radio-records').press('ArrowRight')
+            page.locator('#radio-records').press('ArrowRight')
             page.screenshot(path=str(out/'records-phone.png'))
             # Superseded and late search responses must never restore stale content.
             page.locator('#radio-camera [data-radio-camera="radio"]').tap()

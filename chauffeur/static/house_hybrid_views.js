@@ -126,6 +126,7 @@
   window.chfHybridEnter = function (entry, button) { enter(entry, button, true); };
   window.chfHybridWarm = function (key) { var img = picture(key); if (img) load(img).catch(function () {}); };
   window.chfHybridViewing = function () { return !!active || frame.dataset.phase === 'leaving'; };
+  window.chfHybridReset = function () { if(active)leave(true); };
   window.chfHybridLight = function (night) { if (dark === night) return; dark = night; if (active) show(); };
   back.addEventListener('click', function () { leave(false); });
   window.addEventListener('chf-house-closed', function () { leave(false); });

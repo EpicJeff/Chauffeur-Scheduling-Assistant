@@ -4,6 +4,7 @@ never sinks the room), all sources read-only. See
 docs/superpowers/specs/2026-09-03-argyle-study-design.md."""
 import datetime
 import logging
+import math
 import time
 from typing import Optional
 
@@ -63,11 +64,13 @@ def _board(now, viewer):
     # busy week spend every slot on threads and silently kill the animation.
     for r in insights:
         pins.append({'id': r['id'], 'kind': 'insight', 'label': r.get('line') or '',
+                     'detail': r.get('detail') or '', 'approach': r.get('approach') or '',
                      'warn': False, 'bad': False, 'changed_ts': r.get('created_ts')})
     stalled = {t['id']: t.get('stall_reason') for t in (_th.stalled(today=now.date()) or [])}
     for t in storage.get_threads(include_closed=False):
         reason = stalled.get(t['id'])
         pins.append({'id': t['id'], 'kind': 'thread', 'label': t.get('title') or '',
+                     'detail': t.get('notes') or t.get('description') or '',
                      'warn': bool(reason), 'bad': reason == 'overdue',
                      'changed_ts': t.get('created_at')})
     # `strings` stays in the payload as a permanently empty list so the shape
@@ -95,19 +98,29 @@ def _desk(now, viewer):
         # here for a client to leak. A second gate on one field would be a
         # second thing to keep in step with the first.
         out.append({'id': r['id'], 'open_steps': len(open_steps),
+                    'detail': r.get('detail') or '', 'plan_json': r.get('plan_json') or {},
                     'line': r.get('line') or '',
                     'due': bool(mind.steps_due(r, now.date())),
                     'changed_ts': r.get('created_ts')})
-    return out[:6]
+    return out
 
 
 def _tray(now, viewer):
     rows = storage.get_proposals(status='proposed') or []
+    targets = {'household_task': 'Household list', 'errand': 'Drive errand'}
+    for person in (storage.get_all_passengers() or []) + (storage.get_all_drivers() or []):
+        for cid in person.get('calendar_ids') or person.get('calendarIds') or []:
+            targets[cid] = (person.get('name') or 'Calendar') + ' — ' + cid
+    for member in storage.get_all_members() or []:
+        if member.get('role') == 'child':
+            targets['tasks:' + str(member['id'])] = (member.get('name') or 'Child') + "'s school list"
     # `title` is the field email_ingest.normalize_item writes (services/
     # email_ingest.py:366-371) and the only human-readable name a proposal
     # has; a task proposal's title arrives already carrying its pin glyph.
-    return {'count': len(rows),
-            'items': [{'title': (r.get('title') or '')[:90]} for r in rows[:5]]}
+    return {'count': len(rows), 'targets': [{'id': k, 'label': v} for k, v in targets.items()],
+            'items': [{k: r.get(k) for k in ('id', 'title', 'notes', 'start', 'end',
+                       'location', 'source_from', 'source_subject', 'created_at',
+                       'suggested_calendar_id', 'calendar_id', 'all_day', 'supplies', 'supplies_only', 'duplicate_of')} for r in rows]}
 
 
 def _stickies(now, viewer):
@@ -120,12 +133,12 @@ def _stickies(now, viewer):
     order = {'decide': 2, 'approve': 1, 'fyi': 0}
     worst = max(rows, key=lambda r: order.get(r.get('severity'), 0))['severity'] \
         if rows else None
-    # open_findings() already sorted decide-first, so the five notes the room
-    # can hold are the five that matter most, in the order the surface that
-    # owns findings would list them.
+    # Keep the owning surface's decide-first order. Hybrid paper pagination
+    # can reach every finding; the overview still uses count and worst.
     return {'count': len(rows), 'worst': worst,
-            'items': [{'line': (r.get('line') or '')[:140],
-                       'severity': r.get('severity') or 'fyi'} for r in rows[:5]]}
+            'items': [{'id': r.get('id'), 'line': r.get('line') or '',
+                       'due_at': r.get('due_at'),
+                       'severity': r.get('severity') or 'fyi'} for r in rows]}
 
 
 def _driver_colours():
@@ -262,6 +275,8 @@ def _window(now, viewer):
     bad = [_sign_line(r) for r in rows if ready and r.get('worse')][:3]
     steady = [_sign_line(r) for r in rows if not (ready and r.get('worse'))]
     return {'ready': ready, 'worse': worse[:3], 'label': label,
+            'plant_state': ('unknown' if not ready else 'thriving' if not worse
+                            else 'drooping' if len(worse) == 1 else 'wilting'),
             'signs': bad + steady[:3]}
 
 
@@ -333,8 +348,9 @@ def _contracts(now, viewer):
     # a parent reads, which is what a slip falls back to when the seed event
     # was recorded without one.
     return {'count': len(openish),
-            'items': [{'title': (d.get('seed_title') or d.get('line') or '')[:70]}
-                      for d in openish[:3]]}
+            'items': [{**{k: d.get(k) for k in ('id', 'line', 'date', 'state', 'parts')},
+                       'title': d.get('seed_title') or d.get('line') or ''}
+                      for d in openish]}
 
 
 def _binder_detail(programs, p):
@@ -375,7 +391,9 @@ def _binder_detail(programs, p):
 def _binders(now, viewer):
     from services import programs
     out = []
-    for p in storage.get_programs(state='active') or []:
+    for p in storage.get_programs() or []:
+        if p.get('state') not in ('active', 'paused'):
+            continue
         pulled = False
         try:
             # weekday_shortfall returns None when no weekday is meaningfully
@@ -386,8 +404,11 @@ def _binders(now, viewer):
         except Exception:
             pass
         out.append({'id': p.get('id'), 'title': p.get('title') or '',
+                    'state': p.get('state'), 'why': p.get('why') or '',
+                    'shape': p.get('shape') or {}, 'progress': programs.progress(p),
+                    'current_unit': programs.unit_for(p, (programs.progress(p) or {}).get('phase') or {}) or {},
                     'pulled': pulled, 'detail': _binder_detail(programs, p)})
-    return out[:5]
+    return out
 
 
 def _gauges(now, viewer):
@@ -444,15 +465,23 @@ def _monitor(now, viewer):
 
 
 def _map(now, viewer):
-    """Trips as pins on a wall map, each on a string back to home.
+    """Real destination coordinates from the household's geocode cache.
 
-    The one relation drawn here is one the app actually stores — a trip has
-    a destination and the family leaves from home to reach it — which is
-    exactly the test the evidence board's cross-pin strings failed. Where a
-    pin SITS on the map is decoration (a hash of its own title, so it stays
-    put between polls); the map is not geography and never claims to be.
+    Reading the Study never initiates provider calls. Unknown locations stay
+    unpinned; a trip's event_id is the key used by the existing trip page.
     """
-    from services import scope
+    from services import scope, maps
+    home = None
+    home_location = maps.get_home_location()
+    if home_location:
+        coords = (storage.get_cached_geocode(home_location) or
+                  storage.get_cached_geocode(maps.extract_street_address(home_location)) or {})
+        try:
+            lat, lon = float(coords['lat']), float(coords['lon'])
+            if (lat, lon) != (0, 0) and math.isfinite(lat) and math.isfinite(lon) and -90 <= lat <= 90 and -180 <= lon <= 180:
+                home = {'lat': lat, 'lon': lon}
+        except (KeyError, ValueError, TypeError):
+            pass
     sched = storage.get_cached_schedule() or {}
     starts = {}
     for e in sched.get('events') or []:
@@ -480,7 +509,17 @@ def _map(now, viewer):
             ts = None
         if ts is None:
             ts = starts.get(str(t.get('event_id')))
+        coords = storage.get_cached_geocode(t.get('location') or '') or {}
+        try:
+            lat, lon = float(coords['lat']), float(coords['lon'])
+            # The existing geocoder stores (0, 0) as a failed lookup sentinel.
+            located = (lat, lon) != (0, 0) and math.isfinite(lat) and math.isfinite(lon) and -90 <= lat <= 90 and -180 <= lon <= 180
+        except (KeyError, ValueError, TypeError):
+            lat = lon = None
+            located = False
         rows.append({'id': t.get('id') or t.get('event_id') or '',
+                     'event_id': t.get('event_id') or '',
+                     'lat': lat if located else None, 'lon': lon if located else None,
                      'title': t.get('title') or '',
                      'location': t.get('location') or '',
                      'start_ts': ts, 'upcoming': False})
@@ -489,12 +528,11 @@ def _map(now, viewer):
     nowts = now.timestamp()
     rows = [r for r in rows if r['start_ts'] is None or r['start_ts'] >= nowts]
     rows.sort(key=lambda r: (r['start_ts'] is None, r['start_ts'] or 0))
-    rows = rows[:6]
     for r in rows:                      # the soonest dated one, and only it
         if r['start_ts'] is not None:
             r['upcoming'] = True
             break
-    return {'trips': rows}
+    return {'trips': rows, 'home': home}
 
 
 _SECTIONS = {'board': _board, 'desk': _desk, 'tray': _tray, 'stickies': _stickies,

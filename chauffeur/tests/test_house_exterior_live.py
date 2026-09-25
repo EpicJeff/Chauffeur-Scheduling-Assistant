@@ -49,7 +49,84 @@ def main():
             assert page.locator('#exterior-pictures > img').count() == 1
             assert page.locator('.exterior-orbit').count() == 0
             page.wait_for_selector('[data-vehicle="school-bus"]')
-            assert page.locator('.exterior-vehicle').count() == 1  # Cars now live inside the garage.
+            assert page.locator('#exterior-fleet').count()==0
+            assert page.locator('.exterior-garage-car').count()==2
+            assert '14% charge' in page.locator('.exterior-garage-car[data-vehicle=suv]').get_attribute('aria-label')
+            assert page.locator('.exterior-garage-car[data-vehicle=van]').get_attribute('data-bay')=='left'
+            assert page.locator('.exterior-garage-car[data-vehicle=suv]').get_attribute('data-bay')=='right'
+            assert page.locator('[data-vehicle="school-bus"]').evaluate('n=>n.style.width')=='37%'
+            page.locator('#exterior-layer-controls summary').click()
+            page.locator('#exterior-driveway-preview').select_option('home')
+            page.wait_for_selector('[data-vehicle="driveway-car"]')
+            page.wait_for_function("Array.from(document.querySelectorAll('.exterior-scene-patch')).every(i=>i.complete && i.naturalWidth)")
+            assert page.locator('.exterior-scene-patch').evaluate('''i=>{
+                const c=document.createElement('canvas');c.width=i.naturalWidth;c.height=i.naturalHeight;
+                const x=c.getContext('2d');x.drawImage(i,0,0);
+                const alpha=(px,py)=>x.getImageData(px,py,1,1).data[3];
+                return [[0,0],[500,800],[1200,900],[850,600],[1000,600]].every(p=>alpha(...p)===0)
+                    && alpha(800,780)>240 && getComputedStyle(i).clipPath==='none';
+            }'''), 'driveway uses real transparent pixels, not a clipped pavement patch'
+            page.screenshot(path=str(out/'vehicles-composite.png'))
+            # The patch must retain the photograph's exact cover projection,
+            # including its bottom alignment at narrow and ultrawide sizes.
+            for width, height in ((390,844),(2560,1080),(1400,1000)):
+                page.set_viewport_size({'width':width,'height':height})
+                page.wait_for_function('''() => {
+                    const base=document.getElementById('exterior-photo');
+                    const patch=document.querySelector('.exterior-scene-patch');
+                    const plane=document.getElementById('exterior-traffic').getBoundingClientRect();
+                    const r=patch.getBoundingClientRect();
+                    const s=Math.max(innerWidth/base.naturalWidth,innerHeight/base.naturalHeight);
+                    return patch.naturalWidth===base.naturalWidth && patch.naturalHeight===base.naturalHeight
+                        && Math.abs(plane.width-base.naturalWidth*s)<1
+                        && Math.abs(plane.height-base.naturalHeight*s)<1
+                        && Math.abs(plane.x-(innerWidth-plane.width)*(innerWidth<701?.8:.5))<1
+                        && Math.abs(plane.bottom-innerHeight)<1
+                        && Math.abs(r.width-plane.width*.55)<1
+                        && Math.abs(r.height-plane.height*.55)<1
+                        && Math.abs(r.x-plane.x-plane.width*.2488)<1
+                        && Math.abs(r.y-plane.y-plane.height*.37583)<1;
+                }''')
+                page.screenshot(path=str(out/f'vehicles-{width}.png'))
+                if width==390:
+                    assert page.locator('.exterior-garage-car').evaluate_all('els=>els.every(e=>{const r=e.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.width>=44&&r.height>=44})')
+            # Independent live presence in both spaces of ONE double garage,
+            # plus the driveway, including unknown presence (never assumed home).
+            page.locator('#exterior-driveway-preview').select_option('live')
+            for left,right,driveway in ((l,r,d) for l,r in ((True,False),(False,True),(False,False),(True,True)) for d in (False,True)):
+                fleet[1]['present']=left;fleet[0]['present']=right;fleet[2]['present']=driveway
+                page.evaluate('async()=>{await chfHouseRefresh()}')
+                assert page.locator('.exterior-garage-car[data-bay=left]').count()==int(left)
+                assert page.locator('.exterior-garage-car[data-bay=right]').count()==int(right)
+                state='both' if left and right else 'left' if left else 'right' if right else 'empty'
+                assert page.locator('#exterior-traffic').get_attribute('data-garage-state')==state
+                assert page.locator('.exterior-garage-layer').count()==int(left or right)
+                assert page.locator('[data-vehicle=driveway-car]').count()==int(driveway)
+                assert page.locator('.exterior-driveway-shadow').count()==int(driveway)
+                page.wait_for_function("Array.from(document.querySelectorAll('#exterior-traffic img')).every(i=>i.complete && i.naturalWidth)")
+                assert page.locator('.exterior-garage-layer img').evaluate_all("els=>els.every(i=>getComputedStyle(i).transform==='none')")
+                page.screenshot(path=str(out/f'garage-{left}-{right}-{driveway}.png'))
+            fleet[1]['present']=None
+            page.evaluate('async()=>{await chfHouseRefresh()}')
+            assert page.locator('.exterior-garage-car[data-bay=left]').count()==0
+            fleet[1]['present']=True
+            page.evaluate('async()=>{await chfHouseRefresh()}')
+            page.locator('.exterior-garage-car[data-vehicle=suv]').hover()
+            page.screenshot(path=str(out/'garage-hover.png'))
+            page.locator('.exterior-garage-car[data-vehicle=suv]').click()
+            page.wait_for_selector('.house-life-panel:visible')
+            page.get_by_role('button', name='Close and return to house', exact=True).click()
+            page.locator('[data-vehicle="driveway-car"]').click()
+            page.wait_for_selector('.house-life-panel:visible')
+            page.get_by_role('button', name='Close and return to house', exact=True).click()
+            page.locator('#exterior-driveway-preview').select_option('away')
+            assert page.locator('[data-vehicle="driveway-car"]').count() == 0
+            page.locator('#exterior-bus-preview').select_option('away')
+            assert page.locator('[data-vehicle="school-bus"]').count() == 0
+            page.locator('#exterior-bus-preview').select_option('live')
+            page.locator('#exterior-layer-controls summary').click()
+
+            assert page.locator('.exterior-vehicle').count() == 1  # Bus baseline retained; driveway preview explicitly empty.
             assert page.locator('[data-vehicle="away"]').count() == 0
             assert '3 home' in page.locator('#exterior-cars-shortcut').inner_text()
             page.locator('#exterior-cars-shortcut').click()
@@ -90,10 +167,27 @@ def main():
             assert page.locator('#house-exterior').is_hidden()
             assert not page.locator('#hybrid-room').evaluate('el=>el.inert')
             page.screenshot(path=str(out/'living-desktop.png'))
+            assert not page.evaluate('chfEffectsProbe().running')  # Reduced motion.
+            page.emulate_media(reduced_motion='no-preference')
+            try:
+                page.wait_for_function('chfEffectsProbe().frames > 3')
+            except Exception:
+                print('EFFECT STATE', page.evaluate('''() => ({probe:chfEffectsProbe(),
+                    scene:document.body.dataset.houseScene,frame:{...document.getElementById('hybrid-room-frame').dataset},
+                    hidden:document.hidden,checked:document.getElementById('hybrid-effects-toggle').checked,
+                    images:['hybrid-day','hybrid-night'].map(id=>{const i=document.getElementById(id);return [id,i.complete,i.naturalWidth]})})'''))
+                raise
+            page.locator('#hybrid-effects-toggle').uncheck()
+            assert not page.evaluate('chfEffectsProbe().running')
+            page.locator('#hybrid-effects-toggle').check()
+            page.wait_for_function('chfEffectsProbe().running')
+            page.emulate_media(reduced_motion='reduce')
+
             for key in ('music', 'pets', 'tasks', 'programs'):
                 page.locator(f'#hybrid-hotspots [data-card="{key}"]').click()
                 page.wait_for_selector(f'#hybrid-room-frame[data-view="{key}"][data-phase="detail"]')
                 assert page.locator('#hybrid-outside').is_hidden()
+                assert not page.evaluate('chfEffectsProbe().running')
                 page.keyboard.press('Escape')
                 page.wait_for_selector('#hybrid-room-frame[data-phase="room"]')
                 mode('living')
@@ -162,6 +256,22 @@ def main():
             mode('entering')
             mode('living')
             assert not [e for e in served.errors() if 'net::ERR_FAILED' not in e], served.errors()
+            page.wait_for_function('chfEffectsProbe().running')
+            page.locator('#house-compare-light').select_option('night')
+            page.wait_for_selector('#hybrid-room-frame[data-light="night"]')
+            page.screenshot(path=str(out/'fireplace-night.png'))
+            page.locator('#hybrid-shortcuts [data-card="music"]').click()
+            page.wait_for_selector('#hybrid-room-frame[data-phase="detail"]')
+            assert not page.evaluate('chfEffectsProbe().running')
+            page.goto(served.url('house?compare=exterior&light=day&driveway_car=murano'))
+            ready()
+            page.wait_for_selector('[data-vehicle="driveway-car"]')
+            fleet[2]['present'] = False
+            page.evaluate('async()=>await chfHouseRefresh()')
+            page.wait_for_function('!document.querySelector("[data-vehicle=driveway-car]")')
+            page.wait_for_function("document.querySelector('#exterior-cars-shortcut')?.textContent.includes('2 home')")
+            assert page.locator('.exterior-garage-car').count()==2
+            assert not page.evaluate('chfEffectsProbe().running')
             (out/'results.json').write_text(json.dumps({'passed':True,'views':1,'webglAttempts':0}, indent=2))
             print('PASS: single exterior, shared previews and hold visits, history, touch and live traffic')
     except Exception:

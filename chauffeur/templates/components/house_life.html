@@ -11,14 +11,19 @@
   <section x-ref="panel" class="panel-modal house-life-panel" role="{{ 'region' if house_hybrid|default(false) else 'dialog' }}"{% if not house_hybrid|default(false) %} aria-modal="true"{% endif %}
            @keydown.escape.stop="close()"{% if not house_hybrid|default(false) %} @keydown.tab="trap($event)"{% else %} :role="quickView ? 'dialog' : 'region'" :aria-modal="quickView ? 'true' : null" @keydown.tab="if (quickView) trap($event)"{% endif %} aria-labelledby="house-life-title">
     <header><div><h2 id="house-life-title" x-text="title()"></h2><p x-text="explanation()"></p></div>
-      <button type="button" @click="close()" aria-label="{{ 'Return to living room' if house_hybrid|default(false) else 'Close and return to house' }}"{% if house_hybrid|default(false) %} :aria-label="quickView ? 'Close and return to house' : 'Return to living room'"{% endif %}>{{ '↩' if house_hybrid|default(false) else '✕' }}</button></header>
+      <button type="button" @click="close()" aria-label="{{ 'Return to living room' if house_hybrid|default(false) else 'Close and return to house' }}"{% if house_hybrid|default(false) %} :aria-label="quickView ? 'Close and return to house' : 'Return to ' + ({kitchen:'kitchen',mudroom:'mudroom'}[document.body.dataset.houseScene] || 'living room')"{% endif %}>{{ '↩' if house_hybrid|default(false) else '✕' }}</button></header>
     <div class="house-life-body">
       <template x-if="active === 'chores'"><div class="house-life-lanes" x-data="choresLanesCard({data:{interactive:true}}, apiBase)" x-init="startLanes()">{{ house_chores.lane_grid(interactive='lanesInteractive') }}</div></template>
       <template x-if="active === 'routines'"><div class="house-life-lanes" x-data="routineLanesCard({data:{interactive:true}}, apiBase)" x-init="startRoutineLanes()">{{ house_routines.lane_grid(interactive='lanesInteractive') }}</div></template>
       <template x-if="active === 'programs' && !bookMode()"><div x-data="programsCard({data:{}}, apiBase)" x-init="startPrograms()">{{ house_programs.rows() }}</div></template>
       <template x-if="active === 'packing'"><div x-data="packingCard({data:{interactive:true,days:1}}, apiBase)" x-init="startPacking()">{{ house_packing.rows() }}</div></template>
       <template x-if="t && !bookMode() && !habitatMode()"><div>{% include 'components/board_tile_body.html' %}</div></template>
-      <template x-if="active === 'calendar'"><div x-data="packingCard({data:{interactive:true,days:1}}, apiBase)" x-init="startPacking()">{{ house_packing.rows() }}</div></template>
+      <template x-if="active === 'calendar' && !kitchenCalendarMode()"><div x-data="packingCard({data:{interactive:true,days:1}}, apiBase)" x-init="startPacking()">{{ house_packing.rows() }}</div></template>
+      <div x-show="kitchenCalendarMode()" class="kitchen-calendar-paper">
+        <nav aria-label="Calendar months"><button type="button" aria-label="Previous month" @click="calendarMove('prev')">‹</button><h3 x-text="calendarTitle"></h3><button type="button" aria-label="Next month" @click="calendarMove('next')">›</button></nav>
+        <div id="kitchen-wall-calendar" aria-label="Family month calendar"></div>
+        <button type="button" class="kitchen-calendar-today" @click="calendarMove('today')">This month</button>
+      </div>
       <div x-show="active === 'music'" x-ref="music"></div>
       <template x-if="active === 'study_preview'"><div><p>The Study contains parent information and requires your PIN.</p><button type="button" class="house-life-manage" @click="study()">Unlock Study</button></div></template>
       <p x-show="t && t.data && t.data.empty" class="house-life-message">Nothing to show here yet.</p>

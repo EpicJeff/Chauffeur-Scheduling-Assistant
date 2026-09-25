@@ -29,11 +29,83 @@ def verify_config(served):
         page.get_by_role('button', name='Boards', exact=True).click()
         page.wait_for_function("Alpine.$data(document.querySelector('#boards')).panelLoaded")
         assert page.locator('#panel-house-home').is_checked()
-        print('PASS: config toggle saves through API and survives reload', flush=True)
+        assert not page.locator('#house-hybrid-enabled').is_checked()
+        with page.expect_response(lambda r: '/api/settings' in r.url and r.request.method == 'POST') as response:
+            page.locator('#house-hybrid-enabled').check()
+        assert response.value.ok
+        assert storage.get_settings()['house_hybrid_enabled'] is True
+        page.reload(wait_until='domcontentloaded')
+        page.get_by_role('button', name='Boards', exact=True).click()
+        page.wait_for_function("Alpine.$data(document.querySelector('#boards')).panelLoaded")
+        assert page.locator('#panel-house-home').is_checked()
+        assert page.locator('#house-hybrid-enabled').is_checked()
+        shots=Path('../scratch/house-choice'); shots.mkdir(parents=True,exist_ok=True)
+        page.locator('#panel-house-home').scroll_into_view_if_needed()
+        page.screenshot(path=str(shots/'settings-desktop.png'))
+        with page.expect_response(lambda r: '/api/settings' in r.url and r.request.method == 'POST') as response:
+            page.locator('#house-hybrid-enabled').uncheck()
+        assert response.value.ok
+        assert storage.get_settings()['house_hybrid_enabled'] is False
+        assert storage.get_settings()['panel_house_home'] is True
+        print('PASS: both config toggles persist independently; hybrid can be disabled', flush=True)
         page.evaluate("Alpine.$data(document.querySelector('#boards')).openBoard({slug:'home'})")
         page.wait_for_url('**/home?panel=false&home_view=board', timeout=30000)
         assert page.locator('#room canvas').count() == 0
         print('PASS: Boards editor can still open the Home board', flush=True)
+
+
+def verify_hybrid(served):
+    storage.patch_settings({'panel_house_home': True, 'house_hybrid_enabled': True,
+                            'panel_idle_return_seconds': 0})
+    with served.browser(reduced_motion='reduce') as page:
+        page.route('**/api/v2/chat/stream*', lambda r: r.fulfill(status=204, body=''))
+        page.add_init_script("""sessionStorage.setItem('chauffeur_house_unavailable','1');
+            HTMLCanvasElement.prototype.getContext=function(){return null;};""")
+        page.goto(served.url('home?panel=true&quality=2d'), wait_until='domcontentloaded')
+        page.wait_for_url('**/house?*')
+        page.wait_for_function('window.chfExteriorProbe?.().ready')
+        assert 'compare=' not in page.url
+        assert page.locator('body').get_attribute('data-house-render') == 'hybrid'
+        assert page.locator('#house-comparison').is_hidden()
+        assert page.locator('#house-compare-measurements').is_hidden()
+        assert page.evaluate('typeof THREE') == 'undefined'
+        shots=Path('../scratch/house-choice'); shots.mkdir(parents=True,exist_ok=True)
+        page.screenshot(path=str(shots/'default-house-desktop.png'))
+        page.set_viewport_size({'width':390,'height':844})
+        page.screenshot(path=str(shots/'default-house-phone.png'))
+        page.set_viewport_size({'width':1400,'height':1000})
+        page.evaluate("chfHybridGo('living')")
+        page.wait_for_function("chfHouseMode()==='living'")
+        assert page.locator('#house-comparison').is_hidden()
+        page.locator('#hybrid-walkthrough [data-room=kitchen]').click()
+        page.wait_for_function("chfHouseMode()==='kitchen'")
+        assert page.evaluate('ChauffeurHome.rest()')
+        page.wait_for_function("chfHouseMode()==='exterior'")
+        assert 'scene=' not in page.url
+        other_context = page.context.browser.new_context(reduced_motion='reduce')
+        try:
+            other = other_context.new_page()
+            other.goto(served.url('house'), wait_until='domcontentloaded')
+            assert other.locator('body').get_attribute('data-house-render') == 'hybrid'
+        finally:
+            other_context.close()
+        for query in ('editor=1&quality=2d', 'draft=expired&quality=2d', 'render=3d&quality=2d'):
+            page.goto(served.url('house?'+query), wait_until='domcontentloaded')
+            assert page.locator('#house-exterior').count() == 0, query
+        storage.patch_settings({'panel_house_home': False})
+        page.goto(served.url('home'), wait_until='domcontentloaded')
+        assert page.evaluate('typeof ChauffeurHome') == 'undefined'
+        page.goto(served.url('house'), wait_until='domcontentloaded')
+        assert page.locator('body').get_attribute('data-house-render') == 'hybrid'
+        storage.patch_settings({'house_hybrid_enabled': False})
+        page.reload(wait_until='domcontentloaded')
+        assert page.locator('#house-exterior').count() == 0
+        assert page.locator('body').get_attribute('data-house-render') is None
+        page.goto(served.url('house?compare=exterior&scene=living'), wait_until='domcontentloaded')
+        page.wait_for_function("window.chfHouseMode?.()==='living'")
+        assert page.locator('body').get_attribute('data-house-render') == 'hybrid'
+        assert page.locator('#house-comparison').is_visible()
+    print('PASS: household hybrid default, no-WebGL Home, idle return, second device, editor isolation and rollback', flush=True)
 
 
 def main():
@@ -99,6 +171,7 @@ def main():
             assert '/house?' in page.url
             print('PASS: toggle off preserves existing Home and House behavior', flush=True)
         verify_config(served)
+        verify_hybrid(served)
     finally:
         served.stop()
 

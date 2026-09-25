@@ -1,11 +1,20 @@
 <section id="house-exterior" aria-label="Your house exterior" aria-busy="true">
   <div id="exterior-pictures">
-    <img id="exterior-photo" data-src="{{ 'static/house_hybrid/exterior-scene.jpg'|ver }}" alt="" decoding="async">
-    <div id="exterior-traffic" aria-label="Driveway and curb"></div>
+    <img id="exterior-photo" data-src="{{ 'static/house_hybrid/exterior-model-full-block-empty.png'|ver }}" alt="" decoding="async">
+    <div id="exterior-traffic" aria-label="Garage, driveway and curb"
+         data-driveway="{{ 'static/house_hybrid/exterior-murano-cutout.png'|ver }}"
+         data-garage-both="{{ 'static/house_hybrid/exterior-model-full-block-all-home.png'|ver }}"
+         data-garage-left="{{ 'static/house_hybrid/exterior-model-full-block-left.png'|ver }}"
+         data-garage-right="{{ 'static/house_hybrid/exterior-model-full-block-right.png'|ver }}"></div>
   </div>
   <header class="exterior-heading"><span>THE HOUSE</span><h1>My house</h1></header>
-  <button id="exterior-enter" type="button">Living room shortcuts</button>
+  <div id="exterior-room-shortcuts"><button id="exterior-enter" type="button">Living room shortcuts</button><button id="exterior-kitchen-enter" type="button">Kitchen shortcuts</button><button id="exterior-mudroom-enter" type="button">Mudroom shortcuts</button><button id="exterior-study-enter" type="button">Study · Parent PIN</button></div>
   <div id="exterior-traffic-shortcuts"></div>
+  <details id="exterior-layer-controls"><summary>Vehicle preview</summary>
+    <label>Driveway · Blue Murano <select id="exterior-driveway-preview"><option value="live">Follow assigned vehicle</option><option value="home">Preview parked</option><option value="away">Preview empty</option></select></label>
+    <label>School bus <select id="exterior-bus-preview"><option value="live">Follow bus presence</option><option value="home">Preview at curb</option><option value="away">Preview absent</option></select></label>
+    <small>Live parking follows the matching vehicles. Preview changes only this scene.</small>
+  </details>
   <p id="exterior-status" role="status">Opening your house…</p>
 </section>
 <section id="hybrid-garage" data-car-id="{{ request.query_params.get('garage_car', '') }}" hidden inert aria-label="Garage bay prototype">
@@ -34,4 +43,6 @@
   </div>
 </section>
 <div id="exterior-quickviews"></div>
+{% include 'components/house_kitchen.html' %}
+{% include 'components/house_utility_rooms.html' %}
 <button id="hybrid-outside" type="button" hidden>← Outside</button>

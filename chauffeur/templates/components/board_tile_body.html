@@ -612,7 +612,7 @@
 
                     <!-- the week -->
                     <template x-if="t.type === 'weather' && !t.data.empty">
-                        <div class="flex justify-between gap-2">
+                        <div class="house-weather-days flex justify-between gap-2">
                             <template x-for="d in t.data.days" :key="d.day">
                                 <div class="text-center min-w-0">
                                     <div class="text-xs font-bold panel-dim uppercase" x-text="d.day"></div>

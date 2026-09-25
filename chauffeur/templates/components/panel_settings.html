@@ -14,10 +14,20 @@
             Use The House as Home
         </label>
         <p class="text-xs text-gray-500 mt-1">
-            Open The House from Home and when the panel returns home. Devices that
-            cannot show 3D use the Home board selected above. Off by default.
+            Open The House from Home and when the panel returns home. The original 3D house falls back to the selected Home board on devices without 3D support. Off by default.
         </p>
         <a href="home?panel=false&amp;home_view=board" class="text-xs text-sky-300 underline">Open Home board</a>
+    </div>
+
+    <div>
+        <label class="flex items-center gap-2 text-sm text-gray-300">
+            <input id="house-hybrid-enabled" type="checkbox" x-model="panel.house_hybrid_enabled" @change="savePanel()">
+            Use the new House experience
+        </label>
+        <p class="text-xs text-gray-500 mt-1">
+            Use the photographic rooms for everyone opening The House. Turn off to return to the original 3D house.
+            Takes effect when The House is opened or refreshed. Off by default.
+        </p>
     </div>
 
     <div>

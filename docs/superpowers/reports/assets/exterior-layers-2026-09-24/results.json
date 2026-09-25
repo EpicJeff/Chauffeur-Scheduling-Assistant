@@ -1,0 +1,78 @@
+{
+  "model": "gemini-3.1-flash-image",
+  "base_sha256": "7d52fb76095295b4980b9ad980b17f08163ddc002dc8cacea2372a66c206695d",
+  "max_requests": 2,
+  "retries": 0,
+  "results": [
+    {
+      "stage": "driveway",
+      "dimensions": [
+        1264,
+        848
+      ],
+      "usage": {
+        "promptTokenCount": 477,
+        "candidatesTokenCount": 1443,
+        "totalTokenCount": 1920,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 219
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 258
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1120
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "model_version": "gemini-3.1-flash-image",
+      "sha256": "0ab79ab1be6059ad685598c6ee62e419c38991872716da377fb855379cd2fe2d",
+      "status": "ok",
+      "file": "driveway.jpg",
+      "alpha_extrema": null,
+      "seconds": 9.06
+    },
+    {
+      "stage": "bus",
+      "dimensions": [
+        1264,
+        848
+      ],
+      "usage": {
+        "promptTokenCount": 450,
+        "candidatesTokenCount": 1475,
+        "totalTokenCount": 1925,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 192
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 258
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1120
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "model_version": "gemini-3.1-flash-image",
+      "sha256": "57511278154fccc5452ae3a532f1b938333d4048ca59d7f2b52c21c2830a90b8",
+      "status": "ok",
+      "file": "bus.jpg",
+      "alpha_extrema": null,
+      "seconds": 8.91
+    }
+  ]
+}

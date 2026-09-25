@@ -18,11 +18,13 @@
     selectedIndex = Math.max(0, Math.min(index, jackets.length - 1));
     jackets.forEach(function (jacket, i) {
       var distance = i - selectedIndex, chosen = distance === 0;
+      var offset = Math.min(Math.abs(distance), 3);
       jacket.classList.toggle('is-selected', chosen);
-      jacket.style.setProperty('--record-x', (chosen ? 50 : 50 + Math.sign(distance) * (31 + Math.min(Math.abs(distance), 6) * 2.8)) + '%');
-      jacket.style.setProperty('--record-angle', (chosen ? -3 : -Math.sign(distance) * (Math.abs(distance) === 1 ? 82 : 88)) + 'deg');
+      jacket.style.setProperty('--record-x', (chosen ? 50 : 50 + Math.sign(distance) * (37 + (offset - 1) * 3)) + '%');
+      jacket.style.setProperty('--record-angle', (chosen ? 0 : -Math.sign(distance) * (68 + (offset - 1) * 3)) + 'deg');
+      jacket.style.setProperty('--record-depth', chosen ? '12px' : 'calc(var(--radio-width) * -.12 - ' + offset * 12 + 'px)');
       jacket.style.zIndex = chosen ? 100 : 50 - Math.abs(distance);
-      jacket.hidden = Math.abs(distance) > 6;
+      jacket.hidden = Math.abs(distance) > 3;
       var button = jacket.querySelector('.record-play');
       button.tabIndex = chosen ? 0 : -1;
       button.setAttribute('aria-label', (chosen ? 'Play ' : 'Browse ') + jacket.dataset.name);
@@ -57,6 +59,7 @@
       var jacket = el('article', 'record-jacket');
       jacket.dataset.name = item.name || 'Untitled record';
       jacket.style.setProperty('--record-hue', (i * 47 + 24) % 360);
+      var back = el('span', 'record-back'); back.setAttribute('aria-hidden', 'true');
       var play = el('button', 'record-play'); play.type = 'button'; play.dataset.uri = item.uri;
       play.setAttribute('aria-label', 'Play ' + (item.name || 'Untitled record'));
       var cover = el('span', 'record-cover');
@@ -81,7 +84,7 @@
       save.setAttribute('aria-label', (saved ? 'Remove ' : 'Save ') + (item.name || 'record') + (saved ? ' from favorites' : ' to favorites'));
       save.setAttribute('aria-pressed', String(saved));
       save.addEventListener('click', function () { toggleFavorite(item, saved); });
-      jacket.append(play, save); records.append(jacket);
+      jacket.append(back, play, save); records.append(jacket);
     });
     var rememberedIndex = items.findIndex(function (item) { return item.uri === selectedUri; });
     arrange(rememberedIndex < 0 ? selectedIndex : rememberedIndex);

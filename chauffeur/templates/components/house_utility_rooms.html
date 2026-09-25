@@ -1,0 +1,26 @@
+{% for name, label, views in [('mudroom','Mudroom',['next','chores','routines']),('study','Study',['board','desk','planner','binders','monitor','tray','findings','agreements','gauges','map','plant','plant-drooping','plant-wilting'])] %}
+<section id="hybrid-{{ name }}" class="hybrid-utility-room" aria-label="{{ label }}" data-view="room" data-phase="room" hidden inert>
+  <div class="utility-overview">
+    {% for light in ['day','night'] %}
+    <img data-room-light="{{ light }}" {% if name == 'study' %}data-plant="thriving"{% endif %} data-src="{{ ('static/house_hybrid/' ~ name ~ '-' ~ light ~ '.png')|ver }}" alt="{{ label }} in the oak and cream family home" decoding="async">
+    {% endfor %}
+    {% if name == 'study' %}{% for state in ['drooping','wilting'] %}{% for light in ['day','night'] %}
+    <img data-room-light="{{ light }}" data-plant="{{ state }}" data-src="{{ ('static/house_hybrid/study-' ~ state ~ '-' ~ light ~ '.png')|ver }}" alt="Study with a {{ state }} family baseline plant" decoding="async">
+    {% endfor %}{% endfor %}{% endif %}
+    <div id="{{ name }}-hotspots" class="utility-hotspots" aria-label="{{ label }} destinations"></div>
+  </div>
+  <section class="utility-detail" aria-label="{{ label }} close-up" hidden>
+    <div class="utility-plane">
+      {% for view in views %}{% for light in ['day','night'] %}
+      <img data-utility-view="{{ view }}" data-light="{{ light }}" data-src="{{ ('static/house_hybrid/' ~ name ~ '-' ~ view ~ '-' ~ light ~ '.png')|ver }}" alt="" decoding="async">
+      {% endfor %}{% endfor %}
+      <div id="{{ name }}-controls" class="utility-controls"></div>
+    </div>
+  </section>
+  <button class="utility-back" type="button" hidden>← {{ label }}</button>
+  <div class="utility-shortcuts" aria-label="{{ label }} destinations"></div>
+  <p class="utility-status" role="status">Choose an object to move closer.</p>
+  {% if name == 'study' %}<button id="study-lock" type="button">Lock Study</button>{% endif %}
+</section>
+{% endfor %}
+<nav id="hybrid-walkthrough" aria-label="Connected rooms" hidden></nav>

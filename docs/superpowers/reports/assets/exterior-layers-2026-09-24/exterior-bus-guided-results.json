@@ -1,0 +1,1 @@
+{"model": "gemini-3.1-flash-image", "usage": {"promptTokenCount": 727, "candidatesTokenCount": 1493, "totalTokenCount": 2220, "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 211}, {"modality": "IMAGE", "tokenCount": 516}], "candidatesTokensDetails": [{"modality": "IMAGE", "tokenCount": 1120}], "serviceTier": "standard"}, "max_requests": 1, "retries": 0}

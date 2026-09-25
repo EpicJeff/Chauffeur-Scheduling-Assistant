@@ -146,6 +146,7 @@
   function paintLight() {
     var dark = outsideNight(), image = dark ? night : day, revision = ++paintRevision;
     window.chfHybridLight(dark);
+    window.dispatchEvent(new CustomEvent('chf-house-light', { detail: dark }));
     load(image).then(function () {
       if (revision !== paintRevision || stopped) return;
       day.classList.toggle('is-active', !dark); night.classList.toggle('is-active', dark);

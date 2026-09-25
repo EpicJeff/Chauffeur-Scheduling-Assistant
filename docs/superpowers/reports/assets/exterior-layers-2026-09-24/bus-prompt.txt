@@ -1,0 +1,12 @@
+Edit this exact exterior photograph. Preserve camera, framing,
+house, trees, driveway joints, road and ALL other pixels as closely as possible.
+Add ONLY the requested vehicle and its physically correct contact and cast
+shadows, subtle ground reflections. Match the late afternoon sunlight, scale,
+lens perspective and photographic detail. No scenery changes, no people,
+no added text, no crop, no camera move. Return the complete photograph, 3:2.
+Add one realistic yellow American school bus stopped
+on the ASPHALT ROAD in the lower left foreground, parallel to the diagonal curb,
+nose pointing toward the lower right. Bus mostly in lower left, approximately
+x=0%-31%, y=78%-99%. All tires must touch asphalt, never sidewalk or grass. It is
+acceptable for its rear to extend beyond the left edge. Correct scale relative
+to house and road. No other vehicles.

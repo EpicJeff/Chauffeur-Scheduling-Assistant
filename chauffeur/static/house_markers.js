@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   var rooms = {
-    kitchen: [['Moments','moments','fridge'],['Meals','meals','counter'],['Shopping list','lists','board'],['Calendar','calendar','calendar'],['Weather','weather','window']],
+    kitchen: [['Moments','moments','fridge'],['Meals','meals','counter'],['Groceries','lists','pantry'],['Calendar','calendar','calendar'],['Weather','weather','window']],
     living: [['Music','music','radio'],['Critters','pets','pet'],['Tasks','tasks','tasks'],['Programs','programs','programs']],
     mudroom: [['Next up','schedule','door'],['Chores','chores','chores'],['Routines','routines','routines']],
     garage: [['Cars','cars','garage'],['Errands','errands','errands']],

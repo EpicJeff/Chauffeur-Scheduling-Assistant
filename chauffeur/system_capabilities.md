@@ -1,6 +1,8 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.166 (2026-09-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.181 (2026-09-25).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**House experience choice (v2.499.181).** Config > Boards includes "Use the new House experience" next to "Use The House as Home". The independent household setting defaults off; enabling it makes normal `/house` visits use the photographic exterior and connected rooms, without comparison controls or a WebGL requirement. Both switches together make this the Home experience. Disabling the new experience restores 3D on the next visit or refresh. Draft/editor views and explicit comparison URLs remain available.
 
 **Full-viewport hybrid framing (v2.499.166; feature branch prototype).** Hybrid now fills the same viewport as the 3D canvas, without page margins, borders or rounded image framing. Both comparison modes share compact overlay controls. The room artwork uses a centered cover crop; marker coordinates and approach origins use the same projection so objects remain aligned after resizing. Narrow, short or extreme-wide views provide destination shortcuts over the scene when cropping would hide objects. Close-up controls overlay the full-screen scene and scroll independently on phones. This changes presentation, not the existing card actions or image assets.
 

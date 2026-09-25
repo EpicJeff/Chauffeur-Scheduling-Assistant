@@ -1,5 +1,6 @@
 /* The room opens the family's existing cards; each card owns its teardown. */
 window.houseLife = function () {
+  var kitchenCalendar = null, calendarPending = null;
   var labels = { packing:'Packing', chores:'Chores', routines:'Routines',
     programs:'Programs', tasks:'Household tasks', errands:'Errands',
     moments:'Moments', meals:'Meals', lists:'Shopping list', calendar:'Calendar',
@@ -11,13 +12,38 @@ window.houseLife = function () {
     link: function (url) { return this.apiBase + String(url || '').replace(/^\//, ''); },
     init: function () { if (window.chfHouseState) this.accept(window.chfHouseState() || {}); },
     accept: function (data) { this.state = data || {}; },
-    title: function () { return labels[this.active] || ''; },
+    title: function () {
+      if(document.body.dataset.houseScene==='kitchen') {
+        if(this.active==='weather')return 'Forecast';
+        if(this.active==='lists')return 'Groceries';
+      }
+      return labels[this.active] || '';
+    },
     bookMode: function () { return !this.quickView && document.body.dataset.houseRender === 'hybrid' && ['tasks', 'programs'].includes(this.active); },
     habitatMode: function () { return !this.quickView && document.body.dataset.houseRender === 'hybrid' && this.active === 'pets'; },
     explanation: function () {
       return ({ packing:'Ready for the next outing.', chores:'Choose a job, finish it, or check completed work.',
         routines:'Today’s steps, at your own pace.', programs:'Practice, lessons, and things worth celebrating.',
         tasks:'Household work, with due items first.', errands:'What needs a trip out of the house.' })[this.active] || '';
+    },
+    kitchenCalendarMode: function () { return this.active==='calendar' && document.body.dataset.houseScene==='kitchen'; },
+    calendarTitle: '',
+    mountKitchenCalendar: async function () {
+      var generation=this.generation;
+      await this.$nextTick();
+      try {
+        if(!kitchenCalendar){
+          calendarPending=calendarPending || FamilyCalendar.mount({targetContainerId:'kitchen-wall-calendar',view:'dayGridMonth',toolbar:false,legend:false,details:true,base:this.apiBase});
+          kitchenCalendar=await calendarPending;calendarPending=null;
+        }
+        if(generation!==this.generation){FamilyCalendar.pause('kitchen-wall-calendar',true);return;}
+        FamilyCalendar.pause('kitchen-wall-calendar',false);kitchenCalendar.updateSize();kitchenCalendar.refetchEvents();
+        this.calendarTitle=kitchenCalendar.calendar.view.title;
+      } catch (_) { calendarPending=null;this.error='The calendar could not load. Reopen it to try again.'; }
+    },
+    calendarMove: function (direction) {
+      if(!kitchenCalendar)return;
+      kitchenCalendar.calendar[direction]();this.calendarTitle=kitchenCalendar.calendar.view.title;
     },
     open: async function (key, focus = true) {
       if (key === 'study') { this.study(); return; }
@@ -27,6 +53,7 @@ window.houseLife = function () {
       this.active = key; this.t = null; this.error = ''; this.loading = false;
       var generation = ++this.generation;
       document.body.classList.add('house-card-open');
+      if(this.kitchenCalendarMode()){this.mountKitchenCalendar();return;}
       if (focus) this.$nextTick(() => (this.bookMode() ? document.querySelector('#house-book h2') : this.habitatMode() ? document.getElementById('house-habitat') : this.$refs.panel.querySelector('header button'))?.focus({preventScroll:true}));
       if (key === 'music') {
         this.$nextTick(() => {
@@ -40,6 +67,7 @@ window.houseLife = function () {
       }
       var tiles = {tasks:'tasks',errands:'errands',moments:'moments',meals:'meals',lists:'shopping_list',
         weather:'weather',cars:'cars',pets:'pets',schedule:'hero'};
+      if (key === 'meals' && document.body.dataset.houseScene === 'kitchen') tiles.meals = 'meals_week';
       if (!tiles[key]) return;
       this.loading = true;
       try {
@@ -49,12 +77,13 @@ window.houseLife = function () {
         if (generation !== this.generation) return;
         this.hero = data.hero || {};
         this.t = key === 'schedule' ? {type:'hero',data:{}} : (data.tiles || []).find(t => t.type === tiles[key]) || null;
-        if (!this.t) this.error = 'Nothing on this list yet.';
+        if (!this.t) this.error = ({meals:'No meals added yet.',moments:'No family moments yet.',weather:'Weather data is unavailable.'})[key] || 'Nothing on this list yet.';
       } catch (_) { if (generation === this.generation) this.error = 'Could not load this list. Please try again.'; }
       finally { if (generation === this.generation) this.loading = false; }
     },
     heroCardHtml: function () { return window.HeroCard && this.hero.next ? HeroCard.html(this.hero.next, {compact:true}) : ''; },
     close: function () {
+      if(kitchenCalendar)FamilyCalendar.pause('kitchen-wall-calendar',true);
       if (this.musicHome) { this.musicHome.appendChild(document.getElementById('music-widget')); this.musicHome = null; }
       this.active = null; this.t = null; ++this.generation;
       document.body.classList.remove('house-card-open');

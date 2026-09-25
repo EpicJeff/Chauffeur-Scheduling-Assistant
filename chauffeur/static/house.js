@@ -4921,7 +4921,7 @@
        A third bay adds a separate single-width opening and wall pier. */
     var SIDE_DOOR = BLOCKS.garage.side_door || {style:'carriage', leaves:1, width:3.6, height:3.0};
     var SIDE_FRONT_SETBACK = SIDE_DOOR.front_setback === undefined ? 0.75 : SIDE_DOOR.front_setback;
-    var SIDE_THIRD_WIDTH = 2.4, SIDE_PIER = 0.75;
+    var SIDE_THIRD_WIDTH = Math.max(2.4, SIDE_DOOR.width / 2), SIDE_PIER = 0.75;
     var SIDE_DOOR_Z = GARAGE_BLOCK.south - SIDE_FRONT_SETBACK - SIDE_DOOR.width / 2;
     // The single bay sits behind the main door, toward the rear of the house.
     var SIDE_THIRD_Z = SIDE_DOOR_Z - SIDE_DOOR.width/2 - SIDE_PIER - SIDE_THIRD_WIDTH/2;
@@ -4930,7 +4930,11 @@
     var POP_WIDTH = SIDE_THIRD_WIDTH + 1.2 + Math.max(0, SIDE_PROJECTION-1.8);
     var POP_X = GARAGE_BLOCK.west-POP_WIDTH/2;
     var POP_FRONT = SIDE_DOOR_Z-SIDE_DOOR.width/2-SIDE_PIER;
-    var POP_BACK = POP_FRONT-(SIDE_THIRD_WIDTH+1.2);
+    // Parking depth is the ENTIRE garage block, not the smaller garage room
+    // used by the interior navigation layout. The perpendicular third bay
+    // needs that same depth; sizing it from door width made a shallow porch.
+    var GARAGE_PARKING_DEPTH = GARAGE_BLOCK.east - GARAGE_BLOCK.west;
+    var POP_BACK = POP_FRONT-GARAGE_PARKING_DEPTH;
     var SIDE_OPENINGS = [{z:SIDE_DOOR_Z, width:SIDE_DOOR.width}];
     if (SIDE_DOOR.third_bay && !SIDE_PROJECTION) SIDE_OPENINGS.unshift({z:SIDE_THIRD_Z, width:SIDE_THIRD_WIDTH, third:true});
     var SIDE_OPEN_Z0 = SIDE_PROJECTION ? POP_FRONT : SIDE_DOOR.third_bay ? SIDE_THIRD_Z-SIDE_THIRD_WIDTH/2 : SIDE_DOOR_Z-SIDE_DOOR.width/2;
@@ -7109,6 +7113,13 @@
                 peave, [0,0,-1], [], 'garage', 'garage');
       shellWall('garage_popout_west', px, POP_BACK, px, POP_FRONT,
                 peave, [-1,0,0], [], 'garage', 'garage');
+      // A deep bay may extend beyond the parent block with shorter facade
+      // settings. Close the exposed return instead of relying on that block.
+      if (POP_BACK < GARAGE_BLOCK.north) {
+        shellWall('garage_popout_east_return', GARAGE_BLOCK.west, POP_BACK,
+                  GARAGE_BLOCK.west, GARAGE_BLOCK.north,
+                  peave, [1,0,0], [], 'garage', 'garage');
+      }
       shellWall('garage_popout_pier_west', px, POP_FRONT, POP_X-SIDE_THIRD_WIDTH/2, POP_FRONT,
                 peave, [0,0,1], [], 'garage', 'garage');
       shellWall('garage_popout_pier_east', POP_X+SIDE_THIRD_WIDTH/2, POP_FRONT, GARAGE_BLOCK.west, POP_FRONT,
@@ -7120,8 +7131,8 @@
       shellRegister(ph, 'garage_popout_header', [0,0,1], 'garage');
       // Keep the existing side-facing gable; the single door faces the street.
       shellGable('garage_popout_roof', px, GARAGE_BLOCK.west,
-                 POP_BACK, POP_FRONT, peave, 'x', 'garage', [-1], blockPitch('garage'),
-                 ['garage','garage'], [true,false], 'gable');
+                 POP_BACK, POP_FRONT, peave, 'x', 'garage', [-1,1], blockPitch('garage'),
+                 ['garage','garage'], [true,false], 'gable', BLOCK_VOLUMES.main);
       var pf = shellGroup();
       shellBox(pf, POP_WIDTH, 0.12, POP_FRONT-POP_BACK, FARMHOUSE.stoop,
                POP_X, -0.06, (POP_BACK+POP_FRONT)/2);

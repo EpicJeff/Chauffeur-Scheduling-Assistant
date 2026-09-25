@@ -118,7 +118,10 @@ ENTRIES: List[dict] = [
        'panel shelf.',
        page='config', anchor='boards'),
     _e('panel_house_home', 'panel', 'Use The House as Home',
-       'Open the 3D house as Home, with the selected Home board as fallback on unsupported devices.',
+       'Open the selected house experience as Home, with the Home board as fallback when 3D is unavailable.',
+       page='config', anchor='boards'),
+    _e('house_hybrid_enabled', 'panel', 'Use the new House experience',
+       'Use the photographic rooms for everyone opening The House. Turn off to return to the original 3D house.',
        page='config', anchor='boards'),
     _e('panel_home_board', 'panel', 'Home board',
        'Which board the wall panel treats as home: what /home shows, where an '
