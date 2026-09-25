@@ -1,7 +1,7 @@
 /* The room opens the family's existing cards; each card owns its teardown. */
 window.houseLife = function () {
-  var kitchenCalendar = null, calendarPending = null;
-  var labels = { packing:'Packing', chores:'Chores', routines:'Routines',
+  var kitchenCalendar = null, calendarPending = null, busMap=null, busTimer=null;
+  var labels = { bus:'School buses', packing:'Packing', chores:'Chores', routines:'Routines',
     programs:'Programs', tasks:'Household tasks', errands:'Errands',
     moments:'Moments', meals:'Meals', lists:'Shopping list', calendar:'Calendar',
     weather:'Weather', cars:'Cars', pets:'Critters', schedule:'Next up', music:'Music', study_preview:'Study' };
@@ -28,6 +28,39 @@ window.houseLife = function () {
     },
     kitchenCalendarMode: function () { return this.active==='calendar' && document.body.dataset.houseScene==='kitchen'; },
     calendarTitle: '',
+    busRows: [],
+    showBus: async function (generation) {
+      this.loading=true; this.error='';
+      try {
+        var widgets=[{id:'house-buses',type:'map',config:{people:false,cars:false,buses:true,interactive:true}}];
+        var response=await fetch(this.apiBase+'api/home_board?widgets='+encodeURIComponent(JSON.stringify(widgets)));
+        if(!response.ok)throw new Error('Bus data unavailable');
+        var payload=await response.json();
+        if(generation!==this.generation)return;
+        var data=(payload.tiles||[]).find(t=>t.type==='map')?.data||{};
+        this.busRows=data.people||[];
+        await this.$nextTick();
+        if(generation!==this.generation)return;
+        await FamilyMap.ensureLeaflet();
+        if(generation!==this.generation)return;
+        var map=busMap;
+        if(!map){
+          map=busMap=FamilyMap.create(document.getElementById('house-bus-map'),{
+            interactive:true,fallbackCenter:data.center?[data.center.latitude,data.center.longitude]:null
+          });
+          await map.ensure();
+        }
+        if(generation!==this.generation){map.destroy();return;}
+        await map.refresh(this.busRows);
+      } catch (_) { if(generation===this.generation)this.error='Bus locations could not load. Close and reopen to try again.'; }
+      finally {
+        if(generation===this.generation){
+          this.loading=false;
+          clearTimeout(busTimer);
+          busTimer=setTimeout(()=>{if(this.active==='bus')this.showBus(generation);},20000);
+        }
+      }
+    },
     mountKitchenCalendar: async function () {
       var generation=this.generation;
       await this.$nextTick();
@@ -56,6 +89,7 @@ window.houseLife = function () {
       var generation = ++this.generation;
       document.body.classList.add('house-card-open');
       if(this.kitchenCalendarMode()){this.mountKitchenCalendar();return;}
+      if(key==='bus'){this.busRows=[];this.showBus(generation);}
       if (focus) this.$nextTick(() => (this.bookMode() ? document.querySelector('#house-book h2') : this.habitatMode() ? document.getElementById('house-habitat') : this.$refs.panel.querySelector('header button'))?.focus({preventScroll:true}));
       if (key === 'music') {
         this.$nextTick(() => {
@@ -85,11 +119,12 @@ window.houseLife = function () {
     },
     heroCardHtml: function () { return window.HeroCard && this.hero.next ? HeroCard.html(this.hero.next, {compact:true}) : ''; },
     close: function () {
+      clearTimeout(busTimer);busTimer=null;if(busMap){busMap.destroy();busMap=null;}
       if(kitchenCalendar)FamilyCalendar.pause('kitchen-wall-calendar',true);
       if (this.musicHome) { this.musicHome.appendChild(document.getElementById('music-widget')); this.musicHome = null; }
       this.active = null; this.t = null; ++this.generation;
       document.body.classList.remove('house-card-open');
-      if (this.trigger && this.trigger.focus) this.trigger.focus();
+      if (this.trigger && this.trigger.focus) this.trigger.focus({preventScroll:true});
       if (window.chfHouseRefresh) window.chfHouseRefresh();
       window.dispatchEvent(new CustomEvent('chf-house-closed'));
     },

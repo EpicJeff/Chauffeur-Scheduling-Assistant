@@ -118,8 +118,8 @@
     });
     if (bus) {
       var busLabel = (state.curb?.demo || busMode === 'home') ? 'Demo · School bus nearby' : 'School bus nearby';
-      actor(7,[.185,.99,.37], busLabel, 'schedule', 'school-bus', false);
-      shortcut(busLabel, 'schedule', 'exterior-bus-shortcut');
+      actor(7,[.185,.99,.37], busLabel, 'bus', 'school-bus', false);
+      shortcut(busLabel, 'bus', 'exterior-bus-shortcut');
     }
     project();
   }

@@ -20,6 +20,17 @@ def main():
             page.route('**/api/v2/chat/stream*', lambda r: r.fulfill(status=204, body=''))
             page.route('**/api/music/favorites*', lambda r: r.fulfill(
                 status=200, content_type='application/json', body='{"items":[]}'))
+            bus_rows=[{'member_id':'bus:42','name':"Maya & Finn's bus 42",'is_car':True,'avatar':'Bus','state':'near_stop','latitude':35.8,'longitude':-78.6},
+                      {'member_id':'stop:home','name':"Maya & Finn's stop",'is_car':True,'state':None,'latitude':35.801,'longitude':-78.601}]
+            def bus_map(route):
+                from urllib.parse import urlparse,parse_qs
+                raw=parse_qs(urlparse(route.request.url).query).get('widgets',[''])[0]
+                if raw.startswith('['):
+                    widgets=json.loads(raw)
+                    assert widgets[0]['config']=={'people':False,'cars':False,'buses':True,'interactive':True}
+                    route.fulfill(json={'tiles':[{'type':'map','data':{'people':bus_rows,'center':None}}]})
+                else:route.fallback()
+            page.route('**/api/home_board?widgets=*',bus_map)
             fleet = [
                 {'id':'suv','name':'White 2022 Mercedes GLS','body':'suv','color':'#ffffff','present':True,'battery_pct':14,'warn':True,
                  'exterior_image':'static/house_hybrid/vehicles/mercedes-gls-2022-white.png'},
@@ -148,9 +159,24 @@ def main():
             page.wait_for_selector('.house-life-panel:visible')
             mode('exterior')
             page.get_by_role('button', name='Close and return to house', exact=True).click()
+            def exterior_geometry():
+                return page.evaluate("['house-exterior','exterior-pictures','exterior-photo','exterior-traffic'].map(id=>{let e=document.getElementById(id);return [id,e.scrollLeft,e.scrollTop,e.getBoundingClientRect().toJSON()];})")
+            before=exterior_geometry()
+            for target in ('#exterior-bus-shortcut','[data-vehicle="school-bus"]'):
+                page.locator(target).evaluate('e=>e.focus({preventScroll:true})')
+                page.keyboard.press('Enter')
+                page.wait_for_selector('#house-bus-map .leaflet-marker-icon')
+                assert page.locator('#house-life-title').inner_text()=='School buses'
+                assert page.locator('#house-bus-map .leaflet-marker-icon').count()==2
+                assert "Maya & Finn's bus 42" in page.locator('.house-life-panel').inner_text()
+                mode('exterior')
+                page.screenshot(path=str(out/'bus-map.png'))
+                page.get_by_role('button', name='Close and return to house', exact=True).click()
+                assert exterior_geometry()==before,'Closing a bus must not scroll or resize the house'
+                assert page.locator('#house-bus-map .leaflet-pane').count()==0
+            bus_rows.clear()
             page.locator('#exterior-bus-shortcut').click()
-            page.wait_for_selector('.house-life-panel:visible')
-            mode('exterior')
+            page.get_by_text('No bus location is available right now.',exact=False).wait_for()
             page.get_by_role('button', name='Close and return to house', exact=True).click()
             page.evaluate('async () => { await chfHouseRefresh(); }')
             payload['curb']['bus'] = False

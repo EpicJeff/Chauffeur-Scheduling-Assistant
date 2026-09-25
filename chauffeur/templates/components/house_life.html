@@ -13,6 +13,11 @@
     <header><div><h2 id="house-life-title" x-text="title()"></h2><p x-text="explanation()"></p></div>
       <button type="button" @click="close()" aria-label="{{ 'Return to living room' if house_hybrid|default(false) else 'Close and return to house' }}"{% if house_hybrid|default(false) %} :aria-label="quickView ? 'Close and return to house' : 'Return to ' + ({kitchen:'kitchen',mudroom:'mudroom'}[document.body.dataset.houseScene] || 'living room')"{% endif %}>{{ '↩' if house_hybrid|default(false) else '✕' }}</button></header>
     <div class="house-life-body">
+      <div x-show="active === 'bus'">
+        <div id="house-bus-map" aria-label="School buses and stops" style="height:min(55vh,560px);min-height:240px;isolation:isolate"></div>
+        <template x-for="row in busRows" :key="row.member_id"><p class="house-life-message"><strong x-text="row.name"></strong><span x-text="row.state ? ' - '+row.state.replaceAll('_',' ') : ''"></span></p></template>
+        <p x-show="!loading && !error && !busRows.some(row=>row.member_id.startsWith('bus:'))" class="house-life-message">No bus location is available right now. Any known stops are shown.</p>
+      </div>
       <template x-if="active === 'chores'"><div class="house-life-lanes" x-data="choresLanesCard({data:{interactive:true}}, apiBase)" x-init="startLanes()">{{ house_chores.lane_grid(interactive='lanesInteractive') }}</div></template>
       <template x-if="active === 'routines'"><div class="house-life-lanes" x-data="routineLanesCard({data:{interactive:true}}, apiBase)" x-init="startRoutineLanes()">{{ house_routines.lane_grid(interactive='lanesInteractive') }}</div></template>
       <template x-if="active === 'programs' && !bookMode()"><div x-data="programsCard({data:{}}, apiBase)" x-init="startPrograms()">{{ house_programs.rows() }}</div></template>
@@ -41,4 +46,5 @@
 {% include 'components/routine_lanes.html' %}
 {% include 'components/programs_card.html' %}
 {% if not house_hybrid|default(false) %}{% include 'components/lesson_player.html' %}{% endif %}
+{% include 'components/family_map_core.html' %}
 <script src="{{ 'static/house_life.js'|ver }}"></script>
