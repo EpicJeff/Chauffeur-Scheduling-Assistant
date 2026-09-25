@@ -7,7 +7,7 @@ body.habitat-editing :is(#house-comparison,#house-compare-measurements,#chat-ove
 body.habitat-editing #chat-overlay-container {display:none}
 body.habitat-editing #house-habitat {pointer-events:none}
 body.habitat-editing #house-habitat > :not(template):not(.habitat-left):not(.habitat-right) {visibility:hidden}
-#pet-editor-panel.pet-workbench {background:none;overflow:hidden;color:#ead7ab;font-family:Georgia,serif}
+#pet-editor-panel.pet-workbench {background:none!important;overflow:hidden;color:#ead7ab;font-family:Georgia,serif}
 .pet-workbench .pet-editor-surface {display:block!important;position:absolute;left:50%;top:var(--workbench-top);width:var(--workbench-width);height:calc(var(--workbench-width) * 2 / 3);transform:translate(-50%,-50%);container-type:inline-size}
 .pet-workbench .pet-header {display:contents}
 .pet-workbench .pet-header > button {display:none}
@@ -73,3 +73,7 @@ body.habitat-editing:has(#hybrid-detail[data-light="night"]) .pet-drawer {filter
  .pet-workbench .pet-nameplate > div {font-size:9px;gap:2px;margin-top:2px}
 }
 @media(prefers-reduced-motion:reduce) {.pet-workbench .pet-drawer {animation:none}}
+
+/* These surfaces belong to the photographed habitat, not the panel skin. */
+#pet-editor-panel.pet-workbench .pet-preview{background:none!important}
+#pet-editor-panel.pet-workbench .pet-nameplate input{background:transparent!important;color:#28190c!important;border-color:#65421a66!important}

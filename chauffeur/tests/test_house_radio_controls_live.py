@@ -57,6 +57,12 @@ def main():
             assert not writes
             page.locator('#hybrid-hotspots [data-card=music]').click()
             page.wait_for_function('HouseRadio.state().available')
+            # Real panel theme rules must not paint over the photographed scene.
+            for theme in ('light','dark'):
+                page.evaluate('(theme)=>{document.documentElement.setAttribute("data-panel", "");document.documentElement.dataset.panelTheme=theme;}',theme)
+                assert page.locator('#radio-output').evaluate('e=>getComputedStyle(e).backgroundColor==="rgba(0, 0, 0, 0)" && getComputedStyle(e).backgroundImage==="none"')
+                page.screenshot(path=str(out/('theme-'+theme+'.png')))
+            page.evaluate('()=>{document.documentElement.removeAttribute("data-panel");document.documentElement.removeAttribute("data-panel-theme");}')
             def press(command):
                 with page.expect_response('**/command') as response:page.locator('[data-radio-command='+command+']').click()
                 assert response.value.ok

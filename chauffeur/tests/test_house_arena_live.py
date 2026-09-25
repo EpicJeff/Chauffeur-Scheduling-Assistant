@@ -45,6 +45,12 @@ def main():
                 }""")
 
             cover()
+            # Real panel theme rules must not paint over the photographed scene.
+            for theme in ('light','dark'):
+                page.evaluate('(theme)=>{document.documentElement.setAttribute("data-panel", "");document.documentElement.dataset.panelTheme=theme;}',theme)
+                assert page.locator('#pet-battle-panel').evaluate('e=>getComputedStyle(e).backgroundColor==="rgba(0, 0, 0, 0)" && getComputedStyle(e).backgroundImage==="none"')
+                page.screenshot(path=str(OUT/('theme-'+theme+'.png')))
+            page.evaluate('()=>{document.documentElement.removeAttribute("data-panel");document.documentElement.removeAttribute("data-panel-theme");}')
             page.screenshot(path=str(OUT/'arena-pick.png'))
             panel.get_by_role('button',name='Practice against',exact=False).first.click()
             page.wait_for_function(B+".stage === 'fight'")

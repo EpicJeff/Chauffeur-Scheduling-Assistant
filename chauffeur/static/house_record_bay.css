@@ -118,3 +118,6 @@
 @media(max-width:700px){#hybrid-room-frame[data-view="music"]{--radio-width:1160px}}
 
 #hybrid-room-frame.radio-controls-open #radio-camera{display:none}
+
+/* The photographed brass plaque owns this field, including in panel themes. */
+#house-radio #radio-output{background:transparent!important;color:#352312!important;border-color:transparent!important}

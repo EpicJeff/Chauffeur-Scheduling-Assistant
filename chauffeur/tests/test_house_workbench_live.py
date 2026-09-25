@@ -50,6 +50,14 @@ def main():
 
             open_editor()
             fit()
+            # Real panel theme rules must not paint over the photographed scene.
+            for theme in ('light','dark'):
+                page.evaluate('(theme)=>{document.documentElement.setAttribute("data-panel", "");document.documentElement.dataset.panelTheme=theme;}',theme)
+                assert page.locator('#pet-editor-panel').evaluate('e=>getComputedStyle(e).backgroundColor==="rgba(0, 0, 0, 0)" && getComputedStyle(e).backgroundImage==="none"')
+                for surface in ('.pet-preview','.pet-nameplate input'):
+                    assert panel.locator(surface).evaluate('e=>getComputedStyle(e).backgroundColor==="rgba(0, 0, 0, 0)" && getComputedStyle(e).backgroundImage==="none"')
+                page.screenshot(path=str(OUT/('theme-'+theme+'.png')))
+            page.evaluate('()=>{document.documentElement.removeAttribute("data-panel");document.documentElement.removeAttribute("data-panel-theme");}')
             original=panel.locator('.pet-preview').inner_html()
             panel.get_by_role('button',name='body: blob',exact=True).click()
             assert panel.locator('.pet-preview').inner_html() != original

@@ -5,7 +5,7 @@ body.habitat-battling #hybrid-room-frame[data-view="pets"] #hybrid-detail-pictur
 body.habitat-battling #house-habitat {top:var(--workbench-top)}
 body.habitat-battling :is(#house-comparison,#house-compare-measurements,#chat-overlay-container,#hybrid-status,#hybrid-view-back) {display:none}
 body.habitat-battling #house-habitat {visibility:hidden;pointer-events:none}
-#pet-battle-panel.pb-habitat {background:none;overflow:hidden;color:#ecd9b1;font-family:Georgia,serif}
+#pet-battle-panel.pb-habitat {background:none!important;overflow:hidden;color:#ecd9b1;font-family:Georgia,serif}
 .pb-habitat .pb-surface {display:block!important;position:absolute;left:50%;top:var(--workbench-top);width:var(--workbench-width);height:calc(var(--workbench-width) * 2 / 3);transform:translate(-50%,-50%)}
 .pb-habitat .pb-selection-critter {position:absolute;left:50%;bottom:40%;width:min(17%,240px);transform:translateX(-50%);filter:drop-shadow(0 5px 3px #2d221c77)}
 .pb-habitat .pb-selection-plaque {position:absolute;left:50%;top:65%;height:7.5%;width:min(400px,90vw);transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#26190e;text-shadow:0 1px #e5c080;font:13px Georgia}
