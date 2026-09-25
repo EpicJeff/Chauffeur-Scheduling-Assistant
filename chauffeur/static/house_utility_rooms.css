@@ -144,3 +144,8 @@ body.house-card-open #hybrid-walkthrough{display:none}
 
 @media(max-height:600px){body:has(#hybrid-mudroom:not([hidden]) #mudroom-packing:not([hidden])) #house-comparison{display:none}}
 @media(min-aspect-ratio:2/1){#hybrid-mudroom:has(#mudroom-packing:not([hidden])) .utility-hotspots{display:none}#hybrid-mudroom[data-view=room]:has(#mudroom-packing:not([hidden])) .utility-shortcuts{display:grid;top:78px;bottom:auto;left:160px;grid-template-columns:repeat(3,1fr)}}
+
+/* Wide mudroom paper can fit five readable lanes on a 1080p wall panel. */
+@media(min-width:1100px) and (orientation:landscape){
+ #hybrid-mudroom .house-life-lanes > .grid{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))!important}
+}
