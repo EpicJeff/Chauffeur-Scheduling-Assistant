@@ -4,7 +4,7 @@
   var host = document.getElementById('mudroom-packing');
   if (!host) return;
   var row = host.querySelector('.mudroom-pack-row');
-  var model = packingCard({data:{interactive:true,days:1}}, window.chfBase || '');
+  var model = packingCard({data:{interactive:true,days:7}}, window.chfBase || '');
   var activities = new Map(), nodes = new Map(), selected = null, opener = null;
   var pending = null, writing = false, timer = null, pageIndex = 0;
   var room = document.getElementById('hybrid-mudroom');
@@ -57,17 +57,27 @@
       groups.forEach(g => g.items.forEach(it => {needed += it.needed || 0;packed += Math.min(it.packed || 0, it.needed || 0);}));
       result.set(key, {key:key, source:source, block:block, groups:groups, title:event.title || 'Activity', start:event.start, passengers:event.passengers || [], needed:needed, packed:packed, ready:packed >= needed});
     }
-    // Source blocks take precedence over their earlier preparation tiles.
-    model.blocks.filter(b => b.kind !== 'prep').forEach(function (b) {
-      if (b.canceled || (b.end && new Date(b.end).getTime() <= now)) return;
-      var events = b.kind === 'outing' ? b.events || [] : [{id:b.event_id,title:b.title,start:b.start,passengers:b.passengers}];
-      events.forEach(e => add(b, e, (b.groups || []).filter(g => !(g.event_ids || []).length || g.event_ids.includes(e.id))));
-    });
-    model.blocks.filter(b => b.kind === 'prep').forEach(function (b) {
-      if (b.canceled || (b.window_ends && new Date(b.window_ends).getTime() <= now)) return;
-      (b.tiles || []).forEach(function (t) {
-        if (!result.has(t.for_key + ':' + t.event_id)) add(t, {id:t.event_id,title:t.title,start:t.start,passengers:t.passengers}, t.groups || []);
-      });
+    // A bag belongs to one preparation slot, not every outing on the day.
+    // Keep finished bags in that slot; completion must not advance the clock.
+    function slotEnd(b) {
+      var end = new Date(b.window_ends).getTime();
+      // Family Day moves overdue prep to NOW but retains its old window end.
+      // That catch-up slot remains actionable until its outings depart.
+      if (end <= new Date(b.start).getTime()) {
+        end = Math.max(end, ...(b.tiles || []).map(t => new Date(t.depart || t.start).getTime()).filter(Number.isFinite));
+      }
+      return end;
+    }
+    var slots = model.blocks.filter(function (b) {
+      return b.kind === 'prep' && !b.canceled &&
+        Number.isFinite(new Date(b.start).getTime()) &&
+        slotEnd(b) > now &&
+        (b.tiles || []).some(t => (t.groups || []).some(g => (g.items || []).some(it => it.needed > 0)));
+    }).sort((a,b) => new Date(a.start) - new Date(b.start));
+    var current = slots.filter(b => new Date(b.start).getTime() <= now);
+    var slot = current.length ? current[current.length - 1] : slots[0];
+    if (slot) (slot.tiles || []).forEach(function (t) {
+      add(t, {id:t.event_id,title:t.title,start:t.start,passengers:t.passengers}, t.groups || []);
     });
     return new Map(Array.from(result).sort((a,b) => String(a[1].start || '').localeCompare(String(b[1].start || ''))));
   }

@@ -103,9 +103,48 @@ def main():
                         assert box and box['x']>=0 and box['x']+box['width']<=w+1 and box['y']>=0 and box['y']+box['height']<=h
                     page.screenshot(path=str(OUT/f'exterior-{w}.png'))
                     page.evaluate('async()=>{await chfHybridGo("mudroom")}')
+                # One current/next slot, never the union of today's outings and tonight's prep.
+                stamp=page.evaluate('Date.now()')
+                def at(hours):
+                    return datetime.datetime.fromtimestamp((stamp+hours*3600000)/1000,datetime.timezone.utc).isoformat()
+                def slot(key,begin,end,packed=0):
+                    return {'kind':'prep','key':key,'start':at(begin),'window_ends':at(end),'tiles':[
+                        {'key':key+':tile','for_key':key+':trip','event_id':key,'title':key,'start':at(end+1),
+                         'groups':[{'kit':'Kit','items':[{'key':key+':item','label':'Bottle','needed':1,'packed':packed}]}]}]}
+                morning=slot('Current',-1,1,1)
+                afternoon=slot('Next',2,3)
+                night=slot('Tomorrow activity',4,10)
+                following=slot('Following slot',60,63)
+                fixture={'days':[{'blocks':[night,afternoon,morning,
+                    {'kind':'event','key':'unrelated','event_id':'unrelated','title':'Other daytime activity','start':at(1),'end':at(3),
+                     'groups':morning['tiles'][0]['groups']}]},{'blocks':[following]}]}
+                page.route('**/api/packing/day*',lambda r:r.fulfill(status=200,content_type='application/json',body=json.dumps(fixture)))
+                def expect_slot(title):
+                    page.evaluate('async()=>{await chfMudroomPacking.refresh();await chfMudroomPacking.refresh()}')
+                    assert page.locator('.mudroom-pack strong').all_text_contents()==[title], (page.locator('.mudroom-pack strong').all_text_contents(),page.evaluate('({now:Date.now(),mode:chfHouseMode(),hidden:document.hidden})'),stamp,fixture)
+                expect_slot('Current')
+                morning['window_ends']=at(-2) # Family Day's overdue prep moves to now with the old end
+                expect_slot('Current')
+                morning['window_ends']=at(1)
+                assert page.locator('.mudroom-pack').get_attribute('data-ready')=='true', 'Completed current slot stays visible'
+                page.clock.set_fixed_time((stamp+3600000)/1000) # exact end: next slot, even before it starts
+                expect_slot('Next')
+                page.locator('.mudroom-pack').first.click()
+                page.clock.set_fixed_time((stamp+3*3600000)/1000)
+                expect_slot('Tomorrow activity')
+                assert not page.evaluate('packDialog.isOpen()'), 'An expired slot closes its old list'
+                page.clock.set_fixed_time((stamp+5*3600000)/1000)
+                expect_slot('Tomorrow activity')
+                page.clock.set_fixed_time((stamp+10*3600000)/1000)
+                expect_slot('Following slot')
+                page.clock.set_fixed_time((stamp+63*3600000)/1000)
+                page.evaluate('async()=>{await chfMudroomPacking.refresh()}')
+                assert page.locator('#mudroom-packing').is_hidden()
+                page.clock.set_fixed_time((stamp)/1000)
+                page.unroute('**/api/packing/day*')
                 # Preparation for tomorrow also creates bags, with no four-bag cap.
                 page.evaluate('async()=>{await chfMudroomPacking.refresh()}')
-                overflow={'date':START.date().isoformat(),'blocks':[{'kind':'prep','key':'prep','tiles':[
+                overflow={'date':START.date().isoformat(),'blocks':[{'kind':'prep','key':'prep','start':datetime.datetime.now().isoformat(),'window_ends':(datetime.datetime.now()+datetime.timedelta(hours=6)).isoformat(),'tiles':[
                     {'key':'tile'+str(i),'for_key':'trip'+str(i),'event_id':'event'+str(i),'title':'Activity '+str(i),'start':START.isoformat(),
                      'groups':[{'kit':'Kit','items':[{'key':'item'+str(i),'label':'Bottle','needed':1,'packed':0}]}]}
                     for i in range(7)]}]}
