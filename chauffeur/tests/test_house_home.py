@@ -8,6 +8,9 @@ from models.schemas import Settings
 
 class HouseHomeTests(unittest.TestCase):
     def test_setting_defaults_off_and_round_trips(self):
+        self.assertFalse(Settings().house_hybrid_enabled)
+        self.assertTrue(Settings.model_validate({'house_hybrid_enabled': True}).house_hybrid_enabled)
+        self.assertFalse(Settings.model_validate({'house_hybrid_enabled': True}).panel_house_home)
         self.assertFalse(Settings().panel_house_home)
         self.assertTrue(Settings.model_validate({'panel_house_home': True}).model_dump()['panel_house_home'])
 
@@ -15,16 +18,21 @@ class HouseHomeTests(unittest.TestCase):
         script = r'''
 const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
 const source=fs.readFileSync(process.argv[1],'utf8');
-function run({surface='home',query='',prefix='',supported=true,stored={},quality=null,blocked=false}={}){
+function run({surface='home',query='',prefix='',supported=true,stored={},quality=null,blocked=false,hybrid=false}={}){
  const redirects=[],calls=[];
  const storage={getItem:k=>{if(blocked)throw Error('disabled');return stored[k]||null;},
    setItem:(k,v)=>{if(blocked)throw Error('disabled');stored[k]=v;},removeItem:k=>delete stored[k]};
  const w={chfHouseExit:()=>calls.push('exit'),chfOrbitTo:k=>calls.push(k)};
  const context={URL,URLSearchParams,window:w,sessionStorage:storage,
   localStorage:{getItem:()=>quality},location:{search:query,href:'https://example.test'+prefix+'/'+surface+query,replace:u=>redirects.push(u)},
-  document:{currentScript:{dataset:{surface}},createElement:()=>({getContext:()=>supported?{getExtension:()=>({loseContext:()=>calls.push('release')})}:null})}};
+  document:{currentScript:{dataset:{surface,hybrid:String(hybrid)}},createElement:()=>({getContext:()=>supported?{getExtension:()=>({loseContext:()=>calls.push('release')})}:null})}};
  vm.runInNewContext(source,context);return {w,redirects,calls,stored};
 }
+let h=run({hybrid:true,supported:false,quality:'2d',stored:{chauffeur_house_unavailable:'1'},prefix:'/api/hassio_ingress/abc',query:'?panel=true'});
+assert.equal(h.redirects[0],'https://example.test/api/hassio_ingress/abc/house?panel=true');
+assert.equal(h.calls.length,0,'Hybrid Home must not require WebGL');
+assert.equal(run({hybrid:true,supported:false,query:'?render=3d'}).redirects.length,0);
+assert.equal(run({hybrid:true,query:'?home_view=board'}).redirects.length,0);
 let r=run({prefix:'/api/hassio_ingress/abc',query:'?panel=true&tabs=home,meals'});
 assert.equal(r.redirects[0],'https://example.test/api/hassio_ingress/abc/house?panel=true&tabs=home,meals');
 assert.deepEqual(r.calls,['release']);

@@ -1,0 +1,70 @@
+/* The shared replay player is staged in the habitat's photographic coordinates. */
+body.habitat-battling {--workbench-width:max(100vw,225dvh);--workbench-top:calc(100dvh - var(--workbench-width) / 3)}
+body.habitat-battling #hybrid-room-frame[data-view="pets"] {--habitat-width:var(--workbench-width)}
+body.habitat-battling #hybrid-room-frame[data-view="pets"] #hybrid-detail-picture,
+body.habitat-battling #house-habitat {top:var(--workbench-top)}
+body.habitat-battling :is(#house-comparison,#house-compare-measurements,#chat-overlay-container,#hybrid-status,#hybrid-view-back) {display:none}
+body.habitat-battling #house-habitat {visibility:hidden;pointer-events:none}
+#pet-battle-panel.pb-habitat {background:none;overflow:hidden;color:#ecd9b1;font-family:Georgia,serif}
+.pb-habitat .pb-surface {display:block!important;position:absolute;left:50%;top:var(--workbench-top);width:var(--workbench-width);height:calc(var(--workbench-width) * 2 / 3);transform:translate(-50%,-50%)}
+.pb-habitat .pb-selection-critter {position:absolute;left:50%;bottom:40%;width:min(17%,240px);transform:translateX(-50%);filter:drop-shadow(0 5px 3px #2d221c77)}
+.pb-habitat .pb-selection-plaque {position:absolute;left:50%;top:65%;height:7.5%;width:min(400px,90vw);transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#26190e;text-shadow:0 1px #e5c080;font:13px Georgia}
+.pb-habitat .pb-selection-plaque strong {font-size:24px}
+.pb-habitat :is(.pb-pick,.pb-journal,.pb-result) {position:absolute;left:50%;top:calc(50% - var(--workbench-top) + 60dvh);width:min(880px,94vw);height:calc(40dvh - 20px);transform:translateX(-50%);padding:10px;border:8px solid #654329;border-top:5px solid #a27a49;border-bottom:12px solid #3b291a;border-radius:5px 5px 10px 10px;background:repeating-linear-gradient(2deg,#b38a5722 0 1px,transparent 2px 10px),linear-gradient(110deg,#543921,#87613d,#513520);box-shadow:inset 0 3px 6px #24180a88,0 12px 20px #1b110e77}
+.pb-habitat .pb-pick-header {padding:0 0 5px;border:0}
+.pb-habitat .pb-pick-header > span {display:none}
+.pb-habitat .pb-pick-header > div::before {content:'SPARRING PARTNERS';display:block;font:600 11px Georgia;letter-spacing:.12em;color:#ead6ae}
+.pb-habitat .pb-pick-header > div > div {display:none}
+.pb-habitat .pb-allowance {padding:0 0 7px;font-size:12px;color:#ead6ae}
+.pb-habitat .pb-cards {min-height:0;background:#424a36;box-shadow:inset 0 2px 6px #1c211a88;padding:10px;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#ba9b63 #35402c}
+.pb-habitat .pb-cards > button,.pb-habitat .pb-cards > div {background:#ded1ad;color:#34281b;border-color:#a4936d;border-radius:3px;box-shadow:1px 3px 3px #171d1466}
+.pb-habitat .pb-cards [class*="text-gray-"],.pb-habitat .pb-cards [class*="text-white"] {color:#403524}
+.pb-habitat .pb-cards [class*="bg-gray-"] {background:#c4b38b}
+.pb-habitat .pb-cards [class*="text-emerald-"] {color:#254e32}
+.pb-habitat button {min-height:40px}
+.pb-habitat :is(.pb-pick-header,.pb-log-controls,.pb-result) button {border:1px solid #47321c;background:linear-gradient(#e8d29c,#ad8b50);color:#2a1e11;border-radius:4px;box-shadow:inset 0 1px #f3dfad,0 2px 2px #291b10;font-family:Georgia,serif}
+.pb-habitat button:focus-visible {outline:3px solid #fff0b9;outline-offset:3px}
+.pb-habitat .pb-fight,.pb-habitat .pb-arena {display:contents;background:none}
+.pb-habitat .pb-stage {position:absolute;inset:0;width:100%;height:100%;max-height:none;aspect-ratio:auto;background:none!important}
+.pb-habitat .pb-stage .pb-fighter {top:60%;width:min(15%,220px)}
+.pb-habitat .pb-stage .pb-mine {left:43%}.pb-habitat .pb-stage .pb-theirs {left:57%}
+.pb-habitat .pb-fighter::before {content:'';position:absolute;left:12%;right:12%;bottom:-1%;height:6%;border-radius:50%;background:#37281d66;filter:blur(4px);z-index:-1}
+.pb-habitat .pb-plate {top:65%;bottom:auto;left:50%;right:auto;width:min(185px,42vw);height:7.5%;background:none;border:0;border-radius:0;display:flex;flex-direction:column;justify-content:center;color:#25180c;padding:3px 10px}
+.pb-habitat .pb-plate-mine {transform:translateX(-100%);border-right:1px solid #5c3e2777}
+.pb-habitat .pb-plate [class*="text-"] {color:inherit;font-family:Georgia,serif}
+.pb-habitat .pb-plate > div:last-child:not(.pb-hp) {display:none}
+.pb-habitat .pb-hp {height:7px;box-shadow:inset 0 1px 2px #27180899}
+.pb-habitat .pb-matched {top:63%;left:50%;right:auto;transform:translateX(-50%);background:#4b341fcf;color:#f9e6bf}
+.pb-habitat .pb-journal {color:#382c1c}
+.pb-habitat .pb-journal > div:first-child {background:linear-gradient(105deg,#e9dcbc,#c9b990);box-shadow:inset 0 2px 5px #30281566;font-family:Georgia,serif;padding:12px}
+.pb-habitat .pb-journal [class*="text-"] {color:#463624}
+.pb-habitat .pb-log-controls {border:0;padding:8px 0 0}
+.pb-habitat .pb-result {inset:auto;left:50%;top:calc(50% - var(--workbench-top) + 60dvh);z-index:3;color:#edddb9}
+.pb-habitat .pb-result .pb-pop {padding:6px 12px}
+.pb-habitat .pb-result [class*="text-gray-"] {color:#e4d5b4}
+.pb-habitat .pb-result button[class*="text-gray-"] {color:#2a1e11}
+body.habitat-battling:has(#hybrid-detail[data-light="night"]) .pb-fighter,
+body.habitat-battling:has(#hybrid-detail[data-light="night"]) .pb-selection-critter {filter:brightness(.84) sepia(.1)}
+@media(max-width:700px) {
+ .pb-habitat :is(.pb-pick,.pb-journal,.pb-result) {top:calc(50% - var(--workbench-top) + 57dvh);height:calc(43dvh - 12px);padding:7px}
+ .pb-habitat .pb-stage .pb-mine {left:calc(50% - 22vw)}.pb-habitat .pb-stage .pb-theirs {left:calc(50% + 22vw)}
+ .pb-habitat .pb-stage .pb-fighter {width:39vw;max-width:190px}
+ .pb-habitat .pb-result .text-3xl {font-size:25px}
+ .pb-habitat .pb-result .mt-5 {margin-top:12px}
+}
+@media(max-height:600px) and (min-width:701px) {
+ .pb-habitat :is(.pb-pick,.pb-journal,.pb-result) {top:calc(50% - var(--workbench-top) + 59dvh);height:calc(41dvh - 8px);width:94vw;padding:4px 8px;border-width:5px}
+ .pb-habitat .pb-pick-header {float:right;position:absolute;right:12px;top:5px;z-index:1}
+ .pb-habitat .pb-pick-header > div {display:none}
+ .pb-habitat .pb-allowance {padding-right:100px}
+ .pb-habitat .pb-stage .pb-fighter {width:90px}
+ .pb-habitat .pb-result .pb-pop {display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px 16px}
+ .pb-habitat .pb-result .pb-pop > div {margin:0;font-size:12px}.pb-habitat .pb-result .pb-pop > div:first-child {font-size:22px}
+ .pb-habitat .pb-result .pb-pop > div:last-child {width:100%;margin-top:6px}
+ .pb-habitat .pb-result button {height:36px;min-height:36px}
+}
+@media(prefers-reduced-motion:reduce) {
+ .pb-fighter .dbcr-c,.pb-anim,.pb-hit svg,.pb-pop {animation:none!important}
+ .pb-fainted {opacity:.3}
+ .pb-hp > i {transition:none}
+}

@@ -1,0 +1,21 @@
+{
+  "generator": "Built-in imagegen; static prototype assets, not server Gemini generation",
+  "references": [
+    "chauffeur/static/house_hybrid/vehicles-atlas.png",
+    "chauffeur/static/house_hybrid/exterior-scene.jpg"
+  ],
+  "prompts": [
+    {
+      "name": "mercedes-gls-2022-white",
+      "prompt": "Generate a single photorealistic vehicle cutout, RGBA PNG with genuinely transparent background. Square canvas. Reference 1 is ONLY the perspective and framing reference: match the orientation of the cars in its atlas (NOT the bus): front of vehicle on lower LEFT, rear on upper RIGHT, visible grille and driver side, camera elevated about 22 degrees looking down. Reference 2 is ONLY warm afternoon lighting and realism of the driveway setting. Output ONLY one car, no house, no ground rectangle or background. Car spans x=5% to 95% of square, top roof near y=25%, lowest tire contact at y=78%. Keep a soft low-opacity contact shadow just below tires on transparent background. Entire vehicle visible, no cropping. Real rubber black tires, natural gray-blue glass, chrome/black trim and realistic rims, paint applies ONLY to actual painted body panels. No license text, no labels, no collage. Subject: White 2022 Mercedes-Benz GLS SUV, standard factory appearance. Accurate X167 body, Mercedes star grille and pre-facelift 2022 headlamps, glossy white painted panels."
+    },
+    {
+      "name": "kia-ev9-2026-gray",
+      "prompt": "Generate a single photorealistic vehicle cutout, RGBA PNG with genuinely transparent background. Square canvas. Reference 1 is ONLY the perspective and framing reference: match the orientation of the cars in its atlas (NOT the bus): front of vehicle on lower LEFT, rear on upper RIGHT, visible grille and driver side, camera elevated about 22 degrees looking down. Reference 2 is ONLY warm afternoon lighting and realism of the driveway setting. Output ONLY one car, no house, no ground rectangle or background. Car spans x=5% to 95% of square, top roof near y=25%, lowest tire contact at y=78%. Keep a soft low-opacity contact shadow just below tires on transparent background. Entire vehicle visible, no cropping. Real rubber black tires, natural gray-blue glass, chrome/black trim and realistic rims, paint applies ONLY to actual painted body panels. No license text, no labels, no collage. Subject: Gray 2026 Kia EV9 SUV, standard factory appearance. Accurate angular boxy EV9 body, vertical LED headlights, modern closed EV front fascia, metallic medium gray body panels and black lower cladding."
+    },
+    {
+      "name": "nissan-murano-2021-blue",
+      "prompt": "Generate a single photorealistic vehicle cutout, RGBA PNG with genuinely transparent background. Square canvas. Reference 1 is ONLY the perspective and framing reference: match the orientation of the cars in its atlas (NOT the bus): front of vehicle on lower LEFT, rear on upper RIGHT, visible grille and driver side, camera elevated about 22 degrees looking down. Reference 2 is ONLY warm afternoon lighting and realism of the driveway setting. Output ONLY one car, no house, no ground rectangle or background. Car spans x=5% to 95% of square, top roof near y=25%, lowest tire contact at y=78%. Keep a soft low-opacity contact shadow just below tires on transparent background. Entire vehicle visible, no cropping. Real rubber black tires, natural gray-blue glass, chrome/black trim and realistic rims, paint applies ONLY to actual painted body panels. No license text, no labels, no collage. Subject: Blue 2021 Nissan Murano crossover SUV, standard factory appearance. Accurate third generation Z52 Murano body, V-motion chrome grille, swept headlights, curved roofline, deep metallic blue painted body panels."
+    }
+  ]
+}

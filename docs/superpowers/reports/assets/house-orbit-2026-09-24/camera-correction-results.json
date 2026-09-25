@@ -1,0 +1,62 @@
+{
+  "model": "gemini-3.1-flash-image",
+  "max_requests": 1,
+  "automatic_retries": 0,
+  "views": [
+    {
+      "angle": 4,
+      "label": "Rear left",
+      "status": "ok",
+      "inputs": [
+        {
+          "path": "chauffeur/static/house_hybrid/exterior-orbit/view-5.jpg",
+          "sha256": "6dc60c6c3fea137bd515d98ce79ea63d468efaf9758d0101b50e5399218e18cf"
+        },
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/model-4.png",
+          "sha256": "5d54d2fb12f66dbf01327d828537f242a9dc9761fd20c670ea7d87f862a4199e"
+        }
+      ],
+      "generation_config": {
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "imageConfig": {
+          "aspectRatio": "3:2",
+          "imageSize": "1K"
+        }
+      },
+      "model_version": "gemini-3.1-flash-image",
+      "usage": {
+        "promptTokenCount": 1174,
+        "candidatesTokenCount": 1624,
+        "totalTokenCount": 2798,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 658
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 516
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1120
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "dimensions": [
+        1264,
+        848
+      ],
+      "file": "view-4.jpg",
+      "sha256": "0ce8545cec6741afb905868b820cb57b494f22d3f7869fce2f0a0e28a95aad50",
+      "seconds": 7.97
+    }
+  ]
+}

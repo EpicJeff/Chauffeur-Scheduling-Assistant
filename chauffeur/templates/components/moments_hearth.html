@@ -79,22 +79,35 @@
                 : `<img src="${mediaUrl(m)}" class="${cls}">`;
         }
 
-        window.showMomentOverlayKiosk = function (m) {
+        window.showMomentOverlayKiosk = function (m, options = {}) {
+            const manual = options.manual === true, opener = document.activeElement;
             // A row from presence._moment_row always carries items (cover
             // first, length 1 for an ordinary moment); the fallback below is
             // only for an old cached payload that predates that field.
             const items = (m.items && m.items.length) ? m.items
                 : [{ kind: (m.kind || (m.attachment || {}).kind),
-                     media_url: m.media_url, poster_url: m.poster_url }];
+                     media_url: m.media_url, poster_url: m.poster_url, attachment: m.attachment }];
             let idx = 0, timer = null;
             const overlay = document.createElement('div');
             overlay.className = 'fixed inset-0 z-[200] flex items-center justify-center p-8';
             overlay.dataset.momentOverlay = '1';
             overlay.style.background = 'rgba(0,0,0,0.82)';
+            if (manual) {
+                overlay.setAttribute('role', 'dialog');
+                overlay.setAttribute('aria-modal', 'true');
+                overlay.setAttribute('aria-label', m.event_title || 'Family moment');
+                overlay.addEventListener('keydown', event => {
+                    if (event.key === 'Escape') { event.stopPropagation(); close(); }
+                    if (event.key === 'Tab') { event.preventDefault(); overlay.querySelector('button').focus(); }
+                    if (event.key === 'ArrowRight' && idx < items.length - 1) { idx++; draw(); }
+                    if (event.key === 'ArrowLeft' && idx > 0) { idx--; draw(); }
+                });
+            }
 
             function close() {
                 clearTimeout(timer);
                 overlay.remove();
+                if (manual && opener?.isConnected) opener.focus({preventScroll:true});
                 // Only the LAST clip on screen may clear the flag. A poll can
                 // pop a second moment over the first, and this must ask the
                 // same question draw() asks — is any clip still playing —
@@ -137,7 +150,15 @@
                 // one. An album can therefore never hold the panel for longer
                 // than somebody is actively choosing to hold it.
                 clearTimeout(timer);
-                timer = setTimeout(close, clip ? 30000 : 20000);
+                if (!manual) timer = setTimeout(close, clip ? 30000 : 20000);
+                else {
+                    const button = document.createElement('button');
+                    button.type = 'button'; button.textContent = 'Close photograph';
+                    button.style.cssText = 'position:absolute;right:20px;top:20px;padding:12px 18px;background:#192b26;color:white;border:1px solid #fff8;border-radius:24px';
+                    button.addEventListener('click', event => { event.stopPropagation(); close(); });
+                    overlay.appendChild(button);
+                    if (overlay.isConnected) button.focus();
+                }
             }
 
             // Tapping STEPS rather than closes, and a tap past the last item
@@ -150,6 +171,7 @@
             });
             draw();
             document.body.appendChild(overlay);
+            if (manual) overlay.querySelector('button').focus();
         };
 
         // The catch-up badge. Its key is NOT the pop's: SEEN_KEY seeds to the

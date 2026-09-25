@@ -2,7 +2,7 @@
 
 Chauffeur is a family operations system built for wall panels, phones, and Home Assistant. It combines a constraint-based family driving scheduler with the daily work around the schedule: packing, routines, chores, errands, meals, shopping, messages, trips, household administration, and guided personal programs.
 
-The primary wall experience is an interactive 3D house. Family members can read the next activity at a distance, enter rooms to reach related features, and use familiar household objects instead of navigating a conventional app menu. The PWA provides personal day, ride, family, and task views. The Study provides parent-only administration inside the same house.
+The wall experience offers an interactive 3D house or a photographic house with connected rooms. Config > Boards lets the household choose the new House experience and independently make The House its Home page. Family members can read the next activity at a distance, enter rooms to reach related features, and use familiar household objects instead of navigating a conventional app menu. The PWA provides personal day, ride, family, and task views. The Study provides parent-only administration inside the same house.
 
 ## Current product
 
@@ -19,7 +19,7 @@ For detailed shipped behavior and invariants, read [system_capabilities.md](chau
 
 | Surface | Route | Purpose |
 | --- | --- | --- |
-| 3D house | `/house` | Shared wall-panel home and spatial feature navigation |
+| House | `/house` | Shared wall-panel home and spatial feature navigation |
 | Family PWA | `/app` | Personal and family mobile experience |
 | Schedule | `/home` | Operational schedule and solver dashboard |
 | Configuration | `/config` | People, calendars, cars, rules, integrations, and feature settings |

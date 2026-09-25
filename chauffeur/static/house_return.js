@@ -43,6 +43,10 @@
       expires: Date.now() + result.expires_in * 1000, active: Date.now() });
   };
   window.chfHouseEndParent = function () { lock(false); };
+  window.chfHouseTouchParent = function () {
+    var session=window.chfHouseParent();
+    if(session){session.active=Date.now();save(parentKey,session);}
+  };
   window.chfHouseReturn = function () { lock(true); };
   if (onHouse) lock(false);
   // History entries remember that this was a parent visit even if Back

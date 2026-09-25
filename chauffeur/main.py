@@ -1433,7 +1433,8 @@ def home_board_page(request: Request):
     in an ordinary browser it is also where the panel gets configured (the
     tiles are picked while you look at them)."""
     response = templates.TemplateResponse(request=request, name="home.html",
-                                          context={"house_home_enabled": bool((storage.get_settings() or {}).get("panel_house_home"))})
+                                          context={"house_home_enabled": bool((storage.get_settings() or {}).get("panel_house_home")),
+                                                   "house_hybrid_enabled": bool((storage.get_settings() or {}).get("house_hybrid_enabled"))})
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
 
@@ -1747,7 +1748,8 @@ def house_page(request: Request):
     layout = neighborhood_layout(cached_only=True) if request.query_params.get('editor') != '1' else {'source': 'generated'}
     return templates.TemplateResponse(request=request, name="house.html",
                                       context={'facade_json': facade_json, 'neighborhood_json': _json.dumps(layout),
-                                               'house_home_enabled': bool((storage.get_settings() or {}).get('panel_house_home'))})
+                                               'house_home_enabled': bool((storage.get_settings() or {}).get('panel_house_home')),
+                                               'house_hybrid_enabled': bool((storage.get_settings() or {}).get('house_hybrid_enabled'))})
 
 @app.get("/threads")
 def threads_page(request: Request):
@@ -5623,6 +5625,26 @@ def study_state(request: Request = None):
     from services import study as _study
     actor = _mind_actor(request, None)
     return _study.state(actor)
+
+
+@app.post("/api/study/trips/{event_id}/locate")
+def study_locate_trip(event_id: str, request: Request = None):
+    """Resolve a visible trip on request using the app's existing geocoder."""
+    import math
+    from services import maps, scope
+    actor = _mind_actor(request, None)
+    trip = storage.get_trip_metadata(event_id)
+    if not trip or (actor is not None and not scope.audience_allows(trip, 'trip', actor)):
+        raise HTTPException(status_code=404, detail='Trip not found')
+    location = str(trip.get('location') or '').strip()
+    if not location:
+        raise HTTPException(status_code=400, detail='Add a destination to this trip first.')
+    coords = maps.geocode_address(location)
+    if not coords or not all(math.isfinite(v) for v in coords) or not (-90 <= coords[0] <= 90 and -180 <= coords[1] <= 180) or tuple(coords) == (0, 0):
+        raise HTTPException(status_code=400, detail='This destination could not be located. Add a more specific destination in the trip.')
+    # A cleaned-address cache hit may not have an alias for the trip's label.
+    storage.set_cached_geocode(location, coords[0], coords[1])
+    return {'status': 'success', 'message': 'Destination located.'}
 
 
 @app.post("/api/house/session/end")
@@ -10937,6 +10959,13 @@ def _require_pet_owner(member_id: str, token: Optional[str]):
     return _require_avatar_owner(member_id, token)
 
 
+def _invalidate_pet_board():
+    # Returning to a habitat after an edit must show the saved creature,
+    # rather than the board's brief cached projection from before the edit.
+    from services import home_board
+    home_board.invalidate_cache()
+
+
 def _pet_payload(pet: dict) -> dict:
     """A pet as the UI wants it: the record, plus the drawing. Rendering
     server-side keeps the wall panel, a digest and a phone drawing the same
@@ -11089,6 +11118,7 @@ def pet_battle_endpoint(req: PetBattleRequest,
     res = storage.run_pet_battle(req.pet_id, req.opponent, seed=req.seed)
     if res.get('error'):
         raise HTTPException(status_code=400, detail=res['error'])
+    _invalidate_pet_board()
     return res
 
 
@@ -11199,6 +11229,10 @@ def respond_pet_challenge_endpoint(challenge_id: str,
     if res.get('error'):
         raise HTTPException(status_code=400, detail=res['error'])
     if req.accept:
+        battle = res.get('battle') or {}
+        res['a_svg'] = _battle_side_svg(battle.get('a_in') or {}, 'family_a')
+        res['b_svg'] = _battle_side_svg(battle.get('b_in') or {}, 'family_b')
+        _invalidate_pet_board()
         # The one who asked gets told -- they were not there for the fight.
         # No 'notified' key at all on a decline: silence, not a False.
         res['notified'] = _notify_challenge_answered(
@@ -11334,6 +11368,7 @@ def create_pet_endpoint(req: PetCreateRequest,
                              req.look, req.type)
     if res.get('error'):
         raise HTTPException(status_code=400, detail=res['error'])
+    _invalidate_pet_board()
     return {'status': 'ok', 'pet': _pet_payload(res['pet']),
             'rejected': res.get('rejected') or []}
 
@@ -11351,6 +11386,7 @@ def buy_pet_slot_endpoint(req: PetSlotRequest,
     res = storage.buy_pet_slot(req.member_id)
     if res.get('error'):
         raise HTTPException(status_code=400, detail=res['error'])
+    _invalidate_pet_board()
     return {'status': 'ok', **res,
             'balance': storage.get_pet_xp_balance(req.member_id)}
 
@@ -11381,6 +11417,7 @@ def update_pet_endpoint(pet_id: str, req: PetUpdateRequest,
     res = storage.update_pet(pet_id, fields)
     if res.get('error'):
         raise HTTPException(status_code=400, detail=res['error'])
+    _invalidate_pet_board()
     return {'status': 'ok', 'pet': _pet_payload(res['pet']),
             'rejected': res.get('rejected') or []}
 
@@ -11446,6 +11483,7 @@ def learn_pet_move_endpoint(pet_id: str, req: PetLearnRequest,
     res = storage.learn_pet_move(pet_id, req.move)
     if res.get('error'):
         raise HTTPException(status_code=400, detail=res['error'])
+    _invalidate_pet_board()
     return {'status': 'ok', 'pet': _pet_payload(res['pet']),
             'spent': res['spent'],
             'balance': storage.get_pet_xp_balance(pet['member_id'])}
@@ -11464,6 +11502,7 @@ def retire_pet_endpoint(pet_id: str, req: PetRetireRequest,
     if not out:
         raise HTTPException(status_code=400,
                             detail="No free pet slot to bring it back to")
+    _invalidate_pet_board()
     return {'status': 'ok', 'pet': _pet_payload(out)}
 
 

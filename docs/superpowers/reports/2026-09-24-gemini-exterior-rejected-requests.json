@@ -1,0 +1,55 @@
+{
+  "inputs": [
+    {
+      "path": "chauffeur/static/house_hybrid/exterior-study/model-three-quarter.png",
+      "sha256": "7f89bcab70a03bd86b01549924f42ea5d2c0eab902ecd67f06c8f8fe38c6d04a"
+    },
+    {
+      "path": "docs/superpowers/specs/assets/2026-09-17-photo-farmhouse.jpg",
+      "sha256": "a6a94efc828636370ec1db2f7f4aadcc5c26af90b068b6ad24086eb765a3d150"
+    },
+    {
+      "path": "chauffeur/static/house_hybrid/living-habitat-day.png",
+      "sha256": "4709066af1b4fc86d4576f421c05ac55d63db70f8292a95f4fd99c8aeaf5b2aa"
+    }
+  ],
+  "max_requests": 2,
+  "retries": 0,
+  "results": [
+    {
+      "model": "gemini-2.5-flash-image",
+      "generation_config": {
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "responseFormat": {
+          "image": {
+            "aspectRatio": "3:2"
+          }
+        }
+      },
+      "status": "failed",
+      "error": "Provider HTTP 400: Invalid value at 'generation_config.response_format.image.aspect_ratio' (type.googleapis.com/google.ai.generativelanguage.v1.ImageResponseFormat.AspectRatio), \"3:2\"",
+      "seconds": 0.44
+    },
+    {
+      "model": "gemini-3.1-flash-image",
+      "generation_config": {
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "responseFormat": {
+          "image": {
+            "aspectRatio": "3:2",
+            "imageSize": "1K"
+          }
+        }
+      },
+      "status": "failed",
+      "error": "Provider HTTP 400: Invalid value at 'generation_config.response_format.image.aspect_ratio' (type.googleapis.com/google.ai.generativelanguage.v1.ImageResponseFormat.AspectRatio), \"3:2\"\nInvalid value at 'generation_config.response_format.image.image_size' (type.googleapis.com/google.ai.generativelanguage.v1.ImageResponseFormat.ImageSize), \"1K\"",
+      "seconds": 0.57
+    }
+  ]
+}

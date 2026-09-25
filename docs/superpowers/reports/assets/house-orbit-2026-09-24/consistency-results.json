@@ -1,0 +1,117 @@
+{
+  "model": "gemini-3.1-flash-image",
+  "max_requests": 2,
+  "automatic_retries": 0,
+  "views": [
+    {
+      "angle": 4,
+      "label": "Rear left",
+      "status": "ok",
+      "inputs": [
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/model-4.png",
+          "sha256": "5d54d2fb12f66dbf01327d828537f242a9dc9761fd20c670ea7d87f862a4199e"
+        },
+        {
+          "path": "chauffeur/static/house_hybrid/exterior-orbit/view-5.jpg",
+          "sha256": "6dc60c6c3fea137bd515d98ce79ea63d468efaf9758d0101b50e5399218e18cf"
+        }
+      ],
+      "generation_config": {
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "imageConfig": {
+          "aspectRatio": "3:2",
+          "imageSize": "1K"
+        }
+      },
+      "model_version": "gemini-3.1-flash-image",
+      "usage": {
+        "promptTokenCount": 1050,
+        "candidatesTokenCount": 1755,
+        "totalTokenCount": 2805,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 534
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 516
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1120
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "dimensions": [
+        1264,
+        848
+      ],
+      "file": "view-4.jpg",
+      "sha256": "5951f78c9bfa1fd1b0e077740232a2e136bd2e2e81c772c3eaf8eb6005542f4b",
+      "seconds": 8.85
+    },
+    {
+      "angle": 6,
+      "label": "Rear right",
+      "status": "ok",
+      "inputs": [
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/model-6.png",
+          "sha256": "0ceb7d1437954c53e42ff9d2577cd45887c3bfd9a356ba874fe8b849d5ff7762"
+        },
+        {
+          "path": "chauffeur/static/house_hybrid/exterior-orbit/view-5.jpg",
+          "sha256": "6dc60c6c3fea137bd515d98ce79ea63d468efaf9758d0101b50e5399218e18cf"
+        }
+      ],
+      "generation_config": {
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "imageConfig": {
+          "aspectRatio": "3:2",
+          "imageSize": "1K"
+        }
+      },
+      "model_version": "gemini-3.1-flash-image",
+      "usage": {
+        "promptTokenCount": 1050,
+        "candidatesTokenCount": 1577,
+        "totalTokenCount": 2627,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 534
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 516
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1120
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "dimensions": [
+        1264,
+        848
+      ],
+      "file": "view-6.jpg",
+      "sha256": "422cbcc614e18515dad78553ff7cc29c92658f7f173303b07ee9c3faacbd7bc1",
+      "seconds": 7.55
+    }
+  ]
+}

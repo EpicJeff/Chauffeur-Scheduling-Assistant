@@ -337,8 +337,14 @@ const dom = new JSDOM(html, {
 });
 const w = dom.window;
 
-setTimeout(() => {
+(async () => {
   const doc = w.document;
+  // Wait for the observable result: DOM parsing and profile loading can take
+  // longer than a fixed 600 ms when browser tests run concurrently.
+  const deadline = Date.now() + 8000;
+  while (!doc.getElementById('panel-screensaver') && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
   const before = doc.getElementById('panel-screensaver');
   const out = { appeared: !!before };
   if (before) {
@@ -368,7 +374,7 @@ setTimeout(() => {
   console.log(JSON.stringify(out));
   w.close();
   process.exit(0);
-}, 600);
+})();
 """
 
 

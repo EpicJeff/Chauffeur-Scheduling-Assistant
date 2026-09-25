@@ -96,14 +96,16 @@ window.openPetBattle = async function (m, opts) {
     if (token === null) return;              // asked, and they backed out
     window.dispatchEvent(new CustomEvent('pet-battle-open',
         { detail: { memberId: member.id, memberName: member.name, token: token || null,
+                    petId: member.petId || null,
                     watch: (opts && opts.watch) || null } }));
 };
 
 function petBattlePanel() {
     return {
-        show: false, stage: 'pick', busy: false,
+        show: false, stage: 'pick', busy: false, habitat: false, revision: 0,
+        effects: [], playbackRevision: 0,
         memberId: null, memberName: '', token: null,
-        pet: null, opponents: [], chosen: null,
+        pet: null, familyPet: null, opponents: [], chosen: null,
         challenges: [], waiting: [], rivals: [], pvpEnabled: true,
         past: [], isReplay: false, sceneMine: null,
         replay: null, idx: -1, hp: { a: 0, b: 0 }, maxHp: { a: 1, b: 1 },
@@ -111,8 +113,49 @@ function petBattlePanel() {
         anim: { mine: '', theirs: '' }, fainted: { a: false, b: false },
         timer: null, bg: '',
 
+        init() {
+            this.$watch('show', value => {
+                document.body.classList.toggle('habitat-battling', value && this.habitat);
+                const el = document.getElementById('house-habitat');
+                if (el) el.inert = value && this.habitat;
+            });
+            this.$watch('stage', () => this.focusControl());
+        },
+        focusControl() {
+            this.$nextTick(() => {
+                if (!this.show || !this.habitat) return;
+                this.$el.querySelector(this.stage === 'pick' ? '[title="Train & customise"]' :
+                    this.stage === 'result' ? '.pb-result button' : '.pb-log-controls button')?.focus({preventScroll:true});
+            });
+        },
+        trapFocus(event) {
+            if (!this.habitat) return;
+            const controls = [...this.$el.querySelectorAll('button:not(:disabled)')].filter(el => el.getClientRects().length);
+            const first = controls[0], last = controls[controls.length - 1];
+            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus({preventScroll:true}); }
+            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus({preventScroll:true}); }
+        },
+        stopPlayback() {
+            ++this.playbackRevision;
+            this.effects.forEach(id => clearTimeout(id)); this.effects = [];
+            this.timer = null; this.anim = {mine:'', theirs:''};
+        },
+        later(fn, delay) {
+            const revision = this.playbackRevision;
+            const id = setTimeout(() => { if (revision === this.playbackRevision && this.show) fn(); }, delay);
+            this.effects.push(id); return id;
+        },
+
         get api() { return (window.chfBase !== undefined ? window.chfBase : ''); },
         get won() { return this.replay && this.replay.winner === 'a'; },
+        stageSvg(svg, side) {
+            // The habitat keeps another copy mounted. Shared SVG clip IDs would
+            // otherwise resolve against its hidden creature and erase this one.
+            const prefix = 'pb-stage-' + side + '-';
+            return (svg || '').replace(/\bid="([^"]+)"/g, (_, id) => 'id="' + prefix + id + '"')
+                .replace(/url\(#([^)]+)\)/g, (_, id) => 'url(#' + prefix + id + ')')
+                .replace(/href="#([^"]+)"/g, (_, id) => 'href="#' + prefix + id + '"');
+        },
         pct(side) {
             return Math.max(0, Math.min(100,
                 Math.round(100 * (this.hp[side] / (this.maxHp[side] || 1)))));
@@ -134,6 +177,11 @@ function petBattlePanel() {
         },
 
         async open(detail) {
+            const revision = ++this.revision;
+            this.stopPlayback();
+            this.habitat = document.getElementById('hybrid-room-frame')?.dataset.view === 'pets';
+            this.busy = true; this.pet = null; this.opponents = []; this.past = [];
+            this.challenges = []; this.waiting = []; this.rivals = []; this.remaining = null;
             this.memberId = detail.memberId;
             this.memberName = detail.memberName || '';
             this.token = detail.token || null;
@@ -145,12 +193,15 @@ function petBattlePanel() {
             try {
                 const list = await fetch(this.api + 'api/pets?member_id='
                     + encodeURIComponent(this.memberId)).then(r => r.json());
-                this.pet = (list.pets || [])[0] || null;
+                if (revision !== this.revision) return;
+                this.pet = (list.pets || []).find(p => !detail.petId || p.id === detail.petId) || null;
+                this.familyPet = (list.pets || [])[0] || null;
                 if (!this.pet) {
                     showGlobalAlert('Hatch a critter first!');
                     this.show = false; return;
                 }
                 const o = await fetch(this.api + 'api/pets/opponents').then(r => r.json());
+                if (revision !== this.revision) return;
                 this.opponents = o.opponents || [];
                 // One fetch, two questions: what the cap has left, and the
                 // watch-again list. The list matters most to the child who
@@ -158,9 +209,12 @@ function petBattlePanel() {
                 // and this is the only way they ever see it.
                 const b = await fetch(this.api + 'api/pets/battles?member_id='
                     + encodeURIComponent(this.memberId) + '&limit=8').then(r => r.json());
+                if (revision !== this.revision) return;
                 this.remaining = Math.max(0, (b.cap || 0) - (b.used_today || 0));
                 this.past = b.battles || [];
                 await this.loadChallenges();
+                if (revision !== this.revision) return;
+                this.busy = false; this.focusControl();
                 // Arrived from the "they said yes" push: play it now. The id
                 // is trusted only as far as the server -- an unknown one just
                 // 404s into "That battle is gone."
@@ -169,14 +223,20 @@ function petBattlePanel() {
                                || { id: detail.watch });
                 }
             } catch (e) {
+                if (revision !== this.revision) return;
                 showGlobalAlert('Could not reach the arena');
                 this.show = false;
             }
+            if (revision === this.revision) this.busy = false;
         },
 
         close() {
-            if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+            ++this.revision; this.stopPlayback();
             this.show = false;
+            document.body.classList.remove('habitat-battling');
+            const el = document.getElementById('house-habitat');
+            if (this.habitat && el) el.inert = false;
+            window.dispatchEvent(new CustomEvent('pet-overlay-closed'));
         },
 
         headers() {
@@ -186,9 +246,11 @@ function petBattlePanel() {
         },
 
         async loadChallenges() {
+            const revision = this.revision;
             try {
                 const c = await fetch(this.api + 'api/pets/challenges?member_id='
                     + encodeURIComponent(this.memberId)).then(r => r.json());
+                if (revision !== this.revision) return;
                 this.challenges = (c.challenges || []).filter(x => x.incoming);
                 // The other half of consent: asking used to look like it did
                 // nothing. A waiting row says the invitation is out there --
@@ -197,13 +259,14 @@ function petBattlePanel() {
                 this.waiting = (c.challenges || []).filter(x => !x.incoming);
                 this.rivals = c.rivals || [];
                 this.pvpEnabled = c.pvp_enabled !== false;
-            } catch (e) { this.challenges = []; this.waiting = []; this.rivals = []; }
+            } catch (e) { if (revision === this.revision) { this.challenges = []; this.waiting = []; this.rivals = []; } }
         },
 
         // Asking is an INVITATION. Nothing happens to the other child until
         // they say yes, so this ends with "asked" and not with a battle.
         async challenge(r) {
             if (this.busy) return;
+            const revision = this.revision;
             this.busy = true;
             try {
                 const res = await fetch(this.api + 'api/pets/challenge', {
@@ -212,15 +275,18 @@ function petBattlePanel() {
                                            to_member: r.member_id }),
                 });
                 const d = await res.json().catch(() => ({}));
+                if (revision !== this.revision) return;
                 if (!res.ok) showGlobalAlert(d.detail || 'Could not ask them');
                 else showGlobalAlert(r.name + ' has been asked!');
                 await this.loadChallenges();
-            } catch (e) { showGlobalAlert('Could not ask them'); }
-            this.busy = false;
+            } catch (e) { if (revision === this.revision) showGlobalAlert('Could not ask them'); }
+            if (revision === this.revision) this.busy = false;
         },
 
         async answer(ch, accept) {
             if (this.busy) return;
+            const revision = this.revision;
+            const memberId = this.memberId;
             this.busy = true;
             try {
                 const res = await fetch(this.api + 'api/pets/challenge/'
@@ -229,13 +295,16 @@ function petBattlePanel() {
                     body: JSON.stringify({ accept: accept }),
                 });
                 const d = await res.json().catch(() => ({}));
+                if (res.ok && accept && d.replay) window.dispatchEvent(new CustomEvent('pet-battle-done',
+                    {detail:{memberId, won:d.replay.winner === 'b', awarded:(d.awards || {})[memberId] || 0}}));
+                if (revision !== this.revision) return;
                 if (!res.ok) { showGlobalAlert(d.detail || 'Could not answer'); }
                 else if (accept && d.replay) {
                     // The person who accepted is side B of the stored fight,
                     // so the scene is drawn from their side: their critter is
                     // the near one.
-                    this.isReplay = false; this.sceneMine = null;
-                    this.chosen = { name: d.replay.a.name, svg: this.rivalSvg(ch.from_member) };
+                    this.isReplay = false; this.sceneMine = d.b_svg || this.familyPet?.svg;
+                    this.chosen = { name: d.replay.a.name, svg: d.a_svg || this.rivalSvg(ch.from_member) };
                     this.awarded = (d.awards || {})[this.memberId] || 0;
                     this.capped = !!d.capped;
                     this.replay = this.mirror(d.replay);
@@ -244,8 +313,8 @@ function petBattlePanel() {
                     showGlobalAlert('Maybe another time.');
                 }
                 await this.loadChallenges();
-            } catch (e) { showGlobalAlert('Could not answer'); }
-            this.busy = false;
+            } catch (e) { if (revision === this.revision) showGlobalAlert('Could not answer'); }
+            if (revision === this.revision) this.busy = false;
         },
 
         rivalSvg(memberId) {
@@ -262,10 +331,12 @@ function petBattlePanel() {
         // and tells nobody.
         async watch(b) {
             if (this.busy) return;
+            const revision = this.revision;
             this.busy = true;
             try {
                 const d = await fetch(this.api + 'api/pets/battles/' + b.id)
                     .then(r => r.ok ? r.json() : null);
+                if (revision !== this.revision) return;
                 if (!d || !d.replay) {
                     showGlobalAlert('That battle is gone.');
                     this.busy = false; return;
@@ -280,8 +351,8 @@ function petBattlePanel() {
                 this.chosen = { svg: mineIsA ? d.b_svg : d.a_svg };
                 this.replay = mineIsA ? d.replay : this.mirror(d.replay);
                 this.startPlayback();
-            } catch (e) { showGlobalAlert('Could not fetch that battle'); }
-            this.busy = false;
+            } catch (e) { if (revision === this.revision) showGlobalAlert('Could not fetch that battle'); }
+            if (revision === this.revision) this.busy = false;
         },
 
         dayLabel(b) {
@@ -312,6 +383,8 @@ function petBattlePanel() {
 
         async fight(opp) {
             if (this.busy) return;
+            const revision = this.revision;
+            const memberId = this.memberId;
             this.busy = true; this.chosen = opp;
             this.isReplay = false; this.sceneMine = null;
             const headers = { 'Content-Type': 'application/json' };
@@ -322,23 +395,28 @@ function petBattlePanel() {
                     body: JSON.stringify({ pet_id: this.pet.id, opponent: opp.key }),
                 });
                 if (!res.ok) {
+                    if (revision !== this.revision) return;
                     const d = await res.json().catch(() => ({}));
                     showGlobalAlert(d.detail || 'The battle could not start');
                     this.busy = false; return;
                 }
                 const out = await res.json();
+                if (out.replay) window.dispatchEvent(new CustomEvent('pet-battle-done',
+                    {detail:{memberId, won:out.replay.winner === 'a', awarded:out.awarded || 0}}));
+                if (revision !== this.revision) return;
                 this.replay = out.replay;
                 this.awarded = out.awarded || 0;
                 this.capped = !!out.capped;
                 this.remaining = out.remaining;
                 this.startPlayback();
             } catch (e) {
-                showGlobalAlert('Could not reach the arena');
+                if (revision === this.revision) showGlobalAlert('Could not reach the arena');
             }
-            this.busy = false;
+            if (revision === this.revision) this.busy = false;
         },
 
         startPlayback() {
+            this.stopPlayback();
             this.stage = 'fight';
             this.maxHp = { a: this.replay.a.max_hp, b: this.replay.b.max_hp };
             this.hp = { a: this.maxHp.a, b: this.maxHp.b };
@@ -366,14 +444,14 @@ function petBattlePanel() {
             // lunge, then land the hit a beat later, so the two read as one
             // action rather than two things happening at once
             this.anim[mine ? 'mine' : 'theirs'] = mine ? 'pb-lunge-mine' : 'pb-lunge-theirs';
-            setTimeout(() => { this.anim.mine = ''; this.anim.theirs = ''; }, 430);
+            this.later(() => { this.anim.mine = ''; this.anim.theirs = ''; }, 430);
 
-            setTimeout(() => {
+            this.later(() => {
                 this.hp = { a: t.hp.a, b: t.hp.b };
                 if (t.damage > 0) {
                     const hurt = mine ? 'theirs' : 'mine';
                     this.anim[hurt] = 'pb-hit';
-                    setTimeout(() => { this.anim[hurt] = ''; }, 400);
+                    this.later(() => { this.anim[hurt] = ''; }, 400);
                 }
                 if (t.hp.a <= 0) this.fainted.a = true;
                 if (t.hp.b <= 0) this.fainted.b = true;
@@ -381,11 +459,11 @@ function petBattlePanel() {
 
             // A busier line needs longer on screen than a plain hit.
             const dwell = this.note ? 1500 : 1050;
-            this.timer = setTimeout(() => this.step(), dwell);
+            this.timer = this.later(() => this.step(), dwell);
         },
 
         skip() {
-            if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+            this.stopPlayback();
             const turns = (this.replay && this.replay.turns) || [];
             for (let i = this.idx + 1; i < turns.length; i++) {
                 const t = turns[i];
@@ -404,30 +482,41 @@ function petBattlePanel() {
         },
 
         finish() {
+            this.stopPlayback();
             this.stage = 'result';
-            if (this.isReplay) return;   // watching back pays nothing and tells nobody
-            window.dispatchEvent(new CustomEvent('pet-battle-done',
-                { detail: { memberId: this.memberId, won: this.won,
-                            awarded: this.awarded } }));
         },
 
-        again() {
+        async again() {
+            this.stopPlayback();
             this.replay = null; this.chosen = null; this.stage = 'pick';
             this.awarded = 0; this.capped = false;
             this.isReplay = false; this.sceneMine = null;
+            const revision = this.revision;
+            try {
+                const b = await fetch(this.api + 'api/pets/battles?member_id=' + encodeURIComponent(this.memberId) + '&limit=8').then(r => r.json());
+                if (revision === this.revision) this.past = b.battles || [];
+            } catch (_) { /* The existing opponent cards remain usable offline. */ }
         },
     };
 }
 </script>
 
-<div x-data="petBattlePanel()" x-cloak x-show="show"
+<div id="pet-battle-panel" x-data="petBattlePanel()" x-cloak x-show="show"
+     @keydown.escape.prevent.stop="close()"
+     @keydown.tab="trapFocus($event)"
      @pet-battle-open.window="open($event.detail)"
+     :class="{'pb-habitat':habitat}" :aria-busy="busy" role="dialog" aria-modal="true" aria-label="Critter arena"
      class="panel-modal fixed inset-0 z-[110] bg-gray-950 flex flex-col select-none">
+  <div class="pb-surface" style="display:contents">
+    <div class="pb-selection" x-show="habitat && stage === 'pick'" style="display:none">
+        <div class="pb-selection-critter" x-html="stageSvg(pet?.svg, 'selection')"></div>
+        <div class="pb-selection-plaque"><strong x-text="pet?.name || 'Opening the arena…'"></strong><span>Choose a sparring partner below</span></div>
+    </div>
 
     <!-- ===== choose an opponent ===== -->
     <template x-if="stage === 'pick'">
-        <div class="flex-1 min-h-0 flex flex-col">
-            <div class="flex items-center gap-3 p-3 border-b border-gray-800">
+        <div class="pb-pick flex-1 min-h-0 flex flex-col">
+            <div class="pb-pick-header flex items-center gap-3 p-3 border-b border-gray-800">
                 <span class="w-12 h-12 rounded-xl overflow-hidden bg-gray-800 flex-shrink-0"
                       x-html="pet && pet.svg"></span>
                 <div class="min-w-0 flex-1">
@@ -446,17 +535,18 @@ function petBattlePanel() {
                      The PIN gate is already satisfied (chfMemberToken caches
                      it), so this reopens silently. -->
                 <button type="button" x-show="pet && typeof openPetEditor !== 'undefined'"
-                        @click="close(); openPetEditor({ id: memberId, name: memberName })"
+                        @click="close(); openPetEditor({ id: memberId, name: memberName, petId: pet && pet.id })"
                         class="w-10 h-10 rounded-full bg-gray-800 border border-gray-700 text-gray-200"
                         title="Train &amp; customise">🛠️</button>
                 <button type="button" x-show="typeof openPetGuide !== 'undefined'"
                         @click="openPetGuide(memberId)"
                         class="w-10 h-10 rounded-full bg-gray-800 border border-gray-700 text-gray-300"
                         title="How to play">?</button>
-                <button type="button" @click="close()"
+                <button type="button" @click="close()" aria-label="Close arena"
                         class="w-10 h-10 rounded-full bg-gray-800 border border-gray-700 text-gray-300 text-xl leading-none">×</button>
             </div>
-            <div class="px-3 pt-2 text-xs text-gray-400">
+            <div class="pb-allowance px-3 pt-2 text-xs text-gray-400">
+                <span x-show="busy && !opponents.length">Opening the arena…</span>
                 <span x-show="remaining > 0">
                     <span x-text="remaining"></span> rewarded battles left today.
                 </span>
@@ -466,7 +556,7 @@ function petBattlePanel() {
                     No XP left today &mdash; you can still fight for fun.
                 </span>
             </div>
-            <div class="flex-1 overflow-y-auto p-3 space-y-2">
+            <div class="pb-cards flex-1 overflow-y-auto p-3 space-y-2">
 
                 <!-- SOMEBODY ASKED YOU. Top of the list, because an invitation
                      left unanswered is the one thing here with another child
@@ -495,6 +585,7 @@ function petBattlePanel() {
                 <template x-if="pvpEnabled && rivals.length">
                     <div class="pt-1">
                         <div class="text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1.5">Family</div>
+                        <p x-show="familyPet && pet && familyPet.id !== pet.id" class="text-xs text-gray-400 mb-2" x-text="'Family invitations use ' + (familyPet?.name || '') + ', your first active critter.'"></p>
                         <div class="space-y-2">
                             <template x-for="r in rivals" :key="r.member_id">
                                 <div class="w-full flex items-center gap-3 p-2.5 rounded-xl bg-gray-900 border-2 border-gray-800">
@@ -532,7 +623,7 @@ function petBattlePanel() {
 
                 <div class="text-[11px] font-bold text-gray-500 uppercase tracking-wide pt-1">Practice</div>
                 <template x-for="o in opponents" :key="o.key">
-                    <button type="button" @click="fight(o)" :disabled="busy"
+                    <button type="button" @click="fight(o)" :disabled="busy" :aria-label="'Practice against ' + o.name"
                             class="w-full flex items-center gap-3 p-2.5 rounded-xl bg-gray-900 border-2 border-gray-800 text-left disabled:opacity-50">
                         <span class="w-16 h-16 rounded-lg overflow-hidden bg-gray-800 flex-shrink-0" x-html="o.svg"></span>
                         <span class="min-w-0 flex-1">
@@ -585,7 +676,7 @@ function petBattlePanel() {
 
     <!-- ===== the fight, and its result ===== -->
     <template x-if="stage !== 'pick'">
-        <div class="flex-1 min-h-0 flex flex-col">
+        <div class="pb-fight flex-1 min-h-0 flex flex-col">
             <div class="pb-arena flex-none">
               <div class="relative pb-stage" :style="'background-image:url(' + bg + ')'">
 
@@ -593,21 +684,21 @@ function petBattlePanel() {
                 <!-- Opponent's bar top-left, yours bottom-right: the layout
                      the games have used for thirty years, and the one that
                      keeps each plate out of the corner its critter stands in. -->
-                <div class="absolute top-2 left-2 w-40 bg-gray-950/80 rounded-lg p-2">
+                <div class="pb-plate pb-plate-theirs absolute top-2 left-2 w-40 bg-gray-950/80 rounded-lg p-2">
                     <div class="flex items-baseline justify-between gap-2">
                         <span class="text-xs font-bold text-white truncate" x-text="replay && replay.b.name"></span>
                         <span class="text-[10px] text-gray-400" x-text="replay ? ('Lv' + replay.b.level) : ''"></span>
                     </div>
-                    <div class="pb-hp h-2 rounded bg-black/50 overflow-hidden mt-1">
+                    <div class="pb-hp h-2 rounded bg-black/50 overflow-hidden mt-1" role="progressbar" :aria-label="(replay?.b.name || 'Opponent') + ' health'" :aria-valuenow="hp.b" :aria-valuemax="maxHp.b" aria-valuemin="0">
                         <i :style="'width:' + pct('b') + '%;background:' + barColor('b')"></i>
                     </div>
                 </div>
-                <div class="absolute bottom-2 right-2 w-40 bg-gray-950/80 rounded-lg p-2">
+                <div class="pb-plate pb-plate-mine absolute bottom-2 right-2 w-40 bg-gray-950/80 rounded-lg p-2">
                     <div class="flex items-baseline justify-between gap-2">
                         <span class="text-xs font-bold text-white truncate" x-text="replay && replay.a.name"></span>
                         <span class="text-[10px] text-gray-400" x-text="replay ? ('Lv' + replay.a.level) : ''"></span>
                     </div>
-                    <div class="pb-hp h-2 rounded bg-black/50 overflow-hidden mt-1">
+                    <div class="pb-hp h-2 rounded bg-black/50 overflow-hidden mt-1" role="progressbar" :aria-label="(replay?.a.name || 'Your critter') + ' health'" :aria-valuenow="hp.a" :aria-valuemax="maxHp.a" aria-valuemin="0">
                         <i :style="'width:' + pct('a') + '%;background:' + barColor('a')"></i>
                     </div>
                     <div class="text-[10px] text-gray-400 mt-0.5">
@@ -618,25 +709,25 @@ function petBattlePanel() {
                 <!-- the two critters -->
                 <div class="pb-fighter pb-theirs">
                     <div class="pb-anim" :class="[anim.theirs, fainted.b ? 'pb-fainted' : '']"
-                         x-html="chosen && chosen.svg"></div>
+                         x-html="stageSvg(chosen && chosen.svg, 'theirs')"></div>
                 </div>
                 <div class="pb-fighter pb-mine">
                     <!-- A replay stages the critter that FOUGHT, which after a
                          retirement is not the critter on the shelf today. -->
                     <div class="pb-anim" :class="[anim.mine, fainted.a ? 'pb-fainted' : '']"
-                         x-html="sceneMine || (pet && pet.svg)"></div>
+                         x-html="stageSvg(sceneMine || (pet && pet.svg), 'mine')"></div>
                 </div>
 
                 <!-- level-matched fights say so, because a kid who loses to a
                      bigger sibling deserves to know it was not the levels -->
                 <div x-show="replay && replay.level_matched"
-                     class="absolute top-2 right-2 text-[10px] px-2 py-1 rounded bg-gray-950/80 text-gray-300">
+                     class="pb-matched absolute top-2 right-2 text-[10px] px-2 py-1 rounded bg-gray-950/80 text-gray-300">
                     Level-matched
                 </div>
 
                 <!-- result -->
                 <template x-if="stage === 'result'">
-                    <div class="absolute inset-0 grid place-items-center bg-gray-950/70">
+                    <div class="pb-result absolute inset-0 grid place-items-center bg-gray-950/70" role="status">
                         <div class="pb-pop text-center px-6">
                             <div class="text-3xl font-black" :class="won ? 'text-emerald-400' : 'text-gray-300'"
                                  x-text="won ? 'You win!' : 'Knocked out'"></div>
@@ -661,7 +752,7 @@ function petBattlePanel() {
                                      door: the way to act on it was to close the
                                      arena and find the critter again. -->
                                 <button type="button" x-show="pet && typeof openPetEditor !== 'undefined'"
-                                        @click="close(); openPetEditor({ id: memberId, name: memberName })"
+                                        @click="close(); openPetEditor({ id: memberId, name: memberName, petId: replay?.a.pet_id || pet?.id })"
                                         class="px-5 h-11 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 font-bold">Train</button>
                                 <button type="button" @click="close()"
                                         class="px-5 h-11 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 font-bold">Done</button>
@@ -676,7 +767,7 @@ function petBattlePanel() {
                  it keeps the whole history rather than only the current line:
                  a fight you can scroll back through beats a strip of dead
                  letterbox. -->
-            <div class="flex-1 min-h-0 flex flex-col bg-gray-950 border-t border-gray-800">
+            <div class="pb-journal flex-1 min-h-0 flex flex-col bg-gray-950 border-t border-gray-800">
                 <div class="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-1" x-ref="log">
                     <template x-for="(l, i) in lines" :key="i">
                         <div>
@@ -687,7 +778,7 @@ function petBattlePanel() {
                     </template>
                     <div x-show="!lines.length" class="text-xs text-gray-600">The bell is about to ring…</div>
                 </div>
-                <div class="flex-shrink-0 flex gap-2 p-2 border-t border-gray-800/80">
+                <div class="pb-log-controls flex-shrink-0 flex gap-2 p-2 border-t border-gray-800/80">
                     <button type="button" x-show="stage === 'fight'" @click="skip()"
                             class="px-4 h-9 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 text-xs font-bold">Skip</button>
                     <button type="button" x-show="stage === 'fight'" @click="close()"
@@ -699,5 +790,6 @@ function petBattlePanel() {
             </div>
         </div>
     </template>
+  </div>
 </div>
 {% endraw %}

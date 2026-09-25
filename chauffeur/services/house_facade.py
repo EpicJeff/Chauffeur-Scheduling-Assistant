@@ -294,7 +294,7 @@ def validate_block_model(obj, *, _range_notes=None):
                             rng(door, 'projection', 0, 3.0, p + '.side_door')
                         if 'front_setback' in door:
                             rng(door, 'front_setback', 0.6, 4.0, p + '.side_door')
-                        rng(door, 'width', 2.4, 4.4, p + '.side_door')
+                        rng(door, 'width', 2.4, 6.0, p + '.side_door')
                         rng(door, 'height', 2.4, 4.0, p + '.side_door')
                         leaves = need(door, 'leaves', int, p + '.side_door')
                         if leaves not in (1, 2):
@@ -589,7 +589,7 @@ def _norm_block(name, raw, notes):
             b['side_door'] = {
                 'style': _pick(door.get('style'), GARAGE_STYLES, 'carriage'),
                 'leaves': 2 if _int(door.get('leaves'), 1) == 2 else 1,
-                'width': round(min(4.4, max(2.4, _num(door.get('width'), 3.6))), 2),
+                'width': round(min(6.0, max(2.4, _num(door.get('width'), 3.6))), 2),
                 'height': round(min(4.0, max(2.4, _num(door.get('height'), 3.0))), 2),
             }
             if 'third_bay' in door:
@@ -1174,7 +1174,7 @@ _PHOTO_DIMENSION_GUIDANCE = (f'\nBase bands: height must be {BASE_H_MIN}..{BASE_
                         f'Block depth is extra depth beyond the default block, 0..{DEPTH_MAX} '
                         'scene units, not the total building depth.\n'
                         f'All roof pitches, including upper spans: {PITCH_MIN}..{PITCH_MAX} degrees.\n'
-                        'Side garage door width: 2.4..4.4; height: 2.4..4.0; '
+                        'Side garage door width: 2.4..6.0; height: 2.4..4.0; '
                         'front_setback: 0.6..4.0; projection: 0..3.0 scene units.\n')
 
 PHOTO_SYSTEM = """You describe the STREET-FACING elevation of a house from one photo, as JSON only.
@@ -1225,11 +1225,13 @@ Return exactly this shape (a fraction-based feature has "block"/"at"/"width" ins
   "finishes": [{{"block": "main"|"garage", "at": 0..1, "width": 0..1, "story": 1|2, "cladding": one of {claddings}, "body": one of {body}}}],
   "unexpressed": [up to 8 short strings naming real details the shape above cannot capture]}}
 The garage may also include optional side_door: style (carriage/panel/glass), leaves (1 or 2),
-width (2.4..4.4, default 3.6) and height (2.4..4.0, default 3.0), in scene units.
+width (2.4..6.0, default 3.6; 6.0 for a broad double door) and height (2.4..4.0, default 3.0), in scene units.
 Optional side_door.third_bay (boolean) adds a separate single door; front_setback
 (0.6..4.0, default 0.75) measures the gap from the front corner to the nearest door.
 Optional side_door.projection (0..3, default 0) projects the third bay toward
 the driveway with its own gable; 0 keeps it flush, 1.8 is a typical pop-out.
+The single door is half the double door's width (minimum 2.4); a projecting bay
+has the same parking depth as the main garage bay.
 The garage may include door_colour: wood/white/black/greige/sage/slate/navy.
 These control the garage doors independently of street openings.
 Finishes are optional overrides. Omit unchanged cladding/body fields to inherit independently.

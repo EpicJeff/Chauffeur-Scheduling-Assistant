@@ -274,13 +274,13 @@
         async command(entityId, command, extra, opts) {
             if (!entityId) return false;
             try {
-                await fetch(base(opts) + 'api/ha/media_players/'
+                const response = await fetch(base(opts) + 'api/ha/media_players/'
                     + encodeURIComponent(entityId) + '/command', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(Object.assign({ command }, extra || {})),
                 });
-                return true;
+                return response.ok;
             } catch (e) {
                 return false;
             }

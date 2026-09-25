@@ -125,8 +125,9 @@ def scenario_house_life():
         boxes = page.evaluate("""() => ['tasks','programs'].map(k => {
             const e = document.querySelector('.house-hint[data-house-action="'+k+'"]');
             const r = e.getBoundingClientRect(), l = e.querySelector('.house-hint-label').getBoundingClientRect();
-            return {top: r.top, bottom: l.bottom}; })""")
-        check(boxes[0]['bottom'] <= boxes[1]['top'] or boxes[1]['bottom'] <= boxes[0]['top'],
+            return {left: Math.min(r.left,l.left), right: Math.max(r.right,l.right), top: r.top, bottom: l.bottom}; })""")
+        check(boxes[0]['right'] <= boxes[1]['left'] or boxes[1]['right'] <= boxes[0]['left'] or
+              boxes[0]['bottom'] <= boxes[1]['top'] or boxes[1]['bottom'] <= boxes[0]['top'],
               'neighbouring markers do not overlap: ' + str(boxes))
         page.evaluate("chfHouseFindFeature('study')")
         page.wait_for_function('chfNavProbe({settled:true})')

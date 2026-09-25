@@ -3,7 +3,8 @@ import copy
 import itertools
 import os
 from pathlib import Path
-from test_house_facade_live import live_app, _seed, check, NIGHT_LOCK_JS
+from unittest.mock import patch
+from test_house_facade_live import live_app, _seed, check
 from house_probe import THREE_WRAP
 from services import house_facade as hf
 
@@ -40,13 +41,17 @@ def scenario_lighting_matrix(smoke=False):
     cases=[(m,g,p,'high') for m,g,p in cases]
     cases += [(m,'third','mixed',q) for m in [False,True] for q in ['medium','low']]
     if smoke: cases=[(True,'third','mixed','high'),(True,'side','gable','low')]
-    with served.browser() as page:
+    # The rig follows the outdoor state now, not Date.getHours(). Keep
+    # polling deterministic too, so the real sun cannot reset this matrix.
+    with patch('services.kitchen_room._window', return_value={
+        'calm': True, 'cond': 'clear-night', 'temp': 72, 'precip': 0,
+        'night': True, 'next_sun_change': None,
+    }), served.browser() as page:
         errors=[]
         page.on('pageerror',lambda e: errors.append(str(e)))
         page.route('**/three.min.js*',lambda r:r.fulfill(status=200,content_type='application/javascript',body=three))
         page.route('**/house.js*',lambda r:r.fulfill(status=200,content_type='application/javascript',body=source))
         page.route('**/api/v2/chat/stream*',lambda r:r.fulfill(status=200,body=''))
-        page.add_init_script(NIGHT_LOCK_JS)
         for mirror,garage,porch,quality in cases:
             spec=copy.deepcopy(hf.CANONICAL);spec['mirror']=mirror
             if garage!='front':

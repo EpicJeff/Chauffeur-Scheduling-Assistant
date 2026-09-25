@@ -122,14 +122,14 @@ def scenario_tray_carries_the_titles_it_is_waiting_on():
     finally:
         storage.get_proposals = orig
     check(tray['count'] == 8, f'the count is every waiting row: {tray["count"]}')
-    check(len(tray['items']) == 5, f'five titles at most: {tray["items"]}')
-    check([i['title'] for i in tray['items']] == [f'Notice {i}' for i in range(5)],
+    check(len(tray['items']) == 8, f'all papers can be browsed: {tray["items"]}')
+    check([i['title'] for i in tray['items'][:7]] == [f'Notice {i}' for i in range(7)],
           f'and they are the `title` field, in order: {tray["items"]}')
     _reset()
     storage.get_proposals = lambda status=None: [{'id': 'x', 'status': 'proposed'}]
     try:
         t2 = study.state(PARENT, now=NOON)['furniture']['tray']
-        check(t2['items'] == [{'title': ''}],
+        check(len(t2['items']) == 1 and not t2['items'][0]['title'] and t2['items'][0]['id'] == 'x',
               f'a proposal with no title contributes an empty one, not a crash: {t2}')
     finally:
         storage.get_proposals = orig
@@ -147,8 +147,8 @@ def scenario_stickies_carry_their_finding_lines():
     finally:
         findings.open_findings = orig
     check(st['count'] == 6 and st['worst'] == 'decide', f'unchanged head: {st}')
-    check(len(st['items']) == 5, f'five notes at most: {st["items"]}')
-    check(st['items'][0] == {'line': 'thing 0', 'severity': 'decide'},
+    check(len(st['items']) == 6, f'all findings can be browsed: {st["items"]}')
+    check(st['items'][0] == {'id': 'f0', 'line': 'thing 0', 'severity': 'decide', 'due_at': None},
           f'each note carries its line and its severity: {st["items"][0]}')
 
 
@@ -256,7 +256,7 @@ def scenario_contracts_carry_the_deals_they_are_waiting_on():
     finally:
         storage.get_deals = orig
     check(c['count'] == 4, f'draft and asking only: {c["count"]}')
-    check(len(c['items']) == 3, f'three slips at most: {c["items"]}')
+    check(len(c['items']) == 4, f'all agreements can be browsed: {c["items"]}')
     check(c['items'][0]['title'] == 'Saturday swim', f'the seed event: {c["items"]}')
     check(c['items'][1]['title'] == 'The Ozturks take robotics',
           f'and the sentence when the seed had no title: {c["items"][1]}')
@@ -575,11 +575,25 @@ def scenario_map_pins_only_the_trips_still_ahead():
              'mock_start_date': now_ts + (i + 1) * day, 'audience': 'household'}
             for i in range(9)]
         capped = study.state(PARENT, now=NOON)['furniture']['map']['trips']
-        check(len(capped) == 6, f'six pins at most, got {len(capped)}')
-        check([r['id'] for r in capped] == [f'x{i}' for i in range(6)],
-              'and the six kept are the six soonest')
+        check(len(capped) == 9, f'all future trips remain accessible, got {len(capped)}')
+        check([r['id'] for r in capped] == [f'x{i}' for i in range(9)],
+              'and all are ordered soonest first')
     finally:
         (storage.get_all_trip_metadata, storage.get_cached_schedule) = orig
+
+
+def scenario_map_home_uses_only_valid_cached_coordinates():
+    from unittest.mock import patch
+    from services import maps
+    with patch.object(maps, 'get_home_location', return_value='Household home'), \
+         patch.object(maps, 'geocode_address', side_effect=AssertionError('Read must not geocode')), \
+         patch.object(storage, 'get_cached_geocode') as cached:
+        for coords in ({}, {'lat': 0, 'lon': 0}, {'lat': float('nan'), 'lon': 10}, {'lat': 91, 'lon': 10}):
+            cached.return_value = coords
+            check(study._map(NOON, PARENT)['home'] is None, 'unknown home is not invented')
+        cached.return_value = {'lat': '39.7392', 'lon': '-104.9903', 'display_name': 'Private address'}
+        check(study._map(NOON, PARENT)['home'] == {'lat': 39.7392, 'lon': -104.9903},
+              'home carries valid coordinates without address text')
 
 
 def scenario_map_holds_a_closed_trip_back_from_a_resolved_adult():
@@ -832,6 +846,7 @@ if __name__ == '__main__':
     scenario_calendar_falls_back_to_the_unassigned_alias()
     scenario_monitor_clusters_are_one_per_person_sized_by_their_week()
     scenario_map_pins_only_the_trips_still_ahead()
+    scenario_map_home_uses_only_valid_cached_coordinates()
     scenario_map_holds_a_closed_trip_back_from_a_resolved_adult()
     scenario_every_section_carries_a_calm_form()
     scenario_a_raising_section_is_calm_not_fatal()

@@ -1323,11 +1323,12 @@ def scenario_side_garage_front_seal_and_popout(labels=None):
             roof = page.evaluate("window.chfFabricVertices('garage_popout_roof_end_west')")
             check(bool(roof) == (projection > 0), 'projecting bay has its own outward gable only when selected')
             if projection:
-                door = page.evaluate("window.chfFabricVertices('garage_door')")
-                check(max(v[0] for v in door)-min(v[0] for v in door) > projection, 'single door projects beyond main door')
-                # Door registry reports world coordinates; undo the house mirror.
-                protruding = [v for v in door if v[0] * (-1 if mirror else 1) < -18.6]
-                main = [v for v in door if v[0] * (-1 if mirror else 1) >= -18.6]
+                # Measure the actual openings. The combined door registry also
+                # includes lanterns that protrude across an x-based split.
+                protruding = page.evaluate("window.chfFabricVertices('garage_popout_header')")
+                main = page.evaluate("window.chfFabricVertices('garage_block_west_head')")
+                check(min(v[0] * (-1 if mirror else 1) for v in protruding) < -18.2-projection,
+                      'single opening projects beyond main door')
                 check(protruding and main and max(v[2] for v in protruding) < min(v[2] for v in main),
                       'projecting single door is behind main door toward the rear')
                 check(max(v[0] for v in protruding)-min(v[0] for v in protruding) > 2.3 and max(v[2] for v in protruding)-min(v[2] for v in protruding) < 0.5, 'third door faces street, perpendicular to side doors')

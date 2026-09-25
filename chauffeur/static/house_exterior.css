@@ -1,0 +1,66 @@
+#house-exterior{position:fixed;inset:0;z-index:45;background:#1b2925;color:#fff5df;overflow:hidden;touch-action:pan-y;font:15px system-ui}
+#house-exterior[hidden],#hybrid-outside[hidden]{display:none}
+#exterior-traffic{position:absolute;pointer-events:none}
+#house-exterior .exterior-vehicle{position:absolute;aspect-ratio:1;transform:translate(-50%,-75%);padding:0;border:0;border-radius:0;background:none;box-shadow:none;pointer-events:auto;min-width:0;min-height:0}
+.exterior-vehicle-art{position:absolute;inset:0;background:url('house_hybrid/vehicles-atlas.png') var(--sprite-x) var(--sprite-y)/400% 200% no-repeat;isolation:isolate;pointer-events:none}
+.exterior-vehicle-label{position:absolute;left:50%;top:20%;transform:translateX(-50%);font:600 11px system-ui;color:#fff1d6;white-space:nowrap;background:#17251de8;padding:5px 8px;border:1px solid #e4d0a680;border-radius:12px;opacity:0;transition:opacity .15s}
+.exterior-vehicle:hover .exterior-vehicle-label,.exterior-vehicle:focus-visible .exterior-vehicle-label,.exterior-vehicle[data-warn="true"] .exterior-vehicle-label{opacity:1}
+.exterior-vehicle[data-warn="true"] .exterior-vehicle-label{background:#74400ced;border-color:#ffc76c}
+#exterior-traffic-shortcuts{position:absolute;top:95px;right:185px;display:flex;gap:8px;white-space:nowrap}
+#exterior-traffic-shortcuts button{padding:8px 13px;font-size:12px}
+body:has(.house-hint.expanded) #exterior-traffic-shortcuts{visibility:hidden}
+#exterior-pictures{position:absolute;inset:0;transition:transform .7s cubic-bezier(.2,.65,.2,1),opacity .6s ease;transform-origin:var(--entry-x,50%) var(--entry-y,60%)}
+#exterior-pictures img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center bottom;opacity:0;transition:opacity .4s ease;pointer-events:none}
+#exterior-pictures img.is-active{opacity:1}
+.exterior-heading{position:absolute;top:88px;left:28px;text-shadow:0 2px 12px #000;background:linear-gradient(110deg,#15251cd6,transparent);padding:16px 50px 20px 20px;border-radius:16px;pointer-events:none}
+.exterior-heading>span{font-size:10px;letter-spacing:.22em}.exterior-heading h1{font:500 30px Georgia,serif;margin:7px 0}.exterior-heading p{margin:0;color:#e0dccf;font-size:13px}
+#house-exterior button,#hybrid-outside{border:1px solid #e5d3ab80;background:#192b26ed;color:#fff4da;cursor:pointer;font:600 14px system-ui;min-width:44px;min-height:44px;border-radius:30px;box-shadow:0 4px 18px #0003}
+#house-exterior button:focus-visible,#hybrid-outside:focus-visible{outline:3px solid #f0d09c;outline-offset:4px}
+#exterior-room-marker{pointer-events:auto}
+#exterior-kitchen-marker{pointer-events:auto}
+#exterior-kitchen-marker[hidden]{display:none}
+#exterior-room-marker[hidden]{display:none}
+#exterior-enter{position:absolute;bottom:126px;left:50%;transform:translateX(-50%);padding:13px 25px;white-space:nowrap;background:#f1dbb4!important;color:#203129!important}
+#exterior-room-shortcuts{position:absolute;bottom:126px;left:50%;transform:translateX(-50%);display:flex;gap:8px;max-width:calc(100% - 24px)}
+#exterior-room-shortcuts #exterior-enter{position:static;transform:none;padding:12px 16px}
+#exterior-kitchen-enter{padding:12px 16px;white-space:nowrap}
+body[data-house-scene=exterior]:has(.house-hint.expanded) #exterior-room-shortcuts{visibility:hidden}
+#exterior-status{position:absolute;bottom:94px;left:0;right:0;text-align:center;font-size:12px;margin:0;text-shadow:0 1px 4px #000;background:#12251c99;width:max-content;max-width:90%;padding:4px 10px;border-radius:10px;margin:auto}
+body[data-house-scene="exterior"] #hybrid-room,body[data-house-scene="entering"] #hybrid-room{pointer-events:none}
+body[data-house-scene="exterior"] #house-comparison,body[data-house-scene="entering"] #house-comparison,body[data-house-scene] #house-compare-measurements{display:none}
+body[data-house-scene="entering"] #exterior-pictures{transform:scale(1.85);opacity:0}
+body[data-house-scene="entering"] #house-exterior{background:transparent;pointer-events:none}
+body[data-house-scene="entering"] #house-exterior>header,body[data-house-scene="entering"] #house-exterior>button,body[data-house-scene="entering"] #house-exterior>nav,body[data-house-scene="entering"] #exterior-status{opacity:0}
+body[data-house-scene] #hybrid-room{transition:transform .7s ease;transform:scale(1)}
+body[data-house-scene="exterior"] #hybrid-room{transform:scale(1.08)}
+#hybrid-outside{position:fixed;left:20px;top:84px;z-index:49;padding:10px 18px}
+body:has(#hybrid-room-frame:not([data-phase="room"])) #hybrid-outside{display:none}
+@media(max-width:700px){.exterior-heading{top:84px;left:12px;padding:12px 24px 14px 14px}.exterior-heading h1{font-size:24px}#hybrid-outside{top:145px;left:12px}#exterior-room-marker{pointer-events:auto}}
+@media(max-height:550px){.exterior-heading{top:72px;padding:8px 18px}.exterior-heading h1{font-size:20px}#exterior-enter{bottom:120px}}
+@media(prefers-reduced-motion:reduce){#exterior-pictures,#exterior-pictures img,body[data-house-scene] #hybrid-room{transition:none}}
+
+body[data-house-scene] #house-hints{z-index:46}
+body[data-house-scene] #exterior-room-marker[hidden]{display:none}
+body[data-house-scene=exterior]:has(.house-hint.expanded) #exterior-enter,body[data-house-scene=exterior]:has(.house-hint.expanded) #exterior-status{visibility:hidden}
+
+@media(max-width:700px){.exterior-vehicle-label{display:none}#exterior-traffic-shortcuts{gap:4px}#exterior-traffic-shortcuts button{padding:8px 10px;font-size:11px}}
+#exterior-pictures .exterior-vehicle-art img{opacity:1;object-fit:contain;object-position:center;transition:none}
+#house-exterior .exterior-patch-target{position:absolute;background:none;border:0;border-radius:0;box-shadow:none;pointer-events:auto;padding:0;min-width:0;min-height:0}
+#house-exterior .exterior-patch-target:focus-visible{outline:3px solid #f0d09c;outline-offset:0;border-radius:12px}
+#exterior-layer-controls{position:absolute;right:16px;top:90px;max-width:290px;padding:10px 14px;border-radius:14px;background:#192b26ed;font-size:12px}
+#exterior-layer-controls summary{cursor:pointer;min-height:24px}
+#exterior-layer-controls label{display:block;margin:10px 0}
+#exterior-layer-controls select{display:block;color:#17251d;margin-top:4px;max-width:100%}
+#exterior-layer-controls small{display:block;max-width:240px;color:#ddd}
+@media(max-width:700px){#exterior-layer-controls{top:175px;right:12px;max-width:230px}}
+/* Occupied door interiors share the photograph's coordinate plane. */
+.exterior-garage-layer{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+#exterior-pictures .exterior-scene-patch{object-fit:fill;transform-origin:0 0;transform:translate(24.88%,37.583%) scale(.55);transition:none}
+.exterior-driveway-shadow{position:absolute;left:46.8%;top:81.3%;width:15.8%;height:4.2%;border-radius:50%;background:radial-gradient(ellipse,#17160f70 0%,#17160f40 38%,transparent 73%);transform:rotate(-10deg);filter:blur(3px);pointer-events:none}
+#exterior-pictures .exterior-garage-layer img{object-fit:fill;transform-origin:0 0;transition:none}
+#house-exterior .exterior-garage-car{z-index:2;min-width:44px;min-height:44px}
+.exterior-garage-car .exterior-vehicle-label{top:-12px;left:50%;max-width:250px;white-space:normal;text-align:center}
+.exterior-garage-car:hover .exterior-vehicle-label,.exterior-garage-car:focus-visible .exterior-vehicle-label{opacity:1}
+.exterior-garage-car[data-warn=true]::after{content:'';position:absolute;inset:0;box-shadow:inset 0 0 12px #f0bd7166;pointer-events:none}
+#exterior-room-shortcuts,#exterior-traffic-shortcuts,#exterior-status{z-index:110}
+@media(max-width:700px){#exterior-pictures>img{object-position:80% bottom}#exterior-room-shortcuts{bottom:142px}#exterior-traffic-shortcuts{top:auto;right:auto;left:50%;transform:translateX(-50%);bottom:92px}#exterior-status{display:none}}

@@ -1,4 +1,9 @@
 {% import 'components/packing_card.html' as packing %}
+{% set house_comparison_preview = request.query_params.get('compare') in ['living', 'exterior'] %}
+{% set house_default_hybrid = house_hybrid_enabled|default(false) and not house_comparison_preview and request.query_params.get('render') != '3d' and request.query_params.get('editor') != '1' and not request.query_params.get('draft') %}
+{% set house_comparison = house_comparison_preview or house_default_hybrid %}
+{% set house_hybrid = house_comparison and request.query_params.get('render') != '3d' %}
+{% set house_exterior = house_hybrid and (house_default_hybrid or request.query_params.get('compare') == 'exterior') %}
 <!DOCTYPE html>
 <html lang="en" class="dark">
 
@@ -6,8 +11,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>The Home</title>
-    {% if house_home_enabled|default(false) %}
-    <script src="{{ 'static/house_home.js'|ver }}" data-surface="house"></script>
+    {% if house_home_enabled|default(false) and not house_comparison_preview %}
+    <script src="{{ 'static/house_home.js'|ver }}" data-surface="house" data-hybrid="{{ 'true' if house_hybrid else 'false' }}"></script>
     {% endif %}
     <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
     <link href="{{ 'static/house_markers.css'|ver }}" rel="stylesheet">
@@ -200,9 +205,18 @@
     </style>
     <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
     <link rel="stylesheet" href="{{ 'static/house_life.css'|ver }}">
+    {% if house_comparison %}
+    <link rel="stylesheet" href="{{ 'static/house_comparison.css'|ver }}">
+    {% if house_exterior %}<link rel="stylesheet" href="{{ 'static/house_exterior.css'|ver }}"><link rel="stylesheet" href="{{ 'static/house_garage.css'|ver }}"><link rel="stylesheet" href="{{ 'static/house_kitchen.css'|ver }}"><link rel="stylesheet" href="{{ 'static/house_utility_rooms.css'|ver }}">{% endif %}
+    {% if house_hybrid %}<link rel="stylesheet" href="{{ 'static/house_radio.css'|ver }}"><link rel="stylesheet" href="{{ 'static/house_record_bay.css'|ver }}"><link rel="stylesheet" href="{{ 'static/house_books.css'|ver }}"><script src="{{ 'static/house_books.js'|ver }}"></script>{% endif %}
+    {% if house_hybrid %}<link rel="stylesheet" href="{{ 'static/house_habitat.css'|ver }}"><script src="{{ 'static/house_habitat.js'|ver }}"></script>{% endif %}
+    {% if house_hybrid %}<link rel="stylesheet" href="{{ 'static/house_workbench.css'|ver }}">{% endif %}
+    {% if house_hybrid %}<link rel="stylesheet" href="{{ 'static/house_arena.css'|ver }}"><link rel="stylesheet" href="{{ 'static/house_fullbleed.css'|ver }}">{% endif %}
+    <script>window.HOUSE_COMPARE_NIGHT = {{ 'true' if request.query_params.get('light') == 'night' else ('false' if request.query_params.get('light') == 'day' else 'null') }};</script>
+    {% endif %}
 </head>
 
-<body class="flex flex-col h-screen overflow-hidden">
+<body class="flex flex-col h-screen overflow-hidden{% if house_comparison %} house-comparison-page{% endif %}"{% if house_comparison %} data-house-render="{{ 'hybrid' if house_hybrid else '3d' }}"{% endif %}{% if house_exterior %} data-house-scene="exterior"{% endif %}>
     <div class="editor-chrome">{% include 'nav.html' %}</div>
     <aside id="house-map-credit" hidden aria-label="Neighborhood map credits" title="Mapped streets and available building outlines; illustrative house designs and inferred frontage">
       <a class="mapboxgl-ctrl-logo" href="https://www.mapbox.com/" target="_blank" rel="noopener" aria-label="Mapbox"></a>
@@ -212,6 +226,8 @@
     </aside>
 
     <div id="kitchen-wrap" class="panel-page">
+        {% if house_comparison %}{% include 'components/house_comparison.html' %}{% endif %}
+        {% if house_exterior %}{% include 'components/house_exterior.html' %}{% endif %}
         <h1 id="kitchen-title" class="panel-page-title">The Home</h1>
         <button id="house-back" type="button" hidden aria-label="Go back"></button>
         <div id="house-hints" hidden aria-label="House rooms and features"></div>
@@ -279,6 +295,7 @@
     <script>window.HOUSE_NEIGHBORHOOD = {{ neighborhood_json|default('{}')|safe }};</script>
     <script>window.HOUSE_STATE_URL = (window.chfBase !== undefined ? window.chfBase : '') + 'api/house/state';
             window.HOUSE_FACADE = {{ facade_json|safe }};</script>
+    {% if not house_hybrid %}
     <script src="{{ 'static/vendor/three.min.js'|ver }}"></script>
     <script src="{{ 'static/house_features.js'|ver }}"></script>
     <script>window.STUDY_EMBED_MODE = true;</script>
@@ -290,6 +307,12 @@
     <script src="{{ 'static/house_markers.js'|ver }}"></script>
     <script src="{{ 'static/house.js'|ver }}" onerror="if(window.ChauffeurHome) window.ChauffeurHome.fallback()"></script>
     <script src="{{ 'static/house_glance.js'|ver }}"></script>
+    {% endif %}
     <script src="{{ 'static/kitchen_overlay.js'|ver }}"></script>
+    {% if house_hybrid %}<script src="{{ 'static/house_records.js'|ver }}"></script><script src="{{ 'static/house_radio.js'|ver }}"></script><script src="{{ 'static/house_hybrid_views.js'|ver }}"></script>{% endif %}
+    {% if house_comparison %}<script src="{{ 'static/house_comparison.js'|ver }}"></script>{% endif %}
+    {% if house_exterior %}<script src="{{ 'static/house_markers.js'|ver }}"></script><script src="{{ 'static/house_garage.js'|ver }}"></script><script src="{{ 'static/house_kitchen_surfaces.js'|ver }}"></script><script src="{{ 'static/house_kitchen.js'|ver }}"></script><script src="{{ 'static/house_study_monitor.js'|ver }}"></script><script src="{{ 'static/house_study_surfaces.js'|ver }}"></script><script src="{{ 'static/house_utility_rooms.js'|ver }}"></script><script src="{{ 'static/house_exterior.js'|ver }}"></script><script src="{{ 'static/house_exterior_traffic.js'|ver }}"></script>{% endif %}
+    {% if house_hybrid %}<script src="{{ 'static/house_hybrid_effects.js'|ver }}"></script><script src="{{ 'static/house_hybrid_layout.js'|ver }}"></script>{% endif %}
+    {% if house_exterior %}{% with house_hybrid=false, house_exterior_quick_lesson=true %}{% include 'components/lesson_player.html' %}{% endwith %}{% endif %}
 </body>
 </html>

@@ -1,0 +1,35 @@
+<section id="house-habitat" x-data="houseHabitat()" x-show="habitatMode()" x-cloak tabindex="-1"
+         role="region" aria-label="Critter habitat" :aria-busy="loading || pending"
+         @pet-saved.window="refresh()" @pet-battle-done.window="refresh()"
+         @keydown.left.prevent="turn(-1)" @keydown.right.prevent="turn(1)"
+         @click.capture="if (Date.now() < suppressClickUntil) { $event.preventDefault(); $event.stopPropagation(); }"
+         @touchstart.passive="touchX = $event.touches[0].clientX" @touchend="swipe($event)" @touchcancel="touchX = null">
+  <template x-for="figure in figures" :key="key(figure.row)">
+    <button type="button" class="habitat-critter" :class="'habitat-' + figure.slot"
+            :aria-label="(figure.slot === 'center' ? 'Inspect ' : 'Select ') + name(figure.row)"
+            :aria-pressed="figure.slot === 'center'" @click="choose(figure)">
+      <span class="habitat-shadow" aria-hidden="true"></span>
+      <span class="habitat-creature" x-show="figure.row.pet" x-html="figure.row.pet?.svg || ''"></span>
+      <span class="habitat-egg" x-show="!figure.row.pet" aria-hidden="true"><span x-show="figure.row.kind === 'buy'">+</span></span>
+    </button>
+  </template>
+  <div class="habitat-plaque" aria-live="polite" aria-atomic="true">
+    <h2 x-text="loading ? 'Opening the habitat…' : selected ? name(selected) : 'A little world awaits'"></h2>
+    <p x-show="selected"><span x-show="t?.data?.show_owner" x-text="selected?.name"></span><span x-show="t?.data?.show_level && selected?.pet" x-text="' · ' + (selected?.pet?.type_label || '') + ' · Lv ' + (selected?.pet?.level || 1)"></span></p>
+    <p x-show="!loading && !selected" x-text="error || 'No critters to show yet.'"></p>
+  </div>
+  <div class="habitat-progress" x-show="t?.data?.show_level && selected?.pet?.progress && !selected.pet.progress.max"
+       role="progressbar" aria-label="Progress to the next level" aria-valuemin="0" aria-valuemax="100"
+       :aria-valuenow="Math.round(100 * (selected?.pet?.progress?.ratio || 0))">
+    <span :style="'width:' + Math.round(100 * (selected?.pet?.progress?.ratio || 0)) + '%'"></span>
+  </div>
+  <button type="button" class="habitat-knob habitat-previous" aria-label="Previous critter" :disabled="residents.length < 2" @click="turn(-1)">‹</button>
+  <button type="button" class="habitat-knob habitat-next" aria-label="Next critter" :disabled="residents.length < 2" @click="turn(1)">›</button>
+  <div class="habitat-actions">
+    <button type="button" x-show="selected && t?.data?.interactive" :disabled="!interactive" @click="act('edit')"
+            x-text="selected?.pet ? 'Customize' : selected?.kind === 'buy' ? ('Another slot · ' + selected.cost + ' XP') : 'Hatch a critter'"></button>
+    <button type="button" x-show="selected?.pet && t?.data?.interactive" :disabled="!interactive" @click="act('battle')">Battle</button>
+    <button type="button" x-show="!loading && error" @click="refresh()">Try again</button>
+    <p x-show="selected" x-text="(index + 1) + ' / ' + residents.length + (selected?.hint && selected?.kind === 'pet' ? ' · ' + selected.xp + ' XP · ' + selected.hint : '')"></p>
+  </div>
+</section>

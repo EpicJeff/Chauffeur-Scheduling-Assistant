@@ -585,6 +585,8 @@
     /* one clock for the whole scene: the sky dome and the rig must never
        disagree about whether it is dark out */
     function isNight() {
+      /* Only the explicit comparison page supplies this temporary preview. */
+      if (typeof window.HOUSE_COMPARE_NIGHT === 'boolean') return window.HOUSE_COMPARE_NIGHT;
       /* MASSING ARC 2 task 10: ?day=1 pins the scene to daylight. A
          screenshot taken after seven in the evening photographed a dark
          house, so every probe and live test had to monkey-patch
@@ -754,7 +756,8 @@
       var POOL = 0xffe2b4;                  /* warm, but not the orange the
                                                old 0xffd9a0 pushed onto wood */
       [[0.4, 4.55, -0.7, 13.5, 0.42],       /* the pendants over the island */
-       [-2.4, 4.35, 9.6, 13.0, 0.40],       /* the living room's own corner */
+       [-5.6, 1.2, 8.6, 7.0, 0.72],        /* firelight, just outside the hearth */
+       [0.90, 1.75, 10.90, 6.5, 0.55],     /* the living room's reading lamp */
        [-9.9, 3.45, 5.3, 8.5, 0.34],        /* the mudroom's wall light */
        [-15.4, 3.95, 6.3, 10.0, 0.36],      /* the garage's strip light */
        [10.6, 3.85, 12.1, 9.0, 0.40]        /* the Study's reading lamp */
@@ -1703,13 +1706,15 @@
          flooring transitions in a modern house) — board rows with
          offset seams, the checkerboard retired */
       var g = floorCanvas.getContext('2d'), W = floorCanvas.width;
-      g.fillStyle = '#c9a06c'; g.fillRect(0, 0, W, W);
-      var rows = 9, bh = W / rows;
+      g.fillStyle = '#b59570'; g.fillRect(0, 0, W, W);
+      /* Narrow oak boards with shallow seams, rather than metre-wide
+         strips. This texture is shared across the open great-room floor. */
+      var rows = 42, bh = W / rows;
       for (var r = 0; r < rows; r++) {
         var off = (r % 3) * (W / 3.7);
-        g.fillStyle = 'rgba(120,80,40,' + (0.05 + (r % 3) * 0.045) + ')';
+        g.fillStyle = 'rgba(82,52,31,' + (0.025 + (r % 5) * 0.014) + ')';
         g.fillRect(0, r * bh, W, bh);
-        g.strokeStyle = 'rgba(90,60,30,0.5)'; g.lineWidth = 2;
+        g.strokeStyle = 'rgba(65,47,32,0.28)'; g.lineWidth = W / 1024;
         g.strokeRect(-4, r * bh, W + 8, bh);
         for (var seg = 0; seg < 3; seg++) {
           var sx = (seg * W / 3 + off) % W;
@@ -1717,11 +1722,11 @@
           g.stroke();
         }
         if (DETAIL >= 3) {
-          g.strokeStyle = 'rgba(120,80,40,0.22)'; g.lineWidth = 1;
-          for (var gr = 0; gr < 5; gr++) {
-            var gy = r * bh + 4 + Math.random() * (bh - 8);
+          g.strokeStyle = 'rgba(83,55,34,0.11)'; g.lineWidth = 0.6;
+          for (var gr = 0; gr < 8; gr++) {
+            var gy = r * bh + 1 + ((r * 13 + gr * 7) % 31) / 31 * (bh - 2);
             g.beginPath(); g.moveTo(0, gy);
-            g.lineTo(W, gy + (Math.random() - 0.5) * 5); g.stroke();
+            g.bezierCurveTo(W*.3,gy+1.4,W*.65,gy-1.6,W,gy); g.stroke();
           }
         }
       }
@@ -1900,7 +1905,7 @@
        living apart, with no hand-typed box for either. */
     floor2.userData.room = 'living';
     scene.add(floor2);
-    var wallL2 = box(0.35, 5.6, 8.4, C.wall, -6.65, 2.8, 10.0, westWallG,
+    var wallL2 = box(0.35, 5.6, 8.4, 0x596a69, -6.65, 2.8, 10.0, westWallG,
                      sharp(WALL_O));
     box(0.41, 5.6, 0.09, C.linen, -6.65, 2.8, 14.235, westWallG, sharp({ rough: 0.9 }));
     if (SHADOWS) wallL2.castShadow = false;
@@ -1947,9 +1952,70 @@
       var WX = -6.475;                    /* the west wall's inner face */
       var PG = null;                      /* see the westWallG note below */
       var D2 = DETAIL >= 2, D3 = DETAIL >= 3;
-      var FAB = { rough: 0.98 };          /* fabric never takes GLOSS */
-      var PLASTER = { rough: 0.93 };
-      var woodO = NICE ? { rough: 0.62, map: woodLight } : { rough: 0.62 };
+      /* Room-local surface library: deterministic pixels, shared maps, no
+         downloads or per-frame effects. Fine relief belongs in materials;
+         silhouettes (cushions and leaves) belong in geometry. */
+      var weave = D2 ? canvasTex(256, function (g, S) {
+        g.fillStyle = '#e4e1dc'; g.fillRect(0, 0, S, S);
+        for (var y = 0; y < S; y += 4) for (var x = 0; x < S; x += 4) {
+          var n = (x * 13 + y * 7) % 19;
+          g.fillStyle = 'rgb(' + (224+n) + ',' + (221+n) + ',' + (215+n) + ')';
+          g.fillRect(x, y, 3, 2);
+          g.fillStyle = 'rgba(65,57,48,.12)'; g.fillRect(x+3, y, 1, 4);
+        }
+      }) : null;
+      if (weave) { weave.wrapS=weave.wrapT=T.RepeatWrapping;weave.repeat.set(4,4); }
+      var FAB = { rough: 0.94, map: weave, envInt: 0.025 };
+      function upholstery(c) {
+        var m = mat(c, FAB);
+        if (PBR) { m.bumpMap = weave; m.bumpScale = 0.004; }
+        return m;
+      }
+      /* Rounded cuboids with explicit curved normals, rather than a
+         one-segment bevel shaded to look soft. Geometry remains cached. */
+      function cushionGeo(w, h, d, r) {
+        if (!D2) return chamferGeo(w,h,d,Math.min(r,0.08));
+        return cgeo('living-cushion|'+[w,h,d,r,DETAIL].join('|'), function () {
+          var steps = D3 ? 8 : 4, geo = new T.BoxGeometry(w,h,d,steps,steps,steps);
+          var a = geo.attributes.position, normals = geo.attributes.normal;
+          var radius = Math.min(r, Math.min(w,h,d)*0.46);
+          var hx=w/2-radius, hy=h/2-radius, hz=d/2-radius;
+          for (var i=0;i<a.count;i++) {
+            var x=a.getX(i),y=a.getY(i),z=a.getZ(i);
+            var qx=Math.max(-hx,Math.min(hx,x));
+            var qy=Math.max(-hy,Math.min(hy,y));
+            var qz=Math.max(-hz,Math.min(hz,z));
+            var nx=x-qx,ny=y-qy,nz=z-qz, len=Math.sqrt(nx*nx+ny*ny+nz*nz)||1;
+            nx/=len;ny/=len;nz/=len;
+            a.setXYZ(i,qx+nx*radius,qy+ny*radius,qz+nz*radius);
+            normals.setXYZ(i,nx,ny,nz);
+          }
+          return geo;
+        });
+      }
+      var stoneTex = D2 ? canvasTex(256, function(g,S) {
+        g.fillStyle='#d4cbbd';g.fillRect(0,0,S,S);
+        for(var y=0;y<S;y++) {
+          var v=Math.sin(y*.14)*3+Math.sin(y*.63)*2;
+          g.fillStyle='rgba(73,63,49,'+(0.035+Math.abs(v)*.007)+')';
+          g.fillRect(0,y,S,1);
+        }
+        for(var i=0;i<1300;i++) {
+          g.fillStyle=i%3?'rgba(69,59,44,.08)':'rgba(255,251,239,.24)';
+          g.fillRect((i*47)%S,(i*83+Math.floor(i/17))%S,1+i%2,1);
+        }
+      }) : null;
+      var PLASTER = { rough: 0.89, map: stoneTex, envInt: 0.05 };
+      var oak = D2 ? canvasTex(256, function(g,S) {
+        g.fillStyle='#ac8154';g.fillRect(0,0,S,S);
+        for(var i=0;i<190;i++) {
+          var y=(i*43)%S;
+          g.strokeStyle=i%3?'rgba(52,30,16,.12)':'rgba(241,208,159,.16)';
+          g.lineWidth=i%7===0?1.3:.55;g.beginPath();g.moveTo(0,y);
+          g.bezierCurveTo(70,y+Math.sin(i)*5,180,y-Math.cos(i)*4,S,y);g.stroke();
+        }
+      }) : null;
+      var woodO = NICE ? { rough: 0.48, map: oak, envInt: 0.22 } : { rough: 0.62 };
       var woodK = NICE ? 0xffffff : 0xc89a66;
       var woodM = NICE ? 0xd2b489 : 0xa8834f;   /* a deeper wood: mantle, beams */
       function lb(w, h, d, c, x, y, z, g, o) { return ltag(box(w, h, d, c, x, y, z, g || PG, o)); }
@@ -2017,14 +2083,49 @@
          out from it. One broad leaf = a flattened ellipsoid whose base
          sits over the pot's centre and whose tip leans out by `tilt` at
          azimuth `spin`. Three silhouettes so no two plants repeat. */
-      var LEAFC = [C.leaf, 0x527f44, 0x74a05a];
+      var LEAFC = [0x49634b, 0x344f3d, 0x667a50];
+      var leafTex = D2 ? canvasTex(128, function(g,S) {
+        var wash=g.createLinearGradient(0,0,S,0);
+        wash.addColorStop(0,'#b0b7a0');wash.addColorStop(.48,'#e1e8d2');
+        wash.addColorStop(.52,'#b6c19e');wash.addColorStop(1,'#939f7e');
+        g.fillStyle=wash;g.fillRect(0,0,S,S);
+        g.strokeStyle='rgba(238,240,203,.38)';g.lineWidth=1;
+        for(var y=8;y<S;y+=12) {
+          g.beginPath();g.moveTo(0,y-14);g.lineTo(S/2,y);g.lineTo(S,y-14);g.stroke();
+        }
+      }) : null;
+      var leafMats = LEAFC.map(function(c) {
+        var m=mat(c,{rough:.73,map:leafTex,envInt:.1},true);
+        m.side=T.DoubleSide;
+        if(PBR){m.bumpMap=leafTex;m.bumpScale=.006;}
+        return m;
+      });
+      /* A tapered, folded blade, with a curved midrib and thin edges.
+         Shared topology replaces the thick ellipsoids at medium/high. */
+      var leafGeo = D2 ? (function() {
+        var geo=new T.BufferGeometry(), pos=[],uv=[],idx=[],steps=D3?10:6;
+        for(var j=0;j<=steps;j++) {
+          var t=j/steps, width=Math.pow(Math.sin(Math.PI*t),.72);
+          for(var k=-1;k<=1;k++) {
+            pos.push(.22*Math.sin(Math.PI*t)+.18*Math.abs(k)*width,2*t,width*k);
+            uv.push((k+1)/2,t);
+          }
+        }
+        for(var j=0;j<steps;j++) for(var k=0;k<2;k++) {
+          var a=j*3+k;idx.push(a,a+3,a+1,a+1,a+3,a+4);
+        }
+        geo.setAttribute('position',new T.Float32BufferAttribute(pos,3));
+        geo.setAttribute('uv',new T.Float32BufferAttribute(uv,2));
+        geo.setIndex(idx);geo.computeVertexNormals();return geo;
+      })() : null;
       function pLeaf(x, base, z, L, wide, thick, tilt, spin, c) {
-        var m = new T.Mesh(new T.SphereGeometry(1, D3 ? 10 : 6, D3 ? 8 : 4),
-                           mat(c, { rough: 1.0 }));
-        m.scale.set(thick, L, wide);
+        var m = new T.Mesh(leafGeo || cgeo('living-low-leaf',function(){return new T.SphereGeometry(1,6,4);}),
+                           leafMats[LEAFC.indexOf(c)]);
+        m.scale.set(D2 ? L : thick, L, wide);
         m.rotation.set(0, spin, tilt);
         var rad = L * Math.sin(tilt), up = L * Math.cos(tilt);
-        m.position.set(x + Math.cos(spin) * rad, base + up, z - Math.sin(spin) * rad);
+        m.position.set(D2 ? x : x + Math.cos(spin) * rad,
+                       D2 ? base : base + up, D2 ? z : z - Math.sin(spin) * rad);
         ltag(m); finish(m); (PG || scene).add(m); return m;
       }
       /* leaf tables: [halfLength, halfWidth, tilt, spin] in units of s.
@@ -2061,12 +2162,13 @@
            leaves hang over the rim and swallow the pot */
         var b = y0 + ph + (PLIFT[kind] || 0) * s - 0.06 * s;
         var tbl = PLANTS[kind] || PLANTS.mound;
-        var n = D3 ? tbl.length : (D2 ? 4 : 3);
+        var n = D3 ? tbl.length * 2 : (D2 ? 6 : 3);
         /* a squashed clump at the rim: without it the leaves float */
         sph(0.19 * s, LEAFC[1], x, b + 0.05 * s, z, 0.55);
         for (var i = 0; i < n; i++) {
-          var lf = tbl[i];
-          pLeaf(x, b, z, lf[0] * s, lf[1] * s, 0.045 * s, lf[2], lf[3],
+          var lf = tbl[i % tbl.length], inner = i >= tbl.length;
+          pLeaf(x, b, z, lf[0] * s * (inner ? .72 : 1), lf[1] * s,
+                0.045 * s, lf[2] * (inner ? .7 : 1), lf[3] + (inner ? .55 : 0),
                 LEAFC[i % 3]);
         }
         if (shadow) blobShadow(0.34 * s, 0.32 * s, x, z);
@@ -2074,19 +2176,34 @@
 
       /* ================= 1. the rug: field, border stripe, field ======= */
       (function () {
-        var rx = -2.395, rz = 9.20, rw = 4.70, rd = 5.50;
-        function ply(w, d, y, c) {
-          var m = new T.Mesh(new T.PlaneGeometry(w, d), mat(c, { rough: 1.0 }));
-          m.rotation.x = -Math.PI / 2;
-          m.position.set(rx, y, rz);
-          if (SHADOWS) m.receiveShadow = true;
-          ltag(m); scene.add(m);
-        }
-        ply(rw, rd, 0.050, C.rugB);
-        if (D2) {
-          ply(rw - 0.22, rd - 0.22, 0.055, C.oxblood);
-          ply(rw - 0.34, rd - 0.34, 0.060, C.rugF);
-        }
+        var rx=-2.395, rz=9.20, rw=4.70, rd=5.50;
+        var rugTex=canvasTex(D3?512:256,function(g,S) {
+          g.fillStyle='#c4b69c';g.fillRect(0,0,S,S);
+          g.fillStyle='#dcd1bd';g.fillRect(S*.025,S*.025,S*.95,S*.95);
+          for(var y=0;y<S;y+=2) {
+            g.fillStyle=y%6?'rgba(80,64,44,.045)':'rgba(255,250,234,.22)';
+            g.fillRect(0,y,S,1);
+          }
+          for(var x=0;x<S;x+=3) {
+            g.fillStyle='rgba(60,51,38,.05)';g.fillRect(x,0,1,S);
+          }
+          /* The canvas top maps to -z on the horizontal plane. */
+          [[-1.35,8.70,.76,1.60],[-3.10,7.22,.77,.64],
+           [-3.85,10.60,.78,.66],[-3.25,8.95,.87,.67]].forEach(function(p) {
+            g.save();g.translate((p[0]-rx+rw/2)/rw*S,(p[1]-rz+rd/2)/rd*S);
+            g.scale(p[2]/rw*S,p[3]/rd*S);
+            var shade=g.createRadialGradient(0,0,.15,0,0,1);
+            shade.addColorStop(0,'rgba(36,29,24,.32)');
+            shade.addColorStop(.6,'rgba(36,29,24,.18)');shade.addColorStop(1,'rgba(36,29,24,0)');
+            g.fillStyle=shade;g.fillRect(-1,-1,2,2);g.restore();
+          });
+        });
+        var material=PBR?new T.MeshStandardMaterial({map:rugTex,roughness:1,envMapIntensity:.02})
+                        :new T.MeshLambertMaterial({map:rugTex});
+        if(PBR){material.bumpMap=weave;material.bumpScale=.009;}
+        var rug=new T.Mesh(new T.PlaneGeometry(rw,rd),material);
+        rug.rotation.x=-Math.PI/2;rug.position.set(rx,.052,rz);
+        rug.receiveShadow=SHADOWS;ltag(rug);scene.add(rug);
       })();
 
       PG = westWallG;      /* --- everything built into the wall --- */
@@ -2099,7 +2216,7 @@
          And the breast steps back above the mantle and stops well short
          of the crown: a chimney is quieter than the casework beside it,
          not the loudest thing in the frame. */
-      var STONE = 0x9e9182, STONE_DK = 0x7f7365;
+      var STONE = D2 ? 0xffffff : 0xb8afa0, STONE_DK = 0x8d8070;
       lb(0.90, 0.22, 2.72, STONE_DK, WX + 0.45, 0.11, HZ, null, { rough: 0.9 });
       lb(0.44, 1.72, 2.32, STONE, WX + 0.22, 1.08, HZ, null, PLASTER);
       lb(0.38, 1.62, 1.86, STONE, WX + 0.19, 2.79, HZ, null, PLASTER);
@@ -2137,19 +2254,25 @@
         ls([[WX + 0.62, 0.74, HZ + 1.02], [WX + 0.66, 0.47, HZ + 1.03],
             [WX + 0.70, 0.25, HZ + 1.02]], 0.014, C.graphite, null, STEEL);
       }
-      if (D2) {
-        var fire = new T.Mesh(new T.BoxGeometry(0.04, 0.58, 0.92),
-                              new T.MeshBasicMaterial({ color: 0xf2761c }));
-        fire.position.set(WX + 0.320, 0.60, HZ);
-        /* VIEW-VOLUME MASKING (task 2): plain boxes, built directly. */
-        fire.userData.convex = true;
-        ltag(fire); (PG || scene).add(fire);
-        var emb = new T.Mesh(new T.BoxGeometry(0.06, 0.13, 0.86),
-                             new T.MeshBasicMaterial({ color: 0xffc46a }));
-        emb.position.set(WX + 0.335, 0.38, HZ);
-        emb.userData.convex = true;
-        ltag(emb); (PG || scene).add(emb);
-      }
+      /* A quiet, deterministic flame silhouette in front of the firebox
+         back, behind its lip. One emissive texture; no particles or bloom. */
+      var fireTex=canvasTex(128,function(g,S) {
+        var glow=g.createRadialGradient(64,103,3,64,85,63);
+        glow.addColorStop(0,'rgba(255,164,43,.9)');glow.addColorStop(1,'rgba(191,52,8,0)');
+        g.fillStyle=glow;g.fillRect(0,0,S,S);
+        for(var i=0;i<9;i++) {
+          var x=15+i*12, top=24+(i*17)%40;
+          var flame=g.createLinearGradient(0,top,0,116);
+          flame.addColorStop(0,'#d35c13');flame.addColorStop(.55,'#ffb644');flame.addColorStop(1,'#ffe5a1');
+          g.fillStyle=flame;g.beginPath();g.moveTo(x-9,115);
+          g.bezierCurveTo(x-15,82,x+7,top+18,x,top);
+          g.bezierCurveTo(x+18,top+25,x+9,95,x+10,115);g.fill();
+        }
+      });
+      var fire=new T.Mesh(new T.PlaneGeometry(.98,.88),new T.MeshBasicMaterial({
+        map:fireTex,transparent:true,depthWrite:false,side:T.DoubleSide}));
+      fire.rotation.y=Math.PI/2;fire.position.set(WX+.442,.77,HZ);
+      ltag(fire);PG.add(fire);
       if (D3) {
         [[-0.13, 0.40], [0.13, 0.42], [0.0, 0.58]].forEach(function (lg) {
           var lgm = lc(0.095, 0.095, 0.84, 0x2f2517, WX + 0.400, lg[1], HZ + lg[0],
@@ -2278,8 +2401,8 @@
         var DP = dp || 1.24;
         function sb(w, h, d, r, c, px, py, pz, o) {
           var m = new T.Mesh(
-            D2 ? chamferGeo(w, h, d, r) : new T.BoxGeometry(w, h, d),
-            mat(c, o || FAB));
+            cushionGeo(w, h, d, r),
+            o ? mat(c, o) : upholstery(c));
           m.position.set(px, py, pz);
           m.userData.room = 'living';
           finish(m); g.add(m); return m;
@@ -2317,8 +2440,9 @@
         }
         sb(0.20, 0.92, len, 0.14, shade, DP / 2 - 0.10, 0.82, 0);
         for (k = 0; k < nc; k++) {
-          sb(0.24, 0.58, cw - 0.05, 0.16, body, DP / 2 - 0.30, 0.90,
+          var back = sb(0.30, 0.62, cw - 0.055, 0.18, body, DP / 2 - 0.30, 0.91,
              -len / 2 + 0.05 + cw * (k + 0.5));
+          back.rotation.z = -0.12;
         }
         sb(DP, 0.50, 0.30, 0.14, body, 0, 0.61, -len / 2 + 0.15);
         sb(DP, 0.50, 0.30, 0.14, body, 0, 0.61, len / 2 - 0.15);
@@ -2347,8 +2471,8 @@
         ltag(g); scene.add(g);
         function sb(w, h, d, r, c, px, py, pz, o) {
           var m = new T.Mesh(
-            D2 ? chamferGeo(w, h, d, r) : new T.BoxGeometry(w, h, d),
-            mat(c, o || FAB));
+            cushionGeo(w, h, d, r),
+            o ? mat(c, o) : upholstery(c));
           m.position.set(px, py, pz);
           m.userData.room = 'living'; finish(m); g.add(m); return m;
         }
@@ -2386,15 +2510,15 @@
          everything standing on it moved east together, so the seating
          occupies the room instead of pinning itself to the stone. The
          sofa is the one piece still square on the hearth axis. */
-      seat(-1.35, 8.70, 0, 2.95, C.sage, C.sageDeep, 3,
-           [[-0.95, C.oxblood, 0.22], [0.95, C.terracotta, -0.24]]);
+      seat(-1.35, 8.70, 0, 2.95, 0xe6ddcd, 0xb8ad9b, 3,
+           [[-0.95, 0x42636a, 0.22], [0.95, C.linen, -0.24]]);
       /* BOTH armchairs face the COFFEE TABLE. Not the fire, not the TV,
          not the lens. seat() is built facing -x, so each pose is exactly
          atan2(dz, -dx) of the chair-to-table-centre vector, table centre
          (-3.25, 8.95). Recompute both if the table ever moves. */
-      seat(-3.10, 7.22, 1.4843, 1.12, C.terracotta, C.terraDeep, 1,
+      seat(-3.10, 7.22, 1.4843, 1.12, 0xa9764e, 0x75523b, 1,
            [[0.0, C.cream, -0.20]], 1.14);
-      seat(-3.85, 10.60, -1.9206, 1.12, C.terracotta, C.terraDeep, 1,
+      seat(-3.85, 10.60, -1.9206, 1.12, 0xa9764e, 0x75523b, 1,
            [[0.0, C.cream, 0.20]], 1.14);
 
       /* a console behind the sofa, facing the kitchen half of the great
@@ -2466,7 +2590,7 @@
           PBR ? new T.MeshStandardMaterial({ color: 0xf3e8d2, roughness: 0.8,
                                              emissive: 0xffd9a0, emissiveIntensity: 0.35,
                                              side: T.DoubleSide })
-              : new T.MeshLambertMaterial({ color: 0xf3e8d2, side: T.DoubleSide }));
+              : new T.MeshLambertMaterial({ color: 0xf3e8d2, emissive: 0x8d592d, side: T.DoubleSide }));
         shd.position.set(-1.82, 1.24, 6.72);
         ltag(shd); finish(shd, true); scene.add(shd);
         lb(0.22, 0.05, 0.16, C.slate, -1.60, 0.77, 6.56);
@@ -2500,7 +2624,7 @@
           PBR ? new T.MeshStandardMaterial({ color: 0xf3e8d2, roughness: 0.8,
                                              emissive: 0xffd9a0, emissiveIntensity: 0.35,
                                              side: T.DoubleSide })
-              : new T.MeshLambertMaterial({ color: 0xf3e8d2, side: T.DoubleSide }));
+              : new T.MeshLambertMaterial({ color: 0xf3e8d2, emissive: 0x8d592d, side: T.DoubleSide }));
         shd2.position.set(WX + 0.28, 1.46, CZ - 0.52);
         ltag(shd2); finish(shd2, true); scene.add(shd2);
         bowl(WX + 0.30, 0.95, CZ - 0.10, 0.17, C.brass);
@@ -2511,13 +2635,24 @@
       plant(WX + 0.29, 0.95, CZ + 0.56, 0.39, C.linen, { rough: 0.8 }, 'fiddle', false);
       if (D3) lc(0.20, 0.24, 0.26, C.cork, WX + 0.30, 0.13, CZ + 0.50, null, 12, { rough: 0.95 });
       blobShadow(0.36, 0.82, WX + 0.30, CZ);
-      /* the grid of five (S7.5) - wall plane, so westWallG */
+      /* One larger framed painting gives the wall a readable composition
+         at room distance. Pigment layers, rather than flat colour chips. */
       if (D2) {
-        [[2.86, CZ - 0.50], [2.86, CZ], [2.86, CZ + 0.50],
-         [2.16, CZ - 0.25], [2.16, CZ + 0.25]].forEach(function (f, i) {
-          picture(westWallG, WX + 0.028, f[0], f[1], 0.56, 0.42,
-                  [C.sage, C.terracotta, C.oxblood, C.brass, C.slate][i]);
+        var painting=canvasTex(256,function(g,S) {
+          g.fillStyle='#d1c4a9';g.fillRect(0,0,S,S);
+          ['#a3b0a1','#657f80','#344e59','#a18c68'].forEach(function(c,k) {
+            g.fillStyle=c;g.beginPath();g.moveTo(0,95+k*24);
+            for(var x=0;x<=S;x+=8)g.lineTo(x,100+k*25+Math.sin(x*.027+k*1.6)*22+Math.cos(x*.071+k)*8);
+            g.lineTo(S,S);g.lineTo(0,S);g.fill();
+          });
+          for(var i=0;i<1900;i++) {
+            g.fillStyle=i%3?'rgba(234,221,192,.075)':'rgba(25,37,40,.06)';
+            g.fillRect((i*47)%S,(i*91+Math.floor(i/19))%S,2,1);
+          }
         });
+        picture(westWallG,WX+.028,2.52,CZ,1.43,1.19,C.cream);
+        lb(.008,1.23,.99,0xffffff,WX+.074,2.52,CZ,westWallG,
+           {rough:.97,map:painting,envInt:.02});
         if (D3) {                       /* a picture light over the grid */
           lb(0.10, 0.05, 0.06, C.brass, WX + 0.08, 3.28, CZ, westWallG, STEEL);
           lc(0.045, 0.045, 0.44, C.brass, WX + 0.16, 3.26, CZ, westWallG, 10, STEEL);
@@ -2543,9 +2678,9 @@
         }
       })();
       lightChair(1.48, 9.88, 0.55, C.sage, C.oxblood);
-      /* the floor lamp: base, stem, shade. All of it is D2 - a bare pole
-         with no shade at the low tier reads as broken geometry. */
-      if (D2) {
+      /* The floor lamp keeps its whole silhouette at every tier. Low
+         gets an emissive shade but no real-time point-light cost. */
+      {
         /* R1 (part list): `foot` lathe base, `sweepAt` arm at the old
            stem's own endpoints (a gentle bow, not a right-angle reading
            arm - the shade never moves), `shade` lathe at the head. The
@@ -2558,7 +2693,7 @@
           PBR ? new T.MeshStandardMaterial({ color: 0xf3e8d2, roughness: 0.8,
                                              emissive: 0xffd9a0, emissiveIntensity: 0.45,
                                              side: T.DoubleSide })
-              : new T.MeshLambertMaterial({ color: 0xf3e8d2, side: T.DoubleSide }));
+              : new T.MeshLambertMaterial({ color: 0xf3e8d2, emissive: 0x8d592d, side: T.DoubleSide }));
         lsh2.scale.set(0.68, 0.34, 0.68);
         lsh2.position.set(0.90, 1.65, 10.90);
         ltag(lsh2); finish(lsh2, true); scene.add(lsh2);
@@ -4876,7 +5011,7 @@
        A third bay adds a separate single-width opening and wall pier. */
     var SIDE_DOOR = BLOCKS.garage.side_door || {style:'carriage', leaves:1, width:3.6, height:3.0};
     var SIDE_FRONT_SETBACK = SIDE_DOOR.front_setback === undefined ? 0.75 : SIDE_DOOR.front_setback;
-    var SIDE_THIRD_WIDTH = 2.4, SIDE_PIER = 0.75;
+    var SIDE_THIRD_WIDTH = Math.max(2.4, SIDE_DOOR.width / 2), SIDE_PIER = 0.75;
     var SIDE_DOOR_Z = GARAGE_BLOCK.south - SIDE_FRONT_SETBACK - SIDE_DOOR.width / 2;
     // The single bay sits behind the main door, toward the rear of the house.
     var SIDE_THIRD_Z = SIDE_DOOR_Z - SIDE_DOOR.width/2 - SIDE_PIER - SIDE_THIRD_WIDTH/2;
@@ -4885,7 +5020,11 @@
     var POP_WIDTH = SIDE_THIRD_WIDTH + 1.2 + Math.max(0, SIDE_PROJECTION-1.8);
     var POP_X = GARAGE_BLOCK.west-POP_WIDTH/2;
     var POP_FRONT = SIDE_DOOR_Z-SIDE_DOOR.width/2-SIDE_PIER;
-    var POP_BACK = POP_FRONT-(SIDE_THIRD_WIDTH+1.2);
+    // Parking depth is the ENTIRE garage block, not the smaller garage room
+    // used by the interior navigation layout. The perpendicular third bay
+    // needs that same depth; sizing it from door width made a shallow porch.
+    var GARAGE_PARKING_DEPTH = GARAGE_BLOCK.east - GARAGE_BLOCK.west;
+    var POP_BACK = POP_FRONT-GARAGE_PARKING_DEPTH;
     var SIDE_OPENINGS = [{z:SIDE_DOOR_Z, width:SIDE_DOOR.width}];
     if (SIDE_DOOR.third_bay && !SIDE_PROJECTION) SIDE_OPENINGS.unshift({z:SIDE_THIRD_Z, width:SIDE_THIRD_WIDTH, third:true});
     var SIDE_OPEN_Z0 = SIDE_PROJECTION ? POP_FRONT : SIDE_DOOR.third_bay ? SIDE_THIRD_Z-SIDE_THIRD_WIDTH/2 : SIDE_DOOR_Z-SIDE_DOOR.width/2;
@@ -7064,6 +7203,13 @@
                 peave, [0,0,-1], [], 'garage', 'garage');
       shellWall('garage_popout_west', px, POP_BACK, px, POP_FRONT,
                 peave, [-1,0,0], [], 'garage', 'garage');
+      // A deep bay may extend beyond the parent block with shorter facade
+      // settings. Close the exposed return instead of relying on that block.
+      if (POP_BACK < GARAGE_BLOCK.north) {
+        shellWall('garage_popout_east_return', GARAGE_BLOCK.west, POP_BACK,
+                  GARAGE_BLOCK.west, GARAGE_BLOCK.north,
+                  peave, [1,0,0], [], 'garage', 'garage');
+      }
       shellWall('garage_popout_pier_west', px, POP_FRONT, POP_X-SIDE_THIRD_WIDTH/2, POP_FRONT,
                 peave, [0,0,1], [], 'garage', 'garage');
       shellWall('garage_popout_pier_east', POP_X+SIDE_THIRD_WIDTH/2, POP_FRONT, GARAGE_BLOCK.west, POP_FRONT,
@@ -7075,8 +7221,8 @@
       shellRegister(ph, 'garage_popout_header', [0,0,1], 'garage');
       // Keep the existing side-facing gable; the single door faces the street.
       shellGable('garage_popout_roof', px, GARAGE_BLOCK.west,
-                 POP_BACK, POP_FRONT, peave, 'x', 'garage', [-1], blockPitch('garage'),
-                 ['garage','garage'], [true,false], 'gable');
+                 POP_BACK, POP_FRONT, peave, 'x', 'garage', [-1,1], blockPitch('garage'),
+                 ['garage','garage'], [true,false], 'gable', BLOCK_VOLUMES.main);
       var pf = shellGroup();
       shellBox(pf, POP_WIDTH, 0.12, POP_FRONT-POP_BACK, FARMHOUSE.stoop,
                POP_X, -0.06, (POP_BACK+POP_FRONT)/2);
@@ -13316,7 +13462,7 @@
     webgl.cam.fov = room.fov || 24;
     webgl.cam.updateProjectionMatrix();
     updateBack();
-    scheduleHint();
+    hideHint();
     /* spec section 4: solve against the DESTINATION at tween start (you
        fly through an outline, never a wall) — replaces the show-all-
        then-hide dance that used to run here. */
@@ -13328,7 +13474,8 @@
     tween = { fromP: webgl.cam.position.clone(), toP: webgl.toWorld(room.pos),
               fromA: (lookAt || webgl.EXT_AT).clone(),
               toA: webgl.toWorld(room.at),
-              t0: performance.now(), ms: 850, cb: cb || null };
+              t0: performance.now(), ms: 850,
+              cb: function () { scheduleHint(); if (cb) cb(); } };
     requestFrame();
   }
   function goExterior() {
@@ -13343,7 +13490,7 @@
     webgl.cam.updateProjectionMatrix();
     focused = null;
     updateBack();
-    scheduleHint();
+    hideHint();
     TIP.style.opacity = 0;
     /* spec section 4: the sealed house — every piece solid, destination
        subject null, solved before the tween exactly like enterRoom. */
@@ -13355,7 +13502,7 @@
     tween = { fromP: webgl.cam.position.clone(), toP: webgl.EXT_POS.clone(),
               fromA: (lookAt || webgl.toWorld(webgl.HOME_AT)).clone(),
               toA: webgl.EXT_AT.clone(),
-              t0: performance.now(), ms: 850, cb: null, exit: true };
+              t0: performance.now(), ms: 850, cb: scheduleHint, exit: true };
     requestFrame();
   }
   /* ---- ORBIT (massing arc 1, spec section 4) ---------------------------

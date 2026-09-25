@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Home</title>
     {% if house_home_enabled|default(false) %}
-    <script src="{{ 'static/house_home.js'|ver }}" data-surface="home"></script>
+    <script src="{{ 'static/house_home.js'|ver }}" data-surface="home" data-hybrid="{{ 'true' if house_hybrid_enabled|default(false) else 'false' }}"></script>
     {% endif %}
     {# How far to climb before a relative ASSET means anything — the same
        arithmetic nav.html does for its links and apiBase does for fetches,

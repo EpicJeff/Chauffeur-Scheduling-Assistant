@@ -1,0 +1,40 @@
+{
+  "model": "gemini-3.1-flash-image",
+  "max_requests": 1,
+  "retries": 0,
+  "vehicle": "2026 Kia EV9",
+  "color": "gray",
+  "bay": "left",
+  "results": [
+    {
+      "stage": "cluster",
+      "status": "ok",
+      "dimensions": [
+        1264,
+        848
+      ],
+      "usage": {
+        "promptTokenCount": 232,
+        "candidatesTokenCount": 1441,
+        "totalTokenCount": 1673,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 232
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1120
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "model_version": "gemini-3.1-flash-image",
+      "sha256": "43a5abc6ac4915bc4e5436c69ff3ef8b16f795bd93ae2f903b12dcdee8188b74",
+      "file": "cluster.jpg",
+      "seconds": 7.43
+    }
+  ]
+}

@@ -69,7 +69,11 @@
 </style>
 
 <div x-data="lessonPlayer()" x-show="openFlag" x-cloak
-     @lesson-player:open.window="open($event.detail.window, $event.detail.lesson, $event.detail.preview)"
+     {% if house_hybrid|default(false) %}id="house-book-lesson" role="region" aria-label="Practice session"
+     x-init="$watch('openFlag', value => lessonChanged(value, $el))"
+     @chf-house-close.window="close()"
+     @keydown.escape.prevent.stop="close()"{% endif %}
+     @lesson-player:open.window="{% if house_exterior_quick_lesson|default(false) %}if (document.body.dataset.houseScene === 'exterior') {% elif house_hybrid|default(false) %}if (document.body.dataset.houseScene !== 'exterior') {% endif %}open($event.detail.window, $event.detail.lesson, $event.detail.preview)"
      class="panel-modal fixed inset-0 z-[90] bg-gray-950/95 flex flex-col select-none"
      :class="panel ? 'text-2xl' : 'text-base'">
 
@@ -114,7 +118,7 @@
                 :class="(muted ? 'bg-gray-800 border-gray-700 text-gray-400 ' : 'bg-teal-500/20 border-teal-500/40 text-teal-300 ')
                         + (panel ? 'w-14 h-14 text-2xl' : 'w-10 h-10 text-base')"
                 x-text="muted ? '🔇' : '🔊'"></button>
-        <button type="button" @click="close()"
+        <button type="button" @click="close()" aria-label="Close session"
                 class="shrink-0 rounded-full bg-gray-800 border border-gray-700 text-gray-300 leading-none grid place-items-center"
                 :class="panel ? 'w-14 h-14 text-3xl' : 'w-10 h-10 text-xl'">&times;</button>
     </div>

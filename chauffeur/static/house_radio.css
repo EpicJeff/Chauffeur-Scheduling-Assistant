@@ -1,0 +1,112 @@
+/* The image and live face share one 1536 × 1024 coordinate plane. */
+#hybrid-room-frame[data-view="music"]{--radio-width:min(100vw,110vh);--radio-search-zoom:1.7}
+#hybrid-room-frame[data-view="music"] #hybrid-detail{background:#392718 var(--radio-art) center/cover no-repeat}
+#hybrid-room-frame[data-view="music"] #hybrid-detail::before{content:"";position:absolute;inset:0;background:inherit;filter:blur(22px) brightness(.6);transform:scale(1.08)}
+#hybrid-room-frame[data-view="music"] #hybrid-detail-controls{display:none}
+#hybrid-room-frame[data-view="music"] #hybrid-detail-picture,#house-radio{position:absolute;inset:auto;left:50%;top:39%;width:var(--radio-width);height:calc(var(--radio-width) * 2 / 3);transform:translate(-50%,-50%);transition:transform .4s ease,top .4s ease}
+#hybrid-room-frame[data-view="music"] #hybrid-detail-picture img{object-fit:fill;object-position:center;transform:none}
+#house-radio{container-type:inline-size;pointer-events:auto;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#ffd497;text-shadow:0 0 8px #ffae4466}
+#house-radio[hidden]{display:none}
+.radio-glass{position:absolute;left:54.3%;top:26%;width:31%;height:20.3%;padding:1.2%;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;gap:.45cqw;overflow:hidden}
+.radio-band{display:flex;align-items:center;justify-content:space-between;gap:.5cqw;font-size:clamp(9px,.95cqw,18px);letter-spacing:.12em;color:#d6a56d}
+.radio-lamp{width:.55cqw;height:.55cqw;min-width:5px;min-height:5px;border-radius:50%;background:#694a27;box-shadow:inset 0 1px 2px #0009}
+.is-playing .radio-lamp{background:#ffe0a0;box-shadow:0 0 10px 3px #ffb75b88}
+#radio-title{font-size:clamp(12px,2.05cqw,36px);line-height:1.18;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+#radio-subtitle{font-size:clamp(10px,1.05cqw,20px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#e4b781}
+#radio-notice{font-size:clamp(9px,.85cqw,16px);line-height:1.2;color:#ffdcac}
+#radio-notice:empty{display:none}
+#radio-stations{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+.radio-glass:focus-within{outline:2px solid #ffd494;outline-offset:-2px;border-radius:8px}
+.radio-output{position:absolute;left:30.3%;top:54%;width:16.1%;height:4%;display:flex;align-items:center;justify-content:center;text-shadow:0 1px #dbbd7166;color:#352312}
+.radio-output>span{position:absolute;bottom:100%;font:600 .7cqw/1.3 system-ui;letter-spacing:.12em;color:#e6c18a;text-shadow:0 1px #291405}
+#radio-output{width:100%;height:100%;min-height:44px;border:0;background:transparent;color:inherit;font:700 clamp(10px,1cqw,18px) Georgia,serif;text-align:center;cursor:pointer;padding:0 .6cqw;appearance:none;text-overflow:ellipsis}
+#radio-output option{color:#302319;background:#dbbd81}
+.radio-hardware{position:absolute;top:66.1%;width:7.8%;aspect-ratio:1;transform:translate(-50%,-50%);display:grid;place-items:center;color:#e7c38b;text-shadow:0 1px 2px #2d1606}
+.radio-power{left:26.45%}.radio-volume{left:50%}.radio-tune{left:73.9%}
+.radio-knob{position:relative;width:100%;height:100%;min-width:44px;min-height:44px;padding:0;border:0;border-radius:50%;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;color:#3a291a;background:radial-gradient(circle at 42% 35%,#cab181 0%,#b59763 42%,#806132 74%,#402e17 100%);box-shadow:inset 0 0 0 1px #fbe1a6aa,inset 0 2px 2px #fff0b799,inset 0 -3px 4px #3f270bbb,3px 6px 8px #160c08b3,0 0 0 2px #59401d;font:inherit;text-shadow:0 1px #eed09c88}
+.radio-knob::before{content:"";position:absolute;inset:8%;border-radius:50%;border:1px solid #e7ce9866;background:repeating-radial-gradient(circle,#74502118 0 1px,transparent 1px 3px);pointer-events:none}
+.radio-hardware>.radio-knob{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
+.radio-knob:active:not(:disabled){box-shadow:inset 0 2px 6px #2c170b99,1px 2px 4px #160c08bb}
+.radio-knob:disabled{cursor:default;filter:saturate(.55)}
+.radio-knob:focus-visible,#radio-output:focus-visible{outline:3px solid #ffdea0;outline-offset:5px}
+.radio-pointer{position:absolute;inset:13%;transform:rotate(var(--turn,-130deg));pointer-events:none}
+.radio-pointer::before{content:"";position:absolute;left:47%;top:0;width:6%;height:22%;border-radius:2px;background:#382517;box-shadow:1px 0 #edd4a080}
+.radio-power-mark{position:relative;display:block;width:35%;aspect-ratio:1;margin:auto;border:3px solid currentColor;border-top-color:transparent;border-radius:50%;filter:drop-shadow(0 1px 1px #eed09c66)}
+.radio-power-mark::after{content:"";position:absolute;left:calc(50% - 1.5px);top:-15%;height:65%;width:3px;background:currentColor;border-radius:2px}
+.radio-glass-hint{font-size:.65cqw;letter-spacing:.13em;opacity:.65;margin-top:.5cqw;pointer-events:none}
+.is-playing .radio-power-mark{color:#ffe2a4;text-shadow:0 0 8px #ffb859,0 1px #4d2e10}
+.radio-engraving,.radio-caption{position:absolute;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:clamp(9px,.85cqw,16px);letter-spacing:.12em;pointer-events:none}
+.radio-engraving{bottom:calc(100% + 1cqw)}.radio-caption{top:calc(100% + 1.2cqw);font-size:clamp(8px,.7cqw,14px);letter-spacing:.05em}
+#house-radio[data-light="night"] .radio-knob{filter:brightness(.87) saturate(1.2)}
+@media(max-aspect-ratio:1/1),(min-aspect-ratio:2/1){
+ #hybrid-room-frame[data-view="music"]{--radio-width:min(100vw,110vh)}
+ #hybrid-room-frame[data-view="music"] #hybrid-detail-picture{mask-image:linear-gradient(transparent,#000 12%,#000 88%,transparent)}
+}
+/* Record jackets sit on a shallow wooden ledge, with live cover artwork. */
+#radio-library{position:absolute;left:50%;bottom:105px;width:min(960px,96vw);height:clamp(230px,32vh,320px);transform:translateX(-50%);pointer-events:auto;color:#f4ddad;font:13px system-ui;text-shadow:0 1px 2px #160b05}
+#radio-library[hidden],#radio-search-form[hidden]{display:none}
+#radio-library::after{content:"";position:absolute;bottom:0;left:-20px;right:-20px;height:15px;background:linear-gradient(#bb8b54,#694122 25%,#432718 80%,#26160d);box-shadow:0 10px 16px #0009,inset 0 1px #f2d49a66;pointer-events:none}
+.radio-shelf-rail{display:flex;align-items:center;gap:6px;height:44px}
+.radio-shelf-rail button,.radio-shelf-rail select{height:44px;min-width:44px;border:1px solid #d0a76555;border-radius:3px;padding:0 12px;background:linear-gradient(#634426,#322318);color:#f5dbab;font:inherit}
+.radio-shelf-rail select{max-width:190px;min-width:0;flex:1}
+.radio-shelf-rail button[aria-pressed="true"]{background:linear-gradient(#d0ac70,#9e753e);color:#281c0e;text-shadow:none}
+#radio-record-prev{margin-left:auto}
+#radio-library-status{height:20px;font-size:11px;line-height:20px;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#radio-records{height:calc(100% - 64px);display:flex;gap:20px;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;scrollbar-width:thin;scrollbar-color:#bd965b #332215;align-items:flex-end;padding:8px 15px 16px;perspective:900px}
+.record-jacket{position:relative;flex:0 0 auto;width:clamp(105px,13vw,168px);height:100%;max-height:230px;scroll-snap-align:center;transform:rotateY(-12deg);transform-origin:bottom center;transition:transform .2s ease;filter:drop-shadow(5px 5px 3px #0009)}
+.record-jacket:hover,.record-jacket:focus-within{transform:rotateY(0) translateY(-4px)}
+.record-play{display:flex;flex-direction:column;width:100%;height:calc(100% - 30px);padding:0;border:0;background:#e4d6b4;color:#2b251c;text-shadow:none;text-align:left;cursor:pointer;box-shadow:inset 4px 0 #655039}
+.record-cover{position:relative;display:block;width:100%;flex:1;min-height:0;overflow:hidden;background:linear-gradient(135deg,hsl(var(--record-hue) 30% 24%),#1e2627)}
+#radio-records .record-art{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:1;transform:none}
+.record-cover::after{content:"";position:absolute;inset:0;box-shadow:inset 3px 0 2px #fff3,inset -2px 0 3px #0007;background:linear-gradient(115deg,#fff2,transparent 35%,#0001);pointer-events:none}
+.record-fallback{display:grid;place-items:center;height:100%;padding:12px;color:#f1dcb0;font:italic 17px Georgia;text-align:center}
+.record-name,.record-credit{display:block;width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:1px 7px;font-size:12px;line-height:16px;font-weight:600}
+.record-credit{font-size:10px;font-weight:400}
+.record-save{position:absolute;bottom:0;left:0;width:100%;height:30px;border:0;background:#b7955a;color:#2b2113;font-size:12px;cursor:pointer}
+.record-play:disabled,.record-save:disabled{cursor:default;filter:saturate(.4)}
+#radio-library button:focus-visible,#radio-library select:focus-visible,#radio-records:focus-visible{outline:3px solid #ffe4a8;outline-offset:2px}
+#radio-search-open{position:absolute;bottom:2%;right:2%;height:44px;min-width:44px;background:transparent;border:0;color:#ffd497;font:28px Georgia;cursor:pointer}
+#radio-stations{width:calc(100% - 46px)}
+.radio-glass-hint{padding-right:44px}
+#radio-search-form{position:absolute;inset:0;padding:12px;display:flex;flex-direction:column;justify-content:center;gap:8px;width:calc(100% * var(--radio-search-zoom));height:calc(100% * var(--radio-search-zoom));transform:scale(calc(1 / var(--radio-search-zoom)));transform-origin:top left;box-sizing:border-box}
+#radio-search-form label{font-size:12px;letter-spacing:.1em}
+#radio-search-form>div{display:flex;gap:6px}
+#radio-search-form input{width:100%;min-width:0;font:16px ui-monospace,monospace;background:#26180f88;color:#ffdfa0;border:1px solid #dca45588;border-radius:2px;padding:8px}
+#radio-search-form button{min-height:44px;min-width:44px;border:1px solid #dca45588;background:#41260c;color:#ffdfa0;padding:4px 10px;font:14px ui-monospace,monospace;cursor:pointer}
+#radio-search-close{align-self:flex-start}
+#hybrid-room-frame.radio-searching #hybrid-detail-picture,#hybrid-room-frame.radio-searching #house-radio{top:34%;transform:translate(-70%,-36%) scale(var(--radio-search-zoom));transform-origin:70% 36%}
+.radio-searching .radio-glass>*:not(#radio-search-form){visibility:hidden}
+.radio-searching .radio-glass{overflow:visible}
+@media(max-width:600px){
+ #hybrid-room-frame[data-view="music"]{--radio-search-zoom:2.6}
+ #radio-library{height:280px;bottom:105px}
+ .radio-shelf-rail{gap:3px}
+ .radio-shelf-rail button,.radio-shelf-rail select{font-size:11px;padding:0 6px}
+ .record-jacket{width:116px}
+ .record-play{height:calc(100% - 44px)}.record-save{height:44px}
+ #radio-search-form{gap:4px;padding:8px}
+ #radio-search-form label{display:none}
+ .radio-glass:not(:has(#radio-search-form:not([hidden]))) #radio-title{padding-right:22px}
+}
+@media(prefers-reduced-motion:reduce){#hybrid-room-frame[data-view="music"] #hybrid-detail-picture,#house-radio,.record-jacket{transition:none}}
+#hybrid-room-frame[data-view="music"] #hybrid-detail-picture{mask-image:linear-gradient(to right,transparent,#000 8%,#000 94%,transparent),linear-gradient(transparent,#000 12%,#000 87%,transparent);mask-composite:intersect}
+@media(max-height:650px){
+ #hybrid-room-frame[data-view="music"]{--radio-width:min(100vw,680px)}
+ #hybrid-room-frame[data-view="music"][data-phase="detail"] #hybrid-detail{overflow-y:auto;pointer-events:auto}
+ #hybrid-room-frame[data-view="music"] #hybrid-detail-picture,#house-radio{top:290px}
+ #radio-library{top:535px;bottom:auto;height:280px}
+ #hybrid-room-frame.radio-searching #hybrid-detail-picture,#hybrid-room-frame.radio-searching #house-radio{top:290px}
+}
+@media(max-width:600px){
+ .radio-glass{padding:.3%;gap:2px}
+ .radio-band{font-size:8px;letter-spacing:0}
+ #radio-title{font-size:12px;-webkit-line-clamp:1}
+ #radio-subtitle{font-size:9px}
+ #radio-notice{font-size:9px}
+ .radio-glass:has(#radio-notice:not(:empty)) #radio-subtitle{display:none}
+ .radio-engraving{bottom:calc(100% + 12px);font-size:8px;letter-spacing:.04em}
+ .radio-caption{top:calc(100% + 12px);font-size:8px;letter-spacing:0}
+ .radio-output>span{display:none}
+ #radio-output{font-size:9px}
+ .radio-glass-hint{display:none}
+}

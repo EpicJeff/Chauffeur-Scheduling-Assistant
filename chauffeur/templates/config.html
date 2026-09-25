@@ -2184,6 +2184,11 @@
                                         <button x-show="newCar.image" @click="newCar.image = null"
                                             class="text-red-400 hover:text-red-300 font-bold text-sm px-2">✕</button>
                                     </div>
+                                    <label class="block text-gray-400 mt-3 mb-1 text-sm">House driveway artwork</label>
+                                    <p class="text-xs text-gray-500 mb-2">Optional transparent PNG or WebP of the whole vehicle, facing toward the lower left.</p>
+                                    <img x-show="newCar.exterior_image" :src="newCar.exterior_image" class="w-28 h-20 object-contain" alt="Vehicle driveway artwork">
+                                    <input aria-label="House driveway artwork" type="file" accept="image/png,image/webp" @change="onCarArtworkPicked($event)" class="text-sm w-full">
+                                    <button type="button" x-show="newCar.exterior_image" @click="newCar.exterior_image = null" class="text-red-400 text-sm mt-2">Remove driveway artwork</button>
                                 </div>
                                 <div>
                                     <label class="block text-gray-400 mb-1 text-sm">Color</label>
@@ -2684,7 +2689,7 @@
                                                 <label>Distance from front corner<select :value="facadeSideDoor().front_setback" @change="facadeSetSideDoor('front_setback', Number($event.target.value))"><option value="0.75">Near front</option><option value="2">Set back</option><option value="4">Farther back</option></select></label>
                                                 <label>Door style<select :value="facadeSideDoor().style" @change="facadeSetSideDoor('style', $event.target.value)"><option value="carriage">Carriage</option><option value="panel">Raised panels</option><option value="glass">Glass</option></select></label>
                                                 <label>Door panels<select :value="facadeSideDoor().leaves" @change="facadeSetSideDoor('leaves', Number($event.target.value))"><option value="1">One</option><option value="2">Two</option></select></label>
-                                                <label>Door width <span x-text="Math.round(facadeSideDoor().width / 3.6 * 100) + '% of standard'"></span><input type="range" min="2.4" max="4.4" step="0.1" :value="facadeSideDoor().width" @change="facadeSetSideDoor('width', Number($event.target.value))"></label>
+                                                <label>Door width <span x-text="Math.round(facadeSideDoor().width / 3.6 * 100) + '% of standard'"></span><input type="range" min="2.4" max="6" step="0.1" :value="facadeSideDoor().width" @change="facadeSetSideDoor('width', Number($event.target.value))"></label>
                                                 <label>Door height <span x-text="Math.round(facadeSideDoor().height / 3 * 100) + '% of standard'"></span><input type="range" min="2.4" max="4" step="0.1" :value="facadeSideDoor().height" @change="facadeSetSideDoor('height', Number($event.target.value))"></label>
                                             </div>
                                         </div></div></fieldset></template>
@@ -5536,7 +5541,25 @@
                 },
 
                 blankCar() {
-                    return { name: '', icon: '', image: null, color_code: '#6b7280', seat_capacity: 4, body_type: '', allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '', ha_device_tracker: '', ha_battery_entity: '', ha_fuel_entity: '', ha_range_entity: '' };
+                    return { name: '', icon: '', image: null, exterior_image: null, color_code: '#6b7280', seat_capacity: 4, body_type: '', allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '', ha_device_tracker: '', ha_battery_entity: '', ha_fuel_entity: '', ha_range_entity: '' };
+                },
+
+                async onCarArtworkPicked(event) {
+                    const file = event.target.files?.[0]; event.target.value = '';
+                    if (!file) return;
+                    if (!['image/png', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024) {
+                        showGlobalAlert('Choose a PNG or WebP smaller than 10 MB.'); return;
+                    }
+                    const target = this.newCar, url = URL.createObjectURL(file);
+                    try {
+                        const img = new Image(); img.src = url; await img.decode();
+                        const canvas = document.createElement('canvas');
+                        const scale = Math.min(1, 512 / Math.max(img.width, img.height));
+                        canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale);
+                        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                        target.exterior_image = canvas.toDataURL('image/png');
+                    } catch (_) { showGlobalAlert('Could not read that vehicle artwork.'); }
+                    finally { URL.revokeObjectURL(url); }
                 },
 
                 // Client-side photo shrink: square-crop to 128px JPEG so the
@@ -5585,6 +5608,7 @@
                         name: car.name || '',
                         icon: car.icon || '',
                         image: car.image || null,
+                        exterior_image: car.exterior_image || null,
                         color_code: car.color_code || '#6b7280',
                         seat_capacity: car.seat_capacity != null ? car.seat_capacity : 4,
                         body_type: car.body_type || '',

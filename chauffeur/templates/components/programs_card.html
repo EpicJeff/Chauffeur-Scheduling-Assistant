@@ -168,6 +168,7 @@
             pgCelebrated: [],
             // Today's windows, from the one other route a panel may call.
             pgToday: [],
+            pgPracticeLoaded: false, pgPracticeError: false, pgProgramsError: false,
 
             get pgHasAnything() {
                 return !!(this.pgUpNext || this.pgToday.length
@@ -187,8 +188,9 @@
                     const pad = n => String(n).padStart(2, '0');
                     const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
                     const r = await fetch(`${apiBase}api/practice-windows?start_date=${day}&end_date=${day}`);
-                    if (!r.ok) return;
+                    if (!r.ok) throw new Error('Practice unavailable');
                     const body = await r.json();
+                    this.pgPracticeError = false;
                     this.pgToday = (body.windows || [])
                         .filter(w => !w.logged)
                         .map(w => ({
@@ -217,7 +219,9 @@
                     await Promise.all(this.pgToday.map(x => this.loadWindowLesson(x.raw)));
                 } catch (e) {
                     // Stale beats false-empty, same as the celebrations poll.
+                    this.pgPracticeError = true;
                 }
+                finally { this.pgPracticeLoaded = true; }
             },
 
             // The one lesson route a panel may call (`services/auth.py`,
@@ -247,8 +251,9 @@
             async loadPrograms() {
                 try {
                     const r = await fetch(`${apiBase}api/programs/celebrations`);
-                    if (!r.ok) return;
+                    if (!r.ok) throw new Error('Journal unavailable');
                     const d = await r.json();
+                    this.pgProgramsError = false;
                     const up = d.up_next;
                     // The server has already decided what a hallway may know
                     // and resolved the names; this only words it.
@@ -262,6 +267,7 @@
                         key: c.key,
                         line: `${c.member_name} reached ${c.milestone}` }));
                 } catch (e) {
+                    this.pgProgramsError = true;
                     // Stale beats false-empty: one poll that did not land
                     // (an add-on rebuild, an HA restart) must not wipe a
                     // real celebration off the wall.

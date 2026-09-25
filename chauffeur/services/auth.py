@@ -362,10 +362,12 @@ RULES = [
     # The Study's one read (task 2): same discipline — SIGNED_IN at the
     # route, role decided in the handler (`_mind_actor`).
     (ANY, '/api/study/state', SIGNED_IN, None),
+    ('POST', '/api/study/trips/{event_id}/locate', SIGNED_IN, None),
     # The Kitchen: family-safe by construction, read by wall DEVICES.
     (ANY, '/api/kitchen/state', WALL_OR_SERVICE, None),
     # The Home: the dollhouse (H1) — same family-safe-by-construction read.
     (ANY, '/api/house/state', WALL_OR_SERVICE, None),
+    ('GET', '/api/house/neighborhood', WALL_OR_SERVICE, None),
     # The facade generator (spec 2026-09-15 §3.2): reads are family-safe
     # (a wall builds from the active facade); every write is a parent's.
     ('GET', '/api/house/facades', WALL_OR_SERVICE, None),

@@ -1,0 +1,33 @@
+<section id="hybrid-kitchen" aria-label="Kitchen" data-view="room" hidden inert>
+  {% for weather in ['cloudy','rain','snow','fog'] %}
+  {% for light in ['day','night'] %}
+  <img data-weather-asset="{{ weather }}" data-weather-light="{{ light }}" data-src="{{ ('static/house_hybrid/kitchen-outside-' ~ weather ~ ('-night' if light == 'night' else '') ~ '.png')|ver }}" alt="" hidden>
+  {% endfor %}
+  {% endfor %}
+  <div id="kitchen-overview">
+    {% for light in ['day','night'] %}
+    <img id="kitchen-{{ light }}" data-kitchen-room="{{ light }}" data-src="{{ ('static/house_hybrid/kitchen-' ~ light ~ '.png')|ver }}" alt="Oak and cream kitchen with a recipe stand, refrigerator photographs, household pinboard and garden window" decoding="async">
+    {% endfor %}
+    <div id="kitchen-room-surfaces" class="kitchen-art-surfaces">
+      <div class="kitchen-outdoors" data-outdoors="room" role="img"></div>
+      <div id="kitchen-fridge-photos" aria-label="Family moment photographs"></div>
+    </div>
+    <video id="kitchen-steam" data-src="{{ 'static/house_hybrid/kitchen-steam.webm'|ver }}" muted loop playsinline preload="none" aria-hidden="true" hidden></video>
+    <div id="kitchen-hotspots" aria-label="Kitchen destinations"></div>
+  </div>
+  <section id="kitchen-detail" aria-label="Kitchen close-up" hidden>
+    <div id="kitchen-detail-plane">
+      {% for view in ['meals','moments','pantry','board','weather'] %}
+      {% for light in ['day','night'] %}
+      <img data-kitchen-view="{{ view }}" data-light="{{ light }}" data-src="{{ ('static/house_hybrid/kitchen-' ~ view ~ '-' ~ light ~ '.png')|ver }}" alt="" decoding="async">
+      {% endfor %}
+      {% endfor %}
+      <div class="kitchen-outdoors" data-outdoors="detail" role="img" hidden></div>
+      <div id="kitchen-moment-photos" aria-label="Family moment photographs" hidden></div>
+      <div id="kitchen-controls"></div>
+    </div>
+  </section>
+  <button id="kitchen-back" type="button" hidden>← Kitchen</button>
+  <div id="kitchen-shortcuts" aria-label="Kitchen destinations"></div>
+  <p id="kitchen-status" role="status">Choose an object to move closer.</p>
+</section>

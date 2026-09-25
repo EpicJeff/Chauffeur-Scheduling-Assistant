@@ -1082,7 +1082,7 @@ def scenario_hearth_is_pop_only():
     # 'clearTimeout(timer)' alone is not unique to this feature -- close()
     # already carries one -- so pin the clear-then-rearm pair that only
     # exists where the dwell clock restarts on every draw().
-    check('clearTimeout(timer);\n                timer = setTimeout(close, clip ? 30000 : 20000);' in hearth,
+    check('clearTimeout(timer);\n                if (!manual) timer = setTimeout(close, clip ? 30000 : 20000);' in hearth,
           'the dwell clock restarts on each step rather than running out mid-album')
     # close() and draw() must ask the SAME question -- is any clip still on
     # screen -- not two different ones. The coarse form ('[data-moment-

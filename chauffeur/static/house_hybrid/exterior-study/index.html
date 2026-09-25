@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>My house · Exterior study</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #131815; color: #fff9ee; font: 15px system-ui,sans-serif; }
+    #scene { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    body.fit #scene { object-fit: contain; }
+    header,footer { position: fixed; left: 0; right: 0; padding: 20px 24px; pointer-events: none; }
+    header { top: 0; background: linear-gradient(#101611e6,transparent); padding-bottom: 60px; }
+    footer { bottom: 0; background: linear-gradient(transparent,#101611ef); padding-top: 60px; }
+    .top { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+    h1 { margin: 0; font-size: 18px; font-weight: 550; }
+    nav { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 14px; }
+    button,a,label { pointer-events: auto; }
+    button,a { color: inherit; background: #19241dcc; border: 1px solid #fff5; border-radius: 24px; padding: 10px 15px; font: inherit; text-decoration: none; cursor: pointer; }
+    button[aria-pressed="true"] { background: #f4e5c6; color: #252c24; border-color: #f4e5c6; }
+    button:focus-visible,a:focus-visible,input:focus-visible { outline: 3px solid #e5b959; outline-offset: 4px; }
+    #caption { margin: 6px 0 0; max-width: 760px; line-height: 1.5; text-shadow: 0 1px 4px #000; }
+    footer strong { font-size: 20px; }
+    .options { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+    label { white-space: nowrap; }
+    #status { color: #ffe4a8; }
+    @media(max-width: 600px) { header,footer { padding-left: 14px; padding-right: 14px; } button,a { font-size: 13px; padding: 9px 11px; } footer strong { font-size: 17px; } #caption { font-size: 13px; } }
+  </style>
+</head>
+<body>
+  <img id="scene" src="combined-three-quarter.png" alt="Farmhouse exterior from the saved model viewpoint with photo materials">
+  <header>
+    <div class="top">
+      <h1>My house · Exterior study</h1>
+      <div class="options"><label><input id="fit" type="checkbox"> Fit whole image</label><a href="../../../house?compare=exterior&amp;light=day">Try the full experience →</a><a href="consistency/index.html">Continuity test</a><a href="../../../house?compare=living&amp;light=day">Open living room</a></div>
+    </div>
+    <nav aria-label="Compare exterior treatments">
+      <button data-view="nano2" aria-pressed="false">Nano Banana 2</button>
+      <button data-view="nano" aria-pressed="false">Nano Banana</button>
+      <button data-view="combined" aria-pressed="true">ImageGen · Model + photo</button>
+      <button data-view="photoangle" aria-pressed="false">Photo only · ¾ view</button>
+      <button data-view="angle" aria-pressed="false">3D angle reference</button>
+      <button data-view="photo" aria-pressed="false">Photo treatment</button>
+      <button data-view="model" aria-pressed="false">Model treatment</button>
+      <button data-view="reference" aria-pressed="false">Farmhouse photo</button>
+      <button data-view="source" aria-pressed="false">Saved model</button>
+      <button data-view="interior" aria-pressed="false">Interior style</button>
+    </nav>
+  </header>
+  <footer aria-live="polite"><strong id="title">Your model + your photo</strong><p id="caption">The model supplies the three-quarter viewpoint and structure; the photo supplies materials. The living room sets the shared atmosphere.</p><span id="status"></span></footer>
+  <script>
+    const views = {
+      nano2: ['nano-banana-2.jpg', 'Nano Banana 2 · Paid Gemini API', 'Same model, photo and interior inputs. 10.0 seconds · 1264 × 848. More photographic, but invented right-side windows still need review.'],
+      nano: ['nano-banana.png', 'Nano Banana · Paid Gemini API', 'Same model, photo and interior inputs. 10.5 seconds · 1248 × 832. Retains low-poly vegetation and the floating lot; also adds side windows.'],
+      combined: ['combined-three-quarter.png', 'Your model + your photo', 'The model supplies the three-quarter viewpoint and structure; the photo supplies materials. The living room sets the shared atmosphere.'],
+      photoangle: ['photo-only-three-quarter.png', 'A new angle from only the photo', 'Only the farmhouse photo was supplied. The camera was described in words; unseen side walls and depth are inferred.'],
+      angle: ['model-three-quarter.png', 'The three-quarter camera reference', 'An unretouched render of My house at exterior orbit stop 0. Compare the generated view against this camera and roof geometry.'],
+      photo: ['photo-led.png', 'From the farmhouse photo', 'Original photo + living-room style reference. A visual study; architectural details still need review.'],
+      model: ['model-led.png', 'From your saved model', 'The hand-authored My house facade + living-room style reference. The farmhouse photo was not an input to this treatment.'],
+      reference: ['farmhouse-reference.jpg', 'The farmhouse reference', 'The original photo, unchanged. Compare story heights, roof directions, openings and material placement.'],
+      source: ['model-source.png', 'My house · Hand-authored facade', 'An unretouched render of the exact saved specification. Near-front orbit view, high quality, daylight; neighborhood hidden by the existing editor capture mode.'],
+      interior: ['../living-habitat-day.png', 'The existing living room', 'The common style reference for both exterior treatments: warm daylight, natural materials and photographic detail.']
+    };
+    const scene = document.getElementById('scene');
+    const status = document.getElementById('status');
+    let revision = 0;
+    async function show(key) {
+      if (!views[key]) return;
+      const [src, title, caption] = views[key];
+      const ticket = ++revision;
+      status.textContent = 'Loading…';
+      const next = new Image();
+      next.src = src;
+      try { await next.decode(); } catch (e) {
+        if (ticket === revision) status.textContent = 'This image could not load. Try again.';
+        return;
+      }
+      if (ticket !== revision) return;
+      scene.src = src;
+      scene.alt = title + '. ' + caption;
+      document.getElementById('title').textContent = title;
+      document.getElementById('caption').textContent = caption;
+      document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === key)));
+      status.textContent = '';
+      history.replaceState(null, '', '#' + key);
+    }
+    document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => show(button.dataset.view)));
+    document.getElementById('fit').addEventListener('change', e => document.body.classList.toggle('fit', e.target.checked));
+    function fromHash() {
+      const key = location.hash.slice(1);
+      show(Object.hasOwn(views, key) ? key : 'combined');
+    }
+    addEventListener('hashchange', fromHash);
+    fromHash();
+  </script>
+</body>
+</html>

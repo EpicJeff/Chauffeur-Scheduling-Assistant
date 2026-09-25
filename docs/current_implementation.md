@@ -6,6 +6,10 @@
 
 This file describes current architecture, completed product areas, active work, and next priorities. Dated design documents record decisions made for individual arcs; they are not current status trackers.
 
+## House experience choice (v2.499.181)
+
+Config > Boards now places "Use the new House experience" beside "Use The House as Home". The independent `house_hybrid_enabled` setting defaults off. When enabled, ordinary `/house` uses the photographic exterior and connected rooms for the household; disabling it restores the original 3D house on the next visit or refresh. Home routes to the hybrid without a WebGL prerequisite, and idle return restores its exterior. Editor/draft views remain 3D; explicit comparison URLs remain available. Normal use hides the comparison toolbar and notes.
+
 ## Product objective
 
 Reduce the coordination work required to run a family. Chauffeur should understand the household schedule, solve transportation conflicts, surface the next useful action, and make the family's operational state visible on shared wall panels and personal devices.

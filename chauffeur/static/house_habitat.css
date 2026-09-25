@@ -1,0 +1,40 @@
+/* Live SVG identities stand on the sand; the photo and controls use one plane. */
+#hybrid-room-frame[data-view="pets"]{--habitat-width:min(1500px,115vw,calc((100dvh - 180px) * 1.9))}
+#hybrid-room-frame[data-view="pets"] #hybrid-detail{background:#3d3524 var(--habitat-art) center/cover no-repeat}
+#hybrid-room-frame[data-view="pets"] #hybrid-detail::before{content:"";position:absolute;inset:0;background:#151b1644;backdrop-filter:blur(14px)}
+#hybrid-room-frame[data-view="pets"] #hybrid-detail-picture,#house-habitat{position:absolute;inset:auto;left:50%;top:53%;width:var(--habitat-width);height:calc(var(--habitat-width) * 2 / 3);transform:translate(-50%,-50%)}
+#hybrid-room-frame[data-view="pets"] #hybrid-detail-picture img{object-fit:fill;object-position:center;transform:none}
+#hybrid-room-frame[data-view="pets"] #hybrid-detail-controls{inset:0;width:100%;padding:0;background:none;transform:none}
+#house-habitat{pointer-events:auto;container-type:inline-size;color:#372715;font-family:Georgia,serif;touch-action:pan-y;outline:none}
+.habitat-critter{position:absolute;bottom:40%;left:50%;width:17%;aspect-ratio:1;transform:translateX(-50%);padding:0;background:none;border:0;cursor:pointer;isolation:isolate}
+.habitat-left,.habitat-right{bottom:43%;width:11%;filter:brightness(.88);z-index:1}.habitat-left{left:36%}.habitat-right{left:64%}.habitat-center{z-index:2}
+.habitat-shadow{position:absolute;left:10%;right:10%;bottom:-1%;height:9%;border-radius:50%;background:#34291c88;filter:blur(5px);z-index:-1}
+.habitat-creature{display:block;width:100%;height:100%;transform-origin:50% 100%;animation:habitat-breathe 4s ease-in-out infinite;filter:drop-shadow(2px 3px 2px #36271733)}
+.habitat-creature svg{width:100%;height:100%;display:block}.habitat-left .habitat-creature{animation-delay:-1.2s}.habitat-right .habitat-creature{animation-delay:-2.6s}
+.habitat-egg{position:absolute;left:20%;bottom:0;width:60%;height:78%;border-radius:52% 52% 46% 46% / 64% 64% 38% 38%;background:radial-gradient(ellipse at 30% 20%,#fff8dd,#eadab2 45%,#b9a27a);box-shadow:inset -8px -6px 16px #67573744,2px 4px 5px #2c271944;display:grid;place-items:center;font:40px Georgia;color:#706142}
+.habitat-plaque{position:absolute;left:34%;top:65.4%;width:31.2%;height:6.7%;display:flex;flex-direction:column;justify-content:center;text-align:center;overflow:hidden;color:#130d06;text-shadow:0 1px #ffe2a599;line-height:1.2;background:linear-gradient(90deg,transparent,#f7d28a30,transparent)}
+.habitat-progress{position:absolute;top:72%;left:44%;width:12%;height:3px;background:#30201077;border-radius:2px;overflow:hidden}.habitat-progress span{display:block;height:100%;background:#eed28c}
+.habitat-plaque h2{font-size:clamp(20px,2cqw,30px);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0 0 4px}
+.habitat-plaque p{font:clamp(11px,.95cqw,15px)/1.3 Georgia;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.habitat-knob{position:absolute;top:66%;width:5%;height:5%;border:0;border-radius:50%;background:none;color:#4d3519;font:32px/1 Georgia;display:grid;place-items:center;text-shadow:0 1px #f9d590;cursor:pointer;min-height:44px;min-width:44px}
+.habitat-previous{left:23.5%}.habitat-next{left:71%}.habitat-knob:disabled{opacity:.35;cursor:default}
+.habitat-actions{position:absolute;top:77%;left:27%;width:46%;display:flex;justify-content:center;flex-wrap:wrap;gap:8px}
+.habitat-actions button{min-height:44px;padding:9px 20px;border:1px solid #d6b97a77;border-radius:5px;background:linear-gradient(#63503beF,#392a1ded);color:#f3e2bb;box-shadow:1px 4px 6px #21190d66;font:600 15px Georgia;cursor:pointer}
+.habitat-actions button:disabled{opacity:.6}.habitat-actions p{width:100%;text-align:center;color:#f7ead2;font:12px/1.4 system-ui;text-shadow:0 1px 3px #170f09;margin:0;background:#33271c88;border-radius:10px;padding:3px 9px}
+#house-habitat button:focus-visible{outline:3px solid #ffe5ad;outline-offset:3px}
+#hybrid-detail[data-light="night"] .habitat-creature{filter:brightness(.78) sepia(.12) drop-shadow(2px 3px 2px #20180e88)}
+#hybrid-detail[data-light="night"] .habitat-egg{filter:brightness(.8) sepia(.12)}
+@keyframes habitat-breathe{50%{transform:scale(1.015,1.025)}}
+@media(max-width:700px){
+ #hybrid-room-frame[data-view="pets"]{--habitat-width:1050px}
+ .habitat-plaque{left:37%;width:26%}.habitat-plaque h2{font-size:21px}.habitat-plaque p{font-size:11px}
+ .habitat-previous{left:32.5%}.habitat-next{left:63.3%}
+ .habitat-actions{left:34%;width:32%;top:76%}.habitat-actions button{padding:8px 17px}
+}
+@media(max-height:600px){
+ #hybrid-room-frame[data-view="pets"]{--habitat-width:900px}
+ #hybrid-room-frame[data-view="pets"] #hybrid-detail-picture,#house-habitat{top:35%}
+ .house-comparison-page:has(#hybrid-room-frame[data-view="pets"][data-phase="detail"]) :is(#house-comparison,#house-compare-measurements,#chat-overlay-container){display:none}
+ #hybrid-room:has(#hybrid-room-frame[data-view="pets"][data-phase="detail"]) #hybrid-status{clip-path:inset(50%);width:1px;height:1px;overflow:hidden}
+}
+@media(prefers-reduced-motion:reduce){.habitat-creature{animation:none}}

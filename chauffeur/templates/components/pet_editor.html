@@ -71,7 +71,8 @@ window.openPetEditor = async function (m) {
         ? await chfMemberToken(member) : '';
     if (token === null) return;              // asked, and they backed out
     window.dispatchEvent(new CustomEvent('pet-editor-open',
-        { detail: { memberId: member.id, memberName: member.name, token: token || null } }));
+        { detail: { memberId: member.id, memberName: member.name, token: token || null,
+                    petId: member.petId || null, newPet: !!member.newPet } }));
 };
 
 // Buying room for a second critter, then going straight into naming it.
@@ -99,7 +100,7 @@ window.buyPetSlot = async function (m) {
             showGlobalAlert(d.detail || 'Could not buy a slot');
             return;
         }
-        window.openPetEditor({ id: m.member_id, name: m.name, has_pin: m.has_pin });
+        window.openPetEditor({ id: m.member_id, name: m.name, has_pin: m.has_pin, newPet: true });
     } catch (e) {
         showGlobalAlert('Could not buy a slot');
     }
@@ -107,11 +108,27 @@ window.buyPetSlot = async function (m) {
 
 function petEditorPanel() {
     return {
-        show: false, loading: false, saving: false,
+        show: false, loading: false, saving: false, workbench: false, revision: 0,
         bundle: null, memberId: null, memberName: '', token: null,
         pet: null, cfg: {}, name: '', type: 'ember', xp: null,
         training: {}, equipped: [], busyBuy: false, shelf: [],
         tab: 'body', history: [], future: [],
+
+        init() {
+            this.$watch('show', value => {
+                document.body.classList.toggle('habitat-editing', value && this.workbench);
+                const habitat = document.getElementById('house-habitat');
+                if (habitat) habitat.inert = value && this.workbench;
+            });
+        },
+        trapFocus(event) {
+            if (!this.workbench) return;
+            const controls = [...this.$el.querySelectorAll('button:not(:disabled),input:not(:disabled)')]
+                .filter(el => el.getClientRects().length);
+            const first = controls[0], last = controls[controls.length - 1];
+            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus({preventScroll:true}); }
+            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus({preventScroll:true}); }
+        },
 
         // Glyph first, word second -- the tabs have to work for a child who
         // cannot read them yet.
@@ -191,10 +208,14 @@ function petEditorPanel() {
         get optional() { return this.tab === 'pattern' || this.tab === 'cheeks'; },
 
         async open(detail) {
+            const revision = ++this.revision;
+            this.workbench = document.getElementById('hybrid-room-frame')?.dataset.view === 'pets';
+            if (this.workbench) this.tab = 'body';
             this.memberId = detail.memberId;
             this.memberName = detail.memberName || '';
             this.token = detail.token || null;
             this.show = true; this.loading = true;
+            this.name = ''; this.xp = null;
             this.history = []; this.future = [];
             try {
                 if (!this.bundle) {
@@ -202,23 +223,28 @@ function petEditorPanel() {
                     if (!r.ok) throw new Error('no art');
                     this.bundle = await r.json();
                 }
+                if (revision !== this.revision) return;
                 // include_retired, because "put on the shelf" promised the
                 // creature could come back and nothing in the app was asking
                 // for it -- so retiring was a one-way door that said it wasn't.
                 const list = await fetch(this.api + 'api/pets?member_id='
                     + encodeURIComponent(this.memberId) + '&include_retired=true')
                     .then(r => r.json());
+                if (revision !== this.revision) return;
                 const all = list.pets || [];
-                this.pet = all.find(p => p.active !== false) || null;
+                this.pet = detail.newPet ? null : (all.find(p => p.active !== false && (!detail.petId || p.id === detail.petId)) || null);
+                if (detail.petId && !this.pet && !detail.newPet) { this.show = false; showGlobalAlert('That critter is no longer available.'); return; }
                 this.shelf = all.filter(p => p.active === false);
                 // Level and xp are the MEMBER's, not the creature's -- every
                 // pet they own shares what their effort bought, so a second
                 // critter never arrives as a weakling. Shown here because the
                 // editor is where a kid looks at their pet properly.
                 try {
-                    this.xp = await fetch(this.api + 'api/pets/xp?member_id='
+                    const xp = await fetch(this.api + 'api/pets/xp?member_id='
                         + encodeURIComponent(this.memberId) + '&limit=6').then(r => r.json());
-                } catch (e) { this.xp = null; }
+                    if (revision !== this.revision) return;
+                    this.xp = xp;
+                } catch (e) { if (revision !== this.revision) return; this.xp = null; }
                 if (this.pet) {
                     this.cfg = Object.assign({}, this.pet.species, this.pet.look);
                     this.training = Object.assign({}, this.pet.training || {});
@@ -230,14 +256,19 @@ function petEditorPanel() {
                     // everyone shares is a form to fill in, and a creature
                     // that already looks like something is an invitation.
                     this.cfg = this.randomCfg();
+                    this.training = {}; this.equipped = [];
                     this.name = '';
                     this.type = this.bundle.default;
                 }
             } catch (e) {
+                if (revision !== this.revision) return;
                 showGlobalAlert('Pet art is not built yet');
                 this.show = false;
             }
             this.loading = false;
+            if (this.workbench && this.show) this.$nextTick(() => {
+                if (this.show && revision === this.revision) this.$el.querySelector('.pet-tabs button')?.focus({preventScroll:true});
+            });
             // The rules are worth having at exactly one moment: the first time
             // somebody with no critter opens this. Once per member, ever.
             if (typeof maybeOpenPetGuide === 'function') {
@@ -245,7 +276,13 @@ function petEditorPanel() {
             }
         },
 
-        close() { this.show = false; },
+        close() {
+            ++this.revision; this.show = false;
+            // Restore focus synchronously; Alpine's visibility watcher runs later.
+            const habitat = document.getElementById('house-habitat');
+            if (this.workbench && habitat) habitat.inert = false;
+            window.dispatchEvent(new CustomEvent('pet-overlay-closed'));
+        },
 
         pick(slot, key) {
             this.push();
@@ -365,7 +402,7 @@ function petEditorPanel() {
                 .then(r => r.json());
             const all = list.pets || [];
             this.shelf = all.filter(p => p.active === false);
-            this.pet = all.find(p => p.active !== false) || this.pet;
+            this.pet = all.find(p => p.active !== false && p.id === this.pet?.id) || this.pet;
             this.training = Object.assign({}, this.pet.training || {});
             this.equipped = (this.pet.moves || []).slice();
             this.xp = await fetch(this.api + 'api/pets/xp?member_id='
@@ -469,16 +506,20 @@ function petEditorPanel() {
 }
 </script>
 
-<div x-data="petEditorPanel()" x-cloak x-show="show"
+<div id="pet-editor-panel" x-data="petEditorPanel()" x-cloak x-show="show"
+     @keydown.escape.prevent.stop="close()"
+     @keydown.tab="trapFocus($event)"
      @pet-editor-open.window="open($event.detail)"
+     :class="{'pet-workbench': workbench}" role="dialog" aria-modal="true" aria-label="Customize your critter"
      class="panel-modal fixed inset-0 z-[100] bg-gray-950 flex flex-col h-full min-h-0 select-none">
+  <div class="pet-editor-surface" style="display:contents">
 
     <!-- preview band: inert on purpose, so every control stays low -->
-    <div class="flex-shrink-0 pt-3 pb-2 px-4 flex items-center gap-4 border-b border-gray-700/60">
+    <div class="pet-header flex-shrink-0 pt-3 pb-2 px-4 flex items-center gap-4 border-b border-gray-700/60">
         <div class="pet-preview w-28 h-28 rounded-2xl bg-gray-700/50 border border-gray-600 overflow-hidden flex-shrink-0"
-             x-html="bundle ? svg(null, null, 'pv') : ''"></div>
-        <div class="min-w-0 flex-1">
-            <input type="text" x-model="name" maxlength="24" placeholder="Name your critter"
+             x-html="bundle && !loading ? svg(null, null, 'pv') : ''"></div>
+        <div class="pet-nameplate min-w-0 flex-1">
+            <input type="text" x-model="name" maxlength="24" placeholder="Name your critter" aria-label="Critter name" :disabled="loading || saving"
                    class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white text-lg font-bold placeholder-gray-500 focus:outline-none focus:border-blue-500">
             <div class="mt-1.5 flex items-center gap-2 text-xs text-gray-400 flex-wrap">
                 <span x-text="typeInfo.glyph"></span>
@@ -514,18 +555,21 @@ function petEditorPanel() {
                      x-text="xp && xp.progress ? (xp.progress.need + ' XP to level ' + (xp.progress.level + 1)) : ''"></div>
             </div>
         </div>
-        <button type="button" @click="close()"
+        <button type="button" @click="close()" aria-label="Cancel customization"
                 class="flex-shrink-0 w-10 h-10 rounded-full bg-gray-800 border border-gray-600 text-gray-300 text-xl leading-none">×</button>
     </div>
+
+    <div class="pet-drawer" style="display:contents">
 
     <!-- tabs -->
     <!-- WRAPPED, not scrolled. The avatar editor scrolls its strip because
          its group list can grow; this one is exactly eight and always will be,
          and the last two (Colour, Element) are the ones a child goes looking
          for. Off the right-hand edge, they may as well not exist. -->
-    <div class="flex-shrink-0 flex flex-wrap gap-1 px-3 py-2 border-b border-gray-700/60">
+    <div class="pet-tabs flex-shrink-0 flex flex-wrap gap-1 px-3 py-2 border-b border-gray-700/60">
         <template x-for="t in tabs" :key="t.key">
             <button type="button" @click="tab = t.key"
+                    :aria-pressed="tab === t.key" :disabled="loading || saving"
                     class="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition"
                     :class="tab === t.key ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300'">
                 <span x-text="t.glyph"></span><span x-text="t.label"></span>
@@ -536,7 +580,7 @@ function petEditorPanel() {
     <!-- ON THE SHELF. Only appears when something is on it. The retire
          button has always said a critter "can come back any time"; until this
          existed, nothing in the app could actually bring one back. -->
-    <div x-show="shelf.length" class="flex-shrink-0 flex items-center gap-2 px-3 py-2 border-b border-gray-800 overflow-x-auto">
+    <div x-show="shelf.length" class="pet-retired flex-shrink-0 flex items-center gap-2 px-3 py-2 border-b border-gray-800 overflow-x-auto">
         <span class="text-[11px] font-bold text-gray-500 uppercase tracking-wide flex-shrink-0">On the shelf</span>
         <template x-for="p in shelf" :key="p.id">
             <button type="button" @click="bringBack(p)" :disabled="busyBuy"
@@ -551,11 +595,11 @@ function petEditorPanel() {
     </div>
 
     <!-- choices -->
-    <div class="flex-1 overflow-y-auto p-3">
+    <div class="pet-choices flex-1 overflow-y-auto p-3" :inert="loading || saving">
         <div x-show="loading" class="text-center text-gray-400 py-10">Loading…</div>
 
         <!-- part grids: every tile is this critter with one thing changed -->
-        <div x-show="!loading && !['color','type','train','moves'].includes(tab)" class="grid grid-cols-4 sm:grid-cols-6 gap-2">
+        <div x-show="!loading && !['color','type','train','moves'].includes(tab)" class="pet-parts grid grid-cols-4 sm:grid-cols-6 gap-2">
             <!-- the "none" tile, only where a blank is a real answer -->
             <template x-if="optional">
                 <button type="button" @click="pick(tab, null)"
@@ -564,6 +608,7 @@ function petEditorPanel() {
             </template>
             <template x-for="k in (parts[tab] || [])" :key="tab + '-' + k">
                 <button type="button" @click="pick(tab, k)"
+                        :aria-label="tab + ': ' + k" :aria-pressed="cfg[tab] === k"
                         class="aspect-square rounded-xl bg-gray-700/50 border-2 overflow-hidden"
                         :class="cfg[tab] === k ? 'border-blue-500' : 'border-gray-700'"
                         x-html="bundle ? svg(tab, k, 'th' + tab + k) : ''"></button>
@@ -687,7 +732,8 @@ function petEditorPanel() {
     </div>
 
     <!-- controls, at the bottom edge so every tap stays low on a wall panel -->
-    <div class="flex-shrink-0 border-t border-gray-700/60 p-3 flex items-center gap-2">
+    <div class="pet-footer flex-shrink-0 border-t border-gray-700/60 p-3 flex items-center gap-2">
+        <button type="button" x-show="workbench" @click="close()" class="pet-cancel" :disabled="saving">Cancel</button>
         <button type="button" @click="undo()" :disabled="!history.length"
                 class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-300 disabled:opacity-30" title="Undo">↶</button>
         <button type="button" @click="redo()" :disabled="!future.length"
@@ -705,11 +751,13 @@ function petEditorPanel() {
              where a kid is already looking at their critter, so it is the
              obvious door. -->
         <button type="button" x-show="pet && typeof openPetBattle !== 'undefined'"
-                @click="close(); openPetBattle({ id: memberId, name: memberName })"
+                @click="close(); openPetBattle({ id: memberId, name: memberName, petId: pet && pet.id })"
                 class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-200" title="Battle">⚔️</button>
-        <button type="button" @click="save()" :disabled="saving"
+        <button type="button" @click="save()" :disabled="saving || loading"
                 class="flex-1 h-11 rounded-xl bg-blue-600 text-white font-bold disabled:opacity-50"
                 x-text="saveLabel"></button>
     </div>
+    </div>
+  </div>
 </div>
 {% endraw %}

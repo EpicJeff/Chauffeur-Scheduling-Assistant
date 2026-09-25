@@ -251,7 +251,7 @@ def test_there_is_a_way_in_by_hand():
     arena = open(os.path.join(base, 'components', 'pet_battle.html'),
                  encoding='utf-8').read()
     check('openPetEditor' in arena, "the arena has no way back to the editor")
-    check(arena.count('openPetEditor({ id: memberId, name: memberName })') >= 2,
+    check(arena.count('openPetEditor({ id: memberId, name: memberName, petId:') >= 2,
           "the way back is missing from the header or from the result screen")
 
 

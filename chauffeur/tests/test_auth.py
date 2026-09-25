@@ -127,7 +127,8 @@ def scenario_e2_the_lanes_real_callers_actually_use():
     transport commands, artwork), holds the app's one WebSocket, paints trip
     backgrounds, and talks to Argyle — every one of those was classified for a
     caller that never makes the request, and would have died at the flip."""
-    for m, p in (('GET', '/api/ha/media_players'),
+    for m, p in (('GET', '/api/house/neighborhood'),
+                 ('GET', '/api/ha/media_players'),
                  ('POST', '/api/ha/media_players/{entity_id}/command'),
                  ('GET', '/api/ha/image64/{encoded}'),
                  ('WEBSOCKET', '/api/sendspin/ws'),

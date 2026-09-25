@@ -1,0 +1,13 @@
+Photorealistically re-render the attached house model. EXACT SAME CAMERA.
+Preserve every wall, roof ridge, opening, projection and building silhouette.
+Do not rotate the house or move the camera. This is the {label} view, stop {angle}.
+The model geometry and camera are absolute authority, including blank walls.
+Use warm greige board-and-batten siding, white masonry and trim, charcoal asphalt
+roof shingles, dark metal porch roofing, blue-gray shutters and natural dark wood
+doors where shown. Realistic glass reflections, tactile materials and soft contact
+shadows. Replace polygon trees with real trees in the same positions. Replace the
+blue void with a wooded neighborhood and sky, extending the ground naturally.
+Warm afternoon daylight, restrained natural colors, architectural photography.
+Do not invent openings, chimneys, dormers, extra floors, porches or roof changes.
+Preserve side-entry garage doors exactly where shown. No UI, text, people, cars,
+floating platforms or toy appearance. Landscape 3:2. Show the entire house.

@@ -1,0 +1,39 @@
+#hybrid-garage{position:fixed;inset:0;z-index:45;background:#27241f;color:#fff4da;font:15px system-ui;overflow:hidden}
+#hybrid-garage[hidden]{display:none}
+#exterior-garage-marker{pointer-events:auto}
+body[data-house-scene=entering] #hybrid-garage{z-index:44;pointer-events:none}
+#garage-images,#garage-images img{position:absolute;inset:0;width:100%;height:100%}
+#garage-images img{object-fit:cover;object-position:center;pointer-events:none}
+#garage-occupied{transition:opacity 900ms ease}
+.garage-heading{position:absolute;top:90px;left:26px;padding:16px 22px;background:#192b26d9;border-radius:15px;pointer-events:none}
+.garage-heading span{font-size:10px;letter-spacing:.2em}.garage-heading h1{font:30px Georgia;margin:6px 0}.garage-heading p{font-size:12px;margin:0}
+#hybrid-garage button,#garage-presence{min-height:44px;border:1px solid #e5d3ab80;background:#192b26ec;color:#fff4da;border-radius:22px;padding:10px 16px;cursor:pointer}
+#hybrid-garage button:focus-visible,#garage-presence:focus-visible{outline:3px solid #f0d09c;outline-offset:4px}
+#hybrid-garage #garage-car{position:absolute;left:30%;top:35%;width:40%;height:40%;background:transparent;border:0;border-radius:20px}
+#garage-car span{opacity:0;background:#192b26e8;padding:10px;border-radius:20px}#garage-car:hover span,#garage-car:focus-visible span{opacity:1}
+.garage-controls{position:absolute;bottom:105px;left:50%;transform:translateX(-50%);background:#192b26ec;padding:12px 18px;border-radius:18px;display:flex;align-items:center;gap:12px;max-width:94%;width:max-content}
+.garage-controls p{font-size:13px;margin:0}.garage-controls label{font-size:12px}.garage-controls select{margin-left:5px}
+body[data-house-scene=garage] #hybrid-room,body[data-house-scene=garage] #house-comparison{visibility:hidden;pointer-events:none}
+body[data-house-scene=garage] #hybrid-outside{display:block;top:225px}
+@media(max-width:700px){.garage-heading{top:80px;left:12px;padding:12px}.garage-controls{flex-wrap:wrap;justify-content:center;bottom:95px;gap:8px}.garage-controls p{width:100%;text-align:center}.garage-controls button{font-size:12px}#garage-presence{max-width:180px}.garage-heading h1{font-size:24px}body[data-house-scene=garage] #hybrid-outside{top:200px}}
+@media(prefers-reduced-motion:reduce){#garage-occupied{transition:none}}
+#garage-images{inset:auto;transform-origin:30% 55%;transition:transform .65s ease}
+#garage-images img{object-fit:fill}
+#garage-occupied{mask-image:linear-gradient(to right,#000 0%,#000 53%,transparent 56%);-webkit-mask-image:linear-gradient(to right,#000 0%,#000 53%,transparent 56%)}
+#hybrid-garage #garage-car{left:17%;top:35%;width:35%;height:41%;z-index:2}
+#garage-dashboard{position:absolute;inset:0;z-index:4;background:#131718;animation:garage-dashboard-in .65s ease}
+#garage-dashboard[hidden]{display:none}
+#garage-dashboard-plane{position:absolute;container-type:inline-size}
+#garage-cluster-photo{width:100%;height:100%;display:block}
+#garage-cluster-ui{position:absolute;left:35%;top:49%;width:30%;height:20%;color:#eaf9fd;font:14px system-ui;font-size:1.1cqw;text-shadow:0 0 5px #82ddff60;display:flex;flex-direction:column;justify-content:center;gap:.35cqw}
+.cluster-top{display:flex;justify-content:space-between;gap:10px;font-size:.85cqw;letter-spacing:.08em}.cluster-top span:first-child{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.cluster-readings{display:grid;grid-template-columns:58% 42%;gap:.8cqw}.cluster-readings>div{display:flex;flex-direction:column}.cluster-readings span{font-size:.85cqw;letter-spacing:.18em;color:#a1c4ca}.cluster-readings strong{font-size:3.1cqw;line-height:1.15;font-weight:400}.cluster-readings small{font-size:.8cqw}
+.cluster-charge-track{height:.3cqw;background:#31464a;width:78%;margin-top:.2cqw}.cluster-charge-track i{display:block;height:100%;background:#8ee4ca;transition:width .3s}
+#cluster-notice{font-size:.85cqw;margin:0;color:#aed1d8}#garage-cluster-ui[data-warn=true] #cluster-notice{color:#ffc077}
+#hybrid-garage #cluster-more{align-self:flex-start;border:0;border-radius:0;padding:0;min-height:24px;font-size:.9cqw;background:transparent;color:#a8e7f8}
+#garage-dashboard-back{position:absolute;left:20px;top:90px}
+#hybrid-garage[data-view=dashboard] #garage-images{transform:scale(1.3)}
+#hybrid-garage[data-view=dashboard]>.garage-heading,#hybrid-garage[data-view=dashboard]>.garage-controls{visibility:hidden;pointer-events:none}
+body:has(#hybrid-garage[data-view=dashboard]) #hybrid-outside{display:none}
+@keyframes garage-dashboard-in{from{opacity:0;transform:scale(1.04)}to{opacity:1;transform:scale(1)}}
+@media(prefers-reduced-motion:reduce){#garage-images{transition:none}#garage-dashboard{animation:none}.cluster-charge-track i{transition:none}}

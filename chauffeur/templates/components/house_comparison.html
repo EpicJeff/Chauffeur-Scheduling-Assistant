@@ -1,0 +1,47 @@
+<section id="house-comparison" aria-label="Living room comparison"{% if not house_comparison_preview %} hidden{% endif %}>
+  <div class="house-compare-title"><span>THE HOUSE · COMPARISON</span><strong>Living room</strong></div>
+  <nav class="house-compare-modes" aria-label="Rendering style">
+    <a data-render="hybrid" href="?compare=living&amp;render=hybrid"{% if house_hybrid %} aria-current="page"{% endif %}>Hybrid</a>
+    <a data-render="3d" href="?compare=living&amp;render=3d"{% if not house_hybrid %} aria-current="page"{% endif %}>3D</a>
+  </nav>
+  <label class="house-compare-light">Light
+    <select id="house-compare-light">
+      <option value="auto">Follow the sun</option><option value="day">Day preview</option><option value="night">Night preview</option>
+    </select>
+  </label>
+  <a id="house-compare-exit" href="house">Full house ↗</a>
+  {% if house_hybrid %}<label class="house-fire-toggle" title="Animate the fireplace"><input id="hybrid-effects-toggle" type="checkbox" checked> Fire motion</label>{% endif %}
+  {% if house_exterior %}<label class="house-steam-toggle" title="Animate the saucepan steam"><input id="kitchen-effects-toggle" type="checkbox" checked> Steam motion</label>{% endif %}
+</section>
+{% if house_hybrid %}
+<section id="hybrid-room" aria-label="Living room">
+  <div id="hybrid-room-frame" data-view="room" data-phase="room">
+    <div id="hybrid-overview">
+    <img id="hybrid-day" data-src="{{ 'static/house_hybrid/living-logs-day.png'|ver }}" alt="" aria-hidden="true" decoding="async">
+    <img id="hybrid-night" data-src="{{ 'static/house_hybrid/living-logs-night.png'|ver }}" alt="A furnished living room with a brick fireplace with unlit oak logs, radio, miniature critter habitat on the coffee table and household books" decoding="async">
+    <video id="hybrid-fire" data-src="{{ 'static/house_hybrid/fireplace-simulated.webm'|ver }}" muted loop playsinline preload="none" aria-hidden="true" hidden></video>
+    <div id="hybrid-hotspots" aria-label="Living room cards"></div>
+    </div>
+    <section id="hybrid-detail" aria-label="Object view" hidden>
+      <div id="hybrid-detail-picture">
+        {% for key in ['music', 'pets', 'tasks', 'programs'] %}
+        {% for light in ['day', 'night'] %}
+        <img data-view="{{ key }}" data-light="{{ light }}" data-src="{{ ('static/house_hybrid/' ~ ({'music':'radio-bay', 'pets':'habitat', 'tasks':'ledger-pages', 'programs':'program-pages'}.get(key, key)) ~ '-' ~ light ~ '.png')|ver }}" alt="" decoding="async">
+        {% endfor %}
+        {% endfor %}
+      </div>
+      <div id="hybrid-detail-controls"></div>
+      {% include 'components/house_radio.html' %}
+    </section>
+    <button id="hybrid-view-back" type="button" hidden>← Living room</button>
+  </div>
+  <div id="hybrid-shortcuts" aria-label="Living room cards"></div>
+  <p id="hybrid-status" role="status">Opening the living room…</p>
+</section>
+{% endif %}
+<details id="house-compare-measurements"{% if not house_comparison_preview %} hidden{% endif %}>
+  <summary>Comparison notes</summary>
+  <p>Approach each object through its own perspective, then use its live controls. These curated room views are not a reconstruction of your interior.</p>
+  <p id="house-compare-ready">Measuring room readiness…</p>
+  <p>Compare appearance, time to open a card, and day/night changes on this device. Loading depends on cache and connection; this is not an FPS measurement.</p>
+</details>

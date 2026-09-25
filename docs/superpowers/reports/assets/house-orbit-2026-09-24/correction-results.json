@@ -1,0 +1,160 @@
+{
+  "model": "gemini-3.1-flash-image",
+  "max_requests": 3,
+  "automatic_retries": 0,
+  "views": [
+    {
+      "angle": 2,
+      "label": "Front left",
+      "status": "ok",
+      "inputs": [
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/model-2.png",
+          "sha256": "6120f3a23fb002974d2490a69cec35bf4322d1ab320054af2aa6ee2ca59f5a91"
+        }
+      ],
+      "generation_config": {
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "imageConfig": {
+          "aspectRatio": "3:2",
+          "imageSize": "1K"
+        }
+      },
+      "model_version": "gemini-3.1-flash-image",
+      "usage": {
+        "promptTokenCount": 480,
+        "candidatesTokenCount": 1539,
+        "totalTokenCount": 2019,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 222
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 258
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1120
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "dimensions": [
+        1264,
+        848
+      ],
+      "file": "view-2.jpg",
+      "sha256": "72656d8bdd025b0abe0a473c7bfa18388a57109e36a53a64c04cdd3ae6e3c1be",
+      "seconds": 9.98
+    },
+    {
+      "angle": 4,
+      "label": "Rear left",
+      "status": "ok",
+      "inputs": [
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/model-4.png",
+          "sha256": "5d54d2fb12f66dbf01327d828537f242a9dc9761fd20c670ea7d87f862a4199e"
+        }
+      ],
+      "generation_config": {
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "imageConfig": {
+          "aspectRatio": "3:2",
+          "imageSize": "1K"
+        }
+      },
+      "model_version": "gemini-3.1-flash-image",
+      "usage": {
+        "promptTokenCount": 480,
+        "candidatesTokenCount": 1567,
+        "totalTokenCount": 2047,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 222
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 258
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1120
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "dimensions": [
+        1264,
+        848
+      ],
+      "file": "view-4.jpg",
+      "sha256": "ac8f95f601b333372697b2bf12d60b145c9f389b575a152fce39b97970529abe",
+      "seconds": 10.15
+    },
+    {
+      "angle": 7,
+      "label": "Right side",
+      "status": "ok",
+      "inputs": [
+        {
+          "path": "docs/superpowers/reports/assets/house-orbit-2026-09-24/model-7.png",
+          "sha256": "2bff7027187af8fa8072eadd0f56b47f9c0b7aa971759a03b8b17c1c9b23bef2"
+        }
+      ],
+      "generation_config": {
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "imageConfig": {
+          "aspectRatio": "3:2",
+          "imageSize": "1K"
+        }
+      },
+      "model_version": "gemini-3.1-flash-image",
+      "usage": {
+        "promptTokenCount": 480,
+        "candidatesTokenCount": 1644,
+        "totalTokenCount": 2124,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 222
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 258
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1120
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "dimensions": [
+        1264,
+        848
+      ],
+      "file": "view-7.jpg",
+      "sha256": "c9d2abe9bfde0586a7eecdcf39abea4ee6d03b59ec9125b2f42329f36ad3cf25",
+      "seconds": 8.59
+    }
+  ]
+}

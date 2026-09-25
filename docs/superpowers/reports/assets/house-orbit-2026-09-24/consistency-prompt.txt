@@ -1,0 +1,33 @@
+Create a new camera view of the EXACT SAME physical property in IMAGE 2.
+Output one photorealistic landscape 3:2 image. This is a continuity test, not
+an opportunity to redesign or beautify the property.
+
+IMAGE 1: geometry and camera guide for the requested {label} view (stop {angle}).
+IMAGE 2: canonical straight-rear photograph of the finished property. Treat this
+as the same house, same material samples, same planted objects, same date and time.
+Move the camera to IMAGE 1's angle while retaining IMAGE 2's physical appearance.
+Do not simply reproduce IMAGE 2's straight-on camera. Match IMAGE 1's wall/roof
+silhouette, relative face widths, viewing height and visible side of the house.
+
+FIXED MATERIALS: exact warm light gray/greige board-and-batten siding from image 2,
+same batten width and spacing on all visible walls. Same charcoal-blue asphalt
+shingles, off-white fascia/gutters/window trim, dark brown wood glazed back door.
+No white brick plinth, new horizontal siding, different trim style, shutters on
+rear windows, warmer beige paint, brown roofing, or new surface material.
+
+FIXED REAR: tall central wall blank above the ground-level rear door. One small
+square window to the right of that door (seen straight on), one taller window on
+the right wing. Ground-level, small uncovered light-gray CONCRETE RECTANGULAR
+LANDING at back door. No deck, wood platform, stairs, columns, canopy, portico,
+porch roof or pergola. The narrow concrete walk and continuous low planting bed
+are exactly those of image 2, projected into the new camera view. Do not introduce
+any new upstairs/gable windows or delete visible model side openings.
+
+FIXED LANDSCAPING: image 2's low mixed evergreen foundation shrubs and small
+deciduous tree near the right rear window. The rear lawn is open without mature
+trees in its middle. Background tall pine and deciduous trees remain beyond the
+lot. Ignore the stylized foreground trees in IMAGE 1: IMAGE 2 is the landscape
+authority. Preserve image 2's white picket fencing; no tall timber privacy fence.
+Keep the same sunny afternoon, natural exposure, season, color grade and shingle
+roughness. Nothing may change merely because it would make a prettier composition.
+No text, diagrams, UI, people, cars, floating platform or model-like landscaping.

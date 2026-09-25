@@ -1,0 +1,67 @@
+/* Register all live objects to the same 1536 × 1024 photographed shelf. */
+#hybrid-room-frame[data-view="music"]{--radio-width:max(100vw,150vh);--radio-search-zoom:1;--camera-x:50%;--camera-scale:1}
+#hybrid-room-frame[data-view="music"] #hybrid-detail{overflow:hidden;pointer-events:none}
+#hybrid-room-frame[data-view="music"] #hybrid-detail::before{display:none}
+#hybrid-room-frame[data-view="music"] #hybrid-detail-picture,#hybrid-room-frame[data-view="music"] #house-radio{inset:auto;left:50%;top:50%;width:var(--radio-width);height:calc(var(--radio-width) * 2 / 3);transform:translate(calc(-1 * var(--camera-x)),-50%) scale(var(--camera-scale));transform-origin:var(--camera-x) 50%;transition:transform .55s ease;mask-image:none}
+.radio-glass{left:32.9%;top:34.25%;width:19.9%;height:13%;padding:.9%;gap:.3cqw}
+.radio-band{font-size:clamp(8px,.65cqw,13px)}
+#radio-title{font-size:clamp(12px,1.25cqw,25px)}
+#radio-subtitle{font-size:clamp(9px,.75cqw,15px)}
+#radio-notice{font-size:clamp(8px,.65cqw,13px);padding-right:28px}
+.radio-glass-hint{display:none}
+#radio-title{flex-shrink:0}
+.radio-output{left:19.7%;top:51.3%;width:9.8%;height:2.4%}
+.radio-output>span{font-size:.5cqw}
+#radio-output{font-size:clamp(9px,.75cqw,15px);padding:0 .3cqw}
+.radio-hardware{top:58.4%;width:4.7%}
+.radio-power{left:17.64%}.radio-volume{left:31.18%}.radio-tune{left:45.3%}
+.radio-engraving,.radio-caption{font-size:clamp(8px,.55cqw,12px);letter-spacing:.08em}
+.radio-engraving{bottom:calc(100% + .6cqw)}.radio-caption{top:calc(100% + .7cqw);font-size:clamp(8px,.5cqw,11px)}
+/* Upright jackets occupy the photographed bay and rest on its existing oak. */
+#radio-library{left:58.7%;top:27%;bottom:auto;width:36%;height:42.5%;transform:none;font-size:12px}
+#radio-library::after{display:none}
+#radio-records{position:absolute;inset:0;width:100%;height:100%;padding:0;display:block;overflow:visible;perspective:calc(var(--radio-width) * .65);perspective-origin:50% 100%;touch-action:pan-y;isolation:isolate}
+.record-jacket{--sleeve-depth:clamp(3px,.3cqw,6px);position:absolute;left:var(--record-x,50%);bottom:0;width:76%;height:auto;max-height:none;aspect-ratio:1;transform-origin:center bottom;transform-style:preserve-3d;transition:left .45s ease,transform .45s ease;filter:none}
+.record-jacket,.record-jacket:hover,.record-jacket:focus-within{transform:translateX(-50%) translateZ(var(--record-depth,0px)) rotateY(var(--record-angle,0deg))}
+.record-jacket[hidden],.record-save[hidden]{display:none}
+.record-jacket::before,.record-jacket::after{content:"";position:absolute;top:0;height:100%;width:var(--sleeve-depth);background:linear-gradient(90deg,#6b5742,#d0bea0 30%,#9e8768 65%,#493829);backface-visibility:hidden;pointer-events:none}
+.record-jacket::before{left:0;transform:translateX(-50%) rotateY(-90deg)}
+.record-jacket::after{right:0;transform:translateX(50%) rotateY(90deg)}
+.record-back{position:absolute;inset:0;transform:translateZ(calc(var(--sleeve-depth) / -2)) rotateY(180deg);backface-visibility:hidden;background:linear-gradient(135deg,hsl(var(--record-hue) 24% 24%),#392d23);box-shadow:0 5px 8px #150b0870;pointer-events:none}
+.record-play{position:absolute;inset:0;width:100%;height:100%;padding:0;border:0;background:#d4c8aa;box-shadow:0 3px 5px #120b0770;transform:translateZ(calc(var(--sleeve-depth) / 2));backface-visibility:hidden}
+.record-cover{position:absolute;inset:0;width:100%;height:100%}
+.record-cover::after{box-shadow:inset 3px 0 2px #fff3,inset -2px 0 3px #0007,inset 0 0 1px 1px #ddd7bd66;background:linear-gradient(115deg,#eacc9826,transparent 35%,#23130926)}
+.record-name,.record-credit{position:absolute;left:5%;right:5%;width:auto;bottom:7%;padding:2px 5px;color:#382d1c;background:#e6d8b9eb;font:600 clamp(10px,.8cqw,16px) Georgia;opacity:0}
+.record-credit{bottom:2%;font-size:clamp(8px,.6cqw,13px);font-weight:400}
+.record-jacket.is-selected .record-name,.record-jacket.is-selected .record-credit{opacity:1}
+.record-save{left:auto;bottom:auto;right:4%;top:4%;width:auto;height:auto;min-height:44px;min-width:44px;border:1px solid #d9c79b88;border-radius:50%;padding:4px 8px;background:#e7d9b8;color:#3f2916;font:12px Georgia;box-shadow:1px 2px 3px #0006;transform:translateZ(calc(var(--sleeve-depth) / 2 + 1px))}
+.record-play:disabled,.record-save:disabled{filter:none}
+#house-radio[data-light="night"] .record-cover{filter:brightness(.78) sepia(.13)}
+.radio-shelf-rail{position:absolute;top:107%;left:0;right:0;height:44px;gap:5px}
+.radio-shelf-rail button,.radio-shelf-rail select{height:44px;min-width:44px;padding:0 8px;background:linear-gradient(#ae8c54,#76512d);color:#21160e;font:600 clamp(10px,.7cqw,14px) Georgia;text-shadow:0 1px #ecd3a644;box-shadow:1px 2px 3px #32180666}
+.radio-shelf-rail select{min-width:0;max-width:170px;flex:1}
+.radio-shelf-rail button[aria-pressed="true"]{box-shadow:inset 1px 1px 3px #261409aa;background:#c2a06a}
+.radio-shelf-rail button:disabled{opacity:.5}
+#radio-library-status{position:absolute;top:calc(107% + 45px);left:0;right:0;height:auto;margin:0;font-size:clamp(9px,.7cqw,14px);text-align:center;line-height:1.2;white-space:normal;overflow:visible}
+#radio-search-form{padding:8px;gap:5px}
+#radio-search-form label{font-size:10px}
+#radio-search-form button{font-size:13px;padding:4px 8px}
+#radio-camera{display:none}
+@media(max-width:700px){
+ #hybrid-room-frame[data-view="music"]{--radio-width:900px;--camera-x:32%;--radio-search-zoom:1.6}
+ #hybrid-room-frame[data-radio-camera="records"]{--camera-x:78%}
+ #hybrid-room-frame[data-radio-camera="search"]{--camera-x:42.9%;--camera-scale:1.6}
+ #hybrid-room-frame[data-view="music"][data-phase="detail"] #radio-camera{display:flex;position:absolute;bottom:112px;left:50%;transform:translateX(-50%);gap:6px;pointer-events:auto}
+ #radio-camera button{min-height:44px;padding:8px 18px;background:#573c24e8;color:#ffe3b6;border:1px solid #ceaa78;border-radius:20px;font:14px Georgia}
+ .radio-output>span,.radio-glass-hint,#radio-search-form label{display:none}
+ .radio-glass{padding:.5%}
+ #radio-title{-webkit-line-clamp:1;padding-right:20px}
+ #radio-subtitle{padding-right:25px}
+ .radio-shelf-rail{gap:3px}
+ .radio-shelf-rail button,.radio-shelf-rail select{padding:0 5px}
+}
+@media(max-height:650px) and (min-width:701px){
+ #hybrid-room-frame[data-view="music"]{--radio-width:100vw}
+ #hybrid-room-frame[data-view="music"] #hybrid-detail-picture,#house-radio{top:33%}
+}
+@media(prefers-reduced-motion:reduce){#hybrid-room-frame[data-view="music"] #hybrid-detail-picture,#hybrid-room-frame[data-view="music"] #house-radio,.record-jacket{transition:none}}

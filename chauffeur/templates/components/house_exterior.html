@@ -1,0 +1,48 @@
+<section id="house-exterior" aria-label="Your house exterior" aria-busy="true">
+  <div id="exterior-pictures">
+    <img id="exterior-photo" data-src="{{ 'static/house_hybrid/exterior-model-full-block-empty.png'|ver }}" alt="" decoding="async">
+    <div id="exterior-traffic" aria-label="Garage, driveway and curb"
+         data-driveway="{{ 'static/house_hybrid/exterior-murano-cutout.png'|ver }}"
+         data-garage-both="{{ 'static/house_hybrid/exterior-model-full-block-all-home.png'|ver }}"
+         data-garage-left="{{ 'static/house_hybrid/exterior-model-full-block-left.png'|ver }}"
+         data-garage-right="{{ 'static/house_hybrid/exterior-model-full-block-right.png'|ver }}"></div>
+  </div>
+  <header class="exterior-heading"><span>THE HOUSE</span><h1>My house</h1></header>
+  <div id="exterior-room-shortcuts"><button id="exterior-enter" type="button">Living room shortcuts</button><button id="exterior-kitchen-enter" type="button">Kitchen shortcuts</button><button id="exterior-mudroom-enter" type="button">Mudroom shortcuts</button><button id="exterior-study-enter" type="button">Study · Parent PIN</button></div>
+  <div id="exterior-traffic-shortcuts"></div>
+  <details id="exterior-layer-controls"><summary>Vehicle preview</summary>
+    <label>Driveway · Blue Murano <select id="exterior-driveway-preview"><option value="live">Follow assigned vehicle</option><option value="home">Preview parked</option><option value="away">Preview empty</option></select></label>
+    <label>School bus <select id="exterior-bus-preview"><option value="live">Follow bus presence</option><option value="home">Preview at curb</option><option value="away">Preview absent</option></select></label>
+    <small>Live parking follows the matching vehicles. Preview changes only this scene.</small>
+  </details>
+  <p id="exterior-status" role="status">Opening your house…</p>
+</section>
+<section id="hybrid-garage" data-car-id="{{ request.query_params.get('garage_car', '') }}" hidden inert aria-label="Garage bay prototype">
+  <div id="garage-images">
+    <img id="garage-empty" data-src="{{ 'static/house_hybrid/garage-empty.png'|ver }}" alt="">
+    <button id="garage-car" type="button" aria-label="View instrument cluster"><span>Instrument cluster</span></button>
+    <img id="garage-occupied" data-src="{{ 'static/house_hybrid/garage-left-ev9-gemini.jpg'|ver }}" alt="">
+  </div>
+  <header class="garage-heading"><span>TWO-BAY PROTOTYPE</span><h1>Garage</h1><p>Left bay · Gray 2026 Kia EV9</p></header>
+  <div id="garage-dashboard" hidden>
+    <div id="garage-dashboard-plane">
+      <img id="garage-cluster-photo" data-src="{{ 'static/house_hybrid/garage-ev9-cluster.jpg'|ver }}" alt="Driver instrument cluster">
+      <section id="garage-cluster-ui" aria-label="Vehicle instruments">
+        <div class="cluster-top"><span id="cluster-vehicle">Vehicle</span><span id="cluster-presence">—</span></div>
+        <div class="cluster-readings"><div><span id="cluster-energy-label">BATTERY</span><strong id="cluster-energy">—</strong><div class="cluster-charge-track"><i id="cluster-charge-bar"></i></div></div><div><span>RANGE</span><strong id="cluster-range">—</strong><small id="cluster-range-unit"></small></div></div>
+        <p id="cluster-notice">Telemetry unavailable</p>
+        <button id="cluster-more" type="button">Vehicle details ›</button>
+      </section>
+    </div>
+    <button id="garage-dashboard-back" type="button">← Garage</button>
+  </div>
+  <div class="garage-controls">
+    <p id="garage-state" role="status"></p>
+    <label>Preview state <select id="garage-presence"><option value="live">Follow vehicle presence</option><option value="home">Parked</option><option value="away">Away</option></select></label>
+    <button id="garage-fleet" type="button">Vehicle information</button>
+  </div>
+</section>
+<div id="exterior-quickviews"></div>
+{% include 'components/house_kitchen.html' %}
+{% include 'components/house_utility_rooms.html' %}
+<button id="hybrid-outside" type="button" hidden>← Outside</button>

@@ -57,7 +57,7 @@ def scenario_house_editor_tasks_and_layout():
         home.get_by_role('button', name='Preview in 3D', exact=True).click()
         page.wait_for_function("document.body._x_dataStack[0].facadePreviewToken")
         page.frame_locator('#facade-preview-frame').locator('#room canvas').wait_for(timeout=30000)
-        assert not page.frame_locator('#facade-preview-frame').locator('nav').is_visible()
+        assert not page.frame_locator('#facade-preview-frame').locator('#top-nav-bar').is_visible()
         nav.get_by_role('button', name='Porch', exact=True).click()
         shots = os.environ.get('HOUSE_SHOTS')
         if shots:
