@@ -45,10 +45,14 @@
     // The registered photograph always covers the viewport. A small screen
     // can pan across the object instead of shrinking it into an inset panel.
     var zoom = Math.max(scale, Math.min(width/(fit[2]+48), height/(fit[3]+48)));
+    var wideCalendar=active.key==='calendar' && innerWidth>=1100 && innerWidth>innerHeight;
+    if(wideCalendar)zoom=Math.max(scale,(innerWidth-64)/r[2]);
     Object.assign(plane.style,{width:1536*zoom+'px',height:1024*zoom+'px',left:'0px',top:'0px'});
     detail.scrollLeft=Math.max(0,Math.min(1536*zoom-innerWidth,(fit[0]+fit[2]/2)*zoom-innerWidth/2));
     detail.scrollTop=Math.max(0,Math.min(1024*zoom-innerHeight,(fit[1]+fit[3]/2)*zoom-(top+height/2)));
     Object.assign(controls.style,{left:r[0]/1536*100+'%',top:r[1]/1024*100+'%',width:r[2]/1536*100+'%',height:r[3]/1024*100+'%'});
+    // Crop the portrait paper uniformly; keep the entire month in the visible area.
+    if(wideCalendar)Object.assign(controls.style,{top:(r[1]*zoom+(r[3]*zoom-height)/2)+'px',height:height+'px'});
     if(active.key==='calendar')requestAnimationFrame(function(){window.FamilyCalendar?.get('kitchen-wall-calendar')?.updateSize();});
   }
   function image() { return detail.querySelector('[data-kitchen-view="'+active.view+'"][data-light="'+(dark?'night':'day')+'"]'); }

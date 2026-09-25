@@ -212,11 +212,18 @@ def main():
                     photo=page.locator('#kitchen-moment-photos button').last
                     photo.click();page.get_by_role('button',name='Close photograph').click()
                     full_screen()
-                for width,height in ((844,390),(2560,1080)):
+                for width,height in ((844,390),(1920,1080),(2560,1080)):
                     page.set_viewport_size({'width':width,'height':height})
                     full_screen()
                     if key=='calendar':
                         page.wait_for_function('''()=>Math.abs(document.querySelector('#kitchen-wall-calendar .fc-col-header').getBoundingClientRect().width-document.querySelector('#kitchen-wall-calendar').getBoundingClientRect().width)<4''')
+                    if key=='calendar' and width>=1100:
+                        box=page.locator('#kitchen-wall-calendar').bounding_box()
+                        assert box['width']>=width-80 and box['x']>=0 and box['x']+box['width']<=width+1,box
+                        assert box['y']>=0 and box['y']+box['height']<=height-90,box
+                        cells=page.locator('#kitchen-wall-calendar .fc-daygrid-day')
+                        assert cells.first.bounding_box()['width']>250
+                        assert cells.last.bounding_box()['y']+cells.last.bounding_box()['height']<=box['y']+box['height']+1
                     page.screenshot(path=str(out/f'{key}-{width}.png'))
                 page.locator('#kitchen-back').click();view('room');page.wait_for_function('!history.state?.chfKitchenView')
             page.set_viewport_size({'width':1400,'height':1000})
