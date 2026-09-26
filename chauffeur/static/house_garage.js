@@ -4,6 +4,7 @@
   var room = document.getElementById('hybrid-garage');
   if (!room) return;
   var vehicles = window.ChauffeurHouseVehicles;
+  var lighting = window.ChauffeurSceneLight, bayRequested = false;
   var isPreview = document.body.dataset.housePreview === 'true';
   var empty = document.getElementById('garage-empty');
   var occupied = document.getElementById('garage-occupied');
@@ -34,16 +35,18 @@
   function text(id, value) { document.getElementById(id).textContent = value; }
   function clusterSource() {
     var profile = vehicles.profile(current());
-    if (profile === 'murano-white') return clusterPhoto.dataset['murano'+garageState()];
-    return profile === 'gls450-white-23' ? clusterPhoto.dataset.gls : clusterPhoto.dataset.ev9;
+    return lighting.source(clusterPhoto, profile === 'murano-white' ? 'murano'+garageState() : profile === 'gls450-white-23' ? 'gls' : 'ev9');
   }
   async function loadCluster() {
     var source = clusterSource(), ticket = dashboardTicket;
     if (clusterPhoto.getAttribute('src') === source && clusterPhoto.naturalWidth) return;
-    var image = new Image(); image.src = source; await image.decode();
+    await lighting.load(source);
     if (ticket !== dashboardTicket) return;
     if (source !== clusterSource()) return loadCluster();
-    clusterPhoto.src = source; await clusterPhoto.decode(); project();
+    clusterPhoto.src = source; await clusterPhoto.decode();
+    if (ticket !== dashboardTicket) return;
+    if (source !== clusterSource()) return loadCluster();
+    dashboard.dataset.light = lighting.night() ? 'night' : 'day'; project();
   }
   function cluster() {
     var selected = current(), profile = vehicles.profile(selected);
@@ -139,11 +142,20 @@
   document.getElementById('garage-fleet').addEventListener('click', open);
   window.addEventListener('chf-house-state', e => accept(e.detail));
   window.chfGarageReady = async function () {
-    await Promise.all([empty, occupied, occupiedRight].map(function (image) {
-      if (!image.getAttribute('src')) image.src = image.dataset.src;
-      return image.decode();
-    }));
+    bayRequested = true;
+    var dark = lighting.night(), images = [empty, occupied, occupiedRight];
+    var sources = images.map(image => lighting.source(image, 'src', dark));
+    await Promise.all(sources.map(lighting.load));
+    if (dark !== lighting.night()) return window.chfGarageReady();
+    images.forEach(function (image, i) { image.src = sources[i]; });
+    await Promise.all(images.map(image => image.decode()));
+    if (dark !== lighting.night()) return window.chfGarageReady();
+    room.dataset.light = dark ? 'night' : 'day';
     project();
   };
+  window.addEventListener('chf-house-light', function () {
+    if (bayRequested) window.chfGarageReady().catch(function () { state.textContent = 'Garage lighting could not refresh.'; });
+    if (room.dataset.view === 'dashboard') loadCluster().catch(function () { state.textContent = 'Vehicle lighting could not refresh.'; });
+  });
   accept(window.chfHouseState?.());
 })();

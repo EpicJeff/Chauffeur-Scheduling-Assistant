@@ -3,6 +3,8 @@
 #exterior-traffic{position:absolute;pointer-events:none}
 #house-exterior .exterior-vehicle{position:absolute;aspect-ratio:1;transform:translate(-50%,-75%);padding:0;border:0;border-radius:0;background:none;box-shadow:none;pointer-events:auto;min-width:0;min-height:0}
 .exterior-vehicle-art{position:absolute;inset:0;background:url('house_hybrid/vehicles-atlas.png') var(--sprite-x) var(--sprite-y)/400% 200% no-repeat;isolation:isolate;pointer-events:none}
+/* Uploaded cutouts and the bus share the night ambience, without dimming labels. */
+#house-exterior[data-light=night] .exterior-vehicle-art{filter:brightness(.45) saturate(.7)}
 .exterior-vehicle-label{position:absolute;left:50%;top:20%;transform:translateX(-50%);font:600 11px system-ui;color:#fff1d6;white-space:nowrap;background:#17251de8;padding:5px 8px;border:1px solid #e4d0a680;border-radius:12px;opacity:0;transition:opacity .15s}
 .exterior-vehicle:hover .exterior-vehicle-label,.exterior-vehicle:focus-visible .exterior-vehicle-label,.exterior-vehicle[data-warn="true"] .exterior-vehicle-label{opacity:1}
 .exterior-vehicle[data-warn="true"] .exterior-vehicle-label{background:#74400ced;border-color:#ffc76c}

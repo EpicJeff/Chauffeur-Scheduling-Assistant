@@ -122,7 +122,7 @@ def main():
                 states['device_tracker.ev']['state'] = 'home' if left else 'not_home'
                 states['device_tracker.gls']['state'] = 'home' if right else 'not_home'
                 refresh()
-                page.wait_for_function('(file)=>document.getElementById("garage-cluster-photo").getAttribute("src").includes("cluster-murano-"+file+".png")', arg=file)
+                page.wait_for_function('(file)=>document.getElementById("garage-cluster-photo").getAttribute("src").includes("cluster-murano-"+file+(chfHouseNight?"-night":"")+".png")', arg=file)
             states['device_tracker.murano']['state'] = 'not_home'; refresh(); mode('exterior')
             assert page.locator('#garage-dashboard').is_hidden()
             # Missing tracker data must not manufacture a home vehicle.

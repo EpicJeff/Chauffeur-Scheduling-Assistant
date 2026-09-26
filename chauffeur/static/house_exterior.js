@@ -106,7 +106,8 @@
   window.addEventListener('resize',function(){placeMarker();drawWalk();});window.chfHouseMode=()=>mode;window.chfExteriorProbe=()=>({mode:mode,ready:ready});
   photo.onload=function(){ready=true;window.ChauffeurHome?.ready();photo.classList.add('is-active');placeMarker();exterior.setAttribute('aria-busy','false');status.textContent='Tap a room to explore';window.dispatchEvent(new Event('chf-exterior-ready'));};
   photo.onerror=function(){exterior.setAttribute('aria-busy','false');status.textContent='Exterior image unavailable. Use a room shortcut to continue.';};
-  var initial=new URL(location.href).searchParams.get('scene');setMode('exterior');photo.src=photo.dataset.src;
+  // The traffic compositor loads the exterior and its parking layers together.
+  var initial=new URL(location.href).searchParams.get('scene');setMode('exterior');
   function initialEntry(){if(rooms[initial]){if(history.state?.chfExteriorRoom)enter(false,null,initial);else{history.replaceState({},'',urlFor('exterior'));enter(true,null,initial);}}else history.replaceState({},'',urlFor('exterior'));}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initialEntry);else initialEntry();
 })();

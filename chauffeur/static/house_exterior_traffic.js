@@ -4,6 +4,29 @@
   var scene = document.getElementById('exterior-traffic');
   if (!scene) return;
   var photo = document.getElementById('exterior-photo');
+  var lighting = window.ChauffeurSceneLight, lightTicket = 0;
+  var exterior = document.getElementById('house-exterior');
+  function artwork(image, key) {
+    image.dataset.src = scene.dataset[key];
+    image.dataset.srcNight = scene.dataset[key+'Night'];
+    image.src = lighting.source(image, 'src', exterior.dataset.light ? exterior.dataset.light === 'night' : lighting.night());
+  }
+  async function paintLight() {
+    var ticket = ++lightTicket, dark = lighting.night();
+    var images = [photo].concat(Array.from(scene.querySelectorAll('img[data-src]')));
+    var sources = images.map(image => lighting.source(image, 'src', dark));
+    try {
+      await Promise.all(sources.map(lighting.load));
+      if (ticket !== lightTicket) return;
+      if (dark !== lighting.night()) return paintLight();
+      images.forEach(function (image, i) { if (image.getAttribute('src') !== sources[i]) image.src = sources[i]; });
+      exterior.dataset.light = dark ? 'night' : 'day';
+    } catch (_) {
+      if (ticket !== lightTicket) return;
+      exterior.setAttribute('aria-busy', 'false');
+      document.getElementById('exterior-status').textContent = 'Exterior lighting could not load. Use a room shortcut or try again.';
+    }
+  }
   var shortcuts = document.getElementById('exterior-traffic-shortcuts');
   var payload = '', parked = [];
   var vehicles = window.ChauffeurHouseVehicles;
@@ -71,14 +94,14 @@
     scene.dataset.garageState=key;
     if(key==='empty')return;
     var layer=document.createElement('div');layer.className='exterior-garage-layer';layer.setAttribute('aria-hidden','true');
-    var image=document.createElement('img');image.src=scene.dataset['garage'+key[0].toUpperCase()+key.slice(1)];image.alt='';image.className='is-active';layer.appendChild(image);scene.appendChild(layer);
+    var image=document.createElement('img');artwork(image,'garage'+key[0].toUpperCase()+key.slice(1));image.alt='';image.className='is-active';layer.appendChild(image);scene.appendChild(layer);
     items.forEach(function(item,i){if(item)parkedBay(bays[i],item);});
     image.onerror=function(){layer.remove();scene.querySelectorAll('.exterior-garage-car').forEach(b=>b.remove());};
   }
   function patch(name, label, key, id, box, vehicleId) {
     var shadow=document.createElement('div');shadow.className='exterior-driveway-shadow';shadow.setAttribute('aria-hidden','true');scene.appendChild(shadow);
     var img = document.createElement('img');
-    img.src = scene.dataset[name]; img.alt = ''; img.className = 'is-active exterior-scene-patch';
+    artwork(img, name); img.alt = ''; img.className = 'is-active exterior-scene-patch';
     scene.appendChild(img);
     var button = document.createElement('button'); button.type = 'button';
     button.className = 'exterior-patch-target'; button.dataset.vehicle = id;
@@ -121,8 +144,9 @@
       actor(7,[.185,.99,.37], busLabel, 'bus', 'school-bus', false);
       shortcut(busLabel, 'bus', 'exterior-bus-shortcut');
     }
-    project();
+    project(); paintLight();
   }
+  window.addEventListener('chf-house-light', paintLight);
   window.addEventListener('chf-house-state', function (event) { accept(event.detail); });
   window.addEventListener('chf-exterior-ready', project);
   window.addEventListener('resize', project);
