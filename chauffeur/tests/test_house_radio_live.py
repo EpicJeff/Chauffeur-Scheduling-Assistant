@@ -84,7 +84,7 @@ def main():
             assert not reads and not writes, 'No radio connection before entering'
             page.locator('#hybrid-hotspots [data-card="music"]').click()
             page.locator('#house-radio').wait_for(state='visible')
-            page.wait_for_function('document.querySelectorAll("#radio-output option").length===3')
+            page.wait_for_function('document.querySelectorAll("#radio-output option").length===4')
             assert not writes
             assert page.locator('#radio-output').input_value() == ''
             page.locator('#radio-output').select_option('media_player.living')

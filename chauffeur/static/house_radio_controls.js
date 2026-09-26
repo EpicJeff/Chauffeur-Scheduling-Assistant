@@ -28,7 +28,8 @@
     var s=state(), key=s.selected+':'+(s.player?.media_content_id || '')+':'+(s.player?.media_title || '');
     if(!panel.open || (!force && key===nowKey))return;
     nowKey=key;var ticket=++nowRevision,target=s.selected;now=null;paintHeart();
-    var item=target?await MusicLogic.nowPlayingItem(target,opts):null;
+    var entity=target?await window.HouseRadio.target():null;
+    var item=entity?await MusicLogic.nowPlayingItem(entity,opts):null;
     if(!item?.uri && s.player?.media_content_id)item={uri:s.player.media_content_id,name:s.player.media_title || '',subtitle:s.player.media_artist || '',favorite:null};
     if(panel.open && ticket===nowRevision && target===state().selected){now=item;paintHeart();}
   }
@@ -135,7 +136,8 @@
     try{
       var items=[];
       if(tab==='queue'){
-        var queue=target?await MusicLogic.queue(target,opts):null;
+        var entity=target?await window.HouseRadio.target():null;
+        var queue=entity?await MusicLogic.queue(entity,opts):null;
         if(!valid(ticket,member,target))return;
         status.textContent=target?'':'Choose a speaker on the radio first.';queueRows(queue);return;
       }

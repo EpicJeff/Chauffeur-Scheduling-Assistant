@@ -14,9 +14,31 @@
   var active = false, online = false, busy = false, epoch = 0, readTicket = 0;
   var timer = null, drag = null, preview = false, error = '', visitSerial = 0;
   try { selected = localStorage.getItem('chauffeur_music_player') || ''; } catch (_) {}
-  if (selected === MusicLogic.LOCAL) selected = '';
-  function current() { return players.find(function (p) { return p.entity_id === selected; }); }
-  function usable() { var p = current(); return active && online && p && !['unavailable','unknown'].includes(p.state); }
+  if(selected==='__phone__')selected=MusicLogic.LOCAL;
+  var allPlayers=[],deviceLabel='';
+  MusicLogic.thisDevice(opts).then(function(d){if(d?.named && d.label)deviceLabel=d.label;});
+  var local=MusicLogic.localPlayer({
+    get name(){return deviceLabel || 'Chauffeur screen '+MusicLogic.deviceTag();},
+    key:'chauffeur_sendspin_id::screen::'+MusicLogic.deviceId(),
+    legacyKeys:['chauffeur_sendspin_id::screen::chauffeur-screen']
+  },{apiBase:opts.apiBase,onState:function(){if(active){paintPlayers();paint();}},onNotice:function(message){error=message;if(active)paint();}});
+  function current() {
+    if(selected===MusicLogic.LOCAL)return Object.assign({},local.entityIn(allPlayers)||{},local.nowPlaying(),{
+      name:'This Panel',state:local.active?(local.isPlaying()?'playing':'paused'):'unavailable'
+    });
+    return players.find(function(p){return p.entity_id===selected;});
+  }
+  function usable() { var p=current();return active && (selected===MusicLogic.LOCAL?local.active:online && p && !['unavailable','unknown'].includes(p.state)); }
+  async function target() {
+    if(selected!==MusicLogic.LOCAL)return selected;
+    var found=await MusicLogic.findLocalEntity(local,opts);
+    allPlayers=found.players;
+    return found.entity?.entity_id || null;
+  }
+  function command(name,extra) {
+    var direct=['play','pause','next','previous','volume_set'].includes(name);
+    return action(t=>t===MusicLogic.LOCAL?local.command(name,extra):MusicLogic.command(t,name,extra||{},opts),direct);
+  }
   function put(id, text) { document.getElementById(id).textContent = text || ''; }
   function clamp(value, max) { return Math.max(0, Math.min(max, value)); }
   function dial(el, value, max, text) {
@@ -45,7 +67,7 @@
     tune.setAttribute('aria-valuemax', Math.max(1, stations.length));
     dial(tune, stationIndex, Math.max(0, stations.length - 1), station ? station.name : 'No saved stations');
     stationSelect.value = station ? String(stationIndex) : '';
-    var message = !online ? 'Speakers unavailable' : !selected ? 'Choose a speaker'
+    var message = selected===MusicLogic.LOCAL && local.connecting ? 'Connecting' : !online && selected!==MusicLogic.LOCAL ? 'Speakers unavailable' : !selected ? 'Choose a speaker'
       : !available ? 'Speaker unavailable' : busy ? 'Sending…' : preview && station ? 'Ready · press tuning'
       : playing ? 'Playing' : 'Standby';
     put('radio-state', message.toUpperCase());
@@ -55,7 +77,9 @@
   }
   function paintPlayers() {
     output.replaceChildren(new Option('Choose speaker', ''));
-    players.forEach(function (p) { output.add(new Option(p.name || p.entity_id, p.entity_id)); });
+    output.add(new Option('This Panel'+(local.connecting?' (connecting...)':local.active?' (connected)':''),MusicLogic.LOCAL));
+    var mine=local.entityIn(allPlayers);
+    players.filter(p=>p.entity_id===selected || !mine || p.entity_id!==mine.entity_id).forEach(function(p){output.add(new Option(p.name || p.entity_id,p.entity_id));});
     if (selected && !current()) output.add(new Option('Selected speaker unavailable', selected));
     output.value = selected;
   }
@@ -63,23 +87,27 @@
     if (!active || document.hidden) return;
     var visit = epoch, ticket = ++readTicket;
     var data = await MusicLogic.players(opts);
+    var all=selected===MusicLogic.LOCAL?await MusicLogic.players(opts,true):data;
     if (!active || visit !== epoch || ticket !== readTicket) return;
     online = Array.isArray(data);
+    if(Array.isArray(all))allPlayers=all;
     if (online) {
       players = data;
       // Only a sole speaker is an unambiguous default. Never silently reroute
       // a missing selected speaker to a different room.
       if (!selected && players.length === 1) selected = players[0].entity_id;
-      paintPlayers();
     }
-    paint();
+    paintPlayers();paint();
   }
-  async function action(send) {
+  async function action(send, directLocal) {
     if (!usable() || busy) return;
     var visit = epoch, target = selected;
     busy = true; error = ''; ++readTicket; paint();
     try {
-      if (!await send(target)) throw new Error('The speaker did not accept that change. Try again.');
+      var destination=target===MusicLogic.LOCAL && !directLocal?await window.HouseRadio.target():target;
+      if(!active || visit!==epoch || selected!==target)return;
+      if(!destination)throw new Error('This Panel is not exposed in Home Assistant yet. Enable this player in Music Assistant to use its queue.');
+      if (!await send(destination)) throw new Error('The speaker did not accept that change. Try again.');
       if (active && visit === epoch && selected === target) preview = false;
     } catch (failure) {
       if (active && visit === epoch && selected === target) error = failure.message || 'The speaker did not accept that change. Try again.';
@@ -94,6 +122,8 @@
   output.addEventListener('change', function () {
     selected = output.value; ++epoch; ++readTicket; busy = false; drag = null; preview = false; error = '';
     try { localStorage.setItem('chauffeur_music_player', selected); } catch (_) {}
+    local.wanted=selected===MusicLogic.LOCAL;
+    if(local.wanted)local.start();
     paint(); refresh();
   });
   stationSelect.addEventListener('change', function () {
@@ -102,7 +132,7 @@
   });
   power.addEventListener('click', function () {
     var command = current() && current().state === 'playing' ? 'pause' : 'play';
-    action(function (target) { return MusicLogic.command(target, command, {}, opts); });
+    window.HouseRadio.command(command, {});
   });
   function setValue(el, value) {
     if (el === volume) {
@@ -115,7 +145,7 @@
   }
   function commit(el, value) {
     if (el === tune) playStation();
-    else action(function (target) { return MusicLogic.command(target, 'volume_set', {volume:value / 100}, opts); });
+    else command('volume_set',{volume:value / 100});
   }
   [volume, tune].forEach(function (el) {
     el.addEventListener('pointerdown', function (event) {
@@ -157,8 +187,9 @@
   window.HouseRadio = {
     state: function () { return {active:active, available:!!usable(), busy:busy, player:current(), selected:selected, error:error}; },
     action: action,
+    target: target,
     refresh: refresh,
-    command: function (command, extra) { return action(target=>MusicLogic.command(target,command,extra || {},opts)); },
+    command: command,
     playItem: function (item, member) {
       return action(function (target) { return MusicLogic.play(target, item.uri, item.media_type || 'track', opts,
         {memberId:member || null, item:item}); });
@@ -166,7 +197,9 @@
     open: function () {
       if (active) return;
       active = true; ++epoch; ++visitSerial; root.hidden = false; error = ''; preview = false; busy = false;
-      paint(); startPolling();
+      local.wanted=selected===MusicLogic.LOCAL;
+      if(local.wanted)local.start();
+      paintPlayers();paint(); startPolling();
       window.HouseRecords.open();
       var visit = visitSerial;
       MusicLogic.favorites('radio', 50, opts).then(function (items) {
