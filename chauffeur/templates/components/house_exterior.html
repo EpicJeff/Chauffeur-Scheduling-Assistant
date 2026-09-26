@@ -24,14 +24,16 @@
 </section>
 <section id="hybrid-garage" data-car-id="{{ request.query_params.get('garage_car', '') }}" hidden inert aria-label="Garage">
   <div id="garage-images">
-    <img id="garage-empty" data-src="{{ 'static/house_hybrid/garage-empty.png'|ver }}"
-         data-src-night="{{ 'static/house_hybrid/garage-empty-night.png'|ver }}" alt="">
+    <img id="garage-scene" data-empty="{{ 'static/house_hybrid/garage-empty.png'|ver }}"
+         data-empty-night="{{ 'static/house_hybrid/garage-empty-night.png'|ver }}"
+         data-left="{{ 'static/house_hybrid/garage-left-day.png'|ver }}"
+         data-left-night="{{ 'static/house_hybrid/garage-left-night.png'|ver }}"
+         data-right="{{ 'static/house_hybrid/garage-right-day.png'|ver }}"
+         data-right-night="{{ 'static/house_hybrid/garage-right-night.png'|ver }}"
+         data-both="{{ 'static/house_hybrid/garage-personal-vehicles.png'|ver }}"
+         data-both-night="{{ 'static/house_hybrid/garage-personal-vehicles-night.png'|ver }}" alt="">
     <button id="garage-car" type="button" aria-label="View instrument cluster"><span>Instrument cluster</span></button>
     <button id="garage-car-right" type="button" aria-label="View vehicle details" hidden><span>Vehicle details</span></button>
-    <img id="garage-occupied-right" data-src="{{ 'static/house_hybrid/garage-personal-vehicles.png'|ver }}"
-         data-src-night="{{ 'static/house_hybrid/garage-personal-vehicles-night.png'|ver }}" alt="">
-    <img id="garage-occupied" data-src="{{ 'static/house_hybrid/garage-personal-vehicles.png'|ver }}"
-         data-src-night="{{ 'static/house_hybrid/garage-personal-vehicles-night.png'|ver }}" alt="">
   </div>
   <header class="garage-heading"><span data-house-preview-only>TWO-BAY PROTOTYPE</span><h1>Garage</h1><p id="garage-assignment">No vehicles assigned</p></header>
   <div id="garage-dashboard" hidden>

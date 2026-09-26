@@ -47,3 +47,12 @@ The shared `chf-house-light` event selects these assets for manual previews and 
 
 Browser proof: `python chauffeur/tests/test_house_exterior_lighting_live.py`. Screenshots are written to `scratch/exterior-lighting/`.
 
+
+## Garage window correction — 2026-09-26
+
+The base `exterior-model-full-block-empty-night.png` was edited with built-in ImageGen to remove domestic furniture and table lamps from the two ground-floor garage windows. This base supplies those windows for every live occupancy state; the vehicle overlays are masked to the garage opening and driveway only.
+
+Exact edit prompt:
+
+Use case: precise-object-edit. This image is the EDIT TARGET. Fix ONLY the interior contents visible through the TWO ground-floor tall narrow windows in the GARAGE wall immediately LEFT of the open double garage bay (approximately x=47–50%, y=58–70%, and x=54–56.5%, y=61–72% in the full image). They incorrectly show a furnished living room and table lamp. These are GARAGE windows: remove the lamps, houseplants, domestic furniture, and room decor visible inside ONLY these two windows. Show subdued warm neutral garage illumination with plain undecorated walls and indistinct utility storage, dimmer than the living room windows. Preserve glazing, mullions, shutters, trim, outside landscaping, and exact window shape. Do NOT modify any other windows, porch, architecture, garage opening, driveway, trees, sky or lighting elsewhere. Preserve original camera, framing, exact 1536x1024 size, and pixel-aligned geometry. No new cars, people, words or UI. Return the entire full-frame corrected night exterior, no crop.
+

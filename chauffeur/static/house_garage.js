@@ -6,9 +6,7 @@
   var vehicles = window.ChauffeurHouseVehicles;
   var lighting = window.ChauffeurSceneLight, bayRequested = false;
   var isPreview = document.body.dataset.housePreview === 'true';
-  var empty = document.getElementById('garage-empty');
-  var occupied = document.getElementById('garage-occupied');
-  var occupiedRight = document.getElementById('garage-occupied-right');
+  var sceneImage = document.getElementById('garage-scene');
   var select = document.getElementById('garage-presence');
   var state = document.getElementById('garage-state');
   var carButton = document.getElementById('garage-car');
@@ -23,7 +21,7 @@
   function current() { return fleet.find(item => String(item.id) === activeId) || null; }
   function garageState() { return car?.present === true ? (rightCar?.present === true ? 'Both' : 'Left') : (rightCar?.present === true ? 'Right' : 'Empty'); }
   function project() {
-    [[empty, plane, innerWidth < 700 ? .25 : .5], [clusterPhoto, dashboardPlane, .5]].forEach(function (entry) {
+    [[sceneImage, plane, innerWidth < 700 ? .25 : .5], [clusterPhoto, dashboardPlane, .5]].forEach(function (entry) {
       var image = entry[0], target = entry[1];
       if (!image.naturalWidth) return;
       var scale = Math.max(innerWidth/image.naturalWidth, innerHeight/image.naturalHeight);
@@ -98,7 +96,6 @@
     var home = mode === 'home' || (mode === 'live' && car?.present === true);
     var rightHome = rightCar?.present === true;
     room.dataset.occupied = String(home); room.dataset.rightOccupied = String(rightHome);
-    occupied.style.opacity = home ? '1' : '0'; occupiedRight.style.opacity = rightHome ? '1' : '0';
     carButton.hidden = !home; rightButton.hidden = !rightHome;
     carButton.setAttribute('aria-label', car ? 'View '+car.name+' instrument cluster' : 'Preview instrument cluster');
     rightButton.setAttribute('aria-label', rightCar ? 'View '+rightCar.name+' instrument cluster' : 'Vehicle instruments');
@@ -109,6 +106,7 @@
     text('garage-assignment', [car?.name, rightCar?.name].filter(Boolean).join(' · ') || 'No vehicles assigned');
     if (activeId && current()?.present !== true) back(true);
     cluster();
+    if (bayRequested) window.chfGarageReady().catch(function () { state.textContent = 'Garage artwork could not refresh.'; });
     if (room.dataset.view === 'dashboard') loadCluster().catch(function () { state.textContent = 'Vehicle view could not refresh.'; });
   }
   function accept(data) {
@@ -143,16 +141,26 @@
   window.addEventListener('chf-house-state', e => accept(e.detail));
   window.chfGarageReady = async function () {
     bayRequested = true;
-    var dark = lighting.night(), images = [empty, occupied, occupiedRight];
-    var sources = images.map(image => lighting.source(image, 'src', dark));
-    await Promise.all(sources.map(lighting.load));
-    if (dark !== lighting.night()) return window.chfGarageReady();
-    images.forEach(function (image, i) { image.src = sources[i]; });
-    await Promise.all(images.map(image => image.decode()));
-    if (dark !== lighting.night()) return window.chfGarageReady();
+    var dark = lighting.night(), parking = bayState();
+    var source = lighting.source(sceneImage, parking, dark);
+    await lighting.load(source);
+    if (dark !== lighting.night() || parking !== bayState()) return window.chfGarageReady();
+    if (sceneImage.getAttribute('src') !== source) sceneImage.src = source;
+    try { await sceneImage.decode(); }
+    catch (error) {
+      if (dark !== lighting.night() || parking !== bayState()) return window.chfGarageReady();
+      throw error;
+    }
+    if (dark !== lighting.night() || parking !== bayState()) return window.chfGarageReady();
     room.dataset.light = dark ? 'night' : 'day';
+    room.dataset.parking = parking;
     project();
   };
+  // A complete photograph for each occupancy avoids a lighting seam at the bay boundary.
+  function bayState() {
+    return room.dataset.occupied === 'true' ? (room.dataset.rightOccupied === 'true' ? 'both' : 'left')
+      : (room.dataset.rightOccupied === 'true' ? 'right' : 'empty');
+  }
   window.addEventListener('chf-house-light', function () {
     if (bayRequested) window.chfGarageReady().catch(function () { state.textContent = 'Garage lighting could not refresh.'; });
     if (room.dataset.view === 'dashboard') loadCluster().catch(function () { state.textContent = 'Vehicle lighting could not refresh.'; });

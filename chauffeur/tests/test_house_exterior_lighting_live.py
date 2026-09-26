@@ -38,9 +38,16 @@ def main():
                         i.getAttribute('src')===i.dataset[value==='night'?'srcNight':'src']);
                 }''', arg=value)
             def bay(value):
-                page.wait_for_function('''value => document.getElementById('hybrid-garage').dataset.light===value &&
-                    [...document.querySelectorAll('#garage-images img')].every(i=>i.complete && i.naturalWidth &&
-                        i.getAttribute('src')===i.dataset[value==='night'?'srcNight':'src'])''', arg=value)
+                page.wait_for_function('''value => {
+                    const room=document.getElementById('hybrid-garage');
+                    const parking=room.dataset.occupied==='true' ? (room.dataset.rightOccupied==='true'?'both':'left')
+                        : (room.dataset.rightOccupied==='true'?'right':'empty');
+                    const images=[...document.querySelectorAll('#garage-images img')];
+                    return room.dataset.light===value && room.dataset.parking===parking && images.length===1 &&
+                        images.every(i=>i.complete && i.naturalWidth &&
+                            i.getAttribute('src')===i.dataset[parking+(value==='night'?'Night':'')] &&
+                            getComputedStyle(i).clipPath==='none' && getComputedStyle(i).maskImage==='none');
+                }''', arg=value)
             def cabin(stem, value):
                 page.wait_for_function('''([stem,value]) => {
                     const img=document.getElementById('garage-cluster-photo');
@@ -67,6 +74,7 @@ def main():
                 page.evaluate('chfHybridHome()')
                 exterior('night')
             # Every parking combination and windshield background in both lighting modes.
+            page.set_viewport_size({'width': 2470, 'height': 1236})
             for value in ('day', 'night'):
                 light(value); exterior(value)
                 for left, right in itertools.product((False, True), repeat=2):
@@ -74,6 +82,10 @@ def main():
                     payload['garage']['cars'][1]['present'] = right
                     refresh(); exterior(value)
                     assert page.locator('.exterior-garage-car').count() == int(left)+int(right)
+                    page.evaluate('chfHybridGo("garage")'); bay(value)
+                    parking = 'both' if left and right else 'left' if left else 'right' if right else 'empty'
+                    page.screenshot(path=str(OUT/('garage-'+parking+'-'+value+'.png')))
+                    page.evaluate('chfHybridHome()')
                     page.evaluate('chfVehicleCluster("murano")')
                     stem = 'cluster-murano-' + ('driveway' if left and right else 'left' if left else 'right' if right else 'empty')
                     cabin(stem, value); bay(value)
@@ -100,6 +112,15 @@ def main():
             # Phone layout retains the same artwork and live instruments.
             page.set_viewport_size({'width': 390, 'height': 844})
             page.screenshot(path=str(OUT/'exterior-night-phone.png'))
+            page.evaluate('chfHybridGo("garage")')
+            payload['garage']['cars'][0]['present'] = False
+            refresh(); bay('night')
+            assert page.locator('#garage-car').is_hidden()
+            assert page.locator('#garage-car-right').is_visible()
+            page.screenshot(path=str(OUT/'garage-right-night-phone.png'))
+            payload['garage']['cars'][0]['present'] = True
+            refresh(); bay('night')
+            page.evaluate('chfHybridHome()')
             page.evaluate('chfVehicleCluster("murano")'); cabin('cluster-murano-driveway', 'night')
             assert page.locator('#cluster-energy').inner_text() == '43%'
             page.screenshot(path=str(OUT/'cluster-night-phone.png'))
