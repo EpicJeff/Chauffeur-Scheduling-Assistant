@@ -2045,9 +2045,28 @@
         // The order the blocks stack in on the drives view. Status first (it
         // reframes everything under it), then anything waiting on an answer,
         // then tonight, then the programs, then what is due.
+        // The driver's My Day stacks what is about the day as a whole. A
+        // program's session is not that -- it has a time, so it rides the
+        // drive list at that time (buildTimeline, via myDayProgramItems),
+        // and a program with no session today follows the list. The
+        // practice-now card and the program cards used to stack here, above
+        // every drive (user, 2026-09-26: "It is my day, not my programs and
+        // my drives").
         function practiceStackHtml(p) {
-            return (p.status || '') + (p.requests || '') + (p.now || '')
-                 + (p.programs || '') + (p.dueSoon || '');
+            return (p.status || '') + (p.requests || '') + (p.dueSoon || '');
+        }
+
+        // What the drive list's program rows were drawn from, as data. When
+        // the parts are rebuilt (a log, the heartbeat, a window turning Now)
+        // and this changes, the list redraws; the rows' own HTML cannot be
+        // compared, because every render mints fresh session keys.
+        let practiceRowsDrawnSig = '';
+        function practiceRowSig(parts, dateStr) {
+            return JSON.stringify(((parts && parts.list) || []).map(p => [
+                p.id, p.due_ask ? p.due_ask.slot_date : '',
+                (p.progress || {}).sessions || 0, p.current_unit || 0,
+                practiceWindowsOn(dateStr).filter(w => w.program_id === p.id)
+                    .map(w => [w.time_start, !!w.logged, practiceWindowIsNow(w)])]));
         }
 
         function todayStr() {
@@ -2150,6 +2169,8 @@
             }
             body.innerHTML = practiceStackHtml(await buildPracticeParts());
             applyPracticeVisibility();
+            if (currentView === 'drives'
+                && practiceRowSig(practiceParts, todayStr()) !== practiceRowsDrawnSig) buildTimeline();
         }
 
         // Logging a session moves the ladder and clears the ask, so the
@@ -9193,6 +9214,35 @@
                 // Argyle noticed and tonight's practice are all about now,
                 // and repeating them on every pane of the week is noise.
                 const sections = (dateStr === todayStr()) ? paneSectionsHtml() : '';
+                // Today's program sessions, in the drive list at their own
+                // time, and the programs with no session today after it --
+                // the same rows the passenger's My Day draws. `pr(t)` hands
+                // over every session that starts before `t`, so each leg and
+                // event below releases the ones due ahead of it.
+                const progRows = (!familyByDate && dateStr === todayStr())
+                    ? myDayProgramItems(practiceParts, dateStr) : { timed: [], rest: '' };
+                if (!familyByDate && dateStr === todayStr())
+                    practiceRowsDrawnSig = practiceRowSig(practiceParts, dateStr);
+                progRows.timed.sort((a, b) => a.min - b.min);
+                let progNext = 0;
+                const railRow = x => `
+                    <div class="flex items-start mb-6 relative z-10">
+                        <div class="w-10 h-10 rounded-full bg-teal-700 border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md text-white font-bold text-xs">🎯</div>
+                        <div class="ml-4 flex-1 min-w-0">${x.html}</div>
+                    </div>`;
+                const pr = t => {
+                    let out = '';
+                    const d = t == null ? null : new Date(t);
+                    const m = d && !isNaN(d) ? d.getHours() * 60 + d.getMinutes() : Infinity;
+                    while (progNext < progRows.timed.length && progRows.timed[progNext].min < m)
+                        out += railRow(progRows.timed[progNext++]);
+                    return out;
+                };
+                const progRest = progRows.rest ? `
+                    <div class="space-y-3 mt-2">
+                        <div class="text-xs font-black uppercase tracking-widest text-gray-500">My Programs</div>
+                        ${progRows.rest}
+                    </div>` : '';
 
                 if (familyByDate) {
                     pane.innerHTML = sections
@@ -9203,13 +9253,15 @@
                 }
 
                 if (evs.length === 0) {
-                    pane.innerHTML = sections + `
-                        <div class="flex flex-col items-center justify-center ${sections ? 'py-10' : 'h-full'} opacity-50 text-center">
+                    const sessions = progRows.timed.length
+                        ? `<div class="space-y-3 mb-2">${progRows.timed.map(x => x.html).join('')}</div>` : '';
+                    pane.innerHTML = sections + sessions + `
+                        <div class="flex flex-col items-center justify-center ${sections || sessions ? 'py-10' : 'h-full'} opacity-50 text-center">
                             <div class="text-6xl mb-4">☕</div>
                             <h3 class="text-xl font-bold mb-2">No Drives Scheduled</h3>
                             <p class="text-gray-400">Enjoy your free time!</p>
                         </div>
-                    `;
+                    ` + progRest;
                     frag.appendChild(pane);
                     return;
                 }
@@ -9259,14 +9311,14 @@
 
                                 if (leg1Mins > 0) {
                                     let args1 = `'${originLocation.replace(/'/g, "\\'")}', '${paxPickupLoc.replace(/'/g, "\\'")}', 'Drive to Pickup', '${ev.id}'`;
-                                    html += renderLegPill(formatTime(depTime.toISOString()), "Drive to Pickup", leg1Mins, 0, args1 + `, 'init_${ev.id}_1'`, 'blue', badges, `init_${ev.id}_1`, depTime < new Date());
+                                    html += pr(depTime.toISOString()) + renderLegPill(formatTime(depTime.toISOString()), "Drive to Pickup", leg1Mins, 0, args1 + `, 'init_${ev.id}_1'`, 'blue', badges, `init_${ev.id}_1`, depTime < new Date());
                                 }
 
                                 let args2 = `'${paxPickupLoc.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
-                                html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'init_${ev.id}_2'`, 'blue', leg1Mins > 0 ? '' : badges, `init_${ev.id}_2`, leg2DepTime < new Date());
+                                html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'init_${ev.id}_2'`, 'blue', leg1Mins > 0 ? '' : badges, `init_${ev.id}_2`, leg2DepTime < new Date());
                             } else {
                                 let args = `'${originLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
-                                html += renderLegPill(formatTime(depTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, edge.travel_mins, edge.delay_mins, args + `, 'init_${ev.id}'`, 'blue', badges, `init_${ev.id}`, depTime < new Date());
+                                html += pr(depTime.toISOString()) + renderLegPill(formatTime(depTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, edge.travel_mins, edge.delay_mins, args + `, 'init_${ev.id}'`, 'blue', badges, `init_${ev.id}`, depTime < new Date());
                             }
                         }
                     }
@@ -9312,7 +9364,7 @@
                     const evDataStr = encodeURIComponent(JSON.stringify(eventData));
 
                     const isEventPast = new Date(ev.end) < new Date();
-                    html += `
+                    html += pr(ev.start) + `
                         <div class="flex items-start mb-6 relative z-10 group cursor-pointer ${isEventPast ? 'opacity-40' : ''}" onclick="openEventModal('${evDataStr.replace(/'/g, "\\'")}')">
                             <div class="w-10 h-10 rounded-full bg-gray-700 border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md text-gray-100 font-bold text-xs" style="background-color: ${driverConfig.color_code || '#4a5568'}">
                                 ${formatTime(ev.start).split(':')[0]}
@@ -9359,18 +9411,18 @@
                                 const leg2DepTime = new Date(new Date(ev.end).getTime() + (leg1Mins + edge.home_waypoint.layover_mins) * 60000);
 
                                 let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${driverHomeLoc.replace(/'/g, "\\'")}', '${homeLabel.replace(/'/g, "\\'")}', '${ev.id}'`;
-                                html += renderLegPill(formatTime(ev.end), homeLabel, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', '', `route_${ev.id}_1`, new Date(ev.end) < new Date());
+                                html += pr(ev.end) + renderLegPill(formatTime(ev.end), homeLabel, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', '', `route_${ev.id}_1`, new Date(ev.end) < new Date());
 
                                 if (leg2Mins === 0) { // Meaning pickupLocation == driverHomeLoc
                                     let args3 = `'${driverHomeLoc.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
-                                    html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg3Mins, edge.delay_mins, args3 + `, 'route_${ev.id}_2'`, 'blue', nextBadges, `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0);
+                                    html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg3Mins, edge.delay_mins, args3 + `, 'route_${ev.id}_2'`, 'blue', nextBadges, `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0);
                                 } else {
                                     const leg3DepTime = new Date(leg2DepTime.getTime() + leg2Mins * 60000);
                                     let args2 = `'${driverHomeLoc.replace(/'/g, "\\'")}', '${pickupLocation.replace(/'/g, "\\'")}', '${pickupTitle.replace(/'/g, "\\'")}', '${ev.id}'`;
-                                    html += renderLegPill(formatTime(leg2DepTime.toISOString()), pickupTitle, leg2Mins, 0, args2 + `, 'route_${ev.id}_2'`, 'blue', nextBadges, `route_${ev.id}_2`, leg2DepTime < new Date());
+                                    html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), pickupTitle, leg2Mins, 0, args2 + `, 'route_${ev.id}_2'`, 'blue', nextBadges, `route_${ev.id}_2`, leg2DepTime < new Date());
 
                                     let args3 = `'${pickupLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
-                                    html += renderLegPill(formatTime(leg3DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg3Mins, edge.delay_mins, args3 + `, 'route_${ev.id}_3'`, 'blue', '', `route_${ev.id}_3`, leg3DepTime < new Date(), edge.late_mins || 0);
+                                    html += pr(leg3DepTime.toISOString()) + renderLegPill(formatTime(leg3DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg3Mins, edge.delay_mins, args3 + `, 'route_${ev.id}_3'`, 'blue', '', `route_${ev.id}_3`, leg3DepTime < new Date(), edge.late_mins || 0);
                                 }
                             } else if (edge.home_waypoint) {
                                 const leg1Mins = edge.home_waypoint.to_home_mins;
@@ -9380,10 +9432,10 @@
 
                                 const homeLabel = getHomeLabel(driverHomeLoc);
                                 let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${driverHomeLoc.replace(/'/g, "\\'")}', '${homeLabel.replace(/'/g, "\\'")}', '${ev.id}'`;
-                                html += renderLegPill(formatTime(ev.end), homeLabel, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', '', `route_${ev.id}_1`, new Date(ev.end) < new Date());
+                                html += pr(ev.end) + renderLegPill(formatTime(ev.end), homeLabel, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', '', `route_${ev.id}_1`, new Date(ev.end) < new Date());
 
                                 let args2 = `'${driverHomeLoc.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
-                                html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'route_${ev.id}_2'`, 'blue', nextBadges, `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0);
+                                html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'route_${ev.id}_2'`, 'blue', nextBadges, `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0);
                             } else if (edge.pickup_waypoint) {
                                 const leg1Mins = edge.pickup_waypoint.to_pickup_mins;
                                 const leg2Mins = edge.pickup_waypoint.from_pickup_mins;
@@ -9392,14 +9444,14 @@
                                 const leg2DepTime = new Date(new Date(ev.end).getTime() + leg1Mins * 60000);
 
                                 let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${pickupLocation.replace(/'/g, "\\'")}', '${pickupTitle.replace(/'/g, "\\'")}', '${ev.id}'`;
-                                html += renderLegPill(formatTime(ev.end), pickupTitle, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', nextBadges, `route_${ev.id}_1`, new Date(ev.end) < new Date());
+                                html += pr(ev.end) + renderLegPill(formatTime(ev.end), pickupTitle, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', nextBadges, `route_${ev.id}_1`, new Date(ev.end) < new Date());
 
                                 let args2 = `'${pickupLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
-                                html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'route_${ev.id}_2'`, 'blue', '', `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0);
+                                html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'route_${ev.id}_2'`, 'blue', '', `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0);
                             } else {
                                 let destStr = destinationLocation ? destinationLocation.split(',')[0] : 'Next Event';
                                 let args = `'${(computedOrigin || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', 'Drive to ${destStr.replace(/'/g, "\\'")}', '${ev.id}'`;
-                                html += renderLegPill(formatTime(ev.end), `Drive to ${destStr}`, edge.travel_mins, edge.delay_mins, args + `, 'route_${ev.id}_${nextEv.id}'`, 'blue', nextBadges, `route_${ev.id}_${nextEv.id}`, new Date(ev.end) < new Date(), edge.late_mins || 0);
+                                html += pr(ev.end) + renderLegPill(formatTime(ev.end), `Drive to ${destStr}`, edge.travel_mins, edge.delay_mins, args + `, 'route_${ev.id}_${nextEv.id}'`, 'blue', nextBadges, `route_${ev.id}_${nextEv.id}`, new Date(ev.end) < new Date(), edge.late_mins || 0);
                             }
                         }
                     }
@@ -9423,21 +9475,21 @@
                                 const driverHomeLoc = edge.dropoff_waypoint.driver_home_location || destinationLocation;
 
                                 let args1 = `'${originLocation.replace(/'/g, "\\'")}', '${paxDropoffLoc.replace(/'/g, "\\'")}', 'Drive to Dropoff', '${ev.id}'`;
-                                html += renderLegPill(formatTime(leg2DepTime.toISOString()), "Drive to Dropoff", leg1Mins, 0, args1 + `, 'final_${ev.id}_1'`, 'green', badges, `final_${ev.id}_1`, leg2DepTime < new Date());
+                                html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), "Drive to Dropoff", leg1Mins, 0, args1 + `, 'final_${ev.id}_1'`, 'green', badges, `final_${ev.id}_1`, leg2DepTime < new Date());
 
                                 const homeLabel = getHomeLabel(driverHomeLoc);
                                 let args2 = `'${paxDropoffLoc.replace(/'/g, "\\'")}', '${driverHomeLoc.replace(/'/g, "\\'")}', '${homeLabel.replace(/'/g, "\\'")}', '${ev.id}'`;
-                                html += renderLegPill(formatTime(leg2ArrTime.toISOString()), homeLabel, leg2Mins, edge.delay_mins, args2 + `, 'final_${ev.id}'`, 'green', '', `final_${ev.id}`, leg2ArrTime < new Date());
+                                html += pr(leg2ArrTime.toISOString()) + renderLegPill(formatTime(leg2ArrTime.toISOString()), homeLabel, leg2Mins, edge.delay_mins, args2 + `, 'final_${ev.id}'`, 'green', '', `final_${ev.id}`, leg2ArrTime < new Date());
                             } else {
                                 const homeLabel = getHomeLabel(destinationLocation);
                                 let args = `'${(originLocation || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', '${homeLabel.replace(/'/g, "\\'")}', '${ev.id}'`;
-                                html += renderLegPill(formatTime(arriveDate.toISOString()), homeLabel, edge.travel_mins, edge.delay_mins, args + `, 'final_${ev.id}'`, 'green', badges, `final_${ev.id}`, arriveDate < new Date());
+                                html += pr(arriveDate.toISOString()) + renderLegPill(formatTime(arriveDate.toISOString()), homeLabel, edge.travel_mins, edge.delay_mins, args + `, 'final_${ev.id}'`, 'green', badges, `final_${ev.id}`, arriveDate < new Date());
                             }
                         }
                     }
                 });
 
-                html += '</div>';
+                html += pr(null) + '</div>' + progRest;
                 pane.innerHTML = html;
                 frag.appendChild(pane);
             });

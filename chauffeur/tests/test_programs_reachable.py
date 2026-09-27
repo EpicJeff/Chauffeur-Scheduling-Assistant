@@ -169,8 +169,18 @@ def scenario_the_drives_day_carries_what_my_day_carries():
     check('renderRoutineSection(' not in build,
           "routines are a child's and stay on the child's tab")
     stack = _body(src, 'practiceStackHtml')
-    for part in ('status', 'requests', 'now', 'programs', 'dueSoon'):
+    for part in ('status', 'requests', 'dueSoon'):
         check(part in stack, f"the drives stack must draw {part}")
+    # Programs still reach a driver -- in the drive list at their own time
+    # and after it, not stacked above every drive (2026-09-26, "it is my
+    # day, not my programs and my drives"; tests/test_myday_timeline_live.py
+    # drives it in a browser).
+    timeline = _body(src, 'buildTimeline')
+    check('myDayProgramItems(' in timeline,
+          "the driver's drive list must thread the program rows in")
+    for part in ('now', 'programs'):
+        check(f'p.{part}' not in stack,
+              f"and the stack must not draw {part} above the drives as well")
 
 
 def scenario_a_session_can_be_opened_and_finished():

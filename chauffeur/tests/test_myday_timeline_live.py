@@ -159,6 +159,111 @@ def scenario_a_session_sits_in_the_day_as_a_row_that_opens():
     check(not handle.errors, 'the page threw: %r' % handle.errors[:3])
 
 
+DRIVES_ORDER_JS = """() => {
+  const today = new Date().toLocaleDateString('en-CA');
+  const pane = document.getElementById('pane-' + currentDates.indexOf(today));
+  if (!pane) return { err: 'no today pane' };
+  const all = [...pane.querySelectorAll('*')];
+  const at = txt => all.findIndex(el => el.children.length === 0 &&
+                                   (el.textContent || '').includes(txt));
+  const row = pane.querySelector('[data-myday-program="prog-guitar"]');
+  const body = row && row.querySelector('[data-myday-body]');
+  const today_ = document.getElementById('today-content');
+  return {
+    swim: at('Swim team'), piano: at('Piano lesson'),
+    guitarRow: row ? all.indexOf(row) : -1,
+    guitarRows: pane.querySelectorAll('[data-myday-program="prog-guitar"]').length,
+    runRow: all.indexOf(pane.querySelector('[data-myday-program="prog-run"]')),
+    rowHeight: row ? row.getBoundingClientRect().height : 0,
+    bodyShown: !!(body && body.offsetParent),
+    stackHasProgram: !!(today_ && /Guitar|Running/.test(today_.textContent || '')),
+  };
+}"""
+
+
+def scenario_the_drivers_my_day_threads_sessions_into_the_drives():
+    """The same law on the driver's tab, which is ALSO labelled "My Day"
+    (`tab-drives`). The user's report was about this one: a parent who
+    drives never sees the passenger lens, and here the practice-now card
+    and whole program cards stacked above every drive."""
+    from live_app import live_app
+
+    def seed():
+        _seed()
+        storage.add_member({'id': 'dad', 'name': 'Jeff', 'role': 'parent',
+                            'driver_id': 'd1'})
+        storage.add_driver({'id': 'd1', 'name': 'Jeff', 'color_code': '#38bdf8'})
+        # the two programs belong to the parent here: his own day
+        for pid in ('prog-guitar', 'prog-run'):
+            storage.update_program(pid, {'member_id': 'dad'})
+        for cid in ('c-guitar', 'c-run'):
+            storage.update_protected_commitment(cid, {'member_id': 'dad'})
+
+    served = live_app(seed)
+    if served is None:
+        return
+    iso = datetime.date.today().isoformat()
+    sched = {
+        'events': [
+            {'id': 'e-am', 'title': 'Swim team', 'location': 'Pool',
+             'start': iso + 'T07:00:00', 'end': iso + 'T08:00:00', 'calendar_ids': []},
+            {'id': 'e-pm', 'title': 'Piano lesson', 'location': 'Studio',
+             'start': iso + 'T18:00:00', 'end': iso + 'T19:00:00', 'calendar_ids': []}],
+        'assignments': {'e-am': 'd1', 'e-pm': 'd1'},
+        'route_edges': {}, 'initial_edges': {}, 'final_edges': {}}
+    try:
+        handle = served.browser()
+        with handle as page:
+            page.goto(served.url('app'))
+            page.evaluate("localStorage.setItem('chauffeur_member_id', 'dad');"
+                          "localStorage.setItem('chauffeur_driver_id', 'd1')")
+            page.goto(served.url('app'))
+            page.wait_for_timeout(1500)
+            skip = page.get_by_text('Skip', exact=True)
+            if skip.count():
+                skip.first.click()
+                page.wait_for_timeout(400)
+            page.evaluate("setView('drives')")
+            page.wait_for_timeout(1500)
+            # the drives as a fetch would hand them over, then the same
+            # rebuild a fetch triggers
+            page.evaluate("""async (s) => {
+                scheduleData = Object.assign({}, scheduleData || {}, s);
+                selectedDriverId = 'd1';
+                await refreshPracticeSection(true);
+                buildTimeline();
+            }""", sched)
+            page.wait_for_function(
+                "!!document.querySelector('[data-myday-program=\"prog-guitar\"]')",
+                timeout=15000)
+            o = page.evaluate(DRIVES_ORDER_JS)
+            check(not o.get('err'), 'today has a pane: %r' % o)
+            check(o['guitarRows'] == 1, 'Guitar appears once: %r' % o)
+            check(o['swim'] < o['guitarRow'] < o['piano'],
+                  'the noon session sits between the 7am and 6pm drives: %r' % o)
+            check(o['runRow'] > o['piano'],
+                  'a program with no session today comes after the drives: %r' % o)
+            check(not o['stackHasProgram'],
+                  'the Today block above the drives carries no program: %r' % o)
+            check(not o['bodyShown'] and o['rowHeight'] < 90,
+                  'the session starts as one closed row: %r' % o)
+            page.click('[data-myday-program="prog-guitar"] [data-myday-toggle]')
+            page.wait_for_timeout(200)
+            check(page.evaluate(DRIVES_ORDER_JS)['bodyShown'], 'and a tap opens it')
+            shots = os.environ.get('MYDAY_SHOTS')
+            if shots:
+                page.set_viewport_size({'width': 390, 'height': 844})
+                page.click('[data-myday-program="prog-guitar"] [data-myday-toggle]')
+                page.wait_for_timeout(300)
+                page.evaluate("document.querySelector('[data-myday-program=\"prog-guitar\"]').scrollIntoView({block:'center'})")
+                page.wait_for_timeout(300)
+                page.screenshot(path=os.path.join(shots, 'drives-closed.png'))
+    finally:
+        served.stop()
+    check(not handle.errors, 'the page threw: %r' % handle.errors[:3])
+
+
 if __name__ == '__main__':
     scenario_a_session_sits_in_the_day_as_a_row_that_opens()
+    scenario_the_drivers_my_day_threads_sessions_into_the_drives()
     print('test_myday_timeline_live OK')

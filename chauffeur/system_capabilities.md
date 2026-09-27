@@ -1,6 +1,16 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.199 (2026-09-26).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.200 (2026-09-27).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**The driver's My Day threads program sessions into the drives too (v2.499.200; `templates/app.html`, `tests/test_myday_timeline_live.py`, `tests/test_programs_reachable.py`).** User, after v2.499.199: "I still see full huge program blocks on My Day in the PWA." There are two tabs labelled My Day: the passenger lens (`tab-myday`) and the drives view (`tab-drives`), which is My Day for anyone who drives. v2.499.199 changed only the passenger one, and a parent who drives never sees it. On the drives view, `practiceStackHtml` still stacked the practice-now card and every program card in the Today block above the first drive.
+
+What changed:
+- **Today block:** `practiceStackHtml` now draws only status, requests and due soon.
+- **Sessions in the drive list:** `buildTimeline` threads today's sessions into today's drive list at their own time. `pr(t)` releases every session starting before `t` in front of each leg pill (all 15 `renderLegPill` sites, keyed on the leg's own departure or arrival time) and each event, so a session lands in true time order among the drive legs. Each session is the same `myDayProgramRow` the passenger view draws, on a teal rail circle beside the event circles.
+- **Programs with no session today** follow the list under "My Programs". A day with no drives shows its sessions above the "No Drives Scheduled" card.
+- **Redraw rule:** when `refreshPracticeSection` rebuilds the parts, the list redraws only if `practiceRowSig` changed: program ids, pending ask, session count, current unit, and each window's time, logged state and Now state. That covers a log, the heartbeat, or a window turning Now. The rows' HTML cannot be compared, because every render mints fresh session keys. `buildTimeline` already keeps each pane's scroll position.
+
+Pinned by `scenario_the_drivers_my_day_threads_sessions_into_the_drives`: a parent who drives, a noon session between assigned 7 AM and 6 PM drives, the Today block carrying no program, and one closed row that opens on a tap. RED-proven against v2.499.199, where no session row reaches the drive list. `test_programs_reachable` now requires the stack to draw status, requests and due soon, `buildTimeline` to call `myDayProgramItems`, and the stack to NOT draw `now` or `programs`. The contrast audit is unchanged at 73 pre-existing lines. Not device-verified.
 
 **My Day is one timeline; programs are rows that open (v2.499.199; `templates/app.html`, `tests/test_myday_timeline_live.py`).** User report: "When there are programs on the current day, they take up a huge amount of real estate and push the drives so far out of view ... It is my day, not my programs and my drives." My Day drew a full practice-now block and then a "My Programs" section of whole program cards (steps, lesson, sessions ahead, milestone, three buttons each), and only then the drives. So a noon session sat above a 7 AM drive, and each program cost roughly a screen.
 
