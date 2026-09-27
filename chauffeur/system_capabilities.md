@@ -1,6 +1,20 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.198 (2026-09-26).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.199 (2026-09-26).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**My Day is one timeline; programs are rows that open (v2.499.199; `templates/app.html`, `tests/test_myday_timeline_live.py`).** User report: "When there are programs on the current day, they take up a huge amount of real estate and push the drives so far out of view ... It is my day, not my programs and my drives." My Day drew a full practice-now block and then a "My Programs" section of whole program cards (steps, lesson, sessions ahead, milestone, three buttons each), and only then the drives. So a noon session sat above a 7 AM drive, and each program cost roughly a screen.
+
+What changed:
+- **One timeline.** Each of today's practice windows (`practiceWindowsOn(date)`, for the programs `fetchMyPrograms` already shows) becomes one row among the drives, sorted with them by start time.
+- **Closed row:** teal start time, title, the session label or whose program it is, and at most one state chip: "Done" when logged, "Now" in the practice window (30 min before start through end, with a teal border), or "Did it happen?" when a slot is waiting on that question. A window that ended unlogged is at 50% opacity (the past-state rule).
+- **Tap to open:** the row expands to the existing `renderProgramCard` (steps, lesson, coming up, milestone and Reached it, Did it happen, Add a session), led by "Open the session" while the window is on. Nothing a person could do before was removed.
+- **Programs with no session today** are one row each after the day, under a "My Programs" label, showing when the next practice is.
+- **Open rows stay open** across the re-render that follows logging a session (`mydayOpen`).
+- **Shared rule.** `practiceWindowIsNow` is now the one "is this window on" rule, used by `practiceNow` and the row. `buildPracticeParts` also returns `list` and `commitmentsById`; the drives view still stacks its blocks unchanged.
+- **Empty state:** "No rides today" still shows when a day has sessions but no drives.
+- Precedents: the toggle-over-`hidden` pattern is the proposal card's `▾ hide`; the row shell, time label and pills copy `renderMyDayCard`. No new contrast failures: `tools/audit_contrast.js` lists the same 73 lines before and after, all pre-existing.
+
+Pinned by `scenario_a_session_sits_in_the_day_as_a_row_that_opens`, a live browser test. It checks that a noon session lands between a 7 AM and a 6 PM drive exactly once, starts closed and under 90 px, and opens to the card and closes again on taps. It also checks that a program with no session today comes after the day, and that nothing about programs heads the day. RED-proven against the old layout: the programs header came before the first drive. Not device-verified.
 
 **Garage windows show closed blinds (v2.499.198).** The two narrow ground-floor garage windows left of the double bay on the photographic exterior now show fully lowered, closed horizontal blinds. By day they are neutral off-white; at night they have a dim, even warm glow. No room interior shows through. This replaces v2.499.197's repaint of the same windows as dimly lit utility storage. The change is artwork only: `static/house_hybrid/exterior-model-full-block-empty.png` and `exterior-model-full-block-empty-night.png` were re-edited. They are the base image for every parking combination, and the vehicle overlays are masked to the garage opening and driveway, so the windows always come from the base. Prompts are in `static/house_hybrid/garage-blinds-assets.md`. No code or tests changed, and no automated test inspects the window content.
 
