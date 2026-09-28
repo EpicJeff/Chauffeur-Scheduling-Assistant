@@ -54,7 +54,8 @@ body[data-house-scene=kitchen] .house-steam-toggle{display:flex}
 #hybrid-kitchen[data-light=night] .kitchen-outdoors:not([data-light=night]),#hybrid-kitchen[data-light=day] .kitchen-outdoors[data-light=night]{visibility:hidden}
 #hybrid-kitchen[data-weather=clear] .kitchen-outdoors{display:none}
 #hybrid-kitchen[data-weather=unavailable] .kitchen-outdoors{display:none}
-#hybrid-kitchen[data-view=weather] #kitchen-controls{--panel-fg:#f1f2e9;--panel-dim:#c2cabc;font-size:13px}
+/* The panel skin uses this token even for embedded cards; reveal the dark artwork. */
+#hybrid-kitchen[data-view=weather] #kitchen-controls{--panel-modal:transparent;--panel-fg:#f1f2e9;--panel-dim:#c2cabc;font-size:13px}
 #hybrid-kitchen[data-view=weather] #kitchen-controls :is(.house-life-panel,.house-life-panel h2,[class*="text-gray-"],[class*="text-white"],[class*="text-slate-"]){color:#f1f2e9}
 #hybrid-kitchen[data-view=weather] #kitchen-controls .house-life-panel h2{font:600 19px/1.2 system-ui}
 #hybrid-kitchen[data-view=weather] #kitchen-controls .house-life-panel>header{padding-bottom:5px;border-color:#fff3;gap:2px}
