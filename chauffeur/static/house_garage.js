@@ -97,8 +97,8 @@
     var rightHome = rightCar?.present === true;
     room.dataset.occupied = String(home); room.dataset.rightOccupied = String(rightHome);
     carButton.hidden = !home; rightButton.hidden = !rightHome;
-    carButton.setAttribute('aria-label', car ? 'View '+car.name+' instrument cluster' : 'Preview instrument cluster');
-    rightButton.setAttribute('aria-label', rightCar ? 'View '+rightCar.name+' instrument cluster' : 'Vehicle instruments');
+    carButton.setAttribute('aria-label', car ? 'View '+car.name+' vehicle information' : 'View vehicle information');
+    rightButton.setAttribute('aria-label', rightCar ? 'View '+rightCar.name+' vehicle information' : 'View vehicle information');
     var label = mode !== 'live' ? 'Preview only' : (car ? car.name : 'Left bay');
     state.textContent = label + ' · ' + (home ? 'Parked' : 'Empty');
     if (mode === 'live' && Number.isFinite(car?.battery_pct)) state.textContent += ' · ' + Math.round(car.battery_pct) + '% battery';

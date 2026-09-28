@@ -44,6 +44,11 @@ def main():
                 page.evaluate('chfHybridHome()'); mode('exterior')
             def open_cluster(key):
                 selector = '[data-vehicle=driveway-car]' if key == 'murano' else '.exterior-garage-car[data-vehicle='+key+']'
+                button = page.locator(selector)
+                assert button.locator('span').inner_text() == 'Vehicle information'
+                assert button.get_attribute('aria-label').startswith('View vehicle information for '+NAMES[key])
+                button.hover()
+                page.wait_for_function('(selector)=>getComputedStyle(document.querySelector(selector+" span")).opacity==="1"', arg=selector)
                 page.locator(selector).click()
                 page.wait_for_selector('#garage-dashboard:visible')
                 assert page.locator('#garage-dashboard').get_attribute('data-vehicle') == key
@@ -106,6 +111,8 @@ def main():
             # Both in-garage cars open their own cluster and return to the bay.
             page.evaluate('async()=>{await chfHybridGo("garage")}'); mode('garage')
             for selector, key in (('#garage-car','ev'), ('#garage-car-right','gls')):
+                assert page.locator(selector+' span').inner_text() == 'Vehicle information'
+                assert page.locator(selector).get_attribute('aria-label') == 'View '+NAMES[key]+' vehicle information'
                 page.locator(selector).click(); page.wait_for_selector('#garage-dashboard:visible')
                 assert page.locator('#garage-dashboard').get_attribute('data-vehicle') == key
                 page.locator('#garage-dashboard-back').click(); mode('garage')

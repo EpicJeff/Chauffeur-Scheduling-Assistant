@@ -84,9 +84,9 @@
     var button=document.createElement('button');button.type='button';button.className='exterior-patch-target exterior-garage-car';button.dataset.vehicle=item.id;button.dataset.bay=bay.key;button.dataset.warn=String(!!item.warn);
     var energy=Number.isFinite(item.battery_pct)?' · '+Math.round(item.battery_pct)+'% charge':Number.isFinite(item.fuel_pct)?' · '+Math.round(item.fuel_pct)+'% fuel':'';
     var label=(item.name||'Vehicle')+' · Home'+energy+(item.warn?' · Needs attention':'');
-    button.setAttribute('aria-label',label);button.title=label;
+    button.setAttribute('aria-label','View vehicle information for '+label);button.title=label;
     Object.assign(button.style,{left:bay.box[0]+'%',top:bay.box[1]+'%',width:bay.box[2]+'%',height:bay.box[3]+'%'});
-    var tag=document.createElement('span');tag.className='exterior-vehicle-label';tag.textContent=label;button.appendChild(tag);
+    var tag=document.createElement('span');tag.className='exterior-vehicle-label';tag.textContent='Vehicle information';button.appendChild(tag);
     button.addEventListener('click',function(){window.chfVehicleCluster(item.id);});scene.appendChild(button);
   }
   function garage(items) {
@@ -105,7 +105,8 @@
     scene.appendChild(img);
     var button = document.createElement('button'); button.type = 'button';
     button.className = 'exterior-patch-target'; button.dataset.vehicle = id;
-    button.setAttribute('aria-label',label); button.title = label;
+    button.setAttribute('aria-label','View vehicle information for '+label); button.title = label;
+    var tag=document.createElement('span');tag.className='exterior-vehicle-label';tag.textContent='Vehicle information';button.appendChild(tag);
     button.style.left = box[0]+'%'; button.style.top = box[1]+'%';
     button.style.width = box[2]+'%'; button.style.height = box[3]+'%';
     button.addEventListener('click',function () { if (vehicleId) window.chfVehicleCluster(vehicleId); else open(key); });
