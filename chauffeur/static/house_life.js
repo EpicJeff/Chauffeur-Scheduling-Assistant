@@ -14,7 +14,7 @@ window.houseLife = function () {
     accept: function (data) { this.state = data || {}; },
     title: function () {
       if(document.body.dataset.houseScene==='kitchen') {
-        if(this.active==='weather')return 'Forecast';
+        if(this.active==='weather')return 'Weather';
         if(this.active==='lists')return 'Groceries';
       }
       return labels[this.active] || '';

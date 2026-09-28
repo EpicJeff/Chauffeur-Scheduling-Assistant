@@ -6,14 +6,27 @@
   var photo = document.getElementById('exterior-photo');
   var lighting = window.ChauffeurSceneLight, lightTicket = 0;
   var exterior = document.getElementById('house-exterior');
+  var clearSources = {day:photo.dataset.src, night:photo.dataset.srcNight};
+  function weatherSource(element, dark, kind) {
+    var key = 'weather'+kind.charAt(0).toUpperCase()+kind.slice(1)+(dark?'Night':'Day');
+    return element.dataset[key];
+  }
+  function setSources(image, kind) {
+    var owner = image === photo ? photo : scene;
+    var key = image.dataset.artwork;
+    var weatherLayer = image === photo || key === 'driveway' || key === 'garageRight';
+    image.dataset.src = (weatherLayer && weatherSource(owner, false, kind)) || (image === photo ? clearSources.day : scene.dataset[key]);
+    image.dataset.srcNight = (weatherLayer && weatherSource(owner, true, kind)) || (image === photo ? clearSources.night : scene.dataset[key+'Night']);
+  }
   function artwork(image, key) {
-    image.dataset.src = scene.dataset[key];
-    image.dataset.srcNight = scene.dataset[key+'Night'];
+    image.dataset.artwork = key;
+    setSources(image, exterior.dataset.weather || 'unknown');
     image.src = lighting.source(image, 'src', exterior.dataset.light ? exterior.dataset.light === 'night' : lighting.night());
   }
   async function paintLight() {
-    var ticket = ++lightTicket, dark = lighting.night();
+    var ticket = ++lightTicket, dark = lighting.night(), kind = exterior.dataset.weatherRequested || 'unknown';
     var images = [photo].concat(Array.from(scene.querySelectorAll('img[data-src]')));
+    images.forEach(image => setSources(image, kind));
     var sources = images.map(image => lighting.source(image, 'src', dark));
     try {
       await Promise.all(sources.map(lighting.load));
@@ -21,6 +34,7 @@
       if (dark !== lighting.night()) return paintLight();
       images.forEach(function (image, i) { if (image.getAttribute('src') !== sources[i]) image.src = sources[i]; });
       exterior.dataset.light = dark ? 'night' : 'day';
+      exterior.dataset.weather = kind;
     } catch (_) {
       if (ticket !== lightTicket) return;
       exterior.setAttribute('aria-busy', 'false');
@@ -148,6 +162,7 @@
     project(); paintLight();
   }
   window.addEventListener('chf-house-light', paintLight);
+  window.addEventListener('chf-house-weather', paintLight);
   window.addEventListener('chf-house-state', function (event) { accept(event.detail); });
   window.addEventListener('chf-exterior-ready', project);
   window.addEventListener('resize', project);

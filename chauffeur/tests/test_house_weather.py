@@ -64,7 +64,7 @@ assert(!low.update(7,true,false));assert.equal(low.stats().particles,0);low.disp
         def state(entity):
             if entity=='sun.sun':return {'state':'below_horizon','attributes':{}}
             self.assertEqual(entity,'weather.selected')
-            return {'state':'snowy','attributes':{'temperature':28}}
+            return {'state':'snowy','attributes':{'temperature':28,'temperature_unit':'°F'}}
         with patch('services.storage.get_settings',return_value={'weather_entity':'weather.selected','panel_theme_sunset_offset_minutes':120}), \
              patch('services.ha_api.get_state',side_effect=state), \
              patch('services.ha_api.get_weather_forecast',side_effect=AssertionError('forecast must not be used')):
@@ -72,6 +72,7 @@ assert(!low.update(7,true,false));assert.equal(low.stats().particles,0);low.disp
         self.assertTrue(result['night'])
         self.assertEqual(result['cond'],'snowy')
         self.assertEqual(result['temp'],28)
+        self.assertEqual(result['temp_unit'],'°F')
         self.assertFalse(result['calm'])
 
     def test_missing_weather_does_not_erase_daylight(self):

@@ -75,9 +75,10 @@ body[data-house-preview="false"] [data-house-preview-only]{display:none!importan
 body[data-house-render=hybrid] #house-glance{position:fixed;z-index:46}
 @media(max-width:700px){body[data-house-render=hybrid] .exterior-heading{display:none}}
 
-@media(max-width:700px){body[data-house-render=hybrid] #house-glance .glance-next{top:72px}}
+@media(max-width:700px){body[data-house-render=hybrid] #house-glance .glance-next{top:120px;transform:scale(.7);transform-origin:top right}}
 @media(max-height:600px){
   body[data-house-render=hybrid] .exterior-heading{display:none}
   body[data-house-render=hybrid] #house-glance .glance-clock{top:0;bottom:auto;left:16px}
   body[data-house-render=hybrid] #house-glance .glance-next{top:0;right:16px;left:auto;width:min(52vw,460px);transform:scale(.7);transform-origin:top right}
+  body[data-house-render=hybrid] #house-glance .house-current-weather{max-width:42vw}
 }

@@ -64,7 +64,11 @@ body[data-house-scene=kitchen] .house-steam-toggle{display:flex}
 #hybrid-kitchen[data-view=weather] .house-weather-days>div{display:grid;grid-template-columns:1fr 30px 1.3fr;align-items:center;gap:3px;padding:10px 0;border-bottom:1px solid #ffffff25;text-align:left}
 #hybrid-kitchen[data-view=weather] .house-weather-days>div>div:last-child:not(.tabular-nums){grid-column:3;color:#add2e7;text-align:right}
 #hybrid-kitchen[data-view=weather] .house-weather-days .text-2xl{font-size:22px}
-@media(max-width:700px){#hybrid-kitchen[data-view=weather] .house-weather-days>div{padding:5px 0}}
+@media(max-width:700px){
+  #hybrid-kitchen[data-view=weather] .house-weather-days>div{padding:5px 0;grid-template-columns:1fr 26px 1.2fr 32px}
+  #hybrid-kitchen[data-view=weather] .house-weather-days>div>div:last-child:not(.tabular-nums){grid-column:4}
+  #hybrid-kitchen[data-view=weather] .house-current-weather{font-size:16px;margin-bottom:6px;padding-bottom:6px}
+}
 #kitchen-controls .photo-scrim [class*="text-white"]{color:white}
 #hybrid-kitchen[data-view=calendar] .house-life-body{display:flex;flex-direction:column;overflow:visible}
 #hybrid-kitchen[data-view=calendar] #kitchen-controls .house-life-panel>header{display:none}

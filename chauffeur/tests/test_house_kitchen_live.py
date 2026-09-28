@@ -46,11 +46,13 @@ def main():
             def mode(value):page.wait_for_function('(m)=>window.chfExteriorProbe?.().mode===m',arg=value)
             def view(value):page.wait_for_function('(v)=>window.chfKitchenProbe?.().view===v',arg=value)
             def full_screen():
-                assert page.locator('#kitchen-detail img.is-active').evaluate('''el=>{
+                page.wait_for_function('''()=>{
+                    const el=document.querySelector('#kitchen-detail img.is-active');
+                    if(!el)return false;
                     const r=el.getBoundingClientRect();
                     return r.left<=1 && r.top<=1 && r.right>=innerWidth-1 && r.bottom>=innerHeight-1
                       && Math.abs(r.width/r.height-1.5)<.001;
-                }'''), 'The actual close-up photograph must cover every viewport edge without stretching'
+                }''')  # Resize projection completes on the next animation frame.
                 assert page.locator('#kitchen-detail').evaluate('el=>getComputedStyle(el).backgroundImage==="none" && getComputedStyle(el,"::before").content==="none"')
             def open_card(key):
                 host='#kitchen-shortcuts' if page.viewport_size['width']<701 else '#kitchen-hotspots'

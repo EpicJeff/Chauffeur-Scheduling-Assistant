@@ -1,7 +1,11 @@
 <section id="house-exterior" aria-label="Your house exterior" aria-busy="true">
   <div id="exterior-pictures">
     <img id="exterior-photo" data-src="{{ 'static/house_hybrid/exterior-model-full-block-empty.png'|ver }}"
-         data-src-night="{{ 'static/house_hybrid/exterior-model-full-block-empty-night.png'|ver }}" alt="" decoding="async">
+         data-src-night="{{ 'static/house_hybrid/exterior-model-full-block-empty-night.png'|ver }}"
+         {% for weather in ['cloudy','rain','snow','fog'] %}
+         data-weather-{{ weather }}-day="{{ ('static/house_hybrid/exterior-weather-' ~ weather ~ '-day.png')|ver }}"
+         data-weather-{{ weather }}-night="{{ ('static/house_hybrid/exterior-weather-' ~ weather ~ '-night.png')|ver }}"
+         {% endfor %} alt="" decoding="async">
     <div id="exterior-traffic" aria-label="Garage, driveway and curb"
          data-driveway="{{ 'static/house_hybrid/exterior-vehicles-corrected-day.png'|ver }}"
          data-driveway-night="{{ 'static/house_hybrid/exterior-vehicles-corrected-night.png'|ver }}"
@@ -10,7 +14,11 @@
          data-garage-left="{{ 'static/house_hybrid/exterior-personal-left.png'|ver }}"
          data-garage-left-night="{{ 'static/house_hybrid/exterior-personal-left-night.png'|ver }}"
          data-garage-right="{{ 'static/house_hybrid/exterior-vehicles-corrected-day.png'|ver }}"
-         data-garage-right-night="{{ 'static/house_hybrid/exterior-vehicles-corrected-night.png'|ver }}"></div>
+         data-garage-right-night="{{ 'static/house_hybrid/exterior-vehicles-corrected-night.png'|ver }}"
+         {% for weather in ['cloudy','rain','snow','fog'] %}
+         data-weather-{{ weather }}-day="{{ ('static/house_hybrid/exterior-weather-vehicles-' ~ weather ~ '-day.png')|ver }}"
+         data-weather-{{ weather }}-night="{{ ('static/house_hybrid/exterior-weather-vehicles-' ~ weather ~ '-night.png')|ver }}"
+         {% endfor %}></div>
   </div>
   <header class="exterior-heading"><span>THE HOUSE</span><h1>My house</h1></header>
   <div id="exterior-room-shortcuts" data-house-preview-only><button id="exterior-enter" type="button">Living room shortcuts</button><button id="exterior-kitchen-enter" type="button">Kitchen shortcuts</button><button id="exterior-mudroom-enter" type="button">Mudroom shortcuts</button><button id="exterior-study-enter" type="button">Study · Parent PIN</button></div>

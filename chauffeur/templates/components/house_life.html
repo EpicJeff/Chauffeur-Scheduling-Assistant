@@ -13,6 +13,7 @@
     <header><div><h2 id="house-life-title" x-text="title()"></h2><p x-text="explanation()"></p></div>
       <button type="button" @click="close()" aria-label="{{ 'Return to living room' if house_hybrid|default(false) else 'Close and return to house' }}"{% if house_hybrid|default(false) %} :aria-label="quickView ? 'Close and return to house' : 'Return to ' + ({kitchen:'kitchen',mudroom:'mudroom'}[document.body.dataset.houseScene] || 'living room')"{% endif %}>{{ '↩' if house_hybrid|default(false) else '✕' }}</button></header>
     <div class="house-life-body">
+      <div x-show="active === 'weather'" class="house-current-weather" aria-label="Current weather">{% include 'components/house_current_weather.html' %}</div>
       <div x-show="active === 'bus'">
         <div id="house-bus-map" aria-label="School buses and stops" style="height:min(55vh,560px);min-height:240px;isolation:isolate"></div>
         <template x-for="row in busRows" :key="row.member_id"><p class="house-life-message"><strong x-text="row.name"></strong><span x-text="row.state ? ' - '+row.state.replaceAll('_',' ') : ''"></span></p></template>

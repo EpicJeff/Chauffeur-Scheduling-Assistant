@@ -170,7 +170,7 @@ def _radio() -> dict:
 def _window() -> dict:
     """Current outdoor conditions and the theme's HA sun clock, without UI offsets."""
     from services import ha_api, home_board
-    result = _calm(cond='', temp=None, precip=0, night=True, next_sun_change=None)
+    result = _calm(cond='', temp=None, temp_unit='', precip=0, night=True, next_sun_change=None)
     try:
         sun = home_board.sun_theme({})  # physical sunrise/sunset, not theme preferences
         result['night'] = sun['theme'] == 'dark'
@@ -190,7 +190,8 @@ def _window() -> dict:
         attrs = current.get('attributes') or {}
         wet = cond in ('rainy', 'pouring', 'lightning', 'lightning-rainy',
                        'hail', 'snowy', 'snowy-rainy')
-        result = {**result, 'calm':not wet, 'cond':cond, 'temp':attrs.get('temperature')}
+        result = {**result, 'calm':not wet, 'cond':cond, 'temp':attrs.get('temperature'),
+                  'temp_unit':attrs.get('temperature_unit') or ''}
     except Exception:
         logger.debug('House current weather unavailable', exc_info=True)
     return result

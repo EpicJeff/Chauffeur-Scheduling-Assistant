@@ -18,5 +18,11 @@
 .house-life-lanes > .grid > div{min-width:0}
 .house-life-lanes [x-text="s.name"],.house-life-lanes [x-text="b.name"]{white-space:normal;overflow-wrap:anywhere}
 .house-life-lanes [x-text="it.title"]{min-width:0;overflow-wrap:anywhere}
-@media(max-width:700px){#house-glance .glance-clock{top:12px;bottom:auto}#house-glance .glance-next{left:16px;right:16px;top:84px;width:auto}}
+@media(max-width:700px){#house-glance .glance-clock{top:12px;bottom:auto}#house-glance .glance-next{left:16px;right:16px;top:120px;width:auto}}
 @media(max-width:700px){.house-life-panel{max-height:88vh}.house-life-body{padding:14px}}
+.house-current-weather{display:flex;align-items:center;gap:8px;font:500 18px/1.3 Inter,system-ui,sans-serif}
+.house-current-weather .weather-temperature{font-weight:750;white-space:nowrap}
+.house-current-weather .weather-condition{font-size:.85em}
+#house-glance .house-current-weather{margin-top:10px;font-size:clamp(16px,2.6vmin,24px);max-width:85vw}
+#house-life .house-current-weather{margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #ffffff25}
+@media(max-width:700px){#house-glance .ss-time{font-size:clamp(32px,9vmin,48px)}#house-glance .ss-date{font-size:clamp(12px,3vmin,18px)}#house-glance .house-current-weather{font-size:16px;margin-top:6px}}
