@@ -60,6 +60,17 @@ def main():
             page.goto(served.url('house?light=night'))
             page.wait_for_function('window.chfExteriorProbe?.().ready')
             exterior('night')
+            # These glass/roof landmarks were cut away by the old diagonal mask edge.
+            alpha = page.locator('.exterior-scene-patch').evaluate(r'''async el => {
+                const img=new Image();
+                img.src=getComputedStyle(el).maskImage.match(/url\("?([^"\)]+)"?\)/)[1];
+                await img.decode();
+                const canvas=document.createElement('canvas');
+                canvas.width=1536; canvas.height=1024;
+                const ctx=canvas.getContext('2d'); ctx.drawImage(img,0,0);
+                return [[900,745],[910,749],[920,756]].map(([x,y])=>ctx.getImageData(x,y,1,1).data[3]);
+            }''')
+            assert min(alpha) >= 250, f'Murano windshield must remain opaque: {alpha}'
             resources = page.evaluate('performance.getEntriesByType("resource").map(r=>r.name)')
             assert not any('/exterior-model-full-block-empty.png' in url for url in resources), 'No daytime startup flash'
             page.screenshot(path=str(OUT/'exterior-night.png'))
@@ -82,6 +93,16 @@ def main():
                     payload['garage']['cars'][1]['present'] = right
                     refresh(); exterior(value)
                     assert page.locator('.exterior-garage-car').count() == int(left)+int(right)
+                    parking = 'both' if left and right else 'left' if left else 'right' if right else 'empty'
+                    corrected = 'exterior-vehicles-corrected-'+value+'.png'
+                    assert corrected in page.locator('.exterior-scene-patch').get_attribute('src')
+                    if parking == 'right':
+                        assert corrected in page.locator('.exterior-garage-layer img').get_attribute('src')
+                    page.screenshot(path=str(OUT/('exterior-'+parking+'-'+value+'.png')))
+                    plane = page.locator('#exterior-traffic').bounding_box()
+                    page.screenshot(path=str(OUT/('vehicles-'+parking+'-'+value+'.png')), clip={
+                        'x':plane['x']+plane['width']*.44, 'y':plane['y']+plane['height']*.59,
+                        'width':plane['width']*.30, 'height':plane['height']*.30})
                     page.evaluate('chfHybridGo("garage")'); bay(value)
                     parking = 'both' if left and right else 'left' if left else 'right' if right else 'empty'
                     page.screenshot(path=str(OUT/('garage-'+parking+'-'+value+'.png')))

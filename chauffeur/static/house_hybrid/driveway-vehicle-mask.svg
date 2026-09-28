@@ -4,6 +4,7 @@
     <filter id="shadow" x="-40%" y="-100%" width="180%" height="300%"><feGaussianBlur stdDeviation="10"/></filter>
   </defs>
   <!-- The body stays opaque; only the contact shadow feathers onto the pavement. -->
-  <ellipse cx="839" cy="855" rx="123" ry="24" transform="rotate(-10 839 855)" fill="white" filter="url(#shadow)"/>
-  <path d="M715 825 L715 806 Q718 793 728 782 L742 763 Q750 749 796 736 Q821 728 855 735 L882 743 Q901 752 917 762 L929 763 L933 771 Q951 774 960 787 Q969 799 966 817 L959 832 Q953 844 941 842 L880 861 Q876 878 859 880 Q844 880 838 865 L767 858 Q759 868 746 866 L733 861 Q717 858 715 850 Z" fill="white" stroke="white" stroke-width="3" stroke-linejoin="round" filter="url(#body)"/>
+  <ellipse cx="836" cy="860" rx="124" ry="25" transform="rotate(-10 836 860)" fill="white" filter="url(#shadow)"/>
+  <!-- Follow the outer roof and windshield, not the diagonal side-window beltline. -->
+  <path d="M706 838 L708 815 L711 793 L718 779 L732 754 L741 743 Q769 730 799 724 L824 726 Q850 727 867 736 L889 738 Q905 738 916 745 Q926 752 934 762 L941 760 Q949 761 949 771 L958 774 Q969 785 969 808 L967 829 Q964 850 950 850 L936 846 L894 854 Q891 885 872 887 Q851 891 846 871 L765 864 Q754 876 738 873 Q726 871 719 859 L708 855 Z" fill="white" stroke="white" stroke-width="3" stroke-linejoin="round" filter="url(#body)"/>
 </svg>
