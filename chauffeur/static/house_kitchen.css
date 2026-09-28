@@ -46,7 +46,7 @@ body[data-house-scene=kitchen] .house-steam-toggle{display:flex}
 #hybrid-kitchen[data-light=night] .kitchen-photograph{filter:brightness(.77) sepia(.12)}
 .kitchen-outdoors{position:absolute;pointer-events:none;background-repeat:no-repeat}
 .kitchen-outdoors[data-outdoors=detail]{inset:0;background-size:100% 100%;mask:url("house_hybrid/kitchen-window-mask.svg") 0 0/100% 100%;-webkit-mask:url("house_hybrid/kitchen-window-mask.svg") 0 0/100% 100%}
-.kitchen-outdoors[data-outdoors=room]{left:87.83%;top:5.66%;width:12.17%;height:34.67%;background-size:310% 118%;background-position:right top;mask:url("house_hybrid/kitchen-overview-window-mask.svg") 0 0/100% 100%;-webkit-mask:url("house_hybrid/kitchen-overview-window-mask.svg") 0 0/100% 100%}
+.kitchen-outdoors[data-outdoors=room]{inset:0;background-size:100% 100%}
 /* Night weather is lit in the artwork: filtering a daytime photograph also
    darkened the clock and leaves crossing the panes. Keep the complete night
    composition together so no pane edge cuts across a foreground object. */

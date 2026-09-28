@@ -66,14 +66,19 @@
     if(kind==='clear'){
       room.dataset.weather='clear';outdoors.forEach(el=>el.style.backgroundImage='none');return;
     }
-    var asset=room.querySelector('[data-weather-asset="'+(kind==='unknown'?'cloudy':kind)+'"][data-weather-light="'+light+'"]');
     try{
-      if(!asset.src)asset.src=asset.dataset.src;
-      await asset.decode();
+      // Each camera needs its own artwork; cropping the close-up into the room
+      // duplicates the window frame, foliage and faucet at a different scale.
+      var assets=await Promise.all(outdoors.map(async function(el){
+        var asset=room.querySelector('[data-weather-view="'+el.dataset.outdoors+'"][data-weather-asset="'+(kind==='unknown'?'cloudy':kind)+'"][data-weather-light="'+light+'"]');
+        if(!asset.src)asset.src=asset.dataset.src;
+        await asset.decode();
+        return asset;
+      }));
       if(ticket!==weatherRevision)return;
       room.dataset.weather=kind;
-      outdoors.forEach(function(el){el.style.backgroundImage='url("'+asset.src+'")';el.dataset.light=light;});
-    }catch(_){room.dataset.weather='unavailable';outdoors.forEach(el=>el.style.backgroundImage='none');}
+      outdoors.forEach(function(el,i){el.style.backgroundImage='url("'+assets[i].src+'")';el.dataset.light=light;});
+    }catch(_){if(ticket!==weatherRevision)return;room.dataset.weather='unavailable';outdoors.forEach(el=>el.style.backgroundImage='none');}
   }
   function accept(data){condition=String(data?.window?.cond||'').toLowerCase();weather=weatherKind(condition);if(!room.hidden)refresh();}
   window.chfKitchenSurfaces={refresh:refresh,view:function(key){

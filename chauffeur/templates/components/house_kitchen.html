@@ -1,7 +1,8 @@
 <section id="hybrid-kitchen" aria-label="Kitchen" data-view="room" hidden inert>
   {% for weather in ['cloudy','rain','snow','fog'] %}
   {% for light in ['day','night'] %}
-  <img data-weather-asset="{{ weather }}" data-weather-light="{{ light }}" data-src="{{ ('static/house_hybrid/kitchen-outside-' ~ weather ~ ('-night' if light == 'night' else '') ~ '.png')|ver }}" alt="" hidden>
+  <img data-weather-view="detail" data-weather-asset="{{ weather }}" data-weather-light="{{ light }}" data-src="{{ ('static/house_hybrid/kitchen-outside-' ~ weather ~ ('-night' if light == 'night' else '') ~ '.png')|ver }}" alt="" hidden>
+  <img data-weather-view="room" data-weather-asset="{{ weather }}" data-weather-light="{{ light }}" data-src="{{ ('static/house_hybrid/kitchen-overview-' ~ weather ~ '-' ~ light ~ '.png')|ver }}" alt="" hidden>
   {% endfor %}
   {% endfor %}
   <div id="kitchen-overview">

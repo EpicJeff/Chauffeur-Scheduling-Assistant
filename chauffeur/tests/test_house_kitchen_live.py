@@ -154,6 +154,44 @@ def main():
                 page.locator('#kitchen-back').click();view('room')
                 page.wait_for_function('!history.state?.chfKitchenView')
                 page.locator('#house-compare-light').select_option('day')
+            # Wide-view weather must use its own full scene. The old close-up
+            # crop drew a second window frame and sliced through the faucet.
+            page.set_viewport_size({'width':2470,'height':1236})
+            for cond,kind in [('cloudy','cloudy'),('rainy','rain'),('snowy','snow'),('fog','fog')]:
+                payload['window']['cond']=cond
+                page.evaluate('(data)=>window.dispatchEvent(new CustomEvent("chf-house-state",{detail:data}))',payload)
+                for light in ('day','night'):
+                    page.locator('#house-compare-light').select_option(light)
+                    page.wait_for_function('''({kind,light})=>{
+                        const el=document.querySelector('[data-outdoors=room]');
+                        return document.getElementById('hybrid-kitchen').dataset.weather===kind
+                          && el.dataset.light===light && getComputedStyle(el).visibility==='visible'
+                          && el.style.backgroundImage.includes('kitchen-overview-'+kind+'-'+light+'.png');
+                    }''',arg={'kind':kind,'light':light})
+                    layer=page.locator('[data-outdoors=room]')
+                    assert layer.evaluate('''el=>{
+                        const css=getComputedStyle(el), r=el.getBoundingClientRect(), p=el.parentElement.getBoundingClientRect();
+                        return css.maskImage==='none' && css.backgroundSize==='100% 100%'
+                          && Math.abs(r.x-p.x)<1 && Math.abs(r.y-p.y)<1
+                          && Math.abs(r.width-p.width)<1 && Math.abs(r.height-p.height)<1;
+                    }''')
+                    shot=Image.open(io.BytesIO(page.screenshot(path=str(out/f'overview-{kind}-{light}.png')))).convert('RGB')
+                    source=Image.open(Path(__file__).resolve().parents[1]/'static/house_hybrid'/f'kitchen-overview-{kind}-{light}.png').convert('RGB')
+                    assert source.size==(1536,1024)
+                    plane=layer.bounding_box();scale=plane['width']/1536
+                    # Window mullions, faucet arch and sill retain the full
+                    # scene's pixels, with no second camera composited on top.
+                    for box in ((1365,225,1420,285),(1420,335,1490,360),(1400,398,1500,420)):
+                        screen_box=tuple(round((plane['x'] if i%2==0 else plane['y'])+v*scale) for i,v in enumerate(box))
+                        rendered=ImageStat.Stat(shot.crop(screen_box)).mean
+                        expected=ImageStat.Stat(source.crop(box)).mean
+                        assert max(abs(a-b) for a,b in zip(rendered,expected))<12,(kind,light,box,rendered,expected)
+            payload['window']['cond']='sunny'
+            page.evaluate('(data)=>window.dispatchEvent(new CustomEvent("chf-house-state",{detail:data}))',payload)
+            page.wait_for_function('document.getElementById("hybrid-kitchen").dataset.weather==="clear"')
+            assert page.locator('[data-outdoors=room]').evaluate('el=>getComputedStyle(el).display==="none" && el.style.backgroundImage==="none"')
+            page.set_viewport_size({'width':1400,'height':900})
+            page.locator('#house-compare-light').select_option('day')
             open_card('weather')
             for cond,kind in [('rainy','rain'),('snowy','snow'),('fog','fog'),('cloudy','cloudy'),('unavailable','unknown'),('sunny','clear')]:
                 payload['window']['cond']=cond
