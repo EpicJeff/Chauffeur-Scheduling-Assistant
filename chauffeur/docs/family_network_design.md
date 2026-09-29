@@ -271,6 +271,14 @@ This replaces a rule that exists today as hardcoded checks in three places (`mai
 
 #### C. Contribution — `moments.contribute`
 
+> **Revised v2.499.206 (2026-09-28):** `when_present` is retired and every preset is `all`.
+> The household's ruling: gating on the schedule's idea of who attended is punitive — a
+> last-minute driver swap or a grandparent nobody marked as coming could not share their
+> photos, and the only people it ever stopped were the ones who could not be there. Anyone
+> may hand any event thread a moment, on any day after, archived thread or not; only an
+> explicit per-person `none` override refuses it. Reading the thread is unchanged
+> (`chat.event_threads`). The text below is the original S2 reasoning.
+
 ```
 moments.contribute:  none | when_present | all
 ```
@@ -556,7 +564,7 @@ Twenty-four facets cannot be twenty-four dropdowns on a member card. Role suppli
 | `chat.event_threads` | all | all | all | invited | invited |
 | `chat.agent` | all | all | all | — | — |
 | **`chat.initiate`** | anyone | household | household | **parents** | **none** |
-| **`moments.contribute`** | all | — | all | **when present** | — |
+| **`moments.contribute`** | all | all | all | **all** | all |
 | `meals.plan` | all | all | all | — | — |
 | `meals.repertoire` | all | all | all | — | — |
 | `meals.prep` | all | all | all | — | — |

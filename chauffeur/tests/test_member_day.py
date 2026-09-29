@@ -143,10 +143,42 @@ def scenario_unknown_member_404():
         check(e.status_code == 404, "404 for unknown member")
 
 
+def scenario_past_day_the_rolling_cache_forgot():
+    """The rolling cache starts today; yesterday's game — where its moments
+    get added — comes from the per-day schedule path instead."""
+    import datetime
+    import main
+    ben = _seed()
+    y = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    asked = []
+
+    def fake_schedule(bg, start_date=None, end_date=None, **kw):
+        asked.append((start_date, end_date))
+        return {"events": [{"id": "game", "title": "Game", "event_type": "standard",
+                            "start": f"{y}T10:00:00", "end": f"{y}T11:00:00",
+                            "location": None, "calendar_ids": ["ben@cal"]}],
+                "assignments": {"game": "jeff"}}
+    orig = main.get_schedule
+    main.get_schedule = fake_schedule
+    try:
+        day = main.member_day(ben["id"], date=y)
+        check(asked == [(y, y)], f"asked the per-day path for exactly {y}: {asked}")
+        check([r["id"] for r in day["rides"]] == ["game"],
+              f"yesterday's event is on yesterday's page: {day['rides']}")
+        check(day["rides"][0]["driver"]["name"] == "Jeff",
+              "and its driver comes from that day's assignments")
+        asked.clear()
+        main.member_day(ben["id"], date="2026-07-31")
+        check(asked == [], "a past day the rolling cache still holds is not re-fetched")
+    finally:
+        main.get_schedule = orig
+
+
 SCENARIOS = [
     scenario_day_assembly,
     scenario_member_without_passenger_link,
     scenario_unknown_member_404,
+    scenario_past_day_the_rolling_cache_forgot,
 ]
 
 if __name__ == "__main__":

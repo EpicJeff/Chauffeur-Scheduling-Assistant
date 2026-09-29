@@ -160,20 +160,6 @@ def members_at_event(ev, ev_id, sched=None):
     return present
 
 
-def member_present_at_channel_event(channel, member_id, sched=None) -> bool:
-    """Does the schedule place this member at the event behind this event
-    channel? (family-network S2: moments.contribute = when_present.) False
-    when the event has left the cache — contribution fails closed, and an old
-    thread is no longer an event anyone is at anyway."""
-    sched = sched or storage.get_cached_schedule() or {}
-    ev_id = str(channel.get('event_id') or '')
-    ev = next((e for e in sched.get('events', [])
-               if _base_event_id(str(e.get('id') or '')) == _base_event_id(ev_id)), None)
-    if not ev:
-        return False
-    return any(m['id'] == member_id for m in members_at_event(ev, ev_id, sched))
-
-
 def moment_push_audience(channel, sched=None):
     """Kept-away audience for a moment posted into an event channel
     (scope-shaped, family-network S10): whoever presence.moments lets see
@@ -242,9 +228,10 @@ def run_capture_prompts(send, now=None):
             continue
 
         present = members_at_event(ev, ev_id, sched)
-        # Family-network S2 (moments.contribute = when_present): the person
-        # holding the camera is whoever the schedule placed there — and when
-        # that is the helper who drove, they are the one who can share it.
+        # Family-network S2: the person to ASK is whoever the schedule placed
+        # there — and when that is the helper who drove, they are the one
+        # holding the camera. This picks who gets the prompt, never who may
+        # post: anyone can hand the family a moment (send_message).
         # Kids stay out of the ask; their presence still counts below.
         contributors = [m for m in present
                         if m.get('role') in ('parent', 'adult', 'helper')]

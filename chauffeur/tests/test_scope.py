@@ -202,7 +202,7 @@ def scenario_the_delivered_map_is_the_resolved_truth():
           and m['facets']['schedule.assignment'] == 'none'
           and m['facets']['presence.location'] == 'none',
           "the keeping-up shape the shell keys on is delivered, not guessed")
-    check(m['chat_initiate'] == 'household' and m['moments_contribute'] == 'none',
+    check(m['chat_initiate'] == 'household' and m['moments_contribute'] == 'all',
           "the two capabilities ride along")
 
 

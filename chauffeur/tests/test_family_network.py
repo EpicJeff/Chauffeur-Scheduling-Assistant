@@ -6,8 +6,8 @@ what is not theirs (dark or not), while a tokenless caller keeps today's
 behaviour until `auth_enforce` flips (the route guard owns anonymity; these
 checks own identity).
 
-S2 is the helper's contribution path: moments.contribute = when_present,
-enforced at the send endpoint and offered by the capture sweep.
+S2 is the contribution path: anyone may hand an event thread a moment
+(moments.contribute), and the capture sweep offers it to the helper too.
 
 Run from chauffeur/:  python tests/test_family_network.py
 """
@@ -156,7 +156,7 @@ def scenario_member_create_enforces_the_role_whitelist():
     check(m and m.get('is_child') is True, "is_child stays in step with role on create")
 
 
-# --- S2: moments.contribute = when_present ----------------------------------
+# --- S2: contribution is not membership ------------------------------------
 
 _TINY_PNG = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC"
              "AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
@@ -202,17 +202,49 @@ def scenario_present_helper_hands_over_a_moment():
           "text-only stays barred — the surface is a photo handover, not a seat")
 
 
-def scenario_absent_helper_is_refused():
+def scenario_anyone_hands_over_a_moment_whatever_the_schedule_says():
+    """The schedule is not the gate: a driver swapped at the last second, a
+    grandparent nobody marked as coming, an event days in the past whose
+    thread has archived — the photos still land."""
     import main
+    import datetime
     from fastapi import BackgroundTasks
     tok = _seed()
     _seed_live_event_with_helper_driving()
     other = storage.get_or_create_event_channel("ev2", "Jack's recital")
     photo = main.SendMessageRequest(sender_member_id="nan", body="",
                                     attachment={"kind": "photo", "data_url": _TINY_PNG})
+    main.send_message(other['id'], photo, BackgroundTasks(), request=Req(tok['nan']))
+    check(any(m.get('sender_member_id') == 'nan' and m.get('attachment')
+              for m in storage.get_channel_messages(other['id'])),
+          "a helper the schedule never placed at the event still hands over a moment")
+
+    text = main.SendMessageRequest(sender_member_id="nan", body="lovely")
+    check(_denied(main.send_message, other['id'], text, BackgroundTasks(),
+                  request=Req(tok['nan'])) == 403,
+          "text-only in a thread they cannot read stays barred")
+
+    # Last week's game: the thread archived off the list three days ago.
+    ended = (datetime.datetime.now(datetime.timezone.utc)
+             - datetime.timedelta(days=10)).isoformat()
+    old = storage.get_or_create_event_channel("ev_old", "Last week's game", ended)
+    storage.get_channels_for_member("mom")  # the list read archives it
+    check(storage.get_channel(old['id']).get('archived') is True,
+          "precondition: the old event thread is archived")
+    main.send_message(old['id'], photo, BackgroundTasks(), request=Req(tok['nan']))
+    late = main.SendMessageRequest(sender_member_id="dad", body="finally uploaded these",
+                                   attachment={"kind": "photo", "data_url": _TINY_PNG})
+    main.send_message(old['id'], late, BackgroundTasks(), request=Req(tok['dad']))
+    senders = {m.get('sender_member_id') for m in storage.get_channel_messages(old['id'])}
+    check({'nan', 'dad'} <= senders,
+          "an archived event thread still takes moments, days after the event")
+
+    nope = storage.get_member("nan")
+    storage.update_member("nan", {"scope": {"overrides": {"moments.contribute": "none"}}})
     check(_denied(main.send_message, other['id'], photo, BackgroundTasks(),
                   request=Req(tok['nan'])) == 403,
-          "an event the schedule does not place the helper at fails closed")
+          "only an explicit per-person 'none' refuses a moment")
+    storage.update_member("nan", {"scope": nope.get('scope') or {}})
 
 
 def scenario_capture_prompt_reaches_the_helper():
@@ -264,7 +296,7 @@ SCENARIOS = [
     scenario_voice_sessions_are_not_household_reading,
     scenario_member_create_enforces_the_role_whitelist,
     scenario_present_helper_hands_over_a_moment,
-    scenario_absent_helper_is_refused,
+    scenario_anyone_hands_over_a_moment_whatever_the_schedule_says,
     scenario_capture_prompt_reaches_the_helper,
     scenario_the_guest_role_exists_at_last,
 ]

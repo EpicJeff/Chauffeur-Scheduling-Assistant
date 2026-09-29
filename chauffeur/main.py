@@ -11907,6 +11907,19 @@ def member_day(member_id: str, date: Optional[str] = None, request: Request = No
                 break
 
     sched = storage.get_cached_schedule() or {}
+    if p_id and date_str < _dt.date.today().isoformat() and not any(
+            str(e.get('start', '')).startswith(date_str)
+            for e in sched.get('events', [])):
+        # The rolling cache starts today. A past day it no longer holds —
+        # where a moment for yesterday's game gets added — comes from the
+        # same per-day path the Family tab's back arrow pages in.
+        try:
+            past = get_schedule(BackgroundTasks(), start_date=date_str,
+                                end_date=date_str)
+            if isinstance(past, dict) and 'events' in past:
+                sched = past
+        except Exception as e:
+            logger.error(f"member_day past schedule {date_str} failed: {e}")
     assignments = dict(sched.get('assignments', {}))
     assignments.update(sched.get('ghost_assignments', {}))
     matched_rules = sched.get('matched_rules', {}) or {}
@@ -15158,7 +15171,10 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
     channel = storage.get_channel(channel_id)
     if not channel:
         raise HTTPException(status_code=404, detail="Channel not found")
-    if channel.get('archived'):
+    # An event thread archives a week after its event only to leave the
+    # channel list; it is still that event's thread, and the photos from it
+    # often reach a phone days later. Only other kinds are closed by archiving.
+    if channel.get('archived') and channel.get('kind') != 'event':
         raise HTTPException(status_code=409, detail="Channel is archived")
     body = (req.body or '').strip()
     # Validation is deferred until after every permission/membership check
@@ -15184,13 +15200,15 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
         # Family-network S11: posting asks the same facet the read does, and
         # explicit membership is honoured over a 'none' class — a helper or
         # guest let into an event thread talks freely there (§6B). The one
-        # exception stays S2's: contribution is not membership, so a helper
-        # the schedule places at an event may hand the family a moment — an
-        # upload tied to the event — without ever holding the thread.
-        from services import presence as _presence
+        # exception: a moment (an upload tied to the event) may be handed to
+        # any event thread by anyone, without ever holding the thread.
+        # Contribution is not membership, and it no longer asks the schedule
+        # who was there — the schedule is wrong often enough (a last-minute
+        # driver swap, a grandparent nobody marked as coming) that gating on
+        # it only ever cost the people who could not go. Only an explicit
+        # per-person 'none' override refuses it.
         contributing = (channel.get('kind') == 'event' and req.attachment
-                        and _presence.member_present_at_channel_event(
-                            channel, req.sender_member_id))
+                        and _scope.moments_contribute(sender) != 'none')
         if not contributing:
             raise HTTPException(status_code=403, detail="Not yours to post in")
 

@@ -19,7 +19,8 @@ Three axes, each answering one question (§5):
 
 Plus two capabilities that are not views (§6 Chat B/C): `chat.initiate`
 (may I start a conversation, and with whom) and `moments.contribute` (may I
-hand the family a moment — S2 already enforces `when_present` for helpers).
+hand the family a moment — every preset says yes; only a per-person override
+says no).
 
 Scope answers *what may you see*; role keeps answering *what may you
 administer* (§6: administration is not a facet). Stages stay separate and
@@ -127,7 +128,7 @@ PRESETS = {
     'keeping_up': {
         'sees_people': 'children',
         'chat.initiate': 'household',
-        'moments.contribute': NONE,
+        'moments.contribute': 'all',
         'facets': {
             'calendar.events': ALL, 'schedule.assignment': NONE,
             'schedule.logistics': NONE, 'schedule.diagnostics': NONE,
@@ -173,7 +174,7 @@ PRESETS = {
     'helper': {
         'sees_people': 'driven',
         'chat.initiate': 'parents',
-        'moments.contribute': 'when_present',
+        'moments.contribute': 'all',
         'facets': {
             'calendar.events': OWN, 'schedule.assignment': OWN,
             'schedule.logistics': OWN, 'schedule.diagnostics': NONE,
@@ -199,7 +200,7 @@ PRESETS = {
         # stays 'everyone' rather than inventing a fourth meaning for empty.
         'sees_people': 'everyone',
         'chat.initiate': NONE,
-        'moments.contribute': NONE,
+        'moments.contribute': 'all',
         'facets': {
             'calendar.events': NONE, 'schedule.assignment': NONE,
             'schedule.logistics': NONE, 'schedule.diagnostics': NONE,
@@ -307,11 +308,15 @@ def chat_initiate(member: dict) -> str:
 
 
 def moments_contribute(member: dict) -> str:
-    """none | when_present | all (§6C). Contribution is not membership —
-    S2 already enforces when_present for helpers at the send endpoint."""
+    """none | all (§6C). Contribution is not membership: anyone may hand the
+    family a moment for any event. `when_present` is retired — the schedule's
+    idea of who attended was wrong too often to gate on — and a stored one
+    reads as 'all'."""
     overrides = (member.get('scope') or {}).get('overrides') or {}
     v = overrides.get('moments.contribute')
-    if v in ('none', 'when_present', 'all'):
+    if v == 'when_present':
+        return 'all'
+    if v in ('none', 'all'):
         return v
     return PRESETS[preset_for(member)]['moments.contribute']
 

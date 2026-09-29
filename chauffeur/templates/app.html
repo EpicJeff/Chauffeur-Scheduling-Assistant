@@ -1092,7 +1092,8 @@
         function updateMyDayLabel() {
             const label = document.getElementById('current-day-label');
             if (!label) return;
-            document.getElementById('btn-prev-day').disabled = mydayOffset <= 0;
+            // Back is open-ended: yesterday's game is where its photos go.
+            document.getElementById('btn-prev-day').disabled = false;
             document.getElementById('btn-next-day').disabled = mydayOffset >= kidHorizonDays();
             const sub = document.getElementById('date-subtitle');
             const d = new Date();
@@ -1100,12 +1101,13 @@
             if (sub) sub.textContent = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
             if (mydayOffset === 0) { label.textContent = 'Today'; return; }
             if (mydayOffset === 1) { label.textContent = 'Tomorrow'; return; }
+            if (mydayOffset === -1) { label.textContent = 'Yesterday'; return; }
             label.textContent = d.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
         }
 
         let mydaySlideDir = 0;
         function mydayShift(delta) {
-            const next = Math.max(0, Math.min(kidHorizonDays(), mydayOffset + delta));
+            const next = Math.min(kidHorizonDays(), mydayOffset + delta);
             if (next === mydayOffset) return;
             mydayOffset = next;
             mydaySlideDir = delta > 0 ? 1 : -1;
@@ -2931,6 +2933,15 @@
                     <span class="text-xs font-black uppercase text-red-400 bg-red-500/10 border border-red-500/40 px-2 py-1 rounded-full">⚠ Needs a driver</span>
                 </div>`;
             }
+            // Once it has started, the event can take a moment — today or
+            // any day after, from whoever has the photos.
+            const started = r.start && new Date(r.start) <= new Date();
+            const momentBtn = !(started && r.id) ? '' : `
+                <div class="mt-3 pt-3 border-t border-gray-800">
+                    <button onclick="openEventThread(this.dataset.id, this.dataset.title, this.dataset.end)"
+                        data-id="${mfEscape(String(r.id))}" data-title="${mfEscape(r.title || '')}" data-end="${mfEscape(r.end || '')}"
+                        class="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-gray-800 text-pink-300 border border-gray-700 active:bg-gray-700">📷 Add a moment</button>
+                </div>`;
             return `
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
                 <div class="flex items-center justify-between gap-2 mb-1">
@@ -2946,7 +2957,27 @@
                 </div>` : ''}
                 ${r.optional ? renderOptionalDecisionRow(r) : ''}
                 ${driverRow}
+                ${momentBtn}
             </div>`;
+        }
+
+        // The one way into an event's thread (modal Discuss, My Day's
+        // Add a moment): the base event, so one thread covers its
+        // dropoff/pickup legs. Moments are posted there by anyone, on any
+        // day after — the thread is found or made on demand.
+        async function openEventThread(eventId, title, end) {
+            try {
+                const baseId = String(eventId).replace(/_(dropoff|pickup)$/, '');
+                const baseTitle = (title || '').replace(/^(Dropoff|Pickup): /, '');
+                const res = await fetch(`${apiBase}api/channels/event`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ event_id: baseId, title: baseTitle, event_end: end || null })
+                });
+                const ch = await res.json();
+                setView('messages');
+                openChannel(ch.id, ch);
+            } catch (e) { showGlobalAlert('Failed to open event chat'); }
         }
 
         // Optional events, phase 2: the per-occurrence attend/skip choice.
@@ -4110,7 +4141,7 @@
         let channelsData = [];
         let activeChannelId = null;
         let threadChannel = null;     // the open thread's channel object
-        let helperShareMode = false;  // family-network S2: contribute, never read
+        let helperShareMode = false;  // family-network S2: contribute, never read (anyone who can't read event threads)
 
         // Family-network S11: the thread-guests picker. Lists only OUTSIDE
         // hands (helpers/guests) — the household already sees event threads,
@@ -4455,11 +4486,13 @@
                 await fetchChannels();
                 c = channelsData.find(x => x.id === channelId);
             }
-            // Family-network S2: a helper's capture deep link opens an event
-            // thread they may hand a moment TO but never read — contribution
-            // is not membership. Their channel list never contains event
-            // threads, so "helper + a channel we can't see" is that surface.
-            helperShareMode = currentMemberRole() === 'helper' && (!c || c.kind === 'event');
+            // Family-network S2: anyone may hand an event thread a moment,
+            // but reading it is still the chat.event_threads facet. Whoever
+            // cannot read event threads (a helper, a guest) and was not let
+            // into this one gets the share-only surface instead of a 403.
+            helperShareMode = scopeOf('chat.event_threads') === 'none'
+                && (!c || c.kind === 'event')
+                && !(c && (c.member_ids || []).includes(selectedMemberId));
             threadChannel = c || { id: channelId, kind: null, member_ids: [] };
             const guestsBtn = document.getElementById('thread-guests-btn');
             if (guestsBtn) guestsBtn.style.display =
@@ -8559,21 +8592,9 @@
             if (discussBtn) {
                 if (!ev.isErrand && ev.id && selectedMemberId) {
                     discussBtn.style.display = 'flex';
-                    discussBtn.onclick = async () => {
+                    discussBtn.onclick = () => {
                         closeEventModal();
-                        try {
-                            // Discuss the base event: one thread covers its dropoff/pickup legs.
-                            const baseId = String(ev.id).replace(/_(dropoff|pickup)$/, '');
-                            const baseTitle = (ev.title || '').replace(/^(Dropoff|Pickup): /, '');
-                            const res = await fetch(`${apiBase}api/channels/event`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ event_id: baseId, title: baseTitle, event_end: ev.end || null })
-                            });
-                            const ch = await res.json();
-                            setView('messages');
-                            openChannel(ch.id, ch);
-                        } catch (e) { showGlobalAlert('Failed to open event chat'); }
+                        openEventThread(ev.id, ev.title, ev.end);
                     };
                 } else {
                     discussBtn.style.display = 'none';

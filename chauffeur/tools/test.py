@@ -116,12 +116,54 @@ def focused(changed):
     return sorted(picked), why
 
 
+# No file runs anywhere near this long when it is working. Without a ceiling a
+# single hung file stalls the whole sweep forever, silently: on Windows,
+# asyncio's socketpair fallback (socket._fallback_socketpair, reached when
+# Playwright opens its event loop) can lose its own loopback connect under a
+# parallel browser fan-out and then block in accept() for good. It happened to
+# three different live files in one night. A hang is killed, the file gets ONE
+# more try, and if it hangs again it is reported as a failure with its name on.
+TIMEOUT_S = 420
+HEAVY_TIMEOUT_S = 900
+
+
+def _kill_tree(p):
+    if os.name == 'nt':
+        # the venv launcher re-execs the real interpreter as a CHILD; killing
+        # the launcher alone would orphan the hung test.
+        subprocess.run(['taskkill', '/T', '/F', '/PID', str(p.pid)],
+                       capture_output=True)
+    else:
+        p.kill()
+
+
+def _run_file(f, timeout):
+    p = subprocess.Popen([sys.executable, f], stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, text=True, cwd=HERE,
+                         encoding='utf-8', errors='replace')
+    try:
+        out, _ = p.communicate(timeout=timeout)
+        return p.returncode, out or ''
+    except subprocess.TimeoutExpired:
+        _kill_tree(p)
+        try:
+            out, _ = p.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            out = ''
+        return None, (out or '') + f'\nTIMEOUT after {timeout}s'
+
+
 def run(files, show_slow=False):
     def one(f):
         t0 = time.time()
-        p = subprocess.run([sys.executable, f], capture_output=True, text=True,
-                           cwd=HERE)
-        return f, time.time() - t0, p.returncode, (p.stdout + p.stderr)
+        timeout = HEAVY_TIMEOUT_S if os.path.basename(f) in HEAVY else TIMEOUT_S
+        rc, out = _run_file(f, timeout)
+        if rc is None:
+            rc, again = _run_file(f, timeout)
+            out = out + '\n--- retried once after the timeout ---\n' + again
+            if rc is None:
+                rc = 124
+        return f, time.time() - t0, rc, out
 
     t0 = time.time()
     workers = max(2, (os.cpu_count() or 4))
