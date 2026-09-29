@@ -46,7 +46,54 @@ NUDGE_GRACE_SECS = 3 * 60
 NUDGE_EXPIRE_SECS = 3 * 3600
 
 
+def _route_leg_context(leg_id, sched=None):
+    """Resolve a route leg against its edge, never by splitting event IDs.
+
+    Numbered route legs carry the source event's ID even when driving to
+    the next event. Event IDs can themselves contain underscores/numbers.
+    Keep those durable leg IDs; resolve the rider event and actual stop.
+    """
+    if not str(leg_id).startswith('route_'):
+        return None
+    sched = sched if sched is not None else (storage.get_cached_schedule() or {})
+    events = {str(e.get('id')): e for e in sched.get('events') or []}
+    for edges in (sched.get('route_edges') or {}).values():
+        for source, edge in (edges or {}).items():
+            if not str(leg_id).startswith(f'route_{source}_'):
+                continue
+            target = edge.get('to_event')
+            if not target:
+                continue
+            home, pickup = edge.get('home_waypoint'), edge.get('pickup_waypoint')
+            target_ev = events.get(str(target)) or events.get(
+                re.sub(r'_(dropoff|pickup)$', '', str(target))) or {}
+            stops = []
+            if home or pickup:
+                from services import maps
+                if home:
+                    stops.append((str(source), home.get('driver_home_location')
+                                  or sched.get('home_location') or maps.get_home_location(), True, False))
+                if pickup and (not home or home.get('from_home_mins') != 0):
+                    stops.append((str(target), pickup.get('pickup_location')
+                                  or sched.get('home_location') or maps.get_home_location(), False, True))
+                stops.append((str(target), target_ev.get('location'), False,
+                              str(target).endswith('_pickup')))
+                ids = [f'route_{source}_{i + 1}' for i in range(len(stops))]
+            else:
+                stops = [(str(target), target_ev.get('location'), False,
+                          str(target).endswith('_pickup'))]
+                ids = [f'route_{source}_{target}']
+            for key, (event_id, address, is_home, waiting) in zip(ids, stops):
+                if key == leg_id:
+                    return {'event_id': event_id, 'address': address,
+                            'is_home': is_home, 'toward_waiting': waiting}
+    return None
+
+
 def _leg_event_id(leg_id: str) -> str:
+    route = _route_leg_context(leg_id)
+    if route:
+        return route['event_id']
     s = re.sub(r'^(init_|route_|final_)', '', str(leg_id))
     return re.sub(r'_[123]$', '', s)
 
@@ -73,6 +120,9 @@ def leg_is_toward_waiting(leg_id) -> bool:
     """
     if not leg_id:
         return False
+    route = _route_leg_context(leg_id)
+    if route:
+        return route['toward_waiting']
     s = str(leg_id)
     if re.match(r'^init_.*_1$', s):
         return True
@@ -92,6 +142,9 @@ def _dest_address(leg_id: str, events: dict) -> Optional[str]:
     """Where this leg is DRIVING TO. final_* legs come home; everything else
     heads for the event (split dropoff/pickup variants fall back to their
     base event when the variant id is not in the cache)."""
+    route = _route_leg_context(leg_id)
+    if route:
+        return route['address'] or None
     if str(leg_id).startswith('final_'):
         from services import maps
         return maps.get_home_location()

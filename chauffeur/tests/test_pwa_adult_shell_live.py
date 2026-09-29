@@ -41,6 +41,45 @@ def seed():
             storage.add_driver({'id': driver, 'name': 'Alex Morgan', 'home_location': 'Home', 'color_code': '#287a72'})
 
 
+def check_route_departure(page, schedule, driver):
+    """The event modal and hero must identify the SAME rider and stop.
+
+    Use the real drive-sheet endpoint, not a mocked sheet response. The
+    earlier appointment's route ID survives a home layover before practice.
+    """
+    for pid, name in [('lorena', 'Lorena'), ('james', 'James')]:
+        storage.add_passenger({'id': pid, 'name': name,
+                               'calendar_ids': ['cal_' + pid]})
+    schedule['events'][0]['calendar_ids'] = ['cal_lorena']
+    schedule['events'][1]['calendar_ids'] = ['cal_james']
+    schedule['calendar_metadata'] = {'cal_lorena': {'summary': 'Lorena'},
+                                     'cal_james': {'summary': 'James'}}
+    schedule['initial_edges'] = {}
+    schedule['route_edges'] = {driver: {'morning': {
+        'to_event': 'soccer', 'travel_mins': 35,
+        'home_waypoint': {'driver_home_location': 'Home', 'to_home_mins': 15,
+                          'from_home_mins': 20, 'layover_mins': 315}}}}
+    storage.set_cached_schedule(schedule)
+    page.clock.set_fixed_time(datetime.now().replace(hour=12, minute=0, second=0))
+    page.evaluate('''s => {
+        document.documentElement.style.fontSize = '';
+        scheduleData = s; setView('drives'); buildTimeline();
+    }''', schedule)
+    page.locator('.pwa-event-row .pwa-row-main').filter(has_text='Soccer practice').click()
+    assert page.locator('#em-passengers').inner_text() == 'James'
+    page.evaluate('closeEventModal()')
+    page.wait_for_selector('#event-modal', state='hidden')
+    page.locator('.pwa-next button').click()
+    page.wait_for_function("driveSheetData?.leg_id === 'route_morning_2'")
+    assert page.locator('#drive-dest').inner_text() == 'Riverside fields'
+    assert page.evaluate('driveSheetData.passengers.map(p=>p.name)') == ['James']
+    assert page.evaluate('routeContext.eventId') == 'soccer'
+    assert page.evaluate('routeContext.destination') == 'Riverside fields'
+    assert page.evaluate('driveSheetData.next_drive.title') == 'Piano lesson'
+    page.evaluate('closeActionSheet()')
+    page.wait_for_selector('#action-sheet', state='hidden')
+
+
 def run():
     ha_api.get_states = lambda *a, **kw: []
     ha_api.get_state = lambda *a, **kw: None
@@ -254,6 +293,7 @@ def run():
                         page.set_viewport_size({'width': 390, 'height': 844})
                         page.evaluate("document.documentElement.style.fontSize='200%'")
                         assert not page.evaluate('document.documentElement.scrollWidth > innerWidth')
+                        check_route_departure(page, schedule, driver)
                 assert not errors and not failed_scripts, (key, errors, failed_scripts)
                 print('ok', key, tabs, flush=True)
     finally:

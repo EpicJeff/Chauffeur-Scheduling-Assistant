@@ -198,7 +198,8 @@ def sheet(leg_id: str, now=None) -> dict:
     ev_id = _leg_event_id(leg_id)
     row = storage.get_drive_status(leg_id) or {}
     driver, driver_id = _driver_member(leg_id, sched)
-    is_home = str(leg_id).startswith('final_')
+    route = drive_arrival._route_leg_context(leg_id, sched)
+    is_home = str(leg_id).startswith('final_') or bool(route and route['is_home'])
 
     roll = storage.get_roll_call(leg_id)
     passengers = []

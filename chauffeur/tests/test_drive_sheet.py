@@ -385,7 +385,52 @@ def scenario_a_stale_app_fix_loses_to_a_live_ha_one():
           f"an hour-old app fix does not outrank a live tracker, got {pos}")
 
 
+def scenario_route_legs_use_the_stop_they_are_driving_to():
+    # A morning appointment and a later practice have different riders.
+    # Numbered route legs are keyed by the DEPARTING event, not the next one.
+    _world(event_id='appointment_1', location='Medical center')
+    sched = storage.get_cached_schedule()
+    storage.add_passenger({'id': 'p_james', 'name': 'James',
+                           'calendar_ids': ['cal_james'], 'hashtags': []})
+    sched['events'].append({'id': 'practice_2', 'title': 'Academy',
+                            'start': '2026-08-18T18:00:00',
+                            'end': '2026-08-18T19:00:00',
+                            'location': 'Sports center', 'calendar_ids': ['cal_james']})
+    sched['assignments']['practice_2'] = 'drv_jeff'
+    shapes = [
+        ({}, [('route_appointment_1_practice_2', 'Sports center', 'James')]),
+        ({'home_waypoint': {'driver_home_location': 'Driver home'}},
+         [('route_appointment_1_1', 'Driver home', 'Lily'),
+          ('route_appointment_1_2', 'Sports center', 'James')]),
+        ({'pickup_waypoint': {'pickup_location': 'School'}},
+         [('route_appointment_1_1', 'School', 'James'),
+          ('route_appointment_1_2', 'Sports center', 'James')]),
+        ({'home_waypoint': {'driver_home_location': 'Driver home', 'from_home_mins': 10},
+          'pickup_waypoint': {'pickup_location': 'School'}},
+         [('route_appointment_1_1', 'Driver home', 'Lily'),
+          ('route_appointment_1_2', 'School', 'James'),
+          ('route_appointment_1_3', 'Sports center', 'James')]),
+        ({'home_waypoint': {'driver_home_location': 'Driver home', 'from_home_mins': 0},
+          'pickup_waypoint': {'pickup_location': 'Driver home'}},
+         [('route_appointment_1_2', 'Sports center', 'James')]),
+    ]
+    for waypoints, legs in shapes:
+        sched['route_edges'] = {'drv_jeff': {'appointment_1':
+            {'to_event': 'practice_2', 'travel_mins': 25, **waypoints}}}
+        storage.set_cached_schedule(sched)
+        for leg, address, rider in legs:
+            d = drive_sheet.sheet(leg, now=NOW)
+            check(d['destination']['address'] == address,
+                  f'{leg}: expected {address}, got {d["destination"]}')
+            check([p['name'] for p in d['passengers']] == [rider],
+                  f'{leg}: expected {rider}, got {d["passengers"]}')
+            if rider == 'James':
+                check(d['event_id'] == 'practice_2' and d['next_drive'] is None,
+                      f'{leg}: the destination event must not appear as the NEXT drive')
+
+
 SCENARIOS = [
+    scenario_route_legs_use_the_stop_they_are_driving_to,
     scenario_the_sheet_says_what_the_drive_is,
     scenario_no_eta_says_nothing_about_arrival,
     scenario_only_a_drive_toward_the_waiting_offers_to_tell_them,

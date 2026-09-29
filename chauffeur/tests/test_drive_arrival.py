@@ -88,6 +88,32 @@ def scenario_arrived_at_the_lesson_completes_the_leg():
           f"and the sweep reports what it did: {done}")
 
 
+def scenario_route_arrival_uses_the_onward_stop_not_the_prior_event():
+    w = _World()
+    w.sched['events'].append({'id': 'appointment', 'title': 'Appointment',
+                              'location': 'Medical center'})
+    w.sched['assignments']['appointment'] = 'drv_jeff'
+    w.sched['route_edges'] = {'drv_jeff': {'appointment': {
+        'to_event': 'guitar', 'home_waypoint': {'driver_home_location': 'Home'}}}}
+    w.legs = ['route_appointment_2']
+    w.person_state = _person(ELSEWHERE)
+    w.install()
+    try:
+        storage.get_cached_geocode = lambda addr: dict(
+            lat=SHOP[0] if addr == 'Music & Arts, Cary' else ELSEWHERE[0],
+            lon=SHOP[1] if addr == 'Music & Arts, Cary' else ELSEWHERE[1],
+            precision='exact')
+        check(drive_arrival.check_arrivals(NOW) == [] and w.marked == [],
+              'being at the previous appointment cannot complete the onward drive')
+        w.person_state = _person(LOT)
+        done = drive_arrival.check_arrivals(NOW)
+        check(w.marked == [('route_appointment_2', 'completed')]
+              and done[0]['dest'] == 'Music & Arts, Cary',
+              f'arrival completes the original leg ID at its actual destination: {done}')
+    finally:
+        w.restore()
+
+
 def scenario_mid_drive_is_left_alone():
     w, done = _run(lambda w: setattr(w, 'person_state', _person(ELSEWHERE)))
     check(w.marked == [] and done == [],

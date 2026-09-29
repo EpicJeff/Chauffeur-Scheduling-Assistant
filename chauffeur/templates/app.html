@@ -9482,14 +9482,14 @@
                                 html += pr(ev.end) + renderLegPill(formatTime(ev.end), homeLabel, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', '', `route_${ev.id}_1`, new Date(ev.end) < new Date());
 
                                 if (leg2Mins === 0) { // Meaning pickupLocation == driverHomeLoc
-                                    let args3 = `'${driverHomeLoc.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
+                                    let args3 = `'${driverHomeLoc.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${nextEv.id}'`;
                                     html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg3Mins, edge.delay_mins, args3 + `, 'route_${ev.id}_2'`, 'blue', nextBadges, `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0);
                                 } else {
                                     const leg3DepTime = new Date(leg2DepTime.getTime() + leg2Mins * 60000);
-                                    let args2 = `'${driverHomeLoc.replace(/'/g, "\\'")}', '${pickupLocation.replace(/'/g, "\\'")}', '${pickupTitle.replace(/'/g, "\\'")}', '${ev.id}'`;
+                                    let args2 = `'${driverHomeLoc.replace(/'/g, "\\'")}', '${pickupLocation.replace(/'/g, "\\'")}', '${pickupTitle.replace(/'/g, "\\'")}', '${nextEv.id}'`;
                                     html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), pickupTitle, leg2Mins, 0, args2 + `, 'route_${ev.id}_2'`, 'blue', nextBadges, `route_${ev.id}_2`, leg2DepTime < new Date());
 
-                                    let args3 = `'${pickupLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
+                                    let args3 = `'${pickupLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${nextEv.id}'`;
                                     html += pr(leg3DepTime.toISOString()) + renderLegPill(formatTime(leg3DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg3Mins, edge.delay_mins, args3 + `, 'route_${ev.id}_3'`, 'blue', '', `route_${ev.id}_3`, leg3DepTime < new Date(), edge.late_mins || 0);
                                 }
                             } else if (edge.home_waypoint) {
@@ -9502,7 +9502,7 @@
                                 let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${driverHomeLoc.replace(/'/g, "\\'")}', '${homeLabel.replace(/'/g, "\\'")}', '${ev.id}'`;
                                 html += pr(ev.end) + renderLegPill(formatTime(ev.end), homeLabel, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', '', `route_${ev.id}_1`, new Date(ev.end) < new Date());
 
-                                let args2 = `'${driverHomeLoc.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
+                                let args2 = `'${driverHomeLoc.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${nextEv.id}'`;
                                 html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'route_${ev.id}_2'`, 'blue', nextBadges, `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0);
                             } else if (edge.pickup_waypoint) {
                                 const leg1Mins = edge.pickup_waypoint.to_pickup_mins;
@@ -9511,14 +9511,14 @@
                                 const pickupTitle = edge.pickup_waypoint.pickup_event_title ? `Pickup at ${edge.pickup_waypoint.pickup_event_title}` : 'Pickup';
                                 const leg2DepTime = new Date(new Date(ev.end).getTime() + leg1Mins * 60000);
 
-                                let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${pickupLocation.replace(/'/g, "\\'")}', '${pickupTitle.replace(/'/g, "\\'")}', '${ev.id}'`;
+                                let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${pickupLocation.replace(/'/g, "\\'")}', '${pickupTitle.replace(/'/g, "\\'")}', '${nextEv.id}'`;
                                 html += pr(ev.end) + renderLegPill(formatTime(ev.end), pickupTitle, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', nextBadges, `route_${ev.id}_1`, new Date(ev.end) < new Date());
 
-                                let args2 = `'${pickupLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
+                                let args2 = `'${pickupLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${nextEv.id}'`;
                                 html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'route_${ev.id}_2'`, 'blue', '', `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0);
                             } else {
                                 let destStr = destinationLocation ? destinationLocation.split(',')[0] : 'Next Event';
-                                let args = `'${(computedOrigin || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', 'Drive to ${destStr.replace(/'/g, "\\'")}', '${ev.id}'`;
+                                let args = `'${(computedOrigin || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', 'Drive to ${destStr.replace(/'/g, "\\'")}', '${nextEv.id}'`;
                                 html += pr(ev.end) + renderLegPill(formatTime(ev.end), `Drive to ${destStr}`, edge.travel_mins, edge.delay_mins, args + `, 'route_${ev.id}_${nextEv.id}'`, 'blue', nextBadges, `route_${ev.id}_${nextEv.id}`, new Date(ev.end) < new Date(), edge.late_mins || 0);
                             }
                         }
