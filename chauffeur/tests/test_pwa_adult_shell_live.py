@@ -41,7 +41,7 @@ def seed():
             storage.add_driver({'id': driver, 'name': 'Alex Morgan', 'home_location': 'Home', 'color_code': '#287a72'})
 
 
-def check_route_departure(page, schedule, driver):
+def check_route_departure(page, schedule, driver, output=None):
     """The event modal and hero must identify the SAME rider and stop.
 
     Use the real drive-sheet endpoint, not a mocked sheet response. The
@@ -67,6 +67,10 @@ def check_route_departure(page, schedule, driver):
     }''', schedule)
     page.locator('.pwa-event-row .pwa-row-main').filter(has_text='Soccer practice').click()
     assert page.locator('#em-passengers').inner_text() == 'James'
+    assert page.locator('#em-map-btn').evaluate('(e)=>getComputedStyle(e).backgroundColor') == 'rgb(34, 98, 76)'
+    page.wait_for_function("getComputedStyle(document.getElementById('event-modal')).opacity === '1'")
+    page.wait_for_timeout(350)
+    if output: Path(output, 'adult-event-sheet-light.png').write_bytes(page.screenshot())
     page.evaluate('closeEventModal()')
     page.wait_for_selector('#event-modal', state='hidden')
     page.locator('.pwa-next button').click()
@@ -76,8 +80,38 @@ def check_route_departure(page, schedule, driver):
     assert page.evaluate('routeContext.eventId') == 'soccer'
     assert page.evaluate('routeContext.destination') == 'Riverside fields'
     assert page.evaluate('driveSheetData.next_drive.title') == 'Piano lesson'
-    page.evaluate('closeActionSheet()')
+    assert page.locator('#sheet-title').inner_text() == 'Your drive'
+    assert page.locator('#btn-start-drive').evaluate('(e)=>getComputedStyle(e).backgroundColor') == 'rgb(34, 98, 76)'
+    assert page.locator('#btn-mark-completed').evaluate('(e)=>getComputedStyle(e).boxShadow') == 'none'
+    page.locator('#drive-roll-chips button').click()
+    page.wait_for_function("driveSheetData.passengers[0].aboard === true")
+    assert page.locator('#drive-roll-chips button').get_attribute('data-aboard') == 'yes'
+    if output: Path(output, 'adult-drive-sheet-light.png').write_bytes(page.screenshot())
+    page.evaluate("applyTheme('dark')")
+    page.wait_for_function("getComputedStyle(document.getElementById('btn-start-drive')).backgroundColor === 'rgb(174, 216, 189)'")
+    if output: Path(output, 'adult-drive-sheet-dark.png').write_bytes(page.screenshot())
+    page.evaluate("applyTheme('light')")
+    for width in (360, 768):
+        page.set_viewport_size({'width': width, 'height': 844})
+        assert not page.evaluate('document.documentElement.scrollWidth > innerWidth')
+        assert page.locator('#action-sheet-content').evaluate('(e)=>e.scrollWidth <= e.clientWidth')
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.get_by_role('button', name='Close drive details', exact=True).click()
     page.wait_for_selector('#action-sheet', state='hidden')
+    page.evaluate("window.sheetAnswer = 'pending'; void promptConfirm('Approve task?', 'Sam finished taking out recycling.', 'Approve', 'Not yet').then(v=>window.sheetAnswer=v)")
+    if output: Path(output, 'adult-confirm-sheet-light.png').write_bytes(page.screenshot())
+    page.locator('.pwa-prompt-overlay [data-yes]').click()
+    page.wait_for_function('window.sheetAnswer === true')
+    page.evaluate("void promptInput('Send a request', 'What would help?', {okText:'Send request'}).then(v=>window.sheetAnswer=v)")
+    page.locator('.pwa-prompt-overlay textarea').fill('Please cover the school pickup.')
+    page.locator('.pwa-prompt-overlay [data-yes]').click()
+    page.wait_for_function("window.sheetAnswer === 'Please cover the school pickup.'")
+    page.evaluate("void promptChoice('Who is doing it?', 'Choose a family member.', [{label:'James',value:'james'}]).then(v=>window.sheetAnswer=v)")
+    page.locator('.pwa-prompt-overlay [data-pick]').click()
+    page.wait_for_function("window.sheetAnswer === 'james'")
+    page.evaluate("void promptConfirm('Keep this change?', '').then(v=>window.sheetAnswer=v)")
+    page.get_by_role('button', name='Close dialog', exact=True).click()
+    page.wait_for_function('window.sheetAnswer === false')
 
 
 def run():
@@ -177,6 +211,11 @@ def run():
                     assert page.locator('#btn-pet').is_visible()
                     page.evaluate("setView('more')")
                     assert page.evaluate('currentView') != 'more'
+                    page.evaluate("void promptConfirm('Keep your plan?', 'Your schedule stays the same.').then(()=>{})")
+                    assert page.locator('.pwa-prompt-overlay .pwa-sheet-head').is_hidden()
+                    # The existing app utility uses 20px child corners.
+                    assert page.locator('.pwa-prompt-overlay > div').evaluate('(e)=>getComputedStyle(e).borderTopLeftRadius') == '20px'
+                    page.locator('.pwa-prompt-overlay [data-no]').click()
                 else:
                     assert page.locator('#tab-more').is_visible(), tabs
                     assert not page.locator('#tab-map').is_visible()
@@ -293,7 +332,7 @@ def run():
                         page.set_viewport_size({'width': 390, 'height': 844})
                         page.evaluate("document.documentElement.style.fontSize='200%'")
                         assert not page.evaluate('document.documentElement.scrollWidth > innerWidth')
-                        check_route_departure(page, schedule, driver)
+                        check_route_departure(page, schedule, driver, output)
                 assert not errors and not failed_scripts, (key, errors, failed_scripts)
                 print('ok', key, tabs, flush=True)
     finally:

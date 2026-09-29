@@ -14,6 +14,23 @@ All content is fictional. Actions are local simulations; no request is sent to t
 
 ## Reproduce the review
 
+### Adult action sheets implemented in 2.499.211
+
+[Working sheet gallery](implementation/sheets.html): event and drive details,
+dark drive details, and a shared confirmation. The `.pwa-sheet` treatment
+also covers shared input/choice/session/trip prompts, profile/review dialogs,
+notifications, PIN and new chat. It follows the approved prototype's `.sheet`,
+`.primary` and `.secondary` styles, with 56px drive action targets retained.
+The browser check exercises real roll-call persistence, confirms the event
+and departure agree on their rider/destination, tests prompt results and
+dismissal, and verifies the child prompt styling remains unchanged. Captures
+use fictional fixtures, not the live household.
+Release validation passed for all five adult roles and Sprout, plus the
+26 drive-sheet and six stylesheet checks. Explorer, Navigator and Copilot
+could not finish their rerun because this Windows host intermittently timed
+out creating local socket pairs/listeners. The runner-only workarounds were
+not added to the application.
+
 ### Adult design implemented in 2.499.209
 
 The adult UI now follows the proposal's typography, spacing, light/dark

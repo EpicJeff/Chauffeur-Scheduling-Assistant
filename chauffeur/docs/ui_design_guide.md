@@ -42,6 +42,16 @@ approval handlers. Keep primary actions green; reserve warning colors for
 real states. Test populated, past-only and dark screens against the approved
 mockup, not just the presence of tabs or a theme attribute.
 
+Adult action sheets use `.pwa-sheet` and `.pwa-sheet-overlay`, including the
+shared `_pwaModal` builder. Follow the audience review's `.sheet`, `.primary`
+and `.secondary` styles (`mockups.css:1`): 25px headings, 22px padding and
+top corners, neutral secondary buttons, one green primary action, no button
+shadows. Keep drive Start/Arrived targets at least 56px. Sheets scroll within
+85dvh and include bottom safe-area padding; tablet dialogs center with a
+bounded width. Roll-call and packing states retain explicit marks as well as
+their semantic colors. Never give sheets a separate visual language from
+their adult parent screen.
+
 When two surfaces draw the same concept, they share ONE builder (the
 kiosk-shares-logic / TripLogic pattern — an included component both consumers
 load). Existing shared pieces:

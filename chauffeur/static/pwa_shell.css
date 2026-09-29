@@ -30,6 +30,76 @@
   --c-gray-950: 248 249 247;
 }
 .pwa-adult-only { display: none; }
+/* Sheets follow the approved review's .sheet/.primary/.secondary tokens.
+   Semantic hooks apply equally to static sheets and the shared prompt builder. */
+[data-audience="adult"] .pwa-sheet-overlay { background: #18231f55; backdrop-filter: none; padding: 0; flex-direction: row; align-items: flex-end; justify-content: center; }
+[data-audience="adult"] .pwa-sheet {
+  width: 100%; max-width: 520px; max-height: 85dvh; overflow-y: auto;
+  margin: 0 auto; padding: 22px 22px max(30px, env(safe-area-inset-bottom));
+  border: 0; border-radius: 22px 22px 0 0; box-shadow: none;
+  background: rgb(var(--c-gray-900)); color: rgb(var(--c-gray-100));
+  font-size: 15px; line-height: 1.6; scrollbar-width: thin;
+  scrollbar-color: rgb(var(--c-gray-700)) transparent;
+}
+[data-audience="adult"] dialog.pwa-sheet { margin: auto auto 0; }
+[data-audience="adult"] dialog.pwa-sheet::backdrop { background: #18231f55; }
+[data-audience="adult"] .pwa-sheet :is(h2, h3),
+[data-audience="adult"] .pwa-sheet > :is(.text-lg, .text-xl, .text-2xl) { font-size: 25px; line-height: 1.2; font-weight: 600; letter-spacing: -.4px; }
+[data-audience="adult"] .pwa-sheet :is(.font-bold, .font-black) { font-weight: 600; }
+[data-audience="adult"] .pwa-sheet :is(.uppercase, .tracking-widest) { letter-spacing: .06em; font-size: 11px; color: rgb(var(--c-gray-400)); }
+[data-audience="adult"] .pwa-sheet p { line-height: 1.6; }
+[data-audience="adult"] .pwa-sheet button {
+  min-height: 44px; padding: 10px 14px; border: 1px solid rgb(var(--c-gray-800));
+  border-radius: 8px; box-shadow: none; background: rgb(var(--c-gray-900));
+  color: rgb(var(--c-gray-100)); font-size: 14px; font-weight: 600; line-height: 1.4;
+  letter-spacing: 0; text-transform: none;
+}
+[data-audience="adult"] .pwa-sheet button:not(:disabled):hover { background: var(--pwa-wash); }
+[data-audience="adult"] .pwa-sheet button:disabled { opacity: .45; cursor: default; }
+[data-audience="adult"] .pwa-sheet button svg { width: 20px; height: 20px; flex-shrink: 0; }
+[data-audience="adult"] .pwa-sheet :is(input, textarea) { min-height: 46px; border: 1px solid rgb(var(--c-gray-800)); border-radius: 8px; background: rgb(var(--c-gray-950)); color: rgb(var(--c-gray-100)); }
+[data-audience="adult"] .pwa-sheet-head { align-items: center; justify-content: space-between; margin-bottom: 5px; }
+[data-audience="adult"] :is(.pwa-sheet-head > span, .pwa-sheet-eyebrow) { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: rgb(var(--c-gray-400)); }
+[data-audience="adult"] .pwa-sheet .pwa-sheet-close,
+[data-audience="adult"] .pwa-sheet button[aria-label^="Close"],
+[data-audience="adult"] .pwa-sheet [onclick="closeActionSheet()"],
+[data-audience="adult"] .pwa-sheet [data-no],
+[data-audience="adult"] .pwa-sheet [data-close] { background: transparent; border-color: transparent; color: rgb(var(--c-gray-400)); }
+[data-audience="adult"] .pwa-sheet button[aria-label^="Close"] { min-width: 44px; }
+[data-audience="adult"] .pwa-sheet .pwa-sheet-close { font-size: 26px; font-weight: 400; padding: 4px 10px; }
+[data-audience="adult"] :is(.pwa-drive-handle, .pwa-kid-decoration) { display: none; }
+[data-audience="adult"] .pwa-sheet :is(#btn-start-drive, #btn-arrived, #em-map-btn, #new-chat-start, #pin-modal-ok, [data-yes], [data-start]) {
+  background: var(--pwa-accent); color: rgb(var(--c-gray-950)); border-color: var(--pwa-accent); min-height: 46px;
+}
+[data-audience="adult"][data-theme="light"] .pwa-sheet :is(#btn-start-drive, #btn-arrived, #em-map-btn, #new-chat-start, #pin-modal-ok, [data-yes], [data-start]) { color: white; }
+[data-audience="adult"] #action-sheet-content :is(#btn-start-drive, #btn-arrived) { min-height: 56px; }
+[data-audience="adult"] #sheet-title { margin: 5px 0 8px; }
+[data-audience="adult"] #sheet-subtitle { margin-bottom: 20px; font-size: 15px; }
+[data-audience="adult"] #drive-brief { padding-bottom: 16px; border-bottom: 1px solid rgb(var(--c-gray-800)); }
+[data-audience="adult"] #drive-car > span:first-child { background: transparent; border: 0; padding: 0; font-weight: 400; }
+[data-audience="adult"] .pwa-sheet :is(.text-blue-300, .text-blue-400, .text-teal-300, .text-teal-400, .text-indigo-300) { color: var(--pwa-accent); }
+[data-audience="adult"] #drive-roll-chips button { padding: 8px 12px; font-weight: 500; }
+[data-audience="adult"] #drive-roll-chips button > span:last-child { font-size: 16px; }
+[data-audience="adult"] #drive-roll-chips [data-aboard="yes"],
+[data-audience="adult"] #drive-prep-items [aria-pressed="true"] { background: var(--pwa-wash); color: var(--pwa-accent); border-color: var(--pwa-accent); }
+[data-audience="adult"] #drive-roll-chips [data-aboard="no"] { background: #fff1df; color: #704315; border-color: #ebd1ad; }
+[data-audience="adult"][data-theme="dark"] #drive-roll-chips [data-aboard="no"] { background: #382e21; color: #f4d5a8; border-color: #71532e; }
+[data-audience="adult"] #mark-completed-separator { display: none !important; }
+[data-audience="adult"] #event-modal-content { display: flex; flex-direction: column; }
+[data-audience="adult"] #em-time { font-size: 14px; font-weight: 500; color: rgb(var(--c-gray-400)); }
+[data-audience="adult"] :is(#em-passengers, #em-driver, #em-prep) > span { background: var(--pwa-wash) !important; color: var(--pwa-accent) !important; border: 0 !important; border-radius: 4px; font-size: 13px; font-weight: 500; padding: 4px 8px; max-width: 100%; white-space: normal; }
+[data-audience="adult"] #em-cancel-btn { order: 2; color: #a13530; border-color: transparent; background: transparent; margin: 8px 0 0; }
+[data-audience="adult"][data-theme="dark"] #em-cancel-btn { color: #f4b6ae; }
+[data-audience="adult"] .pwa-prompt-overlay .pwa-sheet > .text-lg { margin-bottom: 13px; }
+[data-audience="adult"] .pwa-sheet [data-pick] { text-align: left; border: 0; border-bottom: 1px solid rgb(var(--c-gray-800)); border-radius: 0; padding-inline: 0; }
+[data-audience="adult"] .pwa-sheet .pwa-feature { border: 0; border-bottom: 1px solid rgb(var(--c-gray-800)); border-radius: 0; padding: 16px 0; text-align: left; }
+[data-audience="adult"] .pwa-sheet > form[method="dialog"] { display: flex; align-items: center; justify-content: space-between; }
+[data-audience="adult"] .pwa-sheet > form[method="dialog"]::before { content: 'Chauffeur'; font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: rgb(var(--c-gray-400)); }
+@media (min-width: 640px) {
+  [data-audience="adult"] .pwa-sheet-overlay { align-items: center; padding: 24px; }
+  [data-audience="adult"] .pwa-sheet { border-radius: 22px; }
+  [data-audience="adult"] dialog.pwa-sheet { margin: auto; }
+}
 [data-audience="adult"] .pwa-adult-only { display: flex; }
 [data-audience="adult"] body > header {
   padding: 14px 20px 12px; gap: 10px; min-height: 72px; box-shadow: none;
@@ -160,7 +230,6 @@
 [data-audience="adult"] #messages-container > div:first-of-type > .text-lg { display: none; }
 [data-audience="adult"] #moments-strip { order: 3; padding: 16px 20px; }
 [data-audience="adult"] #messages-container [onclick="openNewChat()"] { background: rgb(var(--c-gray-900)); color: rgb(var(--c-gray-100)); border: 1px solid rgb(var(--c-gray-800)); border-radius: 8px; min-height: 44px; font-weight: 500; }
-[data-audience="adult"] #action-sheet-content { background: rgb(var(--c-gray-900)); border-radius: 12px 12px 0 0; box-shadow: none; }
 [data-audience="adult"] #screen-anchors button { background: transparent; border: 0; color: var(--pwa-accent); }
 [data-audience="adult"] #screen-anchors button > span:first-child { font-size: 0; }
 [data-audience="adult"] #screen-anchors button > span:first-child > span { position: static; background: transparent; font-size: 12px; color: var(--pwa-accent); }

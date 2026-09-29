@@ -475,8 +475,8 @@
     </div>
 
     <!-- PIN Modal -->
-    <div id="pin-modal" class="fixed inset-0 bg-black/70 z-[60] hidden items-center justify-center p-6">
-        <div class="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-6 w-full max-w-xs">
+    <div id="pin-modal" class="pwa-sheet-overlay fixed inset-0 bg-black/70 z-[60] hidden items-center justify-center p-6">
+        <div class="pwa-sheet bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-6 w-full max-w-xs">
             <h3 id="pin-modal-title" class="text-xl font-bold text-gray-100 mb-1">Enter PIN</h3>
             <p id="pin-modal-subtitle" class="text-sm text-gray-400 mb-4"></p>
             <input id="pin-modal-input" type="password" inputmode="numeric" pattern="[0-9]*"
@@ -534,8 +534,8 @@
 
     <!-- New Chat picker: type-ahead over family members, selections become
          pills. 1 person -> DM, 2+ -> group channel. -->
-    <div id="new-chat-modal" class="fixed inset-0 bg-black/70 z-[60] hidden items-center justify-center p-6">
-        <div class="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-5 w-full max-w-sm flex flex-col max-h-[80vh]">
+    <div id="new-chat-modal" class="pwa-sheet-overlay fixed inset-0 bg-black/70 z-[60] hidden items-center justify-center p-6">
+        <div class="pwa-sheet bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-5 w-full max-w-sm flex flex-col max-h-[80vh]">
             <h3 class="text-xl font-bold text-gray-100 mb-3">New chat</h3>
             <div id="new-chat-pills" class="flex flex-wrap gap-1.5 mb-2 empty:hidden"></div>
             <input id="new-chat-input" type="text" autocomplete="off" placeholder="Type a name..."
@@ -553,9 +553,9 @@
 
     <!-- Notifications Modal -->
     <div id="notif-modal"
-        class="fixed inset-0 bg-black/60 z-50 hidden opacity-0 transition-opacity duration-300 flex flex-col justify-end">
+        class="pwa-sheet-overlay fixed inset-0 bg-black/60 z-50 hidden opacity-0 transition-opacity duration-300 flex flex-col justify-end">
         <div id="notif-modal-content"
-            class="bg-gray-900 border-t border-gray-700 w-full rounded-t-2xl shadow-sheet transform translate-y-full transition-transform duration-300 p-6 flex flex-col h-[70vh]">
+            class="pwa-sheet bg-gray-900 border-t border-gray-700 w-full rounded-t-2xl shadow-sheet transform translate-y-full transition-transform duration-300 p-6 flex flex-col h-[70vh]">
             <div class="flex justify-between items-center mb-6 shrink-0">
                 <div class="flex justify-between items-center w-full pb-2 border-b border-gray-800">
                     <h2 class="text-xl font-bold text-gray-100">Notifications</h2>
@@ -564,7 +564,7 @@
                         All</button>
                 </div>
 
-                <button onclick="toggleNotifications()"
+                <button onclick="toggleNotifications()" aria-label="Close notifications"
                     class="text-gray-400 hover:text-gray-100 bg-gray-800 rounded-full p-1.5"><svg class="w-5 h-5"
                         fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12">
@@ -591,10 +591,11 @@
          "map me there" tap from an event modal), which is why the drive
          blocks below all hide themselves. -->
     <div id="action-sheet"
-        class="fixed inset-0 z-50 hidden flex-col justify-end bg-black/60 backdrop-blur-sm transition-opacity opacity-0">
+        class="pwa-sheet-overlay fixed inset-0 z-50 hidden flex-col justify-end bg-black/60 backdrop-blur-sm transition-opacity opacity-0">
         <div id="action-sheet-content"
-            class="bg-gray-900 rounded-t-2xl p-6 w-full transform translate-y-full transition-transform duration-300 shadow-sheet max-h-[92vh] overflow-y-auto no-scrollbar">
-            <div class="w-12 h-1.5 bg-gray-700 rounded-full mx-auto mb-6"></div>
+            class="pwa-sheet bg-gray-900 rounded-t-2xl p-6 w-full transform translate-y-full transition-transform duration-300 shadow-sheet max-h-[92vh] overflow-y-auto no-scrollbar">
+            <div class="pwa-drive-handle w-12 h-1.5 bg-gray-700 rounded-full mx-auto mb-6"></div>
+            <div class="pwa-adult-only pwa-sheet-head"><span>Chauffeur</span><button class="pwa-sheet-close" onclick="closeActionSheet()" aria-label="Close drive details">&#215;</button></div>
             <h3 class="text-xl font-bold mb-4 text-gray-100" id="sheet-title">Open in Maps</h3>
             <p class="text-sm text-gray-400 mb-6 font-medium" id="sheet-subtitle"></p>
 
@@ -3077,10 +3078,11 @@
             // browser's they must outrank every overlay that can summon them
             // -- the pet and avatar overlays (100-120), the lightbox (210),
             // the celebrations (200). Only the toast (9999) sits above.
-            overlay.className = 'fixed inset-0 z-[400] bg-black/70 flex items-end sm:items-center justify-center p-4';
-            overlay.innerHTML = `<div class="w-full max-w-sm bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-5">${inner}</div>`;
+            overlay.className = 'pwa-sheet-overlay pwa-prompt-overlay fixed inset-0 z-[400] bg-black/70 flex items-end sm:items-center justify-center p-4';
+            overlay.innerHTML = `<div class="pwa-sheet w-full max-w-sm bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-5"><div class="pwa-adult-only pwa-sheet-head"><span>Chauffeur</span><button class="pwa-sheet-close" data-pwa-dismiss aria-label="Close dialog">&#215;</button></div>${inner}</div>`;
             document.body.appendChild(overlay);
             wire(overlay, () => overlay.remove());
+            overlay.querySelector('[data-pwa-dismiss]').onclick = () => overlay.querySelector('[data-no], [data-close]')?.click();
             return overlay;
         }
 
@@ -7733,6 +7735,7 @@
         function openActionSheet(origin, destination, legTitle, eventId = null, legId = null) {
             routeContext = { origin, destination, legTitle, eventId, legId };
             document.getElementById('sheet-subtitle').textContent = legTitle;
+            document.getElementById('sheet-title').textContent = pwaIsAdult() && legId ? 'Your drive' : 'Open in Maps';
             resetDriveSheet();
 
             const btnMarkCompleted = document.getElementById('btn-mark-completed');
@@ -8059,7 +8062,7 @@
                         ? 'bg-amber-600/20 border-amber-500/60 text-amber-200'
                         : 'bg-gray-800 border-gray-700 text-gray-300');
                 const mark = p.aboard === true ? '✓' : (p.aboard === false ? '✕' : '');
-                return `<button onclick="cycleRollCall('${p.member_id}')"
+                return `<button data-aboard="${p.aboard === true ? 'yes' : p.aboard === false ? 'no' : 'unknown'}" onclick="cycleRollCall('${p.member_id}')"
                     class="flex items-center gap-2 pl-1.5 pr-3 py-1.5 rounded-full border-2 font-bold ${cls}">
                     ${face}<span>${mfEscape(p.name || '?')}</span>
                     <span class="text-lg leading-none">${mark}</span></button>`;
@@ -8074,7 +8077,7 @@
                 const on = drivePrepChecked.has(i);
                 const cls = on ? 'bg-green-600/20 border-green-500/60 text-green-200'
                                : 'bg-amber-500/10 border-amber-500/40 text-amber-200';
-                return `<button onclick="toggleDrivePrep('${mfEscape(i).replace(/'/g, "\\'")}')"
+                return `<button aria-pressed="${on}" onclick="toggleDrivePrep('${mfEscape(i).replace(/'/g, "\\'")}')"
                     class="px-3 py-2 rounded-xl border-2 font-bold text-sm ${cls}">${on ? '✓ ' : ''}${mfEscape(i)}</button>`;
             }).join('');
             show('drive-prep', items.length > 0);
@@ -9901,12 +9904,13 @@
 
     <!-- Event Details Modal -->
     <div id="event-modal"
-        class="fixed inset-0 bg-black/60 z-50 hidden opacity-0 transition-opacity duration-300 flex items-end sm:items-center justify-center p-4">
+        class="pwa-sheet-overlay fixed inset-0 bg-black/60 z-50 hidden opacity-0 transition-opacity duration-300 flex items-end sm:items-center justify-center p-4">
         <div id="event-modal-content"
-            class="bg-gray-900 border border-gray-700 w-full max-w-md rounded-2xl shadow-2xl transform translate-y-full sm:translate-y-0 sm:scale-95 transition-all duration-300 p-6">
+            class="pwa-sheet bg-gray-900 border border-gray-700 w-full max-w-md rounded-2xl shadow-2xl transform translate-y-full sm:translate-y-0 sm:scale-95 transition-all duration-300 p-6">
+            <div class="pwa-adult-only pwa-sheet-eyebrow">Event details</div>
             <div class="flex justify-between items-start mb-4">
                 <h3 id="em-title" class="text-2xl font-bold text-gray-100 pr-4">Event Title</h3>
-                <button onclick="closeEventModal()"
+                <button onclick="closeEventModal()" aria-label="Close event details"
                     class="text-gray-400 hover:text-gray-100 bg-gray-800 rounded-full p-1.5"><svg class="w-5 h-5"
                         fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12">
@@ -9931,7 +9935,7 @@
                 <div id="em-assist" class="text-sm text-teal-300 font-bold"></div>
             </div>
             <div class="mb-4" id="em-prep-row" style="display: none">
-                <p class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-1">🎒 Bring</p>
+                <p class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-1"><span class="pwa-kid-decoration">🎒 </span>Bring</p>
                 <div id="em-prep" class="flex flex-wrap gap-1.5"></div>
             </div>
             <div class="mb-6">
@@ -9942,7 +9946,7 @@
                  because that's where the "coach just texted" moment happens. -->
             <button id="em-cancel-btn" style="display: none"
                 class="w-full flex items-center justify-center gap-3 py-3 rounded-xl bg-gray-800 border border-gray-700 active:bg-gray-700 text-gray-200 font-bold shadow-md mb-3">
-                ❌ <span id="em-cancel-label">Cancel this event</span>
+                <span class="pwa-kid-decoration">❌ </span><span id="em-cancel-label">Cancel this event</span>
             </button>
             <button id="em-map-btn"
                 class="w-full flex items-center justify-center gap-3 py-3 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold shadow-md mb-3">
