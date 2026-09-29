@@ -25,11 +25,15 @@ The browser check exercises real roll-call persistence, confirms the event
 and departure agree on their rider/destination, tests prompt results and
 dismissal, and verifies the child prompt styling remains unchanged. Captures
 use fictional fixtures, not the live household.
-Release validation passed for all five adult roles and Sprout, plus the
-26 drive-sheet and six stylesheet checks. Explorer, Navigator and Copilot
-could not finish their rerun because this Windows host intermittently timed
-out creating local socket pairs/listeners. The runner-only workarounds were
-not added to the application.
+Follow-up 2.499.212 sizes empty notifications to their content, lightens
+profile descriptions, supplies distinct profile action icons, and flattens
+the chat-recipient picker with a labeled 44px remove control. The gallery
+includes these sheets in both themes. All nine profile checks now pass,
+including Explorer, Navigator and Copilot; the earlier Windows loopback
+failures are no longer an outstanding validation gap. The runner-only
+socket workaround was not added to the application. Additional browser
+checks cover recipient selection/removal, touch targets, overflow, empty
+notifications and profile text hierarchy; all six stylesheet checks pass.
 
 ### Adult design implemented in 2.499.209
 

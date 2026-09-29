@@ -93,6 +93,12 @@
 [data-audience="adult"] .pwa-prompt-overlay .pwa-sheet > .text-lg { margin-bottom: 13px; }
 [data-audience="adult"] .pwa-sheet [data-pick] { text-align: left; border: 0; border-bottom: 1px solid rgb(var(--c-gray-800)); border-radius: 0; padding-inline: 0; }
 [data-audience="adult"] .pwa-sheet .pwa-feature { border: 0; border-bottom: 1px solid rgb(var(--c-gray-800)); border-radius: 0; padding: 16px 0; text-align: left; }
+[data-audience="adult"] .pwa-sheet .pwa-feature small { font-size: 13px; font-weight: 400; line-height: 1.5; }
+[data-audience="adult"] #notif-modal-content { height: auto; }
+[data-audience="adult"] #notif-list { flex: 0 1 auto; max-height: 55dvh; }
+[data-audience="adult"] #new-chat-suggestions > button { background: transparent; border: 0; border-bottom: 1px solid rgb(var(--c-gray-800)); border-radius: 0; padding-inline: 0; }
+[data-audience="adult"] #new-chat-pills > span { background: var(--pwa-wash); color: var(--pwa-accent); border: 0; border-radius: 8px; padding: 0 0 0 10px; }
+[data-audience="adult"] #new-chat-pills button { background: transparent; color: var(--pwa-accent); border: 0; width: 44px; min-width: 44px; height: 44px; padding: 10px; }
 [data-audience="adult"] .pwa-sheet > form[method="dialog"] { display: flex; align-items: center; justify-content: space-between; }
 [data-audience="adult"] .pwa-sheet > form[method="dialog"]::before { content: 'Chauffeur'; font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: rgb(var(--c-gray-400)); }
 @media (min-width: 640px) {

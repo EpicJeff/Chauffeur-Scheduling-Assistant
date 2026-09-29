@@ -5895,7 +5895,7 @@
                 const m = pickerMember(id);
                 return `<span class="flex items-center gap-1 pl-2.5 pr-1.5 py-1 rounded-full bg-blue-600/30 border border-blue-500/50 text-blue-200 text-sm font-semibold">
                     ${mfEscape(m.name)}
-                    <button onclick="toggleNewChatMember('${id}')" class="w-4 h-4 rounded-full bg-blue-500/40 text-blue-100 text-xs leading-none font-bold">✕</button>
+                    <button onclick="toggleNewChatMember('${id}')" aria-label="Remove ${mfEscape(m.name)}" class="w-4 h-4 rounded-full bg-blue-500/40 text-blue-100 text-xs leading-none font-bold">✕</button>
                 </span>`;
             }).join('');
             document.getElementById('new-chat-start').disabled = !newChatSelected.length;

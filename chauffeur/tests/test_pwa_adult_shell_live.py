@@ -333,10 +333,47 @@ def run():
                         page.evaluate("document.documentElement.style.fontSize='200%'")
                         assert not page.evaluate('document.documentElement.scrollWidth > innerWidth')
                         check_route_departure(page, schedule, driver, output)
+                        check_other_adult_sheets(page, output)
                 assert not errors and not failed_scripts, (key, errors, failed_scripts)
                 print('ok', key, tabs, flush=True)
     finally:
         served.stop()
+
+
+def check_other_adult_sheets(page, output=None):
+    for theme in ('light', 'dark'):
+        page.evaluate('t=>applyTheme(t)', theme)
+        for name, selector, opening, closing in (
+            ('notifications', '#notif-modal-content', 'toggleNotifications()', 'toggleNotifications()'),
+            ('profile', '#pwa-profile', 'pwaOpenProfile()', "document.getElementById('pwa-profile').close()"),
+            ('new-chat', '#new-chat-modal > div', 'openNewChat()', 'closeNewChat()'),
+        ):
+            page.evaluate(opening)
+            page.wait_for_timeout(350)
+            panel = page.locator(selector)
+            assert panel.is_visible(), name
+            assert panel.evaluate('(e)=>e.scrollWidth<=e.clientWidth'), name
+            if name == 'notifications':
+                assert panel.bounding_box()['height'] < 400  # empty sheet fits its content
+            if name == 'profile':
+                assert panel.locator('.pwa-feature small').first.evaluate('(e)=>getComputedStyle(e).fontWeight') == '400'
+            if name == 'new-chat':
+                assert page.locator('#new-chat-start').is_disabled()
+                page.locator('#new-chat-suggestions > button').first.click()
+                assert page.locator('#new-chat-start').is_enabled()
+                assert page.locator('#new-chat-pills button').get_attribute('aria-label').startswith('Remove ')
+            small = panel.locator('button:visible').evaluate_all('(els)=>els.filter(e=>e.getBoundingClientRect().height<43).map(e=>e.textContent)')
+            assert not small, (name, small)
+            if output:
+                page.mouse.move(0, 0)
+                page.wait_for_function("document.getElementById('global-alert').classList.contains('opacity-0')")
+                page.wait_for_timeout(350)
+                Path(output, f'adult-{name}-sheet-{theme}.png').write_bytes(page.screenshot())
+            if name == 'new-chat':
+                page.locator('#new-chat-pills button').click()
+                assert page.locator('#new-chat-start').is_disabled()
+            page.evaluate(closing)
+            page.wait_for_timeout(350)
 
 
 if __name__ == '__main__':

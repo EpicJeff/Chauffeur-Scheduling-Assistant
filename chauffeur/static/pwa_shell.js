@@ -194,6 +194,10 @@ function pwaIcon(name) {
         critter: '<path d="M5 10V5l5 3h4l5-3v5c4 11-18 11-14 0Z"/><path d="M9 12h.01M15 12h.01M10 16h4"/>',
         programs: '<path d="M12 5v16M3 3c4 0 6 0 9 2 3-2 5-2 9-2v16c-4 0-6 0-9 2-3-2-5-2-9-2V3Z"/>',
         profile: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
+        theme: '<path d="M20.5 13a8.5 8.5 0 0 1-9.5-9.5A8.5 8.5 0 1 0 20.5 13Z"/>',
+        refresh: '<path d="M20 4v6h-6M4 20v-6h6M20 10a8 8 0 0 0-14-5M4 14a8 8 0 0 0 14 5"/>',
+        push: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',
+        switch: '<path d="M10 4H4v16h6M9 12h12m-4-4 4 4-4 4"/>',
         arrow: '<path d="m9 5 7 7-7 7"/>',
         assistant: '<path d="m12 2 3 7 7 3-7 3-3 7-3-7-7-3 7-3 3-7Z"/>',
     };
