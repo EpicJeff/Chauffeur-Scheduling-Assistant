@@ -1,0 +1,324 @@
+{
+  "adult": {
+    "stage": null,
+    "capabilities": {},
+    "tabs": [
+      {
+        "text": "My Day",
+        "w": 65
+      },
+      {
+        "text": "Family",
+        "w": 65
+      },
+      {
+        "text": "Messages",
+        "w": 65
+      },
+      {
+        "text": "House\n1",
+        "w": 65
+      },
+      {
+        "text": "Map",
+        "w": 65
+      },
+      {
+        "text": "Music",
+        "w": 65
+      }
+    ],
+    "header": {
+      "x": 0,
+      "y": 0,
+      "width": 390,
+      "height": 96,
+      "top": 0,
+      "right": 390,
+      "bottom": 96,
+      "left": 0
+    },
+    "overflow": true,
+    "smallText": [],
+    "unnamedButtons": [
+      "btn-notif",
+      "btn-sync",
+      "btn-switch-driver",
+      "btn-prev-day",
+      "btn-next-day",
+      "kiosk-chat-fab"
+    ]
+  },
+  "sprout": {
+    "stage": "sprout",
+    "capabilities": {
+      "glyph_scale": "xl",
+      "density": "roomy",
+      "horizon_days": 0,
+      "show_points": true,
+      "show_streaks": false,
+      "can_request": false,
+      "assignable_tasks": false,
+      "can_drive": false,
+      "private_location": false,
+      "own_account": false,
+      "practices_alone": false,
+      "stage": "sprout",
+      "stage_label": "Sprout"
+    },
+    "tabs": [
+      {
+        "text": "My Day",
+        "w": 78
+      },
+      {
+        "text": "Messages",
+        "w": 78
+      },
+      {
+        "text": "House\n1",
+        "w": 78
+      },
+      {
+        "text": "Map",
+        "w": 78
+      },
+      {
+        "text": "Music",
+        "w": 78
+      }
+    ],
+    "header": {
+      "x": 0,
+      "y": 0,
+      "width": 390,
+      "height": 77,
+      "top": 0,
+      "right": 390,
+      "bottom": 77,
+      "left": 0
+    },
+    "overflow": false,
+    "smallText": [
+      {
+        "text": "\u270f\ufe0f",
+        "size": "9px"
+      },
+      {
+        "text": "\ud83e\udd5a Hatch a critter",
+        "size": "11px"
+      }
+    ],
+    "unnamedButtons": [
+      "btn-sync",
+      "btn-switch-driver",
+      "btn-prev-day",
+      "btn-next-day",
+      "kiosk-chat-fab"
+    ]
+  },
+  "explorer": {
+    "stage": "explorer",
+    "capabilities": {
+      "glyph_scale": "lg",
+      "density": "roomy",
+      "horizon_days": 6,
+      "show_points": true,
+      "show_streaks": true,
+      "can_request": true,
+      "assignable_tasks": false,
+      "can_drive": false,
+      "private_location": false,
+      "own_account": false,
+      "practices_alone": false,
+      "stage": "explorer",
+      "stage_label": "Explorer"
+    },
+    "tabs": [
+      {
+        "text": "My Day",
+        "w": 78
+      },
+      {
+        "text": "Messages",
+        "w": 78
+      },
+      {
+        "text": "House\n1",
+        "w": 78
+      },
+      {
+        "text": "Map",
+        "w": 78
+      },
+      {
+        "text": "Music",
+        "w": 78
+      }
+    ],
+    "header": {
+      "x": 0,
+      "y": 0,
+      "width": 390,
+      "height": 77,
+      "top": 0,
+      "right": 390,
+      "bottom": 77,
+      "left": 0
+    },
+    "overflow": false,
+    "smallText": [
+      {
+        "text": "\u270f\ufe0f",
+        "size": "9px"
+      },
+      {
+        "text": "\ud83e\udd5a Hatch a critter",
+        "size": "11px"
+      }
+    ],
+    "unnamedButtons": [
+      "btn-sync",
+      "btn-switch-driver",
+      "btn-prev-day",
+      "btn-next-day",
+      "kiosk-chat-fab"
+    ]
+  },
+  "navigator": {
+    "stage": "navigator",
+    "capabilities": {
+      "glyph_scale": "sm",
+      "density": "tight",
+      "horizon_days": 13,
+      "show_points": false,
+      "show_streaks": false,
+      "can_request": true,
+      "assignable_tasks": true,
+      "can_drive": false,
+      "private_location": true,
+      "own_account": true,
+      "practices_alone": true,
+      "stage": "navigator",
+      "stage_label": "Navigator"
+    },
+    "tabs": [
+      {
+        "text": "My Day",
+        "w": 78
+      },
+      {
+        "text": "Messages",
+        "w": 78
+      },
+      {
+        "text": "House\n1",
+        "w": 78
+      },
+      {
+        "text": "Map",
+        "w": 78
+      },
+      {
+        "text": "Music",
+        "w": 78
+      }
+    ],
+    "header": {
+      "x": 0,
+      "y": 0,
+      "width": 390,
+      "height": 77,
+      "top": 0,
+      "right": 390,
+      "bottom": 77,
+      "left": 0
+    },
+    "overflow": false,
+    "smallText": [
+      {
+        "text": "\u270f\ufe0f",
+        "size": "9px"
+      },
+      {
+        "text": "\ud83e\udd5a Hatch a critter",
+        "size": "11px"
+      }
+    ],
+    "unnamedButtons": [
+      "btn-sync",
+      "btn-switch-driver",
+      "btn-prev-day",
+      "btn-next-day",
+      "kiosk-chat-fab"
+    ]
+  },
+  "copilot": {
+    "stage": "copilot",
+    "capabilities": {
+      "glyph_scale": "none",
+      "density": "tight",
+      "horizon_days": 13,
+      "show_points": false,
+      "show_streaks": false,
+      "can_request": true,
+      "assignable_tasks": true,
+      "can_drive": true,
+      "private_location": true,
+      "own_account": true,
+      "practices_alone": true,
+      "stage": "copilot",
+      "stage_label": "Copilot"
+    },
+    "tabs": [
+      {
+        "text": "My Day",
+        "w": 78
+      },
+      {
+        "text": "Messages",
+        "w": 78
+      },
+      {
+        "text": "House\n1",
+        "w": 78
+      },
+      {
+        "text": "Map",
+        "w": 78
+      },
+      {
+        "text": "Music",
+        "w": 78
+      }
+    ],
+    "header": {
+      "x": 0,
+      "y": 0,
+      "width": 390,
+      "height": 77,
+      "top": 0,
+      "right": 390,
+      "bottom": 77,
+      "left": 0
+    },
+    "overflow": false,
+    "smallText": [
+      {
+        "text": "\u270f\ufe0f",
+        "size": "9px"
+      },
+      {
+        "text": "\ud83e\udd5a Hatch a critter",
+        "size": "11px"
+      }
+    ],
+    "unnamedButtons": [
+      "btn-sync",
+      "btn-switch-driver",
+      "btn-prev-day",
+      "btn-next-day",
+      "kiosk-chat-fab"
+    ]
+  }
+}

@@ -1,0 +1,198 @@
+{
+  "errors": [],
+  "screens": [
+    {
+      "audience": "adult",
+      "screen": "01\nToday",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 13,
+      "smallTargets": []
+    },
+    {
+      "audience": "adult",
+      "screen": "02\nFamily plan",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 21,
+      "smallTargets": []
+    },
+    {
+      "audience": "adult",
+      "screen": "03\nTasks & lists",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 15,
+      "smallTargets": []
+    },
+    {
+      "audience": "adult",
+      "screen": "04\nMessages",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 13,
+      "smallTargets": []
+    },
+    {
+      "audience": "adult",
+      "screen": "05\nFeature discovery",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 15,
+      "smallTargets": []
+    },
+    {
+      "audience": "adult",
+      "screen": "06\nDrive detail",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 10,
+      "smallTargets": []
+    },
+    {
+      "audience": "sprout",
+      "screen": "01\nNext step",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 8,
+      "smallTargets": []
+    },
+    {
+      "audience": "sprout",
+      "screen": "02\nMy things",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 8,
+      "smallTargets": []
+    },
+    {
+      "audience": "sprout",
+      "screen": "03\nMy family",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 6,
+      "smallTargets": []
+    },
+    {
+      "audience": "explorer",
+      "screen": "01\nMy day",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 10,
+      "smallTargets": []
+    },
+    {
+      "audience": "explorer",
+      "screen": "02\nTasks & rewards",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 12,
+      "smallTargets": []
+    },
+    {
+      "audience": "explorer",
+      "screen": "03\nFamily messages",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 11,
+      "smallTargets": []
+    },
+    {
+      "audience": "explorer",
+      "screen": "04\nMy collection",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 13,
+      "smallTargets": []
+    },
+    {
+      "audience": "navigator",
+      "screen": "01\nMy day",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 12,
+      "smallTargets": []
+    },
+    {
+      "audience": "navigator",
+      "screen": "02\nMy plan",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 15,
+      "smallTargets": []
+    },
+    {
+      "audience": "navigator",
+      "screen": "03\nTasks",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 13,
+      "smallTargets": []
+    },
+    {
+      "audience": "navigator",
+      "screen": "04\nMessages",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 12,
+      "smallTargets": []
+    },
+    {
+      "audience": "navigator",
+      "screen": "05\nMy space",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 14,
+      "smallTargets": []
+    },
+    {
+      "audience": "copilot",
+      "screen": "01\nMy day",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 12,
+      "smallTargets": []
+    },
+    {
+      "audience": "copilot",
+      "screen": "02\nMy plan",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 15,
+      "smallTargets": []
+    },
+    {
+      "audience": "copilot",
+      "screen": "03\nTasks",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 13,
+      "smallTargets": []
+    },
+    {
+      "audience": "copilot",
+      "screen": "04\nMessages",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 12,
+      "smallTargets": []
+    },
+    {
+      "audience": "copilot",
+      "screen": "05\nMy space",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 14,
+      "smallTargets": []
+    },
+    {
+      "audience": "copilot",
+      "screen": "06\nDriving, if enabled",
+      "overflow": false,
+      "contentOverflow": false,
+      "buttons": 9,
+      "smallTargets": []
+    }
+  ],
+  "interactions": "approvals, search, task completion/undo, messages, Escape; 360/390/768 reflow"
+}
