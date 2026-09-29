@@ -10,6 +10,47 @@ function pwaOrderTabs(order) {
     if (actual.join() !== order.join()) order.forEach(id => bar.append(document.getElementById('tab-' + id)));
 }
 
+// One profile palette for every audience. Keep the chosen hue, adjusting
+// accent brightness only as needed for text/buttons on both theme surfaces.
+function pwaProfilePalette(color, dark) {
+    let hex = /^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i.test(color || '') ? color.slice(1) : '3b82f6';
+    if (hex.length === 3) hex = [...hex].map(c => c + c).join('');
+    const rgb = [0,2,4].map(i => parseInt(hex.slice(i,i+2),16));
+    const mix = (a,b,t) => a.map((v,i) => Math.round(v*(1-t)+b[i]*t));
+    const luminance = c => c.map(v => v/255).map(v => v <= .04045 ? v/12.92 : ((v+.055)/1.055)**2.4)
+        .reduce((sum,v,i) => sum + v*[.2126,.7152,.0722][i],0);
+    const contrast = (a,b) => (Math.max(luminance(a),luminance(b))+.05)/(Math.min(luminance(a),luminance(b))+.05);
+    const tint = (base, amount) => mix(base,rgb,amount);
+    const bases = dark
+        ? [[248,250,252],[241,245,249],[222,229,238],[205,215,227],[185,195,209],[185,195,209],[115,130,149],[72,86,103],[53,65,80],[28,34,42],[18,23,30]]
+        : [[18,25,33],[24,31,39],[40,49,59],[57,68,79],[80,91,104],[80,91,104],[158,170,184],[204,213,224],[220,227,236],[255,255,255],[255,255,255]];
+    const shades = [50,100,200,300,400,500,600,700,800,900,950];
+    const palette = Object.fromEntries(shades.map((shade,i) => [shade,tint(bases[i],shade === 900 ? (dark ? .10 : 0) : shade === 950 ? (dark ? .08 : .045) : .12)]));
+    const wash = dark ? tint([32,38,46],.24) : tint([255,255,255],.13);
+    const start = dark ? mix(rgb,[255,255,255],.55) : rgb;
+    let accent = start;
+    for (let step = 0; step <= 100; step++) {
+        accent = mix(start,dark ? [255,255,255] : [0,0,0],step/100);
+        if ([wash,palette[900],palette[950]].every(bg => contrast(accent,bg) >= 4.5)) break;
+    }
+    return {...Object.fromEntries(Object.entries(palette).map(([shade,value]) => ['gray-'+shade,value.join(' ')])),
+        accent:`rgb(${accent.join(' ')})`, wash:`rgb(${wash.join(' ')})`};
+}
+function pwaSyncProfileColors() {
+    const root = document.documentElement;
+    const member = membersData.find(m => m.id === selectedMemberId);
+    if (!member) { delete root.dataset.profileColor; pwaSyncProfileColors.color = null; return; }
+    const color = member.color_code || '#3b82f6';
+    if (pwaSyncProfileColors.color !== color) {
+        pwaSyncProfileColors.color = color;
+        for (const theme of ['light','dark']) for (const [name,value] of Object.entries(pwaProfilePalette(color,theme === 'dark')))
+            root.style.setProperty(`--profile-${theme}-${name}`,value);
+    }
+    root.dataset.profileColor = color;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = `rgb(${getComputedStyle(root).getPropertyValue('--c-gray-900').trim()})`;
+}
+
 function pwaSyncShell() {
     const adult = pwaIsAdult();
     document.documentElement.dataset.audience = adult ? 'adult' : 'child';
@@ -45,6 +86,7 @@ function pwaSyncShell() {
         pwaRenderHouseTabs();
     }
     pwaChildSync();
+    pwaSyncProfileColors();
 }
 
 function pwaAllowed(view) {

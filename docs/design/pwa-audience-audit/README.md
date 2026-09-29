@@ -14,6 +14,24 @@ All content is fictional. Actions are local simulations; no request is sent to t
 
 ## Reproduce the review
 
+### Profile colors implemented in 2.499.214
+
+**[Working profile-color examples](implementation/profile-colors/index.html)**
+
+Adults and all four child stages now derive accents, background tints, tabs,
+primary controls and sheets from the selected member's `color_code`. Fixed
+audience palettes are removed. Light/dark variants adjust accent brightness
+for readable contrast, including very light and very dark profile colors.
+The audience layouts stay the same. Palette changes follow roster refreshes,
+theme changes and identity switching; an unknown identity clears the palette.
+
+The shared browser checks exercise each audience with multiple profile colors,
+verify contrast and profile switching, and retain the existing navigation and
+action checks. Set `PWA_PALETTE_OUTPUT` to an output directory when running
+`chauffeur/tests/test_pwa_adult_shell_live.py` to capture the examples above.
+The older galleries below document their release's appearance; their fixed
+stage colors are superseded by this profile-based palette.
+
 ### All four child experiences implemented in 2.499.213
 
 **[Working child screens, sheets and mockup comparison](implementation/children/index.html)**

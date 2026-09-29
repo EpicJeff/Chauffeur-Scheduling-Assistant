@@ -1,48 +1,8 @@
-/* Four stage-specific layouts, using the approved audience review tokens. */
-:root[data-child-stage] {
-  --pwa-accent:#d1b7ff; --pwa-wash:#463657; --child-radius:20px;
-  --c-gray-50:245 240 255; --c-gray-100:245 240 255; --c-gray-200:231 222 246;
-  --c-gray-300:214 204 229; --c-gray-400:194 184 210; --c-gray-500:194 184 210;
-  --c-gray-600:146 128 166; --c-gray-700:94 76 113; --c-gray-800:77 64 94;
-  --c-gray-900:45 39 57; --c-gray-950:33 28 44;
-}
-:root[data-child-stage="sprout"] {
-  --pwa-accent:#aed8bd; --pwa-wash:#30483a; --child-radius:23px;
-  --c-gray-100:240 244 239; --c-gray-300:197 209 200; --c-gray-400:177 190 180;
-  --c-gray-500:177 190 180; --c-gray-700:69 87 76; --c-gray-800:58 73 65;
-  --c-gray-900:29 40 36; --c-gray-950:20 29 27;
-}
+/* Stage layout and shape; colors come from the shared profile palette. */
+:root[data-child-stage] { --child-radius:20px; }
+:root[data-child-stage="sprout"] { --child-radius:23px; }
 :root[data-child-stage="navigator"] { --child-radius:13px; }
-:root[data-child-stage="copilot"] {
-  --pwa-accent:#b8d0ff; --pwa-wash:#334666; --child-radius:10px;
-  --c-gray-100:241 245 255; --c-gray-300:209 220 237; --c-gray-400:181 195 215;
-  --c-gray-500:181 195 215; --c-gray-700:76 98 130; --c-gray-800:64 83 113;
-  --c-gray-900:32 45 64; --c-gray-950:24 32 44;
-}
-:root[data-child-stage][data-theme="light"] {
-  --pwa-accent:#6d43b2; --pwa-wash:#ede6fa;
-  --c-gray-50:49 43 72; --c-gray-100:49 43 72; --c-gray-200:59 51 79;
-  --c-gray-300:79 68 97; --c-gray-400:103 93 120; --c-gray-500:103 93 120;
-  --c-gray-600:166 153 186; --c-gray-700:211 199 228; --c-gray-800:228 221 239;
-  --c-gray-900:255 255 255; --c-gray-950:250 248 255;
-}
-:root[data-child-stage="sprout"][data-theme="light"] {
-  --pwa-accent:#24684b; --pwa-wash:#e3f0ce;
-  --c-gray-100:41 59 50; --c-gray-200:51 67 58; --c-gray-300:68 84 65;
-  --c-gray-400:93 107 92; --c-gray-500:93 107 92; --c-gray-700:205 217 190;
-  --c-gray-800:226 232 213; --c-gray-950:255 250 240;
-}
-:root[data-child-stage="navigator"][data-theme="light"] {
-  --pwa-accent:#6551a6; --pwa-wash:#efebf8;
-  --c-gray-100:46 44 59; --c-gray-400:104 98 117; --c-gray-500:104 98 117;
-  --c-gray-800:226 221 235; --c-gray-950:248 247 252;
-}
-:root[data-child-stage="copilot"][data-theme="light"] {
-  --pwa-accent:#305e9e; --pwa-wash:#eaf0f9;
-  --c-gray-100:38 51 70; --c-gray-300:65 81 104; --c-gray-400:88 103 122;
-  --c-gray-500:88 103 122; --c-gray-700:199 210 226; --c-gray-800:220 226 235;
-  --c-gray-950:247 248 251;
-}
+:root[data-child-stage="copilot"] { --child-radius:10px; }
 [data-child-stage] body { font-family:'Segoe UI',system-ui,sans-serif; font-size:1.0rem; line-height:1.5; }
 [data-child-stage] body > header { padding:14px 20px; min-height:72px; border:0; box-shadow:none; background:rgb(var(--c-gray-950)); }
 [data-child-stage] #driver-name { font-size:0.9375rem; font-weight:600; }

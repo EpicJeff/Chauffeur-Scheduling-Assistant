@@ -1,34 +1,41 @@
-/* Adult PWA foundation; child stages retain their own presentation. */
-:root[data-audience="adult"] {
-  --pwa-accent: #aed8bd;
-  --pwa-wash: #30483a;
-  --c-gray-50: 245 248 244;
-  --c-gray-100: 240 244 239;
-  --c-gray-200: 220 230 222;
-  --c-gray-300: 197 209 200;
-  --c-gray-400: 177 190 180;
-  --c-gray-500: 177 190 180;
-  --c-gray-600: 106 125 115;
-  --c-gray-700: 69 87 76;
-  --c-gray-800: 58 73 65;
-  --c-gray-900: 29 40 36;
-  --c-gray-950: 20 29 27;
+/* Profile-derived colors are shared by adults and every child stage. */
+:root { --pwa-accent:rgb(var(--c-blue-400)); --pwa-wash:rgb(var(--c-gray-800)); }
+:root[data-profile-color] {
+  --pwa-accent: var(--profile-dark-accent);
+  --pwa-wash: var(--profile-dark-wash);
+  --c-gray-50: var(--profile-dark-gray-50);
+  --c-gray-100: var(--profile-dark-gray-100);
+  --c-gray-200: var(--profile-dark-gray-200);
+  --c-gray-300: var(--profile-dark-gray-300);
+  --c-gray-400: var(--profile-dark-gray-400);
+  --c-gray-500: var(--profile-dark-gray-500);
+  --c-gray-600: var(--profile-dark-gray-600);
+  --c-gray-700: var(--profile-dark-gray-700);
+  --c-gray-800: var(--profile-dark-gray-800);
+  --c-gray-900: var(--profile-dark-gray-900);
+  --c-gray-950: var(--profile-dark-gray-950);
 }
-[data-audience="adult"][data-theme="light"] {
-  --pwa-accent: #22624c;
-  --pwa-wash: #eaf2ec;
-  --c-gray-500: 91 99 97;
-  --c-gray-50: 20 31 27;
-  --c-gray-100: 28 48 41;
-  --c-gray-200: 44 54 49;
-  --c-gray-300: 62 72 67;
-  --c-gray-400: 88 105 96;
-  --c-gray-600: 177 188 182;
-  --c-gray-700: 208 217 211;
-  --c-gray-800: 219 226 220;
-  --c-gray-900: 255 255 255;
-  --c-gray-950: 248 249 247;
+:root[data-profile-color][data-theme="light"] {
+  --pwa-accent: var(--profile-light-accent);
+  --pwa-wash: var(--profile-light-wash);
+  --c-gray-50: var(--profile-light-gray-50);
+  --c-gray-100: var(--profile-light-gray-100);
+  --c-gray-200: var(--profile-light-gray-200);
+  --c-gray-300: var(--profile-light-gray-300);
+  --c-gray-400: var(--profile-light-gray-400);
+  --c-gray-500: var(--profile-light-gray-500);
+  --c-gray-600: var(--profile-light-gray-600);
+  --c-gray-700: var(--profile-light-gray-700);
+  --c-gray-800: var(--profile-light-gray-800);
+  --c-gray-900: var(--profile-light-gray-900);
+  --c-gray-950: var(--profile-light-gray-950);
 }
+/* Existing primary controls outside sheets use the same profile palette. */
+[data-profile-color] button:is(.bg-blue-600,.bg-indigo-600),
+[data-profile-color] #thread-messages .bg-blue-600 { background:var(--pwa-accent); color:rgb(var(--c-gray-950)); }
+[data-profile-color][data-theme="light"] button:is(.bg-blue-600,.bg-indigo-600),
+[data-profile-color][data-theme="light"] #thread-messages .bg-blue-600 { color:white; }
+[data-profile-color] input[type="checkbox"] { accent-color:var(--pwa-accent) !important; }
 .pwa-adult-only { display: none; }
 /* Sheets follow the approved review's .sheet/.primary/.secondary tokens.
    Semantic hooks apply equally to static sheets and the shared prompt builder. */

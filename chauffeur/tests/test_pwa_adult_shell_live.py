@@ -19,6 +19,7 @@ DATA = tempfile.mkdtemp(prefix='chauffeur_adult_shell_')
 os.environ['CHAUFFEUR_DATA_DIR'] = DATA
 atexit.register(lambda: shutil.rmtree(DATA, ignore_errors=True))
 from live_app import live_app
+from pwa_profile_checks import check_profile_palette, check_profile_button
 from services import storage, ha_api
 
 DAY = datetime.now().strftime('%Y-%m-%d')
@@ -67,7 +68,7 @@ def check_route_departure(page, schedule, driver, output=None):
     }''', schedule)
     page.locator('.pwa-event-row .pwa-row-main').filter(has_text='Soccer practice').click()
     assert page.locator('#em-passengers').inner_text() == 'James'
-    assert page.locator('#em-map-btn').evaluate('(e)=>getComputedStyle(e).backgroundColor') == 'rgb(34, 98, 76)'
+    check_profile_button(page, '#em-map-btn')
     page.wait_for_function("getComputedStyle(document.getElementById('event-modal')).opacity === '1'")
     page.wait_for_timeout(350)
     if output: Path(output, 'adult-event-sheet-light.png').write_bytes(page.screenshot())
@@ -81,14 +82,14 @@ def check_route_departure(page, schedule, driver, output=None):
     assert page.evaluate('routeContext.destination') == 'Riverside fields'
     assert page.evaluate('driveSheetData.next_drive.title') == 'Piano lesson'
     assert page.locator('#sheet-title').inner_text() == 'Your drive'
-    assert page.locator('#btn-start-drive').evaluate('(e)=>getComputedStyle(e).backgroundColor') == 'rgb(34, 98, 76)'
+    check_profile_button(page, '#btn-start-drive')
     assert page.locator('#btn-mark-completed').evaluate('(e)=>getComputedStyle(e).boxShadow') == 'none'
     page.locator('#drive-roll-chips button').click()
     page.wait_for_function("driveSheetData.passengers[0].aboard === true")
     assert page.locator('#drive-roll-chips button').get_attribute('data-aboard') == 'yes'
     if output: Path(output, 'adult-drive-sheet-light.png').write_bytes(page.screenshot())
     page.evaluate("applyTheme('dark')")
-    page.wait_for_function("getComputedStyle(document.getElementById('btn-start-drive')).backgroundColor === 'rgb(174, 216, 189)'")
+    check_profile_button(page, '#btn-start-drive')
     if output: Path(output, 'adult-drive-sheet-dark.png').write_bytes(page.screenshot())
     page.evaluate("applyTheme('light')")
     for width in (360, 768):
@@ -201,6 +202,8 @@ def run():
                 page.wait_for_timeout(500)
                 assert page.evaluate('selectedMemberId') == key
                 assert page.evaluate('currentMemberRole()') == role
+                check_profile_palette(page)
+                if role == 'child' and not driver: page.evaluate('void renderMyDay()'); page.wait_for_selector('.child-greeting')
                 tabs = page.locator('#pwa-tab-bar > button:visible').all_text_contents()
                 tabs = [' '.join(t.split()) for t in tabs]
                 overflow = page.evaluate('''()=>({width:document.documentElement.scrollWidth,

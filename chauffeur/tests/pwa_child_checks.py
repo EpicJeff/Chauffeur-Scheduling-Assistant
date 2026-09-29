@@ -1,5 +1,6 @@
 """Populated, interactive child acceptance checks for the served PWA harness."""
 from pathlib import Path
+from pwa_profile_checks import check_profile_button
 from urllib.parse import parse_qs, urlparse
 
 
@@ -173,7 +174,7 @@ def check_child_driver(page, output):
     page.locator('.pwa-next button').click()
     page.wait_for_function("driveSheetData?.leg_id === 'init_soccer'")
     assert page.locator('#sheet-title').inner_text() == 'Your drive'
-    assert page.locator('#btn-start-drive').evaluate('(e)=>getComputedStyle(e).backgroundColor') == 'rgb(48, 94, 158)'
+    check_profile_button(page, '#btn-start-drive')
     page.wait_for_timeout(350)
     if output: Path(output,'copilot-drive-sheet-light.png').write_bytes(page.screenshot())
     page.get_by_role('button',name='Close drive details',exact=True).click()

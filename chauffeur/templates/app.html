@@ -4007,6 +4007,7 @@
                 // pickers, passenger lists, or the identity switcher; their names
                 // are resolved specially where messages render.
                 membersData = (await res.json()).filter(m => !m.system);
+                pwaSyncProfileColors();
                 // A presence snapshot may have beaten the members list in.
                 if (typeof renderPresence === 'function') renderPresence();
             } catch (e) {
