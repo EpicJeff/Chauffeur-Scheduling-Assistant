@@ -1,0 +1,14 @@
+<!-- Adult navigation reuses the existing, permission-filtered views. -->
+<section id="pwa-more-container" class="pwa-directory" aria-labelledby="pwa-more-title" hidden>
+    <h2 id="pwa-more-title">More</h2>
+    <p class="pwa-muted">Find a feature or manage your preferences.</p>
+    <label for="pwa-feature-search">Search features</label>
+    <input id="pwa-feature-search" type="search" placeholder="Map, music, appearance..." oninput="pwaRenderDirectory()">
+    <div id="pwa-feature-list"></div>
+    <p id="pwa-search-empty" hidden>No matching features. Try another name.</p>
+</section>
+<dialog id="pwa-profile" class="pwa-profile" aria-labelledby="pwa-profile-title">
+    <form method="dialog"><button class="pwa-close" aria-label="Close profile">Close</button></form>
+    <h2 id="pwa-profile-title">Your profile</h2>
+    <div id="pwa-profile-actions"></div>
+</dialog>

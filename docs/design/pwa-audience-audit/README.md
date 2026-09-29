@@ -14,6 +14,37 @@ All content is fictional. Actions are local simulations; no request is sent to t
 
 ## Reproduce the review
 
+### Adult foundation shipped in 2.499.208
+
+The working PWA now uses a compact adult header, a neutral flat light/dark
+palette, Today / Plan / Household / Messages / More navigation where the
+member's permissions allow those views, searchable feature discovery, and
+a profile/preferences dialog. Map and Music remain available through More.
+Today promotes the scheduler's next or current drive with its existing action.
+The four child stages retain their original navigation and presentation.
+
+[Actual Today, light](implementation/adult-today-light.png) ·
+[Actual Today, dark](implementation/adult-today-dark.png) ·
+[Actual More screen](implementation/adult-more-light.png)
+
+These are served-app captures with fictional data. Run the focused browser
+check to reproduce them:
+
+```powershell
+$env:PWA_REVIEW_OUTPUT='docs/design/pwa-audience-audit/implementation'
+.\venv\Scripts\python.exe -X utf8 chauffeur/tests/test_pwa_adult_shell_live.py
+```
+
+The check covers parent/driver, adult/driver, non-driving parent, helper,
+guest and all four child stages; directory filtering and scope restrictions;
+profile keyboard dismissal, theme switching, drive actions/completion, and
+horizontal overflow at phone/tablet widths and doubled root text size.
+Real notifications, location tracking, routing estimates and music playback
+are not exercised by these fixtures. Consolidated attention summaries and
+the four proposed child redesigns remain subsequent work.
+
+### Standalone proposal
+
 From the repository root, with its Python environment and Playwright installed:
 
 ```powershell

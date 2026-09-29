@@ -103,6 +103,8 @@
         }
     </style>
     <link rel="stylesheet" href="{{ 'static/tailwind-app.css'|ver }}">
+    <link rel="stylesheet" href="{{ 'static/pwa_shell.css'|ver }}">
+    <script defer src="{{ 'static/pwa_shell.js'|ver }}"></script>
     <!-- Alpine, for the avatar editor overlay (avatar arc A3). app.html is
          otherwise vanilla JS on purpose; Alpine here only animates that one
          component, and `defer` keeps it out of the critical path. -->
@@ -131,8 +133,8 @@
         class="bg-gray-900 border-b border-gray-800 p-4 flex items-center justify-between shrink-0 shadow-md relative z-20">
         <div class="flex items-center gap-3">
             <!-- Tap your own face to open the dressing-up box (avatar arc A3). -->
-            <button type="button" class="relative shrink-0"
-                onclick="if (selectedMemberId && typeof openAvatarEditor === 'function') openAvatarEditor(selectedMemberId)">
+            <button id="pwa-identity" type="button" class="relative shrink-0" aria-label="Edit your avatar"
+                onclick="if (pwaIsAdult()) pwaOpenProfile(); else if (selectedMemberId) openAvatarEditor(selectedMemberId)">
                 <div id="driver-avatar"
                     class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg shadow-sm border-2 border-gray-700 bg-gray-800 text-gray-500">
                     ?</div>
@@ -144,6 +146,9 @@
             </div>
         </div>
         <div class="flex items-center gap-2">
+            <button type="button" class="pwa-adult-only pwa-header-button" onclick="pwaSearch()" aria-label="Search features">
+                <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="m15 15 6 6"/></svg>
+            </button>
             <!-- PETS, FROM ANYWHERE IN THE PWA, FOR ANYBODY.
                  The My Day buttons only serve children -- adults have no My
                  Day at all -- and burying the way in inside the avatar editor
@@ -186,7 +191,7 @@
                 <span
                     class="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-blue-500 rounded-full w-2 h-2"></span>
             </button>
-            <button id="btn-notif" onclick="toggleNotifications()"
+            <button id="btn-notif" onclick="toggleNotifications()" aria-label="Notifications"
                 class="p-3 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors relative hidden">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -196,7 +201,7 @@
                 <span id="notif-badge"
                     class="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full hidden">0</span>
             </button>
-            <button id="btn-sync" onclick="fetchSchedule(true)"
+            <button id="btn-sync" onclick="fetchSchedule(true)" aria-label="Refresh schedule"
                 class="p-3 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -210,7 +215,7 @@
                 <svg id="btn-theme-icon" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2"
                     viewBox="0 0 24 24"></svg>
             </button>
-            <button id="btn-switch-driver" onclick="clearDriver()"
+            <button id="btn-switch-driver" onclick="clearDriver()" aria-label="Switch person or sign out"
                 class="p-3 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors hidden">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -389,8 +394,9 @@
             <div id="house-threads" class="p-4 pt-0 space-y-3 pb-8" style="scroll-margin-top: 76px"></div>
         </div>
 
+        {% include 'components/pwa_shell.html' %}
         <!-- Bottom Tab Bar -->
-        <div class="flex bg-gray-900 border-t border-gray-800 shrink-0 z-10 shadow-nav"
+        <div id="pwa-tab-bar" role="navigation" aria-label="Main navigation" class="flex bg-gray-900 border-t border-gray-800 shrink-0 z-10 shadow-nav"
             style="padding-bottom: env(safe-area-inset-bottom)">
             <button id="tab-myday" onclick="setView('myday')" style="display: none"
                 class="flex-1 flex-col items-center gap-0.5 pt-2.5 pb-2 text-gray-500 transition-colors">
@@ -457,6 +463,11 @@
                         d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z"></path>
                 </svg>
                 <span class="text-xs font-bold tracking-wide">Music</span>
+            </button>
+            <button id="tab-more" onclick="setView('more')" style="display: none"
+                class="flex-1 flex-col items-center gap-0.5 pt-2.5 pb-2 text-gray-500 transition-colors">
+                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+                <span class="text-xs font-bold tracking-wide">More</span>
             </button>
         </div>
     </div>
@@ -782,6 +793,7 @@
         updateThemeButton();
 
         function setView(view, focusMemberId = null) {
+            if (view === 'more' && !pwaIsAdult()) return;
             if (view === currentView && !focusMemberId) return;
             currentView = view;
             localStorage.setItem('chauffeur_view', view);
@@ -801,7 +813,7 @@
                 fetchHouseThreads();
             } else if (view === 'music') {
                 if (musicWidgetStarted && typeof mwRefresh === 'function') mwRefresh();
-            } else {
+            } else if (view !== 'more') {
                 buildTimeline();
                 if (view === 'family') { fetchProposals(); fetchMind(); }
             }
@@ -815,7 +827,8 @@
             const isMyDay = currentView === 'myday';
             const isMusic = currentView === 'music';
             const isChores = currentView === 'chores';
-            const isTimeline = !isMessages && !isMap && !isMyDay && !isMusic && !isChores;
+            const isTimeline = !isMessages && !isMap && !isMyDay && !isMusic && !isChores && currentView !== 'more';
+            pwaSyncShell();
             document.getElementById('chores-container').style.display = isChores ? 'flex' : 'none';
             document.getElementById('days-container').style.display = isTimeline ? 'flex' : 'none';
             const nav = document.getElementById('day-nav');
@@ -882,6 +895,7 @@
                 tab.classList.toggle('text-blue-400', v === currentView);
                 tab.classList.toggle('text-gray-500', v !== currentView);
             });
+            pwaSyncShell();
         }
 
         // Passenger mode = a member without a driver identity is logged in.
@@ -954,6 +968,7 @@
             if (noMap && !hiddenNow.includes('map')) hiddenNow.push('map');
             if (noMusic && !hiddenNow.includes('music')) hiddenNow.push('music');
             if (noChores && !hiddenNow.includes('chores')) hiddenNow.push('chores');
+            if (!pwaIsAdult()) hiddenNow.push('more');
             if (hiddenNow.includes(currentView)) {
                 // The keeping-up adult LANDS on Family — it is what they
                 // opened the app for. A guest lands on Messages, for the
@@ -2111,6 +2126,7 @@
         // story, so it draws only when there are at least two places to jump
         // between. Counts come from the same arrays the sections render from.
         function renderScheduleAnchors() {
+            pwaRefreshOverview();
             const wrap = document.getElementById('screen-anchors');
             if (!wrap) return;
             const family = currentView === 'family';
@@ -6192,6 +6208,7 @@
                 tab.style.display = 'flex';
                 renderHouseAnchors();
                 renderHouseLists();
+                if (currentView === 'more') pwaRenderDirectory();
             }
         }
 
@@ -8711,7 +8728,7 @@
             const outerCircle = isInProgress ? 'border-blue-500 bg-blue-600 text-white' : `${colorClassBg} border-gray-950 ${colorClassText}`;
 
             return `
-                <div class="flex items-start mb-6 relative z-10 group cursor-pointer ${isPast && !isInProgress ? 'opacity-40' : ''}" onclick="openActionSheet(${actionArgs})">
+                <div class="pwa-leg-row flex items-start mb-6 relative z-10 group cursor-pointer ${isPast && !isInProgress ? 'opacity-40' : ''}" data-next="${isInProgress ? 'active' : isPast ? 'past' : 'upcoming'}" role="button" tabindex="0" onkeydown="if(event.target === this && (event.key === 'Enter' || event.key === ' ')){event.preventDefault();this.click()}" onclick="openActionSheet(${actionArgs})">
                     <div class="w-10 h-10 rounded-full ${outerCircle} border-4 flex items-center justify-center shrink-0 shadow-md transition-all duration-300">
                         ${iconSvg}
                     </div>
@@ -9386,7 +9403,7 @@
 
                     const isEventPast = new Date(ev.end) < new Date();
                     html += pr(ev.start) + `
-                        <div class="flex items-start mb-6 relative z-10 group cursor-pointer ${isEventPast ? 'opacity-40' : ''}" onclick="openEventModal('${evDataStr.replace(/'/g, "\\'")}')">
+                        <div class="pwa-event-row flex items-start mb-6 relative z-10 group cursor-pointer ${isEventPast ? 'opacity-40' : ''}" role="button" tabindex="0" onkeydown="if(event.target === this && (event.key === 'Enter' || event.key === ' ')){event.preventDefault();this.click()}" onclick="openEventModal('${evDataStr.replace(/'/g, "\\'")}')">
                             <div class="w-10 h-10 rounded-full bg-gray-700 border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md text-gray-100 font-bold text-xs" style="background-color: ${driverConfig.color_code || '#4a5568'}">
                                 ${formatTime(ev.start).split(':')[0]}
                             </div>

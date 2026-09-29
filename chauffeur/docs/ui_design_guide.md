@@ -17,6 +17,20 @@ designed" but matches nothing else is a defect, even when it is pretty.
 
 ## Shared builders come first
 
+### Adult PWA presentation
+
+The approved [audience review](../../docs/design/pwa-audience-audit/AUDIT.md)
+introduces a distinct adult PWA shell. `static/pwa_shell.css` and
+`static/pwa_shell.js` own this presentation: neutral surfaces, thin borders,
+8–12px corners, compact labeled navigation and a searchable More directory.
+Today, Plan, Household and Messages retain their existing data builders and
+permission rules; secondary Map and Music views remain available from More.
+Profile holds appearance, avatar, critter, notification setup and sign-out.
+The next-drive summary reads the existing scheduler rows rather than deriving
+departure times separately. Child stages keep their existing visual treatment
+until their own approved implementation pass. Keep these adult overrides
+scoped to `data-audience="adult"`; do not flatten the kiosk or child UI.
+
 When two surfaces draw the same concept, they share ONE builder (the
 kiosk-shares-logic / TripLogic pattern — an included component both consumers
 load). Existing shared pieces:
