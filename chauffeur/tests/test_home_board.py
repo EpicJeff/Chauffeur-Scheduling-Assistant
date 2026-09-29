@@ -384,8 +384,9 @@ def scenario_the_hero_says_when_to_leave():
               f"{runs['ballet'].get('leave_label')}")
         check(runs['ballet']['from_home'],
               "an initial edge is the driver setting out from home")
-        check(runs['later']['leave_label'] == '6:50 PM' and not runs['later']['from_home'],
-              f"a mid-chain drive has a real departure too, got {runs['later']}")
+        check(runs['later']['leave_label'] == '6:00 PM' and not runs['later']['from_home'],
+              f"a mid-chain drive leaves when the previous event ends, as the "
+              f"Drives list draws it, got {runs['later']}")
         check('leave_at' not in runs['blind'],
               "no travel time means no leave time — a guessed departure is "
               "worse than none")
@@ -401,6 +402,76 @@ def scenario_the_hero_says_when_to_leave():
         hero = home_board._hero(_at(21, 30), [runs['blind']])
         check(hero['next'].get('minutes_to_leave') is None,
               "a drive with no known travel leaves the countdown on the start")
+    finally:
+        (storage.get_cached_schedule, storage.get_cached_daily_schedule,
+         storage.get_all_drivers, storage.get_completed_drives,
+         storage.get_in_progress_drives) = orig
+
+
+def scenario_a_home_layover_is_not_one_long_drive():
+    """Reported against the phone: the compact hero said one leave time and
+    drive length, the Drives list another, and the Drives list was right.
+
+    When the gap allows, the solver sends the driver home in between, and the
+    route edge's `travel_mins` is the drive home PLUS the drive back out. The
+    hero read that sum as one drive into the event, so the drive home from the
+    previous stop was folded into this one. It must say what the Drives list
+    says: leave home at (previous end + drive home + layover), for the drive
+    from home only, and a pickup on the way adds its own leg."""
+    orig = (storage.get_cached_schedule, storage.get_cached_daily_schedule,
+            storage.get_all_drivers, storage.get_completed_drives,
+            storage.get_in_progress_drives)
+    try:
+        home_wp = {'to_home_mins': 12, 'from_home_mins': 20, 'layover_mins': 88,
+                   'driver_home_location': 'home'}
+        sched = {
+            'events': [
+                {'id': 'school', 'title': 'School', 'location': 'school',
+                 'start': _at(8).isoformat(), 'end': _at(15).isoformat()},
+                {'id': 'swim', 'title': 'Swim', 'location': 'pool',
+                 'start': _at(17).isoformat(), 'end': _at(18).isoformat()},
+                {'id': 'music', 'title': 'Music', 'location': 'hall',
+                 'start': _at(20).isoformat(), 'end': _at(21).isoformat()},
+            ],
+            'assignments': {'school': 'drv1', 'swim': 'drv1', 'music': 'drv1'},
+            'scheduled_errands': [],
+            'route_edges': {'drv1': {
+                # School ends 3:00; home by 3:12; 88 min layover; leave home
+                # 4:40 for the 20-minute drive to a 5:00 swim.
+                'school': {'to_event': 'swim', 'travel_mins': 32,
+                           'home_waypoint': dict(home_wp)},
+                # Swim ends 6:00; home by 6:12; out again via a pickup.
+                'swim': {'to_event': 'music', 'travel_mins': 47,
+                         'home_waypoint': dict(home_wp, from_home_mins=15,
+                                               layover_mins=78),
+                         'pickup_waypoint': {'to_pickup_mins': 15,
+                                             'from_pickup_mins': 20,
+                                             'pickup_location': 'friend'}},
+            }},
+        }
+        storage.get_cached_schedule = lambda: sched
+        storage.get_cached_daily_schedule = lambda d: None
+        storage.get_all_drivers = lambda: [{'id': 'drv1', 'name': 'Vovo',
+                                            'color_code': '#fff'}]
+        storage.get_completed_drives = lambda: []
+        storage.get_in_progress_drives = lambda: []
+
+        runs = {r['id']: r for r in home_board.todays_runs(now=_at(9))}
+        swim = runs['swim']
+        check(swim['travel_mins'] == 20,
+              f"the drive is home -> pool, not school -> home -> pool: {swim}")
+        check(swim['leave_label'] == '4:40 PM' and swim['from_home'],
+              f"leave home at 3:00 + 12 + 88 = 4:40, got {swim}")
+        music = runs['music']
+        check(music['travel_mins'] == 35 and music['from_home'],
+              f"home -> friend -> hall is 15 + 20, the drive home excluded: {music}")
+        check(music['leave_label'] == '7:30 PM',
+              f"leave home at 6:00 + 12 + 78 = 7:30, got {music}")
+
+        from services import leave_by
+        kid = leave_by.for_run(sched, 'drv1', 'swim', _at(17), from_home_only=True)
+        check(kid and kid['leave_label'] == '4:40 PM',
+              f"a home layover IS setting out from home for the kid's leave-by: {kid}")
     finally:
         (storage.get_cached_schedule, storage.get_cached_daily_schedule,
          storage.get_all_drivers, storage.get_completed_drives,

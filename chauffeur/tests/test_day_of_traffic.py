@@ -275,6 +275,55 @@ def scenario_every_surface_is_wired():
           "both hero variants must say WHY the leave time moved (+N traffic)")
 
 
+def scenario_traffic_after_a_layover_and_straight_on():
+    """A route edge is decomposed the way the Drives list draws it, so the
+    overlay prices the leg actually driven. After a home layover, traffic
+    moves the departure FROM HOME earlier, but never before the driver is
+    home. Straight on from an event, nobody can leave before it ends, so
+    traffic lengthens the drive and leaves the departure where it is."""
+    _reset()
+    real_settings = storage.get_settings
+    real_drivers = storage.get_all_drivers
+    storage.get_settings = lambda: {'home_location': 'home'}
+    storage.get_all_drivers = lambda: []
+    try:
+        today = datetime.date.today()
+        at = lambda h, m=0: datetime.datetime.combine(today, datetime.time(h, m))
+        now = at(9)
+        events = [{'id': 'school', 'location': 'school',
+                   'start': at(8).isoformat(), 'end': at(15).isoformat()},
+                  {'id': 'swim', 'location': 'pool',
+                   'start': at(17).isoformat(), 'end': at(18).isoformat()}]
+        sched = {'events': events, 'route_edges': {'d1': {'school': {
+            'to_event': 'swim', 'travel_mins': 32,
+            'home_waypoint': {'to_home_mins': 12, 'from_home_mins': 20,
+                              'layover_mins': 88,
+                              'driver_home_location': 'home'}}}}}
+        static = leave_by.for_run(sched, 'd1', 'swim', at(17), live=True, now=now)
+        check(static['leave_label'] == '4:40 PM' and static['travel_mins'] == 20,
+              f"no traffic row: home at 3:12, out at 4:40 for 20 min, got {static}")
+        storage.set_cached_day_of_traffic('home', 'pool', 35, 'refine')
+        live = leave_by.for_run(sched, 'd1', 'swim', at(17), live=True, now=now)
+        check(live['leave_label'] == '4:25 PM' and live['travel_mins'] == 35
+              and live['traffic_delay_mins'] == 15,
+              f"15 min of traffic on home -> pool leaves home 15 min earlier, got {live}")
+        storage.set_cached_day_of_traffic('home', 'pool', 200, 'refine')
+        jam = leave_by.for_run(sched, 'd1', 'swim', at(17), live=True, now=now)
+        check(jam['leave_label'] == '3:12 PM',
+              f"never earlier than getting home (3:00 + 12), got {jam}")
+
+        chained = {'events': events, 'route_edges': {'d1': {'school': {
+            'to_event': 'swim', 'travel_mins': 20}}}}
+        storage.set_cached_day_of_traffic('school', 'pool', 30, 'refine')
+        on = leave_by.for_run(chained, 'd1', 'swim', at(17), live=True, now=now)
+        check(on['leave_label'] == '3:00 PM' and on['travel_mins'] == 30
+              and on['traffic_delay_mins'] == 10,
+              f"straight on: leave when school ends, the drive grows, got {on}")
+    finally:
+        storage.get_settings = real_settings
+        storage.get_all_drivers = real_drivers
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

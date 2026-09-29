@@ -22,6 +22,19 @@ between two honest sentences:
 `from_home_only=True` keeps the second out — the kid digest wants the first
 sense and only the first, because a child reading "leave by 4:20" is being told
 when to put their shoes on.
+
+A route edge is not always one drive. When the gap allows, the solver sends the
+driver HOME in between (`home_waypoint`), and it can route through a passenger
+pickup (`pickup_waypoint`); either way the edge's `travel_mins` is the SUM of
+every leg. Reading that sum as one drive into the event is what put a leave
+time and a drive length on the hero that the Drives list contradicted: the
+drive home from the previous event had been folded in. So a route lead is
+decomposed exactly the way the Drives list draws it (templates/app.html
+buildTimeline): after a home layover the departure is FROM HOME, at the
+previous event's end + the drive home + the layover, and the drive is only
+what is left after home; otherwise the driver sets out when the previous
+event ends and drives every leg. A home layover counts as from home for
+`from_home_only` callers, because it is.
 """
 
 import datetime
@@ -64,25 +77,74 @@ def travel_into(sched: dict, driver_id: str, event_id: str,
             lead = as_lead(edge, True)
             if lead:
                 return lead
-    if from_home_only:
-        return None
-
+    events = None
     for from_id, edge in ((sched.get('route_edges') or {}).get(driver_id) or {}).items():
         if not edge or edge.get('to_event') not in (event_id, f"{event_id}_dropoff"):
             continue
-        lead = as_lead(edge, False)
-        if lead:
-            # Where the driver sets out FROM — the day-of traffic overlay
-            # needs a route, and a route edge's origin is the event it leaves.
-            lead['from_event'] = from_id
-            return lead
+        home_wp = edge.get('home_waypoint') or None
+        pickup_wp = edge.get('pickup_waypoint') or None
+        if from_home_only and not home_wp:
+            continue
+        lead = as_lead(edge, bool(home_wp))
+        if not lead:
+            continue
+        # Where the driver sets out FROM — the day-of traffic overlay needs
+        # a route, and a route edge's origin is the event it leaves.
+        lead['from_event'] = from_id
+        if pickup_wp:
+            lead['via_pickup'] = True
+        if events is None:
+            events = {str(e.get('id')): e for e in (sched.get('events') or [])}
+        prev = events.get(str(from_id)) or events.get(_base_id(str(from_id))) or {}
+        prev_end = _naive(_parse(prev.get('end')))
+        try:
+            if home_wp:
+                to_home = int(home_wp.get('to_home_mins') or 0)
+                layover = int(home_wp.get('layover_mins') or 0)
+                # Home -> (pickup ->) the event: the Drives list's own legs.
+                approach = int(home_wp.get('from_home_mins') or 0) + (
+                    int(pickup_wp.get('from_pickup_mins') or 0) if pickup_wp else 0)
+                if approach <= 0:
+                    return None
+                lead['travel_mins'] = approach
+                lead['home_location'] = home_wp.get('driver_home_location')
+                if prev_end:
+                    lead['depart'] = prev_end + datetime.timedelta(
+                        minutes=to_home + layover)
+                    # Nobody leaves home before they have got there.
+                    lead['earliest'] = prev_end + datetime.timedelta(minutes=to_home)
+            elif prev_end:
+                # Straight on from the previous event, through any pickup.
+                lead['depart'] = prev_end
+        except (TypeError, ValueError):
+            return None
+        return lead
     return None
 
 
+def _parse(value) -> Optional[datetime.datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except ValueError:
+        return None
+
+
+def _naive(dt):
+    # Wall-clock local, offset stripped rather than converted — the same
+    # convention for_run applies to `start`.
+    return dt.replace(tzinfo=None) if dt is not None and dt.tzinfo else dt
+
+
 def leave_at(start: datetime.datetime, lead: dict) -> Optional[datetime.datetime]:
-    """The departure itself. `lead` is what `travel_into` returned."""
+    """The departure itself. `lead` is what `travel_into` returned. A route
+    lead carries the planned departure the Drives list shows (`depart`); an
+    initial edge is worked back from the start."""
     if not start or not lead:
         return None
+    if lead.get('depart'):
+        return lead['depart']
     return start - datetime.timedelta(
         minutes=lead['travel_mins'] + lead.get('buffer_mins', 0))
 
@@ -226,12 +288,17 @@ def _day_of_overlay(sched: dict, driver_id: str, event_id: str,
         # The overlay is about TODAY: tomorrow's digest reading today's rush
         # hour would be confidently wrong in the other direction.
         return None
+    if lead.get('via_pickup'):
+        # The drive goes through a pickup; a direct origin -> destination
+        # reading is a different road and would price the wrong thing.
+        return None
     events = {e.get('id'): e for e in (sched.get('events') or [])}
     dest = (events.get(_base_id(event_id)) or {}).get('location')
     if lead.get('from_home'):
         drv = next((d for d in storage.get_all_drivers()
                     if str(d.get('id')) == str(driver_id)), None)
-        origin = ((drv or {}).get('home_location') or '').strip() \
+        origin = (lead.get('home_location') or '').strip() \
+            or ((drv or {}).get('home_location') or '').strip() \
             or (storage.get_settings() or {}).get('home_location')
     else:
         origin = (events.get(_base_id(lead.get('from_event') or '')) or {}).get('location')
@@ -245,7 +312,14 @@ def _day_of_overlay(sched: dict, driver_id: str, event_id: str,
     if not row or row['duration_mins'] <= lead['travel_mins']:
         return None
     mins = row['duration_mins']
-    when = start - datetime.timedelta(minutes=mins + lead.get('buffer_mins', 0))
+    delay = mins - lead['travel_mins']
+    if lead.get('depart') and not lead.get('from_home'):
+        # Straight on from the previous event: nobody can leave before it
+        # ends, so traffic lengthens the drive and leaves the departure be.
+        return {'travel_mins': mins, 'traffic_delay_mins': delay}
+    when = leave_at(start, lead) - datetime.timedelta(minutes=delay)
+    if lead.get('earliest') and when < lead['earliest']:
+        when = lead['earliest']
     return {'leave_at': when.isoformat(), 'leave_label': clock(when),
             'travel_mins': mins,
-            'traffic_delay_mins': mins - lead['travel_mins']}
+            'traffic_delay_mins': delay}

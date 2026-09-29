@@ -1,6 +1,15 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.206 (2026-09-28).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.215 (2026-09-29).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**The hero's leave time and drive length match the Drives list (v2.499.215; `services/leave_by.py`, `tests/test_home_board.py`, `tests/test_day_of_traffic.py`).** User: "The compact hero card is saying the time to leave and drive time is one thing while the drives schedule says another. The drive schedule is correct." The cause was the route edge. When the gap allows, the solver sends the driver home between two drives (`home_waypoint`) or through a passenger pickup (`pickup_waypoint`), and the edge's `travel_mins` is then the SUM of every leg. `leave_by.travel_into` read that sum as one drive into the event, so the drive home from the previous stop was folded into this one. The drive length came out too long and the leave time too early. Every surface built on `leave_by` showed it: all four compact heroes (screensaver, House glance, House life, Kitchen), the board hero, the drive sheet's next-drive line, runway and the arrival ETA.
+
+What changed: a route lead is now decomposed the way `buildTimeline` draws it.
+- **After a home layover:** leave home at the previous event's end + the drive home + the layover, for the drive from home only (plus the pickup leg if there is one). `from_home` is true, so `from_home_only` callers (the kid's leave-by, runway) now get these too.
+- **Straight on (direct or via a pickup):** leave when the previous event ends, and drive every leg.
+- **Day-of traffic:** after a layover, traffic moves the departure earlier, but never before the driver is home. Straight on, traffic lengthens the drive and leaves the departure where it is. Legs through a pickup are not overlaid, because origin to destination is a different road.
+
+Not changed: an initial (from-home) departure is still start − travel − buffer. The Drives list and the Time-to-leave pushes both subtract a further 5 minutes there; the hero does not, which keeps `test_arrive_by`'s leave + drive = be-there invariant. That 5-minute difference is a product call for the user.
 
 **Anyone can add a moment to any event, on any day after (v2.499.206; `main.py` send_message + member_day, `services/scope.py`, `templates/app.html`, `tests/test_family_network.py`, `tests/test_member_day.py`, `tests/test_moments_past_days_live.py`).** User: "there is no way to add moments for events that happened in the past ... uploading can sometimes be difficult at the activities", and on the presence gate: "There should be no limitation on who can upload a moment to an event thread ... It is a punitive limitation that only hurts the people not able to attend the event."
 
