@@ -14,6 +14,37 @@ All content is fictional. Actions are local simulations; no request is sent to t
 
 ## Reproduce the review
 
+### All four child experiences implemented in 2.499.213
+
+**[Working child screens, sheets and mockup comparison](implementation/children/index.html)**
+
+Sprout now leads with one picture-based routine step, Explorer with a focused
+checklist and pickup reassurance, Navigator with compact priorities and a
+personal Plan, and Copilot with a restrained blue organizer. The children's
+navigation, task/reward sections, messages, feature directory, profile and
+detail sheets use the corresponding stage design. Configured Copilot drivers
+also get compact drive rows, a next-departure summary and matching drive sheets.
+
+Plan reads the selected child's own day and scheduled program sessions within
+the server-provided horizon. Stage and capability overrides remain authoritative;
+parent approval, program supervision and task eligibility are unchanged. Routine
+substeps and direct completion are exercised through the existing actions. This
+also fixes the old completion callback's reference to a nonexistent `members`
+list, which saved progress but failed to refresh it. Older stages retain rewards
+in their task sections without leading their day with points or oversized art.
+
+The served-app suite now uses populated child fixtures, rather than merely
+asserting that the old child UI is unchanged. It covers four stages plus a
+configured Copilot driver, completion/refresh, detail sheets, future-day previews,
+capability overrides, navigation, adult/child shell switching and light/dark
+layouts at phone/tablet sizes with doubled text. Run
+`chauffeur/tests/test_pwa_adult_shell_live.py` for the complete audience suite;
+its child scenarios live in `chauffeur/tests/pwa_child_checks.py`.
+
+These are presentation changes over existing actions. Prototype-only read-aloud,
+new scheduling controls and simulated vehicle reservations are not added. The
+fixtures do not send live messages or test real push, music or location tracking.
+
 ### Adult action sheets implemented in 2.499.211
 
 [Working sheet gallery](implementation/sheets.html): event and drive details,
@@ -73,8 +104,8 @@ phone/tablet widths and doubled root text size. Background integrations are
 disabled in this isolated fixture server; scripts and styles have bounded
 transport retries for loopback connection resets.
 Real notifications, location tracking, routing estimates and music playback
-are not exercised by these fixtures. The four child redesigns remain
-subsequent work; their existing navigation and presentation are preserved.
+are not exercised by these fixtures. The child profiles in that release were regression checks only; the four child
+redesigns are implemented and separately exercised in 2.499.213 above.
 The proposal's simulated cover requests, person filters and new-event flow
 are not added by this visual pass; the application's existing actions and
 permission rules remain authoritative.

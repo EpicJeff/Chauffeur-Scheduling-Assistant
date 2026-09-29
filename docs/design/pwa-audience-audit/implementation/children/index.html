@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Working child experiences · Chauffeur 2.499.213</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:32px;background:#f3f4f1;color:#1c3029;font:16px/1.5 'Segoe UI',system-ui,sans-serif}main{max-width:1250px;margin:auto}h1{font-size:32px;line-height:1.2;font-weight:650}h2{font-size:18px}p,figcaption{color:#586960}a{color:#22624c}nav,.controls{display:flex;flex-wrap:wrap;gap:16px;align-items:center;margin:24px 0}label{display:grid;gap:6px;font-size:14px}select{font:inherit;padding:12px;border:1px solid #b7c6bd;border-radius:8px;background:white;color:#1c3029;min-height:48px}.comparison{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}figure{margin:0}img{display:block;width:100%;height:auto;border:1px solid #dbe2dc;border-radius:12px}figcaption{font-size:14px;margin:8px 0 16px}details{margin:30px 0;padding:16px;border:1px solid #dbe2dc;border-radius:10px}summary{cursor:pointer;font-weight:600}@media(max-width:800px){body{padding:20px}.comparison{grid-template-columns:1fr;max-width:390px}}
+</style>
+<main>
+<nav><a href="../../index.html">Audience design review</a><a href="../sheets.html">Adult sheets</a><a href="../../README.md">Scope and validation</a></nav>
+<h1>Four child experiences, in the working PWA.</h1>
+<p>Version 2.499.213. These are captures of the served application using fictional schedule, routine and household fixtures. The controls below compare the approved direction with the working screens and detail sheets.</p>
+<div class="controls">
+<label>Stage<select id="stage"><option value="sprout">Sprout</option><option value="explorer">Explorer</option><option value="navigator">Navigator</option><option value="copilot">Copilot</option></select></label>
+<label>Working screen<select id="screen"><option value="today-light">Today · light</option><option value="today-dark">Today · dark</option><option value="plan-light">Personal Plan</option><option value="tasks-light">Tasks</option><option value="rewards-light">Rewards</option><option value="messages-light">Messages / Family</option><option value="more-light">More / My things</option><option value="320-large-text">320px · doubled text</option><option value="768-large-text">Tablet · doubled text</option></select></label>
+<label>Working detail sheet<select id="sheet"><option value="ride-sheet-light">Ride details</option><option value="routine-sheet-light">Routine steps</option><option value="profile-sheet-light">Profile</option><option value="confirm-sheet-dark">Confirmation · dark</option></select></label>
+</div>
+<p id="description"></p>
+<section class="comparison">
+<figure><h2>Approved Today mockup</h2><img id="proposal" alt="Approved stage-specific Today design"><figcaption>Design direction; illustrative content and proposed features.</figcaption></figure>
+<figure><h2>Working screen</h2><a id="actual-link"><img id="actual" alt="Actual working child PWA screen"></a><figcaption>Real renderers and existing actions. Captures after interactions may show completed tasks.</figcaption></figure>
+<figure><h2>Working detail sheet</h2><a id="detail-link"><img id="detail" alt="Actual stage-specific detail sheet"></a><figcaption>The stage’s palette, spacing and controls continue into details.</figcaption></figure>
+</section>
+<details><summary>What changed, and what these captures verify</summary>
+<p>Sprout has a picture-led next step, a familiar driver and Today / My things / Family navigation. Explorer has a pickup card, focused checklist, progress and a personal week. Navigator uses compact priorities and a two-week personal Plan. Copilot has a restrained blue organizer, with the original drive scheduler available when the member is configured and permitted to drive.</p>
+<p>All stages keep task completion, routine substeps, task photos, rewards, programs, lists, messages, music and critters. Server-delivered stage capabilities and permissions remain authoritative. The checks exercise routine completion and refresh, pickup details, own-member future dates, read-only routine previews, reward navigation, feature access, capability overrides, adult/child shell switching, light/dark themes and narrow layouts with doubled text.</p>
+<p>The approved prototype’s illustrative read-aloud, new planning controls and simulated car reservations are not new product features in this release. These isolated tests do not send real family messages or exercise live music, notifications or location tracking.</p>
+<p><a href="copilot-driving-light.png">Configured Copilot: driving schedule</a> · <a href="copilot-drive-sheet-light.png">Configured Copilot: drive sheet</a></p>
+</details>
+</main>
+<script>
+const descriptions={sprout:'One next step, a large completion action and picture-based discovery.',explorer:'A reassuring pickup first, playful progress and a manageable checklist.',navigator:'A personal agenda with compact priorities, quieter visuals and practical detail sheets.',copilot:'A mature organizer with restrained blue accents and configured driving responsibilities.'};
+function render(){const stage=document.getElementById('stage').value,screen=document.getElementById('screen'),sheet=document.getElementById('sheet').value;screen.querySelector('[value="plan-light"]').disabled=stage==='sprout';if(stage==='sprout'&&screen.value==='plan-light')screen.value='today-light';document.getElementById('description').textContent=descriptions[stage];document.getElementById('proposal').src='../../previews/'+stage+'-today.png';for(const [id,suffix] of [['actual',screen.value],['detail',sheet]]){const src=stage+'-'+suffix+'.png';document.getElementById(id).src=src;document.getElementById(id+'-link').href=src;}}
+document.querySelectorAll('select').forEach(s=>s.addEventListener('change',render));render();
+</script></html>

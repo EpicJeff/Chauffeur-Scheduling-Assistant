@@ -105,6 +105,8 @@
     <link rel="stylesheet" href="{{ 'static/tailwind-app.css'|ver }}">
     <link rel="stylesheet" href="{{ 'static/pwa_shell.css'|ver }}">
     <script defer src="{{ 'static/pwa_shell.js'|ver }}"></script>
+    <link rel="stylesheet" href="{{ 'static/pwa_child_shell.css'|ver }}">
+    <script defer src="{{ 'static/pwa_child_shell.js'|ver }}"></script>
     <!-- Alpine, for the avatar editor overlay (avatar arc A3). app.html is
          otherwise vanilla JS on purpose; Alpine here only animates that one
          component, and `defer` keeps it out of the critical path. -->
@@ -134,7 +136,7 @@
         <div class="flex items-center gap-3">
             <!-- Tap your own face to open the dressing-up box (avatar arc A3). -->
             <button id="pwa-identity" type="button" class="relative shrink-0" aria-label="Edit your avatar"
-                onclick="if (pwaIsAdult()) pwaOpenProfile(); else if (selectedMemberId) openAvatarEditor(selectedMemberId)">
+                onclick="if (selectedMemberId) pwaOpenProfile()">
                 <div id="driver-avatar"
                     class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg shadow-sm border-2 border-gray-700 bg-gray-800 text-gray-500">
                     ?</div>
@@ -796,7 +798,17 @@
         updateThemeButton();
 
         function setView(view, focusMemberId = null) {
-            if (view === 'more' && !pwaIsAdult()) return;
+            if (pwaChildStage()) {
+                if (view === 'family') {
+                    if (kidHorizonDays() > 0) { pwaChildOpenPlan(); return; }
+                    view = 'myday';
+                }
+                if (view === 'drives' && (!kidCan('can_drive') || !pwaAllowed('drives'))) view = 'myday';
+                const wasPlan = pwaChildPlan; pwaChildPlan = false;
+                if (wasPlan && view === 'myday' && currentView === 'myday') {
+                    mydayOffset = 0; pwaSyncShell(); renderMyDay(); return;
+                }
+            }
             if (view === currentView && !focusMemberId) return;
             currentView = view;
             localStorage.setItem('chauffeur_view', view);
@@ -938,9 +950,9 @@
             // other door is closed by their scope map anyway.
             const guest = currentMemberRole() === 'guest';
             const keepingUp = isKeepingUpAdult();
-            document.getElementById('tab-myday').style.display = (passenger && !helper && !guest && !keepingUp) ? 'flex' : 'none';
-            document.getElementById('tab-drives').style.display = passenger ? 'none' : 'flex';
-            document.getElementById('tab-family').style.display = ((passenger && !keepingUp) || helper || guest) ? 'none' : 'flex';
+            document.getElementById('tab-myday').style.display = ((passenger || currentMemberRole() === 'child') && !helper && !guest && !keepingUp) ? 'flex' : 'none';
+            document.getElementById('tab-drives').style.display = (passenger || !kidCan('can_drive')) ? 'none' : 'flex';
+            document.getElementById('tab-family').style.display = (currentMemberRole() === 'child' || (passenger && !keepingUp) || helper || guest) ? 'none' : 'flex';
             // A keeping-up PARENT keeps chores (they verify and pay out);
             // a keeping-up adult is a spectator there and loses the tab.
             const keepingUpSpectator = keepingUp && currentMemberRole() !== 'parent';
@@ -971,12 +983,17 @@
             if (noMap && !hiddenNow.includes('map')) hiddenNow.push('map');
             if (noMusic && !hiddenNow.includes('music')) hiddenNow.push('music');
             if (noChores && !hiddenNow.includes('chores')) hiddenNow.push('chores');
-            if (!pwaIsAdult()) hiddenNow.push('more');
+            if (currentMemberRole() === 'child') {
+                const hiddenMyDay = hiddenNow.indexOf('myday');
+                if (hiddenMyDay >= 0) hiddenNow.splice(hiddenMyDay, 1);
+                if (!hiddenNow.includes('family')) hiddenNow.push('family');
+                if (!kidCan('can_drive')) hiddenNow.push('drives');
+            }
             if (hiddenNow.includes(currentView)) {
                 // The keeping-up adult LANDS on Family — it is what they
                 // opened the app for. A guest lands on Messages, for the
                 // same reason.
-                currentView = guest ? 'messages'
+                currentView = currentMemberRole() === 'child' ? 'myday' : guest ? 'messages'
                     : keepingUp ? 'family'
                     : (passenger && !helper ? 'myday' : 'drives');
                 localStorage.setItem('chauffeur_view', currentView);
@@ -2015,7 +2032,7 @@
                 // Thursday. `practiceWindowsOn` still narrows to a date, so
                 // the now-block is unaffected by the wider fetch.
                 const wk = new Date(t);
-                wk.setDate(wk.getDate() + 6);
+                wk.setDate(wk.getDate() + (currentMemberRole() === 'child' ? kidHorizonDays() : 6));
                 const weekEnd = `${wk.getFullYear()}-${pad(wk.getMonth() + 1)}-${pad(wk.getDate())}`;
                 practiceWindows = await fetchPracticeWindows(todayStr, weekEnd);
                 out.now = renderPracticeNow(practiceNow(t));
@@ -2244,7 +2261,7 @@
                 // Tier celebration first — it's the bigger moment than the daily streak toast.
                 maybeCelebrateStatus('routine', data.tier_status);
                 if (typeof celebrateAvatarUnlocks !== 'undefined') {
-                    const me = members.find(m => m.id === selectedMemberId);
+                    const me = membersData.find(m => m.id === selectedMemberId);
                     celebrateAvatarUnlocks(me ? me.name : '', data.avatar_unlocked);
                 }
                 if (data.streak && data.streak.today_complete && checked) {
@@ -2385,7 +2402,7 @@
                     // direct tap would have.
                     maybeCelebrateStatus('routine', data.tier_status);
                     if (typeof celebrateAvatarUnlocks !== 'undefined') {
-                        const me = members.find(m => m.id === selectedMemberId);
+                        const me = membersData.find(m => m.id === selectedMemberId);
                         celebrateAvatarUnlocks(me ? me.name : '', data.avatar_unlocked);
                     }
                     if (data.streak && data.streak.today_complete) {
@@ -2560,42 +2577,33 @@
             if (!wrap || !selectedMemberId) return;
             updateMyDayLabel();
             wrap.innerHTML = '<p class="text-center text-gray-500 animate-pulse mt-6">Loading your day...</p>';
-            const requestedOffset = mydayOffset;
+            const requestedOffset = mydayOffset, requestedMember = selectedMemberId;
+            const request = renderMyDay.request = (renderMyDay.request || 0) + 1;
             try {
                 const dateStr = _mydayLocalDate(requestedOffset);
                 const [res, routineRes] = await Promise.all([
                     fetch(`${apiBase}api/members/${selectedMemberId}/day?date=${dateStr}`),
                     fetch(`${apiBase}api/routines/day?member_id=${selectedMemberId}&date=${dateStr}`),
                 ]);
-                if (requestedOffset !== mydayOffset) return; // user already navigated on
+                if (requestedOffset !== mydayOffset || requestedMember !== selectedMemberId || request !== renderMyDay.request) return; // user already navigated on
                 if (!res.ok) throw new Error('bad response');
                 const data = await res.json();
                 const routineData = routineRes.ok ? await routineRes.json() : null;
                 if (routineData && requestedOffset === 0) maybeCelebrateStatus('routine', routineData.status);
-                // My program, today only -- like the kid stats below, this
-                // is not date-scoped (a program has no "today"), so it is
-                // fetched once and left off every other day this view
-                // browses to. Commitments are only fetched when there is at
-                // least one program to ask "when" about -- a household that
-                // never proposed one costs this view nothing extra.
+                // Timed sessions belong in the child's personal Plan as well
+                // as Today. Untimed programs stay on Today, not every date.
                 let programItems = { timed: [], rest: '' };
-                if (requestedOffset === 0) {
-                    // My Day builds its status, requests and due-soon from the
-                    // payload it is already fetching for the day being viewed.
-                    // Of the shared builder it takes the programs themselves
-                    // and places them: each session in the day at its own
-                    // time, the rest after it (myDayProgramItems).
+                if (requestedOffset === 0 || (pwaChildStage() && pwaChildPlan)) {
                     const parts = await buildPracticeParts();
                     programItems = myDayProgramItems(parts, dateStr);
+                    if (requestedOffset !== 0) programItems.rest = '';
                 }
                 const isKid = currentMemberRole() === 'child';
-                let routineHtml, kidTopHtml = '';
+                let routineHtml, kidTopHtml = '', childBalance = null, childJobs = [];
                 if (isKid) {
-                    // Today only: points balance + my chore progress for the
-                    // header pill and the chores ring. Fire-and-tolerate --
-                    // a failed fetch degrades to no pill/dim ring, never a
-                    // broken day.
-                    let balance = 0, choreStats = null;
+                    // Today only: real points and assigned chores. Failed
+                    // secondary fetches omit that summary, not the day.
+                    let balance = null;
                     if (requestedOffset === 0) {
                         const [ptsRes, chRes] = await Promise.all([
                             fetch(`${apiBase}api/points`).catch(() => null),
@@ -2609,15 +2617,13 @@
                             const chores = await chRes.json();
                             const mine = chores.filter(c => c.claimed_by === selectedMemberId
                                 && (c.state === 'claimed' || c.state === 'done'));
-                            choreStats = { mine: mine.length, done: mine.filter(c => c.state === 'done').length };
+                            childJobs = mine;
                         }
-                        if (requestedOffset !== mydayOffset) return;
+                        if (requestedOffset !== mydayOffset || requestedMember !== selectedMemberId || request !== renderMyDay.request) return;
                     }
-                    const buckets = kidBucketItems(routineData);
-                    const interactive = requestedOffset === 0;
-                    kidTopHtml = (interactive ? kidHeader(routineData, balance) : '')
-                        + kidRingRow(buckets, interactive ? choreStats : null, interactive);
-                    routineHtml = KID_BUCKETS.map(b => kidBucketSection(b, buckets[b.key], interactive)).join('');
+                    childBalance = balance;
+                    updatePetBadge(membersData.find(m => m.id === selectedMemberId));
+                    routineHtml = '';
                 } else {
                     routineHtml = renderRoutineSection(routineData, requestedOffset);
                 }
@@ -2655,8 +2661,9 @@
                 const restHtml = programItems.rest ? `
                     <div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-1">My Programs</div>
                     ${programItems.rest}` : '';
-                wrap.innerHTML = statusHtml + requestsHtml + kidTopHtml + launchHtml + routineHtml + dueSoonHtml
-                    + timeline + noRides + restHtml;
+                if (requestedMember !== selectedMemberId || requestedOffset !== mydayOffset || request !== renderMyDay.request) return;
+                wrap.innerHTML = isKid ? pwaChildRenderDay({data, routineData, programItems, balance:childBalance, jobs:childJobs, offset:requestedOffset, date:dateStr})
+                    : statusHtml + requestsHtml + kidTopHtml + launchHtml + routineHtml + dueSoonHtml + timeline + noRides + restHtml;
                 if (mydaySlideDir !== 0) {
                     // Slide the new day in from the direction of travel.
                     wrap.style.transition = 'none';
@@ -2670,7 +2677,8 @@
                     mydaySlideDir = 0;
                 }
             } catch (e) {
-                wrap.innerHTML = '<p class="text-center text-gray-500 mt-6">Could not load your day.</p>';
+                if (requestedMember === selectedMemberId && requestedOffset === mydayOffset && request === renderMyDay.request)
+                    wrap.innerHTML = '<p class="text-center text-gray-500 mt-6">Could not load your day.</p>';
             }
         }
 
@@ -2905,7 +2913,7 @@
                 const isHelper = d.role === 'helper';
                 // Helpers have no HA person entity, so no live map dot; kid
                 // contact is relayed through the family channel.
-                const whereBtn = isHelper ? '' : `<button onclick="setView('map', '${d.member_id}')"
+                const whereBtn = isHelper || !pwaAllowed('map') ? '' : `<button onclick="setView('map', '${d.member_id}')"
                     class="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-gray-800 text-blue-300 border border-gray-700 active:bg-gray-700">Where?</button>`;
                 return `${whereBtn}
                     <button onclick="messageMember('${d.member_id}', 'driving ${mfEscape(rideTitle).replace(/'/g, '&#39;')}')"
@@ -6236,6 +6244,7 @@
 
         function renderHouseAnchors() {
             if (pwaIsAdult()) { pwaRenderHouseTabs(); return; }
+            if (pwaChildStage()) { pwaChildHouseTabs(); return; }
             const wrap = document.getElementById('house-anchors');
             if (!wrap) return;
             const openItems = houseLists.reduce((s, l) => s + (l.open_count || 0), 0);
@@ -6500,10 +6509,10 @@
 
         function choreCard(c, buttonsHtml, subtitle) {
             const kid = currentMemberRole() === 'child';
-            const meta = `<div class="text-xs text-gray-500 mt-0.5">+${c.points} pts ${CHORE_RECUR_LABEL[c.recurrence] || ''}${subtitle ? ' · ' + subtitle : ''}</div>`;
+            const meta = `<div class="text-xs text-gray-500 mt-0.5">${!kid || kidCan('show_points') ? `+${c.points} pts ` : ''}${CHORE_RECUR_LABEL[c.recurrence] || ''}${subtitle ? ' · ' + subtitle : ''}</div>`;
             const extras = `${c.description ? `<div class="text-sm text-gray-400 mt-1">${mfEscape(c.description)}</div>` : ''}
                         ${c.rejected_reason && c.state === 'claimed' ? `<div class="text-sm text-red-400 font-bold mt-1">↩ ${mfEscape(c.rejected_reason)}</div>` : ''}`;
-            if (kid) {
+            if (kid && ['sprout','explorer'].includes(pwaChildStage())) {
                 return `
             <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 flex items-center gap-3">
                 <span class="text-4xl w-12 text-center shrink-0">${kidGlyph(c)}</span>
@@ -6523,6 +6532,8 @@
             const role = currentMemberRole();
             const parts = [];
 
+            // Rewards remain reachable at every stage, but do not lead Tasks.
+            if (role === 'child') parts.push('<section data-child-house="rewards">');
             // Points header
             if (role === 'child') {
                 const mine = (balances || []).find(b => b.member_id === selectedMemberId);
@@ -6607,6 +6618,7 @@
                 }).join('')}</div>`);
             }
 
+            if (role === 'child') parts.push('</section><section data-child-house="tasks">');
             if (pwaIsAdult()) parts.push('<section data-pwa-house="tasks">');
             const mine = choresData.filter(c => c.claimed_by === selectedMemberId && (c.state === 'claimed' || c.state === 'done'));
             if (mine.length) {
@@ -6654,8 +6666,9 @@
                             : `${mfEscape(c.claimed_by_name || '?')}${pwaIsAdult() && c.state === 'done' ? ' · waiting for review' : ' is on it'}`))));
             }
 
-            if (pwaIsAdult()) parts.push('</section>');
+            if (pwaIsAdult() || role === 'child') parts.push('</section>');
             wrap.innerHTML = parts.join('');
+            if (role === 'child') pwaChildHouseTabs();
         }
 
         // Assign this occurrence to somebody: the household, plus outside
@@ -7735,7 +7748,7 @@
         function openActionSheet(origin, destination, legTitle, eventId = null, legId = null) {
             routeContext = { origin, destination, legTitle, eventId, legId };
             document.getElementById('sheet-subtitle').textContent = legTitle;
-            document.getElementById('sheet-title').textContent = pwaIsAdult() && legId ? 'Your drive' : 'Open in Maps';
+            document.getElementById('sheet-title').textContent = (pwaIsAdult() || pwaChildStage()) && legId ? 'Your drive' : 'Open in Maps';
             resetDriveSheet();
 
             const btnMarkCompleted = document.getElementById('btn-mark-completed');
@@ -8715,7 +8728,7 @@
         function renderLegPill(timeStr, title, mins, delayMins, actionArgs, colorTheme = 'blue', subtitleHtml = '', legId = null, isPast = false, lateMins = 0) {
             const isCompleted = legId && scheduleData && scheduleData.completed_drives && scheduleData.completed_drives.includes(legId);
             const isInProgress = legId && scheduleData && scheduleData.in_progress_drives && scheduleData.in_progress_drives.includes(legId) && !isCompleted;
-            if (pwaIsAdult()) return pwaDriveRow({timeStr, title, mins, delayMins, actionArgs, colorTheme,
+            if (pwaIsAdult() || pwaChildStage()) return pwaDriveRow({timeStr, title, mins, delayMins, actionArgs, colorTheme,
                 subtitleHtml, legId, isPast, lateMins, isCompleted, isInProgress});
 
             if (isCompleted) {
@@ -8979,7 +8992,7 @@
                 const w = card.practice || {};
                 const past = new Date(card.end) < now;
                 const steps = (w.steps || []).slice(0, 4);
-                if (pwaIsAdult()) return pwaAgendaRow({time:formatTime(card.start), title:w.title || card.title,
+                if (pwaIsAdult() || pwaChildStage()) return pwaAgendaRow({time:formatTime(card.start), title:w.title || card.title,
                     meta:mfEscape([w.member_name, w.session_label].filter(Boolean).join(' · ')),
                     action:`openSessionSheet('${sessionKey(w)}')`, state:w.logged ? 'Logged' : past ? 'Past' : ''});
                 // Tappable, like every other agenda row. It was the one
@@ -9006,7 +9019,7 @@
             }
 
             if (card.isTrip) {
-                if (pwaIsAdult()) return pwaAgendaRow({time:'All day', title:card.title, meta:'Trip', action:`openTripSheet('${sessionKey(card)}')`});
+                if (pwaIsAdult() || pwaChildStage()) return pwaAgendaRow({time:'All day', title:card.title, meta:'Trip', action:`openTripSheet('${sessionKey(card)}')`});
                 // Tappable like every other row here. It was the last card in
                 // this view that answered nothing, and a background trip is
                 // exactly the one whose MEANING a person cannot infer from
@@ -9079,7 +9092,7 @@
             };
             const evDataStr = encodeURIComponent(JSON.stringify(eventData));
 
-            if (pwaIsAdult()) return pwaEventRow(eventData, card.start, isPast, paxBadges + driverChips,
+            if (pwaIsAdult() || pwaChildStage()) return pwaEventRow(eventData, card.start, isPast, paxBadges + driverChips,
                 conflictNote + prepPillsHtml(prepItemsFor(card.id)));
             return `
                 <div class="mb-3 rounded-xl border bg-gray-900 border-gray-800 active:bg-gray-800 cursor-pointer relative overflow-hidden transition-colors ${isPast ? 'opacity-40' : ''} ${card.suppressed ? 'border-dashed' : ''}"
@@ -9290,7 +9303,7 @@
                     practiceRowsDrawnSig = practiceRowSig(practiceParts, dateStr);
                 progRows.timed.sort((a, b) => a.min - b.min);
                 let progNext = 0;
-                const railRow = x => pwaIsAdult() ? `<div class="pwa-program-row">${x.html}</div>` : `
+                const railRow = x => (pwaIsAdult() || pwaChildStage()) ? `<div class="pwa-program-row">${x.html}</div>` : `
                     <div class="flex items-start mb-6 relative z-10">
                         <div class="w-10 h-10 rounded-full bg-teal-700 border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md text-white font-bold text-xs">🎯</div>
                         <div class="ml-4 flex-1 min-w-0">${x.html}</div>
@@ -9429,7 +9442,7 @@
                     const evDataStr = encodeURIComponent(JSON.stringify(eventData));
 
                     const isEventPast = new Date(ev.end) < new Date();
-                    if (pwaIsAdult()) {
+                    if (pwaIsAdult() || pwaChildStage()) {
                         const prepButton = prepItemsFor(ev.id).length ? `<button class="pwa-inline-action" onclick="togglePrepConfirmed('${ev.id}', event)">${isPrepConfirmed(ev.id) ? 'Packed' : 'Confirm packed'}</button>` : '';
                         html += pr(ev.start) + pwaEventRow(eventData, ev.start, isEventPast, badges + carChipHtml,
                             prepPillsHtml(prepItemsFor(ev.id)) + prepButton + (lateMins > 0 ? `<p class="pwa-warning">Arriving ${lateMins}m late</p>` : ''));

@@ -4,6 +4,11 @@ let pwaHouseSection = 'tasks', pwaDatesExpanded = false;
 function pwaIsAdult() {
     return !!selectedMemberId && currentMemberRole() !== 'child';
 }
+function pwaOrderTabs(order) {
+    const bar = document.getElementById('pwa-tab-bar');
+    const actual = [...bar.children].map(button => button.id.slice(4)).filter(id => order.includes(id));
+    if (actual.join() !== order.join()) order.forEach(id => bar.append(document.getElementById('tab-' + id)));
+}
 
 function pwaSyncShell() {
     const adult = pwaIsAdult();
@@ -16,18 +21,15 @@ function pwaSyncShell() {
         document.querySelector('.pwa-conversation-search input').value = '';
     }
     const labels = {drives: adult ? 'Today' : 'My Day', myday: adult ? 'Today' : 'My Day',
-        family: adult ? 'Plan' : 'Family', chores: adult ? 'Household' : 'House'};
+        family: adult ? 'Plan' : 'Family', chores: adult ? 'Household' : 'House', messages:'Messages', more:'More'};
     Object.entries(labels).forEach(([id, label]) => {
         document.querySelector(`#tab-${id} > span`).textContent = label;
     });
     // Keep keyboard/reading order aligned with the visual tab order.
-    const household = document.getElementById('tab-chores');
-    const afterHousehold = document.getElementById(adult ? 'tab-messages' : 'tab-map');
-    if (household.nextElementSibling !== afterHousehold)
-        afterHousehold.before(household);
+    if (adult) pwaOrderTabs(['myday','drives','family','chores','messages','map','music','more']);
     const more = document.getElementById('tab-more');
     more.style.display = adult ? 'flex' : 'none';
-    document.getElementById('pwa-identity').setAttribute('aria-label', adult ? 'Your profile and preferences' : 'Edit your avatar');
+    document.getElementById('pwa-identity').setAttribute('aria-label', 'Your profile and preferences');
     document.getElementById('pwa-more-container').hidden = !adult || currentView !== 'more';
     document.querySelectorAll('#pwa-tab-bar > button').forEach(button => {
         const name = button.id.slice(4);
@@ -35,9 +37,14 @@ function pwaSyncShell() {
         if (active) button.setAttribute('aria-current', 'page');
         else button.removeAttribute('aria-current');
     });
+    if (adult) document.getElementById('pwa-more-title').textContent = 'More from Chauffeur';
     if (adult && currentView === 'more') pwaRenderDirectory();
     pwaPageHeading();
-    if (adult) pwaRenderHouseTabs();
+    if (adult) {
+        document.getElementById('tab-kidplan')?.style.setProperty('display','none');
+        pwaRenderHouseTabs();
+    }
+    pwaChildSync();
 }
 
 function pwaAllowed(view) {
@@ -51,13 +58,15 @@ function pwaFeatures() {
     const route = (id, title, description, view) => {
         if (pwaAllowed(view)) items.push({id, title, description, run: () => setView(view)});
     };
+    if (pwaChildStage() && selectedDriverId && kidCan('can_drive')) route('drives', 'My drives', 'Your driving responsibilities', 'drives');
     route('map', 'Family map', 'Find shared locations and driving progress', 'map');
     route('music', 'Music', 'Favorites and household listening', 'music');
-    route('household', 'Household', 'Tasks, shared lists and household threads', 'chores');
+    route('household', pwaChildStage() ? 'Tasks & rewards' : 'Household', 'Tasks, rewards and shared lists', 'chores');
     route('moments', 'Messages & moments', 'Conversations and shared family updates', 'messages');
     if (pwaAllowed('drives') || pwaAllowed('myday')) {
         items.push({id: 'programs', title: 'My programs', description: 'Practice and learning in your day', run: () => {
-            setView(pwaAllowed('drives') ? 'drives' : 'myday');
+            setView(pwaChildStage() ? 'myday' : pwaAllowed('drives') ? 'drives' : 'myday');
+            if (pwaChildStage()) pwaChildScrollPrograms();
             if (currentView === 'drives') {
                 activeDateIndex = Math.max(0, currentDates.indexOf(todayStr()));
                 const days = document.getElementById('days-container');
@@ -69,6 +78,8 @@ function pwaFeatures() {
             }
         }});
     }
+    if (pwaChildStage() && membersData.find(m => m.id === selectedMemberId)?.pet_name)
+        items.push({id:'critter', title:'Critter battle', description:'Play with your companion', run:()=>openPetBattle(selectedMemberId)});
     items.push({id: 'assistant', title: 'Ask Argyle', description: 'Help with your family plans', run: () => toggleKioskChat()},
         {id: 'critter', title: 'My critter', description: 'Visit and customize your companion', run: () => openPetEditor(selectedMemberId)},
         {id: 'profile', title: 'Profile & appearance', description: 'Avatar, theme, notifications and sign out', run: pwaOpenProfile});
@@ -125,7 +136,7 @@ function pwaOpenProfile() {
 function pwaRefreshOverview() {
     document.querySelectorAll('.pwa-overview').forEach(node => node.remove());
     document.querySelectorAll('.pwa-promoted').forEach(node => node.classList.remove('pwa-promoted'));
-    if (!pwaIsAdult()) return;
+    if (!pwaIsAdult() && !(pwaChildStage() && selectedDriverId && kidCan('can_drive') && currentView === 'drives')) return;
     if (currentView === 'family') {
         document.querySelectorAll('#days-container > div').forEach(pane => {
             const events = pane.querySelector('#pane-events');
@@ -143,8 +154,10 @@ function pwaRefreshOverview() {
         if (schedule && !pane.querySelector('.pwa-section-title')) {
             const title = document.createElement('div'); title.className = 'pwa-section-title';
             const text = document.createElement('h3'); text.textContent = 'Your schedule'; title.append(text);
-            if (pwaAllowed('family')) {
-                const link = document.createElement('button'); link.textContent = 'Family plan →'; link.onclick = () => setView('family'); title.append(link);
+            if (pwaChildStage() ? kidHorizonDays() > 0 : pwaAllowed('family')) {
+                const link = document.createElement('button');
+                link.textContent = pwaChildStage() ? 'My plan →' : 'Family plan →';
+                link.onclick = () => pwaChildStage() ? pwaChildOpenPlan() : setView('family'); title.append(link);
             }
             schedule.before(title);
         }
@@ -181,6 +194,7 @@ function pwaRefreshOverview() {
     }
     if (host.children.length) pane.prepend(host);
     pwaPageHeading();
+    if (pwaChildStage()) pwaChildSync();
 }
 
 function pwaIcon(name) {
@@ -336,6 +350,6 @@ function pwaRenderHouseTabs() {
 function pwaSelectHouse(section) { pwaHouseSection = section; pwaRenderHouseTabs(); }
 function pwaFilterConversations(query) {
     document.querySelectorAll('#channel-list > button').forEach(button => {
-        button.hidden = pwaIsAdult() && !button.textContent.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
+        button.hidden = !button.textContent.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
     });
 }

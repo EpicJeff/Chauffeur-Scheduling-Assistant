@@ -25,7 +25,7 @@ DAY = datetime.now().strftime('%Y-%m-%d')
 PROFILES = [('parent', 'parent', 'd1'), ('adult', 'adult', 'd2'),
             ('keeping', 'parent', None), ('helper', 'helper', 'd3'),
             ('guest', 'guest', None)] + [(stage, 'child', None) for stage in
-            ('sprout', 'explorer', 'navigator', 'copilot')]
+            ('sprout', 'explorer', 'navigator', 'copilot')] + [('copilot_driver', 'child', 'd4')]
 
 
 def seed():
@@ -33,7 +33,7 @@ def seed():
         member = {'id': key, 'name': 'Alex Morgan' if role != 'child' else 'Jamie',
                   'role': role, 'driver_id': driver, 'color_code': '#287a72'}
         if role == 'child':
-            member['stage_override'] = key
+            member['stage_override'] = key.split('_')[0]
         if key == 'keeping':
             member['scope'] = {'preset': 'keeping_up'}
         storage.add_member(member)
@@ -188,6 +188,10 @@ def run():
                 page.route('**/api/channels?*', lambda r: r.fulfill(json=[{'id':'family','kind':'family','title':'Family','member_ids':[key], 'last_message':{'sender_member_id':key,'body':'See you at the front doors.','ts':int(datetime.now().timestamp())}}, {'id':'school','kind':'group','title':'School pickup','member_ids':[key]}]))
                 page.route('**/api/programs', lambda r: r.fulfill(json={'programs':[dict(id='practice', member_id=key, title='Strength training', state='active', progress={}, emissions={})]}))
                 page.route('**/api/practice-windows?*', lambda r: r.fulfill(json={'windows':[dict(program_id='practice', member_id=key, date=DAY, time_start='21:00', time_end='21:30', title='Strength training', session_label='Push and core', steps=[])]}))
+                if key == 'copilot_driver': storage.set_cached_schedule(schedule)
+                if role == 'child':
+                    from pwa_child_checks import install_child_data, check_child, check_child_driver
+                    child_calls = install_child_data(page, key, DAY)
                 page.goto(served.url('app'), wait_until='domcontentloaded')
                 page.wait_for_timeout(500)
                 if page.locator('#pin-modal-skip').is_visible():
@@ -205,17 +209,8 @@ def run():
                     .slice(0,8).map(e=>({tag:e.tagName,id:e.id,cls:e.className}))})''')
                 assert overflow['width'] <= overflow['viewport'], (key, overflow, errors)
                 if role == 'child':
-                    assert not page.locator('#tab-more').is_visible(), tabs
-                    assert page.locator('#tab-map').is_visible(), tabs
-                    assert page.locator('#tab-myday').inner_text() == 'My Day'
-                    assert page.locator('#btn-pet').is_visible()
-                    page.evaluate("setView('more')")
-                    assert page.evaluate('currentView') != 'more'
-                    page.evaluate("void promptConfirm('Keep your plan?', 'Your schedule stays the same.').then(()=>{})")
-                    assert page.locator('.pwa-prompt-overlay .pwa-sheet-head').is_hidden()
-                    # The existing app utility uses 20px child corners.
-                    assert page.locator('.pwa-prompt-overlay > div').evaluate('(e)=>getComputedStyle(e).borderTopLeftRadius') == '20px'
-                    page.locator('.pwa-prompt-overlay [data-no]').click()
+                    if driver: check_child_driver(page, output)
+                    else: check_child(page, key, output, child_calls)
                 else:
                     assert page.locator('#tab-more').is_visible(), tabs
                     assert not page.locator('#tab-map').is_visible()
