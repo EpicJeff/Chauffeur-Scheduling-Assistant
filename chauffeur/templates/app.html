@@ -269,11 +269,12 @@
     <div id="screen-schedule" class="flex-1 flex flex-col hidden overflow-hidden relative">
 
         <!-- Day Navigation -->
+        <section id="pwa-page-heading" class="pwa-adult-only pwa-page-heading"></section>
         <div id="day-nav"
             class="flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800 shrink-0 z-10 shadow-sm">
             <button onclick="prevDay()"
                 class="p-3 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 disabled:opacity-30 disabled:active:bg-gray-800 transition-colors"
-                id="btn-prev-day">
+                id="btn-prev-day" aria-label="Previous day">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M15 19l-7-7 7-7"></path>
                 </svg>
@@ -282,7 +283,7 @@
                 Loading...</div>
             <button onclick="nextDay()"
                 class="p-3 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 disabled:opacity-30 disabled:active:bg-gray-800 transition-colors"
-                id="btn-next-day">
+                id="btn-next-day" aria-label="Next day">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 5l7 7-7 7"></path>
                 </svg>
@@ -308,6 +309,7 @@
 
         <!-- Messages (family chat) -->
         <div id="messages-container" class="flex-1 flex-col min-h-0 relative" style="display: none">
+            <label class="pwa-adult-only pwa-conversation-search"><span class="sr-only">Find a conversation</span><input type="search" placeholder="Find a conversation" oninput="pwaFilterConversations(this.value)"></label>
             <div class="flex items-center justify-between px-4 pt-4 pb-1 shrink-0 relative">
                 <div class="text-lg font-bold text-gray-100">Messages</div>
                 <div class="flex items-center gap-3">
@@ -1536,7 +1538,7 @@
                     class="w-full text-left px-4 py-3 flex items-center gap-3">
                     ${w ? `<span class="text-sm font-bold uppercase tracking-wider text-teal-300 shrink-0">${mfEscape(programFmtHHMM(w.time_start))}</span>` : ''}
                     <span class="min-w-0 flex-1">
-                        <span class="block text-gray-100 font-bold leading-tight truncate">🎯 ${mfEscape(p.title || '')}</span>
+                        <span class="block text-gray-100 font-bold leading-tight truncate">${pwaIsAdult() ? '' : '🎯 '}${mfEscape(p.title || '')}</span>
                         ${sub ? `<span class="block text-[11px] font-semibold text-gray-400 truncate">${mfEscape(sub)}</span>` : ''}
                     </span>
                     ${chip}
@@ -2070,6 +2072,7 @@
         // every drive (user, 2026-09-26: "It is my day, not my programs and
         // my drives").
         function practiceStackHtml(p) {
+            if (pwaIsAdult()) return (p.status || '') + (p.requests ? '<details class="pwa-request-details"><summary>Requests and replies</summary>' + p.requests + '</details>' : '') + (p.dueSoon || '');
             return (p.status || '') + (p.requests || '') + (p.dueSoon || '');
         }
 
@@ -2689,7 +2692,11 @@
             if (!mid) return;
             try {
                 const r = await fetch(`${apiBase}api/requests?member_id=${mid}`);
-                myRequests = r.ok ? await r.json() : { waiting_on_me: [], mine: [] };
+                const requests = r.ok ? await r.json() : { waiting_on_me: [], mine: [] };
+                if (mid !== selectedMemberId) return;
+                myRequests = requests;
+                pwaRequestsOwner = mid;
+                pwaRefreshOverview();
             } catch (e) { /* the day still renders without them */ }
         }
 
@@ -4474,7 +4481,7 @@
                 <button onclick="openChannel('${c.id}')"
                     class="w-full flex items-center gap-3 p-3.5 rounded-2xl bg-gray-900 border border-gray-800 active:bg-gray-800 text-left">
                     <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg border-4 bg-gray-800 text-gray-100 shrink-0 overflow-hidden"
-                        style="border-color: ${d.color}">${avatarInner(d, d.avatar)}</div>
+                        style="border-color: ${d.color}">${pwaIsAdult() && ['family','group','event'].includes(c.kind) ? pwaIcon(c.kind === 'family' ? 'household' : 'moments') : avatarInner(d, d.avatar)}</div>
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center justify-between gap-2">
                             <span class="font-bold text-gray-100 truncate">${mfEscape(d.name)}</span>
@@ -4485,6 +4492,7 @@
                     ${c.unread ? `<span class="min-w-[20px] h-[20px] px-1.5 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center shrink-0">${c.unread > 99 ? '99+' : c.unread}</span>` : ''}
                 </button>`;
             }).join('');
+            pwaFilterConversations(document.querySelector('.pwa-conversation-search input').value);
         }
 
         // focusMessageId: land in the thread AND open that moment full-screen
@@ -6123,6 +6131,7 @@
         };
 
         async function fetchChores() {
+            const owner = selectedMemberId;
             if (!selectedMemberId) return;
             try {
                 const [choresRes, pointsRes, rewardsRes, redRes] = await Promise.all([
@@ -6131,11 +6140,17 @@
                     fetch(`${apiBase}api/rewards`),
                     fetch(`${apiBase}api/redemptions?state=pending`),
                 ]);
-                choresData = await choresRes.json();
-                rewardsData = rewardsRes.ok ? await rewardsRes.json() : [];
-                redemptionsData = redRes.ok ? await redRes.json() : [];
-                renderChores(await pointsRes.json());
+                const [chores, rewards, redemptions, balances] = await Promise.all([
+                    choresRes.json(), rewardsRes.ok ? rewardsRes.json() : [],
+                    redRes.ok ? redRes.json() : [], pointsRes.json()]);
+                if (owner !== selectedMemberId) return;
+                choresData = chores;
+                rewardsData = rewards;
+                redemptionsData = redemptions;
+                pwaChoresOwner = owner;
+                renderChores(balances);
                 updateChoresBadge();
+                pwaRefreshOverview();
             } catch (e) { console.error('Failed to fetch chores', e); }
         }
 
@@ -6218,6 +6233,7 @@
         }
 
         function renderHouseAnchors() {
+            if (pwaIsAdult()) { pwaRenderHouseTabs(); return; }
             const wrap = document.getElementById('house-anchors');
             if (!wrap) return;
             const openItems = houseLists.reduce((s, l) => s + (l.open_count || 0), 0);
@@ -6270,7 +6286,7 @@
             if (!wrap) return;
             const cc = document.getElementById('chores-content');
             if (cc) cc.style.display = houseRevealListsOnly ? 'none' : '';
-            if (!houseLists.length) { wrap.innerHTML = ''; return; }
+            if (!houseLists.length) { wrap.innerHTML = pwaIsAdult() ? '<p class="pwa-empty">No lists shared with you yet.</p>' : ''; return; }
             const chips = houseLists.length > 1 ? houseLists.map(l => `
                 <button onclick="houseSelectList('${l.id}')"
                     class="px-3 py-1.5 rounded-full text-sm font-bold border ${l.id === houseActiveListId
@@ -6496,16 +6512,7 @@
                 <div class="flex flex-col gap-2 shrink-0">${buttonsHtml}</div>
             </div>`;
             }
-            return `
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-                <div class="flex items-center justify-between gap-2">
-                    <div class="min-w-0">
-                        <div class="text-gray-100 font-bold text-[16px] leading-tight truncate">${kidGlyph(c)} ${mfEscape(c.title)}</div>
-                        ${meta}${extras}
-                    </div>
-                    <div class="flex gap-2 shrink-0">${buttonsHtml}</div>
-                </div>
-            </div>`;
+            return `<div class="pwa-chore-row"><div class="pwa-row-copy"><h3>${mfEscape(c.title)}</h3>${meta}${extras}</div><div class="pwa-row-actions">${buttonsHtml}</div></div>`;
         }
 
         function renderChores(balances) {
@@ -6526,11 +6533,11 @@
                     <span class="text-3xl font-black text-gray-100">${mine ? mine.balance : 0} ⭐</span>
                 </div>`);
             } else if (balances && balances.length) {
-                parts.push(`<div class="flex gap-2 flex-wrap">${balances.map(b => `
+                parts.push(`<details class="pwa-balances" data-pwa-house="tasks"><summary>Family point balances</summary><div class="flex gap-2 flex-wrap">${balances.map(b => `
                     <span class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gray-900 border border-gray-700 text-sm font-bold text-gray-100">
                         <span class="w-2.5 h-2.5 rounded-full" style="background-color:${b.color_code || '#3b82f6'}"></span>
                         ${mfEscape(b.name)}: ${b.balance} ⭐
-                    </span>`).join('')}</div>`);
+                    </span>`).join('')}</div></details>`);
             }
 
             const btn = (label, cls, onclick) =>
@@ -6538,6 +6545,7 @@
 
             if (role === 'parent') {
                 const toVerify = choresData.filter(c => c.state === 'done');
+                parts.push('<section data-pwa-house="reviews">');
                 if (toVerify.length || redemptionsData.length) {
                     parts.push('<div class="text-xs font-black uppercase tracking-widest text-amber-400 pt-2">Needs your OK</div>');
                     toVerify.forEach(c => parts.push(choreCard(c,
@@ -6558,12 +6566,18 @@
                 }
             }
 
+            if (role === 'parent') {
+                if (!choresData.some(c => c.state === 'done') && !redemptionsData.length) parts.push('<p class="pwa-empty">No tasks or reward requests waiting for review.</p>');
+                parts.push('</section>');
+            }
             // Family goals (pooled rewards): kids pledge, parents grant.
             const pooledGoals = rewardsData.filter(rw => rw.pooled && rw.pool);
             const plainRewards = rewardsData.filter(rw => !rw.pooled);
             if (pooledGoals.length) {
+                if (pwaIsAdult()) parts.push(`<section data-pwa-house="${role === 'parent' ? 'reviews' : 'tasks'}">`);
                 parts.push('<div class="text-xs font-black uppercase tracking-widest text-emerald-400 pt-2">Family Goals</div>');
                 pooledGoals.forEach(rw => parts.push(poolGoalCard(rw, role)));
+                if (pwaIsAdult()) parts.push('</section>');
             }
 
             // Rewards store (children see redeem buttons; pending shown)
@@ -6591,12 +6605,13 @@
                 }).join('')}</div>`);
             }
 
+            if (pwaIsAdult()) parts.push('<section data-pwa-house="tasks">');
             const mine = choresData.filter(c => c.claimed_by === selectedMemberId && (c.state === 'claimed' || c.state === 'done'));
             if (mine.length) {
-                parts.push('<div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-2">My chores</div>');
+                parts.push(`<div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-2">${pwaIsAdult() ? 'Assigned to you' : 'My chores'}</div>`);
                 mine.forEach(c => parts.push(choreCard(c,
                     c.state === 'claimed'
-                        ? btn('Done!', 'bg-blue-600 text-white active:bg-blue-700', `choreDone('${c.id}')`) +
+                        ? btn(pwaIsAdult() ? 'Mark done' : 'Done!', 'bg-blue-600 text-white active:bg-blue-700', `choreDone('${c.id}')`) +
                           btn('↩', 'bg-gray-800 text-gray-400 border border-gray-700', `unclaimChore('${c.id}')`)
                         : '<span class="text-xs font-black uppercase text-amber-300 bg-amber-500/10 border border-amber-500/40 px-2 py-1 rounded-full self-center">Waiting for OK</span>',
                     '')));
@@ -6626,7 +6641,7 @@
 
             const othersClaimed = choresData.filter(c => (c.state === 'claimed' || c.state === 'done') && c.claimed_by !== selectedMemberId);
             if (othersClaimed.length) {
-                parts.push('<div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-2">Taken</div>');
+                parts.push(`<div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-2">${pwaIsAdult() ? 'Family progress' : 'Taken'}</div>`);
                 othersClaimed.forEach(c => parts.push(choreCard(c,
                     (isParent && c.assigned_by && !c.owner
                         ? btn('Unassign', 'bg-gray-700 text-gray-100 active:bg-gray-600', `assignChoreTo('${c.id}', null)`)
@@ -6634,9 +6649,10 @@
                     c.owner_name ? `${mfEscape(c.owner_name)}'s job`
                         : (c.assigned_by_name
                             ? `${mfEscape(c.assigned_by_name)} gave it to ${mfEscape(c.claimed_by_name || '?')}`
-                            : `${mfEscape(c.claimed_by_name || '?')} is on it`))));
+                            : `${mfEscape(c.claimed_by_name || '?')}${pwaIsAdult() && c.state === 'done' ? ' · waiting for review' : ' is on it'}`))));
             }
 
+            if (pwaIsAdult()) parts.push('</section>');
             wrap.innerHTML = parts.join('');
         }
 
@@ -8696,6 +8712,8 @@
         function renderLegPill(timeStr, title, mins, delayMins, actionArgs, colorTheme = 'blue', subtitleHtml = '', legId = null, isPast = false, lateMins = 0) {
             const isCompleted = legId && scheduleData && scheduleData.completed_drives && scheduleData.completed_drives.includes(legId);
             const isInProgress = legId && scheduleData && scheduleData.in_progress_drives && scheduleData.in_progress_drives.includes(legId) && !isCompleted;
+            if (pwaIsAdult()) return pwaDriveRow({timeStr, title, mins, delayMins, actionArgs, colorTheme,
+                subtitleHtml, legId, isPast, lateMins, isCompleted, isInProgress});
 
             if (isCompleted) {
                 return `
@@ -8958,6 +8976,9 @@
                 const w = card.practice || {};
                 const past = new Date(card.end) < now;
                 const steps = (w.steps || []).slice(0, 4);
+                if (pwaIsAdult()) return pwaAgendaRow({time:formatTime(card.start), title:w.title || card.title,
+                    meta:mfEscape([w.member_name, w.session_label].filter(Boolean).join(' · ')),
+                    action:`openSessionSheet('${sessionKey(w)}')`, state:w.logged ? 'Logged' : past ? 'Past' : ''});
                 // Tappable, like every other agenda row. It was the one
                 // card in this view that opened nothing, on the reasoning
                 // that a practice window had nothing behind it -- which
@@ -8982,6 +9003,7 @@
             }
 
             if (card.isTrip) {
+                if (pwaIsAdult()) return pwaAgendaRow({time:'All day', title:card.title, meta:'Trip', action:`openTripSheet('${sessionKey(card)}')`});
                 // Tappable like every other row here. It was the last card in
                 // this view that answered nothing, and a background trip is
                 // exactly the one whose MEANING a person cannot infer from
@@ -9054,6 +9076,8 @@
             };
             const evDataStr = encodeURIComponent(JSON.stringify(eventData));
 
+            if (pwaIsAdult()) return pwaEventRow(eventData, card.start, isPast, paxBadges + driverChips,
+                conflictNote + prepPillsHtml(prepItemsFor(card.id)));
             return `
                 <div class="mb-3 rounded-xl border bg-gray-900 border-gray-800 active:bg-gray-800 cursor-pointer relative overflow-hidden transition-colors ${isPast ? 'opacity-40' : ''} ${card.suppressed ? 'border-dashed' : ''}"
                     onclick="openEventModal('${evDataStr.replace(/'/g, "\\'")}')">
@@ -9075,7 +9099,7 @@
         function renderFamilyDay(items) {
             if (!items || items.length === 0) {
                 return `
-                    <div class="flex flex-col items-center justify-center h-full opacity-50 text-center">
+                    <div class="pwa-empty-state flex flex-col items-center justify-center h-full opacity-50 text-center">
                         <div class="text-6xl mb-4">📅</div>
                         <h3 class="text-xl font-bold mb-2">No Events</h3>
                         <p class="text-gray-400">Nothing on the family calendar today.</p>
@@ -9263,7 +9287,7 @@
                     practiceRowsDrawnSig = practiceRowSig(practiceParts, dateStr);
                 progRows.timed.sort((a, b) => a.min - b.min);
                 let progNext = 0;
-                const railRow = x => `
+                const railRow = x => pwaIsAdult() ? `<div class="pwa-program-row">${x.html}</div>` : `
                     <div class="flex items-start mb-6 relative z-10">
                         <div class="w-10 h-10 rounded-full bg-teal-700 border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md text-white font-bold text-xs">🎯</div>
                         <div class="ml-4 flex-1 min-w-0">${x.html}</div>
@@ -9294,7 +9318,7 @@
                     const sessions = progRows.timed.length
                         ? `<div class="space-y-3 mb-2">${progRows.timed.map(x => x.html).join('')}</div>` : '';
                     pane.innerHTML = sections + sessions + `
-                        <div class="flex flex-col items-center justify-center ${sections || sessions ? 'py-10' : 'h-full'} opacity-50 text-center">
+                        <div class="pwa-empty-state flex flex-col items-center justify-center ${sections || sessions ? 'py-10' : 'h-full'} opacity-50 text-center">
                             <div class="text-6xl mb-4">☕</div>
                             <h3 class="text-xl font-bold mb-2">No Drives Scheduled</h3>
                             <p class="text-gray-400">Enjoy your free time!</p>
@@ -9402,6 +9426,11 @@
                     const evDataStr = encodeURIComponent(JSON.stringify(eventData));
 
                     const isEventPast = new Date(ev.end) < new Date();
+                    if (pwaIsAdult()) {
+                        const prepButton = prepItemsFor(ev.id).length ? `<button class="pwa-inline-action" onclick="togglePrepConfirmed('${ev.id}', event)">${isPrepConfirmed(ev.id) ? 'Packed' : 'Confirm packed'}</button>` : '';
+                        html += pr(ev.start) + pwaEventRow(eventData, ev.start, isEventPast, badges + carChipHtml,
+                            prepPillsHtml(prepItemsFor(ev.id)) + prepButton + (lateMins > 0 ? `<p class="pwa-warning">Arriving ${lateMins}m late</p>` : ''));
+                    } else {
                     html += pr(ev.start) + `
                         <div class="pwa-event-row flex items-start mb-6 relative z-10 group cursor-pointer ${isEventPast ? 'opacity-40' : ''}" role="button" tabindex="0" onkeydown="if(event.target === this && (event.key === 'Enter' || event.key === ' ')){event.preventDefault();this.click()}" onclick="openEventModal('${evDataStr.replace(/'/g, "\\'")}')">
                             <div class="w-10 h-10 rounded-full bg-gray-700 border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md text-gray-100 font-bold text-xs" style="background-color: ${driverConfig.color_code || '#4a5568'}">
@@ -9426,6 +9455,7 @@
                         </div>
                     `;
 
+                    }
                     // --- Routing Edge ---
                     if (localRouteEdges[dId] && localRouteEdges[dId][ev.id]) {
                         const edge = localRouteEdges[dId] ? localRouteEdges[dId][ev.id] : null;
@@ -9609,6 +9639,7 @@
 
             document.getElementById('current-day-label').textContent = label;
             document.getElementById('date-subtitle').textContent = dDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+            pwaPageHeading();
 
             // document.getElementById('btn-prev-day').disabled = activeDateIndex === 0;
             // document.getElementById('btn-next-day').disabled = activeDateIndex === currentDates.length - 1;

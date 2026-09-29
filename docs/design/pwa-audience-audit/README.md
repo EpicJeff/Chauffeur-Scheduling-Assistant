@@ -14,17 +14,25 @@ All content is fictional. Actions are local simulations; no request is sent to t
 
 ## Reproduce the review
 
-### Adult foundation shipped in 2.499.208
+### Adult design implemented in 2.499.209
 
-The working PWA now uses a compact adult header, a neutral flat light/dark
-palette, Today / Plan / Household / Messages / More navigation where the
-member's permissions allow those views, searchable feature discovery, and
-a profile/preferences dialog. Map and Music remain available through More.
-Today promotes the scheduler's next or current drive with its existing action.
-The four child stages retain their original navigation and presentation.
+The adult UI now follows the proposal's typography, spacing, light/dark
+palette, page headings and compact schedule rows. The earlier 2.499.208
+foundation retained the old card stack and did not deliver that visual change.
+The next drive is promoted once; remaining drives, appointments and programs
+use aligned time columns and separators. Past items remain readable instead
+of fading. A real review summary links to existing household and request
+actions. Plan has a date strip, Household has section tabs, Messages has
+conversation search, and More has a labeled feature directory.
+
+**[Before / approved mockup / implementation comparison](implementation/comparison.html)**
 
 [Actual Today, light](implementation/adult-today-light.png) ·
 [Actual Today, dark](implementation/adult-today-dark.png) ·
+[Past drives and an evening program](implementation/adult-driver-past-light.png) ·
+[Plan](implementation/adult-plan-light.png) ·
+[Household](implementation/adult-household-light.png) ·
+[Messages](implementation/adult-messages-light.png) ·
 [Actual More screen](implementation/adult-more-light.png)
 
 These are served-app captures with fictional data. Run the focused browser
@@ -37,11 +45,18 @@ $env:PWA_REVIEW_OUTPUT='docs/design/pwa-audience-audit/implementation'
 
 The check covers parent/driver, adult/driver, non-driving parent, helper,
 guest and all four child stages; directory filtering and scope restrictions;
-profile keyboard dismissal, theme switching, drive actions/completion, and
-horizontal overflow at phone/tablet widths and doubled root text size.
+profile keyboard dismissal, theme switching, drive actions/completion,
+program disclosures, date selection, review navigation and verification,
+conversation search, past-row contrast, and horizontal overflow at
+phone/tablet widths and doubled root text size. Background integrations are
+disabled in this isolated fixture server; scripts and styles have bounded
+transport retries for loopback connection resets.
 Real notifications, location tracking, routing estimates and music playback
-are not exercised by these fixtures. Consolidated attention summaries and
-the four proposed child redesigns remain subsequent work.
+are not exercised by these fixtures. The four child redesigns remain
+subsequent work; their existing navigation and presentation are preserved.
+The proposal's simulated cover requests, person filters and new-event flow
+are not added by this visual pass; the application's existing actions and
+permission rules remain authoritative.
 
 ### Standalone proposal
 

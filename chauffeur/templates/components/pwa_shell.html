@@ -1,6 +1,6 @@
 <!-- Adult navigation reuses the existing, permission-filtered views. -->
 <section id="pwa-more-container" class="pwa-directory" aria-labelledby="pwa-more-title" hidden>
-    <h2 id="pwa-more-title">More</h2>
+    <h2 id="pwa-more-title">More from Chauffeur</h2>
     <p class="pwa-muted">Find a feature or manage your preferences.</p>
     <label for="pwa-feature-search">Search features</label>
     <input id="pwa-feature-search" type="search" placeholder="Map, music, appearance..." oninput="pwaRenderDirectory()">
@@ -11,4 +11,9 @@
     <form method="dialog"><button class="pwa-close" aria-label="Close profile">Close</button></form>
     <h2 id="pwa-profile-title">Your profile</h2>
     <div id="pwa-profile-actions"></div>
+</dialog>
+<dialog id="pwa-attention-dialog" class="pwa-profile" aria-labelledby="pwa-attention-title">
+    <form method="dialog"><button class="pwa-close" aria-label="Close review">Close</button></form>
+    <h2 id="pwa-attention-title">Needs your review</h2>
+    <div id="pwa-attention-body"></div>
 </dialog>

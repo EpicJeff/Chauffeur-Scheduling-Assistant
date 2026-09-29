@@ -31,6 +31,17 @@ departure times separately. Child stages keep their existing visual treatment
 until their own approved implementation pass. Keep these adult overrides
 scoped to `data-audience="adult"`; do not flatten the kiosk or child UI.
 
+Adult screens follow the mockup's actual hierarchy: 31px page headings,
+15px row titles, 13px secondary copy, aligned time columns, transparent rows
+with subtle separators, and one bordered departure card. Past items retain
+full text contrast and use a small status label; never fade an entire adult
+row. Programs use the same row treatment while retaining their disclosure.
+Household sections switch between tasks, lists, reviews and existing threads.
+Review counts use the selected member's fetched payloads and the existing
+approval handlers. Keep primary actions green; reserve warning colors for
+real states. Test populated, past-only and dark screens against the approved
+mockup, not just the presence of tabs or a theme attribute.
+
 When two surfaces draw the same concept, they share ONE builder (the
 kiosk-shares-logic / TripLogic pattern — an included component both consumers
 load). Existing shared pieces:
