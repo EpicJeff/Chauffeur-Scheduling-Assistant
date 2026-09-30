@@ -64,10 +64,21 @@ function pwaChildOpenPlan() {
     setView('myday'); pwaChildPlan = true; mydayOffset = 0;
     pwaSyncShell(); renderMyDay();
 }
-async function pwaChildChooseDate(offset) {
-    mydayOffset = Math.max(0, Math.min(kidHorizonDays(), offset));
+async function pwaChildChooseDate(offset, focus = '') {
+    const older = ['navigator', 'copilot'].includes(pwaChildStage());
+    mydayOffset = Math.min(kidHorizonDays(), older ? offset : Math.max(0, offset));
+    updateMyDayLabel();
     await renderMyDay();
-    document.querySelector('.child-dates [aria-pressed="true"]')?.focus({preventScroll:true});
+    const target = focus ? document.querySelector(`.child-day-nav [data-day-action="${focus}"]:not(:disabled)`) || document.querySelector('.child-day-nav strong') : document.querySelector('.child-dates [aria-pressed="true"]');
+    target?.focus({preventScroll:true});
+}
+function pwaChildDayNav(offset, dateLabel) {
+    const label = offset === 0 ? 'Today' : offset === 1 ? 'Tomorrow' : offset === -1 ? 'Yesterday' : dateLabel;
+    return `<nav class="child-day-nav" aria-label="Browse your days">
+        <button data-day-action="previous" aria-label="Previous day" onclick="pwaChildChooseDate(${offset - 1},'previous')">${pwaIcon('arrow')}</button>
+        <div><strong aria-live="polite" tabindex="-1">${mfEscape(label)}</strong><button data-day-action="today" onclick="pwaChildChooseDate(0,'today')" ${offset === 0 ? 'disabled' : ''}>${offset === 0 ? 'Viewing today' : 'Back to today'}</button></div>
+        <button data-day-action="next" aria-label="Next day" onclick="pwaChildChooseDate(${offset + 1},'next')" ${offset >= kidHorizonDays() ? 'disabled' : ''}>${pwaIcon('arrow')}</button>
+    </nav>`;
 }
 function pwaChildDates() {
     return `<nav class="child-dates" aria-label="Your plan dates">${Array.from({length:kidHorizonDays() + 1}, (_, i) => {
@@ -128,8 +139,9 @@ function pwaChildRenderDay({data, routineData, programItems, balance, jobs = [],
     const interactive = offset === 0, plan = pwaChildPlan;
     const dateLabel = new Date(date + 'T12:00:00').toLocaleDateString(undefined,{weekday:'long', month:'long', day:'numeric'});
     const heading = plan ? 'Your plan' : stage === 'sprout' ? `Hi, ${(member.name || '').split(' ')[0]}!`
-        : stage === 'explorer' ? `Hey, ${(member.name || '').split(' ')[0]}!` : stage === 'copilot' ? 'Today, on your terms.' : 'Your day';
+        : stage === 'explorer' ? `Hey, ${(member.name || '').split(' ')[0]}!` : stage === 'copilot' && interactive ? 'Today, on your terms.' : 'Your day';
     let html = `<header class="child-greeting"><div><h1>${mfEscape(heading)}</h1><p>${plan ? mfEscape(dateLabel) : stage === 'sprout' ? 'One little step at a time.' : stage === 'explorer' ? 'A little progress, every day.' : mfEscape(dateLabel)}</p></div>${young && !plan ? pwaChildCompanion(member) : ''}</header>`;
+    if (!young) html += pwaChildDayNav(offset, dateLabel);
     if (plan) html += pwaChildDates();
     html += renderStatusBanner(data.status_days, date);
     const upcoming = rides.map((r,i) => ({r,i})).filter(({r}) => r.status !== 'completed' && !(r.optional && r.optional_decision !== 'attend') && (!interactive || new Date(r.end || r.start).getTime() >= Date.now())).sort((a,b) => new Date(a.r.start)-new Date(b.r.start));
@@ -166,9 +178,9 @@ function pwaChildRenderDay({data, routineData, programItems, balance, jobs = [],
             if (current[1]) html += `<button onclick="pwaChildRoutineDetail(${current[1].index})">${kidGlyph(current[1].item)}<span>Then: ${mfEscape(current[1].item.title)}</span></button>`;
             html += `<button onclick="setView('messages')">${pwaIcon('household')}<span>My grown-ups</span></button></div>`;
         } else {
-            html += `<section class="child-priorities"><span class="child-eyebrow">${stage === 'explorer' ? 'Now' : 'Your priorities'}</span><h2>${stage === 'explorer' ? 'Make room for your day.' : 'Focus on these'}</h2><p class="child-progress">${done} of ${items.length} done</p>${(plan ? items.map((item,index)=>({item,index})) : current.slice(0,3)).map(({item,index})=>pwaChildRoutineRow(item,index,interactive)).join('')}${!current.length ? '<p>Your routine is complete.</p>' : ''}</section>`;
+            html += `<section class="child-priorities"><span class="child-eyebrow">${!interactive ? 'Your routine' : stage === 'explorer' ? 'Now' : 'Your priorities'}</span><h2>${!interactive ? 'On this day' : stage === 'explorer' ? 'Make room for your day.' : 'Focus on these'}</h2><p class="child-progress">${done} of ${items.length} done</p>${(plan || !interactive ? items.map((item,index)=>({item,index})) : current.slice(0,3)).map(({item,index})=>pwaChildRoutineRow(item,index,interactive)).join('')}${!current.length ? '<p>Your routine is complete.</p>' : ''}</section>`;
         }
-        if (!plan) html += `<details class="child-all-routine"><summary>All of today’s routine</summary>${items.map((item,i)=>pwaChildRoutineRow(item,i,interactive)).join('')}</details>`;
+        if (!plan && interactive) html += `<details class="child-all-routine"><summary>All of today’s routine</summary>${items.map((item,i)=>pwaChildRoutineRow(item,i,interactive)).join('')}</details>`;
     } else if (stage === 'sprout' && !plan) html += '<section class="child-step"><h2>A little room to play.</h2><p>No routine steps today.</p><button class="child-primary" onclick="setView(\'messages\')">My grown-ups</button></section>';
     if (!young && jobs.length && pwaAllowed('chores')) html += `<section class="child-jobs"><h2>Your household tasks</h2>${jobs.slice(0,2).map(job=>`<button class="child-agenda-row" onclick="setView('chores')"><span><strong>${mfEscape(job.title)}</strong><small>${job.state === 'done' ? 'Waiting for approval' : 'Assigned to you'}</small></span>${pwaIcon('arrow')}</button>`).join('')}</section>`;
     html += renderDueSoonSection(data.due_soon);

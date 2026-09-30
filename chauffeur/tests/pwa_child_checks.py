@@ -53,6 +53,10 @@ def check_child(page, key, output, calls):
     assert page.locator('.child-pickup').inner_text().find('Alex') >= 0
     assert page.locator('.child-pickup').evaluate('(e)=>e.getBoundingClientRect().top') < page.locator('.child-step, .child-priorities').evaluate('(e)=>e.getBoundingClientRect().top')
     shot('today-light')
+    if key in ('navigator', 'copilot'):
+        check_child_day_navigation(page, key, calls, output)
+    else:
+        assert page.locator('.child-day-nav').count() == 0
     page.locator('.child-pickup-compact' if key in ('sprout','explorer') else '.child-pickup button').first.click()
     assert 'Indoor shoes' in page.locator('#pwa-child-detail-body').inner_text()
     assert 'Alex' in page.locator('#pwa-child-detail-body').inner_text()
@@ -134,6 +138,11 @@ def check_child(page, key, output, calls):
         }""")
         page.wait_for_selector('.child-dates')
         assert page.locator('.child-dates button').count() == 2
+        page.locator('.child-day-nav [data-day-action="next"]').click()
+        page.wait_for_function('pwaChildDay.offset === 1')
+        assert page.locator('.child-day-nav [data-day-action="next"]').is_disabled()
+        page.get_by_role('button', name='Back to today', exact=True).click()
+        page.wait_for_function('pwaChildDay.offset === 0')
         assert page.get_by_role('button',name='Ask for a change',exact=True).count() == 0
         page.locator('#tab-more').click()
         assert page.locator('#pwa-feature-list [data-feature="map"]').count() == 0
@@ -161,6 +170,41 @@ def check_child(page, key, output, calls):
         assert page.evaluate('pwaChildDay') is None
 
 
+def check_child_day_navigation(page, key, calls, output):
+    """Older children can browse directly from Today and return without Plan."""
+    nav = page.locator('.child-day-nav')
+    assert nav.is_visible()
+    assert nav.evaluate('(e)=>e.getBoundingClientRect().bottom < innerHeight - 80')
+    dates = page.evaluate('[-1,0,1].map(_mydayLocalDate)')
+    nav.get_by_role('button', name='Next day', exact=True).click()
+    page.wait_for_function('pwaChildDay.offset === 1 && !pwaChildPlan')
+    assert nav.locator('strong').inner_text() == 'Tomorrow'
+    assert 'Today, on your terms.' not in page.locator('.child-greeting').inner_text()
+    assert page.locator('.child-priorities input:enabled').count() == 0
+    assert page.locator('.child-all-routine').count() == 0
+    assert any('date='+dates[2] in c for c in calls if isinstance(c, str))
+    if output: Path(output, key+'-tomorrow.png').write_bytes(page.screenshot())
+    # Today tab itself is a reliable reset, even without a view change.
+    page.locator('#tab-myday').click()
+    page.wait_for_function('pwaChildDay.offset === 0 && !pwaChildPlan')
+    nav.get_by_role('button', name='Previous day', exact=True).click()
+    page.wait_for_function('pwaChildDay.offset === -1')
+    assert nav.locator('strong').inner_text() == 'Yesterday'
+    assert any('date='+dates[0] in c for c in calls if isinstance(c, str))
+    assert page.locator('.child-priorities input:enabled').count() == 0
+    nav.get_by_role('button', name='Back to today', exact=True).click()
+    page.wait_for_function('pwaChildDay.offset === 0')
+    assert page.locator('.child-priorities input:enabled').count() > 0
+    # Empty dates retain navigation and the explicit return path.
+    page.route('**/api/members/'+key+'/day?*', lambda r:r.fulfill(json=dict(rides=[], due_soon=[], status_days=[])))
+    nav.get_by_role('button', name='Next day', exact=True).click()
+    page.wait_for_function('pwaChildDay.offset === 1 && pwaChildDay.rides.length === 0')
+    assert page.get_by_text('No rides scheduled for this day.', exact=True).is_visible()
+    page.unroute('**/api/members/'+key+'/day?*')
+    nav.get_by_role('button', name='Back to today', exact=True).click()
+    page.wait_for_function('pwaChildDay.offset === 0 && pwaChildDay.rides.length > 0')
+
+
 def check_child_driver(page, output):
     """A real configured Copilot driver keeps the original scheduler actions."""
     page.wait_for_selector('.pwa-next')
@@ -181,6 +225,10 @@ def check_child_driver(page, output):
     page.wait_for_selector('#action-sheet',state='hidden')
     page.locator('#tab-myday').click()
     page.wait_for_selector('.child-drive-link')
+    page.locator('.child-day-nav [data-day-action="next"]').click()
+    page.wait_for_function('pwaChildDay.offset === 1')
+    page.locator('#tab-myday').click()
+    page.wait_for_function('pwaChildDay.offset === 0')
     page.locator('.child-drive-link').click()
     page.wait_for_selector('.pwa-next')
     page.locator('#tab-more').click()

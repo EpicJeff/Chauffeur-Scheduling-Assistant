@@ -805,7 +805,7 @@
                 }
                 if (view === 'drives' && (!kidCan('can_drive') || !pwaAllowed('drives'))) view = 'myday';
                 const wasPlan = pwaChildPlan; pwaChildPlan = false;
-                if (wasPlan && view === 'myday' && currentView === 'myday') {
+                if ((wasPlan || mydayOffset !== 0) && view === 'myday' && currentView === 'myday') {
                     mydayOffset = 0; pwaSyncShell(); renderMyDay(); return;
                 }
             }
@@ -2593,7 +2593,7 @@
                 // Timed sessions belong in the child's personal Plan as well
                 // as Today. Untimed programs stay on Today, not every date.
                 let programItems = { timed: [], rest: '' };
-                if (requestedOffset === 0 || (pwaChildStage() && pwaChildPlan)) {
+                if (requestedOffset === 0 || pwaChildStage()) {
                     const parts = await buildPracticeParts();
                     programItems = myDayProgramItems(parts, dateStr);
                     if (requestedOffset !== 0) programItems.rest = '';
