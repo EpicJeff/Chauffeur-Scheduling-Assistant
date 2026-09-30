@@ -1,6 +1,15 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.216 (2026-09-29).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.218 (2026-09-30).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**A day you page back to stays on screen (v2.499.218; `templates/app.html` `pagedSchedule` + `mergeScheduleInto`, `tests/test_past_days_stay_live.py`).** User: "you can go back and it shows the schedule for a second and then it clears and says there is nothing." The Drives/Family back arrow (`fetchMoreDays`) merged a past day into `scheduleData`. But every schedule refetch replaced `scheduleData` wholesale with the rolling from-today window: the stream's "update", the 5-minute timer and waking the phone. Paging back to a day the server had to solve is itself what fired that update, so the day drew, then blanked to "No Drives Scheduled".
+
+What changed:
+- Paged-in days are kept in `pagedSchedule` and folded back in after every refetch (`mergeScheduleInto`, with the fresh data winning) and over the localStorage-cached draw.
+- The pager's inline merge became that shared function.
+- The pages clear when the viewer or driver changes.
+
+The live test drives both tabs as a parent with the real taps (date button, then back arrow), then refetches twice. It fails on the pre-fix app.html with exactly the reported "No Drives Scheduled".
 
 **One departure rule and one leave margin, on every surface (v2.499.216; `services/leave_by.py`, `main.py` `_departure_notifications` + `_leave_by_stamp`, `solver/matcher.py`, `templates/app.html` `legAt`, `templates/components/schedule_timeline.html` `stLegAt`, `templates/dashboard.html` Leave margin control, `tests/test_leave_margin.py`, `tests/test_leave_times_live.py`).** User: "The times should be the same across every surface. If there's a 5 minute buffer being added, it should be coming from a single unified setting that can be adjusted by the user."
 

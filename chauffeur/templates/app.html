@@ -738,6 +738,9 @@
         let membersData = [];
         let scheduleData = null;
         let selectedDriverId = localStorage.getItem('chauffeur_driver_id');
+        // Days paged in past the rolling window (the back arrow on Drives and
+        // Family). Survives schedule refetches; cleared when the viewer changes.
+        let pagedSchedule = null;
         let selectedMemberId = localStorage.getItem('chauffeur_member_id');
 
         // A saved avatar changes the chip everywhere; refetch members so the
@@ -1075,6 +1078,7 @@
             const authToken = await ensureMemberAuth(m);
             if (authToken === null) return;  // backed out of PIN entry
             const previousMemberId = selectedMemberId;
+            pagedSchedule = null;
             selectedDriverId = null;
             currentDriverId = null;
             localStorage.removeItem('chauffeur_driver_id');
@@ -7441,6 +7445,7 @@
                 if (token === null) return;  // backed out of PIN entry
             }
             currentDriverId = id;
+            if (selectedDriverId !== id) pagedSchedule = null;
             selectedDriverId = id;
             localStorage.setItem('chauffeur_driver_id', id);
             syncMemberIdentity(id);
@@ -7521,6 +7526,7 @@
         }
 
         function clearDriver() {
+            pagedSchedule = null;
             selectedDriverId = null;
             selectedMemberId = null;
             localStorage.removeItem('chauffeur_driver_id');
@@ -7593,6 +7599,7 @@
             if (cached && !refresh && !skipLocal) {
                 try {
                     scheduleData = JSON.parse(cached);
+                    if (pagedSchedule) mergeScheduleInto(scheduleData, pagedSchedule, false);
                     buildTimeline();
                     hasCachedData = true;
                     // Do not return here, let it fetch fresh data in the background
@@ -7625,6 +7632,10 @@
                     // data is already in memory.
                     localStorage.setItem(scheduleCacheKey(), JSON.stringify(scheduleData));
                 } catch (qe) { console.warn('schedule cache not stored', qe); }
+                // The days the back arrow paged in are not in the rolling
+                // window this fetch returns; without this every refetch
+                // blanked them a second after they drew.
+                if (pagedSchedule) mergeScheduleInto(scheduleData, pagedSchedule, false);
                 buildTimeline();
             } catch (e) {
                 console.error("Failed to fetch schedule", e);
@@ -9683,6 +9694,56 @@
             // document.getElementById('btn-next-day').disabled = activeDateIndex === currentDates.length - 1;
         }
 
+        // Fold one schedule blob into another. `srcWins` for a page just
+        // fetched; false when re-applying pages under a fresh refetch, so
+        // anything the fresh blob knows stays as it says.
+        function mergeScheduleInto(target, src, srcWins) {
+            if (!src) return target;
+            const put = (obj, k, v) => { if (srcWins || !(k in obj)) obj[k] = v; };
+            target.events = target.events || [];
+            const ids = new Set(target.events.map(e => e.id));
+            (src.events || []).forEach(e => { if (!ids.has(e.id)) target.events.push(e); });
+            ['assignments', 'ghost_assignments', 'car_assignments', 'assist_assignments'].forEach(key => {
+                if (!src[key]) return;
+                target[key] = target[key] || {};
+                for (const k in src[key]) put(target[key], k, src[key][k]);
+            });
+            ['initial_edges', 'route_edges', 'final_edges'].forEach(key => {
+                if (!src[key]) return;
+                target[key] = target[key] || {};
+                for (const dId in src[key]) {
+                    target[key][dId] = target[key][dId] || {};
+                    for (const k in src[key][dId]) put(target[key][dId], k, src[key][dId][k]);
+                }
+            });
+            if (src.driver_events) {
+                target.driver_events = target.driver_events || {};
+                for (const dId in src.driver_events) {
+                    target.driver_events[dId] = [...new Set([...(target.driver_events[dId] || []),
+                                                             ...src.driver_events[dId]])];
+                }
+            }
+            if (src.scheduled_errands) {
+                target.scheduled_errands = target.scheduled_errands || [];
+                const errIds = new Set(target.scheduled_errands.map(e => e.id));
+                src.scheduled_errands.forEach(e => {
+                    if (!errIds.has(e.id)) target.scheduled_errands.push(e);
+                });
+            }
+            // Rosters and calendar METADATA ride every response: a paged-in
+            // day whose calendars the window had not seen otherwise draws
+            // literal "Passenger" chips and default-blue cards
+            // (familyPaxBadges resolves names and colors from these alone).
+            if (src.calendar_metadata) {
+                target.calendar_metadata = Object.assign({},
+                    src.calendar_metadata, target.calendar_metadata || {});
+            }
+            ['members', 'passengers', 'drivers', 'cars'].forEach(k => {
+                if (src[k] && !(target[k] && target[k].length)) target[k] = src[k];
+            });
+            return target;
+        }
+
         async function fetchMoreDays(direction) {
             const btnPrev = document.getElementById('btn-prev-day');
             const btnNext = document.getElementById('btn-next-day');
@@ -9730,66 +9791,14 @@
                 if (res.ok) {
                     const data = await res.json();
 
-                    // Merge events
-                    if (!scheduleData.events) scheduleData.events = [];
-                    const existingIds = new Set(scheduleData.events.map(e => e.id));
-                    (data.events || []).forEach(e => {
-                        if (!existingIds.has(e.id)) scheduleData.events.push(e);
-                    });
-
-                    // Merge assignments and edges
-                    if (data.assignments) {
-                        Object.assign(scheduleData.assignments, data.assignments);
-                    }
-                    if (data.ghost_assignments) {
-                        Object.assign(scheduleData.ghost_assignments, data.ghost_assignments);
-                    }
-                    if (data.initial_edges) {
-                        for (const dId in data.initial_edges) {
-                            if (!scheduleData.initial_edges[dId]) scheduleData.initial_edges[dId] = {};
-                            Object.assign(scheduleData.initial_edges[dId], data.initial_edges[dId]);
-                        }
-                    }
-                    if (data.route_edges) {
-                        for (const dId in data.route_edges) {
-                            if (!scheduleData.route_edges[dId]) scheduleData.route_edges[dId] = {};
-                            Object.assign(scheduleData.route_edges[dId], data.route_edges[dId]);
-                        }
-                    }
-                    if (data.final_edges) {
-                        for (const dId in data.final_edges) {
-                            if (!scheduleData.final_edges[dId]) scheduleData.final_edges[dId] = {};
-                            Object.assign(scheduleData.final_edges[dId], data.final_edges[dId]);
-                        }
-                    }
-                    if (data.driver_events) {
-                        for (const dId in data.driver_events) {
-                            if (!scheduleData.driver_events[dId]) scheduleData.driver_events[dId] = [];
-                            scheduleData.driver_events[dId] = [...new Set([...scheduleData.driver_events[dId], ...data.driver_events[dId]])];
-                        }
-                    }
-                    if (data.scheduled_errands) {
-                        const existingErrandIds = new Set((scheduleData.scheduled_errands || []).map(e => e.id));
-                        if (!scheduleData.scheduled_errands) scheduleData.scheduled_errands = [];
-                        data.scheduled_errands.forEach(e => {
-                            if (!existingErrandIds.has(e.id)) scheduleData.scheduled_errands.push(e);
-                        });
-                    }
-                    // Rosters and calendar METADATA ride every response but
-                    // were never merged here — a paged-in day whose calendars
-                    // the initial window hadn't seen (or a session whose
-                    // initial fetch never landed) drew literal "Passenger"
-                    // chips and default-blue cards, because familyPaxBadges
-                    // resolves names and colors from calendar_metadata alone.
-                    if (data.calendar_metadata) {
-                        scheduleData.calendar_metadata = Object.assign({},
-                            data.calendar_metadata, scheduleData.calendar_metadata || {});
-                    }
-                    ['members', 'passengers', 'drivers', 'cars'].forEach(k => {
-                        if (data[k] && !(scheduleData[k] && scheduleData[k].length)) {
-                            scheduleData[k] = data[k];
-                        }
-                    });
+                    // Kept apart as well as merged in: every schedule refetch
+                    // (the stream's "update", the wake-up and 5-minute
+                    // refreshes) REPLACES scheduleData with the rolling
+                    // from-today window, and paging back to a day the server
+                    // had to work out is itself what fires that update. The
+                    // paged days are folded back in after each refetch.
+                    mergeScheduleInto(scheduleData, data, true);
+                    pagedSchedule = mergeScheduleInto(pagedSchedule || {}, data, true);
 
                     buildTimeline();
 
