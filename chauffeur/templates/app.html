@@ -1528,16 +1528,17 @@
             else mydayOpen.delete(row.dataset.mydayKey);
         }
 
-        // One row: a session today (`w`) or a program with none (`w` null).
+        // One row: a dated session (`w`) or a current program (`w` null).
         // Closed it is the time, the name and at most one state chip; open it
         // is the program card, led by the session's own Open button while
         // the window is on.
         function myDayProgramRow(p, w, commitmentsById) {
             const key = w ? `w:${p.id}:${w.date}:${w.time_start}` : `p:${p.id}`;
+            const dated = w && w.date !== todayStr();
             const open = mydayOpen.has(key);
             const now = w ? practiceWindowIsNow(w) : false;
             const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
-            const ended = !!w && !now && practiceMinutes(w.time_end) < nowMin;
+            const ended = !!w && (w.date < todayStr() || (w.date === todayStr() && !now && practiceMinutes(w.time_end) < nowMin));
             const whose = (p.member_id !== selectedMemberId && p.member_name) ? p.member_name : '';
             const next = w ? '' : programNextWindow(p, commitmentsById || {});
             const sub = (w ? [whose, w.session_label] : [whose, next ? 'Next: ' + next : ''])
@@ -1545,7 +1546,7 @@
             const chip = (w && w.logged)
                 ? '<span class="text-xs font-black uppercase bg-green-600/30 text-green-300 px-2 py-0.5 rounded-full border border-green-500/50 shrink-0">Done</span>'
                 : now ? '<span class="text-xs font-black uppercase bg-teal-600/30 text-teal-300 px-2 py-0.5 rounded-full border border-teal-500/50 shrink-0">Now</span>'
-                : p.due_ask ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 shrink-0">Did it happen?</span>'
+                : (w ? w.date < todayStr() || p.due_ask?.slot_date === w.date : p.due_ask) ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 shrink-0">Did it happen?</span>'
                 : '';
             const lead = (w && now) ? `
                 <div class="flex gap-2 mb-2">
@@ -1554,9 +1555,9 @@
                 </div>` : '';
             return `
             <div data-myday-key="${mfEscape(key)}" data-myday-program="${mfEscape(p.id)}"
-                 class="bg-gray-900 border ${now ? 'border-teal-500/60' : 'border-gray-800'} rounded-xl ${ended && !w.logged ? 'opacity-50' : ''}">
-                <button type="button" data-myday-toggle onclick="toggleMyDayItem(this)"
-                    aria-expanded="${open ? 'true' : 'false'}"
+                 class="bg-gray-900 border ${now ? 'border-teal-500/60' : 'border-gray-800'} rounded-xl ${ended && !dated && !w.logged ? 'opacity-50' : ''}">
+                <button type="button" data-myday-toggle onclick="${dated ? `openSessionSheet('${sessionKey(w)}')` : 'toggleMyDayItem(this)'}"
+                    ${dated ? 'aria-haspopup="dialog"' : `aria-expanded="${open ? 'true' : 'false'}"`}
                     class="w-full text-left px-4 py-3 flex items-center gap-3">
                     ${w ? `<span class="text-sm font-bold uppercase tracking-wider text-teal-300 shrink-0">${mfEscape(programFmtHHMM(w.time_start))}</span>` : ''}
                     <span class="min-w-0 flex-1">
@@ -1566,14 +1567,14 @@
                     ${chip}
                     <span data-myday-chev class="text-gray-500 shrink-0">${open ? '▾' : '▸'}</span>
                 </button>
-                <div data-myday-body class="px-3 pb-3 ${open ? '' : 'hidden'}">
+                ${dated ? '' : `<div data-myday-body class="px-3 pb-3 ${open ? '' : 'hidden'}">
                     ${lead}${renderProgramCard(p, commitmentsById)}
-                </div>
+                </div>`}
             </div>`;
         }
 
-        // Today's sessions as timed rows ({min, html}) for the day's own
-        // list, and the programs with no session today as rows for after it.
+        // The selected day's sessions as timed rows ({min, html}). Only
+        // Today also carries current programs with no scheduled session.
         // Only programs this person's day already shows (`fetchMyPrograms`),
         // so a parent's day carries a small child's session and nobody
         // else's.
@@ -1582,8 +1583,11 @@
             const byId = (parts && parts.commitmentsById) || {};
             const timed = [], rest = [];
             for (const p of list) {
-                const wins = practiceWindowsOn(dateStr).filter(w => w.program_id === p.id);
-                if (!wins.length) { rest.push(myDayProgramRow(p, null, byId)); continue; }
+                const wins = ((parts && parts.windows) || practiceWindows).filter(w => w.date === dateStr && w.program_id === p.id);
+                if (!wins.length) {
+                    if (dateStr === todayStr()) rest.push(myDayProgramRow(p, null, byId));
+                    continue;
+                }
                 for (const w of wins)
                     timed.push({ min: practiceMinutes(w.time_start), html: myDayProgramRow(p, w, byId) });
             }
@@ -1717,7 +1721,7 @@
         function practiceWindowIsNow(w, now) {
             now = now || new Date();
             const mins = now.getHours() * 60 + now.getMinutes();
-            return !w.logged
+            return w.date === now.toLocaleDateString('en-CA') && !w.logged
                 && mins >= practiceMinutes(w.time_start) - PRACTICE_LEAD_MINUTES
                 && mins <= practiceMinutes(w.time_end);
         }
@@ -1838,7 +1842,7 @@
             // Logging somebody else's session is a parent/adult act the server
             // gates anyway; offering the button to a sibling would be an
             // invitation to a refusal.
-            const canLog = (mine || grown) && !w.logged;
+            const canLog = (mine || grown) && !w.logged && w.date <= todayStr();
             const doneBtn = canLog ? `
                 <button data-done class="flex-1 px-4 py-2.5 rounded-xl bg-teal-600 text-white text-sm font-bold">${
                     mine ? 'Done' : mfEscape(`Done — ${w.member_name || 'them'}`)}</button>` : '';
@@ -1854,7 +1858,7 @@
             // teal, so it reads as its own action next to Done rather than a
             // restyle of it -- and it is the exact color the player's own
             // "Continue / Log it?" button uses, so the thread carries through.
-            const startBtn = canLog ? `
+            const startBtn = canLog && w.date === todayStr() ? `
                 <button data-start class="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-bold">Start</button>` : '';
             _pwaModal(`
                 <div class="text-[11px] font-bold uppercase tracking-widest text-teal-400">${mfEscape(sessionDateLabel(w))}</div>
@@ -1883,11 +1887,8 @@
                 const start = overlay.querySelector('[data-start]');
                 if (start) start.onclick = async () => {
                     close();
-                    // Today's windows already carry their lesson from the
-                    // eager join in buildPracticeParts; this tops up an
-                    // evening further out in the week, which is cheaper
-                    // than fetching a lesson for every session of it up
-                    // front. A no-op when `_lesson` was already resolved.
+                    // Today's windows normally carry their lesson from the
+                    // eager join; other entry points can load it on demand.
                     await loadWindowLesson(w);
                     window.dispatchEvent(new CustomEvent('lesson-player:open',
                         {detail: {window: w, lesson: w._lesson || null}}));
@@ -2202,6 +2203,38 @@
         // spending three fetches every time somebody taps between tabs.
         const PRACTICE_STALE_MS = 30000;
 
+        // A dated session must use that day's window and log date, rather
+        // than the live program card's next session or outstanding ask.
+        async function buildDatedPracticeParts(dateStr) {
+            const [list, windows] = await Promise.all([
+                fetchMyPrograms(), fetchPracticeWindows(dateStr, dateStr)
+            ]);
+            return { list, windows, commitmentsById: {} };
+        }
+
+        // Fetch only the day being viewed. Each result belongs to a member
+        // and date, so paging or switching profiles cannot paint stale data.
+        const datedTimelineDays = new Map(), datedTimelineLoads = new Map();
+        async function refreshDatedTimeline(dateStr, force = false) {
+            if (!dateStr || dateStr === todayStr() || !selectedMemberId || !['drives','family'].includes(currentView)) return;
+            const member = selectedMemberId, key = `${member}:${dateStr}`;
+            const cached = datedTimelineDays.get(key);
+            if ((!force && cached && Date.now() - cached.builtAt < PRACTICE_STALE_MS) || datedTimelineLoads.has(key)) return;
+            const load = {};
+            datedTimelineLoads.set(key, load);
+            try {
+                const [parts, res] = await Promise.all([
+                    buildDatedPracticeParts(dateStr),
+                    fetch(`${apiBase}api/members/${member}/day?date=${dateStr}`)
+                ]);
+                const day = res.ok ? await res.json() : {};
+                if (member !== selectedMemberId || datedTimelineLoads.get(key) !== load) return;
+                datedTimelineDays.set(key, { ...parts, status:renderStatusBanner(day.status_days, dateStr), builtAt:Date.now() });
+                if (['drives','family'].includes(currentView) && currentDates[activeDateIndex] === dateStr) buildTimeline();
+            } catch (e) { /* The schedule remains usable if a secondary read fails. */ }
+            finally { if (datedTimelineLoads.get(key) === load) datedTimelineLoads.delete(key); }
+        }
+
         async function refreshPracticeSection(force) {
             const body = document.getElementById('today-content');
             if (!body) return;
@@ -2220,7 +2253,9 @@
         // surface it was tapped on has to redraw -- whichever of the two
         // that is. `force`, because the write just invalidated the cache.
         function afterProgramWrite() {
+            datedTimelineDays.clear(); datedTimelineLoads.clear();
             if (currentView === 'myday') { renderMyDay(); return; }
+            refreshDatedTimeline(currentDates[activeDateIndex], true);
             refreshPracticeSection(true);
         }
 
@@ -2233,6 +2268,7 @@
         function refreshTodaySurfaces() {
             if (!selectedMemberId) return;
             if (currentView === 'myday') { renderMyDay(); return; }
+            refreshDatedTimeline(currentDates[activeDateIndex], true);
             if (currentView === 'drives') refreshPracticeSection(true);
         }
 
@@ -2594,14 +2630,10 @@
                 const data = await res.json();
                 const routineData = routineRes.ok ? await routineRes.json() : null;
                 if (routineData && requestedOffset === 0) maybeCelebrateStatus('routine', routineData.status);
-                // Timed sessions belong in the child's personal Plan as well
-                // as Today. Untimed programs stay on Today, not every date.
-                let programItems = { timed: [], rest: '' };
-                if (requestedOffset === 0 || pwaChildStage()) {
-                    const parts = await buildPracticeParts();
-                    programItems = myDayProgramItems(parts, dateStr);
-                    if (requestedOffset !== 0) programItems.rest = '';
-                }
+                // Every viewed day carries its scheduled sessions. Current
+                // program summaries, balances and requests belong on Today.
+                const parts = requestedOffset === 0 ? await buildPracticeParts() : await buildDatedPracticeParts(dateStr);
+                const programItems = myDayProgramItems(parts, dateStr);
                 const isKid = currentMemberRole() === 'child';
                 let routineHtml, kidTopHtml = '', childBalance = null, childJobs = [];
                 if (isKid) {
@@ -2648,7 +2680,7 @@
                                rounded-xl px-3 py-2 mb-2 text-sm text-gray-400 hover:text-indigo-300 transition-colors">
                         🙋 Ask for something…
                     </button>` : '';
-                const requestsHtml = renderRequests() + askHtml;
+                const requestsHtml = (requestedOffset === 0 ? renderRequests() : '') + askHtml;
                 // The day, in time order: drives and today's program sessions
                 // together. A session is not a drive, so "No rides today"
                 // still says so beside it.
@@ -2796,6 +2828,7 @@
         function renderStatusBanner(statusDays, dateStr) {
             const role = currentMemberRole();
             const isAdult = role === 'parent' || role === 'adult';
+            const canEdit = isAdult && dateStr >= todayStr();
             const fmtHHMM = (t) => {
                 const [h, m] = String(t || '').split(':').map(Number);
                 if (isNaN(h)) return t;
@@ -2828,7 +2861,7 @@
                     <div class="flex items-center gap-2">
                         <span class="text-lg">${homeDay ? '🏠' : (s.emoji || '💙')}</span>
                         <span class="text-sm font-bold text-sky-100">${mfEscape(s.name || '')}${s.member_name ? ' · ' + mfEscape(s.member_name) : ''}</span>
-                        ${isAdult ? `<button onclick="armClearStatus(this, '${s.id}')"
+                        ${canEdit ? `<button onclick="armClearStatus(this, '${s.id}')"
                             class="ml-auto text-xs font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700">✕</button>` : ''}
                     </div>
                     ${msg ? `<p class="text-sm text-sky-200/90 mt-1.5">${msg}</p>` : ''}
@@ -2837,11 +2870,11 @@
                     ${meta.length ? `<p class="text-xs text-sky-400/60 mt-1">${mfEscape(meta.join(' · '))}</p>` : ''}
                 </div>`;
             }).join('');
-            const setRow = isAdult ? `
+            const setRow = canEdit ? `
                 <div class="mb-2">
                     <button onclick="toggleStatusSetRow('${dateStr}')"
                         class="text-xs font-bold text-gray-500 active:text-gray-300">＋ Family status</button>
-                    <div id="status-set-row"></div>
+                    <div id="status-set-row-${dateStr}"></div>
                 </div>` : '';
             return cards + setRow;
         }
@@ -2863,12 +2896,13 @@
         async function clearStatusDay(dayId) {
             try {
                 await fetch(`${apiBase}api/status/days/${dayId}`, { method: 'DELETE' });
-                renderMyDay();
+                datedTimelineDays.clear(); datedTimelineLoads.clear();
+                refreshTodaySurfaces();
             } catch (e) { showGlobalAlert('Could not clear the status'); }
         }
 
         async function toggleStatusSetRow(dateStr) {
-            const row = document.getElementById('status-set-row');
+            const row = document.getElementById('status-set-row-' + dateStr);
             if (!row) return;
             if (row.innerHTML) { row.innerHTML = ''; return; }
             row.innerHTML = '<p class="text-xs text-gray-500 mt-1">Loading…</p>';
@@ -2894,7 +2928,8 @@
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ date: dateStr, protocol_id: protocolId, set_by: selectedMemberId })
                 });
-                renderMyDay();
+                datedTimelineDays.clear(); datedTimelineLoads.clear();
+                refreshTodaySurfaces();
             } catch (e) { showGlobalAlert('Could not set the status'); }
         }
 
@@ -9312,19 +9347,17 @@
                 const pane = document.createElement('div');
                 pane.className = "min-w-full w-full h-full snap-center overflow-y-auto px-4 py-6";
                 pane.id = `pane-${index}`;
-                // Today's pane carries the day's other sections above its own
-                // list, so the whole thing is one scroll instead of three
-                // boxes fighting over the screen. Only TODAY's: intake, what
-                // Argyle noticed and tonight's practice are all about now,
-                // and repeating them on every pane of the week is noise.
-                const sections = (dateStr === todayStr()) ? paneSectionsHtml() : '';
-                // Today's program sessions, in the drive list at their own
-                // time, and the programs with no session today after it --
+                // Live intake and requests belong to Today. Other dates
+                // carry their own family status and scheduled sessions.
+                const dated = datedTimelineDays.get(`${selectedMemberId}:${dateStr}`);
+                const sections = (dateStr === todayStr()) ? paneSectionsHtml() : (dated?.status || '');
+                // Dated program sessions, in the drive list at their own
+                // time, and current programs with no session after Today --
                 // the same rows the passenger's My Day draws. `pr(t)` hands
                 // over every session that starts before `t`, so each leg and
                 // event below releases the ones due ahead of it.
-                const progRows = (!familyByDate && dateStr === todayStr())
-                    ? myDayProgramItems(practiceParts, dateStr) : { timed: [], rest: '' };
+                const progRows = !familyByDate && (dateStr === todayStr() || dated)
+                    ? myDayProgramItems(dateStr === todayStr() ? practiceParts : dated, dateStr) : { timed: [], rest: '' };
                 if (!familyByDate && dateStr === todayStr())
                     practiceRowsDrawnSig = practiceRowSig(practiceParts, dateStr);
                 progRows.timed.sort((a, b) => a.min - b.min);
@@ -9689,6 +9722,7 @@
             document.getElementById('current-day-label').textContent = label;
             document.getElementById('date-subtitle').textContent = dDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
             pwaPageHeading();
+            refreshDatedTimeline(dStr);
 
             // document.getElementById('btn-prev-day').disabled = activeDateIndex === 0;
             // document.getElementById('btn-next-day').disabled = activeDateIndex === currentDates.length - 1;

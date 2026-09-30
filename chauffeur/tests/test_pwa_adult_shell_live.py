@@ -332,6 +332,9 @@ def run():
                         assert not page.evaluate('document.documentElement.scrollWidth > innerWidth')
                         check_route_departure(page, schedule, driver, output)
                         check_other_adult_sheets(page, output)
+                if key in ('parent', 'navigator', 'copilot'):
+                    from pwa_program_date_checks import check_program_dates
+                    check_program_dates(page, key, driver, output)
                 assert not errors and not failed_scripts, (key, errors, failed_scripts)
                 print('ok', key, tabs, flush=True)
     finally:
