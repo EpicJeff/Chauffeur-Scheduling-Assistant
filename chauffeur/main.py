@@ -16648,6 +16648,12 @@ def update_settings(settings: Settings, background_tasks: BackgroundTasks):
                        + " neither a password nor a PIN and would be locked "
                        "out. Give each of them one (Set PIN on their card, or "
                        "send an invite), then try again.")
+    if 'leave_margin_mins' in incoming:
+        # Clamped on the way in by the one reader (services/leave_by). Every
+        # save already marks the day caches dirty, which the solver's
+        # go-home-in-between decision (it uses the same margin) needs.
+        from services import leave_by as _lb
+        incoming['leave_margin_mins'] = _lb.margin_mins(incoming)
     current.update(incoming)
     storage.update_settings(current)
     # Panel-shaped settings (layout, theme, screensaver…) edited on one device
@@ -18779,125 +18785,8 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             existing_notifs = storage.get_pending_notifications()
             fired_notif_ids = {n["notif_id"] for n in existing_notifs if n.get("fired")}
             
-            all_driver_ids = set()
-            all_driver_ids.update(data_payload.get("initial_edges", {}).keys())
-            all_driver_ids.update(data_payload.get("route_edges", {}).keys())
-            all_driver_ids.update(data_payload.get("final_edges", {}).keys())
-            
-            for d_id in all_driver_ids:
-                if d_id.startswith('ghost_'): continue
-                
-                for ev_id, edge in data_payload.get("initial_edges", {}).get(d_id, {}).items():
-                    ev = events_by_id.get(ev_id)
-                    if not ev: continue
-                    pickup_wp = edge.get("pickup_waypoint")
-                    buffer_before = edge.get("buffer_before_mins", 0)
-                    ev_start_ts = datetime.datetime.fromisoformat(ev.start.isoformat()).timestamp()
-                    
-                    # origin/travel_static_mins: the leg the push is FOR, so
-                    # the day-of traffic sweep can re-price it and move the
-                    # fire time up when the road is slow (maps.py). Pushes
-                    # anchored to an event's END carry no route on purpose —
-                    # traffic does not change when a game finishes.
-                    def add_init_notif(nid, ts, body, loc, origin=None, static=None):
-                        if now_ts <= ts + 600:
-                            pending_notifications.append({
-                                "notif_id": nid, "driver_id": d_id, "trigger_timestamp": ts,
-                                "title": "Time to Leave!", "body": body, "location": loc, "fired": nid in fired_notif_ids,
-                                "origin": origin or None, "destination": loc if origin else None,
-                                "travel_static_mins": static or None
-                            })
-
-                    if pickup_wp:
-                        pax_pickup_loc = pickup_wp.get("pickup_location", "")
-                        driver_home_loc = edge.get("driver_home_location", "")
-                        if pax_pickup_loc == driver_home_loc:
-                            dep_time = ev_start_ts - (pickup_wp.get("from_global_home_mins", 0) + 5 + buffer_before) * 60
-                            add_init_notif(f"init_{ev_id}", dep_time, f"Drive to {ev.location.split(',')[0]}", ev.location,
-                                           origin=driver_home_loc, static=pickup_wp.get("from_global_home_mins", 0))
-                        else:
-                            dep1 = ev_start_ts - (pickup_wp.get("from_driver_home_mins", 0) + pickup_wp.get("from_global_home_mins", 0) + 5 + buffer_before) * 60
-                            add_init_notif(f"init_{ev_id}_1", dep1, f"Pickup at {pax_pickup_loc.split(',')[0]}", pax_pickup_loc,
-                                           origin=driver_home_loc, static=pickup_wp.get("from_driver_home_mins", 0))
-                            dep2 = ev_start_ts - (pickup_wp.get("from_global_home_mins", 0) + 5 + buffer_before) * 60
-                            add_init_notif(f"init_{ev_id}_2", dep2, f"Drive to {ev.location.split(',')[0]}", ev.location,
-                                           origin=pax_pickup_loc, static=pickup_wp.get("from_global_home_mins", 0))
-                    else:
-                        dep_time = ev_start_ts - (edge.get("travel_mins", 0) + 5 + buffer_before) * 60
-                        add_init_notif(f"init_{ev_id}", dep_time, f"Drive to {ev.location.split(',')[0]}", ev.location,
-                                       origin=edge.get("driver_home_location") or settings.get("home_location"),
-                                       static=edge.get("travel_mins", 0))
-                        
-                for ev_id, edge in data_payload.get("route_edges", {}).get(d_id, {}).items():
-                    ev = events_by_id.get(ev_id)
-                    next_ev = events_by_id.get(edge.get("to_event", ""))
-                    if not ev or not next_ev: continue
-                    buffer_after = edge.get("buffer_after_mins", 0)
-                    buffer_before = edge.get("buffer_before_mins", 0)
-                    ev_end_ts = datetime.datetime.fromisoformat(ev.end.isoformat()).timestamp()
-                    next_ev_start_ts = datetime.datetime.fromisoformat(next_ev.start.isoformat()).timestamp()
-                    
-                    home_wp = edge.get("home_waypoint")
-                    pickup_wp = edge.get("pickup_waypoint")
-                    
-                    def add_notif(nid, ts, body, loc, origin=None, static=None):
-                        if now_ts <= ts + 600:
-                            pending_notifications.append({
-                                "notif_id": nid, "driver_id": d_id, "trigger_timestamp": ts,
-                                "title": "Time to Leave!", "body": body, "location": loc, "fired": nid in fired_notif_ids,
-                                "origin": origin or None, "destination": loc if origin else None,
-                                "travel_static_mins": static or None
-                            })
-
-                    if home_wp and pickup_wp:
-                        pax_pickup_loc = pickup_wp.get("pickup_location", "")
-                        driver_home_loc = home_wp.get("driver_home_location", "")
-                        dep1 = ev_end_ts + buffer_after * 60
-                        add_notif(f"route_{ev_id}_{next_ev.id}_1", dep1, "Drive Home", settings.get("home_location", ""))
-                        if pax_pickup_loc == driver_home_loc:
-                            dep2 = max(dep1, next_ev_start_ts - (pickup_wp.get("from_pickup_mins", 0) + buffer_before + 5) * 60)
-                            add_notif(f"route_{ev_id}_{next_ev.id}_2", dep2, f"Drive to {next_ev.location.split(',')[0]}", next_ev.location,
-                                      origin=pax_pickup_loc, static=pickup_wp.get("from_pickup_mins", 0))
-                        else:
-                            dep2 = max(dep1, next_ev_start_ts - (home_wp.get("from_home_mins", 0) + pickup_wp.get("from_pickup_mins", 0) + buffer_before + 5) * 60)
-                            add_notif(f"route_{ev_id}_{next_ev.id}_2", dep2, f"Pickup at {pax_pickup_loc.split(',')[0]}", pax_pickup_loc,
-                                      origin=driver_home_loc, static=home_wp.get("from_home_mins", 0))
-                            dep3 = max(dep2, next_ev_start_ts - (pickup_wp.get("from_pickup_mins", 0) + buffer_before + 5) * 60)
-                            add_notif(f"route_{ev_id}_{next_ev.id}_3", dep3, f"Drive to {next_ev.location.split(',')[0]}", next_ev.location,
-                                      origin=pax_pickup_loc, static=pickup_wp.get("from_pickup_mins", 0))
-                    elif home_wp:
-                        dep1 = ev_end_ts + buffer_after * 60
-                        add_notif(f"route_{ev_id}_{next_ev.id}_1", dep1, "Drive Home", settings.get("home_location", ""))
-                        dep2 = max(dep1, next_ev_start_ts - (home_wp.get("from_home_mins", 0) + buffer_before + 5) * 60)
-                        add_notif(f"route_{ev_id}_{next_ev.id}_2", dep2, f"Drive to {next_ev.location.split(',')[0]}", next_ev.location,
-                                  origin=home_wp.get("driver_home_location") or settings.get("home_location"),
-                                  static=home_wp.get("from_home_mins", 0))
-                    elif pickup_wp:
-                        dep1 = ev_end_ts + buffer_after * 60
-                        add_notif(f"route_{ev_id}_{next_ev.id}_1", dep1, f"Pickup at {pickup_wp.get('pickup_location', 'Location').split(',')[0]}", pickup_wp.get("pickup_location", ""))
-                        dep2 = max(dep1, next_ev_start_ts - (pickup_wp.get("from_pickup_mins", 0) + buffer_before + 5) * 60)
-                        add_notif(f"route_{ev_id}_{next_ev.id}_2", dep2, f"Drive to {next_ev.location.split(',')[0]}", next_ev.location,
-                                  origin=pickup_wp.get("pickup_location", ""), static=pickup_wp.get("from_pickup_mins", 0))
-                    else:
-                        dep_time = max(ev_end_ts + buffer_after * 60, next_ev_start_ts - (edge.get("travel_mins", 0) + buffer_before + 5) * 60)
-                        add_notif(f"route_{ev_id}_{next_ev.id}", dep_time, f"Drive to {next_ev.location.split(',')[0]}", next_ev.location,
-                                  origin=ev.location, static=edge.get("travel_mins", 0))
-                        
-                for ev_id, edge in data_payload.get("final_edges", {}).get(d_id, {}).items():
-                    ev = events_by_id.get(ev_id)
-                    if not ev: continue
-                    dep_time = datetime.datetime.fromisoformat(ev.end.isoformat()).timestamp() + edge.get("buffer_after_mins", 0) * 60
-                    if now_ts <= dep_time + 600:
-                        notif_id = f"final_{ev_id}"
-                        pending_notifications.append({
-                            "notif_id": notif_id,
-                            "driver_id": d_id,
-                            "trigger_timestamp": dep_time,
-                            "title": "Time to Leave!",
-                            "body": "Drive Home",
-                            "location": settings.get("home_location", ""),
-                            "fired": notif_id in fired_notif_ids
-                        })
+            pending_notifications = _departure_notifications(
+                data_payload, events_by_id, settings, now_ts, fired_notif_ids)
             storage.save_pending_notifications(pending_notifications)
         return data_payload
 
@@ -19469,6 +19358,113 @@ def _json_safe(value):
     return value
 
 
+def _departure_notifications(data_payload, events_by_id, settings, now_ts,
+                             fired_notif_ids):
+    """The Time-to-leave pushes for every driver in a solved schedule, each
+    at the departure services/leave_by decides for that leg. Pulled out of
+    the refresh so a test can run it rather than read it."""
+    import datetime
+    pending_notifications = []
+    all_driver_ids = set()
+    for key in ("initial_edges", "route_edges", "final_edges"):
+        all_driver_ids.update(data_payload.get(key, {}).keys())
+    for d_id in all_driver_ids:
+        if d_id.startswith('ghost_'): continue
+        
+        # Every departure comes from services/leave_by, the one place
+        # the rule lives, so a push fires at the time the Drives list
+        # shows. origin/travel_static_mins ride only on departures FROM
+        # HOME (not through a pickup): the day-of traffic sweep moves
+        # those earlier (maps.py), exactly as leave_by's own overlay
+        # does. A departure from an event is anchored to its END, and
+        # traffic does not change when a game finishes.
+        from services import leave_by as _lb
+        _margin = _lb.margin_mins(settings)
+
+        def add_notif(nid, dep_dt, body, loc, origin=None, static=None):
+            ts = dep_dt.timestamp()
+            if now_ts <= ts + 600:
+                pending_notifications.append({
+                    "notif_id": nid, "driver_id": d_id, "trigger_timestamp": ts,
+                    "title": "Time to Leave!", "body": body, "location": loc, "fired": nid in fired_notif_ids,
+                    "origin": origin or None, "destination": loc if origin else None,
+                    "travel_static_mins": static or None
+                })
+
+        for ev_id, edge in data_payload.get("initial_edges", {}).get(d_id, {}).items():
+            ev = events_by_id.get(ev_id)
+            if not ev: continue
+            legs = _lb.initial_legs(edge, ev.start, _margin)
+            if not legs: continue
+            dest = (ev.location or '').split(',')[0]
+            driver_home_loc = edge.get("driver_home_location") or settings.get("home_location")
+            if len(legs) == 2:
+                pax = (edge.get("pickup_waypoint") or {}).get("pickup_location", "")
+                add_notif(f"init_{ev_id}_1", legs[0]['depart'], f"Pickup at {pax.split(',')[0]}", pax)
+                add_notif(f"init_{ev_id}_2", legs[1]['depart'], f"Drive to {dest}", ev.location)
+            else:
+                add_notif(f"init_{ev_id}", legs[0]['depart'], f"Drive to {dest}", ev.location,
+                          origin=driver_home_loc, static=legs[0]['mins'])
+
+        for ev_id, edge in data_payload.get("route_edges", {}).get(d_id, {}).items():
+            ev = events_by_id.get(ev_id)
+            next_ev = events_by_id.get(edge.get("to_event", ""))
+            if not ev or not next_ev: continue
+            legs = _lb.route_legs(edge, ev.end, next_ev.start, _margin)
+            if not legs: continue
+            home_wp = edge.get("home_waypoint")
+            pickup_wp = edge.get("pickup_waypoint")
+            base = f"route_{ev_id}_{next_ev.id}"
+            dest = (next_ev.location or '').split(',')[0]
+            if home_wp:
+                add_notif(f"{base}_1", legs[0]['depart'], "Drive Home", settings.get("home_location", ""))
+                home_loc = home_wp.get("driver_home_location") or settings.get("home_location")
+                if len(legs) == 3:
+                    pax = pickup_wp.get("pickup_location", "")
+                    add_notif(f"{base}_2", legs[1]['depart'], f"Pickup at {pax.split(',')[0]}", pax)
+                    add_notif(f"{base}_3", legs[2]['depart'], f"Drive to {dest}", next_ev.location)
+                else:
+                    add_notif(f"{base}_2", legs[1]['depart'], f"Drive to {dest}", next_ev.location,
+                              origin=None if pickup_wp else home_loc,
+                              static=None if pickup_wp else legs[1]['mins'])
+            elif pickup_wp:
+                pax = pickup_wp.get("pickup_location", "")
+                add_notif(f"{base}_1", legs[0]['depart'], f"Pickup at {(pax or 'Location').split(',')[0]}", pax)
+                add_notif(f"{base}_2", legs[1]['depart'], f"Drive to {dest}", next_ev.location)
+            else:
+                add_notif(base, legs[0]['depart'], f"Drive to {dest}", next_ev.location)
+
+        for ev_id, edge in data_payload.get("final_edges", {}).get(d_id, {}).items():
+            ev = events_by_id.get(ev_id)
+            if not ev: continue
+            legs = _lb.final_legs(edge, ev.end)
+            dep_dt = legs[0]['depart'] if legs else ev.end + datetime.timedelta(
+                minutes=edge.get("buffer_after_mins", 0) or 0)
+            dep_time = dep_dt.timestamp()
+            if now_ts <= dep_time + 600:
+                notif_id = f"final_{ev_id}"
+                pending_notifications.append({
+                    "notif_id": notif_id,
+                    "driver_id": d_id,
+                    "trigger_timestamp": dep_time,
+                    "title": "Time to Leave!",
+                    "body": "Drive Home",
+                    "location": settings.get("home_location", ""),
+                    "fired": notif_id in fired_notif_ids
+                })
+    return pending_notifications
+
+
+def _leave_by_stamp(blob):
+    """Put leave_by's per-leg departures on every edge of a served schedule.
+    Never lets a stamping failure take the schedule down with it."""
+    try:
+        from services import leave_by as _lb
+        _lb.stamp(blob)
+    except Exception as e:
+        logger.error(f"leave_by stamp failed: {e}")
+
+
 @app.get("/api/schedule")
 def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_date: str = None, force_refresh: bool = False,
                  request: Request = None):
@@ -19670,6 +19666,9 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                 if now - last_bg_refresh.get('full_30_days', 0) > 1800:
                     last_bg_refresh['full_30_days'] = now
                     background_tasks.add_task(trigger_background_refresh, None, None, False)
+                # Every leg's departure, decided once (services/leave_by)
+                # and drawn as-is by the Drives list and the Schedule page.
+                _leave_by_stamp(cached)
                 return _json_safe(_scope.redact_schedule_blob(cached, _viewer))
 
         # Fetch fresh and block if no cache exists or forced
@@ -19699,6 +19698,8 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                 res["prep_by_event"] = _prep_by_event(res.get("events"))
                 res["prep_confirmed"] = storage.get_confirmed_preps()
                 res["solving_dates"] = schedule_coordinator.get_solving_dates()
+            if "error" not in res:
+                _leave_by_stamp(res)
             return _json_safe(_scope.redact_schedule_blob(res, _viewer))
         except Exception as e:
             import traceback

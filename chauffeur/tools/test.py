@@ -195,6 +195,12 @@ def run(files, show_slow=False):
 
 
 def main(argv):
+    # A failing test's tail can carry any character; a cp1252 console must
+    # not turn the report into a crash of its own.
+    try:
+        sys.stdout.reconfigure(errors='replace')
+    except (AttributeError, ValueError):
+        pass
     args = [a for a in argv if not a.startswith('-')]
     flags = {a for a in argv if a.startswith('-')}
 

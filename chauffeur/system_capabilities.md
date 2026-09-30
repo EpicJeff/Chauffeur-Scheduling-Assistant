@@ -1,6 +1,41 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.215 (2026-09-29).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.216 (2026-09-29).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**One departure rule and one leave margin, on every surface (v2.499.216; `services/leave_by.py`, `main.py` `_departure_notifications` + `_leave_by_stamp`, `solver/matcher.py`, `templates/app.html` `legAt`, `templates/components/schedule_timeline.html` `stLegAt`, `templates/dashboard.html` Leave margin control, `tests/test_leave_margin.py`, `tests/test_leave_times_live.py`).** User: "The times should be the same across every surface. If there's a 5 minute buffer being added, it should be coming from a single unified setting that can be adjusted by the user."
+
+There were four copies of the departure arithmetic, and the family could see them disagree:
+- the PWA Drives list, which added a literal 5 minutes on a first drive and drew a post-layover departure from the solver's layover number;
+- the desktop Schedule timeline, which had its own literal 5;
+- the Time-to-leave pushes, which had a literal 5 everywhere and "as late as possible" even when leaving an event;
+- `leave_by` (the heroes, the drive sheet, the kid's leave-by, runway), which had no margin at all.
+
+The solver also subtracted a literal 5 when deciding whether a gap was long enough to go home in.
+
+**The rule, now in `leave_by` only:**
+- **Leaving home** (the day's first drive, or back out after a layover): as late as still gets there, start − the drive − the event's arrive-early buffer − the leave margin. After a layover it is never earlier than getting home.
+- **Leaving an event:** when it ends, plus its after-buffer.
+- **The next leg of the same trip** (after a pickup or drop-off): straight on.
+
+`initial_legs`, `route_legs` and `final_legs` return every leg a driver drives, in the order the Drives list draws them.
+
+**How every surface gets it:**
+- `stamp()` puts those legs (ISO departures + minutes) on every edge the schedule API serves, and on the wall's timeline slice. It also puts `leave_margin_mins` on the blob.
+- The Drives list (`legAt`) and the Schedule timeline (`stLegAt`/`stArriveAt`) draw the stamped times. Their old formulas remain only as a fallback for a schedule cached on a phone before the stamp, until the next fetch.
+- The pushes come from `main._departure_notifications`, which is pulled out of the refresh so a test runs it. It uses the same leg functions and keeps every notif id. Only departures from home, and not through a pickup, carry a route for the day-of traffic sweep; a departure from an event is anchored to its end.
+- `for_run`/`travel_into` derive the hero's lead from the same legs.
+- The solver's layover threshold and layover length use the margin, read once per solve.
+
+**The setting:** `leave_margin_mins` (Settings, default 5, clamped 0–60 by `leave_by.margin_mins`, the only reader). It is registered in the settings index under The daily schedule, and it lives on the Schedule page (`/dashboard_v2#leave-margin`), a number field in the header saved as a partial settings POST. Every settings save already marks the day caches dirty, so a new margin re-solves and rebuilds the pushes.
+
+**Visible changes:**
+- Every from-home leave time on the heroes, drive sheet and kid's leave-by is now 5 minutes earlier by default, the same as the Drives list and the pushes.
+- A departure straight on from an event is now at its end on every surface; the pushes used to wait until the latest moment.
+- A departure after a layover is now "as late as works" on the Drives list too.
+
+`test_arrive_by`'s invariant is now leave + margin + drive = be there by.
+
+Not part of this: `assist_ready_buffer_mins` (be-ready for a ride an outside hand drives) stays its own setting, because it is not a departure of ours. Errand departures (`home_board._errand_leave`) still use the errand's own travel time with no margin.
 
 **The hero's leave time and drive length match the Drives list (v2.499.215; `services/leave_by.py`, `tests/test_home_board.py`, `tests/test_day_of_traffic.py`).** User: "The compact hero card is saying the time to leave and drive time is one thing while the drives schedule says another. The drive schedule is correct." The cause was the route edge. When the gap allows, the solver sends the driver home between two drives (`home_waypoint`) or through a passenger pickup (`pickup_waypoint`), and the edge's `travel_mins` is then the SUM of every leg. `leave_by.travel_into` read that sum as one drive into the event, so the drive home from the previous stop was folded into this one. The drive length came out too long and the leave time too early. Every surface built on `leave_by` showed it: all four compact heroes (screensaver, House glance, House life, Kitchen), the board hero, the drive sheet's next-drive line, runway and the arrival ETA.
 

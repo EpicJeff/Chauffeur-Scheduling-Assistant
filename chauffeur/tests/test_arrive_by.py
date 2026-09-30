@@ -534,11 +534,15 @@ def scenario_leave_plus_drive_equals_be_there():
     lead = leave_by.travel_into(sched, 'd1', 'ev1')
     leave = leave_by.leave_at(KICKOFF, lead)
     arrive = datetime.datetime.fromisoformat(ev.arrive_by['arrive_at'])
-    check(leave + datetime.timedelta(minutes=lead['travel_mins']) == arrive,
-          f"leave {leave.time()} + {lead['travel_mins']}min must equal "
+    # The household's leave margin (one setting, leave_by.margin_mins) is
+    # the only thing between leaving + driving and the be-there time.
+    margin = datetime.timedelta(minutes=leave_by.margin_mins())
+    check(leave + margin + datetime.timedelta(minutes=lead['travel_mins']) == arrive,
+          f"leave {leave.time()} + margin + {lead['travel_mins']}min must equal "
           f"be-there {arrive.time()}")
-    check(leave.strftime('%H:%M') == '09:42',
-          f"9:42 for an 18-minute drive to a 10:00 arrival: {leave.strftime('%H:%M')}")
+    check(leave.strftime('%H:%M') == '09:37',
+          f"9:37 for an 18-minute drive to a 10:00 arrival with the 5-minute "
+          f"leave margin: {leave.strftime('%H:%M')}")
 
     # 3. A longer RULE still wins, and the invariant holds there too — the
     #    badge moves with the departure rather than the two diverging again.
@@ -547,7 +551,7 @@ def scenario_leave_plus_drive_equals_be_there():
     lead2 = leave_by.travel_into(sched, 'd1', 'ev1')
     leave2 = leave_by.leave_at(KICKOFF, lead2)
     arrive2 = datetime.datetime.fromisoformat(ev.arrive_by['arrive_at'])
-    check(leave2 + datetime.timedelta(minutes=lead2['travel_mins']) == arrive2,
+    check(leave2 + margin + datetime.timedelta(minutes=lead2['travel_mins']) == arrive2,
           f"still exact at a 30-minute lead: {leave2.time()} vs {arrive2.time()}")
 
     # 4. And an event nobody asked to be early for is untouched: no buffer,

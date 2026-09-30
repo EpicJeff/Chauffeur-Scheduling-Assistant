@@ -1691,8 +1691,9 @@ def _tile_drives(now, runs, sched=None, config=None, **_):
         'days': span,
         'start_date': first.isoformat(),
         'end_date': (first + datetime.timedelta(days=span - 1)).isoformat(),
-        'schedule': _schedule_slice(first, sched, drivers=only or None,
-                                    days=span),
+        # Departures stamped by leave_by, the one place they are decided.
+        'schedule': leave_by.stamp(_schedule_slice(first, sched, drivers=only or None,
+                                                   days=span)),
         # Where to scroll the timeline so the tile opens on the part of the day
         # that has not happened. The whole day is drawn — a wall panel showing
         # a drive that finished an hour ago at the top of the tile is showing

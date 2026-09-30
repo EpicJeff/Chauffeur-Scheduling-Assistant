@@ -409,6 +409,12 @@ ENTRIES: List[dict] = [
        'item, never repeating. Each child also needs a cue room picked on the '
        'Routines page; no room means no cues for that child.',
        page='routines', anchor='runway'),
+    _e('leave_margin_mins', 'daily', 'Leave margin',
+       'Extra minutes before every departure from home: the leave-by time is '
+       'the start, minus the drive, minus any arrive-early buffer, minus these '
+       'minutes. The same number on the Drives list, the Schedule, the '
+       'time-to-leave notifications, the wall and the kids’ leave-by.',
+       page='dashboard_v2', anchor='leave-margin'),
     _e('assist_ready_buffer_mins', 'household', 'Be-ready buffer for covered rides',
        'When somebody outside the house drives, the wall says "be ready at" — '
        'the start time minus the drive from here minus these minutes. How '
@@ -700,7 +706,8 @@ def audit_ui(templates_dir: str = None) -> dict:
     # of shopping.html), so the audit has to be told where to read. Kept as a
     # map of exceptions rather than importing main.py's routing table, which
     # would drag the whole app into a test that only wants to read files.
-    PAGE_TEMPLATES = {'meals': 'shopping.html', 'lists': 'shopping.html'}
+    PAGE_TEMPLATES = {'meals': 'shopping.html', 'lists': 'shopping.html',
+                      'dashboard_v2': 'dashboard.html'}
 
     def _text(page):
         if page not in cache:

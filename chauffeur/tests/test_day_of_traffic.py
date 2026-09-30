@@ -72,8 +72,9 @@ def scenario_the_overlay_moves_the_leave_time_earlier_only():
         storage.set_cached_day_of_traffic('home', 'apex gym', 28, 'morning')
         live = leave_by.for_run(sched, 'd1', 'ev1', start, live=True, now=now)
         check(live['travel_mins'] == 28 and live['traffic_delay_mins'] == 11
-              and live['leave_label'] == '4:27 PM',
-              f"the 5pm drive re-prices to 28 and leaves 11 min earlier, got {live}")
+              and live['leave_label'] == '4:22 PM',
+              f"the 5pm drive re-prices to 28 and leaves 11 min earlier "
+              f"(5:00 − 28 − 5 buffer − 5 leave margin), got {live}")
 
         static = leave_by.for_run(sched, 'd1', 'ev1', start, live=False, now=now)
         check(static['travel_mins'] == 17,
@@ -131,8 +132,8 @@ def scenario_an_offset_carrying_start_does_not_take_my_day_down():
                                 live=True, now=now)
         check(live and live['travel_mins'] == 28,
               f"an aware start reads as its wall-clock time, no raise: {live}")
-        check(live['leave_label'] == '4:27 PM',
-              f"and the departure is the same 4:27 the naive path says: {live}")
+        check(live['leave_label'] == '4:22 PM',
+              f"and the departure is the same 4:22 the naive path says: {live}")
 
         aware_now = now.replace(tzinfo=tz)
         both = leave_by.for_run(sched, 'd1', 'ev1', aware_start,
@@ -260,7 +261,10 @@ def scenario_every_surface_is_wired():
     """Source contracts: the pieces that must not quietly regress."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     main_src = open(os.path.join(root, 'main.py'), encoding='utf-8').read()
-    check(main_src.count('travel_static_mins') >= 3,
+    # One push builder since v2.499.216 (main._departure_notifications, run
+    # by tests/test_leave_margin.py, which also pins WHICH legs carry a route).
+    check('def _departure_notifications' in main_src
+          and main_src.count('travel_static_mins') >= 1,
           "push generation no longer records each leg's route + static "
           "minutes — the sweep and the early-fire both starve without them")
     check('run_day_of_traffic_sweep' in main_src
@@ -300,11 +304,11 @@ def scenario_traffic_after_a_layover_and_straight_on():
                               'layover_mins': 88,
                               'driver_home_location': 'home'}}}}}
         static = leave_by.for_run(sched, 'd1', 'swim', at(17), live=True, now=now)
-        check(static['leave_label'] == '4:40 PM' and static['travel_mins'] == 20,
-              f"no traffic row: home at 3:12, out at 4:40 for 20 min, got {static}")
+        check(static['leave_label'] == '4:35 PM' and static['travel_mins'] == 20,
+              f"no traffic row: out of home at 5:00 − 20 − 5 margin = 4:35, got {static}")
         storage.set_cached_day_of_traffic('home', 'pool', 35, 'refine')
         live = leave_by.for_run(sched, 'd1', 'swim', at(17), live=True, now=now)
-        check(live['leave_label'] == '4:25 PM' and live['travel_mins'] == 35
+        check(live['leave_label'] == '4:20 PM' and live['travel_mins'] == 35
               and live['traffic_delay_mins'] == 15,
               f"15 min of traffic on home -> pool leaves home 15 min earlier, got {live}")
         storage.set_cached_day_of_traffic('home', 'pool', 200, 'refine')

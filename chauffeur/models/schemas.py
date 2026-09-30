@@ -1193,6 +1193,11 @@ class Settings(BaseModel):
     # driver of ours — just the gap that stops somebody being met at the kerb
     # still looking for a shin pad.
     assist_ready_buffer_mins: int = 10
+    # The leave margin: minutes added before every departure from home, on
+    # every surface that states one (Drives list, Schedule page, Time-to-leave
+    # pushes, the heroes, the drive sheet, the kid's leave-by). One number,
+    # read only through services/leave_by.margin_mins.
+    leave_margin_mins: int = 5
     # Room announcements: HA area id -> the entity announce() must use there,
     # overriding the satellite-first/playing-first pick. Only rooms the family
     # has pinned appear; everything else resolves automatically.

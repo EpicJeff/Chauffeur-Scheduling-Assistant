@@ -26,6 +26,19 @@
      belongs here; anything that fetches or mutates them stays on the page.
 -->
 <script>
+    // Every departure drawn here is decided server-side in ONE place
+    // (services/leave_by) and stamped on each edge as `legs`: the same times
+    // the PWA's Drives list, the pushes and the wall show. The fallbacks only
+    // cover a schedule served before the stamp existed.
+    function stLegAt(edge, i, fallback) {
+        const l = edge && edge.legs && edge.legs[i];
+        return l && l.depart ? new Date(l.depart) : fallback;
+    }
+    function stArriveAt(edge, fallback) {
+        const l = edge && edge.legs && edge.legs.length ? edge.legs[edge.legs.length - 1] : null;
+        return l && l.depart ? new Date(new Date(l.depart).getTime() + l.mins * 60000) : fallback;
+    }
+
     // The timeline's own state. Declared here, set by whoever is driving:
     // dashboard.html fills these from /api/schedule as it always has, and the
     // home board fills them from the board payload's own cached slice.
@@ -719,7 +732,7 @@
                             if (initEdge && initEdge.travel_mins > 0) {
                                 const targetEvent = allEventsForDate.find(e => e.id === initEdge.to_event);
                                 if (targetEvent) {
-                                    const departureTime = new Date(targetEvent.start).getTime() - (initEdge.travel_mins + 5) * 60000;
+                                    const departureTime = stLegAt(initEdge, 0, new Date(new Date(targetEvent.start).getTime() - (initEdge.travel_mins + 5) * 60000)).getTime();
                                     const departureHour = floorToHour(new Date(departureTime).toISOString()).getTime();
                                     activePeriods.push({ start: departureHour, end: floorToHour(targetEvent.start).getTime() });
                                 }
@@ -1196,8 +1209,8 @@
                         if (isAssignedToThisColumn && localInitialEdges[c_id] && localInitialEdges[c_id][ev.id]) {
                             const initEdge = localInitialEdges[c_id] ? localInitialEdges[c_id][ev.id] : null;
                             if (initEdge && initEdge.to_event === ev.id && initEdge.travel_mins > 0) {
-                                const bufferMins = 5 + (initEdge.buffer_before_mins || 0); // Add standard 5m buffer + rule buffer
-                                const departureDate = new Date(new Date(ev.start).getTime() - (initEdge.travel_mins + bufferMins) * 60000);
+                                const bufferMins = 5 + (initEdge.buffer_before_mins || 0); // fallback only: leave_by stamps the real one
+                                const departureDate = stLegAt(initEdge, 0, new Date(new Date(ev.start).getTime() - (initEdge.travel_mins + bufferMins) * 60000));
                                 const departureStr = formatTime(departureDate.toISOString());
                                 const departureY = getTimeY(departureDate.toISOString());
                                 const distance = startY - departureY;
@@ -1289,7 +1302,7 @@
                                     if (edge.home_waypoint && edge.pickup_waypoint) {
                                         const bufferMins = 5 + (edge.buffer_before_mins || 0);
                                         const driveFromHome = edge.home_waypoint.from_home_mins + edge.pickup_waypoint.from_pickup_mins;
-                                        const leaveHomeDate = new Date(new Date(nextEv.start).getTime() - (driveFromHome + bufferMins) * 60000);
+                                        const leaveHomeDate = stLegAt(edge, 1, new Date(new Date(nextEv.start).getTime() - (driveFromHome + bufferMins) * 60000));
 
                                         if (edge.home_waypoint.from_home_mins === 0) {
                                             const state1 = getEdgeStateExact(`route_${ev.id}_1`);
@@ -1329,7 +1342,7 @@
                                     } else if (edge.home_waypoint) {
                                         const bufferMins = 5 + (edge.buffer_before_mins || 0);
                                         const driveFromHome = edge.home_waypoint.from_home_mins;
-                                        const leaveHomeDate = new Date(new Date(nextEv.start).getTime() - (driveFromHome + bufferMins) * 60000);
+                                        const leaveHomeDate = stLegAt(edge, 1, new Date(new Date(nextEv.start).getTime() - (driveFromHome + bufferMins) * 60000));
 
                                         const state1 = getEdgeStateExact(`route_${ev.id}_1`);
                                         const state2 = getEdgeStateExact(`route_${ev.id}_2`);
@@ -1407,7 +1420,7 @@
                         if (isAssignedToThisColumn && localFinalEdges[c_id] && localFinalEdges[c_id][ev.id]) {
                             const finalEdge = localFinalEdges[c_id] ? localFinalEdges[c_id][ev.id] : null;
                             if (finalEdge && finalEdge.from_event === ev.id && finalEdge.travel_mins > 0) {
-                                const arriveDate = new Date(new Date(ev.end).getTime() + (finalEdge.travel_mins + (finalEdge.buffer_after_mins || 0)) * 60000);
+                                const arriveDate = stArriveAt(finalEdge, new Date(new Date(ev.end).getTime() + (finalEdge.travel_mins + (finalEdge.buffer_after_mins || 0)) * 60000));
                                 const arriveStr = formatTime(arriveDate.toISOString());
                                 const arriveY = getTimeY(arriveDate.toISOString());
                                 const distance = arriveY - endY;

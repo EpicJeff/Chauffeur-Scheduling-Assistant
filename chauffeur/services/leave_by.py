@@ -6,147 +6,290 @@ kid digest has printed "🚀 Leave by 8:47 AM with Vovo" since arc K5. It lived
 inside `main.member_day`, so the wall panel's hero could not reach it and was
 left saying "in 2 hr 26 min" about a start time nobody sets an alarm for.
 
-The rule, unchanged from K5: **start − travel − the driver's buffer**, and
-**no travel time means no leave time**. A guessed departure is worse than none:
-it is the kind of number a household plans around once, gets burned by, and
-then stops trusting the whole board over.
+**This module is the only place a departure is worked out.** Every surface
+that states one — the Drives list, the desktop Schedule, the Time-to-leave
+pushes, every hero, the drive sheet, the kid's leave-by — reads it from here:
+Python callers through `legs()` / `for_run()`, the pages through the `legs`
+that `stamp()` puts on every edge the schedule API serves. There used to be
+four copies of this arithmetic (app.html, schedule_timeline.html, the push
+builder in main.py, and here), each with its own idea of the rule, and the
+family could see them disagree (2026-09-29): "The times should be the same
+across every surface."
 
-Two edges can carry that travel, and which of them applies is the difference
-between two honest sentences:
+The rule, for every leg a driver drives:
 
-- an **initial** edge is the driver setting out FROM HOME for this drive, which
-  is what "leave by" means to somebody standing in their kitchen;
-- a **route** edge is the driver arriving from wherever they already are, so
-  the departure is real but it is not this household's front door.
+- **Leaving HOME** (the day's first drive, or back out after a layover at
+  home): as late as still gets there — start − the drive − the event's own
+  arrive-early buffer − the household's leave margin (`leave_margin_mins`,
+  one setting, default 5, adjustable on the Schedule page). After a layover it
+  is never earlier than getting home.
+- **Leaving an EVENT**: when it ends (plus its after-buffer). Nobody leaves a
+  game early to shave a wait off the next drop-off.
+- **The next leg of the same trip** (after a pickup, after dropping someone):
+  straight on, when the previous leg arrives.
 
-`from_home_only=True` keeps the second out — the kid digest wants the first
-sense and only the first, because a child reading "leave by 4:20" is being told
-when to put their shoes on.
+And **no travel time means no leave time**. A guessed departure is worse than
+none: it is the kind of number a household plans around once, gets burned by,
+and then stops trusting the whole board over.
 
 A route edge is not always one drive. When the gap allows, the solver sends the
 driver HOME in between (`home_waypoint`), and it can route through a passenger
 pickup (`pickup_waypoint`); either way the edge's `travel_mins` is the SUM of
-every leg. Reading that sum as one drive into the event is what put a leave
-time and a drive length on the hero that the Drives list contradicted: the
-drive home from the previous event had been folded in. So a route lead is
-decomposed exactly the way the Drives list draws it (templates/app.html
-buildTimeline): after a home layover the departure is FROM HOME, at the
-previous event's end + the drive home + the layover, and the drive is only
-what is left after home; otherwise the driver sets out when the previous
-event ends and drives every leg. A home layover counts as from home for
-`from_home_only` callers, because it is.
+every leg. Reading that sum as one drive into the event is what once put a
+leave time and a drive length on the hero that the Drives list contradicted.
+`legs()` is the decomposition, and everything reads it.
+
+`from_home_only=True` keeps departures from somewhere else out — the kid digest
+wants "leave by" in the kitchen sense only, because a child reading "leave by
+4:20" is being told when to put their shoes on. A layover at home counts:
+that departure IS from home.
 """
 
 import datetime
-from typing import Optional
+from typing import List, Optional
+
+DEFAULT_MARGIN_MINS = 5
+
+
+def margin_mins(settings: dict = None) -> int:
+    """The household's leave margin: minutes added before every departure
+    from home, on every surface. One setting (`leave_margin_mins`)."""
+    if settings is None:
+        try:
+            from services import storage
+            settings = storage.get_settings() or {}
+        except Exception:
+            # The solver reads this too; a settings read that fails must not
+            # take a solve down with it.
+            settings = {}
+    raw = settings.get('leave_margin_mins')
+    try:
+        v = int(raw if raw is not None else DEFAULT_MARGIN_MINS)
+    except (TypeError, ValueError):
+        v = DEFAULT_MARGIN_MINS
+    return max(0, min(60, v))
+
+
+def _i(v) -> int:
+    try:
+        return int(round(float(v or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _td(mins) -> datetime.timedelta:
+    return datetime.timedelta(minutes=mins)
+
+
+def _leg(depart, mins, frm, to):
+    return {'depart': depart, 'mins': int(mins), 'from': frm, 'to': to}
+
+
+def initial_legs(edge: dict, start: datetime.datetime, margin: int) -> List[dict]:
+    """The day's first drive, from home. Through a passenger pickup when the
+    edge says so (two legs, straight on); otherwise one."""
+    if not edge or not start:
+        return []
+    bb = _i(edge.get('buffer_before_mins'))
+    wp = edge.get('pickup_waypoint') or None
+    if wp:
+        a, b = _i(wp.get('from_driver_home_mins')), _i(wp.get('from_global_home_mins'))
+        if a > 0 and b > 0:
+            out = start - _td(a + b + bb + margin)
+            return [_leg(out, a, 'home', 'pickup'),
+                    _leg(out + _td(a), b, 'pickup', 'event')]
+    t = _i(edge.get('travel_mins'))
+    if t <= 0:
+        return []
+    return [_leg(start - _td(t + bb + margin), t, 'home', 'event')]
+
+
+def route_legs(edge: dict, prev_end: datetime.datetime,
+               start: datetime.datetime, margin: int) -> List[dict]:
+    """From one event to the next, exactly the legs the Drives list draws:
+    [to home, (home to pickup,) to the event] after a layover; [to pickup,
+    to the event] through a pickup; one leg otherwise."""
+    if not edge or not prev_end or not start:
+        return []
+    free = prev_end + _td(_i(edge.get('buffer_after_mins')))
+    bb = _i(edge.get('buffer_before_mins'))
+    home = edge.get('home_waypoint') or None
+    pick = edge.get('pickup_waypoint') or None
+    if home:
+        to_home, from_home = _i(home.get('to_home_mins')), _i(home.get('from_home_mins'))
+        fp = _i(pick.get('from_pickup_mins')) if pick else 0
+        approach = from_home + fp
+        home_by = free + _td(to_home)
+        out = max(home_by, start - _td(approach + bb + margin))
+        legs = [_leg(free, to_home, 'event', 'home')]
+        if pick and from_home > 0:
+            legs += [_leg(out, from_home, 'home', 'pickup'),
+                     _leg(out + _td(from_home), fp, 'pickup', 'event')]
+        else:
+            legs.append(_leg(out, approach, 'home', 'event'))
+        return legs
+    if pick:
+        tp, fp = _i(pick.get('to_pickup_mins')), _i(pick.get('from_pickup_mins'))
+        return [_leg(free, tp, 'event', 'pickup'),
+                _leg(free + _td(tp), fp, 'pickup', 'event')]
+    t = _i(edge.get('travel_mins'))
+    return [_leg(free, t, 'event', 'event')] if t > 0 else []
+
+
+def final_legs(edge: dict, end: datetime.datetime) -> List[dict]:
+    """After the day's last event: home, through a drop-off when there is one."""
+    if not edge or not end:
+        return []
+    free = end + _td(_i(edge.get('buffer_after_mins')))
+    wp = edge.get('dropoff_waypoint') or None
+    if wp:
+        a, b = _i(wp.get('to_global_home_mins')), _i(wp.get('to_driver_home_mins'))
+        return [_leg(free, a, 'event', 'dropoff'),
+                _leg(free + _td(a), b, 'dropoff', 'home')]
+    t = _i(edge.get('travel_mins'))
+    return [_leg(free, t, 'event', 'home')] if t > 0 else []
+
+
+def _parse(value) -> Optional[datetime.datetime]:
+    if not value:
+        return None
+    if isinstance(value, datetime.datetime):
+        return _naive(value)
+    try:
+        return _naive(datetime.datetime.fromisoformat(str(value).replace('Z', '+00:00')))
+    except ValueError:
+        return None
+
+
+def _naive(dt):
+    # Wall-clock local, offset stripped rather than converted — the repo-wide
+    # convention for event stamps.
+    return dt.replace(tzinfo=None) if dt is not None and dt.tzinfo else dt
+
+
+def _event_index(sched: dict) -> dict:
+    return {str(e.get('id')): e for e in (sched.get('events') or [])}
+
+
+def _event(events: dict, ev_id) -> dict:
+    return events.get(str(ev_id)) or events.get(_base_id(str(ev_id))) or {}
+
+
+def stamp(sched: dict, margin: int = None) -> dict:
+    """Put `legs` (ISO departures + minutes) on every initial, route and final
+    edge of a schedule blob, in place, so the pages draw the departures this
+    module decided instead of re-deriving them. Called on every schedule the
+    API serves."""
+    if not sched:
+        return sched
+    margin = margin_mins() if margin is None else margin
+    events = _event_index(sched)
+    sched['leave_margin_mins'] = margin
+
+    def out(legs):
+        return [dict(l, depart=l['depart'].isoformat()) for l in legs]
+
+    for d_id, by_ev in (sched.get('initial_edges') or {}).items():
+        for ev_id, edge in (by_ev or {}).items():
+            if isinstance(edge, dict):
+                edge['legs'] = out(initial_legs(
+                    edge, _parse(_event(events, ev_id).get('start')), margin))
+    for d_id, by_ev in (sched.get('route_edges') or {}).items():
+        for ev_id, edge in (by_ev or {}).items():
+            if isinstance(edge, dict):
+                edge['legs'] = out(route_legs(
+                    edge, _parse(_event(events, ev_id).get('end')),
+                    _parse(_event(events, edge.get('to_event')).get('start')), margin))
+    for d_id, by_ev in (sched.get('final_edges') or {}).items():
+        for ev_id, edge in (by_ev or {}).items():
+            if isinstance(edge, dict):
+                edge['legs'] = out(final_legs(
+                    edge, _parse(_event(events, ev_id).get('end'))))
+    return sched
 
 
 def travel_into(sched: dict, driver_id: str, event_id: str,
-                from_home_only: bool = False) -> Optional[dict]:
-    """`{'travel_mins', 'buffer_mins', 'from_home'}` for the drive INTO
-    `event_id`, or None when the schedule does not know.
+                from_home_only: bool = False, start: datetime.datetime = None,
+                margin: int = None) -> Optional[dict]:
+    """The departure toward `event_id`: `{'travel_mins', 'from_home',
+    'depart'?, ...}`, or None when the schedule does not know.
 
-    Initial edges are keyed by the event being driven to; route edges are keyed
-    by the event being driven FROM, so the one that matters here is found by
-    its `to_event`. Both shapes are the solver's, and both are read this way by
-    the Drives timeline.
-    """
+    The departure is the one you set out on from somewhere you were resting
+    — home, or the previous event — and the drive is every leg from there to
+    the event. Initial edges are keyed by the event being driven to; route
+    edges by the event being driven FROM, found here by their `to_event`.
+    `depart` is present whenever the event's start is known (passed, or read
+    from the schedule)."""
     if not driver_id or not event_id or str(driver_id).startswith('ghost_'):
         return None
+    margin = margin_mins() if margin is None else margin
+    events = _event_index(sched)
+    start = _naive(start) or _parse(_event(events, event_id).get('start'))
 
-    def as_lead(edge, from_home):
-        try:
-            mins = int(edge.get('travel_mins') or 0)
-        except (TypeError, ValueError):
+    def lead_from(legs, from_home, **extra):
+        legs = [l for l in legs]
+        if not legs:
             return None
+        mins = sum(l['mins'] for l in legs)
         if mins <= 0:
             return None
-        try:
-            buffer_mins = int(edge.get('buffer_before_mins') or 0)
-        except (TypeError, ValueError):
-            buffer_mins = 0
-        return {'travel_mins': mins, 'buffer_mins': buffer_mins,
-                'from_home': from_home}
+        lead = {'travel_mins': mins, 'from_home': from_home,
+                'margin_mins': margin if from_home else 0, **extra}
+        lead['depart'] = legs[0]['depart']
+        return lead
 
     initial = ((sched.get('initial_edges') or {}).get(driver_id) or {})
     # `{id}_dropoff` is the split-leg key the ride cards use; member_day has
     # always looked under both.
     for key in (event_id, f"{event_id}_dropoff"):
         edge = initial.get(key)
-        if edge:
-            lead = as_lead(edge, True)
-            if lead:
-                return lead
-    events = None
+        if edge and _i(edge.get('travel_mins')) > 0:
+            bb = _i(edge.get('buffer_before_mins'))
+            if not start:
+                return {'travel_mins': _i(edge.get('travel_mins')),
+                        'buffer_mins': bb, 'from_home': True,
+                        'margin_mins': margin}
+            return lead_from(initial_legs(edge, start, margin), True,
+                             buffer_mins=bb,
+                             home_location=edge.get('driver_home_location'),
+                             via_pickup=bool(edge.get('pickup_waypoint')))
+
     for from_id, edge in ((sched.get('route_edges') or {}).get(driver_id) or {}).items():
         if not edge or edge.get('to_event') not in (event_id, f"{event_id}_dropoff"):
             continue
         home_wp = edge.get('home_waypoint') or None
-        pickup_wp = edge.get('pickup_waypoint') or None
         if from_home_only and not home_wp:
             continue
-        lead = as_lead(edge, bool(home_wp))
-        if not lead:
-            continue
+        prev_end = _parse(_event(events, from_id).get('end'))
+        bb = _i(edge.get('buffer_before_mins'))
         # Where the driver sets out FROM — the day-of traffic overlay needs
         # a route, and a route edge's origin is the event it leaves.
-        lead['from_event'] = from_id
-        if pickup_wp:
-            lead['via_pickup'] = True
-        if events is None:
-            events = {str(e.get('id')): e for e in (sched.get('events') or [])}
-        prev = events.get(str(from_id)) or events.get(_base_id(str(from_id))) or {}
-        prev_end = _naive(_parse(prev.get('end')))
-        try:
-            if home_wp:
-                to_home = int(home_wp.get('to_home_mins') or 0)
-                layover = int(home_wp.get('layover_mins') or 0)
-                # Home -> (pickup ->) the event: the Drives list's own legs.
-                approach = int(home_wp.get('from_home_mins') or 0) + (
-                    int(pickup_wp.get('from_pickup_mins') or 0) if pickup_wp else 0)
-                if approach <= 0:
-                    return None
-                lead['travel_mins'] = approach
-                lead['home_location'] = home_wp.get('driver_home_location')
-                if prev_end:
-                    lead['depart'] = prev_end + datetime.timedelta(
-                        minutes=to_home + layover)
-                    # Nobody leaves home before they have got there.
-                    lead['earliest'] = prev_end + datetime.timedelta(minutes=to_home)
-            elif prev_end:
-                # Straight on from the previous event, through any pickup.
-                lead['depart'] = prev_end
-        except (TypeError, ValueError):
-            return None
-        return lead
+        extra = {'from_event': from_id, 'buffer_mins': bb,
+                 'via_pickup': bool(edge.get('pickup_waypoint'))}
+        if not prev_end or not start:
+            mins = _i(edge.get('travel_mins'))
+            return ({'travel_mins': mins, 'from_home': False, 'margin_mins': 0,
+                     **extra} if mins > 0 else None)
+        legs = route_legs(edge, prev_end, start, margin)
+        if home_wp:
+            # The drive home is its own leg; the departure that matters is
+            # back out from home, never earlier than getting there.
+            return lead_from(legs[1:], True,
+                             earliest=legs[0]['depart'] + _td(legs[0]['mins']),
+                             home_location=home_wp.get('driver_home_location'),
+                             **extra)
+        return lead_from(legs, False, **extra)
     return None
 
 
-def _parse(value) -> Optional[datetime.datetime]:
-    if not value:
-        return None
-    try:
-        return datetime.datetime.fromisoformat(str(value).replace('Z', '+00:00'))
-    except ValueError:
-        return None
-
-
-def _naive(dt):
-    # Wall-clock local, offset stripped rather than converted — the same
-    # convention for_run applies to `start`.
-    return dt.replace(tzinfo=None) if dt is not None and dt.tzinfo else dt
-
-
 def leave_at(start: datetime.datetime, lead: dict) -> Optional[datetime.datetime]:
-    """The departure itself. `lead` is what `travel_into` returned. A route
-    lead carries the planned departure the Drives list shows (`depart`); an
-    initial edge is worked back from the start."""
+    """The departure itself. `lead` is what `travel_into` returned."""
     if not start or not lead:
         return None
     if lead.get('depart'):
         return lead['depart']
-    return start - datetime.timedelta(
-        minutes=lead['travel_mins'] + lead.get('buffer_mins', 0))
+    return _naive(start) - _td(lead['travel_mins'] + lead.get('buffer_mins', 0)
+                               + lead.get('margin_mins', 0))
 
 
 def clock(dt: datetime.datetime) -> str:
@@ -189,7 +332,7 @@ def for_run(sched: dict, driver_id: str, event_id: str,
         start = start.replace(tzinfo=None)
     if now is not None and now.tzinfo is not None:
         now = now.replace(tzinfo=None)
-    lead = travel_into(sched, driver_id, event_id, from_home_only)
+    lead = travel_into(sched, driver_id, event_id, from_home_only, start=start)
     when = leave_at(start, lead) if lead else None
     if not when:
         return None

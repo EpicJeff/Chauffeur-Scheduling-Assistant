@@ -539,6 +539,8 @@ def solve_schedule(
     if passengers is None:
         passengers = []
     # Resolve effective overrides (instance overrides take precedence over series overrides)
+    from services.leave_by import margin_mins as _margin_mins
+    leave_margin = _margin_mins()  # once per solve, not per event pair
     effective_overrides_list = []
     # Sort descending by created_at to ensure newer overrides take precedence if duplicate
     sorted_overrides = sorted(overrides, key=lambda x: getattr(x, 'created_at', x.get('created_at', 0) if isinstance(x, dict) else 0) or 0, reverse=True)
@@ -1133,9 +1135,9 @@ def solve_schedule(
                                 if active_driver_home and e1.location and e2.location:
                                     t_home = get_travel_time_minutes(e1.location, active_driver_home)
                                     t_back = get_travel_time_minutes(active_driver_home, e2.location)
-                                    # Drive home kicks in if layover >= 20 mins. Layover = gap_mins - t_home - t_back - 5.
-                                    # gap_mins = 20 + 5 + t_home + t_back = 25 + t_home + t_back
-                                    threshold_seconds = (25 + t_home + t_back) * 60
+                                    # Drive home kicks in if layover >= 20 mins. Layover = gap_mins - t_home - t_back - margin,
+                                    # the household's leave margin (services/leave_by, one setting).
+                                    threshold_seconds = (20 + leave_margin + t_home + t_back) * 60
                                     
                                 # Linearly decay passenger stickiness bonus from 50,000 (at 0 gap) down to 0 (at threshold_seconds gap).
                                 # This aligns perfectly with the threshold where a driver typically has enough time to go home for a layover.
@@ -1730,7 +1732,9 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
     driver_map = {d.id: d for d in drivers}
     
     if trip_metadata is None: trip_metadata = []
-    
+    from services.leave_by import margin_mins as _margin_mins
+    leave_margin = _margin_mins()
+
     def get_active_home_local(entity_id: str, ts: float, default_home: str) -> str:
         return get_active_home(entity_id, ts, default_home, trip_metadata)
 
@@ -1949,7 +1953,10 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                     travel_from_home, from_delay = travel_for_display(driver_home_at_layover, next_dest, departure_time=int(dep_time + travel_to_home*60))
                     
                     extra_drive = pickup_waypoint["from_pickup_mins"] if pickup_waypoint else 0
-                    layover = travel_gap - travel_to_home - travel_from_home - extra_drive - 5
+                    # The leave margin is the household's one setting (services/
+                    # leave_by): the layover is what is left after it, and the
+                    # departure back out of home is leave_by's to state.
+                    layover = travel_gap - travel_to_home - travel_from_home - extra_drive - leave_margin
                     
                     if layover >= 20 or (wait > 15 and layover >= 0):
                         home_waypoint = {

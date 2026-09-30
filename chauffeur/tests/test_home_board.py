@@ -379,8 +379,8 @@ def scenario_the_hero_says_when_to_leave():
         storage.get_in_progress_drives = lambda: []
 
         runs = {r['id']: r for r in home_board.todays_runs(now=_at(14, 34))}
-        check(runs['ballet']['leave_label'] == '4:20 PM',
-              f"5:00 start − 26 min drive − 14 min buffer = 4:20, got "
+        check(runs['ballet']['leave_label'] == '4:15 PM',
+              f"5:00 start − 26 min drive − 14 min buffer − 5 leave margin = 4:15, got "
               f"{runs['ballet'].get('leave_label')}")
         check(runs['ballet']['from_home'],
               "an initial edge is the driver setting out from home")
@@ -393,7 +393,7 @@ def scenario_the_hero_says_when_to_leave():
 
         hero = home_board._hero(_at(14, 34), list(runs.values()))
         check(hero['next']['id'] == 'ballet', "the hero is still the next drive")
-        check(hero['next']['minutes_to_leave'] == 106,
+        check(hero['next']['minutes_to_leave'] == 101,
               f"1 hr 46 min to leave, not 2 hr 26 min to start, got "
               f"{hero['next']['minutes_to_leave']}")
         check(hero['next']['minutes_until'] == 146,
@@ -436,8 +436,8 @@ def scenario_a_home_layover_is_not_one_long_drive():
             'assignments': {'school': 'drv1', 'swim': 'drv1', 'music': 'drv1'},
             'scheduled_errands': [],
             'route_edges': {'drv1': {
-                # School ends 3:00; home by 3:12; 88 min layover; leave home
-                # 4:40 for the 20-minute drive to a 5:00 swim.
+                # School ends 3:00; home by 3:12; leave home at 5:00 − 20
+                # − the 5-minute leave margin = 4:35 for a 5:00 swim.
                 'school': {'to_event': 'swim', 'travel_mins': 32,
                            'home_waypoint': dict(home_wp)},
                 # Swim ends 6:00; home by 6:12; out again via a pickup.
@@ -460,17 +460,17 @@ def scenario_a_home_layover_is_not_one_long_drive():
         swim = runs['swim']
         check(swim['travel_mins'] == 20,
               f"the drive is home -> pool, not school -> home -> pool: {swim}")
-        check(swim['leave_label'] == '4:40 PM' and swim['from_home'],
-              f"leave home at 3:00 + 12 + 88 = 4:40, got {swim}")
+        check(swim['leave_label'] == '4:35 PM' and swim['from_home'],
+              f"leave home at 5:00 − 20 − 5 = 4:35, got {swim}")
         music = runs['music']
         check(music['travel_mins'] == 35 and music['from_home'],
               f"home -> friend -> hall is 15 + 20, the drive home excluded: {music}")
-        check(music['leave_label'] == '7:30 PM',
-              f"leave home at 6:00 + 12 + 78 = 7:30, got {music}")
+        check(music['leave_label'] == '7:20 PM',
+              f"leave home at 8:00 − 35 − 5 = 7:20, got {music}")
 
         from services import leave_by
         kid = leave_by.for_run(sched, 'drv1', 'swim', _at(17), from_home_only=True)
-        check(kid and kid['leave_label'] == '4:40 PM',
+        check(kid and kid['leave_label'] == '4:35 PM',
               f"a home layover IS setting out from home for the kid's leave-by: {kid}")
     finally:
         (storage.get_cached_schedule, storage.get_cached_daily_schedule,
@@ -1433,8 +1433,13 @@ def scenario_the_drives_tile_hands_over_a_schedule_not_a_drawing():
               "the slice names its day, which is what dateFilter matches on")
         check('far' not in slice_['assignments'] and 'far' not in slice_['unassigned'],
               "tomorrow's event must not drag its assignment along")
-        check(slice_['initial_edges']['drv1'] == {'a': {'travel_mins': 12}},
+        pruned = {k: {f: v for f, v in e.items() if f != 'legs'}
+                  for k, e in slice_['initial_edges']['drv1'].items()}
+        check(pruned == {'a': {'travel_mins': 12}},
               f"edges prune to the same day's events, got {slice_['initial_edges']}")
+        check(slice_['initial_edges']['drv1']['a'].get('legs'),
+              "and the slice's edges carry leave_by's departures, so the tile "
+              "draws the times every other surface shows")
         check([d['id'] for d in slice_['drivers']] == ['drv1', 'drv2'],
               "the renderer names its columns from `drivers`, so they travel too")
         check(tile['next_event_id'] == 'a',

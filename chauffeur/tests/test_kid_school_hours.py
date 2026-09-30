@@ -87,8 +87,8 @@ def scenario_morning_launch_math():
            {"d1": {"school": {"travel_mins": 20, "buffer_before_mins": 5}}})
     day = main.member_day("kid1", TODAY.isoformat())
     l = day["launch"]
-    check(l and l["leave_label"] == "7:35 AM" and l["driver"]["name"] == "Dad",
-          f"leave-by = start − travel − buffer, got {l}")
+    check(l and l["leave_label"] == "7:30 AM" and l["driver"]["name"] == "Dad",
+          f"leave-by = start − travel − buffer − the 5-minute leave margin, got {l}")
     # no initial edge -> no line (the ride card already shows its time)
     _cache([_ev("school", "School Dropoff", 8)], {"school": "d1"})
     check(main.member_day("kid1", TODAY.isoformat())["launch"] is None,
@@ -109,12 +109,13 @@ def scenario_split_ride_launch_and_digest_line():
     _cache([base, drop], {"school_dropoff": "d1"},
            {"d1": {"school_dropoff": {"travel_mins": 10}}})
     day = main.member_day("kid1", (TODAY + datetime.timedelta(days=1)).isoformat())
-    check(day["launch"] and day["launch"]["leave_label"] == "7:50 AM",
-          f"split ride resolves the dropoff leg's edge, got {day['launch']}")
+    check(day["launch"] and day["launch"]["leave_label"] == "7:45 AM",
+          f"split ride resolves the dropoff leg's edge (8:00 − 10 − 5 margin), "
+          f"got {day['launch']}")
     with mock.patch.object(family_digest, 'weather_line', return_value=None):
         digest = main._build_kid_digests()
     lines = digest["kids"]["kid1"]["lines"]
-    check(lines[0] == "🚀 Leave by 7:50 AM with Dad",
+    check(lines[0] == "🚀 Leave by 7:45 AM with Dad",
           f"digest leads with the launch line, got {lines}")
 
 

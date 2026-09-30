@@ -128,8 +128,9 @@ def scenario_a_real_departure_tightens_the_morning():
     })
     now = datetime.datetime.combine(DAY, datetime.time(8, 0))
     rw = runway.runways_for("tot", DATE, now=now)['morning']
-    # leave-at = 8:45 − 25 = 8:20, earlier than the 8:30 item time.
-    check(rw['end_label'] == '8:20 AM' and rw['tightened_by'] == 'schedule',
+    # leave-at = 8:45 − 20 drive − 5 buffer − 5 leave margin = 8:15, earlier
+    # than the 8:30 item time.
+    check(rw['end_label'] == '8:15 AM' and rw['tightened_by'] == 'schedule',
           f"the solver's departure tightens the end: {rw}")
 
 
