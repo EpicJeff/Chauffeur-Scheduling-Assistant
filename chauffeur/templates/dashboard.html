@@ -1712,8 +1712,9 @@
                 if (appConfig.driver_ids) {
                     isChecked = appConfig.driver_ids.includes(String(d.id));
                 } else {
-                    // Fallback to driver events map
-                    const dEvents = currentData.driver_events[d.id] || [];
+                    // Fallback to driver events map. The key is redacted away
+                    // (not emptied) for a viewer without schedule.driver_calendars.
+                    const dEvents = (currentData.driver_events || {})[d.id] || [];
                     isChecked = dEvents.includes(ev.id);
                 }
 
