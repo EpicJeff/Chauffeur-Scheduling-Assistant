@@ -563,12 +563,12 @@
         // --- Pending agent proposals (C3: fuel stops / charge buffers) ---
         let _proposalActorId = null;
         async function _resolveProposalActor() {
-            // Approval is parent/adult-scoped. Prefer the member this browser
-            // uses in the PWA; fall back to the first parent on record.
+            // Approval is parent/adult-scoped. Prefer whoever is signed in to
+            // this admin page; fall back to the first parent on record.
             if (_proposalActorId) return _proposalActorId;
             try {
                 const members = await fetch('api/members').then(r => r.json());
-                const stored = localStorage.getItem('chauffeur_member_id');
+                const stored = (window.chfAdminSession && window.chfAdminSession() || {}).id;
                 const mine = members.find(m => m.id === stored && ['parent', 'adult'].includes(m.role));
                 const parent = mine || members.find(m => m.role === 'parent');
                 _proposalActorId = parent ? parent.id : null;
@@ -2231,33 +2231,53 @@
 
             document.getElementById('schedule-container').classList.add('opacity-50', 'pointer-events-none');
             try {
-                await fetch(`api/overrides?draft=${isDraftMode}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ event_id: targetEventId, driver_id: driverId, event_title: ev?.title, date_str: ev ? ev.start.split('T')[0] : null })
-                });
+                let res;
+                try {
+                    res = await fetch(`api/overrides?draft=${isDraftMode}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ event_id: targetEventId, driver_id: driverId, event_title: ev?.title, date_str: ev ? ev.start.split('T')[0] : null })
+                    });
+                } catch (e) {
+                    showGlobalAlert("Failed to force swap");
+                    return;
+                }
+                // "Failed" means the SERVER said no. It used to be any throw in
+                // this block, so a redraw that tripped on a redacted key
+                // reported a failure for a swap that had been saved.
+                if (!res.ok) {
+                    showGlobalAlert("Failed to force swap");
+                    if (currentData) renderSchedule(currentData);
+                    return;
+                }
 
-                // Optimistic UI update
-                if (currentData) {
-                    if (driverId === 'unassigned') {
-                        delete currentData.assignments[ghostEventId];
-                        if (currentData.ghost_assignments) delete currentData.ghost_assignments[ghostEventId];
-                        if (!currentData.unassigned.includes(ghostEventId)) currentData.unassigned.push(ghostEventId);
-                    } else {
-                        currentData.assignments[ghostEventId] = driverId;
-                        currentData.unassigned = currentData.unassigned.filter(id => id !== ghostEventId);
+                // Optimistic UI update. Any of these keys can be absent: the
+                // schedule is redacted per viewer (scope.redact_schedule_blob).
+                try {
+                    if (currentData) {
+                        currentData.assignments = currentData.assignments || {};
+                        currentData.unassigned = currentData.unassigned || [];
+                        if (driverId === 'unassigned') {
+                            delete currentData.assignments[ghostEventId];
+                            if (currentData.ghost_assignments) delete currentData.ghost_assignments[ghostEventId];
+                            if (!currentData.unassigned.includes(ghostEventId)) currentData.unassigned.push(ghostEventId);
+                        } else {
+                            currentData.assignments[ghostEventId] = driverId;
+                            currentData.unassigned = currentData.unassigned.filter(id => id !== ghostEventId);
+                        }
+                        if (!currentData.overridden_events) currentData.overridden_events = [];
+                        if (!currentData.overridden_events.includes(ghostEventId)) currentData.overridden_events.push(ghostEventId);
+                        renderSchedule(currentData);
                     }
-                    if (!currentData.overridden_events) currentData.overridden_events = [];
-                    if (!currentData.overridden_events.includes(ghostEventId)) currentData.overridden_events.push(ghostEventId);
-                    renderSchedule(currentData);
+                } catch (e) {
+                    // The swap is saved; the refresh below redraws it properly.
+                    console.error('optimistic redraw after swap failed', e);
                 }
 
                 // If not in draft mode, forceSync to trigger background refresh
                 if (!isDraftMode) {
                     forceSync(false, false).catch(console.error);
                 }
-            } catch (e) {
-                showGlobalAlert("Failed to force swap");
             } finally {
                 document.getElementById('schedule-container').classList.remove('opacity-50', 'pointer-events-none');
             }

@@ -20,10 +20,24 @@
 
 <div x-data="adminGate()" x-init="init()">
 
-  {# The token rides every same-origin request from this page, same wrapper as
-     the PWA. Installed unconditionally: it must be in place BEFORE any panel
-     fetches, not after somebody signs in. #}
+  {# The token rides every same-origin request from this page. Installed
+     unconditionally: it must be in place BEFORE any panel fetches, not after
+     somebody signs in.
+
+     The admin session has keys of its OWN. It used to share the PWA's
+     `chauffeur_member_token`, and localStorage is per origin, so signing
+     the PWA in as a child in one tab turned this page into the child's view
+     in another: the schedule arrived redacted for a child and the drag-drop
+     and triage editors broke on the missing keys. Signing in here wrote the
+     PWA's identity the other way round. Neither side touches the other's
+     keys now. #}
   <script>
+    window.chfAdminSession = function () {
+      try {
+        const token = localStorage.getItem('chauffeur_admin_token') || '';
+        return token ? { token: token, id: localStorage.getItem('chauffeur_admin_token_for') || '' } : null;
+      } catch (e) { return null; }
+    };
     (function attachAdminToken() {
       const _fetch = window.fetch.bind(window);
       window.fetch = function (input, init) {
@@ -31,7 +45,8 @@
           const url = typeof input === 'string' ? input : (input && input.url) || '';
           const foreign = /^[a-z]+:\/\//i.test(url) && !url.startsWith(window.location.origin);
           if (!foreign) {
-            const token = localStorage.getItem('chauffeur_member_token') || '';
+            const session = window.chfAdminSession();
+            const token = session ? session.token : '';
             let did = localStorage.getItem('chauffeur_device_id');
             if (!did) {
               // Auth arc S5: names the device, never the person, and carries
@@ -143,10 +158,21 @@ function adminGate() {
         const d = await r.json();
         this.parents = (d.parents || []);
         if (!d.claimed && d.may_claim) { this.state = 'first-run'; return; }
+        // Carry an admin session from before the keys were split: a PWA token
+        // that belongs to a PARENT is the one this page was using. Anybody
+        // else's is left alone, which is the whole point of the split.
+        if (!window.chfAdminSession()) {
+          const forId = localStorage.getItem('chauffeur_member_token_for');
+          const pwaToken = localStorage.getItem('chauffeur_member_token');
+          if (pwaToken && forId && this.parents.some(p => p.id === forId)) {
+            localStorage.setItem('chauffeur_admin_token', pwaToken);
+            localStorage.setItem('chauffeur_admin_token_for', forId);
+          }
+        }
         // A token in hand is treated as good; if it has gone stale the first
         // gated call answers 403 and the page asks again. Verifying up front
         // would put a round trip in front of every load for the common case.
-        this.state = localStorage.getItem('chauffeur_member_token') ? 'in' : 'sign-in';
+        this.state = window.chfAdminSession() ? 'in' : 'sign-in';
       } catch (e) {
         // Never trap somebody out of their own admin page because a status
         // call failed — enforcement lives on the server, not on this overlay.
@@ -192,9 +218,10 @@ function adminGate() {
     },
 
     store(d) {
-      localStorage.setItem('chauffeur_member_token', d.token);
-      localStorage.setItem('chauffeur_member_token_for', d.member.id);
-      localStorage.setItem('chauffeur_member_id', d.member.id);
+      // Admin keys only: whoever the PWA in this browser is signed in as
+      // stays signed in as them.
+      localStorage.setItem('chauffeur_admin_token', d.token);
+      localStorage.setItem('chauffeur_admin_token_for', d.member.id);
       this.state = 'in';
       location.reload();   // let the page load its data as somebody
     }

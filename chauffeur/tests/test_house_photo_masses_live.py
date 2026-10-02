@@ -78,7 +78,7 @@ def main():
             from services import storage
             storage.add_member({'id':'mass-editor','name':'Mass Editor','role':'parent','status':'active'})
             token=storage.create_member_token('mass-editor')
-            page.add_init_script('localStorage.setItem("chauffeur_member_token", '+json.dumps(token)+')')
+            page.add_init_script('localStorage.setItem("chauffeur_admin_token", '+json.dumps(token)+')')
             page.goto(served.url('config'))
             page.wait_for_function('document.body._x_dataStack && document.body._x_dataStack[0].facadeDraft')
             spec,_,_=compile_structure(source)

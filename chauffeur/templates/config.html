@@ -7179,7 +7179,7 @@
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
-                                'X-Member-Token': localStorage.getItem('chauffeur_member_token') || ''
+                                'X-Member-Token': (window.chfAdminSession && window.chfAdminSession() || {}).token || ''
                             },
                             // The email as TYPED, not as last saved: the server
                             // persists whatever it is given, and somebody who

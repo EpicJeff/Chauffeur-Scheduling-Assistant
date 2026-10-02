@@ -1,6 +1,15 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.221 (2026-10-01).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.222 (2026-10-02).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**The admin pages keep their own session (v2.499.222; `templates/components/admin_gate.html` `chfAdminSession`, `nav.html` `chfAuthUrl`, `dashboard.html` `forceSwap`, `tests/test_admin_session_live.py`).** User: "Failed to force swap" on every drag on the Schedule page, after testing the PWA in the same browser signed in as a child. The admin gate (Schedule and Config pages) kept its session in the PWA's `chauffeur_member_token`, and localStorage is shared per origin. So signing the PWA in as a child made the admin page the child's view: `/api/schedule` came back redacted for a child, and the drag-drop and triage editors broke on the missing keys. Signing in on the admin page also wrote the PWA's identity (`chauffeur_member_token`, `_for`, `chauffeur_member_id`).
+
+What changed:
+- The admin session lives in `chauffeur_admin_token` / `chauffeur_admin_token_for`, read through `window.chfAdminSession()`. The gate's fetch wrapper attaches only that token, never the PWA's. Explicit `X-Member-Token` headers (a PIN-proven member's token) are still respected.
+- Admin sign-in writes only the admin keys. The PWA in the same browser stays signed in as whoever it was.
+- Upgrade path: with no admin session, a PWA token whose `_for` is a PARENT is carried over, so no parent is signed out. Anybody else's token is ignored and the page asks for sign-in.
+- `chfAuthUrl` (streams) uses the admin session on admin pages. The Config invite button and the Schedule proposals actor read the admin session too.
+- `forceSwap` says "Failed to force swap" only when the save request fails or the server refuses it. A redraw that trips on a redacted key used to report a failure for a swap that had been saved, and skipped the resync.
 
 **An inbox event opens without a driver-calendar grant (v2.499.221; `templates/dashboard.html` `switchToEditMode`, `tests/test_triage_edit_live.py`).** User: clicking an event in the Schedule page's needs-setup inbox threw "Cannot read properties of undefined (reading 'vovo')". Triage events open the modal straight into edit mode, and its driver chips read `currentData.driver_events[d.id]`. `driver_events` belongs to the `schedule.driver_calendars` facet, and `scope.redact_schedule_blob` removes the key (never empties it) for a viewer who does not reach that facet. The builder now reads a missing map as empty, so the chips draw unticked. Saving with none ticked writes no `driver_ids` (the endpoint skips an empty list), so nothing is overridden. The live test clicks the inbox card with the key deleted, the way the redactor serves it, and fails on the pre-fix page with the reported error.
 

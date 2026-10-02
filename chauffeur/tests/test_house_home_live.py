@@ -15,7 +15,7 @@ def verify_config(served):
     storage.add_member({'id':'home-admin','name':'Home Admin','role':'parent'})
     token = storage.create_member_token('home-admin')
     with served.browser() as page:
-        page.add_init_script('localStorage.setItem("chauffeur_member_token", '+json.dumps(token)+')')
+        page.add_init_script('localStorage.setItem("chauffeur_admin_token", '+json.dumps(token)+')')
         page.route('**/api/v2/chat/stream*', lambda r: r.fulfill(status=200, body=''))
         page.goto(served.url('config'), wait_until='domcontentloaded')
         page.get_by_role('button', name='Boards', exact=True).click()

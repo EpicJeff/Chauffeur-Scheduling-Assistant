@@ -17,7 +17,7 @@ def scenario_house_editor_tasks_and_layout():
     storage.add_member({'id': 'editor-parent', 'name': 'Editor Parent', 'role': 'parent', 'status': 'active'})
     token = storage.create_member_token('editor-parent')
     with served.browser() as page:
-        page.add_init_script('localStorage.setItem("chauffeur_member_token", ' + json.dumps(token) + ')')
+        page.add_init_script('localStorage.setItem("chauffeur_admin_token", ' + json.dumps(token) + ')')
         errors = []
         page.on('pageerror', lambda e: errors.append(str(e)))
         page.set_viewport_size({'width': 1600, 'height': 1100})

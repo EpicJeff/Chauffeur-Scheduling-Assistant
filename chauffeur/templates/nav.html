@@ -417,7 +417,12 @@
         try {
             if (typeof localStorage === 'undefined') return url;
             const parentVisit = window.chfHouseParent && window.chfHouseParent();
-            const t = parentVisit ? parentVisit.token : localStorage.getItem('chauffeur_member_token');
+            // An admin page (admin_gate) streams as its own session, never as
+            // whoever the PWA in this browser is signed in as.
+            const admin = !parentVisit && window.chfAdminSession ? window.chfAdminSession() : null;
+            const t = parentVisit ? parentVisit.token
+                : (window.chfAdminSession ? (admin && admin.token)
+                   : localStorage.getItem('chauffeur_member_token'));
             const d = localStorage.getItem('chauffeur_device_token');
             const q = t ? 'member_token=' + encodeURIComponent(t)
                         : (d ? 'device_token=' + encodeURIComponent(d) : '');
