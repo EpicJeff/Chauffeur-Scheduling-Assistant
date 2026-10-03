@@ -258,6 +258,13 @@
                             <div id="diagnostics-list" class="space-y-3"></div>
                         </div>
 
+                        <!-- Assigned, but the route goes back for the next
+                             kid and arrives late: offer riding together. -->
+                        <div id="ride-suggestion-section" class="hidden">
+                            <h4 class="text-xl font-bold text-sky-300 mb-3">🔗 Ride together?</h4>
+                            <div id="ride-suggestion-body" class="bg-gray-900 border border-sky-900/60 p-4 rounded-lg flex flex-col space-y-3"></div>
+                        </div>
+
                         <div id="view-unassigned-reason"></div>
 
                         <!-- The hand path onto services/negotiation.py. It lives
@@ -1280,8 +1287,24 @@
                         type = reasonObj.type;
 
                         if (type === 'conflict' || type === 'personal_conflict') {
+                            // Riding together would make this no conflict at
+                            // all (matcher.ride_together_suggestion): offered
+                            // first, for these two occurrences only.
+                            const rt = reasonObj.ride_together;
+                            let rideHtml = '';
+                            if (rt && !isReadOnly) {
+                                const waitTxt = rt.wait_mins > 0
+                                    ? ` · ${escHtml(rt.waiting_name || 'one kid')} waits ${rt.wait_mins}m`
+                                    : '';
+                                const ids = JSON.stringify([eventId, rt.event_id]).replace(/"/g, '&quot;');
+                                rideHtml = `
+                                    <button onclick="closeEventModal(); rideTogether(${ids})" class="text-xs bg-sky-600 hover:bg-sky-500 text-white px-3 py-1.5 rounded flex items-center shadow-sm transition-colors" title="Group with ${escHtml(rt.title)}: both kids go in the car together, one driver. These occurrences only.">
+                                        🔗 Ride together with ${escHtml(rt.title)}${waitTxt}
+                                    </button>`;
+                            }
                             actionHtml = `
-                                <div class="mt-3 flex space-x-2">
+                                <div class="mt-3 flex flex-wrap gap-2">
+                                    ${rideHtml}
                                     <button onclick="createRule('any', '${evTitle}', 'tolerance', ${reasonObj.lateness_mins || 15}, '${reasonObj.suggested_tolerance_type || 'both'}', this)" class="text-xs bg-yellow-600 hover:bg-yellow-500 text-white px-3 py-1.5 rounded flex items-center shadow-sm transition-colors">
                                         <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                                         Allow ${reasonObj.lateness_mins || 15}m Late
@@ -1326,6 +1349,29 @@
                 }
             } else {
                 diagnosticsSection.classList.add('hidden');
+            }
+
+            // The route fetched the next kid and runs late: the same "ride
+            // together" offer the diagnostics make (matcher.compute_route_edges).
+            const rideSection = document.getElementById('ride-suggestion-section');
+            const rideBody = document.getElementById('ride-suggestion-body');
+            let rideEdge = null;
+            Object.values(currentData.route_edges || {}).forEach(byEv => {
+                Object.entries(byEv || {}).forEach(([fromId, edge]) => {
+                    if (edge && edge.to_event === eventId && edge.ride_together) rideEdge = edge.ride_together;
+                });
+            });
+            if (rideEdge && !isReadOnly && rideSection && rideBody) {
+                const waitTxt = rideEdge.wait_mins > 0
+                    ? ` ${escHtml(rideEdge.waiting_name || 'One kid')} would wait ${rideEdge.wait_mins}m.`
+                    : '';
+                const ids = JSON.stringify([eventId, rideEdge.event_id]).replace(/"/g, '&quot;');
+                rideBody.innerHTML = `
+                    <span class="text-sm text-gray-300">The drive goes back to pick up this event's passengers after <b>${escHtml(rideEdge.title)}</b> and arrives ${rideEdge.late_mins}m late. They could ride together from the start instead.${waitTxt}</span>
+                    <div><button onclick="closeEventModal(); rideTogether(${ids})" class="text-xs bg-sky-600 hover:bg-sky-500 text-white px-3 py-1.5 rounded inline-flex items-center shadow-sm transition-colors">🔗 Ride together with ${escHtml(rideEdge.title)}</button></div>`;
+                rideSection.classList.remove('hidden');
+            } else if (rideSection) {
+                rideSection.classList.add('hidden');
             }
 
             const removeOverrideBtn = document.getElementById('remove-override-btn');
@@ -1495,6 +1541,7 @@
             // Tab visibility logic
             const hasDiagnostics = !document.getElementById('diagnostics-section').classList.contains('hidden') ||
                 !document.getElementById('conflicts-section').classList.contains('hidden') ||
+                !document.getElementById('ride-suggestion-section').classList.contains('hidden') ||
                 document.getElementById('view-unassigned-reason').innerHTML.trim() !== '';
 
             const tabsContainer = document.getElementById('modal-tabs');
@@ -2432,10 +2479,144 @@
             ev.preventDefault();
         }
 
+        // --- Ride groups: drop one event onto another to ride together ---
+        // services/ride_groups.py. Only these occurrences, never a rule: one
+        // driver for all of them, never a conflict, routed as one trip.
+        function rideOccurrenceDate(e) {
+            const leg = /_(dropoff|pickup)$/.test(String(e.id || ''));
+            return String((leg && e.original_start) || e.start || '').slice(0, 10);
+        }
+
+        function rideGroupable(a, b) {
+            if (!a || !b || a.id === b.id) return false;
+            const bad = t => t === 'background_trip' || t === 'errand';
+            if (bad(a.event_type) || bad(b.event_type)) return false;
+            return rideOccurrenceDate(a) === rideOccurrenceDate(b);
+        }
+
+        function rideColumnName(driverId) {
+            if (driverId === 'unassigned') return 'Unassigned';
+            if (String(driverId).startsWith('assist_')) {
+                const c = (currentData?.assist_contacts || []).find(x => String(x.id) === driverId.slice('assist_'.length));
+                return c ? c.name : null;
+            }
+            if (driverId === 'no_location' || /^g\d+$/.test(driverId)) return null;
+            return currentData?.drivers?.find(d => d.id === driverId)?.name || null;
+        }
+
+        function escHtml(t) {
+            return String(t || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        // Dropped on another event: group, or (it was a miss) assign to the
+        // column it landed in. Resolves 'group' | 'assign' | 'cancel'.
+        function chooseDropAction(dragged, target, driverId, sameColumn) {
+            return new Promise(resolve => {
+                const colName = sameColumn ? null : rideColumnName(driverId);
+                const buttons = [{ text: 'Cancel', onClick: () => resolve('cancel') }];
+                if (colName) {
+                    buttons.push({
+                        text: driverId === 'unassigned' ? 'Move to Unassigned' : `Assign to ${escHtml(colName)}`,
+                        className: 'px-4 py-2 rounded bg-gray-600 hover:bg-gray-500 text-white text-sm font-bold transition-colors',
+                        onClick: () => resolve('assign')
+                    });
+                }
+                buttons.push({
+                    text: 'Group Events',
+                    className: 'px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-colors shadow-lg shadow-blue-900/50',
+                    onClick: () => resolve('group')
+                });
+                openCCConfirmModal(
+                    `Group **${escHtml(dragged.title)}** with **${escHtml(target.title)}**?\n\nGrouped events ride together with one driver, so they never count as a conflict. This applies to these occurrences only.`,
+                    null, buttons, '', 'Group events?');
+            });
+        }
+
+        function rideKeys(id) {
+            const e = currentEventsMap[id];
+            if (!e) return null;
+            return { id: e.id, source_event_ids: e.source_event_ids, recurring_event_id: e.recurring_event_id,
+                     start: e.start, original_start: e.original_start };
+        }
+
+        async function rideTogether(eventIds) {
+            const first = currentEventsMap[eventIds[0]];
+            if (first) localSolvingDates.add(rideOccurrenceDate(first));
+            document.getElementById('schedule-container').classList.add('opacity-50', 'pointer-events-none');
+            try {
+                const res = await fetch('api/events/ride_group', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    // The occurrence keys ride along for a day outside the
+                    // server's cached window (a week paged forward).
+                    body: JSON.stringify({ event_ids: eventIds, events: eventIds.map(rideKeys).filter(Boolean) })
+                });
+                if (!res.ok) {
+                    let msg = 'Could not group those events';
+                    try { msg = (await res.json()).detail || msg; } catch (e) {}
+                    showGlobalAlert(msg);
+                    if (currentData) renderSchedule(currentData);
+                    return;
+                }
+                forceSync(false, false).catch(console.error);
+            } catch (e) {
+                showGlobalAlert('Could not group those events');
+            } finally {
+                document.getElementById('schedule-container').classList.remove('opacity-50', 'pointer-events-none');
+            }
+        }
+
+        async function leaveRideGroup(eventId) {
+            const ev = currentEventsMap[eventId];
+            if (ev) localSolvingDates.add(rideOccurrenceDate(ev));
+            try {
+                const res = await fetch(`api/events/${encodeURIComponent(eventId)}/ride_group`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ event: rideKeys(eventId) })
+                });
+                if (!res.ok) { showGlobalAlert('Could not ungroup that event'); return; }
+                forceSync(false, false).catch(console.error);
+            } catch (e) {
+                showGlobalAlert('Could not ungroup that event');
+            }
+        }
+
+        // The 🔗 chip on a grouped card: who it rides with, and the way out.
+        async function openRideGroupChip(e, eventId) {
+            e.stopPropagation();
+            e.preventDefault();
+            if (isReadOnly) return;
+            const ev = currentEventsMap[eventId];
+            const g = window.stRideGroupOf(ev);
+            const partners = [...new Set(Object.values(currentEventsMap)
+                .filter(x => x.id !== eventId && window.stRideGroupOf(x) === g)
+                .map(x => x.title))];
+            const ok = await promptConfirm('Riding together',
+                `${ev ? ev.title : 'This event'} rides with ${partners.join(', ') || 'nothing else now'}.\n\nTake it out of the group?`,
+                'Ungroup', 'Keep');
+            if (ok) await leaveRideGroup(eventId);
+        }
+
         async function drop(ev, driverId) {
             ev.preventDefault();
             const eventId = ev.dataTransfer.getData("text");
             const sourceDriverId = ev.dataTransfer.getData("sourceDriver");
+
+            // Landed on another event's card: offer to group them.
+            const targetCard = ev.target && ev.target.closest ? ev.target.closest('[id^="event-"]') : null;
+            const targetId = targetCard ? targetCard.id.slice('event-'.length) : null;
+            const draggedEv = currentEventsMap[eventId];
+            const targetEv = targetId ? currentEventsMap[targetId] : null;
+            if (targetEv && rideGroupable(draggedEv, targetEv)) {
+                const sameColumn = driverId === sourceDriverId;
+                const choice = await chooseDropAction(draggedEv, targetEv, driverId, sameColumn);
+                if (choice === 'group') {
+                    await rideTogether([eventId, targetId]);
+                    return;
+                }
+                if (choice !== 'assign') return;
+            }
 
             if (driverId === sourceDriverId) return;
 

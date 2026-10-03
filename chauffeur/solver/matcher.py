@@ -479,7 +479,11 @@ def get_grouped_event_pairs(events: List[Event], rules: List[Rule], passengers: 
                 for j in range(i + 1, len(group_events)):
                     grouped_event_pairs.add((group_events[i].id, group_events[j].id))
                     grouped_event_pairs.add((group_events[j].id, group_events[i].id))
-                    
+
+    # Ride groups: occurrences the family grouped by hand (services/ride_groups).
+    from services import ride_groups as _rg
+    grouped_event_pairs |= _rg.pairs(events)
+
     return grouped_event_pairs
 
 def solve_schedule(
@@ -1753,6 +1757,10 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
             driver_default_home = driver_map[d_id].home_location
             
         grouped_event_pairs = get_grouped_event_pairs(events, rules, passengers) if rules and passengers else set()
+        # A ride group is the family's word, not a rule -- it routes as one
+        # trip even in a household with no rules at all.
+        from services import ride_groups as _rg
+        grouped_event_pairs |= _rg.pairs(events)
         
         # Group events by date to correctly compute initial edges per day and prevent cross-day routing
         from itertools import groupby
@@ -2000,6 +2008,14 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                 }
                 if pickup_waypoint:
                     edges[d_id][e1.id]["pickup_waypoint"] = pickup_waypoint
+                    # Fetching the next kid makes this leg late: riding
+                    # together from the start may be the answer (the same
+                    # offer the diagnostics make for an unassigned event).
+                    if late > 0 and passengers:
+                        _ride = ride_together_suggestion(e2, e1, passengers)
+                        if _ride:
+                            _ride["late_mins"] = int(late)
+                            edges[d_id][e1.id]["ride_together"] = _ride
                 if home_waypoint:
                     edges[d_id][e1.id]["home_waypoint"] = home_waypoint
 
@@ -2029,6 +2045,60 @@ def compute_conflicts(assignments: Dict[str, str], ghost_assignments: Dict[str, 
                 
     return conflicts
 
+# How far apart two events may be, and how long a kid may sit waiting, for the
+# diagnostics to suggest riding together. Past these it is no longer "both
+# kids in the car" but a kid parked somewhere for an afternoon.
+RIDE_TOGETHER_MAX_TRAVEL_MINS = 10
+RIDE_TOGETHER_MAX_WAIT_MINS = 90
+
+
+def ride_together_suggestion(e: Event, a_e: Event, passengers: List[Passenger]) -> Optional[dict]:
+    """The diagnostics' "Ride together" offer for an unassigned event `e`
+    that conflicts with `a_e`, or None when grouping them would not be a
+    sensible day: different days, the same kid (that case already chains),
+    too far apart, or somebody waiting longer than RIDE_TOGETHER_MAX_WAIT_MINS.
+
+    Riding together means everyone leaves for the earlier start and goes home
+    after the later end, so the later-starting kid waits before and the
+    earlier-ending kid waits after; the offer names the longer wait."""
+    if e.start.date() != a_e.start.date():
+        return None
+    if getattr(e, 'event_type', '') in ('background_trip', 'errand')             or getattr(a_e, 'event_type', '') in ('background_trip', 'errand'):
+        return None
+    if not e.location or not a_e.location:
+        return None
+    e_pax = get_event_passenger_ids(e, passengers)
+    a_pax = get_event_passenger_ids(a_e, passengers)
+    if not e_pax or not a_pax or e_pax & a_pax:
+        return None
+    if e.location.strip().lower() != a_e.location.strip().lower():
+        try:
+            apart = get_travel_time_minutes(e.location, a_e.location)
+        except Exception:
+            return None
+        if apart is None or apart > RIDE_TOGETHER_MAX_TRAVEL_MINS:
+            return None
+    first, second = (e, a_e) if e.start <= a_e.start else (a_e, e)
+    wait_before = (second.start - first.start).total_seconds() / 60
+    early_end, late_end = (e, a_e) if e.end <= a_e.end else (a_e, e)
+    wait_after = (late_end.end - early_end.end).total_seconds() / 60
+    if wait_before >= wait_after:
+        wait, waiter = wait_before, second
+    else:
+        wait, waiter = wait_after, early_end
+    wait = int(round(wait))
+    if wait > RIDE_TOGETHER_MAX_WAIT_MINS:
+        return None
+    names = {p.id: p.name for p in passengers}
+    waiter_names = [names[pid] for pid in sorted(get_event_passenger_ids(waiter, passengers)) if pid in names]
+    return {
+        "event_id": a_e.id,
+        "title": a_e.title,
+        "wait_mins": wait,
+        "waiting_name": " & ".join(waiter_names) or None,
+    }
+
+
 def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers: List[Driver], driver_events: dict, assignments: dict, overrides: List[dict], rules: List[Rule], passengers: List[Passenger] = None, trip_metadata: List[dict] = None, cars: List[Car] = None, driver_passenger_map: Dict[str, str] = None, home_location: Optional[str] = None) -> dict:
     if passengers is None:
         passengers = []
@@ -2042,6 +2112,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
         for e in events
     }
     
+    from services import ride_groups as _rg
     diagnostics = {}
     event_map = {e.id: e for e in events}
     overridden_pairs = set()
@@ -2119,6 +2190,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                     if getattr(ae, 'all_day', False) and getattr(ae, 'event_type', '') != 'background_trip': continue
                     if not getattr(ae, 'location', '') or not str(ae.location).strip(): continue
                     if ae.id == e.id: continue
+                    if _rg.same_group(e, ae): continue
                     if e.start.date() < ae.start.date() or e.start.date() > ae.end.date(): continue
                     needs_driver = getattr(ae, 'event_type', '') != 'background_trip'
                     if needs_driver and ae.id not in assignments: continue
@@ -2167,6 +2239,8 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                     if assigned_d_id == d.id and ae_id != e.id:
                         ae = event_map.get(ae_id)
                         if not ae: continue
+                        # Grouped to ride together: never a conflict.
+                        if _rg.same_group(e, ae): continue
                         if e.start.date() < ae.start.date() or e.start.date() > ae.end.date(): continue
                         
                         travel = get_travel_time_minutes(e.location, ae.location) if e.location and ae.location else 20
@@ -2184,10 +2258,14 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                             reason = {
                                 "text": f"Driver cannot travel from/to scheduled event '{ae.title}' in time.",
                                 "type": "conflict",
+                                "conflict_event_id": ae.id,
                                 "conflict_event_title": ae.title,
                                 "lateness_mins": lateness_mins if lateness_mins > 0 else None,
                                 "suggested_tolerance_type": "departure" if e.start <= ae.start else "arrival"
                             }
+                            _ride = ride_together_suggestion(e, ae, passengers)
+                            if _ride:
+                                reason["ride_together"] = _ride
                             break
                         
             # 2.7 Trip bans (same rules as the solver's trip-assignment constraint)
@@ -2279,6 +2357,9 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                 for a_id, a_d_id in assignments.items():
                     if a_d_id == d.id and a_id != e.id:
                         a_e = event_map.get(a_id)
+                        # Grouped to ride together: never a conflict.
+                        if a_e and _rg.same_group(e, a_e):
+                            continue
                         if a_e:
                             shares_passenger = bool(get_event_passenger_ids(e, passengers).intersection(get_event_passenger_ids(a_e, passengers)))
                             if shares_passenger:
@@ -2316,6 +2397,9 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                                     "conflict_event_title": a_e.title,
                                     "lateness_mins": lateness_mins if lateness_mins > 0 else None
                                 }
+                                _ride = ride_together_suggestion(e, a_e, passengers)
+                                if _ride:
+                                    reason["ride_together"] = _ride
                                 break
 
             if not reason:

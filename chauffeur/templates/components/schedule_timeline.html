@@ -80,6 +80,17 @@
     window.drag = window.drag || function () {};
     window.drop = window.drop || function () {};
     window.allowDrop = window.allowDrop || function () {};
+    window.openRideGroupChip = window.openRideGroupChip || function () {};
+
+    // Ride groups (services/ride_groups.py): the group a schedule event is in,
+    // read for the event's own leg -- a split event's dropoff and pickup are
+    // grouped independently.
+    function stRideGroupOf(ev) {
+        if (!ev || !ev.ride_groups) return null;
+        const m = String(ev.id || '').match(/_(dropoff|pickup)$/);
+        return ev.ride_groups[m ? m[1] : ''] || null;
+    }
+    window.stRideGroupOf = stRideGroupOf;
 
         // Captured so a chip-tap mutation can redraw exactly what the page
         // drew (the board and the dashboard call with different options).
@@ -1136,6 +1147,21 @@
                                     carChip = `<span class="ml-1 px-1 rounded font-bold flex items-center text-[9px] shrink-0 ${carSwap ? 'text-amber-300 bg-amber-500/20' : 'text-gray-300 bg-gray-600/40'}" title="${carSwap ? "Car swap: not this driver's usual car" : 'Assigned car'}">${evCar.icon || '🚗'}<span class="ml-0.5 truncate max-w-[52px]">${evCar.name}${carSwap ? ' ⇄' : ''}</span></span>`;
                                 }
                             }
+                            // Riding together: a link chip naming the others
+                            // in the group. Tapping it (not on a read-only
+                            // surface) offers to take this event out.
+                            let rideChip = '';
+                            const evRideGroup = stRideGroupOf(ev);
+                            if (evRideGroup) {
+                                const partners = [...new Set(events
+                                    .filter(x => x.id !== ev.id && stRideGroupOf(x) === evRideGroup)
+                                    .map(x => x.title))];
+                                const tip = ('Rides with: ' + partners.join(', ')).replace(/"/g, '&quot;');
+                                const chipId = String(ev.id).replace(/'/g, '&#39;');
+                                rideChip = readOnly
+                                    ? `<span class="ml-1 px-1 rounded font-bold text-[9px] shrink-0 text-sky-200 bg-sky-500/25" title="${tip}">🔗</span>`
+                                    : `<button onclick="openRideGroupChip(event, '${chipId}')" class="pointer-events-auto ml-1 px-1 rounded font-bold text-[9px] shrink-0 text-sky-200 bg-sky-500/25 hover:bg-sky-500/40 cursor-pointer" title="${tip}">🔗</button>`;
+                            }
                             const isCompleted = new Date(ev.end).getTime() < nowTime;
                             const opacityClass = isCompleted ? 'opacity-40 grayscale' : 'opacity-100';
                             const cursorClass = readOnly ? 'cursor-default' : 'cursor-pointer hover:bg-gray-700';
@@ -1154,6 +1180,7 @@
                                             ${overriddenEventsList.includes(ev.id) ? '<span class="ml-1 text-yellow-500"><svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v5.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 111.414-1.414L9 8.586V3a1 1 0 011-1z" /></svg></span>' : ''}
                                             ${lateMins > 0 ? `<span class="ml-1 text-red-500 bg-red-500/20 px-1 rounded font-bold flex items-center text-[10px]" title="Arriving ${lateMins}m late"><svg class="w-2.5 h-2.5 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>${lateMins}m</span>` : ''}
                                             ${carChip}
+                                            ${rideChip}
                                         </div>
                                         <div class="font-bold text-[12px] text-white leading-tight truncate pointer-events-none ${isShort ? 'flex-1 min-w-0' : 'mb-0.5 mt-0.5'}">
                                             ${ev.event_type === 'dropoff' ? '<span class="text-[9px] uppercase bg-orange-600/50 text-orange-200 px-1 rounded mr-1">Drop</span>' : ''}

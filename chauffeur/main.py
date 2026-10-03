@@ -16422,6 +16422,49 @@ def delete_event_config(google_id: str):
     trigger_background_refresh()
     return {"status": "deleted"}
 
+@app.post("/api/events/ride_group")
+def ride_group_api(body: dict = Body(default={}), request: Request = None):
+    """Group these occurrences to ride together (services/ride_groups.py):
+    one driver, never a conflict, routed as one trip. `event_ids` are the
+    schedule's own ids (a split leg keeps its _dropoff/_pickup suffix); the
+    LAST is the drop target, whose existing group the others join."""
+    from services import ride_groups
+    _cancel_actor_refused(request, body.get('member_id'))
+    ids = [str(i) for i in (body.get('event_ids') or []) if i]
+    ids = list(dict.fromkeys(ids))
+    if len(ids) < 2:
+        raise HTTPException(status_code=400, detail="Pick at least two events to group.")
+    supplied = {str(e.get('id')): e for e in (body.get('events') or []) if isinstance(e, dict)}
+    items = [(_ride_group_event(i, supplied.get(i)), i) for i in ids]
+    try:
+        group_id = ride_groups.group(items)
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err))
+    trigger_background_refresh()
+    return {"status": "grouped", "group_id": group_id}
+
+def _ride_group_event(event_id: str, supplied: Optional[dict]) -> dict:
+    """The occurrence keys for a ride group: the cached schedule's event, or
+    -- for a day the Schedule page paged to, outside the cached window -- the
+    keys the page sent. Only keys are read; nothing else is trusted."""
+    try:
+        return _resolve_cached_event(event_id)
+    except HTTPException:
+        if not supplied:
+            raise
+    keep = ('id', 'source_event_ids', 'recurring_event_id', 'start', 'original_start')
+    return {k: supplied.get(k) for k in keep if supplied.get(k) is not None}
+
+@app.delete("/api/events/{event_id}/ride_group")
+def ride_ungroup_api(event_id: str, body: dict = Body(default={}), request: Request = None):
+    """Take one occurrence out of its ride group; a group of one dissolves."""
+    from services import ride_groups
+    _cancel_actor_refused(request, (body or {}).get('member_id'))
+    ev = _ride_group_event(event_id, (body or {}).get('event'))
+    ride_groups.ungroup(ev, event_id)
+    trigger_background_refresh()
+    return {"status": "ungrouped"}
+
 @app.post("/api/events/{event_id}/optional_decision")
 def set_optional_decision_api(event_id: str, body: dict = Body(default={})):
     """Optional events, phase 2: the per-occurrence attend/skip choice.
@@ -17369,6 +17412,10 @@ def hash_events(events_list, assist_map=None):
         dec = getattr(e, 'optional_decision', None)
         if conf.get('is_optional') or dec:
             parts.append(f"opt:{eid}:{1 if conf.get('is_optional') else 0}:{dec or ''}")
+        # Ride groups too: grouping two events changes only how they solve.
+        rg = getattr(e, 'ride_groups', None)
+        if rg:
+            parts.append(f"rg:{eid}:{sorted(rg.items())}")
     return hashlib.sha256("||".join(parts).encode('utf-8')).hexdigest()
 
 import threading
@@ -18106,6 +18153,11 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     # attends regain full weight in the solver.
     from services import optional_events as _opt
     _opt.stamp_decisions(events)
+
+    # Ride groups: occurrences grouped by hand to ride together. Stamped
+    # before unrolling and the attendance split so every copy carries it.
+    from services import ride_groups as _rg
+    _rg.stamp_ride_groups(events)
 
     # Cancellations: detect feed-announced ones first (a "CANCELED …" title
     # arriving from a league system becomes a record + pushes, and a

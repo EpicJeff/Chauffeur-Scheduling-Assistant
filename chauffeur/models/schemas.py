@@ -91,6 +91,13 @@ class Event(BaseModel):
     # the trip actually is, independently of how much of it is in view.
     span_start: Optional[datetime] = None
     span_end: Optional[datetime] = None
+    # Ride groups: the family said THESE occurrences ride together -- both
+    # kids in the car from the start, one driver, never a conflict. Leg
+    # ('' whole event, 'dropoff', 'pickup') -> group id, because a split
+    # event's two legs are grouped independently. Stamped each refresh from
+    # storage.ride_groups (services/ride_groups.py); never a rule, never
+    # written to the event config.
+    ride_groups: Dict[str, str] = Field(default_factory=dict)
 
 class Driver(BaseModel):
     id: str

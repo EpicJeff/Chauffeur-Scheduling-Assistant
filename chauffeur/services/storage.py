@@ -426,6 +426,10 @@ with db_lock:
     # tombstone that keeps a resurrected ICS event canceled. Restoring sets
     # restored_at rather than deleting — the history is the point.
     event_cancellations_table = db.table('event_cancellations')
+    # Ride groups: occurrences the family grouped by hand to ride together
+    # (services/ride_groups.py). Own table for the optional-decisions reason:
+    # an instance config would shadow the series config wholesale.
+    ride_groups_table = db.table('ride_groups')
     shopping_lists_table = db.table('shopping_lists')
     shopping_items_table = db.table('shopping_items')
     meals_table = db.table('meals')
@@ -2442,6 +2446,37 @@ def restore_event_cancellation(google_ids, date: str) -> Optional[dict]:
             (q.google_id == rec['google_id']) & (q.date == date))
     rec['restored_at'] = _time.time()
     return rec
+
+# --- Ride groups ---
+# One row per grouped occurrence leg: (google_id, date, leg) -> group_id.
+# Keyed like optional decisions (instance google id, occurrence date), plus
+# the leg so a split event's dropoff and pickup group independently.
+
+def get_ride_group_rows(date: str = None) -> List[dict]:
+    with db_lock:
+        if date:
+            return [dict(r) for r in ride_groups_table.search(Query().date == date)]
+        return [dict(r) for r in ride_groups_table.all()]
+
+def set_ride_group_row(google_id: str, date: str, leg: str, group_id: str):
+    import time as _time
+    q = Query()
+    with db_lock:
+        ride_groups_table.remove((q.google_id == google_id) & (q.date == date)
+                                 & (q.leg == leg))
+        ride_groups_table.insert({'google_id': google_id, 'date': date,
+                                  'leg': leg, 'group_id': group_id,
+                                  'ts': _time.time()})
+
+def remove_ride_group_row(google_id: str, date: str, leg: str):
+    q = Query()
+    with db_lock:
+        ride_groups_table.remove((q.google_id == google_id) & (q.date == date)
+                                 & (q.leg == leg))
+
+def prune_ride_groups(before_date: str):
+    with db_lock:
+        ride_groups_table.remove(Query().date < before_date)
 
 # --- Outside hands (load arc A1) ---
 # Contacts who do work for this household without holding the app, and the
