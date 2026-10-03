@@ -261,6 +261,25 @@ def restore_event(event_name: str, target_date: str = 'today',
                                          restore=True)
 
 
+def group_events_ride_together(event_names, target_date: str = 'today',
+                               acting_member: dict = None) -> Dict[str, Any]:
+    """
+    Groups one day's event occurrences to ride together: one driver, never a
+    conflict, one trip. That day only -- never a rule. Parent/adult only.
+    """
+    from services import ride_groups
+    return ride_groups.group_by_titles(event_names, target_date,
+                                       acting_member=acting_member)
+
+
+def ungroup_event(event_name: str, target_date: str = 'today',
+                  acting_member: dict = None) -> Dict[str, Any]:
+    """Takes one occurrence out of its ride-together group."""
+    from services import ride_groups
+    return ride_groups.ungroup_by_title(event_name, target_date,
+                                        acting_member=acting_member)
+
+
 # ==============================================================================
 # TRIP TOOLS
 # ==============================================================================
@@ -3653,6 +3672,30 @@ def get_available_tools() -> List[Dict]:
                     "target_date": {"type": "string", "description": "A date the event occurs on, YYYY-MM-DD or relative ('today', 'Thursday'), used to find it. Default today."},
                     "optional": {"type": "boolean", "description": "true to mark optional (default), false to make it a firm commitment again."},
                     "scope": {"type": "string", "enum": ["series", "instance"], "description": "series (default) = every occurrence; instance = only the one on target_date."}
+                },
+                "required": ["event_name"]
+            }
+        },
+        {
+            "name": "group_events_ride_together",
+            "description": "Groups specific events on ONE day to ride together ('Ava's swim and Ben's dive can go together', 'put both kids in the car for swim and dive'): one driver takes all of them, they never count as a conflict, and the route is one trip with no drive home in between. That day's occurrences only -- other weeks are untouched; it is not a rule. Parents/adults only.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_names": {"type": "array", "items": {"type": "string"}, "description": "Two or more event names (or substrings), all on target_date. The last is the event the others join."},
+                    "target_date": {"type": "string", "description": "The day of the occurrences as YYYY-MM-DD (relative terms like 'today' or 'tomorrow' are accepted). Default today."}
+                },
+                "required": ["event_names"]
+            }
+        },
+        {
+            "name": "ungroup_event",
+            "description": "Takes one event out of its ride-together group ('swim doesn't ride with dive anymore'). A group left with one event dissolves. Parents/adults only.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_name": {"type": "string", "description": "The name of the event or a substring of it."},
+                    "target_date": {"type": "string", "description": "The date of the occurrence. Default today."}
                 },
                 "required": ["event_name"]
             }

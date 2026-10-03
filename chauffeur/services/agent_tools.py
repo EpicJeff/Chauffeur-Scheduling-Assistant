@@ -40,7 +40,7 @@ class DeleteRoutingRuleTool(BaseModel):
 class AddPriorityRuleTool(BaseModel):
     """
     Creates a new priority rule to mark an event's relative IMPORTANCE.
-    Do NOT use this for grouping events (use AddRoutingRuleTool with constraint_type='group' instead).
+    Do NOT use this for grouping events (use AddRoutingRuleTool with constraint_type='group' for a standing rule, or GroupEventsRideTogetherTool for one day's occurrences).
     """
     weight_modifier: int = Field(..., description="Score modifier added to this event's base assignment reward. Scale: 1000 = mild nudge, 100000 = outranks passenger-continuity bonuses, 500000 = near-mandatory. Use 100000 for critical must-route events like doctor appointments. Negative values deprioritize. Do NOT use this for 'staying' at an event, that is an attendance rule.")
     keywords: List[str] = Field(..., description="List of keywords to match against the event title and description.")
@@ -853,6 +853,20 @@ class CancelEventTool(BaseModel):
     target_date: Optional[str] = Field("today", description="The date of the occurrence, YYYY-MM-DD or relative ('today', 'tomorrow').")
     reason: Optional[str] = Field(None, description="Why it was canceled ('coach is sick') — rides the pushes and the record.")
 
+class GroupEventsRideTogetherTool(BaseModel):
+    """
+    Groups specific event occurrences on ONE day to ride together ("Ava's swim and Ben's dive can go together", "put both kids in the car for swim and dive"): one driver takes all of them, they never count as a conflict, and the route is one trip with no drive home in between. Applies to that day's occurrences only -- other weeks are untouched. For a standing rule across weeks use AddRoutingRuleTool with constraint_type='group' instead. Parents/adults only.
+    """
+    event_names: List[str] = Field(..., description="Two or more event names (or substrings), all on target_date. The last one is the event the others join.")
+    target_date: Optional[str] = Field("today", description="The day of the occurrences, YYYY-MM-DD or relative ('today', 'tomorrow').")
+
+class UngroupEventTool(BaseModel):
+    """
+    Takes one event occurrence out of its ride-together group ("swim doesn't ride with dive anymore"). A group left with one event dissolves. Parents/adults only.
+    """
+    event_name: str = Field(..., description="The name of the event or a substring of it.")
+    target_date: Optional[str] = Field("today", description="The date of the occurrence.")
+
 class RestoreEventTool(BaseModel):
     """
     Un-cancels a previously canceled event occurrence ("practice is back on") — restores the Google title, re-plans the drive, tells everyone it is happening after all. Parents/adults only.
@@ -932,6 +946,8 @@ TOOL_SCHEMAS = {
     "set_event_optional": SetEventOptionalTool.model_json_schema(),
     "cancel_event": CancelEventTool.model_json_schema(),
     "restore_event": RestoreEventTool.model_json_schema(),
+    "group_events_ride_together": GroupEventsRideTogetherTool.model_json_schema(),
+    "ungroup_event": UngroupEventTool.model_json_schema(),
     "get_kid_tasks": GetKidTasksTool.model_json_schema(),
     "add_kid_task": AddKidTaskTool.model_json_schema(),
     "complete_kid_task": CompleteKidTaskTool.model_json_schema(),
@@ -2395,6 +2411,18 @@ def handle_restore_event(args: dict) -> dict:
                                          args.get("target_date") or "today",
                                          restore=True)
 
+def handle_group_events_ride_together(args: dict) -> dict:
+    # Admin dashboard / HA voice: parent surfaces, so the gate passes on None
+    # (same reasoning as handle_cancel_event).
+    from services import ride_groups
+    return ride_groups.group_by_titles(args.get("event_names") or [],
+                                       args.get("target_date") or "today")
+
+def handle_ungroup_event(args: dict) -> dict:
+    from services import ride_groups
+    return ride_groups.ungroup_by_title(args.get("event_name") or "",
+                                        args.get("target_date") or "today")
+
 def handle_launch_mission(args: dict) -> dict:
     # v1 loop is admin-only (dashboard/HA voice), so no acting-member gate is
     # needed here — same "trusted context" reasoning as handle_send_family_message
@@ -2485,6 +2513,8 @@ TOOL_HANDLERS = {
     "set_event_optional": handle_set_event_optional,
     "cancel_event": handle_cancel_event,
     "restore_event": handle_restore_event,
+    "group_events_ride_together": handle_group_events_ride_together,
+    "ungroup_event": handle_ungroup_event,
     "get_kid_tasks": handle_get_kid_tasks,
     "add_kid_task": handle_add_kid_task,
     "complete_kid_task": handle_complete_kid_task,

@@ -312,6 +312,45 @@ def scenario_the_endpoints_run():
     storage.members_table.truncate()
 
 
+def scenario_both_agent_stacks_group_by_name():
+    import main
+    from services import agent_tools, agent_tools_v2
+    _reset()
+    main.trigger_background_refresh = lambda *a, **k: None
+    check({"group_events_ride_together", "ungroup_event"} <= set(agent_tools.TOOL_HANDLERS)
+          and {"group_events_ride_together", "ungroup_event"} <= set(agent_tools.TOOL_SCHEMAS),
+          "the v1 stack has schema and handler")
+    v2_names = {t.get("name") for t in agent_tools_v2.get_available_tools()}
+    check({"group_events_ride_together", "ungroup_event"} <= v2_names,
+          "the chat widget's stack (agent_tools_v2) has them too")
+    router_src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                   'services', 'agent_router.py'), encoding='utf-8').read()
+    check('"group_events_ride_together"' in router_src and 'ungroup_event(' in router_src,
+          "and the router dispatches them")
+
+    a, b = pair()
+    _cache(a, b)
+    day = DAY.date().isoformat()
+    res = agent_tools.TOOL_HANDLERS["group_events_ride_together"](
+        {"event_names": ["swim", "dive"], "target_date": day})
+    check(res.get("status") == "success" and len(storage.get_ride_group_rows()) == 2,
+          f"v1 groups by name: {res} / {storage.get_ride_group_rows()}")
+    res = agent_tools_v2.ungroup_event("dive", day)
+    check(res.get("status") == "success" and storage.get_ride_group_rows() == [],
+          f"v2 ungroups by name, and the pair dissolves: {res}")
+    res = agent_tools_v2.group_events_ride_together("swim and dive", day)
+    check(res.get("status") == "success" and len(storage.get_ride_group_rows()) == 2,
+          f"a spoken list in one string is split, not refused: {res}")
+    _reset()
+    res = agent_tools_v2.group_events_ride_together(["swim", "swim"], day)
+    check(res.get("status") == "error" and "both matched" in res.get("message", ""),
+          f"two names for one event are refused out loud: {res}")
+    res = agent_tools_v2.group_events_ride_together(["swim", "dive"], day,
+                                                    acting_member={"id": "k", "role": "child"})
+    check(res.get("status") == "error" and storage.get_ride_group_rows() == [],
+          f"a child asking Argyle is refused: {res}")
+
+
 def scenario_the_hand_path_exists():
     tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'templates')
     dash = open(os.path.join(tpl, 'dashboard.html'), encoding='utf-8').read()

@@ -378,6 +378,9 @@ sending or claiming, and never pass from_member/member_name for them.
                              # Cancellations confirm themselves out loud too
                              # ("canceled — the driver and the kids are told").
                              "cancel_event", "restore_event",
+                             # Ride groups confirm themselves ("they ride
+                             # together with one driver, that day only").
+                             "group_events_ride_together", "ungroup_event",
                              "add_trip_poi",
                              "clear_trip_itinerary", "auto_schedule_trip_itinerary",
                              "manage_trip_rules", "manage_trip_flights",
@@ -579,6 +582,18 @@ sending or claiming, and never pass from_member/member_name for them.
                                            acting_member=acting_member)
                     else:
                         res = restore_event(args.get("event_name") or "",
+                                            args.get("target_date") or "today",
+                                            acting_member=acting_member)
+                    if res.get("status") == "success": schedule_dirty = True
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name in ("group_events_ride_together", "ungroup_event"):
+                    from services.agent_tools_v2 import group_events_ride_together, ungroup_event
+                    if func_name == "group_events_ride_together":
+                        res = group_events_ride_together(args.get("event_names") or [],
+                                                         args.get("target_date") or "today",
+                                                         acting_member=acting_member)
+                    else:
+                        res = ungroup_event(args.get("event_name") or "",
                                             args.get("target_date") or "today",
                                             acting_member=acting_member)
                     if res.get("status") == "success": schedule_dirty = True

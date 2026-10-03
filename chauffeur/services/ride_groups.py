@@ -170,3 +170,78 @@ def ungroup(ev, req_id) -> bool:
     if len(rest) == 1:
         storage.remove_ride_group_row(rest[0]['google_id'], date, rest[0].get('leg') or '')
     return True
+
+
+# --- Agent path (both stacks) ---
+
+def _refused(acting_member) -> dict:
+    """Regrouping the family's drives is a parent/adult act, same gate as
+    cancellations (and the endpoints' _cancel_actor_refused)."""
+    if (acting_member or {}).get('role') in ('child', 'helper', 'guest'):
+        return {'status': 'error',
+                'message': "Only a parent or adult can group or ungroup "
+                           "events -- ask one of them."}
+    return None
+
+
+def _refresh():
+    try:
+        import main as _m
+        _m.trigger_background_refresh()
+    except Exception:
+        pass
+
+
+def group_by_titles(event_names, target_date: str = 'today',
+                    acting_member: dict = None) -> dict:
+    """Resolve each name on the date (fuzzy, over the cached schedule) and
+    group them to ride together. The LAST name is the one the others join,
+    as with a drop."""
+    refused = _refused(acting_member)
+    if refused:
+        return refused
+    from services.agent_tools_v2 import _find_event_fuzzy
+    if isinstance(event_names, str):
+        event_names = re.split(r',|\band\b', event_names)
+    names = [str(n).strip() for n in (event_names or []) if str(n or '').strip()]
+    if len(names) < 2:
+        return {'status': 'error',
+                'message': "Name at least two events to ride together."}
+    items, seen = [], {}
+    for name in names:
+        ev, err = _find_event_fuzzy(name, target_date or 'today')
+        if err:
+            return {'status': 'error', 'message': err}
+        if ev['id'] in seen:
+            return {'status': 'error',
+                    'message': f"'{name}' and '{seen[ev['id']]}' both matched "
+                               f"'{ev.get('title')}' -- name them more exactly."}
+        seen[ev['id']] = name
+        items.append((ev, ev['id']))
+    try:
+        group(items)
+    except ValueError as err:
+        return {'status': 'error', 'message': str(err)}
+    _refresh()
+    titles = [ev.get('title') for ev, _ in items]
+    return {'status': 'success',
+            'message': f"Grouped {', '.join(titles[:-1])} with {titles[-1]}: "
+                       f"they ride together with one driver, for that day only."}
+
+
+def ungroup_by_title(event_name: str, target_date: str = 'today',
+                     acting_member: dict = None) -> dict:
+    refused = _refused(acting_member)
+    if refused:
+        return refused
+    from services.agent_tools_v2 import _find_event_fuzzy
+    ev, err = _find_event_fuzzy(event_name or '', target_date or 'today')
+    if err:
+        return {'status': 'error', 'message': err}
+    if not ungroup(ev, ev['id']):
+        return {'status': 'success',
+                'message': f"'{ev.get('title')}' wasn't riding with anything."}
+    _refresh()
+    return {'status': 'success',
+            'message': f"'{ev.get('title')}' no longer rides with the others; "
+                       f"the solver plans it on its own again."}
