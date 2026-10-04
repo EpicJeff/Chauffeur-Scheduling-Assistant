@@ -1276,7 +1276,7 @@ def get_family_messages(limit: int = 10, requester_driver_id: str = None) -> Dic
 
 def list_chores() -> Dict[str, Any]:
     from services import storage
-    chores = storage.get_all_chores()
+    chores = storage.get_offered_chores()   # out of season: not on the list
     names = {m['id']: m.get('name', '?') for m in storage.get_all_members(include_archived=True)}
     open_c = [c for c in chores if c.get('state') == 'open']
     claimed = [c for c in chores if c.get('state') == 'claimed']
@@ -2002,7 +2002,7 @@ def claim_chore(chore_title: str, member_name: str = None,
     title = (chore_title or '').strip().lower()
     if not title:
         return {"status": "error", "message": "Which chore should be claimed?"}
-    chores = storage.get_all_chores()
+    chores = storage.get_offered_chores()   # an out-of-season chore cannot be claimed
     matches = [c for c in chores if title in (c.get('title') or '').lower()]
     open_matches = [c for c in matches if c.get('state') == 'open']
     if not matches:
@@ -2058,7 +2058,8 @@ def get_family_goals() -> Dict[str, Any]:
     if _rewards_off():
         return dict(REWARDS_OFF)
     from services import storage
-    goals = [r for r in storage.get_rewards() if r.get('pooled')]
+    # Switched-off and out-of-season goals are not on offer (services/seasons.py).
+    goals = [r for r in storage.get_offered_rewards() if r.get('pooled')]
     if not goals:
         return {"status": "success", "goals": [],
                 "message": "There are no family goals set up right now."}
@@ -2096,7 +2097,7 @@ def contribute_to_family_goal(reward_title: str, amount: int, member_name: str =
                 "message": f"Only children pledge points — {actor.get('name')} isn't a child. "
                            "Parents can adjust the goal or grant it in the app."}
     title = (reward_title or '').strip().lower()
-    goals = [r for r in storage.get_rewards() if r.get('pooled')]
+    goals = [r for r in storage.get_offered_rewards() if r.get('pooled')]
     matches = [g for g in goals if (g.get('title') or '').lower() == title] \
         or [g for g in goals if title and title in (g.get('title') or '').lower()]
     if not matches:

@@ -9856,6 +9856,10 @@ class ChoreCreateRequest(BaseModel):
     # A permanent arrangement — this chore is theirs, every time it recurs.
     # A member id, or 'assist:<id>'. Per-instance assignment is /assign.
     owner: Optional[str] = None
+    # Yearly window, "MM-DD" each; both empty = all year (services/seasons.py).
+    # Only touched on edit when the client sends them.
+    season_start: Optional[str] = None
+    season_end: Optional[str] = None
 
 def _clean_emoji(v):
     # A glyph, not a caption: cap at 8 chars (covers ZWJ sequences), blank -> None
@@ -9871,9 +9875,29 @@ def _validate_chore_fields(req):
     if req.recurrence not in ('once', 'daily', 'weekly', 'monthly'):
         raise HTTPException(status_code=400, detail="Invalid recurrence")
 
+
+def _season_fields(req) -> dict:
+    """The yearly window off a chore or reward request, cleaned -- or {} when
+    the client never mentioned it, so an editor that predates seasons cannot
+    wipe one out by saving."""
+    if not ({'season_start', 'season_end'} & set(req.model_fields_set)):
+        return {}
+    from services import seasons
+    try:
+        start, end = seasons.clean(req.season_start, req.season_end)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {'season_start': start, 'season_end': end}
+
 @app.get("/api/chores")
-def list_chores():
-    chores = storage.get_all_chores()
+def list_chores(manage: bool = False):
+    """The chores the family sees right now; out-of-season rows are skipped
+    (services/seasons.py). `manage=1` is the Chores page, which lists every
+    row with its season so a parent can still edit it."""
+    from services import seasons
+    chores = storage.get_all_chores() if manage else storage.get_offered_chores()
+    for c in chores:
+        seasons.annotate(c, 'chore')
     members = {m['id']: m for m in storage.get_all_members(include_archived=True)}
     # Outside hands claim chores too — the same shape as an adult claiming one,
     # earning nothing. Resolving the name here is what stops a chore Maddie did
@@ -9929,10 +9953,13 @@ def create_chore(req: ChoreCreateRequest, background_tasks: BackgroundTasks):
                   points=int(req.points), recurrence=req.recurrence,
                   eligible_member_ids=req.eligible_member_ids or []).model_dump()
     chore.update(_owned_chore_fields(req.owner))
+    chore.update(_season_fields(req))
     storage.add_chore(chore)
     # An owned chore is nobody's to pick up, so the "new chore posted" blast to
-    # the eligible kids would be an invitation to something already taken.
-    if not req.owner:
+    # the eligible kids would be an invitation to something already taken --
+    # and a chore posted out of season is an invitation to nothing yet.
+    from services import seasons
+    if not req.owner and seasons.in_season(chore):
         background_tasks.add_task(_notify_chore_event, 'posted', chore)
     return chore
 
@@ -9946,6 +9973,7 @@ def edit_chore(chore_id: str, req: ChoreCreateRequest):
              'description': req.description or '',
              'points': int(req.points), 'recurrence': req.recurrence,
              'eligible_member_ids': req.eligible_member_ids or []}
+    patch.update(_season_fields(req))
     # Only touch the lifecycle when the OWNER actually changed — editing the
     # title of a chore somebody has already finished must not reset it.
     if (req.owner or None) != (existing.get('owner') or None):
@@ -9969,7 +9997,9 @@ def reopen_chore_endpoint(chore_id: str, background_tasks: BackgroundTasks):
                             detail="Only verified or claimed chores can be reopened — "
                                    "finished work awaiting verification should be verified or rejected in the app")
     chore = storage.get_chore(chore_id)
-    background_tasks.add_task(_notify_chore_event, 'posted', chore)
+    from services import seasons
+    if seasons.in_season(chore):          # out of season, nobody to tell yet
+        background_tasks.add_task(_notify_chore_event, 'posted', chore)
     return chore
 
 class ChoreMemberRequest(BaseModel):
@@ -10002,6 +10032,9 @@ def claim_chore_endpoint(chore_id: str, req: ChoreMemberRequest):
     chore = storage.get_chore(chore_id)
     if not chore:
         raise HTTPException(status_code=404, detail="Chore not found")
+    from services import seasons
+    if not seasons.in_season(chore):
+        raise HTTPException(status_code=409, detail="That chore is out of season")
     eligible = chore.get('eligible_member_ids') or []
     if eligible and req.member_id not in eligible:
         raise HTTPException(status_code=403, detail="This chore isn't available to you")
@@ -11577,6 +11610,14 @@ class RewardRequest(BaseModel):
     cost: int = 50
     pooled: bool = False
     min_share: int = 0
+    active: Optional[bool] = None
+    # Yearly window, "MM-DD" each; both empty = all year (services/seasons.py).
+    season_start: Optional[str] = None
+    season_end: Optional[str] = None
+
+
+class RewardActiveRequest(BaseModel):
+    active: bool
 
 @app.get("/api/rewards")
 def list_rewards(manage: bool = False):
@@ -11584,12 +11625,13 @@ def list_rewards(manage: bool = False):
     lanes, the PWA and the child shell all simply have nothing to offer;
     `manage=1` is the chores page's catalog editor, which keeps working so a
     parent can tidy the shop while it is closed."""
-    from services import household_features as _hf
-    if not manage and not _hf.rewards_enabled():
-        return []
-    rewards = storage.get_rewards()
+    from services import seasons
+    # Each reward's own switch and season apply too (services/seasons.py):
+    # the family sees only what is on and in season, the editor sees all.
+    rewards = storage.get_rewards() if manage else storage.get_offered_rewards()
     rewards.sort(key=lambda r: r.get('cost', 0))
     for r in rewards:
+        seasons.annotate(r, 'reward')
         if r.get('pooled'):
             r['pool'] = storage.get_pool_status(r)
     return rewards
@@ -11605,7 +11647,9 @@ def create_reward(req: RewardRequest):
         raise HTTPException(status_code=400, detail="Minimum share must be between 0 and the cost")
     reward = Reward(title=req.title.strip(), description=req.description or '',
                     cost=int(req.cost), pooled=bool(req.pooled),
-                    min_share=int(req.min_share) if req.pooled else 0).model_dump()
+                    min_share=int(req.min_share) if req.pooled else 0,
+                    active=req.active is not False).model_dump()
+    reward.update(_season_fields(req))
     storage.add_reward(reward)
     return reward
 
@@ -11613,12 +11657,24 @@ def create_reward(req: RewardRequest):
 def edit_reward(reward_id: str, req: RewardRequest):
     if req.min_share < 0 or (req.pooled and req.min_share > int(req.cost)):
         raise HTTPException(status_code=400, detail="Minimum share must be between 0 and the cost")
-    if not storage.update_reward(reward_id, {
-            'title': req.title.strip(), 'description': req.description or '',
-            'cost': int(req.cost), 'pooled': bool(req.pooled),
-            'min_share': int(req.min_share) if req.pooled else 0}):
+    patch = {'title': req.title.strip(), 'description': req.description or '',
+             'cost': int(req.cost), 'pooled': bool(req.pooled),
+             'min_share': int(req.min_share) if req.pooled else 0}
+    if req.active is not None:
+        patch['active'] = bool(req.active)
+    patch.update(_season_fields(req))
+    if not storage.update_reward(reward_id, patch):
         raise HTTPException(status_code=404, detail="Reward not found")
     return {"status": "updated"}
+
+@app.post("/api/rewards/{reward_id}/active")
+def set_reward_active(reward_id: str, req: RewardActiveRequest):
+    """The per-reward switch, one tap on the Chores page. Off takes it out
+    of the family's store; any request or pledge already on it stays for a
+    parent to decide."""
+    if not storage.update_reward(reward_id, {'active': bool(req.active)}):
+        raise HTTPException(status_code=404, detail="Reward not found")
+    return {"status": "updated", "active": bool(req.active)}
 
 @app.delete("/api/rewards/{reward_id}")
 def remove_reward(reward_id: str):
@@ -11643,6 +11699,8 @@ def redeem_reward(reward_id: str, req: ChoreMemberRequest, background_tasks: Bac
     result = storage.request_redemption(reward_id, req.member_id)
     if result == 'missing':
         raise HTTPException(status_code=404, detail="Reward not found")
+    if result == 'unavailable':
+        raise HTTPException(status_code=409, detail="That reward isn't available right now")
     if result == 'pooled':
         raise HTTPException(status_code=409, detail="This is a family goal — chip in points instead")
     if result == 'insufficient':
@@ -11724,6 +11782,8 @@ def contribute_to_pool_endpoint(reward_id: str, req: PoolContributeRequest,
     result, pledged = storage.contribute_to_pool(reward_id, req.member_id, req.amount)
     if result == 'missing':
         raise HTTPException(status_code=404, detail="Reward not found")
+    if result == 'unavailable':
+        raise HTTPException(status_code=409, detail="That goal isn't available right now")
     if result == 'not_pooled':
         raise HTTPException(status_code=409, detail="That reward isn't a family goal")
     if result == 'invalid':

@@ -297,17 +297,19 @@
             },
             async loadChores() {
                 try {
-                    const res = await fetch(`${apiBase}api/chores`);
+                    // `manageCatalog`: the Chores page lists every chore,
+                    // out-of-season ones too, so a parent can still edit them.
+                    const res = await fetch(`${apiBase}api/chores${this.manageCatalog ? '?manage=1' : ''}`);
                     const data = await res.json();
                     this.chores = Array.isArray(data) ? data : [];
                 } catch (e) { this.chores = []; }
             },
             async loadRewards() {
                 try {
-                    // `manageRewards` is the chores page's catalog editor: it
-                    // sees the store even while the household has rewards
-                    // switched off. Every lane gets the family's view.
-                    const res = await fetch(`${apiBase}api/rewards${this.manageRewards ? '?manage=1' : ''}`);
+                    // `manageCatalog` is the chores page's catalog editor: it
+                    // sees the whole store -- switched off, out of season or
+                    // closed household-wide. Every lane gets the family's view.
+                    const res = await fetch(`${apiBase}api/rewards${this.manageCatalog ? '?manage=1' : ''}`);
                     this.rewards = await res.json();
                 } catch (e) { this.rewards = []; }
             },

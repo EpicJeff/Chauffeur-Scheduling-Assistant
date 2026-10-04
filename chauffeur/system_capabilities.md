@@ -1,6 +1,19 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.225 (2026-10-04).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.226 (2026-10-04).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**Seasons for chores and rewards, and a switch on each reward (v2.499.226; `services/seasons.py`, `Chore` / `Reward` `season_start` / `season_end`, `Reward.active`, `storage.get_offered_rewards` / `get_offered_chores`, `main._season_fields`, `main.set_reward_active` (`POST /api/rewards/{id}/active`), `list_chores(manage=)` / `list_rewards(manage=)`, `chores.html` `season_editor` macro / `setRewardActive` / `seasonIn` / `seasonOut`, `tests/test_seasons.py`).** User: each reward needs its own on/off, because some rewards are seasonal; and chores and rewards both want date ranges (summer, the cool months, the holidays) so they only show at those times.
+
+What it does:
+- **A yearly window** on any chore or reward: `season_start` / `season_end`, "MM-DD", inclusive, no year (it recurs every year), wrapping New Year when start > end (Nov 15 – Jan 5). Both empty = all year; half a window reads as all year and the API refuses to save one. Feb 29 is a valid end. The Chores page form picks month + day with four quick fills (All year, Summer Jun 1 – Aug 31, Cool months Oct 1 – Mar 31, Holidays Nov 15 – Jan 5).
+- **A per-reward switch** (`active`, default on): one checkbox on each reward row. Edits that do not send `active` (or a season) leave it alone.
+- **The family sees only what is offered.** `GET /api/rewards` gives the store minus switched-off and out-of-season rewards (and `[]` while the household switch is off); `GET /api/chores` gives the in-season chores. The lanes, PWA, child shell, wall goals tile, Argyle (goals, chore list, claim), House attention badges and the unclaimed-chore nag all read these. `manage=1` is the Chores page, which lists every row with `season_label` / `in_season` / `offered` / `active`, dims what the family cannot see, and labels why ("Out of season · Jun 1 – Aug 31", "Off — hidden from the family").
+- **The asks refuse** out of season or switched off: claim (409 "out of season"), redeem and pledge (409 "isn't available right now", via `request_redemption` / `contribute_to_pool` returning `'unavailable'`). A chore created or reopened out of season sends no "new chore posted" push.
+
+Invariants:
+- **Work under way is never yanked** (`seasons.chore_offered`): out of season, a chore that is DONE and waiting for a parent stays visible, and so does one a child CLAIMED from the pot. The open pot, last period's verified row and an OWNER's standing job go quiet ("Sam mows the lawn" does not sit on Sam's list all winter).
+- **Nothing is taken.** No row is deleted or reset by a season or a switch; requests and pledges already on a switched-off or out-of-season reward stay for a parent to decide, and a child can still withdraw a pledge. Recurring chores keep reopening on their cadence out of season, just unseen.
+- Chores have no per-chore switch (not asked for; a chore nobody wants is deleted). Dates use the server's local date, like the chore upkeep.
 
 **Household feature switches: critters and rewards (v2.499.225; `services/household_features.py`, `Settings.critters_enabled` / `rewards_enabled`, `main._feature_gate` (global dependency after `_auth_guard`), `main.list_rewards(manage=)`, `window.chfFeatures` / `chfFeatureOn()` in `ha_theme.html` + `app.html`, `chores.html` `features` / `saveFeature`, `tests/test_household_features.py`).** User: a toggle that shows or hides critters completely from the wall panel and the app so the family can decide whether they want the feature, and a toggle that temporarily removes rewards.
 

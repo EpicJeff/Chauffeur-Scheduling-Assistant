@@ -381,6 +381,10 @@ class Chore(BaseModel):
     verified_at: Optional[float] = None
     rejected_reason: Optional[str] = None
     reopens_on: Optional[str] = None  # ISO date; recurring verified reopen
+    # A yearly window, "MM-DD" each, inclusive, may wrap New Year; both None =
+    # all year. Out of season the family stops seeing it (services/seasons.py).
+    season_start: Optional[str] = None
+    season_end: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
 
 class KidTask(BaseModel):
@@ -547,6 +551,12 @@ class Reward(BaseModel):
     # Pooled only: minimum pledge per child before a parent can grant
     # without forcing (0 = no minimum). Keeps one kid from riding free.
     min_share: int = 0
+    # The parent's hand switch for THIS reward, and its yearly window
+    # (services/seasons.py). Off or out of season, the family's store skips
+    # it; nothing about it is deleted.
+    active: bool = True
+    season_start: Optional[str] = None
+    season_end: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
 
 class Redemption(BaseModel):

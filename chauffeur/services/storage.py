@@ -5302,6 +5302,23 @@ def prune_day_counters(before_date: str) -> int:
 
 # --- Rewards + redemptions ---
 
+def get_offered_rewards() -> List[dict]:
+    """The family's store right now: nothing while the household has rewards
+    switched off, and otherwise every reward that is switched on and in season
+    (services/seasons.py). get_rewards() stays the whole catalog."""
+    from services import household_features, seasons
+    if not household_features.rewards_enabled():
+        return []
+    return [r for r in get_rewards() if seasons.reward_offered(r)]
+
+
+def get_offered_chores() -> List[dict]:
+    """The chores the family sees right now (services/seasons.chore_offered).
+    get_all_chores() stays every row, for the Chores page and the upkeep."""
+    from services import seasons
+    return [c for c in get_all_chores() if seasons.chore_offered(c)]
+
+
 def get_rewards() -> List[dict]:
     with db_lock:
         return [dict(r) for r in rewards_table.all()]
@@ -5355,6 +5372,9 @@ def request_redemption(reward_id: str, member_id: str) -> str:
         if not reward:
             return 'missing'
         reward = dict(reward[0])
+    from services import seasons
+    if not seasons.reward_offered(reward):
+        return 'unavailable'
     if reward.get('pooled'):
         return 'pooled'
     if get_spendable_points(member_id) < reward.get('cost', 0):
@@ -5476,6 +5496,9 @@ def contribute_to_pool(reward_id: str, member_id: str, amount: int):
         if not rows:
             return 'missing', 0
         reward = dict(rows[0])
+    from services import seasons
+    if not seasons.reward_offered(reward):
+        return 'unavailable', 0
     if not reward.get('pooled'):
         return 'not_pooled', 0
     amount = int(amount)

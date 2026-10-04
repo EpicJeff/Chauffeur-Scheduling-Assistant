@@ -1977,7 +1977,8 @@ def _tile_chores_goals(now, config=None, **_):
         if not household_features.rewards_enabled():
             return None                  # switched off: the card vanishes
         goals = []
-        for r in storage.get_rewards():
+        # Offered only: a goal switched off or out of season is not on the wall.
+        for r in storage.get_offered_rewards():
             if not r.get('pooled'):
                 continue
             goals.append({'id': r.get('id'), 'title': r.get('title'),

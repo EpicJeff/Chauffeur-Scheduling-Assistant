@@ -238,7 +238,9 @@ def _chore_findings(now_ts: float):
     """
     out = []
     unclaimed = []
-    for c in storage.get_all_chores():
+    # Offered chores only: an out-of-season chore is not "unclaimed", it is
+    # waiting for its season (services/seasons.py). Done ones always count.
+    for c in storage.get_offered_chores():
         state = c.get('state')
         if state == 'done' and c.get('done_at') \
                 and now_ts - c['done_at'] >= STALE_VERIFY_HOURS * 3600:

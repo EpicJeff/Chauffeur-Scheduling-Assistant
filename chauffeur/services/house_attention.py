@@ -8,7 +8,7 @@ def _signal(count=0, available=0):
 
 
 def _chores(now):
-    rows = storage.get_all_chores() or []
+    rows = storage.get_offered_chores() or []   # out of season is not owed
     # The unclaimed chore pot is an opportunity, not household debt.
     return _signal(sum(r.get('state') in ('claimed', 'done') or
                        (r.get('state') == 'open' and bool(r.get('owner')))

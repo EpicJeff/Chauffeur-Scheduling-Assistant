@@ -23,6 +23,42 @@
     {% include 'nav.html' %}
 
     <div class="flex-1 overflow-y-auto bg-gray-900/50" x-data="choresPage()" x-init="init()" x-cloak>
+{#- The yearly window editor, shared by the chore and the reward forms
+    (services/seasons.py). Month + day, no year: a season comes back every
+    year on its own. Start after end wraps New Year. -#}
+{% macro season_editor(obj) %}
+<div class="w-full mt-4">
+    <label class="block text-gray-400 mb-1 text-sm">Season (optional) &mdash; when the family sees it, every year</label>
+    <div class="flex gap-2 items-center flex-wrap">
+        <select x-model="{{ obj }}.s_month" aria-label="Season starts: month"
+            class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+            <option value="">All year</option>
+            <template x-for="(mn, i) in seasonMonths" :key="'s' + i">
+                <option :value="String(i + 1)" x-text="mn"></option>
+            </template>
+        </select>
+        <input type="number" min="1" max="31" x-model.number="{{ obj }}.s_day" x-show="{{ obj }}.s_month"
+            aria-label="Season starts: day" class="w-20 bg-gray-900 border border-gray-600 rounded p-3 text-white">
+        <span class="text-gray-400 text-sm font-bold" x-show="{{ obj }}.s_month">to</span>
+        <select x-model="{{ obj }}.e_month" x-show="{{ obj }}.s_month" aria-label="Season ends: month"
+            class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+            <template x-for="(mn, i) in seasonMonths" :key="'e' + i">
+                <option :value="String(i + 1)" x-text="mn"></option>
+            </template>
+        </select>
+        <input type="number" min="1" max="31" x-model.number="{{ obj }}.e_day" x-show="{{ obj }}.s_month"
+            aria-label="Season ends: day" class="w-20 bg-gray-900 border border-gray-600 rounded p-3 text-white">
+    </div>
+    <div class="flex gap-2 flex-wrap mt-2">
+        <template x-for="p in seasonPresets" :key="p.label">
+            <button type="button" @click="Object.assign({{ obj }}, p.fields)"
+                class="px-2 py-0.5 bg-gray-700 text-gray-300 rounded font-bold text-xs" x-text="p.label"></button>
+        </template>
+    </div>
+    <p class="text-[11px] text-gray-500 mt-1">Outside its season it is hidden from the kids, the wall and Argyle,
+        and comes back on its own. Nothing is deleted; it stays listed here.</p>
+</div>
+{% endmacro %}
         <div class="panel-page mx-auto p-6 lg:p-10 w-full" :class="isKiosk ? 'max-w-none' : 'max-w-5xl'">
 
             <header class="mb-8" x-show="!hideTitle">
@@ -238,7 +274,8 @@
                                 No chores posted yet — add the first one below.
                             </div>
                             <template x-for="chore in chores" :key="chore.id">
-                                <div class="bg-gray-800 border border-gray-700 p-4 rounded-xl flex flex-col md:flex-row justify-between md:items-center gap-3">
+                                <div class="bg-gray-800 border border-gray-700 p-4 rounded-xl flex flex-col md:flex-row justify-between md:items-center gap-3"
+                                    :class="chore.offered === false && 'opacity-50'">
                                     <div class="min-w-0">
                                         <div class="flex items-center gap-2 flex-wrap">
                                             <h4 class="text-lg font-bold text-white" x-text="chore.title"></h4>
@@ -247,6 +284,10 @@
                                             <span x-show="chore.recurrence !== 'once'"
                                                 class="px-2 py-0.5 bg-gray-700 text-gray-300 rounded font-bold text-xs uppercase"
                                                 x-text="chore.recurrence"></span>
+                                            <span x-show="chore.season_label"
+                                                class="px-2 py-0.5 rounded font-bold text-xs"
+                                                :class="chore.in_season ? 'bg-gray-700 text-gray-300' : 'bg-amber-500/20 text-amber-300'"
+                                                x-text="(chore.in_season ? '🗓️ ' : '🗓️ Out of season · ') + chore.season_label"></span>
                                             <span class="px-2 py-0.5 rounded font-bold text-xs uppercase"
                                                 :class="{ 'bg-green-900/50 text-green-300': chore.state === 'open',
                                                           'bg-amber-900/50 text-amber-300': chore.state === 'claimed' || chore.state === 'done',
@@ -320,6 +361,7 @@
                                     placeholder="Both bins, and put them back after pickup"
                                     class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
                             </div>
+                            {{ season_editor('choreEdit') }}
                             <div class="w-full mt-4">
                                 <label class="block text-gray-400 mb-1 text-sm">Who can claim it (none checked = anyone)</label>
                                 <div class="flex gap-3 flex-wrap">
@@ -492,7 +534,8 @@
                                 No rewards yet — give those points something to buy.
                             </div>
                             <template x-for="rw in rewards" :key="rw.id">
-                                <div class="bg-gray-800 border border-gray-700 p-4 rounded-xl flex justify-between items-center gap-3">
+                                <div class="bg-gray-800 border border-gray-700 p-4 rounded-xl flex justify-between items-center gap-3"
+                                    :class="rw.offered === false && 'opacity-50'">
                                     <div class="min-w-0">
                                         <div class="flex items-center gap-2 flex-wrap">
                                             <h4 class="text-lg font-bold text-white" x-text="rw.title"></h4>
@@ -503,6 +546,12 @@
                                             <span x-show="rw.pooled && rw.min_share"
                                                 class="px-2 py-0.5 bg-gray-700 text-gray-300 rounded font-bold text-xs"
                                                 x-text="'min ' + rw.min_share + ' pts each'"></span>
+                                            <span x-show="rw.season_label"
+                                                class="px-2 py-0.5 rounded font-bold text-xs"
+                                                :class="rw.in_season ? 'bg-gray-700 text-gray-300' : 'bg-amber-500/20 text-amber-300'"
+                                                x-text="(rw.in_season ? '🗓️ ' : '🗓️ Out of season · ') + rw.season_label"></span>
+                                            <span x-show="rw.active === false"
+                                                class="px-2 py-0.5 bg-gray-700 text-gray-400 rounded font-bold text-xs">Off &mdash; hidden from the family</span>
                                         </div>
                                         <p class="text-gray-400 text-sm" x-text="rw.description" x-show="rw.description"></p>
                                         <p x-show="rw.pooled && rw.pool" class="text-sm font-bold mt-0.5"
@@ -510,7 +559,18 @@
                                             x-text="rw.pool ? (rw.pool.pledged + '/' + rw.pool.cost + ' pts pledged'
                                                 + (rw.pool.funded ? ' — funded, grant it in the app' : '')) : ''"></p>
                                     </div>
-                                    <div class="flex space-x-2 shrink-0">
+                                    <div class="flex items-center space-x-2 shrink-0">
+                                        <!-- THIS reward, on or off. Same control as the store's
+                                             own switch above; off hides it from the family and
+                                             keeps any request or pledge already on it. -->
+                                        <label class="flex items-center gap-2 cursor-pointer px-2"
+                                            :title="rw.active === false ? 'Off: the family does not see it' : 'On: in the store when in season'">
+                                            <input type="checkbox" :checked="rw.active !== false"
+                                                @change="setRewardActive(rw, $event.target.checked)"
+                                                class="w-5 h-5 rounded bg-gray-900 border-gray-600"
+                                                :aria-label="'Offer ' + rw.title">
+                                            <span class="text-xs font-bold text-gray-300" x-text="rw.active === false ? 'Off' : 'On'"></span>
+                                        </label>
                                         <button @click="startEditReward(rw)"
                                             class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg font-bold text-sm">Edit</button>
                                         <button @click="deleteReward(rw)"
@@ -555,6 +615,7 @@
                                 <button x-show="editRewardId" @click="cancelEditReward()"
                                     class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-4 py-3 rounded transition-colors">Cancel</button>
                             </div>
+                            {{ season_editor('rewardEdit') }}
                         </div>
                     </section>
 
@@ -588,7 +649,37 @@
                 features: { critters_enabled: chfFeatureOn('critters'),
                             rewards_enabled: chfFeatureOn('rewards') },
                 featureSaved: null,
-                get manageRewards() { return !this.isKiosk; },
+                get manageCatalog() { return !this.isKiosk; },
+                // Seasons (services/seasons.py): the editor works in month +
+                // day fields and the API in "MM-DD" strings.
+                seasonMonths: ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+                               'August', 'September', 'October', 'November', 'December'],
+                seasonPresets: [
+                    { label: 'All year', fields: { s_month: '', s_day: 1, e_month: '1', e_day: 1 } },
+                    { label: 'Summer', fields: { s_month: '6', s_day: 1, e_month: '8', e_day: 31 } },
+                    { label: 'Cool months', fields: { s_month: '10', s_day: 1, e_month: '3', e_day: 31 } },
+                    { label: 'Holidays', fields: { s_month: '11', s_day: 15, e_month: '1', e_day: 5 } },
+                ],
+                seasonIn(item) {
+                    const p = v => (/^\d{2}-\d{2}$/.test(v || '') ? v.split('-').map(Number) : null);
+                    const s = p(item && item.season_start), e = p(item && item.season_end);
+                    return s && e ? { s_month: String(s[0]), s_day: s[1], e_month: String(e[0]), e_day: e[1] }
+                                  : { s_month: '', s_day: 1, e_month: '1', e_day: 1 };
+                },
+                seasonOut(f) {
+                    if (!f.s_month) return { season_start: null, season_end: null };
+                    const two = n => String(n).padStart(2, '0');
+                    return { season_start: two(f.s_month) + '-' + two(f.s_day || 1),
+                             season_end: two(f.e_month || 1) + '-' + two(f.e_day || 1) };
+                },
+                async setRewardActive(rw, on) {
+                    const res = await fetch(`${this.apiBase}api/rewards/${rw.id}/active`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ active: on }),
+                    });
+                    if (!res.ok) showGlobalAlert('Could not switch that reward');
+                    await this.loadRewards();
+                },
                 async saveFeature(key) {
                     try {
                         const res = await fetch(`${this.apiBase}api/settings`, {
@@ -637,9 +728,11 @@
                 members: [],
                 hands: [],
                 editChoreId: null,
-                choreEdit: { title: '', emoji: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [], owner: '' },
+                choreEdit: { title: '', emoji: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [], owner: '',
+                             s_month: '', s_day: 1, e_month: '1', e_day: 1 },
                 editRewardId: null,
-                rewardEdit: { title: '', description: '', cost: 50, pooled: false, min_share: 0 },
+                rewardEdit: { title: '', description: '', cost: 50, pooled: false, min_share: 0,
+                              s_month: '', s_day: 1, e_month: '1', e_day: 1 },
 
                 async init() {
                     await this.loadPoints();
@@ -1013,11 +1106,13 @@
                         recurrence: chore.recurrence || 'once',
                         eligible_member_ids: [...(chore.eligible_member_ids || [])],
                         owner: chore.owner || '',
+                        ...this.seasonIn(chore),
                     };
                 },
                 cancelEditChore() {
                     this.editChoreId = null;
-                    this.choreEdit = { title: '', emoji: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [], owner: '' };
+                    this.choreEdit = { title: '', emoji: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [], owner: '',
+                                       ...this.seasonIn(null) };
                 },
                 async saveChore() {
                     if (!(this.choreEdit.title || '').trim()) { showGlobalAlert('Title required'); return; }
@@ -1027,7 +1122,7 @@
                     const res = await fetch(url, {
                         method: this.editChoreId ? 'PUT' : 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(this.choreEdit)
+                        body: JSON.stringify({ ...this.choreEdit, ...this.seasonOut(this.choreEdit) })
                     });
                     if (!res.ok) {
                         const err = await res.json().catch(() => ({}));
@@ -1059,11 +1154,13 @@
                 startEditReward(rw) {
                     this.editRewardId = rw.id;
                     this.rewardEdit = { title: rw.title, description: rw.description || '', cost: rw.cost,
-                                        pooled: !!rw.pooled, min_share: rw.min_share || 0 };
+                                        pooled: !!rw.pooled, min_share: rw.min_share || 0,
+                                        ...this.seasonIn(rw) };
                 },
                 cancelEditReward() {
                     this.editRewardId = null;
-                    this.rewardEdit = { title: '', description: '', cost: 50, pooled: false, min_share: 0 };
+                    this.rewardEdit = { title: '', description: '', cost: 50, pooled: false, min_share: 0,
+                                        ...this.seasonIn(null) };
                 },
                 async saveReward() {
                     if (!(this.rewardEdit.title || '').trim()) { showGlobalAlert('Title required'); return; }
@@ -1073,7 +1170,7 @@
                     const res = await fetch(url, {
                         method: this.editRewardId ? 'PUT' : 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(this.rewardEdit)
+                        body: JSON.stringify({ ...this.rewardEdit, ...this.seasonOut(this.rewardEdit) })
                     });
                     if (!res.ok) {
                         const err = await res.json().catch(() => ({}));

@@ -92,6 +92,36 @@ def run():
             check(not b.errors, "chores page script errors: %s" % b.errors)
 
     @scenario
+    def a_reward_switches_off_and_a_chore_gets_a_season_by_hand():
+        storage.patch_settings({'rewards_enabled': True})
+        b = served.browser()
+        with b as page:
+            page.goto(served.url('chores'))
+            page.wait_for_selector('#rewards h4:has-text("Ice cream")')
+            box = page.locator('input[aria-label="Offer Ice cream"]')
+            check(box.is_checked(), "a new reward does not show as on")
+            box.click()
+            page.wait_for_function(
+                "() => fetch('api/rewards?manage=1').then(r => r.json())"
+                ".then(rs => rs.some(r => r.title === 'Ice cream' && r.active === false))")
+            check(not any(r.get('title') == 'Ice cream' and r.get('active') is not False
+                          for r in storage.get_rewards()), "the tap never reached the reward")
+            # a chore with the Summer preset, saved through the form
+            page.fill('input[placeholder="Take out the trash"]', 'Mow the lawn')
+            page.locator('button:has-text("Summer")').first.click()
+            page.locator('button:has-text("Add Chore")').click()
+            page.wait_for_selector('h4:has-text("Mow the lawn")')
+            row = [c for c in storage.get_all_chores() if c.get('title') == 'Mow the lawn']
+            check(row and row[0].get('season_start') == '06-01' and row[0].get('season_end') == '08-31',
+                  "the season did not save: %s" % row)
+            page.wait_for_timeout(300)
+            _shot(page, 'chores_seasons.png')
+            if OUT:
+                page.locator('#rewards').screenshot(path=os.path.join(OUT, 'rewards_rows.png'))
+            check(not b.errors, "chores page script errors: %s" % b.errors)
+        storage.patch_settings({'rewards_enabled': False})
+
+    @scenario
     def the_pwa_boots_with_no_critter_doors():
         b = served.browser()
         with b as page:
