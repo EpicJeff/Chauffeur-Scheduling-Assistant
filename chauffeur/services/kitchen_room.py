@@ -200,6 +200,10 @@ def _window() -> dict:
 def _pet() -> dict:
     # get_pets, never the raw table: level is DERIVED from the owner's
     # lifetime xp (a stored 'level' is a lie), and retired pets are filtered.
+    # Switched off, the room has no critters to report at all.
+    from services import household_features
+    if not household_features.critters_enabled():
+        return _calm(count=0, pets=[])
     rows = storage.get_pets()
     if not rows:
         return _calm(count=0, pets=[])

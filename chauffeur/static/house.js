@@ -267,6 +267,13 @@
       headline:function(){return studyZoneHeadline(key);}};
   });
   var ZONE_ORDER = ['door', 'window', 'calendar', 'counter', 'fridge', 'board', 'radio', 'pet', 'garage', 'curb'];
+  /* Critters switched off (services/household_features.py): no zone, no
+     marker, no fallback row, and below, no laptop on the coffee table. */
+  var CRITTERS = !window.chfFeatureOn || window.chfFeatureOn('critters');
+  if (!CRITTERS) {
+    delete ZONES.pet;
+    ZONE_ORDER = ZONE_ORDER.filter(function (k) { return k !== 'pet'; });
+  }
 
   var PANEL = /[?&]panel=true/.test(window.location.search);
   function go(slug) { window.location.href = BASE + slug + window.location.search; }
@@ -4261,6 +4268,9 @@
     critFace.rotation.x = -0.30;
     critFace.position.set(0, 1.4395, -0.157);
     crit.add(critFace); finish(critFace);
+    /* switched off: built (so the painters keep one shape) but never in the
+       scene, so it is neither drawn nor tappable */
+    if (!CRITTERS) { scene.remove(crit); delete groups.pet; }
 
     /* ---- the house around the kitchen (H1): everything out here lives
        in extG so the camera modes can reason about "outside". The
@@ -14624,7 +14634,7 @@
   };
   var EXTERIOR_HINTS = [
     ['kitchen', 'Kitchen', ['moments', 'meals', 'lists', 'calendar', 'weather']],
-    ['living', 'Living room', ['music', 'critters', 'tasks', 'programs'], ['tasks','programs']],
+    ['living', 'Living room', CRITTERS ? ['music', 'critters', 'tasks', 'programs'] : ['music', 'tasks', 'programs'], ['tasks','programs']],
     ['mudroom', 'Mudroom', ['schedule', 'chores', 'routines'], ['packing','chores','routines']],
     ['garage', 'Garage', ['garage', 'errands'], ['errands']],
     ['study', 'Study (Parent PIN)', ['study'], ['intake','tasks']]

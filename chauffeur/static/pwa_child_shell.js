@@ -87,9 +87,15 @@ function pwaChildDates() {
     }).join('')}</nav>`;
 }
 function pwaChildCompanion(member) {
-    const src = member.pet_id ? petFaceSrc(member.pet_id).replaceAll('&amp;', '&') : member.figure;
-    return src ? `<button class="child-companion" onclick="${member.pet_id ? 'openPetEditor' : 'openAvatarEditor'}(selectedMemberId)" aria-label="${member.pet_id ? 'Visit your critter' : 'Edit your character'}"><img src="${mfEscape(src)}" alt=""></button>`
-        : `<button class="child-companion child-egg" onclick="openPetEditor(selectedMemberId)" aria-label="Hatch a critter">${pwaIcon('critter')}</button>`;
+    // No pet editor on the page means critters are switched off: the
+    // companion is the child's own character, never an egg.
+    const critters = typeof openPetEditor === 'function';
+    const pet = critters && member.pet_id;
+    const src = pet ? petFaceSrc(member.pet_id).replaceAll('&amp;', '&') : member.figure;
+    if (src) return `<button class="child-companion" onclick="${pet ? 'openPetEditor' : 'openAvatarEditor'}(selectedMemberId)" aria-label="${pet ? 'Visit your critter' : 'Edit your character'}"><img src="${mfEscape(src)}" alt=""></button>`;
+    return critters
+        ? `<button class="child-companion child-egg" onclick="openPetEditor(selectedMemberId)" aria-label="Hatch a critter">${pwaIcon('critter')}</button>`
+        : `<button class="child-companion child-egg" onclick="openAvatarEditor(selectedMemberId)" aria-label="Edit your character">${pwaIcon('profile')}</button>`;
 }
 function pwaChildRoutineRow(item, index, interactive) {
     return `<div class="child-task-row ${item.checked ? 'child-done' : ''}"><label>
@@ -190,19 +196,19 @@ function pwaChildRenderDay({data, routineData, programItems, balance, jobs = [],
     if (interactive) {
         html += renderRequests();
         if (kidCan('can_request') && !next) html += '<button class="child-secondary" onclick="askForSomething()">Ask for something</button>';
-        if (balance !== null && kidCan('show_points') && pwaAllowed('chores')) html += `<button class="child-rewards-link" onclick="pwaChildOpenRewards()">${balance} points · Your rewards ${pwaIcon('arrow')}</button>`;
+        if (balance !== null && kidCan('show_points') && pwaAllowed('chores')) html += `<button class="child-rewards-link" onclick="pwaChildOpenRewards()">${balance} points${chfFeatureOn('rewards') ? ' · Your rewards' : ''} ${pwaIcon('arrow')}</button>`;
     }
     return html;
 }
 function pwaChildOpenRewards() { setView('chores'); pwaChildTaskSection = 'rewards'; pwaChildHouseTabs(); }
 function pwaChildHouseTabs() {
     const stage = pwaChildStage(); if (!stage) return;
-    const tabs = houseRevealListsOnly ? [['lists','Lists']] : [['tasks',stage === 'sprout' ? 'My jobs' : 'Tasks'],['rewards','Rewards'],['lists','Lists']];
+    const tabs = houseRevealListsOnly ? [['lists','Lists']] : [['tasks',stage === 'sprout' ? 'My jobs' : 'Tasks'],['rewards',chfFeatureOn('rewards') ? 'Rewards' : 'Points'],['lists','Lists']];
     if (houseThreads.length && !houseRevealListsOnly) tabs.push(['threads','Threads']);
     if (!tabs.some(([id])=>id === pwaChildTaskSection)) pwaChildTaskSection = tabs[0][0];
     document.getElementById('chores-container').dataset.childSection = pwaChildTaskSection;
     const title = stage === 'sprout' ? 'My things' : 'Your tasks';
-    const html = `<header class="child-page-heading"><h1>${title}</h1><p>${stage === 'sprout' ? 'Little jobs. Things you love.' : 'One thing at a time.'}</p></header><div class="child-section-tabs" aria-label="Task sections">${tabs.map(([id,label])=>`<button aria-pressed="${id === pwaChildTaskSection}" onclick="pwaChildSelectTasks('${id}')">${label}</button>`).join('')}</div>${stage === 'sprout' ? `<div class="child-shortcuts"><button onclick="setView('more')">${pwaIcon('critter')}<span>Critter, music & more</span></button><button onclick="setView('myday')">${pwaIcon('drives')}<span>My routine</span></button></div>` : ''}`;
+    const html = `<header class="child-page-heading"><h1>${title}</h1><p>${stage === 'sprout' ? 'Little jobs. Things you love.' : 'One thing at a time.'}</p></header><div class="child-section-tabs" aria-label="Task sections">${tabs.map(([id,label])=>`<button aria-pressed="${id === pwaChildTaskSection}" onclick="pwaChildSelectTasks('${id}')">${label}</button>`).join('')}</div>${stage === 'sprout' ? `<div class="child-shortcuts"><button onclick="setView('more')">${chfFeatureOn('critters') ? `${pwaIcon('critter')}<span>Critter, music & more</span>` : `${pwaIcon('music')}<span>Music & more</span>`}</button><button onclick="setView('myday')">${pwaIcon('drives')}<span>My routine</span></button></div>` : ''}`;
     const host = document.getElementById('house-anchors');
     if (host.innerHTML !== html) host.innerHTML = html;
 }

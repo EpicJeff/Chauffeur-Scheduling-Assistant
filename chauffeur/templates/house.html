@@ -289,8 +289,11 @@
     {% include 'components/shopping_lists.html' %}
     {% include 'components/family_calendar.html' %}
     {% include 'components/pack_dialog.html' %}
+    {# Critters switched off: no editor, arena or guide exists on the page, so every `typeof openPetEditor` door stays shut. #}
+    {% if household_features().critters %}
     {% include 'components/pet_editor.html' %}
     {% include 'components/pet_battle.html' %}
+    {% endif %}
 
     <script>window.HOUSE_NEIGHBORHOOD = {{ neighborhood_json|default('{}')|safe }};</script>
     <script>window.HOUSE_STATE_URL = (window.chfBase !== undefined ? window.chfBase : '') + 'api/house/state';

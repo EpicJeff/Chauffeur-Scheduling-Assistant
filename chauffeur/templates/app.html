@@ -15,6 +15,12 @@
     <meta name="theme-color" content="#171717">
     <link rel="stylesheet" href="{{ 'static/theme.css'|ver }}">
     <script>
+        // Which whole features the household has switched off
+        // (services/household_features.py); the shell reads it, never guesses.
+        window.chfFeatures = {{ household_features()|tojson }};
+        window.chfFeatureOn = function (k) { return !window.chfFeatures || window.chfFeatures[k] !== false; };
+    </script>
+    <script>
         // Resolve the theme BEFORE first paint, or the app flashes dark on
         // the way to light. Three states: 'auto' follows the OS, 'light' and
         // 'dark' pin it. Per-device (localStorage), not per-member — which
@@ -121,9 +127,12 @@
     {% include 'components/kid_glyphs.html' %}
     {% include 'components/emoji_picker.html' %}
     {% include 'components/avatar_editor.html' %}
+    {# Critters switched off: no editor, arena or guide exists on the page, so every `typeof openPetEditor` door stays shut. #}
+    {% if household_features().critters %}
     {% include 'components/pet_editor.html' %}
     {% include 'components/pet_battle.html' %}
     {% include 'components/pet_guide.html' %}
+    {% endif %}
     <!-- The lesson player: opened from openSessionSheet's own Start tap
          below (a `lesson-player:open` window event), same one component the
          wall board and the Programs page open. Included once here, at the
@@ -157,6 +166,7 @@
                  makes a whole feature something you have to already know
                  about. The header is on every view for every role, which is
                  exactly what a built-in feature needs. -->
+            {% if household_features().critters %}
             <button id="btn-pet" type="button"
                 onclick="if (selectedMemberId && typeof openPetEditor === 'function') openPetEditor(selectedMemberId)"
                 class="w-11 h-11 shrink-0 grid place-items-center rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors relative"
@@ -180,6 +190,7 @@
                 <span id="pet-xp-dot"
                     class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 hidden"></span>
             </button>
+            {% endif %}
             <button id="btn-push" onclick="enableNotifications()"
                 class="p-3 rounded-full bg-blue-800 text-blue-200 hover:text-gray-100 transition-colors relative hidden"
                 title="Enable Push Notifications">
@@ -2523,7 +2534,9 @@
             // wall panel. Two small buttons, under the greeting, where a kid
             // is already looking at their own day.
             updatePetBadge(m);
-            const petHtml = `
+            // Critters switched off: the editor was never included, so there
+            // is no door to draw (services/household_features.py).
+            const petHtml = typeof openPetEditor !== 'function' ? '' : `
                 <div class="flex flex-wrap gap-1.5 mt-1.5">
                     <button onclick="typeof openPetEditor === 'function' && openPetEditor(selectedMemberId)"
                         class="shrink-0 max-w-full pr-2.5 py-1 rounded-full text-[11px] font-bold bg-gray-800 border border-gray-700 text-gray-200 inline-flex items-center gap-1 ${m.pet_id ? 'pl-1' : 'pl-2.5'}">
@@ -6620,7 +6633,7 @@
             }
 
             if (role === 'parent') {
-                if (!choresData.some(c => c.state === 'done') && !redemptionsData.length) parts.push('<p class="pwa-empty">No tasks or reward requests waiting for review.</p>');
+                if (!choresData.some(c => c.state === 'done') && !redemptionsData.length) parts.push(`<p class="pwa-empty">No tasks${chfFeatureOn('rewards') ? ' or reward requests' : ''} waiting for review.</p>`);
                 parts.push('</section>');
             }
             // Family goals (pooled rewards): kids pledge, parents grant.

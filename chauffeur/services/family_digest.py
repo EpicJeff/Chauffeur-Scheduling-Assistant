@@ -185,9 +185,11 @@ def build_weekly_digest(end_date: datetime.date = None, days: int = 7):
                  in sorted(per_kid.items(), key=lambda kv: -kv[1])]
         sections.append((f"✅ Chores — {n} verified", lines))
 
-    # Rewards granted this week
+    # Rewards granted this week -- none of it while the household has the
+    # store switched off; the digest is a family-room post, not admin.
+    from services import household_features
     granted = [r for r in storage.get_redemptions()
-               if r.get('state') == 'approved' and (r.get('decided_at') or 0) >= start_ts]
+               if r.get('state') == 'approved' and (r.get('decided_at') or 0) >= start_ts]         if household_features.rewards_enabled() else []
     if granted:
         # Pooled grants have no single member — the whole family earned it.
         lines = [f"• {'Family goal' if r.get('pooled') else name_of(r['member_id'])}"

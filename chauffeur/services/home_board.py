@@ -1952,11 +1952,17 @@ def _tile_chores_lanes(now, config=None, **_):
         # rewards means the household has not set the economy up.
         if not (storage.get_all_chores() or storage.get_rewards()):
             return None
+        from services import household_features
+        parts = {p: _cfg_bool(config, f'show_{p}', True)
+                 for p in ('figure', 'header', 'goals', 'rewards',
+                           'mine', 'available')}
+        # Rewards switched off: the store and the goals leave the lanes, the
+        # chores and the points stay.
+        if not household_features.rewards_enabled():
+            parts['goals'] = parts['rewards'] = False
         return {'interactive': _cfg_bool(config, 'interactive', True),
                 'members': _cfg_ids(config, 'members'),
-                'parts': {p: _cfg_bool(config, f'show_{p}', True)
-                          for p in ('figure', 'header', 'goals', 'rewards',
-                                    'mine', 'available')}}
+                'parts': parts}
     except Exception as e:
         print(f"[home_board] chore lanes failed: {e}")
         return None
@@ -1967,6 +1973,9 @@ def _tile_chores_goals(now, config=None, **_):
     2), in the same reward shape the lanes fetch live — which is what lets
     one macro draw both."""
     try:
+        from services import household_features
+        if not household_features.rewards_enabled():
+            return None                  # switched off: the card vanishes
         goals = []
         for r in storage.get_rewards():
             if not r.get('pooled'):
@@ -2092,8 +2101,11 @@ def _tile_pets(now, config=None, **_):
     try:
         from services import pet_render
         from services import pet_catalog
+        from services import household_features
         if not pet_render.available():
             return None                  # no art: no doors onto nothing
+        if not household_features.critters_enabled():
+            return None                  # switched off: the card vanishes
         wanted = _cfg_ids(config, 'members')
         show_empty = _cfg_bool(config, 'show_unhatched', True)
         rows = []
@@ -5550,6 +5562,12 @@ def catalog() -> dict:
     three cameras — needs most.
     """
     ha_ok = ha_configured()
+    from services import household_features
+    feature_off = {}
+    if not household_features.critters_enabled():
+        feature_off['pets'] = 'critters switched on (Chores page)'
+    if not household_features.rewards_enabled():
+        feature_off['chores_rewards'] = 'rewards switched on (Chores page)'
     widgets = []
     for w in WIDGETS:
         w = dict(w)
@@ -5560,6 +5578,11 @@ def catalog() -> dict:
         if w['key'] in ('ha', 'ha_image', 'ha_dashboard', 'ha_card', 'music'):
             w['requires'] = 'Home Assistant'
             w['available'] = ha_ok
+        # A switched-off household feature (services/household_features.py):
+        # its tile would only ever vanish, so the palette says why instead.
+        if w['key'] in feature_off:
+            w['requires'] = feature_off[w['key']]
+            w['available'] = False
         # Whether "always show, even when empty" is a question worth asking of
         # this type. It needs a sentence to say when it IS empty, or the flag
         # buys a blank panel instead of an explanation; chrome never vanishes,

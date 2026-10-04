@@ -1266,6 +1266,11 @@ class Settings(BaseModel):
     # whitelist merge) never drop them.
     chore_status_tiers: Optional[List[StatusTier]] = None      # thresholds = lifetime points
     routine_status_tiers: Optional[List[StatusTier]] = None    # thresholds = best-streak days
+    # Whole-feature switches (services/household_features.py). Off HIDES the
+    # critter game / the rewards store everywhere and refuses the asks; it
+    # never deletes a pet, an xp row, a reward or a pledge.
+    critters_enabled: bool = True
+    rewards_enabled: bool = True
     # Pet XP rates (pets arc P2). A SEPARATE currency from points: a verified
     # chore mints both, so no child ever chooses between levelling their
     # critter and the family goal, and nothing converts xp back into points.

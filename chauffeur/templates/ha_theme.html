@@ -289,6 +289,15 @@
         });
     }
 </script>
+<script>
+    // --- Which whole features the household has switched off
+    // (services/household_features.py). Read once at load; flipping one
+    // reloads the walls through the `profile` stream event. Its own block,
+    // AFTER the first: that one is executed straight out of this file by
+    // tests/test_panel_stickiness.py and must stay Jinja-free.
+    window.chfFeatures = {{ household_features()|tojson }};
+    window.chfFeatureOn = function (k) { return !window.chfFeatures || window.chfFeatures[k] !== false; };
+</script>
 <style>
     /* --- Panel mode: the whole app, sized for a finger.
        The lever is the ROOT FONT SIZE, not a pile of per-control overrides.

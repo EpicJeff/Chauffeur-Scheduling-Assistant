@@ -1532,9 +1532,12 @@
          says "Finish". -->
     {% include 'components/lesson_player.html' %}
     {% include 'components/avatar_editor.html' %}
+    {# Critters switched off: no editor, arena or guide exists on the page, so every `typeof openPetEditor` door stays shut. #}
+    {% if household_features().critters %}
     {% include 'components/pet_editor.html' %}
     {% include 'components/pet_battle.html' %}
     {% include 'components/pet_guide.html' %}
+    {% endif %}
     {% include 'components/kid_digest_lanes.html' %}
     <!-- And the drives tile's timeline, which is the Drives page's own
          renderer. Both tiles are the page's view at tile size rather than a
@@ -4390,8 +4393,8 @@
                         || (c.blurb || '').toLowerCase().includes(q);
                     const all = (this.catalog.widgets || []).filter(match);
                     return [
-                        { name: 'This household', rows: all.filter(c => !c.requires) },
-                        { name: 'Home Assistant', rows: all.filter(c => c.requires) },
+                        { name: 'This household', rows: all.filter(c => c.requires !== 'Home Assistant') },
+                        { name: 'Home Assistant', rows: all.filter(c => c.requires === 'Home Assistant') },
                     ];
                 },
 

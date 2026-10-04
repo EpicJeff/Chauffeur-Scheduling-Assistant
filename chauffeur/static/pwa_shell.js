@@ -103,7 +103,9 @@ function pwaFeatures() {
     if (pwaChildStage() && selectedDriverId && kidCan('can_drive')) route('drives', 'My drives', 'Your driving responsibilities', 'drives');
     route('map', 'Family map', 'Find shared locations and driving progress', 'map');
     route('music', 'Music', 'Favorites and household listening', 'music');
-    route('household', pwaChildStage() ? 'Tasks & rewards' : 'Household', 'Tasks, rewards and shared lists', 'chores');
+    const rewards = chfFeatureOn('rewards');
+    route('household', pwaChildStage() ? (rewards ? 'Tasks & rewards' : 'Tasks & points') : 'Household',
+        rewards ? 'Tasks, rewards and shared lists' : 'Tasks, points and shared lists', 'chores');
     route('moments', 'Messages & moments', 'Conversations and shared family updates', 'messages');
     if (pwaAllowed('drives') || pwaAllowed('myday')) {
         items.push({id: 'programs', title: 'My programs', description: 'Practice and learning in your day', run: () => {
@@ -120,11 +122,14 @@ function pwaFeatures() {
             }
         }});
     }
-    if (pwaChildStage() && membersData.find(m => m.id === selectedMemberId)?.pet_name)
+    // Critters switched off: the editor and arena were never included, and
+    // their doors go with them (services/household_features.py).
+    const critters = typeof openPetEditor === 'function';
+    if (critters && pwaChildStage() && membersData.find(m => m.id === selectedMemberId)?.pet_name)
         items.push({id:'critter', title:'Critter battle', description:'Play with your companion', run:()=>openPetBattle(selectedMemberId)});
-    items.push({id: 'assistant', title: 'Ask Argyle', description: 'Help with your family plans', run: () => toggleKioskChat()},
-        {id: 'critter', title: 'My critter', description: 'Visit and customize your companion', run: () => openPetEditor(selectedMemberId)},
-        {id: 'profile', title: 'Profile & appearance', description: 'Avatar, theme, notifications and sign out', run: pwaOpenProfile});
+    items.push({id: 'assistant', title: 'Ask Argyle', description: 'Help with your family plans', run: () => toggleKioskChat()});
+    if (critters) items.push({id: 'critter', title: 'My critter', description: 'Visit and customize your companion', run: () => openPetEditor(selectedMemberId)});
+    items.push({id: 'profile', title: 'Profile & appearance', description: 'Avatar, theme, notifications and sign out', run: pwaOpenProfile});
     return items;
 }
 
@@ -160,7 +165,8 @@ function pwaOpenProfile() {
     }});
     const items = [
         action('avatar', 'Your avatar', 'Edit your photo or character', () => openAvatarEditor(selectedMemberId)),
-        action('critter', 'My critter', 'Visit your companion', () => openPetEditor(selectedMemberId)),
+        ...(typeof openPetEditor === 'function'
+            ? [action('critter', 'My critter', 'Visit your companion', () => openPetEditor(selectedMemberId))] : []),
         action('theme', 'Appearance', `Theme: ${themePref()}. Change between device, light and dark.`, () => {
             cycleTheme();
             const button = dialog.querySelector('[data-feature="theme"] small');

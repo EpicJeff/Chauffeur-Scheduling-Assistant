@@ -484,6 +484,28 @@ def adjust_points(member_name: str, delta: int = None, set_to: int = None,
             "message": f"Done — {change} points for {member['name']}. They now have {balance} points."}
 
 
+# Whole features a household can switch off (services/household_features.py).
+# Every agent tool that touches one answers with the switch instead of acting,
+# in BOTH stacks -- the v1 handlers delegate to these functions.
+CRITTERS_OFF = {"status": "error",
+                "message": "Critters are switched off for this family right now. "
+                           "A parent can turn them back on from the Chores page."}
+REWARDS_OFF = {"status": "error",
+               "message": "Rewards and family goals are switched off for this family "
+                          "right now. Points still count; a parent can turn rewards "
+                          "back on from the Chores page."}
+
+
+def _critters_off() -> bool:
+    from services import household_features
+    return not household_features.critters_enabled()
+
+
+def _rewards_off() -> bool:
+    from services import household_features
+    return not household_features.rewards_enabled()
+
+
 def challenge_pet_battle(challenger_name: str, opponent_name: str) -> Dict[str, Any]:
     """Ask somebody for a pet battle, on behalf of a child who said so out loud.
 
@@ -492,6 +514,8 @@ def challenge_pet_battle(challenger_name: str, opponent_name: str) -> Dict[str, 
     the person being challenged, and handing that to an assistant would make
     it possible to be dragged into a fight by someone talking to a speaker in
     another room."""
+    if _critters_off():
+        return dict(CRITTERS_OFF)
     from services import storage
     me = _find_member_fuzzy(challenger_name)
     them = _find_member_fuzzy(opponent_name)
@@ -511,6 +535,8 @@ def award_pet_xp(member_name: str, amount: int) -> Dict[str, Any]:
 
     Deliberately cannot reach the POINTS ledger: xp buys nothing outside the
     game, so this is a safe thing to say to a speaker, and points are not."""
+    if _critters_off():
+        return dict(CRITTERS_OFF)
     from services import storage
     m = _find_member_fuzzy(member_name)
     if not m:
@@ -528,6 +554,8 @@ def get_pet_status(member_name: str = None) -> Dict[str, Any]:
     """How somebody's critter is doing. Deliberately reports level, element
     and XP and NOT a win-loss record: there isn't one, and inventing one in a
     spoken answer would be the ladder this arc refuses to build."""
+    if _critters_off():
+        return dict(CRITTERS_OFF)
     from services import storage
     from services import pet_catalog
     lines = []
@@ -2027,6 +2055,8 @@ def get_routine_status(member_name: str, target_date: str = "today") -> Dict[str
 
 def get_family_goals() -> Dict[str, Any]:
     """Pooled ('family goal') rewards with pledge progress."""
+    if _rewards_off():
+        return dict(REWARDS_OFF)
     from services import storage
     goals = [r for r in storage.get_rewards() if r.get('pooled')]
     if not goals:
@@ -2053,6 +2083,8 @@ def contribute_to_family_goal(reward_title: str, amount: int, member_name: str =
                               sender_driver_id: str = None) -> Dict[str, Any]:
     """Pledge a child's points toward a pooled reward. Same hold semantics
     as the /contribute endpoint, and fires the same notification fan-out."""
+    if _rewards_off():
+        return dict(REWARDS_OFF)
     from services import storage
     actor, err = _resolve_actor(sender_driver_id, member_name)
     if err:

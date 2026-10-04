@@ -949,7 +949,8 @@ def _companion(member_id: str) -> str:
     try:
         from services import pet_render
         from services import storage
-        if not pet_render.available():
+        from services import household_features
+        if not pet_render.available() or not household_features.critters_enabled():
             return ''
         pet = storage.get_active_pet(member_id)
         if not pet:
@@ -969,6 +970,9 @@ def _companion_key(member_id: str) -> str:
     redraw, so the pet's look is part of the figure's identity."""
     try:
         from services import storage
+        from services import household_features
+        if not household_features.critters_enabled():
+            return '-'
         pet = storage.get_active_pet(member_id)
         if not pet:
             return '-'

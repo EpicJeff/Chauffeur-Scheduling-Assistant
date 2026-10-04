@@ -147,6 +147,13 @@
                 } }
   };
   var ZONE_ORDER = ['door', 'window', 'calendar', 'counter', 'fridge', 'board', 'radio', 'pet'];
+  /* Critters switched off (services/household_features.py): no zone, no
+     row, and below, no laptop in the room at all. */
+  var CRITTERS = !window.chfFeatureOn || window.chfFeatureOn('critters');
+  if (!CRITTERS) {
+    delete ZONES.pet;
+    ZONE_ORDER = ZONE_ORDER.filter(function (k) { return k !== 'pet'; });
+  }
 
   function go(slug) { window.location.href = BASE + slug + window.location.search; }
 
@@ -743,6 +750,9 @@
     critFace.rotation.x = -0.30;
     critFace.position.set(0, 1.4395, -0.157);
     crit.add(critFace); finish(critFace);
+    /* switched off: built (so the painters keep one shape) but never in the
+       scene, so it is neither drawn nor tappable */
+    if (!CRITTERS) { scene.remove(crit); delete groups.pet; }
 
     /* ---- the painters: every data surface drawn like the app draws it —
        Inter type, white cards, accent bars, soft shadows. Cached per

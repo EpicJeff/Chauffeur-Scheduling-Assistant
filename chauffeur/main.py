@@ -1197,8 +1197,24 @@ async def _auth_guard(conn: HTTPConnection):
                         headers={'X-Auth-Refusal': ','.join(verdict['needs'])})
 
 
+async def _feature_gate(conn: HTTPConnection):
+    """A switched-off household feature refuses its own routes
+    (services/household_features.py). After the auth guard, so a refusal
+    never tells an unauthenticated caller which features the house runs.
+    HTTPConnection for the same websocket reason as the guard above; no
+    feature owns a websocket, so a handshake always passes."""
+    if conn.scope.get('type') == 'websocket':
+        return
+    from services import household_features as _hf
+    route = conn.scope.get('route')
+    path = getattr(route, 'path', None) or conn.url.path
+    refused = _hf.refusal(conn.scope.get('method') or '', path)
+    if refused:
+        raise HTTPException(status_code=refused[0], detail=refused[1])
+
+
 app = FastAPI(title="Family Driver Graph Scheduler", lifespan=lifespan,
-              dependencies=[Depends(_auth_guard)])
+              dependencies=[Depends(_auth_guard), Depends(_feature_gate)])
 
 # Gzip, selectively. Single-shot texty responses compress (~97% off state
 # JSON, measured); anything streaming — the SSE and ndjson endpoints — passes
@@ -1364,6 +1380,17 @@ def _shelf_boards(request: Request) -> list:
         return []
 
 
+def _household_features() -> dict:
+    """`window.chfFeatures` for every page's head (ha_theme.html, app.html):
+    which whole features the household has switched off."""
+    try:
+        from services import household_features as _hf
+        return _hf.snapshot()
+    except Exception:
+        return {'critters': True, 'rewards': True}
+
+
+templates.env.globals['household_features'] = _household_features
 templates.env.globals['shelf_order'] = _shelf_order
 templates.env.globals['shelf_boards'] = _shelf_boards
 
@@ -4861,17 +4888,21 @@ def _public_member(m: dict) -> dict:
     from services import avatar_render
     out['image'] = avatar_render.effective_image(m)
     # The critter's name, so a surface can label the door to it without a
-    # second round trip. Cheap: one lookup, no art.
+    # second round trip. Cheap: one lookup, no art. None of it while the
+    # household has critters switched off -- a surface keyed on pet_name
+    # must find no critter, not a door that 404s.
     try:
-        pet = storage.get_active_pet(m.get('id'))
-        if pet:
-            out['pet_name'] = pet.get('name')
-            out['pet_id'] = pet.get('id')
-        # The spendable balance and whether it can buy anything, so a header
-        # or a greeting can show both without a second round trip.
-        spend = storage.pet_spend_hint(m.get('id'))
-        out['pet_xp'] = spend['balance']
-        out['pet_hint'] = spend['hint']
+        from services import household_features as _hf
+        if _hf.critters_enabled():
+            pet = storage.get_active_pet(m.get('id'))
+            if pet:
+                out['pet_name'] = pet.get('name')
+                out['pet_id'] = pet.get('id')
+            # The spendable balance and whether it can buy anything, so a
+            # header or a greeting can show both without a second round trip.
+            spend = storage.pet_spend_hint(m.get('id'))
+            out['pet_xp'] = spend['balance']
+            out['pet_hint'] = spend['hint']
     except Exception:
         pass
     return out
@@ -10890,7 +10921,8 @@ def _pet_door(member_id: str) -> dict:
     """`pet_id` / `pet_name` for whoever this is, or empty. Never raises: a
     missing critter must not cost somebody their dressing-up box."""
     try:
-        pet = storage.get_active_pet(member_id)
+        from services import household_features as _hf
+        pet = storage.get_active_pet(member_id) if _hf.critters_enabled() else None
     except Exception:
         pet = None
     if not pet:
@@ -11547,7 +11579,14 @@ class RewardRequest(BaseModel):
     min_share: int = 0
 
 @app.get("/api/rewards")
-def list_rewards():
+def list_rewards(manage: bool = False):
+    """The store. Empty while the household has rewards switched off, so the
+    lanes, the PWA and the child shell all simply have nothing to offer;
+    `manage=1` is the chores page's catalog editor, which keeps working so a
+    parent can tidy the shop while it is closed."""
+    from services import household_features as _hf
+    if not manage and not _hf.rewards_enabled():
+        return []
     rewards = storage.get_rewards()
     rewards.sort(key=lambda r: r.get('cost', 0))
     for r in rewards:
@@ -16697,13 +16736,23 @@ def update_settings(settings: Settings, background_tasks: BackgroundTasks):
         # go-home-in-between decision (it uses the same margin) needs.
         from services import leave_by as _lb
         incoming['leave_margin_mins'] = _lb.margin_mins(incoming)
+    current_before = dict(current)
     current.update(incoming)
     storage.update_settings(current)
     # Panel-shaped settings (layout, theme, screensaver…) edited on one device
     # must repaint every wall panel — they reload on the `profile` stream
     # event. Everything else rides the generic `update` bump.
     global LAST_UPDATE_TIME, LAST_PROFILE_TIME
-    if any(k.startswith('panel_') for k in incoming):
+    # A whole feature switched on or off reshapes every page that draws it,
+    # and pages read the switch once, at load -- so walls reload too, onto a
+    # board rebuilt without (or with) the feature's tiles.
+    feature_flipped = any(
+        k in incoming and bool(incoming[k]) != (current_before.get(k, True) is not False)
+        for k in ('critters_enabled', 'rewards_enabled'))
+    if feature_flipped:
+        from services import home_board as _hb
+        _hb.invalidate_cache()
+    if any(k.startswith('panel_') for k in incoming) or feature_flipped:
         LAST_PROFILE_TIME = time.time()
     LAST_UPDATE_TIME = time.time()
     background_tasks.add_task(trigger_background_refresh)

@@ -5,6 +5,8 @@
   var toolbar = document.getElementById('house-comparison');
   if (!toolbar) return;
   var hybrid = document.body.dataset.houseRender === 'hybrid';
+  /* critters switched off (services/household_features.py) */
+  var critters = !window.chfFeatureOn || window.chfFeatureOn('critters');
   var light = document.getElementById('house-compare-light');
   var readyLabel = document.getElementById('house-compare-ready');
   var stats = window.chfHouseComparison = { renderer: hybrid ? 'hybrid' : '3d', readyMs: null };
@@ -55,7 +57,7 @@
     var wait = setInterval(function () {
       var nav = window.chfNavProbe && window.chfNavProbe({ settled: true });
       var labels = Array.from(document.querySelectorAll('.house-hint-label')).map(function (el) { return el.textContent.trim(); });
-      if (nav && nav.mode === 'living' && ['Radio', 'Critters', 'Home ledger', 'Program book'].every(function (s) { return labels.indexOf(s) >= 0; })) {
+      if (nav && nav.mode === 'living' && ['Radio', 'Critters', 'Home ledger', 'Program book'].filter(function (s) { return s !== 'Critters' || critters; }).every(function (s) { return labels.indexOf(s) >= 0; })) {
         clearInterval(wait); ready();
       } else if (performance.now() > 120000) {
         clearInterval(wait); readyLabel.textContent = '3D did not become ready within two minutes. Hybrid is available above.';
@@ -79,7 +81,7 @@
       icon: '<rect x="5" y="3" width="15" height="18" rx="2"/><path d="M8 3v18M11 8h6M11 12h6M11 16h4"/>' },
     { key: 'programs', label: 'Program book', x: .905, y: .661,
       icon: '<path d="M12 5C8 3 4 3 2 4v16c3-1 6-1 10 1 4-2 7-2 10-1V4c-3-1-6-1-10 1v16"/>' }
-  ];
+  ].filter(function (entry) { return entry.key !== 'pets' || critters; });
   function button(entry, anchored) {
     var el = document.createElement('button'); el.type = 'button';
     el.dataset.card = entry.key; el.setAttribute('aria-label', entry.label);

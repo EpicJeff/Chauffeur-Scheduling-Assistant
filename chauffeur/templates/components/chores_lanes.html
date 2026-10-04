@@ -304,7 +304,10 @@
             },
             async loadRewards() {
                 try {
-                    const res = await fetch(`${apiBase}api/rewards`);
+                    // `manageRewards` is the chores page's catalog editor: it
+                    // sees the store even while the household has rewards
+                    // switched off. Every lane gets the family's view.
+                    const res = await fetch(`${apiBase}api/rewards${this.manageRewards ? '?manage=1' : ''}`);
                     this.rewards = await res.json();
                 } catch (e) { this.rewards = []; }
             },

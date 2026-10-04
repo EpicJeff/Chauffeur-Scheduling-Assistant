@@ -3,7 +3,10 @@
   'use strict';
   var rooms = {
     kitchen: [['Moments','moments','fridge'],['Meals','meals','counter'],['Groceries','lists','pantry'],['Calendar','calendar','calendar'],['Weather','weather','window']],
-    living: [['Music','music','radio'],['Critters','pets','pet'],['Tasks','tasks','tasks'],['Programs','programs','programs']],
+    living: [['Music','music','radio'],['Critters','pets','pet'],['Tasks','tasks','tasks'],['Programs','programs','programs']].filter(function (m) {
+      /* critters switched off (services/household_features.py) */
+      return m[1] !== 'pets' || !window.chfFeatureOn || window.chfFeatureOn('critters');
+    }),
     mudroom: [['Next up','schedule','door'],['Chores','chores','chores'],['Routines','routines','routines']],
     garage: [['Cars','cars','garage'],['Errands','errands','errands']],
     study: [['Study · Parent PIN','study_preview','study']]

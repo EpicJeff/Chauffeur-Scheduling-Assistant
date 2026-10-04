@@ -497,6 +497,19 @@ ENTRIES: List[dict] = [
     _e('routine_status_tiers', 'solver', 'Routine status tiers',
        'The streak thresholds behind the routine status colours.',
        page='routines', anchor='tiers', ui_marker='statusTiersEditor'),
+    # The two whole-feature switches. Both on the CHORES page, beside the
+    # economy each one belongs to.
+    _e('critters_enabled', 'kids', 'Critters',
+       'Turn the critter game on or off for the whole family. Off hides every '
+       'critter, the arena and the pet tiles from the wall and the app; '
+       'nothing is deleted and XP keeps adding up, so turning it back on '
+       'finds every pet where it was.',
+       page='chores', anchor='petxp'),
+    _e('rewards_enabled', 'kids', 'Rewards',
+       'Turn the rewards store and family goals on or off, for a break. Off, '
+       'nobody can ask for a reward or pledge points, and the wall and app '
+       'stop showing them. Points keep adding up and nothing is deleted.',
+       page='chores', anchor='rewards'),
     # Pet xp. All three live on the CHORES page because that is where the
     # economy is already tuned, even though routines mint too -- one home for
     # the rates beats two half-homes.
