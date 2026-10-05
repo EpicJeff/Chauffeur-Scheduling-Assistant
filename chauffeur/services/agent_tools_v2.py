@@ -2347,8 +2347,18 @@ def get_kid_tasks(member_name: str = "", acting_member: dict = None) -> Dict[str
     today = _dt.date.today()
 
     def _lines(member):
+        # Upcoming items one per line; past-due ones fold into a single
+        # count (they are mostly handed in on Canvas and never ticked here,
+        # and listed oldest-first they buried what is due tomorrow). Asking
+        # by name still finds them — complete_kid_task matches every open task.
         import main as _m
-        return [_m._task_line(t, today) for t in storage.get_kid_tasks(member['id'])]
+        tasks = storage.get_kid_tasks(member['id'])
+        late = [t for t in tasks if (t.get('due_date') or '') < today.isoformat()]
+        out = [_m._task_line(t, today) for t in tasks if t not in late]
+        if late:
+            out.append(f"🗂 {len(late)} still open from earlier"
+                       + (f" (latest: {late[-1].get('title')})" if late[-1].get('title') else ""))
+        return out
 
     if acting_member and acting_member.get('role') == 'child':
         lines = _lines(acting_member)

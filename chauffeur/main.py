@@ -12233,10 +12233,15 @@ def member_day(member_id: str, date: Optional[str] = None, request: Request = No
         launch = bus.morning_launch(member, date_str, rides)
 
     # K4a: the kid's school/deadline list — open tasks due within 7 days of
-    # the viewed date, plus overdue (worded gently, shown in place, never
-    # pushed). Empty for members with no tasks (adults).
+    # the viewed date. Empty for members with no tasks (adults).
+    # Past-due open tasks are their OWN bucket (`still_open`, newest first),
+    # never mixed into due_soon: an assignment feed has no submission state,
+    # so most of them were handed in on Canvas and simply never ticked here,
+    # and sorted oldest-first they used to bury what is actually due
+    # tomorrow (family verdict, 2026-10-04). The bucket is there to open,
+    # not to read past.
     ref = _dt.date.fromisoformat(date_str)
-    due_soon = []
+    due_soon, still_open = [], []
     for t in storage.get_kid_tasks(member_id):
         try:
             due = _dt.date.fromisoformat(t.get('due_date') or '')
@@ -12244,11 +12249,13 @@ def member_day(member_id: str, date: Optional[str] = None, request: Request = No
             continue
         if due > ref + _dt.timedelta(days=7):
             continue
-        due_soon.append({'id': t['id'], 'title': t.get('title'),
-                         'kind': t.get('kind') or 'other',
-                         'emoji': _TASK_EMOJI.get(t.get('kind'), '📌'),
-                         'due_date': t.get('due_date'), 'overdue': due < ref,
-                         'label': _task_due_label(due, ref)})
+        row = {'id': t['id'], 'title': t.get('title'),
+               'kind': t.get('kind') or 'other',
+               'emoji': _TASK_EMOJI.get(t.get('kind'), '📌'),
+               'due_date': t.get('due_date'), 'overdue': due < ref,
+               'label': _task_due_label(due, ref)}
+        (still_open if due < ref else due_soon).append(row)
+    still_open.reverse()
 
     # Presence & Status P1: active family statuses for the viewed date ride
     # every member's day payload — the My Day banner is how a kid (or the
@@ -12266,6 +12273,7 @@ def member_day(member_id: str, date: Optional[str] = None, request: Request = No
         'date': date_str,
         'rides': rides,
         'due_soon': due_soon,
+        'still_open': still_open,
         'launch': launch,
         'status_days': status_days,
     }
@@ -12289,6 +12297,7 @@ def member_day(member_id: str, date: Optional[str] = None, request: Request = No
             payload['rides'] = [{**r, 'assist': None} for r in payload['rides']]
         if _scope.reach(viewer, 'lists.kid_tasks') == _scope.NONE:
             payload['due_soon'] = []
+            payload['still_open'] = []
         if _scope.reach(viewer, 'presence.status') == _scope.NONE:
             payload['status_days'] = []
     return payload
@@ -12379,6 +12388,32 @@ def complete_kid_task_api(task_id: str, req: KidTaskCompleteRequest):
         if actor and actor.get('role') == 'child' and actor['id'] != task['member_id']:
             raise HTTPException(status_code=403, detail="You can only check off your own tasks")
     return storage.complete_kid_task(task_id, req.done)
+
+class KidTaskClearPastRequest(BaseModel):
+    owner_id: str                      # whose list
+    member_id: Optional[str] = None    # per-action identity (PWA pattern)
+    before: Optional[str] = None       # YYYY-MM-DD; defaults to today
+
+@app.post("/api/kid-tasks/clear-past")
+def clear_past_kid_tasks(req: KidTaskClearPastRequest):
+    """Check off every open task due before `before` in one go — the
+    "still open from earlier" bucket's Clear button. Same identity rule as a
+    single check-off: a child clears only their own list."""
+    import datetime as _dt
+    if req.member_id:
+        actor = storage.get_member(req.member_id)
+        if actor and actor.get('role') == 'child' and actor['id'] != req.owner_id:
+            raise HTTPException(status_code=403, detail="You can only clear your own list")
+    try:
+        cutoff = _dt.date.fromisoformat(req.before) if req.before else _dt.date.today()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="before must be YYYY-MM-DD")
+    cleared = 0
+    for t in storage.get_kid_tasks(req.owner_id):
+        if (t.get('due_date') or '9999') < cutoff.isoformat():
+            storage.complete_kid_task(t['id'], True)
+            cleared += 1
+    return {"cleared": cleared}
 
 # --- Shopping lists (meals & provisioning arc M1) -----------------------------
 # Design contract (docs/meal_design.md §M1): there is NO whole-list write
@@ -14347,8 +14382,11 @@ def _build_kid_digests(target_date=None, routine_bus=True):
             lines.insert(0, f"🚀 Leave by {launch['leave_label']}"
                             + (f" with {who}" if who else ""))
 
-        # K4a: school tasks due within 3 days of the digest day, plus
-        # overdue (gentle wording — see _task_due_label). NOISE CONTROL: an
+        # K4a: school tasks due within 3 days of the digest day. Past-due
+        # tasks are NOT here: the digest is pushed, and overdue is never
+        # pushed (K4 design) — they sorted first and ate the six detail
+        # slots plus the roll-up count, so "+11 more" hid tomorrow's quiz.
+        # They live in My Day's "still open" bucket instead. NOISE CONTROL: an
         # assignment feed imports the whole gradebook, and seventeen
         # undifferentiated lines bury the two that matter while shoving the
         # routines off the screen. Tests, projects and bring-items get their
@@ -14362,7 +14400,7 @@ def _build_kid_digests(target_date=None, routine_bus=True):
                 due = _dt.date.fromisoformat(t.get('due_date') or '')
             except ValueError:
                 continue
-            if due <= target + _dt.timedelta(days=2):
+            if target <= due <= target + _dt.timedelta(days=2):
                 (important if t.get('kind') in ('test', 'project', 'bring')
                  else homework).append((due, t))
         important.sort(key=lambda p: p[0])

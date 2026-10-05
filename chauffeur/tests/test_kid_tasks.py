@@ -54,16 +54,43 @@ def scenario_due_soon_window_and_wording():
     _task("kid1", "Old done", TOMORROW, status="done")
     storage.set_cached_schedule({"events": [], "assignments": {}, "matched_rules": {},
                                  "scheduled_errands": []})
+    _task("kid1", "Older reading", TODAY - datetime.timedelta(days=6))
     day = main.member_day("kid1", TODAY.isoformat())
     labels = {t["title"]: t for t in day["due_soon"]}
-    check(set(labels) == {"Math worksheet", "Science fair", "Library book"},
-          f"7-day horizon + overdue, done and far-future excluded — got {set(labels)}")
-    check(labels["Library book"]["overdue"] and
-          labels["Library book"]["label"].startswith("still open"),
-          f"overdue wording is gentle, got {labels['Library book']['label']}")
+    check(set(labels) == {"Math worksheet", "Science fair"},
+          f"7-day horizon, past-due/done/far-future excluded — got {set(labels)}")
     check(labels["Math worksheet"]["label"] == "due tomorrow", "tomorrow label")
-    check(day["due_soon"][0]["title"] == "Library book",
-          "sorted by due date (overdue first)")
+    check(day["due_soon"][0]["title"] == "Math worksheet", "sorted by due date")
+    # Past-due is its own bucket, newest first, gently worded — never mixed
+    # into the list it used to bury (family verdict, 2026-10-04).
+    late = day["still_open"]
+    check([t["title"] for t in late] == ["Library book", "Older reading"],
+          f"still_open holds past-due tasks newest first, got {[t['title'] for t in late]}")
+    check(late[0]["overdue"] and late[0]["label"].startswith("still open"),
+          f"overdue wording is gentle, got {late[0]['label']}")
+
+
+def scenario_clear_past_bucket():
+    _reset()
+    import main
+    from fastapi import HTTPException
+    a = _task("kid1", "Old one", TODAY - datetime.timedelta(days=3))
+    b = _task("kid1", "Older one", TODAY - datetime.timedelta(days=9))
+    c = _task("kid1", "Still ahead", TOMORROW)
+    d = _task("kid2", "Sibling old", TODAY - datetime.timedelta(days=3))
+    try:
+        main.clear_past_kid_tasks(main.KidTaskClearPastRequest(owner_id="kid1", member_id="kid2"))
+        check(False, "a sibling clearing another kid's bucket must 403")
+    except HTTPException as e:
+        check(e.status_code == 403, "a child clears only their own bucket")
+    res = main.clear_past_kid_tasks(main.KidTaskClearPastRequest(owner_id="kid1", member_id="kid1"))
+    check(res["cleared"] == 2, f"both past-due tasks cleared, got {res}")
+    status = {t["id"]: t["status"] for t in storage.get_kid_tasks(include_done=True)}
+    check(status[a["id"]] == "done" and status[b["id"]] == "done", "past-due checked off")
+    check(status[c["id"]] == "open", "upcoming untouched")
+    check(status[d["id"]] == "open", "another kid's list untouched")
+    res = main.clear_past_kid_tasks(main.KidTaskClearPastRequest(owner_id="kid2", member_id="momm"))
+    check(res["cleared"] == 1, "a parent can clear a kid's bucket")
 
 
 def scenario_digest_lines_and_inclusion():
@@ -117,8 +144,10 @@ def scenario_the_digest_is_not_the_gradebook():
           f"tests and projects keep their own lines, got {tasks}")
     check(not any("Worksheet" in t for t in tasks),
           f"plain homework must not be narrated item by item, got {tasks}")
-    check(any(t == "📚 8 more on your school list" for t in tasks),
-          f"homework rolls up into one count line, got {tasks}")
+    check(any(t == "📚 7 more on your school list" for t in tasks),
+          f"homework rolls up into one count line, past-due excluded, got {tasks}")
+    check(not any("Overdue reading" in t for t in tasks),
+          "past-due is never pushed in the digest")
     check(len(tasks) == 3, f"three lines, not eleven: {tasks}")
     # A single homework item is a line, not a count — no page-open to learn
     # six words.
@@ -195,6 +224,7 @@ def scenario_agent_tool_scoping():
 
 SCENARIOS = [
     scenario_due_soon_window_and_wording,
+    scenario_clear_past_bucket,
     scenario_digest_lines_and_inclusion,
     scenario_completion_identity_rules,
     scenario_agent_tool_scoping,

@@ -1219,24 +1219,61 @@
             </div>`;
         }
 
-        function renderDueSoonSection(tasks) {
-            if (!tasks || !tasks.length) return '';
-            const rows = tasks.map(t => `
+        function renderDueSoonRow(t) {
+            return `
                 <label class="flex items-center gap-3 py-2.5 px-1 cursor-pointer active:opacity-70" id="task-row-${t.id}">
                     <input type="checkbox" onchange="completeKidTask('${t.id}', this.checked)"
                         class="w-7 h-7 rounded-lg accent-indigo-500 shrink-0">
                     <span class="shrink-0">${t.emoji}</span>
                     <span class="flex-1 text-[15px] font-bold text-gray-100 task-title">${mfEscape(t.title)}</span>
                     <span class="text-xs font-bold ${t.overdue ? 'text-amber-400' : 'text-indigo-300'}">${mfEscape(t.label)}</span>
-                </label>`).join('');
+                </label>`;
+        }
+
+        // Past-due open tasks are their own collapsed bucket under the list,
+        // never mixed into it: an assignment feed has no submission state,
+        // so most of them were handed in and simply never ticked here.
+        // Closed by default so tomorrow is what the eye lands on.
+        function renderDueSoonSection(tasks, stillOpen) {
+            tasks = tasks || [];
+            stillOpen = stillOpen || [];
+            if (!tasks.length && !stillOpen.length) return '';
+            const owner = selectedMemberId;
+            const bucket = !stillOpen.length ? '' : `
+                <details class="mt-2 pt-2 border-t border-gray-800" id="still-open-bucket">
+                    <summary class="flex items-center justify-between cursor-pointer select-none py-1">
+                        <span class="text-xs font-bold text-gray-400">🗂 Still open from earlier</span>
+                        <span class="text-xs text-gray-500 font-bold">${stillOpen.length}</span>
+                    </summary>
+                    <div class="divide-y divide-gray-800">${stillOpen.map(renderDueSoonRow).join('')}</div>
+                    <button type="button" onclick="clearPastKidTasks('${owner}', ${stillOpen.length})"
+                        class="mt-2 w-full text-xs font-bold text-gray-300 bg-gray-800 rounded-lg py-2 active:opacity-70">Clear all ${stillOpen.length}</button>
+                </details>`;
             return `
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-1">
                 <div class="flex items-center justify-between mb-1">
                     <span class="text-xs font-black uppercase tracking-widest text-gray-500">📚 Due Soon</span>
                     <span class="text-xs text-gray-500 font-bold">${tasks.length}</span>
                 </div>
-                <div class="divide-y divide-gray-800">${rows}</div>
+                ${tasks.length ? `<div class="divide-y divide-gray-800">${tasks.map(renderDueSoonRow).join('')}</div>`
+                               : '<p class="text-xs text-gray-500 italic py-1">Nothing due this week.</p>'}
+                ${bucket}
             </div>`;
+        }
+
+        async function clearPastKidTasks(ownerId, n) {
+            const ok = await promptConfirm(`Check off ${n} older item${n === 1 ? '' : 's'}?`, 'Use this when they were already handed in.', 'Check off');
+            if (!ok) return;
+            try {
+                const res = await fetch(`${apiBase}api/kid-tasks/clear-past`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ owner_id: ownerId, member_id: selectedMemberId })
+                });
+                if (!res.ok) throw new Error();
+                const b = document.getElementById('still-open-bucket');
+                if (b) b.remove();
+                showGlobalAlert('Cleared ✅');
+            } catch (e) { showGlobalAlert('Could not clear'); }
         }
 
         // Programs arc, task 6: "My program" -- begin
@@ -2088,7 +2125,7 @@
                 if (r.ok) {
                     const day = await r.json();
                     out.status = renderStatusBanner(day.status_days, todayStr);
-                    out.dueSoon = renderDueSoonSection(day.due_soon);
+                    out.dueSoon = renderDueSoonSection(day.due_soon, day.still_open);
                 }
             } catch (e) { /* the day still draws without them */ }
             practiceBuiltAt = Date.now();
@@ -2676,7 +2713,7 @@
                 } else {
                     routineHtml = renderRoutineSection(routineData, requestedOffset);
                 }
-                const dueSoonHtml = renderDueSoonSection(data.due_soon);
+                const dueSoonHtml = renderDueSoonSection(data.due_soon, data.still_open);
                 const launchHtml = !data.launch ? '' : `
                     <div class="bg-indigo-950/60 border border-indigo-800/60 rounded-xl p-3 mb-1 flex items-center gap-2">
                         <span class="text-lg">🚀</span>
