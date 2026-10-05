@@ -394,7 +394,7 @@ body.ha-theme #simple-event-modal .glass-panel {
                     
                     <!-- Driver -->
                     <div class="bg-white/5 rounded-xl p-4 border border-white/5">
-                        <div class="text-xs font-semibold text-white/50 uppercase tracking-wider mb-2">Driver</div>
+                        <div id="modal-driver-label" class="text-xs font-semibold text-white/50 uppercase tracking-wider mb-2">Driver</div>
                         <div id="modal-driver" class="flex items-center gap-2"></div>
                     </div>
                 </div>
@@ -414,7 +414,7 @@ body.ha-theme #simple-event-modal .glass-panel {
                         </svg>
                     </div>
                     <div class="flex-1">
-                        <div class="text-xs font-semibold text-white/50 uppercase tracking-wider mb-0.5">Location</div>
+                        <div id="modal-location-label" class="text-xs font-semibold text-white/50 uppercase tracking-wider mb-0.5">Location</div>
                         <span id="modal-location" class="break-words font-medium text-white text-sm"></span>
                     </div>
                 </div>
@@ -956,6 +956,8 @@ function _fetchEvents(inst, startStr, endStr) {
         aliases: inst.aliases,
         hidden: inst.hidden,
         only: inst.only,
+        school: inst.opts.school,
+        schoolAll: inst.opts.schoolAll,
         onRoster: inst.opts.legend ? (roster) => _drawLegend(inst, roster) : null,
     });
 }
@@ -1328,7 +1330,7 @@ function _openEventDetails(inst, evObj) {
     const cfgContainer = document.getElementById('modal-config-container');
     const cfgBtn = document.getElementById('modal-config-btn');
     if (cfgContainer) {
-        const show = !!inst.opts.onConfigure && !props.isErrand;
+        const show = !!inst.opts.onConfigure && !props.isErrand && !props.isSchool;
         cfgContainer.style.display = show ? '' : 'none';
         if (show && cfgBtn) cfgBtn.onclick = () => {
             _closeEventModal();
@@ -1386,13 +1388,21 @@ function _openEventDetails(inst, evObj) {
         abEl.classList.toggle('hidden', !ab);
     }
     document.getElementById('modal-location').textContent = props.location
-        || (props.isPractice ? 'Wherever they practise.' : 'No location provided.');
+        || (props.isPractice ? 'Wherever they practise.'
+            : props.isSchool ? 'From the school list' : 'No location provided.');
 
     const paxContainer = document.getElementById('modal-passengers');
     const _paxLabel = document.getElementById('modal-passengers-label');
     // Nobody is a PASSENGER on a holiday; they are on it. The block is the
     // same block, and the word above it follows what is being listed.
-    if (_paxLabel) _paxLabel.textContent = props.isTrip ? 'Who is away' : 'Passengers';
+    if (_paxLabel) _paxLabel.textContent = props.isTrip ? 'Who is away'
+        : props.isSchool ? 'For' : 'Passengers';
+    // A school item is not driven to and happens in a class, not a place;
+    // the two headings follow what is listed under them.
+    const _drvLabel = document.getElementById('modal-driver-label');
+    if (_drvLabel) _drvLabel.textContent = props.isSchool ? 'What' : 'Driver';
+    const _locLabel = document.getElementById('modal-location-label');
+    if (_locLabel) _locLabel.textContent = props.isSchool ? 'Class' : 'Location';
     if (props.passengers && props.passengers.length > 0) {
         paxContainer.innerHTML = props.passengers.map(p => {
             return `<span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm" style="background-color: ${p.color}">${p.name}</span>`;
@@ -1440,6 +1450,12 @@ function _openEventDetails(inst, evObj) {
                 <span class="font-bold text-teal-300">${_who}'s practice</span>
                 <span class="text-white/40 text-xs">${_phase ? _agEsc(_phase) + ' — nobody drives to this' : 'Nobody drives to this'}</span>
             </div>`;
+    } else if (props.isSchool) {
+        // Schoolwork: nobody drives to it, and "Not assigned" would read as
+        // a gap. Say what it is and when it is due.
+        driverContainer.innerHTML = `
+            <div class="w-8 h-8 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center font-bold text-lg border border-indigo-500/30">📚</div>
+            <span class="text-white/60 text-sm">Schoolwork${props.dueTime ? ' — due by ' + _agEsc(new Date('1970-01-01T' + props.dueTime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })) : ''}</span>`;
     } else if (props.isTrip) {
         // "Not assigned" over a holiday is the same false gap the practice
         // line was: nothing is missing, the schedule simply does not plan
@@ -1580,6 +1596,10 @@ async function mountFamilyCalendar(options = {}) {
         tripLinks: false,
         base: (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : ''),
         only: null,
+        // K4d: child member ids whose school lists show as a layer, and
+        // whether plain homework rides too (else tests/projects/bring-items).
+        school: null,
+        schoolAll: false,
         agendaDays: 7,
         carryParams: '',
         onEventClick: null,
@@ -1649,9 +1669,20 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
         aliases = new Map(),
         hidden = new Set(),
         only = null,
+        school = null,
+        schoolAll = false,
         onRoster = null,
     } = opts;
     const roster = new Map();
+    // K4d school layer, fetched alongside the schedule. Upcoming items only
+    // (the server clamps to today); a failure costs the layer, never the
+    // calendar.
+    const schoolFetch = (school && school.length)
+        ? fetch(`${base}api/kid-tasks/calendar?members=${encodeURIComponent(school.join(','))}`
+                + `&start=${encodeURIComponent(startStr)}&end=${encodeURIComponent(endStr)}`
+                + (schoolAll ? '&all=true' : ''))
+            .then(r => r.ok ? r.json() : []).catch(() => [])
+        : Promise.resolve([]);
                         const apiBase = base;
                         const res = await fetch(`${apiBase}api/schedule?start_date=${encodeURIComponent(startStr)}&end_date=${encodeURIComponent(endStr)}&force_refresh=false`);
 
@@ -2028,6 +2059,29 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                         if (onRoster) onRoster(roster, aliases);
 
                         let fcEvents = Array.from(eventsMap.values());
+
+                        // School items join BEFORE the filter, with the child
+                        // as their one "passenger", so the legend and a card
+                        // pinned to people treat them like that child's events.
+                        for (const t of await schoolFetch) {
+                            const color = t.member_color || '#6366f1';
+                            fcEvents.push({
+                                id: 'school_' + t.id,
+                                title: `${t.emoji} ${t.member_name}: ${t.title}`,
+                                start: t.due_date,
+                                allDay: true,
+                                backgroundColor: color,
+                                borderColor: t.course_color || color,
+                                extendedProps: {
+                                    isSchool: true,
+                                    rawColor: color,
+                                    location: t.course_name || '',
+                                    description: t.description || '',
+                                    dueTime: t.due_time || null,
+                                    passengers: [{ name: t.member_name, color: color }],
+                                },
+                            });
+                        }
 
                         // Apply filtering. Passengers define who an event is
                         // "for"; the driver only counts when there are no

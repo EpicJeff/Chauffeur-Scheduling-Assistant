@@ -438,6 +438,27 @@ def build_household_briefing(target_date: datetime.date = None) -> dict:
             open_lines.append((datetime.datetime.combine(tomorrow, datetime.time(23)),
                                f"📋 {label} — nobody yet"))
 
+    # K4d: the school safety net. The kid is the only one who sees their
+    # list, so a test or a thing to bring can slip past a household with
+    # nobody else knowing. Forward-only and big items only — tests, projects,
+    # things to bring, due tomorrow through two days on: what a parent plans
+    # around. Never homework, never overdue (K4: not a parent dashboard).
+    school_lines = []
+    try:
+        items = storage.upcoming_school_items(
+            tomorrow.isoformat(), (tomorrow + datetime.timedelta(days=2)).isoformat())
+        emoji = {'test': '📝', 'project': '📐', 'bring': '🎒'}
+        for t in sorted(items, key=lambda t: (t.get('due_date') or '', t.get('member_name') or '')):
+            d = datetime.date.fromisoformat(t['due_date'])
+            when = 'tomorrow' if d == tomorrow else d.strftime('%A')
+            course = f" ({t['course_name']})" if t.get('course_named') and t.get('course_name') else ''
+            school_lines.append(f"{emoji.get(t.get('kind'), '📌')} {t.get('member_name')}: "
+                                f"{t.get('title')}{course} — {when}")
+    except Exception as se:
+        print(f"Briefing school lines failed: {se}")
+    if len(school_lines) > 6:
+        school_lines = school_lines[:5] + [f"…and {len(school_lines) - 5} more on the kids' school lists"]
+
     label = 'Tomorrow' if tomorrow == datetime.date.today() + datetime.timedelta(days=1) \
         else tomorrow.strftime('%A')
     lines = []
@@ -449,6 +470,9 @@ def build_household_briefing(target_date: datetime.date = None) -> dict:
     if covered:
         lines.append("Handled:" if open_lines else "All handled:")
         lines += [l for _, l in sorted(covered)]
+    if school_lines:
+        lines.append("School:")
+        lines += school_lines
     return {'date': tomorrow.isoformat(), 'label': label,
             'lines': lines, 'open_count': len(open_lines)}
 

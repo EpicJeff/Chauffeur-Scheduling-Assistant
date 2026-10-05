@@ -172,6 +172,42 @@ def check_parent(served, output):
         assert not errors, errors
 
 
+def check_calendar_layer(served, output):
+    """The shared calendar component draws a child's upcoming school items
+    as all-day entries when mounted with `school` (the wall card's option),
+    and a tap says what it is instead of 'Not assigned'."""
+    with served.browser(reduced_motion='reduce') as page:
+        errors = []
+        page.on('pageerror', lambda e: errors.append(str(e)))
+        page.set_viewport_size({'width': 1100, 'height': 800})
+        _stub(page)
+        page.goto(served.url('calendar'), wait_until='domcontentloaded')
+        page.wait_for_function('window.FamilyCalendar && FamilyCalendar.mount')
+        page.evaluate('''async () => {
+            const host = document.createElement('div');
+            host.id = 'school-layer-cal';
+            host.style.cssText = 'position:fixed;inset:64px 0 0 0;z-index:1;display:flex;background:#0f172a;padding:16px';
+            document.body.appendChild(host);
+            await FamilyCalendar.mount({targetContainerId: 'school-layer-cal', view: 'agenda',
+                toolbar: false, details: true, legend: true, agendaDays: 7,
+                base: window.chfBase || '', school: ['kid']});
+        }''')
+        page.wait_for_selector('#school-layer-cal >> text=Jamie: Chapter 4 Quiz')
+        text = page.locator('#school-layer-cal').inner_text()
+        assert 'Cell Lab Report' not in text, 'plain homework stays off unless asked'
+        assert 'Reading log' not in text, 'never overdue'
+        if output:
+            page.screenshot(path=str(Path(output, 'school-calendar-layer.png')))
+        page.locator('#school-layer-cal >> text=Chapter 4 Quiz').click()
+        page.wait_for_selector('#modal-driver >> text=Schoolwork')
+        assert page.locator('#modal-passengers').inner_text().strip() == 'Jamie'
+        assert page.locator('#modal-driver-label').inner_text().strip().lower() == 'what'
+        assert page.locator('#modal-location-label').inner_text().strip().lower() == 'class'
+        if output:
+            page.screenshot(path=str(Path(output, 'school-calendar-detail.png')))
+        assert not errors, errors
+
+
 def run():
     ha_api.get_states = lambda *a, **kw: []
     ha_api.get_state = lambda *a, **kw: None
@@ -191,6 +227,8 @@ def run():
     print('PASS  kid: card, detail, agenda, naming, month')
     check_parent(served, output)
     print('PASS  parent: More -> School')
+    check_calendar_layer(served, output)
+    print('PASS  calendar component: school layer + details')
 
 
 if __name__ == '__main__':

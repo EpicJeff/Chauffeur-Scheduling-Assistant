@@ -614,6 +614,16 @@ WIDGETS = [
          _opt('members', 'People', 'select', [], source='members', multi=True,
               help="Matches each person's own calendars. Empty shows everyone."),
          _opt('all_day', 'Include all-day events', 'bool', True),
+         # K4d: the kids' school lists as a layer, the way the map shows the
+         # bus. Off until somebody picks a child: a wall is in a shared room,
+         # and homework is not everybody's business. Never overdue items.
+         _opt('school', 'School items for', 'select', [], source='members', multi=True,
+              help="Shows these children's upcoming tests, projects and things "
+                   "to bring from their school lists. Grown-ups picked here "
+                   "show nothing."),
+         _opt('school_all', 'Every school item', 'bool', False,
+              help='Also show plain homework, not just tests, projects and '
+                   'things to bring.'),
      ]},
     {'key': 'errands', 'icon': '📋', 'label': 'Errands',
      'heading': 'Errands waiting',
@@ -2482,7 +2492,9 @@ def _tile_calendar(now, sched=None, settings=None, config=None, **_):
                              # dialog behind every event tap, and the
                              # per-person legend chips.
                              'details': interactive,
-                             'legend': _cfg_bool(config, 'show_legend', True)}}
+                             'legend': _cfg_bool(config, 'show_legend', True),
+                             'school': _cfg_ids(config, 'school'),
+                             'school_all': _cfg_bool(config, 'school_all', False)}}
         show_all_day = _cfg_bool(config, 'all_day', True)
         member_ids = _cfg_ids(config, 'members')
         # Resolved ONCE, not per event: this reads every member record, and a
@@ -2562,6 +2574,29 @@ def _tile_calendar(now, sched=None, settings=None, config=None, **_):
                 'kind': 'errand',
                 'past': bool(end < now),
             })
+
+        # K4d school layer (list view): the same rows the grid views fetch
+        # from /api/kid-tasks/calendar, as all-day lines in the child's color.
+        school_ids = _cfg_ids(config, 'school')
+        if school_ids:
+            try:
+                last = today + datetime.timedelta(days=span - 1)
+                for t in storage.upcoming_school_items(
+                        today.isoformat(), last.isoformat(), member_ids=school_ids,
+                        big_only=not _cfg_bool(config, 'school_all', False)):
+                    d = datetime.date.fromisoformat(t['due_date'])
+                    emoji = {'test': '📝', 'project': '📐', 'bring': '🎒',
+                             'homework': '📚'}.get(t.get('kind'), '📌')
+                    place(d, {
+                        'title': f"{emoji} {t.get('member_name')}: {t.get('title')}",
+                        'at': '', 'end_at': '', 'all_day': True,
+                        'start': d.isoformat() + 'T00:00:00',
+                        'driver': None, 'needs_driver': False,
+                        'color': t.get('member_color') or '#6366f1',
+                        'kind': 'school', 'past': False,
+                    })
+            except Exception as e:
+                print(f"[home_board] calendar school layer failed: {e}")
 
         total = sum(len(v) for v in days.values())
         # Never hidden. A family calendar with a quiet stretch is information;

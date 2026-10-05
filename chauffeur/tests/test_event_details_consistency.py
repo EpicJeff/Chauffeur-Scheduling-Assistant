@@ -211,7 +211,7 @@ def scenario_the_surfaces_read_the_resolved_list():
           "the dialog must prefer the resolved list")
     check('calendar_ids' in pax,
           "and keep the calendar route as the fallback for older payloads")
-    check("props.isTrip ? 'Who is away' : 'Passengers'" in cal,
+    check("props.isTrip ? 'Who is away'" in cal and "props.isSchool ? 'For' : 'Passengers'" in cal,
           "nobody is a passenger on a holiday")
 
     app = _read('app.html')

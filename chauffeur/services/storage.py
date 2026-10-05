@@ -2415,6 +2415,37 @@ def decorate_kid_tasks(tasks: List[dict]) -> List[dict]:
     return out
 
 
+BIG_SCHOOL_KINDS = ('test', 'project', 'bring')
+
+
+def upcoming_school_items(start: str, end: str, member_ids=None,
+                          big_only: bool = True) -> List[dict]:
+    """Open school tasks due from `start` through `end` (YYYY-MM-DD,
+    inclusive) for the PARENT-facing surfaces: the household briefing and
+    the wall calendar's school layer. Forward-looking by contract — a start
+    before today is clamped to today, because overdue is the child's own
+    business (K4) and the feed cannot tell handed-in from forgotten.
+    `big_only` keeps the kinds a family plans around (tests, projects,
+    things to bring). Each row carries the child's name and color."""
+    import datetime as _dt
+    today = _dt.date.today().isoformat()
+    start = max(start or today, today)
+    kids = {m['id']: m for m in get_all_members()
+            if m.get('role') == 'child' and not m.get('system')}
+    if member_ids:
+        kids = {k: v for k, v in kids.items() if k in set(member_ids)}
+    rows = [t for t in get_kid_tasks() if t.get('member_id') in kids
+            and start <= (t.get('due_date') or '') <= end
+            and (not big_only or t.get('kind') in BIG_SCHOOL_KINDS)]
+    out = []
+    for t in decorate_kid_tasks(rows):
+        kid = kids[t['member_id']]
+        t['member_name'] = kid.get('name')
+        t['member_color'] = kid.get('color_code')
+        out.append(t)
+    return out
+
+
 def complete_kid_task(task_id: str, done: bool = True) -> Optional[dict]:
     import time as _time
     with db_lock:

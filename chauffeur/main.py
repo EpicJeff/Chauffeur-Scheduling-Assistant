@@ -12388,6 +12388,27 @@ def list_school_classes(member_id: str):
              'open_count': counts.get(c['key'], 0)}
             for c in storage.get_school_classes(member_id)]
 
+@app.get("/api/kid-tasks/calendar")
+def school_calendar_items(start: str, end: str, members: str = "", all: bool = False):
+    """The wall calendar's school layer (K4d): open school items due in
+    [start, end] for the listed children, forward-only, tests/projects/
+    bring-items unless `all`. Dates are the calendar's range strings; only
+    their date part matters."""
+    ids = [m for m in (members or '').split(',') if m.strip()]
+    if not ids:
+        return []
+    rows = storage.upcoming_school_items(start[:10], end[:10], member_ids=ids,
+                                         big_only=not all)
+    return [{'id': t['id'], 'member_id': t['member_id'],
+             'member_name': t.get('member_name'), 'member_color': t.get('member_color'),
+             'title': t.get('title'), 'kind': t.get('kind') or 'other',
+             'emoji': _TASK_EMOJI.get(t.get('kind'), '📌'),
+             'due_date': t.get('due_date'), 'due_time': t.get('due_time'),
+             'course_name': t.get('course_name') if t.get('course_named') else None,
+             'course_color': t.get('course_color'),
+             'description': t.get('description')}
+            for t in rows]
+
 @app.put("/api/kid-tasks/classes/{class_id}")
 def update_school_class_api(class_id: str, req: SchoolClassUpdate):
     import re as _re

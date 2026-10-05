@@ -1496,7 +1496,9 @@ def scenario_the_calendar_card_mounts_views_and_still_builds_the_list():
         check(tile == {'interactive': True,
                        'grid': {'view': 'agenda', 'toolbar': False,
                                 'days': home_board.AGENDA_DAYS, 'only': [],
-                                'details': True, 'legend': True}},
+                                'details': True, 'legend': True,
+                                # K4d: no school layer until a child is picked
+                                'school': [], 'school_all': False}},
               f"the default calendar card is not a component agenda mount: {tile}")
         # How many days is the CARD's call, not the board's — the board-wide
         # `panel_agenda_days` is gone (v2.229.2), because one number could not

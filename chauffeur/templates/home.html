@@ -2954,6 +2954,10 @@
                             // only wall, still one toggle away.
                             details: !!g.details,
                             legend: !!g.legend,
+                            // K4d: the children whose school lists ride along
+                            // as a layer (ids; the server picks the rows).
+                            school: (g.school && g.school.length) ? g.school : null,
+                            schoolAll: !!g.school_all,
                         });
                         this._liveCalendars.set(id, key);
                     }
