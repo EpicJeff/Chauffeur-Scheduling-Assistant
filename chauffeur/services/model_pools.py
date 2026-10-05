@@ -7,7 +7,7 @@ of 2026-08-30):
 - lite:  gemini-3.5-flash-lite (500), gemini-3.1-flash-lite (500),
          gemini-2.5-flash-lite (20)  -> ~1,020/day, answers in seconds.
 - flash: gemini-3.8/3.7/3.6/3.5/3.1/3/2.5-flash (20 each) -> ~140/day, highest quality.
-- gemma: gemma-4-31b-it (14,400), gemma-4-26b-it (14,400) -> ~28,800/day, but
+- gemma: gemma-4-31b-it (14,400) + whatever large Gemma the key lists (discovered daily), but
          44-180s per call measured on the free API (2026-07-30).
 - pro:   gemini-3.1-pro-preview (paid key only, mission tier exclusive).
 
@@ -29,6 +29,13 @@ and logs loudly — it usually means a pool default has a stale model id.
 HTTP 500/502/503/504 failures also cool a model for two minutes, so later
 foreground requests can reach healthy candidates instead of repeating overloads.
 
+The GEMMA pool is discovered, not trusted (2026-10-05): Google renames and
+retires Gemma ids, and a stale default (gemma-4-26b-it, 404 on device) left
+background work with one real model. Once a day — and at once after a Gemma
+404 — the API key's own model list is read (`refresh_gemma_models`) and the
+pool becomes the defaults that exist plus any other large Gemma the key can
+use. A `model_pool_gemma` setting still wins outright.
+
 Pools are overridable without a code change via comma-separated settings keys
 model_pool_lite / model_pool_flash / model_pool_gemma.
 """
@@ -44,7 +51,10 @@ DEFAULT_POOLS = {
     'lite': ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"],
     'flash': ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash",
               "gemini-3-flash", "gemini-2.5-flash"],
-    'gemma': ["gemma-4-31b-it", "gemma-4-26b-it"],
+    # Only a starting point: the Gemma pool is rebuilt from the key's own
+    # model list once a day (refresh_gemma_models). gemma-4-26b-it was a
+    # default here and 404'd on device.
+    'gemma': ["gemma-4-31b-it", "gemma-3-27b-it"],
     # gemini-2.5-pro is closed to new users; the live pro id is the -preview
     # one (device-verified error text, 2026-09-06). Served via v1beta only.
     'pro': ["gemini-3.1-pro-preview"],
@@ -78,7 +88,119 @@ def _pool(name: str, settings: dict) -> list:
     raw = (settings or {}).get(f'model_pool_{name}') or ''
     if raw.strip():
         return [m.strip() for m in raw.split(',') if m.strip()]
+    if name == 'gemma':
+        found = _discovered_gemma()
+        if found:
+            # Defaults that really exist keep their order; then the rest of
+            # what the key offers, largest first.
+            keep = [m for m in DEFAULT_POOLS['gemma'] if m in found]
+            return keep + [m for m in found if m not in keep][:max(0, GEMMA_POOL_SIZE - len(keep))]
     return list(DEFAULT_POOLS[name])
+
+
+# --- Gemma discovery ---------------------------------------------------------
+GEMMA_POOL_SIZE = 3
+GEMMA_MIN_BILLIONS = 12          # smaller Gemmas are too weak for extraction
+_DISCOVERY_STATE = 'gemma_models_discovered'
+_DISCOVERY_FRESH = 24 * 3600
+_DISCOVERY_RETRY = 3600
+_discovery_lock = threading.Lock()
+
+
+def _gemma_size(model: str) -> int:
+    """Parameter count in billions from an id ('gemma-4-31b-it' -> 31); an
+    'e4b' (effective) id or no size reads as 0."""
+    m = re.search(r'-(e?)(\d+)b\b', model)
+    return 0 if not m or m.group(1) else int(m.group(2))
+
+
+def _discovery_row():
+    try:
+        from services import storage
+        return storage.get_app_state(_DISCOVERY_STATE) or {}
+    except Exception:
+        return {}
+
+
+def _discovered_gemma():
+    row = _discovery_row()
+    return list(row.get('models') or []) or None
+
+
+def gemma_discovery_due() -> bool:
+    row = _discovery_row()
+    age = time.time() - float(row.get('ts') or 0)
+    return age > (_DISCOVERY_FRESH if row.get('models') else _DISCOVERY_RETRY)
+
+
+def mark_gemma_discovery_stale():
+    """A Gemma id just 404'd: look again on the next call."""
+    try:
+        from services import storage
+        row = dict(_discovery_row())
+        row['ts'] = 0
+        storage.set_app_state(_DISCOVERY_STATE, row)
+    except Exception:
+        pass
+
+
+def refresh_gemma_models(api_key: str) -> list:
+    """Read the key's model list (one unmetered GET — it is not a generation
+    request) and keep the Gemma models that can generate and are at least
+    GEMMA_MIN_BILLIONS, largest first. Records the attempt either way, so a
+    failure retries in an hour rather than on every call."""
+    import json
+    import urllib.request
+    from services import storage
+    models, token = [], ''
+    try:
+        for _ in range(10):
+            url = ('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200'
+                   + (f'&pageToken={token}' if token else ''))
+            req = urllib.request.Request(url, headers={'x-goog-api-key': api_key})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.load(resp)
+            for m in data.get('models', []):
+                mid = str(m.get('name', '')).split('/', 1)[-1]
+                if (mid.startswith('gemma') and 'generateContent' in (m.get('supportedGenerationMethods') or [])
+                        and _gemma_size(mid) >= GEMMA_MIN_BILLIONS):
+                    models.append(mid)
+            token = data.get('nextPageToken')
+            if not token:
+                break
+    except Exception as e:
+        logger.warning(f"[model-pools] Gemma model discovery failed ({str(e)[:120]}) — keeping the current list")
+        row = dict(_discovery_row())
+        row['ts'] = time.time() - _DISCOVERY_FRESH + _DISCOVERY_RETRY if row.get('models') else time.time()
+        storage.set_app_state(_DISCOVERY_STATE, row)
+        return list(row.get('models') or [])
+    models = sorted(dict.fromkeys(models), key=lambda m: (-_gemma_size(m), m))
+    storage.set_app_state(_DISCOVERY_STATE, {'ts': time.time(), 'models': models})
+    logger.info(f"[model-pools] Gemma models available to this key: {', '.join(models) or 'none'}")
+    return models
+
+
+def _maybe_discover(tier: str, api_key: str, settings: dict, wait: bool = False):
+    """Refresh the Gemma list when a Gemma-using call is about to run and the
+    list is stale — on a background thread, so no call ever waits on it (this
+    call uses the list as it stands). One look at a time."""
+    if not api_key or 'gemma' not in TIER_CHAINS.get(tier, []):
+        return
+    if ((settings or {}).get('model_pool_gemma') or '').strip():
+        return
+    if not gemma_discovery_due() or not _discovery_lock.acquire(blocking=False):
+        return
+
+    def look():
+        try:
+            if gemma_discovery_due():
+                refresh_gemma_models(api_key)
+        finally:
+            _discovery_lock.release()
+    t = threading.Thread(target=look, name='gemma-discovery', daemon=True)
+    t.start()
+    if wait:
+        t.join()
 
 
 def api_key_for_pool(pool_name: str, settings: dict) -> str:
@@ -120,6 +242,8 @@ def note_failure(model: str, err_str: str):
             logger.info(f"[model-pools] {model} rate limited (per-minute) — 120s cooldown")
     elif "404" in err or "not_found" in low or "not found" in low:
         until = time.time() + 6 * 3600
+        if is_gemma(model):
+            mark_gemma_discovery_stale()
         logger.error(f"[model-pools] {model} looks unknown to the API (404) — cooling "
                      f"6h. If this persists, fix the model id via the model_pool_* "
                      f"settings keys. Error: {err[:200]}")
@@ -193,6 +317,10 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
     from services import llm_budget
     background = tier in ('background', 'mind') if background is None else background
     workflow = workflow or tier
+    try:
+        _maybe_discover(tier, api_key, settings)
+    except Exception as e:
+        logger.warning(f"[model-pools] Gemma discovery skipped: {e}")
     if not background:
         return _call_chain(tier, api_key, system_prompt, user_prompt, temperature, timeout_s,
                            gemma_timeout_s, max_models, settings, images, background, workflow,

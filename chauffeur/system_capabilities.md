@@ -1,6 +1,12 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.238 (2026-10-05).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.239 (2026-10-05).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**The Gemma pool is discovered from the key's own model list (v2.499.239; `model_pools.refresh_gemma_models`/`_maybe_discover`/`_discovered_gemma`/`mark_gemma_discovery_stale`/`_gemma_size`, `tests/test_gemma_discovery.py`).** User's log after v2.499.238: the fall-through worked, but the sibling default `gemma-4-26b-it` answered 404 ("not found for API version v1beta"), so background work still had only one real Gemma model.
+
+- Once a day, and immediately after any Gemma 404, a background thread reads `GET /v1beta/models` with the key (in the `x-goog-api-key` header; a list call, not a generation request, so it is not metered by `llm_budget`) and keeps the Gemma models that support `generateContent` and are ≥ 12B (`e4b`-style effective sizes and 1B/4B models excluded), largest first. Stored in app_state `gemma_models_discovered`. No call ever waits on it — the call that triggers it uses the list as it stands.
+- The `gemma` pool becomes: defaults that the key really has (in default order), then the largest others, 3 in all. A `model_pool_gemma` setting still wins outright and disables discovery. A failed look keeps the last good list and retries after an hour; with no list yet the defaults are used.
+- Default Gemma pool changed to `gemma-4-31b-it`, `gemma-3-27b-it` (the bogus `gemma-4-26b-it` removed); the log line "Gemma models available to this key: …" shows what was found.
 
 **Background AI work survives one sick Gemma model (v2.499.238; `model_pools.call_pool_json`/`_call_chain`, `llm_budget.hold_workflow_pauses`/`apply_held_pauses`/`_write_workflow_pause`, `tests/test_llm_budget.py` `scenario_background_gemma_falls_through_once`).** User's log: `gemma-4-31b-it failed (HTTP Error 500: Internal error encountered) — deferring background work`. Google's Gemma endpoints return 500s often; background calls made exactly one attempt, so one 500 paused the whole workflow (email intake) for 15 min → 2 h while `gemma-4-26b-it` was healthy, and the next probe hit the same sick model.
 

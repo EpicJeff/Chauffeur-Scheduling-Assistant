@@ -126,20 +126,20 @@ def scenario_background_gemma_falls_through_once():
          patch('time.time', return_value=1810000000):
         res = model_pools.call_pool_json('background', 'fallthrough', 's', 'u', settings={},
                                          workflow='intake.email')
-        check(res.get('items') == [] and res.get('_model') == 'gemma-4-26b-it',
-              f'a 500 on gemma-31b is answered by gemma-26b in the same call: {res}')
-        check(calls == ['gemma-4-31b-it', 'gemma-4-26b-it'], f'exactly two wire attempts: {calls}')
+        check(res.get('items') == [] and res.get('_model') == 'gemma-3-27b-it',
+              f'a 500 on gemma-31b is answered by the sibling Gemma in the same call: {res}')
+        check(calls == ['gemma-4-31b-it', 'gemma-3-27b-it'], f'exactly two wire attempts: {calls}')
         check(budget.workflow_ready('fallthrough', 'intake.email'),
               'a call that succeeded on the sibling leaves the workflow unpaused')
 
     model_pools.reset_cooldowns()
     calls = []
-    with patch('urllib.request.urlopen', wire({'gemma-4-31b-it', 'gemma-4-26b-it'}, calls)), \
+    with patch('urllib.request.urlopen', wire({'gemma-4-31b-it', 'gemma-3-27b-it'}, calls)), \
          patch('time.sleep', lambda _: None), patch('time.time', return_value=1810100000):
         res = model_pools.call_pool_json('background', 'bothfail', 's', 'u', settings={},
                                          workflow='intake.email')
         check(res.get('error') and res.get('transient'), f'both failing is a transient error: {res}')
-        check(calls == ['gemma-4-31b-it', 'gemma-4-26b-it'],
+        check(calls == ['gemma-4-31b-it', 'gemma-3-27b-it'],
               f'never spills past Gemma onto the Lite pool: {calls}')
         check(not budget.workflow_ready('bothfail', 'intake.email'),
               'when the whole call fails, the workflow pause is written')
