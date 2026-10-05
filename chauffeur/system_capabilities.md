@@ -1,6 +1,12 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.232 (2026-10-05).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.233 (2026-10-05).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**School sheet: class pills filter (v2.499.233; `pwa_school.js` `pwaSchoolPills`/`pwaSchoolTogglePill`/`pwaSchoolShowAll`/`pwaSchoolClearPast`, `tests/test_school_view_live.py` `check_class_pills`).** User: filter the school calendar by class with pills, the way the calendar filters by person.
+
+- Under Agenda | Month, one pill per class that has items (plus "No class" for items without one), in the calendar legend's style (`family_calendar.html` `_drawLegend`): filled in the class color when shown, a tinted outline when hidden. Tapping toggles; "Show all" appears while anything is hidden. Hidden classes keep their pill so they can be switched back on. Drawn only when there are at least two groups.
+- The filter applies to Agenda, Month and the past-due bucket. **Persistent per child, per device** (localStorage `chauffeur_school_hidden_<child id>`, try/catch-wrapped): a parent hiding homeroom changes nothing for the child or the other parent.
+- With a filter on, the bucket's "Clear all" checks off only the visible classes' items (one `complete` call each, confirmed first) instead of the server's date-only clear.
 
 **Class names from Canvas + name a class from its task (v2.499.232, K4d; `services/canvas_courses.py`, `PUT /api/ics_feeds/{id}/canvas-token`, `SchoolClass.canvas_name`, `pwa_school.js` `schoolNameClass`/`pwaSchoolCanvasToken`, Config feed row "Canvas names", `tests/test_school_detail.py`).** User: the class showed as the long course code; the feed has no friendly name, but the family can create Canvas access tokens.
 

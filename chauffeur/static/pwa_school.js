@@ -122,7 +122,7 @@ async function pwaSchoolOpen(ownerId) {
         }
     }
     const now = new Date();
-    pwaSchool = {owner, tasks: [], classes: [], mode: 'agenda',
+    pwaSchool = {owner, tasks: [], classes: [], mode: 'agenda', hidden: schoolLoadHidden(owner), pillKeys: [],
                  month: new Date(now.getFullYear(), now.getMonth(), 1), day: schoolLocalDate(now)};
     document.getElementById('pwa-school-overlay')?.remove();
     const overlay = document.createElement('div');
@@ -208,7 +208,27 @@ function pwaSchoolAgenda(open, today) {
 
 async function pwaSchoolClearPast(n) {
     if (!pwaSchool) return;
-    await clearPastKidTasks(pwaSchool.owner, n);
+    const s = pwaSchool;
+    if (!s.hidden.size) {
+        await clearPastKidTasks(s.owner, n);
+        return pwaSchoolLoad();
+    }
+    // A class filter is on: "Clear all" means all the ones on screen, never
+    // the hidden classes' items the server's date-only clear would also take.
+    const today = schoolLocalDate(new Date());
+    const late = s.tasks.filter(t => t.status !== 'done' && t.due_date < today
+                                     && !s.hidden.has(t.course_key || ''));
+    const ok = await promptConfirm(`Check off ${late.length} older item${late.length === 1 ? '' : 's'}?`,
+        'Only the classes you are showing. Use this when they were already handed in.', 'Check off');
+    if (!ok) return;
+    for (const t of late) {
+        try {
+            await fetch(`${apiBase}api/kid-tasks/${t.id}/complete`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({member_id: selectedMemberId, done: true})});
+        } catch (e) { /* one failure must not stop the rest */ }
+    }
+    showGlobalAlert('Cleared ✅');
     pwaSchoolLoad();
 }
 
@@ -355,6 +375,71 @@ async function pwaSchoolColorClass(id) {
     if (color) pwaSchoolUpdateClass(id, {color});
 }
 
+// Class pills (the calendar legend's people pills, for classes): tap one to
+// hide that class's items in both Agenda and Month. Remembered per child on
+// THIS device -- a parent filtering out homeroom must not change what the
+// child or the other parent sees. '' stands for items with no class.
+function schoolHiddenKey(owner) { return `chauffeur_school_hidden_${owner}`; }
+
+function schoolLoadHidden(owner) {
+    try { return new Set(JSON.parse(localStorage.getItem(schoolHiddenKey(owner)) || '[]')); }
+    catch (e) { return new Set(); }
+}
+
+function schoolSaveHidden() {
+    if (!pwaSchool) return;
+    try { localStorage.setItem(schoolHiddenKey(pwaSchool.owner), JSON.stringify([...pwaSchool.hidden])); }
+    catch (e) { /* private mode: the filter just lasts this visit */ }
+}
+
+function pwaSchoolPills(open) {
+    const s = pwaSchool;
+    const byKey = new Map(s.classes.map(c => [c.key, c]));
+    const keys = [];
+    open.forEach(t => { const k = t.course_key || ''; if (!keys.includes(k)) keys.push(k); });
+    // Hidden classes keep their pill even when the filter emptied them out,
+    // or there would be no way to switch them back on.
+    s.hidden.forEach(k => { if (!keys.includes(k) && (k === '' || byKey.has(k))) keys.push(k); });
+    if (keys.length < 2) { s.pillKeys = []; return ''; }
+    keys.sort((a, b) => (a === '') - (b === '')
+        || (s.classes.findIndex(c => c.key === a) - s.classes.findIndex(c => c.key === b)));
+    s.pillKeys = keys;
+    const pills = keys.map((k, i) => {
+        const c = byKey.get(k);
+        const color = k ? schoolColor(c?.color) : '#64748b';
+        const label = k ? (c?.display || k) : 'No class';
+        const off = s.hidden.has(k);
+        const style = off
+            ? `background:color-mix(in srgb, ${color} 12%, transparent);border-color:${color};color:${color}`
+            : `background:${color};border-color:transparent;color:#fff`;
+        return `<span role="button" tabindex="0" aria-pressed="${!off}" data-pill="${i}"
+            onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}"
+            onclick="pwaSchoolTogglePill(${i})"
+            class="cursor-pointer px-3 py-1.5 rounded-full text-xs font-bold border max-w-[12rem] truncate ${off ? 'opacity-80' : ''}"
+            style="${style}">${mfEscape(label)}</span>`;
+    }).join('');
+    const reset = s.hidden.size ? `<span role="button" tabindex="0" onclick="pwaSchoolShowAll()"
+        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}"
+        class="cursor-pointer px-3 py-1.5 rounded-full text-xs font-bold text-gray-300 border border-gray-600">Show all</span>` : '';
+    return `<div class="flex flex-wrap gap-1.5 mb-3" aria-label="Filter by class">${pills}${reset}</div>`;
+}
+
+function pwaSchoolTogglePill(i) {
+    if (!pwaSchool) return;
+    const k = pwaSchool.pillKeys[i];
+    if (k === undefined) return;
+    if (pwaSchool.hidden.has(k)) pwaSchool.hidden.delete(k); else pwaSchool.hidden.add(k);
+    schoolSaveHidden();
+    pwaSchoolRender();
+}
+
+function pwaSchoolShowAll() {
+    if (!pwaSchool) return;
+    pwaSchool.hidden.clear();
+    schoolSaveHidden();
+    pwaSchoolRender();
+}
+
 function pwaSchoolRender() {
     const body = document.getElementById('pwa-school-body');
     if (!body || !pwaSchool) return;
@@ -366,6 +451,8 @@ function pwaSchoolRender() {
     // dashboard, and the feed has no submission state, so most of it was
     // handed in anyway). A parent's view starts at today, in both modes.
     const open = s.tasks.filter(t => t.status !== 'done' && (mine || t.due_date >= today));
+    const pills = pwaSchoolPills(open);
+    const shown = open.filter(t => !s.hidden.has(t.course_key || ''));
     // A segmented control, not two sheet buttons: the sheet's boxed button
     // treatment would draw both halves alike and hide which one is on.
     const tab = (mode, label) => `<div role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}" onclick="pwaSchoolMode('${mode}')" aria-pressed="${s.mode === mode}"
@@ -376,6 +463,7 @@ function pwaSchoolRender() {
             <button type="button" onclick="pwaSchoolClose()" class="pwa-sheet-close text-gray-400 text-xl px-2" aria-label="Close">&#215;</button>
         </div>
         <div class="flex gap-1 bg-gray-800 rounded-xl p-1 mb-3">${tab('agenda', 'Agenda')}${tab('month', 'Month')}</div>
-        ${s.mode === 'month' ? pwaSchoolMonth(open) : pwaSchoolAgenda(open, today)}
+        ${pills}
+        ${s.mode === 'month' ? pwaSchoolMonth(shown) : pwaSchoolAgenda(shown, today)}
         ${pwaSchoolClasses()}`;
 }

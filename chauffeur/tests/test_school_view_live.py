@@ -177,6 +177,40 @@ def check_kid(served, output):
         assert not errors, errors
 
 
+def check_class_pills(served, output):
+    """Class pills filter the School sheet like the calendar's people pills,
+    and the choice survives closing the sheet (per child, this device)."""
+    with served.browser(reduced_motion='reduce', has_touch=True) as page:
+        errors = _open(served, page, 'kid')
+        page.evaluate("pwaSchoolOpen('kid')")
+        body = page.locator('#pwa-school-body')
+        page.wait_for_selector('#pwa-school-body >> text=Cell Lab Report')
+        pills = page.locator('#pwa-school-body [data-pill]')
+        labels = [p.strip() for p in pills.all_inner_texts()]
+        assert 'Science' in labels and 'Algebra 1' in labels and 'No class' in labels, labels
+        pills.filter(has_text='Science').click()
+        page.wait_for_function("!document.getElementById('pwa-school-body').innerText.includes('Cell Lab Report')")
+        text = body.inner_text()
+        assert 'Problem set 7' in text and 'Chapter 4 Quiz' not in text, text
+        assert pills.filter(has_text='Science').get_attribute('aria-pressed') == 'false'
+        if output:
+            page.screenshot(path=str(Path(output, 'school-class-pills.png')))
+        # Month view honours the same filter.
+        page.locator('#pwa-school-body [role="button"]:text-is("Month")').click()
+        page.locator(f'#pwa-school-body [data-day="{_d(2)}"]').click()
+        mt = body.inner_text()
+        assert 'Problem set 7' in mt and 'Chapter 4 Quiz' not in mt, mt
+        # Persistent: close and reopen.
+        page.evaluate('pwaSchoolClose()')
+        page.evaluate("pwaSchoolOpen('kid')")
+        page.wait_for_selector('#pwa-school-body >> text=Problem set 7')
+        assert 'Cell Lab Report' not in body.inner_text(), 'the filter survives reopening'
+        page.locator('#pwa-school-body [role="button"]:text-is("Show all")').click()
+        page.wait_for_selector('#pwa-school-body >> text=Cell Lab Report')
+        page.evaluate('pwaSchoolClose()')
+        assert not errors, errors
+
+
 def check_parent(served, output):
     with served.browser(reduced_motion='reduce', has_touch=True) as page:
         errors = _open(served, page, 'mom')
@@ -244,6 +278,8 @@ def run():
         Path(output).mkdir(parents=True, exist_ok=True)
     check_kid(served, output)
     print('PASS  kid: card, detail, agenda, naming, month')
+    check_class_pills(served, output)
+    print('PASS  kid: class pills filter and persist')
     check_parent(served, output)
     print('PASS  parent: More -> School')
     check_calendar_layer(served, output)
