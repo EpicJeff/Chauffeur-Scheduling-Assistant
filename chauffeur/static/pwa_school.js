@@ -107,7 +107,7 @@ function schoolTaskMeta(t) {
     // class, and the name appears once somebody gives it one.
     if (t.course_name && t.course_named) bits.push(`<span class="text-xs font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 truncate max-w-[10rem]">${mfEscape(t.course_name)}</span>`);
     if (t.due_time) bits.push(`<span class="text-xs font-semibold text-gray-400">by ${mfEscape(formatClock(t.due_time))}</span>`);
-    if (t.description || (t.links || []).length) bits.push('<span class="text-xs font-semibold text-gray-400" aria-label="Has details">📎</span>');
+    if (t.description || t.notes || (t.links || []).length) bits.push('<span class="text-xs font-semibold text-gray-400" aria-label="Has details">📎</span>');
     return bits.length ? `<span class="flex flex-wrap items-center gap-1.5 min-w-0">${bits.join('')}</span>` : '';
 }
 
@@ -555,7 +555,137 @@ function pwaSchoolRender() {
             <button type="button" onclick="pwaSchoolClose()" class="pwa-sheet-close text-gray-400 text-xl px-2" aria-label="Close">&#215;</button>
         </div>
         <div class="flex gap-1 bg-gray-800 rounded-xl p-1 mb-3">${tab('agenda', 'Agenda')}${tab('month', 'Month')}</div>
+        <div role="button" tabindex="0" onclick="pwaPlannerSnap()" data-planner-snap
+            onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}"
+            class="cursor-pointer mb-3 text-center text-sm font-bold text-gray-200 bg-gray-800 rounded-lg py-2">📷 Snap your planner</div>
         ${pills}
         ${s.mode === 'month' ? pwaSchoolMonth(shown) : pwaSchoolAgenda(shown, today)}
         ${pwaSchoolClasses()}`;
+}
+
+
+// --- Planner photo (K4d) ---------------------------------------------------
+// A page of the paper planner -> proposed changes, reviewed before anything
+// is saved. Any planner layout: the server's instructions describe none.
+let pwaPlanner = null;   // {owner, page_dates, rows}
+
+function pwaPlannerSnap() {
+    if (!pwaSchool) return;
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = 'image/*';
+    input.onchange = () => { if (input.files && input.files[0]) pwaPlannerUpload(input.files[0]); };
+    input.click();
+}
+
+async function pwaPlannerUpload(file) {
+    const owner = pwaSchool?.owner;
+    if (!owner) return;
+    showGlobalAlert('Reading your planner…');
+    let data;
+    try {
+        const fd = new FormData();
+        fd.append('photo', file);
+        fd.append('owner_id', owner);
+        fd.append('member_id', selectedMemberId || '');
+        const r = await fetch(`${apiBase}api/kid-tasks/planner-photo`, {method: 'POST', body: fd});
+        data = await r.json().catch(() => ({}));
+        if (!r.ok || data.error) return showGlobalAlert(data.error || data.detail || 'Could not read that photo');
+    } catch (e) { return showGlobalAlert('Could not read that photo'); }
+    if (!(data.rows || []).length) return showGlobalAlert('Nothing on that page to add.');
+    pwaPlanner = {owner, page_dates: data.page_dates, rows: data.rows.map((r, i) => ({...r, i,
+        keep: r.action === 'new' || r.action === 'note',
+        title: r.subject && !r.text.toLowerCase().includes(r.subject.toLowerCase()) ? `${r.subject}: ${r.text}` : r.text}))};
+    pwaPlannerReview();
+}
+
+function schoolShortDate(iso) {
+    return iso ? new Date(iso + 'T12:00:00').toLocaleDateString(undefined, {weekday: 'short', month: 'short', day: 'numeric'}) : '';
+}
+
+function pwaPlannerReview() {
+    const P = pwaPlanner;
+    if (!P) return;
+    document.getElementById('pwa-planner-overlay')?.remove();
+    const add = P.rows.filter(r => r.action === 'new' || r.action === 'needs_date');
+    const notes = P.rows.filter(r => r.action === 'note');
+    const same = P.rows.filter(r => r.action === 'already');
+    const box = r => `<input type="checkbox" ${r.keep ? 'checked' : ''} data-keep="${r.i}" aria-label="Keep"
+        class="w-6 h-6 rounded-lg accent-indigo-500 shrink-0 mt-1">`;
+    const addRow = r => `
+        <div class="rounded-lg bg-gray-800 px-2.5 py-2 flex items-start gap-2">
+            ${box(r)}
+            <div class="flex-1 min-w-0 flex flex-col gap-1.5">
+                <input type="text" data-title="${r.i}" value="${mfEscape(r.title)}" aria-label="What"
+                    class="w-full rounded-lg px-2 py-1 text-sm font-bold">
+                <div class="flex flex-wrap items-center gap-1.5">
+                    <input type="date" data-date="${r.i}" value="${r.date || ''}" aria-label="Due"
+                        class="rounded-lg px-2 py-1 text-sm">
+                    <span class="text-xs font-semibold text-gray-400">${SCHOOL_EMOJI[r.kind] || '📌'}${r.course_name ? ' · ' + mfEscape(r.course_name) : ''}</span>
+                </div>
+                ${r.details ? `<span class="text-xs text-gray-300">📒 ${mfEscape(r.details)}</span>` : ''}
+                ${r.action === 'needs_date' && !r.date ? `<span class="text-xs text-amber-300" data-date-hint="${r.i}">Pick the day it is due</span>` : ''}
+            </div>
+        </div>`;
+    const noteRow = r => `
+        <div class="rounded-lg bg-gray-800 px-2.5 py-2 flex items-start gap-2">
+            ${box(r)}
+            <div class="flex-1 min-w-0">
+                <div class="text-sm font-bold text-gray-100">${mfEscape(r.match.title)}</div>
+                <div class="text-xs font-semibold text-gray-400">${mfEscape([r.match.course_name, schoolShortDate(r.match.due_date)].filter(Boolean).join(' · '))}</div>
+                <div class="text-xs text-gray-300 mt-1">📒 ${mfEscape(r.note)}</div>
+                ${r.conflict ? `<div class="text-xs text-amber-300 mt-1">Your planner says ${mfEscape(schoolShortDate(r.date))}; the school list says ${mfEscape(schoolShortDate(r.match.due_date))}</div>` : ''}
+            </div>
+        </div>`;
+    const overlay = document.createElement('div');
+    overlay.id = 'pwa-planner-overlay';
+    overlay.className = 'pwa-sheet-overlay fixed inset-0 z-[400] bg-black/70 flex items-end sm:items-center justify-center p-4';
+    overlay.innerHTML = `<div class="pwa-sheet w-full max-w-sm bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-5 max-h-[85dvh] overflow-y-auto" role="dialog" aria-label="From your planner">
+        <div class="text-gray-100 font-bold text-lg">From your planner</div>
+        ${P.page_dates ? `<div class="text-xs font-semibold text-gray-400 mb-2">Read as ${mfEscape(P.page_dates)}</div>` : '<div class="mb-2"></div>'}
+        ${add.length ? `<div class="text-xs font-black uppercase tracking-widest text-gray-500 mt-2 mb-1">Add to the list</div>
+            <div class="flex flex-col gap-1.5">${add.map(addRow).join('')}</div>` : ''}
+        ${notes.length ? `<div class="text-xs font-black uppercase tracking-widest text-gray-500 mt-3 mb-1">Add a note</div>
+            <div class="flex flex-col gap-1.5">${notes.map(noteRow).join('')}</div>` : ''}
+        ${same.length ? `<div class="text-xs font-black uppercase tracking-widest text-gray-500 mt-3 mb-1">Already on the list</div>
+            <div class="flex flex-col gap-1">${same.map(r => `<div class="text-sm text-gray-400 px-1">✓ ${mfEscape(r.match.title)}${r.match.course_name ? ' · ' + mfEscape(r.match.course_name) : ''}</div>`).join('')}</div>` : ''}
+        <div class="flex gap-2 justify-end mt-4">
+            <button data-no class="px-4 py-2 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-bold">Cancel</button>
+            <button data-yes class="px-4 py-2 rounded-xl bg-green-600 text-white text-sm font-bold">Save</button>
+        </div></div>`;
+    document.body.appendChild(overlay);
+    const close = () => { overlay.remove(); pwaPlanner = null; };
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    overlay.querySelector('[data-no]').onclick = close;
+    overlay.querySelectorAll('[data-keep]').forEach(cb => { cb.onchange = () => { P.rows[+cb.dataset.keep].keep = cb.checked; }; });
+    overlay.querySelectorAll('[data-title]').forEach(el => { el.oninput = () => { P.rows[+el.dataset.title].title = el.value; }; });
+    overlay.querySelectorAll('[data-date]').forEach(el => { el.onchange = () => {
+        const r = P.rows[+el.dataset.date];
+        r.date = el.value || null;
+        overlay.querySelector(`[data-date-hint="${r.i}"]`)?.toggleAttribute('hidden', !!r.date);
+        if (r.date && !r.keep) { r.keep = true; overlay.querySelector(`[data-keep="${r.i}"]`).checked = true; }
+    }; });
+    overlay.querySelector('[data-yes]').onclick = () => pwaPlannerSave(close);
+}
+
+async function pwaPlannerSave(close) {
+    const P = pwaPlanner;
+    if (!P) return;
+    const rows = P.rows.filter(r => r.keep).map(r => r.action === 'note'
+        ? {action: 'note', task_id: r.match.id, note: r.note}
+        : {action: 'new', title: r.title, due_date: r.date, kind: r.kind,
+           course_key: r.course_key || null, note: r.details || ''})
+        .filter(r => r.action === 'note' || (r.title && r.due_date));
+    const missing = P.rows.filter(r => r.keep && r.action !== 'note' && !r.date).length;
+    if (missing) return showGlobalAlert(`Pick a day for ${missing} item${missing === 1 ? '' : 's'}, or untick ${missing === 1 ? 'it' : 'them'}.`);
+    try {
+        const r = await fetch(`${apiBase}api/kid-tasks/planner-apply`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({owner_id: P.owner, member_id: selectedMemberId, rows})});
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) return showGlobalAlert(d.detail || 'Could not save');
+        close();
+        const bits = [d.added ? `${d.added} added` : '', d.noted ? `${d.noted} note${d.noted === 1 ? '' : 's'}` : ''].filter(Boolean);
+        showGlobalAlert(bits.length ? `From your planner: ${bits.join(', ')} ✅` : 'Nothing new to save');
+    } catch (e) { return showGlobalAlert('Could not save'); }
+    if (pwaSchool) pwaSchoolLoad();
 }

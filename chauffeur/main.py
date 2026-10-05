@@ -12498,6 +12498,47 @@ def complete_kid_task_api(task_id: str, req: KidTaskCompleteRequest):
             raise HTTPException(status_code=403, detail="You can only check off your own tasks")
     return storage.complete_kid_task(task_id, req.done)
 
+def _planner_identity(owner_id: str, actor_id: Optional[str]):
+    owner = storage.get_member(owner_id or '')
+    if not owner or owner.get('role') != 'child':
+        raise HTTPException(status_code=400, detail="A planner belongs to a child")
+    if actor_id:
+        actor = storage.get_member(actor_id)
+        if actor and actor.get('role') == 'child' and actor['id'] != owner_id:
+            raise HTTPException(status_code=403, detail="You can only add to your own list")
+        if actor and actor.get('role') == 'helper':
+            raise HTTPException(status_code=403, detail="Helpers can't change a school list")
+
+@app.post("/api/kid-tasks/planner-photo")
+async def planner_photo(photo: UploadFile = File(...), owner_id: str = Form(...),
+                        member_id: str = Form('')):
+    """K4d: a photo of a page of the child's paper planner -> proposed
+    changes (notes onto matching items, new items, items that need a date).
+    Nothing is written; the review screen sends what it keeps to /apply."""
+    import base64
+    from services import planner_intake
+    _planner_identity(owner_id, member_id or None)
+    data = await photo.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty upload")
+    if len(data) > _PHOTO_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Image too large (8MB max)")
+    mime = (photo.content_type or '').lower()
+    if not mime.startswith('image/'):
+        raise HTTPException(status_code=400, detail="Only images are supported")
+    return planner_intake.extract(owner_id, base64.b64encode(data).decode('ascii'), mime)
+
+class PlannerApplyRequest(BaseModel):
+    owner_id: str
+    member_id: Optional[str] = None    # per-action identity (PWA pattern)
+    rows: List[dict] = []
+
+@app.post("/api/kid-tasks/planner-apply")
+def planner_apply(req: PlannerApplyRequest):
+    from services import planner_intake
+    _planner_identity(req.owner_id, req.member_id)
+    return planner_intake.apply(req.owner_id, req.rows, req.member_id)
+
 class KidTaskKindRequest(BaseModel):
     kind: str
     member_id: Optional[str] = None    # per-action identity (PWA pattern)

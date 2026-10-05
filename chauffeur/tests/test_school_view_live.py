@@ -249,6 +249,61 @@ def check_big_items(served, output):
         assert not errors, errors
 
 
+def check_planner(served, output):
+    """Snap your planner: the photo's proposals are reviewed (tick, edit,
+    pick a date) and only what is kept is saved. The photo READ is stubbed
+    (it is a Gemini call); the save is the real endpoint."""
+    quiz = next(t for t in storage.get_kid_tasks('kid') if t['title'] == 'Chapter 4 Quiz')
+    reading = {'page_dates': 'Week of Oct 5', 'error': None, 'rows': [
+        {'text': 'sci quiz ch4', 'subject': 'sci', 'date': quiz['due_date'], 'date_basis': 'layout',
+         'kind': 'test', 'details': 'chapters 4-5, bring calculator', 'checked_off': False,
+         'match': {'id': quiz['id'], 'title': 'Chapter 4 Quiz', 'course_name': 'Science',
+                   'due_date': quiz['due_date'], 'status': 'open'},
+         'action': 'note', 'note': 'chapters 4-5, bring calculator', 'conflict': None},
+        {'text': 'bring poster board', 'subject': 'English', 'date': _d(3), 'date_basis': 'layout',
+         'kind': 'bring', 'details': None, 'checked_off': False, 'match': None,
+         'action': 'new', 'note': None, 'conflict': None, 'course_key': 'course_77', 'course_name': 'English'},
+        {'text': 'field trip form', 'subject': None, 'date': None, 'date_basis': 'none',
+         'kind': 'other', 'details': None, 'checked_off': False, 'match': None,
+         'action': 'needs_date', 'note': None, 'conflict': None},
+        {'text': 'math worksheet', 'subject': 'Math', 'date': _d(1), 'date_basis': 'layout',
+         'kind': 'homework', 'details': None, 'checked_off': False, 'match': None,
+         'action': 'new', 'note': None, 'conflict': None},
+    ]}
+    with served.browser(reduced_motion='reduce', has_touch=True) as page:
+        errors = _open(served, page, 'kid')
+        page.route('**/api/kid-tasks/planner-photo', lambda r: r.fulfill(json=reading))
+        page.evaluate("pwaSchoolOpen('kid')")
+        page.wait_for_selector('#pwa-school-body [data-planner-snap]')
+        with page.expect_file_chooser() as fc:
+            page.locator('#pwa-school-body [data-planner-snap]').click()
+        fc.value.set_files({'name': 'planner.jpg', 'mimeType': 'image/jpeg', 'buffer': b'\xff\xd8\xff\xd9'})
+        review = page.locator('#pwa-planner-overlay')
+        review.wait_for()
+        rt = review.inner_text().lower()
+        assert 'add to the list' in rt and 'add a note' in rt and 'week of oct 5' in rt, rt
+        assert 'pick the day it is due' in rt, rt
+        # Untick the worksheet, give the form a date, rename the poster line.
+        review.locator('[data-keep="3"]').uncheck()
+        review.locator('[data-date="2"]').fill(_d(4))
+        review.locator('[data-date="2"]').dispatch_event('change')
+        review.locator('[data-title="1"]').fill('English: poster board (white)')
+        if output:
+            page.screenshot(path=str(Path(output, 'school-planner-review.png')))
+        review.locator('[data-yes]').click()
+        page.wait_for_function("!document.getElementById('pwa-planner-overlay')")
+        page.wait_for_timeout(400)
+        tasks = {t['title']: t for t in storage.get_kid_tasks('kid')}
+        assert 'chapters 4-5' in (tasks['Chapter 4 Quiz'].get('notes') or ''), tasks['Chapter 4 Quiz']
+        assert tasks['English: poster board (white)']['source'] == 'planner'
+        assert tasks['English: poster board (white)']['course_key'] == 'course_77'
+        assert tasks['Field trip form']['due_date'] == _d(4) if 'Field trip form' in tasks \
+            else tasks['field trip form']['due_date'] == _d(4)
+        assert 'Math: math worksheet' not in tasks and 'math worksheet' not in tasks, 'unticked is not saved'
+        page.evaluate('pwaSchoolClose()')
+        assert not errors, errors
+
+
 def check_parent(served, output):
     with served.browser(reduced_motion='reduce', has_touch=True) as page:
         errors = _open(served, page, 'mom')
@@ -320,6 +375,8 @@ def run():
     print('PASS  kid: class pills filter and persist')
     check_big_items(served, output)
     print('PASS  kid: heads-up strip, kind switch, tests & projects filter')
+    check_planner(served, output)
+    print('PASS  kid: planner photo review and save')
     check_parent(served, output)
     print('PASS  parent: More -> School')
     check_calendar_layer(served, output)
