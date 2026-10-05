@@ -102,7 +102,59 @@ def scenario_daily_quota_survives_restart():
     check(len(calls)==1,'provider daily exhaustion persists across restarts')
 
 
+def scenario_background_gemma_falls_through_once():
+    """A Gemma 500 (Google's servers, common) used to pause a background
+    workflow for 15 min-2 h after ONE attempt while the sibling Gemma model
+    was healthy. Now a server failure on one Gemma model tries the other
+    within the same call; the workflow pause lands only if the whole call
+    fails; it never spills onto Lite (that allowance is chat's)."""
+    def gemma_ok_body():
+        return io.BytesIO(b'{"candidates":[{"content":{"parts":[{"text":"{\\"items\\":[]}"}]}}]}')
+
+    def wire(fail_models, calls, code=500):
+        def urlopen(req, **kw):
+            m = req.full_url.split('/models/')[1].split(':')[0]
+            calls.append(m)
+            if m in fail_models:
+                raise urllib.error.HTTPError('https://offline.invalid', code, 'Internal', {}, io.BytesIO(b'internal'))
+            return gemma_ok_body()
+        return urlopen
+
+    model_pools.reset_cooldowns()
+    calls = []
+    with patch('urllib.request.urlopen', wire({'gemma-4-31b-it'}, calls)), patch('time.sleep', lambda _: None), \
+         patch('time.time', return_value=1810000000):
+        res = model_pools.call_pool_json('background', 'fallthrough', 's', 'u', settings={},
+                                         workflow='intake.email')
+        check(res.get('items') == [] and res.get('_model') == 'gemma-4-26b-it',
+              f'a 500 on gemma-31b is answered by gemma-26b in the same call: {res}')
+        check(calls == ['gemma-4-31b-it', 'gemma-4-26b-it'], f'exactly two wire attempts: {calls}')
+        check(budget.workflow_ready('fallthrough', 'intake.email'),
+              'a call that succeeded on the sibling leaves the workflow unpaused')
+
+    model_pools.reset_cooldowns()
+    calls = []
+    with patch('urllib.request.urlopen', wire({'gemma-4-31b-it', 'gemma-4-26b-it'}, calls)), \
+         patch('time.sleep', lambda _: None), patch('time.time', return_value=1810100000):
+        res = model_pools.call_pool_json('background', 'bothfail', 's', 'u', settings={},
+                                         workflow='intake.email')
+        check(res.get('error') and res.get('transient'), f'both failing is a transient error: {res}')
+        check(calls == ['gemma-4-31b-it', 'gemma-4-26b-it'],
+              f'never spills past Gemma onto the Lite pool: {calls}')
+        check(not budget.workflow_ready('bothfail', 'intake.email'),
+              'when the whole call fails, the workflow pause is written')
+
+    model_pools.reset_cooldowns()
+    calls = []
+    with patch('urllib.request.urlopen', wire({'gemma-4-31b-it'}, calls, code=400)), \
+         patch('time.sleep', lambda _: None), patch('time.time', return_value=1810200000):
+        model_pools.call_pool_json('background', 'badreq', 's', 'u', settings={}, workflow='intake.email')
+        check(calls == ['gemma-4-31b-it'], f'a non-server failure does not try the sibling: {calls}')
+    model_pools.reset_cooldowns()
+
+
 if __name__=='__main__':
     scenario_retry_amplification();scenario_shared_budget_and_reserve()
     scenario_concurrency_and_day_reset();scenario_daily_quota_survives_restart()
+    scenario_background_gemma_falls_through_once()
     print('LLM request budget passed (all provider calls mocked)')

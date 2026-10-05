@@ -21,6 +21,11 @@ BACKGROUND_FLASH_LIMIT = 12  # shared across automated workflows/models per day
 FLASH_MODEL_LIMIT = 20
 _scope = contextvars.ContextVar('llm_request_scope', default=('direct', False))
 _wire_attempts = contextvars.ContextVar('llm_wire_attempts', default=None)
+# While set (a list), a background failure's WORKFLOW pause is collected here
+# instead of written: a pool call that falls through to a sibling model must
+# not be paused by its own first attempt. The caller applies it only when the
+# whole call failed (apply_held_pauses).
+_held_pauses = contextvars.ContextVar('llm_held_pauses', default=None)
 
 
 class Deferred(RuntimeError):
@@ -45,6 +50,35 @@ def record_attempts(attempts):
         yield
     finally:
         _wire_attempts.reset(token)
+
+
+@contextlib.contextmanager
+def hold_workflow_pauses():
+    held = []
+    token = _held_pauses.set(held)
+    try:
+        yield held
+    finally:
+        _held_pauses.reset(token)
+
+
+def apply_held_pauses(held):
+    """Write the workflow pause the last failed attempt would have written."""
+    if not held:
+        return
+    account, scope, retry_at = held[-1]
+    now = time.time()
+    with contextlib.closing(_connect()) as db, db:
+        db.execute('BEGIN IMMEDIATE')
+        _write_workflow_pause(db, account, scope, retry_at, now)
+
+
+def _write_workflow_pause(db, account, scope, retry_at, now):
+    row = db.execute('SELECT failures FROM pauses WHERE account=? AND scope=?', (account, scope)).fetchone()
+    failures = min((row[0] if row else 0) + 1, 4)
+    until = max(retry_at, now + min(7200, 900 * 2 ** (failures - 1)))
+    db.execute('INSERT INTO pauses VALUES(?,?,?,?) ON CONFLICT(account,scope) DO UPDATE SET until=excluded.until,failures=excluded.failures',
+               (account, scope, until, failures))
 
 
 def _connect():
@@ -138,11 +172,11 @@ def _finish(reservation, model, outcome, retry_at=0, failed=False):
         if background:
             scope = 'workflow:' + workflow
             if failed:
-                row = db.execute('SELECT failures FROM pauses WHERE account=? AND scope=?', (account, scope)).fetchone()
-                failures = min((row[0] if row else 0) + 1, 4)
-                until = max(retry_at, now + min(7200, 900 * 2 ** (failures - 1)))
-                db.execute('INSERT INTO pauses VALUES(?,?,?,?) ON CONFLICT(account,scope) DO UPDATE SET until=excluded.until,failures=excluded.failures',
-                           (account, scope, until, failures))
+                held = _held_pauses.get()
+                if held is not None:
+                    held.append((account, scope, retry_at))
+                else:
+                    _write_workflow_pause(db, account, scope, retry_at, now)
             else:
                 db.execute('DELETE FROM pauses WHERE account=? AND scope=?', (account, scope))
 

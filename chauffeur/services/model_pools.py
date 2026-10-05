@@ -190,17 +190,48 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
     (the house photo pipeline writes it into its own notes). Nothing else
     changes; an admission deferral, which sends nothing, is not recorded.
     """
-    from services import llm as _llm
     from services import llm_budget
     background = tier in ('background', 'mind') if background is None else background
     workflow = workflow or tier
+    if not background:
+        return _call_chain(tier, api_key, system_prompt, user_prompt, temperature, timeout_s,
+                           gemma_timeout_s, max_models, settings, images, background, workflow,
+                           strict_json, max_output_tokens, attempts, total_timeout_s,
+                           thinking_level, response_schema)
+    # Background: the workflow pause is held until the whole call has failed,
+    # so a fall-through to a sibling Gemma model is not blocked by the pause
+    # its own first attempt would otherwise have written.
+    with llm_budget.hold_workflow_pauses() as held:
+        res = _call_chain(tier, api_key, system_prompt, user_prompt, temperature, timeout_s,
+                          gemma_timeout_s, max_models, settings, images, background, workflow,
+                          strict_json, max_output_tokens, attempts, total_timeout_s,
+                          thinking_level, response_schema)
+    if isinstance(res, dict) and res.get('error'):
+        llm_budget.apply_held_pauses(held)   # no-op when nothing failed on the wire
+    return res
+
+
+def _call_chain(tier, api_key, system_prompt, user_prompt, temperature, timeout_s,
+                gemma_timeout_s, max_models, settings, images, background, workflow,
+                strict_json, max_output_tokens, attempts, total_timeout_s,
+                thinking_level, response_schema):
+    from services import llm as _llm
+    from services import llm_budget
     last_err = "no models available"
     transient = False
     deadline = None if total_timeout_s is None else time.monotonic() + total_timeout_s
     launched = 0
     deferred_until = None
+    # Background work makes one attempt — except that a SERVER failure
+    # (5xx/timeout) on a Gemma model may try the sibling Gemma model once.
+    # Google's Gemma endpoints 500 often, and one sick model used to stall a
+    # whole workflow for hours while its twin was healthy. Never past Gemma:
+    # the Lite pool's daily allowance is shared with interactive chat.
+    bg_limit = 1
     for model in models_for(tier, settings):
-        if launched >= (1 if background else max_models):
+        if launched >= (bg_limit if background else max_models):
+            break
+        if background and launched and not is_gemma(model):
             break
         t = gemma_timeout_s if (gemma_timeout_s and is_gemma(model)) else timeout_s
         if deadline is not None:
@@ -231,7 +262,12 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
             note_failure(model, last_err)
             transient = any(c in last_err for c in ("429", "500", "502", "503", "504",
                                                     "timed out", "timeout"))
-            logger.warning(f"[model-pools] {model} failed ({last_err[:160]}) — " + ('deferring background work' if background else 'trying next'))
+            if background and transient and is_gemma(model):
+                bg_limit = 2
+            logger.warning(f"[model-pools] {model} failed ({last_err[:160]}) — "
+                           + ('trying next' if not background
+                              else 'trying the other Gemma model' if launched < bg_limit
+                              else 'deferring background work'))
             continue
         launched += 1
         if isinstance(res, dict) and res.get("error") and "429" in str(res["error"]):
