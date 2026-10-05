@@ -403,6 +403,26 @@ class KidTask(BaseModel):
     done_at: Optional[float] = None
     created_at: float = Field(default_factory=time.time)
     created_by_member_id: Optional[str] = None
+    # K4d: what a school feed says beyond the title (all optional; a manual
+    # task leaves them empty). The class is a key into school_classes, where
+    # the family gives a cryptic course code a name and a color.
+    due_time: Optional[str] = None     # "HH:MM" local, when the feed has one
+    description: Optional[str] = None  # teacher's text, plain
+    links: List[dict] = Field(default_factory=list)  # [{url, text}]
+    url: Optional[str] = None          # the item in the school's own system
+    course_key: Optional[str] = None
+    course_label: Optional[str] = None # the feed's own name/code for the class
+
+class SchoolClass(BaseModel):
+    # K4d: one class on a child's school feed, keyed by the feed's course id.
+    # Registered automatically on sync; `name`/`color` are the family's.
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    member_id: str
+    key: str
+    label: Optional[str] = None        # what the feed calls it
+    name: Optional[str] = None         # what the family calls it
+    color: Optional[str] = None
+    created_at: float = Field(default_factory=time.time)
 
 class RoutineItem(BaseModel):
     # Personal daily-routine template ("brush teeth", "homework"): per member,

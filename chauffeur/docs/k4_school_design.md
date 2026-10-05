@@ -72,3 +72,18 @@ windowing (overdue included, horizon capped), digest line wording (due
 tomorrow / weekday / gentle overdue), agent-tool identity scoping (kid =
 self only, parent = any, helper refused), digest inclusion for task-only
 kids.
+
+### K4d — the feed's detail, a school view, parent visibility (2026-10-04)
+Family review: Canvas items carry descriptions, links and a class, all of
+which import discarded; past-due items buried what is due tomorrow; parents
+had no view at all. Decisions:
+- **Past-due is its own bucket** (`still_open`), collapsed, with Clear all.
+  The digest never counts past-due — it is pushed, and overdue is never pushed.
+- **Keep the detail**: class, description, links, due time, link back.
+  Classes are keyed per child and named/colored once by the family; a raw
+  course code never appears on a digest line.
+- **School view** (agenda + month) for the kid and, read-mostly, for parents.
+- **Parents see what is coming, never what is overdue**: tests, projects and
+  bring-items on the parent digest and as an opt-in per-child layer on the
+  wall calendar card. Overdue stays the kid's (and is unreliable anyway —
+  the feed has no submission state).

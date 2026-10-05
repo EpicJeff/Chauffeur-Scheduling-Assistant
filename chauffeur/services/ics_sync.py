@@ -21,6 +21,7 @@ import datetime
 import hashlib
 import json
 import re
+from html.parser import HTMLParser
 
 import requests
 
@@ -122,11 +123,26 @@ def parse_ics(content: bytes, window_start=None, window_end=None) -> dict:
         title = str(ev.get('SUMMARY') or '(No Title)').strip() or '(No Title)'
         location = str(ev.get('LOCATION') or '').strip() or None
         description = str(ev.get('DESCRIPTION') or '').strip() or None
+        # Task-mode extras (school feeds). Canvas puts the assignment link in
+        # URL and the teacher's formatted description, links intact, in
+        # X-ALT-DESC; other platforms use CATEGORIES for the class. All are
+        # optional — a feed without them still parses exactly as before.
+        url = str(ev.get('URL') or '').strip() or None
+        alt_desc = str(ev.get('X-ALT-DESC') or '').strip() or None
+        cats = ev.get('CATEGORIES')
+        categories = []
+        for c in (cats if isinstance(cats, list) else [cats] if cats else []):
+            try:
+                categories += [str(x) for x in c.cats]
+            except AttributeError:
+                categories += [x.strip() for x in str(c).split(',') if x.strip()]
 
         uid_counts[uid] = uid_counts.get(uid, 0) + 1
         raw.append({'uid': uid, 'title': title, 'start': start_iso,
                     'end': end_iso, 'all_day': all_day,
-                    'location': location, 'description': description})
+                    'location': location, 'description': description,
+                    'url': url, 'alt_desc': alt_desc,
+                    'categories': categories})
 
     items = {}
     for it in raw:
@@ -210,6 +226,130 @@ def _task_kind_for(title: str) -> str:
     return 'homework'
 
 
+_TRAILING_TAG = re.compile(r'\s*\[([^\[\]]+)\]\s*$')
+_CANVAS_COURSE = re.compile(r'include_contexts=(course_\d+)')
+_BARE_URL = re.compile(r'https?://[^\s<>"\x27\])]+')
+DESCRIPTION_CAP = 4000
+LINKS_CAP = 12
+
+
+def _code_shaped(label: str) -> bool:
+    """A machine course code ('502.Knox.30062Y0.6001.2027'), not a name."""
+    return bool(re.fullmatch(r'[A-Za-z0-9._\-]+', label or '')
+                and re.search(r'\d', label) and '.' in label)
+
+
+def _course_tags(items: dict) -> dict:
+    """Trailing [tag] -> how many items carry it. Canvas appends the class to
+    EVERY item's title, so a real class tag repeats; a teacher's one-off
+    '... [IMPORTANT]' does not, and is left in the title."""
+    counts = {}
+    for it in items.values():
+        m = _TRAILING_TAG.search(it.get('title') or '')
+        if m:
+            tag = m.group(1).strip()
+            counts[tag] = counts.get(tag, 0) + 1
+    return counts
+
+
+class _Anchors(HTMLParser):
+    """Collect <a href> links and the visible text of an HTML description."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.links, self.text, self._href, self._buf = [], [], None, []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'a':
+            self._href, self._buf = dict(attrs).get('href'), []
+        elif tag in ('br', 'p', 'div', 'li', 'tr'):
+            self.text.append('\n')
+
+    def handle_endtag(self, tag):
+        if tag == 'a' and self._href:
+            self.links.append((self._href, ''.join(self._buf).strip()))
+            self._href = None
+        elif tag in ('p', 'div', 'li'):
+            self.text.append('\n')
+
+    def handle_data(self, data):
+        self.text.append(data)
+        if self._href:
+            self._buf.append(data)
+
+
+def _task_details(item: dict, tags: dict, tz) -> dict:
+    """Everything a school feed says about one item beyond its title: the
+    class it belongs to, the teacher's description and links, the real due
+    date and time. Platform-agnostic: each field is read from whatever the
+    feed provides and left empty when it provides nothing."""
+    title = item.get('title') or ''
+    course_label = None
+    m = _TRAILING_TAG.search(title)
+    if m:
+        tag = m.group(1).strip()
+        if tags.get(tag, 0) >= 2 or _code_shaped(tag):
+            course_label = tag
+            title = title[:m.start()]
+    if not course_label and item.get('categories'):
+        course_label = item['categories'][0].strip() or None
+    url = item.get('url') if (item.get('url') or '').startswith(('http://', 'https://')) else None
+    cm = _CANVAS_COURSE.search(url or '')
+    course_key = cm.group(1) if cm else course_label
+
+    # Due date/time in LOCAL time. A feed stamps timed items in UTC, so an
+    # 11:59 PM due date read straight off the ISO string lands a day late.
+    start = item.get('start') or ''
+    due_time = None
+    if item.get('all_day') or len(start) <= 10:
+        due_date = start[:10]
+    else:
+        try:
+            local = datetime.datetime.fromisoformat(start).astimezone(tz)
+            due_date, due_time = local.date().isoformat(), local.strftime('%H:%M')
+        except ValueError:
+            due_date = start[:10]
+
+    text = item.get('description') or ''
+    links = []
+    if item.get('alt_desc'):
+        parser = _Anchors()
+        try:
+            parser.feed(item['alt_desc'])
+            links = [(h, t) for h, t in parser.links if (h or '').startswith(('http://', 'https://'))]
+            if not text:
+                text = ''.join(parser.text)
+        except Exception:
+            pass
+    seen = {h for h, _ in links}
+    for h in _BARE_URL.findall(text):
+        h = h.rstrip('.,;:')
+        if h not in seen:
+            seen.add(h)
+            links.append((h, ''))
+    text = re.sub(r'[ \t]+\n', '\n', text)
+    text = re.sub(r'\n{3,}', '\n\n', text).strip()
+    if len(text) > DESCRIPTION_CAP:
+        text = text[:DESCRIPTION_CAP].rstrip() + '…'
+    return {
+        'title': _clean_title(title),
+        'due_date': due_date,
+        'due_time': due_time,
+        'description': text or None,
+        'links': [{'url': h, 'text': t[:120]} for h, t in links[:LINKS_CAP]],
+        'url': url,
+        'course_key': course_key,
+        'course_label': course_label,
+        # Canvas tells assignments from calendar events by UID; an event
+        # (field trip, no-school day) is never 'homework'.
+        'is_event': (item.get('uid') or '').startswith('event-calendar-event-'),
+    }
+
+
+# Fields a sync keeps current on an OPEN task (title/due plus the K4d detail).
+_SYNCED_FIELDS = ('title', 'due_date', 'due_time', 'description', 'links',
+                  'url', 'course_key', 'course_label')
+
+
 def _sync_feed_tasks(feed: dict, items: dict, summary: dict, now) -> dict:
     """Task-mode sync (K4b): a per-student assignment feed lands on the kid's
     school list (kid_tasks), NEVER on a calendar — assignment 'events' would
@@ -227,37 +367,40 @@ def _sync_feed_tasks(feed: dict, items: dict, summary: dict, now) -> dict:
                 for t in storage.get_kid_tasks(member_id, include_done=True)
                 if (t.get('source_ref') or '').startswith(ref_prefix)}
 
+    tags = _course_tags(items)
+    tz = _local_tz()
     wanted = {}
     for key, item in items.items():
-        due = (item['start'] or '')[:10]
+        d = _task_details(item, tags, tz)
         try:
-            due_d = datetime.date.fromisoformat(due)
+            due_d = datetime.date.fromisoformat(d['due_date'])
         except ValueError:
             continue
         if due_d < today - PAST_GRACE:
             continue  # don't import ancient assignments
         # Cleaned at import so the stored task is clean on EVERY surface
         # (digest, My Day, DMs). Already-imported tasks catch up on the next
-        # sync: their stored title mismatches the cleaned one, which is the
-        # ordinary title-change patch path below.
-        wanted[ref_prefix + key] = {'title': _clean_title(item['title']),
-                                    'due_date': due}
+        # sync: any stored field that differs is the ordinary patch path.
+        wanted[ref_prefix + key] = d
+        if d['course_key']:
+            storage.ensure_school_class(member_id, d['course_key'], d['course_label'])
 
     for ref, w in wanted.items():
         t = existing.pop(ref, None)
+        kind = _task_kind_for(w['title'])
+        if w['is_event'] and kind == 'homework':
+            kind = 'other'
+        fields = {k: w[k] for k in _SYNCED_FIELDS}
         if t is None:
             from models.schemas import KidTask
-            task = KidTask(member_id=member_id, title=w['title'],
-                           due_date=w['due_date'], kind=_task_kind_for(w['title']),
-                           source='ics', source_ref=ref).model_dump()
+            task = KidTask(member_id=member_id, kind=kind, source='ics',
+                           source_ref=ref, **fields).model_dump()
             storage.add_kid_task(task)
             summary['added'] += 1
         elif t.get('status') == 'done':
             continue
-        elif t.get('title') != w['title'] or t.get('due_date') != w['due_date']:
-            storage.update_kid_task(t['id'], {
-                'title': w['title'], 'due_date': w['due_date'],
-                'kind': _task_kind_for(w['title'])})
+        elif any(t.get(k) != v for k, v in fields.items()):
+            storage.update_kid_task(t['id'], {**fields, 'kind': kind})
             summary['updated'] += 1
 
     # Leftovers vanished from the feed: cancel only OPEN future tasks.

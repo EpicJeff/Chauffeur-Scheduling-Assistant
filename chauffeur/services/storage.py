@@ -420,6 +420,8 @@ with db_lock:
     # count as an item completion.
     routine_step_checks_table = db.table('routine_step_checks')
     kid_tasks_table = db.table('kid_tasks')
+    # K4d: the classes on a child's school feed, named and colored by the family.
+    school_classes_table = db.table('school_classes')
     optional_decisions_table = db.table('optional_decisions')
     # Canceled occurrences. Unlike decisions these are NEVER pruned: the
     # record is the reschedule memory ("canceled, coach sick") and the
@@ -2329,6 +2331,89 @@ def update_kid_task(task_id: str, data: dict) -> bool:
 def delete_kid_task(task_id: str):
     with db_lock:
         kid_tasks_table.remove(Query().id == task_id)
+
+# --- School classes (K4d) ---
+# A feed names a class by whatever its platform uses — Canvas's own course id,
+# or a section code like '502.Knox.30062Y0.6001.2027'. The family names it
+# once ('Science') and gives it a color; every surface reads the name.
+
+SCHOOL_CLASS_COLORS = ['#6366f1', '#14b8a6', '#f59e0b', '#ec4899', '#22c55e',
+                       '#3b82f6', '#ef4444', '#a855f7', '#84cc16', '#06b6d4']
+
+
+def _class_code_shaped(label: str) -> bool:
+    import re as _re
+    return bool(_re.fullmatch(r'[A-Za-z0-9._\-]+', label or '')
+                and _re.search(r'\d', label) and '.' in label)
+
+
+def get_school_classes(member_id: str) -> List[dict]:
+    with db_lock:
+        rows = [dict(c) for c in school_classes_table.search(Query().member_id == member_id)]
+    rows.sort(key=lambda c: c.get('created_at') or 0)
+    return rows
+
+
+def get_school_class(class_id: str) -> Optional[dict]:
+    with db_lock:
+        res = school_classes_table.search(Query().id == class_id)
+        return dict(res[0]) if res else None
+
+
+def ensure_school_class(member_id: str, key: str, label: Optional[str] = None) -> dict:
+    """Register a class the first time a feed mentions it, with the next
+    unused color. Never touches a class the family already named."""
+    from models.schemas import SchoolClass
+    with db_lock:
+        Q = Query()
+        res = school_classes_table.search((Q.member_id == member_id) & (Q.key == key))
+        if res:
+            row = dict(res[0])
+            if label and not row.get('label'):
+                school_classes_table.update({'label': label}, Q.id == row['id'])
+                row['label'] = label
+            return row
+        used = {c.get('color') for c in school_classes_table.search(Q.member_id == member_id)}
+        color = next((c for c in SCHOOL_CLASS_COLORS if c not in used),
+                     SCHOOL_CLASS_COLORS[len(used) % len(SCHOOL_CLASS_COLORS)])
+        row = SchoolClass(member_id=member_id, key=key, label=label, color=color).model_dump()
+        school_classes_table.insert(row)
+        return row
+
+
+def update_school_class(class_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(school_classes_table.update(data, Query().id == class_id))
+
+
+def school_class_display(c: Optional[dict]) -> Optional[str]:
+    """The family's name, else the feed's label when it reads like a name.
+    A bare course code is not a name — it shows only until somebody names it."""
+    if not c:
+        return None
+    return (c.get('name') or '').strip() or c.get('label') or c.get('key')
+
+
+def decorate_kid_tasks(tasks: List[dict]) -> List[dict]:
+    """Attach course_name / course_color / course_named to each task for
+    display (one class lookup per member, not per task)."""
+    cache = {}
+    out = []
+    for t in tasks:
+        t = dict(t)
+        key = t.get('course_key')
+        if key:
+            mid = t.get('member_id')
+            if mid not in cache:
+                cache[mid] = {c['key']: c for c in get_school_classes(mid)}
+            c = cache[mid].get(key)
+            t['course_name'] = school_class_display(c) or t.get('course_label') or key
+            t['course_color'] = (c or {}).get('color')
+            t['course_named'] = bool(c and ((c.get('name') or '').strip()
+                                            or not _class_code_shaped(c.get('label') or c.get('key') or '')))
+        out.append(t)
+    return out
+
 
 def complete_kid_task(task_id: str, done: bool = True) -> Optional[dict]:
     import time as _time

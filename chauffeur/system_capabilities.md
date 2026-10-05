@@ -1,6 +1,17 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.228 (2026-10-04).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.229 (2026-10-05).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**School feeds keep their detail: class, description, links, due time (v2.499.229, K4d; `ics_sync._task_details`/`_course_tags`/`_SYNCED_FIELDS`, `KidTask` new fields, `SchoolClass` + `school_classes` table, `storage.ensure_school_class`/`decorate_kid_tasks`/`school_class_display`, `GET /api/kid-tasks/classes`, `PUT /api/kid-tasks/classes/{id}`, `tests/test_school_detail.py`).** User: Canvas items have descriptions and links and belong to separate class calendars, but Chauffeur showed only a title and a date. The feed carried all of it; task-mode sync kept only title + date, and `_clean_title` was deleting the class.
+
+- `parse_ics` additionally reads `URL`, `X-ALT-DESC` (HTML description) and `CATEGORIES`. Calendar-mode sync and its fingerprint are unchanged.
+- Task mode stores on each KidTask: `due_time` (HH:MM local), `description` (plain text, blank runs collapsed, capped 4000 chars), `links` ([{url, text}] from HTML anchors + bare URLs in the text, http(s) only, max 12), `url` (the item in the school's system), `course_key`, `course_label`.
+- **Class detection is platform-agnostic.** A trailing `[tag]` on the title is the class when it repeats across the feed (Canvas appends the class to every item) or is code-shaped; a teacher's one-off `[IMPORTANT]` stays in the title. Fallback: first `CATEGORIES` value. The key is Canvas's `include_contexts=course_N` from the URL when present (survives course renames), else the label.
+- **Due date bug fixed:** timed items were dated by the raw UTC ISO string, so a Canvas 11:59 PM assignment landed a day late. Dates/times are now converted to local time first.
+- Canvas calendar events (UID `event-calendar-event-*`) are never kind `homework` (falls to `other`).
+- Sync keeps all `_SYNCED_FIELDS` current on OPEN tasks (existing tasks backfill on the next sync through the ordinary patch path); DONE tasks stay final.
+- **Classes**: sync registers each class once per child (`school_classes`: member_id, key, label, name, color) with the next unused palette color; it never overwrites the family's name/color. `decorate_kid_tasks` adds `course_name`/`course_color`/`course_named` at read time (My Day rows, `/api/kid-tasks`, digest, agent list). `course_named` is false while the only name is a bare code — `_task_line` appends "(Science)" only for a named class, so a raw code never rides a digest line. Naming/coloring: `PUT /api/kid-tasks/classes/{id}` (child: own classes only; color must be #rrggbb; name ≤ 40 chars).
+- `member_day` task rows also carry `due_time`, `description`, `links`, `url`, `notes`, `source` and the course fields (`_task_detail_fields`).
 
 **School list: past-due is its own bucket (v2.499.228; `main.member_day` `still_open`, `_build_kid_digests`, `POST /api/kid-tasks/clear-past`, `app.html` `renderDueSoonSection`/`clearPastKidTasks`, `agent_tools_v2.get_kid_tasks`, `tests/test_kid_tasks.py`).** User: past-due assignments that never got ticked kept showing first, and the evening digest's "+11 more" meant you never saw what was due tomorrow. An assignment feed has no submission state, so most past-due items were handed in on Canvas and simply never ticked here.
 

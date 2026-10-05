@@ -12242,7 +12242,7 @@ def member_day(member_id: str, date: Optional[str] = None, request: Request = No
     # not to read past.
     ref = _dt.date.fromisoformat(date_str)
     due_soon, still_open = [], []
-    for t in storage.get_kid_tasks(member_id):
+    for t in storage.decorate_kid_tasks(storage.get_kid_tasks(member_id)):
         try:
             due = _dt.date.fromisoformat(t.get('due_date') or '')
         except ValueError:
@@ -12253,7 +12253,8 @@ def member_day(member_id: str, date: Optional[str] = None, request: Request = No
                'kind': t.get('kind') or 'other',
                'emoji': _TASK_EMOJI.get(t.get('kind'), '📌'),
                'due_date': t.get('due_date'), 'overdue': due < ref,
-               'label': _task_due_label(due, ref)}
+               'label': _task_due_label(due, ref),
+               **_task_detail_fields(t)}
         (still_open if due < ref else due_soon).append(row)
     still_open.reverse()
 
@@ -12315,10 +12316,25 @@ def _task_due_label(due, ref):
     lbl = family_digest.day_label(due)
     return "due " + (lbl.lower() if lbl in ("Today", "Tomorrow") else due.strftime('%A'))
 
+def _task_detail_fields(t):
+    """The K4d detail a surface needs to draw one task beyond its title:
+    class (decorated by storage.decorate_kid_tasks), due time, the teacher's
+    description and links, and the link back to the school's own page."""
+    return {'due_time': t.get('due_time'), 'description': t.get('description'),
+            'links': t.get('links') or [], 'url': t.get('url'),
+            'notes': t.get('notes') or '', 'source': t.get('source'),
+            'course_key': t.get('course_key'), 'course_name': t.get('course_name'),
+            'course_color': t.get('course_color'),
+            'course_named': bool(t.get('course_named'))}
+
 def _task_line(task, ref):
     import datetime as _dt
     emoji = _TASK_EMOJI.get(task.get('kind'), '📌')
     title = task.get('title') or 'Task'
+    # A named class reads as a name ("Science"); a raw course code would be
+    # noise on every line, so it stays off until somebody names the class.
+    if task.get('course_named') and task.get('course_name'):
+        title = f"{title} ({task['course_name']})"
     try:
         due = _dt.date.fromisoformat(task.get('due_date') or '')
     except ValueError:
@@ -12350,7 +12366,48 @@ def _validate_kid_task(req: KidTaskRequest):
 
 @app.get("/api/kid-tasks")
 def list_kid_tasks(member_id: Optional[str] = None, include_done: bool = False):
-    return storage.get_kid_tasks(member_id, include_done)
+    return storage.decorate_kid_tasks(storage.get_kid_tasks(member_id, include_done))
+
+# --- School classes (K4d): name and color a feed's cryptic course codes ---
+
+class SchoolClassUpdate(BaseModel):
+    name: Optional[str] = None
+    color: Optional[str] = None
+    member_id: Optional[str] = None    # per-action identity (PWA pattern)
+
+@app.get("/api/kid-tasks/classes")
+def list_school_classes(member_id: str):
+    """A child's classes with how many open items each has, so the naming
+    sheet can lead with the ones that matter."""
+    counts = {}
+    for t in storage.get_kid_tasks(member_id):
+        k = t.get('course_key')
+        if k:
+            counts[k] = counts.get(k, 0) + 1
+    return [{**c, 'display': storage.school_class_display(c),
+             'open_count': counts.get(c['key'], 0)}
+            for c in storage.get_school_classes(member_id)]
+
+@app.put("/api/kid-tasks/classes/{class_id}")
+def update_school_class_api(class_id: str, req: SchoolClassUpdate):
+    import re as _re
+    c = storage.get_school_class(class_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Class not found")
+    if req.member_id:
+        actor = storage.get_member(req.member_id)
+        if actor and actor.get('role') == 'child' and actor['id'] != c['member_id']:
+            raise HTTPException(status_code=403, detail="You can only name your own classes")
+    updates = {}
+    if req.name is not None:
+        updates['name'] = req.name.strip()[:40] or None
+    if req.color is not None:
+        if not _re.fullmatch(r'#[0-9a-fA-F]{6}', req.color):
+            raise HTTPException(status_code=400, detail="color must be #rrggbb")
+        updates['color'] = req.color
+    if updates:
+        storage.update_school_class(class_id, updates)
+    return storage.get_school_class(class_id)
 
 @app.post("/api/kid-tasks")
 def create_kid_task(req: KidTaskRequest):
@@ -14395,7 +14452,7 @@ def _build_kid_digests(target_date=None, routine_bus=True):
         # list is the kid's own My Day / school list, it is just not
         # narrated item by item on a digest whose job is the day's shape.
         important, homework = [], []
-        for t in storage.get_kid_tasks(m['id']):
+        for t in storage.decorate_kid_tasks(storage.get_kid_tasks(m["id"])):
             try:
                 due = _dt.date.fromisoformat(t.get('due_date') or '')
             except ValueError:

@@ -2352,7 +2352,7 @@ def get_kid_tasks(member_name: str = "", acting_member: dict = None) -> Dict[str
         # and listed oldest-first they buried what is due tomorrow). Asking
         # by name still finds them — complete_kid_task matches every open task.
         import main as _m
-        tasks = storage.get_kid_tasks(member['id'])
+        tasks = storage.decorate_kid_tasks(storage.get_kid_tasks(member['id']))
         late = [t for t in tasks if (t.get('due_date') or '') < today.isoformat()]
         out = [_m._task_line(t, today) for t in tasks if t not in late]
         if late:
