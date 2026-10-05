@@ -127,6 +127,13 @@ function pwaFeatures() {
     const critters = typeof openPetEditor === 'function';
     if (critters && pwaChildStage() && membersData.find(m => m.id === selectedMemberId)?.pet_name)
         items.push({id:'critter', title:'Critter battle', description:'Play with your companion', run:()=>openPetBattle(selectedMemberId)});
+    // School (K4d): a child's own assignments; a parent picks which child.
+    // Helpers have no school-list reach, so no door.
+    if (typeof pwaSchoolOpen === 'function' && (pwaChildStage()
+            || (['parent', 'adult'].includes(currentMemberRole()) && pwaSchoolChildren().length)))
+        items.push({id: 'school', title: 'School', description: pwaChildStage()
+            ? 'Assignments, classes and what is due' : 'Each child’s assignments, tests and what is due',
+            run: () => pwaSchoolOpen()});
     items.push({id: 'assistant', title: 'Ask Argyle', description: 'Help with your family plans', run: () => toggleKioskChat()});
     if (critters) items.push({id: 'critter', title: 'My critter', description: 'Visit and customize your companion', run: () => openPetEditor(selectedMemberId)});
     items.push({id: 'profile', title: 'Profile & appearance', description: 'Avatar, theme, notifications and sign out', run: pwaOpenProfile});
@@ -262,6 +269,7 @@ function pwaIcon(name) {
         switch: '<path d="M10 4H4v16h6M9 12h12m-4-4 4 4-4 4"/>',
         arrow: '<path d="m9 5 7 7-7 7"/>',
         assistant: '<path d="m12 2 3 7 7 3-7 3-3 7-3-7-7-3 7-3 3-7Z"/>',
+        school: '<path d="m2 9 10-5 10 5-10 5L2 9Z"/><path d="M6 11v5c3 2 9 2 12 0v-5M22 9v6"/>',
     };
     return `<svg class="pwa-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.profile}</svg>`;
 }

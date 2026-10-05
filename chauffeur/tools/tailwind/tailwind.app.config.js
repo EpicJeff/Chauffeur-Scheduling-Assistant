@@ -24,6 +24,8 @@ module.exports = {
     // components and they must be scanned with THIS theme, not the other one.
     content: [
         './templates/**/*.html',
+        // The PWA's school view draws its markup from JS (K4d).
+        './static/pwa_school.js',
     ],
     theme: {
         extend: {

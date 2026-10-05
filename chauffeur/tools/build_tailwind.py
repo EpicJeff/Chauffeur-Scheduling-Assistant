@@ -80,6 +80,8 @@ def content_hash():
                 paths.append(os.path.join(base, f))
     for f in ('input.css', 'tailwind.base.config.js', 'tailwind.app.config.js'):
         paths.append(os.path.join(CONF, f))
+    # Scripts the app config scans for classes (its `content` list).
+    paths.append(os.path.join(STATIC, 'pwa_school.js'))
     for path in sorted(paths, key=lambda p: os.path.relpath(p, ROOT).replace('\\', '/')):
         h.update(os.path.relpath(path, ROOT).replace('\\', '/').encode('utf-8'))
         with open(path, 'rb') as fh:

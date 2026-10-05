@@ -113,6 +113,7 @@
     <script defer src="{{ 'static/pwa_shell.js'|ver }}"></script>
     <link rel="stylesheet" href="{{ 'static/pwa_child_shell.css'|ver }}">
     <script defer src="{{ 'static/pwa_child_shell.js'|ver }}"></script>
+    <script defer src="{{ 'static/pwa_school.js'|ver }}"></script>
     <!-- Alpine, for the avatar editor overlay (avatar arc A3). app.html is
          otherwise vanilla JS on purpose; Alpine here only animates that one
          component, and `defer` keeps it out of the critical path. -->
@@ -1219,15 +1220,26 @@
             </div>`;
         }
 
+        // One school task: the checkbox checks it off, the rest of the row
+        // opens its detail (class, the teacher's description and links, due
+        // time — static/pwa_school.js). The left bar is the class color.
         function renderDueSoonRow(t) {
+            if (typeof schoolRemember === 'function') schoolRemember(t);
+            const bar = t.course_color && /^#[0-9a-fA-F]{6}$/.test(t.course_color) ? t.course_color : 'transparent';
+            const meta = typeof schoolTaskMeta === 'function' ? schoolTaskMeta(t) : '';
             return `
-                <label class="flex items-center gap-3 py-2.5 px-1 cursor-pointer active:opacity-70" id="task-row-${t.id}">
-                    <input type="checkbox" onchange="completeKidTask('${t.id}', this.checked)"
+                <div class="flex items-center gap-3 py-2.5 pl-2 pr-1 border-l-4" style="border-left-color:${bar}" id="task-row-${t.id}">
+                    <input type="checkbox" onchange="completeKidTask('${t.id}', this.checked)" aria-label="${mfEscape(t.title)}"
                         class="w-7 h-7 rounded-lg accent-indigo-500 shrink-0">
-                    <span class="shrink-0">${t.emoji}</span>
-                    <span class="flex-1 text-[15px] font-bold text-gray-100 task-title">${mfEscape(t.title)}</span>
-                    <span class="text-xs font-bold ${t.overdue ? 'text-amber-400' : 'text-indigo-300'}">${mfEscape(t.label)}</span>
-                </label>`;
+                    <button type="button" onclick="openKidTaskDetail('${t.id}')" class="flex-1 min-w-0 text-left flex items-center gap-3 active:opacity-70">
+                        <span class="shrink-0">${t.emoji}</span>
+                        <span class="flex-1 min-w-0 flex flex-col gap-0.5">
+                            <span class="text-[15px] font-bold text-gray-100 task-title">${mfEscape(t.title)}</span>
+                            ${meta}
+                        </span>
+                        <span class="text-xs font-bold shrink-0 ${t.overdue ? 'text-amber-400' : 'text-indigo-300'}">${mfEscape(t.label)}</span>
+                    </button>
+                </div>`;
         }
 
         // Past-due open tasks are their own collapsed bucket under the list,
@@ -1253,7 +1265,7 @@
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-1">
                 <div class="flex items-center justify-between mb-1">
                     <span class="text-xs font-black uppercase tracking-widest text-gray-500">📚 Due Soon</span>
-                    <span class="text-xs text-gray-500 font-bold">${tasks.length}</span>
+                    <button type="button" onclick="pwaSchoolOpen('${owner}')" class="text-xs text-indigo-300 font-bold active:opacity-70">See all →</button>
                 </div>
                 ${tasks.length ? `<div class="divide-y divide-gray-800">${tasks.map(renderDueSoonRow).join('')}</div>`
                                : '<p class="text-xs text-gray-500 italic py-1">Nothing due this week.</p>'}
