@@ -1,6 +1,8 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.235 (2026-10-05).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.236 (2026-10-05).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**Email intake survives 8-bit headers and one bad message (v2.499.236; `email_ingest._body_text`, `fetch_new_messages`, `tests/test_email_ingest.py` `test_eight_bit_headers_and_one_bad_message`).** User saw "Mailbox check failed: IMAP error: 'Header' object has no attribute 'startswith'". Python's parser returns an `email.header.Header` (not a str) when a raw header carries unencoded 8-bit bytes — e.g. an attachment named "café.pdf" — and `_body_text` called `.startswith` on Content-Disposition. Worse, any per-message exception aborted the whole fetch before the UID cursor advanced, so every later check failed on the same email forever. Now: the header is `str()`-ed (and compared case-insensitively), and each message is parsed in its own try — an unreadable one is logged ("skipped unreadable message uid N") and skipped while the cursor still moves past it.
 
 **Planner photo intake (v2.499.235, K4d; `services/planner_intake.py`, `POST /api/kid-tasks/planner-photo`, `POST /api/kid-tasks/planner-apply`, `pwa_school.js` `pwaPlannerSnap`/`pwaPlannerReview`/`pwaPlannerSave`, `tests/test_planner_intake.py`, `tests/test_school_view_live.py` `check_planner`).** User: the family bought a paper planner; capture a page and use it to add notes to existing school items or add items Canvas doesn't have. Must not assume any one planner layout.
 

@@ -89,7 +89,11 @@ def _body_text(msg) -> str:
         ctype = part.get_content_type()
         if ctype not in ('text/plain', 'text/html'):
             continue
-        if part.get('Content-Disposition', '').startswith('attachment'):
+        # str(): the parser hands back an email.header.Header, not a str, when
+        # a raw header carries 8-bit bytes — an attachment named "café.pdf"
+        # sent without encoding is enough, and .startswith on it killed the
+        # whole mailbox check.
+        if str(part.get('Content-Disposition') or '').lower().startswith('attachment'):
             continue
         try:
             payload = part.get_payload(decode=True)
@@ -192,13 +196,19 @@ def fetch_new_messages(settings: dict):
                 if status != 'OK' or not msg_data or msg_data[0] is None:
                     continue
                 raw = msg_data[0][1]
-                msg = email.message_from_bytes(raw)
-                messages.append({
-                    'uid': uid,
-                    'from': _from_address(msg),
-                    'subject': _decode_header(msg.get('Subject', '')) or '(no subject)',
-                    'text': _body_text(msg),
-                })
+                # One unreadable message must not stop the run: the cursor
+                # only advances after the loop, so a message that raised here
+                # used to fail EVERY later check on the same email forever.
+                try:
+                    msg = email.message_from_bytes(raw)
+                    messages.append({
+                        'uid': uid,
+                        'from': _from_address(msg),
+                        'subject': _decode_header(msg.get('Subject', '')) or '(no subject)',
+                        'text': _body_text(msg),
+                    })
+                except Exception as pe:
+                    print(f"Email intake: skipped unreadable message uid {uid}: {pe}")
             if highest > last_uid:
                 storage.set_app_state(cursor_key, highest)
             return messages, None

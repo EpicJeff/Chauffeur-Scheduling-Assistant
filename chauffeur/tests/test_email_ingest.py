@@ -670,6 +670,56 @@ def test_fuzzy_dedup():
           "rephrased duplicate of an ignored proposal stays suppressed")
 
 
+def test_eight_bit_headers_and_one_bad_message():
+    """An attachment named with raw 8-bit bytes makes the parser return an
+    email.header.Header instead of a str; .startswith on it failed the whole
+    mailbox check ("'Header' object has no attribute 'startswith'"), and
+    because the cursor only advances after the loop, every later check hit
+    the same email. Both are pinned here."""
+    print("8-bit attachment header + one bad message ...")
+    import email as _email
+    from unittest import mock
+    # 8-bit bytes in a header (the UTF-8 for "café", sent unencoded).
+    raw = "\r\n".join([
+        "From: Coach <coach@x.org>", "Subject: Practice", "MIME-Version: 1.0",
+        "Content-Type: multipart/mixed; boundary=B", "",
+        "--B", "Content-Type: text/plain", "", "Practice moved to 5pm",
+        "--B", "Content-Type: text/plain",
+        'Content-Disposition: attachment; filename="caf\u00e9.txt"', "", "not the body",
+        "--B--", ""]).encode("utf-8")
+    msg = _email.message_from_bytes(raw)
+    check(any(type(p.get('Content-Disposition')).__name__ == 'Header' for p in msg.walk()),
+          "the fixture really produces a Header object")
+    body = email_ingest._body_text(msg)
+    check('Practice moved' in body and 'not the body' not in body,
+          f"body read, 8-bit attachment skipped: {body!r}")
+
+    class FakeIMAP:
+        def __init__(self, host): pass
+        def login(self, u, p): pass
+        def select(self, *a, **k): return 'OK', [b'2']
+        def uid(self, cmd, *args):
+            if cmd == 'SEARCH':
+                return 'OK', [b'5 6 7']
+            return 'OK', [(b'x', raw if args[0] == '7' else b'garbage')]
+        def logout(self): pass
+
+    real_from = email_ingest._from_address
+    def flaky_from(m):
+        if m.get('Subject') is None:      # the 'garbage' message
+            raise ValueError("unreadable")
+        return real_from(m)
+    settings = {'ingest_email_user': 'u@x.org', 'ingest_email_password': 'pw'}
+    storage.set_app_state('ingest_last_uid::u@x.org', 5)  # 0 = first contact, skips backlog
+    with mock.patch.object(email_ingest.imaplib, 'IMAP4_SSL', FakeIMAP),          mock.patch.object(email_ingest, '_from_address', side_effect=flaky_from):
+        msgs, err = email_ingest.fetch_new_messages(settings)
+    check(err is None, f"one bad message is not a mailbox error: {err}")
+    check([m['uid'] for m in msgs] == [7] and 'Practice moved' in msgs[0]['text'],
+          f"the good message still comes through: {msgs}")
+    check(int(storage.get_app_state('ingest_last_uid::u@x.org')) == 7,
+          "the cursor moves past the bad message, so it is not retried forever")
+
+
 if __name__ == '__main__':
     test_mime_and_allowlist()
     test_normalize()
@@ -686,5 +736,6 @@ if __name__ == '__main__':
     test_editing_a_skip_rule()
     test_log_collapse()
     test_fuzzy_dedup()
+    test_eight_bit_headers_and_one_bad_message()
     print(f"\n{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)
