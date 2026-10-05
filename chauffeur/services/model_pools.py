@@ -30,7 +30,8 @@ HTTP 500/502/503/504 failures also cool a model for two minutes, so later
 foreground requests can reach healthy candidates instead of repeating overloads.
 
 The GEMMA pool is discovered, not trusted (2026-10-05): Google renames and
-retires Gemma ids, and a stale default (gemma-4-26b-it, 404 on device) left
+retires Gemma ids: gemma-4-26b-it worked for months, then began answering 404
+(Google withdrew it, seen on device 2026-10-05) and left
 background work with one real model. Once a day — and at once after a Gemma
 404 — the API key's own model list is read (`refresh_gemma_models`) and the
 pool becomes the defaults that exist plus any other large Gemma the key can
@@ -53,7 +54,7 @@ DEFAULT_POOLS = {
               "gemini-3-flash", "gemini-2.5-flash"],
     # Only a starting point: the Gemma pool is rebuilt from the key's own
     # model list once a day (refresh_gemma_models). gemma-4-26b-it was a
-    # default here and 404'd on device.
+    # working default until Google withdrew it (404 on device, 2026-10-05).
     'gemma': ["gemma-4-31b-it", "gemma-3-27b-it"],
     # gemini-2.5-pro is closed to new users; the live pro id is the -preview
     # one (device-verified error text, 2026-09-06). Served via v1beta only.
