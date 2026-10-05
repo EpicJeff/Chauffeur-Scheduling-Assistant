@@ -4322,6 +4322,34 @@ def run_ingest_now():
 def ingest_log(limit: int = 50):
     return storage.get_ingest_log(limit=limit)
 
+@app.get("/api/ingest/missed")
+def ingest_missed():
+    """Emails whose extraction failed (by the log) and how many are queued
+    for a re-read, so the intake page can offer and track the recovery."""
+    from services import email_ingest
+    settings = storage.get_settings() or {}
+    return {**email_ingest.missed_summary(),
+            'pending': email_ingest.rescan_pending(settings)}
+
+class IngestRescanRequest(BaseModel):
+    since: str                         # YYYY-MM-DD
+
+@app.post("/api/ingest/rescan")
+def ingest_rescan(req: IngestRescanRequest):
+    """Queue every email since `since` for another read. Ones already handled
+    are skipped as they come up; the rest go through intake again, a batch per
+    poll, pausing (never dropping) when the AI is busy."""
+    import datetime as _dt
+    from services import email_ingest
+    try:
+        since = _dt.date.fromisoformat(req.since)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="since must be YYYY-MM-DD")
+    res = email_ingest.queue_rescan(storage.get_settings() or {}, since)
+    if res.get('error'):
+        raise HTTPException(status_code=400, detail=res['error'])
+    return res
+
 _PHOTO_MAX_BYTES = 8 * 1024 * 1024
 
 @app.post("/api/ingest/photo")

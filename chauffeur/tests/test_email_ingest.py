@@ -714,10 +714,11 @@ def test_eight_bit_headers_and_one_bad_message():
     with mock.patch.object(email_ingest.imaplib, 'IMAP4_SSL', FakeIMAP),          mock.patch.object(email_ingest, '_from_address', side_effect=flaky_from):
         msgs, err = email_ingest.fetch_new_messages(settings)
     check(err is None, f"one bad message is not a mailbox error: {err}")
-    check([m['uid'] for m in msgs] == [7] and 'Practice moved' in msgs[0]['text'],
-          f"the good message still comes through: {msgs}")
-    check(int(storage.get_app_state('ingest_last_uid::u@x.org')) == 7,
-          "the cursor moves past the bad message, so it is not retried forever")
+    check([m['uid'] for m in msgs] == [6, 7] and msgs[0].get('unreadable')
+          and 'Practice moved' in msgs[1]['text'],
+          f"the bad one is flagged, the good one still comes through: {msgs}")
+    check(int(storage.get_app_state('ingest_last_uid::u@x.org')) == 5,
+          "fetching alone never moves the cursor (the run loop does, per message)")
 
 
 if __name__ == '__main__':

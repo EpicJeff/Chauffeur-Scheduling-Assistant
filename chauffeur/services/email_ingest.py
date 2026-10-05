@@ -160,23 +160,69 @@ def sender_blocked(from_addr: str, blocklist: list, subject=None):
     return None
 
 
-def fetch_new_messages(settings: dict):
-    """Fetch messages with UID greater than the stored cursor. Returns
-    (messages, error) where each message is {uid, from, subject, text}."""
+class ExtractionDeferred(RuntimeError):
+    """The model could not take this email NOW (admission pause, rate limit,
+    timeout). The email must be retried later, never dropped."""
+
+
+def _cursor_key(user: str) -> str:
+    return f'ingest_last_uid::{user}'
+
+
+def _rescan_key(user: str) -> str:
+    return f'ingest_rescan::{user}'
+
+
+def _mailbox(settings: dict):
     host = settings.get('ingest_email_host') or DEFAULT_HOST
     user = (settings.get('ingest_email_user') or '').strip()
     password = (settings.get('ingest_email_password') or '').strip()
+    return host, user, password
+
+
+def _read_uid(conn, uid: int) -> dict:
+    """One message by UID -> {uid, from, subject, text, message_id}, or
+    {uid, unreadable: reason} when it cannot be fetched or parsed."""
+    try:
+        status, msg_data = conn.uid('FETCH', str(uid), '(RFC822)')
+        if status != 'OK' or not msg_data or msg_data[0] is None:
+            return {'uid': uid, 'unreadable': f'fetch {status}'}
+        msg = email.message_from_bytes(msg_data[0][1])
+        return {
+            'uid': uid,
+            'from': _from_address(msg),
+            'subject': _decode_header(msg.get('Subject', '')) or '(no subject)',
+            'text': _body_text(msg),
+            'message_id': str(msg.get('Message-ID') or '').strip()[:200],
+        }
+    except Exception as pe:
+        print(f"Email intake: unreadable message uid {uid}: {pe}")
+        return {'uid': uid, 'unreadable': str(pe)[:120]}
+
+
+def fetch_new_messages(settings: dict):
+    """The next batch to process: queued RESCAN uids first (a family asked to
+    re-read missed mail), else messages with UID above the cursor. Returns
+    (messages, error); each message is {uid, from, subject, text,
+    message_id, rescan} or {uid, unreadable, rescan}.
+
+    The cursor is NOT advanced here. It moves one message at a time as
+    `_run_ingest_locked` finishes each (mark_handled), so a message the model
+    could not take yet stays in line instead of being skipped for good —
+    which is how a provider pause used to drop a whole backlog."""
+    host, user, password = _mailbox(settings)
     if not user or not password:
         return [], 'no mailbox configured'
-
-    cursor_key = f'ingest_last_uid::{user}'
-    last_uid = int(storage.get_app_state(cursor_key) or 0)
-
+    last_uid = int(storage.get_app_state(_cursor_key(user)) or 0)
+    queue = list(storage.get_app_state(_rescan_key(user)) or [])
     try:
         conn = imaplib.IMAP4_SSL(host)
         try:
             conn.login(user, password)
             conn.select('INBOX', readonly=True)
+            if queue:
+                return [dict(_read_uid(conn, int(u)), rescan=True)
+                        for u in queue[:MAX_MESSAGES_PER_RUN]], None
             status, data = conn.uid('SEARCH', None, 'ALL')
             if status != 'OK':
                 return [], f'IMAP search failed: {status}'
@@ -185,33 +231,10 @@ def fetch_new_messages(settings: dict):
                 return [], None
             if last_uid == 0:
                 # First contact: start the cursor at the top, skip backlog.
-                storage.set_app_state(cursor_key, max(uids))
+                storage.set_app_state(_cursor_key(user), max(uids))
                 return [], None
             new_uids = sorted(u for u in uids if u > last_uid)[:MAX_MESSAGES_PER_RUN]
-            messages = []
-            highest = last_uid
-            for uid in new_uids:
-                status, msg_data = conn.uid('FETCH', str(uid), '(RFC822)')
-                highest = max(highest, uid)
-                if status != 'OK' or not msg_data or msg_data[0] is None:
-                    continue
-                raw = msg_data[0][1]
-                # One unreadable message must not stop the run: the cursor
-                # only advances after the loop, so a message that raised here
-                # used to fail EVERY later check on the same email forever.
-                try:
-                    msg = email.message_from_bytes(raw)
-                    messages.append({
-                        'uid': uid,
-                        'from': _from_address(msg),
-                        'subject': _decode_header(msg.get('Subject', '')) or '(no subject)',
-                        'text': _body_text(msg),
-                    })
-                except Exception as pe:
-                    print(f"Email intake: skipped unreadable message uid {uid}: {pe}")
-            if highest > last_uid:
-                storage.set_app_state(cursor_key, highest)
-            return messages, None
+            return [dict(_read_uid(conn, u), rescan=False) for u in new_uids], None
         finally:
             try:
                 conn.logout()
@@ -219,6 +242,82 @@ def fetch_new_messages(settings: dict):
                 pass
     except Exception as e:
         return [], f'IMAP error: {e}'
+
+
+def mark_handled(settings: dict, msg: dict) -> None:
+    """This message is done (proposed, skipped, nothing in it, or truly
+    unreadable): move past it. A rescan item leaves the queue; a new one
+    moves the cursor to it (messages are processed in UID order)."""
+    _, user, _ = _mailbox(settings)
+    if not user:
+        return
+    if msg.get('rescan'):
+        queue = [u for u in (storage.get_app_state(_rescan_key(user)) or []) if int(u) != msg['uid']]
+        storage.set_app_state(_rescan_key(user), queue)
+    else:
+        last = int(storage.get_app_state(_cursor_key(user)) or 0)
+        if msg['uid'] > last:
+            storage.set_app_state(_cursor_key(user), msg['uid'])
+    if msg.get('message_id'):
+        storage.mark_ingest_seen(msg['message_id'])
+
+
+def _was_handled(msg: dict) -> bool:
+    """For a RESCAN: did an earlier run already handle this email? Handled
+    since this fix -> its Message-ID was recorded. Before it -> look for a
+    non-error log row or a proposal from the same sender and subject (the log
+    is capped, so the proposal check is the one that reaches far back)."""
+    if msg.get('message_id') and storage.ingest_seen(msg['message_id']):
+        return True
+    key = (msg.get('from'), (msg.get('subject') or '')[:120])
+    for row in storage.get_ingest_log(limit=1000):
+        if (row.get('from'), row.get('subject')) == key and not str(row.get('outcome', '')).startswith('error'):
+            return True
+    subj = (msg.get('subject') or '')[:200]
+    return any(p.get('source_from') == msg.get('from') and p.get('source_subject') == subj
+               for p in storage.get_proposals())
+
+
+def missed_summary(limit: int = 1000) -> dict:
+    """How many logged emails failed extraction and since when, so the page
+    can offer to re-read them."""
+    rows = [r for r in storage.get_ingest_log(limit=limit)
+            if str(r.get('outcome', '')).startswith('error: extraction failed')]
+    since = min((r.get('first_ts') or r.get('ts') or 0) for r in rows) if rows else None
+    return {'failed': sum(int(r.get('count') or 1) for r in rows), 'since_ts': since}
+
+
+def queue_rescan(settings: dict, since: datetime.date) -> dict:
+    """Queue every message received since `since` for a re-read. Messages
+    already handled are skipped at processing time (_was_handled), so this is
+    safe to run over mail that went through fine."""
+    host, user, password = _mailbox(settings)
+    if not user or not password:
+        return {'queued': 0, 'error': 'no mailbox configured'}
+    try:
+        conn = imaplib.IMAP4_SSL(host)
+        try:
+            conn.login(user, password)
+            conn.select('INBOX', readonly=True)
+            status, data = conn.uid('SEARCH', None, 'SINCE', since.strftime('%d-%b-%Y'))
+            if status != 'OK':
+                return {'queued': 0, 'error': f'IMAP search failed: {status}'}
+            uids = sorted(int(u) for u in (data[0].split() if data and data[0] else []))
+        finally:
+            try:
+                conn.logout()
+            except Exception:
+                pass
+    except Exception as e:
+        return {'queued': 0, 'error': f'IMAP error: {e}'}
+    queue = sorted(set(int(u) for u in (storage.get_app_state(_rescan_key(user)) or [])) | set(uids))
+    storage.set_app_state(_rescan_key(user), queue)
+    return {'queued': len(uids), 'pending': len(queue), 'error': None}
+
+
+def rescan_pending(settings: dict) -> int:
+    _, user, _ = _mailbox(settings)
+    return len(storage.get_app_state(_rescan_key(user)) or []) if user else 0
 
 
 # --- extraction -------------------------------------------------------------
@@ -328,6 +427,10 @@ def extract_items(subject: str, from_addr: str, body: str, member_names: list,
     if not isinstance(res, dict):
         return []
     if res.get('error'):
+        # Paused, rate-limited or timed out: the email is fine, the model is
+        # busy. The caller keeps it in line rather than dropping it.
+        if res.get('deferred') or res.get('transient'):
+            raise ExtractionDeferred(str(res['error']))
         raise RuntimeError(str(res['error']))
     items = res.get('items')
     return items if isinstance(items, list) else []
@@ -746,6 +849,19 @@ def run_photo_ingest(image_b64: str, mime: str, caption: str = '') -> dict:
 
 # --- orchestration ----------------------------------------------------------
 
+def _match_thread(msg: dict) -> None:
+    """Thread matching is additive and independent of event extraction — a
+    reply from a vendor can carry both a date-bound item AND be an update to
+    an open thread, and neither should suppress the other. Runs once per
+    email, AFTER extraction settles, so a retried email is never matched
+    twice. A failure here must never break ingest."""
+    try:
+        from services import threads
+        threads.match_inbound(msg['from'], msg['subject'], msg['text'])
+    except Exception as e:
+        print(f"[email_ingest] thread match failed: {e}")
+
+
 def run_ingest() -> dict:
     """One poll: fetch → extract → normalize → dedupe → propose.
     Returns {'checked', 'proposed', 'error'}. Serialized under _run_lock."""
@@ -782,6 +898,17 @@ def _run_ingest_locked() -> dict:
         sched_events, [p for p in existing if p.get('status') == 'proposed'])
 
     for msg in messages:
+        if msg.get('unreadable'):
+            # Truly unreadable (not the model's fault): logged and passed, or
+            # it would block every later email.
+            storage.add_ingest_log({'from': '', 'subject': f"(message {msg['uid']})",
+                                    'outcome': f"error: unreadable email ({msg['unreadable']})"})
+            mark_handled(settings, msg)
+            continue
+        if msg.get('rescan') and _was_handled(msg):
+            mark_handled(settings, msg)
+            summary['already'] = summary.get('already', 0) + 1
+            continue
         summary['checked'] += 1
         log = {'from': msg['from'], 'subject': msg['subject'][:120]}
 
@@ -799,26 +926,27 @@ def _run_ingest_locked() -> dict:
                    if blocked.get('matched_keyword') else blocked.get('pattern'))
             storage.add_ingest_log({**log, 'outcome': f'skipped: matched skip rule ({why})',
                                     'skipped': True})
+            mark_handled(settings, msg)
             continue
-
-        # Thread matching is additive and independent of event extraction —
-        # a reply from a vendor can carry both a date-bound item AND be an
-        # update to an open thread, and neither should suppress the other.
-        # A match failure here must never break ingest, so it gets its own
-        # try/except rather than sharing the extraction one below.
-        try:
-            from services import threads
-            threads.match_inbound(msg['from'], msg['subject'], msg['text'])
-        except Exception as e:
-            print(f"[email_ingest] thread match failed: {e}")
 
         entry = sender_default(msg['from'], sender_defaults)
         try:
             items = extract_items(msg['subject'], msg['from'], msg['text'],
                                   member_names, known_block=known_block)
+        except ExtractionDeferred as e:
+            # Stop here and keep this email (and everything after it) in
+            # line; the next poll after the pause picks up exactly here.
+            summary['checked'] -= 1
+            summary['deferred'] = True
+            storage.add_ingest_log({'from': '', 'subject': '(poll)',
+                                    'outcome': f'waiting: AI busy, will retry ({e})'})
+            break
         except Exception as e:
             storage.add_ingest_log({**log, 'outcome': f'error: extraction failed ({e})'})
+            _match_thread(msg)
+            mark_handled(settings, msg)
             continue
+        _match_thread(msg)
 
         proposed_here = dropped = duped = supplies_only = 0
         for item in items:
@@ -888,5 +1016,6 @@ def _run_ingest_locked() -> dict:
         else:
             outcome = 'no actionable items'
         storage.add_ingest_log({**log, 'outcome': outcome})
+        mark_handled(settings, msg)
 
     return summary

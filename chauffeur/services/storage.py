@@ -450,6 +450,9 @@ with db_lock:
     event_proposals_table = db.table('event_proposals')
     agent_action_proposals_table = db.table('agent_action_proposals')
     ingest_log_table = db.table('ingest_log')
+    # Message-IDs email intake has finished with, so a re-read of missed mail
+    # skips what already went through (the log is capped at 200 rows).
+    ingest_seen_table = db.table('ingest_seen')
     prep_kits_table = db.table('prep_kits')
     prep_status_table = db.table('prep_status')
     packing_claims_table = db.table('packing_claims')
@@ -7619,6 +7622,27 @@ def add_ingest_log(entry: dict, cap: int = 200) -> None:
         if len(rows) + 1 > cap:
             for r in rows[:len(rows) + 1 - cap]:
                 ingest_log_table.remove(doc_ids=[r.doc_id])
+
+def mark_ingest_seen(message_id: str, cap: int = 5000) -> None:
+    import time
+    if not message_id:
+        return
+    with db_lock:
+        if ingest_seen_table.search(Query().id == message_id):
+            return
+        ingest_seen_table.insert({'id': message_id, 'ts': time.time()})
+        rows = ingest_seen_table.all()
+        if len(rows) > cap:
+            for r in sorted(rows, key=lambda r: r.get('ts', 0))[:len(rows) - cap]:
+                ingest_seen_table.remove(Query().id == r['id'])
+
+
+def ingest_seen(message_id: str) -> bool:
+    if not message_id:
+        return False
+    with db_lock:
+        return bool(ingest_seen_table.search(Query().id == message_id))
+
 
 def get_ingest_log(limit: int = 50) -> List[dict]:
     with db_lock:

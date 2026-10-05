@@ -31,6 +31,28 @@
                     simply forwarding an email. Nothing lands on a calendar without your approval.</p>
             </header>
 
+            <!-- Missed mail: emails the AI could not read (it was paused or busy)
+                 used to be dropped. They can be re-read; already-handled mail is
+                 skipped as it comes up. -->
+            <div x-show="missed.pending > 0 || missed.failed > 0"
+                class="mb-6 rounded-xl p-4 border flex items-center gap-3 flex-wrap"
+                :class="missed.pending > 0 ? 'bg-blue-900/30 border-blue-700/50' : 'bg-amber-900/30 border-amber-700/50'">
+                <div class="flex-1 min-w-0 text-sm">
+                    <template x-if="missed.pending > 0">
+                        <span class="text-blue-200">Re-reading missed email: <b x-text="missed.pending"></b> left.
+                            It goes a batch at a time and waits whenever the AI is busy, so this can take a while.</span>
+                    </template>
+                    <template x-if="!(missed.pending > 0)">
+                        <span class="text-amber-200"><b x-text="missed.failed"></b> email<span x-show="missed.failed !== 1">s</span>
+                            <span x-show="missed.since_ts" x-text="' since ' + new Date((missed.since_ts || 0) * 1000).toLocaleDateString()"></span>
+                            couldn't be read because the AI was paused or busy. They were skipped, not lost.</span>
+                    </template>
+                </div>
+                <button x-show="!(missed.pending > 0)" @click="rescanMissed()" :disabled="rescanning"
+                    class="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors"
+                    x-text="rescanning ? 'Queuing…' : 'Re-read them'"></button>
+            </div>
+
             <!-- ===== Proposals ===== -->
             <section class="mb-10">
                 <div class="flex items-center justify-between gap-2 flex-wrap mb-3">
@@ -531,6 +553,8 @@
                 // was typed in last owns the dropdown.
                 locSuggest: { pid: null, field: '', items: [], token: null },
                 checking: false,
+                missed: { failed: 0, since_ts: null, pending: 0 },
+                rescanning: false,
                 savingConfig: false,
                 uploadingPhoto: false,
                 busyId: null,
@@ -544,7 +568,7 @@
                 shoppingLists: [],
 
                 async init() {
-                    await Promise.all([this.loadProposals(), this.loadLog(), this.loadConfig(),
+                    await Promise.all([this.loadProposals(), this.loadLog(), this.loadConfig(), this.loadMissed(),
                                        this.loadTargets(), this.loadMisfiled(),
                                        this.loadIgnoredSenders(), this.loadSkipped(),
                                        this.loadShoppingLists()]);
@@ -765,6 +789,32 @@
                         showGlobalAlert(`Moved ${moved} to the household list 📋`
                             + (failed ? ` — ${failed} couldn't be moved.` : ''));
                     } finally { this.refiling = false; }
+                },
+                async loadMissed() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ingest/missed`);
+                        if (res.ok) this.missed = await res.json();
+                    } catch (e) { /* the banner just stays hidden */ }
+                },
+                async rescanMissed() {
+                    const d = this.missed.since_ts ? new Date(this.missed.since_ts * 1000) : new Date(Date.now() - 30 * 86400000);
+                    d.setDate(d.getDate() - 1);
+                    const def = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                    const since = await promptInput('Re-read email since', 'Every email from this date on is looked at again. Ones that already went through are skipped.', { value: def, placeholder: 'YYYY-MM-DD' });
+                    if (since === null) return;
+                    this.rescanning = true;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ingest/rescan`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ since: since.trim() })
+                        });
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) { showGlobalAlert(data.detail || 'Could not queue the re-read'); return; }
+                        showGlobalAlert(`Queued ${data.queued} email${data.queued !== 1 ? 's' : ''} to look at again — they'll go through over the next polls.`);
+                        await this.loadMissed();
+                    } catch (e) {
+                        showGlobalAlert('Could not queue the re-read: ' + e.message);
+                    } finally { this.rescanning = false; }
                 },
                 async loadLog() {
                     try {
@@ -1026,13 +1076,15 @@
                         const s = await res.json();
                         if (s.error) {
                             showGlobalAlert('Mailbox check failed: ' + s.error);
+                        } else if (s.deferred) {
+                            showGlobalAlert(`The AI is busy right now (paused after a failure). ${s.checked ? `Read ${s.checked} first; ` : ''}the rest is waiting and will be read automatically — nothing is skipped.`);
                         } else if (s.checked === 0) {
                             showGlobalAlert('No new mail since the last check — the automatic poll (every 10 minutes) may have just processed things; see Recent activity.'
                                 + (s.pending ? ` ${s.pending} proposal${s.pending !== 1 ? 's' : ''} waiting below.` : ''));
                         } else {
                             showGlobalAlert(`Checked ${s.checked} new message${s.checked !== 1 ? 's' : ''} — ${s.proposed} proposal${s.proposed !== 1 ? 's' : ''} added.`);
                         }
-                        await Promise.all([this.loadProposals(), this.loadLog()]);
+                        await Promise.all([this.loadProposals(), this.loadLog(), this.loadMissed()]);
                     } catch (e) {
                         showGlobalAlert('Mailbox check failed: ' + e.message);
                     } finally { this.checking = false; }
