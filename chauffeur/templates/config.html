@@ -1757,10 +1757,17 @@
                                                             :class="(feed.last_status || '').startsWith('error') ? 'text-red-400' : 'text-gray-500'"
                                                             x-text="(feed.last_status || 'never synced') + (feed.last_synced ? ' · ' + new Date(feed.last_synced).toLocaleString() : '')">
                                                         </p>
+                                                        <p class="text-xs truncate" x-show="feed.canvas_status"
+                                                            :class="(feed.canvas_status || '').startsWith('error') ? 'text-red-400' : 'text-gray-500'"
+                                                            x-text="'Canvas names: ' + (feed.canvas_status || '')"></p>
                                                     </div>
                                                     <button @click="syncIcsFeed(feed)" :disabled="icsSyncingId === feed.id"
                                                         class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
                                                         x-text="icsSyncingId === feed.id ? '...' : 'Sync'"></button>
+                                                    <button x-show="feed.target_kind === 'tasks'" @click="setCanvasToken(feed)"
+                                                        class="bg-gray-600 hover:bg-gray-500 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
+                                                        :title="feed.canvas_status || 'Get class names from Canvas'"
+                                                        x-text="feed.canvas_token_set ? 'Canvas ✓' : 'Canvas names'"></button>
                                                     <button @click="toggleIcsFeed(feed)"
                                                         class="bg-gray-600 hover:bg-gray-500 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
                                                         x-text="feed.enabled === false ? 'Resume' : 'Pause'"></button>
@@ -6273,6 +6280,31 @@
                         this.icsSyncingId = null;
                         await this.loadIcsFeeds();
                     }
+                },
+                // K4d: Canvas course names for a school feed's classes. The
+                // token is write-only server-side; this page only ever learns
+                // whether one is set.
+                async setCanvasToken(feed) {
+                    const token = await promptInput('Class names from Canvas',
+                        'Signed in to Canvas as the child: Account → Settings → New Access Token. '
+                        + 'Used only to read the course list, sent only to this feed’s Canvas, never shown again.'
+                        + (feed.canvas_token_set ? ' Leave empty to remove the saved one.' : ''),
+                        { placeholder: 'Canvas access token', value: '' });
+                    if (token === null) return;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ics_feeds/${feed.id}/canvas-token`, {
+                            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ token: token.trim() })
+                        });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) showGlobalAlert(d.detail || 'Could not save the token');
+                        else showGlobalAlert(d.status === 'cleared' ? 'Canvas token removed'
+                            : (d.status || '').startsWith('error') ? d.status.replace(/^error: /, '')
+                            : `Named ${d.named} class${d.named === 1 ? '' : 'es'} from Canvas`);
+                    } catch (e) {
+                        showGlobalAlert('Could not save the token: ' + e.message);
+                    }
+                    await this.loadIcsFeeds();
                 },
                 async toggleIcsFeed(feed) {
                     await fetch(`${this.apiBase}api/ics_feeds/${feed.id}`, {

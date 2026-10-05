@@ -69,7 +69,11 @@ function openKidTaskDetail(id) {
             <span class="w-1 self-stretch rounded" style="background:${color}"></span>
             <div class="min-w-0">
                 <div class="text-gray-100 font-bold text-lg leading-snug">${SCHOOL_EMOJI[t.kind] || '📌'} ${mfEscape(t.title)}</div>
-                <div class="text-xs font-semibold text-gray-400">${mfEscape([t.course_name, due].filter(Boolean).join(' · '))}</div>
+                <div class="text-xs font-semibold text-gray-400">${t.course_id
+                    // The class is tappable: a bare course code is the one
+                    // thing on this sheet a family can fix in place.
+                    ? `<span role="button" tabindex="0" data-rename class="cursor-pointer underline text-indigo-300">${mfEscape(t.course_named ? t.course_name : `${t.course_name || t.course_label || 'Class'} · Name this class`)}</span>`
+                    : mfEscape(t.course_name || '')}${t.course_name && due ? ' · ' : ''}${mfEscape(due)}</div>
             </div>
         </div>
         <div class="max-h-[50vh] overflow-y-auto my-3 flex flex-col gap-2">
@@ -84,6 +88,11 @@ function openKidTaskDetail(id) {
             <button data-yes class="px-4 py-2 rounded-xl bg-green-600 text-white text-sm font-bold">${done ? 'Mark not done' : 'Check off'}</button>
         </div>`, (overlay, close) => {
         overlay.querySelector('[data-close]').onclick = close;
+        const rename = overlay.querySelector('[data-rename]');
+        if (rename) {
+            rename.onclick = () => { close(); schoolNameClass(t.course_id, t.course_label, t.course_named ? t.course_name : ''); };
+            rename.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); rename.click(); } };
+        }
         overlay.querySelector('[data-yes]').onclick = async () => {
             close();
             await completeKidTask(t.id, !done);
@@ -254,11 +263,13 @@ function pwaSchoolMode(mode) { if (pwaSchool) { pwaSchool.mode = mode; pwaSchool
 function pwaSchoolClasses() {
     const cls = pwaSchool.classes;
     if (!cls.length) return '';
-    const unnamed = cls.some(c => !c.name && /\d/.test(c.display || '') && (c.display || '').includes('.'));
+    const unnamed = cls.some(c => !c.name && !c.canvas_name && /\d/.test(c.display || '') && (c.display || '').includes('.'));
     return `
         <details class="mt-4" ${unnamed ? 'open' : ''}>
             <summary class="text-xs font-black uppercase tracking-widest text-gray-500 cursor-pointer select-none py-1">Classes</summary>
             ${unnamed ? '<p class="text-xs text-gray-400 mb-2">Give your classes names so they read nicely everywhere.</p>' : ''}
+            ${['parent', 'adult'].includes(currentMemberRole()) ? `<div role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}" onclick="pwaSchoolCanvasToken()"
+                class="cursor-pointer mb-2 text-center text-xs font-bold text-gray-300 bg-gray-800 rounded-lg py-2">Get names from Canvas</div>` : ''}
             <div class="flex flex-col gap-1.5">
             ${cls.map(c => `
                 <div class="rounded-lg bg-gray-800 px-2.5 py-1.5 flex items-center gap-2">
@@ -287,10 +298,56 @@ async function pwaSchoolUpdateClass(id, body) {
 async function pwaSchoolRenameClass(id) {
     const c = (pwaSchool?.classes || []).find(x => x.id === id);
     if (!c) return;
-    const name = await promptInput('Name this class', c.label ? `The school calls it ${c.label}` : '',
-        {value: c.name || '', placeholder: 'Science', okText: 'Save'});
+    schoolNameClass(id, c.label, c.name || '', c.canvas_name);
+}
+
+// Name a class from anywhere a class shows (the Classes list, a task's
+// detail sheet). Clearing the name falls back to Canvas's, then the code.
+async function schoolNameClass(id, label, current, canvasName) {
+    const hint = [label ? `The feed calls it ${label}.` : '',
+                  canvasName ? `Canvas calls it ${canvasName}.` : ''].filter(Boolean).join(' ');
+    const name = await promptInput('Name this class', hint,
+        {value: current || '', placeholder: canvasName || 'Science', okText: 'Save'});
     if (name === null) return;
-    pwaSchoolUpdateClass(id, {name});
+    try {
+        const r = await fetch(`${apiBase}api/kid-tasks/classes/${id}`, {
+            method: 'PUT', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name, member_id: selectedMemberId})});
+        if (!r.ok) throw new Error();
+    } catch (e) { return showGlobalAlert('Could not save the class'); }
+    if (pwaSchool) pwaSchoolLoad();
+    else if (typeof refreshTodaySurfaces === 'function') refreshTodaySurfaces();
+}
+
+// Canvas's own course names (K4d): a parent pastes an access token made in
+// the child's Canvas account; the server keeps it write-only and fetches the
+// names. Parents only: the feed routes are.
+async function pwaSchoolCanvasToken() {
+    if (!pwaSchool) return;
+    let feeds = [];
+    try {
+        const r = await fetch(`${apiBase}api/ics_feeds`);
+        if (r.ok) feeds = (await r.json()).filter(f => f.target_kind === 'tasks' && f.member_id === pwaSchool.owner);
+    } catch (e) { /* handled below */ }
+    if (!feeds.length) return showGlobalAlert('No school feed for this child.');
+    const feed = feeds[0];
+    const token = await promptInput('Class names from Canvas',
+        'Signed in to Canvas as your child: Account → Settings → New Access Token. Paste it here. '
+        + 'Chauffeur only reads the course list with it, never shows it again, and sends it nowhere but your school’s Canvas.'
+        + (feed.canvas_token_set ? ' Leave empty to remove the saved one.' : ''),
+        {placeholder: 'Canvas access token', okText: 'Save'});
+    if (token === null) return;
+    try {
+        const r = await fetch(`${apiBase}api/ics_feeds/${feed.id}/canvas-token`, {
+            method: 'PUT', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({token: token.trim()})});
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) return showGlobalAlert(d.detail || 'Could not save the token');
+        showGlobalAlert(d.status === 'cleared' ? 'Canvas token removed'
+            : (d.status || '').startsWith('error') ? d.status.replace(/^error: /, '')
+            : `Named ${d.named} class${d.named === 1 ? '' : 'es'} from Canvas`);
+    } catch (e) { return showGlobalAlert('Could not reach Chauffeur'); }
+    pwaSchoolLoad();
 }
 
 async function pwaSchoolColorClass(id) {

@@ -37,6 +37,7 @@ def seed():
                         'stage_override': 'navigator', 'color_code': '#6366f1'})
     sci = storage.ensure_school_class('kid', 'course_88', '502.Knox.30062Y0.6001.2027')
     storage.ensure_school_class('kid', 'Algebra 1', 'Algebra 1')
+    storage.ensure_school_class('kid', 'course_77', '611.Knox.40011Z0.6002.2027')
     from models.schemas import KidTask
     rows = [
         dict(title='Cell Lab Report', due_date=_d(1), due_time='23:59', kind='homework',
@@ -53,6 +54,8 @@ def seed():
         dict(title='Reading log', due_date=_d(-3), kind='homework', course_key='Algebra 1',
              course_label='Algebra 1'),
         dict(title='Old worksheet', due_date=_d(-9), kind='homework'),
+        dict(title='Essay draft', due_date=_d(3), kind='homework', course_key='course_77',
+             course_label='611.Knox.40011Z0.6002.2027'),
     ]
     for r in rows:
         storage.add_kid_task(KidTask(member_id='kid', source='ics', **r).model_dump())
@@ -143,7 +146,8 @@ def check_kid(served, output):
         page.locator('.pwa-prompt-overlay [data-yes]').click()
         page.wait_for_function("pwaSchool && pwaSchool.classes.some(c => c.name === 'Science')")
         page.wait_for_selector('#pwa-school-body >> text=Science')
-        assert 'Give your classes names' not in body.inner_text()
+        # one class is still a bare code (named from its detail sheet below)
+        assert 'Give your classes names' in body.inner_text()
 
         # Month view
         page.locator('#pwa-school-body [role="button"]:text-is("Month")').click()
@@ -155,6 +159,21 @@ def check_kid(served, output):
             page.screenshot(path=str(Path(output, 'school-month.png')))
         page.evaluate('pwaSchoolClose()')
         assert storage.get_school_classes('kid')[0]['name'] == 'Science'
+
+        # The class line on a task's detail sheet names the class in place.
+        page.evaluate("openKidTaskDetail(Object.values(pwaSchoolTasks).find(t => t.title === 'Essay draft').id)")
+        link = page.locator('.pwa-prompt-overlay [data-rename]')
+        link.wait_for()
+        assert 'Name this class' in link.inner_text(), link.inner_text()
+        if output:
+            page.screenshot(path=str(Path(output, 'school-detail-name-class.png')))
+        link.click()
+        page.locator('.pwa-prompt-overlay textarea').fill('English')
+        page.locator('.pwa-prompt-overlay [data-yes]').click()
+        page.wait_for_function("!document.querySelector('.pwa-prompt-overlay')")
+        page.wait_for_timeout(300)
+        named = {c['key']: c.get('name') for c in storage.get_school_classes('kid')}
+        assert named['course_77'] == 'English', named
         assert not errors, errors
 
 

@@ -421,6 +421,7 @@ class SchoolClass(BaseModel):
     key: str
     label: Optional[str] = None        # what the feed calls it
     name: Optional[str] = None         # what the family calls it
+    canvas_name: Optional[str] = None  # Canvas's own name (needs a token)
     color: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
 

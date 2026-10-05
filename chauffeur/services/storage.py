@@ -2387,11 +2387,13 @@ def update_school_class(class_id: str, data: dict) -> bool:
 
 
 def school_class_display(c: Optional[dict]) -> Optional[str]:
-    """The family's name, else the feed's label when it reads like a name.
-    A bare course code is not a name — it shows only until somebody names it."""
+    """The family's name, else Canvas's name for the course (fetched with a
+    token, services/canvas_courses), else the feed's label. A bare course
+    code is not a name — it shows only until one of the first two exists."""
     if not c:
         return None
-    return (c.get('name') or '').strip() or c.get('label') or c.get('key')
+    return ((c.get('name') or '').strip() or (c.get('canvas_name') or '').strip()
+            or c.get('label') or c.get('key'))
 
 
 def decorate_kid_tasks(tasks: List[dict]) -> List[dict]:
@@ -2410,7 +2412,9 @@ def decorate_kid_tasks(tasks: List[dict]) -> List[dict]:
             t['course_name'] = school_class_display(c) or t.get('course_label') or key
             t['course_color'] = (c or {}).get('color')
             t['course_named'] = bool(c and ((c.get('name') or '').strip()
+                                            or (c.get('canvas_name') or '').strip()
                                             or not _class_code_shaped(c.get('label') or c.get('key') or '')))
+            t['course_id'] = (c or {}).get('id')
         out.append(t)
     return out
 

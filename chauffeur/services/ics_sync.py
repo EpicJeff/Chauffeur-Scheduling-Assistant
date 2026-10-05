@@ -448,7 +448,16 @@ def sync_feed(feed: dict) -> dict:
     summary['total'] = len(items)
 
     if feed.get('target_kind') == 'tasks':
-        return _sync_feed_tasks(feed, items, summary, now)
+        out = _sync_feed_tasks(feed, items, summary, now)
+        # Canvas's own course names, when the family gave this feed a token
+        # (at most daily; services/canvas_courses). Never fails the sync.
+        if feed.get('canvas_token'):
+            try:
+                from services import canvas_courses
+                canvas_courses.refresh_class_names(storage.get_ics_feed(feed_id) or feed)
+            except Exception as e:
+                print(f"Canvas course names failed for feed {feed_id}: {e}")
+        return out
     cal_id = feed['calendar_id']
     event_map = dict(feed.get('event_map') or {})
     new_map = {}

@@ -3958,8 +3958,11 @@ class IcsFeedUpdate(BaseModel):
     enabled: Optional[bool] = None
 
 def _public_ics_feed(f: dict) -> dict:
-    """The event_map is internal bookkeeping (can be hundreds of entries)."""
-    return {k: v for k, v in f.items() if k != 'event_map'}
+    """The event_map is internal bookkeeping (can be hundreds of entries).
+    A Canvas token is write-only: the page learns only that one is set."""
+    out = {k: v for k, v in f.items() if k not in ('event_map', 'canvas_token')}
+    out['canvas_token_set'] = bool(f.get('canvas_token'))
+    return out
 
 @app.get("/api/calendar_health")
 def calendar_health():
@@ -4036,6 +4039,33 @@ def update_ics_feed(feed_id: str, req: IcsFeedUpdate):
     if updates:
         storage.update_ics_feed(feed_id, updates)
     return {"status": "updated"}
+
+class CanvasTokenRequest(BaseModel):
+    token: str = ""                  # empty clears it
+
+@app.put("/api/ics_feeds/{feed_id}/canvas-token")
+def set_canvas_token(feed_id: str, req: CanvasTokenRequest):
+    """K4d: a Canvas access token for a school task feed, used only to read
+    the child's course names (services/canvas_courses). Saved, then tried at
+    once so the answer is immediate: how many classes got a name, or why not."""
+    from services import canvas_courses
+    feed = storage.get_ics_feed(feed_id)
+    if not feed:
+        raise HTTPException(status_code=404, detail="Feed not found")
+    if feed.get('target_kind') != 'tasks':
+        raise HTTPException(status_code=400, detail="Only school task feeds take a Canvas token")
+    token = (req.token or '').strip()
+    if not token:
+        storage.update_ics_feed(feed_id, {'canvas_token': None, 'canvas_status': None,
+                                          'canvas_synced': None})
+        for c in storage.get_school_classes(feed.get('member_id')):
+            if c.get('canvas_name'):
+                storage.update_school_class(c['id'], {'canvas_name': None})
+        return {"status": "cleared", "named": 0}
+    if not canvas_courses.canvas_base(feed.get('url')):
+        raise HTTPException(status_code=400, detail="This feed is not an https Canvas address")
+    storage.update_ics_feed(feed_id, {'canvas_token': token})
+    return canvas_courses.refresh_class_names(storage.get_ics_feed(feed_id), force=True)
 
 @app.post("/api/ics_feeds/{feed_id}/sync")
 def sync_ics_feed_now(feed_id: str, background_tasks: BackgroundTasks):
@@ -12325,7 +12355,8 @@ def _task_detail_fields(t):
             'notes': t.get('notes') or '', 'source': t.get('source'),
             'course_key': t.get('course_key'), 'course_name': t.get('course_name'),
             'course_color': t.get('course_color'),
-            'course_named': bool(t.get('course_named'))}
+            'course_named': bool(t.get('course_named')),
+            'course_id': t.get('course_id')}
 
 def _task_line(task, ref):
     import datetime as _dt

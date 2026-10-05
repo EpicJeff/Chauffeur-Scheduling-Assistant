@@ -205,10 +205,109 @@ def scenario_existing_tasks_catch_up():
     check(res['updated'] == 0, f"an unchanged feed patches nothing, got {res}")
 
 
+class _Resp:
+    def __init__(self, status, body, links=None):
+        self.status_code, self._body, self.links = status, body, links or {}
+
+    def json(self):
+        return self._body
+
+    def raise_for_status(self):
+        import requests
+        if self.status_code >= 400:
+            raise requests.HTTPError(response=self)
+
+
+def _canvas_feed():
+    fid, _ = _sync()
+    storage.update_ics_feed(fid, {'url': 'webcal://knox.instructure.com/feeds/calendars/user_abc.ics'})
+    return fid
+
+
+def scenario_canvas_token_names_classes():
+    """A token fetches Canvas's own course names: matched by the course id
+    the feed's URLs carry, or by course_code when an item had no URL. The
+    family's name still wins, the token is never returned, and it is only
+    ever sent to the feed's own host."""
+    _reset()
+    import main
+    from services import canvas_courses
+    fid = _canvas_feed()
+    calls = []
+    page1 = [{'id': 88, 'name': 'Biology - Knox', 'course_code': '502.Knox.30062Y0.6001.2027'}]
+    page2 = [{'id': 91, 'name': 'Algebra I Honors', 'course_code': 'Algebra 1'}]
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        calls.append((url, headers))
+        if 'page=2' in url:
+            return _Resp(200, page2, {'next': {'url': 'https://evil.example.com/api/v1/courses?page=3'}})
+        return _Resp(200, page1, {'next': {'url': 'https://knox.instructure.com/api/v1/courses?page=2'}})
+
+    with mock.patch.object(canvas_courses.requests, 'get', side_effect=fake_get):
+        res = main.set_canvas_token(fid, main.CanvasTokenRequest(token='  tok123 '))
+    check(res['named'] == 2 and res['status'].startswith('ok'), f"both classes named: {res}")
+    check(all(u.startswith('https://knox.instructure.com/') for u, _ in calls) and len(calls) == 2,
+          f"only the feed's own host, pagination stops at a foreign host: {[u for u, _ in calls]}")
+    check(calls[0][1]['Authorization'] == 'Bearer tok123', "token sent trimmed, as a bearer")
+    listed = main.list_ics_feeds()[0]
+    check('canvas_token' not in listed and listed['canvas_token_set'] is True,
+          f"the token is write-only: {sorted(listed)}")
+    classes = {c['key']: c for c in main.list_school_classes("kid1")}
+    check(classes['course_88']['display'] == 'Biology - Knox'
+          and classes['Algebra 1']['display'] == 'Algebra I Honors',
+          f"Canvas names show: {[c['display'] for c in classes.values()]}")
+    day = main.member_day("kid1", TODAY.isoformat())
+    lab = next(r for r in day['due_soon'] if r['title'] == 'Cell Lab Report')
+    check(lab['course_named'] and lab['course_name'] == 'Biology - Knox' and lab['course_id'],
+          f"a Canvas name counts as named and the row knows its class id: {lab}")
+    main.update_school_class_api(classes['course_88']['id'], main.SchoolClassUpdate(name="Science"))
+    check(main.list_school_classes("kid1")[0]['display'] == 'Science', "the family's name wins")
+
+    # The hourly sync does not hammer Canvas: at most daily.
+    with mock.patch.object(canvas_courses.requests, 'get', side_effect=fake_get) as g:
+        _sync_again()
+        check(g.call_count == 0, "a fresh name list is not refetched on every sync")
+
+    # A refused token says so and keeps the names it had.
+    with mock.patch.object(canvas_courses.requests, 'get', return_value=_Resp(401, {})):
+        res = main.set_canvas_token(fid, main.CanvasTokenRequest(token='expired'))
+    check('refused' in res['status'], f"a 401 is reported plainly: {res}")
+    check(main.list_ics_feeds()[0]['canvas_status'].startswith('error'), "status shown on the feed")
+
+    # Clearing removes the token and the Canvas names.
+    res = main.set_canvas_token(fid, main.CanvasTokenRequest(token=''))
+    check(res['status'] == 'cleared' and main.list_ics_feeds()[0]['canvas_token_set'] is False,
+          "an empty token clears it")
+    check(not any(c.get('canvas_name') for c in storage.get_school_classes("kid1")),
+          "and the names it brought")
+
+
+def scenario_canvas_token_refuses_bad_feeds():
+    _reset()
+    import main
+    from fastapi import HTTPException
+    fid, _ = _sync()   # https://x/feed.ics is https -> allowed host 'x'
+    storage.update_ics_feed(fid, {'url': 'http://plain.example.com/feed.ics'})
+    try:
+        main.set_canvas_token(fid, main.CanvasTokenRequest(token='t'))
+        check(False, "an http feed must not receive a token")
+    except HTTPException as e:
+        check(e.status_code == 400, "plain http refused")
+    cal = storage.add_ics_feed({"url": "https://x/team.ics", "name": "Team",
+                                "calendar_id": "primary", "target_kind": "calendar"})
+    try:
+        main.set_canvas_token(cal, main.CanvasTokenRequest(token='t'))
+        check(False, "a calendar feed takes no token")
+    except HTTPException as e:
+        check(e.status_code == 400, "calendar feeds refused")
+
+
 SCENARIOS = [
     scenario_canvas_detail_survives,
     scenario_naming_a_class_reaches_every_line,
     scenario_existing_tasks_catch_up,
+    scenario_canvas_token_names_classes,
+    scenario_canvas_token_refuses_bad_feeds,
 ]
 
 if __name__ == "__main__":
