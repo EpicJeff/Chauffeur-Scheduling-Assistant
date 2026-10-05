@@ -11809,6 +11809,9 @@ def withdraw_pool_pledge_endpoint(reward_id: str, req: ChoreMemberRequest):
 class PoolDecision(BaseModel):
     approve: bool
     force: bool = False  # grant despite children short of min_share
+    # Grant before it is funded: each child pays only their pledge and the
+    # parent covers the rest (storage.grant_pool).
+    cover_rest: bool = False
 
 @app.post("/api/rewards/{reward_id}/pool/decide")
 def decide_pool_endpoint(reward_id: str, req: PoolDecision,
@@ -11829,9 +11832,12 @@ def decide_pool_endpoint(reward_id: str, req: PoolDecision,
                     f"{reward.get('title')} — your {c['amount']} ⭐ pledge is back in your balance",
                     '/app?view=chores')
         return {"status": "cleared", "released": len(contribs)}
-    redemption, err = storage.grant_pool(reward_id, parent['id'], force=req.force)
+    redemption, err = storage.grant_pool(reward_id, parent['id'], force=req.force,
+                                         cover_rest=req.cover_rest)
     if err == 'unfunded':
         raise HTTPException(status_code=409, detail="Not fully funded yet")
+    if err == 'empty':
+        raise HTTPException(status_code=409, detail="Nobody has chipped in yet")
     if err == 'short':
         pool = storage.get_pool_status(reward)
         names = ', '.join(n for n in pool['short'] if n)

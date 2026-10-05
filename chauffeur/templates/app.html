@@ -6825,9 +6825,14 @@
                 actions = `<div class="flex items-center gap-2 flex-wrap">${mineHtml}${chipIn}</div>`;
             } else if (role === 'parent') {
                 const grantLabel = poolForceIds.has(rw.id) ? 'Grant anyway ⚠️' : '✓ Grant';
+                // Not funded yet but somebody has chipped in: a parent can make
+                // it happen now. Each child pays only their pledge; the parent
+                // covers the rest. Confirmed first, naming every deduction.
                 const grant = pool.funded || poolForceIds.has(rw.id)
                     ? `<button onclick="decidePool('${rw.id}', true)" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-green-600 text-white active:bg-green-700">${grantLabel}</button>`
-                    : '';
+                    : pool.pledged > 0
+                        ? `<button onclick="grantPoolEarly('${rw.id}')" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-green-600 text-white active:bg-green-700">✓ Grant now · cover ${pool.remaining} ⭐</button>`
+                        : '';
                 const release = pool.pledged > 0
                     ? `<button onclick="decidePool('${rw.id}', false)" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-red-600/80 text-white active:bg-red-700">✗ Release</button>`
                     : '';
@@ -6881,6 +6886,30 @@
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
                 showGlobalAlert(err.detail || 'Could not withdraw');
+            }
+            fetchChores();
+        }
+
+        async function grantPoolEarly(id) {
+            const rw = rewardsData.find(r => r.id === id);
+            if (!rw || !rw.pool) return;
+            const pool = rw.pool;
+            const who = pool.contributions.filter(c => c.amount > 0)
+                .map(c => `${c.member_name || '?'} −${c.amount} ⭐`).join(', ');
+            const ok = await promptConfirm('Grant it now?',
+                `${rw.title} has ${pool.pledged} of ${pool.cost} ⭐. Each child pays only what they chipped in (${who}); you cover the other ${pool.remaining}.`,
+                'Grant now');
+            if (!ok) return;
+            const res = await fetch(`${apiBase}api/rewards/${id}/pool/decide`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Member-Token': memberToken() },
+                body: JSON.stringify({ approve: true, cover_rest: true })
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                showGlobalAlert(err.detail || 'Could not grant');
+            } else {
+                showGlobalAlert('Granted! 🎉');
             }
             fetchChores();
         }

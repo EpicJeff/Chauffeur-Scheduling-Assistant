@@ -191,12 +191,68 @@ def scenario_agent_tools():
         "pool funded via agent pledges")
 
 
+def scenario_parent_grants_early_and_covers_the_rest():
+    """A parent can make a goal happen before it is funded: each child pays
+    exactly their pledge -- never a point of the gap -- and the row records
+    what the parent covered. It overrides min_share too (the parent is looking
+    at who gave what), and needs at least one pledge."""
+    _family()
+    _reward("goal", cost=150, min_share=20)
+    _, err = storage.grant_pool("goal", "mom", cover_rest=True)
+    check(err == "empty", "an early grant with no pledges was not refused")
+    storage.contribute_to_pool("goal", "a", 50)
+    storage.contribute_to_pool("goal", "b", 40)
+    _, err = storage.grant_pool("goal", "mom")
+    check(err == "unfunded", "a plain grant still needs full funding")
+
+    red, err = storage.grant_pool("goal", "mom", cover_rest=True)
+    check(err is None and red["pooled"], "the early grant did not go through: %r" % err)
+    check(storage.get_points_balance("a") == 70 and storage.get_points_balance("b") == 60,
+          "a child paid more (or less) than their pledge")
+    check(storage.get_points_balance("c") == 0, "a child who gave nothing was charged")
+    check(red["cost"] == 90 and red["parent_covered"] == 60,
+          "the row does not say what the kids paid and what the parent covered: %r" % red)
+    check(storage.get_pool_contributions(reward_id="goal") == [], "pledges not cleared")
+
+
+def scenario_early_grant_through_the_endpoint():
+    import main
+    from fastapi import BackgroundTasks, HTTPException
+    _family()
+    _reward("goal", cost=150)
+    storage.contribute_to_pool("goal", "a", 30)
+    orig = main.require_parent_token
+    main.require_parent_token = lambda tok: storage.get_member("mom")
+    try:
+        try:
+            main.decide_pool_endpoint("goal", main.PoolDecision(approve=True), BackgroundTasks())
+            raise AssertionError("an unfunded goal granted without cover_rest")
+        except HTTPException as e:
+            check(e.status_code == 409, "wrong refusal: %s" % e.status_code)
+        red = main.decide_pool_endpoint("goal", main.PoolDecision(approve=True, cover_rest=True),
+                                        BackgroundTasks())
+        check(red["parent_covered"] == 120 and storage.get_points_balance("a") == 90,
+              "the endpoint did not grant early: %r" % red)
+    finally:
+        main.require_parent_token = orig
+
+
+def scenario_pwa_offers_it():
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(here, "templates", "app.html"), encoding="utf-8").read()
+    check("grantPoolEarly('${rw.id}')" in src and "cover_rest: true" in src,
+          "the parent's PWA card has no way to grant early")
+
+
 SCENARIOS = [
     scenario_pledge_holds_and_clamping,
     scenario_withdraw_and_clear,
     scenario_grant_min_share_and_ledger,
     scenario_reset_and_reward_lifecycle_release_pledges,
     scenario_agent_tools,
+    scenario_parent_grants_early_and_covers_the_rest,
+    scenario_early_grant_through_the_endpoint,
+    scenario_pwa_offers_it,
 ]
 
 if __name__ == "__main__":

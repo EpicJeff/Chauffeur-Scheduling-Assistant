@@ -5543,11 +5543,19 @@ def clear_pool(reward_id: str) -> int:
         pool_contributions_table.remove(Query().reward_id == reward_id)
         return n
 
-def grant_pool(reward_id: str, decider_member_id: str, force: bool = False):
+def grant_pool(reward_id: str, decider_member_id: str, force: bool = False,
+               cover_rest: bool = False):
     """Parent grants a funded pool: one negative 'redeem' ledger entry per
     contributor for exactly their pledge, one approved redemption row
     (pooled=True, member_id None) for history/digest, pledges cleared.
-    Returns (redemption_row, None) or (None, 'missing'|'unfunded'|'short')."""
+
+    `cover_rest` is the parent deciding the goal happens NOW, before it is
+    funded: each child still pays exactly what they pledged and not a point
+    more, and the parent covers the gap (recorded as `parent_covered`). It is
+    an override of the whole pool, so the min-share check does not apply --
+    a parent choosing to cover the rest has already looked at who gave what.
+    Needs at least one pledge; with none there is nothing for the app to do.
+    Returns (redemption_row, None) or (None, 'missing'|'unfunded'|'short'|'empty')."""
     import time
     import uuid as _uuid
     with db_lock:
@@ -5556,9 +5564,12 @@ def grant_pool(reward_id: str, decider_member_id: str, force: bool = False):
             return None, 'missing'
         reward = dict(rows[0])
     status = get_pool_status(reward)
-    if not status['funded']:
+    if cover_rest:
+        if status['pledged'] <= 0:
+            return None, 'empty'
+    elif not status['funded']:
         return None, 'unfunded'
-    if status['short'] and not force:
+    elif status['short'] and not force:
         return None, 'short'
     now = time.time()
     with db_lock:
@@ -5577,6 +5588,8 @@ def grant_pool(reward_id: str, decider_member_id: str, force: bool = False):
             'member_id': None, 'state': 'approved', 'pooled': True,
             'contributions': [{'member_id': c['member_id'], 'amount': c['amount']}
                               for c in status['contributions']],
+            # What the parent covered to grant it early; 0 for a funded pool.
+            'parent_covered': max(0, int(status['cost']) - int(status['pledged'])),
             'requested_at': now, 'decided_by': decider_member_id, 'decided_at': now,
         }
         redemptions_table.insert(redemption)

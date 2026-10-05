@@ -1,6 +1,12 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.226 (2026-10-04).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.227 (2026-10-04).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**Family goals: a parent can grant early and cover the rest (v2.499.227; `storage.grant_pool(cover_rest=)`, `PoolDecision.cover_rest`, `app.html` `grantPoolEarly`, `tests/test_pooled_rewards.py`).** User: a way for a parent to grant a family goal that is not fully funded, deducting only what each person has chipped in. Before this, an unfunded goal offered a parent only Release; the existing "Grant anyway" only overrides a funded pool's min-share shortfall.
+
+- The parent's PWA goal card shows "Grant now · cover N" once anyone has pledged. A confirm names every child's deduction and the parent's share before anything moves.
+- Each child is debited exactly their pledge (never any of the gap; a child who gave nothing pays nothing); the approved pooled redemption records `cost` = what the kids paid and `parent_covered` = the gap. Pledges clear; kids get the usual "is happening!" ping.
+- An early grant overrides min_share (the parent is looking at who gave what) and is refused with no pledges at all (409 "Nobody has chipped in yet"). A plain grant still requires full funding.
 
 **Seasons for chores and rewards, and a switch on each reward (v2.499.226; `services/seasons.py`, `Chore` / `Reward` `season_start` / `season_end`, `Reward.active`, `storage.get_offered_rewards` / `get_offered_chores`, `main._season_fields`, `main.set_reward_active` (`POST /api/rewards/{id}/active`), `list_chores(manage=)` / `list_rewards(manage=)`, `chores.html` `season_editor` macro / `setRewardActive` / `seasonIn` / `seasonOut`, `tests/test_seasons.py`).** User: each reward needs its own on/off, because some rewards are seasonal; and chores and rewards both want date ranges (summer, the cool months, the holidays) so they only show at those times.
 
