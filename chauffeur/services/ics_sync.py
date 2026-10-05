@@ -214,15 +214,23 @@ def _clean_title(title: str) -> str:
     return out or str(title or '')
 
 
+# Whole words only: 'contest', 'latest' and 'Protestant' are not tests.
+_KIND_WORDS = [
+    ('test', re.compile(r'\b(tests?|quiz(zes)?|exams?|midterms?|finals|assessments?'
+                        r'|practicals?|unit checks?)\b')),
+    ('project', re.compile(r'\b(projects?|presentations?|essays?)\b')),
+    ('bring', re.compile(r'\b(bring|wear|return)\b')),
+]
+
+
 def _task_kind_for(title: str) -> str:
-    """Kind heuristic for assignment feeds — drives the emoji, nothing else."""
+    """Kind heuristic for assignment feeds. Tests and projects get their own
+    look everywhere (K4d), so a miss matters; a family member can correct
+    any task by hand and the sync then leaves its kind alone (kind_locked)."""
     low = (title or '').lower()
-    if any(w in low for w in ('test', 'quiz', 'exam', 'midterm', 'final')):
-        return 'test'
-    if 'project' in low:
-        return 'project'
-    if any(w in low for w in ('bring', 'wear', 'return')):
-        return 'bring'
+    for kind, rx in _KIND_WORDS:
+        if rx.search(low):
+            return kind
     return 'homework'
 
 
@@ -399,8 +407,14 @@ def _sync_feed_tasks(feed: dict, items: dict, summary: dict, now) -> dict:
             summary['added'] += 1
         elif t.get('status') == 'done':
             continue
-        elif any(t.get(k) != v for k, v in fields.items()):
-            storage.update_kid_task(t['id'], {**fields, 'kind': kind})
+        elif any(t.get(k) != v for k, v in fields.items()) \
+                or (t.get('kind') != kind and not t.get('kind_locked')):
+            # A kind somebody set by hand ("that's a test, not homework") is
+            # theirs; the title heuristic never takes it back.
+            upd = dict(fields)
+            if not t.get('kind_locked'):
+                upd['kind'] = kind
+            storage.update_kid_task(t['id'], upd)
             summary['updated'] += 1
 
     # Leftovers vanished from the feed: cancel only OPEN future tasks.

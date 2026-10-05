@@ -412,6 +412,7 @@ class KidTask(BaseModel):
     url: Optional[str] = None          # the item in the school's own system
     course_key: Optional[str] = None
     course_label: Optional[str] = None # the feed's own name/code for the class
+    kind_locked: bool = False          # kind set by hand; feed sync leaves it
 
 class SchoolClass(BaseModel):
     # K4d: one class on a child's school feed, keyed by the feed's course id.

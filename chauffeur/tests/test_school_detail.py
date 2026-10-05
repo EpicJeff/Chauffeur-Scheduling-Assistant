@@ -302,12 +302,47 @@ def scenario_canvas_token_refuses_bad_feeds():
         check(e.status_code == 400, "calendar feeds refused")
 
 
+def scenario_kind_words_and_hand_set_kind():
+    """Tests/projects are matched as whole words (a 'contest' is not a test,
+    'Final draft' is not an exam), and a kind set by hand survives the feed."""
+    from services.ics_sync import _task_kind_for as k
+    for title, want in [("Unit 3 Assessment", "test"), ("Lab Practical", "test"),
+                        ("Chapter 4 Quiz", "test"), ("Final exam", "test"),
+                        ("Spelling contest", "homework"), ("Latest news", "homework"),
+                        ("Final draft essay", "project"), ("Group presentation", "project"),
+                        ("Bring poster board", "bring"), ("Worksheet 3", "homework")]:
+        check(k(title) == want, f"{title!r} -> {k(title)}, wanted {want}")
+    _reset()
+    import main
+    from fastapi import HTTPException
+    _sync()
+    lab = _by_title()["Cell Lab Report"]
+    check(lab['kind'] == 'homework', "lab report starts as homework")
+    try:
+        main.set_kid_task_kind(lab['id'], main.KidTaskKindRequest(kind='test', member_id='kid2'))
+        check(False, "a sibling must not retype another kid's task")
+    except HTTPException as e:
+        check(e.status_code == 403, "a child changes only their own")
+    try:
+        main.set_kid_task_kind(lab['id'], main.KidTaskKindRequest(kind='bogus'))
+        check(False, "unknown kind must 400")
+    except HTTPException as e:
+        check(e.status_code == 400, "kinds are the known five")
+    res = main.set_kid_task_kind(lab['id'], main.KidTaskKindRequest(kind='test', member_id='kid1'))
+    check(res['kind'] == 'test' and res['kind_locked'], f"set and locked: {res}")
+    _sync_again()
+    check(storage.get_kid_task(lab['id'])['kind'] == 'test', "the feed sync never takes it back")
+    res = main.set_kid_task_kind(lab['id'], main.KidTaskKindRequest(kind='project', member_id='momm'))
+    check(res['kind'] == 'project', "a parent can change it too")
+
+
 SCENARIOS = [
     scenario_canvas_detail_survives,
     scenario_naming_a_class_reaches_every_line,
     scenario_existing_tasks_catch_up,
     scenario_canvas_token_names_classes,
     scenario_canvas_token_refuses_bad_feeds,
+    scenario_kind_words_and_hand_set_kind,
 ]
 
 if __name__ == "__main__":

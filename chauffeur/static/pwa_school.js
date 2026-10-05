@@ -37,14 +37,78 @@ function schoolDayHeading(iso) {
 }
 
 // Class chip + due time: the metadata line every school row carries.
+// Tests and projects are the things a family plans around (K4d): they get
+// their own tag, a heavier row, the Heads-up strip and their own filter.
+// Homework and info items stay quiet. One saturated element per row (the
+// tag), per the design guide.
+const SCHOOL_BIG = ['test', 'project'];
+const SCHOOL_KINDS = [['test', 'Test or quiz'], ['project', 'Project'], ['homework', 'Homework'],
+    ['bring', 'Something to bring'], ['other', 'Other / info']];
+
+function schoolIsBig(t) { return SCHOOL_BIG.includes(t.kind); }
+
+function schoolDaysUntil(iso) {
+    const today = new Date(); today.setHours(12, 0, 0, 0);
+    return Math.round((new Date(iso + 'T12:00:00') - today) / 86400000);
+}
+
+function schoolCountdown(iso) {
+    const n = schoolDaysUntil(iso);
+    return n < 0 ? 'past' : n === 0 ? 'today' : n === 1 ? 'tomorrow' : `${n} days`;
+}
+
+function schoolBigTag(t) {
+    if (!schoolIsBig(t) || !t.due_date) return '';
+    const tint = t.kind === 'test' ? 'bg-amber-500/20 text-amber-300' : 'bg-teal-500/20 text-teal-300';
+    return `<span class="text-xs font-bold px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0 ${tint}">${t.kind === 'test' ? 'Test' : 'Project'} · ${schoolCountdown(t.due_date)}</span>`;
+}
+
+// The top of the Due Soon card: tests and projects in the coming week, with
+// a countdown, so a quiz never hides among worksheets. They stay in the
+// list below too; nothing moves.
+function schoolHeadsUp(tasks) {
+    const big = (tasks || []).filter(t => schoolIsBig(t) && schoolDaysUntil(t.due_date) >= 0)
+        .sort((a, b) => a.due_date.localeCompare(b.due_date));
+    if (!big.length) return '';
+    return `<div class="mb-2 rounded-lg bg-gray-800 px-3 py-2 flex flex-col gap-1.5" data-heads-up>
+        <span class="text-xs font-bold text-gray-400">Heads-up</span>
+        ${big.map(t => { schoolRemember(t); return `
+        <div role="button" tabindex="0" onclick="openKidTaskDetail('${t.id}')"
+            onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}"
+            class="cursor-pointer flex items-center gap-2 min-w-0">
+            <span class="w-1 self-stretch rounded" style="background:${schoolColor(t.course_color)}"></span>
+            <span class="flex-1 min-w-0 truncate text-sm font-bold text-gray-100">${SCHOOL_EMOJI[t.kind] || '📌'} ${mfEscape(t.title)}${t.course_named && t.course_name ? ` <span class="text-gray-400 font-semibold">· ${mfEscape(t.course_name)}</span>` : ''}</span>
+            ${schoolBigTag(t)}
+        </div>`; }).join('')}
+    </div>`;
+}
+
+async function schoolSetKind(id, current) {
+    const kind = await promptChoice('What kind of item is this?', 'Tests and projects stand out everywhere.',
+        SCHOOL_KINDS.map(([v, l]) => ({label: (v === current ? '✓ ' : '') + l, value: v})));
+    if (!kind || kind === current) return;
+    try {
+        const r = await fetch(`${apiBase}api/kid-tasks/${id}/kind`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({kind, member_id: selectedMemberId})});
+        if (!r.ok) throw new Error();
+    } catch (e) { return showGlobalAlert('Could not change it'); }
+    const t = pwaSchoolTasks[id];
+    if (t) t.kind = kind;
+    if (pwaSchool) pwaSchoolLoad();
+    else if (typeof refreshTodaySurfaces === 'function') refreshTodaySurfaces();
+}
+
 function schoolTaskMeta(t) {
     const bits = [];
+    const tag = schoolBigTag(t);
+    if (tag) bits.push(tag);
     // A raw course code is noise on a row; the color bar already says which
     // class, and the name appears once somebody gives it one.
     if (t.course_name && t.course_named) bits.push(`<span class="text-xs font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 truncate max-w-[10rem]">${mfEscape(t.course_name)}</span>`);
     if (t.due_time) bits.push(`<span class="text-xs font-semibold text-gray-400">by ${mfEscape(formatClock(t.due_time))}</span>`);
     if (t.description || (t.links || []).length) bits.push('<span class="text-xs font-semibold text-gray-400" aria-label="Has details">📎</span>');
-    return bits.length ? `<span class="flex items-center gap-1.5 min-w-0">${bits.join('')}</span>` : '';
+    return bits.length ? `<span class="flex flex-wrap items-center gap-1.5 min-w-0">${bits.join('')}</span>` : '';
 }
 
 function schoolLinkify(text) {
@@ -76,6 +140,8 @@ function openKidTaskDetail(id) {
                     : mfEscape(t.course_name || '')}${t.course_name && due ? ' · ' : ''}${mfEscape(due)}</div>
             </div>
         </div>
+        <div class="text-xs font-semibold text-gray-400 mt-1">Type: <span role="button" tabindex="0" data-kind
+            class="cursor-pointer underline text-indigo-300">${mfEscape((SCHOOL_KINDS.find(([v]) => v === t.kind) || [, 'Other / info'])[1])}</span></div>
         <div class="max-h-[50vh] overflow-y-auto my-3 flex flex-col gap-2">
             ${t.description ? `<div class="text-sm text-gray-300 leading-snug whitespace-pre-line">${schoolLinkify(t.description)}</div>`
                             : '<p class="text-xs text-gray-500 italic">No description from the teacher.</p>'}
@@ -88,6 +154,9 @@ function openKidTaskDetail(id) {
             <button data-yes class="px-4 py-2 rounded-xl bg-green-600 text-white text-sm font-bold">${done ? 'Mark not done' : 'Check off'}</button>
         </div>`, (overlay, close) => {
         overlay.querySelector('[data-close]').onclick = close;
+        const kindEl = overlay.querySelector('[data-kind]');
+        kindEl.onclick = () => { close(); schoolSetKind(t.id, t.kind); };
+        kindEl.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); kindEl.click(); } };
         const rename = overlay.querySelector('[data-rename]');
         if (rename) {
             rename.onclick = () => { close(); schoolNameClass(t.course_id, t.course_label, t.course_named ? t.course_name : ''); };
@@ -123,6 +192,7 @@ async function pwaSchoolOpen(ownerId) {
     }
     const now = new Date();
     pwaSchool = {owner, tasks: [], classes: [], mode: 'agenda', hidden: schoolLoadHidden(owner), pillKeys: [],
+                 bigOnly: schoolLoadBigOnly(owner),
                  month: new Date(now.getFullYear(), now.getMonth(), 1), day: schoolLocalDate(now)};
     document.getElementById('pwa-school-overlay')?.remove();
     const overlay = document.createElement('div');
@@ -162,7 +232,7 @@ async function pwaSchoolLoad() {
 function pwaSchoolRow(t) {
     const done = t.status === 'done';
     return `
-        <div class="rounded-lg bg-gray-800 px-2.5 py-1.5 flex items-center gap-2" style="border-left:4px solid ${schoolColor(t.course_color)}">
+        <div class="rounded-lg bg-gray-800 px-2.5 py-1.5 flex items-center gap-2" style="border-left:${schoolIsBig(t) ? 7 : 4}px solid ${schoolColor(t.course_color)}">
             <input type="checkbox" ${done ? 'checked' : ''} aria-label="${mfEscape(t.title)}"
                 onchange="pwaSchoolCheck('${t.id}', this.checked)" class="w-6 h-6 rounded-lg accent-indigo-500 shrink-0">
             <div role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}" onclick="openKidTaskDetail('${t.id}')" class="flex-1 min-w-0 text-left flex flex-col gap-0.5 cursor-pointer">
@@ -386,6 +456,18 @@ function schoolLoadHidden(owner) {
     catch (e) { return new Set(); }
 }
 
+function schoolLoadBigOnly(owner) {
+    try { return localStorage.getItem(`chauffeur_school_big_${owner}`) === '1'; } catch (e) { return false; }
+}
+
+function pwaSchoolToggleBig() {
+    if (!pwaSchool) return;
+    pwaSchool.bigOnly = !pwaSchool.bigOnly;
+    try { localStorage.setItem(`chauffeur_school_big_${pwaSchool.owner}`, pwaSchool.bigOnly ? '1' : '0'); }
+    catch (e) { /* lasts this visit */ }
+    pwaSchoolRender();
+}
+
 function schoolSaveHidden() {
     if (!pwaSchool) return;
     try { localStorage.setItem(schoolHiddenKey(pwaSchool.owner), JSON.stringify([...pwaSchool.hidden])); }
@@ -400,7 +482,17 @@ function pwaSchoolPills(open) {
     // Hidden classes keep their pill even when the filter emptied them out,
     // or there would be no way to switch them back on.
     s.hidden.forEach(k => { if (!keys.includes(k) && (k === '' || byKey.has(k))) keys.push(k); });
-    if (keys.length < 2) { s.pillKeys = []; return ''; }
+    const anyBig = open.some(schoolIsBig);
+    // The Tests & projects pill leads the row, apart from the class pills: a
+    // KIND filter that combines with them ("Science tests only").
+    const big = (anyBig || s.bigOnly) ? `<span role="button" tabindex="0" aria-pressed="${s.bigOnly}" data-big-pill
+        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}"
+        onclick="pwaSchoolToggleBig()"
+        class="cursor-pointer px-3 py-1.5 rounded-full text-xs font-bold border ${s.bigOnly ? 'bg-amber-500/20 text-amber-300 border-amber-400' : 'text-gray-300 border-gray-600'}">${s.bigOnly ? '✓ ' : ''}Tests & projects</span>` : '';
+    if (keys.length < 2) {
+        s.pillKeys = [];
+        return big ? `<div class="flex flex-wrap gap-1.5 mb-3" aria-label="Filter">${big}</div>` : '';
+    }
     keys.sort((a, b) => (a === '') - (b === '')
         || (s.classes.findIndex(c => c.key === a) - s.classes.findIndex(c => c.key === b)));
     s.pillKeys = keys;
@@ -421,7 +513,7 @@ function pwaSchoolPills(open) {
     const reset = s.hidden.size ? `<span role="button" tabindex="0" onclick="pwaSchoolShowAll()"
         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}"
         class="cursor-pointer px-3 py-1.5 rounded-full text-xs font-bold text-gray-300 border border-gray-600">Show all</span>` : '';
-    return `<div class="flex flex-wrap gap-1.5 mb-3" aria-label="Filter by class">${pills}${reset}</div>`;
+    return `<div class="flex flex-wrap gap-1.5 mb-3" aria-label="Filter by class">${big}${pills}${reset}</div>`;
 }
 
 function pwaSchoolTogglePill(i) {
@@ -452,7 +544,7 @@ function pwaSchoolRender() {
     // handed in anyway). A parent's view starts at today, in both modes.
     const open = s.tasks.filter(t => t.status !== 'done' && (mine || t.due_date >= today));
     const pills = pwaSchoolPills(open);
-    const shown = open.filter(t => !s.hidden.has(t.course_key || ''));
+    const shown = open.filter(t => !s.hidden.has(t.course_key || '') && (!s.bigOnly || schoolIsBig(t)));
     // A segmented control, not two sheet buttons: the sheet's boxed button
     // treatment would draw both halves alike and hide which one is on.
     const tab = (mode, label) => `<div role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}" onclick="pwaSchoolMode('${mode}')" aria-pressed="${s.mode === mode}"

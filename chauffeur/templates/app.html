@@ -1228,7 +1228,7 @@
             const bar = t.course_color && /^#[0-9a-fA-F]{6}$/.test(t.course_color) ? t.course_color : 'transparent';
             const meta = typeof schoolTaskMeta === 'function' ? schoolTaskMeta(t) : '';
             return `
-                <div class="flex items-center gap-3 py-2.5 pl-2 pr-1 border-l-4" style="border-left-color:${bar}" id="task-row-${t.id}">
+                <div class="flex items-center gap-3 py-2.5 pl-2 pr-1 ${['test', 'project'].includes(t.kind) ? 'border-l-[7px]' : 'border-l-4'}" style="border-left-color:${bar}" id="task-row-${t.id}">
                     <input type="checkbox" onchange="completeKidTask('${t.id}', this.checked)" aria-label="${mfEscape(t.title)}"
                         class="w-7 h-7 rounded-lg accent-indigo-500 shrink-0">
                     <button type="button" onclick="openKidTaskDetail('${t.id}')" class="flex-1 min-w-0 text-left flex items-center gap-3 active:opacity-70">
@@ -1267,6 +1267,7 @@
                     <span class="text-xs font-black uppercase tracking-widest text-gray-500">📚 Due Soon</span>
                     <button type="button" onclick="pwaSchoolOpen('${owner}')" class="text-xs text-indigo-300 font-bold active:opacity-70">See all →</button>
                 </div>
+                ${typeof schoolHeadsUp === 'function' ? schoolHeadsUp(tasks) : ''}
                 ${tasks.length ? `<div class="divide-y divide-gray-800">${tasks.map(renderDueSoonRow).join('')}</div>`
                                : '<p class="text-xs text-gray-500 italic py-1">Nothing due this week.</p>'}
                 ${bucket}

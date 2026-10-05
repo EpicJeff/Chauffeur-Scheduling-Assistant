@@ -1,6 +1,14 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.233 (2026-10-05).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.234 (2026-10-05).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**Tests and projects stand out; type is editable (v2.499.234, K4d; `ics_sync._KIND_WORDS`/`_task_kind_for`, `KidTask.kind_locked`, `POST /api/kid-tasks/{id}/kind`, `pwa_school.js` `schoolBigTag`/`schoolHeadsUp`/`schoolSetKind`/`pwaSchoolToggleBig`, `tests/test_school_detail.py`, `tests/test_school_view_live.py` `check_big_items`).** User: her test was in Canvas but she didn't see it or forgot; quizzes/tests/projects should look different from homework and info items, with a way to see only those. Morning-of reminders were rejected (too late to act on).
+
+- **Look**: tests and projects (`SCHOOL_BIG`) carry a tinted tag on every row — "TEST · 2 DAYS" amber, "PROJECT · 12 DAYS" teal (today / tomorrow / N days) — and a heavier 7px class-color bar; homework, bring and info rows are unchanged. Row metadata wraps rather than truncating.
+- **Heads-up strip** at the top of the Due Soon card: tests and projects due in the coming week, soonest first, class name and countdown tag; tapping one opens its detail. They also stay in the list below.
+- **"Tests & projects" pill** leads the School sheet's pill row and combines with the class pills (e.g. Science tests only); affects Agenda, Month (homework-only days go blank) and the past-due bucket. Remembered per child per device (`chauffeur_school_big_<id>`).
+- **Type detection**: whole-word matching (a "contest" is not a test; bare "final" no longer means exam — "final exam" still does via "exam"); new words: assessment(s), practical(s), unit check(s), finals → test; presentation(s), essay(s) → project.
+- **Type by hand**: the detail sheet's "Type: Homework" line opens a five-way choice (Test or quiz / Project / Homework / Something to bring / Other). `POST /api/kid-tasks/{id}/kind` sets `kind` + `kind_locked`; a child changes only their own, parents any. Feed sync never overrides a locked kind.
 
 **School sheet: class pills filter (v2.499.233; `pwa_school.js` `pwaSchoolPills`/`pwaSchoolTogglePill`/`pwaSchoolShowAll`/`pwaSchoolClearPast`, `tests/test_school_view_live.py` `check_class_pills`).** User: filter the school calendar by class with pills, the way the calendar filters by person.
 

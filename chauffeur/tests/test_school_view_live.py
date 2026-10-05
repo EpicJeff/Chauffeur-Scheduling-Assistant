@@ -211,6 +211,44 @@ def check_class_pills(served, output):
         assert not errors, errors
 
 
+def check_big_items(served, output):
+    """Tests and projects stand out: the Heads-up strip on Due Soon, a tag
+    on every row, a Tests & projects filter, and a Type line that retypes
+    a task by hand."""
+    with served.browser(reduced_motion='reduce', has_touch=True) as page:
+        errors = _open(served, page, 'kid')
+        page.evaluate("setView('myday')")
+        page.evaluate('void renderMyDay()')
+        strip = page.locator('[data-heads-up]')
+        strip.wait_for()
+        st = strip.inner_text()
+        assert 'Chapter 4 Quiz' in st and 'Cell Lab Report' not in st, st
+        assert 'TEST' in st.upper() and '2 DAYS' in st.upper(), st
+        if output:
+            page.locator('text=📚 Due Soon').locator('xpath=ancestor::div[contains(@class,"rounded-xl")][1]') \
+                .screenshot(path=str(Path(output, 'school-heads-up.png')))
+        # Retype the lab report as a test from its detail sheet.
+        page.locator('button:has-text("Cell Lab Report")').first.click()
+        page.locator('.pwa-prompt-overlay [data-kind]').click()
+        page.locator('.pwa-prompt-overlay [data-pick]').filter(has_text='Test or quiz').click()
+        page.wait_for_function("document.querySelector('[data-heads-up]') && document.querySelector('[data-heads-up]').innerText.includes('Cell Lab Report')")
+        lab = next(t for t in storage.get_kid_tasks('kid') if t['title'] == 'Cell Lab Report')
+        assert lab['kind'] == 'test' and lab['kind_locked'], lab
+        # Tests & projects only, in the School sheet.
+        page.evaluate("pwaSchoolOpen('kid')")
+        page.wait_for_selector('#pwa-school-body >> text=Problem set 7')
+        page.locator('#pwa-school-body [data-big-pill]').click()
+        page.wait_for_function("!document.getElementById('pwa-school-body').innerText.includes('Problem set 7')")
+        bt = page.locator('#pwa-school-body').inner_text()
+        assert 'Chapter 4 Quiz' in bt and 'Science fair board' in bt, bt
+        if output:
+            page.screenshot(path=str(Path(output, 'school-big-only.png')))
+        page.locator('#pwa-school-body [data-big-pill]').click()
+        page.wait_for_selector('#pwa-school-body >> text=Problem set 7')
+        page.evaluate('pwaSchoolClose()')
+        assert not errors, errors
+
+
 def check_parent(served, output):
     with served.browser(reduced_motion='reduce', has_touch=True) as page:
         errors = _open(served, page, 'mom')
@@ -247,7 +285,7 @@ def check_calendar_layer(served, output):
         }''')
         page.wait_for_selector('#school-layer-cal >> text=Jamie: Chapter 4 Quiz')
         text = page.locator('#school-layer-cal').inner_text()
-        assert 'Cell Lab Report' not in text, 'plain homework stays off unless asked'
+        assert 'Problem set 7' not in text, 'plain homework stays off unless asked'
         assert 'Reading log' not in text, 'never overdue'
         if output:
             page.screenshot(path=str(Path(output, 'school-calendar-layer.png')))
@@ -280,6 +318,8 @@ def run():
     print('PASS  kid: card, detail, agenda, naming, month')
     check_class_pills(served, output)
     print('PASS  kid: class pills filter and persist')
+    check_big_items(served, output)
+    print('PASS  kid: heads-up strip, kind switch, tests & projects filter')
     check_parent(served, output)
     print('PASS  parent: More -> School')
     check_calendar_layer(served, output)

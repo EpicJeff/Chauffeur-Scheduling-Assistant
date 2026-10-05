@@ -12498,6 +12498,27 @@ def complete_kid_task_api(task_id: str, req: KidTaskCompleteRequest):
             raise HTTPException(status_code=403, detail="You can only check off your own tasks")
     return storage.complete_kid_task(task_id, req.done)
 
+class KidTaskKindRequest(BaseModel):
+    kind: str
+    member_id: Optional[str] = None    # per-action identity (PWA pattern)
+
+@app.post("/api/kid-tasks/{task_id}/kind")
+def set_kid_task_kind(task_id: str, req: KidTaskKindRequest):
+    """Correct a task's type by hand (K4d): "Unit 3 Assessment" is a test even
+    though no title rule says so. Locks the kind against the feed's
+    heuristic. Same identity rule as checking off: a child, their own."""
+    task = storage.get_kid_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if req.kind not in _TASK_EMOJI:
+        raise HTTPException(status_code=400, detail="Unknown kind")
+    if req.member_id:
+        actor = storage.get_member(req.member_id)
+        if actor and actor.get('role') == 'child' and actor['id'] != task['member_id']:
+            raise HTTPException(status_code=403, detail="You can only change your own tasks")
+    storage.update_kid_task(task_id, {'kind': req.kind, 'kind_locked': True})
+    return storage.get_kid_task(task_id)
+
 class KidTaskClearPastRequest(BaseModel):
     owner_id: str                      # whose list
     member_id: Optional[str] = None    # per-action identity (PWA pattern)
