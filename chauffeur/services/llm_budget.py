@@ -73,10 +73,19 @@ def apply_held_pauses(held):
         _write_workflow_pause(db, account, scope, retry_at, now)
 
 
+WORKFLOW_PAUSE_CAP = 7200
+
+
 def _write_workflow_pause(db, account, scope, retry_at, now):
+    """Backoff for a background WORKFLOW: 15 min, 30, 60, then 2 h. It never
+    inherits a model's own retry_at — a 404 (6 h) or a per-day 429 (until
+    midnight) is that MODEL's penalty, already written under its 'model:'
+    scope. Copying it here paused all of email intake for six hours because
+    one withdrawn Gemma id answered 404 (device, 2026-10-05) while other
+    models were fine."""
     row = db.execute('SELECT failures FROM pauses WHERE account=? AND scope=?', (account, scope)).fetchone()
     failures = min((row[0] if row else 0) + 1, 4)
-    until = max(retry_at, now + min(7200, 900 * 2 ** (failures - 1)))
+    until = now + min(WORKFLOW_PAUSE_CAP, 900 * 2 ** (failures - 1))
     db.execute('INSERT INTO pauses VALUES(?,?,?,?) ON CONFLICT(account,scope) DO UPDATE SET until=excluded.until,failures=excluded.failures',
                (account, scope, until, failures))
 
@@ -141,6 +150,12 @@ def _reserve(key, model):
         db.execute('DELETE FROM attempts WHERE started < ?', (now - 32 * 86400,))
         for scope in ('model:' + model, 'workflow:' + workflow if background else ''):
             row = db.execute('SELECT until FROM pauses WHERE account=? AND scope=?', (account, scope)).fetchone()
+            if row and scope.startswith('workflow:') and row[0] > now + WORKFLOW_PAUSE_CAP + 60:
+                # Longer than any backoff can be: a pause written before the
+                # cap held (a model's 6 h / midnight penalty copied onto the
+                # workflow). Lift it; the model's own pause still stands.
+                db.execute('UPDATE pauses SET until=? WHERE account=? AND scope=?', (now, account, scope))
+                row = None
             if row and row[0] > now:
                 raise Deferred('AI requests paused after provider failure', row[0])
         limit = _limit(model)

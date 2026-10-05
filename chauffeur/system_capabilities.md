@@ -1,6 +1,11 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.240 (2026-10-05).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.241 (2026-10-05).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**A model's penalty never pauses a whole background workflow (v2.499.241; `llm_budget._write_workflow_pause`/`WORKFLOW_PAUSE_CAP`/`_reserve`, `tests/test_llm_budget.py` `scenario_a_model_penalty_never_pauses_the_workflow`).** User: intake made no progress — "(poll) waiting: AI busy, will retry (AI requests paused after provider failure) ×9 since 2:44 PM". At 2:44 gemma-4-31b 500'd and the withdrawn gemma-4-26b-it 404'd; the background workflow pause was written as `max(retry_at, backoff)` with the 404's six-hour model penalty as `retry_at` (v2.499.238 held the LAST failure's retry_at, which made the 404 the one copied), so all of email intake was paused until ~8:45 PM while nothing was actually wrong with the workflow.
+
+- The workflow pause is now backoff only — 15 min, 30, 60, then 2 h (`WORKFLOW_PAUSE_CAP`) — and never inherits a model's `retry_at`. A 404 (6 h) or per-day 429 (until Pacific midnight) stays on that model's own `model:` scope, so the model is skipped while the workflow keeps trying the others.
+- A workflow pause already stored for longer than the cap (written by the old code) is lifted the next time that workflow asks (`_reserve`), so the stuck intake resumes on the first poll after the update without anyone clearing anything.
 
 **The Gemma pool is discovered from the key's own model list (v2.499.239; `model_pools.refresh_gemma_models`/`_maybe_discover`/`_discovered_gemma`/`mark_gemma_discovery_stale`/`_gemma_size`, `tests/test_gemma_discovery.py`).** User's log after v2.499.238: the fall-through worked, but the sibling default `gemma-4-26b-it` — which had been working — now answered 404 ("not found for API version v1beta"): Google withdrew it, so background work had only one Gemma model left.
 

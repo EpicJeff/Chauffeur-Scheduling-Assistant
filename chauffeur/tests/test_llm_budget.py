@@ -153,7 +153,52 @@ def scenario_background_gemma_falls_through_once():
     model_pools.reset_cooldowns()
 
 
+def scenario_a_model_penalty_never_pauses_the_workflow():
+    """Device 2026-10-05: gemma-31b 500'd, the sibling 404'd (withdrawn), and
+    the workflow pause copied the 404's six-hour model penalty — email intake
+    sat 'waiting' for six hours. The workflow pause is backoff only; the
+    model's penalty stays on the model; an overlong stored pause is lifted."""
+    import sqlite3
+    def wire(calls):
+        def urlopen(req, **kw):
+            m = req.full_url.split('/models/')[1].split(':')[0]
+            calls.append(m)
+            code = 500 if m == 'gemma-4-31b-it' else 404
+            raise urllib.error.HTTPError('https://offline.invalid', code, 'x', {}, io.BytesIO(b'x'))
+        return urlopen
+    model_pools.reset_cooldowns()
+    calls = []
+    t0 = 1820000000
+    with patch('urllib.request.urlopen', wire(calls)), patch('time.sleep', lambda _: None), \
+         patch('time.time', return_value=t0):
+        model_pools.call_pool_json('background', 'penalty', 's', 'u', settings={}, workflow='intake.email')
+    check(calls == ['gemma-4-31b-it', 'gemma-3-27b-it'], f'both tried: {calls}')
+    with patch('time.time', return_value=t0 + 901):
+        check(budget.workflow_ready('penalty', 'intake.email'),
+              'the workflow is back after the 15-minute backoff, not six hours')
+    with contextlib_closing(budget._connect()) as db:
+        until = db.execute("SELECT until FROM pauses WHERE account=? AND scope=?",
+                           (budget._account('penalty'), 'model:gemma-3-27b-it')).fetchone()[0]
+    check(until == t0 + 21600, "the withdrawn model keeps its own six-hour penalty")
+
+    # A six-hour workflow pause already on disk (written by the old code) is lifted.
+    with contextlib_closing(budget._connect()) as db, db:
+        db.execute("INSERT OR REPLACE INTO pauses VALUES(?,?,?,?)",
+                   (budget._account('stuck'), 'workflow:intake.email', t0 + 21600, 2))
+    model_pools.reset_cooldowns()
+    calls = []
+    with patch('urllib.request.urlopen', ok), patch('time.sleep', lambda _: None), \
+         patch('time.time', return_value=t0 + 60):
+        res = model_pools.call_pool_json('background', 'stuck', 's', 'u', settings={}, workflow='intake.email')
+    check(not res.get('deferred'), f'an overlong stored workflow pause no longer blocks: {res}')
+    model_pools.reset_cooldowns()
+
+
+from contextlib import closing as contextlib_closing
+
+
 if __name__=='__main__':
+    scenario_a_model_penalty_never_pauses_the_workflow()
     scenario_retry_amplification();scenario_shared_budget_and_reserve()
     scenario_concurrency_and_day_reset();scenario_daily_quota_survives_restart()
     scenario_background_gemma_falls_through_once()
