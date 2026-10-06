@@ -1133,6 +1133,22 @@ class Settings(BaseModel):
     school_year_start: str = ""       # YYYY-MM-DD, update once a year
     school_year_end: str = ""         # YYYY-MM-DD
     school_closed_keywords: str = ""  # comma list; empty = built-in default
+    # The other four title vocabularies the school calendar is read with
+    # (services/school.py). They were hardcoded until the School page
+    # (v2.499.250) made them editable: a district that writes "Early Release
+    # Day" or "Opening Day" was otherwise invisible. Comma lists, defaulting
+    # to the built-in words so the page shows what is matched today; an empty
+    # value falls back to the same defaults rather than matching nothing.
+    school_half_day_keywords: str = ("half day, half-day, early release, early dismissal, "
+                                     "early out, minimum day, noon dismissal")
+    school_delayed_keywords: str = ("delayed opening, late start, delayed start, "
+                                    "two hour delay, 2 hour delay, 2-hour delay, late arrival")
+    school_first_day_keywords: str = ("first day of school, first day for students, "
+                                      "first day of classes, first day of class, school begins, "
+                                      "school starts, classes begin, 1st day of school")
+    school_last_day_keywords: str = ("last day of school, last day for students, "
+                                     "last day of classes, last day of class, school ends, "
+                                     "classes end, end of school year")
     # Defaulted, and it MATTERS: POST /api/settings merges with
     # `exclude_unset=True` precisely so a client can send only the fields it
     # manages — but a required field makes every partial body a 422 before the

@@ -81,6 +81,29 @@ def _keywords(settings):
     return [k.strip().lower() for k in raw.split(',') if k.strip()]
 
 
+# The four other vocabularies, editable on the School page (v2.499.250).
+# Setting key -> the built-in words it falls back to when empty: an emptied
+# box means "the usual words", never "match nothing", because a vocabulary
+# that silently matches nothing is a feature that silently stops.
+VOCAB_SETTINGS = {
+    'half': ('school_half_day_keywords', HALF_DAY_KEYWORDS),
+    'delayed': ('school_delayed_keywords', DELAYED_KEYWORDS),
+    'first': ('school_first_day_keywords', FIRST_DAY_KEYWORDS),
+    'last': ('school_last_day_keywords', LAST_DAY_KEYWORDS),
+}
+
+
+def _vocab(settings=None):
+    """{'half'|'delayed'|'first'|'last': tuple of lowercase words}."""
+    settings = settings or {}
+    out = {}
+    for name, (key, default) in VOCAB_SETTINGS.items():
+        words = [k.strip().lower() for k in str(settings.get(key) or '').split(',')
+                 if k.strip()]
+        out[name] = tuple(words) or default
+    return out
+
+
 def _parse_date(s):
     try:
         return datetime.date.fromisoformat(str(s)[:10])
@@ -109,10 +132,12 @@ def _pair_intervals(firsts, lasts):
     return intervals
 
 
-def _fetch_school_data(cal_id, start, end, keywords):
+def _fetch_school_data(cal_id, start, end, keywords, vocab=None):
     """One pass over the designated calendar: (no_school_dates, year
-    intervals), or None on fetch failure."""
+    intervals), or None on fetch failure. `vocab` is `_vocab(settings)`;
+    None reads with the built-in words."""
     from services import calendar as gcal
+    vocab = vocab or _vocab()
     local_tz = datetime.datetime.now().astimezone().tzinfo
     time_min = datetime.datetime.combine(start, datetime.time.min, tzinfo=local_tz).isoformat()
     time_max = datetime.datetime.combine(end, datetime.time.max, tzinfo=local_tz).isoformat()
@@ -128,9 +153,9 @@ def _fetch_school_data(cal_id, start, end, keywords):
         d = _event_date(e)
         if d is None:
             continue
-        if any(k in title for k in FIRST_DAY_KEYWORDS):
+        if any(k in title for k in vocab['first']):
             firsts.append(d)
-        elif any(k in title for k in LAST_DAY_KEYWORDS):
+        elif any(k in title for k in vocab['last']):
             lasts.append(d)
         s = (e.get('start') or {}).get('date')
         if not s:
@@ -144,12 +169,12 @@ def _fetch_school_data(cal_id, start, end, keywords):
             while cur < d_end:
                 dates.add(cur.isoformat())
                 cur += datetime.timedelta(days=1)
-        elif any(k in title for k in HALF_DAY_KEYWORDS):
+        elif any(k in title for k in vocab['half']):
             cur = d
             while cur < d_end:
                 kinds[cur.isoformat()] = 'half'
                 cur += datetime.timedelta(days=1)
-        elif any(k in title for k in DELAYED_KEYWORDS):
+        elif any(k in title for k in vocab['delayed']):
             cur = d
             while cur < d_end:
                 # A closure keyword on another event wins over a delay; a half
@@ -171,7 +196,8 @@ def _ensure_cache(cal_id, settings, day):
             today = datetime.date.today()
             start = min(today - datetime.timedelta(days=_WINDOW_DAYS), day)
             end = max(today + datetime.timedelta(days=_WINDOW_DAYS), day)
-            data = _fetch_school_data(cal_id, start, end, _keywords(settings))
+            data = _fetch_school_data(cal_id, start, end, _keywords(settings),
+                                      _vocab(settings))
             if data is not None:
                 dates, intervals, kinds = data
                 _cache.update({'ts': now, 'fail_ts': 0.0, 'cal_id': cal_id,

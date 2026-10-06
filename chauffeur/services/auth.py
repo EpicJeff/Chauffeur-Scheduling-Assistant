@@ -202,6 +202,9 @@ RULES = [
     (ANY, '/mind', ANYONE, None),
     (ANY, '/work', ANYONE, None),
     (ANY, '/rhythms', ANYONE, None),
+    # School: same admin-page shape as Mind — a shell anyone can load; its
+    # data is the parent-gated settings, members, feeds and stages APIs.
+    (ANY, '/school', ANYONE, None),
     (ANY, '/kitchen', ANYONE, None),
     (ANY, '/house', ANYONE, None),
     # Missions: same admin-page shape as Mind — a shell anyone can load, the

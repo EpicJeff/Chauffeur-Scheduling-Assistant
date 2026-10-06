@@ -57,6 +57,9 @@
      'paths': ['M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4']},
     {'slug': 'rhythms', 'href': 'rhythms', 'label': 'Rhythms', 'short': 'Rhythms', 'match': '/rhythms',
      'paths': ['M9 4.5v15m6-15v15M4.5 9h15m-15 6h15M6 4.5h12A1.5 1.5 0 0119.5 6v12a1.5 1.5 0 01-1.5 1.5H6A1.5 1.5 0 014.5 18V6A1.5 1.5 0 016 4.5z']},
+    {'slug': 'school', 'href': 'school', 'label': 'School', 'short': 'School', 'match': '/school',
+     'paths': ['M12 14l9-5-9-5-9 5 9 5z',
+               'M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14zm-4 6v-7.5l4-2.222']},
     {'slug': 'trips', 'href': 'trips', 'label': 'Trips', 'short': 'Trips', 'match': '/trip',
      'paths': ['M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z']},
     {'slug': 'map', 'href': 'map', 'label': 'Map', 'short': 'Map', 'match': '/map',
@@ -82,7 +85,7 @@
   vocabulary: an HA card configured as `tabs=calendar,lists` names slugs that
   the grouped bar no longer shows, and must keep finding them.
 #}
-{% set ADMIN_NAV = ['home', 'schedule', 'errands', 'meals', 'rhythms', 'work',
+{% set ADMIN_NAV = ['home', 'schedule', 'errands', 'meals', 'rhythms', 'school', 'work',
                     'trips', 'map', 'music'] %}
 {% set _qp = request.query_params %}
 {% set _full_nav = _qp.get('kiosk') == 'true' or _qp.get('tabs') is not none %}
@@ -127,6 +130,11 @@
         {'key': 'mind', 'label': 'Mind', 'href': 'work?tab=mind', 'path': '/work', 'tab': 'mind', 'also': '/mind'},
         {'key': 'threads', 'label': 'Threads', 'href': 'work?tab=threads', 'path': '/work', 'tab': 'threads', 'also': '/threads'},
         {'key': 'missions', 'label': 'Missions', 'href': 'work?tab=missions', 'path': '/work', 'tab': 'missions', 'also': '/missions'}],
+    'school': [
+        {'key': 'children', 'label': 'Children', 'href': 'school?tab=children', 'path': '/school', 'tab': 'children'},
+        {'key': 'calendar', 'label': 'Calendar', 'href': 'school?tab=calendar', 'path': '/school', 'tab': 'calendar'},
+        {'key': 'evenings', 'label': 'Evenings', 'href': 'school?tab=evenings', 'path': '/school', 'tab': 'evenings'},
+        {'key': 'growing', 'label': 'Growing up', 'href': 'school?tab=growing', 'path': '/school', 'tab': 'growing'}],
 } %}
 {% set _tab = _qp.get('tab') %}
 {% set _pg = namespace(group=none, active=none, first=none) %}
@@ -645,7 +653,7 @@
             // that administers that must itself stay off one.
             const kioskTabs = (urlParams.get('tabs') || '').toLowerCase()
                 .split(',').map(s => s.trim());
-            ['intake', 'mind', 'threads', 'programs', 'work', 'rhythms'].forEach(slug => {
+            ['intake', 'mind', 'threads', 'programs', 'work', 'rhythms', 'school'].forEach(slug => {
                 if (!kioskTabs.includes(slug)) {
                     document.querySelectorAll(`[data-slug="${slug}"]`)
                         .forEach(a => { a.style.display = 'none'; });

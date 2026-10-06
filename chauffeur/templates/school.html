@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>School</title>
+    <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
+    {% include 'ha_theme.html' %}
+    <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
+    <style>
+        body { background-color: #111827; color: #e5e7eb; }
+        [x-cloak] { display: none !important; }
+    </style>
+    <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
+</head>
+
+<body class="flex flex-col h-screen overflow-hidden">
+    {% include 'nav.html' %}
+
+    <!-- Everything about school in one parent place (v2.499.250). The setup
+         used to be spread across Config's General tab (the school calendar,
+         the evening digest), each child's member card (hours, aftercare, bus,
+         school feeds) and People → Growing up. Same page shell as /work and
+         /rhythms; one tab at a time through the School group in nav.html
+         PAGE_GROUPS. -->
+    {# Each block is a tab of the School group (nav.html PAGE_GROUPS); the
+       anchors (#children, #calendar, #evenings, #growing-up) are what the
+       settings index links to, and the script at the bottom opens the tab an
+       anchor lives in. The controls are the ones Config carried, moved rather
+       than redrawn: the same cards, inputs and wording (config.html's General
+       tab and People → Growing up). This page saves ONLY its own keys — POST
+       /api/settings merges — so it can never clobber a setting it does not
+       show. #}
+    <div class="flex-1 overflow-y-auto bg-gray-900/50">
+    <div x-data="schoolPage()" x-init="init()" class="panel-page max-w-5xl mx-auto p-6 lg:p-10 w-full" x-cloak>
+
+        <header class="mb-6">
+            <h2 class="panel-page-title">School</h2>
+            <p class="text-gray-400 text-sm">What a school day is, each child's hours and bus, the
+                evening look at tomorrow, and the stages a child grows through. Parents only.</p>
+        </header>
+
+        <!-- Children -->
+        <section id="children" data-page-tab="children" class="min-w-0">
+            <div class="flex flex-col gap-2 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                <span class="font-bold text-gray-300">🏫 Each child</span>
+                <p class="text-sm text-gray-500">
+                    School hours, aftercare, the bus and school task feeds are on each child's card in
+                    <a href="config" class="text-blue-400 hover:text-blue-300 font-semibold">Config → People</a>
+                    for now.
+                </p>
+            </div>
+        </section>
+
+        <!-- Calendar: what a school day is. Moved from Config → General. -->
+        <section id="calendar" data-page-tab="calendar" class="min-w-0">
+            <div class="flex flex-col gap-3 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                <div class="flex items-center justify-between">
+                    <span class="font-bold text-gray-300">🏫 School Calendar</span>
+                    <span class="text-xs text-emerald-400 font-bold" x-show="saved === 'calendar'" x-transition.opacity>Saved ✓</span>
+                </div>
+                <div class="flex flex-col sm:flex-row sm:items-center gap-4 flex-wrap">
+                    <div class="flex items-center gap-2 shrink-0">
+                        <label class="text-sm text-gray-400 font-semibold">Calendar</label>
+                        <select x-model="schoolCalendarId" @change="saveCalendar()"
+                            class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500 max-w-[240px]">
+                            <option value="">— not set (weekdays only) —</option>
+                            <!-- Keep an unknown saved id selectable (e.g. a pasted district calendar) -->
+                            <template x-if="schoolCalendarId && !calendarIds.includes(schoolCalendarId)">
+                                <option :value="schoolCalendarId" x-text="schoolCalendarId"></option>
+                            </template>
+                            <template x-for="c in calendarIds" :key="c">
+                                <option :value="c" x-text="calendarMetadata[c] ? calendarMetadata[c].summary : c"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="flex items-center gap-2 flex-1 min-w-[260px]">
+                        <label class="text-sm text-gray-400 font-semibold shrink-0">or any calendar ID</label>
+                        <input type="text" x-model="schoolCalendarId" @change="saveCalendar()"
+                            placeholder="district_abc123@group.calendar.google.com"
+                            class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500 w-full">
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                        <label class="text-sm text-gray-400 font-semibold" title="Auto-detected from the calendar's First/Last Day of School events; setting either date takes manual control">School year override</label>
+                        <input type="date" x-model="schoolYearStart" @change="saveCalendar()"
+                            class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                        <span class="text-gray-500 text-sm">to</span>
+                        <input type="date" x-model="schoolYearEnd" @change="saveCalendar()"
+                            class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                    </div>
+                </div>
+                <p class="text-sm text-gray-500">
+                    Tells Chauffeur what a school day is. School-day features (the after-school
+                    pickup push, bus leave-by lines) run on weekdays inside the school year,
+                    skipping any day the chosen calendar has an all-day event matching a
+                    no-school keyword. The school year is <span class="text-gray-400 font-semibold">detected
+                    automatically</span> from the calendar's "First/Last Day of School" events —
+                    the override dates are only for calendars without those markers (setting
+                    either date takes full manual control). A district Google calendar works
+                    directly — paste its calendar ID (public calendars just work; a private one
+                    must be shared with the same service account as your family calendars). An
+                    ICS-fed calendar works too. Nothing set = plain weekdays, as before.
+                </p>
+                <p class="text-sm text-gray-400" x-show="schoolStatus && schoolStatus.calendar_configured"
+                    x-html="schoolStatusLine()"></p>
+            </div>
+
+            <!-- The words the calendar is read with. Closure words were
+                 always editable; the other four were hardcoded in
+                 services/school.py until this page. -->
+            <div class="flex flex-col gap-3 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                <span class="font-bold text-gray-300">🔤 The words on your district's calendar</span>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-3">
+                    <template x-for="w in keywordFields" :key="w.model">
+                        <div class="flex flex-col gap-1 min-w-0">
+                            <label class="text-sm text-gray-400 font-semibold" :for="'kw-' + w.model" x-text="w.label"></label>
+                            <input type="text" :id="'kw-' + w.model" x-model="$data[w.model]" @change="saveCalendar()"
+                                :placeholder="wordDefaults[w.key] || ''"
+                                class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500 w-full">
+                            <span class="text-[11px] text-gray-500" x-text="w.help"></span>
+                        </div>
+                    </template>
+                </div>
+                <p class="text-sm text-gray-500">
+                    Comma-separated. An event matches when its title contains any of the words, ignoring
+                    capitals. Closures, half days and late starts read <span class="text-gray-400 font-semibold">all-day</span>
+                    events only; first and last day of school read any event. Empty a box to go back to the
+                    usual words.
+                </p>
+            </div>
+        </section>
+
+        <!-- Evenings: the kid digest and kid quiet hours. Moved from Config →
+             General. Controls row ABOVE the description (config.html, the
+             user screenshot of 2026-08-03). -->
+        <section id="evenings" data-page-tab="evenings" class="min-w-0">
+            <div class="flex flex-col gap-3 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                <div class="flex flex-col sm:flex-row sm:items-center gap-4 flex-wrap">
+                    <div class="flex items-center space-x-3 shrink-0">
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" x-model="kidDigestEnabled" @change="saveEvenings()"
+                                class="sr-only peer">
+                            <div
+                                class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                            </div>
+                        </label>
+                        <span class="font-bold text-gray-300">🌙 Kid Digest</span>
+                    </div>
+                    <div x-show="kidDigestEnabled" class="flex items-center gap-2 shrink-0">
+                        <label class="text-sm text-gray-400 font-semibold" for="kidDigestTime">Send after</label>
+                        <input type="time" id="kidDigestTime" x-model="kidDigestTime" @change="saveEvenings()"
+                            class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                        <label class="text-sm text-gray-400 font-semibold" for="kidDigestCutover">Board shows tomorrow after</label>
+                        <input type="time" id="kidDigestCutover" x-model="kidDigestCutover" @change="saveEvenings()"
+                            class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                        <label class="text-sm text-gray-400 font-semibold" for="kidQuietStart">Kid quiet hours</label>
+                        <input type="time" id="kidQuietStart" x-model="kidQuietStart" @change="saveEvenings()"
+                            class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                        <span class="text-gray-500 text-sm">to</span>
+                        <input type="time" x-model="kidQuietEnd" @change="saveEvenings()"
+                            class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                    </div>
+                    <span class="text-xs text-emerald-400 font-bold" x-show="saved === 'evenings'" x-transition.opacity>Saved ✓</span>
+                </div>
+                <p class="text-sm text-gray-500">
+                    Each child gets a "🌙 Tomorrow" Argyle DM — their rides with who's driving,
+                    what to bring, weather, and their streak — and the same cards show on the
+                    routines kiosk board, so kids without phones see it on the wall panel. Kids
+                    with nothing tomorrow get nothing. Nothing kid-facing ever sends during kid
+                    quiet hours; a send time inside the quiet window means the digest is skipped
+                    that day.
+                </p>
+            </div>
+        </section>
+
+        <!-- Growing up: stages (load arc A4). Moved from Config → People. -->
+        <section id="growing-up" data-page-tab="growing" class="min-w-0">
+            <div class="bg-gray-900 p-5 rounded-xl border border-gray-700">
+                <span class="font-bold text-gray-300">🌱 Growing up</span>
+                <p class="text-gray-400 text-sm mt-1 mb-4">What the app shows a child changes as they get
+                    older — how much of the week they can see, whether points and streaks lead the
+                    screen, whether they can ask you for things, whether they can be given real jobs.
+                    Birthdays live on each person's <b>identity card</b> in
+                    <a href="config" class="text-blue-400 hover:text-blue-300 font-semibold">Config → People</a>;
+                    a birthday only <b>suggests</b> a stage, and you can pin any child wherever suits them.
+                    <b>Nothing is ever deleted when a child moves up</b> — points and streaks
+                    are kept, they just stop being the point.</p>
+
+                <div x-show="(stageData.pending || []).length" class="mb-4 space-y-2">
+                    <template x-for="p in stageData.pending" :key="p.member_id">
+                        <div class="bg-purple-950/50 border border-purple-800/60 rounded-xl p-4">
+                            <div class="font-bold text-purple-100">
+                                <span x-text="p.name"></span> is
+                                <span x-text="p.age"></span> now — ready to move up to
+                                <span class="capitalize" x-text="p.to"></span>.
+                            </div>
+                            <ul class="text-sm text-purple-200/80 mt-1 list-disc list-inside">
+                                <template x-for="g in p.grants" :key="g">
+                                    <li x-text="'They get ' + g"></li>
+                                </template>
+                            </ul>
+                            <button @click="acknowledgeStage(p)"
+                                class="mt-2 bg-purple-600 hover:bg-purple-500 px-4 py-2 rounded-lg font-bold text-sm">
+                                Yes, they're growing up
+                            </button>
+                        </div>
+                    </template>
+                </div>
+
+                <div class="space-y-2">
+                    <template x-for="k in (stageData.kids || [])" :key="k.member_id">
+                        <div class="bg-gray-800 p-3 rounded-xl space-y-2">
+                            <div class="flex flex-wrap items-center gap-3">
+                                <span class="font-bold text-white flex-1" x-text="k.name"></span>
+                                <span class="text-xs text-gray-500"
+                                    x-text="k.age === null ? 'no birthday — set it on their identity card' : (k.age + ' years')"></span>
+                                <select :value="k.pinned || ''" @change="pinStage(k, $event.target.value)"
+                                    class="bg-gray-900 rounded-lg px-2 py-1 text-sm">
+                                    <option value="">Follow their age</option>
+                                    <template x-for="s in (stageData.stages || [])" :key="s.key">
+                                        <option :value="s.key" x-text="s.label + ' (' + s.school + ')'"></option>
+                                    </template>
+                                </select>
+                                <span class="px-2 py-0.5 bg-purple-900/40 text-purple-300 rounded-full text-xs font-bold"
+                                    x-text="stageGlyph(k.stage) + ' ' + stageLabel(k.stage)"></span>
+                            </div>
+                            <!-- Autonomy, which is NOT the same question as the
+                                 stage: the stage only proposes and this decides. -->
+                            <label class="flex flex-wrap items-center gap-2 text-xs text-gray-400">
+                                <span class="flex-1 min-w-[12rem]">
+                                    Can practise on their own
+                                    <span class="block text-[11px] text-gray-500">
+                                        Off means their program also shows on a grown-up's day, so somebody
+                                        can run the session and mark it done. They still see it on their own.
+                                    </span>
+                                </span>
+                                <select :value="practicePin(k)" @change="setPracticesAlone(k, $event.target.value)"
+                                    class="bg-gray-900 rounded-lg px-2 py-1 text-sm shrink-0">
+                                    <option value="" x-text="'Follow their stage (' + ((k.capabilities || {}).practices_alone ? 'yes' : 'no') + ')'"></option>
+                                    <option value="yes">Yes</option>
+                                    <option value="no">No — a grown-up runs it</option>
+                                </select>
+                            </label>
+                        </div>
+                    </template>
+                    <p x-show="!(stageData.kids || []).length" class="text-gray-500 text-sm italic">
+                        No children on the roster yet.</p>
+                </div>
+
+                <!-- The band timeline: four colored stage bands over one age
+                     axis, three draggable cutoff handles, and the kids plotted
+                     at their ages. Cutoffs stay strictly increasing by
+                     construction, matching the sanitiser in services/stages.py. -->
+                <div class="mt-5 bg-gray-800 p-4 rounded-xl select-none">
+                    <div class="flex items-center justify-between mb-1">
+                        <label class="block text-xs font-bold text-gray-400">When the stages change</label>
+                        <span class="text-xs text-emerald-400 font-bold" x-show="cutoffsSaved" x-transition.opacity>Saved ✓</span>
+                    </div>
+                    <div class="relative h-11 mt-1">
+                        <template x-for="b in stageBands()" :key="'lbl-' + b.key">
+                            <div class="absolute text-center overflow-hidden"
+                                :style="'left:' + b.left + '%; width:' + b.width + '%'">
+                                <div class="text-base leading-tight" x-text="b.glyph"></div>
+                                <div class="text-[11px] font-bold leading-tight" :style="'color:' + b.color"
+                                    x-text="b.label"></div>
+                                <div class="text-[10px] text-gray-500 leading-tight"
+                                    x-text="b.until !== null ? 'until ' + b.until : stageCutoffs[2] + '+'"></div>
+                            </div>
+                        </template>
+                    </div>
+                    <div class="relative h-16 touch-none" @pointermove="moveCutoffDrag($event)"
+                        @pointerup="endCutoffDrag()" @pointercancel="endCutoffDrag()">
+                        <div x-ref="stageTrack"
+                            class="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-3 rounded-full overflow-hidden bg-gray-900">
+                            <template x-for="b in stageBands()" :key="'band-' + b.key">
+                                <div class="absolute top-0 bottom-0"
+                                    :style="'left:' + b.left + '%; width:' + b.width + '%; background:' + b.color + '66'"></div>
+                            </template>
+                        </div>
+                        <template x-for="mk in stageKidMarkers()" :key="'kid-' + mk.id">
+                            <div class="absolute -translate-x-1/2 z-10 flex flex-col items-center"
+                                :style="'left:' + mk.left + '%; top:' + (mk.raise ? '0' : '36') + 'px'"
+                                :title="mk.title">
+                                <div class="w-7 h-7 rounded-full border-2 flex items-center justify-center bg-gray-800 overflow-hidden"
+                                    :style="'border-color:' + mk.color">
+                                    <img x-show="mk.image" :src="mk.image" class="w-full h-full object-cover">
+                                    <span x-show="!mk.image" class="text-xs" x-text="mk.face"></span>
+                                </div>
+                                <div x-show="mk.pinned" class="text-[9px] leading-none">📌</div>
+                            </div>
+                        </template>
+                        <template x-for="(c, i) in stageCutoffs" :key="'cut-' + i">
+                            <div class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-20 cursor-ew-resize touch-none"
+                                :style="'left:' + stagePos(c) + '%'"
+                                @pointerdown.prevent="startCutoffDrag(i, $event)">
+                                <div class="w-5 h-9 rounded-full bg-white shadow-lg border-2 border-gray-300 flex items-center justify-center">
+                                    <span class="text-[10px] font-bold text-gray-800" x-text="c"></span>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                    <div class="relative h-4 text-[9px] text-gray-600">
+                        <template x-for="a in [2,4,6,8,10,12,14,16,18]" :key="'tick-' + a">
+                            <span class="absolute -translate-x-1/2" :style="'left:' + stagePos(a) + '%'"
+                                x-text="a"></span>
+                        </template>
+                    </div>
+                    <p class="text-[11px] text-gray-500 mt-2" x-show="stageKidsOffTimeline().length">
+                        Not on the timeline (no birthday set):
+                        <span x-text="stageKidsOffTimeline().join(', ')"></span>
+                    </p>
+                    <p class="text-[11px] text-gray-500 mt-2">Drag a handle to move a cutoff — it saves
+                        when you let go. Defaults follow preschool, elementary, middle and high school;
+                        change them to match your schools — middle school often starts at eleven, and a
+                        fixed twelve would put a sixth grader in the wrong stage for half the year. A
+                        📌 child is pinned and sits in their pinned band whatever their age.</p>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        // An anchor (#evenings, from the settings index) can live in a tab
+        // that is not open. Open its tab first, then scroll to it — otherwise
+        // the deep link lands on a hidden element and the reader hunts.
+        (function () {
+            function openAnchor() {
+                const id = (window.location.hash || '').slice(1);
+                if (!id) return;
+                const el = document.getElementById(id);
+                const block = el && el.closest('[data-page-tab]');
+                if (!block) return;
+                const tab = block.getAttribute('data-page-tab');
+                const link = document.querySelector('#page-tabs a[data-inpage-tab="' + tab + '"]');
+                if (link && !link.classList.contains('bg-blue-600')) link.click();
+                setTimeout(() => el.scrollIntoView({ block: 'start' }), 50);
+            }
+            window.addEventListener('hashchange', openAnchor);
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', openAnchor);
+            else openAnchor();
+        })();
+
+        function schoolPage() {
+            return {
+                apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
+                saved: '',
+                // Calendar
+                calendarIds: [],
+                calendarMetadata: {},
+                schoolCalendarId: '',
+                schoolYearStart: '',
+                schoolYearEnd: '',
+                schoolClosedKeywords: '',
+                schoolHalfDayKeywords: '',
+                schoolDelayedKeywords: '',
+                schoolFirstDayKeywords: '',
+                schoolLastDayKeywords: '',
+                schoolStatus: null,
+                // The built-in words, from services/school.py via the route —
+                // an unset box shows what is really matched, and a box left
+                // at exactly these words saves as "the usual words" ('').
+                wordDefaults: {{ (school_word_defaults or {})|tojson }},
+                keywordFields: [
+                    { model: 'schoolClosedKeywords', key: 'school_closed_keywords', label: 'No school',
+                      help: 'A day with one of these is out — no pickup push, no bus lines.' },
+                    { model: 'schoolHalfDayKeywords', key: 'school_half_day_keywords', label: 'Half day',
+                      help: 'A short day: somebody has to be there earlier than usual.' },
+                    { model: 'schoolDelayedKeywords', key: 'school_delayed_keywords', label: 'Late start',
+                      help: 'School opens late: the morning runs later.' },
+                    { model: 'schoolFirstDayKeywords', key: 'school_first_day_keywords', label: 'First day of school',
+                      help: 'Where the school year starts.' },
+                    { model: 'schoolLastDayKeywords', key: 'school_last_day_keywords', label: 'Last day of school',
+                      help: 'Where the school year ends and summer begins.' },
+                ],
+                // Evenings
+                kidDigestEnabled: true,
+                kidDigestTime: '19:30',
+                kidDigestCutover: '19:00',
+                kidQuietStart: '20:30',
+                kidQuietEnd: '07:00',
+                // Growing up (load arc A4)
+                members: [],
+                stageData: { kids: [], pending: [], stages: [], cutoffs: [6, 12, 15] },
+                stageCutoffs: [6, 12, 15],
+                // The visual axis runs 1–20 years; the sanitiser in stages.py
+                // allows cutoffs up to 24, so positions clamp.
+                stageAgeMin: 1, stageAgeMax: 20,
+                stageColors: { sprout: '#34d399', explorer: '#38bdf8', navigator: '#a78bfa', copilot: '#fb7185' },
+                stageDragIdx: null,
+                cutoffsSaved: false,
+
+                async init() {
+                    await Promise.all([this.loadSettings(), this.loadMembers(), this.loadStages()]);
+                    this.loadSchoolStatus();   // non-blocking; may take a moment (gcal fetch)
+                },
+
+                async loadSettings() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/settings`);
+                        if (!res.ok) return;
+                        const data = await res.json();
+                        this.calendarIds = data.calendar_ids || [];
+                        this.schoolCalendarId = data.school_calendar_id || '';
+                        this.schoolYearStart = data.school_year_start || '';
+                        this.schoolYearEnd = data.school_year_end || '';
+                        this.keywordFields.forEach(w => {
+                            this[w.model] = data[w.key] || this.wordDefaults[w.key] || '';
+                        });
+                        this.kidDigestEnabled = data.kid_digest_enabled !== false;
+                        this.kidDigestTime = data.kid_digest_time || '19:30';
+                        this.kidDigestCutover = data.kid_digest_cutover_time || '19:00';
+                        this.kidQuietStart = data.kid_quiet_start || '20:30';
+                        this.kidQuietEnd = data.kid_quiet_end || '07:00';
+                        this.fetchCalendarMetadata(this.calendarIds);
+                    } catch (e) { console.error('Failed to load settings', e); }
+                },
+                async fetchCalendarMetadata(ids) {
+                    if (!ids || !ids.length) return;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/calendars/metadata`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(ids) });
+                        if (!res.ok) return;
+                        const metadata = await res.json();
+                        this.calendarMetadata = Object.assign({}, this.calendarMetadata, metadata);
+                    } catch (e) { /* the raw ids still show */ }
+                },
+                async postSettings(payload, which) {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/settings`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload) });
+                        if (!res.ok) {
+                            const d = await res.json().catch(() => ({}));
+                            showGlobalAlert(d.detail || "Couldn't save that.");
+                            return false;
+                        }
+                        this.saved = which;
+                        setTimeout(() => { if (this.saved === which) this.saved = ''; }, 1600);
+                        return true;
+                    } catch (e) {
+                        showGlobalAlert("Couldn't reach Chauffeur.");
+                        return false;
+                    }
+                },
+                // Only this tab's keys: the server merges, so anything not
+                // named here is left exactly as it was.
+                // A word list left exactly at the built-in words saves as ''
+                // ("the usual words"), so a later improvement to the defaults
+                // still reaches a family who never changed theirs.
+                wordsFor(w) {
+                    const v = (this[w.model] || '').trim();
+                    const norm = x => (x || '').split(',').map(t => t.trim().toLowerCase()).filter(Boolean).join(',');
+                    return norm(v) === norm(this.wordDefaults[w.key]) ? '' : v;
+                },
+                async saveCalendar() {
+                    const payload = {
+                        school_calendar_id: (this.schoolCalendarId || '').trim(),
+                        school_year_start: this.schoolYearStart || '',
+                        school_year_end: this.schoolYearEnd || '',
+                    };
+                    // school_closed_keywords, school_half_day_keywords,
+                    // school_delayed_keywords, school_first_day_keywords,
+                    // school_last_day_keywords — one per keywordFields row.
+                    this.keywordFields.forEach(w => { payload[w.key] = this.wordsFor(w); });
+                    const ok = await this.postSettings(payload, 'calendar');
+                    if (ok) {
+                        // An emptied box shows the usual words again.
+                        this.keywordFields.forEach(w => {
+                            if (!(this[w.model] || '').trim()) this[w.model] = this.wordDefaults[w.key] || '';
+                        });
+                        this.loadSchoolStatus();
+                    }
+                },
+                async saveEvenings() {
+                    await this.postSettings({
+                        kid_digest_enabled: !!this.kidDigestEnabled,
+                        kid_digest_time: this.kidDigestTime || '19:30',
+                        kid_digest_cutover_time: this.kidDigestCutover || '19:00',
+                        kid_quiet_start: this.kidQuietStart || '20:30',
+                        kid_quiet_end: this.kidQuietEnd || '07:00',
+                    }, 'evenings');
+                },
+                async loadSchoolStatus() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/school/status`);
+                        this.schoolStatus = res.ok ? await res.json() : null;
+                    } catch (e) { this.schoolStatus = null; }
+                },
+                schoolStatusLine() {
+                    const s = this.schoolStatus;
+                    if (!s || !s.calendar_configured) return '';
+                    const fmt = d => new Date(d + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+                    let line = s.in_session_today ? '✅ School is in session today.' : '🏖️ School is out today.';
+                    if (s.manual_start || s.manual_end) {
+                        line += ` Manual override: ${s.manual_start ? fmt(s.manual_start) : '…'} – ${s.manual_end ? fmt(s.manual_end) : '…'}.`;
+                    } else if (s.detected_years && s.detected_years.length) {
+                        line += ` Detected school year${s.detected_years.length > 1 ? 's' : ''}: `
+                            + s.detected_years.map(y => `${fmt(y[0])} – ${fmt(y[1])}${y[2] ? ' (end estimated — no last-day event recognized)' : ''}`).join(', ') + '.';
+                    } else {
+                        line += ' ⚠️ No "First/Last Day of School" events found on the calendar — set the override dates.';
+                    }
+                    if (s.no_school_days_cached) {
+                        line += ` ${s.no_school_days_cached} no-school day${s.no_school_days_cached !== 1 ? 's' : ''} recognized.`;
+                    }
+                    return line;
+                },
+
+                async loadMembers() {
+                    try {
+                        const r = await fetch(`${this.apiBase}api/members`);
+                        this.members = r.ok ? await r.json() : [];
+                    } catch (e) { this.members = []; }
+                },
+
+                // --- Stages: the child that grows (load arc A4) ---
+                async loadStages() {
+                    try {
+                        const r = await fetch(`${this.apiBase}api/stages`);
+                        this.stageData = r.ok ? await r.json() : { kids: [], pending: [], stages: [] };
+                        this.stageCutoffs = (this.stageData.cutoffs || [6, 12, 15]).slice();
+                    } catch (e) { console.error('Failed to load stages', e); }
+                },
+                async acknowledgeStage(p) {
+                    // Growing up is GRANTED — a parent confirms it, and the
+                    // new capabilities are named out loud.
+                    try {
+                        const res = await fetch(`${this.apiBase}api/stages/${p.member_id}/acknowledge`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ stage: p.to }) }).then(r => r.json());
+                        showGlobalAlert(res.message || 'Done.');
+                        await this.loadStages();
+                    } catch (e) { showGlobalAlert("Couldn't save that."); }
+                },
+                // '' when the stage decides, 'yes'/'no' when a parent has said
+                // so outright — read from the OVERRIDES, not the resolved value.
+                practicePin(k) {
+                    const o = (k.overrides || {});
+                    if (!('practices_alone' in o)) return '';
+                    return o.practices_alone ? 'yes' : 'no';
+                },
+                async setPracticesAlone(k, value) {
+                    // The whole map goes back: a member write replaces the
+                    // field wholesale rather than merging into it.
+                    const next = Object.assign({}, k.overrides || {});
+                    if (value === '') delete next.practices_alone;
+                    else next.practices_alone = (value === 'yes');
+                    try {
+                        await fetch(`${this.apiBase}api/members/${k.member_id}`, {
+                            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ capability_overrides: next }) });
+                        await this.loadStages();
+                    } catch (e) { showGlobalAlert("Couldn't save that."); }
+                },
+                async pinStage(k, value) {
+                    try {
+                        await fetch(`${this.apiBase}api/members/${k.member_id}`, {
+                            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ stage_override: value || null }) });
+                        await this.loadStages();
+                    } catch (e) { showGlobalAlert("Couldn't pin that stage."); }
+                },
+                stageLabel(key) {
+                    const s = (this.stageData.stages || []).find(x => x.key === key);
+                    return s ? s.label : (key || '');
+                },
+                stageGlyph(key) {
+                    const s = (this.stageData.stages || []).find(x => x.key === key);
+                    return (s && s.glyph) || '';
+                },
+                stagePos(age) {
+                    const p = (age - this.stageAgeMin) / (this.stageAgeMax - this.stageAgeMin) * 100;
+                    return Math.max(0, Math.min(100, p));
+                },
+                stageForAgeLive(age) {
+                    // Client-side twin of stages.stage_for_age, against the
+                    // cutoffs AS DRAGGED.
+                    const c = this.stageCutoffs;
+                    return age < c[0] ? 'sprout' : age < c[1] ? 'explorer' : age < c[2] ? 'navigator' : 'copilot';
+                },
+                stageBands() {
+                    const c = this.stageCutoffs;
+                    const edges = [this.stageAgeMin, c[0], c[1], c[2], this.stageAgeMax];
+                    return ['sprout', 'explorer', 'navigator', 'copilot'].map((key, i) => {
+                        const left = this.stagePos(edges[i]);
+                        return {
+                            key, left, width: Math.max(0, this.stagePos(edges[i + 1]) - left),
+                            color: this.stageColors[key],
+                            label: this.stageLabel(key) || key,
+                            glyph: this.stageGlyph(key),
+                            until: i < 3 ? c[i] : null,
+                        };
+                    });
+                },
+                stageKidMarkers() {
+                    const c = this.stageCutoffs;
+                    return (this.stageData.kids || []).map((k, idx) => {
+                        const m = (this.members || []).find(x => x.id === k.member_id) || {};
+                        let left, stage;
+                        if (k.pinned) {
+                            const edges = [this.stageAgeMin, c[0], c[1], c[2], this.stageAgeMax];
+                            const bi = ['sprout', 'explorer', 'navigator', 'copilot'].indexOf(k.pinned);
+                            left = this.stagePos((edges[bi] + edges[bi + 1]) / 2);
+                            stage = k.pinned;
+                        } else if (k.age === null || k.age === undefined) {
+                            return null;
+                        } else {
+                            left = this.stagePos(k.age + 0.5);   // 9 means "between 9 and 10"
+                            stage = this.stageForAgeLive(k.age);
+                        }
+                        return {
+                            id: k.member_id, left, pinned: !!k.pinned,
+                            color: this.stageColors[stage] || '#9ca3af',
+                            image: m.image || null,
+                            face: m.avatar || (k.name || '?').slice(0, 1),
+                            title: k.name + (k.pinned ? ' — pinned ' + this.stageLabel(k.pinned)
+                                : ' — ' + k.age + ' (' + this.stageLabel(stage) + ')'),
+                            raise: idx % 2 === 1,
+                        };
+                    }).filter(Boolean);
+                },
+                stageKidsOffTimeline() {
+                    return (this.stageData.kids || [])
+                        .filter(k => (k.age === null || k.age === undefined) && !k.pinned)
+                        .map(k => k.name);
+                },
+                startCutoffDrag(i, ev) {
+                    this.stageDragIdx = i;
+                    if (ev.target.setPointerCapture) {
+                        try { ev.target.setPointerCapture(ev.pointerId); } catch (e) { }
+                    }
+                },
+                moveCutoffDrag(ev) {
+                    if (this.stageDragIdx === null) return;
+                    const track = this.$refs.stageTrack;
+                    if (!track) return;
+                    const r = track.getBoundingClientRect();
+                    let age = Math.round(this.stageAgeMin
+                        + (ev.clientX - r.left) / r.width * (this.stageAgeMax - this.stageAgeMin));
+                    const c = this.stageCutoffs, i = this.stageDragIdx;
+                    const lo = i === 0 ? 1 : c[i - 1] + 1;
+                    const hi = i === 2 ? this.stageAgeMax - 1 : c[i + 1] - 1;
+                    age = Math.max(lo, Math.min(hi, age));
+                    if (c[i] !== age) c[i] = age;
+                },
+                async endCutoffDrag() {
+                    if (this.stageDragIdx === null) return;
+                    this.stageDragIdx = null;
+                    await this.saveStageCutoffs();
+                },
+                async saveStageCutoffs() {
+                    const c = this.stageCutoffs.map(n => parseInt(n, 10));
+                    if (!(c[0] > 0 && c[0] < c[1] && c[1] < c[2] && c[2] < 25)) return;
+                    try {
+                        await fetch(`${this.apiBase}api/settings`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ stage_cutoffs: c }) });
+                        await this.loadStages();
+                        this.cutoffsSaved = true;
+                        setTimeout(() => this.cutoffsSaved = false, 1600);
+                    } catch (e) { showGlobalAlert("Couldn't save that."); }
+                },
+            };
+        }
+    </script>
+    </div>
+    {% include 'components/control_center.html' %}
+    {% include 'components/moments_hearth.html' %}
+</body>
+</html>

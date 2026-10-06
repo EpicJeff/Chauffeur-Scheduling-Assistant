@@ -164,7 +164,7 @@ def scenario_the_home_board_is_in_the_nav():
 
 
 ADMIN_ONLY_SLUGS = ('intake', 'mind', 'threads', 'programs',
-                    'work', 'rhythms')
+                    'work', 'rhythms', 'school')
 
 
 def scenario_every_slug_is_filterable():

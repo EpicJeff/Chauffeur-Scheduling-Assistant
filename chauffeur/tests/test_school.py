@@ -88,6 +88,34 @@ def scenario_custom_keywords():
               "custom list replaces the default (no-school no longer matches)")
 
 
+def scenario_the_other_four_vocabularies_are_settings():
+    """The School page (v2.499.250) made the half-day, late-start, first- and
+    last-day words editable. A custom word must be read; an emptied box must
+    fall back to the built-in words (never match nothing); and the model's
+    defaults must be the same words the code used to hardcode, or the page
+    would show one vocabulary while the reader used another."""
+    from models.schemas import Settings
+    defaults = Settings()
+    for name, (key, words) in school.VOCAB_SETTINGS.items():
+        shown = tuple(w.strip() for w in getattr(defaults, key).split(','))
+        check(shown == words, f"{key}'s default is not the built-in {name} list")
+    school._reset_cache()
+    _settings(school_calendar_id="school", school_half_day_keywords="medio dia")
+    with _gcal_events([_all_day("Medio Dia escolar", MONDAY),
+                       _all_day("Early Release", TUESDAY)]):
+        check(school.school_day_kind(MONDAY) == 'half', "a custom half-day word is read")
+        check(school.school_day_kind(TUESDAY) == 'full',
+              "the custom list replaces the default, like the closure words")
+    school._reset_cache()
+    _settings(school_calendar_id="school", school_half_day_keywords="  ",
+              school_first_day_keywords="opening day")
+    first = MONDAY - datetime.timedelta(days=10)
+    with _gcal_events([_all_day("Early Release", MONDAY), _all_day("Opening Day", first)]):
+        check(school.school_day_kind(MONDAY) == 'half', "an emptied box falls back to the usual words")
+        check(school.status()['detected_years'][0][0] == first.isoformat(),
+              "a custom first-day word marks the year")
+
+
 def scenario_fetch_failure_fails_open():
     school._reset_cache()
     _settings(school_calendar_id="school")
@@ -189,6 +217,7 @@ SCENARIOS = [
     scenario_year_bounds_mark_summer_out,
     scenario_no_school_calendar_events,
     scenario_custom_keywords,
+    scenario_the_other_four_vocabularies_are_settings,
     scenario_fetch_failure_fails_open,
     scenario_auto_year_bounds_from_markers,
     scenario_classes_wording_and_estimated_flag,

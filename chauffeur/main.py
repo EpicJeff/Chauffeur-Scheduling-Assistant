@@ -1725,6 +1725,23 @@ def rhythms_page(request: Request):
     return templates.TemplateResponse(request=request, name="rhythms.html")
 
 
+@app.get("/school")
+def school_page(request: Request):
+    """Everything about school in one parent place (v2.499.250): each child's
+    hours, bus and feeds, the school calendar and its words, the evening
+    digest and kid quiet hours, and the growing-up stages. A shell anyone can
+    load; every read and write behind it is a parent-gated API.
+
+    The built-in calendar words ride in with the page so an unset vocabulary
+    shows the words actually being matched, from the one place they live."""
+    from services import school as _school
+    defaults = {'school_closed_keywords': _school.DEFAULT_CLOSED_KEYWORDS}
+    for key, words in _school.VOCAB_SETTINGS.values():
+        defaults[key] = ', '.join(words)
+    return templates.TemplateResponse(request=request, name="school.html",
+                                      context={'school_word_defaults': defaults})
+
+
 @app.get("/work")
 def work_page(request: Request):
     """Mind + Missions + Threads on one desk — three columns of the same
@@ -17161,6 +17178,14 @@ def update_settings(settings: Settings, background_tasks: BackgroundTasks):
             for key in {new_home, maps.extract_street_address(new_home)}:
                 if key:
                     storage.delete_cached_geocode(key)
+    # The school calendar is read once and cached for six hours, keyed only
+    # by the calendar id — so a changed keyword list or year override would
+    # otherwise sit unread until the cache aged out, and the School page's
+    # status line would keep describing the old words. Any school_* change
+    # drops it and the next read refetches.
+    if any(k.startswith('school_') and incoming.get(k) != current.get(k) for k in incoming):
+        from services import school as _school
+        _school._reset_cache()
     # Flipping the toll policy changes what every cached minute MEANS: the
     # static cache is deliberately immortal, so it has to burn here or the
     # app keeps quoting the other policy's durations indefinitely.

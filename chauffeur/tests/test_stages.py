@@ -318,14 +318,19 @@ def scenario_the_hand_path_exists():
     tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        'templates')
     config = open(os.path.join(tpl, 'config.html'), encoding='utf-8').read()
-    check('acknowledgeStage' in config and 'memberEdit.birthdate' in config
-          and 'pinStage' in config and 'saveStageCutoffs' in config,
-          "birthdays (on the identity card), pins, cutoffs and the confirmation "
-          "moment all work by hand")
-    check('startCutoffDrag' in config and 'stageKidMarkers' in config,
+    # Growing up moved to the School page (v2.499.250); birthdays stay on
+    # the identity card.
+    school = open(os.path.join(tpl, 'school.html'), encoding='utf-8').read()
+    check('memberEdit.birthdate' in config, "birthdays stay on the identity card")
+    check('acknowledgeStage' in school and 'pinStage' in school
+          and 'saveStageCutoffs' in school,
+          "pins, cutoffs and the confirmation moment all work by hand")
+    check('startCutoffDrag' in school and 'stageKidMarkers' in school,
           "the cutoff timeline is draggable and shows the kids on it")
-    check('Nothing is ever deleted' in config,
+    check('Nothing is ever deleted' in school,
           "and the promise is written where the parent makes the decision")
+    check('school?tab=growing' in config,
+          "and Config still says where Growing up went")
     app = open(os.path.join(tpl, 'app.html'), encoding='utf-8').read()
     check('kidCan(' in app and 'kidHorizonDays' in app,
           "the PWA shell asks for capabilities by name")
