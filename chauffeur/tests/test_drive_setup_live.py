@@ -12,7 +12,8 @@ Schedule group. What only a browser can check:
     that sent everything it had loaded could still clobber a setting another
     page changed meanwhile;
   - a routing rule, a car, a protected-time commitment and an outside hand
-    can each be added by hand from the page.
+    can each be added by hand from the page, and an errand rule from the
+    Errands page's Rules tab (v2.499.255).
 
 Run from chauffeur/:  python tests/test_drive_setup_live.py [--out DIR]
 """
@@ -65,6 +66,8 @@ def seed():
                         'priority_index': 2, 'calendar_ids': [], 'hashtags': []})
     storage.add_rule({'driver_id': 'dad', 'constraint_type': 'required',
                       'keywords': ['Swim'], 'passenger_ids': [], 'days_of_week': []})
+    storage.add_errand_rule({'title': 'Swim run', 'constraint_type': 'driver_assignment',
+                             'keywords': ['swim'], 'is_enabled': True})
 
 
 def _sign_in(page, served):
@@ -277,6 +280,37 @@ def main():
             check('/drive_setup' in page.url and _visible(page, '#outside-hands'),
                   f'config#outside-hands did not forward to Drive setup: {page.url}')
 
+            # Errand rules live on the Errands page's Rules tab now; Drive
+            # setup's Rules section says so.
+            page.goto(served.url('drive_setup'), wait_until='networkidle')
+            check(page.locator('#rules a[data-errand-rules-link][href$="errands?tab=rules"]').count() == 1,
+                  'Drive setup does not point at the errand rules')
+            page.goto(served.url('errands?tab=rules'), wait_until='networkidle')
+            page.wait_for_timeout(800)
+            tabs = page.eval_on_selector_all('#page-tabs .page-tab', 'els => els.map(e => e.dataset.tabKey)')
+            check(tabs == ['errands', 'tasks', 'rules'], f'errands tabs: {tabs}')
+            check(_visible(page, '#errand-rules') and not _visible(page, '[data-page-tab="errands"]'),
+                  'errands?tab=rules does not show the Rules tab alone')
+            er = page.locator('#errand-rules')
+            check('Swim run' in er.inner_text(), 'the existing errand rule is not listed')
+            er.locator('[x-model="newErrandRule.title"]').fill('Grocery runs')
+            er.locator('[x-model="newErrandRuleKeywordInput"]').fill('grocery')
+            er.locator('[x-model="newErrandRuleKeywordInput"]').press('Enter')
+            er.get_by_role('button', name='Save Rule', exact=True).click()
+            page.wait_for_timeout(900)
+            rules = page.request.get(served.url('api/errand_rules')).json()
+            mine = [r for r in rules if r.get('title') == 'Grocery runs']
+            check(len(mine) == 1 and mine[0].get('keywords') == ['grocery'],
+                  f'the errand rule did not save: {rules}')
+            check('Grocery runs' in er.inner_text(), 'the new errand rule is not listed')
+            _shot(page, 'errands-rules.png')
+            # The tab strip switches to it in place from the Errands tab too.
+            page.goto(served.url('errands'), wait_until='networkidle')
+            page.click('#page-tabs [data-tab-key="rules"]')
+            page.wait_for_timeout(800)
+            check(_visible(page, '#errand-rules') and 'Grocery runs' in page.locator('#errand-rules').inner_text(),
+                  'switching to Rules in place did not load the rules')
+
             # Config keeps a pointer where each block used to be, and no
             # longer carries the controls.
             page.goto(served.url('config'), wait_until='domcontentloaded')
@@ -284,6 +318,9 @@ def main():
                            'cars', 'protected-time', 'outside-hands'):
                 check(page.locator(f'a[href$="drive_setup#{anchor}"]').count() >= 1,
                       f'Config has no pointer to drive_setup#{anchor}')
+            check(page.locator('a[data-moved-rules]').count() == 1,
+                  "Config's Rules & Priorities entry is not a link to where the rules went")
+            check(page.locator('text=Create Errand Rule').count() == 0, 'Config still carries errand rules')
 
             errors = [e for e in handle.errors if 'Failed to load resource' not in e]
             check(not errors, f'page errors: {errors[:3]}')

@@ -105,16 +105,21 @@
                         </button>
                     </li>
                     <li>
-                        <button @click="activeTab = 'rules'"
-                            :class="activeTab === 'rules' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'"
-                            class="whitespace-nowrap w-full text-left px-4 py-2 md:py-3 rounded-lg font-bold transition-colors flex items-center text-sm md:text-base">
+                        <!-- Rules & Priorities moved to Drive setup (routing and
+                             priority rules) and the Errands page (errand rules)
+                             in v2.499.253-255. The entry stays, as a link, so
+                             the place people look still answers. -->
+                        <a href="drive_setup#rules" data-moved-rules
+                            title="Moved to Schedule → Drive setup"
+                            class="text-gray-400 hover:bg-gray-700 hover:text-white whitespace-nowrap w-full text-left px-4 py-2 md:py-3 rounded-lg font-bold transition-colors flex items-center text-sm md:text-base">
                             <svg class="w-5 h-5 mr-2 md:mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                     d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z">
                                 </path>
                             </svg>
                             Rules & Priorities
-                        </button>
+                            <span class="ml-auto pl-2 text-gray-500" aria-hidden="true">↗</span>
+                        </a>
                     </li>
                     <li>
                         <!-- Boards. Foundational enough to be a tab here rather
@@ -2275,247 +2280,6 @@
                     </div>
                 </div>
 
-                <!-- Rules -->
-                <div x-show="activeTab === 'rules'" x-cloak x-data="{ rulesSubTab: 'errand' }" x-transition.opacity class="space-y-10">
-                    <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700">
-                        <!-- Routing rules, priority rules, Analyze My Habits and the
-                             rule switches moved to Drive setup (v2.499.253). A
-                             pointer stays where they used to be. -->
-                        <h2 class="text-3xl font-bold text-indigo-300 mb-2">Errand Rules</h2>
-                        <div class="flex flex-col gap-2 p-5 mb-6 bg-gray-900 rounded-xl border border-gray-700">
-                            <span class="font-bold text-gray-300">🚗 Routing and priority rules</span>
-                            <p class="text-sm text-gray-500">
-                                Who drives what, which events matter most, Analyze My Habits and
-                                the standard/AI rule switches now live on
-                                <a href="drive_setup#rules" class="text-blue-400 hover:text-blue-300 font-semibold">Schedule → Drive setup</a>,
-                                beside the Drives list they shape.
-                            </p>
-                        </div>
-
-                    <div x-show="rulesSubTab === 'errand'" x-transition.opacity x-cloak>
-                        <div class="bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed space-y-4 mb-8">
-                            <h3 class="text-xl font-bold text-white mb-2" x-text="editErrandRuleId ? 'Edit Errand Rule' : 'Create Errand Rule'"></h3>
-                            
-                            <div>
-                                <label class="block text-gray-400 mb-1 text-sm">Title</label>
-                                <input type="text" x-model="newErrandRule.title" placeholder="e.g. Grocery Runs" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                            </div>
-                            
-                            <div class="border-t border-gray-600 pt-4" x-show="newErrandRule.constraint_type !== 'grouping'">
-                                <label class="block text-gray-400 mb-1 text-sm font-bold">Matching Criteria</label>
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
-                                    <div>
-                                        <div class="flex gap-2">
-                                            <input type="text" x-model="newErrandRuleKeywordInput" @keydown.enter="addErrandRuleKeyword()" placeholder="Add keyword (e.g. grocery)" class="flex-1 bg-gray-900 border border-gray-600 rounded p-2 text-white font-mono text-sm">
-                                            <button @click="addErrandRuleKeyword()" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded text-sm font-bold shadow-md">Add</button>
-                                        </div>
-                                        <div class="flex flex-wrap gap-2 mt-2">
-                                            <template x-for="(kw, idx) in newErrandRule.keywords" :key="idx">
-                                                <div class="flex items-center bg-gray-800 text-blue-300 px-2 py-1 rounded text-xs border border-gray-600">
-                                                    <span x-text="kw" class="mr-2"></span>
-                                                    <button @click="newErrandRule.keywords.splice(idx, 1)" class="text-gray-400 hover:text-red-400"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
-                                                </div>
-                                            </template>
-                                        </div>
-                                        <div class="mt-2 flex items-center gap-2">
-                                            <input type="checkbox" x-model="newErrandRule.keywords_match_all" class="rounded bg-gray-900 border-gray-600">
-                                            <span class="text-xs text-gray-400">Match ALL keywords</span>
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <input type="text" x-model="newErrandRule.location" placeholder="Location substring (optional)" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div class="border-t border-gray-600 pt-4">
-                                <label class="block text-gray-400 mb-2 text-sm font-bold">Constraint Configuration</label>
-                                <select x-model="newErrandRule.constraint_type" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white mb-4">
-                                    <option value="driver_assignment">Driver Assignment</option>
-                                    <option value="passenger_assignment">Passenger Constraints</option>
-                                    <option value="time_of_day">Time of Day</option>
-                                    <option value="day_of_week">Day of Week Restrictions</option>
-                                    <option value="buffer_tolerance">Buffer & Tolerance</option>
-                                    <option value="grouping">Group Errands</option>
-                                </select>
-
-                                <!-- Driver Assignment -->
-                                <div x-show="newErrandRule.constraint_type === 'driver_assignment'" class="space-y-2">
-                                    <div class="text-xs text-gray-400 mb-2">Click to toggle: Gray (Allowed/Neutral) &rarr; Blue (Required) &rarr; Red (Prohibited)</div>
-                                    <div class="flex flex-wrap gap-2">
-                                        <template x-for="d in drivers" :key="d.id">
-                                            <button @click="toggleErrandRuleDriver(d.id)"
-                                                    :class="{
-                                                        'bg-gray-800 border-gray-600 text-gray-400': !newErrandRule.required_drivers.includes(d.id) && !newErrandRule.prohibited_drivers.includes(d.id),
-                                                        'bg-blue-900/50 border-blue-500 text-blue-300': newErrandRule.required_drivers.includes(d.id),
-                                                        'bg-red-900/50 border-red-500 text-red-300 line-through': newErrandRule.prohibited_drivers.includes(d.id)
-                                                    }"
-                                                    class="border px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
-                                                <div class="w-2 h-2 rounded-full" :style="'background-color: ' + d.color_code"></div>
-                                                <span x-text="d.name"></span>
-                                            </button>
-                                        </template>
-                                    </div>
-                                </div>
-
-                                <!-- Passenger Constraints -->
-                                <div x-show="newErrandRule.constraint_type === 'passenger_assignment'" class="space-y-2" style="display: none;">
-                                    <div class="text-xs text-gray-400 mb-2">Click to toggle: Gray (Allowed/Neutral) &rarr; Blue (Required) &rarr; Red (Prohibited)</div>
-                                    <div class="flex flex-wrap gap-2">
-                                        <template x-for="p in passengers" :key="p.id">
-                                            <button @click="toggleErrandRulePassenger(p.id)"
-                                                    :class="{
-                                                        'bg-gray-800 border-gray-600 text-gray-400': !newErrandRule.required_passengers.includes(p.id) && !newErrandRule.prohibited_passengers.includes(p.id),
-                                                        'bg-blue-900/50 border-blue-500 text-blue-300': newErrandRule.required_passengers.includes(p.id),
-                                                        'bg-red-900/50 border-red-500 text-red-300 line-through': newErrandRule.prohibited_passengers.includes(p.id)
-                                                    }"
-                                                    class="border px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
-                                                <span x-text="p.name"></span>
-                                            </button>
-                                        </template>
-                                    </div>
-                                </div>
-
-                                <!-- Time of Day -->
-                                <div x-show="newErrandRule.constraint_type === 'time_of_day'" class="grid grid-cols-2 gap-4" style="display: none;">
-                                    <div>
-                                        <label class="block text-gray-400 text-xs mb-1">Time Window Start</label>
-                                        <input type="time" x-model="newErrandRule.time_window_start" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
-                                    </div>
-                                    <div>
-                                        <label class="block text-gray-400 text-xs mb-1">Time Window End</label>
-                                        <input type="time" x-model="newErrandRule.time_window_end" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
-                                    </div>
-                                </div>
-
-                                <!-- Buffer & Tolerance -->
-                                <div x-show="newErrandRule.constraint_type === 'buffer_tolerance'" class="grid grid-cols-2 gap-4" style="display: none;">
-                                    <div>
-                                        <label class="block text-gray-400 text-xs mb-1">Buffer Time (mins)</label>
-                                        <input type="number" x-model.number="newErrandRule.buffer_mins" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
-                                    </div>
-                                    <div>
-                                        <label class="block text-gray-400 text-xs mb-1">Tolerance (mins)</label>
-                                        <input type="number" x-model.number="newErrandRule.tolerance_mins" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
-                                    </div>
-                                </div>
-
-                                <!-- Day of Week -->
-                                <div x-show="newErrandRule.constraint_type === 'day_of_week'" class="space-y-2" style="display: none;">
-                                    <label class="block text-gray-400 mb-1 text-sm font-bold">Valid Days</label>
-                                    <div class="flex flex-wrap gap-2">
-                                        <template x-for="(day, idx) in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']">
-                                            <button @click.prevent="toggleErrandRuleDay(idx)"
-                                                :class="newErrandRule.valid_days_of_week.includes(idx) ? 'bg-pink-600 border-pink-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
-                                                class="border px-3 py-1.5 rounded-lg text-sm font-bold transition-colors"
-                                                x-text="day"></button>
-                                        </template>
-                                    </div>
-                                </div>
-
-                                <!-- Grouping -->
-                                <div x-show="newErrandRule.constraint_type === 'grouping'" class="space-y-6" style="display: none;">
-                                    <label class="block text-gray-400 mb-1 text-sm font-bold">Group Filter Sets</label>
-                                    <div class="space-y-4">
-                                        <template x-for="(fs, fidx) in newErrandRule.filter_sets" :key="fidx">
-                                            <div class="bg-gray-800 p-4 rounded border border-gray-600">
-                                                <div class="flex justify-between items-center mb-4">
-                                                    <span class="font-bold text-white"
-                                                        x-text="'Errand Filter ' + (fidx + 1)"></span>
-                                                    <button @click.prevent="newErrandRule.filter_sets.splice(fidx, 1)"
-                                                        class="text-red-400 hover:text-red-300">Remove</button>
-                                                </div>
-                                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                    <div>
-                                                        <div class="flex items-center justify-between mb-1">
-                                                            <label class="block text-gray-400 text-xs font-bold">Keywords</label>
-                                                            <label class="flex items-center space-x-1 cursor-pointer text-xs" x-show="fs.keywords.length > 1">
-                                                                <span class="text-gray-500" :class="fs.keywords_match_all ? '' : 'text-blue-400 font-bold'">Any</span>
-                                                                <div class="relative">
-                                                                    <input type="checkbox" x-model="fs.keywords_match_all" class="sr-only">
-                                                                    <div class="block bg-gray-600 w-6 h-4 rounded-full" :class="fs.keywords_match_all ? 'bg-blue-500' : ''"></div>
-                                                                    <div class="dot absolute left-0.5 top-0.5 bg-white w-3 h-3 rounded-full transition transform" :class="fs.keywords_match_all ? 'translate-x-2' : ''"></div>
-                                                                </div>
-                                                                <span class="text-gray-500" :class="fs.keywords_match_all ? 'text-blue-400 font-bold' : ''">All</span>
-                                                            </label>
-                                                        </div>
-                                                        <div class="flex gap-2 mb-2">
-                                                            <input type="text" :id="'errandKwInput_' + fidx"
-                                                                @keydown.enter.prevent="let val = document.getElementById('errandKwInput_' + fidx).value.trim(); if(val && !fs.keywords.includes(val)) { fs.keywords.push(val); } document.getElementById('errandKwInput_' + fidx).value = '';"
-                                                                placeholder="e.g. Grocery"
-                                                                class="flex-1 bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
-                                                            <button
-                                                                @click.prevent="let val = document.getElementById('errandKwInput_' + fidx).value.trim(); if(val && !fs.keywords.includes(val)) { fs.keywords.push(val); } document.getElementById('errandKwInput_' + fidx).value = '';"
-                                                                class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 rounded text-sm">Add</button>
-                                                        </div>
-                                                        <div class="flex flex-wrap gap-2">
-                                                            <template x-for="(kw, index) in fs.keywords" :key="index">
-                                                                <span
-                                                                    class="bg-gray-800 text-yellow-300 border border-gray-600 px-2 py-1 rounded text-xs flex items-center">
-                                                                    <span x-text="kw"></span>
-                                                                    <button
-                                                                        @click.prevent="fs.keywords.splice(index, 1)"
-                                                                        class="ml-2 text-gray-400 hover:text-red-400">&times;</button>
-                                                                </span>
-                                                            </template>
-                                                        </div>
-                                                    </div>
-                                                    <div>
-                                                        <label class="block text-gray-400 mb-1 text-xs font-bold">Location</label>
-                                                        <input type="text" x-model="fs.location"
-                                                            placeholder="Location substring..."
-                                                            class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500">
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </template>
-                                    </div>
-                                    <button
-                                        @click.prevent="newErrandRule.filter_sets.push({keywords: [], keywords_match_all: false, location: ''})"
-                                        class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm font-bold">+
-                                        Add Errand to Group</button>
-                                </div>
-                            </div>
-                            </div>
-                            
-                            <div class="flex gap-4 mt-4">
-                                <button @click="submitErrandRule()" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold text-white shadow-md">Save Rule</button>
-                                <button x-show="editErrandRuleId" @click="cancelEditErrandRule()" class="bg-gray-600 hover:bg-gray-500 px-6 py-2 rounded-lg font-bold text-white">Cancel</button>
-                            </div>
-                        </div>
-                        
-                        <div class="space-y-4">
-                            <h3 class="text-xl font-bold text-gray-300 border-b border-gray-700 pb-2">Active Errand Rules</h3>
-                            <template x-for="rule in errandRules" :key="rule.doc_id">
-                                <div class="bg-gray-900 border border-gray-700 p-4 rounded-xl shadow-sm flex justify-between items-center" :class="!rule.is_enabled ? 'opacity-50 grayscale' : ''">
-                                    <div>
-                                        <div class="flex items-center gap-2">
-                                            <h4 class="font-bold text-lg text-white" x-text="rule.title"></h4>
-                                            <span x-show="!rule.is_enabled" class="text-xs bg-red-900 text-red-300 px-2 py-0.5 rounded">Disabled</span>
-                                        </div>
-                                        <div class="text-xs text-gray-400 mt-1">
-                                            Keywords: <span x-text="rule.keywords.join(', ')"></span>
-                                        </div>
-                                    </div>
-                                    <div class="flex space-x-2">
-                                        <button @click="toggleErrandRuleState(rule)" class="text-gray-400 hover:text-white p-2">
-                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                                        </button>
-                                        <button @click="editErrandRule(rule)" class="text-blue-500 hover:text-blue-400 bg-blue-500/10 p-2 rounded-lg">
-                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
-                                        </button>
-                                        <button @click="deleteErrandRule(rule.doc_id)" class="text-red-500 hover:text-red-400 bg-red-500/10 p-2 rounded-lg">
-                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                                        </button>
-                                    </div>
-                                </div>
-                            </template>
-                            <template x-if="errandRules.length === 0">
-                                <p class="text-sm text-gray-500 italic text-center p-4">No errand rules configured.</p>
-                            </template>
-                        </div>
-                    </div>
-                </div>
             </div>
 
                 {% include 'components/boards_admin.html' %}
@@ -2567,7 +2331,7 @@
         // bookmark to one of their anchors here goes straight to its new
         // home rather than landing at the top of General to hunt.
         (function () {
-            const MOVED = { 'cars': 'cars', 'car-alerts': 'car-alerts',
+            const MOVED = { 'rules': 'rules', 'cars': 'cars', 'car-alerts': 'car-alerts',
                             'protected-time': 'protected-time', 'outside-hands': 'outside-hands' };
             const id = (window.location.hash || '').slice(1);
             if (MOVED[id]) window.location.replace('drive_setup' + window.location.search + '#' + MOVED[id]);
@@ -2616,7 +2380,6 @@
                 isHomeAssistant: false,
                 drivers: [],
                 passengers: [],
-                errandRules: [],
 
                 // AI assistant LLM settings
                 llmProvider: '',
@@ -2657,8 +2420,6 @@
                 icsSyncingId: null,
                 newPassengerHashtagInput: '',
                 newPassengerCalendarInput: '',
-                newErrandRule: { title: '', constraint_type: 'driver_assignment', location: '', keywords: [], keywords_match_all: false, allowed_drivers: [], required_drivers: [], prohibited_drivers: [], allowed_passengers: [], required_passengers: [], prohibited_passengers: [], time_window_start: '', time_window_end: '', valid_days_of_week: [], buffer_mins: 0, tolerance_mins: 0, filter_sets: [] },
-                newErrandRuleKeywordInput: '',
                 editDriverId: null,
                 editPassengerId: null,
                 members: [],
@@ -2708,7 +2469,6 @@
                 haMediaPlayers: [],
                 haNotifyServices: [],
                 testNotifyResult: '',
-                editErrandRuleId: null,
                 autocompleteTimeout: null,
                 currentSessionToken: null,
 
@@ -2762,7 +2522,6 @@
                     this.loadStatusData();  // not awaited: a side panel on the People tab
                     this.loadStages();          // ditto (load arc A4)
                     this.loadHaOptions();  // not awaited: HA may be slow/absent
-                    await this.loadErrandRules();
                     console.log("configApp init complete");
                 },
 
@@ -4627,139 +4386,7 @@
                 },
 
                 // --- Rules ---
-                async loadErrandRules() {
-                    try {
-                        const res = await fetch(`${this.apiBase}api/errand_rules`);
-                        const data = await res.json();
-                        this.errandRules = Array.isArray(data) ? data : [];
-                    } catch (e) {
-                        console.error("Failed to load errand rules", e);
-                        this.errandRules = [];
-                    }
-                },
 
-                // --- Errand Rules ---
-                addErrandRuleKeyword() {
-                    const kw = this.newErrandRuleKeywordInput.trim().toLowerCase();
-                    if (kw && !this.newErrandRule.keywords.includes(kw)) {
-                        this.newErrandRule.keywords.push(kw);
-                    }
-                    this.newErrandRuleKeywordInput = '';
-                },
-                cancelEditErrandRule() {
-                    this.newErrandRule = { title: '', constraint_type: 'driver_assignment', location: '', keywords: [], keywords_match_all: false, allowed_drivers: [], required_drivers: [], prohibited_drivers: [], allowed_passengers: [], required_passengers: [], prohibited_passengers: [], time_window_start: '', time_window_end: '', valid_days_of_week: [], buffer_mins: 0, tolerance_mins: 0, filter_sets: [] };
-                    this.editErrandRuleId = null;
-                },
-                editErrandRule(rule) {
-                    this.editErrandRuleId = rule.doc_id;
-                    this.newErrandRule = {
-                        title: rule.title,
-                        constraint_type: rule.constraint_type || 'driver_assignment',
-                        location: rule.location || '',
-                        keywords: [...rule.keywords],
-                        keywords_match_all: rule.keywords_match_all,
-                        allowed_drivers: [...(rule.allowed_drivers || [])],
-                        required_drivers: [...(rule.required_drivers || [])],
-                        prohibited_drivers: [...(rule.prohibited_drivers || [])],
-                        allowed_passengers: [...(rule.allowed_passengers || [])],
-                        required_passengers: [...(rule.required_passengers || [])],
-                        prohibited_passengers: [...(rule.prohibited_passengers || [])],
-                        time_window_start: rule.time_window_start || '',
-                        time_window_end: rule.time_window_end || '',
-                        valid_days_of_week: rule.valid_days_of_week ? [...rule.valid_days_of_week] : [],
-                        buffer_mins: rule.buffer_mins || 0,
-                        tolerance_mins: rule.tolerance_mins || 0,
-                        filter_sets: rule.filter_sets ? JSON.parse(JSON.stringify(rule.filter_sets)) : []
-                    };
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                },
-                toggleErrandRuleDriver(driverId) {
-                    if (this.newErrandRule.required_drivers.includes(driverId)) {
-                        this.newErrandRule.required_drivers = this.newErrandRule.required_drivers.filter(id => id !== driverId);
-                        this.newErrandRule.prohibited_drivers.push(driverId);
-                    } else if (this.newErrandRule.prohibited_drivers.includes(driverId)) {
-                        this.newErrandRule.prohibited_drivers = this.newErrandRule.prohibited_drivers.filter(id => id !== driverId);
-                    } else {
-                        this.newErrandRule.required_drivers.push(driverId);
-                    }
-                },
-                toggleErrandRuleDay(day) {
-                    const idx = this.newErrandRule.valid_days_of_week.indexOf(day);
-                    if (idx === -1) this.newErrandRule.valid_days_of_week.push(day);
-                    else this.newErrandRule.valid_days_of_week.splice(idx, 1);
-                },
-                toggleErrandRulePassenger(passengerId) {
-                    if (this.newErrandRule.required_passengers.includes(passengerId)) {
-                        this.newErrandRule.required_passengers = this.newErrandRule.required_passengers.filter(id => id !== passengerId);
-                        this.newErrandRule.prohibited_passengers.push(passengerId);
-                    } else if (this.newErrandRule.prohibited_passengers.includes(passengerId)) {
-                        this.newErrandRule.prohibited_passengers = this.newErrandRule.prohibited_passengers.filter(id => id !== passengerId);
-                    } else {
-                        this.newErrandRule.required_passengers.push(passengerId);
-                    }
-                },
-                async toggleErrandRuleState(rule) {
-                    try {
-                        rule.is_enabled = !rule.is_enabled;
-                        await fetch(`${this.apiBase}api/errand_rules/${rule.doc_id}`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(rule)
-                        });
-                        await this.loadErrandRules();
-                    } catch (e) {
-                        console.error("Failed to toggle errand rule state", e);
-                    }
-                },
-                async deleteErrandRule(docId) {
-                    if (!await promptConfirm('Delete this errand rule?',
-                                             'This cannot be undone.', 'Delete')) return;
-                    await fetch(`${this.apiBase}api/errand_rules/${docId}`, { method: 'DELETE' });
-                    await this.loadErrandRules();
-                },
-                async submitErrandRule() {
-                    if (!this.newErrandRule.title) return showGlobalAlert('Title is required');
-                    if (this.newErrandRule.constraint_type === 'grouping' && this.newErrandRule.filter_sets.length < 2) return showGlobalAlert('You must specify at least two filter sets to group errands');
-                    const payload = {
-                        title: this.newErrandRule.title,
-                        constraint_type: this.newErrandRule.constraint_type,
-                        location: this.newErrandRule.location,
-                        keywords: this.newErrandRule.keywords,
-                        keywords_match_all: this.newErrandRule.keywords_match_all,
-                        allowed_drivers: this.newErrandRule.allowed_drivers,
-                        required_drivers: this.newErrandRule.required_drivers,
-                        prohibited_drivers: this.newErrandRule.prohibited_drivers,
-                        allowed_passengers: this.newErrandRule.allowed_passengers,
-                        required_passengers: this.newErrandRule.required_passengers,
-                        prohibited_passengers: this.newErrandRule.prohibited_passengers,
-                        time_window_start: this.newErrandRule.time_window_start,
-                        time_window_end: this.newErrandRule.time_window_end,
-                        buffer_mins: this.newErrandRule.buffer_mins,
-                        tolerance_mins: this.newErrandRule.tolerance_mins,
-                        filter_sets: this.newErrandRule.filter_sets,
-                        is_enabled: true
-                    };
-                    
-                    try {
-                        if (this.editErrandRuleId) {
-                            await fetch(`${this.apiBase}api/errand_rules/${this.editErrandRuleId}`, {
-                                method: 'PUT',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(payload)
-                            });
-                        } else {
-                            await fetch(`${this.apiBase}api/errand_rules`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(payload)
-                            });
-                        }
-                        this.cancelEditErrandRule();
-                        await this.loadErrandRules();
-                    } catch (e) {
-                        console.error("Failed to save errand rule", e);
-                    }
-                },
 
                 async testLLMConnection() {
                     this.llmTestResult = 'Testing connection...';

@@ -125,6 +125,17 @@
             {{ errand_lists.errand_list(interactive='true', edit='openEditModal') }}
         </div>
         </div>
+
+        {# Errand rules (v2.499.255), moved from Config's Rules & Priorities
+           tab to sit beside the errands they govern. A browser tab only: a
+           panel or kiosk sees every [data-page-tab] block at once, and the
+           rules are parent administration with no business on a wall. #}
+        {% set _qp = request.query_params %}
+        {% if _qp.get('panel') != 'true' and _qp.get('kiosk') != 'true' and _qp.get('tabs') is none %}
+        <div data-page-tab="rules" class="px-8 pb-8 min-h-0 overflow-y-auto">
+            {% include 'components/errand_rules.html' %}
+        </div>
+        {% endif %}
     </div>
 
     <!-- Edit Modal (Hidden by default) -->
