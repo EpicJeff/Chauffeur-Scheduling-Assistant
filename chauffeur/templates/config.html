@@ -138,7 +138,7 @@
                                     d="M4 5a1 1 0 011-1h5a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM13 5a1 1 0 011-1h5a1 1 0 011 1v2a1 1 0 01-1 1h-5a1 1 0 01-1-1V5zM13 12a1 1 0 011-1h5a1 1 0 011 1v7a1 1 0 01-1 1h-5a1 1 0 01-1-1v-7zM4 15a1 1 0 011-1h5a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4z">
                                 </path>
                             </svg>
-                            Boards
+                            Boards &amp; House
                         </button>
                     </li>
                 </ul>
@@ -503,34 +503,15 @@
                             authenticates via the supervisor automatically.</p>
                     </div>
 
-                    <!-- Trip Hashtags -->
-                    <div class="mb-6">
-                        <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider">Trip Hashtags
-                            (Temporary Home Locations)</label>
-                        <div class="flex gap-2 mb-2 max-w-lg">
-                            <input type="text" x-model="newTripHashtagInput" @keydown.enter="addTripHashtag()"
-                                placeholder="e.g. #trip"
-                                class="flex-1 bg-gray-800 border border-gray-600 rounded p-3 text-white font-mono focus:outline-none focus:border-blue-500">
-                            <button @click="addTripHashtag()"
-                                class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 rounded transition-colors flex items-center shadow-md">Add</button>
-                        </div>
-                        <div class="flex flex-wrap gap-2 max-w-lg mb-2">
-                            <template x-for="(tag, index) in tripHashtags" :key="index">
-                                <div
-                                    class="flex items-center bg-gray-700 border border-gray-600 px-3 py-1.5 rounded-full text-sm font-bold shadow-sm text-blue-200">
-                                    <span x-text="tag" class="mr-2"></span>
-                                    <button @click="removeTripHashtag(index)"
-                                        class="text-gray-400 hover:text-red-400 transition-colors focus:outline-none">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                                d="M6 18L18 6M6 6l12 12"></path>
-                                        </svg>
-                                    </button>
-                                </div>
-                            </template>
-                        </div>
-                        <p class="text-gray-500 text-sm mt-1">If an all-day event contains any of these hashtags, its
-                            location will be used as a temporary Home Location for the event's duration.</p>
+                    <!-- Trip hashtags moved to the Trips page (v2.499.257),
+                         beside the trips they find; a pointer stays. -->
+                    <div class="flex flex-col gap-2 mb-6 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                        <span class="font-bold text-gray-300">🧳 Trip hashtags</span>
+                        <p class="text-sm text-gray-500">
+                            The hashtags that make an all-day event a trip (and its location a
+                            temporary home) now live on
+                            <a href="trips#trip-hashtags" class="text-blue-400 hover:text-blue-300 font-semibold">Trips</a>.
+                        </p>
                     </div>
 
                     <!-- AI assistant section -->
@@ -707,23 +688,14 @@
                                 notifications.
                             </p>
                         </div>
-                        <div class="flex flex-col sm:flex-row sm:items-center gap-4 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
-                            <div class="flex items-center space-x-3 shrink-0">
-                                <label class="relative inline-flex items-center cursor-pointer">
-                                    <input type="checkbox" x-model="proactiveWatchersEnabled" @change="saveSettings()"
-                                        class="sr-only peer">
-                                    <div
-                                        class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
-                                    </div>
-                                </label>
-                                <span class="font-bold text-gray-300">Proactive Heads-ups</span>
-                            </div>
+                        <!-- Proactive heads-ups moved to Work → Mind (v2.499.257):
+                             the watchers are Argyle noticing stuck things. -->
+                        <div class="flex flex-col gap-2 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                            <span class="font-bold text-gray-300">🔔 Proactive heads-ups</span>
                             <p class="text-sm text-gray-500">
-                                Argyle periodically sweeps for stuck things and DMs parents one consolidated
-                                heads-up: events with no driver in the next 3 days, intake proposals waiting 3+
-                                days, chores awaiting your OK for 2+ days, chores unclaimed for a week, stale
-                                reward requests, past-due errands, and a weekly prep-kit idea check. Each item is
-                                mentioned exactly once, never between 9pm and 8am.
+                                The switch for Argyle's consolidated heads-up about stuck things
+                                (events with no driver, waiting proposals, unclaimed chores) now lives on
+                                <a href="work?tab=mind#heads-ups" class="text-blue-400 hover:text-blue-300 font-semibold">Work → Mind</a>.
                             </p>
                         </div>
                         <!-- School moved to its own page (v2.499.250): the school
@@ -1813,8 +1785,130 @@
                     </p>
                 </div>
 
-                <!-- House editor: task navigation with explicit editing scope. -->
-                <div x-show="activeTab === 'family'" x-cloak id="home" class="bg-gray-800 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+                <!-- Outside hands moved to Drive setup (v2.499.254); a pointer
+                     stays where they used to be. -->
+                <div x-show="activeTab === 'family'" x-cloak
+                    class="flex flex-col gap-2 p-5 mb-10 bg-gray-900 rounded-xl border border-gray-700">
+                    <span class="font-bold text-gray-300">🤝 Outside hands</span>
+                    <p class="text-sm text-gray-500">
+                        The carpool parents and anyone else outside the house who helps, and how early
+                        to be ready when one of them drives, now live on
+                        <a href="drive_setup#outside-hands" class="text-blue-400 hover:text-blue-300 font-semibold">Schedule → Drive setup → Outside hands</a>.
+                    </p>
+                </div>
+
+                <!-- Status Days moved to the Calendar page (v2.499.257); a
+                     pointer stays where they used to be. -->
+                <div x-show="activeTab === 'family'" x-cloak
+                    class="flex flex-col gap-2 p-5 mb-10 bg-gray-900 rounded-xl border border-gray-700">
+                    <span class="font-bold text-gray-300">💙 Status Days</span>
+                    <p class="text-sm text-gray-500">
+                        The family's day types ("Chemo Day", "Night Shift") in your own words, and the
+                        days set with them, now live on
+                        <a href="calendar#status-days" class="text-blue-400 hover:text-blue-300 font-semibold">Schedule → Calendar → Status days</a>.
+                    </p>
+                </div>
+
+                <!-- Passenger profile form (People tab sub-panel) -->
+                <div x-show="activeTab === 'family' && showPassengerForm" x-cloak x-transition.opacity
+                    id="passengerFormPanel" style="order: 2"
+                    class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+                    <h2 class="text-2xl font-bold mb-6 text-sky-300"
+                        x-text="editPassengerId ? ('Passenger Profile — ' + newPassenger.name) : 'New Passenger Profile'"></h2>
+                    <div class="bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed">
+                        <div class="flex gap-4 items-end flex-wrap">
+                            <div class="w-full lg:flex-1">
+                                <label class="block text-gray-400 mb-1 text-sm">Name</label>
+                                <input type="text" x-model="newPassenger.name" placeholder="Passenger Name"
+                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                            </div>
+                            <div class="w-full lg:flex-1">
+                                <label class="block text-gray-400 mb-1 text-sm">Hashtags (e.g. #sarah)</label>
+                                <div class="flex gap-2 mb-2">
+                                    <input type="text" x-model="newPassengerHashtagInput"
+                                        @keydown.enter="addPassengerHashtag()" placeholder="#hashtag"
+                                        class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono">
+                                    <button @click="addPassengerHashtag()"
+                                        class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 rounded transition-colors flex items-center shadow-md">Add</button>
+                                </div>
+                                <div class="flex flex-wrap gap-2">
+                                    <template x-for="(tag, index) in newPassenger.hashtags" :key="index">
+                                        <div
+                                            class="flex items-center text-blue-200 px-2 py-1 rounded-full text-xs font-bold shadow-sm border border-gray-600 bg-gray-800">
+                                            <span x-text="tag" class="mr-1"></span>
+                                            <button @click="removePassengerHashtag(index)"
+                                                class="text-gray-400 hover:text-red-400 transition-colors focus:outline-none">
+                                                <svg class="w-3 h-3" fill="none" stroke="currentColor"
+                                                    viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                                        stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                            <div class="w-full lg:flex-1">
+                                <label class="block text-gray-400 mb-1 text-sm">Calendars</label>
+                                <div class="bg-gray-900/60 border border-gray-700 rounded-lg p-3">
+                                    <p class="text-xs text-gray-400">Set on the person, not here — <b>People → Identity
+                                            → 📅 Google Calendars</b>. This profile mirrors that list; because they have
+                                        a passenger profile, events on it become rides to schedule.</p>
+                                    <div class="flex flex-wrap gap-2 mt-2" x-show="newPassenger.calendar_ids.length">
+                                        <template x-for="calId in newPassenger.calendar_ids" :key="calId">
+                                            <div class="flex items-center text-gray-300 px-2 py-1 rounded-full text-xs font-bold border border-gray-700 bg-gray-800">
+                                                <div class="w-2.5 h-2.5 rounded-full mr-1.5"
+                                                    :style="'background-color: ' + (calendarMetadata[calId] ? calendarMetadata[calId].backgroundColor : '#9CA3AF')">
+                                                </div>
+                                                <span x-text="calendarMetadata[calId] ? calendarMetadata[calId].summary : calId"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="w-full mt-4" x-show="editPassengerId && passengerFormMember">
+                            <p class="text-xs text-gray-500">Subscribed ICS feeds moved to the person —
+                                <b>People → Identity → 📅 Google Calendars</b>, where the calendars they land on are set.</p>
+                        </div>
+                        <div
+                            class="mt-6 p-4 bg-gray-900/50 rounded-lg border border-gray-600 flex items-center justify-between">
+                            <div>
+                                <h4 class="font-bold text-white mb-1">Requires Attendance</h4>
+                                <p class="text-xs text-gray-400">If enabled, drivers will be scheduled to stay for the
+                                    entirety of this passenger's events and cannot perform overlapping routes.</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" x-model="newPassenger.requires_attendance" class="sr-only peer">
+                                <div
+                                    class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                </div>
+                            </label>
+                        </div>
+                        <div class="flex gap-4 mt-4 items-center">
+                            <button @click="submitPassenger()"
+                                class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center"
+                                :disabled="saving"
+                                x-text="saving ? 'Saving...' : (editPassengerId ? 'Save Passenger' : 'Add Passenger')"></button>
+                            <button @click="cancelEditPassenger()"
+                                class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center">Cancel</button>
+                            <button x-show="editPassengerId" @click="deletePassenger(editPassengerId)"
+                                class="ml-auto text-red-400 hover:text-red-300 bg-red-500/10 px-4 py-3 rounded-lg font-bold text-sm transition-colors">Remove
+                                Passenger Profile</button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+                {% include 'components/boards_admin.html' %}
+
+                <!-- House editor: task navigation with explicit editing scope.
+                     On the People tab until v2.499.257; now under Boards on the
+                     Boards & House tab, beside the boards the house is the
+                     home of. The #home anchor (the settings index's
+                     config#home) opens this tab — see openHashTab(). -->
+                <div x-show="activeTab === 'boards'" x-cloak id="home" class="bg-gray-800 rounded-2xl mt-10 mb-10 shadow-2xl border border-gray-700">
                     <div class="home-heading"><h2 class="text-3xl font-bold text-teal-300">Your house</h2>
                         <p class="home-help">Choose a design, shape the house, then add details. Preview changes before saving. Use a saved design on the house to make it appear on the next load.</p>
                         <span class="hidden">house_facades house_facade_active</span>
@@ -1964,329 +2058,6 @@
 
                     </div></aside></div>
                 </div>
-
-                <!-- Outside hands moved to Drive setup (v2.499.254); a pointer
-                     stays where they used to be. -->
-                <div x-show="activeTab === 'family'" x-cloak
-                    class="flex flex-col gap-2 p-5 mb-10 bg-gray-900 rounded-xl border border-gray-700">
-                    <span class="font-bold text-gray-300">🤝 Outside hands</span>
-                    <p class="text-sm text-gray-500">
-                        The carpool parents and anyone else outside the house who helps, and how early
-                        to be ready when one of them drives, now live on
-                        <a href="drive_setup#outside-hands" class="text-blue-400 hover:text-blue-300 font-semibold">Schedule → Drive setup → Outside hands</a>.
-                    </p>
-                </div>
-
-                <!-- Status Days (People tab sub-panel, Presence & Status arc P1) -->
-                <div x-show="activeTab === 'family'" x-cloak x-transition.opacity
-                    class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
-                    <h2 class="text-3xl font-bold mb-2 text-sky-300">Status Days</h2>
-                    <p class="text-gray-400 text-sm mb-4">Family day types — "Chemo Day", "Night Shift",
-                        "Trip Day" — so the kids never come home guessing. Write what a day means <b>in your
-                        own words</b>: what the kids should hear (the plan, plus something they can do) and
-                        what the other adults need to know. Setting a day announces it, leads the kids'
-                        evening digest and My Day, and rides the after-school push. Clearing one announces
-                        the change of plans too — never leave them guessing in either direction.</p>
-                    <div class="space-y-3">
-                        <template x-for="p in statusProtocols" :key="p.id">
-                            <div class="bg-gray-900 p-4 rounded-xl shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3"
-                                :class="p.enabled === false ? 'opacity-50' : ''">
-                                <div>
-                                    <h3 class="text-lg font-bold text-white">
-                                        <span x-text="p.emoji || '💙'"></span> <span x-text="p.name"></span>
-                                        <span class="text-xs text-gray-500 font-normal ml-1"
-                                            x-text="statusMemberName(p.member_id)"></span>
-                                    </h3>
-                                    <div class="text-xs text-gray-400 mt-1 flex gap-2 flex-wrap items-center">
-                                        <span class="px-2 py-0.5 bg-sky-900/40 text-sky-300 rounded-full font-bold"
-                                            x-text="statusNeedLabel(p.need)"></span>
-                                        <span x-show="(p.beats || []).length"
-                                            class="px-2 py-0.5 bg-indigo-900/40 text-indigo-300 rounded-full font-bold"
-                                            x-text="(p.beats || []).length + '-beat timeline'"></span>
-                                        <span class="italic" x-show="p.kid_message"
-                                            x-text="'“' + p.kid_message + '”'"></span>
-                                    </div>
-                                </div>
-                                <div class="flex gap-2">
-                                    <button @click="editStatusProtocol(p)"
-                                        class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Edit</button>
-                                    <button @click="deleteStatusProtocolUi(p)"
-                                        class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Delete</button>
-                                </div>
-                            </div>
-                        </template>
-                    </div>
-                    <div class="mt-4">
-                        <button x-show="!showStatusForm" @click="openStatusForm()"
-                            class="w-full border border-dashed border-gray-600 hover:border-sky-500 hover:text-sky-300 text-gray-400 font-bold py-4 rounded-xl transition-colors">+
-                            Add a Day Type</button>
-                        <div x-show="showStatusForm" x-cloak
-                            class="bg-gray-700/30 p-5 rounded-xl border border-gray-600 border-dashed">
-                            <h3 class="text-lg font-bold text-white mb-4"
-                                x-text="editStatusId ? ('Day Type — ' + newStatusProtocol.name) : 'New Day Type'"></h3>
-                            <div class="flex gap-4 items-end flex-wrap">
-                                <div>
-                                    <label class="block text-gray-400 mb-1 text-sm">Emoji</label>
-                                    <div class="flex items-center gap-2">
-                                        <button type="button" title="Pick an emoji"
-                                            @click="EmojiPicker.open($event.currentTarget, v => newStatusProtocol.emoji = v)"
-                                            class="shrink-0 bg-gray-900 border border-gray-600 rounded p-3 text-xl leading-none"
-                                            x-text="newStatusProtocol.emoji || '😀'"></button>
-                                        <input type="text" x-model="newStatusProtocol.emoji" maxlength="8" placeholder="💙"
-                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-20">
-                                    </div>
-                                </div>
-                                <div class="flex-1 min-w-[160px]">
-                                    <label class="block text-gray-400 mb-1 text-sm">Name</label>
-                                    <input type="text" x-model="newStatusProtocol.name" placeholder="e.g. Chemo Day"
-                                        class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                                </div>
-                                <div>
-                                    <label class="block text-gray-400 mb-1 text-sm">Who it's about</label>
-                                    <select x-model="newStatusProtocol.member_id"
-                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                                        <option value="">— the family —</option>
-                                        <template x-for="m in members.filter(m => ['parent','adult'].includes(m.role))"
-                                            :key="m.id">
-                                            <option :value="m.id" x-text="m.name"></option>
-                                        </template>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label class="block text-gray-400 mb-1 text-sm">What the house needs</label>
-                                    <select x-model="newStatusProtocol.need"
-                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                                        <option value="give_space">Give space — home but resting</option>
-                                        <option value="cover">Cover for them — out of the rotation</option>
-                                        <option value="help">Bring in help — other parent is caregiving</option>
-                                        <option value="clear_deck">Clear the deck — family time</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label class="block text-gray-400 mb-1 text-sm">Call window
-                                        <span class="text-gray-600">(multi-day spans — soft, "around")</span></label>
-                                    <input type="time" x-model="newStatusProtocol.call_time"
-                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                                </div>
-                            </div>
-                            <div class="mt-4">
-                                <label class="block text-gray-400 mb-1 text-sm">What the kids hear
-                                    <span class="text-gray-600">(your words, delivered as written — the plan, plus
-                                        something they can do)</span></label>
-                                <textarea x-model="newStatusProtocol.kid_message" rows="2"
-                                    placeholder="e.g. Mom's resting today after her treatment. Grandma's picking you up and it's pizza night — Mom would love a drawing for when she wakes up."
-                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white text-sm"></textarea>
-                            </div>
-                            <div class="mt-3">
-                                <label class="block text-gray-400 mb-1 text-sm">What the other adults hear
-                                    <span class="text-gray-600">(the logistics)</span></label>
-                                <textarea x-model="newStatusProtocol.adult_message" rows="2"
-                                    placeholder="e.g. I'll be down by 2pm — pickups and dinner need covering."
-                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white text-sm"></textarea>
-                            </div>
-                            <div class="mt-3">
-                                <label class="block text-gray-400 mb-1 text-sm">Calendar words
-                                    <span class="text-gray-600">(comma-separated — a calendar event containing one of
-                                        these auto-sets this day type: adults are told which event matched, kids only
-                                        ever hear about today/tomorrow, and a cleared day is never re-set)</span></label>
-                                <input type="text" x-model="newStatusProtocol.keywords_text" placeholder="chemo, infusion"
-                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white text-sm">
-                            </div>
-                            <div class="mt-4">
-                                <label class="block text-gray-400 mb-1 text-sm">Timeline beats
-                                    <span class="text-gray-600">(every family's arc is different — write what each day
-                                        around the event means, in your words. A prep day "2 days before the start"
-                                        (pack, lay out the meds list), the rest day "1 day after" with different words
-                                        and needs than the day itself, a recovery check-in "3 days after" — beats land
-                                        before, during, or after the event. A beat's words replace the default line for
-                                        that day; a beat's need changes the driving rules for that day only.)</span></label>
-                                <template x-for="(b, bi) in newStatusProtocol.beats" :key="bi">
-                                    <div class="bg-gray-900/60 border border-gray-700 rounded-lg p-3 mb-2">
-                                        <div class="flex gap-2 flex-wrap items-center mb-2">
-                                            <input type="number" min="1" max="45" x-show="b.direction !== 'on'"
-                                                x-model.number="b.offset_abs"
-                                                class="bg-gray-900 border border-gray-600 rounded p-2 text-white w-20 text-sm">
-                                            <select x-model="b.direction"
-                                                class="bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
-                                                <option value="before">day(s) before</option>
-                                                <option value="on">on the day of</option>
-                                                <option value="after">day(s) after</option>
-                                            </select>
-                                            <select x-model="b.anchor"
-                                                class="bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
-                                                <option value="start">the start</option>
-                                                <option value="end">the end</option>
-                                            </select>
-                                            <select x-model="b.audience"
-                                                class="bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
-                                                <option value="kids">→ the kids</option>
-                                                <option value="adults">→ the other adults</option>
-                                                <option value="affected">→ them (the affected member)</option>
-                                                <option value="everyone">→ everyone</option>
-                                            </select>
-                                            <select x-model="b.need"
-                                                class="bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
-                                                <option value="">need: unchanged</option>
-                                                <option value="cover">need: cover for them</option>
-                                                <option value="help">need: bring in help</option>
-                                                <option value="clear_deck">need: clear the deck</option>
-                                                <option value="give_space">need: give space</option>
-                                            </select>
-                                            <button @click="newStatusProtocol.beats.splice(bi, 1)"
-                                                class="text-gray-400 hover:text-red-400 font-bold ml-auto">✕</button>
-                                        </div>
-                                        <textarea x-model="b.message" rows="2"
-                                            placeholder="The words for this day, e.g. 'Mom's extra tired today — this is the rest day. Quiet afternoon, and she'd love a hug when you get home.'"
-                                            class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm"></textarea>
-                                    </div>
-                                </template>
-                                <button @click="newStatusProtocol.beats.push({ anchor: 'start', offset_abs: 1, direction: 'after', audience: 'kids', message: '', need: '' })"
-                                    class="border border-dashed border-gray-600 hover:border-sky-500 hover:text-sky-300 text-gray-400 font-bold px-4 py-2 rounded-lg text-sm transition-colors">+
-                                    Add a beat</button>
-                            </div>
-                            <div class="flex gap-4 mt-5 items-center">
-                                <button @click="submitStatusProtocol()" :disabled="saving"
-                                    class="bg-sky-600 hover:bg-sky-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center"
-                                    x-text="saving ? 'Saving...' : (editStatusId ? 'Save Day Type' : 'Add Day Type')"></button>
-                                <button @click="cancelStatusForm()"
-                                    class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center">Cancel</button>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="mt-6 pt-4 border-t border-gray-700" x-show="statusProtocols.length">
-                        <h3 class="text-sm font-bold text-gray-300 mb-2">Upcoming status days</h3>
-                        <template x-for="d in statusDays" :key="d.id">
-                            <div class="flex items-center gap-2 mb-1 text-sm text-gray-300">
-                                <span
-                                    x-text="d.date + (d.end_date && d.end_date !== d.date ? ' → ' + d.end_date : '') + ' · ' + (d.emoji || '💙') + ' ' + d.name + (d.note ? ' · ' + d.note : '')"></span>
-                                <span class="text-xs text-gray-500" x-show="d.set_by_name"
-                                    x-text="'set by ' + d.set_by_name"></span>
-                                <span class="text-xs text-sky-400/70" x-show="d.source === 'calendar'"
-                                    x-text="'📅 ' + (d.source_detail || 'from calendar')"></span>
-                                <button @click="clearStatusDayUi(d)"
-                                    class="text-gray-400 hover:text-red-400 font-bold">✕</button>
-                            </div>
-                        </template>
-                        <p x-show="!statusDays.length" class="text-xs text-gray-500">None set for the next two
-                            weeks.</p>
-                        <div class="flex gap-2 flex-wrap items-center mt-2">
-                            <input type="date" x-model="newStatusDay.date"
-                                class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm">
-                            <span class="text-gray-500 text-xs">to</span>
-                            <input type="date" x-model="newStatusDay.end_date" title="optional span end (trips)"
-                                class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm">
-                            <select x-model="newStatusDay.protocol_id"
-                                class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm">
-                                <option value="">— day type —</option>
-                                <template x-for="p in statusProtocols.filter(p => p.enabled !== false)" :key="p.id">
-                                    <option :value="p.id" x-text="(p.emoji || '💙') + ' ' + p.name"></option>
-                                </template>
-                            </select>
-                            <input type="text" x-model="newStatusDay.note"
-                                placeholder="note (optional — 'today's different')"
-                                class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm flex-1 min-w-[160px]">
-                            <button @click="addStatusDayUi()"
-                                class="bg-sky-700 hover:bg-sky-600 text-white font-bold px-4 py-2.5 rounded text-sm transition-colors">Set</button>
-                        </div>
-                        <p class="text-xs text-gray-500 mt-2">Setting or clearing a day sends the messages right
-                            away — kids only for today/tomorrow (further-out days wait for the night-before
-                            digest), the other adults always.</p>
-                    </div>
-                </div>
-
-                <!-- Passenger profile form (People tab sub-panel) -->
-                <div x-show="activeTab === 'family' && showPassengerForm" x-cloak x-transition.opacity
-                    id="passengerFormPanel" style="order: 2"
-                    class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
-                    <h2 class="text-2xl font-bold mb-6 text-sky-300"
-                        x-text="editPassengerId ? ('Passenger Profile — ' + newPassenger.name) : 'New Passenger Profile'"></h2>
-                    <div class="bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed">
-                        <div class="flex gap-4 items-end flex-wrap">
-                            <div class="w-full lg:flex-1">
-                                <label class="block text-gray-400 mb-1 text-sm">Name</label>
-                                <input type="text" x-model="newPassenger.name" placeholder="Passenger Name"
-                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                            </div>
-                            <div class="w-full lg:flex-1">
-                                <label class="block text-gray-400 mb-1 text-sm">Hashtags (e.g. #sarah)</label>
-                                <div class="flex gap-2 mb-2">
-                                    <input type="text" x-model="newPassengerHashtagInput"
-                                        @keydown.enter="addPassengerHashtag()" placeholder="#hashtag"
-                                        class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono">
-                                    <button @click="addPassengerHashtag()"
-                                        class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 rounded transition-colors flex items-center shadow-md">Add</button>
-                                </div>
-                                <div class="flex flex-wrap gap-2">
-                                    <template x-for="(tag, index) in newPassenger.hashtags" :key="index">
-                                        <div
-                                            class="flex items-center text-blue-200 px-2 py-1 rounded-full text-xs font-bold shadow-sm border border-gray-600 bg-gray-800">
-                                            <span x-text="tag" class="mr-1"></span>
-                                            <button @click="removePassengerHashtag(index)"
-                                                class="text-gray-400 hover:text-red-400 transition-colors focus:outline-none">
-                                                <svg class="w-3 h-3" fill="none" stroke="currentColor"
-                                                    viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                        stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                                                </svg>
-                                            </button>
-                                        </div>
-                                    </template>
-                                </div>
-                            </div>
-                            <div class="w-full lg:flex-1">
-                                <label class="block text-gray-400 mb-1 text-sm">Calendars</label>
-                                <div class="bg-gray-900/60 border border-gray-700 rounded-lg p-3">
-                                    <p class="text-xs text-gray-400">Set on the person, not here — <b>People → Identity
-                                            → 📅 Google Calendars</b>. This profile mirrors that list; because they have
-                                        a passenger profile, events on it become rides to schedule.</p>
-                                    <div class="flex flex-wrap gap-2 mt-2" x-show="newPassenger.calendar_ids.length">
-                                        <template x-for="calId in newPassenger.calendar_ids" :key="calId">
-                                            <div class="flex items-center text-gray-300 px-2 py-1 rounded-full text-xs font-bold border border-gray-700 bg-gray-800">
-                                                <div class="w-2.5 h-2.5 rounded-full mr-1.5"
-                                                    :style="'background-color: ' + (calendarMetadata[calId] ? calendarMetadata[calId].backgroundColor : '#9CA3AF')">
-                                                </div>
-                                                <span x-text="calendarMetadata[calId] ? calendarMetadata[calId].summary : calId"></span>
-                                            </div>
-                                        </template>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="w-full mt-4" x-show="editPassengerId && passengerFormMember">
-                            <p class="text-xs text-gray-500">Subscribed ICS feeds moved to the person —
-                                <b>People → Identity → 📅 Google Calendars</b>, where the calendars they land on are set.</p>
-                        </div>
-                        <div
-                            class="mt-6 p-4 bg-gray-900/50 rounded-lg border border-gray-600 flex items-center justify-between">
-                            <div>
-                                <h4 class="font-bold text-white mb-1">Requires Attendance</h4>
-                                <p class="text-xs text-gray-400">If enabled, drivers will be scheduled to stay for the
-                                    entirety of this passenger's events and cannot perform overlapping routes.</p>
-                            </div>
-                            <label class="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" x-model="newPassenger.requires_attendance" class="sr-only peer">
-                                <div
-                                    class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
-                                </div>
-                            </label>
-                        </div>
-                        <div class="flex gap-4 mt-4 items-center">
-                            <button @click="submitPassenger()"
-                                class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center"
-                                :disabled="saving"
-                                x-text="saving ? 'Saving...' : (editPassengerId ? 'Save Passenger' : 'Add Passenger')"></button>
-                            <button @click="cancelEditPassenger()"
-                                class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center">Cancel</button>
-                            <button x-show="editPassengerId" @click="deletePassenger(editPassengerId)"
-                                class="ml-auto text-red-400 hover:text-red-300 bg-red-500/10 px-4 py-3 rounded-lg font-bold text-sm transition-colors">Remove
-                                Passenger Profile</button>
-                        </div>
-                    </div>
-                </div>
-
-            </div>
-
-                {% include 'components/boards_admin.html' %}
             </div>
         </div>
 
@@ -2378,8 +2149,6 @@
                 timezone: '',
                 driverLocationSuggestions: [],
                 newCalendarIdInput: '',
-                newTripHashtagInput: '',
-                tripHashtags: [],
                 calendarMetadata: {},
                 isHomeAssistant: false,
                 drivers: [],
@@ -2403,7 +2172,6 @@
                 weeklyDigestEnabled: true,
                 weeklyDigestDay: 6,
                 weeklyDigestTime: '19:00',
-                proactiveWatchersEnabled: true,
                 llmTestResult: null,
                 llmTestSuccess: null,
 
@@ -2451,15 +2219,8 @@
                 },
                 authAudit: null, enforceError: '',            // auth arc S8
                 pairBusy: false,
-                // Status Days (Presence & Status arc P1)
-                statusProtocols: [],
                 // Stages (load arc A4)
                 stageData: { kids: [], pending: [], stages: [], cutoffs: [6, 12, 15] },
-                statusDays: [],
-                showStatusForm: false,
-                editStatusId: null,
-                newStatusProtocol: { emoji: '💙', name: '', member_id: '', need: 'give_space', kid_message: '', adult_message: '', keywords_text: '', call_time: '', beats: [] },
-                newStatusDay: { date: '', end_date: '', protocol_id: '', note: '' },
                 memberMergeTarget: '',
                 publicBaseUrl: '',
                 haBaseUrl: '',
@@ -2523,10 +2284,25 @@
                     });
                     this.loadIcsFeeds();  // not awaited: feeds are a side panel
                     await this.loadMembers();
-                    this.loadStatusData();  // not awaited: a side panel on the People tab
                     this.loadStages();          // ditto (load arc A4)
                     this.loadHaOptions();  // not awaited: HA may be slow/absent
+                    this.openHashTab();
+                    window.addEventListener('hashchange', () => this.openHashTab());
                     console.log("configApp init complete");
+                },
+
+                // A deep link (the settings index's config#home, an old
+                // bookmark) can name an anchor inside a tab that is not open.
+                // Open the tab the anchor's block belongs to, then scroll to
+                // it, rather than landing on General with the target hidden.
+                openHashTab() {
+                    const id = (window.location.hash || '').slice(1);
+                    const el = id && document.getElementById(id);
+                    if (!el) return;
+                    const block = el.closest('[x-show^="activeTab === "]');
+                    const m = block && /activeTab === '([a-z]+)'/.exec(block.getAttribute('x-show'));
+                    if (m) this.activeTab = m[1];
+                    this.$nextTick(() => setTimeout(() => el.scrollIntoView({ block: 'start' }), 50));
                 },
 
                 async handleLocationInput() {
@@ -2660,7 +2436,6 @@
                     this.haToken = data.ha_token || '';
                     this.maServerUrl = data.ma_server_url || '';
                     this.maToken = data.ma_token || '';
-                    this.tripHashtags = data.trip_hashtags || [];
                     this.calendarIds = data.calendar_ids || [];
                     this.defaultCalendarId = data.default_calendar_id || '';
                     this.timezone = data.timezone || '';
@@ -2685,7 +2460,6 @@
                     this.weeklyDigestEnabled = data.weekly_digest_enabled !== false;
                     this.weeklyDigestDay = data.weekly_digest_day ?? 6;
                     this.weeklyDigestTime = data.weekly_digest_time || '19:00';
-                    this.proactiveWatchersEnabled = data.proactive_watchers_enabled !== false;
                     // School, the kid digest and kid quiet hours load on /school (v2.499.250).
                     this.loadWeatherEntities();   // non-blocking; empty when HA is absent
 
@@ -2742,21 +2516,6 @@
                     this.defaultCalendarId = this.defaultCalendarId === calId ? '' : calId;
                     await this.saveSettings();
                 },
-                async addTripHashtag() {
-                    let val = this.newTripHashtagInput.trim().toLowerCase();
-                    if (val) {
-                        if (!val.startsWith('#')) val = '#' + val;
-                        if (!this.tripHashtags.includes(val)) {
-                            this.tripHashtags.push(val);
-                            await this.saveSettings();
-                        }
-                    }
-                    this.newTripHashtagInput = '';
-                },
-                async removeTripHashtag(index) {
-                    this.tripHashtags.splice(index, 1);
-                    await this.saveSettings();
-                },
                 async saveSettings() {
                     this.saving = true;
                     try {
@@ -2783,7 +2542,6 @@
                             ha_token: this.haToken || '',
                             ma_server_url: this.maServerUrl || '',
                             ma_token: this.maToken || '',
-                            trip_hashtags: this.tripHashtags || [],
                             llm_provider: this.llmProvider,
                             llm_gemini_api_key: this.llmGeminiApiKey,
                             web_research_enabled: this.webResearchEnabled,
@@ -2799,14 +2557,16 @@
                             weekly_digest_enabled: this.weeklyDigestEnabled,
                             weekly_digest_day: parseInt(this.weeklyDigestDay),
                             weekly_digest_time: this.weeklyDigestTime || '19:00',
-                            proactive_watchers_enabled: this.proactiveWatchersEnabled
                             // car_*, assist_ready_buffer_mins (v2.499.254) and
                             // days_to_*, traffic_*, routing_avoid_tolls, the four
                             // rule switches, load_balancing_*, suggested_routes_enabled
                             // and tomorrow_digest_* are Drive setup's (v2.499.253).
-                            // kid_digest_*, kid_quiet_* and school_* are the School
-                            // page's (v2.499.250) — never sent from here, so this
-                            // page cannot clobber them.
+                            // school_* are the School page's (v2.499.250);
+                            // kid_digest_*, kid_quiet_* and stage_cutoffs are
+                            // Rhythms' (v2.499.256); trip_hashtags is the Trips
+                            // page's and proactive_watchers_enabled the Mind's
+                            // (v2.499.257) — never sent from here, so this page
+                            // cannot clobber them.
                         };
 
                         await fetch(`${this.apiBase}api/settings`, {
@@ -3735,108 +3495,6 @@
                     return (s && s.glyph) || '';
                 },
 
-                // --- Status Days (Presence & Status arc P1) ---
-                async loadStatusData() {
-                    try {
-                        const [pRes, dRes] = await Promise.all([
-                            fetch(`${this.apiBase}api/status/protocols`),
-                            fetch(`${this.apiBase}api/status/days`),
-                        ]);
-                        this.statusProtocols = pRes.ok ? await pRes.json() : [];
-                        this.statusDays = dRes.ok ? await dRes.json() : [];
-                    } catch (e) {
-                        console.error("Failed to load status data", e);
-                    }
-                },
-                statusMemberName(memberId) {
-                    const m = this.members.find(x => x.id === memberId);
-                    return m ? m.name : '';
-                },
-                statusNeedLabel(need) {
-                    return { cover: 'Cover for them', help: 'Bring in help',
-                             clear_deck: 'Clear the deck', give_space: 'Give space' }[need] || need;
-                },
-                openStatusForm() {
-                    this.editStatusId = null;
-                    this.newStatusProtocol = { emoji: '💙', name: '', member_id: '', need: 'give_space', kid_message: '', adult_message: '', keywords_text: '', call_time: '', beats: [] };
-                    this.showStatusForm = true;
-                },
-                editStatusProtocol(p) {
-                    this.editStatusId = p.id;
-                    this.newStatusProtocol = {
-                        emoji: p.emoji || '💙', name: p.name || '', member_id: p.member_id || '',
-                        need: p.need || 'give_space', kid_message: p.kid_message || '',
-                        adult_message: p.adult_message || '',
-                        keywords_text: (p.keywords || []).join(', '),
-                        call_time: p.call_time || '',
-                        beats: (p.beats || []).map(b => ({ anchor: b.anchor || 'start',
-                            offset_abs: Math.abs(b.offset_days || 0) || 1,
-                            direction: (b.offset_days || 0) < 0 ? 'before'
-                                : ((b.offset_days || 0) > 0 ? 'after' : 'on'),
-                            audience: b.audience || 'kids',
-                            message: b.message || '', need: b.need || '' })),
-                    };
-                    this.showStatusForm = true;
-                },
-                cancelStatusForm() { this.showStatusForm = false; this.editStatusId = null; },
-                async submitStatusProtocol() {
-                    const f = this.newStatusProtocol;
-                    if (!f.name.trim()) { showGlobalAlert('Give the day type a name.'); return; }
-                    this.saving = true;
-                    const payload = {
-                        emoji: f.emoji || '💙', name: f.name.trim(),
-                        member_id: f.member_id || null, need: f.need,
-                        kid_message: f.kid_message.trim(), adult_message: f.adult_message.trim(),
-                        keywords: f.keywords_text.split(',').map(k => k.trim()).filter(Boolean),
-                        call_time: f.call_time || null,
-                        beats: (f.beats || [])
-                            .filter(b => (b.message || '').trim() || b.need)
-                            .map(b => ({ anchor: b.anchor,
-                                         offset_days: b.direction === 'on' ? 0
-                                             : (b.direction === 'before' ? -1 : 1) * Math.max(1, b.offset_abs || 1),
-                                         audience: b.audience, message: (b.message || '').trim(),
-                                         need: b.need || null })),
-                    };
-                    try {
-                        if (this.editStatusId) {
-                            await fetch(`${this.apiBase}api/status/protocols/${this.editStatusId}`, {
-                                method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(payload) });
-                        } else {
-                            await fetch(`${this.apiBase}api/status/protocols`, {
-                                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(payload) });
-                        }
-                        this.showStatusForm = false;
-                        this.editStatusId = null;
-                        await this.loadStatusData();
-                    } catch (e) { showGlobalAlert('Could not save the day type.'); }
-                    this.saving = false;
-                },
-                async deleteStatusProtocolUi(p) {
-                    if (!await promptConfirm('Delete Day Type',
-                        `Delete "${p.name}"? Any upcoming days set with it are removed too.`, 'Delete')) return;
-                    await fetch(`${this.apiBase}api/status/protocols/${p.id}`, { method: 'DELETE' });
-                    await this.loadStatusData();
-                },
-                async addStatusDayUi() {
-                    const d = this.newStatusDay;
-                    if (!d.date || !d.protocol_id) { showGlobalAlert('Pick a date and a day type.'); return; }
-                    if (d.end_date && d.end_date < d.date) { showGlobalAlert('The span end is before its start.'); return; }
-                    await fetch(`${this.apiBase}api/status/days`, {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ date: d.date, end_date: (d.end_date && d.end_date !== d.date) ? d.end_date : null,
-                                               protocol_id: d.protocol_id, note: d.note.trim() }),
-                    });
-                    this.newStatusDay = { date: '', end_date: '', protocol_id: '', note: '' };
-                    await this.loadStatusData();
-                },
-                async clearStatusDayUi(d) {
-                    if (!await promptConfirm('Clear Status Day',
-                        `Clear ${d.name} on ${d.date}? Everyone is told the plans changed.`, 'Clear')) return;
-                    await fetch(`${this.apiBase}api/status/days/${d.id}`, { method: 'DELETE' });
-                    await this.loadStatusData();
-                },
                 async loadScopeMeta() {
                     if (this.scopeMeta) return;
                     try {

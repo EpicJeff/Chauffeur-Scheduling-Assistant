@@ -82,7 +82,7 @@ def main():
             page.goto(served.url('config'))
             page.wait_for_function('document.body._x_dataStack && document.body._x_dataStack[0].facadeDraft')
             spec,_,_=compile_structure(source)
-            page.evaluate("spec => { const s=document.body._x_dataStack[0]; s.activeTab='family'; s.facadeTask='shape'; s.facadeDraft=spec; }",spec)
+            page.evaluate("spec => { const s=document.body._x_dataStack[0]; s.activeTab='boards'; s.facadeTask='shape'; s.facadeDraft=spec; }",spec)
             field=page.locator('#home fieldset').filter(has=page.locator('legend',has_text='Photo-matched sections'))
             field.scroll_into_view_if_needed()
             assert field.is_visible()

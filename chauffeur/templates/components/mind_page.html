@@ -153,6 +153,33 @@
                     first, the larger step is always double), and the time
                     limit on each re-solve.
                 </p>
+
+                {# Proactive heads-ups (proactive_watchers_enabled), moved from
+                   Config → General → Digests in v2.499.257: the watchers are
+                   Argyle noticing stuck things, which is the Mind's business.
+                   A setting, so never drawn on a panel, kiosk or filtered
+                   embed of /work or /mind (the errand_rules guard in
+                   errands.html is the precedent). Toggle skin: "Look for
+                   deals" above. It saves only its own key. #}
+                {% set _rq = request.query_params %}
+                {% if _rq.get('panel') != 'true' and _rq.get('kiosk') != 'true' and _rq.get('tabs') is none %}
+                <h3 id="heads-ups" class="text-sm font-semibold text-gray-300 pt-2">Heads-ups</h3>
+                <label class="flex items-center justify-between bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                    <span class="text-sm font-semibold text-gray-200">Proactive heads-ups</span>
+                    <span class="flex items-center gap-2">
+                        <span class="text-xs text-emerald-400 font-bold" x-show="watchersSaved" x-transition.opacity>Saved ✓</span>
+                        <input type="checkbox" id="proactiveWatchersEnabled" x-model="proactiveWatchersEnabled"
+                            @change="saveWatchers()" class="h-5 w-5 accent-pink-400">
+                    </span>
+                </label>
+                <p class="text-[11px] text-gray-500 -mt-2 px-1">
+                    Argyle periodically sweeps for stuck things and DMs parents one consolidated
+                    heads-up: events with no driver in the next 3 days, intake proposals waiting 3+
+                    days, chores awaiting your OK for 2+ days, chores unclaimed for a week, stale
+                    reward requests, past-due errands, and a weekly prep-kit idea check. Each item is
+                    mentioned exactly once, never between 9pm and 8am.
+                </p>
+                {% endif %}
             </div>
 
             <!-- Admin-only sections: /api/mind/admin 403s a non-parent, and the
@@ -368,7 +395,30 @@
                         for (const k of Object.keys(this.s)) {
                             if (d[k] !== undefined && d[k] !== null) this.s[k] = d[k];
                         }
+                        this.proactiveWatchersEnabled = d.proactive_watchers_enabled !== false;
                     } catch (e) { /* defaults already in place */ }
+                },
+
+                // Proactive heads-ups (moved from Config, v2.499.257). Kept
+                // out of `s` on purpose: it saves alone, a single-key body,
+                // like graduate() below.
+                proactiveWatchersEnabled: true,
+                watchersSaved: false,
+                async saveWatchers() {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/settings', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ proactive_watchers_enabled: !!this.proactiveWatchersEnabled })
+                        });
+                        if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            return showGlobalAlert(err.detail || 'Could not save that just now.');
+                        }
+                        this.watchersSaved = true;
+                        setTimeout(() => { this.watchersSaved = false; }, 1600);
+                    } catch (e) {
+                        showGlobalAlert('Could not save that just now.');
+                    }
                 },
 
                 async loadAdmin() {

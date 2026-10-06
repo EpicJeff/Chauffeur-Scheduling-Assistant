@@ -2176,7 +2176,7 @@ def set_household_status(protocol_name: str, target_date: str = "today",
     if not protocols:
         return {"status": "error",
                 "message": "No status day types are set up yet — a parent can "
-                           "create them in Config → People → Status Days."}
+                           "create them on Schedule → Calendar → Status days."}
     low = (protocol_name or '').strip().lower()
     hits = [p for p in protocols if low == (p.get('name') or '').lower()] \
         or [p for p in protocols if low and low in (p.get('name') or '').lower()]

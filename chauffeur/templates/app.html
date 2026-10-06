@@ -2975,7 +2975,7 @@
                     statusProtocolsCache = (await res.json()).filter(p => p.enabled !== false);
                 }
                 if (!statusProtocolsCache.length) {
-                    row.innerHTML = '<p class="text-xs text-gray-500 mt-1">No day types yet — create them in Config → People → Status Days.</p>';
+                    row.innerHTML = '<p class="text-xs text-gray-500 mt-1">No day types yet — create them on Schedule → Calendar → Status days.</p>';
                     return;
                 }
                 row.innerHTML = '<div class="flex flex-wrap gap-1.5 mt-1.5">' + statusProtocolsCache.map(p =>

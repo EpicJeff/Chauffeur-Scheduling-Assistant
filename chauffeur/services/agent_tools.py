@@ -807,7 +807,7 @@ class GetEatingPlanTool(BaseModel):
 
 class SetHouseholdStatusTool(BaseModel):
     """
-    Sets (or clears) a family status day — a pre-authored day type like 'Chemo Day' or 'Trip Day' ("today is a chemo day", "set rest day for tomorrow", "clear tomorrow's chemo day"). Setting it tells the kids in the family's own words and notifies the other adults. Day types are created in Config, not here.
+    Sets (or clears) a family status day — a pre-authored day type like 'Chemo Day' or 'Trip Day' ("today is a chemo day", "set rest day for tomorrow", "clear tomorrow's chemo day"). Setting it tells the kids in the family's own words and notifies the other adults. Day types are created on the Calendar page (Status days), not here.
     """
     protocol_name: str = Field(..., description="Which day type, e.g. 'Chemo Day' — fuzzy matched against the family's configured status day types.")
     target_date: Optional[str] = Field(None, description="Which day (or span start): 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")

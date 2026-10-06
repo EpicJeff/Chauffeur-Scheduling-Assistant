@@ -98,7 +98,7 @@
                 </svg>
             </div>
             <h2 class="text-xl font-bold text-white mb-2">No Trips Found</h2>
-            <p class="text-gray-400 text-center max-w-md">We couldn't find any events marked as trips. Add one of your trip hashtags to an event in Google Calendar, or mark an event as a trip in Chauffeur's settings.</p>
+            <p class="text-gray-400 text-center max-w-md">We couldn't find any events marked as trips. Add one of your trip hashtags (set below) to an all-day event in Google Calendar, or create one with New Trip.</p>
         </div>
 
         <!-- The gallery is components/trip_gallery.html now, and this page is one
@@ -108,6 +108,96 @@
         <div id="wall-hidden-note" class="hidden mb-4 bg-gray-800/80 border border-gray-700 text-gray-300 text-sm rounded-xl px-4 py-3">
         </div>
         <div id="trips-grid" class="hidden"></div>
+
+        {# Trip hashtags (trip_hashtags), moved from Config → General in
+           v2.499.257: the words that make an all-day event a trip belong
+           beside the trips they find. A setting, so a browser thing only —
+           the Trips board on a panel is served from home.html, and a kiosk
+           or filtered embed of this page never gets the markup (the
+           errand_rules guard in errands.html is the precedent). The chips
+           and input are Config's, unchanged; it saves only its own key. #}
+        {% set _rq = request.query_params %}
+        {% if _rq.get('panel') != 'true' and _rq.get('kiosk') != 'true' and _rq.get('tabs') is none %}
+        <section id="trip-hashtags" x-data="tripHashtagsPanel()" x-init="init()"
+            class="glass-panel rounded-2xl p-6 mt-8">
+            <div class="flex items-center gap-3 mb-2">
+                <h2 class="text-lg font-bold text-white">Trip hashtags</h2>
+                <span class="text-xs text-emerald-400 font-bold" x-show="saved" x-transition.opacity>Saved ✓</span>
+            </div>
+            <div class="flex gap-2 mb-2 max-w-lg">
+                <input type="text" id="newTripHashtagInput" x-model="newTripHashtagInput" @keydown.enter="addTripHashtag()"
+                    placeholder="e.g. #trip"
+                    class="flex-1 bg-gray-800 border border-gray-600 rounded p-3 text-white font-mono focus:outline-none focus:border-blue-500">
+                <button @click="addTripHashtag()" data-add-trip-hashtag
+                    class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 rounded transition-colors flex items-center shadow-md">Add</button>
+            </div>
+            <div class="flex flex-wrap gap-2 max-w-lg mb-2">
+                <template x-for="(tag, index) in tripHashtags" :key="index">
+                    <div data-trip-hashtag
+                        class="flex items-center bg-gray-700 border border-gray-600 px-3 py-1.5 rounded-full text-sm font-bold shadow-sm text-blue-200">
+                        <span x-text="tag" class="mr-2"></span>
+                        <button @click="removeTripHashtag(index)" :aria-label="'Remove ' + tag"
+                            class="text-gray-400 hover:text-red-400 transition-colors focus:outline-none">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </template>
+                <p x-show="!tripHashtags.length" class="text-xs text-gray-500 italic">No trip hashtags yet.</p>
+            </div>
+            <p class="text-gray-500 text-sm mt-1">If an all-day event contains any of these hashtags, its
+                location will be used as a temporary Home Location for the event's duration, and the
+                event shows here as a trip.</p>
+        </section>
+        <script>
+            function tripHashtagsPanel() {
+                return {
+                    apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
+                    tripHashtags: [],
+                    newTripHashtagInput: '',
+                    saved: false,
+                    async init() {
+                        try {
+                            const r = await fetch(`${this.apiBase}api/settings`);
+                            if (r.ok) this.tripHashtags = (await r.json()).trip_hashtags || [];
+                        } catch (e) { /* the list stays empty */ }
+                    },
+                    addTripHashtag() {
+                        let val = (this.newTripHashtagInput || '').trim().toLowerCase();
+                        if (!val) return;
+                        if (!val.startsWith('#')) val = '#' + val;
+                        if (!this.tripHashtags.includes(val)) {
+                            this.tripHashtags.push(val);
+                            this.save();
+                        }
+                        this.newTripHashtagInput = '';
+                    },
+                    removeTripHashtag(index) {
+                        this.tripHashtags.splice(index, 1);
+                        this.save();
+                    },
+                    // Only this key: the server merges.
+                    async save() {
+                        try {
+                            const r = await fetch(`${this.apiBase}api/settings`, {
+                                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ trip_hashtags: this.tripHashtags.slice() }) });
+                            if (!r.ok) {
+                                const d = await r.json().catch(() => ({}));
+                                return showGlobalAlert(d.detail || "Couldn't save that.");
+                            }
+                            this.saved = true;
+                            setTimeout(() => { this.saved = false; }, 1600);
+                        } catch (e) {
+                            showGlobalAlert("Couldn't reach Chauffeur.");
+                        }
+                    },
+                };
+            }
+        </script>
+        {% endif %}
 
     </main>
 

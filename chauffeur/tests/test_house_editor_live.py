@@ -21,10 +21,15 @@ def scenario_house_editor_tasks_and_layout():
         errors = []
         page.on('pageerror', lambda e: errors.append(str(e)))
         page.set_viewport_size({'width': 1600, 'height': 1100})
-        page.goto(served.url('config'))
+        # The editor lives on Config's Boards & House tab (v2.499.257); the
+        # settings index's config#home link opens that tab by itself.
+        page.goto(served.url('config#home'))
         page.wait_for_function("document.body._x_dataStack && document.body._x_dataStack[0].facadeDraft")
-        page.evaluate("document.body._x_dataStack[0].activeTab = 'family'")
+        page.wait_for_function("document.body._x_dataStack[0].activeTab === 'boards'")
         home = page.locator('#home')
+        assert home.is_visible(), 'config#home did not open the Boards & House tab'
+        assert page.locator('#boards').is_visible(), 'the house is not beside the boards'
+        assert page.get_by_role('button', name='Boards & House').count() == 1, 'the tab is not named Boards & House'
         home.scroll_into_view_if_needed()
         nav = home.get_by_role('navigation', name='House editing tasks')
         assert nav.get_by_role('button').count() == 6

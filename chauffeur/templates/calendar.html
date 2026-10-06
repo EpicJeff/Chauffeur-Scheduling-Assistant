@@ -74,8 +74,12 @@
 <body class="flex flex-col">
     {% include 'nav.html' %}
 
-    <header class="panel-page px-6 pt-6 pb-2 lg:px-10 lg:pt-8 shrink-0">
+    <header class="panel-page px-6 pt-6 pb-2 lg:px-10 lg:pt-8 shrink-0 flex items-end justify-between gap-4">
         <h2 class="panel-page-title">Calendar</h2>
+        {% if request.query_params.get('panel') != 'true' and request.query_params.get('kiosk') != 'true' and request.query_params.get('tabs') is none %}
+        <a href="#status-days" data-status-days-link
+            class="text-sm font-bold text-sky-300 hover:text-sky-200 bg-sky-500/10 px-3 py-1.5 rounded-lg border border-sky-500/20 mb-1">💙 Status days</a>
+        {% endif %}
     </header>
 
     <main class="flex-1 w-full p-2 sm:p-4 lg:p-6 flex flex-col h-[calc(100vh-64px)]">
@@ -91,6 +95,16 @@
             <div id="calendar" class="flex-1 relative z-10 w-full min-h-0"></div>
         </div>
     </main>
+
+    {# Status Days (v2.499.257), moved from Config → People: a status day
+       is a fact about a day, so it sits under the calendar. Parent
+       administration, never on a wall: a panel (?panel=true serves the
+       calendar board anyway), the calendar kiosk and a filtered embed never
+       get the markup. #}
+    {% set _rq = request.query_params %}
+    {% if _rq.get('panel') != 'true' and _rq.get('kiosk') != 'true' and _rq.get('tabs') is none %}
+    {% include 'components/status_days.html' %}
+    {% endif %}
 
     <!-- Event Configuration Modal (in-page; sibling of the dashboard's edit
          mode — same api/events/config + api/events PATCH contracts) -->
