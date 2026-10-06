@@ -428,7 +428,7 @@ def research(question: str, read_pages: int = PAGES_READ) -> dict:
 
     # Route 1: let Google do the searching. No second key, no separate
     # allowance, and the citations arrive with the answer.
-    if settings.get('llm_provider', 'gemini') == 'gemini':
+    if (settings.get('llm_provider') or 'gemini') == 'gemini':
         try:
             grounded = _gemini_grounded(question, api_key)
         except Exception as e:

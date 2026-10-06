@@ -543,7 +543,6 @@
                                     class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Model provider</label>
                                 <select id="llmProvider" x-model="llmProvider" @change="saveSettings()"
                                     class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white">
-                                    <option value="" x-show="!llmProvider">— not chosen —</option>
                                     <option value="gemini">Gemini (Google)</option>
                                     <option value="ollama">Ollama (a local model server)</option>
                                 </select>
@@ -2481,7 +2480,9 @@
                     this.isHomeAssistant = data.is_home_assistant || false;
 
                     // LLM Settings
-                    this.llmProvider = data.llm_provider || '';
+                    // Unset means Gemini: every caller defaults to it
+                    // (`settings.get('llm_provider') or 'gemini'`).
+                    this.llmProvider = data.llm_provider || 'gemini';
                     this.llmGeminiApiKey = data.llm_gemini_api_key || '';
                     this.webResearchEnabled = !!data.web_research_enabled;
                     this.webSearchApiKey = data.web_search_api_key || '';

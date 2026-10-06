@@ -411,7 +411,7 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
         except Exception as e:
             page_context_str += f"(Failed to load extended page context: {str(e)})\n"
             
-    provider = settings.get('llm_provider', 'gemini')
+    provider = (settings.get('llm_provider') or 'gemini')
     if context and context.get('model_override'):
         provider = context.get('model_override')
     
@@ -751,7 +751,7 @@ def auto_name_conversation(conversation_id: str, first_message: str):
     import urllib.request
     try:
         settings = storage.get_settings()
-        provider = settings.get('llm_provider', 'gemini')
+        provider = (settings.get('llm_provider') or 'gemini')
         prompt = f"Summarize this message into a short 3-5 word conversation title. DO NOT use quotes. Message: \n{first_message}"
         
         title = ""

@@ -97,7 +97,7 @@ def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_nights: in
     from services import model_pools
     
     settings = storage.get_settings()
-    provider = settings.get('llm_provider', 'gemini')
+    provider = (settings.get('llm_provider') or 'gemini')
     if provider == 'ollama':
         url = settings.get('llm_ollama_url', 'http://localhost:11434')
         model = settings.get('llm_ollama_model', 'qwen2.5:7b')
@@ -1088,7 +1088,7 @@ def generate_trip_accommodations(trip: TripMetadata, user_prompt: str) -> Tuple[
     from models.schemas import TripAccommodation
     
     settings = storage.get_settings()
-    provider = settings.get('llm_provider', 'gemini')
+    provider = (settings.get('llm_provider') or 'gemini')
     if provider == 'ollama':
         url = settings.get('llm_ollama_url', 'http://localhost:11434')
         model = settings.get('llm_ollama_model', 'qwen2.5:7b')
@@ -1242,7 +1242,7 @@ def generate_trip_flights(trip: 'TripMetadata', user_prompt: str) -> Tuple[Optio
     import datetime
 
     settings = storage.get_settings()
-    provider = settings.get('llm_provider', 'gemini')
+    provider = (settings.get('llm_provider') or 'gemini')
     if provider == 'ollama':
         url = settings.get('llm_ollama_url', 'http://localhost:11434')
         model = settings.get('llm_ollama_model', 'qwen2.5:7b')
@@ -1367,7 +1367,7 @@ def generate_trip_plan(trip: 'TripMetadata', user_prompt: str, duration_nights: 
     from services import storage, maps
     
     settings = storage.get_settings()
-    provider = settings.get('llm_provider', 'gemini')
+    provider = (settings.get('llm_provider') or 'gemini')
     if provider == 'ollama':
         url = settings.get('llm_ollama_url', 'http://localhost:11434')
         model = settings.get('llm_ollama_model', 'qwen2.5:7b')
@@ -1742,7 +1742,7 @@ def suggest_trip_dates(trip: TripMetadata) -> Tuple[Optional[str], Optional[dict
         
     cal_context = "\n".join(condensed_events) if condensed_events else "No upcoming events found on calendar."
     
-    provider = settings.get('llm_provider', 'gemini')
+    provider = (settings.get('llm_provider') or 'gemini')
     if provider == 'ollama':
         url = settings.get('llm_ollama_url', 'http://localhost:11434')
         model = settings.get('llm_ollama_model', 'qwen2.5:7b')

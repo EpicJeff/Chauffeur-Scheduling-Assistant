@@ -16611,7 +16611,7 @@ def _run_analysis_task(task_id: str):
         import json
         
         settings = storage.get_settings()
-        llm_provider = settings.get('llm_provider', 'gemini')
+        llm_provider = (settings.get('llm_provider') or 'gemini')
         llm_url = settings.get('llm_ollama_url', 'http://localhost:11434')
         llm_api_key = settings.get('llm_gemini_api_key', '')
         # Heavy tier: override-pattern analysis is rare and quality-critical.
