@@ -4328,8 +4328,26 @@ def ingest_missed():
     for a re-read, so the intake page can offer and track the recovery."""
     from services import email_ingest
     settings = storage.get_settings() or {}
-    return {**email_ingest.missed_summary(),
-            'pending': email_ingest.rescan_pending(settings)}
+    return {**email_ingest.missed_summary(), **email_ingest.backlog_status(settings)}
+
+class IngestSkipBacklogRequest(BaseModel):
+    keep_since: str                    # YYYY-MM-DD: mail from this day on is still read
+
+@app.post("/api/ingest/skip-backlog")
+def ingest_skip_backlog(req: IngestSkipBacklogRequest):
+    """Abandon the backlog (the family's call when it would take days): the
+    re-read queue empties and older unread mail is passed over; mail from
+    `keep_since` on is still read, newest arrivals included."""
+    import datetime as _dt
+    from services import email_ingest
+    try:
+        since = _dt.date.fromisoformat(req.keep_since)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="keep_since must be YYYY-MM-DD")
+    res = email_ingest.skip_backlog(storage.get_settings() or {}, since)
+    if res.get('error'):
+        raise HTTPException(status_code=400, detail=res['error'])
+    return res
 
 class IngestRescanRequest(BaseModel):
     since: str                         # YYYY-MM-DD

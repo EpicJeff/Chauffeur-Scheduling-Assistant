@@ -220,21 +220,24 @@ def fetch_new_messages(settings: dict):
         try:
             conn.login(user, password)
             conn.select('INBOX', readonly=True)
-            if queue:
-                return [dict(_read_uid(conn, int(u)), rescan=True)
-                        for u in queue[:MAX_MESSAGES_PER_RUN]], None
             status, data = conn.uid('SEARCH', None, 'ALL')
             if status != 'OK':
                 return [], f'IMAP search failed: {status}'
             uids = [int(u) for u in (data[0].split() if data and data[0] else [])]
-            if not uids:
-                return [], None
-            if last_uid == 0:
+            if last_uid == 0 and uids:
                 # First contact: start the cursor at the top, skip backlog.
                 storage.set_app_state(_cursor_key(user), max(uids))
                 return [], None
+            # NEW mail always goes first; the re-read queue only gets a turn
+            # when nothing new is waiting. The other way round, a 500-email
+            # re-read held today's school email back for days (2026-10-05).
             new_uids = sorted(u for u in uids if u > last_uid)[:MAX_MESSAGES_PER_RUN]
-            return [dict(_read_uid(conn, u), rescan=False) for u in new_uids], None
+            if new_uids:
+                return [dict(_read_uid(conn, u), rescan=False) for u in new_uids], None
+            if queue:
+                return [dict(_read_uid(conn, int(u)), rescan=True)
+                        for u in queue[:MAX_MESSAGES_PER_RUN]], None
+            return [], None
         finally:
             try:
                 conn.logout()
@@ -281,8 +284,13 @@ def _was_handled(msg: dict) -> bool:
 def missed_summary(limit: int = 1000) -> dict:
     """How many logged emails failed extraction and since when, so the page
     can offer to re-read them."""
-    rows = [r for r in storage.get_ingest_log(limit=limit)
-            if str(r.get('outcome', '')).startswith('error: extraction failed')]
+    log = storage.get_ingest_log(limit=limit)
+    # Failures from before the family abandoned a backlog are not offered
+    # again: that was their answer.
+    cut = max((r.get('ts') or 0) for r in log if r.get('subject') == '(backlog)') if any(
+        r.get('subject') == '(backlog)' for r in log) else 0
+    rows = [r for r in log if (r.get('ts') or 0) > cut
+            and str(r.get('outcome', '')).startswith('error: extraction failed')]
     since = min((r.get('first_ts') or r.get('ts') or 0) for r in rows) if rows else None
     return {'failed': sum(int(r.get('count') or 1) for r in rows), 'since_ts': since}
 
@@ -313,6 +321,76 @@ def queue_rescan(settings: dict, since: datetime.date) -> dict:
     queue = sorted(set(int(u) for u in (storage.get_app_state(_rescan_key(user)) or [])) | set(uids))
     storage.set_app_state(_rescan_key(user), queue)
     return {'queued': len(uids), 'pending': len(queue), 'error': None}
+
+
+def backlog_status(settings: dict) -> dict:
+    """How far behind intake is: 'behind' = messages above the cursor not
+    read yet (None when the mailbox could not be asked), 'pending' = the
+    re-read queue."""
+    host, user, password = _mailbox(settings)
+    out = {'behind': None, 'pending': rescan_pending(settings)}
+    if not user or not password:
+        return out
+    last_uid = int(storage.get_app_state(_cursor_key(user)) or 0)
+    try:
+        conn = imaplib.IMAP4_SSL(host)
+        try:
+            conn.login(user, password)
+            conn.select('INBOX', readonly=True)
+            status, data = conn.uid('SEARCH', None, 'ALL')
+            if status == 'OK' and last_uid:
+                uids = [int(u) for u in (data[0].split() if data and data[0] else [])]
+                out['behind'] = sum(1 for u in uids if u > last_uid)
+        finally:
+            try:
+                conn.logout()
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"Email intake: backlog status unavailable: {e}")
+    return out
+
+
+def skip_backlog(settings: dict, keep_since: datetime.date) -> dict:
+    """Abandon the backlog: empty the re-read queue and move the cursor so
+    only mail received on or after `keep_since` is still read. Never moves
+    the cursor backwards. Returns {'dropped_rereads', 'skipped', 'error'}."""
+    host, user, password = _mailbox(settings)
+    if not user or not password:
+        return {'dropped_rereads': 0, 'skipped': 0, 'error': 'no mailbox configured'}
+    dropped = len(storage.get_app_state(_rescan_key(user)) or [])
+    last_uid = int(storage.get_app_state(_cursor_key(user)) or 0)
+    try:
+        conn = imaplib.IMAP4_SSL(host)
+        try:
+            conn.login(user, password)
+            conn.select('INBOX', readonly=True)
+            status, data = conn.uid('SEARCH', None, 'ALL')
+            if status != 'OK':
+                return {'dropped_rereads': 0, 'skipped': 0, 'error': f'IMAP search failed: {status}'}
+            all_uids = sorted(int(u) for u in (data[0].split() if data and data[0] else []))
+            status, data = conn.uid('SEARCH', None, 'SINCE', keep_since.strftime('%d-%b-%Y'))
+            if status != 'OK':
+                return {'dropped_rereads': 0, 'skipped': 0, 'error': f'IMAP search failed: {status}'}
+            keep = sorted(int(u) for u in (data[0].split() if data and data[0] else []))
+        finally:
+            try:
+                conn.logout()
+            except Exception:
+                pass
+    except Exception as e:
+        return {'dropped_rereads': 0, 'skipped': 0, 'error': f'IMAP error: {e}'}
+    target = (keep[0] - 1) if keep else (all_uids[-1] if all_uids else last_uid)
+    new_cursor = max(last_uid, target)
+    skipped = sum(1 for u in all_uids if last_uid < u <= new_cursor)
+    storage.set_app_state(_rescan_key(user), [])
+    storage.set_app_state(_cursor_key(user), new_cursor)
+    storage.add_ingest_log({'from': '', 'subject': '(backlog)',
+                            'outcome': f"skipped: backlog abandoned — {skipped} unread older email"
+                                       f"{'s' if skipped != 1 else ''} and {dropped} queued re-read"
+                                       f"{'s' if dropped != 1 else ''}; reading from "
+                                       f"{keep_since.isoformat()} on", 'skipped': True})
+    return {'dropped_rereads': dropped, 'skipped': skipped, 'error': None}
 
 
 def rescan_pending(settings: dict) -> int:

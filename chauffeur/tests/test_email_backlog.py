@@ -137,7 +137,8 @@ def scenario_missed_summary_and_queue():
     storage.add_ingest_log({'from': 'a', 'subject': 'x', 'outcome': 'error: extraction failed (paused)', 'ts': 1000})
     storage.add_ingest_log({'from': 'b', 'subject': 'y', 'outcome': 'error: extraction failed (paused)', 'ts': 2000})
     storage.add_ingest_log({'from': 'c', 'subject': 'z', 'outcome': 'proposed 1 item', 'ts': 3000})
-    m = main.ingest_missed()
+    with mock.patch.object(email_ingest.imaplib, 'IMAP4_SSL', _Box([10], [])):
+        m = main.ingest_missed()
     check(m['failed'] == 2 and m['since_ts'] == 1000 and m['pending'] == 0, f"missed summary: {m}")
 
     class FakeIMAP:
@@ -161,7 +162,82 @@ def scenario_missed_summary_and_queue():
         check(e.status_code == 400, "bad date refused")
 
 
+class _Box:
+    """A fake mailbox: ALL -> every uid; SINCE -> the uids from a date on."""
+    def __init__(self, all_uids, since_uids, fetched=None):
+        self.all, self.since, self.fetched = all_uids, since_uids, fetched if fetched is not None else []
+
+    def __call__(self, host):
+        return self
+
+    def login(self, u, p): pass
+    def select(self, *a, **k): return 'OK', [b'1']
+    def logout(self): pass
+
+    def uid(self, cmd, *args):
+        if cmd == 'SEARCH':
+            uids = self.since if 'SINCE' in args else self.all
+            return 'OK', [' '.join(str(u) for u in uids).encode()]
+        self.fetched.append(int(args[0]))
+        raw = (b"From: s@x.org\r\nSubject: m" + args[0].encode() + b"\r\n\r\nbody\r\n")
+        return 'OK', [(b'x', raw)]
+
+
+def scenario_new_mail_goes_before_rereads():
+    """A 500-email re-read held today's school email back for days. New mail
+    (above the cursor) always goes first; the queue only when none waits."""
+    _reset(cursor=100)
+    storage.set_app_state(QUEUE, [5, 6, 7])
+    box = _Box([5, 6, 7, 100, 101, 102], [])
+    with mock.patch.object(email_ingest.imaplib, 'IMAP4_SSL', box):
+        msgs, _ = email_ingest.fetch_new_messages(SETTINGS)
+        check([m['uid'] for m in msgs] == [101, 102] and not any(m['rescan'] for m in msgs),
+              f"new mail first: {[m['uid'] for m in msgs]}")
+        storage.set_app_state(CURSOR, 102)
+        msgs, _ = email_ingest.fetch_new_messages(SETTINGS)
+        check([m['uid'] for m in msgs] == [5, 6, 7] and all(m['rescan'] for m in msgs),
+              "the re-read queue only when nothing new is waiting")
+        status = email_ingest.backlog_status(SETTINGS)
+        check(status == {'behind': 0, 'pending': 3}, f"backlog status: {status}")
+        storage.set_app_state(CURSOR, 100)
+        check(email_ingest.backlog_status(SETTINGS)['behind'] == 2, "behind counts unread mail above the cursor")
+
+
+def scenario_skip_the_backlog():
+    _reset(cursor=100)
+    import main
+    storage.set_app_state(QUEUE, [5, 6, 7])
+    storage.add_ingest_log({'from': 'a', 'subject': 'x', 'outcome': 'error: extraction failed (paused)'})
+    with mock.patch.object(email_ingest.imaplib, 'IMAP4_SSL', _Box([100], [])):
+        check(main.ingest_missed()['failed'] == 1, "a failure is offered for re-read before the skip")
+    box = _Box(list(range(100, 701)), list(range(650, 701)))     # 600 behind; yesterday on = 650+
+    with mock.patch.object(email_ingest.imaplib, 'IMAP4_SSL', box):
+        res = main.ingest_skip_backlog(main.IngestSkipBacklogRequest(keep_since='2026-10-04'))
+        check(res == {'dropped_rereads': 3, 'skipped': 549, 'error': None}, f"skip result: {res}")
+        check(storage.get_app_state(CURSOR) == 649 and storage.get_app_state(QUEUE) == [],
+              "cursor sits just before the first kept email; the queue is empty")
+        msgs, _ = email_ingest.fetch_new_messages(SETTINGS)
+        check(msgs[0]['uid'] == 650, "the next poll reads from the kept date on")
+        m = main.ingest_missed()
+        check(m['failed'] == 0 and m['pending'] == 0, f"the abandoned failures are not offered again: {m}")
+        check(any(r['subject'] == '(backlog)' and 'abandoned' in r['outcome'] for r in storage.get_ingest_log()),
+              "the skip is in the activity log")
+    # Never backwards: keeping from a date before the cursor leaves it alone.
+    box = _Box(list(range(100, 701)), list(range(300, 701)))
+    with mock.patch.object(email_ingest.imaplib, 'IMAP4_SSL', box):
+        res = main.ingest_skip_backlog(main.IngestSkipBacklogRequest(keep_since='2026-09-01'))
+    check(storage.get_app_state(CURSOR) == 649 and res['skipped'] == 0, "a skip never moves the cursor back")
+    from fastapi import HTTPException
+    try:
+        main.ingest_skip_backlog(main.IngestSkipBacklogRequest(keep_since='yesterday'))
+        check(False, "a bad date must 400")
+    except HTTPException as e:
+        check(e.status_code == 400, "bad date refused")
+
+
 SCENARIOS = [
+    scenario_new_mail_goes_before_rereads,
+    scenario_skip_the_backlog,
     scenario_a_pause_keeps_mail_in_line,
     scenario_permanent_errors_do_not_block,
     scenario_deferral_detection,
