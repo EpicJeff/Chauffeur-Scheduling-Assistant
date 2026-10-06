@@ -1559,8 +1559,11 @@
             editFormBaseline = null;
             document.getElementById('modal-view-mode').classList.add('hidden');
             document.getElementById('modal-edit-mode').classList.remove('hidden');
-            await eventConfigFormFill('edit', ev, currentData || {});
-            if (activeEventId === ev.id) editFormBaseline = eventConfigFormRead('edit');
+            // Snapshot as soon as the form is drawn (the pickers load after),
+            // so a quick Save still compares against what was shown.
+            const filled = eventConfigFormFill('edit', ev, currentData || {});
+            editFormBaseline = eventConfigFormRead('edit');
+            await filled;
         }
 
         async function dropPassengerFromEvent(eventId, passengerId) {
@@ -2567,16 +2570,37 @@
             if (!triageDrafts[key]) triageDrafts[key] = { base: null, values: null, ignored: false, ready: false };
             renderTriageHead(ev);
             mount.innerHTML = eventConfigFormHtml('triage');
-            await eventConfigFormFill('triage', ev, triageCtx, { staged: true });
-            if (seq !== triageDrawSeq) return;   // another event was picked meanwhile
+            // The form is drawn synchronously; only the trip and outside-hands
+            // pickers wait on the network. Take the snapshot NOW, so Looks
+            // Good, Ignore and edits work the moment the event is on screen.
+            // Waiting for the pickers left the buttons dead for a round trip
+            // (seconds behind the Home Assistant proxy), and a tap in that
+            // window was silently dropped.
+            const filled = eventConfigFormFill('triage', ev, triageCtx, { staged: true });
             const d = triageDrafts[key];
             if (!d.base) {
                 d.base = eventConfigFormRead('triage');
-                d.values = d.base;
+                d.values = Object.assign({}, d.base);
             } else {
                 eventConfigFormApply('triage', d.values);
             }
             document.getElementById('triage-detail').scrollTop = 0;
+            updateTriageFooter();
+            await filled;
+            if (seq !== triageDrawSeq) return;   // another event was picked meanwhile
+            // The pickers now hold their real options. A picker the person
+            // has not touched takes the loaded value as its baseline (it is
+            // the event's own state, not an edit); one they changed keeps it.
+            const now = eventConfigFormRead('triage');
+            d.values = Object.assign({}, d.values);
+            ['trip_id', 'assist_contact_id'].forEach(f => {
+                if (d.values[f] === d.base[f]) {
+                    d.base[f] = now[f];
+                    d.values[f] = now[f];
+                }
+            });
+            eventConfigFormApply('triage', d.values);
+            renderTriageList();
             updateTriageFooter();
         }
 

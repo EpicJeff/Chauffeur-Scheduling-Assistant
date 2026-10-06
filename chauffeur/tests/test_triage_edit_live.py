@@ -245,6 +245,38 @@ def scenario_looks_good_saves_an_untouched_event_and_only_the_approved_ones():
           "an event opened but not approved stays in the inbox")
 
 
+def scenario_looks_good_works_while_the_pickers_are_still_loading():
+    """User: after Looks Good advanced to the next event, Looks Good did
+    nothing until you clicked away and back. The next event's snapshot
+    waited for the trip and outside-hands pickers' fetches, a slow round
+    trip behind the Home Assistant proxy, and a tap in that window was
+    dropped. Slow those two fetches down and tap straight through."""
+    def drive(page, errors):
+        _open_inbox(page)
+        page.evaluate(r"""() => {
+            const real = window.fetch;
+            window.fetch = (u, o) => /api\/(trips|assist-contacts)/.test(String(u))
+                ? new Promise(r => setTimeout(() => r(real(u, o)), 2500)) : real(u, o);
+        }""")
+        page.evaluate('() => document.getElementById("triage-ready-btn").click()')
+        page.wait_for_timeout(300)   # gev2 is on screen, its pickers still loading
+        page.evaluate('() => document.getElementById("triage-ready-btn").click()')
+        page.wait_for_timeout(300)
+        quick = _state(page)
+        page.wait_for_timeout(3000)  # let the pickers land
+        settled = _state(page)
+        return quick, settled, errors
+    got = _serve(drive)
+    if got is None:
+        return
+    quick, settled, errors = got
+    check(not errors, "the inbox threw: %s" % errors)
+    check(quick['save'] == 'Save 2 events',
+          "the second Looks Good counted while the pickers loaded: %r" % quick)
+    check(settled['save'] == 'Save 2 events' and not settled['edited'],
+          "the pickers landing is not an edit and keeps both approvals: %r" % settled)
+
+
 def scenario_undo_takes_an_event_back_out_of_save():
     def drive(page, errors):
         _open_inbox(page)

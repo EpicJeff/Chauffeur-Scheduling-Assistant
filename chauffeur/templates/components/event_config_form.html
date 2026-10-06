@@ -211,6 +211,10 @@ async function _ecfPopulateTrips(p, selectedTripId) {
         if (!res.ok) throw new Error(`status ${res.status}`);
         const data = await res.json();
         const trips = (data.trips || []).filter(t => !t.is_draft);
+        // Whatever the picker says now wins over what it was opened with:
+        // the form is live while this loads, and a choice made meanwhile
+        // must not be put back.
+        selectedTripId = tripDropdown.value || '';
         let optionsHtml = '<option value="">None</option>';
         let matched = false;
         trips.forEach(t => {

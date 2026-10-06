@@ -1,6 +1,11 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.245 (2026-10-06).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.246 (2026-10-06).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**Inbox: Looks Good works the moment an event is on screen (v2.499.246; `dashboard.html` `selectTriageEvent`/`switchToEditMode`, `event_config_form.html` `_ecfPopulateTrips`, `tests/test_triage_edit_live.py` `scenario_looks_good_works_while_the_pickers_are_still_loading`).** User: after Looks Good advanced to the next event, Looks Good did nothing until you clicked another event and back. The next event's snapshot (the draft `base` every button checks) was taken only after the trip and outside-hands pickers finished their fetches, which can take seconds behind the Home Assistant proxy, and a tap in that window returned silently.
+
+- The snapshot is taken as soon as the form is drawn (everything but the two pickers is synchronous). When the pickers land, an untouched picker's loaded value becomes part of the baseline, since it is the event's own state and not an edit; a picker the person changed meanwhile keeps their choice. The trip picker rebuilds around its current value, not the one it opened with.
+- The event modal takes its baseline the same way, so a quick Save still compares against what was shown.
 
 **Inbox: Save writes only the events you approved (v2.499.245; `dashboard.html` `triageIsIncluded`/`toggleTriageReady`, `#triage-ready-btn`, `tests/test_triage_edit_live.py`).** User: Save stayed disabled until something was changed, so an event whose setup was already right could not be saved; and "I may only look at 5 out of 15 and want to save those", so there has to be an explicit "this one is OK".
 
