@@ -71,6 +71,20 @@
                         onchange="saveLeaveMargin(this)">
                     min
                 </label>
+                <!-- The Inbox: every event still waiting for its setup, across
+                     the whole schedule, answered together in one dialog and
+                     saved with one re-solve. -->
+                <button onclick="openTriageInbox()" id="inbox-btn"
+                    title="Events that need their setup before they can be scheduled"
+                    class="hidden bg-gray-800 hover:bg-gray-700 text-white font-bold h-10 rounded-lg shadow-md border border-gray-700 transition-colors text-sm md:text-base w-full md:w-auto md:px-4 flex items-center justify-center gap-2 whitespace-nowrap">
+                    <svg class="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4">
+                        </path>
+                    </svg>
+                    Inbox
+                    <span id="inbox-count" class="hidden bg-red-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">0</span>
+                </button>
                 <button onclick="forceSync()" id="sync-btn"
                     class="bg-blue-600 hover:bg-blue-500 h-10 rounded-lg font-bold text-white shadow-md transition-colors flex items-center justify-center text-sm md:text-base w-full md:w-auto md:px-6 whitespace-nowrap">
                     <svg id="sync-icon" class="w-5 h-5 mr-1 md:mr-2" fill="none" stroke="currentColor"
@@ -93,20 +107,6 @@
 
         <div id="proposals-banner" class="hidden mb-6"></div>
 
-        <div id="inbox-container" class="hidden mb-6">
-            <h2 class="text-2xl font-bold text-yellow-500 mb-4 flex items-center">
-                <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4">
-                    </path>
-                </svg>
-                Inbox <span id="inbox-count"
-                    class="ml-3 bg-red-600 text-white text-sm font-bold px-2 py-1 rounded-full">0</span>
-            </h2>
-            <div id="inbox-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                <!-- Populated dynamically -->
-            </div>
-        </div>
 
 
 
@@ -327,94 +327,10 @@
                     <h3 class="text-2xl font-bold text-blue-200 mb-6">Configure Event</h3>
                     <input type="hidden" id="edit-event-id">
 
-                    <div class="space-y-4">
-                        <div class="grid grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-gray-400 mb-1 text-sm">Start Time Override</label>
-                                <input type="datetime-local" id="edit-start"
-                                    class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
-                            </div>
-                            <div>
-                                <label class="block text-gray-400 mb-1 text-sm">End Time Override</label>
-                                <input type="datetime-local" id="edit-end"
-                                    class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
-                            </div>
-                        </div>
-
-                        <div class="relative">
-                            <label class="block text-gray-400 mb-1 text-sm">Location Override</label>
-                            <input type="text" id="edit-location" oninput="handleLocationInput()"
-                                placeholder="Type to search Mapbox..."
-                                class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
-                            <div id="autocomplete-dropdown"
-                                class="hidden absolute w-full mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-2xl z-50 max-h-60 overflow-y-auto">
-                            </div>
-                        </div>
-
-                        <div class="mt-4 pt-4 border-t border-gray-700">
-                            <div class="mb-4">
-                                <label class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">Attendance
-                                    Mode</label>
-                                <select id="edit-attendance-mode"
-                                    class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
-                                    <option value="scheduler">Let scheduler decide</option>
-                                    <option value="dropoff_pickup">Drop off and Pick up</option>
-                                    <option value="stay">Stay for entire event</option>
-                                </select>
-                            </div>
-
-                            <div class="mb-4">
-                                <label
-                                    class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">Passengers</label>
-                                <div id="edit-passengers-container"
-                                    class="grid grid-cols-2 gap-3 bg-gray-900 border border-gray-600 rounded-lg p-3">
-                                </div>
-                            </div>
-
-                            <div class="mb-4">
-                                <label class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">Drivers</label>
-                                <div id="edit-drivers-container"
-                                    class="grid grid-cols-2 gap-3 bg-gray-900 border border-gray-600 rounded-lg p-3">
-                                </div>
-                            </div>
-
-                            <!-- Outside hands (load arc A1). The drag-onto-a-column
-                                 gesture only ever worked for a drive that was ALREADY
-                                 covered — the column is drawn from the coverage — so
-                                 the first hand-over had no door at all. This is it;
-                                 the drag stays as the shortcut it was meant to be. -->
-                            <div class="mb-4" id="edit-assist-row">
-                                <label class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">Hand to
-                                    someone outside the house</label>
-                                <select id="edit-assist-contact"
-                                    class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-teal-500">
-                                    <option value="">Nobody — the family drives it</option>
-                                </select>
-                                <p id="edit-assist-hint" class="text-[10px] text-gray-500 mt-1"></p>
-                            </div>
-
-                            <div class="flex flex-col mt-4 bg-gray-900 border border-gray-600 rounded-lg p-3">
-                                <div class="flex items-center mb-3">
-                                    <input type="checkbox" id="edit-is-optional"
-                                        class="w-5 h-5 rounded bg-gray-800 border-gray-600 text-purple-500 focus:ring-purple-500 cursor-pointer">
-                                    <label for="edit-is-optional" class="ml-3 text-gray-300 font-bold cursor-pointer">Optional — dropped first if the day conflicts</label>
-                                </div>
-                                <p class="text-[10px] text-gray-500 -mt-2 mb-3 ml-8">Still scheduled on a free day, but the first thing let go when drives collide. Skipping it is never an alarm.</p>
-                                <div class="flex items-center mb-3">
-                                    <input type="checkbox" id="edit-is-trip"
-                                        class="w-5 h-5 rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500 cursor-pointer">
-                                    <label for="edit-is-trip" class="ml-3 text-gray-300 font-bold cursor-pointer">Mark as pure Background Trip (No destination)</label>
-                                </div>
-                                <div class="flex flex-col">
-                                    <label for="edit-trip-id" class="text-gray-400 mb-1 text-sm font-bold tracking-wider">Associated Trip</label>
-                                    <select id="edit-trip-id" class="bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm focus:border-blue-500">
-                                        <option value="">None</option>
-                                    </select>
-                                    <p class="text-[10px] text-gray-500 mt-1">If this event is part of a background trip, link it here.</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    <!-- The setup form is components/event_config_form.html,
+                         shared with the Inbox dialog; drawn here with the
+                         `edit` prefix, so its ids are the edit-* ids. -->
+                    <div id="edit-form-mount"></div>
 
                     <div class="mt-8 flex justify-between items-center">
                         <button id="ignore-event-btn" onclick="ignoreEvent()"
@@ -441,6 +357,56 @@
 
 
 
+    <!-- THE INBOX DIALOG. Left: every event waiting for setup, by day
+         (the agenda's own containers and rows, components/agenda_row.html).
+         Right: the selected event's setup, the same form the event modal
+         draws (components/event_config_form.html). Answers are staged
+         until Save, which writes them all and asks for ONE re-solve;
+         Cancel and the X throw them away. -->
+    <div id="triage-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-[90] p-2 md:p-4"
+        onclick="if (event.target === this) closeTriageInbox()">
+        <div class="bg-gray-800 rounded-2xl w-full max-w-6xl border border-gray-600 shadow-2xl h-[92vh] md:h-[90vh] flex flex-col overflow-hidden">
+            <div class="flex items-center justify-between px-4 md:px-6 py-4 border-b border-gray-700 shrink-0">
+                <h2 class="text-2xl font-bold text-white flex items-center gap-3">
+                    <svg class="w-6 h-6 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4">
+                        </path>
+                    </svg>
+                    Inbox
+                    <span id="triage-modal-count" class="bg-red-600 text-white text-sm font-bold px-2 py-0.5 rounded-full">0</span>
+                </h2>
+                <button onclick="closeTriageInbox()" class="text-gray-400 hover:text-white p-1" aria-label="Close">
+                    <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="flex-1 min-h-0 flex flex-col md:flex-row">
+                <div id="triage-list"
+                    class="md:w-96 shrink-0 max-h-[35%] md:max-h-none overflow-y-auto p-3 md:p-4 flex flex-col gap-3 border-b md:border-b-0 md:border-r border-gray-700">
+                </div>
+                <div id="triage-detail" class="flex-1 min-h-0 overflow-y-auto p-4 md:p-6">
+                    <div id="triage-detail-head" class="mb-6"></div>
+                    <div id="triage-form-mount"></div>
+                </div>
+            </div>
+
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 px-4 md:px-6 py-4 border-t border-gray-700 shrink-0">
+                <p id="triage-status" class="text-sm text-gray-400"></p>
+                <div class="flex gap-4 justify-end">
+                    <button onclick="closeTriageInbox()"
+                        class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors">Cancel</button>
+                    <button id="triage-save-btn" onclick="saveTriageInbox()"
+                        class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors flex items-center justify-center min-w-[180px] disabled:opacity-50 disabled:cursor-not-allowed">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% include 'components/agenda_row.html' %}
+    {% include 'components/event_config_form.html' %}
     {% include 'components/control_center.html' %}
     <!-- 📸 Moments hearth overlay (kiosk mode only; no card mount on the
          schedule board — the unbidden pop is the point here) -->
@@ -503,6 +469,10 @@
     <script>
         const urlParams = new URLSearchParams(window.location.search);
 
+        // The event modal's edit mode draws the shared setup form
+        // (components/event_config_form.html) under the `edit` prefix.
+        document.getElementById('edit-form-mount').innerHTML = eventConfigFormHtml('edit');
+
         function formatYMD(date) {
             const d = new Date(date);
             const month = '' + (d.getMonth() + 1);
@@ -524,11 +494,9 @@
             // room you are in: the shelf is icons and the wordmark is gone.
             // This predates the one-title-per-page convention (v2.117.0) and
             // had been quietly deleting the schedule's name ever since.
-            if (isKiosk) {
-                const inboxContainer = document.getElementById('inbox-container');
-                if (inboxContainer) inboxContainer.classList.add('hidden');
-            }
             if (!isReadOnly && !isKiosk) {
+                document.getElementById('inbox-btn').classList.remove('hidden');
+                refreshTriageCount();
                 loadProposalsBanner();
                 setInterval(loadProposalsBanner, 120000);
                 loadLeaveMargin();
@@ -1575,209 +1543,26 @@
             document.getElementById('event-modal').classList.remove('hidden');
         }
 
-        function markPaxTimeEdited(selectElem) {
-            selectElem.closest('.pax-times-container').dataset.edited = 'true';
-        }
-
-        function togglePaxTimes(checkbox, paxId) {
-            const container = document.getElementById('pax-times-' + paxId);
-            if (!container) return;
-            if (checkbox.checked || checkbox.disabled) {
-                container.classList.remove('opacity-40', 'pointer-events-none');
-                container.classList.add('opacity-100');
-            } else {
-                container.classList.add('opacity-40', 'pointer-events-none');
-                container.classList.remove('opacity-100');
-            }
-        }
-
-        function generateTimePickerHTML(pId, type, defaultTime24) {
-            let h = '';
-            let m = '';
-            let ampm = 'AM';
-
-            if (defaultTime24) {
-                const parts = defaultTime24.split(':');
-                if (parts.length >= 2) {
-                    let hour24 = parseInt(parts[0], 10);
-                    m = parts[1];
-                    ampm = hour24 >= 12 ? 'PM' : 'AM';
-                    let hour12 = hour24 % 12;
-                    if (hour12 === 0) hour12 = 12;
-                    h = hour12.toString().padStart(2, '0');
-                }
-            }
-
-            const hourOptions = Array.from({ length: 12 }, (_, i) => {
-                const val = (i + 1).toString().padStart(2, '0');
-                return `<option value="${val}" ${val === h ? 'selected' : ''}>${val}</option>`;
-            }).join('');
-
-            const minuteOptions = ['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55'].map(val => {
-                return `<option value="${val}" ${val === m ? 'selected' : ''}>${val}</option>`;
-            }).join('');
-
-            return `
-                <div class="flex items-center space-x-1 pax-times-container" data-pax-time="${type}" data-pax-id="${pId}" data-edited="${defaultTime24 ? 'true' : 'false'}">
-                    <span class="text-[10px] text-gray-500 font-bold uppercase w-10">${type}:</span>
-                    <select class="pax-time-h bg-gray-900 border border-gray-600 rounded text-xs text-white p-0.5 focus:border-blue-500" onchange="markPaxTimeEdited(this)">
-                        <option value="">--</option>
-                        ${hourOptions}
-                    </select>
-                    <span class="text-gray-400 font-bold">:</span>
-                    <select class="pax-time-m bg-gray-900 border border-gray-600 rounded text-xs text-white p-0.5 focus:border-blue-500" onchange="markPaxTimeEdited(this)">
-                        <option value="">--</option>
-                        ${minuteOptions}
-                    </select>
-                    <select class="pax-time-ampm bg-gray-900 border border-gray-600 rounded text-xs text-white p-0.5 focus:border-blue-500" onchange="markPaxTimeEdited(this)">
-                        <option value="AM" ${ampm === 'AM' ? 'selected' : ''}>AM</option>
-                        <option value="PM" ${ampm === 'PM' ? 'selected' : ''}>PM</option>
-                    </select>
-                </div>
-            `;
-        }
-
         function switchToViewMode() {
             document.getElementById('modal-edit-mode').classList.add('hidden');
             document.getElementById('modal-view-mode').classList.remove('hidden');
         }
 
-        async function populateTripDropdown(selectedTripId) {
-            const tripDropdown = document.getElementById('edit-trip-id');
-            if (!tripDropdown) return;
+        // The form as it was first drawn for the event being edited; a save
+        // compares against it (eventConfigPayload) so an untouched time
+        // never rewrites the Google event.
+        let editFormBaseline = null;
 
-            // Keep the current selection visible while we load, so a linked trip
-            // doesn't flicker to "None" mid-fetch.
-            const keepSel = selectedTripId
-                ? `<option value="${selectedTripId}" selected>Loading trips…</option>`
-                : '';
-            tripDropdown.innerHTML = `<option value="">None</option>${keepSel}`;
-
-            try {
-                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-                const res = await fetch(`${apiBase}api/trips`);
-                if (!res.ok) throw new Error(`status ${res.status}`);
-                const data = await res.json();
-                const trips = (data.trips || []).filter(t => !t.is_draft);
-
-                let optionsHtml = '<option value="">None</option>';
-                let matched = false;
-                trips.forEach(t => {
-                    const isSel = selectedTripId === t.id;
-                    if (isSel) matched = true;
-                    const dateLabel = t.start ? ` (${t.start.split('T')[0]})` : '';
-                    optionsHtml += `<option value="${t.id}" ${isSel ? 'selected' : ''}>${t.title}${dateLabel}</option>`;
-                });
-                // A previously-linked trip that no longer appears (e.g. an old
-                // day-slice id from before this fix) — keep it selectable so we
-                // don't silently drop the existing link, but flag it.
-                if (selectedTripId && !matched) {
-                    optionsHtml += `<option value="${selectedTripId}" selected>Currently linked (re-select to fix)</option>`;
-                }
-                tripDropdown.innerHTML = optionsHtml;
-            } catch (e) {
-                console.error('Failed to load trips for link dropdown', e);
-                tripDropdown.innerHTML = `<option value="">None</option>` +
-                    (selectedTripId ? `<option value="${selectedTripId}" selected>Currently linked</option>` : '') +
-                    `<option value="" disabled>⚠️ Could not load trips</option>`;
-            }
-        }
-
-        function switchToEditMode() {
+        async function switchToEditMode() {
             const ev = currentEventsMap[activeEventId];
             if (!ev) return;
-
-            document.getElementById('edit-start').value = toDateTimeLocal(ev.start);
-            document.getElementById('edit-end').value = toDateTimeLocal(ev.end);
-            document.getElementById('edit-location').value = ev.location || '';
-
-            const appConfig = ev.app_config || {};
-
-            document.getElementById('edit-attendance-mode').value = appConfig.driver_attendance_mode || 'scheduler';
-            document.getElementById('edit-is-trip').checked = appConfig.is_trip || false;
-            document.getElementById('edit-is-optional').checked = appConfig.is_optional || false;
-
-            // Populate from the canonical trip list (same source as the Trips page),
-            // NOT currentData.events — those are per-day background_trip SLICES whose
-            // ids are day instances, so linking to one never matches the real trip
-            // (get_trip_api matches event_configs by the base {cal}::{google_id}).
-            populateTripDropdown(appConfig.trip_id);
-            populateAssistDropdown(ev);
-
-            // Passengers
-            const paxContainer = document.getElementById('edit-passengers-container');
-            const passengers = currentData.passengers || [];
-            paxContainer.innerHTML = passengers.map(p => {
-                let isChecked = false;
-                let isDisabled = false;
-
-                const isOnCalendar = ev.original_calendar_ids && p.calendar_ids && ev.original_calendar_ids.some(cid => p.calendar_ids.includes(cid));
-
-                if (isOnCalendar) {
-                    isChecked = true;
-                    isDisabled = true;
-                } else if (appConfig.passenger_ids) {
-                    isChecked = appConfig.passenger_ids.includes(String(p.id));
-                } else if (p.hashtags && p.hashtags.length > 0) {
-                    // Detect hashtags for legacy events
-                    isChecked = p.hashtags.some(tag => {
-                        const t = tag.toLowerCase();
-                        return (ev.title || '').toLowerCase().includes(t) || (ev.description || '').toLowerCase().includes(t);
-                    });
-                }
-
-                const paxTimes = appConfig.passenger_times || {};
-                const myTimes = paxTimes[p.id] || {};
-                const startPickerHTML = generateTimePickerHTML(p.id, 'start', myTimes.start);
-                const endPickerHTML = generateTimePickerHTML(p.id, 'end', myTimes.end);
-
-                return `
-                    <div class="flex flex-col space-y-1 mb-2">
-                        <label class="cursor-pointer inline-flex w-max">
-                            <input type="checkbox" value="${p.id}" class="pax-checkbox peer sr-only" ${isChecked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''} onchange="togglePaxTimes(this, '${p.id}')">
-                            <div class="px-3 py-1.5 rounded-full text-sm font-semibold transition-colors border select-none 
-                                ${isDisabled 
-                                    ? 'bg-blue-900/50 text-blue-300 border-blue-500/30 cursor-not-allowed' 
-                                    : 'bg-gray-800 text-gray-300 border-gray-600 hover:bg-gray-700 peer-checked:bg-blue-600 peer-checked:text-white peer-checked:border-blue-600 peer-checked:hover:bg-blue-500'}">
-                                ${p.name} ${isDisabled ? '<span class="text-[10px] text-blue-400 font-bold ml-1 uppercase">(On Calendar)</span>' : ''}
-                            </div>
-                        </label>
-                        <div id="pax-times-${p.id}" class="flex flex-col space-y-1 ml-6 transition-opacity duration-200 ${isChecked || isDisabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}">
-                            ${startPickerHTML}
-                            ${endPickerHTML}
-                        </div>
-                    </div>
-                `;
-            }).join('');
-
-            // Drivers
-            const drvContainer = document.getElementById('edit-drivers-container');
-            const drivers = currentData.drivers || [];
-
-            drvContainer.innerHTML = drivers.map(d => {
-                let isChecked = false;
-                if (appConfig.driver_ids) {
-                    isChecked = appConfig.driver_ids.includes(String(d.id));
-                } else {
-                    // Fallback to driver events map. The key is redacted away
-                    // (not emptied) for a viewer without schedule.driver_calendars.
-                    const dEvents = (currentData.driver_events || {})[d.id] || [];
-                    isChecked = dEvents.includes(ev.id);
-                }
-
-                return `
-                    <label class="cursor-pointer inline-flex w-max">
-                        <input type="checkbox" value="${d.id}" class="drv-checkbox peer sr-only" ${isChecked ? 'checked' : ''}>
-                        <div class="px-3 py-1.5 rounded-full text-sm font-semibold transition-colors border select-none bg-gray-800 text-gray-300 border-gray-600 hover:bg-gray-700 peer-checked:bg-blue-600 peer-checked:text-white peer-checked:border-blue-600 peer-checked:hover:bg-blue-500">
-                            ${d.name}
-                        </div>
-                    </label>
-                `;
-            }).join('');
-            document.getElementById('autocomplete-dropdown').classList.add('hidden');
+            editFormBaseline = null;
             document.getElementById('modal-view-mode').classList.add('hidden');
             document.getElementById('modal-edit-mode').classList.remove('hidden');
+            await eventConfigFormFill('edit', ev, currentData || {});
+            if (activeEventId === ev.id) editFormBaseline = eventConfigFormRead('edit');
         }
+
         async function dropPassengerFromEvent(eventId, passengerId) {
             const ev = currentEventsMap[eventId];
             if (!ev) return;
@@ -1824,95 +1609,36 @@
                 btn.classList.add('opacity-75', 'cursor-not-allowed');
             }
 
-            // Parse Config
-            const paxCheckboxes = document.querySelectorAll('.pax-checkbox:checked, .pax-checkbox:disabled');
-            const drvCheckboxes = document.querySelectorAll('.drv-checkbox:checked');
-
-            const passengerTimes = {};
-            paxCheckboxes.forEach(cb => {
-                const pId = cb.value;
-                const timesContainer = document.getElementById('pax-times-' + pId);
-                if (!timesContainer) return;
-
-                const timeRows = timesContainer.querySelectorAll('.pax-times-container[data-edited="true"]');
-                if (timeRows.length > 0) {
-                    passengerTimes[pId] = {};
-                    timeRows.forEach(row => {
-                        const type = row.dataset.paxTime;
-                        const h = row.querySelector('.pax-time-h').value;
-                        const m = row.querySelector('.pax-time-m').value;
-                        const ampm = row.querySelector('.pax-time-ampm').value;
-
-                        if (h && m) {
-                            let hour24 = parseInt(h, 10);
-                            if (ampm === 'PM' && hour24 !== 12) hour24 += 12;
-                            if (ampm === 'AM' && hour24 === 12) hour24 = 0;
-                            passengerTimes[pId][type] = hour24.toString().padStart(2, '0') + ':' + m;
-                        }
-                    });
-
-                    // Cleanup if empty
-                    if (Object.keys(passengerTimes[pId]).length === 0) {
-                        delete passengerTimes[pId];
-                    }
-                }
-            });
-
-            const configData = {
-                passenger_ids: Array.from(paxCheckboxes).map(cb => cb.value),
-                passenger_times: passengerTimes,
-                driver_ids: Array.from(drvCheckboxes).map(cb => cb.value),
-                driver_attendance_mode: document.getElementById('edit-attendance-mode').value,
-                is_trip: document.getElementById('edit-is-trip').checked,
-                is_optional: document.getElementById('edit-is-optional').checked,
-                trip_id: document.getElementById('edit-trip-id').value,
-                location_override: document.getElementById('edit-location').value
-            };
-
-            const googleIdParts = ev.source_event_ids[0].split('::');
-            let googleId = googleIdParts[googleIdParts.length - 1];
-            if (ev.recurring_event_id) {
-                const applyToSeries = await promptConfirm("Recurring Event", "This is a recurring event. Do you want to apply this configuration to ALL instances in the series?", "Entire Series", "This Instance");
-                if (applyToSeries) {
-                    googleId = ev.recurring_event_id;
-                }
-            }
+            // The series-or-instance answer is on the form now (its scope
+            // row), beside the answers it governs, rather than a dialog
+            // that interrupted the save. Outside hands are not part of this
+            // save: the modal's picker still saves the moment it changes.
+            const values = eventConfigFormRead('edit');
+            const payload = eventConfigPayload(ev, values, editFormBaseline);
 
             try {
                 if (ev.start) {
                     localSolvingDates.add(ev.start.split('T')[0]);
                     renderSchedule(currentData);
                 }
-                // Save config
-                await fetch(`api/events/config/${googleId}`, {
+                await fetch(`api/events/config/${encodeURIComponent(payload.google_id)}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(configData)
+                    body: JSON.stringify(payload.config)
                 });
 
-                // Save overrides if time changed
-                const startInput = document.getElementById('edit-start').value;
-                const endInput = document.getElementById('edit-end').value;
-                const newStart = toIsoString(startInput);
-                const newEnd = toIsoString(endInput);
-
-                if (newStart !== ev.start || newEnd !== ev.end) {
+                if (payload.details) {
                     await fetch('api/events', {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            source_event_ids: ev.source_event_ids,
-                            start: newStart,
-                            end: newEnd,
-                            location: configData.location_override || ev.location
-                        })
+                        body: JSON.stringify(payload.details)
                     });
                 }
 
                 closeEventModal();
                 if (currentData) {
                     if (!currentData.evaluating) currentData.evaluating = [];
-                    if (ev.recurring_event_id) {
+                    if (ev.recurring_event_id && values.scope === 'series') {
                         const instances = (currentData.events || []).filter(e => e.recurring_event_id === ev.recurring_event_id);
                         instances.forEach(inst => currentData.evaluating.push(inst.id));
                     } else {
@@ -1920,6 +1646,7 @@
                     }
                     renderSchedule(currentData);
                 }
+                refreshTriageCount();
             } catch (e) {
                 showError("Failed to save configuration.");
             } finally {
@@ -1943,15 +1670,19 @@
                 btn.classList.add('opacity-75', 'cursor-not-allowed');
             }
 
-            const googleIdParts = ev.source_event_ids[0].split('::');
-            const googleId = googleIdParts[googleIdParts.length - 1];
+            // Ignore follows the form's scope row like Save does: it used to
+            // write the instance only while hiding the whole series here,
+            // so the rest of the series came back on the next solve.
+            const values = eventConfigFormRead('edit');
+            const scope = values ? values.scope : 'instance';
+            const googleId = eventConfigPayload(ev, values || { scope }, null).google_id;
 
             try {
                 if (ev.start) {
                     localSolvingDates.add(ev.start.split('T')[0]);
                     renderSchedule(currentData);
                 }
-                await fetch(`api/events/config/${googleId}`, {
+                await fetch(`api/events/config/${encodeURIComponent(googleId)}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ is_ignored: true })
@@ -1969,7 +1700,7 @@
                         }
                     };
                     
-                    if (ev.recurring_event_id) {
+                    if (ev.recurring_event_id && scope === 'series') {
                         const instances = (currentData.events || []).filter(e => e.recurring_event_id === ev.recurring_event_id);
                         instances.forEach(inst => removeEvent(inst.id));
                         if (currentData.events) {
@@ -1983,6 +1714,7 @@
                     }
                     renderSchedule(currentData);
                 }
+                refreshTriageCount();
             } catch (e) {
                 showError("Failed to ignore event.");
             } finally {
@@ -1997,73 +1729,6 @@
         function closeEventModal() {
             document.getElementById('event-modal').classList.add('hidden');
             activeEventId = null;
-        }
-
-        let autocompleteTimeout = null;
-        function generateUUID() {
-            if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-                return generateUUID();
-            }
-            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-                var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
-                return v.toString(16);
-            });
-        }
-
-        let currentSessionToken = null;
-        async function handleLocationInput() {
-            const input = document.getElementById('edit-location').value;
-            const dropdown = document.getElementById('autocomplete-dropdown');
-
-            if (input.length < 3) {
-                dropdown.classList.add('hidden');
-                currentSessionToken = null;
-                return;
-            }
-            if (!currentSessionToken) {
-                currentSessionToken = generateUUID();
-            }
-
-            clearTimeout(autocompleteTimeout);
-            autocompleteTimeout = setTimeout(async () => {
-                try {
-                    const res = await fetch(`api/places/autocomplete?input=${encodeURIComponent(input)}&session_token=${currentSessionToken}`);
-                    const data = await res.json();
-
-                    if (data.suggestions && data.suggestions.length > 0) {
-                        dropdown.innerHTML = data.suggestions.map(s => {
-                            const escapedDesc = s.description.replace(/'/g, "\\'");
-                            const mapboxId = s.mapbox_id ? `'${s.mapbox_id}'` : 'null';
-                            return `<div onclick="selectLocation('${escapedDesc}', ${mapboxId})" class="p-3 hover:bg-gray-600 cursor-pointer border-b border-gray-600 last:border-0 text-sm">${s.description}</div>`;
-                        }).join('');
-                        dropdown.classList.remove('hidden');
-                    } else {
-                        dropdown.classList.add('hidden');
-                    }
-                } catch (e) {
-                    console.error("Autocomplete failed", e);
-                }
-            }, 300); // 300ms debounce
-        }
-
-        async function selectLocation(loc, mapboxId = null) {
-            document.getElementById('edit-location').value = loc;
-            document.getElementById('autocomplete-dropdown').classList.add('hidden');
-
-            if (mapboxId && currentSessionToken) {
-                try {
-                    const res = await fetch(`api/places/retrieve?mapbox_id=${mapboxId}&session_token=${currentSessionToken}`);
-                    if (res.ok) {
-                        const data = await res.json();
-                        if (data && data.name) {
-                            document.getElementById('edit-location').value = data.name;
-                        }
-                    }
-                } catch (e) {
-                    console.error("Retrieve failed", e);
-                }
-            }
-            currentSessionToken = null;
         }
 
         async function saveEventDetails() {
@@ -2140,6 +1805,11 @@
         const ASSIST_COVERED_HINT = "A covered drive leaves the solver entirely: no driver is " +
             "scheduled, nobody is chased about it, and the kids' digest says who they are riding " +
             "with. Saved the moment you choose.";
+        // In the Inbox dialog the pick is staged with the rest of the event's
+        // answers and lands on Save, like everything else there.
+        const ASSIST_STAGED_HINT = "A covered drive leaves the solver entirely: no driver is " +
+            "scheduled, nobody is chased about it, and the kids' digest says who they are riding " +
+            "with. Saved with the rest when you press Save.";
         const ASSIST_EMPTY_HINT = "Nobody outside the house is set up yet — add the carpool " +
             "parents in Settings → People → Outside hands.";
 
@@ -2152,7 +1822,7 @@
             const hint = document.getElementById((ids && ids.hint) || 'edit-assist-hint');
             if (!sel) return;
             await loadAssistContacts();
-            const covered = (currentData && currentData.assist_assignments) || {};
+            const covered = (ids && ids.covered) || (currentData && currentData.assist_assignments) || {};
             const current = covered[ev.id] || '';
             const list = assistContactsFor('driving');
             sel.innerHTML = '<option value="">Nobody — the family drives it</option>';
@@ -2172,12 +1842,14 @@
             // feature, and left no way to learn that a prerequisite existed at
             // all — say what is missing and where to go and fix it.
             sel.disabled = !list.length && !current;
-            if (hint) hint.textContent = sel.disabled ? ASSIST_EMPTY_HINT : ASSIST_COVERED_HINT;
+            const staged = !!(ids && ids.staged);
+            if (hint) hint.textContent = sel.disabled ? ASSIST_EMPTY_HINT
+                : (staged ? ASSIST_STAGED_HINT : ASSIST_COVERED_HINT);
             if (row) {
                 row.classList.remove('hidden');
                 row.style.display = '';
             }
-            sel.onchange = () => setAssistCoverage(ev.id, sel.value || null);
+            sel.onchange = staged ? null : () => setAssistCoverage(ev.id, sel.value || null);
         }
 
         // Kiosk and read-only surfaces get no picker — they display, they do not
@@ -2467,7 +2139,13 @@
 
         // Global escape key listener for modal
         document.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape') closeEventModal();
+            if (e.key !== 'Escape') return;
+            // A dialog stacked over the inbox (its unsaved-changes question)
+            // takes Escape for itself.
+            const choice = document.getElementById('cc-choice-modal');
+            if (choice && !choice.classList.contains('hidden')) return;
+            if (triageIsOpen()) { closeTriageInbox(); return; }
+            closeEventModal();
         });
 
         function drag(ev, eventId, sourceDriverId) {
@@ -2650,6 +2328,368 @@
         }
 
 
+        // --- The Inbox dialog -----------------------------------------------
+        // Every event still waiting for its setup, across the whole build
+        // horizon (/api/events/triage), answered in one place. Picking an
+        // event draws its setup on the right with the same form the event
+        // modal uses; answers are STAGED per event and nothing reaches the
+        // server until Save, which sends them all in one batch and asks for
+        // one re-solve. Cancel / X / Escape throw the answers away, asking
+        // first when there are any.
+        let triageRows = [];          // one per event, a series once (earliest)
+        let triageCtx = {};           // passengers/drivers/... for the form
+        let triageSelected = null;    // row key (the event id)
+        let triageDrafts = {};        // key -> { base, values, ignored }
+        let triageFailures = {};      // key -> why the last Save missed it
+        let triageSaving = false;
+        let triageDrawSeq = 0;
+
+        function triageIsOpen() {
+            return !document.getElementById('triage-modal').classList.contains('hidden');
+        }
+
+        // The old inline inbox's rule: a repeating event is set up once, so
+        // the series is one row (its earliest occurrence) with a count.
+        function groupTriageEvents(events) {
+            const rows = [];
+            const bySeries = {};
+            (events || []).forEach(ev => {
+                if (ev.recurring_event_id) {
+                    const row = bySeries[ev.recurring_event_id];
+                    if (row) { row.series_count++; return; }
+                    bySeries[ev.recurring_event_id] = Object.assign({}, ev, { series_count: 1 });
+                    rows.push(bySeries[ev.recurring_event_id]);
+                } else {
+                    rows.push(ev);
+                }
+            });
+            return rows;
+        }
+
+        async function fetchTriage() {
+            const res = await fetch('api/events/triage');
+            if (!res.ok) throw new Error(`status ${res.status}`);
+            return res.json();
+        }
+
+        function setTriageCount(n) {
+            const badge = document.getElementById('inbox-count');
+            if (badge) {
+                badge.textContent = n;
+                badge.classList.toggle('hidden', !n);
+            }
+            const inDialog = document.getElementById('triage-modal-count');
+            if (inDialog) inDialog.textContent = n;
+        }
+
+        async function refreshTriageCount() {
+            if (isKiosk || isReadOnly) return;
+            // The open dialog owns its own list; a solve landing mid-triage
+            // must not reshuffle the rows under the person's hands.
+            if (triageIsOpen()) return;
+            try {
+                const data = await fetchTriage();
+                if (!triageIsOpen()) setTriageCount(groupTriageEvents(data.events).length);
+            } catch (e) {
+                console.error('Inbox count failed', e);
+            }
+        }
+
+        function triageRow(key) {
+            return triageRows.find(r => r.id === key) || null;
+        }
+
+        function triageIsDirty(key) {
+            const d = triageDrafts[key];
+            if (!d || !d.base) return false;
+            return d.ignored || JSON.stringify(d.values) !== JSON.stringify(d.base);
+        }
+
+        function triageDirtyKeys() {
+            return triageRows.map(r => r.id).filter(triageIsDirty);
+        }
+
+        // Fold whatever the form says now into the selected event's draft.
+        function stashTriageForm() {
+            const d = triageSelected && triageDrafts[triageSelected];
+            if (!d || !d.base) return;
+            const v = eventConfigFormRead('triage');
+            if (v) d.values = v;
+        }
+
+        function updateTriageFooter() {
+            const n = triageDirtyKeys().length;
+            const btn = document.getElementById('triage-save-btn');
+            btn.textContent = triageSaving ? 'Saving…' : (n ? `Save ${n} change${n === 1 ? '' : 's'}` : 'Save');
+            btn.disabled = triageSaving || !n;
+            const failed = Object.keys(triageFailures).length;
+            const status = document.getElementById('triage-status');
+            status.className = 'text-sm ' + (failed ? 'text-red-300' : 'text-gray-400');
+            status.textContent = failed
+                ? `${failed} event${failed === 1 ? '' : 's'} could not be saved and ${failed === 1 ? 'is' : 'are'} still here, marked. Everything else was saved.`
+                : (n ? 'Nothing changes on the schedule until you save.' : '');
+        }
+
+        function renderTriageList() {
+            const list = document.getElementById('triage-list');
+            list.innerHTML = '';
+            setTriageCount(triageRows.length);
+            if (!triageRows.length) {
+                list.innerHTML = '<p class="text-xs text-gray-500 italic px-1 py-2">Nothing is waiting for setup.</p>';
+                return;
+            }
+            const todayIso = formatYMD(new Date());
+            const tmr = new Date();
+            tmr.setDate(tmr.getDate() + 1);
+            const tomorrowIso = formatYMD(tmr);
+            let card = null, cardDay = null;
+            triageRows.forEach(ev => {
+                const day = new Date(ev.start);
+                const dayIso = formatYMD(day);
+                if (dayIso !== cardDay) {
+                    // A day is a container of events: the agenda's own panel.
+                    cardDay = dayIso;
+                    const isToday = dayIso === todayIso;
+                    const label = isToday ? 'Today' : (dayIso === tomorrowIso ? 'Tomorrow'
+                        : day.toLocaleDateString('en-US', { weekday: 'long' }));
+                    const month = day.toLocaleDateString('en-US', { month: 'short' });
+                    card = document.createElement('div');
+                    card.className = `agenda-day rounded-2xl p-3 flex flex-col gap-2${isToday ? ' agenda-today' : ''}`;
+                    card.innerHTML = `
+                        <div class="flex items-baseline gap-2 px-1 min-w-0">
+                            <span class="text-2xl font-extrabold text-white">${day.getDate()}</span>
+                            <span class="text-sm font-bold text-gray-300 truncate">${escHtml(label)} · ${escHtml(month)}</span>
+                        </div>`;
+                    list.appendChild(card);
+                }
+                const d = triageDrafts[ev.id];
+                let badges = '';
+                if (ev.series_count > 1) {
+                    badges += `<span class="bg-indigo-900/50 text-indigo-300 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border border-indigo-700/50 shrink-0">Series (${ev.series_count})</span>`;
+                }
+                if (triageFailures[ev.id]) {
+                    badges += '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 shrink-0">Not saved</span>';
+                } else if (d && d.ignored) {
+                    badges += '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 shrink-0">Ignore</span>';
+                } else if (triageIsDirty(ev.id)) {
+                    badges += '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 shrink-0">Edited</span>';
+                }
+                const color = (typeof calMetasFor === 'function')
+                    ? calMetasFor(ev, triageCtx.calendar_metadata)[0].backgroundColor : '#3b82f6';
+                const row = agendaEventRow({
+                    title: ev.title || '(No Title)', start: ev.start, end: ev.end, allDay: false,
+                    extendedProps: { rawColor: color },
+                }, {
+                    tappable: true, canceled: !!(d && d.ignored), extraBadgeHtml: badges,
+                    onClick: () => selectTriageEvent(ev.id),
+                });
+                row.id = 'triage-row-' + ev.id;
+                if (ev.id === triageSelected) row.classList.add('ring-2', 'ring-blue-500');
+                card.appendChild(row);
+            });
+        }
+
+        function renderTriageHead(ev) {
+            const head = document.getElementById('triage-detail-head');
+            const form = document.getElementById('triage-form-mount');
+            if (!ev) {
+                head.innerHTML = '';
+                form.classList.remove('opacity-40', 'pointer-events-none');
+                return;
+            }
+            const d = triageDrafts[ev.id] || {};
+            const when = `${formatDateStr(ev.start)} • ${formatTime(ev.start)} - ${formatTime(ev.end)}`;
+            const series = ev.series_count > 1
+                ? `<span class="bg-indigo-900/50 text-indigo-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded border border-indigo-700/50 shrink-0">Series (${ev.series_count})</span>` : '';
+            const fail = triageFailures[ev.id]
+                ? `<div class="mt-4 bg-red-900/40 border border-red-500/50 text-red-200 rounded-lg p-3 text-sm">${escHtml(triageFailures[ev.id])}</div>` : '';
+            head.innerHTML = `
+                <div class="flex justify-between items-start gap-4">
+                    <div class="min-w-0">
+                        <h3 class="text-2xl font-bold text-white flex items-center gap-2 flex-wrap">
+                            <span class="truncate${d.ignored ? ' line-through opacity-60' : ''}">${escHtml(ev.title || '(No Title)')}</span>${series}
+                        </h3>
+                        <p class="text-sm text-gray-400 mt-1">${escHtml(when)}${ev.location ? ' • ' + escHtml(ev.location) : ''}</p>
+                    </div>
+                    <button id="triage-ignore-btn" onclick="toggleTriageIgnore()"
+                        class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 ${d.ignored ? 'text-white' : 'text-red-400 hover:text-red-300'} font-bold transition-colors flex items-center shrink-0 text-sm">
+                        ${d.ignored ? 'Undo Ignore' : 'Ignore Event'}
+                    </button>
+                </div>
+                ${d.ignored ? '<p class="mt-3 text-sm text-gray-400">This event will be ignored when you save: it leaves the schedule and the inbox.</p>' : ''}
+                ${fail}`;
+            form.classList.toggle('opacity-40', !!d.ignored);
+            form.classList.toggle('pointer-events-none', !!d.ignored);
+        }
+
+        async function selectTriageEvent(key) {
+            if (key === triageSelected) return;
+            stashTriageForm();
+            triageSelected = key;
+            const ev = triageRow(key);
+            renderTriageList();
+            const mount = document.getElementById('triage-form-mount');
+            if (!ev) {
+                mount.innerHTML = '';
+                renderTriageHead(null);
+                return;
+            }
+            const seq = ++triageDrawSeq;
+            if (!triageDrafts[key]) triageDrafts[key] = { base: null, values: null, ignored: false };
+            renderTriageHead(ev);
+            mount.innerHTML = eventConfigFormHtml('triage');
+            await eventConfigFormFill('triage', ev, triageCtx, { staged: true });
+            if (seq !== triageDrawSeq) return;   // another event was picked meanwhile
+            const d = triageDrafts[key];
+            if (!d.base) {
+                d.base = eventConfigFormRead('triage');
+                d.values = d.base;
+            } else {
+                eventConfigFormApply('triage', d.values);
+            }
+            document.getElementById('triage-detail').scrollTop = 0;
+            updateTriageFooter();
+        }
+
+        function onTriageFormChange() {
+            if (!triageSelected) return;
+            const before = triageIsDirty(triageSelected);
+            stashTriageForm();
+            if (triageIsDirty(triageSelected) !== before) renderTriageList();
+            updateTriageFooter();
+        }
+
+        function toggleTriageIgnore() {
+            const d = triageSelected && triageDrafts[triageSelected];
+            if (!d || !d.base) return;
+            stashTriageForm();
+            d.ignored = !d.ignored;
+            renderTriageHead(triageRow(triageSelected));
+            renderTriageList();
+            updateTriageFooter();
+        }
+
+        async function openTriageInbox() {
+            triageRows = [];
+            triageDrafts = {};
+            triageFailures = {};
+            triageSelected = null;
+            triageSaving = false;
+            document.getElementById('triage-list').innerHTML =
+                '<p class="text-xs text-gray-500 italic px-1 py-2">Loading…</p>';
+            document.getElementById('triage-form-mount').innerHTML = '';
+            renderTriageHead(null);
+            updateTriageFooter();
+            document.getElementById('triage-modal').classList.remove('hidden');
+            let data;
+            try {
+                data = await fetchTriage();
+            } catch (e) {
+                document.getElementById('triage-list').innerHTML =
+                    '<p class="text-xs text-gray-500 italic px-1 py-2">Could not load the inbox. Close it and try again.</p>';
+                return;
+            }
+            if (!triageIsOpen()) return;
+            triageCtx = data;
+            triageRows = groupTriageEvents(data.events);
+            renderTriageList();
+            if (!data.built) {
+                document.getElementById('triage-list').innerHTML =
+                    '<p class="text-xs text-gray-500 italic px-1 py-2">The schedule has not been built yet. Sync, then open the inbox again.</p>';
+            }
+            if (triageRows.length) await selectTriageEvent(triageRows[0].id);
+        }
+
+        function _triageBatchItem(ev) {
+            const d = triageDrafts[ev.id];
+            const p = eventConfigPayload(ev, d.values, d.base);
+            if (d.ignored) return { key: ev.id, google_id: p.google_id, config: { is_ignored: true } };
+            return { key: ev.id, google_id: p.google_id, config: p.config,
+                     details: p.details, assist: p.assist };
+        }
+
+        async function saveTriageInbox() {
+            if (triageSaving) return;
+            stashTriageForm();
+            const keys = triageDirtyKeys();
+            if (!keys.length) return;
+            const items = keys.map(k => _triageBatchItem(triageRow(k)));
+            triageSaving = true;
+            updateTriageFooter();
+            let res;
+            try {
+                const r = await fetch('api/events/config/batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ items })
+                });
+                if (!r.ok) throw new Error(`status ${r.status}`);
+                res = await r.json();
+            } catch (e) {
+                triageSaving = false;
+                updateTriageFooter();
+                const status = document.getElementById('triage-status');
+                status.className = 'text-sm text-red-300';
+                status.textContent = 'Nothing was saved: the server did not answer. Your changes are still here; try Save again.';
+                return;
+            }
+            triageSaving = false;
+            const saved = new Set();
+            triageFailures = {};
+            (res.results || []).forEach(r => {
+                if (r.ok) saved.add(r.key);
+                else triageFailures[r.key] = r.error || 'Could not be saved.';
+            });
+            // The saved days show as solving until the one re-solve lands,
+            // exactly as a single save from the event modal does.
+            triageRows.filter(ev => saved.has(ev.id)).forEach(ev => {
+                if (ev.start) localSolvingDates.add(ev.start.split('T')[0]);
+            });
+            if (currentData && saved.size) renderSchedule(currentData);
+
+            if (!Object.keys(triageFailures).length) {
+                await closeTriageInbox(true);
+                return;
+            }
+            // Keep the dialog on what did not land; everything that did leaves.
+            triageRows = triageRows.filter(ev => !saved.has(ev.id));
+            saved.forEach(k => { delete triageDrafts[k]; });
+            const firstFailed = triageRows.find(ev => triageFailures[ev.id]);
+            triageSelected = null;
+            renderTriageList();
+            updateTriageFooter();
+            if (firstFailed) await selectTriageEvent(firstFailed.id);
+        }
+
+        async function closeTriageInbox(force) {
+            if (!triageIsOpen() || triageSaving) return;
+            stashTriageForm();
+            const n = triageDirtyKeys().length;
+            if (!force && n) {
+                const choice = await promptChoice('Unsaved changes',
+                    `You changed ${n} event${n === 1 ? '' : 's'}. Nothing has been saved yet.`,
+                    [{ value: 'save', label: `Save ${n} change${n === 1 ? '' : 's'}` },
+                     { value: 'discard', label: 'Discard changes' }]);
+                if (choice === 'save') { await saveTriageInbox(); return; }
+                if (choice !== 'discard') return;   // keep editing
+            }
+            document.getElementById('triage-modal').classList.add('hidden');
+            // The form leaves the DOM with the dialog: its ids and chips must
+            // not linger beside the event modal's own.
+            document.getElementById('triage-form-mount').innerHTML = '';
+            triageRows = [];
+            triageDrafts = {};
+            triageFailures = {};
+            triageSelected = null;
+            refreshTriageCount();
+        }
+
+        (function wireTriageForm() {
+            const mount = document.getElementById('triage-form-mount');
+            mount.addEventListener('change', onTriageFormChange);
+            mount.addEventListener('input', onTriageFormChange);
+        })();
+
         // Fetch immediately (which will hit the cache instantly)
         async function initDashboard() {
             if (isReadOnly) {
@@ -2676,6 +2716,7 @@
         // Listen for real-time updates from the backend
         let evtSource = null;
         function handleServerUpdate() {
+            refreshTriageCount();
             if (currentStartDate && currentEndDate) {
                 fetchSchedule(true, false, false, true);
             } else {

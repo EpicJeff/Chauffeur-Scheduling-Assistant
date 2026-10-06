@@ -7494,9 +7494,21 @@ def set_assist_coverage(req: AssistCoverageRequest, background_tasks: Background
     """
     if not req.event_id:
         raise HTTPException(status_code=400, detail="event_id is required")
-    event_id, _base_id, leg, ev = _assist_event_context(req.event_id)
+    result = _apply_assist_coverage(req.event_id, req.contact_id, req.scope,
+                                    note=req.note, actor=req.actor)
+    background_tasks.add_task(trigger_background_refresh, None, None, True)
+    return result
+
+
+def _apply_assist_coverage(event_id_in: str, contact_id: Optional[str], scope_in: Optional[str],
+                           note: Optional[str] = "", actor: Optional[str] = None) -> dict:
+    """The write half of /api/assist-coverage, shared with the inbox's batch
+    save so a staged hand-over lands exactly as an immediate one does. The
+    caller owns the re-solve (force_refresh: the events did not change, only
+    who covers them)."""
+    event_id, _base_id, leg, ev = _assist_event_context(event_id_in)
     rec = (ev or {}).get('recurring_event_id')
-    scope = 'series' if (req.scope == 'series' and rec) else 'instance'
+    scope = 'series' if (scope_in == 'series' and rec) else 'instance'
     key = _assist_svc.scoped_key(event_id, rec, scope)
     leg_label = leg.replace('dropoff', 'drop-off') if leg else None
     if scope == 'series':
@@ -7504,20 +7516,19 @@ def set_assist_coverage(req: AssistCoverageRequest, background_tasks: Background
     else:
         span = f"this {leg_label}" if leg_label else 'this one'
 
-    if req.contact_id:
-        contact = storage.get_assist_contact(req.contact_id)
+    if contact_id:
+        contact = storage.get_assist_contact(contact_id)
         if not contact:
             raise HTTPException(status_code=404, detail="Contact not found")
         storage.set_assist_assignment(
-            key, req.contact_id, req.note or "", scope=scope,
+            key, contact_id, note or "", scope=scope,
             # A series row has no single date and must never archive on one.
             event_date=('' if scope == 'series' else str((ev or {}).get('start') or '')[:10]),
-            event_title=(ev or {}).get('title') or '', actor=req.actor)
+            event_title=(ev or {}).get('title') or '', actor=actor)
         msg = f"{contact.get('relation_label') or contact.get('name')} is covering {span}."
     else:
-        _assist_svc.clear_coverage(event_id, rec, actor=req.actor)
+        _assist_svc.clear_coverage(event_id, rec, actor=actor)
         msg = "Back on the family's plate."
-    background_tasks.add_task(trigger_background_refresh, None, None, True)
     return {"status": "success", "message": msg, "scope": scope,
             "event_id": event_id, "leg": leg}
 
@@ -16773,6 +16784,63 @@ def delete_override_by_event(event_id: str, background_tasks: BackgroundTasks, d
     return {"status": "deleted"}
 
 # --- Event Configs API ---
+@app.post("/api/events/config/batch")
+def save_event_configs_batch(body: dict = Body(default={})):
+    """The inbox's one Save: every staged event's setup, then ONE re-solve.
+
+    Each item is {key, google_id, config, details?, assist?} — exactly what
+    the single-event save sends to /api/events/config, /api/events (PATCH)
+    and /api/assist-coverage, so a staged change lands as an immediate one
+    would. Items are independent: one failure never unwinds the others, and
+    the result names every item so the dialog can keep the failures open.
+    The calendar write runs in strict mode here, because the whole point of
+    the batch is to report what did not land."""
+    items = body.get('items') or []
+    results = []
+    any_written = False
+    any_assist = False
+    for it in items:
+        key = it.get('key')
+        google_id = it.get('google_id')
+        if not google_id:
+            results.append({"key": key, "ok": False, "error": "No event id."})
+            continue
+        step = 'setup'
+        try:
+            config = it.get('config')
+            if isinstance(config, dict):
+                storage.set_event_config(google_id, dict(config))
+                any_written = True
+            details = it.get('details')
+            if isinstance(details, dict) and details.get('source_event_ids'):
+                step = 'time'
+                src = details.get('source_event_ids')
+                fields = {k: details[k] for k in ('start', 'end', 'location')
+                          if details.get(k) is not None}
+                calendar.update_event_details(src, fields, strict=True)
+                any_written = True
+            assist = it.get('assist')
+            if isinstance(assist, dict) and assist.get('event_id'):
+                step = 'cover'
+                _apply_assist_coverage(assist['event_id'], assist.get('contact_id') or None,
+                                       assist.get('scope'), actor=body.get('actor'))
+                any_assist = True
+            results.append({"key": key, "ok": True})
+        except Exception as e:
+            logger.error(f"Inbox batch save failed for {google_id} at {step}: {e}", exc_info=True)
+            what = {'setup': "The setup could not be saved.",
+                    'time': "The setup saved, but the new time could not be written to Google Calendar.",
+                    'cover': "The setup saved, but the hand-over could not be saved."}[step]
+            detail = getattr(e, 'detail', None) or str(e)
+            results.append({"key": key, "ok": False, "error": f"{what} ({detail})"})
+    if any_written or any_assist:
+        # force_refresh only when coverage moved: config writes invalidate
+        # their own days, but a hand-over changes no event.
+        trigger_background_refresh(None, None, any_assist)
+    failed = sum(1 for r in results if not r['ok'])
+    return {"results": results, "saved": len(results) - failed, "failed": failed}
+
+
 @app.post("/api/events/config/{google_id}")
 def update_event_config(google_id: str, config_data: dict):
     # Persist before responding: the write is a fast local upsert, and a client
@@ -16787,6 +16855,74 @@ def delete_event_config(google_id: str):
     storage.delete_event_config(google_id)
     trigger_background_refresh()
     return {"status": "deleted"}
+
+
+def _event_config_keys(ev: dict) -> list:
+    """Every event_configs key that would claim this event, in the order the
+    refresh tries them: each source id's bare Google id, then the series."""
+    keys = []
+    for src in ev.get('source_event_ids') or [ev.get('id')]:
+        if not src:
+            continue
+        parts = str(src).split('::')
+        keys.append(parts[-1] if len(parts) > 1 else str(src))
+    if ev.get('recurring_event_id'):
+        keys.append(ev['recurring_event_id'])
+    return keys
+
+
+@app.get("/api/events/triage")
+def list_triage_events(request: Request = None):
+    """Every event still waiting for its setup, across the whole build
+    horizon — not just the days the Schedule page happens to have loaded.
+
+    Read from the full-horizon schedule cache (the refresh with no range is
+    the one that covers `days_to_build`), redacted for the viewer exactly as
+    /api/schedule is. The cache trails a save by one solve, so an event whose
+    config has since been written is dropped here rather than offered again.
+    Events that have already ended are not setup work any more."""
+    _claim = None
+    try:
+        _claim = (getattr(request, 'query_params', {}) or {}).get('viewer')
+    except Exception:
+        _claim = None
+    _viewer_id = _acting_id(request, _claim)
+    _viewer = storage.get_member(_viewer_id) if _viewer_id else None
+    from services import scope as _scope
+    cached = storage.get_cached_schedule() or {}
+    blob = _scope.redact_schedule_blob(cached, _viewer) if cached else {}
+    with storage.db_lock:
+        configured = {c['google_id'] for c in storage.event_configs_table.all() if 'google_id' in c}
+    now_iso = datetime.now().isoformat()
+    seen, events = set(), []
+    for ev in blob.get('events') or []:
+        if not isinstance(ev, dict) or not ev.get('needs_triage'):
+            continue
+        if ev.get('id') in seen:
+            continue
+        if str(ev.get('end') or ev.get('start') or '')[:19] < now_iso[:19]:
+            continue
+        if any(k in configured for k in _event_config_keys(ev)):
+            continue
+        seen.add(ev.get('id'))
+        events.append(ev)
+    events.sort(key=lambda e: str(e.get('start') or ''))
+    out = {
+        "events": events,
+        "passengers": blob.get('passengers') or [],
+        "drivers": _identity_driver_colors(blob.get('drivers')),
+        "calendar_metadata": _apply_identity_colors(blob.get('calendar_metadata') or {}),
+        # Never built yet: say so rather than claim an empty inbox.
+        "built": bool(cached),
+    }
+    # Facet-gated keys stay absent when the viewer does not reach them —
+    # a missing key reads as "not yours to know", never as "nobody".
+    for k in ('driver_events', 'assist_assignments'):
+        if k in blob:
+            out[k] = blob[k]
+    return _json_safe(out)
+
+
 
 @app.post("/api/events/ride_group")
 def ride_group_api(body: dict = Body(default={}), request: Request = None):

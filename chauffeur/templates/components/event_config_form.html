@@ -1,0 +1,509 @@
+{# ── An event's setup form: who rides, who drives, the time and place
+   overrides, outside hands, optional / trip. ONE builder, two hosts:
+
+   - the event modal's edit mode on the Schedule page (prefix `edit`, so its
+     element ids are the `edit-*` ids the page always had), which saves one
+     event at a time;
+   - the Inbox dialog (prefix `triage`), which stages every event's answers
+     and saves them together with one re-solve.
+
+   Same concept, same builder (docs/ui_design_guide.md): before this file
+   the form was hand-drawn once inside the modal, and a second consumer
+   would have meant a second copy drifting from the first.
+
+   The form only draws, fills and reads. Saving is the host's: it turns
+   `eventConfigFormRead(p)` into requests with `eventConfigPayload(...)`,
+   which is the one place that says what a save sends — so a staged inbox
+   save and an immediate modal save cannot disagree about it.
+
+   ctx: { passengers, drivers, driver_events?, assist_assignments? } — the
+   schedule payload's own keys. `driver_events` is facet-gated and may be
+   absent (scope.redact_schedule_blob removes it, never empties it). #}
+<script>
+function _ecfEsc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+// HTML5 datetime-local wants YYYY-MM-DDThh:mm in local time.
+function _ecfToLocal(isoStr) {
+    if (!isoStr) return '';
+    const d = new Date(isoStr);
+    const pad = n => n.toString().padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+// The path to the API from wherever the host page is mounted: nav climbs
+// out once as window.chfBase, and every included component reads that.
+function _ecfBase() {
+    return (typeof window !== 'undefined' && window.chfBase !== undefined) ? window.chfBase : '';
+}
+function _ecfToIso(localStr) {
+    return localStr ? new Date(localStr).toISOString() : null;
+}
+
+function eventConfigFormHtml(p) {
+    const field = 'w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500';
+    const chip = 'px-3 py-1.5 rounded-full text-sm font-semibold transition-colors border select-none bg-gray-800 text-gray-300 border-gray-600 hover:bg-gray-700 peer-checked:bg-blue-600 peer-checked:text-white peer-checked:border-blue-600 peer-checked:hover:bg-blue-500';
+    return `
+    <div id="${p}-form" class="space-y-4" data-ecf-prefix="${p}">
+        <!-- A recurring event answers once for the whole series, or for this
+             one occurrence. Asked here, beside the answers it governs, so a
+             save never has to stop and ask. -->
+        <div id="${p}-scope-row" class="hidden">
+            <label class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">This is a repeating event. Apply to</label>
+            <div class="flex flex-wrap gap-3">
+                <label class="cursor-pointer inline-flex w-max">
+                    <input type="radio" name="${p}-scope" value="series" class="ecf-scope peer sr-only" checked>
+                    <div class="${chip}">Entire series</div>
+                </label>
+                <label class="cursor-pointer inline-flex w-max">
+                    <input type="radio" name="${p}-scope" value="instance" class="ecf-scope peer sr-only">
+                    <div class="${chip}">This instance</div>
+                </label>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+            <div>
+                <label class="block text-gray-400 mb-1 text-sm">Start Time Override</label>
+                <input type="datetime-local" id="${p}-start" class="${field}">
+            </div>
+            <div>
+                <label class="block text-gray-400 mb-1 text-sm">End Time Override</label>
+                <input type="datetime-local" id="${p}-end" class="${field}">
+            </div>
+        </div>
+
+        <div class="relative">
+            <label class="block text-gray-400 mb-1 text-sm">Location Override</label>
+            <input type="text" id="${p}-location" oninput="eventConfigLocationInput('${p}')"
+                placeholder="Type to search Mapbox..." class="${field}">
+            <div id="${p}-autocomplete"
+                class="hidden absolute w-full mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-2xl z-50 max-h-60 overflow-y-auto">
+            </div>
+        </div>
+
+        <div class="mt-4 pt-4 border-t border-gray-700">
+            <div class="mb-4">
+                <label class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">Attendance Mode</label>
+                <select id="${p}-attendance-mode" class="${field}">
+                    <option value="scheduler">Let scheduler decide</option>
+                    <option value="dropoff_pickup">Drop off and Pick up</option>
+                    <option value="stay">Stay for entire event</option>
+                </select>
+            </div>
+
+            <div class="mb-4">
+                <label class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">Passengers</label>
+                <div id="${p}-passengers-container"
+                    class="grid grid-cols-2 gap-3 bg-gray-900 border border-gray-600 rounded-lg p-3">
+                </div>
+            </div>
+
+            <div class="mb-4">
+                <label class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">Drivers</label>
+                <div id="${p}-drivers-container"
+                    class="grid grid-cols-2 gap-3 bg-gray-900 border border-gray-600 rounded-lg p-3">
+                </div>
+            </div>
+
+            <!-- Outside hands (load arc A1). The drag-onto-a-column gesture
+                 only ever worked for a drive that was ALREADY covered — the
+                 column is drawn from the coverage — so the first hand-over had
+                 no door at all. This is it; the drag stays as the shortcut it
+                 was meant to be. -->
+            <div class="mb-4" id="${p}-assist-row">
+                <label class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">Hand to someone outside the house</label>
+                <select id="${p}-assist-contact"
+                    class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-teal-500">
+                    <option value="">Nobody — the family drives it</option>
+                </select>
+                <p id="${p}-assist-hint" class="text-[10px] text-gray-500 mt-1"></p>
+            </div>
+
+            <div class="flex flex-col mt-4 bg-gray-900 border border-gray-600 rounded-lg p-3">
+                <div class="flex items-center mb-3">
+                    <input type="checkbox" id="${p}-is-optional"
+                        class="w-5 h-5 rounded bg-gray-800 border-gray-600 text-purple-500 focus:ring-purple-500 cursor-pointer">
+                    <label for="${p}-is-optional" class="ml-3 text-gray-300 font-bold cursor-pointer">Optional — dropped first if the day conflicts</label>
+                </div>
+                <p class="text-[10px] text-gray-500 -mt-2 mb-3 ml-8">Still scheduled on a free day, but the first thing let go when drives collide. Skipping it is never an alarm.</p>
+                <div class="flex items-center mb-3">
+                    <input type="checkbox" id="${p}-is-trip"
+                        class="w-5 h-5 rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500 cursor-pointer">
+                    <label for="${p}-is-trip" class="ml-3 text-gray-300 font-bold cursor-pointer">Mark as pure Background Trip (No destination)</label>
+                </div>
+                <div class="flex flex-col">
+                    <label for="${p}-trip-id" class="text-gray-400 mb-1 text-sm font-bold tracking-wider">Associated Trip</label>
+                    <select id="${p}-trip-id" class="bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm focus:border-blue-500">
+                        <option value="">None</option>
+                    </select>
+                    <p class="text-[10px] text-gray-500 mt-1">If this event is part of a background trip, link it here.</p>
+                </div>
+            </div>
+        </div>
+    </div>`;
+}
+
+function _ecfTimePickerHtml(pId, type, defaultTime24) {
+    let h = '', m = '', ampm = 'AM';
+    if (defaultTime24) {
+        const parts = defaultTime24.split(':');
+        if (parts.length >= 2) {
+            const hour24 = parseInt(parts[0], 10);
+            m = parts[1];
+            ampm = hour24 >= 12 ? 'PM' : 'AM';
+            let hour12 = hour24 % 12;
+            if (hour12 === 0) hour12 = 12;
+            h = hour12.toString().padStart(2, '0');
+        }
+    }
+    const hourOptions = Array.from({ length: 12 }, (_, i) => {
+        const val = (i + 1).toString().padStart(2, '0');
+        return `<option value="${val}" ${val === h ? 'selected' : ''}>${val}</option>`;
+    }).join('');
+    const minuteOptions = ['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55']
+        .map(val => `<option value="${val}" ${val === m ? 'selected' : ''}>${val}</option>`).join('');
+    const sel = 'bg-gray-900 border border-gray-600 rounded text-xs text-white p-0.5 focus:border-blue-500';
+    return `
+        <div class="flex items-center space-x-1 pax-times-container" data-pax-time="${type}" data-pax-id="${_ecfEsc(pId)}" data-edited="${defaultTime24 ? 'true' : 'false'}">
+            <span class="text-[10px] text-gray-500 font-bold uppercase w-10">${type}:</span>
+            <select class="pax-time-h ${sel}" onchange="eventConfigMarkPaxTime(this)">
+                <option value="">--</option>${hourOptions}
+            </select>
+            <span class="text-gray-400 font-bold">:</span>
+            <select class="pax-time-m ${sel}" onchange="eventConfigMarkPaxTime(this)">
+                <option value="">--</option>${minuteOptions}
+            </select>
+            <select class="pax-time-ampm ${sel}" onchange="eventConfigMarkPaxTime(this)">
+                <option value="AM" ${ampm === 'AM' ? 'selected' : ''}>AM</option>
+                <option value="PM" ${ampm === 'PM' ? 'selected' : ''}>PM</option>
+            </select>
+        </div>`;
+}
+
+function eventConfigMarkPaxTime(selectElem) {
+    selectElem.closest('.pax-times-container').dataset.edited = 'true';
+}
+
+function eventConfigTogglePaxTimes(checkbox) {
+    const box = checkbox.closest('.ecf-pax').querySelector('.ecf-pax-times');
+    if (!box) return;
+    const on = checkbox.checked || checkbox.disabled;
+    box.classList.toggle('opacity-40', !on);
+    box.classList.toggle('pointer-events-none', !on);
+    box.classList.toggle('opacity-100', on);
+}
+
+// The canonical trip list (same source as the Trips page), NOT the schedule's
+// events — those are per-day background_trip SLICES whose ids are day
+// instances, so linking to one never matches the real trip (get_trip_api
+// matches event_configs by the base {cal}::{google_id}).
+async function _ecfPopulateTrips(p, selectedTripId) {
+    const tripDropdown = document.getElementById(p + '-trip-id');
+    if (!tripDropdown) return;
+    // Keep the current selection visible while we load, so a linked trip
+    // doesn't flicker to "None" mid-fetch.
+    const keepSel = selectedTripId
+        ? `<option value="${_ecfEsc(selectedTripId)}" selected>Loading trips…</option>` : '';
+    tripDropdown.innerHTML = `<option value="">None</option>${keepSel}`;
+    try {
+        const res = await fetch(`${_ecfBase()}api/trips`);
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const data = await res.json();
+        const trips = (data.trips || []).filter(t => !t.is_draft);
+        let optionsHtml = '<option value="">None</option>';
+        let matched = false;
+        trips.forEach(t => {
+            const isSel = selectedTripId === t.id;
+            if (isSel) matched = true;
+            const dateLabel = t.start ? ` (${t.start.split('T')[0]})` : '';
+            optionsHtml += `<option value="${_ecfEsc(t.id)}" ${isSel ? 'selected' : ''}>${_ecfEsc(t.title)}${dateLabel}</option>`;
+        });
+        // A previously-linked trip that no longer appears (e.g. an old
+        // day-slice id) stays selectable so the existing link is not
+        // silently dropped, but flagged.
+        if (selectedTripId && !matched) {
+            optionsHtml += `<option value="${_ecfEsc(selectedTripId)}" selected>Currently linked (re-select to fix)</option>`;
+        }
+        tripDropdown.innerHTML = optionsHtml;
+    } catch (e) {
+        console.error('Failed to load trips for link dropdown', e);
+        tripDropdown.innerHTML = `<option value="">None</option>` +
+            (selectedTripId ? `<option value="${_ecfEsc(selectedTripId)}" selected>Currently linked</option>` : '') +
+            `<option value="" disabled>⚠️ Could not load trips</option>`;
+    }
+}
+
+// Which scope a recurring event's saved setup already has: a config stored
+// under the series id answers for the series. A brand-new event (no config)
+// starts on "Entire series" — a new repeating activity is almost always set
+// up once for all of it.
+function _ecfDefaultScope(ev) {
+    if (!ev.recurring_event_id) return 'instance';
+    const cfg = ev.app_config || {};
+    if (cfg.google_id && cfg.google_id !== ev.recurring_event_id) return 'instance';
+    return 'series';
+}
+
+// Draw `ev` into the form. Resolves once the async pickers (trips, outside
+// hands) are filled, so a host that snapshots the form afterwards reads what
+// the person sees.
+async function eventConfigFormFill(p, ev, ctx, opts) {
+    ctx = ctx || {};
+    opts = opts || {};
+    const appConfig = ev.app_config || {};
+
+    const scopeRow = document.getElementById(p + '-scope-row');
+    if (scopeRow) {
+        scopeRow.classList.toggle('hidden', !ev.recurring_event_id);
+        const want = _ecfDefaultScope(ev);
+        document.querySelectorAll(`input[name="${p}-scope"]`).forEach(r => { r.checked = r.value === want; });
+    }
+
+    document.getElementById(p + '-start').value = _ecfToLocal(ev.start);
+    document.getElementById(p + '-end').value = _ecfToLocal(ev.end);
+    document.getElementById(p + '-location').value = ev.location || '';
+    document.getElementById(p + '-attendance-mode').value = appConfig.driver_attendance_mode || 'scheduler';
+    document.getElementById(p + '-is-trip').checked = appConfig.is_trip || false;
+    document.getElementById(p + '-is-optional').checked = appConfig.is_optional || false;
+    document.getElementById(p + '-autocomplete').classList.add('hidden');
+
+    // Passengers
+    const paxContainer = document.getElementById(p + '-passengers-container');
+    paxContainer.innerHTML = (ctx.passengers || []).map(pax => {
+        let isChecked = false;
+        let isDisabled = false;
+        const isOnCalendar = ev.original_calendar_ids && pax.calendar_ids
+            && ev.original_calendar_ids.some(cid => pax.calendar_ids.includes(cid));
+        if (isOnCalendar) {
+            isChecked = true;
+            isDisabled = true;
+        } else if (appConfig.passenger_ids) {
+            isChecked = appConfig.passenger_ids.includes(String(pax.id));
+        } else if (pax.hashtags && pax.hashtags.length > 0) {
+            // Detect hashtags for legacy events
+            isChecked = pax.hashtags.some(tag => {
+                const t = tag.toLowerCase();
+                return (ev.title || '').toLowerCase().includes(t) || (ev.description || '').toLowerCase().includes(t);
+            });
+        }
+        const myTimes = (appConfig.passenger_times || {})[pax.id] || {};
+        return `
+            <div class="ecf-pax flex flex-col space-y-1 mb-2">
+                <label class="cursor-pointer inline-flex w-max">
+                    <input type="checkbox" value="${_ecfEsc(pax.id)}" class="pax-checkbox peer sr-only" ${isChecked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''} onchange="eventConfigTogglePaxTimes(this)">
+                    <div class="px-3 py-1.5 rounded-full text-sm font-semibold transition-colors border select-none
+                        ${isDisabled
+                            ? 'bg-blue-900/50 text-blue-300 border-blue-500/30 cursor-not-allowed'
+                            : 'bg-gray-800 text-gray-300 border-gray-600 hover:bg-gray-700 peer-checked:bg-blue-600 peer-checked:text-white peer-checked:border-blue-600 peer-checked:hover:bg-blue-500'}">
+                        ${_ecfEsc(pax.name)} ${isDisabled ? '<span class="text-[10px] text-blue-400 font-bold ml-1 uppercase">(On Calendar)</span>' : ''}
+                    </div>
+                </label>
+                <div id="${p}-pax-times-${_ecfEsc(pax.id)}" class="ecf-pax-times flex flex-col space-y-1 ml-6 transition-opacity duration-200 ${isChecked || isDisabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}">
+                    ${_ecfTimePickerHtml(pax.id, 'start', myTimes.start)}
+                    ${_ecfTimePickerHtml(pax.id, 'end', myTimes.end)}
+                </div>
+            </div>`;
+    }).join('');
+
+    // Drivers
+    const drvContainer = document.getElementById(p + '-drivers-container');
+    drvContainer.innerHTML = (ctx.drivers || []).map(d => {
+        let isChecked = false;
+        if (appConfig.driver_ids) {
+            isChecked = appConfig.driver_ids.includes(String(d.id));
+        } else {
+            // Fallback to the driver events map. The key is redacted away
+            // (not emptied) for a viewer without schedule.driver_calendars.
+            const dEvents = (ctx.driver_events || {})[d.id] || [];
+            isChecked = dEvents.includes(ev.id);
+        }
+        return `
+            <label class="cursor-pointer inline-flex w-max">
+                <input type="checkbox" value="${_ecfEsc(d.id)}" class="drv-checkbox peer sr-only" ${isChecked ? 'checked' : ''}>
+                <div class="px-3 py-1.5 rounded-full text-sm font-semibold transition-colors border select-none bg-gray-800 text-gray-300 border-gray-600 hover:bg-gray-700 peer-checked:bg-blue-600 peer-checked:text-white peer-checked:border-blue-600 peer-checked:hover:bg-blue-500">
+                    ${_ecfEsc(d.name)}
+                </div>
+            </label>`;
+    }).join('');
+
+    const waits = [_ecfPopulateTrips(p, appConfig.trip_id)];
+    if (typeof window.populateAssistDropdown === 'function') {
+        waits.push(window.populateAssistDropdown(ev, {
+            sel: p + '-assist-contact', row: p + '-assist-row', hint: p + '-assist-hint',
+            staged: !!opts.staged, covered: ctx.assist_assignments,
+        }));
+    }
+    await Promise.all(waits.map(w => Promise.resolve(w).catch(console.error)));
+}
+
+// Everything the form says, as plain values. Two reads of an untouched form
+// are equal, which is how a host tells an edited event from a viewed one.
+function eventConfigFormRead(p) {
+    const root = document.getElementById(p + '-form');
+    if (!root) return null;
+    const pax = root.querySelectorAll('.pax-checkbox:checked, .pax-checkbox:disabled');
+    const drv = root.querySelectorAll('.drv-checkbox:checked');
+    const passengerTimes = {};
+    pax.forEach(cb => {
+        const box = cb.closest('.ecf-pax');
+        const rows = box ? box.querySelectorAll('.pax-times-container[data-edited="true"]') : [];
+        const times = {};
+        rows.forEach(row => {
+            const h = row.querySelector('.pax-time-h').value;
+            const m = row.querySelector('.pax-time-m').value;
+            const ampm = row.querySelector('.pax-time-ampm').value;
+            if (h && m) {
+                let hour24 = parseInt(h, 10);
+                if (ampm === 'PM' && hour24 !== 12) hour24 += 12;
+                if (ampm === 'AM' && hour24 === 12) hour24 = 0;
+                times[row.dataset.paxTime] = hour24.toString().padStart(2, '0') + ':' + m;
+            }
+        });
+        if (Object.keys(times).length) passengerTimes[cb.value] = times;
+    });
+    const scopeRow = document.getElementById(p + '-scope-row');
+    const scopeSel = root.querySelector(`input[name="${p}-scope"]:checked`);
+    const assist = document.getElementById(p + '-assist-contact');
+    return {
+        scope: (scopeRow && !scopeRow.classList.contains('hidden') && scopeSel) ? scopeSel.value : 'instance',
+        start: document.getElementById(p + '-start').value,
+        end: document.getElementById(p + '-end').value,
+        location: document.getElementById(p + '-location').value,
+        attendance_mode: document.getElementById(p + '-attendance-mode').value,
+        passenger_ids: Array.from(pax).map(cb => cb.value),
+        passenger_times: passengerTimes,
+        driver_ids: Array.from(drv).map(cb => cb.value),
+        assist_contact_id: assist ? (assist.value || '') : '',
+        is_optional: document.getElementById(p + '-is-optional').checked,
+        is_trip: document.getElementById(p + '-is-trip').checked,
+        trip_id: document.getElementById(p + '-trip-id').value,
+    };
+}
+
+// Put earlier answers back (the inbox returning to an event it staged).
+// Call after eventConfigFormFill has resolved, so the pickers have options.
+function eventConfigFormApply(p, v) {
+    if (!v) return;
+    const root = document.getElementById(p + '-form');
+    root.querySelectorAll(`input[name="${p}-scope"]`).forEach(r => { r.checked = r.value === v.scope; });
+    document.getElementById(p + '-start').value = v.start;
+    document.getElementById(p + '-end').value = v.end;
+    document.getElementById(p + '-location').value = v.location;
+    document.getElementById(p + '-attendance-mode').value = v.attendance_mode;
+    document.getElementById(p + '-is-optional').checked = !!v.is_optional;
+    document.getElementById(p + '-is-trip').checked = !!v.is_trip;
+    document.getElementById(p + '-trip-id').value = v.trip_id;
+    const assist = document.getElementById(p + '-assist-contact');
+    if (assist && !assist.disabled) assist.value = v.assist_contact_id || '';
+    root.querySelectorAll('.pax-checkbox').forEach(cb => {
+        if (!cb.disabled) cb.checked = v.passenger_ids.includes(cb.value);
+        eventConfigTogglePaxTimes(cb);
+        const times = (v.passenger_times || {})[cb.value] || {};
+        cb.closest('.ecf-pax').querySelectorAll('.pax-times-container').forEach(row => {
+            const t = times[row.dataset.paxTime];
+            if (!t) return;
+            const [hh, mm] = t.split(':');
+            let hour24 = parseInt(hh, 10);
+            let hour12 = hour24 % 12;
+            if (hour12 === 0) hour12 = 12;
+            row.querySelector('.pax-time-h').value = hour12.toString().padStart(2, '0');
+            row.querySelector('.pax-time-m').value = mm;
+            row.querySelector('.pax-time-ampm').value = hour24 >= 12 ? 'PM' : 'AM';
+            row.dataset.edited = 'true';
+        });
+    });
+    root.querySelectorAll('.drv-checkbox').forEach(cb => { cb.checked = v.driver_ids.includes(cb.value); });
+}
+
+// What one event's save sends. `base` is the form as it was first drawn:
+// the Google Calendar write happens only when the time actually moved, and
+// the hand-over only when the picker changed. (Comparing the form to the
+// server's own ISO string never matched — its offset is not toISOString's
+// Z — so every save used to rewrite the Google event.)
+function eventConfigPayload(ev, v, base) {
+    const parts = (ev.source_event_ids && ev.source_event_ids[0] || ev.id).split('::');
+    let googleId = parts[parts.length - 1];
+    if (ev.recurring_event_id && v.scope === 'series') googleId = ev.recurring_event_id;
+    const config = {
+        passenger_ids: v.passenger_ids,
+        passenger_times: v.passenger_times,
+        driver_ids: v.driver_ids,
+        driver_attendance_mode: v.attendance_mode,
+        is_trip: v.is_trip,
+        is_optional: v.is_optional,
+        trip_id: v.trip_id,
+        location_override: v.location,
+    };
+    const timeMoved = base ? (v.start !== base.start || v.end !== base.end)
+        : (_ecfToIso(v.start) !== ev.start || _ecfToIso(v.end) !== ev.end);
+    const details = timeMoved ? {
+        source_event_ids: ev.source_event_ids,
+        start: _ecfToIso(v.start),
+        end: _ecfToIso(v.end),
+        location: v.location || ev.location,
+    } : null;
+    const assist = (base && (v.assist_contact_id || '') !== (base.assist_contact_id || '')) ? {
+        event_id: ev.id, contact_id: v.assist_contact_id || null, scope: v.scope,
+    } : null;
+    return { google_id: googleId, config, details, assist };
+}
+
+// Mapbox place search under the location field, one session token per form.
+const _ecfPlaceSession = {};
+const _ecfPlaceTimer = {};
+function _ecfUUID() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random() * 16 | 0;
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    });
+}
+function eventConfigLocationInput(p) {
+    const input = document.getElementById(p + '-location').value;
+    const dropdown = document.getElementById(p + '-autocomplete');
+    if (input.length < 3) {
+        dropdown.classList.add('hidden');
+        _ecfPlaceSession[p] = null;
+        return;
+    }
+    if (!_ecfPlaceSession[p]) _ecfPlaceSession[p] = _ecfUUID();
+    clearTimeout(_ecfPlaceTimer[p]);
+    _ecfPlaceTimer[p] = setTimeout(async () => {
+        try {
+            const res = await fetch(`${_ecfBase()}api/places/autocomplete?input=${encodeURIComponent(input)}&session_token=${_ecfPlaceSession[p]}`);
+            const data = await res.json();
+            dropdown.innerHTML = '';
+            (data.suggestions || []).forEach(s => {
+                const row = document.createElement('div');
+                row.className = 'p-3 hover:bg-gray-600 cursor-pointer border-b border-gray-600 last:border-0 text-sm';
+                row.textContent = s.description;
+                row.onclick = () => eventConfigSelectLocation(p, s.description, s.mapbox_id || null);
+                dropdown.appendChild(row);
+            });
+            dropdown.classList.toggle('hidden', !(data.suggestions || []).length);
+        } catch (e) {
+            console.error('Autocomplete failed', e);
+        }
+    }, 300);
+}
+async function eventConfigSelectLocation(p, loc, mapboxId) {
+    const input = document.getElementById(p + '-location');
+    input.value = loc;
+    document.getElementById(p + '-autocomplete').classList.add('hidden');
+    const token = _ecfPlaceSession[p];
+    if (mapboxId && token) {
+        try {
+            const res = await fetch(`${_ecfBase()}api/places/retrieve?mapbox_id=${encodeURIComponent(mapboxId)}&session_token=${token}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data && data.name) input.value = data.name;
+            }
+        } catch (e) {
+            console.error('Retrieve failed', e);
+        }
+    }
+    _ecfPlaceSession[p] = null;
+    // A programmatic value change fires no input event; tell the host.
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+</script>

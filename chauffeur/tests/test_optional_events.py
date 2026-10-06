@@ -113,7 +113,12 @@ def scenario_the_hand_path_exists():
                        'templates')
     dash = open(os.path.join(tpl, 'dashboard.html'), encoding='utf-8').read()
     cal = open(os.path.join(tpl, 'calendar.html'), encoding='utf-8').read()
-    check('edit-is-optional' in dash and 'is_optional' in dash,
+    # The modal's setup form is the shared builder (also the Inbox's), drawn
+    # with the `edit` prefix: `${p}-is-optional` becomes edit-is-optional.
+    form = open(os.path.join(tpl, 'components', 'event_config_form.html'),
+                encoding='utf-8').read()
+    check("eventConfigFormHtml('edit')" in dash and '-is-optional' in form
+          and 'is_optional' in form,
           "the dashboard event modal carries the checkbox and saves the flag")
     check('cal-edit-is-optional' in cal and 'is_optional' in cal,
           "so does the calendar's")

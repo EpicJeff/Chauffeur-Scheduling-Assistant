@@ -356,11 +356,17 @@ def get_event_dates(event_id: str):
         print(f"Error fetching event dates for {event_id}: {ex}")
         return None, None
 
-def update_event_details(source_event_ids: list[str], details: dict):
+def update_event_details(source_event_ids: list[str], details: dict, strict: bool = False):
     """
     Updates the details (summary, description, location, start, end) for multiple Google Calendar events.
+
+    strict: raise once at the end if any calendar's copy failed to update,
+    instead of only logging it. The inbox's batch save needs to know which
+    events did not land so it can keep them open; the fire-and-forget PATCH
+    keeps the old log-and-continue behaviour.
     """
     service = get_calendar_service()
+    failures = []
     
     # Map current calendars to their event IDs
     current_cals = {}
@@ -433,6 +439,9 @@ def update_event_details(source_event_ids: list[str], details: dict):
             service.events().update(calendarId=cal_id, eventId=original_id, body=event).execute()
         except Exception as ex:
             print(f"Error updating details for {cal_id}: {ex}")
+            failures.append(str(ex))
+    if strict and failures:
+        raise RuntimeError("; ".join(failures))
 
 def write_event_color(calendar_id: str, event_id: str, color_id: str):
     """
