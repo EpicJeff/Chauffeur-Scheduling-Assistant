@@ -593,12 +593,20 @@
                             </label>
                             <p class="text-gray-500 text-sm mb-4">
                                 Answers practical questions with the page each fact came from.
-                                Gemini searches Google itself, so this needs no extra key and no
-                                extra allowance — it uses the same quota as everything else here.
-                                The fields below are only for routing research through Brave
-                                instead, or for older models that can't search.
+                                By default your main AI model does the searching (Gemini searches
+                                Google itself), so this needs no extra key and no extra allowance.
+                                Research only uses Brave or SerpApi if you pick one here.
                             </p>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label for="webResearchVia" class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Research searches with</label>
+                                    <select id="webResearchVia" x-model="webResearchVia" @change="saveSettings()"
+                                        class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white">
+                                        <option value="model">Main AI model</option>
+                                        <option value="brave">Brave (needs the key below)</option>
+                                        <option value="serpapi">SerpApi (shared allowance)</option>
+                                    </select>
+                                </div>
                                 <div>
                                     <label class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Web Search Key</label>
                                     <input type="password" x-model="webSearchApiKey" @change="saveSettings()"
@@ -2196,6 +2204,7 @@
                 llmProvider: '',
                 llmGeminiApiKey: '',
                 webResearchEnabled: false,
+                webResearchVia: 'model',
                 webSearchApiKey: '',
                 webResearchCap: 40,
                 serpapiReserve: 100,
@@ -2485,6 +2494,7 @@
                     this.llmProvider = data.llm_provider || 'gemini';
                     this.llmGeminiApiKey = data.llm_gemini_api_key || '';
                     this.webResearchEnabled = !!data.web_research_enabled;
+                    this.webResearchVia = data.web_research_via || 'model';
                     this.webSearchApiKey = data.web_search_api_key || '';
                     this.webResearchCap = data.web_research_cap ?? 40;
                     this.serpapiReserve = data.serpapi_reserve ?? 100;
@@ -2592,6 +2602,7 @@
                             llm_provider: this.llmProvider,
                             llm_gemini_api_key: this.llmGeminiApiKey,
                             web_research_enabled: this.webResearchEnabled,
+                            web_research_via: this.webResearchVia,
                             web_search_api_key: this.webSearchApiKey,
                             web_research_cap: Math.max(0, parseInt(this.webResearchCap, 10) || 0),
                             serpapi_reserve: Math.max(0, parseInt(this.serpapiReserve, 10) || 0),

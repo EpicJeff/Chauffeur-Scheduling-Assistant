@@ -468,10 +468,12 @@ ENTRIES: List[dict] = [
     _e('web_research_enabled', 'ai', 'Web research',
        'Lets Argyle look things up on the web and answer with sources. Off '
        'means it never reaches outside the house.'),
+    _e('web_research_via', 'ai', 'Research searches with',
+       'Your main AI model (Gemini searches Google itself) unless you pick '
+       'Brave or SerpApi. Research only ever uses the one chosen.'),
     _e('web_search_api_key', 'ai', 'Web search key',
-       'Optional. Gemini searches Google itself, so most families need '
-       'nothing here — a Brave key is only for routing research elsewhere or '
-       'for model pools without search grounding.'),
+       'Brave Search key, used only when research is set to search with '
+       'Brave.'),
     _e('web_research_cap', 'ai', 'Research questions per month',
        'Hard ceiling on web research runs (default 40).'),
     _e('serpapi_reserve', 'ai', 'SerpApi reserve',

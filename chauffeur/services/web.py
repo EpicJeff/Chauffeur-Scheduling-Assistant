@@ -4,24 +4,27 @@ the house, and therefore the one most able to make things up.
 The whole module is built around a single rule: **a claim carries the page it
 came from, or it does not survive.**
 
-Three routes to an answer, tried in order:
+Three routes to an answer. The household picks ONE (`web_research_via`) and
+research never wanders onto another:
 
-1. **Gemini Search grounding** (the default, and nearly always the one used).
+1. **The main model** (`model`, the default). Gemini Search grounding:
    `tools: [{"google_search": {}}]` lets the model run its own Google queries
    and return an answer annotated with the pages it used. Google does the
    searching, so there is no second API key and no separate allowance — it
    bills against the same Gemini pool everything else here already uses.
    Citations come back as redirect URLs, which are resolved to the real
-   publisher page so a family can click through and check.
-2. **Brave** (`web_search_api_key`) — its own allowance, for households that
-   would rather not route research through Google, or whose model pool has
-   no grounding support.
-3. **SerpApi** — already configured for flights, gift shortlists and Walmart,
-   and capped at 250 requests A MONTH ACROSS ALL OF THEM. Research is the
-   newest and least urgent consumer, so it may only borrow from that pool
-   above a reserve (`serpapi_reserve`); past that line the remaining calls
-   belong to the features that had them first. "Why did my flight lookup stop
-   working" must never have a research question as its unexplained answer.
+   publisher page so a family can click through and check. When it fails
+   the Gemini error is the answer; it does not fall through to a metered
+   search API the household never chose for research.
+2. **Brave** (`brave`, key in `web_search_api_key`) — its own allowance, for
+   households that would rather not route research through Google, or whose
+   model has no grounding support (Ollama).
+3. **SerpApi** (`serpapi`) — already configured for flights, gift shortlists
+   and Walmart, and capped at 250 requests A MONTH ACROSS ALL OF THEM.
+   Research may only borrow from that pool above a reserve
+   (`serpapi_reserve`); past that line the remaining calls belong to the
+   features that had them first. "Why did my flight lookup stop working" must
+   never have a research question as its unexplained answer.
 
 Routes 2 and 3 search, then FETCH the top pages and ask the model what that
 text says — never what it remembers — and any fact citing a page we did not
@@ -286,9 +289,9 @@ def _parse_grounded(data: dict) -> dict:
             'suggestions_html': suggestions}
 
 
-def _gemini_grounded(question: str, api_key: str, model: str = None) -> Optional[dict]:
-    """One grounded call. Returns None when the pool has no model that can do
-    it, so the caller falls through to a search backend."""
+def _gemini_grounded(question: str, api_key: str, model: str = None) -> dict:
+    """One grounded call. On failure returns {'error': why} — the last model's
+    error, or that the pool held no model able to search."""
     import urllib.request
     import urllib.error
     from services import model_pools, llm_budget
@@ -325,7 +328,8 @@ def _gemini_grounded(question: str, api_key: str, model: str = None) -> Optional
             return out
     if last_err:
         logger.info(f"[web] no pool model grounded the search: {last_err}")
-    return None
+        return {'error': last_err}
+    return {'error': 'no Gemini model in the pool can search the web'}
 
 
 def _resolve_url(url: str) -> str:
@@ -367,22 +371,24 @@ EXTRACT_SYSTEM = (
 )
 
 
-def search(query: str, count: int = RESULTS_PER_SEARCH) -> dict:
-    """Raw results, cached. Brave when configured, else SerpApi above its
-    reserve. Never raises — a dead search is a status."""
+def search(query: str, count: int = RESULTS_PER_SEARCH,
+           via: str = 'brave') -> dict:
+    """Raw results from the named backend (`brave` or `serpapi`), cached.
+    SerpApi only above its reserve. Never raises — a dead search is a
+    status."""
     settings = storage.get_settings() or {}
-    ck = f"s|{query.strip().lower()}|{count}"
+    ck = f"s|{via}|{query.strip().lower()}|{count}"
     cached = _cache_get(ck)
     if cached is not None:
         return {'status': 'ok', 'results': cached, 'cached': True}
 
-    if _brave_key():
+    if via == 'brave' and _brave_key():
         try:
             rows = _brave_search(query, count)
         except Exception as e:
             logger.warning(f"[web] brave search failed: {e}")
             return {'status': 'error', 'message': str(e)}
-    elif _serpapi_key():
+    elif via == 'serpapi' and _serpapi_key():
         head = _serp_headroom(settings)
         if head <= 0:
             return {'status': 'reserved',
@@ -426,29 +432,39 @@ def research(question: str, read_pages: int = PAGES_READ) -> dict:
         return {'status': 'capped',
                 'message': f"That's {cap} research questions this month."}
 
-    # Route 1: let Google do the searching. No second key, no separate
+    via = settings.get('web_research_via') or 'model'
+
+    # Route 1: the main model does the searching. No second key, no separate
     # allowance, and the citations arrive with the answer.
-    if (settings.get('llm_provider') or 'gemini') == 'gemini':
+    if via == 'model':
+        if (settings.get('llm_provider') or 'gemini') != 'gemini':
+            return {'status': 'error',
+                    'message': "The local model can't search the web. Pick "
+                               "Brave or SerpApi for research in Config."}
         try:
-            grounded = _gemini_grounded(question, api_key)
+            grounded = _gemini_grounded(question, api_key) or {}
         except Exception as e:
             logger.warning(f"[web] grounding failed: {e}")
-            grounded = None
-        if grounded and grounded.get('answer'):
-            _month_count(bump=True)
-            sources = _resolve_sources(grounded.get('sources') or [])
-            out = {'status': 'ok', 'answer': grounded['answer'],
-                   'facts': [{'claim': grounded['answer'], 'url': s['url']}
-                             for s in sources[:1]],
-                   'dropped': 0, 'sources': sources, 'via': 'grounding',
-                   'suggestions_html': grounded.get('suggestions_html') or ''}
-            _cache_put(ck, out)
-            return out
+            grounded = {'error': str(e)}
+        if not grounded.get('answer'):
+            return {'status': 'error',
+                    'message': "Gemini couldn't search the web: "
+                               f"{grounded.get('error') or 'no answer came back'}"}
+        _month_count(bump=True)
+        sources = _resolve_sources(grounded.get('sources') or [])
+        out = {'status': 'ok', 'answer': grounded['answer'],
+               'facts': [{'claim': grounded['answer'], 'url': s['url']}
+                         for s in sources[:1]],
+               'dropped': 0, 'sources': sources, 'via': 'grounding',
+               'suggestions_html': grounded.get('suggestions_html') or ''}
+        _cache_put(ck, out)
+        return out
 
-    # Routes 2 and 3: search a backend ourselves, read the pages, extract.
-    if not (_brave_key() or _serpapi_key()):
+    # Routes 2 and 3: search the chosen backend ourselves, read the pages,
+    # extract.
+    if not (_brave_key() if via == 'brave' else _serpapi_key()):
         return {'status': 'no_key'}
-    found = search(question)
+    found = search(question, via=via)
     if found['status'] != 'ok':
         return found
     results = found['results']

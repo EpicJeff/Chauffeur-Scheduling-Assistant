@@ -18,13 +18,14 @@ def _reset():
     storage.set_app_state('web_search_cache', {})
     storage.set_app_state('serpapi_usage', {})
     storage.set_app_state('web_research_calls', {})
+    # Most scenarios here exercise the search-and-read route, so the shared
+    # settings choose it; the grounding scenarios choose the default instead.
     storage.get_settings = lambda: {'llm_gemini_api_key': 'k',
-                                    'web_research_enabled': True}
+                                    'web_research_enabled': True,
+                                    'web_research_via': 'serpapi'}
     web._serpapi_key = lambda: 'serp-key'
     web._brave_key = lambda: ''
-    # Grounding is the primary path, so every non-grounding scenario has to
-    # switch it off explicitly or it would never reach the fallback.
-    web._gemini_grounded = lambda q, key, model=None: None
+    web._gemini_grounded = lambda q, key, model=None: {'error': 'not stubbed'}
     web._resolve_url = lambda u: u
 
 
@@ -81,6 +82,8 @@ GROUNDED_ANNOTATED = {
 
 def scenario_grounding_is_preferred_and_costs_no_extra_key():
     _reset()
+    storage.get_settings = lambda: {'llm_gemini_api_key': 'k',
+                                    'web_research_enabled': True}
     web._serpapi_key = lambda: 'serp-key'
     web._brave_key = lambda: 'brave-key'
     hits = []
@@ -111,21 +114,45 @@ def scenario_both_grounding_response_shapes_are_read():
           f"newer url_citation annotations, got {annotated['sources']}")
 
 
-def scenario_grounding_failure_falls_back_to_search():
+def scenario_grounding_failure_says_why_and_never_borrows_a_search_api():
+    """The main model is the household's choice for research. When it
+    fails, the Gemini error is the answer — research does not quietly spend a
+    SerpApi or Brave allowance nobody chose for it, and the failure is not
+    reported as some other API's error."""
     _reset()
+    storage.get_settings = lambda: {'llm_gemini_api_key': 'k',
+                                    'web_research_enabled': True}
     web._brave_key = lambda: 'brave-key'
+    web._serpapi_key = lambda: 'serp-key'
+    web._brave_search = _fake_serp(RESULTS)
+    web._serp_search = _fake_serp(RESULTS)
 
     def boom(q, key, model=None):
         raise RuntimeError('grounding unavailable on this model')
     web._gemini_grounded = boom
-    web._brave_search = _fake_serp(RESULTS)
-    web._fetch = _fake_fetch({'https://justinguitar.com/g1': 'Grade 1 text.',
-                              'https://blog.example/guitar': 'Blog.'})
-    web._pool_call = _fake_llm({'answer': 'From pages.', 'facts': [
-        {'claim': 'x', 'url': 'https://justinguitar.com/g1'}]})
     res = web.research('anything')
-    check(res['status'] == 'ok' and res['answer'] == 'From pages.',
-          f"an old model without grounding still researches, got {res}")
+    check(res['status'] == 'error'
+          and 'grounding unavailable' in (res.get('message') or ''),
+          f"the Gemini failure is what is reported, got {res}")
+    check(not CALLS['search'], "and no search API was touched")
+
+    web._gemini_grounded = lambda q, key, model=None: {'error': '429 quota'}
+    res = web.research('something else')
+    check('Gemini' in res.get('message', '') and '429' in res['message'],
+          f"a returned error reads the same way, got {res}")
+    check(not CALLS['search'], "still no search API")
+
+
+def scenario_a_local_model_says_it_cannot_search():
+    _reset()
+    storage.get_settings = lambda: {'llm_gemini_api_key': 'k',
+                                    'llm_provider': 'ollama',
+                                    'web_research_enabled': True}
+    web._serp_search = _fake_serp(RESULTS)
+    res = web.research('anything')
+    check(res['status'] == 'error' and 'Brave' in (res.get('message') or ''),
+          f"it says how to give research a search route, got {res}")
+    check(not CALLS['search'], "and does not pick one itself")
 
 
 def scenario_redirect_citations_resolve_to_the_real_page():
@@ -215,6 +242,7 @@ def scenario_monthly_cap_stops_research():
     _reset()
     storage.get_settings = lambda: {'llm_gemini_api_key': 'k',
                                     'web_research_enabled': True,
+                                    'web_research_via': 'serpapi',
                                     'web_research_cap': 2}
     web._serp_search = _fake_serp(RESULTS)
     web._fetch = _fake_fetch({'https://justinguitar.com/g1': 'x',
@@ -232,6 +260,7 @@ def scenario_serpapi_reserve_protects_flights_and_gifts():
     _reset()
     storage.get_settings = lambda: {'llm_gemini_api_key': 'k',
                                     'web_research_enabled': True,
+                                    'web_research_via': 'serpapi',
                                     'serpapi_monthly_limit': 250,
                                     'serpapi_reserve': 100}
     web._brave_key = lambda: ''            # no dedicated backend configured
@@ -254,8 +283,11 @@ def scenario_serpapi_reserve_protects_flights_and_gifts():
           f"and it says why, got {r.get('message')}")
 
 
-def scenario_a_dedicated_backend_is_preferred_over_the_shared_one():
+def scenario_choosing_brave_never_touches_the_shared_allowance():
     _reset()
+    storage.get_settings = lambda: {'llm_gemini_api_key': 'k',
+                                    'web_research_enabled': True,
+                                    'web_research_via': 'brave'}
     web._brave_key = lambda: 'brave-key'
     brave_hits = []
 
@@ -293,7 +325,8 @@ def scenario_only_http_urls_are_fetched():
 if __name__ == '__main__':
     scenario_grounding_is_preferred_and_costs_no_extra_key()
     scenario_both_grounding_response_shapes_are_read()
-    scenario_grounding_failure_falls_back_to_search()
+    scenario_grounding_failure_says_why_and_never_borrows_a_search_api()
+    scenario_a_local_model_says_it_cannot_search()
     scenario_redirect_citations_resolve_to_the_real_page()
     scenario_html_becomes_readable_text()
     scenario_disabled_and_keyless_degrade_quietly()
@@ -302,7 +335,7 @@ if __name__ == '__main__':
     scenario_search_is_cached_so_a_repeat_costs_nothing()
     scenario_monthly_cap_stops_research()
     scenario_serpapi_reserve_protects_flights_and_gifts()
-    scenario_a_dedicated_backend_is_preferred_over_the_shared_one()
+    scenario_choosing_brave_never_touches_the_shared_allowance()
     scenario_nothing_found_is_an_honest_answer()
     scenario_only_http_urls_are_fetched()
     print("test_web_research OK")

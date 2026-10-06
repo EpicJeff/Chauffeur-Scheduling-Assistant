@@ -1216,6 +1216,9 @@ class Settings(BaseModel):
     # Web research (services/web.py). Off by default: this is the only thing
     # in the app that reaches outside the house.
     web_research_enabled: Optional[bool] = False
+    # Which route research takes: 'model' (Gemini's own Google search, the
+    # default), 'brave' or 'serpapi'. Never more than the one chosen.
+    web_research_via: Optional[str] = 'model'
     web_search_api_key: Optional[str] = ''
     web_research_cap: Optional[int] = 40
     # SerpApi is 250/month shared with flights, gifts and Walmart. Research
