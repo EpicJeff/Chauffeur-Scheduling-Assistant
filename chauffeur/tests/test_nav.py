@@ -105,8 +105,11 @@ def scenario_all_three_renderers_loop_the_list():
                   "the shelf no longer resolves its slugs against NAV_ITEMS — "
                   "hardcoded copy?")
         else:
-            check('{% for item in NAV_ITEMS %}' in section,
-                  f"the {what} does not loop NAV_ITEMS — hardcoded copy?")
+            # The bar and the menu loop the ADMIN order (v2.499.247) but
+            # still resolve every slug against NAV_ITEMS, so an entry is
+            # still one line in one list.
+            check('{% for slug in _bar_order %}{% for item in NAV_ITEMS if item.slug == slug %}' in section,
+                  f"the {what} does not resolve its order against NAV_ITEMS — hardcoded copy?")
 
 
 def scenario_the_shelf_arrives_in_its_final_order():
@@ -160,7 +163,7 @@ def scenario_the_home_board_is_in_the_nav():
         check(slug in slugs, f"'{slug}' is missing from NAV_ITEMS")
 
 
-ADMIN_ONLY_SLUGS = ('intake', 'mind', 'study', 'threads', 'programs',
+ADMIN_ONLY_SLUGS = ('intake', 'mind', 'threads', 'programs',
                     'work', 'rhythms')
 
 
@@ -231,17 +234,88 @@ def scenario_mind_stays_off_shared_screens():
           "the kiosk no longer hides mind")
 
 
-def scenario_study_stays_off_shared_screens():
-    """The Study draws the Mind's own lane as a room: the evidence board pins
-    insight lines and thread titles, and its state endpoint is the same
-    parent/adult gate. A room is a friendlier frame, not a weaker one — same
-    discipline as intake, mind, threads and programs: nav link for the
-    browser, hidden on every kiosk unless a card opts back in."""
-    check('study' in ADMIN_ONLY_SLUGS,
-          "study dropped out of the admin-only exception list")
-    kiosk = BODY[BODY.index('if (isKiosk) {'):]
-    check("'study'" in kiosk or 'data-slug="study"' in kiosk,
-          "the kiosk no longer hides study")
+def _admin_nav():
+    m = re.search(r"\{% set ADMIN_NAV = \[(.*?)\] %\}", BODY, re.S)
+    check(m, "ADMIN_NAV is gone from nav.html")
+    return re.findall(r"'([a-z_]+)'", m.group(1))
+
+
+def scenario_the_admin_bar_is_not_the_shelf():
+    """v2.499.247: the browser bar had grown to seventeen entries because it
+    and the wall shelf were one list. The bar now shows ADMIN_NAV; the shelf
+    and kiosk filters still resolve against the full NAV_ITEMS vocabulary, so
+    a page the family taps on the wall (Routines) survives leaving the bar."""
+    slugs = {it['slug'] for it in _items()}
+    admin = _admin_nav()
+    for slug in admin:
+        check(slug in slugs, f"ADMIN_NAV names '{slug}', which NAV_ITEMS does not define")
+    check('routines' not in admin, "Routines is back in the admin bar — it lives under Rhythms")
+    check('routines' in slugs, "Routines left NAV_ITEMS, so the wall shelf lost it")
+    check('study' not in slugs, "the retired Study is back in the nav")
+    check("_qp.get('kiosk') == 'true'" in BODY and "_qp.get('tabs') is not none" in BODY,
+          "a kiosk or ?tabs= embed no longer gets the full vocabulary")
+
+
+def scenario_the_retired_study_lands_on_the_house():
+    """Old /study bookmarks redirect to the House, where the room lives now."""
+    import main
+    import inspect
+    src = inspect.getsource(main.study_page)
+    check('RedirectResponse' in src and '"house"' in src,
+          "/study no longer redirects to the House")
+    check(not os.path.exists(os.path.join(os.path.dirname(NAV), 'study.html')),
+          "study.html is back")
+
+
+def _page_groups():
+    block = BODY[BODY.index('{% set PAGE_GROUPS'):BODY.index('{% set _tab =')]
+    tabs = []
+    for chunk in re.findall(r"\{'key':(.*?)\}", block):
+        entry = {}
+        for key in ('key', 'label', 'href', 'path', 'tab', 'also'):
+            m = re.search(r"'%s': '([^']+)'" % key, "{'key':" + chunk)
+            if m:
+                entry[key] = m.group(1)
+        tabs.append(entry)
+    return tabs
+
+
+def scenario_every_page_tab_is_served_and_drawn():
+    """A tab is a destination: its page must exist, and a tab that switches
+    in place must have a block on that page to show — otherwise the strip
+    hides everything and the page goes blank."""
+    import main
+    routes = {r.path.strip('/') for r in main.app.routes if hasattr(r, 'path')}
+    tabs = _page_groups()
+    check(len(tabs) >= 12, f"only parsed {len(tabs)} page tabs — the list moved?")
+    tpl = os.path.dirname(NAV)
+    for t in tabs:
+        page = t['href'].split('?')[0]
+        check(page in routes, f"tab {t['key']} links to '{page}', which nothing serves")
+        if t.get('tab'):
+            src = open(os.path.join(tpl, page + '.html'), encoding='utf-8').read()
+            check(f'data-page-tab="{t["tab"]}"' in src,
+                  f"{page}.html has no block for its '{t['tab']}' tab")
+
+
+def scenario_the_tab_param_stays_on_its_page():
+    """nav.html copies the page's query string onto every link (kiosk, panel,
+    theme). `tab` names a view of THIS page, so carrying it would open the
+    next page on a tab it does not have — or overwrite the one a tab link
+    names, which made every tab of the strip point at the current one."""
+    i = BODY.index('for (const [key, value] of urlParams.entries())')
+    check("if (key === 'tab') continue;" in BODY[i:i + 400],
+          "the link rewriter carries ?tab= onto other pages")
+
+
+def scenario_folded_pages_live_in_a_group():
+    """Every page that left the admin bar must still be reachable from it,
+    through the group that took it in."""
+    admin = set(_admin_nav())
+    grouped = {t['key'] for t in _page_groups()}
+    for slug in ('calendar', 'moments', 'occasions', 'chores', 'intake'):
+        check(slug in admin or slug in grouped,
+              f"'{slug}' left the admin bar and no page group took it in")
 
 
 def scenario_threads_stays_off_shared_screens():

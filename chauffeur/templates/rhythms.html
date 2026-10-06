@@ -21,13 +21,15 @@
     <!-- The recurring shapes of family life on one page: routines (the daily
          checklists) and programs (the goal plans). A presentation-only merge —
          each column is the SAME component its standalone page serves, two
-         independent Alpine islands; /routines and /programs keep working. -->
+         independent Alpine islands; /routines and /programs keep working.
+         One at a time (v2.499.247): each section is a tab of the Rhythms
+         group (nav.html PAGE_GROUPS), with Chores beside them. -->
     <div class="flex-1 overflow-y-auto bg-gray-900/50">
-        <div class="grid grid-cols-1 xl:grid-cols-2 gap-2 max-w-[90rem] mx-auto">
-            <section id="routines" class="min-w-0">
+        <div class="max-w-6xl mx-auto">
+            <section id="routines" data-page-tab="routines" class="min-w-0">
                 {% include 'components/routines_page.html' %}
             </section>
-            <section id="programs" class="min-w-0">
+            <section id="programs" data-page-tab="programs" class="min-w-0">
                 {% include 'components/programs_page.html' %}
             </section>
         </div>

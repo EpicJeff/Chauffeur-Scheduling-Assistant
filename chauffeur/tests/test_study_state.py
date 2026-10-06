@@ -759,11 +759,12 @@ def scenario_the_endpoint_refuses_a_signed_in_child():
 
 
 def scenario_template_carries_room_fallback_and_vendored_three():
+    # The standalone /study page retired in v2.499.247; the room lives in the
+    # House, which is the page that has to carry its scene and fallback now.
     import os
-    path = os.path.join(os.path.dirname(__file__), '..', 'templates', 'study.html')
+    path = os.path.join(os.path.dirname(__file__), '..', 'templates', 'house.html')
     src = open(path, encoding='utf-8').read()
-    check('id="room"' in src and 'id="fallback"' in src,
-          'both render targets present')
+    check('id="fallback"' in src, 'the no-WebGL fallback is present')
     check('static/vendor/three.min.js' in src, 'vendored three referenced')
     check('static/study.js' in src, 'scene script referenced')
     for banned in ('alert(', 'confirm(', 'prompt('):

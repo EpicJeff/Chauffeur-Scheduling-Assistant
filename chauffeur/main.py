@@ -1737,7 +1737,11 @@ def missions_page(request: Request):
 
 @app.get("/study")
 def study_page(request: Request):
-    return templates.TemplateResponse(request=request, name="study.html")
+    """The standalone Study retired (v2.499.247): the room lives in the House
+    now, which is the panel's version of the same admin glance. Old bookmarks
+    land on the House rather than a 404."""
+    q = request.url.query
+    return RedirectResponse(url="house" + (f"?{q}" if q else ""))
 
 @app.get("/kitchen")
 def kitchen_page(request: Request):

@@ -53,8 +53,6 @@
      'paths': ['M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15']},
     {'slug': 'intake', 'href': 'intake', 'label': 'Intake', 'short': 'Intake', 'match': '/intake',
      'paths': ['M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z']},
-    {'slug': 'study', 'href': 'study', 'label': 'The Study', 'short': 'Study', 'match': '/study',
-     'paths': ['M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25']},
     {'slug': 'work', 'href': 'work', 'label': 'Work', 'short': 'Work', 'match': '/work',
      'paths': ['M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4']},
     {'slug': 'rhythms', 'href': 'rhythms', 'label': 'Rhythms', 'short': 'Rhythms', 'match': '/rhythms',
@@ -69,7 +67,74 @@
     {'slug': 'music', 'href': 'music', 'label': 'Music', 'short': 'Music', 'match': '/music',
      'paths': ['M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3']}
 ] %}
+{#
+  THE ADMIN BAR IS NOT THE SHELF.
+
+  NAV_ITEMS is the vocabulary of destinations: the wall shelf and the kiosk
+  `?tabs=` filter resolve their slugs against it, so a page the family taps on
+  the wall (Routines, Chores, Lists) has to stay in it. The desktop bar and the
+  mobile menu are a different audience — an adult at a browser — and they had
+  grown to seventeen entries because both surfaces were drawn from one list.
+  ADMIN_NAV is the order and selection the browser shows; anything left out of
+  it is still a destination, reached from the page group it now lives in.
+
+  A kiosk (`?kiosk=true`) or a filtered embed (`?tabs=...`) keeps the whole
+  vocabulary: an HA card configured as `tabs=calendar,lists` names slugs that
+  the grouped bar no longer shows, and must keep finding them.
+#}
+{% set ADMIN_NAV = ['home', 'schedule', 'errands', 'meals', 'lists', 'rhythms', 'work',
+                    'trips', 'map', 'music'] %}
+{% set _qp = request.query_params %}
+{% set _full_nav = _qp.get('kiosk') == 'true' or _qp.get('tabs') is not none %}
+{% set _bar_order = NAV_ITEMS|map(attribute='slug')|list if _full_nav else ADMIN_NAV %}
 {% set _path = request.url.path %}
+{#
+  PAGE GROUPS: one nav entry, several pages behind a tab strip.
+
+  Each tab is a destination in its own right: `path` is the page that serves
+  it (a substring, for the same ingress reason as `match`), `tab` the in-page
+  view when one page carries several, and `also` an older standalone URL that
+  draws the same view (/mind is the Mind tab of /work). A tab whose page IS
+  the current page switches in place — the strip hides every other
+  `[data-page-tab]` block and says so with a `chf-page-tab` event — and any
+  other tab is an ordinary link. A page joins a group by being named here; it
+  writes no tab markup of its own.
+
+  The strip is a browser affordance: a kiosk, a filtered embed or a panel
+  keeps its own navigation and sees every block, as before.
+#}
+{% set PAGE_GROUPS = {
+    'schedule': [
+        {'key': 'drives', 'label': 'Drives', 'href': 'dashboard_v2', 'path': 'dashboard_v2'},
+        {'key': 'calendar', 'label': 'Calendar', 'href': 'calendar', 'path': '/calendar'},
+        {'key': 'moments', 'label': 'Moments', 'href': 'moments', 'path': '/moments'},
+        {'key': 'occasions', 'label': 'Occasions', 'href': 'occasions', 'path': '/occasions'}],
+    'errands': [
+        {'key': 'errands', 'label': 'Errands', 'href': 'errands?tab=errands', 'path': '/errands', 'tab': 'errands'},
+        {'key': 'tasks', 'label': 'Tasks', 'href': 'errands?tab=tasks', 'path': '/errands', 'tab': 'tasks'}],
+    'rhythms': [
+        {'key': 'chores', 'label': 'Chores', 'href': 'chores', 'path': '/chores'},
+        {'key': 'routines', 'label': 'Routines', 'href': 'rhythms?tab=routines', 'path': '/rhythms', 'tab': 'routines', 'also': '/routines'},
+        {'key': 'programs', 'label': 'Programs', 'href': 'rhythms?tab=programs', 'path': '/rhythms', 'tab': 'programs', 'also': '/programs'}],
+    'work': [
+        {'key': 'intake', 'label': 'Intake', 'href': 'intake', 'path': '/intake'},
+        {'key': 'mind', 'label': 'Mind', 'href': 'work?tab=mind', 'path': '/work', 'tab': 'mind', 'also': '/mind'},
+        {'key': 'threads', 'label': 'Threads', 'href': 'work?tab=threads', 'path': '/work', 'tab': 'threads', 'also': '/threads'},
+        {'key': 'missions', 'label': 'Missions', 'href': 'work?tab=missions', 'path': '/work', 'tab': 'missions', 'also': '/missions'}],
+} %}
+{% set _tab = _qp.get('tab') %}
+{% set _pg = namespace(group=none, active=none, first=none) %}
+{% for gslug, tabs in PAGE_GROUPS.items() %}
+  {% for t in tabs %}
+    {% if t.path in _path or (t.also and t.also in _path) %}
+      {% set _pg.group = gslug %}
+      {% if _pg.first is none %}{% set _pg.first = t %}{% endif %}
+      {% if _tab and t.tab == _tab %}{% set _pg.active = t %}{% endif %}
+    {% endif %}
+  {% endfor %}
+{% endfor %}
+{% set _active_tab = _pg.active or _pg.first %}
+{% set _show_tabs = _pg.group and not _full_nav and _qp.get('panel') != 'true' %}
 {#
   How far to climb before a relative link means anything.
 
@@ -106,9 +171,9 @@
                 </div>
                 <div class="hidden md:block">
                     <div class="ml-10 flex items-baseline space-x-4">
-                        {% for item in NAV_ITEMS %}
-                        <a href="{{ _up }}{{ item.href }}" data-slug="{{ item.slug }}"
-                            class="{% if item.match in _path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
+                        {% for slug in _bar_order %}{% for item in NAV_ITEMS if item.slug == slug %}
+                        <a href="{{ _up }}{{ PAGE_GROUPS[item.slug][0].href if (item.slug in PAGE_GROUPS and not _full_nav) else item.href }}" data-slug="{{ item.slug }}"
+                            class="{% if item.match in _path or (_pg.group == item.slug and not _full_nav) %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 {% for d in item.paths %}
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{{ d }}"></path>
@@ -116,7 +181,7 @@
                             </svg>
                             {{ item.label }}
                         </a>
-                        {% endfor %}
+                        {% endfor %}{% endfor %}
                     </div>
                 </div>
             </div>
@@ -178,12 +243,83 @@
         </div>
     </div>
 
+    {% if _show_tabs %}
+    {# The page group's tab strip. Same pill vocabulary as Settings' section
+       tabs (config.html, `activeTab`), laid out as a row: blue for where you
+       are, gray for where you could go. A count chip rides a tab only when a
+       page reports one (window.chfSetPageTabCount). #}
+    <div id="page-tabs" class="border-t border-gray-800" data-group="{{ _pg.group }}">
+        <div class="px-4 sm:px-6 lg:px-8 flex items-center gap-1 h-11 overflow-x-auto" style="scrollbar-width: none">
+            {% for t in PAGE_GROUPS[_pg.group] %}
+            {% set _here = t.key == _active_tab.key %}
+            <a href="{{ _up }}{{ t.href }}" data-tab-key="{{ t.key }}"
+                {% if t.tab and t.path in _path %}data-inpage-tab="{{ t.tab }}"{% endif %}
+                class="page-tab {% if _here %}bg-blue-600 text-white{% else %}text-gray-400 hover:bg-gray-700 hover:text-white{% endif %} whitespace-nowrap px-3 py-1.5 rounded-lg text-sm font-bold transition-colors flex items-center gap-1.5">
+                {{ t.label }}
+                <span class="page-tab-count hidden text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300"></span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% if _active_tab.tab and _active_tab.path in _path %}
+    <style id="page-tab-style">html:not([data-panel]) [data-page-tab]:not([data-page-tab="{{ _active_tab.tab }}"]) { display: none !important; }</style>
+    {% endif %}
+    <script>
+    (function () {
+        const strip = document.getElementById('page-tabs');
+        const ACTIVE = ['bg-blue-600', 'text-white'];
+        const IDLE = ['text-gray-400', 'hover:bg-gray-700', 'hover:text-white'];
+        function mark(key) {
+            strip.querySelectorAll('.page-tab').forEach(a => {
+                const on = a.dataset.tabKey === key;
+                ACTIVE.forEach(c => a.classList.toggle(c, on));
+                IDLE.forEach(c => a.classList.toggle(c, !on));
+            });
+        }
+        // In-place switch for the views this page carries. The URL keeps the
+        // tab (replaceState, not a new history entry per click) so a reload or
+        // a shared link opens where you were.
+        strip.addEventListener('click', ev => {
+            const a = ev.target.closest('a[data-inpage-tab]');
+            if (!a || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button) return;
+            ev.preventDefault();
+            const tab = a.dataset.inpageTab;
+            let style = document.getElementById('page-tab-style');
+            if (!style) {
+                style = document.createElement('style');
+                style.id = 'page-tab-style';
+                document.head.appendChild(style);
+            }
+            style.textContent = 'html:not([data-panel]) [data-page-tab]:not([data-page-tab="' + tab + '"]) { display: none !important; }';
+            mark(a.dataset.tabKey);
+            try {
+                const url = new URL(window.location.href);
+                url.searchParams.set('tab', tab);
+                history.replaceState(history.state, '', url.pathname + url.search + url.hash);
+            } catch (e) { }
+            window.dispatchEvent(new CustomEvent('chf-page-tab', { detail: tab }));
+        });
+        window.chfPageTab = function () {
+            const on = strip.querySelector('.page-tab.bg-blue-600');
+            return on ? on.dataset.tabKey : null;
+        };
+        window.chfSetPageTabCount = function (key, count) {
+            const a = strip.querySelector('[data-tab-key="' + key + '"] .page-tab-count');
+            if (!a) return;
+            const n = Math.max(0, parseInt(count, 10) || 0);
+            a.textContent = n;
+            a.classList.toggle('hidden', !n);
+        };
+    })();
+    </script>
+    {% endif %}
+
     <!-- Mobile menu, show/hide based on menu state. -->
     <div class="md:hidden hidden absolute top-16 left-0 w-full bg-gray-900 border-b border-gray-800 shadow-2xl z-[70]" id="mobile-menu">
         <div class="px-2 pt-2 pb-3 space-y-1 sm:px-3 flex flex-col">
-            {% for item in NAV_ITEMS %}
-            <a href="{{ _up }}{{ item.href }}" data-slug="{{ item.slug }}"
-                class="{% if item.match in _path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
+            {% for slug in _bar_order %}{% for item in NAV_ITEMS if item.slug == slug %}
+            <a href="{{ _up }}{{ PAGE_GROUPS[item.slug][0].href if (item.slug in PAGE_GROUPS and not _full_nav) else item.href }}" data-slug="{{ item.slug }}"
+                class="{% if item.match in _path or (_pg.group == item.slug and not _full_nav) %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     {% for d in item.paths %}
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{{ d }}"></path>
@@ -191,7 +327,7 @@
                 </svg>
                 {{ item.label }}
             </a>
-            {% endfor %}
+            {% endfor %}{% endfor %}
             <a href="{{ _up }}config" id="mobile-settings-nav-item"
                 class="{% if 'config' in _path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -467,6 +603,10 @@
             if (link.href && !link.href.includes('javascript:') && raw.charAt(0) !== '#') {
                 const url = new URL(link.href, window.location.origin);
                 for (const [key, value] of urlParams.entries()) {
+                    // `tab` names a view of THIS page; carried onto another
+                    // link it would open that page on a tab it may not have,
+                    // or overwrite the tab the link itself names.
+                    if (key === 'tab') continue;
                     url.searchParams.set(key, value);
                 }
                 // `+ url.hash`, now that fragment links are no longer skipped:
@@ -486,20 +626,19 @@
                 });
 
             // Intake (mail approvals, IMAP settings), Mind (dial settings,
-            // the full sensitive insight lane, graduation), the Study (the
-            // same lane and the rest of the household's admin state, drawn
-            // as a room), Threads (vendor/project correspondence —
+            // the full sensitive insight lane, graduation), Threads
+            // (vendor/project correspondence —
             // counterparty emails, and the odd employment-screening thread)
             // and Programs (proposing and approving a family member's
             // program) are admin surfaces — hide each on kiosk displays
             // unless a card explicitly opts back in via ?tabs=...,intake /
-            // ?tabs=...,mind / ?tabs=...,study / ?tabs=...,threads /
+            // ?tabs=...,mind / ?tabs=...,threads /
             // ?tabs=...,programs. Mind especially: its whole reason to exist
             // is keeping sensitive insights off shared screens, so the page
             // that administers that must itself stay off one.
             const kioskTabs = (urlParams.get('tabs') || '').toLowerCase()
                 .split(',').map(s => s.trim());
-            ['intake', 'mind', 'study', 'threads', 'programs', 'work', 'rhythms'].forEach(slug => {
+            ['intake', 'mind', 'threads', 'programs', 'work', 'rhythms'].forEach(slug => {
                 if (!kioskTabs.includes(slug)) {
                     document.querySelectorAll(`[data-slug="${slug}"]`)
                         .forEach(a => { a.style.display = 'none'; });

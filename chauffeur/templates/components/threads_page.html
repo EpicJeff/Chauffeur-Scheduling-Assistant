@@ -2,7 +2,8 @@
    the standalone /threads wrapper AND by the combined /work page —
    chrome (nav, control_center, hearth) belongs to the HOST page,
    never here. #}
-        <div x-data="threadsPage()" x-init="load()" class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
+        <div x-data="threadsPage()" x-init="load()"
+            x-effect="window.chfSetPageTabCount && window.chfSetPageTabCount('threads', stalledList.length)" class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
 
             <h2 class="panel-page-title">Threads</h2>
             <p class="text-sm text-gray-500 mb-5">

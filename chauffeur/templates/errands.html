@@ -45,10 +45,13 @@
         </header>
 
         <!-- Household tasks (load arc A2 — the keystone).
-             Deliberately on THIS page and above the errands: the distinction
+             Deliberately on THIS page beside the errands: the distinction
              between "do something" and "go somewhere" is the whole point of
-             the object, and it is only learnable if you can see both. -->
-        <div class="px-8 pb-2">
+             the object, and it is learnable because the header above names
+             both. Since v2.499.247 they are two tabs of one page rather than
+             two stacked blocks (nav.html PAGE_GROUPS); a panel still sees
+             both. -->
+        <div data-page-tab="tasks" class="px-8 pb-2 min-h-0 overflow-y-auto">
             <div class="bg-gray-800/60 rounded-xl border border-gray-700/50 p-4">
                 <div class="flex items-center justify-between mb-3">
                     <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-widest">The household list</h3>
@@ -77,6 +80,7 @@
             </div>
         </div>
 
+        <div data-page-tab="errands" class="flex-1 flex flex-col min-h-0">
         <!-- Input Area -->
         <div class="px-8 pb-6">
             <div class="relative bg-gray-800 rounded-xl shadow-sm border border-gray-700/50 flex flex-col focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent transition-all">
@@ -119,6 +123,7 @@
              difference between them. -->
         <div class="flex-1 overflow-y-auto px-8 pb-8">
             {{ errand_lists.errand_list(interactive='true', edit='openEditModal') }}
+        </div>
         </div>
     </div>
 

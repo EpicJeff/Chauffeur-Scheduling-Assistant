@@ -22,16 +22,18 @@
          hold the loops. Each column is the SAME component its standalone page
          serves (three independent Alpine islands) — /mind, /missions and
          /threads keep working for old links and kiosk opt-ins; this page is
-         just the desk they share. -->
+         just the desk they share. One organ at a time (v2.499.247): each
+         section is a tab of the Work group (nav.html PAGE_GROUPS), with
+         Intake beside them. -->
     <div class="flex-1 overflow-y-auto bg-gray-900/50">
-        <div class="grid grid-cols-1 xl:grid-cols-3 gap-2 max-w-[120rem] mx-auto">
-            <section id="mind" class="min-w-0">
+        <div class="max-w-6xl mx-auto">
+            <section id="mind" data-page-tab="mind" class="min-w-0">
                 {% include 'components/mind_page.html' %}
             </section>
-            <section id="missions" class="min-w-0">
+            <section id="missions" data-page-tab="missions" class="min-w-0">
                 {% include 'components/missions_page.html' %}
             </section>
-            <section id="threads" class="min-w-0">
+            <section id="threads" data-page-tab="threads" class="min-w-0">
                 {% include 'components/threads_page.html' %}
             </section>
         </div>

@@ -11,6 +11,7 @@
     <script>window.chfHasLessonDoneListener = true;</script>
         <div x-data="programsPage()" x-init="load()"
              @lesson-player:done.window="onLessonDone($event.detail)"
+             x-effect="window.chfSetPageTabCount && window.chfSetPageTabCount('programs', programs.filter(p => p.state === 'proposed' && canAct(p)).length)"
              class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
 
             <h2 class="panel-page-title">Programs</h2>
