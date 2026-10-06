@@ -233,7 +233,12 @@ def scenario_the_reason_is_reachable_by_hand_and_by_agent():
     by talking to Argyle is a rule they cannot correct."""
     import os
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    cfg = open(os.path.join(here, 'templates', 'config.html'), encoding='utf-8').read()
+    # The rule editor moved to Drive setup (v2.499.253): the form is the
+    # drive_rules component, the save/edit/reset code is the page's own.
+    cfg = ''.join(open(os.path.join(here, 'templates', *rel), encoding='utf-8').read()
+                  for rel in (('drive_setup.html',), ('components', 'drive_rules.html')))
+    check("{% include 'components/drive_rules.html' %}" in cfg,
+          "Drive setup draws the rule editor")
     check('newRule.buffer_reason' in cfg, "the rule editor has the field")
     check(cfg.count('buffer_reason') >= 3,
           "and it survives a save and an edit, not just the form")

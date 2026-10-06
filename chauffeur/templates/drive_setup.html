@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drive setup</title>
+    <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
+    {% include 'ha_theme.html' %}
+    <script defer src="{{ 'static/vendor/alpine-collapse.min.js'|ver }}"></script>
+    <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
+    <style>
+        [x-cloak] { display: none !important; }
+        body { background-color: #111827; color: #e2e8f0; font-family: 'Inter', sans-serif; }
+    </style>
+    <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
+</head>
+
+{# Everything that decides how drives get assigned, in one parent place
+   (v2.499.253). It used to be spread across Config: the Rules & Priorities
+   tab, the solver switches and the planning horizons on General, routing and
+   traffic policy beside the Mapbox quotas, and the parents' tomorrow digest.
+   A tab of the Schedule group (nav.html PAGE_GROUPS), beside the Drives list
+   these settings shape.
+
+   The markup is Config's, moved rather than redrawn: the same cards, inputs
+   and wording. The page saves ONLY its own keys — POST /api/settings merges —
+   so it can never clobber a setting it does not show, and Config no longer
+   sends any of these.
+
+   The Alpine root sits on <body>, as on Config, because these controls came
+   from there and the sign-in gate (admin_gate) nests inside it the same way. #}
+<body class="bg-gray-900 text-white h-screen flex flex-col overflow-hidden" x-data="driveSetup()" x-init="init()">
+{% include 'components/admin_gate.html' %}
+    {% include 'nav.html' %}
+
+    <div class="flex-1 overflow-y-auto bg-gray-900/50">
+    <div class="panel-page max-w-5xl mx-auto p-6 lg:p-10 w-full" x-cloak>
+
+        <header class="mb-6">
+            <h2 class="panel-page-title">Drive setup</h2>
+            <p class="text-gray-400 text-sm">How the solver hands out drives: the rules you have written,
+                how far ahead it plans, how it balances the load, how it prices a drive, and the
+                evening look at tomorrow. Parents only.</p>
+        </header>
+
+        {# The section switcher: Config's own Rules sub-tab row (config.html,
+           `rulesSubTab`), one row up. Sections are x-show, so every anchor
+           is in the DOM and openAnchor() can find the section it lives in. #}
+        <div class="flex space-x-4 mb-6 border-b border-gray-700 pb-2 overflow-x-auto" id="drive-sections">
+            <template x-for="s in sections" :key="s.key">
+                <button @click="setSection(s.key)" :data-section-tab="s.key"
+                    :class="section === s.key ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-200'"
+                    class="pb-2 font-bold px-4 text-xl whitespace-nowrap" x-text="s.label"></button>
+            </template>
+        </div>
+
+        <!-- Rules: routing and priority rules (moved from Config → Rules &
+             Priorities). Errand rules went to the Errands page. -->
+        <section id="rules" data-drive-section="rules" x-show="section === 'rules'" class="space-y-10">
+                    <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700">
+                        <div class="flex items-center justify-between mb-6">
+                            <h2 class="text-3xl font-bold text-indigo-300">Scheduling Rules & Priorities</h2>
+                            <div class="flex gap-4">
+                                <button @click="analyzeHabits()" :disabled="!!analyzingHabits"
+                                    class="bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800 disabled:opacity-50 text-white font-bold px-6 py-2 rounded-lg transition-colors flex items-center shadow-lg">
+                                    <svg x-show="!analyzingHabits" class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                                    </svg>
+                                    <svg x-show="analyzingHabits" class="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    <span x-text="analyzingHabits ? 'Analyzing Overrides...' : 'Analyze My Habits'"></span>
+                                </button>
+                                <button @click="showDebugLogs = !showDebugLogs" x-show="debugLogs.length > 0" x-cloak
+                                    class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-4 py-2 rounded-lg transition-colors flex items-center shadow-lg">
+                                    <svg class="w-5 h-5 mr-2 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M4 18h16a2 2 0 002-2V6a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                                    </svg>
+                                    Logs
+                                </button>
+                                <button @click="startNewRule()"
+                                    class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-2 rounded-lg transition-colors flex items-center shadow-lg">
+                                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M12 4v16m8-8H4"></path>
+                                    </svg>
+                                    New Rule
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Debug Panel -->
+                        <div x-show="showDebugLogs" x-transition.opacity x-cloak class="fixed bottom-4 right-4 z-[60] w-[calc(100%-2rem)] max-w-[640px] max-h-[80vh] md:max-h-[960px] bg-gray-900 border border-gray-700 rounded-lg shadow-2xl flex flex-col">
+                            <div class="flex justify-between items-center bg-gray-800 px-4 py-2 border-b border-gray-700 shrink-0 rounded-t-lg">
+                                <h3 class="text-gray-300 font-bold text-sm flex items-center gap-2">
+                                    <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M4 18h16a2 2 0 002-2V6a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                                    Analysis Progress
+                                </h3>
+                                <button @click="showDebugLogs = false" class="text-gray-500 hover:text-gray-300">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                </button>
+                            </div>
+                            <div class="p-4 overflow-y-auto font-mono text-xs md:text-sm text-green-400 flex-1" id="drive-debug-output">
+                                <template x-for="log in debugLogs">
+                                    <div x-text="log"></div>
+                                </template>
+                            </div>
+                        </div>
+                    <p class="text-sm text-gray-500 -mt-2 mb-6">
+                        Routing rules say who drives what; priority rules say which events matter most when
+                        not everything can be covered. Rules for errands live with the errands, on
+                        <a href="config" class="text-blue-400 hover:text-blue-300 font-semibold" data-errand-rules-link>Config → Rules &amp; Priorities</a>.
+                    </p>
+
+                    <div class="flex space-x-4 mb-6 border-b border-gray-700 pb-2">
+                        <button @click="rulesSubTab = 'routing'" :class="rulesSubTab === 'routing' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-200'" class="pb-2 font-bold px-4 text-xl">Routing Rules</button>
+                        <button @click="rulesSubTab = 'priority'" :class="rulesSubTab === 'priority' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-200'" class="pb-2 font-bold px-4 text-xl">Priority Rules</button>
+                    </div>
+
+{% include 'components/drive_rules.html' %}
+                </div>
+        </section>
+
+        <!-- Solver & horizons: how far ahead, how the load is spread, how a
+             drive is priced, and the parents' evening digest. Each block was
+             a piece of Config's General tab; each saves only its own keys. -->
+        <section id="solver" data-drive-section="solver" x-show="section === 'solver'"
+            class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+            <h2 class="text-3xl font-bold mb-2 text-indigo-300">Solver &amp; horizons</h2>
+            <p class="text-gray-400 text-sm mb-2">What the solver looks at, how it decides, and what the
+                parents hear about it the evening before.</p>
+
+            <!-- How far ahead (Config → General, "Days to Display" / "Days
+                 to Solve"). Days to solve had no hand path at all until
+                 2026-08-07; showing more than is solved just shows
+                 unassigned days. -->
+            <div id="horizons" class="mt-6 pt-6 border-t border-gray-700">
+                <div class="flex items-center justify-between mb-4">
+                    <h4 class="font-bold text-white">How far ahead</h4>
+                    <span class="text-xs text-emerald-400 font-bold" x-show="saved === 'horizons'" x-transition.opacity>Saved ✓</span>
+                </div>
+                <div class="mb-6">
+                    <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider" for="daysToShow">Days to
+                        Display on Kiosk Dashboard</label>
+                    <div class="flex items-center space-x-4">
+                        <input type="number" min="1" max="14" id="daysToShow" x-model="daysToShow" @change="saveHorizons()"
+                            class="bg-gray-800 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 font-mono w-24">
+                        <span class="text-gray-400 text-sm">Number of days into the future to display on the Kiosk
+                            Mode Dashboard (1-14)</span>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider" for="daysToBuild">Days to
+                        Solve</label>
+                    <div class="flex items-center space-x-4">
+                        <input type="number" min="1" max="30" id="daysToBuild" x-model="daysToBuild" @change="saveHorizons()"
+                            class="bg-gray-800 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 font-mono w-24">
+                        <span class="text-gray-400 text-sm">How far ahead the solver actually assigns drivers.
+                            Displaying more days than this shows them unassigned.</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Solver behaviour (Config → General → Solver Behavior). -->
+            <div id="solver-behavior" class="mt-6 pt-6 border-t border-gray-700">
+                <div class="flex items-center justify-between mb-4">
+                    <h4 class="font-bold text-white">Solver Behavior</h4>
+                    <span class="text-xs text-emerald-400 font-bold" x-show="saved === 'solver'" x-transition.opacity>Saved ✓</span>
+                </div>
+                <div class="flex flex-col sm:flex-row sm:items-center gap-4 mb-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                    <div class="flex items-center space-x-3 shrink-0">
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="loadBalancingEnabled" x-model="loadBalancingEnabled" @change="saveSolver()"
+                                class="sr-only peer">
+                            <div
+                                class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                            </div>
+                        </label>
+                        <span class="font-bold text-gray-300">Balance Driving Load</span>
+                    </div>
+                    <div x-show="loadBalancingEnabled" class="flex items-center gap-2 shrink-0">
+                        <label class="text-sm text-gray-400 font-semibold" for="loadBalancingMetric">Balance by</label>
+                        <select id="loadBalancingMetric" x-model="loadBalancingMetric" @change="saveSolver()"
+                            class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                            <option value="events">Total Events Driven</option>
+                            <option value="driving_time">Total Driving Time</option>
+                            <option value="occupied_time">Total Occupied Time</option>
+                        </select>
+                    </div>
+                    <p class="text-sm text-gray-500">
+                        When on, the solver spreads events across all drivers using the chosen measure of load.
+                        When off, it fills the highest-priority drivers first. Attendee assignments,
+                        manual overrides, and shared-passenger chains still take precedence.
+                        <span x-show="loadBalancingEnabled && loadBalancingMetric === 'driving_time'">
+                            Driving time is estimated as the round trip from each driver's home to the event.
+                        </span>
+                    </p>
+                </div>
+                <div class="flex flex-col sm:flex-row sm:items-center gap-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                    <div class="flex items-center space-x-3 shrink-0">
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="suggestedRoutesEnabled" x-model="suggestedRoutesEnabled" @change="saveSolver()"
+                                class="sr-only peer">
+                            <div
+                                class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                            </div>
+                        </label>
+                        <span class="font-bold text-gray-300">Suggested Driver Routes</span>
+                    </div>
+                    <p class="text-sm text-gray-500">
+                        When on, events no real driver can take get a suggested "extra driver" route
+                        (ghost columns on the dashboard). When off, those events just stay in the
+                        unassigned triage bucket.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Routing & traffic policy (v2.166.0; Config → General). Facts
+                 about the household, not quota knobs — which is why they
+                 moved here and the Mapbox tier limits stayed on Config. -->
+            <div id="traffic" class="mt-6 pt-6 border-t border-gray-700">
+                <div class="flex items-center justify-between mb-4">
+                    <h4 class="font-bold text-white">Routing &amp; Traffic</h4>
+                    <span class="text-xs text-emerald-400 font-bold" x-show="saved === 'traffic'" x-transition.opacity>Saved ✓</span>
+                </div>
+                <p x-show="disableMapbox" class="text-sm text-amber-300 mb-4">
+                    Mapbox is switched off in
+                    <a href="config" class="text-blue-400 hover:text-blue-300 font-semibold">Config → General</a>,
+                    so drives are priced by the free routing servers and these two do nothing until it is
+                    back on.</p>
+                <div class="p-5 bg-gray-900/50 rounded-xl border border-gray-700">
+                    <div class="space-y-4">
+                        <div class="flex items-center space-x-4">
+                            <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                                <input type="checkbox" id="trafficLiveEnabled" x-model="trafficLiveEnabled" @change="saveTraffic()"
+                                    class="sr-only peer">
+                                <div
+                                    class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                </div>
+                            </label>
+                            <span class="text-gray-400 text-sm"><span class="font-semibold text-gray-300">Day-of
+                                    traffic.</span> Re-price each drive with real traffic on its day: a predictive
+                                pass in the morning and a live check an hour before leaving. Leave-by times and
+                                Time-to-Leave pushes only ever move <em>earlier</em>. Two small Directions requests
+                                per drive per day; planning stays on typical times.</span>
+                        </div>
+                        <div class="flex items-center space-x-4" x-show="trafficLiveEnabled" x-transition>
+                            <input type="number" min="0" max="23" id="trafficMorningHour" x-model="trafficMorningHour"
+                                @change="saveTraffic()"
+                                class="w-20 bg-gray-900 border border-gray-600 rounded p-2 text-white font-mono text-sm focus:outline-none focus:border-blue-500 shrink-0">
+                            <span class="text-gray-400 text-sm">Hour of the morning pass (0–23). The day's drives
+                                get their predictive estimates at this hour.</span>
+                        </div>
+                        <div class="flex items-center space-x-4">
+                            <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                                <input type="checkbox" id="routingAvoidTolls" x-model="routingAvoidTolls" @change="saveTraffic()"
+                                    class="sr-only peer">
+                                <div
+                                    class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                </div>
+                            </label>
+                            <span class="text-gray-400 text-sm"><span class="font-semibold text-gray-300">Avoid toll
+                                    roads.</span> Price every drive without tolls — otherwise Mapbox quotes the toll
+                                route's faster time whether or not you would take it. Flipping this clears every
+                                cached drive time and re-prices the schedule under the new policy.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- The parents' tomorrow digest (Config → General → Digests &
+                 Weather). The weather entity it reads stays on Config with
+                 the weekly digest, for now. -->
+            <div id="tomorrow-digest" class="mt-6 pt-6 border-t border-gray-700">
+                <div class="flex items-center justify-between mb-4">
+                    <h4 class="font-bold text-white">The evening before</h4>
+                    <span class="text-xs text-emerald-400 font-bold" x-show="saved === 'digest'" x-transition.opacity>Saved ✓</span>
+                </div>
+                <div class="flex flex-col sm:flex-row sm:items-center gap-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                    <div class="flex items-center space-x-3 shrink-0">
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="tomorrowDigestEnabled" x-model="tomorrowDigestEnabled" @change="saveDigest()"
+                                class="sr-only peer">
+                            <div
+                                class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                            </div>
+                        </label>
+                        <span class="font-bold text-gray-300">Tomorrow Digest</span>
+                    </div>
+                    <div x-show="tomorrowDigestEnabled" class="flex items-center gap-2 shrink-0">
+                        <label class="text-sm text-gray-400 font-semibold" for="tomorrowDigestTime">Send after</label>
+                        <input type="time" id="tomorrowDigestTime" x-model="tomorrowDigestTime" @change="saveDigest()"
+                            class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                    </div>
+                    <p class="text-sm text-gray-500">
+                        Each evening, subscribed drivers get one push listing tomorrow's drives (with any
+                        prep-kit items to bring) topped by a forecast line from the Home Assistant weather
+                        integration chosen in
+                        <a href="config" class="text-blue-400 hover:text-blue-300 font-semibold">Config → General</a>;
+                        the line is simply omitted when Home Assistant is unreachable.
+                    </p>
+                </div>
+            </div>
+        </section>
+    </div>
+    </div>
+
+    <script>
+        function driveSetup() {
+            return {
+                apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
+                sections: [
+                    { key: 'rules', label: 'Rules' },
+                    { key: 'solver', label: 'Solver & horizons' },
+                ],
+                section: 'rules',
+                rulesSubTab: 'routing',
+                saved: '',
+                saving: false,
+
+                // Shared lookups the rule lists draw with.
+                drivers: [],
+                passengers: [],
+                calendarMetadata: {},
+
+                // --- Rules (moved from Config → Rules & Priorities) ---
+                rules: [],
+                priorityRules: [],
+                matchedEventsByRule: {},
+                analyzingHabits: false,
+                debugLogs: [],
+                showDebugLogs: false,
+                enableStandardRules: true,
+                enableAiRules: true,
+                enableStandardPriorityRules: true,
+                enableAiPriorityRules: true,
+                newRule: { driver_id: '', constraint_type: 'required', keywords: [], passenger_ids: [], days_of_week: [], start_date: '', end_date: '', time_start: '', time_end: '', location: '', filter_sets: [], buffer_before_mins: 0, buffer_after_mins: 0, buffer_reason: '', attendance_action: 'stay' },
+                newRuleKeywordInput: '',
+                newPriorityRule: { weight_modifier: 100, keywords: [], passenger_ids: [], days_of_week: [], start_date: '', end_date: '', time_start: '', time_end: '', location: '' },
+                newPriorityRuleKeywordInput: '',
+                editRuleId: null,
+                editPriorityRuleId: null,
+                ruleLocationSuggestions: [],
+                priorityRuleLocationSuggestions: [],
+                autocompleteTimeout: null,
+                currentSessionToken: null,
+
+                // --- Solver & horizons (moved from Config → General) ---
+                daysToShow: 7,
+                daysToBuild: 7,
+                loadBalancingEnabled: false,
+                loadBalancingMetric: 'occupied_time',
+                suggestedRoutesEnabled: true,
+                trafficLiveEnabled: true,
+                trafficMorningHour: 6,
+                routingAvoidTolls: false,
+                tomorrowDigestEnabled: true,
+                tomorrowDigestTime: '20:00',
+                disableMapbox: false,
+
+                async init() {
+                    window.addEventListener('hashchange', () => this.openAnchor());
+                    this.openAnchor();
+                    await Promise.all([this.loadSettings(), this.loadDrivers(), this.loadPassengers()]);
+                    await Promise.all([this.loadRules(), this.loadPriorityRules()]);
+                    this.loadMatchedEvents();   // non-blocking: a solve can take a moment
+                },
+
+                // An anchor (#traffic, from the settings index) can live in a
+                // section that is not open. Open its section — and its Rules
+                // sub-tab — first, then scroll to it; otherwise the deep link
+                // lands on a hidden element and the reader hunts. Anything after
+                // a '?' in the hash is dropped: the house appends its own query
+                // to the garage link, which puts it after the '#'.
+                openAnchor() {
+                    const id = decodeURIComponent((window.location.hash || '').slice(1)).split('?')[0];
+                    if (!id) return;
+                    const el = document.getElementById(id);
+                    if (!el) return;
+                    const sec = el.closest('[data-drive-section]');
+                    if (sec) this.section = sec.getAttribute('data-drive-section');
+                    const sub = el.closest('[data-rules-sub]');
+                    if (sub) this.rulesSubTab = sub.getAttribute('data-rules-sub');
+                    this.$nextTick(() => setTimeout(() => el.scrollIntoView({ block: 'start' }), 50));
+                },
+                // The address keeps the section (replaceState, so no history
+                // entry per click) and a reload opens where you were.
+                setSection(key) {
+                    this.section = key;
+                    try {
+                        history.replaceState(history.state, '', window.location.pathname + window.location.search + '#' + key);
+                    } catch (e) { }
+                },
+
+                async loadSettings() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/settings`);
+                        if (!res.ok) return;
+                        const data = await res.json();
+                        this.enableStandardRules = data.enable_standard_rules !== false;
+                        this.enableAiRules = data.enable_ai_rules !== false;
+                        this.enableStandardPriorityRules = data.enable_standard_priority_rules !== false;
+                        this.enableAiPriorityRules = data.enable_ai_priority_rules !== false;
+                        this.daysToShow = data.days_to_show || 7;
+                        this.daysToBuild = data.days_to_build || 7;
+                        this.loadBalancingEnabled = data.load_balancing_enabled === true;
+                        this.loadBalancingMetric = data.load_balancing_metric || 'occupied_time';
+                        this.suggestedRoutesEnabled = data.suggested_routes_enabled !== false;
+                        this.trafficLiveEnabled = data.traffic_live_enabled !== false;
+                        this.trafficMorningHour = data.traffic_morning_hour != null ? data.traffic_morning_hour : 6;
+                        this.routingAvoidTolls = data.routing_avoid_tolls === true;
+                        this.tomorrowDigestEnabled = data.tomorrow_digest_enabled !== false;
+                        this.tomorrowDigestTime = data.tomorrow_digest_time || '20:00';
+                        this.disableMapbox = data.disable_mapbox || false;
+                    } catch (e) { console.error('Failed to load settings', e); }
+                },
+                async postSettings(payload, which) {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/settings`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload) });
+                        if (!res.ok) {
+                            const d = await res.json().catch(() => ({}));
+                            showGlobalAlert(d.detail || "Couldn't save that.");
+                            return false;
+                        }
+                        if (which) {
+                            this.saved = which;
+                            setTimeout(() => { if (this.saved === which) this.saved = ''; }, 1600);
+                        }
+                        return true;
+                    } catch (e) {
+                        showGlobalAlert("Couldn't reach Chauffeur.");
+                        return false;
+                    }
+                },
+                // Each block sends only its own keys: the server merges, so
+                // anything not named here is left exactly as it was.
+                saveRuleToggles() {
+                    return this.postSettings({
+                        enable_standard_rules: !!this.enableStandardRules,
+                        enable_ai_rules: !!this.enableAiRules,
+                        enable_standard_priority_rules: !!this.enableStandardPriorityRules,
+                        enable_ai_priority_rules: !!this.enableAiPriorityRules,
+                    }, 'rules');
+                },
+                saveHorizons() {
+                    return this.postSettings({
+                        days_to_show: parseInt(this.daysToShow) || 7,
+                        days_to_build: parseInt(this.daysToBuild) || 7,
+                    }, 'horizons');
+                },
+                saveSolver() {
+                    return this.postSettings({
+                        load_balancing_enabled: !!this.loadBalancingEnabled,
+                        load_balancing_metric: this.loadBalancingMetric || 'occupied_time',
+                        suggested_routes_enabled: !!this.suggestedRoutesEnabled,
+                    }, 'solver');
+                },
+                saveTraffic() {
+                    return this.postSettings({
+                        traffic_live_enabled: !!this.trafficLiveEnabled,
+                        traffic_morning_hour: Math.max(0, Math.min(23, parseInt(this.trafficMorningHour, 10) || 0)),
+                        routing_avoid_tolls: !!this.routingAvoidTolls,
+                    }, 'traffic');
+                },
+                saveDigest() {
+                    return this.postSettings({
+                        tomorrow_digest_enabled: !!this.tomorrowDigestEnabled,
+                        tomorrow_digest_time: this.tomorrowDigestTime || '20:00',
+                    }, 'digest');
+                },
+
+                async fetchCalendarMetadata(ids) {
+                    if (!ids || ids.length === 0) return;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/calendars/metadata`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(ids)
+                        });
+                        if (!res.ok) return;
+                        const metadata = await res.json();
+                        this.calendarMetadata = Object.assign({}, this.calendarMetadata, metadata);
+                    } catch (e) { /* the raw ids still show */ }
+                },
+                async loadDrivers() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/drivers`);
+                        const data = await res.json();
+                        this.drivers = Array.isArray(data) ? data : [];
+                    } catch (e) {
+                        console.error('Failed to load drivers', e);
+                        this.drivers = [];
+                    }
+                },
+                async loadPassengers() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/passengers`);
+                        const data = await res.json();
+                        this.passengers = Array.isArray(data) ? data : [];
+                    } catch (e) {
+                        console.error('Failed to load passengers', e);
+                        this.passengers = [];
+                    }
+                },
+                // The header's New Rule button. On Config it called a
+                // function that never existed; here it opens a blank form on
+                // whichever sub-tab is showing and brings it into view.
+                startNewRule() {
+                    if (this.rulesSubTab === 'priority') this.cancelEditPriorityRule();
+                    else { this.rulesSubTab = 'routing'; this.resetRuleForm(); }
+                    this.$nextTick(() => {
+                        const form = document.getElementById(this.rulesSubTab === 'priority' ? 'priority-rule-form' : 'routing-rule-form');
+                        if (form) form.scrollIntoView({ block: 'start', behavior: 'smooth' });
+                    });
+                },
+                async handleRuleLocationInput() {
+                    if (!this.newRule.location || this.newRule.location.length < 3) {
+                        this.ruleLocationSuggestions = [];
+                        this.currentSessionToken = null;
+                        return;
+                    }
+                    if (!this.currentSessionToken) {
+                        this.currentSessionToken = crypto.randomUUID();
+                    }
+                    clearTimeout(this.autocompleteTimeout);
+                    this.autocompleteTimeout = setTimeout(async () => {
+                        try {
+                            const res = await fetch(`${this.apiBase}api/places/autocomplete?input=${encodeURIComponent(this.newRule.location)}&session_token=${this.currentSessionToken}`);
+                            const data = await res.json();
+                            if (data.suggestions) {
+                                this.ruleLocationSuggestions = data.suggestions;
+                            } else {
+                                this.ruleLocationSuggestions = [];
+                            }
+                        } catch (e) {
+                            console.error("Autocomplete failed", e);
+                        }
+                    }, 300);
+                },
+                async selectRuleLocation(loc, mapboxId = null) {
+                    this.newRule.location = loc;
+                    this.ruleLocationSuggestions = [];
+                    
+                    if (mapboxId && this.currentSessionToken) {
+                        try {
+                            const res = await fetch(`${this.apiBase}api/places/retrieve?mapbox_id=${mapboxId}&session_token=${this.currentSessionToken}`);
+                            if (res.ok) {
+                                const data = await res.json();
+                                if (data && data.name) {
+                                    this.newRule.location = data.name;
+                                }
+                            }
+                        } catch (e) {
+                            console.error("Retrieve failed", e);
+                        }
+                    }
+                    this.currentSessionToken = null;
+                },
+                async handlePriorityRuleLocationInput() {
+                    if (!this.newPriorityRule.location || this.newPriorityRule.location.length < 3) {
+                        this.priorityRuleLocationSuggestions = [];
+                        this.currentSessionToken = null;
+                        return;
+                    }
+                    if (!this.currentSessionToken) {
+                        this.currentSessionToken = crypto.randomUUID();
+                    }
+                    clearTimeout(this.autocompleteTimeout);
+                    this.autocompleteTimeout = setTimeout(async () => {
+                        try {
+                            const res = await fetch(`${this.apiBase}api/places/autocomplete?input=${encodeURIComponent(this.newPriorityRule.location)}&session_token=${this.currentSessionToken}`);
+                            const data = await res.json();
+                            if (data.suggestions) {
+                                this.priorityRuleLocationSuggestions = data.suggestions;
+                            } else {
+                                this.priorityRuleLocationSuggestions = [];
+                            }
+                        } catch (e) {
+                            console.error("Autocomplete failed", e);
+                        }
+                    }, 300);
+                },
+                async selectPriorityRuleLocation(loc, mapboxId = null) {
+                    this.newPriorityRule.location = loc;
+                    this.priorityRuleLocationSuggestions = [];
+                    
+                    if (mapboxId && this.currentSessionToken) {
+                        try {
+                            const res = await fetch(`${this.apiBase}api/places/retrieve?mapbox_id=${mapboxId}&session_token=${this.currentSessionToken}`);
+                            if (res.ok) {
+                                const data = await res.json();
+                                if (data && data.name) {
+                                    this.newPriorityRule.location = data.name;
+                                }
+                            }
+                        } catch (e) {
+                            console.error("Retrieve failed", e);
+                        }
+                    }
+                    this.currentSessionToken = null;
+                },
+                async analyzeHabits() {
+                    this.analyzingHabits = true;
+                    this.showDebugLogs = true;
+                    this.debugLogs = ['Starting background task...'];
+                    try {
+                        const res = await fetch(`${this.apiBase}api/rules/analyze-overrides/start`, {
+                            method: 'POST'
+                        });
+                        if (!res.ok) throw new Error('Failed to start analysis');
+                        const { task_id } = await res.json();
+                        let data = null;
+                        while (true) {
+                            await new Promise(r => setTimeout(r, 2000));
+                            const statusRes = await fetch(`${this.apiBase}api/rules/analyze-overrides/status/${task_id}`);
+                            if (!statusRes.ok) throw new Error("Failed to check analysis status");
+                            const statusData = await statusRes.json();
+                            
+                            if (statusData.logs) {
+                                this.debugLogs = statusData.logs;
+                                this.$nextTick(() => {
+                                    const out = document.getElementById('drive-debug-output');
+                                    if (out) out.scrollTop = out.scrollHeight;
+                                });
+                            }
+                            
+                            if (statusData.status === 'completed') {
+                                data = statusData.result;
+                                break;
+                            } else if (statusData.status === 'failed') {
+                                throw new Error(statusData.error || "Analysis failed internally");
+                            }
+                        }
+                        
+                        if (data.new_rules_count === 0 && data.new_priority_rules_count === 0) {
+                            showGlobalAlert("Analysis complete. No new significant patterns were found that aren't already covered by your existing rules.");
+                        } else {
+                            showGlobalAlert(`Analysis complete!\nAdded ${data.new_rules_count} new standard rules.\nAdded ${data.new_priority_rules_count} new priority rules.\n(Duplicates were ignored)`);
+                        }
+                        await Promise.all([this.loadRules(), this.loadPriorityRules()]);
+                    } catch (e) {
+                        showGlobalAlert(e.message);
+                    } finally {
+                        this.analyzingHabits = false;
+                    }
+                },
+                async loadRules() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/rules`);
+                        const data = await res.json();
+                        this.rules = Array.isArray(data) ? data : [];
+                    } catch (e) {
+                        console.error("Failed to load rules", e);
+                        this.rules = [];
+                    }
+                },
+                async loadMatchedEvents() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/schedule`);
+                        if (!res.ok) return;
+                        const data = await res.json();
+                        
+                        if (data && data.calendar_metadata) {
+                            Object.assign(this.calendarMetadata, data.calendar_metadata);
+                        }
+                        
+                        if (data && data.matched_rules && data.events) {
+                            const mapping = {};
+                            const eventsMap = {};
+                            data.events.forEach(ev => eventsMap[ev.id] = ev);
+                            
+                            Object.keys(data.matched_rules).forEach(eventId => {
+                                const rulesMatchingEvent = data.matched_rules[eventId];
+                                const eventObj = eventsMap[eventId];
+                                if (eventObj) {
+                                    rulesMatchingEvent.forEach(rule => {
+                                        const prefix = rule._is_priority ? 'p_' : 's_';
+                                        const rId = prefix + (rule.doc_id || rule.id);
+                                        if (!mapping[rId]) mapping[rId] = [];
+                                        mapping[rId].push(eventObj);
+                                    });
+                                }
+                            });
+                            this.matchedEventsByRule = mapping;
+                        }
+                    } catch(e) {
+                        console.error("Failed to load matched events", e);
+                    }
+                },
+                editRule(rule) {
+                    this.editRuleId = rule.doc_id;
+                    this.newRule = {
+                        driver_id: rule.driver_id,
+                        constraint_type: rule.constraint_type,
+                        duplicate_action: rule.duplicate_action || 'schedule_one',
+                        attendance_action: rule.attendance_action || 'stay',
+                        tolerance_mins: rule.tolerance_mins || 0,
+                        tolerance_type: rule.tolerance_type || 'both',
+                        buffer_before_mins: rule.buffer_before_mins || 0,
+                        buffer_reason: rule.buffer_reason || '',
+                        buffer_after_mins: rule.buffer_after_mins || 0,
+                        grouping_period: rule.grouping_period || 'daily',
+                        keywords: [...(rule.keywords || [])],
+                        keywords_match_all: rule.keywords_match_all || false,
+                        passenger_ids: [...(rule.passenger_ids || [])],
+                        passengers_match_all: rule.passengers_match_all || false,
+                        days_of_week: [...(rule.days_of_week || [])],
+                        start_date: rule.start_date || '',
+                        end_date: rule.end_date || '',
+                        time_start: rule.time_start || '',
+                        time_end: rule.time_end || '',
+                        location: rule.location || '',
+                        filter_sets: JSON.parse(JSON.stringify(rule.filter_sets || []))
+                    };
+
+                    if (this.newRule.keywords.length === 1) {
+                        this.newRuleKeywordInput = this.newRule.keywords.pop();
+                    } else {
+                        this.newRuleKeywordInput = '';
+                    }
+                },
+                resetRuleForm() {
+                    this.editRuleId = null;
+                    this.newRuleKeywordInput = '';
+                    this.newRule = { driver_id: '', constraint_type: 'required', duplicate_action: 'schedule_one', attendance_action: 'stay', tolerance_mins: 0, tolerance_type: 'both', buffer_before_mins: 0, buffer_after_mins: 0, buffer_reason: '', grouping_period: 'daily', keywords: [], keywords_match_all: false, passenger_ids: [], passengers_match_all: false, days_of_week: [], start_date: '', end_date: '', time_start: '', time_end: '', location: '', filter_sets: [] };
+                },
+                cancelEditRule() {
+                    this.resetRuleForm();
+                },
+                async submitRule() {
+                    this.saving = true;
+                    try {
+                        const kwInput = this.newRuleKeywordInput.trim();
+                        if (kwInput && !this.newRule.keywords.includes(kwInput)) {
+                            this.newRule.keywords.push(kwInput);
+                        }
+                        this.newRuleKeywordInput = '';
+
+                        if (this.newRule.constraint_type === 'attendance' || this.newRule.constraint_type === 'no_split') {
+                            this.newRule.driver_id = 'any';
+                        }
+                        if (!this.newRule.driver_id) return showGlobalAlert('Driver is required');
+
+                        if (this.newRule.constraint_type === 'group') {
+                            if (this.newRule.filter_sets.length < 2) return showGlobalAlert('You must specify at least two filter sets to group');
+                            for (let i = 0; i < this.newRule.filter_sets.length; i++) {
+                                let fs = this.newRule.filter_sets[i];
+                                if (fs.keywords.length === 0 && fs.passenger_ids.length === 0 && !fs.days_of_week.length && !fs.start_date && !fs.end_date && !fs.time_start && !fs.time_end && !fs.location) return showGlobalAlert('Event Filter ' + (i + 1) + ' must have at least one constraint (keyword, passenger, date, time, etc)');
+                            }
+                        } else {
+                            if (this.newRule.keywords.length === 0 && this.newRule.passenger_ids.length === 0 && !this.newRule.days_of_week.length && !this.newRule.start_date && !this.newRule.end_date && !this.newRule.time_start && !this.newRule.time_end && !this.newRule.location) return showGlobalAlert('You must specify at least one constraint (keyword, passenger, date, time, etc)');
+                        }
+
+                        const payload = JSON.parse(JSON.stringify(this.newRule));
+                        if (this.editRuleId) {
+                            await fetch(`${this.apiBase}api/rules/${this.editRuleId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                        } else {
+                            await fetch(`${this.apiBase}api/rules`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                        }
+                        this.cancelEditRule();
+                        await this.loadRules();
+                    } finally { this.saving = false; }
+                },
+                async deleteRule(doc_id) {
+                    await fetch(`${this.apiBase}api/rules/${doc_id}`, { method: 'DELETE' });
+                    await this.loadRules();
+                },
+                async toggleRule(rule, type) {
+                    const endpoint = type === 'rule' ? 'rules' : 'priority_rules';
+                    const newStatus = rule.is_enabled === false ? true : false;
+                    const payload = { ...rule, is_enabled: newStatus };
+                    await fetch(`${this.apiBase}api/${endpoint}/${rule.doc_id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                    if (type === 'rule') {
+                        await this.loadRules();
+                    } else {
+                        await this.loadPriorityRules();
+                    }
+                },
+                async loadPriorityRules() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/priority_rules`);
+                        const data = await res.json();
+                        this.priorityRules = Array.isArray(data) ? data : [];
+                    } catch (e) {
+                        console.error("Failed to load priority rules", e);
+                        this.priorityRules = [];
+                    }
+                },
+                editPriorityRule(rule) {
+                    this.editPriorityRuleId = rule.doc_id;
+                    this.newPriorityRule = {
+                        weight_modifier: rule.weight_modifier,
+                        keywords: [...(rule.keywords || [])],
+                        keywords_match_all: rule.keywords_match_all || false,
+                        passenger_ids: [...(rule.passenger_ids || [])],
+                        passengers_match_all: rule.passengers_match_all || false,
+                        days_of_week: [...(rule.days_of_week || [])],
+                        start_date: rule.start_date || '',
+                        end_date: rule.end_date || '',
+                        time_start: rule.time_start || '',
+                        time_end: rule.time_end || '',
+                        location: rule.location || ''
+                    };
+
+                    if (this.newPriorityRule.keywords.length === 1) {
+                        this.newPriorityRuleKeywordInput = this.newPriorityRule.keywords.pop();
+                    } else {
+                        this.newPriorityRuleKeywordInput = '';
+                    }
+                },
+                cancelEditPriorityRule() {
+                    this.editPriorityRuleId = null;
+                    this.newPriorityRuleKeywordInput = '';
+                    this.newPriorityRule = { weight_modifier: 100, keywords: [], keywords_match_all: false, passenger_ids: [], passengers_match_all: false, days_of_week: [], start_date: '', end_date: '', time_start: '', time_end: '', location: '' };
+                },
+                async submitPriorityRule() {
+                    this.saving = true;
+                    try {
+                        const kwInput = this.newPriorityRuleKeywordInput.trim();
+                        if (kwInput && !this.newPriorityRule.keywords.includes(kwInput)) {
+                            this.newPriorityRule.keywords.push(kwInput);
+                        }
+                        this.newPriorityRuleKeywordInput = '';
+
+                        if (this.newPriorityRule.keywords.length === 0 && this.newPriorityRule.passenger_ids.length === 0 && !this.newPriorityRule.days_of_week.length && !this.newPriorityRule.start_date && !this.newPriorityRule.end_date && !this.newPriorityRule.time_start && !this.newPriorityRule.time_end && !this.newPriorityRule.location) return showGlobalAlert('You must specify at least one constraint (keyword, passenger, date, time, etc)');
+                        this.newPriorityRule.weight_modifier = parseInt(this.newPriorityRule.weight_modifier);
+
+                        const payload = JSON.parse(JSON.stringify(this.newPriorityRule));
+                        if (this.editPriorityRuleId) {
+                            await fetch(`${this.apiBase}api/priority_rules/${this.editPriorityRuleId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                        } else {
+                            await fetch(`${this.apiBase}api/priority_rules`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                        }
+                        this.cancelEditPriorityRule();
+                        await this.loadPriorityRules();
+                    } finally { this.saving = false; }
+                },
+                async deletePriorityRule(doc_id) {
+                    await fetch(`${this.apiBase}api/priority_rules/${doc_id}`, { method: 'DELETE' });
+                    await this.loadPriorityRules();
+                },
+                getDriverName(id) {
+                    if (id === 'any') return 'Any Driver';
+                    const d = this.drivers.find(x => x.id === id);
+                    return d ? d.name : id;
+                },
+                getPassengerName(id) {
+                    const p = this.passengers.find(x => x.id === id || x.doc_id === id || (x.calendar_ids && x.calendar_ids.includes(id)));
+                    return p ? p.name : id;
+                },
+                isPassengerInList(list, p) {
+                    if (!list || !p) return false;
+                    if (list.includes(p.id) || list.includes(p.doc_id)) return true;
+                    if (p.calendar_ids && p.calendar_ids.some(cid => list.includes(cid))) return true;
+                    return false;
+                },
+                togglePassengerInList(list, p) {
+                    if (this.isPassengerInList(list, p)) {
+                        const toRemove = [p.id, p.doc_id].concat(p.calendar_ids || []);
+                        for (let i = list.length - 1; i >= 0; i--) {
+                            if (toRemove.includes(list[i])) list.splice(i, 1);
+                        }
+                    } else {
+                        list.push(p.id);
+                    }
+                },
+                addRuleKeyword() {
+                    const val = this.newRuleKeywordInput.trim();
+                    if (val && !this.newRule.keywords.includes(val)) {
+                        this.newRule.keywords.push(val);
+                    }
+                    this.newRuleKeywordInput = '';
+                },
+                removeRuleKeyword(idx) { this.newRule.keywords.splice(idx, 1); },
+                toggleRuleDay(day) {
+                    const idx = this.newRule.days_of_week.indexOf(day);
+                    if (idx === -1) this.newRule.days_of_week.push(day);
+                    else this.newRule.days_of_week.splice(idx, 1);
+                },
+                toggleRulePassenger(p) {
+                    this.togglePassengerInList(this.newRule.passenger_ids, p);
+                },
+                addPriorityRuleKeyword() {
+                    const val = this.newPriorityRuleKeywordInput.trim();
+                    if (val && !this.newPriorityRule.keywords.includes(val)) {
+                        this.newPriorityRule.keywords.push(val);
+                    }
+                    this.newPriorityRuleKeywordInput = '';
+                },
+                removePriorityRuleKeyword(idx) { this.newPriorityRule.keywords.splice(idx, 1); },
+                togglePriorityRuleDay(day) {
+                    const idx = this.newPriorityRule.days_of_week.indexOf(day);
+                    if (idx === -1) this.newPriorityRule.days_of_week.push(day);
+                    else this.newPriorityRule.days_of_week.splice(idx, 1);
+                },
+                togglePriorityRulePassenger(p) {
+                    this.togglePassengerInList(this.newPriorityRule.passenger_ids, p);
+                },
+            };
+        }
+    </script>
+    {% include 'components/control_center.html' %}
+    {% include 'components/moments_hearth.html' %}
+</body>
+</html>

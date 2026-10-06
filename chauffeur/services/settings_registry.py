@@ -55,6 +55,8 @@ GROUPS = [
 ]
 
 _CONFIG = 'config'
+# Everything that decides how drives get assigned (v2.499.253).
+_DRIVE = 'drive_setup'
 
 
 def _e(key, group, label, help_text, page=_CONFIG, anchor='general', ui_marker=None):
@@ -75,8 +77,10 @@ ENTRIES: List[dict] = [
        'Which Google calendars feed the schedule and the solver.'),
     _e('default_calendar_id', 'daily', 'Default calendar',
        'Where a newly created event lands when nothing else decides.'),
-    _e('days_to_show', 'daily', 'Days shown', 'How far ahead the dashboard displays.'),
-    _e('days_to_build', 'daily', 'Days solved', 'How far ahead the solver plans drivers.'),
+    _e('days_to_show', 'daily', 'Days shown', 'How far ahead the dashboard displays.',
+       page=_DRIVE, anchor='horizons'),
+    _e('days_to_build', 'daily', 'Days solved', 'How far ahead the solver plans drivers.',
+       page=_DRIVE, anchor='horizons'),
     _e('time_format_24h', 'daily', '24-hour clock', 'Show times as 14:30 rather than 2:30pm.'),
     _e('timezone', 'daily', 'Time zone',
        "The family's time zone, like America/Chicago. Clock times from email intake, "
@@ -327,8 +331,10 @@ ENTRIES: List[dict] = [
 
     # --- digests & nudges
     _e('tomorrow_digest_enabled', 'digests', 'Tomorrow digest',
-       "An evening summary of tomorrow's driving for the parents."),
-    _e('tomorrow_digest_time', 'digests', 'Tomorrow digest time', 'When it goes out.'),
+       "An evening summary of tomorrow's driving for the parents.",
+       page=_DRIVE, anchor='tomorrow-digest'),
+    _e('tomorrow_digest_time', 'digests', 'Tomorrow digest time', 'When it goes out.',
+       page=_DRIVE, anchor='tomorrow-digest'),
     _e('weekly_digest_enabled', 'digests', 'Weekly digest',
        'A weekly family round-up, including anything waiting in intake.'),
     _e('weekly_digest_day', 'digests', 'Weekly digest day', 'Which day it goes out.'),
@@ -468,10 +474,13 @@ ENTRIES: List[dict] = [
     _e('llm_ollama_model', 'ai', 'Ollama model', 'Which local model to call.'),
     _e('chat_suggestions_enabled', 'ai', 'Chat suggestions',
        'Offer example prompts on each page.'),
-    _e('enable_ai_rules', 'ai', 'AI scheduling rules', 'Let the assistant author solver rules.'),
-    _e('enable_ai_priority_rules', 'ai', 'AI priority rules', 'The same for driver priority.'),
+    _e('enable_ai_rules', 'ai', 'AI scheduling rules', 'Let the assistant author solver rules.',
+       page=_DRIVE, anchor='routing-rules'),
+    _e('enable_ai_priority_rules', 'ai', 'AI priority rules', 'The same for driver priority.',
+       page=_DRIVE, anchor='priority-rules'),
     _e('suggested_routes_enabled', 'ai', 'Suggested routes',
-       'Offer route ideas alongside the solved schedule.'),
+       'Offer route ideas alongside the solved schedule.',
+       page=_DRIVE, anchor='solver-behavior'),
 
     # --- maps & quotas
     _e('disable_mapbox', 'maps', 'Turn Mapbox off', 'Stops every Mapbox call at once.'),
@@ -493,24 +502,31 @@ ENTRIES: List[dict] = [
        'Re-price each drive with real traffic on the day: a predictive pass '
        'in the morning and a live check an hour before leaving. Two small '
        'Directions requests per drive per day; leave-by times and pushes '
-       'only ever move EARLIER. Planning stays on typical times.'),
+       'only ever move EARLIER. Planning stays on typical times.',
+       page=_DRIVE, anchor='traffic'),
     _e('traffic_morning_hour', 'maps', 'Morning traffic pass',
        'The hour (0-23) the day\'s drives get their predictive traffic '
-       'estimates. Default 6.'),
+       'estimates. Default 6.',
+       page=_DRIVE, anchor='traffic'),
     _e('routing_avoid_tolls', 'maps', 'Avoid toll roads',
        'Price every drive without toll roads. Off, Mapbox happily routes '
        'over the toll road and quotes its faster time whether or not you '
        'would take it. Flipping this clears every cached drive time so the '
-       'schedule re-prices under the new policy.'),
+       'schedule re-prices under the new policy.',
+       page=_DRIVE, anchor='traffic'),
 
     # --- solver
-    _e('enable_standard_rules', 'solver', 'Scheduling rules', 'Apply the hand-written solver rules.'),
+    _e('enable_standard_rules', 'solver', 'Scheduling rules', 'Apply the hand-written solver rules.',
+       page=_DRIVE, anchor='routing-rules'),
     _e('enable_standard_priority_rules', 'solver', 'Priority rules',
-       'Apply hand-written driver priority rules.'),
+       'Apply hand-written driver priority rules.',
+       page=_DRIVE, anchor='priority-rules'),
     _e('load_balancing_enabled', 'solver', 'Balance the load',
-       'Spread driving across parents rather than optimising route length alone.'),
+       'Spread driving across parents rather than optimising route length alone.',
+       page=_DRIVE, anchor='solver-behavior'),
     _e('load_balancing_metric', 'solver', 'Balance by',
-       'Whether fairness is measured in trips or in minutes.'),
+       'Whether fairness is measured in trips or in minutes.',
+       page=_DRIVE, anchor='solver-behavior'),
     _e('chore_status_tiers', 'solver', 'Chore status tiers',
        'The point thresholds behind the chore status colours.',
        page='chores', anchor='tiers', ui_marker='statusTiersEditor'),

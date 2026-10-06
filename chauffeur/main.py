@@ -1714,6 +1714,16 @@ def school_page(request: Request):
                                       context={'school_word_defaults': defaults})
 
 
+@app.get("/drive_setup")
+def drive_setup_page(request: Request):
+    """Everything that decides how drives get assigned, in one parent place
+    (v2.499.253): routing and priority rules, the solver switches and
+    horizons, routing and traffic policy, and the parents' tomorrow digest.
+    A tab of the Schedule group beside the Drives list. A shell anyone can
+    load; every read and write behind it is a parent-gated API."""
+    return templates.TemplateResponse(request=request, name="drive_setup.html")
+
+
 @app.get("/work")
 def work_page(request: Request):
     """Mind + Missions + Threads on one desk — three columns of the same

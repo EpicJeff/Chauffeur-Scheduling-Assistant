@@ -1,0 +1,957 @@
+{# Routing rules and priority rules — the two halves of "who takes which
+   drive" that a family writes by hand (or Argyle writes and they correct).
+   Moved verbatim from Config's Rules & Priorities tab onto Drive setup
+   (v2.499.253); included by drive_setup.html and bound to its Alpine root
+   (driveSetup()), which owns the rules state, the rule-toggle save and the
+   location autocomplete. The two blocks are the page's Rules sub-tabs:
+   `rulesSubTab` switches them, and `data-rules-sub` is how a deep link
+   (#routing-rules, #priority-rules) opens the right one. #}
+                    <div id="routing-rules" data-rules-sub="routing" x-show="rulesSubTab === 'routing'" x-transition.opacity>
+                        <div class="flex flex-col sm:flex-row flex-wrap gap-6 mb-8 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                            <div class="flex items-center space-x-3 w-full sm:w-auto">
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="enableStandardRules" @change="saveRuleToggles()"
+                                        class="sr-only peer">
+                                    <div
+                                        class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                    </div>
+                                </label>
+                                <span class="font-bold text-gray-300">Standard Rules</span>
+                            </div>
+                            <div class="flex items-center space-x-3 w-full sm:w-auto">
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="enableAiRules" @change="saveRuleToggles()"
+                                        class="sr-only peer">
+                                    <div
+                                        class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600">
+                                    </div>
+                                </label>
+                                <span class="font-bold text-gray-300">AI Rules</span>
+                            </div>
+                        </div>
+                            <div id="routing-rule-form" class="bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed space-y-4">
+                                <h3 class="text-xl font-bold text-white mb-2"
+                                    x-text="editRuleId ? 'Edit Rule' : 'Create Routing Rule'"></h3>
+                                <div class="flex gap-4 flex-wrap">
+                                    <div class="w-full lg:flex-1"
+                                        x-show="newRule.constraint_type !== 'no_split' && newRule.constraint_type !== 'attendance'">
+                                        <label class="block text-gray-400 mb-1 text-sm">Driver</label>
+                                        <select x-model="newRule.driver_id"
+                                            class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
+                                            <option value="">Select Driver</option>
+                                            <option value="any">Any Driver (Global)</option>
+                                            <template x-for="driver in drivers">
+                                                <option :value="driver.id" x-text="driver.name"></option>
+                                            </template>
+                                        </select>
+                                    </div>
+                                    <div class="w-full lg:w-48">
+                                        <label class="block text-gray-400 mb-1 text-sm">Constraint</label>
+                                        <select x-model="newRule.constraint_type"
+                                            class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
+                                            <option value="required">Required</option>
+                                            <option value="preferred">Preferred</option>
+                                            <option value="unavailable">Unavailable</option>
+                                            <option value="avoid">Avoid</option>
+                                            <option value="duplicate">Duplicate Event Handling</option>
+                                            <option value="tolerance">Tolerance (Late Arrival / Early Departure)
+                                            </option>
+                                            <option value="group">Group Events</option>
+                                            <option value="buffer">Buffer Time</option>
+                                            <option value="attendance">Event Attendance</option>
+                                        </select>
+                                    </div>
+                                    <div class="w-full lg:w-32" x-show="newRule.constraint_type === 'tolerance'">
+                                        <label class="block text-gray-400 mb-1 text-sm">Tolerance (mins)</label>
+                                        <input type="number" x-model.number="newRule.tolerance_mins" min="0"
+                                            class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                    </div>
+                                    <div class="w-full lg:w-48" x-show="newRule.constraint_type === 'tolerance'">
+                                        <label class="block text-gray-400 mb-1 text-sm">Applies To</label>
+                                        <select x-model="newRule.tolerance_type"
+                                            class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                            <option value="both">Both</option>
+                                            <option value="arrival">Late Arrival</option>
+                                            <option value="departure">Early Departure</option>
+                                        </select>
+                                    </div>
+                                    <div class="w-full lg:w-32" x-show="newRule.constraint_type === 'buffer'">
+                                        <label class="block text-gray-400 mb-1 text-sm">Buffer Before (m)</label>
+                                        <input type="number" x-model.number="newRule.buffer_before_mins" min="0"
+                                            class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                    </div>
+                                    <div class="w-full lg:w-32" x-show="newRule.constraint_type === 'buffer'">
+                                        <label class="block text-gray-400 mb-1 text-sm">Buffer After (m)</label>
+                                        <input type="number" x-model.number="newRule.buffer_after_mins" min="0"
+                                            class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                    </div>
+                                    <!-- Arrive-by V1: this is what turns a chip into a
+                                         sentence. "Arrive 10:00 - warm-up" is something a
+                                         parent can act on; "arrive 10:00 (buffer)" is the
+                                         app talking about itself. -->
+                                    <div class="w-full lg:w-48" x-show="newRule.constraint_type === 'buffer'">
+                                        <label class="block text-gray-400 mb-1 text-sm">Reason</label>
+                                        <input type="text" x-model="newRule.buffer_reason" maxlength="40"
+                                            placeholder="Warm-up"
+                                            class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white placeholder-gray-600">
+                                        <p class="text-[11px] text-gray-500 mt-1">Shown wherever the early arrival is.</p>
+                                    </div>
+                                    <div class="w-full lg:w-48" x-show="newRule.constraint_type === 'duplicate'">
+                                        <label class="block text-gray-400 mb-1 text-sm">Action</label>
+                                        <select x-model="newRule.duplicate_action"
+                                            class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
+                                            <option value="schedule_one">Schedule One</option>
+                                            <option value="schedule_all">Schedule All</option>
+                                        </select>
+                                    </div>
+                                    <div class="w-full lg:w-48" x-show="newRule.constraint_type === 'attendance'">
+                                        <label class="block text-gray-400 mb-1 text-sm">Action</label>
+                                        <select x-model="newRule.attendance_action"
+                                            class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
+                                            <option value="stay">Stay for Event</option>
+                                            <option value="dropoff_pickup">Drop-off / Pickup</option>
+                                        </select>
+                                    </div>
+                                    <div class="w-full lg:w-48" x-show="newRule.constraint_type === 'duplicate'">
+                                        <label class="block text-gray-400 mb-1 text-sm">Grouping Period</label>
+                                        <select x-model="newRule.grouping_period"
+                                            class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
+                                            <option value="daily">Daily</option>
+                                            <option value="weekly">Weekly</option>
+                                            <option value="monthly">Monthly</option>
+                                            <option value="all">Entire Period</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div x-show="newRule.constraint_type !== 'group'">
+                                    <div
+                                        class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4 border-t border-gray-600 pt-4">
+                                        <div>
+                                            <div class="flex items-center justify-between mb-1">
+                                                <label class="block text-gray-400 text-sm font-bold">Keywords</label>
+                                                <label class="flex items-center space-x-2 cursor-pointer text-xs" x-show="newRule.keywords.length > 1">
+                                                    <span class="text-gray-500" :class="newRule.keywords_match_all ? '' : 'text-blue-400 font-bold'">Match Any</span>
+                                                    <div class="relative">
+                                                        <input type="checkbox" x-model="newRule.keywords_match_all" class="sr-only">
+                                                        <div class="block bg-gray-600 w-8 h-5 rounded-full" :class="newRule.keywords_match_all ? 'bg-blue-500' : ''"></div>
+                                                        <div class="dot absolute left-1 top-1 bg-white w-3 h-3 rounded-full transition transform" :class="newRule.keywords_match_all ? 'translate-x-3' : ''"></div>
+                                                    </div>
+                                                    <span class="text-gray-500" :class="newRule.keywords_match_all ? 'text-blue-400 font-bold' : ''">Match All</span>
+                                                </label>
+                                            </div>
+                                            <div class="flex gap-2 mb-2">
+                                                <input type="text" x-model="newRuleKeywordInput"
+                                                    @keydown.enter.prevent="addRuleKeyword()" placeholder="e.g. Soccer"
+                                                    class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                                <button @click.prevent="addRuleKeyword()"
+                                                    class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 rounded">Add</button>
+                                            </div>
+                                            <div class="flex flex-wrap gap-2">
+                                                <template x-for="(kw, index) in newRule.keywords" :key="index">
+                                                    <span
+                                                        class="bg-gray-800 text-yellow-300 border border-gray-600 px-2 py-1 rounded text-sm flex items-center">
+                                                        <span x-text="kw"></span>
+                                                        <button @click.prevent="removeRuleKeyword(index)"
+                                                            class="ml-2 text-gray-400 hover:text-red-400">&times;</button>
+                                                    </span>
+                                                </template>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div class="flex items-center justify-between mb-1">
+                                                <label class="block text-gray-400 text-sm font-bold">Passengers</label>
+                                                <label class="flex items-center space-x-2 cursor-pointer text-xs" x-show="newRule.passenger_ids.length > 1">
+                                                    <span class="text-gray-500" :class="newRule.passengers_match_all ? '' : 'text-blue-400 font-bold'">Match Any</span>
+                                                    <div class="relative">
+                                                        <input type="checkbox" x-model="newRule.passengers_match_all" class="sr-only">
+                                                        <div class="block bg-gray-600 w-8 h-5 rounded-full" :class="newRule.passengers_match_all ? 'bg-blue-500' : ''"></div>
+                                                        <div class="dot absolute left-1 top-1 bg-white w-3 h-3 rounded-full transition transform" :class="newRule.passengers_match_all ? 'translate-x-3' : ''"></div>
+                                                    </div>
+                                                    <span class="text-gray-500" :class="newRule.passengers_match_all ? 'text-blue-400 font-bold' : ''">Match All</span>
+                                                </label>
+                                            </div>
+                                            <div class="flex flex-wrap gap-2">
+                                                <template x-for="p in passengers">
+                                                    <button @click.prevent="toggleRulePassenger(p)"
+                                                        :class="isPassengerInList(newRule.passenger_ids, p) ? 'bg-green-600 border-green-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
+                                                        class="border px-3 py-1.5 rounded-lg text-sm font-bold transition-colors"
+                                                        x-text="p.name"></button>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div
+                                        class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4 border-t border-gray-600 pt-4">
+                                        <div>
+                                            <label class="block text-gray-400 mb-2 text-sm font-bold">Days of the
+                                                Week</label>
+                                            <div class="flex flex-wrap gap-2">
+                                                <template
+                                                    x-for="(day, idx) in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']">
+                                                    <button @click.prevent="toggleRuleDay(idx)"
+                                                        :class="newRule.days_of_week.includes(idx) ? 'bg-pink-600 border-pink-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
+                                                        class="border px-3 py-1.5 rounded-lg text-sm font-bold transition-colors"
+                                                        x-text="day"></button>
+                                                </template>
+                                            </div>
+                                        </div>
+                                        <div class="flex flex-col md:flex-row gap-4 mt-4">
+                                            <div class="flex-1">
+                                                <label class="block text-gray-400 mb-1 text-sm font-bold">Start Date</label>
+                                                <input type="date" x-model="newRule.start_date"
+                                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                            </div>
+                                            <div class="flex-1">
+                                                <label class="block text-gray-400 mb-1 text-sm font-bold">End Date</label>
+                                                <input type="date" x-model="newRule.end_date"
+                                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                            </div>
+                                        </div>
+                                        <div class="flex flex-col md:flex-row gap-4 mt-4">
+                                            <div class="flex-1">
+                                                <label class="block text-gray-400 mb-1 text-sm font-bold">Starts After (Time)</label>
+                                                <input type="time" x-model="newRule.time_start"
+                                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                            </div>
+                                            <div class="flex-1">
+                                                <label class="block text-gray-400 mb-1 text-sm font-bold">Ends Before (Time)</label>
+                                                <input type="time" x-model="newRule.time_end"
+                                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                            </div>
+                                            <div class="flex-1 md:flex-[2] relative">
+                                                <label class="block text-gray-400 mb-1 text-sm font-bold">Location
+                                                    (Match)</label>
+                                                <input type="text" x-model="newRule.location"
+                                                    @input="handleRuleLocationInput()" placeholder="e.g. Gym"
+                                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500">
+                                                    <template x-for="s in ruleLocationSuggestions" :key="s.description">
+                                                        <div @click="selectRuleLocation(s.description, s.mapbox_id)"
+                                                            class="p-3 hover:bg-gray-600 cursor-pointer border-b border-gray-600 last:border-0 text-sm"
+                                                            x-text="s.description"></div>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div x-show="newRule.constraint_type === 'group'"
+                                    class="mt-4 border-t border-gray-600 pt-4 space-y-6">
+                                    <label class="block text-gray-400 mb-1 text-sm font-bold">Group Filter Sets</label>
+                                    <div class="space-y-4">
+                                        <template x-for="(fs, fidx) in newRule.filter_sets" :key="fidx">
+                                            <div class="bg-gray-800 p-4 rounded border border-gray-600">
+                                                <div class="flex justify-between items-center mb-4">
+                                                    <span class="font-bold text-white"
+                                                        x-text="'Event Filter ' + (fidx + 1)"></span>
+                                                    <button @click.prevent="newRule.filter_sets.splice(fidx, 1)"
+                                                        class="text-red-400 hover:text-red-300">Remove</button>
+                                                </div>
+                                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                    <div>
+                                                        <div class="flex items-center justify-between mb-1">
+                                                            <label class="block text-gray-400 text-xs font-bold">Keywords</label>
+                                                            <label class="flex items-center space-x-1 cursor-pointer text-xs" x-show="fs.keywords.length > 1">
+                                                                <span class="text-gray-500" :class="fs.keywords_match_all ? '' : 'text-blue-400 font-bold'">Any</span>
+                                                                <div class="relative">
+                                                                    <input type="checkbox" x-model="fs.keywords_match_all" class="sr-only">
+                                                                    <div class="block bg-gray-600 w-6 h-4 rounded-full" :class="fs.keywords_match_all ? 'bg-blue-500' : ''"></div>
+                                                                    <div class="dot absolute left-0.5 top-0.5 bg-white w-3 h-3 rounded-full transition transform" :class="fs.keywords_match_all ? 'translate-x-2' : ''"></div>
+                                                                </div>
+                                                                <span class="text-gray-500" :class="fs.keywords_match_all ? 'text-blue-400 font-bold' : ''">All</span>
+                                                            </label>
+                                                        </div>
+                                                        <div class="flex gap-2 mb-2">
+                                                            <input type="text" :id="'kwInput_' + fidx"
+                                                                @keydown.enter.prevent="let val = document.getElementById('kwInput_' + fidx).value.trim(); if(val && !fs.keywords.includes(val)) { fs.keywords.push(val); } document.getElementById('kwInput_' + fidx).value = '';"
+                                                                placeholder="e.g. Soccer"
+                                                                class="flex-1 bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                                            <button
+                                                                @click.prevent="let val = document.getElementById('kwInput_' + fidx).value.trim(); if(val && !fs.keywords.includes(val)) { fs.keywords.push(val); } document.getElementById('kwInput_' + fidx).value = '';"
+                                                                class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 rounded text-sm">Add</button>
+                                                        </div>
+                                                        <div class="flex flex-wrap gap-2">
+                                                            <template x-for="(kw, index) in fs.keywords" :key="index">
+                                                                <span
+                                                                    class="bg-gray-800 text-yellow-300 border border-gray-600 px-2 py-1 rounded text-xs flex items-center">
+                                                                    <span x-text="kw"></span>
+                                                                    <button
+                                                                        @click.prevent="fs.keywords.splice(index, 1)"
+                                                                        class="ml-2 text-gray-400 hover:text-red-400">&times;</button>
+                                                                </span>
+                                                            </template>
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <div class="flex items-center justify-between mb-1">
+                                                            <label class="block text-gray-400 text-xs font-bold">Passengers</label>
+                                                            <label class="flex items-center space-x-1 cursor-pointer text-xs" x-show="fs.passenger_ids.length > 1">
+                                                                <span class="text-gray-500" :class="fs.passengers_match_all ? '' : 'text-blue-400 font-bold'">Any</span>
+                                                                <div class="relative">
+                                                                    <input type="checkbox" x-model="fs.passengers_match_all" class="sr-only">
+                                                                    <div class="block bg-gray-600 w-6 h-4 rounded-full" :class="fs.passengers_match_all ? 'bg-blue-500' : ''"></div>
+                                                                    <div class="dot absolute left-0.5 top-0.5 bg-white w-3 h-3 rounded-full transition transform" :class="fs.passengers_match_all ? 'translate-x-2' : ''"></div>
+                                                                </div>
+                                                                <span class="text-gray-500" :class="fs.passengers_match_all ? 'text-blue-400 font-bold' : ''">All</span>
+                                                            </label>
+                                                        </div>
+                                                        <div class="flex flex-wrap gap-2">
+                                                            <template x-for="p in passengers">
+                                                                <button
+                                                                    @click.prevent="togglePassengerInList(fs.passenger_ids, p)"
+                                                                    :class="isPassengerInList(fs.passenger_ids, p) ? 'bg-green-600 border-green-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
+                                                                    class="border px-2 py-1 rounded text-xs font-bold transition-colors"
+                                                                    x-text="p.name"></button>
+                                                            </template>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div
+                                                    class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 border-t border-gray-600 pt-4">
+                                                    <div>
+                                                        <label class="block text-gray-400 mb-1 text-xs">Days of the
+                                                            Week</label>
+                                                        <div class="flex flex-wrap gap-2">
+                                                            <template
+                                                                x-for="(day, idx) in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']">
+                                                                <button
+                                                                    @click.prevent="fs.days_of_week.includes(idx) ? fs.days_of_week = fs.days_of_week.filter(d => d !== idx) : fs.days_of_week.push(idx)"
+                                                                    :class="fs.days_of_week.includes(idx) ? 'bg-pink-600 border-pink-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
+                                                                    class="border px-2 py-1 rounded text-xs font-bold transition-colors"
+                                                                    x-text="day"></button>
+                                                            </template>
+                                                        </div>
+                                                    </div>
+                                                    <div class="flex flex-col md:flex-row gap-2 mt-4">
+                                                        <div class="flex-1">
+                                                            <label class="block text-gray-400 mb-1 text-xs">Start Date</label>
+                                                            <input type="date" x-model="fs.start_date"
+                                                                class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                                        </div>
+                                                        <div class="flex-1">
+                                                            <label class="block text-gray-400 mb-1 text-xs">End Date</label>
+                                                            <input type="date" x-model="fs.end_date"
+                                                                class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                                        </div>
+                                                    </div>
+                                                    <div class="flex flex-col md:flex-row gap-2 mt-4">
+                                                        <div class="flex-1">
+                                                            <label class="block text-gray-400 mb-1 text-xs">Starts After (Time)</label>
+                                                            <input type="time" x-model="fs.time_start"
+                                                                class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                                        </div>
+                                                        <div class="flex-1">
+                                                            <label class="block text-gray-400 mb-1 text-xs">Ends Before (Time)</label>
+                                                            <input type="time" x-model="fs.time_end"
+                                                                class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                                        </div>
+                                                        <div class="flex-1 md:flex-[2]">
+                                                            <label
+                                                                class="block text-gray-400 mb-1 text-xs">Location</label>
+                                                            <input type="text" x-model="fs.location"
+                                                                placeholder="Location keyword..."
+                                                                class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500">
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                    <button
+                                        @click.prevent="newRule.filter_sets.push({keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: ''})"
+                                        class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm font-bold">+
+                                        Add Event to Group</button>
+                                </div>
+
+                                <div class="flex gap-4 pt-4">
+                                    <button @click="submitRule()"
+                                        class="bg-blue-600 hover:bg-blue-500 px-8 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center justify-center"
+                                        :disabled="!!saving"
+                                        x-text="saving ? 'Saving...' : (editRuleId ? 'Save Rule' : 'Add Rule')"></button>
+                                    <button x-show="editRuleId" @click="cancelEditRule()"
+                                        class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center justify-center">Cancel</button>
+                                </div>
+
+
+
+
+<div class="bg-gray-800 p-6 rounded-xl border border-gray-700 mb-8">
+    <h3 class="text-lg font-bold text-gray-300 mb-4 uppercase tracking-wide flex items-center">
+        
+        Manual Routing Rules
+    </h3>
+    <div class="space-y-3">
+        <template x-for="rule in rules.filter(r => !r.is_ai_generated)" :key="rule.doc_id || rule.id">
+            <div x-data="{ expanded: false }" class="bg-gray-900 border border-gray-700 p-4 rounded-xl shadow-sm transition-all" :class="rule.is_enabled === false || !enableStandardRules ? 'opacity-50 grayscale' : ''">
+                <!-- Compact Header -->
+                <div class="flex items-center justify-between gap-4 cursor-pointer" @click="expanded = !expanded">
+                    <div class="flex items-center flex-1 gap-4">
+                        <label class="relative inline-flex items-center cursor-pointer shrink-0" @click.stop>
+                            <input type="checkbox" :checked="rule.is_enabled !== false" @change="toggleRule(rule, 'rule')" class="sr-only peer">
+                            <div class="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500"></div>
+                        </label>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="text-gray-300">Driver</span>
+                            <span class="font-bold text-blue-400" x-text="getDriverName(rule.driver_id)"></span>
+                            
+                            <span class="text-gray-300">is</span>
+                            <span class="font-bold text-purple-400 uppercase" x-text="rule.constraint_type === 'duplicate' ? 'DUPLICATE (' + (rule.duplicate_action === 'schedule_all' ? 'SCHEDULE ALL' : 'SCHEDULE ONE') + ')' : (rule.constraint_type === 'attendance' ? 'ATTENDANCE (' + (rule.attendance_action === 'dropoff_pickup' ? 'SPLIT' : 'STAY') + ')' : (rule.constraint_type === 'no_split' ? 'ATTENDANCE (STAY)' : rule.constraint_type))"></span>
+        
+                        </div>
+                    </div>
+                    <!-- Chevron -->
+                    <button class="text-gray-400 hover:text-white transition-colors">
+                        <svg class="w-5 h-5 transition-transform" :class="expanded ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </button>
+                </div>
+                
+                <!-- Expanded Content -->
+                <div x-show="expanded" x-collapse class="mt-4 pt-4 border-t border-gray-800">
+                    <div class="flex flex-col md:flex-row justify-between gap-4">
+                        <!-- Filters -->
+                        <div class="text-gray-400 flex flex-wrap gap-2 items-center text-sm">
+                            <template x-if="rule.constraint_type === 'tolerance'">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-orange-300 italic" x-text="'Tolerance (' + (rule.tolerance_type === 'arrival' ? 'Arrival' : (rule.tolerance_type === 'departure' ? 'Departure' : 'Both')) + '): ' + rule.tolerance_mins + 'm'"></span>
+                            </template>
+                            <span class="font-bold">IF</span>
+                            <template x-if="rule.keywords && rule.keywords.length > 0">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword ' + (rule.keywords.length > 1 ? (rule.keywords_match_all ? '(ALL)' : '(ANY)') : '') + ': ' + (Array.isArray(rule.keywords) ? rule.keywords.join(', ') : '')"></span>
+                            </template>
+                            <template x-if="rule.passenger_ids && rule.passenger_ids.length > 0">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-green-300" x-text="'Passenger ' + (rule.passenger_ids.length > 1 ? (rule.passengers_match_all ? '(ALL)' : '(ANY)') : '') + ': ' + (Array.isArray(rule.passenger_ids) ? rule.passenger_ids.map(p => getPassengerName(p)).join(', ') : '')"></span>
+                            </template>
+                            <template x-if="rule.days_of_week && rule.days_of_week.length > 0">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-pink-300" x-text="'Days: ' + (Array.isArray(rule.days_of_week) ? rule.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ') : '')"></span>
+                            </template>
+                            <template x-if="rule.start_date || rule.end_date">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-teal-300" x-text="'Dates: ' + (rule.start_date || 'Any') + ' to ' + (rule.end_date || 'Any')"></span>
+                            </template>
+                            <template x-if="rule.time_start || rule.time_end">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-cyan-300" x-text="'Time: ' + (rule.time_start || 'Any') + ' to ' + (rule.time_end || 'Any')"></span>
+                            </template>
+                            <template x-if="rule.location">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-indigo-300" x-text="'Loc: ' + rule.location"></span>
+                            </template>
+                        </div>
+                        <!-- Actions -->
+                        <div class="flex space-x-2 shrink-0">
+                            <button @click.stop="editRule(rule)" class="text-blue-500 hover:text-blue-400 bg-blue-500/10 p-2 rounded-lg transition-colors">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                            </button>
+                            <button @click.stop="deleteRule(rule.doc_id)" class="text-red-500 hover:text-red-400 bg-red-500/10 p-2 rounded-lg transition-colors">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div x-show="matchedEventsByRule['s_' + (rule.doc_id || rule.id)] && matchedEventsByRule['s_' + (rule.doc_id || rule.id)].length > 0" class="mt-4 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                        <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Matched Events in Schedule</div>
+                        <div class="space-y-2">
+                            <template x-for="ev in matchedEventsByRule['s_' + (rule.doc_id || rule.id)]" :key="ev.id">
+                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
+                                    <div class="px-2 py-1.5 w-full flex flex-col">
+                                        <div class="flex items-center shrink-0">
+                                            <template x-for="cid in (ev.calendar_ids || [])" :key="cid">
+                                                <div class="w-2.5 h-2.5 rounded-full mr-1 shadow-sm border border-black/20" :style="'background-color: ' + (calendarMetadata[cid] ? calendarMetadata[cid].backgroundColor : '#3B82F6')"></div>
+                                            </template>
+                                            <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 ml-0.5 truncate" :style="'color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')" x-text="ev.calendar_ids && ev.calendar_ids.length > 0 ? ev.calendar_ids.map(c => calendarMetadata[c] ? calendarMetadata[c].summary : c).join(' + ') : 'Event'"></div>
+                                        </div>
+                                        <div class="font-bold text-[11px] text-white leading-tight mt-0.5 truncate" x-text="ev.title"></div>
+                                        <div class="text-gray-400 text-[10px] font-medium mt-0.5 truncate flex items-center gap-1" x-text="new Date(ev.start).toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'}) + ' - ' + new Date(ev.end).toLocaleString([], {hour: '2-digit', minute:'2-digit'})"></div>
+                                        <template x-if="ev.location">
+                                            <div class="text-gray-500 text-[9px] mt-0.5 truncate flex items-center gap-0.5 w-full">
+                                                <svg class="w-3 h-3 inline-block mx-0.5 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+                                                <span class="truncate" x-text="ev.location"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>
+        <template x-if="rules.filter(r => !r.is_ai_generated).length === 0">
+            <p class="text-sm text-gray-500 italic p-4 text-center border border-gray-700 border-dashed rounded-xl">No manual routing rules configured.</p>
+        </template>
+    </div>
+</div>
+<div class="bg-gray-800 p-6 rounded-xl border border-gray-700 mb-8">
+    <h3 class="text-lg font-bold text-gray-300 mb-4 uppercase tracking-wide flex items-center">
+        <svg class="w-5 h-5 mr-2 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+</svg>
+        AI Generated Routing Rules
+    </h3>
+    <div class="space-y-3">
+        <template x-for="rule in rules.filter(r => r.is_ai_generated)" :key="rule.doc_id || rule.id">
+            <div x-data="{ expanded: false }" class="bg-gray-900 border border-indigo-900/50 p-4 rounded-xl shadow-sm transition-all" :class="rule.is_enabled === false || !enableAiRules ? 'opacity-50 grayscale' : ''">
+                <!-- Compact Header -->
+                <div class="flex items-center justify-between gap-4 cursor-pointer" @click="expanded = !expanded">
+                    <div class="flex items-center flex-1 gap-4">
+                        <label class="relative inline-flex items-center cursor-pointer shrink-0" @click.stop>
+                            <input type="checkbox" :checked="rule.is_enabled !== false" @change="toggleRule(rule, 'rule')" class="sr-only peer">
+                            <div class="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500"></div>
+                        </label>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="text-gray-300">Driver</span>
+                            <span class="font-bold text-blue-400" x-text="getDriverName(rule.driver_id)"></span>
+                            
+                            <span class="text-gray-300">is</span>
+                            <span class="font-bold text-purple-400 uppercase" x-text="rule.constraint_type === 'duplicate' ? 'DUPLICATE (' + (rule.duplicate_action === 'schedule_all' ? 'SCHEDULE ALL' : 'SCHEDULE ONE') + ')' : (rule.constraint_type === 'attendance' ? 'ATTENDANCE (' + (rule.attendance_action === 'dropoff_pickup' ? 'SPLIT' : 'STAY') + ')' : (rule.constraint_type === 'no_split' ? 'ATTENDANCE (STAY)' : rule.constraint_type))"></span>
+        
+                        </div>
+                    </div>
+                    <!-- Chevron -->
+                    <button class="text-gray-400 hover:text-white transition-colors">
+                        <svg class="w-5 h-5 transition-transform" :class="expanded ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </button>
+                </div>
+                
+                <!-- Expanded Content -->
+                <div x-show="expanded" x-collapse class="mt-4 pt-4 border-t border-gray-800">
+                    <div class="flex flex-col md:flex-row justify-between gap-4">
+                        <!-- Filters -->
+                        <div class="text-gray-400 flex flex-wrap gap-2 items-center text-sm">
+                            <template x-if="rule.constraint_type === 'tolerance'">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-orange-300 italic" x-text="'Tolerance (' + (rule.tolerance_type === 'arrival' ? 'Arrival' : (rule.tolerance_type === 'departure' ? 'Departure' : 'Both')) + '): ' + rule.tolerance_mins + 'm'"></span>
+                            </template>
+                            <span class="font-bold">IF</span>
+                            <template x-if="rule.keywords && rule.keywords.length > 0">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword ' + (rule.keywords.length > 1 ? (rule.keywords_match_all ? '(ALL)' : '(ANY)') : '') + ': ' + (Array.isArray(rule.keywords) ? rule.keywords.join(', ') : '')"></span>
+                            </template>
+                            <template x-if="rule.passenger_ids && rule.passenger_ids.length > 0">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-green-300" x-text="'Passenger ' + (rule.passenger_ids.length > 1 ? (rule.passengers_match_all ? '(ALL)' : '(ANY)') : '') + ': ' + (Array.isArray(rule.passenger_ids) ? rule.passenger_ids.map(p => getPassengerName(p)).join(', ') : '')"></span>
+                            </template>
+                            <template x-if="rule.days_of_week && rule.days_of_week.length > 0">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-pink-300" x-text="'Days: ' + (Array.isArray(rule.days_of_week) ? rule.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ') : '')"></span>
+                            </template>
+                            <template x-if="rule.start_date || rule.end_date">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-teal-300" x-text="'Dates: ' + (rule.start_date || 'Any') + ' to ' + (rule.end_date || 'Any')"></span>
+                            </template>
+                            <template x-if="rule.time_start || rule.time_end">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-cyan-300" x-text="'Time: ' + (rule.time_start || 'Any') + ' to ' + (rule.time_end || 'Any')"></span>
+                            </template>
+                            <template x-if="rule.location">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-indigo-300" x-text="'Loc: ' + rule.location"></span>
+                            </template>
+                        </div>
+                        <!-- Actions -->
+                        <div class="flex space-x-2 shrink-0">
+                            <button @click.stop="editRule(rule)" class="text-blue-500 hover:text-blue-400 bg-blue-500/10 p-2 rounded-lg transition-colors">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                            </button>
+                            <button @click.stop="deleteRule(rule.doc_id)" class="text-red-500 hover:text-red-400 bg-red-500/10 p-2 rounded-lg transition-colors">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div x-show="matchedEventsByRule['s_' + (rule.doc_id || rule.id)] && matchedEventsByRule['s_' + (rule.doc_id || rule.id)].length > 0" class="mt-4 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                        <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Matched Events in Schedule</div>
+                        <div class="space-y-2">
+                            <template x-for="ev in matchedEventsByRule['s_' + (rule.doc_id || rule.id)]" :key="ev.id">
+                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
+                                    <div class="px-2 py-1.5 w-full flex flex-col">
+                                        <div class="flex items-center shrink-0">
+                                            <template x-for="cid in (ev.calendar_ids || [])" :key="cid">
+                                                <div class="w-2.5 h-2.5 rounded-full mr-1 shadow-sm border border-black/20" :style="'background-color: ' + (calendarMetadata[cid] ? calendarMetadata[cid].backgroundColor : '#3B82F6')"></div>
+                                            </template>
+                                            <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 ml-0.5 truncate" :style="'color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')" x-text="ev.calendar_ids && ev.calendar_ids.length > 0 ? ev.calendar_ids.map(c => calendarMetadata[c] ? calendarMetadata[c].summary : c).join(' + ') : 'Event'"></div>
+                                        </div>
+                                        <div class="font-bold text-[11px] text-white leading-tight mt-0.5 truncate" x-text="ev.title"></div>
+                                        <div class="text-gray-400 text-[10px] font-medium mt-0.5 truncate flex items-center gap-1" x-text="new Date(ev.start).toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'}) + ' - ' + new Date(ev.end).toLocaleString([], {hour: '2-digit', minute:'2-digit'})"></div>
+                                        <template x-if="ev.location">
+                                            <div class="text-gray-500 text-[9px] mt-0.5 truncate flex items-center gap-0.5 w-full">
+                                                <svg class="w-3 h-3 inline-block mx-0.5 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+                                                <span class="truncate" x-text="ev.location"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>
+        <template x-if="rules.filter(r => r.is_ai_generated).length === 0">
+            <p class="text-sm text-gray-500 italic p-4 text-center border border-gray-700 border-dashed rounded-xl">No ai generated routing rules configured.</p>
+        </template>
+    </div>
+</div>
+
+
+
+                        </div>
+                    <div id="priority-rules" data-rules-sub="priority" x-show="rulesSubTab === 'priority'" x-transition.opacity x-cloak>
+                        <div class="flex flex-col sm:flex-row flex-wrap gap-6 mb-8 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                            <div class="flex items-center space-x-3 w-full sm:w-auto">
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="enableStandardPriorityRules"
+                                        @change="saveRuleToggles()" class="sr-only peer">
+                                    <div
+                                        class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                    </div>
+                                </label>
+                                <span class="font-bold text-gray-300">Standard Priorities</span>
+                            </div>
+                            <div class="flex items-center space-x-3 w-full sm:w-auto">
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="enableAiPriorityRules" @change="saveRuleToggles()"
+                                        class="sr-only peer">
+                                    <div
+                                        class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600">
+                                    </div>
+                                </label>
+                                <span class="font-bold text-gray-300">AI Priorities</span>
+                            </div>
+                        </div>
+                            <div id="priority-rule-form" class="bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed space-y-4">
+                                <h3 class="text-xl font-bold text-white mb-2"
+                                    x-text="editPriorityRuleId ? 'Edit Priority' : 'Create Event Priority'"></h3>
+
+                                <div class="w-full lg:w-48 mb-4">
+                                    <label class="block text-gray-400 mb-1 text-sm font-bold">Priority Modifier</label>
+                                    <select x-model="newPriorityRule.weight_modifier"
+                                        class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
+                                        <option value="10000">Critical (+10000)</option>
+                                        <option value="1000">High (+1000)</option>
+                                        <option value="-1000">Low (-1000)</option>
+                                        <option value="-10000">Ignore (-10000)</option>
+                                    </select>
+                                </div>
+
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-gray-600 pt-4">
+                                    <div>
+                                        <div class="flex items-center justify-between mb-1">
+                                            <label class="block text-gray-400 text-sm font-bold">Keywords</label>
+                                            <label class="flex items-center space-x-2 cursor-pointer text-xs" x-show="newPriorityRule.keywords.length > 1">
+                                                <span class="text-gray-500" :class="newPriorityRule.keywords_match_all ? '' : 'text-blue-400 font-bold'">Match Any</span>
+                                                <div class="relative">
+                                                    <input type="checkbox" x-model="newPriorityRule.keywords_match_all" class="sr-only">
+                                                    <div class="block bg-gray-600 w-8 h-5 rounded-full" :class="newPriorityRule.keywords_match_all ? 'bg-blue-500' : ''"></div>
+                                                    <div class="dot absolute left-1 top-1 bg-white w-3 h-3 rounded-full transition transform" :class="newPriorityRule.keywords_match_all ? 'translate-x-3' : ''"></div>
+                                                </div>
+                                                <span class="text-gray-500" :class="newPriorityRule.keywords_match_all ? 'text-blue-400 font-bold' : ''">Match All</span>
+                                            </label>
+                                        </div>
+                                        <div class="flex gap-2 mb-2">
+                                            <input type="text" x-model="newPriorityRuleKeywordInput"
+                                                @keydown.enter.prevent="addPriorityRuleKeyword()"
+                                                placeholder="e.g. Doctor"
+                                                class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                            <button @click.prevent="addPriorityRuleKeyword()"
+                                                class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 rounded">Add</button>
+                                        </div>
+                                        <div class="flex flex-wrap gap-2">
+                                            <template x-for="(kw, index) in newPriorityRule.keywords" :key="index">
+                                                <span
+                                                    class="bg-gray-800 text-yellow-300 border border-gray-600 px-2 py-1 rounded text-sm flex items-center">
+                                                    <span x-text="kw"></span>
+                                                    <button @click.prevent="removePriorityRuleKeyword(index)"
+                                                        class="ml-2 text-gray-400 hover:text-red-400">&times;</button>
+                                                </span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div class="flex items-center justify-between mb-1">
+                                            <label class="block text-gray-400 text-sm font-bold">Passengers</label>
+                                            <label class="flex items-center space-x-2 cursor-pointer text-xs" x-show="newPriorityRule.passenger_ids.length > 1">
+                                                <span class="text-gray-500" :class="newPriorityRule.passengers_match_all ? '' : 'text-blue-400 font-bold'">Match Any</span>
+                                                <div class="relative">
+                                                    <input type="checkbox" x-model="newPriorityRule.passengers_match_all" class="sr-only">
+                                                    <div class="block bg-gray-600 w-8 h-5 rounded-full" :class="newPriorityRule.passengers_match_all ? 'bg-blue-500' : ''"></div>
+                                                    <div class="dot absolute left-1 top-1 bg-white w-3 h-3 rounded-full transition transform" :class="newPriorityRule.passengers_match_all ? 'translate-x-3' : ''"></div>
+                                                </div>
+                                                <span class="text-gray-500" :class="newPriorityRule.passengers_match_all ? 'text-blue-400 font-bold' : ''">Match All</span>
+                                            </label>
+                                        </div>
+                                        <div class="flex flex-wrap gap-2">
+                                            <template x-for="p in passengers">
+                                                <button @click.prevent="togglePriorityRulePassenger(p)"
+                                                    :class="isPassengerInList(newPriorityRule.passenger_ids, p) ? 'bg-green-600 border-green-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
+                                                    class="border px-3 py-1.5 rounded-lg text-sm font-bold transition-colors"
+                                                    x-text="p.name"></button>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4 border-t border-gray-600 pt-4">
+                                    <div>
+                                        <label class="block text-gray-400 mb-2 text-sm font-bold">Days of the
+                                            Week</label>
+                                        <div class="flex flex-wrap gap-2">
+                                            <template x-for="(day, idx) in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']">
+                                                <button @click.prevent="togglePriorityRuleDay(idx)"
+                                                    :class="newPriorityRule.days_of_week.includes(idx) ? 'bg-pink-600 border-pink-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
+                                                    class="border px-3 py-1.5 rounded-lg text-sm font-bold transition-colors"
+                                                    x-text="day"></button>
+                                            </template>
+                                        </div>
+                                    </div>
+                                    <div class="flex flex-col md:flex-row gap-4 mt-4">
+                                        <div class="flex-1">
+                                            <label class="block text-gray-400 mb-1 text-sm font-bold">Start Date</label>
+                                            <input type="date" x-model="newPriorityRule.start_date"
+                                                class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                        </div>
+                                        <div class="flex-1">
+                                            <label class="block text-gray-400 mb-1 text-sm font-bold">End Date</label>
+                                            <input type="date" x-model="newPriorityRule.end_date"
+                                                class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                        </div>
+                                    </div>
+                                    <div class="flex flex-col md:flex-row gap-4 mt-4">
+                                        <div class="flex-1">
+                                            <label class="block text-gray-400 mb-1 text-sm font-bold">Starts After (Time)</label>
+                                            <input type="time" x-model="newPriorityRule.time_start"
+                                                class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                        </div>
+                                        <div class="flex-1">
+                                            <label class="block text-gray-400 mb-1 text-sm font-bold">Ends Before (Time)</label>
+                                            <input type="time" x-model="newPriorityRule.time_end"
+                                                class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                        </div>
+                                        <div class="flex-1 md:flex-[2] relative">
+                                            <label class="block text-gray-400 mb-1 text-sm font-bold">Location
+                                                (Match)</label>
+                                            <input type="text" x-model="newPriorityRule.location"
+                                                @input="handlePriorityRuleLocationInput()" placeholder="e.g. Gym"
+                                                class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500">
+                                            <!-- Autocomplete Dropdown -->
+                                            <div x-show="priorityRuleLocationSuggestions.length > 0"
+                                                @click.away="priorityRuleLocationSuggestions = []"
+                                                class="absolute w-full mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-2xl z-50 max-h-60 overflow-y-auto">
+                                                <template x-for="s in priorityRuleLocationSuggestions"
+                                                    :key="s.description">
+                                                    <div @click="selectPriorityRuleLocation(s.description, s.mapbox_id)"
+                                                        class="p-3 hover:bg-gray-600 cursor-pointer border-b border-gray-600 last:border-0 text-sm"
+                                                        x-text="s.description"></div>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="flex gap-4 pt-4">
+                                    <button @click="submitPriorityRule()"
+                                        class="bg-blue-600 hover:bg-blue-500 px-8 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center justify-center"
+                                        :disabled="!!saving"
+                                        x-text="saving ? 'Saving...' : (editPriorityRuleId ? 'Save Priority' : 'Add Priority')"></button>
+                                    <button x-show="editPriorityRuleId" @click="cancelEditPriorityRule()"
+                                        class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center justify-center">Cancel</button>
+                                </div>
+                            </div>
+
+
+<div class="bg-gray-800 p-6 rounded-xl border border-gray-700 mb-8">
+    <h3 class="text-lg font-bold text-gray-300 mb-4 uppercase tracking-wide flex items-center">
+        
+        Manual Priority Rules
+    </h3>
+    <div class="space-y-3">
+        <template x-for="rule in priorityRules.filter(r => !r.is_ai_generated)" :key="rule.doc_id || rule.id">
+            <div x-data="{ expanded: false }" class="bg-gray-900 border border-gray-700 p-4 rounded-xl shadow-sm transition-all" :class="rule.is_enabled === false || !enableStandardPriorityRules ? 'opacity-50 grayscale' : ''">
+                <!-- Compact Header -->
+                <div class="flex items-center justify-between gap-4 cursor-pointer" @click="expanded = !expanded">
+                    <div class="flex items-center flex-1 gap-4">
+                        <label class="relative inline-flex items-center cursor-pointer shrink-0" @click.stop>
+                            <input type="checkbox" :checked="rule.is_enabled !== false" @change="toggleRule(rule, 'priority_rule')" class="sr-only peer">
+                            <div class="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500"></div>
+                        </label>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="text-gray-300">Priority Modifier:</span>
+                            <span class="font-bold text-green-400" x-text="rule.weight_modifier > 0 ? '+' + rule.weight_modifier : rule.weight_modifier"></span>
+                            
+                        </div>
+                    </div>
+                    <!-- Chevron -->
+                    <button class="text-gray-400 hover:text-white transition-colors">
+                        <svg class="w-5 h-5 transition-transform" :class="expanded ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </button>
+                </div>
+                
+                <!-- Expanded Content -->
+                <div x-show="expanded" x-collapse class="mt-4 pt-4 border-t border-gray-800">
+                    <div class="flex flex-col md:flex-row justify-between gap-4">
+                        <!-- Filters -->
+                        <div class="text-gray-400 flex flex-wrap gap-2 items-center text-sm">
+                            <template x-if="rule.constraint_type === 'tolerance'">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-orange-300 italic" x-text="'Tolerance (' + (rule.tolerance_type === 'arrival' ? 'Arrival' : (rule.tolerance_type === 'departure' ? 'Departure' : 'Both')) + '): ' + rule.tolerance_mins + 'm'"></span>
+                            </template>
+                            <span class="font-bold">IF</span>
+                            <template x-if="rule.keywords && rule.keywords.length > 0">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword ' + (rule.keywords.length > 1 ? (rule.keywords_match_all ? '(ALL)' : '(ANY)') : '') + ': ' + (Array.isArray(rule.keywords) ? rule.keywords.join(', ') : '')"></span>
+                            </template>
+                            <template x-if="rule.passenger_ids && rule.passenger_ids.length > 0">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-green-300" x-text="'Passenger ' + (rule.passenger_ids.length > 1 ? (rule.passengers_match_all ? '(ALL)' : '(ANY)') : '') + ': ' + (Array.isArray(rule.passenger_ids) ? rule.passenger_ids.map(p => getPassengerName(p)).join(', ') : '')"></span>
+                            </template>
+                            <template x-if="rule.days_of_week && rule.days_of_week.length > 0">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-pink-300" x-text="'Days: ' + (Array.isArray(rule.days_of_week) ? rule.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ') : '')"></span>
+                            </template>
+                            <template x-if="rule.start_date || rule.end_date">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-teal-300" x-text="'Dates: ' + (rule.start_date || 'Any') + ' to ' + (rule.end_date || 'Any')"></span>
+                            </template>
+                            <template x-if="rule.time_start || rule.time_end">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-cyan-300" x-text="'Time: ' + (rule.time_start || 'Any') + ' to ' + (rule.time_end || 'Any')"></span>
+                            </template>
+                            <template x-if="rule.location">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-indigo-300" x-text="'Loc: ' + rule.location"></span>
+                            </template>
+                        </div>
+                        <!-- Actions -->
+                        <div class="flex space-x-2 shrink-0">
+                            <button @click.stop="editPriorityRule(rule)" class="text-blue-500 hover:text-blue-400 bg-blue-500/10 p-2 rounded-lg transition-colors">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                            </button>
+                            <button @click.stop="deletePriorityRule(rule.doc_id)" class="text-red-500 hover:text-red-400 bg-red-500/10 p-2 rounded-lg transition-colors">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div x-show="matchedEventsByRule['p_' + (rule.doc_id || rule.id)] && matchedEventsByRule['p_' + (rule.doc_id || rule.id)].length > 0" class="mt-4 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                        <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Matched Events in Schedule</div>
+                        <div class="space-y-2">
+                            <template x-for="ev in matchedEventsByRule['p_' + (rule.doc_id || rule.id)]" :key="ev.id">
+                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
+                                    <div class="px-2 py-1.5 w-full flex flex-col">
+                                        <div class="flex items-center shrink-0">
+                                            <template x-for="cid in (ev.calendar_ids || [])" :key="cid">
+                                                <div class="w-2.5 h-2.5 rounded-full mr-1 shadow-sm border border-black/20" :style="'background-color: ' + (calendarMetadata[cid] ? calendarMetadata[cid].backgroundColor : '#3B82F6')"></div>
+                                            </template>
+                                            <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 ml-0.5 truncate" :style="'color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')" x-text="ev.calendar_ids && ev.calendar_ids.length > 0 ? ev.calendar_ids.map(c => calendarMetadata[c] ? calendarMetadata[c].summary : c).join(' + ') : 'Event'"></div>
+                                        </div>
+                                        <div class="font-bold text-[11px] text-white leading-tight mt-0.5 truncate" x-text="ev.title"></div>
+                                        <div class="text-gray-400 text-[10px] font-medium mt-0.5 truncate flex items-center gap-1" x-text="new Date(ev.start).toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'}) + ' - ' + new Date(ev.end).toLocaleString([], {hour: '2-digit', minute:'2-digit'})"></div>
+                                        <template x-if="ev.location">
+                                            <div class="text-gray-500 text-[9px] mt-0.5 truncate flex items-center gap-0.5 w-full">
+                                                <svg class="w-3 h-3 inline-block mx-0.5 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+                                                <span class="truncate" x-text="ev.location"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>
+        <template x-if="priorityRules.filter(r => !r.is_ai_generated).length === 0">
+            <p class="text-sm text-gray-500 italic p-4 text-center border border-gray-700 border-dashed rounded-xl">No manual priority rules configured.</p>
+        </template>
+    </div>
+</div>
+<div class="bg-gray-800 p-6 rounded-xl border border-gray-700 mb-8">
+    <h3 class="text-lg font-bold text-gray-300 mb-4 uppercase tracking-wide flex items-center">
+        <svg class="w-5 h-5 mr-2 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+</svg>
+        AI Generated Priority Rules
+    </h3>
+    <div class="space-y-3">
+        <template x-for="rule in priorityRules.filter(r => r.is_ai_generated)" :key="rule.doc_id || rule.id">
+            <div x-data="{ expanded: false }" class="bg-gray-900 border border-indigo-900/50 p-4 rounded-xl shadow-sm transition-all" :class="rule.is_enabled === false || !enableAiPriorityRules ? 'opacity-50 grayscale' : ''">
+                <!-- Compact Header -->
+                <div class="flex items-center justify-between gap-4 cursor-pointer" @click="expanded = !expanded">
+                    <div class="flex items-center flex-1 gap-4">
+                        <label class="relative inline-flex items-center cursor-pointer shrink-0" @click.stop>
+                            <input type="checkbox" :checked="rule.is_enabled !== false" @change="toggleRule(rule, 'priority_rule')" class="sr-only peer">
+                            <div class="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500"></div>
+                        </label>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="text-gray-300">Priority Modifier:</span>
+                            <span class="font-bold text-green-400" x-text="rule.weight_modifier > 0 ? '+' + rule.weight_modifier : rule.weight_modifier"></span>
+                            
+                        </div>
+                    </div>
+                    <!-- Chevron -->
+                    <button class="text-gray-400 hover:text-white transition-colors">
+                        <svg class="w-5 h-5 transition-transform" :class="expanded ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </button>
+                </div>
+                
+                <!-- Expanded Content -->
+                <div x-show="expanded" x-collapse class="mt-4 pt-4 border-t border-gray-800">
+                    <div class="flex flex-col md:flex-row justify-between gap-4">
+                        <!-- Filters -->
+                        <div class="text-gray-400 flex flex-wrap gap-2 items-center text-sm">
+                            <template x-if="rule.constraint_type === 'tolerance'">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-orange-300 italic" x-text="'Tolerance (' + (rule.tolerance_type === 'arrival' ? 'Arrival' : (rule.tolerance_type === 'departure' ? 'Departure' : 'Both')) + '): ' + rule.tolerance_mins + 'm'"></span>
+                            </template>
+                            <span class="font-bold">IF</span>
+                            <template x-if="rule.keywords && rule.keywords.length > 0">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword ' + (rule.keywords.length > 1 ? (rule.keywords_match_all ? '(ALL)' : '(ANY)') : '') + ': ' + (Array.isArray(rule.keywords) ? rule.keywords.join(', ') : '')"></span>
+                            </template>
+                            <template x-if="rule.passenger_ids && rule.passenger_ids.length > 0">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-green-300" x-text="'Passenger ' + (rule.passenger_ids.length > 1 ? (rule.passengers_match_all ? '(ALL)' : '(ANY)') : '') + ': ' + (Array.isArray(rule.passenger_ids) ? rule.passenger_ids.map(p => getPassengerName(p)).join(', ') : '')"></span>
+                            </template>
+                            <template x-if="rule.days_of_week && rule.days_of_week.length > 0">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-pink-300" x-text="'Days: ' + (Array.isArray(rule.days_of_week) ? rule.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ') : '')"></span>
+                            </template>
+                            <template x-if="rule.start_date || rule.end_date">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-teal-300" x-text="'Dates: ' + (rule.start_date || 'Any') + ' to ' + (rule.end_date || 'Any')"></span>
+                            </template>
+                            <template x-if="rule.time_start || rule.time_end">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-cyan-300" x-text="'Time: ' + (rule.time_start || 'Any') + ' to ' + (rule.time_end || 'Any')"></span>
+                            </template>
+                            <template x-if="rule.location">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-indigo-300" x-text="'Loc: ' + rule.location"></span>
+                            </template>
+                        </div>
+                        <!-- Actions -->
+                        <div class="flex space-x-2 shrink-0">
+                            <button @click.stop="editPriorityRule(rule)" class="text-blue-500 hover:text-blue-400 bg-blue-500/10 p-2 rounded-lg transition-colors">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                            </button>
+                            <button @click.stop="deletePriorityRule(rule.doc_id)" class="text-red-500 hover:text-red-400 bg-red-500/10 p-2 rounded-lg transition-colors">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div x-show="matchedEventsByRule['p_' + (rule.doc_id || rule.id)] && matchedEventsByRule['p_' + (rule.doc_id || rule.id)].length > 0" class="mt-4 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                        <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Matched Events in Schedule</div>
+                        <div class="space-y-2">
+                            <template x-for="ev in matchedEventsByRule['p_' + (rule.doc_id || rule.id)]" :key="ev.id">
+                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
+                                    <div class="px-2 py-1.5 w-full flex flex-col">
+                                        <div class="flex items-center shrink-0">
+                                            <template x-for="cid in (ev.calendar_ids || [])" :key="cid">
+                                                <div class="w-2.5 h-2.5 rounded-full mr-1 shadow-sm border border-black/20" :style="'background-color: ' + (calendarMetadata[cid] ? calendarMetadata[cid].backgroundColor : '#3B82F6')"></div>
+                                            </template>
+                                            <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 ml-0.5 truncate" :style="'color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')" x-text="ev.calendar_ids && ev.calendar_ids.length > 0 ? ev.calendar_ids.map(c => calendarMetadata[c] ? calendarMetadata[c].summary : c).join(' + ') : 'Event'"></div>
+                                        </div>
+                                        <div class="font-bold text-[11px] text-white leading-tight mt-0.5 truncate" x-text="ev.title"></div>
+                                        <div class="text-gray-400 text-[10px] font-medium mt-0.5 truncate flex items-center gap-1" x-text="new Date(ev.start).toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'}) + ' - ' + new Date(ev.end).toLocaleString([], {hour: '2-digit', minute:'2-digit'})"></div>
+                                        <template x-if="ev.location">
+                                            <div class="text-gray-500 text-[9px] mt-0.5 truncate flex items-center gap-0.5 w-full">
+                                                <svg class="w-3 h-3 inline-block mx-0.5 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+                                                <span class="truncate" x-text="ev.location"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>
+        <template x-if="priorityRules.filter(r => r.is_ai_generated).length === 0">
+            <p class="text-sm text-gray-500 italic p-4 text-center border border-gray-700 border-dashed rounded-xl">No ai generated priority rules configured.</p>
+        </template>
+    </div>
+</div>
+                    </div>

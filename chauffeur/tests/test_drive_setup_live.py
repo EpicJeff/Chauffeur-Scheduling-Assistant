@@ -1,0 +1,209 @@
+"""The Drive setup page, actually served (v2.499.253).
+
+Everything that decides how drives get assigned lived on Config: the Rules &
+Priorities tab, the solver switches and horizons, routing and traffic policy
+and the parents' tomorrow digest. It moved to /drive_setup, a tab of the
+Schedule group. What only a browser can check:
+
+  - the page draws inside the Schedule tab strip, its section switcher shows
+    one section at a time, and a deep link to an anchor in a closed section
+    (the settings index's `drive_setup#traffic`) opens that section;
+  - a change saves ONLY its own keys: the settings POST merges, and a page
+    that sent everything it had loaded could still clobber a setting another
+    page changed meanwhile;
+  - a routing rule can be written by hand from the page.
+
+Run from chauffeur/:  python tests/test_drive_setup_live.py [--out DIR]
+"""
+import os
+import sys
+import tempfile
+
+os.environ.setdefault('CHAUFFEUR_DATA_DIR', tempfile.mkdtemp(prefix='drive_setup_live_'))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from live_app import live_app
+
+from services import storage
+
+OUT = sys.argv[sys.argv.index('--out') + 1] if '--out' in sys.argv else None
+
+
+def check(cond, msg):
+    if not cond:
+        raise AssertionError(msg)
+
+
+def _visible(page, sel):
+    return page.evaluate(
+        "(s) => { const el = document.querySelector(s);"
+        " return !!el && getComputedStyle(el).display !== 'none'; }", sel)
+
+
+def _shot(page, name):
+    if OUT:
+        os.makedirs(OUT, exist_ok=True)
+        page.screenshot(path=os.path.join(OUT, name), full_page=True)
+
+
+TOKENS = {}
+
+
+def seed():
+    storage.update_settings({'days_to_show': 9, 'days_to_build': 5,
+                             'load_balancing_enabled': False,
+                             'routing_avoid_tolls': False,
+                             'kid_quiet_start': '20:30',
+                             'intake_imap_host': 'imap.example.com'})
+    storage.add_member({'id': 'mum', 'name': 'Mum', 'role': 'parent', 'color_code': '#6366f1'})
+    storage.add_member({'id': 'dad', 'name': 'Dad', 'role': 'parent', 'color_code': '#f59e0b'})
+    TOKENS['parent'] = storage.create_member_token('mum')
+    storage.add_driver({'id': 'mum', 'name': 'Mum', 'color_code': '#6366f1', 'group': 'primary',
+                        'priority_index': 1, 'calendar_ids': [], 'hashtags': []})
+    storage.add_driver({'id': 'dad', 'name': 'Dad', 'color_code': '#f59e0b', 'group': 'primary',
+                        'priority_index': 2, 'calendar_ids': [], 'hashtags': []})
+    storage.add_rule({'driver_id': 'dad', 'constraint_type': 'required',
+                      'keywords': ['Swim'], 'passenger_ids': [], 'days_of_week': []})
+
+
+def _sign_in(page, served):
+    """Drive setup carries the admin sign-in gate (as the Drives page does):
+    a parent's admin session, the way test_ride_groups_live opens /dashboard_v2."""
+    page.goto(served.url('api/account/setup'))
+    page.evaluate('(t) => { localStorage.clear();'
+                  ' localStorage.setItem("chauffeur_admin_token", t);'
+                  ' localStorage.setItem("chauffeur_admin_token_for", "mum"); }',
+                  TOKENS['parent'])
+
+
+def _changed(before, after):
+    keys = set(before) | set(after)
+    return {k for k in keys if before.get(k) != after.get(k)}
+
+
+def main():
+    served = live_app(seed)
+    if served is None:
+        return
+    try:
+        handle = served.browser()
+        with handle as page:
+            page.set_viewport_size({'width': 1400, 'height': 900})
+            _sign_in(page, served)
+            page.goto(served.url('drive_setup'), wait_until='networkidle')
+            page.wait_for_timeout(600)
+
+            # It is a tab of the Schedule group, and the tab it is on is lit.
+            check(_visible(page, '#page-tabs'), 'Drive setup has no Schedule tab strip')
+            tabs = page.eval_on_selector_all('#page-tabs .page-tab', 'els => els.map(e => e.dataset.tabKey)')
+            check(tabs == ['drives', 'calendar', 'moments', 'occasions', 'setup'], f'tabs: {tabs}')
+            lit = page.eval_on_selector_all('#page-tabs .page-tab.bg-blue-600', 'els => els.map(e => e.dataset.tabKey)')
+            check(lit == ['setup'], f'the lit tab is {lit}, not Drive setup')
+
+            _shot(page, 'drive-setup-top.png')
+
+            # Rules is the default section; the rule already written is listed.
+            check(_visible(page, '#rules') and not _visible(page, '#solver'),
+                  'Rules is not the only section showing')
+            cards = '#routing-rules [x-data="{ expanded: false }"]'
+            check(page.locator(cards).count() == 1 and 'Dad' in page.locator(cards).first.inner_text(),
+                  'the existing rule is not listed')
+
+            # A routing rule written by hand.
+            form = page.locator('#routing-rule-form')
+            form.locator('[x-model="newRule.driver_id"]').select_option('mum')
+            form.locator('[x-model="newRuleKeywordInput"]').fill('Piano')
+            page.locator('#routing-rules').get_by_role('button', name='Add Rule', exact=True).click()
+            page.wait_for_timeout(900)
+            rules = page.request.get(served.url('api/rules')).json()
+            piano = [r for r in rules if 'Piano' in (r.get('keywords') or [])]
+            check(len(piano) == 1 and piano[0]['driver_id'] == 'mum', f'the hand-written rule did not save: {rules}')
+            check(page.locator(cards).count() == 2, 'the new rule is not listed')
+            _shot(page, 'drive-setup-rules.png')
+
+            # A rule switch saves alone.
+            before = dict(storage.get_settings())
+            page.locator('#routing-rules input[x-model="enableAiRules"]').uncheck(force=True)
+            page.wait_for_timeout(800)
+            after = dict(storage.get_settings())
+            check(after.get('enable_ai_rules') is False, 'the AI rules switch did not save')
+            stray = _changed(before, after) - {'enable_standard_rules', 'enable_ai_rules',
+                                                'enable_standard_priority_rules', 'enable_ai_priority_rules'}
+            check(not stray, f'the rule switch touched other settings: {stray}')
+
+            # Priority sub-tab.
+            page.get_by_role('button', name='Priority Rules').click()
+            page.wait_for_timeout(200)
+            check(_visible(page, '#priority-rules') and not _visible(page, '#routing-rules'),
+                  'the Priority Rules sub-tab did not switch')
+
+            # Solver & horizons: one change, and nothing else moves.
+            page.click('#drive-sections [data-section-tab="solver"]')
+            page.wait_for_timeout(200)
+            check(_visible(page, '#solver') and not _visible(page, '#rules'), 'clicking Solver did not show it')
+            check(page.input_value('#daysToShow') == '9' and page.input_value('#daysToBuild') == '5',
+                  'the horizons did not load')
+            before = dict(storage.get_settings())
+            page.locator('#loadBalancingEnabled').check(force=True)
+            page.wait_for_timeout(800)
+            after = dict(storage.get_settings())
+            check(after.get('load_balancing_enabled') is True, 'load balancing did not save')
+            stray = _changed(before, after) - {'load_balancing_enabled', 'load_balancing_metric',
+                                                'suggested_routes_enabled'}
+            check(not stray, f'the solver save touched other settings: {stray}')
+            check(after.get('days_to_show') == 9 and after.get('intake_imap_host') == 'imap.example.com'
+                  and after.get('kid_quiet_start') == '20:30', 'an unrelated setting changed')
+
+            before = dict(storage.get_settings())
+            page.fill('#daysToBuild', '10')
+            page.dispatch_event('#daysToBuild', 'change')
+            page.wait_for_timeout(800)
+            after = dict(storage.get_settings())
+            check(after.get('days_to_build') == 10, f"days to solve not saved: {after.get('days_to_build')}")
+            check(not (_changed(before, after) - {'days_to_show', 'days_to_build'}),
+                  f'the horizon save touched other settings: {_changed(before, after)}')
+
+            before = dict(storage.get_settings())
+            page.locator('#routingAvoidTolls').check(force=True)
+            page.wait_for_timeout(800)
+            after = dict(storage.get_settings())
+            check(after.get('routing_avoid_tolls') is True, 'avoid tolls did not save')
+            check(not (_changed(before, after) - {'traffic_live_enabled', 'traffic_morning_hour',
+                                                  'routing_avoid_tolls'}),
+                  f'the traffic save touched other settings: {_changed(before, after)}')
+
+            before = dict(storage.get_settings())
+            page.fill('#tomorrowDigestTime', '21:15')
+            page.dispatch_event('#tomorrowDigestTime', 'change')
+            page.wait_for_timeout(800)
+            after = dict(storage.get_settings())
+            check(after.get('tomorrow_digest_time') == '21:15', 'the digest time did not save')
+            check(not (_changed(before, after) - {'tomorrow_digest_enabled', 'tomorrow_digest_time'}),
+                  f'the digest save touched other settings: {_changed(before, after)}')
+            _shot(page, 'drive-setup-solver.png')
+
+            # A deep link to an anchor in a closed section opens it.
+            page.goto(served.url('drive_setup#traffic'), wait_until='networkidle')
+            page.wait_for_timeout(600)
+            check(_visible(page, '#traffic') and not _visible(page, '#rules'),
+                  'drive_setup#traffic did not open Solver & horizons')
+            page.goto(served.url('drive_setup#priority-rules'), wait_until='networkidle')
+            page.wait_for_timeout(600)
+            check(_visible(page, '#priority-rules'), 'drive_setup#priority-rules did not open the Priority sub-tab')
+
+            # Config keeps a pointer where each block used to be, and no
+            # longer carries the controls.
+            page.goto(served.url('config'), wait_until='domcontentloaded')
+            for anchor in ('horizons', 'traffic', 'solver-behavior', 'tomorrow-digest', 'rules'):
+                check(page.locator(f'a[href$="drive_setup#{anchor}"]').count() >= 1,
+                      f'Config has no pointer to drive_setup#{anchor}')
+
+            errors = [e for e in handle.errors if 'Failed to load resource' not in e]
+            check(not errors, f'page errors: {errors[:3]}')
+    finally:
+        served.stop()
+    print('test_drive_setup_live OK')
+
+
+if __name__ == '__main__':
+    main()

@@ -125,12 +125,19 @@ def scenario_the_settings_reach_the_model_and_the_page():
         check(key in schemas_src,
               f"{key} is not a Settings field — the save endpoint silently "
               "drops keys the model does not carry")
+    # Routing & traffic moved to Drive setup (v2.499.253).
+    page = open(os.path.join(root, 'templates', 'drive_setup.html'),
+                encoding='utf-8').read()
+    for prop in ('trafficLiveEnabled', 'trafficMorningHour', 'routingAvoidTolls'):
+        check(page.count(prop) >= 4,
+              f"{prop} must be declared, loaded, saved AND rendered on the "
+              f"Drive setup page — found only {page.count(prop)} mentions")
     config = open(os.path.join(root, 'templates', 'config.html'),
                   encoding='utf-8').read()
-    for prop in ('trafficLiveEnabled', 'trafficMorningHour', 'routingAvoidTolls'):
-        check(config.count(prop) >= 4,
-              f"{prop} must be declared, loaded, saved AND rendered on the "
-              f"config page — found only {config.count(prop)} mentions")
+    for prop in ('trafficLiveEnabled', 'routingAvoidTolls', 'routing_avoid_tolls:'):
+        check(prop not in config,
+              f"{prop} is still on the config page, which would send it "
+              "and clobber the Drive setup page's value")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

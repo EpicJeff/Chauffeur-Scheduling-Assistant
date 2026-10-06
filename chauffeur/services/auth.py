@@ -205,6 +205,10 @@ RULES = [
     # School: same admin-page shape as Mind — a shell anyone can load; its
     # data is the parent-gated settings, members, feeds and stages APIs.
     (ANY, '/school', ANYONE, None),
+    # Drive setup: the Drives page's admin sibling (Schedule group) — a shell
+    # anyone can load; its data is the parent-gated settings, rules, cars,
+    # commitments and outside-hands APIs. Same sign-in gate as /dashboard_v2.
+    (ANY, '/drive_setup', ANYONE, None),
     (ANY, '/kitchen', ANYONE, None),
     (ANY, '/house', ANYONE, None),
     # Missions: same admin-page shape as Mind — a shell anyone can load, the
