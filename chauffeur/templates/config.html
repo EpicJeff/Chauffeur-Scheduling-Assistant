@@ -1761,9 +1761,9 @@
                                                             :class="(feed.canvas_status || '').startsWith('error') ? 'text-red-400' : 'text-gray-500'"
                                                             x-text="'Canvas names: ' + (feed.canvas_status || '')"></p>
                                                     </div>
-                                                    <button @click="syncIcsFeed(feed)" :disabled="icsSyncingId === feed.id"
+                                                    <button @click="syncIcsFeed(feed)" :disabled="icsSyncingId === feed.id || !!feed.syncing"
                                                         class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
-                                                        x-text="icsSyncingId === feed.id ? '...' : 'Sync'"></button>
+                                                        x-text="icsSyncingId === feed.id || !!feed.syncing ? 'Syncing…' : 'Sync'"></button>
                                                     <button x-show="feed.target_kind === 'tasks'" @click="setCanvasToken(feed)"
                                                         class="bg-gray-600 hover:bg-gray-500 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
                                                         :title="feed.canvas_status || 'Get class names from Canvas'"
@@ -6256,7 +6256,13 @@
                             showGlobalAlert(`Subscribed to "${data.name}" — found ${data.event_count} ${target === '__tasks__' ? 'items for the task list' : 'events'}. They're being created in the background.`);
                             this.newIcsFeed = { url: '', calendar_id: '' };
                             await this.loadIcsFeeds();
-                            setTimeout(() => this.loadIcsFeeds(), 8000); // pick up the initial sync result
+                            // pick up the initial sync result; a big feed takes a while
+                            const poll = async (n) => {
+                                await this.loadIcsFeeds();
+                                if (n > 0 && this.icsFeeds.some(f => f.id === data.id && f.syncing))
+                                    setTimeout(() => poll(n - 1), 8000);
+                            };
+                            setTimeout(() => poll(15), 8000);
                         }
                     } catch (e) {
                         showGlobalAlert('Could not add feed: ' + e.message);
@@ -6271,6 +6277,8 @@
                         const data = await res.json();
                         if (data.error) {
                             showGlobalAlert('Sync failed: ' + data.error);
+                        } else if (data.busy) {
+                            showGlobalAlert(`"${feed.name}" is already syncing — check back in a minute.`);
                         } else {
                             showGlobalAlert(`Synced "${feed.name}": ${data.total} events (${data.added} added, ${data.updated} updated, ${data.removed} removed).`);
                         }
@@ -6321,6 +6329,7 @@
                         'Remove them', 'Keep them');
                     const res = await fetch(`${this.apiBase}api/ics_feeds/${feed.id}?remove_events=${removeEvents}`, { method: 'DELETE' });
                     const data = await res.json();
+                    if (!res.ok) return showGlobalAlert(data.detail || 'Could not delete that feed.');
                     if (removeEvents) showGlobalAlert(`Feed deleted. ${data.events_removed} upcoming events removed.`);
                     await this.loadIcsFeeds();
                 },

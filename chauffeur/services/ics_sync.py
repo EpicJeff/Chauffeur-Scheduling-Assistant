@@ -16,11 +16,17 @@ Sync rules:
 - Recurring occurrences are keyed uid::start so one rescheduled/cancelled
   occurrence never disturbs its siblings; single events are keyed by uid so a
   time change is a patch, not a delete+create.
+- One sync per feed at a time: a second sync started while one runs (Sync
+  now during the slow first sync, or the hourly loop) is skipped. Two at once
+  each read the same empty event_map and inserted every event again.
+- Every sync ends by deleting any event tagged with this feed whose key the
+  feed already tracks under a different gid — the copies a past race left.
 """
 import datetime
 import hashlib
 import json
 import re
+import threading
 from html.parser import HTMLParser
 
 import requests
@@ -441,9 +447,87 @@ def _sync_feed_tasks(feed: dict, items: dict, summary: dict, now) -> dict:
     return summary
 
 
+_feed_locks = {}
+_feed_locks_guard = threading.Lock()
+
+
+def _feed_lock(feed_id: str) -> threading.Lock:
+    with _feed_locks_guard:
+        return _feed_locks.setdefault(feed_id, threading.Lock())
+
+
+def is_syncing(feed_id: str) -> bool:
+    return _feed_lock(feed_id).locked()
+
+
 def sync_feed(feed: dict) -> dict:
     """Sync one feed dict (as stored). Persists the updated feed doc and
-    returns {'added','updated','removed','total','error'}."""
+    returns {'added','updated','removed','total','error'}, plus 'busy': True
+    (and nothing done) when this feed is already mid-sync."""
+    feed_id = feed['id']
+    lock = _feed_lock(feed_id)
+    if not lock.acquire(blocking=False):
+        return {'added': 0, 'updated': 0, 'removed': 0, 'total': 0,
+                'error': None, 'busy': True}
+    try:
+        # Re-read under the lock: the caller's copy may predate a sync that
+        # just finished, and its stale event_map would re-insert everything.
+        fresh = storage.get_ics_feed(feed_id)
+        if fresh is None:  # deleted meanwhile
+            return {'added': 0, 'updated': 0, 'removed': 0, 'total': 0, 'error': None}
+        return _sync_feed_locked(fresh)
+    finally:
+        lock.release()
+
+
+def _dedupe_feed_events(cal_id: str, feed_id: str, new_map: dict) -> int:
+    """Delete this feed's duplicate copies in Google: per ics_key keep the
+    tracked gid (or, when none is tracked, the oldest copy) and remove the
+    rest. Returns how many were deleted; an unreadable calendar deletes none."""
+    events = gcal.list_tagged_events(cal_id, 'ics_feed_id', feed_id)
+    if not events:
+        return 0
+    tracked = {e.get('gid') for e in new_map.values()}
+    by_key = {}
+    for ev in events:
+        key = ((ev.get('extendedProperties') or {}).get('private') or {}).get('ics_key')
+        if key and ev.get('id'):
+            by_key.setdefault(key, []).append(ev)
+    removed = 0
+    for copies in by_key.values():
+        if len(copies) < 2:
+            continue
+        keep = {c['id'] for c in copies if c['id'] in tracked}
+        if not keep:
+            keep = {min(copies, key=lambda c: c.get('created') or '')['id']}
+        for c in copies:
+            if c['id'] not in keep and gcal.remove_event(cal_id, c['id']):
+                removed += 1
+    return removed
+
+
+def _merge_duplicate_items(items: dict, event_map: dict):
+    """Collapse feed items that are the same event under different UIDs
+    (TeamSnap posts some twice): same title, start, end and location. The
+    survivor is a key already in event_map when there is one (no churn), else
+    the lowest key; the other keys' Google events then vanish like any dropped
+    event. Description is not compared (it carries each copy's own link).
+    Returns (items, merged_count)."""
+    groups = {}
+    for key, it in items.items():
+        ident = ((it.get('title') or '').strip().casefold(), it['start'], it['end'],
+                 it['all_day'], (it.get('location') or '').strip().casefold())
+        groups.setdefault(ident, []).append(key)
+    out = {}
+    merged = 0
+    for keys in groups.values():
+        keys.sort(key=lambda k: (k not in event_map, k))
+        out[keys[0]] = items[keys[0]]
+        merged += len(keys) - 1
+    return out, merged
+
+
+def _sync_feed_locked(feed: dict) -> dict:
     feed_id = feed['id']
     summary = {'added': 0, 'updated': 0, 'removed': 0, 'total': 0, 'error': None}
     now = datetime.datetime.now(_local_tz())
@@ -475,6 +559,8 @@ def sync_feed(feed: dict) -> dict:
     cal_id = feed['calendar_id']
     event_map = dict(feed.get('event_map') or {})
     new_map = {}
+    items, merged = _merge_duplicate_items(items, event_map)
+    summary['total'] = len(items)
 
     # Prune history: entries whose event started before the grace window stay
     # in Google Calendar forever but stop being tracked (and can't be deleted
@@ -514,14 +600,21 @@ def sync_feed(feed: dict) -> dict:
         else:
             new_map[key] = entry  # transient failure: retry next sync
 
+    deduped = _dedupe_feed_events(cal_id, feed_id, new_map)
+    summary['removed'] += deduped
+
     status = f"ok: {summary['total']} events"
     changes = []
     if summary['added']:
         changes.append(f"{summary['added']} added")
     if summary['updated']:
         changes.append(f"{summary['updated']} updated")
-    if summary['removed']:
-        changes.append(f"{summary['removed']} removed")
+    if summary['removed'] - deduped:
+        changes.append(f"{summary['removed'] - deduped} removed")
+    if deduped:
+        changes.append(f"{deduped} duplicate{'s' if deduped != 1 else ''} removed")
+    if merged:
+        changes.append(f"{merged} duplicate{'s' if merged != 1 else ''} in the feed merged")
     if changes:
         status += ' (' + ', '.join(changes) + ')'
 

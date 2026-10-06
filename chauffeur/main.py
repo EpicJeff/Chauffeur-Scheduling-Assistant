@@ -3962,6 +3962,8 @@ def _public_ics_feed(f: dict) -> dict:
     A Canvas token is write-only: the page learns only that one is set."""
     out = {k: v for k, v in f.items() if k not in ('event_map', 'canvas_token')}
     out['canvas_token_set'] = bool(f.get('canvas_token'))
+    from services import ics_sync
+    out['syncing'] = ics_sync.is_syncing(f['id'])
     return out
 
 @app.get("/api/calendar_health")
@@ -4085,6 +4087,10 @@ def delete_ics_feed(feed_id: str, background_tasks: BackgroundTasks,
     feed = storage.get_ics_feed(feed_id)
     if not feed:
         raise HTTPException(status_code=404, detail="Feed not found")
+    if ics_sync.is_syncing(feed_id):
+        # Events the running sync inserts after this would be untracked forever.
+        raise HTTPException(status_code=409,
+                            detail="This feed is syncing right now — try again in a minute.")
     removed = 0
     if remove_events:
         removed = ics_sync.remove_feed_events(feed)

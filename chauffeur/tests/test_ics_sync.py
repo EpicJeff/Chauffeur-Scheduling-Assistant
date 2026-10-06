@@ -70,11 +70,13 @@ class FakeGcal:
         self.removed = []       # (cal_id, gid)
         self.fail_remove = False
         self._next = 0
+        self.live = {}          # gid -> event as Google would list it
 
     def insert_event(self, cal_id, body):
         self._next += 1
         gid = f"g{self._next}"
         self.inserted.append((cal_id, gid, body))
+        self.live[gid] = dict(body, id=gid, created=f"2026-01-01T00:00:{self._next:02d}Z")
         return gid
 
     def patch_event(self, cal_id, gid, body):
@@ -85,7 +87,12 @@ class FakeGcal:
         if self.fail_remove:
             return False
         self.removed.append((cal_id, gid))
+        self.live.pop(gid, None)
         return True
+
+    def list_tagged_events(self, cal_id, prop_key, prop_value):
+        return [e for e in self.live.values()
+                if e['extendedProperties']['private'].get(prop_key) == prop_value]
 
 
 def test_parse():
@@ -201,6 +208,90 @@ def test_sync_lifecycle():
         ics_sync.fetch_ics = real_fetch
 
 
+def test_no_duplicates():
+    """The TeamSnap report: one feed landed every event several times. Two
+    syncs of one feed must never run at once; copies a past race left are
+    deleted by the next sync; and one event the feed lists twice under two
+    UIDs lands once."""
+    print("duplicates ...")
+    import threading
+    fake = FakeGcal()
+    real_gcal, real_fetch = ics_sync.gcal, ics_sync.fetch_ics
+    ics_sync.gcal = fake
+    a = {'uid': 'a-1', 'start': NOW + datetime.timedelta(days=3),
+         'end': NOW + datetime.timedelta(days=3, hours=2), 'summary': 'Practice',
+         'location': 'Gym'}
+    b = {'uid': 'b-1', 'start': NOW + datetime.timedelta(days=4),
+         'end': NOW + datetime.timedelta(days=4, hours=2), 'summary': 'Game'}
+    try:
+        # -- a second sync while one runs is skipped, not run alongside
+        feed_id = storage.add_ics_feed({'url': 'https://x/race.ics', 'name': 'R',
+                                        'calendar_id': 'race@cal'})
+        entered, release = threading.Event(), threading.Event()
+
+        def slow_fetch(url):
+            entered.set()
+            release.wait(5)
+            return build_ics([a, b])
+        ics_sync.fetch_ics = slow_fetch
+        first = {}
+        t = threading.Thread(target=lambda: first.update(
+            ics_sync.sync_feed(storage.get_ics_feed(feed_id))))
+        t.start()
+        entered.wait(5)
+        check(ics_sync.is_syncing(feed_id), "feed reports syncing mid-sync")
+        second = ics_sync.sync_feed(storage.get_ics_feed(feed_id))
+        release.set()
+        t.join(5)
+        check(second.get('busy') is True and second['added'] == 0,
+              f"overlapping sync skipped: {second}")
+        check(first.get('added') == 2, f"the running sync did the work: {first}")
+        check(len(fake.live) == 2, f"each event once in Google, got {len(fake.live)}")
+        check(not ics_sync.is_syncing(feed_id), "lock released after sync")
+
+        # -- a stale caller copy (empty map) can't re-insert: sync re-reads
+        ics_sync.fetch_ics = lambda url: build_ics([a, b])
+        stale = dict(storage.get_ics_feed(feed_id), event_map={})
+        res = ics_sync.sync_feed(stale)
+        check(res['added'] == 0, f"stale feed copy inserts nothing: {res}")
+
+        # -- copies an old race left behind are deleted by the next sync
+        feed = storage.get_ics_feed(feed_id)
+        tracked = {e['gid'] for e in feed['event_map'].values()}
+        body = next(e for e in fake.live.values() if e['id'] in tracked)
+        stray = fake.insert_event('race@cal', {k: v for k, v in body.items()
+                                               if k not in ('id', 'created')})
+        res = ics_sync.sync_feed(storage.get_ics_feed(feed_id))
+        check(stray not in fake.live, "untracked copy of a tracked event deleted")
+        check(set(fake.live) == tracked, "the tracked events survive")
+        check('1 duplicate removed' in storage.get_ics_feed(feed_id)['last_status'],
+              f"status says so: {storage.get_ics_feed(feed_id)['last_status']}")
+
+        # -- one event posted twice under two UIDs lands once
+        twin = dict(a, uid='a-2')
+        ics_sync.fetch_ics = lambda url: build_ics([a, twin, b])
+        res = ics_sync.sync_feed(storage.get_ics_feed(feed_id))
+        check(res['added'] == 0 and res['total'] == 2, f"twin merged, not added: {res}")
+        check('a-2' not in storage.get_ics_feed(feed_id)['event_map'], "twin not tracked")
+        check('in the feed merged' in storage.get_ics_feed(feed_id)['last_status'],
+              "status mentions the merge")
+
+        # -- a fresh feed with the twin from the start creates it once
+        fresh_id = storage.add_ics_feed({'url': 'https://x/twin.ics', 'name': 'T2',
+                                         'calendar_id': 'twin@cal'})
+        res = ics_sync.sync_feed(storage.get_ics_feed(fresh_id))
+        check(res['added'] == 2, f"fresh feed: 2 events, not 3: {res}")
+
+        # -- same time but a different title is a different event
+        other = dict(a, uid='a-3', summary='Open Gym')
+        ics_sync.fetch_ics = lambda url: build_ics([a, other, b])
+        res = ics_sync.sync_feed(storage.get_ics_feed(fresh_id))
+        check(res['added'] == 1, f"different title at the same time is kept: {res}")
+    finally:
+        ics_sync.gcal = real_gcal
+        ics_sync.fetch_ics = real_fetch
+
+
 def test_clean_title():
     """Course codes are machine noise on every surface a family reads —
     stripped at import. Only code-shaped brackets go; a teacher's own
@@ -224,6 +315,7 @@ def test_clean_title():
 if __name__ == '__main__':
     test_parse()
     test_sync_lifecycle()
+    test_no_duplicates()
     test_clean_title()
     print(f"\n{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)

@@ -533,6 +533,30 @@ def patch_event(calendar_id: str, event_id: str, body: dict) -> bool:
         print(f"Error patching event {event_id} in {calendar_id}: {ex}")
         return False
 
+def list_tagged_events(calendar_id: str, prop_key: str, prop_value: str):
+    """Every event on the calendar carrying private extended property
+    prop_key=prop_value, past and future. Returns a list, or None when the
+    calendar could not be read (callers must not mistake that for 'none')."""
+    try:
+        service = get_calendar_service()
+        events = []
+        page_token = None
+        while True:
+            res = service.events().list(
+                calendarId=calendar_id,
+                privateExtendedProperty=f"{prop_key}={prop_value}",
+                maxResults=2500,
+                pageToken=page_token
+            ).execute()
+            events.extend(res.get('items', []))
+            page_token = res.get('nextPageToken')
+            if not page_token:
+                break
+        return events
+    except Exception as ex:
+        print(f"Error listing tagged events in {calendar_id}: {ex}")
+        return None
+
 def remove_event(calendar_id: str, event_id: str) -> bool:
     """Delete an event; an already-gone event (404/410) counts as success so
     callers don't retry forever on manually-deleted events."""
