@@ -11,7 +11,8 @@ Schedule group. What only a browser can check:
   - a change saves ONLY its own keys: the settings POST merges, and a page
     that sent everything it had loaded could still clobber a setting another
     page changed meanwhile;
-  - a routing rule can be written by hand from the page.
+  - a routing rule, a car, a protected-time commitment and an outside hand
+    can each be added by hand from the page.
 
 Run from chauffeur/:  python tests/test_drive_setup_live.py [--out DIR]
 """
@@ -182,6 +183,80 @@ def main():
                   f'the digest save touched other settings: {_changed(before, after)}')
             _shot(page, 'drive-setup-solver.png')
 
+            # Cars: one added and then edited by hand, through the form.
+            page.click('#drive-sections [data-section-tab="cars"]')
+            page.wait_for_timeout(200)
+            check(_visible(page, '#cars') and not _visible(page, '#solver'), 'clicking Cars did not show it')
+            page.locator('#cars').get_by_role('button', name='+ Add a Car').click()
+            page.locator('#cars [x-model="newCar.name"]').fill('Minivan')
+            page.locator('#cars [x-model\\.number="newCar.seat_capacity"]').fill('6')
+            page.locator('#cars').get_by_role('button', name='Mum', exact=True).click()
+            page.locator('#cars').get_by_role('button', name='Add Car', exact=True).click()
+            page.wait_for_timeout(900)
+            cars = page.request.get(served.url('api/cars')).json()
+            check(len(cars) == 1 and cars[0]['name'] == 'Minivan' and cars[0]['seat_capacity'] == 6
+                  and cars[0]['allowed_driver_ids'] == ['mum'], f'the car did not save: {cars}')
+            page.locator('#cars').get_by_role('button', name='Edit', exact=True).click()
+            page.locator('#cars [x-model\\.number="newCar.seat_capacity"]').fill('7')
+            page.locator('#cars').get_by_role('button', name='Save Car', exact=True).click()
+            page.wait_for_timeout(900)
+            cars = page.request.get(served.url('api/cars')).json()
+            check(len(cars) == 1 and cars[0]['seat_capacity'] == 7, f'the car edit did not save: {cars}')
+            check('7 passenger seats' in page.locator('#cars').inner_text(), 'the edited car is not shown')
+
+            # Car alerts send only their own four keys (they used to send all
+            # of Config's settings).
+            before = dict(storage.get_settings())
+            page.locator('#car-alerts [x-model\\.number="carFuelWarnPct"]').fill('15')
+            page.locator('#car-alerts [data-save-alerts]').click()
+            page.wait_for_timeout(800)
+            after = dict(storage.get_settings())
+            check(after.get('car_fuel_warn_pct') == 15, f"fuel warning not saved: {after.get('car_fuel_warn_pct')}")
+            check(not (_changed(before, after) - {'car_battery_warn_pct', 'car_fuel_warn_pct',
+                                                  'car_auto_errand', 'car_fuel_station'}),
+                  f'Save Alerts touched other settings: {_changed(before, after)}')
+            _shot(page, 'drive-setup-cars.png')
+
+            # Protected time: a commitment added by hand.
+            page.click('#drive-sections [data-section-tab="protected"]')
+            page.wait_for_timeout(200)
+            check(_visible(page, '#protected-time'), 'clicking Protected time did not show it')
+            pt = page.locator('#protected-time')
+            pt.locator('[x-model="commitmentForm.title"]').fill('Thursday run')
+            pt.locator('[data-commitment-member]').select_option('dad')
+            pt.get_by_role('button', name='T', exact=True).nth(1).click()   # Thursday
+            pt.locator('[data-protect]').click()
+            page.wait_for_timeout(800)
+            got = storage.get_protected_commitments()
+            check(len(got) == 1 and got[0]['title'] == 'Thursday run' and got[0]['member_id'] == 'dad'
+                  and got[0]['days_of_week'] == [3], f'the commitment did not save: {got}')
+            check('Thursday run' in pt.inner_text(), 'the commitment is not listed')
+            _shot(page, 'drive-setup-protected.png')
+
+            # Outside hands: one added by hand, and the be-ready buffer alone.
+            page.click('#drive-sections [data-section-tab="hands"]')
+            page.wait_for_timeout(200)
+            oh = page.locator('#outside-hands')
+            check(_visible(page, '#outside-hands'), 'clicking Outside hands did not show it')
+            oh.locator('[x-model="assistForm.name"]').fill('Sarah Whitfield')
+            oh.locator('[x-model="assistForm.relation_label"]').fill("Emma's mom")
+            oh.get_by_role('button', name='🚗 Driving').click()
+            oh.locator('[data-save-hand]').click()
+            page.wait_for_timeout(800)
+            hands = storage.get_assist_contacts()
+            check(len(hands) == 1 and hands[0]['name'] == 'Sarah Whitfield' and 'driving' in hands[0].get('kinds', []),
+                  f'the outside hand did not save: {hands}')
+            check("Emma's mom" in oh.inner_text(), 'the outside hand is not listed')
+            before = dict(storage.get_settings())
+            page.fill('#assistReadyBuffer', '15')
+            page.dispatch_event('#assistReadyBuffer', 'change')
+            page.wait_for_timeout(800)
+            after = dict(storage.get_settings())
+            check(after.get('assist_ready_buffer_mins') == 15, 'the be-ready buffer did not save')
+            check(not (_changed(before, after) - {'assist_ready_buffer_mins'}),
+                  f'the buffer save touched other settings: {_changed(before, after)}')
+            _shot(page, 'drive-setup-hands.png')
+
             # A deep link to an anchor in a closed section opens it.
             page.goto(served.url('drive_setup#traffic'), wait_until='networkidle')
             page.wait_for_timeout(600)
@@ -191,10 +266,22 @@ def main():
             page.wait_for_timeout(600)
             check(_visible(page, '#priority-rules'), 'drive_setup#priority-rules did not open the Priority sub-tab')
 
+            page.goto(served.url('drive_setup#car-alerts'), wait_until='networkidle')
+            page.wait_for_timeout(600)
+            check(_visible(page, '#car-alerts') and not _visible(page, '#rules'),
+                  'drive_setup#car-alerts did not open Cars')
+
+            # An old link to a moved Config anchor lands on its new home.
+            page.goto(served.url('config#outside-hands'), wait_until='networkidle')
+            page.wait_for_timeout(800)
+            check('/drive_setup' in page.url and _visible(page, '#outside-hands'),
+                  f'config#outside-hands did not forward to Drive setup: {page.url}')
+
             # Config keeps a pointer where each block used to be, and no
             # longer carries the controls.
             page.goto(served.url('config'), wait_until='domcontentloaded')
-            for anchor in ('horizons', 'traffic', 'solver-behavior', 'tomorrow-digest', 'rules'):
+            for anchor in ('horizons', 'traffic', 'solver-behavior', 'tomorrow-digest', 'rules',
+                           'cars', 'protected-time', 'outside-hands'):
                 check(page.locator(f'a[href$="drive_setup#{anchor}"]').count() >= 1,
                       f'Config has no pointer to drive_setup#{anchor}')
 

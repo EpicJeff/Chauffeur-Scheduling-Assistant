@@ -13,6 +13,10 @@
         [x-cloak] { display: none !important; }
         body { background-color: #111827; color: #e2e8f0; font-family: 'Inter', sans-serif; }
     </style>
+    <!-- Mapbox GL: station-picker map (Car alerts). No map load is billed
+         until the picker actually instantiates a map. -->
+    <link href="{{ 'static/vendor/mapbox-gl.css'|ver }}" rel="stylesheet">
+    <script src="{{ 'static/vendor/mapbox-gl.js'|ver }}"></script>
     <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
 </head>
 
@@ -21,7 +25,8 @@
    tab, the solver switches and the planning horizons on General, routing and
    traffic policy beside the Mapbox quotas, and the parents' tomorrow digest.
    A tab of the Schedule group (nav.html PAGE_GROUPS), beside the Drives list
-   these settings shape.
+   these settings shape. The cars, protected time and outside hands joined
+   it from Config → People in v2.499.254.
 
    The markup is Config's, moved rather than redrawn: the same cards, inputs
    and wording. The page saves ONLY its own keys — POST /api/settings merges —
@@ -40,8 +45,9 @@
         <header class="mb-6">
             <h2 class="panel-page-title">Drive setup</h2>
             <p class="text-gray-400 text-sm">How the solver hands out drives: the rules you have written,
-                how far ahead it plans, how it balances the load, how it prices a drive, and the
-                evening look at tomorrow. Parents only.</p>
+                the cars it can use, the time it must leave alone, the people outside the house who
+                drive for you, how far ahead it plans, how it balances the load and prices a drive,
+                and the evening look at tomorrow. Parents only.</p>
         </header>
 
         {# The section switcher: Config's own Rules sub-tab row (config.html,
@@ -122,6 +128,534 @@
 {% include 'components/drive_rules.html' %}
                 </div>
         </section>
+
+        <!-- Cars (moved from Config → People). The fleet limits who can take
+             which drive, so it lives with the rest of what shapes the solve. -->
+        <section id="cars" data-drive-section="cars" x-show="section === 'cars'"
+            class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+            <h2 class="text-3xl font-bold mb-2 text-teal-300">Cars</h2>
+            <p class="text-gray-400 text-sm mb-4">The household fleet. Cars limit who can take which
+                events: passenger seats, who's allowed behind the wheel, and car-seat restrictions. The
+                solver assigns a car to every drive and never double-books one; two drivers can reuse a
+                car only when there's time to hand it off at home. <b>Anyone listed on no car keeps an
+                    unrestricted personal car</b> — leave this section empty and scheduling behaves
+                exactly as before.</p>
+            <div class="space-y-3">
+                <template x-for="car in cars" :key="car.doc_id">
+                    <div class="bg-gray-900 p-4 rounded-xl shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3"
+                        :class="car.is_disabled ? 'opacity-50' : ''">
+                        <div class="flex items-center gap-3">
+                            <div class="w-11 h-11 rounded-full flex items-center justify-center text-2xl border-4 bg-gray-800 overflow-hidden"
+                                :style="'border-color: ' + (car.color_code || '#6b7280')">
+                                <template x-if="car.image">
+                                    <img :src="car.image" class="w-full h-full object-cover">
+                                </template>
+                                <template x-if="!car.image">
+                                    <span x-text="car.icon || '🚗'"></span>
+                                </template>
+                            </div>
+                            <div>
+                                <h3 class="text-lg font-bold text-white" x-text="car.name"></h3>
+                                <div class="text-xs text-gray-400 flex gap-2 flex-wrap items-center mt-0.5">
+                                    <span x-text="car.seat_capacity + ' passenger seats'"></span>
+                                    <span class="text-gray-600">·</span>
+                                    <span x-text="'Drivers: ' + carDriverNames(car)"></span>
+                                    <span x-show="car.default_driver_id" class="text-gray-600">·</span>
+                                    <span x-show="car.default_driver_id"
+                                        x-text="'usually ' + driverNameById(car.default_driver_id)"></span>
+                                    <span x-show="car.allowed_passenger_ids"
+                                        class="px-2 py-0.5 bg-amber-900/40 text-amber-300 rounded-full font-bold">car-seat
+                                        limited</span>
+                                    <span x-show="carUnavailableNote(car)"
+                                        class="px-2 py-0.5 bg-red-900/40 text-red-300 rounded-full font-bold"
+                                        x-text="carUnavailableNote(car)"></span>
+                                    <span x-show="car.is_disabled"
+                                        class="px-2 py-0.5 bg-gray-700 text-gray-300 rounded-full font-bold uppercase">disabled</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex gap-2">
+                            <button @click="editCar(car)"
+                                class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Edit</button>
+                            <button @click="deleteCar(car.doc_id)"
+                                class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Delete</button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            <div class="mt-4">
+                <button x-show="!showCarForm" @click="openCarForm()"
+                    class="w-full border border-dashed border-gray-600 hover:border-teal-500 hover:text-teal-300 text-gray-400 font-bold py-4 rounded-xl transition-colors">+
+                    Add a Car</button>
+                <div x-show="showCarForm" x-cloak
+                    class="bg-gray-700/30 p-5 rounded-xl border border-gray-600 border-dashed">
+                    <h3 class="text-lg font-bold text-white mb-4"
+                        x-text="editCarId ? ('Car — ' + newCar.name) : 'New Car'"></h3>
+                    <div class="flex gap-4 items-end flex-wrap">
+                        <div class="flex-1 min-w-[160px]">
+                            <label class="block text-gray-400 mb-1 text-sm">Name</label>
+                            <input type="text" x-model="newCar.name" placeholder="e.g. Minivan"
+                                class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 mb-1 text-sm">Icon (emoji)</label>
+                            <div class="flex items-center gap-2">
+                                <button type="button" title="Pick an emoji"
+                                    @click="EmojiPicker.open($event.currentTarget, v => newCar.icon = v)"
+                                    class="shrink-0 bg-gray-900 border border-gray-600 rounded p-3 text-xl leading-none"
+                                    x-text="newCar.icon || '😀'"></button>
+                                <input type="text" x-model="newCar.icon" maxlength="8" placeholder="🚐"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-20">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 mb-1 text-sm">Photo (wins over emoji)</label>
+                            <div class="flex items-center gap-2">
+                                <img x-show="newCar.image" :src="newCar.image"
+                                    class="w-12 h-12 rounded-lg object-cover border-2 border-gray-600">
+                                <label
+                                    class="bg-gray-600 hover:bg-gray-500 text-white font-bold px-3 py-3 rounded cursor-pointer text-sm transition-colors">
+                                    <span x-text="newCar.image ? 'Change' : 'Upload'"></span>
+                                    <input type="file" accept="image/*" class="hidden"
+                                        @change="onPhotoPicked($event, newCar)">
+                                </label>
+                                <button x-show="newCar.image" @click="newCar.image = null"
+                                    class="text-red-400 hover:text-red-300 font-bold text-sm px-2">✕</button>
+                            </div>
+                            <label for="car-house-artwork" class="block text-gray-400 mt-3 mb-1 text-sm">House vehicle appearance</label>
+                            <select id="car-house-artwork" x-model="newCar.house_artwork" class="w-full bg-gray-900 border border-gray-600 rounded p-2">
+                                <option value="">No scene assignment / uploaded artwork</option>
+                                <option value="ev9-white-black-roof">White 2026 Kia EV9 GT-Line / black roof / left garage bay</option>
+                                <option value="gls450-white-23">White 2022 Mercedes GLS 450 / 23-inch wheels / right garage bay</option>
+                                <option value="murano-white">White 2021 Nissan Murano / driveway</option>
+                            </select>
+                            <p class="text-xs text-gray-500 mt-2">Assign each scene vehicle to its matching saved car. Both House views follow that car's Home/Away status and telemetry. No assignment leaves the space empty.</p>
+                            <label class="block text-gray-400 mt-3 mb-1 text-sm">House driveway artwork</label>
+                            <p class="text-xs text-gray-500 mb-2">Optional transparent PNG or WebP of the whole vehicle, facing toward the lower left.</p>
+                            <img x-show="newCar.exterior_image" :src="newCar.exterior_image" class="w-28 h-20 object-contain" alt="Vehicle driveway artwork">
+                            <input aria-label="House driveway artwork" type="file" accept="image/png,image/webp" @change="onCarArtworkPicked($event)" class="text-sm w-full">
+                            <button type="button" x-show="newCar.exterior_image" @click="newCar.exterior_image = null" class="text-red-400 text-sm mt-2">Remove driveway artwork</button>
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 mb-1 text-sm">Color</label>
+                            <input type="color" x-model="newCar.color_code"
+                                class="bg-gray-900 border border-gray-600 rounded p-1 h-12 w-16">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 mb-1 text-sm">Passenger seats
+                                <span class="text-gray-600">(excluding driver)</span></label>
+                            <input type="number" min="0" max="20" x-model.number="newCar.seat_capacity"
+                                class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-24">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 mb-1 text-sm">Body
+                                <span class="text-gray-600">(how the house draws it)</span></label>
+                            <select x-model="newCar.body_type"
+                                class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                <option value="">Generic</option>
+                                <option value="sedan">Sedan</option>
+                                <option value="suv">SUV</option>
+                                <option value="truck">Truck</option>
+                                <option value="minivan">Minivan</option>
+                                <option value="hatch">Hatchback</option>
+                                <option value="wagon">Wagon</option>
+                                <option value="van">Van</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mt-4">
+                        <label class="block text-gray-400 mb-1 text-sm">Who may drive it</label>
+                        <div class="flex flex-wrap gap-2">
+                            <template x-for="d in drivers" :key="d.id">
+                                <button @click="toggleCarDriver(d.id)"
+                                    class="px-3 py-1.5 rounded-full text-xs font-bold border transition-colors"
+                                    :class="newCar.allowed_driver_ids.includes(d.id) ? 'bg-teal-600/40 border-teal-500 text-teal-200' : 'bg-gray-800 border-gray-600 text-gray-400 hover:border-gray-400'"
+                                    x-text="d.name"></button>
+                            </template>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-1">Drivers not listed on any car keep an
+                            unrestricted personal car.</p>
+                    </div>
+                    <div class="mt-4">
+                        <label class="block text-gray-400 mb-1 text-sm">Usual driver
+                            <span class="text-gray-600">(the solver avoids taking their car away)</span></label>
+                        <select x-model="newCar.default_driver_id"
+                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                            <option value="">— none —</option>
+                            <template x-for="d in drivers.filter(d => newCar.allowed_driver_ids.includes(d.id))"
+                                :key="d.id">
+                                <option :value="d.id" x-text="d.name"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="mt-4">
+                        <label class="block text-gray-400 mb-1 text-sm">Who fits (car seats)</label>
+                        <div class="flex items-center gap-4 mb-2">
+                            <label class="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer">
+                                <input type="radio" value="any" x-model="carPaxMode" class="accent-teal-500">
+                                Anyone fits</label>
+                            <label class="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer">
+                                <input type="radio" value="limited" x-model="carPaxMode" class="accent-teal-500">
+                                Only selected passengers</label>
+                        </div>
+                        <div x-show="carPaxMode === 'limited'" class="flex flex-wrap gap-2">
+                            <template x-for="p in passengers" :key="p.id">
+                                <button @click="toggleCarPassenger(p.id)"
+                                    class="px-3 py-1.5 rounded-full text-xs font-bold border transition-colors"
+                                    :class="(newCar.allowed_passenger_ids || []).includes(p.id) ? 'bg-amber-600/40 border-amber-500 text-amber-200' : 'bg-gray-800 border-gray-600 text-gray-400 hover:border-gray-400'"
+                                    x-text="p.name"></button>
+                            </template>
+                        </div>
+                    </div>
+                    <div class="mt-4">
+                        <label class="block text-gray-400 mb-1 text-sm">Unavailable
+                            <span class="text-gray-600">(loaned out, in the shop — the solver won't use it)</span></label>
+                        <template x-for="(r, idx) in newCar.unavailable_ranges" :key="idx">
+                            <div class="flex items-center gap-2 mb-1 text-sm text-gray-300">
+                                <span x-text="r.start + ' → ' + r.end + (r.reason ? ' · ' + r.reason : '')"></span>
+                                <button @click="newCar.unavailable_ranges.splice(idx, 1)"
+                                    class="text-gray-400 hover:text-red-400 font-bold">✕</button>
+                            </div>
+                        </template>
+                        <div class="flex gap-2 flex-wrap items-center">
+                            <input type="date" x-model="newCarRange.start"
+                                class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm">
+                            <span class="text-gray-500">to</span>
+                            <input type="date" x-model="newCarRange.end"
+                                class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm">
+                            <input type="text" x-model="newCarRange.reason" placeholder="reason (optional)"
+                                class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm flex-1 min-w-[140px]">
+                            <button @click="addCarUnavailableRange()"
+                                class="bg-gray-600 hover:bg-gray-500 text-white font-bold px-3 py-2 rounded text-sm transition-colors">Add</button>
+                        </div>
+                    </div>
+                    <div class="mt-4" x-show="haStatus && haStatus.available">
+                        <label class="block text-gray-400 mb-1 text-sm">Home Assistant
+                            <span class="text-gray-600">(optional — map location, charge/fuel reminders)</span></label>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div>
+                                <span class="block text-xs text-gray-500 mb-0.5">Location (device tracker)</span>
+                                <select x-model="newCar.ha_device_tracker"
+                                    class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm">
+                                    <option value="">— none —</option>
+                                    <template x-for="t in haDeviceTrackers" :key="t.entity_id">
+                                        <option :value="t.entity_id" x-text="t.name"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div>
+                                <span class="block text-xs text-gray-500 mb-0.5">Battery / charge % sensor</span>
+                                <input type="text" list="ha-sensor-list" x-model="newCar.ha_battery_entity"
+                                    placeholder="sensor.…"
+                                    class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm font-mono">
+                            </div>
+                            <div>
+                                <span class="block text-xs text-gray-500 mb-0.5">Fuel level % sensor</span>
+                                <input type="text" list="ha-sensor-list" x-model="newCar.ha_fuel_entity"
+                                    placeholder="sensor.…"
+                                    class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm font-mono">
+                            </div>
+                            <div>
+                                <span class="block text-xs text-gray-500 mb-0.5">Range remaining sensor</span>
+                                <input type="text" list="ha-sensor-list" x-model="newCar.ha_range_entity"
+                                    placeholder="sensor.…"
+                                    class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm font-mono">
+                            </div>
+                        </div>
+                        <datalist id="ha-sensor-list">
+                            <template x-for="s in haSensors" :key="s.entity_id">
+                                <option :value="s.entity_id" x-text="s.name"></option>
+                            </template>
+                        </datalist>
+                    </div>
+                    <div class="mt-4 flex items-center gap-3">
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" x-model="newCar.is_disabled" class="sr-only peer">
+                            <div
+                                class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                            </div>
+                        </label>
+                        <span class="text-sm text-gray-300">Disabled (ignored by the solver entirely)</span>
+                    </div>
+                    <div class="flex gap-4 mt-5 items-center">
+                        <button @click="submitCar()" :disabled="!!saving"
+                            class="bg-teal-600 hover:bg-teal-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center"
+                            x-text="saving ? 'Saving...' : (editCarId ? 'Save Car' : 'Add Car')"></button>
+                        <button @click="cancelEditCar()"
+                            class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center">Cancel</button>
+                    </div>
+                </div>
+            </div>
+            <div id="car-alerts" class="mt-6 pt-4 border-t border-gray-700" x-show="cars.length">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-sm font-bold text-gray-300">Car alerts</h3>
+                    <span class="text-xs text-emerald-400 font-bold" x-show="saved === 'alerts'" x-transition.opacity>Saved ✓</span>
+                </div>
+                <div class="flex flex-wrap items-end gap-4">
+                    <div>
+                        <label class="block text-gray-400 mb-1 text-xs">🔌 Charge reminder below %</label>
+                        <input type="number" min="5" max="90" x-model.number="carBatteryWarnPct"
+                            class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white w-24">
+                    </div>
+                    <div>
+                        <label class="block text-gray-400 mb-1 text-xs">⛽ Fuel reminder below %</label>
+                        <input type="number" min="5" max="90" x-model.number="carFuelWarnPct"
+                            class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white w-24">
+                    </div>
+                    <div class="flex-1 min-w-[220px]">
+                        <label class="block text-gray-400 mb-1 text-xs">Home gas station (for auto errands)</label>
+                        <div class="flex gap-2">
+                            <input type="text" x-model="carFuelStation" placeholder="e.g. Costco Gas, Main St"
+                                class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm">
+                            <button @click="findNearbyStations()" :disabled="!!stationSearchBusy"
+                                class="bg-gray-600 hover:bg-gray-500 text-white font-bold px-3 py-2 rounded text-sm transition-colors whitespace-nowrap"
+                                x-text="stationSearchBusy ? 'Searching…' : '📍 Find nearby'"></button>
+                        </div>
+                    </div>
+                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer pb-2.5">
+                        <input type="checkbox" x-model="carAutoErrand" class="accent-teal-500 w-4 h-4">
+                        Auto-add fuel-up errands
+                    </label>
+                    <button @click="saveCarAlerts()" data-save-alerts
+                        class="bg-teal-700 hover:bg-teal-600 text-white font-bold px-4 py-2.5 rounded text-sm transition-colors">Save
+                        Alerts</button>
+                </div>
+                <div x-show="nearbyStations.length" x-cloak class="mt-3">
+                    <p class="text-xs text-gray-400 mb-1.5"
+                        x-text="stationMapOk ? 'Closest to home — tap a pin, then Select (saves right away):'
+                                             : 'Closest to home — tap to choose (saves right away):'"></p>
+                    <div id="station-map" x-show="stationMapOk"
+                        class="w-full h-80 rounded-xl border border-gray-700 overflow-hidden"></div>
+                    <p x-show="stationHomeLabel" x-cloak class="text-xs mt-1.5"
+                        :class="stationHomePrecision === 'exact' ? 'text-gray-500' : 'text-amber-400'">
+                        <span x-text="'🏠 pin: ' + stationHomeLabel"></span>
+                        <span x-show="stationHomePrecision !== 'exact'"> — this is only city-level!
+                            The exact address couldn't be found; it will retry within a day, or re-save
+                            your Home Location (Config → General) to force a fresh lookup now.</span>
+                    </p>
+                    <!-- fallback when the map can't load (no key / map-load quota) -->
+                    <div x-show="!stationMapOk" class="flex flex-wrap gap-1.5">
+                        <template x-for="(st, si) in nearbyStations" :key="si">
+                            <button @click="pickStation(st)"
+                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-900 text-teal-300 border border-gray-700 hover:border-teal-500 transition-colors text-left">
+                                <span x-text="st.name"></span>
+                                <span class="text-gray-500 font-normal"
+                                    x-text="' · ' + (st.distance_km != null ? st.distance_km + ' km' : '') + (st.address ? ' · ' + st.address : '')"></span>
+                            </button>
+                        </template>
+                    </div>
+                </div>
+                <p x-show="stationSearchError" x-cloak class="text-xs text-amber-400 mt-2"
+                    x-text="stationSearchError"></p>
+                <p class="text-xs text-gray-500 mt-2">Reminders push to the car's usual driver (else parents)
+                    when it's low with drives coming in the next 24h, or when it isn't home shortly before a
+                    drive. Each car needs its HA sensors mapped in its form above; the fleet shows on the
+                    family map once a location tracker is set.</p>
+            </div>
+
+        </section>
+
+        <!-- Protected time (load arc A6; moved from Config → People).
+             An adult's life used to exist here only as an obstacle —
+             a calendar event whose whole job was making you
+             unavailable. This is time that is FOR something. -->
+        <section id="protected-time" data-drive-section="protected" x-show="section === 'protected'"
+            class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+            <h2 class="text-3xl font-bold mb-2 text-emerald-300">Protected time</h2>
+            <p class="text-gray-400 text-sm mb-4">A run club, therapy, choir, a standing coffee —
+                a piece of somebody's own life the solver <b>defends</b> instead of filling. Drives
+                stop landing in the window, an override that steals it gets called out before the
+                evening is lost, and "needs cover" flags open drives in that window days ahead.
+                Everyone needs an outlet; covered time is what makes one real.</p>
+            <div class="space-y-2">
+                <template x-for="pc in commitments" :key="pc.id">
+                    <div class="bg-gray-900 p-3 rounded-xl flex flex-wrap items-center gap-3"
+                        :class="pc.active === false ? 'opacity-50' : ''">
+                        <span class="font-bold text-white" x-text="pc.title"></span>
+                        <span class="text-xs text-gray-500" x-text="pc.member_name"></span>
+                        <span class="text-xs text-gray-400"
+                            x-text="(pc.days_of_week || []).map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ')
+                                    + ' · ' + pc.time_start + '–' + pc.time_end"></span>
+                        <span x-show="pc.needs_coverage"
+                            class="px-2 py-0.5 bg-emerald-900/40 text-emerald-300 rounded-full text-xs font-bold">needs cover</span>
+                        <button @click="deleteCommitment(pc)"
+                            class="ml-auto text-red-500 hover:text-red-400 text-xs font-bold">Delete</button>
+                    </div>
+                </template>
+                <p x-show="!commitments.length" class="text-gray-500 text-sm italic">
+                    Nothing protected yet. That is usually not because nobody needs anything.</p>
+            </div>
+            <div class="mt-4 bg-gray-900 p-4 rounded-xl flex flex-wrap items-end gap-3">
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 mb-1">What</label>
+                    <input x-model="commitmentForm.title" placeholder="Thursday run"
+                        class="bg-gray-800 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 mb-1">Whose</label>
+                    <select x-model="commitmentForm.member_id" data-commitment-member class="bg-gray-800 rounded-lg px-2 py-2 text-sm">
+                        <template x-for="m in members.filter(m => ['parent','adult'].includes(m.role))" :key="m.id">
+                            <option :value="m.id" x-text="m.name"></option>
+                        </template>
+                    </select>
+                </div>
+                <div class="flex gap-1">
+                    <template x-for="(dl, di) in ['M','T','W','T','F','S','S']" :key="di">
+                        <button type="button"
+                            @click="commitmentForm.days_of_week = commitmentForm.days_of_week.includes(di)
+                                ? commitmentForm.days_of_week.filter(x => x !== di)
+                                : [...commitmentForm.days_of_week, di]"
+                            :class="commitmentForm.days_of_week.includes(di)
+                                ? 'bg-emerald-600 text-white' : 'bg-gray-800 text-gray-500'"
+                            class="w-9 h-9 rounded font-bold text-sm" x-text="dl"></button>
+                    </template>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 mb-1">From</label>
+                    <input type="time" x-model="commitmentForm.time_start"
+                        class="bg-gray-800 rounded-lg px-2 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 mb-1">To</label>
+                    <input type="time" x-model="commitmentForm.time_end"
+                        class="bg-gray-800 rounded-lg px-2 py-2 text-sm">
+                </div>
+                <label class="flex items-center gap-2 text-sm text-gray-300 pb-2">
+                    <input type="checkbox" x-model="commitmentForm.needs_coverage"
+                        class="w-4 h-4 accent-emerald-500"> needs cover
+                </label>
+                <button @click="saveCommitment()" data-protect
+                    class="bg-emerald-600 hover:bg-emerald-500 px-4 py-2 rounded-lg font-bold text-sm">Protect it</button>
+            </div>
+        </section>
+
+        <!-- Outside hands (load arc A1; moved from Config → People).
+             People who do work for this household without holding the
+             app: a carpool parent, the neighbour who does the dishes.
+             NOT members — no login, no PIN, no headcount, no wall
+             board. The `helper` role is the other thing entirely, an
+             external person who DOES hold the app. -->
+        <section id="outside-hands" data-drive-section="hands" x-show="section === 'hands'"
+            class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+            <h2 class="text-3xl font-bold mb-2 text-teal-300">Outside hands</h2>
+            <p class="text-gray-400 text-sm mb-4">People outside this house who do work for it —
+                the carpool parent, the neighbour who comes to do the dishes. They have no login
+                and are never counted as family; they exist so the app can be told
+                <b>this one isn't ours</b>. Hand a drive to one of them on the schedule and it
+                leaves the solver entirely: no driver is scheduled, nobody gets chased about it,
+                and the kids' digest says who they're riding with. The event still shows on the
+                wall — with them named and a <b>be ready at</b> time — because knowing to be
+                ready is the part that stays ours.</p>
+
+            <!-- The one number the covered-ride sentence needs. Lives
+                 here rather than the config firehose: it means nothing
+                 to a household with no outside hands. -->
+            <div class="bg-gray-900 p-4 rounded-xl mb-4 flex flex-wrap items-center gap-3">
+                <label class="text-sm font-bold text-gray-300">Be ready this many minutes
+                    before the car arrives</label>
+                <input type="number" min="0" max="120" x-model.number="assistReadyBuffer"
+                    @change="saveAssistBuffer()" id="assistReadyBuffer"
+                    class="w-24 bg-gray-800 border border-gray-600 rounded-lg p-2 text-white text-center focus:outline-none focus:border-teal-500">
+                <span class="text-xs text-gray-500">The wall shows the start time minus the
+                    drive from here minus this.</span>
+            </div>
+            <div class="space-y-3">
+                <template x-for="c in assistContacts" :key="c.id">
+                    <div class="bg-gray-900 p-4 rounded-xl shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3"
+                        :class="c.active === false ? 'opacity-50' : ''">
+                        <div>
+                            <h3 class="text-lg font-bold text-white">
+                                <span x-text="c.relation_label || c.name"></span>
+                                <span class="text-xs text-gray-500 font-normal ml-1"
+                                    x-show="c.relation_label" x-text="c.name"></span>
+                            </h3>
+                            <div class="text-xs text-gray-400 mt-1 flex gap-2 flex-wrap items-center">
+                                <span class="px-2 py-0.5 bg-teal-900/40 text-teal-300 rounded-full font-bold"
+                                    x-text="assistRelationshipLabel(c.relationship)"></span>
+                                <template x-for="k in (c.kinds || [])" :key="k">
+                                    <span class="px-2 py-0.5 bg-gray-700 rounded-full" x-text="k"></span>
+                                </template>
+                                <span x-show="c.phone" x-text="c.phone"></span>
+                                <span x-show="c.covering_count"
+                                    x-text="'covering ' + c.covering_count"></span>
+                            </div>
+                        </div>
+                        <div class="flex gap-2">
+                            <button @click="editAssistContact(c)"
+                                class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Edit</button>
+                            <button @click="deleteAssistContactUi(c)"
+                                class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Delete</button>
+                        </div>
+                    </div>
+                </template>
+                <p x-show="!assistContacts.length" class="text-gray-500 text-sm italic">
+                    Nobody yet. Add the carpool parents and anyone else who helps.</p>
+            </div>
+
+            <div class="mt-6 bg-gray-900 p-4 rounded-xl grid gap-3 md:grid-cols-2">
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 mb-1">Name</label>
+                    <input x-model="assistForm.name" placeholder="Sarah Whitfield"
+                        class="w-full bg-gray-800 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 mb-1">What you call them</label>
+                    <input x-model="assistForm.relation_label" placeholder="Emma's mom"
+                        class="w-full bg-gray-800 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 mb-1">Phone</label>
+                    <input x-model="assistForm.phone" placeholder="555-0142"
+                        class="w-full bg-gray-800 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 mb-1">Helps with</label>
+                    <div class="flex gap-2">
+                        <template x-for="s in [{k:'driving',label:'🚗 Driving'},{k:'housework',label:'🧹 Housework'}]" :key="s.k">
+                            <button type="button" @click="toggleAssistSurface(s.k)"
+                                class="px-3 py-2 rounded-lg text-sm font-bold border transition-colors"
+                                :class="assistForm.helps_with.includes(s.k)
+                                    ? 'bg-teal-600/40 border-teal-500 text-teal-200'
+                                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'"
+                                x-text="s.label"></button>
+                        </template>
+                    </div>
+                    <!-- Neither pill lit is not "they do nothing" — it is "nobody
+                         has said", and an untagged contact is offered everywhere.
+                         Hiding somebody from a list takes positive information. -->
+                    <p class="text-[11px] text-gray-500 mt-1"
+                        x-text="assistForm.helps_with.length
+                            ? 'They appear when you go looking for that kind of help.'
+                            : 'Not set — they appear in every list until you say.'"></p>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 mb-1">Other tags</label>
+                    <input x-model="assistForm.kinds_text" placeholder="tutoring, pets"
+                        class="w-full bg-gray-800 rounded-lg px-3 py-2 text-sm">
+                    <p class="text-[11px] text-gray-500 mt-1">Free notes to yourself. Nothing
+                        branches on these — a new kind of help never needs new code.</p>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 mb-1">Arrangement</label>
+                    <select x-model="assistForm.relationship"
+                        class="w-full bg-gray-800 rounded-lg px-3 py-2 text-sm">
+                        <option value="reciprocal">We take turns</option>
+                        <option value="paid">We pay them</option>
+                        <option value="volunteer">They just help</option>
+                    </select>
+                    <p class="text-[11px] text-gray-500 mt-1">Only "we take turns" gets turn-taking
+                        nudges — you owe a carpool parent a turn, not the person you pay.</p>
+                </div>
+                <div class="flex items-end gap-2">
+                    <button @click="saveAssistContact()" data-save-hand
+                        class="bg-teal-600 hover:bg-teal-500 px-4 py-2 rounded-lg font-bold text-sm"
+                        x-text="assistForm.id ? 'Save' : 'Add'"></button>
+                    <button x-show="assistForm.id" @click="resetAssistForm()"
+                        class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg font-bold text-sm">Cancel</button>
+                </div>
+            </div>
+        </section>
+
 
         <!-- Solver & horizons: how far ahead, how the load is spread, how a
              drive is priced, and the parents' evening digest. Each block was
@@ -308,11 +842,22 @@
     </div>
 
     <script>
+        // Station-picker map (Car alerts). The GL map and markers live OUTSIDE
+        // Alpine's reactive data — wrapping a mapboxgl.Map in a reactivity
+        // Proxy breaks its internals and taxes every render.
+        const DRIVE_MAPBOX_KEY = '{{ mapbox_key }}';
+        const DRIVE_ALLOW_MAP_LOADS = {{ allow_map_loads | lower }};
+        let stationMap = null;
+        let stationMarkers = [];
+
         function driveSetup() {
             return {
                 apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
                 sections: [
                     { key: 'rules', label: 'Rules' },
+                    { key: 'cars', label: 'Cars' },
+                    { key: 'protected', label: 'Protected time' },
+                    { key: 'hands', label: 'Outside hands' },
                     { key: 'solver', label: 'Solver & horizons' },
                 ],
                 section: 'rules',
@@ -360,10 +905,49 @@
                 tomorrowDigestTime: '20:00',
                 disableMapbox: false,
 
+                // --- Cars (moved from Config → People) ---
+                members: [],
+                cars: [],
+                showCarForm: false,
+                editCarId: null,
+                carPaxMode: 'any',
+                newCar: { name: '', icon: '', exterior_image: '', house_artwork: '', color_code: '#6b7280', seat_capacity: 4, body_type: '', allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '' },
+                newCarRange: { start: '', end: '', reason: '' },
+                haStatus: null,
+                haDeviceTrackers: [],
+                haSensors: [],
+                carBatteryWarnPct: 30,
+                carFuelWarnPct: 25,
+                carAutoErrand: false,
+                carFuelStation: '',
+                nearbyStations: [],
+                stationSearchBusy: false,
+                stationSearchError: '',
+                stationHome: null,
+                stationHomeLabel: '',
+                stationHomePrecision: 'exact',
+                stationMapOk: false,
+
+                // --- Protected time (load arc A6) ---
+                commitments: [],
+                commitmentForm: { title: '', member_id: '', days_of_week: [],
+                                  time_start: '18:00', time_end: '20:00',
+                                  needs_coverage: false },
+
+                // --- Outside hands (load arc A1) ---
+                assistContacts: [],
+                assistForm: { id: null, name: '', relation_label: '', phone: '',
+                              kinds_text: '', helps_with: [], relationship: 'reciprocal' },
+                assistReadyBuffer: 10,
+
                 async init() {
                     window.addEventListener('hashchange', () => this.openAnchor());
                     this.openAnchor();
-                    await Promise.all([this.loadSettings(), this.loadDrivers(), this.loadPassengers()]);
+                    await Promise.all([this.loadSettings(), this.loadDrivers(), this.loadPassengers(),
+                                       this.loadCars(), this.loadMembers()]);
+                    this.loadCommitments();     // not awaited: each section stands alone
+                    this.loadAssistContacts();
+                    this.loadHaOptions();       // not awaited: HA may be slow or absent
                     await Promise.all([this.loadRules(), this.loadPriorityRules()]);
                     this.loadMatchedEvents();   // non-blocking: a solve can take a moment
                 },
@@ -414,6 +998,11 @@
                         this.tomorrowDigestEnabled = data.tomorrow_digest_enabled !== false;
                         this.tomorrowDigestTime = data.tomorrow_digest_time || '20:00';
                         this.disableMapbox = data.disable_mapbox || false;
+                        this.carBatteryWarnPct = data.car_battery_warn_pct != null ? data.car_battery_warn_pct : 30;
+                        this.carFuelWarnPct = data.car_fuel_warn_pct != null ? data.car_fuel_warn_pct : 25;
+                        this.carAutoErrand = data.car_auto_errand === true;
+                        this.carFuelStation = data.car_fuel_station || '';
+                        this.assistReadyBuffer = (data.assist_ready_buffer_mins ?? 10);
                     } catch (e) { console.error('Failed to load settings', e); }
                 },
                 async postSettings(payload, which) {
@@ -473,6 +1062,455 @@
                     }, 'digest');
                 },
 
+                // --- People and Home Assistant, for the car and protected-time forms ---
+                async loadMembers() {
+                    try {
+                        const r = await fetch(`${this.apiBase}api/members`);
+                        this.members = r.ok ? await r.json() : [];
+                    } catch (e) { this.members = []; }
+                    // The "Whose" select shows its first grown-up; make the
+                    // model say so too, or a form that looks filled in is
+                    // refused for having nobody chosen.
+                    const first = this.grownUps()[0];
+                    if (!this.commitmentForm.member_id && first) this.commitmentForm.member_id = first.id;
+                },
+                grownUps() {
+                    return (this.members || []).filter(m => ['parent', 'adult'].includes(m.role) && !m.system);
+                },
+                // The car form's optional HA fields. Absent HA hides them
+                // (haStatus.available), never errors.
+                async loadHaOptions() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ha/status`);
+                        this.haStatus = await res.json();
+                        if (!this.haStatus.available) return;
+                        const [trackers, sensors] = await Promise.all([
+                            fetch(`${this.apiBase}api/ha/entities?domain=device_tracker`).then(r => r.json()),
+                            fetch(`${this.apiBase}api/ha/entities?domain=sensor`).then(r => r.json()),
+                        ]);
+                        this.haDeviceTrackers = Array.isArray(trackers) ? trackers : [];
+                        this.haSensors = Array.isArray(sensors) ? sensors : [];
+                    } catch (e) {
+                        this.haStatus = { available: false, mode: 'error' };
+                    }
+                },
+                // Car alerts' own keys. "Save Alerts" used to send Config's
+                // whole settings object.
+                saveCarAlerts() {
+                    return this.postSettings({
+                        car_battery_warn_pct: parseFloat(this.carBatteryWarnPct) || 30,
+                        car_fuel_warn_pct: parseFloat(this.carFuelWarnPct) || 25,
+                        car_auto_errand: !!this.carAutoErrand,
+                        car_fuel_station: (this.carFuelStation || '').trim(),
+                    }, 'alerts');
+                },
+                saveAssistBuffer() {
+                    return this.postSettings({
+                        assist_ready_buffer_mins: Math.max(0, Math.min(120, parseInt(this.assistReadyBuffer, 10) || 0)),
+                    }, 'hands');
+                },
+                async loadCars() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/cars`);
+                        const data = await res.json();
+                        this.cars = Array.isArray(data) ? data : [];
+                    } catch (e) {
+                        console.error("Failed to load cars", e);
+                        this.cars = [];
+                    }
+                },
+                blankCar() {
+                    return { name: '', icon: '', image: null, exterior_image: null, house_artwork: '', color_code: '#6b7280', seat_capacity: 4, body_type: '', allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '', ha_device_tracker: '', ha_battery_entity: '', ha_fuel_entity: '', ha_range_entity: '' };
+                },
+                async onCarArtworkPicked(event) {
+                    const file = event.target.files?.[0]; event.target.value = '';
+                    if (!file) return;
+                    if (!['image/png', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024) {
+                        showGlobalAlert('Choose a PNG or WebP smaller than 10 MB.'); return;
+                    }
+                    const target = this.newCar, url = URL.createObjectURL(file);
+                    try {
+                        const img = new Image(); img.src = url; await img.decode();
+                        const canvas = document.createElement('canvas');
+                        const scale = Math.min(1, 512 / Math.max(img.width, img.height));
+                        canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale);
+                        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                        target.exterior_image = canvas.toDataURL('image/png');
+                    } catch (_) { showGlobalAlert('Could not read that vehicle artwork.'); }
+                    finally { URL.revokeObjectURL(url); }
+                },
+                photoToDataUrl(file) {
+                    return new Promise((resolve, reject) => {
+                        if (!file || !file.type.startsWith('image/')) return reject(new Error('Not an image'));
+                        const img = new Image();
+                        img.onload = () => {
+                            const size = 128;
+                            const canvas = document.createElement('canvas');
+                            canvas.width = size; canvas.height = size;
+                            const side = Math.min(img.width, img.height);
+                            const sx = (img.width - side) / 2, sy = (img.height - side) / 2;
+                            canvas.getContext('2d').drawImage(img, sx, sy, side, side, 0, 0, size, size);
+                            URL.revokeObjectURL(img.src);
+                            resolve(canvas.toDataURL('image/jpeg', 0.85));
+                        };
+                        img.onerror = () => { URL.revokeObjectURL(img.src); reject(new Error('Could not read image')); };
+                        img.src = URL.createObjectURL(file);
+                    });
+                },
+                async onPhotoPicked(event, target) {
+                    const file = event.target.files && event.target.files[0];
+                    event.target.value = '';
+                    if (!file) return;
+                    try {
+                        target.image = await this.photoToDataUrl(file);
+                    } catch (e) {
+                        showGlobalAlert('Could not read that image file.');
+                    }
+                },
+                openCarForm() {
+                    this.newCar = this.blankCar();
+                    this.carPaxMode = 'any';
+                    this.editCarId = null;
+                    this.showCarForm = true;
+                },
+                editCar(car) {
+                    this.newCar = {
+                        id: car.id,
+                        name: car.name || '',
+                        icon: car.icon || '',
+                        image: car.image || null,
+                        exterior_image: car.exterior_image || null,
+                        house_artwork: car.house_artwork || '',
+                        color_code: car.color_code || '#6b7280',
+                        seat_capacity: car.seat_capacity != null ? car.seat_capacity : 4,
+                        body_type: car.body_type || '',
+                        allowed_driver_ids: [...(car.allowed_driver_ids || [])],
+                        allowed_passenger_ids: car.allowed_passenger_ids ? [...car.allowed_passenger_ids] : null,
+                        default_driver_id: '',
+                        unavailable_ranges: (car.unavailable_ranges || []).map(r => ({ ...r })),
+                        is_disabled: !!car.is_disabled,
+                        notes: car.notes || '',
+                        ha_device_tracker: car.ha_device_tracker || '',
+                        ha_battery_entity: car.ha_battery_entity || '',
+                        ha_fuel_entity: car.ha_fuel_entity || '',
+                        ha_range_entity: car.ha_range_entity || ''
+                    };
+                    this.carPaxMode = car.allowed_passenger_ids ? 'limited' : 'any';
+                    this.editCarId = car.doc_id;
+                    this.showCarForm = true;
+                    // The usual-driver <option>s are x-for generated from
+                    // allowed_driver_ids; a native <select> silently drops a
+                    // value set before its option exists, so apply it after
+                    // the options render.
+                    this.$nextTick(() => {
+                        this.newCar.default_driver_id = car.default_driver_id || '';
+                    });
+                },
+                cancelEditCar() {
+                    this.newCar = this.blankCar();
+                    this.editCarId = null;
+                    this.showCarForm = false;
+                },
+                toggleCarDriver(driverId) {
+                    const i = this.newCar.allowed_driver_ids.indexOf(driverId);
+                    if (i >= 0) {
+                        this.newCar.allowed_driver_ids.splice(i, 1);
+                        if (this.newCar.default_driver_id === driverId) this.newCar.default_driver_id = '';
+                    } else {
+                        this.newCar.allowed_driver_ids.push(driverId);
+                    }
+                },
+                toggleCarPassenger(paxId) {
+                    if (!Array.isArray(this.newCar.allowed_passenger_ids)) this.newCar.allowed_passenger_ids = [];
+                    const i = this.newCar.allowed_passenger_ids.indexOf(paxId);
+                    if (i >= 0) this.newCar.allowed_passenger_ids.splice(i, 1);
+                    else this.newCar.allowed_passenger_ids.push(paxId);
+                },
+                addCarUnavailableRange() {
+                    if (!this.newCarRange.start || !this.newCarRange.end) return showGlobalAlert('Both start and end dates are required');
+                    if (this.newCarRange.end < this.newCarRange.start) return showGlobalAlert('End date is before start date');
+                    this.newCar.unavailable_ranges.push({ ...this.newCarRange });
+                    this.newCarRange = { start: '', end: '', reason: '' };
+                },
+                async submitCar() {
+                    this.saving = true;
+                    try {
+                        if (!this.newCar.name) return showGlobalAlert('Name is required');
+                        if (!this.newCar.allowed_driver_ids.length && !this.newCar.is_disabled) {
+                            return showGlobalAlert('Pick at least one allowed driver — a car nobody may drive can never be used. (Or mark it disabled.)');
+                        }
+                        const payload = { ...this.newCar };
+                        payload.allowed_passenger_ids = this.carPaxMode === 'limited' && Array.isArray(payload.allowed_passenger_ids) && payload.allowed_passenger_ids.length
+                            ? payload.allowed_passenger_ids : null;
+                        payload.default_driver_id = payload.default_driver_id || null;
+                        payload.body_type = payload.body_type || null;
+                        payload.house_artwork = payload.house_artwork || null;
+                        for (const k of ['ha_device_tracker', 'ha_battery_entity', 'ha_fuel_entity', 'ha_range_entity']) {
+                            payload[k] = (payload[k] || '').trim() || null;
+                        }
+                        if (!payload.id) delete payload.id;
+
+                        if (this.editCarId) {
+                            await fetch(`${this.apiBase}api/cars/${this.editCarId}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload)
+                            });
+                        } else {
+                            await fetch(`${this.apiBase}api/cars`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload)
+                            });
+                        }
+                        this.cancelEditCar();
+                        await this.loadCars();
+                    } finally {
+                        this.saving = false;
+                    }
+                },
+                async deleteCar(docId) {
+                    if (!await promptConfirm('Delete car', 'Delete this car? Drivers listed only on it go back to an unrestricted personal car.', 'Delete')) return;
+                    await fetch(`${this.apiBase}api/cars/${docId}`, { method: 'DELETE' });
+                    this.cancelEditCar();
+                    await this.loadCars();
+                },
+                driverNameById(id) {
+                    const d = this.drivers.find(d => d.id === id);
+                    return d ? d.name : id;
+                },
+                carDriverNames(car) {
+                    const ids = car.allowed_driver_ids || [];
+                    if (!ids.length) return 'nobody';
+                    return ids.map(id => this.driverNameById(id)).join(', ');
+                },
+                carUnavailableNote(car) {
+                    const today = new Date().toISOString().slice(0, 10);
+                    for (const r of (car.unavailable_ranges || [])) {
+                        if (r.start && r.end && r.start <= today && today <= r.end) {
+                            return 'unavailable' + (r.reason ? ': ' + r.reason : '') + ' until ' + r.end;
+                        }
+                        if (r.start && r.start > today) {
+                            return 'unavailable ' + r.start + ' → ' + r.end + (r.reason ? ' (' + r.reason + ')' : '');
+                        }
+                    }
+                    return '';
+                },
+                async findNearbyStations() {
+                    this.stationSearchBusy = true;
+                    this.stationSearchError = '';
+                    this.nearbyStations = [];
+                    try {
+                        const res = await fetch(`${this.apiBase}api/cars/stations/nearby`);
+                        const data = await res.json();
+                        this.nearbyStations = data.stations || [];
+                        this.stationHome = data.home || null;
+                        this.stationHomeLabel = data.home_label || '';
+                        this.stationHomePrecision = data.home_precision || 'exact';
+                        if (data.error) this.stationSearchError = data.error;
+                        if (this.nearbyStations.length) await this.renderStationMap();
+                    } catch (e) {
+                        this.stationSearchError = 'Search failed — try again.';
+                    }
+                    this.stationSearchBusy = false;
+                },
+                async renderStationMap() {
+                    // Map when we can, chips when we can't — same quota gate
+                    // as the trip map; one map load billed per picker open.
+                    this.stationMapOk = !!(window.mapboxgl && DRIVE_MAPBOX_KEY && DRIVE_ALLOW_MAP_LOADS);
+                    if (!this.stationMapOk) return;
+                    await this.$nextTick();
+                    const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                    if (!stationMap) {
+                        mapboxgl.accessToken = DRIVE_MAPBOX_KEY;
+                        stationMap = new mapboxgl.Map({
+                            container: 'station-map',
+                            style: 'mapbox://styles/mapbox/dark-v11',
+                            center: this.stationHome ? [this.stationHome.lon, this.stationHome.lat] : [-98.5795, 39.8283],
+                            zoom: 12,
+                        });
+                        stationMap.addControl(new mapboxgl.NavigationControl(), 'top-right');
+                        stationMap.once('load', () => {
+                            fetch(`${this.apiBase}api/telemetry/mapbox_map_load`, { method: 'POST' });
+                        });
+                    } else {
+                        stationMap.resize();
+                    }
+                    stationMarkers.forEach(m => m.remove());
+                    stationMarkers = [];
+                    const bounds = new mapboxgl.LngLatBounds();
+                    // Styled pins, not raw emoji divs: bare emoji markers render
+                    // as unreadable blobs on some platforms and give no size
+                    // guarantee. Fixed-size ringed circles are unambiguous.
+                    const mkPin = (emoji, ring) => {
+                        const el = document.createElement('div');
+                        el.style.cssText = 'width:34px;height:34px;border-radius:50%;'
+                            + `background:#111827;border:3px solid ${ring};display:flex;`
+                            + 'align-items:center;justify-content:center;font-size:16px;'
+                            + 'line-height:1;box-shadow:0 2px 6px rgba(0,0,0,.5);cursor:pointer';
+                        el.textContent = emoji;
+                        return el;
+                    };
+                    if (this.stationHome) {
+                        // The home pin explains itself: tap it to see exactly what
+                        // the address resolved to — a city-center geocode must be
+                        // VISIBLE, never silent.
+                        const homePopup = new mapboxgl.Popup({ offset: 20, closeButton: false }).setHTML(`
+                            <div style="font-family:Inter,sans-serif;min-width:170px">
+                                <div style="font-weight:700;color:#111">🏠 Home pin</div>
+                                <div style="font-size:12px;color:#555;margin-top:2px">${(this.stationHomeLabel || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>
+                                ${this.stationHomePrecision !== 'exact' ? '<div style="font-size:12px;color:#b45309;margin-top:4px;font-weight:700">⚠️ City-level only — re-save your Home Location to force a fresh lookup.</div>' : ''}
+                            </div>`);
+                        stationMarkers.push(new mapboxgl.Marker(mkPin('🏠', '#f59e0b'))
+                            .setLngLat([this.stationHome.lon, this.stationHome.lat])
+                            .setPopup(homePopup).addTo(stationMap));
+                        bounds.extend([this.stationHome.lon, this.stationHome.lat]);
+                    }
+                    window.__pickStationFromMap = (i) => this.pickStation(this.nearbyStations[i]);
+                    this.nearbyStations.forEach((st, i) => {
+                        if (st.lat == null || st.lon == null) return;
+                        const el = mkPin('⛽', '#0d9488');
+                        const popup = new mapboxgl.Popup({ offset: 18, closeButton: false }).setHTML(`
+                            <div style="font-family:Inter,sans-serif;min-width:160px">
+                                <div style="font-weight:700;color:#111">${esc(st.name)}</div>
+                                <div style="font-size:12px;color:#555;margin-top:2px">${esc(st.address || '')}${st.distance_km != null ? ' · ' + st.distance_km + ' km from home' : ''}</div>
+                                <button onclick="window.__pickStationFromMap(${i})"
+                                    style="margin-top:8px;background:#0d9488;color:#fff;font-weight:700;border:none;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px">Select</button>
+                            </div>`);
+                        stationMarkers.push(new mapboxgl.Marker(el)
+                            .setLngLat([st.lon, st.lat]).setPopup(popup).addTo(stationMap));
+                        bounds.extend([st.lon, st.lat]);
+                    });
+                    // The container was hidden until this render pass, so the GL
+                    // canvas sized itself against a zero/partial-width box —
+                    // resize FIRST, then fit (fitBounds on a wrong-size canvas
+                    // miscenters), and once more after layout settles.
+                    const fit = () => {
+                        if (!stationMap) return;
+                        stationMap.resize();
+                        if (!bounds.isEmpty()) stationMap.fitBounds(bounds, { padding: 56, maxZoom: 14 });
+                    };
+                    requestAnimationFrame(fit);
+                    setTimeout(fit, 300);
+                },
+                async pickStation(st) {
+                    this.carFuelStation = st.address ? `${st.name}, ${st.address}` : st.name;
+                    this.nearbyStations = [];
+                    // Only the station: the server merges, so the thresholds a
+                    // half-typed field holds are not saved behind your back.
+                    await this.postSettings({ car_fuel_station: (this.carFuelStation || '').trim() }, 'alerts');
+                    showGlobalAlert(`Home gas station set: ${st.name}`);
+                },
+                async loadCommitments() {
+                    try {
+                        const r = await fetch(`${this.apiBase}api/commitments`);
+                        this.commitments = r.ok ? await r.json() : [];
+                    } catch (e) { console.error("Failed to load commitments", e); }
+                },
+                async saveCommitment() {
+                    const f = this.commitmentForm;
+                    if (!(f.title || '').trim() || !f.member_id || !f.days_of_week.length) {
+                        showGlobalAlert('It needs a name, a person, and at least one day.');
+                        return;
+                    }
+                    try {
+                        await fetch(`${this.apiBase}api/commitments`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(f) });
+                        this.commitmentForm = { title: '', member_id: f.member_id,
+                                                days_of_week: [], time_start: '18:00',
+                                                time_end: '20:00', needs_coverage: false };
+                        await this.loadCommitments();
+                    } catch (e) { showGlobalAlert("Couldn't protect that."); }
+                },
+                async deleteCommitment(pc) {
+                    if (!await promptConfirm('Stop protecting it?',
+                        `${pc.title} goes back to being ordinary time the solver can fill.`,
+                        'Stop', 'Keep')) return;
+                    try {
+                        await fetch(`${this.apiBase}api/commitments/${pc.id}`, { method: 'DELETE' });
+                        await this.loadCommitments();
+                    } catch (e) { showGlobalAlert("Couldn't remove it."); }
+                },
+                async loadAssistContacts() {
+                    try {
+                        const r = await fetch(`${this.apiBase}api/assist-contacts?include_inactive=true`);
+                        this.assistContacts = r.ok ? await r.json() : [];
+                    } catch (e) { console.error("Failed to load assist contacts", e); }
+                },
+                assistRelationshipLabel(rel) {
+                    return { reciprocal: 'We take turns', paid: 'We pay them',
+                             volunteer: 'They just help' }[rel] || 'We take turns';
+                },
+                resetAssistForm() {
+                    this.assistForm = { id: null, name: '', relation_label: '', phone: '',
+                                        kinds_text: '', helps_with: [], relationship: 'reciprocal' };
+                },
+                toggleAssistSurface(k) {
+                    const list = this.assistForm.helps_with;
+                    const i = list.indexOf(k);
+                    if (i >= 0) list.splice(i, 1); else list.push(k);
+                },
+                editAssistContact(c) {
+                    // Both halves come from the server already split: `helps_with`
+                    // is the normalised read of the two work tags, `other_kinds`
+                    // is everything else — so editing never silently drops
+                    // "tutoring", and the synonym table has no JavaScript twin.
+                    this.assistForm = {
+                        id: c.id, name: c.name || '', relation_label: c.relation_label || '',
+                        phone: c.phone || '', kinds_text: (c.other_kinds || []).join(', '),
+                        helps_with: [...(c.helps_with || [])],
+                        relationship: c.relationship || 'reciprocal',
+                    };
+                },
+                async saveAssistContact() {
+                    const f = this.assistForm;
+                    if (!(f.name || '').trim()) {
+                        showGlobalAlert('They need a name.');
+                        return;
+                    }
+                    const payload = {
+                        name: f.name.trim(), relation_label: (f.relation_label || '').trim(),
+                        phone: (f.phone || '').trim(), relationship: f.relationship || 'reciprocal',
+                        // The pills are stored as ordinary tags: `kinds` stays one
+                        // free list, so nothing new had to be added to the model
+                        // and an old contact tagged "carpool" still reads as a
+                        // driver without a migration.
+                        kinds: [...(f.helps_with || []),
+                                ...(f.kinds_text || '').split(',').map(s => s.trim()).filter(Boolean)],
+                    };
+                    try {
+                        if (f.id) {
+                            await fetch(`${this.apiBase}api/assist-contacts/${f.id}`, {
+                                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload) });
+                        } else {
+                            await fetch(`${this.apiBase}api/assist-contacts`, {
+                                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload) });
+                        }
+                        this.resetAssistForm();
+                        await this.loadAssistContacts();
+                    } catch (e) { showGlobalAlert('Could not save them.'); }
+                },
+                async deleteAssistContactUi(c) {
+                    // Deleting drops their coverage, which hands those drives
+                    // back to the family — say so before it happens.
+                    // A standing arrangement is not "1 drive" — saying so would
+                    // understate what comes back by an entire season.
+                    const oneOffs = (c.covering_count || 0) - (c.covering_series || 0);
+                    const bits = [];
+                    if (oneOffs > 0) bits.push(`${oneOffs} drive${oneOffs === 1 ? '' : 's'}`);
+                    if (c.covering_series) bits.push(`${c.covering_series} standing arrangement${c.covering_series === 1 ? '' : 's'} (every occurrence)`);
+                    const extra = bits.length ? ` ${bits.join(' and ')} will come back to the family.` : '';
+                    if (!await promptConfirm('Remove them?',
+                        `${c.relation_label || c.name} will be removed.${extra}`, 'Remove', 'Keep')) return;
+                    try {
+                        await fetch(`${this.apiBase}api/assist-contacts/${c.id}`, { method: 'DELETE' });
+                        await this.loadAssistContacts();
+                    } catch (e) { showGlobalAlert('Could not remove them.'); }
+                },
                 async fetchCalendarMetadata(ids) {
                     if (!ids || ids.length === 0) return;
                     try {
@@ -904,6 +1942,7 @@
         }
     </script>
     {% include 'components/control_center.html' %}
+    {% include 'components/emoji_picker.html' %}
     {% include 'components/moments_hearth.html' %}
 </body>
 </html>

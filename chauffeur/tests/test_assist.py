@@ -338,7 +338,7 @@ def scenario_the_agent_can_hand_a_drive_over_and_take_it_back():
         check(storage.get_assist_assignment_map() == {}, "and the coverage is gone")
 
         res = agent_tools_v2.cover_with_assist('soccer', 'somebody nobody knows')
-        check(res['status'] == 'error' and 'Config' in res['message'],
+        check(res['status'] == 'error' and 'Drive setup' in res['message'],
               f"an unknown helper points at the hand path, got {res}")
 
         res = agent_tools_v2.cover_with_assist('badminton', "Emma's mom")
@@ -385,9 +385,11 @@ def scenario_every_agent_capability_has_a_hand_path():
         check(t in names, f"{t} is offered to the model")
     tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        'templates')
-    config = open(os.path.join(tpl, 'config.html'), encoding='utf-8').read()
-    check('assistContacts' in config and 'saveAssistContact' in config,
-          "contacts can be added by hand in Config → People")
+    # Outside hands moved to Drive setup (v2.499.254).
+    setup = open(os.path.join(tpl, 'drive_setup.html'), encoding='utf-8').read()
+    check('assistContacts' in setup and 'saveAssistContact' in setup
+          and 'id="outside-hands"' in setup,
+          "contacts can be added by hand on Drive setup → Outside hands")
     dash = open(os.path.join(tpl, 'dashboard.html'), encoding='utf-8').read()
     check('setAssistCoverage' in dash and "startsWith('assist_')" in dash,
           "and a drive can be handed over by hand on the schedule")
@@ -407,7 +409,7 @@ def scenario_every_agent_capability_has_a_hand_path():
     # payload — only rebuilt by a solve. So a family who had just added a
     # carpool parent got an invisible control, and no way to learn that a
     # prerequisite existed. An empty list is a thing to SAY, not to vanish for.
-    check('ASSIST_EMPTY_HINT' in dash and 'Settings → People' in dash,
+    check('ASSIST_EMPTY_HINT' in dash and 'Drive setup → Outside hands' in dash,
           "with nobody set up the picker still shows itself and names the "
           "missing prerequisite, instead of hiding the feature")
     check('api/assist-contacts' in dash and 'loadAssistContacts' in dash,

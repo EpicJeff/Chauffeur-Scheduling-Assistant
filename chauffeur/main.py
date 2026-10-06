@@ -1643,17 +1643,9 @@ def account_set_password_page(request: Request):
 
 @app.get("/config")
 def config(request: Request):
-    # Mapbox context for the gas-station picker map (same quota gate the trip
-    # map uses — the map only instantiates when the user opens the picker).
-    import datetime as _dt
-    current_month = _dt.datetime.now().strftime("%Y-%m")
-    allow_map_loads = maps.get_map_option('enable_mapbox_map_loads', True) \
-        and storage.get_mapbox_usage(current_month, 'map_loads') \
-        < maps.get_map_option('mapbox_map_loads_limit', 45000)
-    return templates.TemplateResponse(request=request, name="config.html", context={
-        "mapbox_key": maps.get_mapbox_api_key() or "",
-        "allow_map_loads": allow_map_loads,
-    })
+    # The gas-station picker map (and its Mapbox context) went to Drive setup
+    # with the cars (v2.499.254).
+    return templates.TemplateResponse(request=request, name="config.html")
 
 @app.get("/calendar", response_class=HTMLResponse)
 def calendar_view(request: Request):
@@ -1718,10 +1710,22 @@ def school_page(request: Request):
 def drive_setup_page(request: Request):
     """Everything that decides how drives get assigned, in one parent place
     (v2.499.253): routing and priority rules, the solver switches and
-    horizons, routing and traffic policy, and the parents' tomorrow digest.
+    horizons, routing and traffic policy, the parents' tomorrow digest, the
+    cars, protected time and outside hands.
     A tab of the Schedule group beside the Drives list. A shell anyone can
-    load; every read and write behind it is a parent-gated API."""
-    return templates.TemplateResponse(request=request, name="drive_setup.html")
+    load; every read and write behind it is a parent-gated API.
+
+    Since v2.499.254 it also holds the cars, protected time and outside
+    hands, so it carries the Mapbox context for the gas-station picker map
+    (same quota gate the trip map uses: the map only instantiates when the
+    picker opens)."""
+    import datetime as _dt
+    current_month = _dt.datetime.now().strftime("%Y-%m")
+    allow_map_loads = maps.get_map_option('enable_mapbox_map_loads', True)         and storage.get_mapbox_usage(current_month, 'map_loads')         < maps.get_map_option('mapbox_map_loads_limit', 45000)
+    return templates.TemplateResponse(request=request, name="drive_setup.html", context={
+        "mapbox_key": maps.get_mapbox_api_key() or "",
+        "allow_map_loads": allow_map_loads,
+    })
 
 
 @app.get("/work")

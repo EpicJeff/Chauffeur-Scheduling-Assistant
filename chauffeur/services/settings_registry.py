@@ -322,12 +322,16 @@ ENTRIES: List[dict] = [
 
     # --- cars
     _e('car_battery_warn_pct', 'cars', 'Battery warning',
-       'Charge level below which the car is flagged before a drive.'),
+       'Charge level below which the car is flagged before a drive.',
+       page=_DRIVE, anchor='car-alerts'),
     _e('car_fuel_warn_pct', 'cars', 'Fuel warning',
-       'Tank level below which the car is flagged before a drive.'),
+       'Tank level below which the car is flagged before a drive.',
+       page=_DRIVE, anchor='car-alerts'),
     _e('car_auto_errand', 'cars', 'Auto fuel errands',
-       'Propose a fuel or charge stop on a route without being asked.'),
-    _e('car_fuel_station', 'cars', 'Preferred station', 'Where a fuel stop is proposed by default.'),
+       'Propose a fuel or charge stop on a route without being asked.',
+       page=_DRIVE, anchor='car-alerts'),
+    _e('car_fuel_station', 'cars', 'Preferred station', 'Where a fuel stop is proposed by default.',
+       page=_DRIVE, anchor='car-alerts'),
 
     # --- digests & nudges
     _e('tomorrow_digest_enabled', 'digests', 'Tomorrow digest',
@@ -445,7 +449,7 @@ ENTRIES: List[dict] = [
        'When somebody outside the house drives, the wall says "be ready at" — '
        'the start time minus the drive from here minus these minutes. How '
        'early everyone should be standing by the door before the car arrives.',
-       page=_CONFIG, anchor='outside-hands'),
+       page=_DRIVE, anchor='outside-hands'),
     _e('announce_targets', 'integrations', 'Room announcement speakers',
        'Pin which speaker Argyle announces through in a room; unpinned rooms '
        'pick the voice satellite, then whichever player is already on.',

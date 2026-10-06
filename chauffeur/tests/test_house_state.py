@@ -214,8 +214,9 @@ def scenario_body_type_rides_the_car_record():
     check(Car(name='X').model_dump().get('body_type') is None,
           "unset = generic car")
     src = io.open(os.path.join(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__))), 'templates', 'config.html'),
+        os.path.abspath(__file__))), 'templates', 'drive_setup.html'),
         encoding='utf-8').read()
+    # The car editor moved to Drive setup with the cars (v2.499.254).
     check('newCar.body_type' in src, "the editor offers the picker (hand path)")
     for t in ('sedan', 'suv', 'truck', 'minivan', 'hatch', 'wagon', 'van'):
         check(f'value="{t}"' in src, f"picker offers {t}")

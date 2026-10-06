@@ -1,4 +1,4 @@
-"""Vehicle artwork survives config upload, save/re-edit and shared fleet state."""
+"""Vehicle artwork survives the car editor's upload (Drive setup), save/re-edit and shared fleet state."""
 import base64
 import io
 from pathlib import Path
@@ -14,9 +14,9 @@ def main():
     served = live_app(seed)
     try:
         with served.browser() as page:
-            page.goto(served.url('config'))
+            page.goto(served.url('drive_setup#cars'))
             page.wait_for_function('window.Alpine && Alpine.$data(document.body).cars.length > 0')
-            page.evaluate("const app=Alpine.$data(document.body); app.activeTab='family'; app.editCar(app.cars[0]);")
+            page.evaluate("const app=Alpine.$data(document.body); app.section='cars'; app.editCar(app.cars[0]);")
             artwork = Path(__file__).resolve().parents[1]/'static/house_hybrid/vehicles/mercedes-gls-2022-white.png'
             page.get_by_label('House driveway artwork', exact=True).set_input_files(str(artwork))
             page.wait_for_function("Alpine.$data(document.body).newCar.exterior_image?.startsWith('data:image/png;base64,')")
@@ -35,7 +35,7 @@ def main():
             state = page.request.get(served.url('api/house/state')).json()
             row = next(c for c in state['garage']['cars'] if c['id'] == car_id)
             assert row['exterior_image'] == before
-            print('PASS: vehicle artwork upload retains alpha and survives config/API/fleet round trip')
+            print('PASS: vehicle artwork upload retains alpha and survives editor/API/fleet round trip')
     finally:
         served.stop()
 

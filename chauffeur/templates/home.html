@@ -2051,19 +2051,22 @@
                     // errands page beside the driving they are not.
                     meals_week: 'meals', tasks: 'errands?tab=tasks',
                     // The fleet card's door is the CAR EDITOR — /cars is not a
-                    // page, the cars live in Config beside the drivers, and
+                    // page, the cars live on Drive setup (v2.499.254), and
                     // that is where a low car gets its battery entity typed in.
-                    cars: 'config',
+                    cars: 'drive_setup#cars',
                 },
 
                 link(key) {
                     // A page may name its own view (`errands?tab=tasks`); the
                     // board's flags (panel, kiosk, theme) still ride along.
-                    const [page, own] = (this.PAGES[key] || key).split('?');
+                    // ...and may name a section (`drive_setup#cars`), which has
+                    // to come AFTER the query or it swallows the flags.
+                    const [dest, hash] = (this.PAGES[key] || key).split('#');
+                    const [page, own] = dest.split('?');
                     const q = new URLSearchParams(window.location.search);
                     new URLSearchParams(own || '').forEach((v, k) => q.set(k, v));
                     const qs = q.toString();
-                    return this.apiBase + page + (qs ? '?' + qs : '');
+                    return this.apiBase + page + (qs ? '?' + qs : '') + (hash ? '#' + hash : '');
                 },
 
                 // Layout is the household's call, not mine: a map earns two

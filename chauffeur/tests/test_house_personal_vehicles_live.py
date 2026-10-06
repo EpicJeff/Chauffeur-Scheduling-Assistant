@@ -58,11 +58,12 @@ def main():
             mode('garage')
             assert page.locator('#garage-car').is_hidden()
             assert page.locator('#garage-car-right').is_hidden()
-            # Assign through the actual config UI and check persistence/API.
-            page.goto(served.url('config'))
+            # Assign through the actual car editor (Drive setup since
+            # v2.499.254) and check persistence/API.
+            page.goto(served.url('drive_setup#cars'))
             page.wait_for_function('window.Alpine && Alpine.$data(document.body).cars.length===3')
             for key, profile in PROFILES.items():
-                page.evaluate('(id)=>{const app=Alpine.$data(document.body);app.activeTab="family";app.editCar(app.cars.find(c=>c.id===id))}', key)
+                page.evaluate('(id)=>{const app=Alpine.$data(document.body);app.section="cars";app.editCar(app.cars.find(c=>c.id===id))}', key)
                 page.get_by_label('House vehicle appearance', exact=True).select_option(profile)
                 page.evaluate('async()=>{await Alpine.$data(document.body).submitCar()}')
                 saved = next(c for c in page.request.get(served.url('api/cars')).json() if c['id'] == key)

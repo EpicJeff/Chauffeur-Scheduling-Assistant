@@ -272,10 +272,13 @@ def scenario_the_hand_paths_exist():
     import os
     tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        'templates')
+    # Protected time moved to Drive setup (v2.499.254); quiet hours and lanes
+    # stay on the member card in Config.
+    setup = open(os.path.join(tpl, 'drive_setup.html'), encoding='utf-8').read()
+    check('saveCommitment' in setup and 'deleteCommitment' in setup
+          and 'Protected time' in setup and 'id="protected-time"' in setup,
+          "protected time works by hand on Drive setup")
     config = open(os.path.join(tpl, 'config.html'), encoding='utf-8').read()
-    check('saveCommitment' in config and 'deleteCommitment' in config
-          and 'Protected time' in config,
-          "protected time works by hand on the People tab")
     check('memberEdit.quiet_start' in config and 'memberEdit.notify_lanes' in config,
           "quiet hours and lanes live on the member's own card")
 

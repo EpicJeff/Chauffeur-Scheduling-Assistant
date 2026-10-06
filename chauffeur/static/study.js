@@ -142,7 +142,7 @@
     if (f.tray.count) rows.push(['/intake', 'Intake', `${f.tray.count} waiting`, false]);
     if (f.stickies.count) rows.push(['/dashboard', 'Findings',
       `${f.stickies.count} open (${f.stickies.worst || 'low'})`, false]);
-    f.keys.filter(k => k.low).forEach(k => rows.push(['/config#cars', 'Car', `${k.name} low`, false]));
+    f.keys.filter(k => k.low).forEach(k => rows.push(['/drive_setup#cars', 'Car', `${k.name} low`, false]));
     if (f.contracts.count) rows.push(['/dashboard', 'Deals', `${f.contracts.count} awaiting answers`, false]);
     f.binders.filter(b => b.pulled).forEach(b => rows.push(['/programs', 'Program', `${b.title} needs a look`, false]));
     // The window: the week measured against the family's OWN baseline. Only
@@ -631,7 +631,7 @@
     stickies:  { meshes: [], url: null,           parts: {}, summary: '' },  // findings have no page yet (Needs-You tile unbuilt) — the focused stickies ARE the findings view; a false destination is worse than none
     calendar:  { meshes: [], url: '/dashboard',   parts: {}, summary: '' },
     window:    { meshes: [], url: '/mind',        parts: {}, summary: '' },
-    keys:      { meshes: [], url: '/config#cars', parts: {}, summary: '' },
+    keys:      { meshes: [], url: '/drive_setup#cars', parts: {}, summary: '' },
     contracts: { meshes: [], url: '/dashboard',   parts: {}, summary: '' },
     binders:   { meshes: [], url: '/programs',    parts: {}, summary: '' },
     gauges:    { meshes: [], url: '/mind',        parts: {}, summary: '' },
