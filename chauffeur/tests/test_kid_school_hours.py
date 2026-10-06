@@ -80,6 +80,28 @@ def scenario_school_end_silence_rules():
         check(lanes.call_count == 0, "no pushes in any silent case")
 
 
+def scenario_the_dismissal_push_has_its_own_off_switch():
+    """School page (v2.499.251): a parent can stop one child's dismissal
+    push without clearing the end time, which also drives the morning
+    leave-by line. One real scheduler tick, run both ways."""
+    _reset()
+    import main
+    from services import school
+    weekday = DISMISSAL
+    while weekday.weekday() >= 5:
+        weekday += datetime.timedelta(days=1)
+    tick = weekday.replace(minute=5)
+    with mock.patch.object(school, 'school_in_session', return_value=True),             mock.patch.object(main, '_send_school_end_push') as push:
+        check(main._run_school_end_pushes(tick) == ['kid1'], "on by default: the tick pushes")
+        check(push.call_count == 1, "the push was sent")
+        storage.app_state_table.truncate()
+        storage.update_member('kid1', {'school_end_push': False})
+        check(main._run_school_end_pushes(tick) == [], "switched off: the tick stays silent")
+        check(push.call_count == 1, "no second push")
+    check(storage.get_member('kid1').get('school_hours_end') == '15:00',
+          "and the hours are untouched")
+
+
 def scenario_morning_launch_math():
     _reset()
     import main
@@ -190,6 +212,7 @@ def scenario_trip_digest_lines():
 
 SCENARIOS = [
     scenario_school_end_push_names_the_driver,
+    scenario_the_dismissal_push_has_its_own_off_switch,
     scenario_school_end_silence_rules,
     scenario_morning_launch_math,
     scenario_split_ride_launch_and_digest_line,

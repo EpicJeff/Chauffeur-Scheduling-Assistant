@@ -253,6 +253,10 @@ class FamilyMember(BaseModel):
     # push and the morning launch line. Empty = no school-hour features.
     school_hours_start: Optional[str] = None  # HH:MM
     school_hours_end: Optional[str] = None    # HH:MM
+    # The dismissal ("school's out") push, per child (School page,
+    # v2.499.251). Until then the only off switch was clearing the end time,
+    # which also killed the morning leave-by line. Absent = on.
+    school_end_push: bool = True
     # Aftercare as a care window (load arc A5, children only). The actual
     # fallback most two-income families use, previously inexpressible: on an
     # aftercare day the pickup deadline is `aftercare_until`, not the school

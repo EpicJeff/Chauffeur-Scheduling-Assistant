@@ -1654,37 +1654,28 @@
                                             <span x-show="!memberEdit.calendar_ids.length"
                                                 class="text-gray-500 italic text-sm">No calendar yet — this person won't appear on the family calendar.</span>
                                         </div>
-                                        <div class="mt-4" x-show="memberEdit.calendar_ids.length || memberEdit.role === 'child'">
+                                        <div class="mt-4" x-show="memberEdit.calendar_ids.length">
                                             <label class="block text-gray-400 mb-1 text-sm">Subscribed ICS Feeds</label>
                                             <p class="text-xs text-gray-500 mb-2">Paste a team or school calendar URL — its events
                                                 are created on this person's calendar and re-synced hourly, so reschedules and
-                                                cancellations propagate on their own. Past events are never touched. For a child, an
-                                                assignment feed (Canvas/Schoology) can target their <b>📚 school task list</b> instead —
-                                                homework lands as due-dated tasks, never as calendar events the driving solver would see.</p>
+                                                cancellations propagate on their own. Past events are never touched.</p>
                                             <template x-for="feed in icsFeedsFor(memberEdit.calendar_ids, member)" :key="feed.id">
                                                 <div class="flex items-center gap-2 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 mb-2"
                                                     :class="feed.enabled === false ? 'opacity-60' : ''">
                                                     <div class="flex-1 min-w-0">
                                                         <span class="text-sm font-bold text-white" x-text="feed.name"></span>
                                                         <span class="text-xs text-teal-300 ml-2"
-                                                            x-text="(feed.event_count || 0) + (feed.target_kind === 'tasks' ? ' 📚 tasks' : ' events')"></span>
+                                                            x-text="(feed.event_count || 0) + ' events'"></span>
                                                         <span x-show="feed.enabled === false"
                                                             class="text-xs text-yellow-300 ml-2 font-bold uppercase">paused</span>
                                                         <p class="text-xs truncate"
                                                             :class="(feed.last_status || '').startsWith('error') ? 'text-red-400' : 'text-gray-500'"
                                                             x-text="(feed.last_status || 'never synced') + (feed.last_synced ? ' · ' + new Date(feed.last_synced).toLocaleString() : '')">
                                                         </p>
-                                                        <p class="text-xs truncate" x-show="feed.canvas_status"
-                                                            :class="(feed.canvas_status || '').startsWith('error') ? 'text-red-400' : 'text-gray-500'"
-                                                            x-text="'Canvas names: ' + (feed.canvas_status || '')"></p>
                                                     </div>
                                                     <button @click="syncIcsFeed(feed)" :disabled="icsSyncingId === feed.id || !!feed.syncing"
                                                         class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
                                                         x-text="icsSyncingId === feed.id || !!feed.syncing ? 'Syncing…' : 'Sync'"></button>
-                                                    <button x-show="feed.target_kind === 'tasks'" @click="setCanvasToken(feed)"
-                                                        class="bg-gray-600 hover:bg-gray-500 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
-                                                        :title="feed.canvas_status || 'Get class names from Canvas'"
-                                                        x-text="feed.canvas_token_set ? 'Canvas ✓' : 'Canvas names'"></button>
                                                     <button @click="toggleIcsFeed(feed)"
                                                         class="bg-gray-600 hover:bg-gray-500 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
                                                         x-text="feed.enabled === false ? 'Resume' : 'Pause'"></button>
@@ -1696,7 +1687,7 @@
                                                 <input type="text" x-model="newIcsFeed.url"
                                                     placeholder="https://... .ics or webcal://..."
                                                     class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono text-sm">
-                                                <select x-show="memberEdit.calendar_ids.length > 1 || memberEdit.role === 'child'"
+                                                <select x-show="memberEdit.calendar_ids.length > 1"
                                                     x-model="newIcsFeed.calendar_id"
                                                     class="bg-gray-900 border border-gray-600 rounded p-3 text-white text-sm">
                                                     <option value="">Onto calendar...</option>
@@ -1704,16 +1695,18 @@
                                                         <option :value="c"
                                                             x-text="calendarMetadata[c] ? calendarMetadata[c].summary : c"></option>
                                                     </template>
-                                                    <option x-show="memberEdit.role === 'child'" value="__tasks__"
-                                                        x-text="'📚 School task list (' + member.name + ')'"></option>
                                                 </select>
                                                 <button @click="addInlineIcsFeed(memberEdit.calendar_ids, member)" :disabled="icsFeedBusy"
                                                     class="bg-teal-600 hover:bg-teal-500 disabled:opacity-60 text-white font-bold px-4 rounded transition-colors flex items-center shadow-md"
                                                     x-text="icsFeedBusy ? 'Checking...' : 'Subscribe'"></button>
                                             </div>
-                                            <p class="text-xs text-amber-300/80 mt-2" x-show="!memberEdit.calendar_ids.length && memberEdit.role === 'child'">
-                                                Add a calendar above to subscribe event feeds; assignment feeds can go straight to the task list.</p>
                                         </div>
+                                        <!-- A child's assignment feeds (their school task list) are
+                                             edited on the School page (v2.499.251): one editor each. -->
+                                        <p class="mt-3 text-xs text-gray-500" x-show="memberEdit.role === 'child'">
+                                            📚 <span x-text="schoolFeedCount(member) ? schoolFeedCount(member) + ' school task feed' + (schoolFeedCount(member) === 1 ? '' : 's') + ' — ' : ''"></span>
+                                            Assignment feeds for the school task list are on the
+                                            <a href="school?tab=children" class="text-blue-400 hover:text-blue-300 font-semibold">School page</a>.</p>
                                     </div>
                                     <div class="flex gap-4 items-end flex-wrap mt-4 pt-4 border-t border-gray-600/50">
                                         <div>
@@ -1803,154 +1796,12 @@
                                                 </template>
                                             </select>
                                         </div>
-                                        <div x-show="memberEdit.role === 'child'">
-                                            <label class="block text-gray-400 mb-1 text-sm">🏫 School hours
-                                                <span class="text-gray-600">(enables the after-school pickup push + morning leave-by line)</span></label>
-                                            <div class="flex items-center gap-2">
-                                                <input type="time" x-model="memberEdit.school_hours_start"
-                                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                                                <span class="text-gray-500">to</span>
-                                                <input type="time" x-model="memberEdit.school_hours_end"
-                                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                                            </div>
-                                        </div>
-                                        <div x-show="memberEdit.role === 'child'">
-                                            <label class="block text-gray-400 mb-1 text-sm">🏫 Aftercare
-                                                <span class="text-gray-600">(on these days the pickup deadline is the aftercare end, not the bell — and the dismissal push says so)</span></label>
-                                            <div class="flex items-center gap-2 flex-wrap">
-                                                <div class="flex gap-1">
-                                                    <template x-for="(dl, di) in ['M','T','W','T','F']" :key="di">
-                                                        <button type="button"
-                                                            @click="memberEdit.aftercare_days = (memberEdit.aftercare_days || []).includes(di)
-                                                                ? memberEdit.aftercare_days.filter(x => x !== di)
-                                                                : [...(memberEdit.aftercare_days || []), di]"
-                                                            :class="(memberEdit.aftercare_days || []).includes(di)
-                                                                ? 'bg-teal-600 text-white' : 'bg-gray-900 text-gray-500'"
-                                                            class="w-9 h-9 rounded font-bold text-sm" x-text="dl"></button>
-                                                    </template>
-                                                </div>
-                                                <div>
-                                                    <span class="block text-xs text-gray-500 mb-0.5">until</span>
-                                                    <input type="time" x-model="memberEdit.aftercare_until"
-                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                                                </div>
-                                                <div class="flex-1 min-w-[140px]">
-                                                    <span class="block text-xs text-gray-500 mb-0.5">called</span>
-                                                    <input x-model="memberEdit.aftercare_place" placeholder="Extended Day"
-                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div x-show="memberEdit.role === 'child'">
-                                            <label class="block text-gray-400 mb-1 text-sm">🚌 School bus
-                                                <span class="text-gray-600">(AM stop time is required — it is both the switch and the baseline "late" is measured against; the sensors themselves are found automatically from the first name)</span></label>
-                                            <div class="flex items-center gap-2 flex-wrap">
-                                                <div>
-                                                    <span class="block text-xs text-gray-500 mb-0.5">AM stop</span>
-                                                    <input type="time" x-model="memberEdit.bus_am_stop_time"
-                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                                                </div>
-                                                <div>
-                                                    <span class="block text-xs text-gray-500 mb-0.5">PM drop</span>
-                                                    <input type="time" x-model="memberEdit.bus_pm_stop_time"
-                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                                                </div>
-                                                <div>
-                                                    <span class="block text-xs text-gray-500 mb-0.5">Walk (min)</span>
-                                                    <input type="number" min="0" max="60" x-model.number="memberEdit.bus_walk_mins" placeholder="5"
-                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-20">
-                                                </div>
-                                                <div class="flex-1 min-w-[140px]">
-                                                    <span class="block text-xs text-gray-500 mb-0.5">HA entity prefix (blank = first name)</span>
-                                                    <input type="text" x-model="memberEdit.bus_entity_prefix" placeholder="addison"
-                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
-                                                </div>
-                                            </div>
-                                            <!-- B2, the live morning layer. Both OFF until somebody
-                                                 sets them: the bus arc's rule is that Chauffeur says
-                                                 nothing about buses it was not asked about. The lead
-                                                 IS the opt-in — a switch beside a number is two ways
-                                                 to say the same thing. -->
-                                            <div class="flex items-center gap-4 flex-wrap mt-2">
-                                                <div>
-                                                    <span class="block text-xs text-gray-500 mb-0.5">"Get ready" push (min before leaving, blank = off)</span>
-                                                    <input type="number" min="0" max="60" x-model.number="memberEdit.bus_ready_lead_mins" placeholder="off"
-                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-24">
-                                                </div>
-                                                <label class="flex items-center gap-2 text-sm text-gray-300 mt-4">
-                                                    <input type="checkbox" x-model="memberEdit.bus_late_push"
-                                                        class="w-5 h-5 accent-blue-500">
-                                                    Tell them when the bus is running late
-                                                </label>
-                                            </div>
-                                            <!-- B3: the two EVENTS. These are what the
-                                                 tracker actually reports, rather than
-                                                 arithmetic against the stop time above —
-                                                 "the bus has started" and "the bus is
-                                                 nearly here" are true statements. -->
-                                            <div class="flex items-center gap-4 flex-wrap mt-2">
-                                                <label class="flex items-center gap-2 text-sm text-gray-300">
-                                                    <input type="checkbox" x-model="memberEdit.bus_route_push"
-                                                        class="w-5 h-5 accent-blue-500">
-                                                    Tell them when the bus starts its route
-                                                </label>
-                                                <div class="min-w-[150px]">
-                                                    <span class="block text-xs text-gray-500 mb-0.5">"Nearly here" zone (its radius is the fence)</span>
-                                                    <input type="text" x-model="memberEdit.bus_near_zone" placeholder="zone.bus_stop"
-                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
-                                                </div>
-                                                <div>
-                                                    <span class="block text-xs text-gray-500 mb-0.5">…or metres from home</span>
-                                                    <input type="number" min="0" max="20000" step="50" x-model.number="memberEdit.bus_near_radius_m" placeholder="off"
-                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-28">
-                                                </div>
-                                                <div class="flex-1 min-w-[160px]">
-                                                    <span class="block text-xs text-gray-500 mb-0.5">Say it out loud in (HA area, blank = silent)</span>
-                                                    <input type="text" x-model="memberEdit.bus_announce_room" placeholder="Kitchen"
-                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
-                                                </div>
-                                            </div>
-                                            <details class="mt-2">
-                                                <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-300">Other bus platforms: explicit HA entities (blank = Here Comes The Bus auto-discovery)</summary>
-                                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2">
-                                                    <div>
-                                                        <span class="block text-xs text-gray-500 mb-0.5">AM stop-ETA sensor</span>
-                                                        <input type="text" x-model="memberEdit.bus_am_eta_entity" placeholder="sensor.…"
-                                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
-                                                    </div>
-                                                    <div>
-                                                        <span class="block text-xs text-gray-500 mb-0.5">PM stop-ETA sensor</span>
-                                                        <input type="text" x-model="memberEdit.bus_pm_eta_entity" placeholder="sensor.…"
-                                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
-                                                    </div>
-                                                    <div>
-                                                        <span class="block text-xs text-gray-500 mb-0.5">Bus-running binary sensor</span>
-                                                        <input type="text" x-model="memberEdit.bus_active_entity" placeholder="binary_sensor.…"
-                                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
-                                                    </div>
-                                                    <div>
-                                                        <span class="block text-xs text-gray-500 mb-0.5">Where-the-bus-is sensor</span>
-                                                        <input type="text" x-model="memberEdit.bus_location_entity" placeholder="sensor.… (HCTB: found automatically)"
-                                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
-                                                    </div>
-                                                    <div>
-                                                        <span class="block text-xs text-gray-500 mb-0.5">Bus tracker (for the map + "nearly here")</span>
-                                                        <input type="text" x-model="memberEdit.bus_tracker_entity" placeholder="device_tracker.…"
-                                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
-                                                    </div>
-                                                    <div>
-                                                        <span class="block text-xs text-gray-500 mb-0.5">Bus number sensor (matches siblings onto one bus)</span>
-                                                        <input type="text" x-model="memberEdit.bus_number_entity" placeholder="sensor.… (HCTB: found automatically)"
-                                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
-                                                    </div>
-                                                    <div>
-                                                        <span class="block text-xs text-gray-500 mb-0.5">Bus stop (an HA zone works)</span>
-                                                        <input type="text" x-model="memberEdit.bus_stop_entity" placeholder="zone.bus_stop"
-                                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
-                                                    </div>
-                                                </div>
-                                            </details>
-                                        </div>
+                                        <!-- School hours, aftercare, the bus and school task
+                                             feeds moved to the School page (v2.499.251). -->
+                                        <p x-show="memberEdit.role === 'child'" class="w-full text-sm text-gray-500">
+                                            🏫 School hours, aftercare, the bus and school feeds are on the
+                                            <a href="school?tab=children" class="text-blue-400 hover:text-blue-300 font-semibold">School page</a>.
+                                        </p>
                                         <button @click="testNotify(member)" x-show="member.notify_service"
                                             class="bg-purple-700 hover:bg-purple-600 text-white font-bold px-4 py-3 rounded transition-colors shadow-md text-sm">Test
                                             Notify</button>
@@ -5937,12 +5788,14 @@
                         this.icsFeeds = [];
                     }
                 },
+                // Calendar feeds only: a child's school task feeds are edited
+                // on the School page (v2.499.251), so there is one editor each.
                 icsFeedsFor(calIds, member) {
                     const ids = calIds || [];
-                    return this.icsFeeds.filter(f =>
-                        (f.target_kind === 'tasks'
-                            ? (member && f.member_id === member.id)
-                            : ids.includes(f.calendar_id)));
+                    return this.icsFeeds.filter(f => f.target_kind !== 'tasks' && ids.includes(f.calendar_id));
+                },
+                schoolFeedCount(member) {
+                    return this.icsFeeds.filter(f => f.target_kind === 'tasks' && member && f.member_id === member.id).length;
                 },
                 icsTargetLabel(calId) {
                     const m = this.calendarMetadata[calId];
@@ -5955,12 +5808,8 @@
                     const target = (ids.length === 1 && !this.newIcsFeed.calendar_id)
                         ? ids[0] : this.newIcsFeed.calendar_id;
                     if (!target) return showGlobalAlert('Pick which calendar the events go on.');
-                    // K4b: '__tasks__' targets the child's school task list, not a calendar.
-                    const taskOwner = member || this.passengerFormMember;
-                    if (target === '__tasks__' && !taskOwner) return showGlobalAlert('Could not tell whose task list to use.');
-                    const body = target === '__tasks__'
-                        ? { url: url, target_kind: 'tasks', member_id: taskOwner.id }
-                        : { url: url, calendar_id: target };
+                    // A child's school task list is subscribed on the School page.
+                    const body = { url: url, calendar_id: target };
                     this.icsFeedBusy = true;
                     try {
                         const res = await fetch(`${this.apiBase}api/ics_feeds`, {
@@ -5972,7 +5821,7 @@
                         if (!res.ok) {
                             showGlobalAlert(data.detail || 'Could not add that feed.');
                         } else {
-                            showGlobalAlert(`Subscribed to "${data.name}" — found ${data.event_count} ${target === '__tasks__' ? 'items for the task list' : 'events'}. They're being created in the background.`);
+                            showGlobalAlert(`Subscribed to "${data.name}" — found ${data.event_count} events. They're being created in the background.`);
                             this.newIcsFeed = { url: '', calendar_id: '' };
                             await this.loadIcsFeeds();
                             // pick up the initial sync result; a big feed takes a while
@@ -6007,31 +5856,6 @@
                         this.icsSyncingId = null;
                         await this.loadIcsFeeds();
                     }
-                },
-                // K4d: Canvas course names for a school feed's classes. The
-                // token is write-only server-side; this page only ever learns
-                // whether one is set.
-                async setCanvasToken(feed) {
-                    const token = await promptInput('Class names from Canvas',
-                        'Signed in to Canvas as the child: Account → Settings → New Access Token. '
-                        + 'Used only to read the course list, sent only to this feed’s Canvas, never shown again.'
-                        + (feed.canvas_token_set ? ' Leave empty to remove the saved one.' : ''),
-                        { placeholder: 'Canvas access token', value: '' });
-                    if (token === null) return;
-                    try {
-                        const res = await fetch(`${this.apiBase}api/ics_feeds/${feed.id}/canvas-token`, {
-                            method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ token: token.trim() })
-                        });
-                        const d = await res.json().catch(() => ({}));
-                        if (!res.ok) showGlobalAlert(d.detail || 'Could not save the token');
-                        else showGlobalAlert(d.status === 'cleared' ? 'Canvas token removed'
-                            : (d.status || '').startsWith('error') ? d.status.replace(/^error: /, '')
-                            : `Named ${d.named} class${d.named === 1 ? '' : 'es'} from Canvas`);
-                    } catch (e) {
-                        showGlobalAlert('Could not save the token: ' + e.message);
-                    }
-                    await this.loadIcsFeeds();
                 },
                 async toggleIcsFeed(feed) {
                     await fetch(`${this.apiBase}api/ics_feeds/${feed.id}`, {
@@ -6535,28 +6359,6 @@
                         email: member.email || '',                    // auth arc S3
                         has_password: !!member.has_password,          // read-only status
                         media_player_entity: member.media_player_entity || '',
-                        school_hours_start: member.school_hours_start || '',
-                        school_hours_end: member.school_hours_end || '',
-                        aftercare_days: (member.aftercare_days || []).slice(),
-                        aftercare_until: member.aftercare_until || '',
-                        aftercare_place: member.aftercare_place || '',
-                        bus_am_stop_time: member.bus_am_stop_time || '',
-                        bus_pm_stop_time: member.bus_pm_stop_time || '',
-                        bus_walk_mins: member.bus_walk_mins || null,
-                        bus_entity_prefix: member.bus_entity_prefix || '',
-                        bus_am_eta_entity: member.bus_am_eta_entity || '',
-                        bus_pm_eta_entity: member.bus_pm_eta_entity || '',
-                        bus_active_entity: member.bus_active_entity || '',
-                        bus_location_entity: member.bus_location_entity || '',
-                        bus_ready_lead_mins: member.bus_ready_lead_mins || null,
-                        bus_late_push: !!member.bus_late_push,
-                        bus_tracker_entity: member.bus_tracker_entity || '',
-                        bus_number_entity: member.bus_number_entity || '',
-                        bus_stop_entity: member.bus_stop_entity || '',
-                        bus_route_push: !!member.bus_route_push,
-                        bus_near_zone: member.bus_near_zone || '',
-                        bus_near_radius_m: member.bus_near_radius_m || null,
-                        bus_announce_room: member.bus_announce_room || '',
                     };
                 },
                 async addMemberCalendarId() {
@@ -6856,33 +6658,13 @@
                     updates.ha_person_entity = updates.ha_person_entity || null;
                     updates.notify_service = updates.notify_service || null;
                     updates.media_player_entity = updates.media_player_entity || null;
-                    updates.school_hours_start = updates.school_hours_start || null;
-                    updates.school_hours_end = updates.school_hours_end || null;
                     updates.quiet_start = updates.quiet_start || null;
                     updates.quiet_end = updates.quiet_end || null;
                     updates.notify_lanes = updates.notify_lanes || 'all';
                     updates.email = (updates.email || '').trim() || null;   // auth arc S3
                     delete updates.has_password;   // status, never an input
-                    updates.aftercare_days = updates.aftercare_days || [];
-                    updates.aftercare_until = updates.aftercare_until || null;
-                    updates.aftercare_place = (updates.aftercare_place || '').trim() || null;
-                    updates.bus_am_stop_time = updates.bus_am_stop_time || null;
-                    updates.bus_pm_stop_time = updates.bus_pm_stop_time || null;
-                    updates.bus_walk_mins = parseInt(updates.bus_walk_mins) || null;
-                    updates.bus_entity_prefix = (updates.bus_entity_prefix || '').trim() || null;
-                    updates.bus_am_eta_entity = (updates.bus_am_eta_entity || '').trim() || null;
-                    updates.bus_pm_eta_entity = (updates.bus_pm_eta_entity || '').trim() || null;
-                    updates.bus_active_entity = (updates.bus_active_entity || '').trim() || null;
-                    updates.bus_location_entity = (updates.bus_location_entity || '').trim() || null;
-                    updates.bus_ready_lead_mins = parseInt(updates.bus_ready_lead_mins) || null;
-                    updates.bus_late_push = !!updates.bus_late_push;
-                    updates.bus_tracker_entity = (updates.bus_tracker_entity || '').trim() || null;
-                    updates.bus_number_entity = (updates.bus_number_entity || '').trim() || null;
-                    updates.bus_stop_entity = (updates.bus_stop_entity || '').trim() || null;
-                    updates.bus_route_push = !!updates.bus_route_push;
-                    updates.bus_near_zone = (updates.bus_near_zone || '').trim() || null;
-                    updates.bus_near_radius_m = parseInt(updates.bus_near_radius_m) || null;
-                    updates.bus_announce_room = (updates.bus_announce_room || '').trim() || null;
+                    // School hours, aftercare and bus fields are the School page's
+                    // (v2.499.251): not in memberEdit, so never sent from here.
                     updates.calendar_ids = updates.calendar_ids || [];
                     await fetch(`${this.apiBase}api/members/${member.id}`, {
                         method: 'PUT',

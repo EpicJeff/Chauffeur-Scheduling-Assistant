@@ -251,16 +251,18 @@ def scenario_every_b2_field_has_a_hand_path():
     cannot reach is a feature that does not exist for them."""
     import os
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    cfg = open(os.path.join(root, 'templates', 'config.html'),
+    # The bus fields moved to the School page's Children tab (v2.499.251).
+    cfg = open(os.path.join(root, 'templates', 'school.html'),
                encoding='utf-8').read()
     for field in ('bus_ready_lead_mins', 'bus_late_push', 'bus_location_entity'):
-        check(f'memberEdit.{field}' in cfg,
-              f"{field} has no input on the member card")
+        check(f'k.form.{field}' in cfg or f"key: '{field}'" in cfg,
+              f"{field} has no input on the child's School card")
         # Bound BOTH ways: an input that loads but never saves is the same
         # bug as no input at all, and looks like it worked.
-        check(f'{field}: member.{field}' in cfg or f'{field}: !!member.{field}' in cfg,
-              f"{field} is never loaded into the edit form")
-        check(f'updates.{field}' in cfg, f"{field} is never saved")
+        check(f'{field}: m.{field}' in cfg or f'{field}: !!m.{field}' in cfg,
+              f"{field} is never loaded into the child's form")
+        check(f'{field}: txt(f.{field})' in cfg or f'{field}: num(f.{field})' in cfg
+              or f'{field}: !!f.{field}' in cfg, f"{field} is never saved")
     from models import schemas
     for field in ('bus_ready_lead_mins', 'bus_late_push', 'bus_location_entity'):
         check(field in schemas.FamilyMember.model_fields,
@@ -366,15 +368,16 @@ def scenario_speaking_is_opt_in_per_child():
 def scenario_every_b3_field_has_a_hand_path():
     import os
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    cfg = open(os.path.join(root, 'templates', 'config.html'), encoding='utf-8').read()
+    cfg = open(os.path.join(root, 'templates', 'school.html'), encoding='utf-8').read()
     from models import schemas
     for field in ('bus_tracker_entity', 'bus_stop_entity', 'bus_route_push',
                   'bus_near_radius_m', 'bus_near_zone', 'bus_announce_room',
                   'bus_number_entity'):
-        check(f'memberEdit.{field}' in cfg, f"{field} has no input")
-        check(f'{field}: member.{field}' in cfg or f'{field}: !!member.{field}' in cfg,
+        check(f'k.form.{field}' in cfg or f"key: '{field}'" in cfg, f"{field} has no input")
+        check(f'{field}: m.{field}' in cfg or f'{field}: !!m.{field}' in cfg,
               f"{field} is never loaded")
-        check(f'updates.{field}' in cfg, f"{field} is never saved")
+        check(f'{field}: txt(f.{field})' in cfg or f'{field}: num(f.{field})' in cfg
+              or f'{field}: !!f.{field}' in cfg, f"{field} is never saved")
         check(field in schemas.FamilyMember.model_fields,
               f"{field} is not on the model, so the PUT drops it")
 

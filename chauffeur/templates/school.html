@@ -41,16 +41,233 @@
                 evening look at tomorrow, and the stages a child grows through. Parents only.</p>
         </header>
 
-        <!-- Children -->
-        <section id="children" data-page-tab="children" class="min-w-0">
-            <div class="flex flex-col gap-2 p-5 bg-gray-900 rounded-xl border border-gray-700">
-                <span class="font-bold text-gray-300">🏫 Each child</span>
-                <p class="text-sm text-gray-500">
-                    School hours, aftercare, the bus and school task feeds are on each child's card in
-                    <a href="config" class="text-blue-400 hover:text-blue-300 font-semibold">Config → People</a>
-                    for now.
-                </p>
-            </div>
+        <!-- Children: one card per child. The hours, aftercare and bus
+             controls are the member card's (config.html, People → Identity),
+             moved with their labels; the card saves only these fields
+             (PUT /api/members merges). School task feeds and classes are the
+             plumbing of the child's school list; the list itself stays the
+             child's (K4: parents never get a dashboard about the kid). -->
+        <section id="children" data-page-tab="children" class="min-w-0 space-y-4">
+            <p x-show="kidsLoaded && !kids.length" class="text-gray-500 text-sm italic">
+                No children on the roster yet. Add one in
+                <a href="config" class="text-blue-400 hover:text-blue-300 font-semibold">Config → People</a>.</p>
+            <template x-for="k in kids" :key="k.id">
+                <div class="bg-gray-800 p-5 rounded-xl border border-gray-700" :data-child="k.id">
+                    <div class="flex items-center gap-3 mb-4">
+                        <span class="w-3 h-3 rounded-full shrink-0" :style="'background:' + (k.color_code || '#6b7280')"></span>
+                        <h3 class="text-lg font-bold text-white flex-1" x-text="k.name"></h3>
+                        <span class="text-xs text-emerald-400 font-bold" x-show="k.saved" x-transition.opacity>Saved ✓</span>
+                        <button @click="saveChild(k)" :disabled="!!k.saving" data-save-child
+                            class="bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white font-bold px-5 py-2 rounded transition-colors shadow-md">Save</button>
+                    </div>
+
+                    <div class="flex gap-4 items-end flex-wrap">
+                        <div>
+                            <label class="block text-gray-400 mb-1 text-sm">🏫 School hours
+                                <span class="text-gray-600">(enables the after-school pickup push + morning leave-by line)</span></label>
+                            <div class="flex items-center gap-2">
+                                <input type="time" x-model="k.form.school_hours_start" data-field="school_hours_start"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                <span class="text-gray-500">to</span>
+                                <input type="time" x-model="k.form.school_hours_end" data-field="school_hours_end"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                            </div>
+                        </div>
+                        <label class="flex items-center gap-2 text-sm text-gray-300 pb-3">
+                            <input type="checkbox" x-model="k.form.school_end_push" data-field="school_end_push"
+                                class="w-5 h-5 accent-blue-500">
+                            Tell them when school is out
+                            <span class="text-gray-600">(the dismissal push — off keeps the hours for everything else)</span>
+                        </label>
+                    </div>
+
+                    <div class="mt-4">
+                        <label class="block text-gray-400 mb-1 text-sm">🏫 Aftercare
+                            <span class="text-gray-600">(on these days the pickup deadline is the aftercare end, not the bell — and the dismissal push says so)</span></label>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <div class="flex gap-1">
+                                <template x-for="(dl, di) in ['M','T','W','T','F']" :key="di">
+                                    <button type="button" @click="toggleAftercareDay(k, di)"
+                                        :class="(k.form.aftercare_days || []).includes(di)
+                                            ? 'bg-teal-600 text-white' : 'bg-gray-900 text-gray-500'"
+                                        class="w-9 h-9 rounded font-bold text-sm" x-text="dl"></button>
+                                </template>
+                            </div>
+                            <div>
+                                <span class="block text-xs text-gray-500 mb-0.5">until</span>
+                                <input type="time" x-model="k.form.aftercare_until"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                            </div>
+                            <div class="flex-1 min-w-[140px]">
+                                <span class="block text-xs text-gray-500 mb-0.5">called</span>
+                                <input x-model="k.form.aftercare_place" placeholder="Extended Day"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 pt-4 border-t border-gray-600/50">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <label class="block text-gray-400 mb-1 text-sm flex-1 min-w-[16rem]">🚌 School bus
+                                <span class="text-gray-600">(AM stop time is required — it is both the switch and the baseline "late" is measured against; the sensors themselves are found automatically from the first name)</span></label>
+                            <button type="button" @click="diagnoseBus(k)" :disabled="!!k.diagnosing" data-diagnose
+                                class="bg-gray-600 hover:bg-gray-500 disabled:opacity-60 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
+                                x-text="k.diagnosing ? 'Checking…' : 'Diagnose bus'"></button>
+                        </div>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <div>
+                                <span class="block text-xs text-gray-500 mb-0.5">AM stop</span>
+                                <input type="time" x-model="k.form.bus_am_stop_time" data-field="bus_am_stop_time"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                            </div>
+                            <div>
+                                <span class="block text-xs text-gray-500 mb-0.5">PM drop</span>
+                                <input type="time" x-model="k.form.bus_pm_stop_time"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                            </div>
+                            <div>
+                                <span class="block text-xs text-gray-500 mb-0.5">Walk (min)</span>
+                                <input type="number" min="0" max="60" x-model.number="k.form.bus_walk_mins" placeholder="5"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-20">
+                            </div>
+                            <div class="flex-1 min-w-[140px]">
+                                <span class="block text-xs text-gray-500 mb-0.5">HA entity prefix (blank = first name)</span>
+                                <input type="text" x-model="k.form.bus_entity_prefix" placeholder="addison"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
+                            </div>
+                        </div>
+                        <!-- B2, the live morning layer. Both OFF until somebody
+                             sets them; the lead IS the opt-in. -->
+                        <div class="flex items-center gap-4 flex-wrap mt-2">
+                            <div>
+                                <span class="block text-xs text-gray-500 mb-0.5">"Get ready" push (min before leaving, blank = off)</span>
+                                <input type="number" min="0" max="60" x-model.number="k.form.bus_ready_lead_mins" placeholder="off"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-24">
+                            </div>
+                            <label class="flex items-center gap-2 text-sm text-gray-300 mt-4">
+                                <input type="checkbox" x-model="k.form.bus_late_push" data-field="bus_late_push"
+                                    class="w-5 h-5 accent-blue-500">
+                                Tell them when the bus is running late
+                            </label>
+                        </div>
+                        <!-- B3: the two EVENTS the tracker actually reports. -->
+                        <div class="flex items-center gap-4 flex-wrap mt-2">
+                            <label class="flex items-center gap-2 text-sm text-gray-300">
+                                <input type="checkbox" x-model="k.form.bus_route_push"
+                                    class="w-5 h-5 accent-blue-500">
+                                Tell them when the bus starts its route
+                            </label>
+                            <div class="min-w-[150px]">
+                                <span class="block text-xs text-gray-500 mb-0.5">"Nearly here" zone (its radius is the fence)</span>
+                                <input type="text" x-model="k.form.bus_near_zone" placeholder="zone.bus_stop"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
+                            </div>
+                            <div>
+                                <span class="block text-xs text-gray-500 mb-0.5">…or metres from home</span>
+                                <input type="number" min="0" max="20000" step="50" x-model.number="k.form.bus_near_radius_m" placeholder="off"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-28">
+                            </div>
+                            <div class="flex-1 min-w-[160px]">
+                                <span class="block text-xs text-gray-500 mb-0.5">Say it out loud in (HA area, blank = silent)</span>
+                                <input type="text" x-model="k.form.bus_announce_room" placeholder="Kitchen"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
+                            </div>
+                        </div>
+                        <details class="mt-2">
+                            <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-300">Other bus platforms: explicit HA entities (blank = Here Comes The Bus auto-discovery)</summary>
+                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2">
+                                <template x-for="f in busEntityFields" :key="f.key">
+                                    <div>
+                                        <span class="block text-xs text-gray-500 mb-0.5" x-text="f.label"></span>
+                                        <input type="text" x-model="k.form[f.key]" :placeholder="f.placeholder"
+                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
+                                    </div>
+                                </template>
+                            </div>
+                        </details>
+                        <!-- What the bus diagnosis found, in sentences: every
+                             gate fails silently and they all look the same
+                             from a wall (GET /api/admin/bus_diagnose). -->
+                        <div x-show="k.diagnosis" class="mt-3 bg-gray-900 rounded-lg border border-gray-700 p-3 space-y-1" data-diagnosis>
+                            <template x-for="(line, li) in (k.diagnosis || [])" :key="li">
+                                <p class="text-sm text-gray-300" x-text="line"></p>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- School task feeds (K4b): an assignment feed whose items
+                         land on this child's school list as due-dated tasks,
+                         never as calendar events. Moved from the member
+                         card's feed list. -->
+                    <div class="mt-4 pt-4 border-t border-gray-600/50">
+                        <label class="block text-gray-400 mb-1 text-sm">📚 School task feeds</label>
+                        <p class="text-xs text-gray-500 mb-2">Paste the assignment feed from Canvas or Schoology —
+                            homework lands on <span x-text="k.name"></span>'s school list as due-dated tasks, re-synced
+                            hourly, never as calendar events the driving solver would see. Calendar feeds (a team's
+                            games) stay on the person in Config → People.</p>
+                        <template x-for="feed in feedsFor(k)" :key="feed.id">
+                            <div class="flex items-center gap-2 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 mb-2"
+                                :class="feed.enabled === false ? 'opacity-60' : ''" data-feed>
+                                <div class="flex-1 min-w-0">
+                                    <span class="text-sm font-bold text-white" x-text="feed.name"></span>
+                                    <span class="text-xs text-teal-300 ml-2" x-text="(feed.event_count || 0) + ' 📚 tasks'"></span>
+                                    <span x-show="feed.enabled === false"
+                                        class="text-xs text-yellow-300 ml-2 font-bold uppercase">paused</span>
+                                    <p class="text-xs truncate"
+                                        :class="(feed.last_status || '').startsWith('error') ? 'text-red-400' : 'text-gray-500'"
+                                        x-text="(feed.last_status || 'never synced') + (feed.last_synced ? ' · ' + new Date(feed.last_synced).toLocaleString() : '')"></p>
+                                    <p class="text-xs truncate" x-show="feed.canvas_status"
+                                        :class="(feed.canvas_status || '').startsWith('error') ? 'text-red-400' : 'text-gray-500'"
+                                        x-text="'Canvas names: ' + (feed.canvas_status || '')"></p>
+                                </div>
+                                <button @click="syncFeed(feed)" :disabled="feedSyncingId === feed.id || !!feed.syncing"
+                                    class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
+                                    x-text="feedSyncingId === feed.id || !!feed.syncing ? 'Syncing…' : 'Sync'"></button>
+                                <button @click="setCanvasToken(feed, k)"
+                                    class="bg-gray-600 hover:bg-gray-500 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
+                                    :title="feed.canvas_status || 'Get class names from Canvas'"
+                                    x-text="feed.canvas_token_set ? 'Canvas ✓' : 'Canvas names'"></button>
+                                <button @click="toggleFeed(feed)"
+                                    class="bg-gray-600 hover:bg-gray-500 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
+                                    x-text="feed.enabled === false ? 'Resume' : 'Pause'"></button>
+                                <button @click="deleteFeed(feed)"
+                                    class="bg-red-700 hover:bg-red-600 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors">Delete</button>
+                            </div>
+                        </template>
+                        <p x-show="!feedsFor(k).length" class="text-xs text-gray-500 italic mb-2">No school feed yet.</p>
+                        <div class="flex gap-2">
+                            <input type="text" x-model="k.feedUrl" placeholder="https://... .ics or webcal://..." data-feed-url
+                                class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono text-sm">
+                            <button @click="addFeed(k)" :disabled="!!k.feedBusy" data-add-feed
+                                class="bg-teal-600 hover:bg-teal-500 disabled:opacity-60 text-white font-bold px-4 rounded transition-colors flex items-center shadow-md"
+                                x-text="k.feedBusy ? 'Checking...' : 'Subscribe'"></button>
+                        </div>
+                    </div>
+
+                    <!-- Classes (K4d): a feed's course codes, named and
+                         colored by the family. The phone has the same list
+                         in its School sheet. -->
+                    <div class="mt-4 pt-4 border-t border-gray-600/50" x-show="(k.classes || []).length">
+                        <label class="block text-gray-400 mb-1 text-sm">🎨 Classes</label>
+                        <p class="text-xs text-gray-500 mb-2">Give each class a name and a color so it reads nicely
+                            everywhere. Clearing a name goes back to Canvas's, then to the feed's code.</p>
+                        <div class="space-y-1.5">
+                            <template x-for="c in (k.classes || [])" :key="c.id">
+                                <div class="flex items-center gap-2 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2" data-class>
+                                    <input type="color" :value="c.color || '#6366f1'" @change="saveClass(k, c, { color: $event.target.value })"
+                                        class="bg-gray-900 border border-gray-600 rounded p-0.5 h-8 w-10 shrink-0" aria-label="Class color">
+                                    <input type="text" :value="c.name || ''" @change="saveClass(k, c, { name: $event.target.value })"
+                                        :placeholder="c.canvas_name || c.label || c.key" data-class-name
+                                        class="flex-1 min-w-0 bg-gray-900 border border-gray-600 rounded px-3 py-1.5 text-white text-sm">
+                                    <span class="text-xs text-gray-500 truncate max-w-[12rem]" x-show="c.label" x-text="c.label"></span>
+                                    <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300"
+                                        x-text="c.open_count + ' open'"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </template>
         </section>
 
         <!-- Calendar: what a school day is. Moved from Config → General. -->
@@ -383,6 +600,20 @@
                 kidDigestCutover: '19:00',
                 kidQuietStart: '20:30',
                 kidQuietEnd: '07:00',
+                // Children (v2.499.251)
+                kids: [],
+                kidsLoaded: false,
+                icsFeeds: [],
+                feedSyncingId: null,
+                busEntityFields: [
+                    { key: 'bus_am_eta_entity', label: 'AM stop-ETA sensor', placeholder: 'sensor.…' },
+                    { key: 'bus_pm_eta_entity', label: 'PM stop-ETA sensor', placeholder: 'sensor.…' },
+                    { key: 'bus_active_entity', label: 'Bus-running binary sensor', placeholder: 'binary_sensor.…' },
+                    { key: 'bus_location_entity', label: 'Where-the-bus-is sensor', placeholder: 'sensor.… (HCTB: found automatically)' },
+                    { key: 'bus_tracker_entity', label: 'Bus tracker (for the map + "nearly here")', placeholder: 'device_tracker.…' },
+                    { key: 'bus_number_entity', label: 'Bus number sensor (matches siblings onto one bus)', placeholder: 'sensor.… (HCTB: found automatically)' },
+                    { key: 'bus_stop_entity', label: 'Bus stop (an HA zone works)', placeholder: 'zone.bus_stop' },
+                ],
                 // Growing up (load arc A4)
                 members: [],
                 stageData: { kids: [], pending: [], stages: [], cutoffs: [6, 12, 15] },
@@ -395,7 +626,8 @@
                 cutoffsSaved: false,
 
                 async init() {
-                    await Promise.all([this.loadSettings(), this.loadMembers(), this.loadStages()]);
+                    await Promise.all([this.loadSettings(), this.loadMembers(), this.loadStages(), this.loadFeeds()]);
+                    this.buildKids();
                     this.loadSchoolStatus();   // non-blocking; may take a moment (gcal fetch)
                 },
 
@@ -516,6 +748,260 @@
                         const r = await fetch(`${this.apiBase}api/members`);
                         this.members = r.ok ? await r.json() : [];
                     } catch (e) { this.members = []; }
+                },
+
+                // --- Children (v2.499.251) ---
+                // One card per child. `form` holds exactly the fields this
+                // page owns on the member record; a save sends only those
+                // (PUT /api/members merges), so the identity, scope and
+                // calendars the member card edits are never touched here.
+                buildChildForm(m) {
+                    return {
+                        school_hours_start: m.school_hours_start || '',
+                        school_hours_end: m.school_hours_end || '',
+                        school_end_push: m.school_end_push !== false,
+                        aftercare_days: (m.aftercare_days || []).slice(),
+                        aftercare_until: m.aftercare_until || '',
+                        aftercare_place: m.aftercare_place || '',
+                        bus_am_stop_time: m.bus_am_stop_time || '',
+                        bus_pm_stop_time: m.bus_pm_stop_time || '',
+                        bus_walk_mins: m.bus_walk_mins || null,
+                        bus_entity_prefix: m.bus_entity_prefix || '',
+                        bus_ready_lead_mins: m.bus_ready_lead_mins || null,
+                        bus_late_push: !!m.bus_late_push,
+                        bus_route_push: !!m.bus_route_push,
+                        bus_near_zone: m.bus_near_zone || '',
+                        bus_near_radius_m: m.bus_near_radius_m || null,
+                        bus_announce_room: m.bus_announce_room || '',
+                        bus_am_eta_entity: m.bus_am_eta_entity || '',
+                        bus_pm_eta_entity: m.bus_pm_eta_entity || '',
+                        bus_active_entity: m.bus_active_entity || '',
+                        bus_location_entity: m.bus_location_entity || '',
+                        bus_tracker_entity: m.bus_tracker_entity || '',
+                        bus_number_entity: m.bus_number_entity || '',
+                        bus_stop_entity: m.bus_stop_entity || '',
+                    };
+                },
+                buildKids() {
+                    const prev = {};
+                    (this.kids || []).forEach(k => { prev[k.id] = k; });
+                    this.kids = (this.members || [])
+                        .filter(m => m.role === 'child' && !m.system && m.status !== 'archived')
+                        .map(m => ({
+                            id: m.id, name: m.name, color_code: m.color_code,
+                            form: this.buildChildForm(m),
+                            feedUrl: '', feedBusy: false, saving: false, saved: false,
+                            diagnosing: false, diagnosis: null,
+                            classes: (prev[m.id] || {}).classes || [],
+                        }));
+                    this.kidsLoaded = true;
+                    this.kids.forEach(k => this.loadClasses(k));
+                },
+                toggleAftercareDay(k, di) {
+                    const days = k.form.aftercare_days || [];
+                    k.form.aftercare_days = days.includes(di) ? days.filter(x => x !== di) : [...days, di];
+                },
+                childPayload(k) {
+                    const f = k.form, txt = v => (v || '').trim() || null, num = v => parseInt(v) || null;
+                    return {
+                        school_hours_start: f.school_hours_start || null,
+                        school_hours_end: f.school_hours_end || null,
+                        school_end_push: !!f.school_end_push,
+                        aftercare_days: f.aftercare_days || [],
+                        aftercare_until: f.aftercare_until || null,
+                        aftercare_place: txt(f.aftercare_place),
+                        bus_am_stop_time: f.bus_am_stop_time || null,
+                        bus_pm_stop_time: f.bus_pm_stop_time || null,
+                        bus_walk_mins: num(f.bus_walk_mins),
+                        bus_entity_prefix: txt(f.bus_entity_prefix),
+                        bus_ready_lead_mins: num(f.bus_ready_lead_mins),
+                        bus_late_push: !!f.bus_late_push,
+                        bus_route_push: !!f.bus_route_push,
+                        bus_near_zone: txt(f.bus_near_zone),
+                        bus_near_radius_m: num(f.bus_near_radius_m),
+                        bus_announce_room: txt(f.bus_announce_room),
+                        bus_am_eta_entity: txt(f.bus_am_eta_entity),
+                        bus_pm_eta_entity: txt(f.bus_pm_eta_entity),
+                        bus_active_entity: txt(f.bus_active_entity),
+                        bus_location_entity: txt(f.bus_location_entity),
+                        bus_tracker_entity: txt(f.bus_tracker_entity),
+                        bus_number_entity: txt(f.bus_number_entity),
+                        bus_stop_entity: txt(f.bus_stop_entity),
+                    };
+                },
+                async saveChild(k) {
+                    k.saving = true;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/members/${k.id}`, {
+                            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.childPayload(k)) });
+                        if (!res.ok) {
+                            const d = await res.json().catch(() => ({}));
+                            return showGlobalAlert(d.detail || "Couldn't save that.");
+                        }
+                        k.saved = true;
+                        setTimeout(() => { k.saved = false; }, 1600);
+                    } catch (e) {
+                        showGlobalAlert("Couldn't reach Chauffeur.");
+                    } finally { k.saving = false; }
+                },
+                // The bus diagnosis, as sentences. Every gate it reports
+                // fails silently on a wall, so each one is said out loud.
+                busDiagnosisLines(d) {
+                    if (!d) return ['Nothing came back for this child.'];
+                    const out = [];
+                    out.push(d.am_stop_time
+                        ? `AM stop time ${d.am_stop_time} is set, so the bus lines (evening digest, leave-by, be ready at) run.`
+                        : 'No AM stop time, so the bus lines (evening digest, leave-by, be ready at) are off. Set one to switch them on.');
+                    if (!d.tracker_exists) {
+                        out.push(`The bus tracker ${d.tracker_entity} is not in Home Assistant, so there is no bus on the map. `
+                            + 'Check the entity prefix, or name the tracker under Other bus platforms.');
+                    } else if (!d.tracker_has_coords) {
+                        out.push(`The bus tracker ${d.tracker_entity} exists but has no position right now.`);
+                    } else {
+                        const ago = d.tracker_reported_secs_ago;
+                        out.push(`The bus tracker ${d.tracker_entity} has a position`
+                            + (ago !== null && ago !== undefined ? `, reported ${Math.max(1, Math.round(ago / 60))} min ago.` : '.'));
+                    }
+                    if (d.active_entity) {
+                        out.push(`The bus is ${d.active ? 'running' : 'not running'} (${d.active_entity}`
+                            + (d.active_state ? ` says "${d.active_state}"` : ' is not in Home Assistant') + ').');
+                    }
+                    out.push(d.stop_entity
+                        ? `The stop is ${d.stop_entity}` + (d.stop_has_coords ? ', and it has a position.' : ', but it has no position, so the stop is not drawn.')
+                        : 'No bus stop set, so the stop is not drawn on the map.');
+                    out.push(d.map_position ? 'The bus is on the map now.' : 'The bus is not on the map now.');
+                    if (d.note) out.push(d.note);
+                    return out;
+                },
+                async diagnoseBus(k) {
+                    k.diagnosing = true;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/admin/bus_diagnose`);
+                        if (!res.ok) throw new Error();
+                        const data = await res.json();
+                        const d = (data.children || []).find(c => c.member_id === k.id);
+                        k.diagnosis = this.busDiagnosisLines(d);
+                    } catch (e) {
+                        k.diagnosis = ["Couldn't run the bus check."];
+                    } finally { k.diagnosing = false; }
+                },
+
+                // School task feeds: the existing /api/ics_feeds routes, the
+                // task-list kind only (calendar feeds stay on the person).
+                async loadFeeds() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ics_feeds`);
+                        const data = res.ok ? await res.json() : [];
+                        this.icsFeeds = Array.isArray(data) ? data : [];
+                    } catch (e) { this.icsFeeds = []; }
+                },
+                feedsFor(k) {
+                    return (this.icsFeeds || []).filter(f => f.target_kind === 'tasks' && f.member_id === k.id);
+                },
+                async addFeed(k) {
+                    const url = (k.feedUrl || '').trim();
+                    if (!url) return showGlobalAlert('Paste the school feed URL first.');
+                    k.feedBusy = true;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ics_feeds`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ url, target_kind: 'tasks', member_id: k.id }) });
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) return showGlobalAlert(data.detail || 'Could not add that feed.');
+                        showGlobalAlert(`Subscribed to "${data.name}" — found ${data.event_count} items for ${k.name}'s school list. They're being added in the background.`);
+                        k.feedUrl = '';
+                        await this.loadFeeds();
+                        // Pick up the first sync's result; a big feed takes a while.
+                        const poll = async (n) => {
+                            await this.loadFeeds();
+                            if (n > 0 && this.icsFeeds.some(f => f.id === data.id && f.syncing))
+                                setTimeout(() => poll(n - 1), 8000);
+                            else this.loadClasses(k);
+                        };
+                        setTimeout(() => poll(15), 8000);
+                    } catch (e) {
+                        showGlobalAlert('Could not add feed: ' + e.message);
+                    } finally { k.feedBusy = false; }
+                },
+                async syncFeed(feed) {
+                    this.feedSyncingId = feed.id;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ics_feeds/${feed.id}/sync`, { method: 'POST' });
+                        const data = await res.json().catch(() => ({}));
+                        if (data.error) showGlobalAlert('Sync failed: ' + data.error);
+                        else if (data.busy) showGlobalAlert(`"${feed.name}" is already syncing — check back in a minute.`);
+                        else showGlobalAlert(`Synced "${feed.name}": ${data.total} items (${data.added} added, ${data.updated} updated, ${data.removed} removed).`);
+                    } catch (e) {
+                        showGlobalAlert('Sync failed: ' + e.message);
+                    } finally {
+                        this.feedSyncingId = null;
+                        await this.loadFeeds();
+                        const k = this.kids.find(x => x.id === feed.member_id);
+                        if (k) this.loadClasses(k);
+                    }
+                },
+                // K4d: Canvas course names. The token is write-only on the
+                // server; this page only learns whether one is set.
+                async setCanvasToken(feed, k) {
+                    const token = await promptInput('Class names from Canvas',
+                        'Signed in to Canvas as the child: Account → Settings → New Access Token. '
+                        + 'Used only to read the course list, sent only to this feed’s Canvas, never shown again.'
+                        + (feed.canvas_token_set ? ' Leave empty to remove the saved one.' : ''),
+                        { placeholder: 'Canvas access token', value: '' });
+                    if (token === null) return;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ics_feeds/${feed.id}/canvas-token`, {
+                            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ token: token.trim() }) });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) showGlobalAlert(d.detail || 'Could not save the token');
+                        else showGlobalAlert(d.status === 'cleared' ? 'Canvas token removed'
+                            : (d.status || '').startsWith('error') ? d.status.replace(/^error: /, '')
+                            : `Named ${d.named} class${d.named === 1 ? '' : 'es'} from Canvas`);
+                    } catch (e) {
+                        showGlobalAlert('Could not save the token: ' + e.message);
+                    }
+                    await this.loadFeeds();
+                    if (k) this.loadClasses(k);
+                },
+                async toggleFeed(feed) {
+                    await fetch(`${this.apiBase}api/ics_feeds/${feed.id}`, {
+                        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ enabled: feed.enabled === false }) });
+                    await this.loadFeeds();
+                },
+                async deleteFeed(feed) {
+                    if (!await promptConfirm('Delete feed', `Stop syncing "${feed.name}"?`, 'Delete')) return;
+                    const removeTasks = await promptConfirm('Remove its open tasks?',
+                        'Also remove the tasks this feed added that are not checked off yet? Checked-off ones are always kept.',
+                        'Remove them', 'Keep them');
+                    const res = await fetch(`${this.apiBase}api/ics_feeds/${feed.id}?remove_events=${removeTasks}`, { method: 'DELETE' });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) return showGlobalAlert(data.detail || 'Could not delete that feed.');
+                    if (removeTasks) showGlobalAlert(`Feed deleted. ${data.events_removed} open tasks removed.`);
+                    await this.loadFeeds();
+                },
+
+                // Classes (K4d): rename and recolor through the class API the
+                // phone's School sheet uses.
+                async loadClasses(k) {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/kid-tasks/classes?member_id=${encodeURIComponent(k.id)}`);
+                        k.classes = res.ok ? await res.json() : [];
+                    } catch (e) { k.classes = []; }
+                },
+                async saveClass(k, c, body) {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/kid-tasks/classes/${c.id}`, {
+                            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body) });
+                        if (!res.ok) {
+                            const d = await res.json().catch(() => ({}));
+                            return showGlobalAlert(d.detail || 'Could not save the class');
+                        }
+                    } catch (e) { return showGlobalAlert('Could not save the class'); }
+                    await this.loadClasses(k);
                 },
 
                 // --- Stages: the child that grows (load arc A4) ---

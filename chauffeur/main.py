@@ -348,35 +348,7 @@ async def push_notification_loop():
             # late, e.g. server was down) stays silent — a stale pickup push
             # is worse than none. ---
             try:
-                from services import family_digest, school
-                now_dt = datetime.now()
-                settings = storage.get_settings() or {}
-                if school.school_in_session(now_dt.date()) \
-                        and not family_digest.in_kid_quiet_hours(now_dt, settings):
-                    today_str = now_dt.strftime('%Y-%m-%d')
-                    sent = dict(storage.get_app_state("school_end_push_sent") or {})
-                    dirty = False
-                    for m in storage.get_all_members():
-                        if m.get('role') != 'child' or not m.get('school_hours_end'):
-                            continue
-                        key = f"{m['id']}:{today_str}"
-                        if key in sent:
-                            continue
-                        try:
-                            hh, mm = [int(x) for x in str(m['school_hours_end']).split(':')[:2]]
-                        except ValueError:
-                            continue
-                        mins_past = (now_dt.hour * 60 + now_dt.minute) - (hh * 60 + mm)
-                        if mins_past < 0:
-                            continue
-                        sent[key] = time.time()
-                        dirty = True
-                        if mins_past <= 45:
-                            _send_school_end_push(m, now=now_dt)
-                    if dirty:
-                        cutoff = time.time() - 2 * 86400
-                        storage.set_app_state("school_end_push_sent",
-                                              {k: v for k, v in sent.items() if v >= cutoff})
+                _run_school_end_pushes(datetime.now())
             except Exception as se:
                 print(f"School-end push error: {se}")
 
@@ -14405,6 +14377,50 @@ def _notify_kids_driver_changes(buffered, now=None):
             _notify_member_lanes(kid, "Ride update", body, '/app')
 
 # --- School-day-end pickup push (kid-support arc K4c) ---
+
+def _run_school_end_pushes(now_dt):
+    """One tick of the dismissal push (K4c), run every 30s by the scheduler.
+
+    Per child with school hours and the push left on (School page), school
+    days only, once per day, at dismissal. More than 45 minutes late stays
+    silent: a stale pickup push is worse than none. Returns the ids a push
+    was attempted for, so a test can run one tick."""
+    from services import family_digest, school
+    attempted = []
+    settings = storage.get_settings() or {}
+    if school.school_in_session(now_dt.date()) \
+            and not family_digest.in_kid_quiet_hours(now_dt, settings):
+        today_str = now_dt.strftime('%Y-%m-%d')
+        sent = dict(storage.get_app_state("school_end_push_sent") or {})
+        dirty = False
+        for m in storage.get_all_members():
+            if m.get('role') != 'child' or not m.get('school_hours_end'):
+                continue
+            # A parent switched this child's dismissal push off on
+            # the School page; the hours still drive everything else.
+            if m.get('school_end_push') is False:
+                continue
+            key = f"{m['id']}:{today_str}"
+            if key in sent:
+                continue
+            try:
+                hh, mm = [int(x) for x in str(m['school_hours_end']).split(':')[:2]]
+            except ValueError:
+                continue
+            mins_past = (now_dt.hour * 60 + now_dt.minute) - (hh * 60 + mm)
+            if mins_past < 0:
+                continue
+            sent[key] = time.time()
+            dirty = True
+            if mins_past <= 45:
+                attempted.append(m['id'])
+                _send_school_end_push(m, now=now_dt)
+        if dirty:
+            cutoff = time.time() - 2 * 86400
+            storage.set_app_state("school_end_push_sent",
+                                  {k: v for k, v in sent.items() if v >= cutoff})
+    return attempted
+
 
 def _send_school_end_push(member, now=None):
     """At dismissal, tell the kid what happens next: their first ride within

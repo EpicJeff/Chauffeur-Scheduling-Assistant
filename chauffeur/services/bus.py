@@ -10,7 +10,7 @@ actually running. The bus never enters the solver: it is kid-facing info,
 like weather, and every helper degrades to the static answer (or None) when
 HA or the integration is absent.
 
-Member fields (children, set in Config → People next to school hours):
+Member fields (children, set on the School page next to school hours):
 - bus_am_stop_time   'HH:MM' — morning pickup at the stop; the OPT-IN switch
   for the whole feature (no value → Chauffeur says nothing about buses)
 - bus_pm_stop_time   'HH:MM' — usual afternoon drop-off (optional)
