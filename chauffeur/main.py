@@ -12429,11 +12429,14 @@ def _task_line(task, ref):
     return f"{emoji} {title} — {_task_due_label(due, ref)}"
 
 class KidTaskRequest(BaseModel):
-    member_id: str
+    member_id: str           # the child whose list this is (the OWNER)
     title: str
     due_date: str            # YYYY-MM-DD
     kind: str = 'other'      # homework | test | project | bring | other
     notes: Optional[str] = ""
+    due_time: Optional[str] = None     # "HH:MM", optional
+    course_key: Optional[str] = None   # one of the owner's classes, optional
+    actor_id: Optional[str] = None     # per-action identity (PWA pattern)
 
 class KidTaskCompleteRequest(BaseModel):
     member_id: Optional[str] = None   # per-action identity (PWA pattern)
@@ -12450,6 +12453,38 @@ def _validate_kid_task(req: KidTaskRequest):
     member = storage.get_member(req.member_id)
     if not member or member.get('role') != 'child':
         raise HTTPException(status_code=400, detail="Tasks belong to a child member")
+    import re as _re
+    if req.due_time and not _re.fullmatch(r'([01]\d|2[0-3]):[0-5]\d', req.due_time):
+        raise HTTPException(status_code=400, detail="due_time must be HH:MM")
+
+
+def _kid_task_writer(request, owner_id: str, claimed: Optional[str]):
+    """Who may add to, edit or delete from a child's school list (K4 hand
+    path, v2.499.252): the child, for their own list, and a parent or adult
+    (the School page's "Add a task for", or a parent looking at the child's
+    list on their phone). Another child and a helper or guest are refused,
+    the same rule the planner photo follows. A caller with no person behind
+    it (an admin surface) passes: the route's tier is the gate there.
+    Returns the acting member id, or None."""
+    actor_id = _acting_id(request, claimed)
+    actor = storage.get_member(actor_id) if actor_id else None
+    if not actor:
+        return None
+    role = actor.get('role')
+    if role in ('helper', 'guest'):
+        raise HTTPException(status_code=403, detail="Helpers can't change a school list")
+    if role == 'child' and actor['id'] != owner_id:
+        raise HTTPException(status_code=403, detail="You can only change your own list")
+    return actor['id']
+
+
+def _kid_task_course(owner_id: str, course_key: Optional[str]) -> Optional[str]:
+    """A class only if it is one of the owner's; anything else is dropped
+    rather than inventing a class nobody can name."""
+    if not course_key:
+        return None
+    keys = {c['key'] for c in storage.get_school_classes(owner_id)}
+    return course_key if course_key in keys else None
 
 @app.get("/api/kid-tasks")
 def list_kid_tasks(member_id: Optional[str] = None, include_done: bool = False):
@@ -12518,28 +12553,67 @@ def update_school_class_api(class_id: str, req: SchoolClassUpdate):
     return storage.get_school_class(class_id)
 
 @app.post("/api/kid-tasks")
-def create_kid_task(req: KidTaskRequest):
+def create_kid_task(req: KidTaskRequest, request: Request):
     from models.schemas import KidTask
     _validate_kid_task(req)
-    task = KidTask(member_id=req.member_id, title=req.title.strip(),
+    actor_id = _kid_task_writer(request, req.member_id, req.actor_id)
+    task = KidTask(member_id=req.member_id, title=req.title.strip()[:140],
                    due_date=req.due_date,
                    kind=req.kind if req.kind in _TASK_EMOJI else 'other',
-                   notes=req.notes or "").model_dump()
+                   # Somebody chose the kind by hand; nothing re-guesses it.
+                   kind_locked=True,
+                   notes=req.notes or "", due_time=req.due_time or None,
+                   course_key=_kid_task_course(req.member_id, req.course_key),
+                   created_by_member_id=actor_id).model_dump()
     storage.add_kid_task(task)
-    return task
+    return storage.decorate_kid_tasks([task])[0]
+
+# What a school feed owns on a task it imported: the next sync rewrites
+# these from the school's copy, so a hand edit to them would silently undo
+# itself within the hour. A feed task's title, date, time and class are the
+# school's; its notes and kind are the family's.
+_FEED_OWNED = ('title', 'due_date', 'due_time', 'course_key')
 
 @app.put("/api/kid-tasks/{task_id}")
-def edit_kid_task(task_id: str, req: KidTaskRequest):
-    _validate_kid_task(req)
-    if not storage.update_kid_task(task_id, {
-            'title': req.title.strip(), 'due_date': req.due_date,
-            'kind': req.kind if req.kind in _TASK_EMOJI else 'other',
-            'notes': req.notes or ""}):
+def edit_kid_task(task_id: str, req: KidTaskRequest, request: Request):
+    task = storage.get_kid_task(task_id)
+    if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    return storage.get_kid_task(task_id)
+    _validate_kid_task(req)
+    if req.member_id != task['member_id']:
+        raise HTTPException(status_code=400, detail="A task stays on its own child's list")
+    _kid_task_writer(request, task['member_id'], req.actor_id)
+    kind = req.kind if req.kind in _TASK_EMOJI else 'other'
+    updates = {'notes': req.notes or ""}
+    if kind != task.get('kind'):
+        updates.update({'kind': kind, 'kind_locked': True})
+    wanted = {'title': req.title.strip()[:140], 'due_date': req.due_date,
+              'due_time': req.due_time or None,
+              'course_key': _kid_task_course(task['member_id'], req.course_key)}
+    if task.get('source') == 'ics':
+        if any((wanted[k] or None) != (task.get(k) or None) for k in _FEED_OWNED):
+            raise HTTPException(status_code=400,
+                                detail="This one comes from the school feed, so its title, "
+                                       "date and class follow the school's copy. Notes and "
+                                       "type are yours to change.")
+    else:
+        updates.update(wanted)
+    storage.update_kid_task(task_id, updates)
+    return storage.decorate_kid_tasks([storage.get_kid_task(task_id)])[0]
 
 @app.delete("/api/kid-tasks/{task_id}")
-def remove_kid_task(task_id: str):
+def remove_kid_task(task_id: str, request: Request, member_id: Optional[str] = None):
+    """`member_id` is the per-action identity (who is deleting)."""
+    task = storage.get_kid_task(task_id)
+    if not task:
+        return {"status": "ok"}       # already gone: deleting is idempotent
+    _kid_task_writer(request, task['member_id'], member_id)
+    if task.get('source') == 'ics':
+        # The next sync would put it straight back while the feed still has
+        # it; checking it off is the gesture that sticks.
+        raise HTTPException(status_code=400,
+                            detail="This one comes from the school feed and would come "
+                                   "back on the next sync. Check it off instead.")
     storage.delete_kid_task(task_id)
     return {"status": "ok"}
 

@@ -60,6 +60,9 @@ def seed():
                         'school_hours_start': '08:00', 'school_hours_end': '15:00',
                         'quiet_start': '21:00', 'notify_lanes': 'urgent'})
     storage.ensure_school_class('kid_ada', 'SCI.7.2', 'SCI.7.2')
+    from models.schemas import KidTask
+    storage.add_kid_task(KidTask(member_id='kid_ada', title='Overdue worksheet',
+                                 due_date='2026-01-05', kind='homework').model_dump())
     # A school feed is a URL the server reads; served in-process, the read is
     # stubbed so the add path runs without the network.
     from services import ics_sync
@@ -138,6 +141,21 @@ def main():
             cls = storage.get_school_classes('kid_ada')
             check(cls and cls[0].get('name') == 'Science', f'the class rename did not save: {cls}')
             _el_shot(ada, 'school-child-ada.png')
+
+            # A parent adds a task INTO Ada's list from her card...
+            ada.locator('[data-task-title]').fill('Sign the field trip form')
+            ada.locator('[data-task-kind]').select_option('bring')
+            ada.locator('[data-add-task]').click()
+            page.wait_for_timeout(800)
+            mine = [t for t in storage.get_kid_tasks('kid_ada') if t['title'] == 'Sign the field trip form']
+            check(len(mine) == 1 and mine[0]['kind'] == 'bring' and mine[0]['source'] == 'manual',
+                  f'the School page did not add the task to Ada: {mine}')
+            check(ada.locator('[data-task-title]').input_value() == '', 'the form did not clear')
+            # ...and the page never lists her tasks (K4: no parent dashboard).
+            body = page.locator('body').inner_text()
+            check('Overdue worksheet' not in body and 'Sign the field trip form' not in body,
+                  "the School page shows the child's list")
+            _el_shot(ada.locator('[data-add-task-for]'), 'school-add-task-for.png')
             _shot(page, 'school-children.png')
 
             # Evenings: one field changes, and nothing else does.

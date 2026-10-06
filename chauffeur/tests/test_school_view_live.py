@@ -318,6 +318,88 @@ def check_parent(served, output):
         assert not errors, errors
 
 
+def check_hand_path(served, output):
+    """Add, edit and delete by hand (v2.499.252): the child on their own
+    list, and a parent on the child's. A feed task can be retyped and noted
+    but keeps the school's title, and has no Delete."""
+    with served.browser(reduced_motion='reduce', has_touch=True) as page:
+        errors = _open(served, page, 'kid')
+        page.evaluate("pwaSchoolOpen('kid')")
+        page.wait_for_selector('#pwa-school-body [data-add-task]')
+        page.locator('#pwa-school-body [data-add-task]').click()
+        form = page.locator('.pwa-prompt-overlay').last
+        form.wait_for()
+        form.locator('[data-f-title]').fill('Bring a shoebox')
+        form.locator('[data-f-date]').fill(_d(5))
+        form.locator('[data-f-time]').fill('08:15')
+        form.locator('[data-f-kind]').select_option('bring')
+        form.locator('[data-f-class]').select_option('Algebra 1')
+        if output:
+            page.screenshot(path=str(Path(output, 'school-add-task.png')))
+        form.locator('[data-yes]').click()
+        page.wait_for_selector('#pwa-school-body >> text=Bring a shoebox')
+        made = next(t for t in storage.get_kid_tasks('kid') if t['title'] == 'Bring a shoebox')
+        assert made['due_date'] == _d(5) and made['due_time'] == '08:15', made
+        assert made['kind'] == 'bring' and made['course_key'] == 'Algebra 1', made
+        assert made['source'] == 'manual' and made['created_by_member_id'] == 'kid', made
+
+        # Edit it from its detail sheet.
+        page.evaluate(f"openKidTaskDetail('{made['id']}')")
+        sheet = page.locator('.pwa-prompt-overlay').last
+        sheet.locator('[data-edit]').click()
+        form = page.locator('.pwa-prompt-overlay').last
+        form.locator('[data-f-title]').wait_for()
+        assert form.locator('[data-f-title]').input_value() == 'Bring a shoebox'
+        form.locator('[data-f-title]').fill('Bring a shoebox and glue')
+        form.locator('[data-f-notes]').fill('for the diorama')
+        form.locator('[data-yes]').click()
+        page.wait_for_selector('#pwa-school-body >> text=Bring a shoebox and glue')
+        edited = storage.get_kid_task(made['id'])
+        assert edited['title'] == 'Bring a shoebox and glue' and edited['notes'] == 'for the diorama', edited
+
+        # Delete it, through the confirm.
+        page.evaluate(f"openKidTaskDetail('{made['id']}')")
+        page.locator('.pwa-prompt-overlay').last.locator('[data-delete]').click()
+        page.locator('.pwa-prompt-overlay').last.locator('[data-yes]').click()
+        page.wait_for_function("!document.getElementById('pwa-school-body').innerText.includes('Bring a shoebox')")
+        assert storage.get_kid_task(made['id']) is None, 'the task was not deleted'
+
+        # A feed task: Edit with the school's fields locked, and no Delete.
+        page.evaluate("openKidTaskDetail(Object.values(pwaSchoolTasks).find(t => t.title === 'Problem set 7').id)")
+        sheet = page.locator('.pwa-prompt-overlay').last
+        sheet.locator('[data-edit]').wait_for()
+        assert sheet.locator('[data-delete]').count() == 0, 'a feed task offers Delete'
+        sheet.locator('[data-edit]').click()
+        form = page.locator('.pwa-prompt-overlay').last
+        form.locator('[data-feed-note]').wait_for()
+        assert form.locator('[data-f-title]').is_disabled(), "a feed task's title is editable"
+        form.locator('[data-f-notes]').fill('pages 40-42')
+        if output:
+            page.screenshot(path=str(Path(output, 'school-edit-feed-task.png')))
+        form.locator('[data-yes]').click()
+        page.wait_for_function("!document.querySelector('.pwa-prompt-overlay')")
+        page.wait_for_timeout(300)
+        ps = next(t for t in storage.get_kid_tasks('kid') if t['title'] == 'Problem set 7')
+        assert ps['notes'] == 'pages 40-42', ps
+        page.evaluate('pwaSchoolClose()')
+        assert not errors, errors
+
+    # A parent adds to the child's list from the same sheet.
+    with served.browser(reduced_motion='reduce', has_touch=True) as page:
+        errors = _open(served, page, 'mom')
+        page.evaluate("pwaSchoolOpen('kid')")
+        page.wait_for_selector('#pwa-school-body [data-add-task]')
+        page.locator('#pwa-school-body [data-add-task]').click()
+        form = page.locator('.pwa-prompt-overlay').last
+        form.locator('[data-f-title]').fill('Sign the permission slip')
+        form.locator('[data-yes]').click()
+        page.wait_for_selector('#pwa-school-body >> text=Sign the permission slip')
+        slip = next(t for t in storage.get_kid_tasks('kid') if t['title'] == 'Sign the permission slip')
+        assert slip['created_by_member_id'] == 'mom', slip
+        page.evaluate('pwaSchoolClose()')
+        assert not errors, errors
+
+
 def check_calendar_layer(served, output):
     """The shared calendar component draws a child's upcoming school items
     as all-day entries when mounted with `school` (the wall card's option),
@@ -379,6 +461,8 @@ def run():
     print('PASS  kid: planner photo review and save')
     check_parent(served, output)
     print('PASS  parent: More -> School')
+    check_hand_path(served, output)
+    print('PASS  hand path: add, edit, delete; feed task locked; parent adds')
     check_calendar_layer(served, output)
     print('PASS  calendar component: school layer + details')
 

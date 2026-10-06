@@ -7,7 +7,8 @@
 //
 // Loaded by app.html after its inline script; reads its globals (apiBase,
 // selectedMemberId, membersData, mfEscape, formatClock, completeKidTask,
-// clearPastKidTasks, _pwaModal, promptInput, promptChoice, showGlobalAlert).
+// clearPastKidTasks, _pwaModal, promptInput, promptChoice, promptConfirm,
+// showGlobalAlert, currentMemberRole, refreshTodaySurfaces).
 // Uses the PWA's gray vocabulary (remapped by the theme token layer) rather
 // than agenda_row.html's dark-only .agenda-day, which the app does not load.
 
@@ -128,6 +129,8 @@ function openKidTaskDetail(id) {
         <a href="${mfEscape(l.url)}" target="_blank" rel="noopener noreferrer"
             class="flex items-center gap-2 rounded-lg px-2.5 py-1.5 bg-gray-800 text-sm font-bold text-indigo-200 break-all">🔗 ${mfEscape(l.text || l.url)}</a>`).join('');
     const done = t.status === 'done';
+    const canWrite = schoolCanWrite(t.member_id);
+    const feed = schoolIsFeedTask(t);
     const overlay = _pwaModal(`
         <div class="flex items-start gap-2 mb-1">
             <span class="w-1 self-stretch rounded" style="background:${color}"></span>
@@ -147,13 +150,20 @@ function openKidTaskDetail(id) {
                             : '<p class="text-xs text-gray-500 italic">No description from the teacher.</p>'}
             ${t.notes ? `<div class="text-sm text-gray-300 whitespace-pre-line">${mfEscape(t.notes)}</div>` : ''}
             ${links ? `<div class="flex flex-col gap-1.5">${links}</div>` : ''}
+            ${canWrite && feed ? '<p class="text-xs text-gray-500 italic">From the school feed — when it is done, check it off.</p>' : ''}
         </div>
         <div class="flex gap-2 justify-end flex-wrap">
+            ${canWrite ? '<button data-edit class="px-4 py-2 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-bold">Edit</button>' : ''}
+            ${canWrite && !feed ? '<button data-delete class="px-4 py-2 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-bold">Delete</button>' : ''}
             ${t.url ? `<a href="${mfEscape(t.url)}" target="_blank" rel="noopener noreferrer" class="px-4 py-2 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-bold">Open in school site</a>` : ''}
             <button data-close class="px-4 py-2 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-bold">Close</button>
             <button data-yes class="px-4 py-2 rounded-xl bg-green-600 text-white text-sm font-bold">${done ? 'Mark not done' : 'Check off'}</button>
         </div>`, (overlay, close) => {
         overlay.querySelector('[data-close]').onclick = close;
+        const editEl = overlay.querySelector('[data-edit]');
+        if (editEl) editEl.onclick = () => { close(); schoolTaskForm(t.member_id, t); };
+        const delEl = overlay.querySelector('[data-delete]');
+        if (delEl) delEl.onclick = () => { close(); schoolTaskDelete(t); };
         const kindEl = overlay.querySelector('[data-kind]');
         kindEl.onclick = () => { close(); schoolSetKind(t.id, t.kind); };
         kindEl.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); kindEl.click(); } };
@@ -555,14 +565,143 @@ function pwaSchoolRender() {
             <button type="button" onclick="pwaSchoolClose()" class="pwa-sheet-close text-gray-400 text-xl px-2" aria-label="Close">&#215;</button>
         </div>
         <div class="flex gap-1 bg-gray-800 rounded-xl p-1 mb-3">${tab('agenda', 'Agenda')}${tab('month', 'Month')}</div>
-        <div role="button" tabindex="0" onclick="pwaPlannerSnap()" data-planner-snap
-            onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}"
-            class="cursor-pointer mb-3 text-center text-sm font-bold text-gray-200 bg-gray-800 rounded-lg py-2">📷 Snap your planner</div>
+        <div class="flex gap-2 mb-3">
+            ${schoolCanWrite(s.owner) ? `<div role="button" tabindex="0" onclick="pwaSchoolAdd()" data-add-task
+                onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}"
+                class="cursor-pointer flex-1 text-center text-sm font-bold text-gray-200 bg-gray-800 rounded-lg py-2">+ Add task</div>` : ''}
+            <div role="button" tabindex="0" onclick="pwaPlannerSnap()" data-planner-snap
+                onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}"
+                class="cursor-pointer flex-1 text-center text-sm font-bold text-gray-200 bg-gray-800 rounded-lg py-2">📷 Snap your planner</div>
+        </div>
         ${pills}
         ${s.mode === 'month' ? pwaSchoolMonth(shown) : pwaSchoolAgenda(shown, today)}
         ${pwaSchoolClasses()}`;
 }
 
+
+// --- Adding, editing and deleting by hand (v2.499.252) ---------------------
+// The child, on their own list, and a parent or adult looking at a child's
+// list. Everybody else sees the list but not these doors (the server says
+// the same: another child, a helper or a guest is refused). A task the
+// school feed brought in keeps the school's title, date and class -- the
+// next sync would put them back -- so those are shown but locked, and it
+// cannot be deleted (checking it off is the gesture that sticks).
+const SCHOOL_FIELD = 'w-full bg-gray-950 border border-gray-700 rounded-xl p-3 text-gray-100 text-[16px] focus:outline-none focus:border-blue-500 disabled:opacity-60';
+
+function schoolCanWrite(owner) {
+    return owner === selectedMemberId || ['parent', 'adult'].includes(currentMemberRole());
+}
+
+function schoolIsFeedTask(t) { return !!t && t.source === 'ics'; }
+
+function schoolTomorrow() {
+    const d = new Date(); d.setDate(d.getDate() + 1);
+    return schoolLocalDate(d);
+}
+
+async function schoolClassesFor(owner) {
+    if (pwaSchool && pwaSchool.owner === owner) return pwaSchool.classes || [];
+    try {
+        const r = await fetch(`${apiBase}api/kid-tasks/classes?member_id=${encodeURIComponent(owner)}`);
+        return r.ok ? await r.json() : [];
+    } catch (e) { return []; }
+}
+
+// One form for add and edit: `t` absent means a new task on `owner`'s list.
+async function schoolTaskForm(owner, t) {
+    const feed = schoolIsFeedTask(t);
+    const lock = feed ? 'disabled' : '';
+    const classes = await schoolClassesFor(owner);
+    const kind = t ? t.kind : 'homework';
+    const cls = t ? (t.course_key || '') : '';
+    const overlay = _pwaModal(`
+        <div class="text-gray-100 font-bold text-lg mb-1">${t ? 'Edit task' : 'Add a task'}</div>
+        ${feed ? `<div class="text-gray-400 text-sm mb-3 leading-snug" data-feed-note>From the school feed: the title, date and class follow the school’s copy. The type and notes are yours.</div>` : '<div class="mb-3"></div>'}
+        <div class="flex flex-col gap-2.5">
+            <label class="flex flex-col gap-1"><span class="text-xs font-semibold text-gray-400">What</span>
+                <input type="text" data-f-title maxlength="140" placeholder="Read chapter 4" ${lock} class="${SCHOOL_FIELD}"></label>
+            <div class="flex gap-2">
+                <label class="flex-1 flex flex-col gap-1 min-w-0"><span class="text-xs font-semibold text-gray-400">Due</span>
+                    <input type="date" data-f-date ${lock} class="${SCHOOL_FIELD}"></label>
+                <label class="flex-1 flex flex-col gap-1 min-w-0"><span class="text-xs font-semibold text-gray-400">By (optional)</span>
+                    <input type="time" data-f-time ${lock} class="${SCHOOL_FIELD}"></label>
+            </div>
+            ${classes.length || cls ? `<label class="flex flex-col gap-1"><span class="text-xs font-semibold text-gray-400">Class</span>
+                <select data-f-class ${lock} class="${SCHOOL_FIELD}">
+                    <option value="">No class</option>
+                    ${classes.map(c => `<option value="${mfEscape(c.key)}">${mfEscape(c.display || c.key)}</option>`).join('')}
+                </select></label>` : ''}
+            <label class="flex flex-col gap-1"><span class="text-xs font-semibold text-gray-400">Type</span>
+                <select data-f-kind class="${SCHOOL_FIELD}">
+                    ${SCHOOL_KINDS.map(([v, l]) => `<option value="${v}">${mfEscape(l)}</option>`).join('')}
+                </select></label>
+            <label class="flex flex-col gap-1"><span class="text-xs font-semibold text-gray-400">Notes (optional)</span>
+                <textarea data-f-notes rows="2" class="${SCHOOL_FIELD} resize-none"></textarea></label>
+        </div>
+        <div class="flex gap-2 justify-end mt-4">
+            <button data-no class="px-4 py-2 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-bold">Cancel</button>
+            <button data-yes class="px-4 py-2 rounded-xl bg-green-600 text-white text-sm font-bold">${t ? 'Save' : 'Add'}</button>
+        </div>`, (overlay, close) => {
+        overlay.querySelector('[data-no]').onclick = close;
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+        overlay.querySelector('[data-yes]').onclick = () => schoolTaskSave(owner, t, overlay, close);
+    });
+    // .value, never the attribute: titles and notes carry quotes.
+    const q = s => overlay.querySelector(s);
+    q('[data-f-title]').value = t ? (t.title || '') : '';
+    q('[data-f-date]').value = t ? (t.due_date || '') : schoolTomorrow();
+    q('[data-f-time]').value = t ? (t.due_time || '') : '';
+    if (q('[data-f-class]')) q('[data-f-class]').value = cls;
+    q('[data-f-kind]').value = SCHOOL_KINDS.some(([v]) => v === kind) ? kind : 'other';
+    q('[data-f-notes]').value = t ? (t.notes || '') : '';
+    if (!feed) q('[data-f-title]').focus();
+    return overlay;
+}
+
+async function schoolTaskSave(owner, t, overlay, close) {
+    const q = s => overlay.querySelector(s);
+    const body = {
+        member_id: owner, actor_id: selectedMemberId,
+        title: q('[data-f-title]').value.trim(),
+        due_date: q('[data-f-date]').value,
+        due_time: q('[data-f-time]').value || null,
+        course_key: q('[data-f-class]') ? (q('[data-f-class]').value || null) : (t ? t.course_key || null : null),
+        kind: q('[data-f-kind]').value,
+        notes: q('[data-f-notes]').value.trim(),
+    };
+    if (!body.title) return showGlobalAlert('Say what it is first.');
+    if (!body.due_date) return showGlobalAlert('Pick the day it is due.');
+    try {
+        const r = await fetch(t ? `${apiBase}api/kid-tasks/${t.id}` : `${apiBase}api/kid-tasks`, {
+            method: t ? 'PUT' : 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)});
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) return showGlobalAlert(d.detail || 'Could not save it');
+        schoolRemember(d);
+    } catch (e) { return showGlobalAlert('Could not reach Chauffeur'); }
+    close();
+    if (pwaSchool) pwaSchoolLoad();
+    else if (typeof refreshTodaySurfaces === 'function') refreshTodaySurfaces();
+}
+
+function pwaSchoolAdd() {
+    if (!pwaSchool || !schoolCanWrite(pwaSchool.owner)) return;
+    schoolTaskForm(pwaSchool.owner, null);
+}
+
+async function schoolTaskDelete(t) {
+    const ok = await promptConfirm('Delete this task?', t.title, 'Delete', 'Keep');
+    if (!ok) return;
+    try {
+        const r = await fetch(`${apiBase}api/kid-tasks/${t.id}?member_id=${encodeURIComponent(selectedMemberId || '')}`,
+            {method: 'DELETE'});
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) return showGlobalAlert(d.detail || 'Could not delete it');
+    } catch (e) { return showGlobalAlert('Could not reach Chauffeur'); }
+    delete pwaSchoolTasks[t.id];
+    if (pwaSchool) pwaSchoolLoad();
+    else if (typeof refreshTodaySurfaces === 'function') refreshTodaySurfaces();
+}
 
 // --- Planner photo (K4d) ---------------------------------------------------
 // A page of the paper planner -> proposed changes, reviewed before anything

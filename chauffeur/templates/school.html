@@ -266,6 +266,58 @@
                             </template>
                         </div>
                     </div>
+                    <!-- Add a task for this child (v2.499.252): a parent
+                         writes INTO the child's own school list — the note
+                         from the teacher, the form to sign. Write-only on
+                         purpose: this page never lists the child's tasks
+                         (K4: parents never get a dashboard about the kid);
+                         the list is the child's, on their phone and wall. -->
+                    <div class="mt-4 pt-4 border-t border-gray-600/50" data-add-task-for>
+                        <label class="block text-gray-400 mb-1 text-sm">✏️ Add a task for <span x-text="k.name"></span></label>
+                        <p class="text-xs text-gray-500 mb-2">It goes on <span x-text="k.name"></span>'s own school list,
+                            beside their homework. You won't see the list here — it's theirs.</p>
+                        <div class="flex gap-2 items-end flex-wrap">
+                            <div class="flex-1 min-w-[200px]">
+                                <span class="block text-xs text-gray-500 mb-0.5">What</span>
+                                <input type="text" x-model="k.task.title" maxlength="140" placeholder="Permission slip back by Friday" data-task-title
+                                    @keydown.enter="addTask(k)"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
+                            </div>
+                            <div>
+                                <span class="block text-xs text-gray-500 mb-0.5">Due</span>
+                                <input type="date" x-model="k.task.due_date" data-task-date
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                            </div>
+                            <div>
+                                <span class="block text-xs text-gray-500 mb-0.5">By (optional)</span>
+                                <input type="time" x-model="k.task.due_time"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                            </div>
+                            <div>
+                                <span class="block text-xs text-gray-500 mb-0.5">Type</span>
+                                <select x-model="k.task.kind" data-task-kind
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                    <template x-for="kd in taskKinds" :key="kd[0]">
+                                        <option :value="kd[0]" x-text="kd[1]"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div x-show="(k.classes || []).length">
+                                <span class="block text-xs text-gray-500 mb-0.5">Class</span>
+                                <select x-model="k.task.course_key"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white max-w-[180px]">
+                                    <option value="">No class</option>
+                                    <template x-for="c in (k.classes || [])" :key="c.id">
+                                        <option :value="c.key" x-text="c.display || c.key"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <button @click="addTask(k)" :disabled="!!k.taskBusy" data-add-task
+                                class="bg-teal-600 hover:bg-teal-500 disabled:opacity-60 text-white font-bold px-4 py-3 rounded transition-colors shadow-md">Add</button>
+                        </div>
+                        <p class="text-xs text-emerald-400 font-bold mt-2" x-show="k.taskAdded" x-transition.opacity
+                            x-text="'Added to ' + k.name + '’s list ✓'"></p>
+                    </div>
                 </div>
             </template>
         </section>
@@ -605,6 +657,8 @@
                 kidsLoaded: false,
                 icsFeeds: [],
                 feedSyncingId: null,
+                taskKinds: [['test', 'Test or quiz'], ['project', 'Project'], ['homework', 'Homework'],
+                            ['bring', 'Something to bring'], ['other', 'Other / info']],
                 busEntityFields: [
                     { key: 'bus_am_eta_entity', label: 'AM stop-ETA sensor', placeholder: 'sensor.…' },
                     { key: 'bus_pm_eta_entity', label: 'PM stop-ETA sensor', placeholder: 'sensor.…' },
@@ -792,10 +846,40 @@
                             form: this.buildChildForm(m),
                             feedUrl: '', feedBusy: false, saving: false, saved: false,
                             diagnosing: false, diagnosis: null,
+                            task: this.blankTask(), taskBusy: false, taskAdded: false,
                             classes: (prev[m.id] || {}).classes || [],
                         }));
                     this.kidsLoaded = true;
                     this.kids.forEach(k => this.loadClasses(k));
+                },
+                blankTask() {
+                    const d = new Date(); d.setDate(d.getDate() + 1);
+                    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                    return { title: '', due_date: iso, due_time: '', kind: 'other', course_key: '' };
+                },
+                // Write-only: a parent adds to the child's list; nothing here
+                // reads it back (K4).
+                async addTask(k) {
+                    const t = k.task;
+                    if (!(t.title || '').trim()) return showGlobalAlert('Say what it is first.');
+                    if (!t.due_date) return showGlobalAlert('Pick the day it is due.');
+                    k.taskBusy = true;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/kid-tasks`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ member_id: k.id, title: t.title.trim(), due_date: t.due_date,
+                                                   due_time: t.due_time || null, kind: t.kind || 'other',
+                                                   course_key: t.course_key || null }) });
+                        if (!res.ok) {
+                            const d = await res.json().catch(() => ({}));
+                            return showGlobalAlert(d.detail || "Couldn't add that.");
+                        }
+                        k.task = this.blankTask();
+                        k.taskAdded = true;
+                        setTimeout(() => { k.taskAdded = false; }, 2500);
+                    } catch (e) {
+                        showGlobalAlert("Couldn't reach Chauffeur.");
+                    } finally { k.taskBusy = false; }
                 },
                 toggleAftercareDay(k, di) {
                     const days = k.form.aftercare_days || [];
