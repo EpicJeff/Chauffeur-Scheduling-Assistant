@@ -199,8 +199,8 @@ def scenario_answers_are_staged_until_save_then_saved_together():
         return
     after_tick, returned, before_save, all_posts, errors = got
     check(not errors, "the inbox threw: %s" % errors)
-    check(after_tick['edited'] == ['triage-row-gev1'] and after_tick['save'] == 'Save 1 change',
-          "a change marks its row and arms Save: %r" % after_tick)
+    check(after_tick['edited'] == ['triage-row-gev1'] and after_tick['save'] == 'Save 1 event',
+          "a change marks its row ready and arms Save: %r" % after_tick)
     check(returned['checked'] == ['vovo'],
           "coming back to an event shows what was staged for it: %r" % returned)
     check(before_save == [], "nothing was saved before Save: %r" % before_save)
@@ -210,6 +210,61 @@ def scenario_answers_are_staged_until_save_then_saved_together():
     check(cfg.get('driver_ids') == ['vovo'], "the staged driver was saved: %r" % cfg)
     check(storage.get_event_config('gev2') is None,
           "an event only looked at is not saved: %r" % storage.get_event_config('gev2'))
+
+
+def scenario_looks_good_saves_an_untouched_event_and_only_the_approved_ones():
+    """The user: "I may only look at 5 out of 15 and want to save those."
+    Opening an event decides nothing; Looks Good does, with no edit needed."""
+    def drive(page, errors):
+        _open_inbox(page)
+        before = _state(page)
+        page.evaluate('() => document.getElementById("triage-ready-btn").click()')
+        # Marking moves on to the next undecided event.
+        page.wait_for_function(
+            '() => document.getElementById("triage-row-gev2").classList.contains("ring-2")', timeout=10000)
+        page.wait_for_timeout(300)
+        marked = _state(page)
+        marked['readyRow'] = page.evaluate(
+            '() => document.getElementById("triage-row-gev1").textContent.includes("Ready")')
+        page.evaluate('() => document.getElementById("triage-save-btn").click()')
+        page.wait_for_function(
+            '() => document.getElementById("triage-modal").classList.contains("hidden")', timeout=15000)
+        return before, marked, errors
+    got = _serve(drive)
+    if got is None:
+        return
+    before, marked, errors = got
+    check(not errors, "the inbox threw: %s" % errors)
+    check(before['saveDisabled'], "opening an event does not arm Save: %r" % before)
+    check(marked['readyRow'] and marked['save'] == 'Save 1 event',
+          "Looks Good marks the row and arms Save: %r" % marked)
+    cfg = storage.get_event_config('gev1')
+    check(cfg is not None and cfg.get('passenger_ids') == ['p1'],
+          "the untouched event is saved as shown: %r" % cfg)
+    check(storage.get_event_config('gev2') is None,
+          "an event opened but not approved stays in the inbox")
+
+
+def scenario_undo_takes_an_event_back_out_of_save():
+    def drive(page, errors):
+        _open_inbox(page)
+        page.evaluate('() => document.getElementById("triage-ready-btn").click()')
+        page.wait_for_function(
+            '() => document.getElementById("triage-row-gev2").classList.contains("ring-2")', timeout=10000)
+        _select(page, 'gev1')
+        page.evaluate('() => document.getElementById("triage-ready-btn").click()')
+        page.wait_for_timeout(300)
+        st = _state(page)
+        st['still'] = page.evaluate(
+            '() => document.getElementById("triage-row-gev1").classList.contains("ring-2")')
+        return st, errors
+    got = _serve(drive)
+    if got is None:
+        return
+    st, errors = got
+    check(not errors, "the inbox threw: %s" % errors)
+    check(st['saveDisabled'] and st['still'],
+          "Undo un-marks, stays on the event, and disarms Save: %r" % st)
 
 
 def scenario_closing_with_changes_asks_and_discard_saves_nothing():
@@ -229,7 +284,7 @@ def scenario_closing_with_changes_asks_and_discard_saves_nothing():
         return
     asked, errors = got
     check(not errors, "the inbox threw: %s" % errors)
-    check(asked == ['Save 1 change', 'Discard changes'], "the question offers both: %r" % asked)
+    check(asked == ['Save 1 event', 'Discard changes'], "the question offers both: %r" % asked)
     check(storage.get_event_config('gev1') is None, "Discard saved nothing")
 
 

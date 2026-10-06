@@ -2339,7 +2339,7 @@
         let triageRows = [];          // one per event, a series once (earliest)
         let triageCtx = {};           // passengers/drivers/... for the form
         let triageSelected = null;    // row key (the event id)
-        let triageDrafts = {};        // key -> { base, values, ignored }
+        let triageDrafts = {};        // key -> { base, values, ignored, ready }
         let triageFailures = {};      // key -> why the last Save missed it
         let triageSaving = false;
         let triageDrawSeq = 0;
@@ -2409,6 +2409,21 @@
             return triageRows.map(r => r.id).filter(triageIsDirty);
         }
 
+        // What Save writes: the events the person DECIDED — marked Looks
+        // Good (changing an event marks it too) or marked Ignore. Opening an
+        // event decides nothing: look at five of fifteen, approve three, and
+        // Save writes three; the other twelve stay in the inbox. An event
+        // nobody approved is never saved, because that would vouch for a
+        // setup nobody agreed to.
+        function triageIsIncluded(key) {
+            const d = triageDrafts[key];
+            return !!(d && d.base && (d.ready || d.ignored));
+        }
+
+        function triageIncludedKeys() {
+            return triageRows.map(r => r.id).filter(triageIsIncluded);
+        }
+
         // Fold whatever the form says now into the selected event's draft.
         function stashTriageForm() {
             const d = triageSelected && triageDrafts[triageSelected];
@@ -2418,16 +2433,18 @@
         }
 
         function updateTriageFooter() {
-            const n = triageDirtyKeys().length;
+            const n = triageIncludedKeys().length;
+            const rest = triageRows.length - n;
             const btn = document.getElementById('triage-save-btn');
-            btn.textContent = triageSaving ? 'Saving…' : (n ? `Save ${n} change${n === 1 ? '' : 's'}` : 'Save');
+            btn.textContent = triageSaving ? 'Saving…' : (n ? `Save ${n} event${n === 1 ? '' : 's'}` : 'Save');
             btn.disabled = triageSaving || !n;
             const failed = Object.keys(triageFailures).length;
             const status = document.getElementById('triage-status');
             status.className = 'text-sm ' + (failed ? 'text-red-300' : 'text-gray-400');
             status.textContent = failed
                 ? `${failed} event${failed === 1 ? '' : 's'} could not be saved and ${failed === 1 ? 'is' : 'are'} still here, marked. Everything else was saved.`
-                : (n ? 'Nothing changes on the schedule until you save.' : '');
+                : (n ? `Saves the ${n === 1 ? 'event' : n + ' events'} marked Ready or Ignore${rest ? `; the other ${rest} stay${rest === 1 ? 's' : ''} in the inbox` : ''}. Nothing changes on the schedule until you save.`
+                     : 'Mark an event Looks Good, or change it, to include it in Save.');
         }
 
         function renderTriageList() {
@@ -2471,8 +2488,14 @@
                     badges += '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 shrink-0">Not saved</span>';
                 } else if (d && d.ignored) {
                     badges += '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 shrink-0">Ignore</span>';
-                } else if (triageIsDirty(ev.id)) {
+                } else if (d && d.ready && triageIsDirty(ev.id)) {
                     badges += '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 shrink-0">Edited</span>';
+                } else if (d && d.ready) {
+                    badges += '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-green-500/20 text-green-300 shrink-0">Ready</span>';
+                } else if (triageIsDirty(ev.id)) {
+                    // Changed, then taken back out of Save: the answers are
+                    // kept, but say plainly that Save will not write them.
+                    badges += '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-400 shrink-0">Edited · not ready</span>';
                 }
                 const color = (typeof calMetasFor === 'function')
                     ? calMetasFor(ev, triageCtx.calendar_metadata)[0].backgroundColor : '#3b82f6';
@@ -2504,17 +2527,23 @@
             const fail = triageFailures[ev.id]
                 ? `<div class="mt-4 bg-red-900/40 border border-red-500/50 text-red-200 rounded-lg p-3 text-sm">${escHtml(triageFailures[ev.id])}</div>` : '';
             head.innerHTML = `
-                <div class="flex justify-between items-start gap-4">
+                <div class="flex flex-col md:flex-row md:justify-between md:items-start gap-3 md:gap-4">
                     <div class="min-w-0">
                         <h3 class="text-2xl font-bold text-white flex items-center gap-2 flex-wrap">
                             <span class="truncate${d.ignored ? ' line-through opacity-60' : ''}">${escHtml(ev.title || '(No Title)')}</span>${series}
                         </h3>
                         <p class="text-sm text-gray-400 mt-1">${escHtml(when)}${ev.location ? ' • ' + escHtml(ev.location) : ''}</p>
                     </div>
-                    <button id="triage-ignore-btn" onclick="toggleTriageIgnore()"
-                        class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 ${d.ignored ? 'text-white' : 'text-red-400 hover:text-red-300'} font-bold transition-colors flex items-center shrink-0 text-sm">
-                        ${d.ignored ? 'Undo Ignore' : 'Ignore Event'}
-                    </button>
+                    <div class="flex flex-wrap md:justify-end gap-2 shrink-0">
+                        <button id="triage-ignore-btn" onclick="toggleTriageIgnore()"
+                            class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 ${d.ignored ? 'text-white' : 'text-red-400 hover:text-red-300'} font-bold transition-colors flex items-center text-sm">
+                            ${d.ignored ? 'Undo Ignore' : 'Ignore Event'}
+                        </button>
+                        <button id="triage-ready-btn" onclick="toggleTriageReady()"
+                            class="px-4 py-2 rounded-lg ${d.ready ? 'bg-gray-700 hover:bg-gray-600 text-green-300' : 'bg-green-600 hover:bg-green-500 text-white'} font-bold transition-colors flex items-center text-sm">
+                            ${d.ready ? '✓ Ready · Undo' : 'Looks Good'}
+                        </button>
+                    </div>
                 </div>
                 ${d.ignored ? '<p class="mt-3 text-sm text-gray-400">This event will be ignored when you save: it leaves the schedule and the inbox.</p>' : ''}
                 ${fail}`;
@@ -2535,7 +2564,7 @@
                 return;
             }
             const seq = ++triageDrawSeq;
-            if (!triageDrafts[key]) triageDrafts[key] = { base: null, values: null, ignored: false };
+            if (!triageDrafts[key]) triageDrafts[key] = { base: null, values: null, ignored: false, ready: false };
             renderTriageHead(ev);
             mount.innerHTML = eventConfigFormHtml('triage');
             await eventConfigFormFill('triage', ev, triageCtx, { staged: true });
@@ -2553,9 +2582,18 @@
 
         function onTriageFormChange() {
             if (!triageSelected) return;
+            const d = triageDrafts[triageSelected];
             const before = triageIsDirty(triageSelected);
             stashTriageForm();
-            if (triageIsDirty(triageSelected) !== before) renderTriageList();
+            let redraw = triageIsDirty(triageSelected) !== before;
+            // Changing an event is approving it: the first edit marks it
+            // Ready. Only the first, so an Undo after editing sticks.
+            if (d && !before && triageIsDirty(triageSelected) && !d.ready && !d.ignored) {
+                d.ready = true;
+                renderTriageHead(triageRow(triageSelected));
+                redraw = true;
+            }
+            if (redraw) renderTriageList();
             updateTriageFooter();
         }
 
@@ -2564,9 +2602,29 @@
             if (!d || !d.base) return;
             stashTriageForm();
             d.ignored = !d.ignored;
+            if (d.ignored) d.ready = false;
             renderTriageHead(triageRow(triageSelected));
             renderTriageList();
             updateTriageFooter();
+        }
+
+        // Looks Good: this event's setup is right as shown. Marking moves on
+        // to the next event nobody has decided yet, so a run through the
+        // list is one tap per event; un-marking stays put.
+        async function toggleTriageReady() {
+            const d = triageSelected && triageDrafts[triageSelected];
+            if (!d || !d.base) return;
+            stashTriageForm();
+            d.ready = !d.ready;
+            if (d.ready) d.ignored = false;
+            renderTriageHead(triageRow(triageSelected));
+            renderTriageList();
+            updateTriageFooter();
+            if (!d.ready) return;
+            const i = triageRows.findIndex(r => r.id === triageSelected);
+            const undecided = r => !triageIsIncluded(r.id);
+            const next = triageRows.slice(i + 1).find(undecided) || triageRows.slice(0, i).find(undecided);
+            if (next) await selectTriageEvent(next.id);
         }
 
         async function openTriageInbox() {
@@ -2611,7 +2669,7 @@
         async function saveTriageInbox() {
             if (triageSaving) return;
             stashTriageForm();
-            const keys = triageDirtyKeys();
+            const keys = triageIncludedKeys();
             if (!keys.length) return;
             const items = keys.map(k => _triageBatchItem(triageRow(k)));
             triageSaving = true;
@@ -2664,12 +2722,15 @@
         async function closeTriageInbox(force) {
             if (!triageIsOpen() || triageSaving) return;
             stashTriageForm();
-            const n = triageDirtyKeys().length;
+            // Decisions and edits are worth a question; events merely looked
+            // at lose nothing by closing, and stay in the inbox.
+            const n = triageRows.filter(r => triageIsIncluded(r.id) || triageIsDirty(r.id)).length;
             if (!force && n) {
+                const k = triageIncludedKeys().length;
+                const opts = k ? [{ value: 'save', label: `Save ${k} event${k === 1 ? '' : 's'}` }] : [];
+                opts.push({ value: 'discard', label: 'Discard changes' });
                 const choice = await promptChoice('Unsaved changes',
-                    `You changed ${n} event${n === 1 ? '' : 's'}. Nothing has been saved yet.`,
-                    [{ value: 'save', label: `Save ${n} change${n === 1 ? '' : 's'}` },
-                     { value: 'discard', label: 'Discard changes' }]);
+                    `You marked or changed ${n} event${n === 1 ? '' : 's'}. Nothing has been saved yet.`, opts);
                 if (choice === 'save') { await saveTriageInbox(); return; }
                 if (choice !== 'discard') return;   // keep editing
             }
