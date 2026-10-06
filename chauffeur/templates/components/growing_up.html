@@ -1,0 +1,337 @@
+{# Growing up: the stages a child grows through (load arc A4) — confirming
+   a move up, pinning a stage, whether they can practise on their own, and
+   the ages the stages change at (stage_cutoffs). Config → People until
+   v2.499.250, then School → Growing up, and since v2.499.256 a tab of the
+   Rhythms group (rhythms?tab=growing-up): growing up is about the child,
+   not about school. The markup and script are School's, moved unchanged.
+
+   A settings section, never drawn on a wall: rhythms.html includes this only
+   in a browser (no ?panel=true, ?kiosk=true or ?tabs=). Its own Alpine scope;
+   the cutoffs save ONLY stage_cutoffs (POST /api/settings merges), and the
+   pins and the practise switch go through the member API as before. #}
+<div id="growing-up-panel" x-data="growingUpPanel()" x-init="init()" class="panel-page max-w-5xl mx-auto p-6 lg:p-10 w-full" x-cloak>
+    <header class="mb-6">
+        <h2 class="panel-page-title">🌱 Growing up</h2>
+        <p class="text-gray-400 text-sm">The stages a child grows through and what each one changes. Parents only.</p>
+    </header>
+    <div class="bg-gray-900 p-5 rounded-xl border border-gray-700">
+        <p class="text-gray-400 text-sm mt-1 mb-4">What the app shows a child changes as they get
+            older — how much of the week they can see, whether points and streaks lead the
+            screen, whether they can ask you for things, whether they can be given real jobs.
+            Birthdays live on each person's <b>identity card</b> in
+            <a href="config" class="text-blue-400 hover:text-blue-300 font-semibold">Config → People</a>;
+            a birthday only <b>suggests</b> a stage, and you can pin any child wherever suits them.
+            <b>Nothing is ever deleted when a child moves up</b> — points and streaks
+            are kept, they just stop being the point.</p>
+
+        <div x-show="(stageData.pending || []).length" class="mb-4 space-y-2">
+            <template x-for="p in stageData.pending" :key="p.member_id">
+                <div class="bg-purple-950/50 border border-purple-800/60 rounded-xl p-4">
+                    <div class="font-bold text-purple-100">
+                        <span x-text="p.name"></span> is
+                        <span x-text="p.age"></span> now — ready to move up to
+                        <span class="capitalize" x-text="p.to"></span>.
+                    </div>
+                    <ul class="text-sm text-purple-200/80 mt-1 list-disc list-inside">
+                        <template x-for="g in p.grants" :key="g">
+                            <li x-text="'They get ' + g"></li>
+                        </template>
+                    </ul>
+                    <button @click="acknowledgeStage(p)"
+                        class="mt-2 bg-purple-600 hover:bg-purple-500 px-4 py-2 rounded-lg font-bold text-sm">
+                        Yes, they're growing up
+                    </button>
+                </div>
+            </template>
+        </div>
+
+        <div class="space-y-2">
+            <template x-for="k in (stageData.kids || [])" :key="k.member_id">
+                <div class="bg-gray-800 p-3 rounded-xl space-y-2">
+                    <div class="flex flex-wrap items-center gap-3">
+                        <span class="font-bold text-white flex-1" x-text="k.name"></span>
+                        <span class="text-xs text-gray-500"
+                            x-text="k.age === null ? 'no birthday — set it on their identity card' : (k.age + ' years')"></span>
+                        <select :value="k.pinned || ''" @change="pinStage(k, $event.target.value)"
+                            class="bg-gray-900 rounded-lg px-2 py-1 text-sm">
+                            <option value="">Follow their age</option>
+                            <template x-for="s in (stageData.stages || [])" :key="s.key">
+                                <option :value="s.key" x-text="s.label + ' (' + s.school + ')'"></option>
+                            </template>
+                        </select>
+                        <span class="px-2 py-0.5 bg-purple-900/40 text-purple-300 rounded-full text-xs font-bold"
+                            x-text="stageGlyph(k.stage) + ' ' + stageLabel(k.stage)"></span>
+                    </div>
+                    <!-- Autonomy, which is NOT the same question as the
+                         stage: the stage only proposes and this decides. -->
+                    <label class="flex flex-wrap items-center gap-2 text-xs text-gray-400">
+                        <span class="flex-1 min-w-[12rem]">
+                            Can practise on their own
+                            <span class="block text-[11px] text-gray-500">
+                                Off means their program also shows on a grown-up's day, so somebody
+                                can run the session and mark it done. They still see it on their own.
+                            </span>
+                        </span>
+                        <select :value="practicePin(k)" @change="setPracticesAlone(k, $event.target.value)"
+                            class="bg-gray-900 rounded-lg px-2 py-1 text-sm shrink-0">
+                            <option value="" x-text="'Follow their stage (' + ((k.capabilities || {}).practices_alone ? 'yes' : 'no') + ')'"></option>
+                            <option value="yes">Yes</option>
+                            <option value="no">No — a grown-up runs it</option>
+                        </select>
+                    </label>
+                </div>
+            </template>
+            <p x-show="!(stageData.kids || []).length" class="text-gray-500 text-sm italic">
+                No children on the roster yet.</p>
+        </div>
+
+        <!-- The band timeline: four colored stage bands over one age
+             axis, three draggable cutoff handles, and the kids plotted
+             at their ages. Cutoffs stay strictly increasing by
+             construction, matching the sanitiser in services/stages.py. -->
+        <div class="mt-5 bg-gray-800 p-4 rounded-xl select-none">
+            <div class="flex items-center justify-between mb-1">
+                <label class="block text-xs font-bold text-gray-400">When the stages change</label>
+                <span class="text-xs text-emerald-400 font-bold" x-show="cutoffsSaved" x-transition.opacity>Saved ✓</span>
+            </div>
+            <div class="relative h-11 mt-1">
+                <template x-for="b in stageBands()" :key="'lbl-' + b.key">
+                    <div class="absolute text-center overflow-hidden"
+                        :style="'left:' + b.left + '%; width:' + b.width + '%'">
+                        <div class="text-base leading-tight" x-text="b.glyph"></div>
+                        <div class="text-[11px] font-bold leading-tight" :style="'color:' + b.color"
+                            x-text="b.label"></div>
+                        <div class="text-[10px] text-gray-500 leading-tight"
+                            x-text="b.until !== null ? 'until ' + b.until : stageCutoffs[2] + '+'"></div>
+                    </div>
+                </template>
+            </div>
+            <div class="relative h-16 touch-none" @pointermove="moveCutoffDrag($event)"
+                @pointerup="endCutoffDrag()" @pointercancel="endCutoffDrag()">
+                <div x-ref="stageTrack"
+                    class="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-3 rounded-full overflow-hidden bg-gray-900">
+                    <template x-for="b in stageBands()" :key="'band-' + b.key">
+                        <div class="absolute top-0 bottom-0"
+                            :style="'left:' + b.left + '%; width:' + b.width + '%; background:' + b.color + '66'"></div>
+                    </template>
+                </div>
+                <template x-for="mk in stageKidMarkers()" :key="'kid-' + mk.id">
+                    <div class="absolute -translate-x-1/2 z-10 flex flex-col items-center"
+                        :style="'left:' + mk.left + '%; top:' + (mk.raise ? '0' : '36') + 'px'"
+                        :title="mk.title">
+                        <div class="w-7 h-7 rounded-full border-2 flex items-center justify-center bg-gray-800 overflow-hidden"
+                            :style="'border-color:' + mk.color">
+                            <img x-show="mk.image" :src="mk.image" class="w-full h-full object-cover">
+                            <span x-show="!mk.image" class="text-xs" x-text="mk.face"></span>
+                        </div>
+                        <div x-show="mk.pinned" class="text-[9px] leading-none">📌</div>
+                    </div>
+                </template>
+                <template x-for="(c, i) in stageCutoffs" :key="'cut-' + i">
+                    <div class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-20 cursor-ew-resize touch-none"
+                        :style="'left:' + stagePos(c) + '%'"
+                        @pointerdown.prevent="startCutoffDrag(i, $event)" :data-cutoff-handle="i">
+                        <div class="w-5 h-9 rounded-full bg-white shadow-lg border-2 border-gray-300 flex items-center justify-center">
+                            <span class="text-[10px] font-bold text-gray-800" x-text="c"></span>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            <div class="relative h-4 text-[9px] text-gray-600">
+                <template x-for="a in [2,4,6,8,10,12,14,16,18]" :key="'tick-' + a">
+                    <span class="absolute -translate-x-1/2" :style="'left:' + stagePos(a) + '%'"
+                        x-text="a"></span>
+                </template>
+            </div>
+            <p class="text-[11px] text-gray-500 mt-2" x-show="stageKidsOffTimeline().length">
+                Not on the timeline (no birthday set):
+                <span x-text="stageKidsOffTimeline().join(', ')"></span>
+            </p>
+            <p class="text-[11px] text-gray-500 mt-2">Drag a handle to move a cutoff — it saves
+                when you let go. Defaults follow preschool, elementary, middle and high school;
+                change them to match your schools — middle school often starts at eleven, and a
+                fixed twelve would put a sixth grader in the wrong stage for half the year. A
+                📌 child is pinned and sits in their pinned band whatever their age.</p>
+        </div>
+    </div>
+</div>
+<script>
+    function growingUpPanel() {
+        return {
+            apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
+            members: [],
+            stageData: { kids: [], pending: [], stages: [], cutoffs: [6, 12, 15] },
+            stageCutoffs: [6, 12, 15],
+            // The visual axis runs 1–20 years; the sanitiser in stages.py
+            // allows cutoffs up to 24, so positions clamp.
+            stageAgeMin: 1, stageAgeMax: 20,
+            stageColors: { sprout: '#34d399', explorer: '#38bdf8', navigator: '#a78bfa', copilot: '#fb7185' },
+            stageDragIdx: null,
+            cutoffsSaved: false,
+
+            async init() {
+                await Promise.all([this.loadMembers(), this.loadStages()]);
+            },
+            // Faces for the kids on the timeline.
+            async loadMembers() {
+                try {
+                    const r = await fetch(`${this.apiBase}api/members`);
+                    this.members = r.ok ? await r.json() : [];
+                } catch (e) { this.members = []; }
+            },
+
+            // --- Stages: the child that grows (load arc A4) ---
+            async loadStages() {
+                try {
+                    const r = await fetch(`${this.apiBase}api/stages`);
+                    this.stageData = r.ok ? await r.json() : { kids: [], pending: [], stages: [] };
+                    this.stageCutoffs = (this.stageData.cutoffs || [6, 12, 15]).slice();
+                } catch (e) { console.error('Failed to load stages', e); }
+            },
+            async acknowledgeStage(p) {
+                // Growing up is GRANTED — a parent confirms it, and the
+                // new capabilities are named out loud.
+                try {
+                    const res = await fetch(`${this.apiBase}api/stages/${p.member_id}/acknowledge`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ stage: p.to }) }).then(r => r.json());
+                    showGlobalAlert(res.message || 'Done.');
+                    await this.loadStages();
+                } catch (e) { showGlobalAlert("Couldn't save that."); }
+            },
+            // '' when the stage decides, 'yes'/'no' when a parent has said
+            // so outright — read from the OVERRIDES, not the resolved value.
+            practicePin(k) {
+                const o = (k.overrides || {});
+                if (!('practices_alone' in o)) return '';
+                return o.practices_alone ? 'yes' : 'no';
+            },
+            async setPracticesAlone(k, value) {
+                // The whole map goes back: a member write replaces the
+                // field wholesale rather than merging into it.
+                const next = Object.assign({}, k.overrides || {});
+                if (value === '') delete next.practices_alone;
+                else next.practices_alone = (value === 'yes');
+                try {
+                    await fetch(`${this.apiBase}api/members/${k.member_id}`, {
+                        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ capability_overrides: next }) });
+                    await this.loadStages();
+                } catch (e) { showGlobalAlert("Couldn't save that."); }
+            },
+            async pinStage(k, value) {
+                try {
+                    await fetch(`${this.apiBase}api/members/${k.member_id}`, {
+                        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ stage_override: value || null }) });
+                    await this.loadStages();
+                } catch (e) { showGlobalAlert("Couldn't pin that stage."); }
+            },
+            stageLabel(key) {
+                const s = (this.stageData.stages || []).find(x => x.key === key);
+                return s ? s.label : (key || '');
+            },
+            stageGlyph(key) {
+                const s = (this.stageData.stages || []).find(x => x.key === key);
+                return (s && s.glyph) || '';
+            },
+            stagePos(age) {
+                const p = (age - this.stageAgeMin) / (this.stageAgeMax - this.stageAgeMin) * 100;
+                return Math.max(0, Math.min(100, p));
+            },
+            stageForAgeLive(age) {
+                // Client-side twin of stages.stage_for_age, against the
+                // cutoffs AS DRAGGED.
+                const c = this.stageCutoffs;
+                return age < c[0] ? 'sprout' : age < c[1] ? 'explorer' : age < c[2] ? 'navigator' : 'copilot';
+            },
+            stageBands() {
+                const c = this.stageCutoffs;
+                const edges = [this.stageAgeMin, c[0], c[1], c[2], this.stageAgeMax];
+                return ['sprout', 'explorer', 'navigator', 'copilot'].map((key, i) => {
+                    const left = this.stagePos(edges[i]);
+                    return {
+                        key, left, width: Math.max(0, this.stagePos(edges[i + 1]) - left),
+                        color: this.stageColors[key],
+                        label: this.stageLabel(key) || key,
+                        glyph: this.stageGlyph(key),
+                        until: i < 3 ? c[i] : null,
+                    };
+                });
+            },
+            stageKidMarkers() {
+                const c = this.stageCutoffs;
+                return (this.stageData.kids || []).map((k, idx) => {
+                    const m = (this.members || []).find(x => x.id === k.member_id) || {};
+                    let left, stage;
+                    if (k.pinned) {
+                        const edges = [this.stageAgeMin, c[0], c[1], c[2], this.stageAgeMax];
+                        const bi = ['sprout', 'explorer', 'navigator', 'copilot'].indexOf(k.pinned);
+                        left = this.stagePos((edges[bi] + edges[bi + 1]) / 2);
+                        stage = k.pinned;
+                    } else if (k.age === null || k.age === undefined) {
+                        return null;
+                    } else {
+                        left = this.stagePos(k.age + 0.5);   // 9 means "between 9 and 10"
+                        stage = this.stageForAgeLive(k.age);
+                    }
+                    return {
+                        id: k.member_id, left, pinned: !!k.pinned,
+                        color: this.stageColors[stage] || '#9ca3af',
+                        image: m.image || null,
+                        face: m.avatar || (k.name || '?').slice(0, 1),
+                        title: k.name + (k.pinned ? ' — pinned ' + this.stageLabel(k.pinned)
+                            : ' — ' + k.age + ' (' + this.stageLabel(stage) + ')'),
+                        raise: idx % 2 === 1,
+                    };
+                }).filter(Boolean);
+            },
+            stageKidsOffTimeline() {
+                return (this.stageData.kids || [])
+                    .filter(k => (k.age === null || k.age === undefined) && !k.pinned)
+                    .map(k => k.name);
+            },
+            startCutoffDrag(i, ev) {
+                this.stageDragIdx = i;
+                if (ev.target.setPointerCapture) {
+                    try { ev.target.setPointerCapture(ev.pointerId); } catch (e) { }
+                }
+            },
+            moveCutoffDrag(ev) {
+                if (this.stageDragIdx === null) return;
+                const track = this.$refs.stageTrack;
+                if (!track) return;
+                const r = track.getBoundingClientRect();
+                let age = Math.round(this.stageAgeMin
+                    + (ev.clientX - r.left) / r.width * (this.stageAgeMax - this.stageAgeMin));
+                const c = this.stageCutoffs, i = this.stageDragIdx;
+                const lo = i === 0 ? 1 : c[i - 1] + 1;
+                const hi = i === 2 ? this.stageAgeMax - 1 : c[i + 1] - 1;
+                age = Math.max(lo, Math.min(hi, age));
+                if (c[i] !== age) c[i] = age;
+            },
+            async endCutoffDrag() {
+                if (this.stageDragIdx === null) return;
+                this.stageDragIdx = null;
+                await this.saveStageCutoffs();
+            },
+            async saveStageCutoffs() {
+                const c = this.stageCutoffs.map(n => parseInt(n, 10));
+                if (!(c[0] > 0 && c[0] < c[1] && c[1] < c[2] && c[2] < 25)) return;
+                try {
+                    const res = await fetch(`${this.apiBase}api/settings`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ stage_cutoffs: c }) });
+                    if (!res.ok) {
+                        const d = await res.json().catch(() => ({}));
+                        showGlobalAlert(d.detail || "Couldn't save that.");
+                        return this.loadStages();
+                    }
+                    await this.loadStages();
+                    this.cutoffsSaved = true;
+                    setTimeout(() => this.cutoffsSaved = false, 1600);
+                } catch (e) { showGlobalAlert("Couldn't save that."); }
+            },
+        };
+    }
+</script>

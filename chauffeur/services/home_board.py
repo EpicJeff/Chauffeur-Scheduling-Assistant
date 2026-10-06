@@ -807,8 +807,8 @@ WIDGETS = [
          # a permanently absent row it never asked about.
          _opt('buses', 'Show school buses', 'bool', False,
               help='The bus each child rides, with the stop it is heading '
-                   'for. Needs a tracker entity on the child in '
-                   'Config → People.'),
+                   'for. Needs a bus tracker on the child in '
+                   'School → Children.'),
          _opt('bus_ids', 'Whose buses', 'select', [], source='bus_riders',
               multi=True,
               help='Leave empty for every child who has a bus tracker.'),

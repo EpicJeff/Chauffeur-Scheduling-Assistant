@@ -546,6 +546,19 @@
                     {% include 'components/status_tiers_editor.html' %}
                 </div>
             </template>
+
+            {# Kid evenings (v2.499.256): the kid digest and kid quiet hours,
+               moved from School → Evenings to sit with the routines whose
+               kiosk board shows the same 🌙 cards. Settings are a browser
+               thing: the routines kiosk (?kiosk=true), a panel (?panel=true)
+               and a filtered embed (?tabs=) never get the markup at all —
+               the errand_rules.html guard in errands.html is the precedent. #}
+            {% set _rq = request.query_params %}
+            {% if _rq.get('panel') != 'true' and _rq.get('kiosk') != 'true' and _rq.get('tabs') is none %}
+            <div class="mt-6">
+                {% include 'components/kid_evenings_settings.html' %}
+            </div>
+            {% endif %}
         </div>
     </div>
     <script>

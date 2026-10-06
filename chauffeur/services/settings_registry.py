@@ -282,19 +282,22 @@ ENTRIES: List[dict] = [
        'How many pairs of hands normally cook. Hands-on work divides between them.',
        page='meals', anchor='kitchen'),
 
-    # --- kids & school (all on the School page since v2.499.250)
+    # --- kids & school. The school calendar is on the School page
+    # (v2.499.250); the kid digest and kid quiet hours are a section of the
+    # Routines view on /rhythms (v2.499.256) — they are about the child's
+    # evening, beside the routines board that shows the same 🌙 cards.
     _e('kid_digest_enabled', 'kids', 'Kid evening digest',
        'A calm look at tomorrow, sent to each child in the evening.',
-       page='school', anchor='evenings'),
+       page='rhythms', anchor='kid-evenings'),
     _e('kid_digest_time', 'kids', 'Kid digest time', 'When the evening digest goes out.',
-       page='school', anchor='evenings'),
+       page='rhythms', anchor='kid-evenings'),
     _e('kid_digest_cutover_time', 'kids', 'Digest cutover',
        'After this time the digest talks about tomorrow rather than today.',
-       page='school', anchor='evenings'),
+       page='rhythms', anchor='kid-evenings'),
     _e('kid_quiet_start', 'kids', 'Kid quiet hours start',
-       'No push reaches a child after this time.', page='school', anchor='evenings'),
+       'No push reaches a child after this time.', page='rhythms', anchor='kid-evenings'),
     _e('kid_quiet_end', 'kids', 'Kid quiet hours end', 'Pushes resume from here.',
-       page='school', anchor='evenings'),
+       page='rhythms', anchor='kid-evenings'),
     _e('school_calendar_id', 'kids', 'School calendar',
        'A district calendar whose all-day closure events mark days out of session.',
        page='school', anchor='calendar'),
@@ -432,7 +435,7 @@ ENTRIES: List[dict] = [
        'The three ages where a child moves from Sprout to Explorer to '
        'Navigator to Copilot — roughly preschool, elementary, middle and high '
        'school. Change them to match your schools.',
-       page='school', anchor='growing-up'),
+       page='rhythms', anchor='growing-up'),
     _e('runway_cues_enabled', 'kids', 'Runway voice cues',
        'When a morning or bedtime runway falls genuinely behind, the child\'s '
        'room hears one short sentence through its speaker — once per stalled '

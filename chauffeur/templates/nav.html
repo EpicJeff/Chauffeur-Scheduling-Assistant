@@ -126,7 +126,8 @@
     'rhythms': [
         {'key': 'chores', 'label': 'Chores', 'href': 'chores', 'path': '/chores'},
         {'key': 'routines', 'label': 'Routines', 'href': 'rhythms?tab=routines', 'path': '/rhythms', 'tab': 'routines', 'also': '/routines'},
-        {'key': 'programs', 'label': 'Programs', 'href': 'rhythms?tab=programs', 'path': '/rhythms', 'tab': 'programs', 'also': '/programs'}],
+        {'key': 'programs', 'label': 'Programs', 'href': 'rhythms?tab=programs', 'path': '/rhythms', 'tab': 'programs', 'also': '/programs'},
+        {'key': 'growing-up', 'label': 'Growing up', 'href': 'rhythms?tab=growing-up', 'path': '/rhythms', 'tab': 'growing-up'}],
     'work': [
         {'key': 'intake', 'label': 'Intake', 'href': 'intake', 'path': '/intake'},
         {'key': 'mind', 'label': 'Mind', 'href': 'work?tab=mind', 'path': '/work', 'tab': 'mind', 'also': '/mind'},
@@ -134,9 +135,7 @@
         {'key': 'missions', 'label': 'Missions', 'href': 'work?tab=missions', 'path': '/work', 'tab': 'missions', 'also': '/missions'}],
     'school': [
         {'key': 'children', 'label': 'Children', 'href': 'school?tab=children', 'path': '/school', 'tab': 'children'},
-        {'key': 'calendar', 'label': 'Calendar', 'href': 'school?tab=calendar', 'path': '/school', 'tab': 'calendar'},
-        {'key': 'evenings', 'label': 'Evenings', 'href': 'school?tab=evenings', 'path': '/school', 'tab': 'evenings'},
-        {'key': 'growing', 'label': 'Growing up', 'href': 'school?tab=growing', 'path': '/school', 'tab': 'growing'}],
+        {'key': 'calendar', 'label': 'Calendar', 'href': 'school?tab=calendar', 'path': '/school', 'tab': 'calendar'}],
 } %}
 {% set _tab = _qp.get('tab') %}
 {% set _pg = namespace(group=none, active=none, first=none) %}

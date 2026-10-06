@@ -318,9 +318,13 @@ def scenario_the_hand_path_exists():
     tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        'templates')
     config = open(os.path.join(tpl, 'config.html'), encoding='utf-8').read()
-    # Growing up moved to the School page (v2.499.250); birthdays stay on
-    # the identity card.
-    school = open(os.path.join(tpl, 'school.html'), encoding='utf-8').read()
+    # Growing up moved to the School page (v2.499.250), then to its own tab
+    # of Rhythms (v2.499.256); birthdays stay on the identity card.
+    school = open(os.path.join(tpl, 'components', 'growing_up.html'), encoding='utf-8').read()
+    rhythms = open(os.path.join(tpl, 'rhythms.html'), encoding='utf-8').read()
+    check("include 'components/growing_up.html'" in rhythms
+          and 'data-page-tab="growing-up"' in rhythms,
+          "Growing up is a tab of the Rhythms page")
     check('memberEdit.birthdate' in config, "birthdays stay on the identity card")
     check('acknowledgeStage' in school and 'pinStage' in school
           and 'saveStageCutoffs' in school,
@@ -329,7 +333,7 @@ def scenario_the_hand_path_exists():
           "the cutoff timeline is draggable and shows the kids on it")
     check('Nothing is ever deleted' in school,
           "and the promise is written where the parent makes the decision")
-    check('school?tab=growing' in config,
+    check('rhythms?tab=growing-up' in config,
           "and Config still says where Growing up went")
     app = open(os.path.join(tpl, 'app.html'), encoding='utf-8').read()
     check('kidCan(' in app and 'kidHorizonDays' in app,

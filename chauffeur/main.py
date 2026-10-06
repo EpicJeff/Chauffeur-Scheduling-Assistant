@@ -1692,9 +1692,10 @@ def rhythms_page(request: Request):
 @app.get("/school")
 def school_page(request: Request):
     """Everything about school in one parent place (v2.499.250): each child's
-    hours, bus and feeds, the school calendar and its words, the evening
-    digest and kid quiet hours, and the growing-up stages. A shell anyone can
-    load; every read and write behind it is a parent-gated API.
+    hours, bus and feeds, and the school calendar and its words. (The kid
+    digest, kid quiet hours and Growing up moved to Rhythms in v2.499.256.)
+    A shell anyone can load; every read and write behind it is a
+    parent-gated API.
 
     The built-in calendar words ride in with the page so an unset vocabulary
     shows the words actually being matched, from the one place they live."""

@@ -23,7 +23,8 @@
          each column is the SAME component its standalone page serves, two
          independent Alpine islands; /routines and /programs keep working.
          One at a time (v2.499.247): each section is a tab of the Rhythms
-         group (nav.html PAGE_GROUPS), with Chores beside them. -->
+         group (nav.html PAGE_GROUPS), with Chores beside them. Growing up
+         joined as a fourth tab in v2.499.256. -->
     <div class="flex-1 overflow-y-auto bg-gray-900/50">
         <div class="max-w-6xl mx-auto">
             <section id="routines" data-page-tab="routines" class="min-w-0">
@@ -32,8 +33,41 @@
             <section id="programs" data-page-tab="programs" class="min-w-0">
                 {% include 'components/programs_page.html' %}
             </section>
+            {# Growing up (v2.499.256), moved from School: the stages a child
+               grows through are about the child. Parent settings, so a
+               browser tab only — a panel, kiosk or filtered embed sees every
+               [data-page-tab] block at once and must not get this one (the
+               errand_rules guard in errands.html is the precedent). #}
+            {% set _rq = request.query_params %}
+            {% if _rq.get('panel') != 'true' and _rq.get('kiosk') != 'true' and _rq.get('tabs') is none %}
+            <section id="growing-up" data-page-tab="growing-up" class="min-w-0">
+                {% include 'components/growing_up.html' %}
+            </section>
+            {% endif %}
         </div>
     </div>
+    <script>
+        // An anchor (rhythms#growing-up, rhythms#kid-evenings from the
+        // settings index) can live in a tab that is not open. Open its tab
+        // first, then scroll to it, or the deep link lands on a hidden
+        // element. Same opener as school.html.
+        (function () {
+            function openAnchor() {
+                const id = (window.location.hash || '').slice(1);
+                if (!id) return;
+                const el = document.getElementById(id);
+                const block = el && el.closest('[data-page-tab]');
+                if (!block) return;
+                const tab = block.getAttribute('data-page-tab');
+                const link = document.querySelector('#page-tabs a[data-inpage-tab="' + tab + '"]');
+                if (link && !link.classList.contains('bg-blue-600')) link.click();
+                setTimeout(() => el.scrollIntoView({ block: 'start' }), 50);
+            }
+            window.addEventListener('hashchange', openAnchor);
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', openAnchor);
+            else openAnchor();
+        })();
+    </script>
     {% include 'components/control_center.html' %}
     {% include 'components/moments_hearth.html' %}
 </body>

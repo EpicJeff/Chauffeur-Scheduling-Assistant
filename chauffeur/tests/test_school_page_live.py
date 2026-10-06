@@ -5,9 +5,11 @@ calendar, the kid digest), each child's member card (hours, bus, feeds) and
 People → Growing up. It moved to /school, one tab per concern. What only a
 browser can check:
 
-  - the page draws, its tab strip switches the four blocks, and a deep link
-    to an anchor in a closed tab (the settings index's `school#evenings`)
+  - the page draws, its tab strip switches the blocks, and a deep link
+    to an anchor in a closed tab (the settings index's `school#calendar`)
     opens that tab;
+  - Evenings and Growing up moved to Rhythms (v2.499.256), and their old
+    School links forward there;
   - a change on a tab saves ONLY that tab's keys: the settings POST merges,
     and a page that sent everything it had loaded could still clobber a
     setting another page changed meanwhile.
@@ -91,7 +93,9 @@ def main():
 
             check(_visible(page, '#page-tabs'), 'the School page has no tab strip')
             tabs = page.eval_on_selector_all('#page-tabs .page-tab', 'els => els.map(e => e.dataset.tabKey)')
-            check(tabs == ['children', 'calendar', 'evenings', 'growing'], f'tabs: {tabs}')
+            check(tabs == ['children', 'calendar'], f'tabs: {tabs}')
+            check(page.locator('#evenings, #growing-up, #kidQuietStart').count() == 0,
+                  'the kid digest or Growing up is still drawn on School')
             check(_visible(page, '[data-page-tab="children"]'), 'Children is not the default view')
             check(not _visible(page, '[data-page-tab="calendar"]'), 'Calendar shows beside Children')
             # Children: one card per child, saving only the school fields.
@@ -158,23 +162,6 @@ def main():
             _el_shot(ada.locator('[data-add-task-for]'), 'school-add-task-for.png')
             _shot(page, 'school-children.png')
 
-            # Evenings: one field changes, and nothing else does.
-            page.click('#page-tabs [data-tab-key="evenings"]')
-            page.wait_for_timeout(200)
-            check(_visible(page, '#evenings'), 'clicking Evenings did not show it')
-            before = dict(storage.get_settings())
-            page.fill('#kidQuietStart', '21:15')
-            page.dispatch_event('#kidQuietStart', 'change')
-            page.wait_for_timeout(800)
-            after = dict(storage.get_settings())
-            check(after.get('kid_quiet_start') == '21:15', f"quiet start not saved: {after.get('kid_quiet_start')}")
-            stray = _changed(before, after) - {'kid_quiet_start', 'kid_digest_enabled', 'kid_digest_time',
-                                                'kid_digest_cutover_time', 'kid_quiet_end'}
-            check(not stray, f'the Evenings save touched other settings: {stray}')
-            check(after.get('days_to_show') == 9 and after.get('intake_imap_host') == 'imap.example.com',
-                  'an unrelated setting changed')
-            _shot(page, 'school-evenings.png')
-
             # Calendar: a new vocabulary word saves, again alone.
             page.click('#page-tabs [data-tab-key="calendar"]')
             page.wait_for_timeout(200)
@@ -195,21 +182,36 @@ def main():
             _shot(page, 'school-calendar.png')
 
             # A deep link to an anchor in a closed tab opens that tab.
-            page.goto(served.url('school#growing-up'), wait_until='networkidle')
+            page.goto(served.url('school#calendar'), wait_until='networkidle')
             page.wait_for_timeout(600)
-            check(_visible(page, '#growing-up'), 'school#growing-up did not open Growing up')
-            check(not _visible(page, '#children'), 'Children still shows on the Growing up link')
+            check(_visible(page, '#calendar'), 'school#calendar did not open Calendar')
+            check(not _visible(page, '#children'), 'Children still shows on the Calendar link')
+
+            # Evenings and Growing up left School for Rhythms (v2.499.256):
+            # the old links forward to the new homes.
+            for old, want_tab, anchor in (('school#growing-up', 'tab=growing-up', '#growing-up'),
+                                          ('school?tab=growing', 'tab=growing-up', '#growing-up'),
+                                          ('school#evenings', 'tab=routines', '#kid-evenings'),
+                                          ('school?tab=evenings', 'tab=routines', '#kid-evenings')):
+                page.goto(served.url(old), wait_until='networkidle')
+                page.wait_for_timeout(600)
+                check('/rhythms' in page.url and want_tab in page.url,
+                      f'{old} did not forward to Rhythms: {page.url}')
+                check(_visible(page, anchor), f'{old} did not land on {anchor}')
+            page.goto(served.url('rhythms?tab=growing-up'), wait_until='networkidle')
+            page.wait_for_timeout(600)
             names = page.locator('#growing-up').inner_text()
             check('Ada' in names and 'Ben' in names, 'the children are not on Growing up')
-            _shot(page, 'school-growing.png')
 
             # Config keeps a pointer where each block used to be.
             page.goto(served.url('config'), wait_until='domcontentloaded')
             # (Config rewrites its own links to absolute paths.)
             check(page.locator('main a[href$="/school"], a[href$="/school"]:not(nav a)').count() >= 1,
                   'Config has no pointer to School')
-            check(page.locator('a[href$="school?tab=growing"]').count() >= 1,
+            check(page.locator('a[href$="rhythms?tab=growing-up"]').count() >= 1,
                   'Config has no pointer to Growing up')
+            check(page.locator('a[href$="rhythms?tab=routines#kid-evenings"]').count() >= 1,
+                  'Config has no pointer to the kid digest')
 
             errors = [e for e in handle.errors if 'Failed to load resource' not in e]
             check(not errors, f'page errors: {errors[:3]}')

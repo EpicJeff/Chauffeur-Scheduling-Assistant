@@ -727,16 +727,19 @@
                             </p>
                         </div>
                         <!-- School moved to its own page (v2.499.250): the school
-                             calendar and its words, the kid evening digest and kid
-                             quiet hours, each child's hours/bus/feeds and Growing
-                             up. A pointer stays where they used to be. -->
+                             calendar and its words and each child's hours/bus/feeds.
+                             The kid evening digest and kid quiet hours went with it,
+                             then on to Rhythms → Routines (v2.499.256), beside the
+                             routines board that shows the same cards. A pointer
+                             stays where they used to be. -->
                         <div class="flex flex-col gap-2 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
                             <span class="font-bold text-gray-300">🏫 School, the kid digest and kid quiet hours</span>
                             <p class="text-sm text-gray-500">
-                                The school calendar and the words it is read with, the evening
-                                "🌙 Tomorrow" digest, kid quiet hours, each child's school hours and
-                                bus, and the growing-up stages now live on
+                                The school calendar and the words it is read with, and each child's
+                                school hours and bus, now live on
                                 <a href="school" class="text-blue-400 hover:text-blue-300 font-semibold">School</a>.
+                                The evening "🌙 Tomorrow" digest and kid quiet hours live on
+                                <a href="rhythms?tab=routines#kid-evenings" class="text-blue-400 hover:text-blue-300 font-semibold">Rhythms → Routines</a>.
                             </p>
                         </div>
                         <!-- Where this family eats moved to Shopping & Meals
@@ -1795,8 +1798,9 @@
                     </p>
                 </div>
 
-                <!-- Growing up moved to the School page (v2.499.250); a pointer
-                     stays where it used to be. -->
+                <!-- Growing up moved to the School page (v2.499.250), then to
+                     its own tab of Rhythms (v2.499.256); a pointer stays where
+                     it used to be. -->
                 <div x-show="activeTab === 'family'" x-cloak
                     class="flex flex-col gap-2 p-5 mb-10 bg-gray-900 rounded-xl border border-gray-700">
                     <span class="font-bold text-gray-300">🌱 Growing up</span>
@@ -1804,7 +1808,7 @@
                         The stages a child grows through — confirming a move up, pinning a stage,
                         whether they can practise on their own, and the ages the stages change at —
                         now live on
-                        <a href="school?tab=growing" class="text-blue-400 hover:text-blue-300 font-semibold">School → Growing up</a>.
+                        <a href="rhythms?tab=growing-up" class="text-blue-400 hover:text-blue-300 font-semibold">Rhythms → Growing up</a>.
                         Birthdays stay on each person's identity card above.
                     </p>
                 </div>
