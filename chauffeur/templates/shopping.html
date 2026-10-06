@@ -1019,233 +1019,80 @@
                          a feature-owned surface needs no new endpoint, only the
                          discipline of sending what it owns. -->
 
-                    <!-- Holiday and party food does not belong in the Tuesday
-                         list. It is HIDDEN, not gone: the toggle says how many
-                         are behind it, because a filter that silently swallows
-                         rows is how a family concludes the app lost their
-                         turkey. -->
-                    <div class="flex items-center justify-between mb-3"
-                        x-show="occasionDishCount()">
-                        <span class="text-[11px] text-gray-500"
-                            x-text="occasionDishCount() + ' occasion dish'
-                                + (occasionDishCount() === 1 ? '' : 'es')
-                                + ' — holiday and party food, never proposed on an ordinary night'"></span>
-                        <button @click="showOccasionDishes = !showOccasionDishes"
-                            class="text-[11px] font-bold shrink-0 ml-3"
-                            :class="showOccasionDishes ? 'text-amber-300' : 'text-gray-600 hover:text-amber-300'"
-                            x-text="showOccasionDishes ? 'Hide' : 'Show'"></button>
-                    </div>
-                    <!-- Corrections are the point of this editor, so the parts the
-                         model guessed have to be visible and the name editable. -->
-                    <div class="space-y-2">
-                        <template x-for="m in shownDishes()" :key="'rp-' + m.id">
-                            <div class="bg-gray-900 rounded-xl border border-gray-700 px-4 py-2.5 flex items-start gap-3">
-                                <!-- The picture, and the only place it can be set
-                                     by hand. "Your own photo outranks a stock one"
-                                     was true of the model and the agent tool and
-                                     of nothing a person could actually do — the
-                                     dish editor showed no image at all. The tile
-                                     IS the control: it shows what a child sees on
-                                     the board, and tapping it replaces that. -->
-                                <div class="shrink-0 flex flex-col items-center gap-1">
-                                    <label class="relative w-11 h-14 rounded-lg overflow-hidden border flex items-center
-                                                  justify-center cursor-pointer bg-gray-950 group"
-                                        :class="m.image_url ? 'border-gray-700 hover:border-pink-400/60'
-                                                            : 'border-dashed border-gray-700 hover:border-pink-400/60'"
-                                        :title="m.image_url
-                                            ? ((m.image_source === 'family' ? 'Your photo' : 'Stock picture')
-                                               + ' — tap to use a photo of your own')
-                                            : 'Add your own photo of this dish'">
-                                        <img x-show="m.image_url" :src="m.image_url" alt=""
-                                            class="absolute inset-0 w-full h-full object-cover">
-                                        <span x-show="!m.image_url"
-                                            class="text-base text-gray-700 group-hover:text-pink-300">📷</span>
-                                        <input type="file" accept="image/*" class="hidden"
-                                            @change="onDishPhotoPicked($event, m)">
-                                    </label>
-                                    <!-- Stock is the fallback, so it is offered only
-                                         while the good answer is still missing. -->
-                                    <button x-show="(m.image_source || '') !== 'family'"
-                                        @click="findDishPicture(m)" :disabled="dishPicBusy === m.id"
-                                        class="text-[10px] font-bold text-gray-600 hover:text-pink-300 disabled:opacity-40"
-                                        title="Look one up instead"
-                                        x-text="dishPicBusy === m.id ? '…' : 'stock'"></button>
-                                    <button x-show="m.image_url" @click="clearDishImage(m)"
-                                        class="text-[10px] font-bold text-gray-600 hover:text-red-400"
-                                        title="Remove this picture">remove</button>
-                                </div>
-                                <div class="min-w-0 flex-1">
-                                    <button @click="renameDish(m)"
-                                        class="text-sm font-semibold text-gray-200 hover:text-white text-left"
-                                        title="Rename">
-                                        <span x-text="m.name"></span>
-                                    </button>
-                                    <div class="text-[11px] text-gray-600 truncate"
-                                        x-text="dishBlurb(m)"></div>
-                                    <!-- Prep that happens OUTSIDE the cook
-                                         window (M8). Opt-in per dish, because
-                                         whether rice gets soaked is a fact
-                                         about this household, not about rice. -->
-                                    <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-                                        <template x-for="(p, pi) in (m.prep_steps || [])"
-                                            :key="'pp-' + m.id + pi">
-                                            <span class="px-2 py-0.5 rounded-lg text-[10px] font-semibold
-                                                         bg-amber-500/15 border border-amber-500/40 text-amber-300
-                                                         flex items-center gap-1.5">
-                                                <span x-text="prepLabel(p)"></span>
-                                                <button @click="dropPrep(m, p)"
-                                                    class="text-amber-500/70 hover:text-red-400"
-                                                    title="Stop reminding">✕</button>
-                                            </span>
-                                        </template>
-                                        <button @click="addPrep(m)"
-                                            class="text-[10px] font-bold text-gray-600 hover:text-amber-300">
-                                            + prep ahead
-                                        </button>
-                                    </div>
-                                    <!-- Dishes that come as a set (M9). This
-                                         shipped with an API and agent tools and
-                                         no way to say it by hand — the same gap
-                                         the rules engine had. It lives HERE
-                                         because a pairing is a property of a
-                                         dish, not a rule; the label carries the
-                                         direction, because "with" and "only
-                                         with" are opposite claims. -->
-                                    <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-                                        <template x-for="p in partnerDishes(m, 'always_with')"
-                                            :key="'aw-' + m.id + '-' + p.id">
-                                            <span class="px-2 py-0.5 rounded-lg text-[10px] font-semibold
-                                                         bg-emerald-500/15 border border-emerald-500/40 text-emerald-300
-                                                         flex items-center gap-1.5">
-                                                <span class="opacity-60">with</span>
-                                                <span x-text="p.short_name || p.name"></span>
-                                                <button @click="dropPairing(m, p, 'always_with')"
-                                                    class="text-emerald-500/70 hover:text-red-400"
-                                                    title="They don't always come together">✕</button>
-                                            </span>
-                                        </template>
-                                        <template x-for="p in partnerDishes(m, 'only_with')"
-                                            :key="'ow-' + m.id + '-' + p.id">
-                                            <span class="px-2 py-0.5 rounded-lg text-[10px] font-semibold
-                                                         bg-sky-500/15 border border-sky-500/40 text-sky-300
-                                                         flex items-center gap-1.5">
-                                                <span class="opacity-60">only with</span>
-                                                <span x-text="p.short_name || p.name"></span>
-                                                <button @click="dropPairing(m, p, 'only_with')"
-                                                    class="text-sky-500/70 hover:text-red-400"
-                                                    title="Drop this restriction">✕</button>
-                                            </span>
-                                        </template>
-                                        <button @click="openPairingPicker(m, 'always_with')"
-                                            class="text-[10px] font-bold text-gray-600 hover:text-emerald-300">
-                                            + comes with
-                                        </button>
-                                        <!-- What the dish IS, and how far it goes.
-                                             Both were in the model from the start
-                                             and on no screen: the only way to fix
-                                             a misfiled dish was to ask the agent
-                                             and hope it re-extracted differently.
-                                             Whole meals get the chips too: a
-                                             category is the family's rule
-                                             vocabulary as well as a plate slot,
-                                             and "no repeats on protein" must be
-                                             able to catch chicken alfredo. The
-                                             composer never slot-fills with a
-                                             meal (pool_for excludes the type),
-                                             so on a meal the chip is purely
-                                             "what this is". -->
-                                        <template x-for="c in categories" :key="'dc-' + m.id + c.id">
-                                            <button @click="toggleDishCategory(m, c)"
-                                                class="text-[10px] font-bold px-2 py-0.5 rounded-lg border transition-colors"
-                                                :class="(m.category_ids || []).includes(c.id)
-                                                    ? 'bg-pink-500/15 border-pink-400/50 text-pink-200'
-                                                    : 'border-gray-700 text-gray-600 hover:text-pink-300'"
-                                                x-text="c.name"></button>
-                                        </template>
-                                        <!-- Free-form tags. The extractor and the
-                                             agent have always written these; the
-                                             family had no way to see or fix them
-                                             by hand, so a rule word could only be
-                                             attached by asking Argyle nicely. -->
-                                        <template x-for="t in (m.tags || [])" :key="'tg-' + m.id + t">
-                                            <span class="px-2 py-0.5 rounded-lg text-[10px] font-semibold
-                                                         bg-amber-500/10 border border-amber-500/40 text-amber-200
-                                                         flex items-center gap-1.5">
-                                                <span x-text="t"></span>
-                                                <button @click="dropDishTag(m, t)"
-                                                    class="text-amber-500/70 hover:text-red-400"
-                                                    title="Remove this tag">✕</button>
-                                            </span>
-                                        </template>
-                                        <button @click="addDishTag(m)"
-                                            class="text-[10px] font-bold text-gray-600 hover:text-amber-300"
-                                            title="A word rules can match — spicy, crockpot, kid-favorite">
-                                            + tag
-                                        </button>
-                                        <button @click="toggleWholeMeal(m)"
-                                            class="text-[10px] font-bold"
-                                            :class="m.type === 'meal'
-                                                ? 'px-2 py-0.5 rounded-lg bg-violet-500/15 border border-violet-400/50 text-violet-200'
-                                                : 'text-gray-600 hover:text-violet-300'"
-                                            :title="m.type === 'meal'
-                                                ? 'A whole dinner on its own — nothing is served beside it. Tap to make it fill one slot instead.'
-                                                : 'Mark as a whole dinner on its own'"
-                                            x-text="m.type === 'meal' ? 'whole meal' : '+ whole meal'"></button>
-                                        <label class="text-[10px] font-bold text-gray-600 flex items-center gap-1"
-                                            title="How many it feeds. More than the household means a second night of it.">
-                                            serves
-                                            <input type="number" min="1" max="50" :value="m.serves || 4"
-                                                @change="setDishServes(m, $event.target.value)"
-                                                class="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 w-12 text-[10px] text-gray-300">
-                                        </label>
-                                        <!-- A tray is a tray: feeding more people
-                                             means making another whole one, not
-                                             one-and-a-half of one. -->
-                                        <button @click="toggleWholeUnits(m)"
-                                            class="text-[10px] font-bold"
-                                            :class="m.whole_units
-                                                ? 'px-2 py-0.5 rounded-lg bg-sky-500/15 border border-sky-400/50 text-sky-200'
-                                                : 'text-gray-600 hover:text-sky-300'"
-                                            :title="m.whole_units
-                                                ? 'Made in whole units — feeding more means another whole one. Tap if you can just make more or less of it.'
-                                                : 'Made in whole units? A tray, a cake, a sheet pan.'"
-                                            x-text="m.whole_units ? 'by the tray' : '+ by the tray'"></button>
-                                        <!-- The consequence of that number, said
-                                             where the number is typed. -->
-                                        <span x-show="leftoverNights(m)"
-                                            class="text-[10px] font-bold px-2 py-0.5 rounded-lg
-                                                   bg-teal-500/15 border border-teal-400/40 text-teal-300"
-                                            title="Big enough to come back — it gets proposed again to use it up"
-                                            x-text="'+' + leftoverNights(m) + ' night'
-                                                + (leftoverNights(m) === 1 ? '' : 's')"></span>
-                                        <button @click="openPairingPicker(m, 'only_with')"
-                                            class="text-[10px] font-bold text-gray-600 hover:text-sky-300">
-                                            + only with
-                                        </button>
-                                        <!-- The model guesses this from the name;
-                                             the family corrects it here. One tap,
-                                             because it is a label, not a form. -->
-                                        <button @click="toggleDishScope(m)"
-                                            class="text-[10px] font-bold"
-                                            :class="(m.scope || 'everyday') === 'occasion'
-                                                ? 'px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300'
-                                                : 'text-gray-600 hover:text-amber-300'"
-                                            :title="(m.scope || 'everyday') === 'occasion'
-                                                ? 'Holiday and party food — never proposed on an ordinary night. Tap to make it everyday.'
-                                                : 'Move this out of the everyday pool'"
-                                            x-text="(m.scope || 'everyday') === 'occasion'
-                                                ? 'occasion only' : '+ occasion only'"></button>
-                                    </div>
-                                </div>
-                                <button @click="deleteDish(m)"
-                                    class="text-gray-600 hover:text-red-400 shrink-0">✕</button>
-                            </div>
+                    <!-- Find and filter (v2.499.249). A wrapping grid shows six
+                         or seven dishes a row, so the list stops being something
+                         to scroll past and becomes something to look across; the
+                         chips narrow it the way the plate is built, by category.
+                         Holiday and party food is HIDDEN, never gone: its toggle
+                         says how many are behind it, because a filter that
+                         silently swallows rows is how a family concludes the app
+                         lost their turkey. -->
+                    <div class="flex flex-wrap items-center gap-1.5 mb-4">
+                        <input x-model="dishQuery" type="search" placeholder="Find a dish"
+                            class="bg-gray-900 border border-gray-700 rounded-full px-3 py-1.5 text-sm text-white placeholder-gray-500 w-44 max-w-full focus:outline-none focus:border-pink-400/60">
+                        <template x-for="f in dishFilters()" :key="'df-' + f.id">
+                            <button @click="dishFilter = f.id" :data-dish-filter="f.id"
+                                class="px-3 py-1.5 rounded-full text-sm font-bold transition-colors border"
+                                :class="dishFilter === f.id
+                                    ? 'bg-pink-500/20 border-pink-400/60 text-pink-200'
+                                    : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'">
+                                <span x-text="f.label"></span>
+                                <span class="opacity-60 font-semibold" x-text="f.count"></span>
+                            </button>
                         </template>
-                        <span x-show="!shownDishes().length" class="text-xs text-gray-500"
-                            x-text="repertoire.length
-                                ? 'Every dish here is occasion-only — Show them above.'
-                                : 'Nothing yet — describe what you cook and I\'ll sort it out.'"></span>
+                        <span class="flex-1"></span>
+                        <button x-show="occasionDishCount()" @click="showOccasionDishes = !showOccasionDishes"
+                            class="text-xs font-bold"
+                            :class="showOccasionDishes ? 'text-amber-300' : 'text-gray-500 hover:text-amber-300'"
+                            :title="'Holiday and party food, never proposed on an ordinary night'"
+                            x-text="(showOccasionDishes ? 'Hide' : 'Show') + ' occasion dishes ('
+                                + occasionDishCount() + ')'"></button>
                     </div>
+                    <!-- The dish CARD is the wall's week-board card
+                         (shopping_lists.week_board): portrait, the picture full
+                         bleed, a scrim, the caption on the photo — so a dish
+                         looks the same here as it does to a child reading the
+                         board. No picture, or one that fails to load, is the
+                         same flat type tint the board uses, never a broken
+                         image. The card shows only what is SET; every control
+                         that used to sit open on each row lives in the editor
+                         sheet below, one tap away. -->
+                    <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(150px, 1fr))">
+                        <template x-for="m in shownDishes()" :key="'rp-' + m.id">
+                            <button type="button" @click="editDishId = m.id"
+                                class="dish-card group relative rounded-2xl overflow-hidden aspect-[4/5] flex flex-col justify-end text-left bg-gray-900 border border-black/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-pink-400"
+                                :aria-label="'Edit ' + m.name">
+                                <div class="absolute inset-0" :class="dishTint(m)"></div>
+                                <template x-if="m.image_url">
+                                    <img :src="m.image_url" alt="" loading="lazy"
+                                        @error="$el.remove()"
+                                        class="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]">
+                                </template>
+                                <div class="absolute inset-0 bg-gradient-to-t from-black/95 via-black/50 to-transparent"></div>
+                                <div class="relative p-2.5 flex flex-col gap-1 min-w-0">
+                                    <div class="font-bold text-[15px] leading-tight text-white line-clamp-2 break-words" style="text-shadow: 0 1px 2px rgba(0,0,0,.6)"
+                                        x-text="m.name"></div>
+                                    <div class="text-[11px] font-semibold text-gray-300 truncate" style="text-shadow: 0 1px 2px rgba(0,0,0,.6)"
+                                        x-text="dishCardMeta(m)"></div>
+                                    <div class="flex flex-wrap gap-1" x-show="dishFlags(m).length">
+                                        <template x-for="(f, fi) in dishFlags(m).slice(0, 2)" :key="'fl-' + m.id + fi">
+                                            <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-900/60 backdrop-blur-sm whitespace-nowrap"
+                                                :class="f.cls" x-text="f.text"></span>
+                                        </template>
+                                        <span x-show="dishFlags(m).length > 2"
+                                            class="text-[10px] font-bold px-0.5 py-0.5 text-gray-400"
+                                            x-text="'+' + (dishFlags(m).length - 2)"></span>
+                                    </div>
+                                </div>
+                            </button>
+                        </template>
+                    </div>
+                    <span x-show="!shownDishes().length" class="block text-xs text-gray-500 italic py-4"
+                        x-text="!repertoire.length
+                            ? 'Nothing yet — describe what you cook and I\'ll sort it out.'
+                            : (dishQuery.trim() || dishFilter !== 'all')
+                                ? 'No dishes match. Clear the search or pick All.'
+                                : 'Every dish here is occasion-only — Show occasion dishes above.'"></span>
                 </div>
                 </div>
 
@@ -1471,6 +1318,255 @@
 
         </div>
 
+        <!-- THE DISH EDITOR (v2.499.249). Every control the dish row used to
+             carry open — a dozen per dish, set or not, which is what made the
+             list a scroll — gathered into one sheet the card opens. Nothing a
+             person could do on the row is gone; it is grouped by the question
+             it answers. A right-hand drawer on a wide screen, a bottom sheet on
+             a phone. z-[85]: above the sticky nav (z-[60]) and the Ask Argyle
+             bar (z-[80]), below the pairing picker and the page's other
+             dialogs (z-[90]) that open from inside it, and the global prompts
+             (z-[400]).
+             `x-for` over a one-item list so the dish is `m`, the same name every
+             handler and test already uses; deleting the dish empties the list
+             and the sheet closes itself. -->
+        <template x-for="m in editingDish()" :key="'ed-' + m.id">
+            <div class="fixed inset-0 z-[85] bg-black/60 backdrop-blur-sm flex justify-end items-end sm:items-stretch"
+                @click.self="editDishId = null" @keydown.escape.window="editDishId = null">
+                <div class="bg-gray-800 w-full sm:w-[28rem] h-[88vh] sm:h-full overflow-y-auto border-t sm:border-t-0 sm:border-l border-gray-700 rounded-t-2xl sm:rounded-none flex flex-col"
+                    role="dialog" :aria-label="m.name">
+                    <!-- The picture, and the only place it can be set by hand.
+                         "Your own photo outranks a stock one" was true of the
+                         model and the agent tool and of nothing a person could
+                         do until the row grew a tile; the sheet keeps all three
+                         moves. Stock is offered only while the good answer (your
+                         own photo) is still missing. -->
+                    <div class="relative aspect-[16/10] shrink-0 bg-gray-900">
+                        <div class="absolute inset-0" :class="dishTint(m)"></div>
+                        <template x-if="m.image_url">
+                            <img :src="m.image_url" alt="" @error="$el.remove()"
+                                class="absolute inset-0 w-full h-full object-cover">
+                        </template>
+                        <div class="absolute inset-0 bg-gradient-to-t from-gray-800 via-gray-800/10 to-transparent"></div>
+                        <div class="absolute top-2.5 left-2.5 right-2.5 flex flex-wrap gap-1.5">
+                            <label class="text-xs font-bold px-2.5 py-1.5 rounded-full bg-gray-900/75 backdrop-blur-sm text-white hover:bg-gray-900 cursor-pointer">
+                                Use my photo
+                                <input type="file" accept="image/*" class="hidden"
+                                    @change="onDishPhotoPicked($event, m)">
+                            </label>
+                            <button type="button" x-show="(m.image_source || '') !== 'family'"
+                                @click="findDishPicture(m)" :disabled="dishPicBusy === m.id"
+                                class="text-xs font-bold px-2.5 py-1.5 rounded-full bg-gray-900/75 backdrop-blur-sm text-white hover:bg-gray-900 disabled:opacity-50"
+                                x-text="dishPicBusy === m.id ? 'Looking…' : 'Find a stock photo'"></button>
+                            <button type="button" x-show="m.image_url" @click="clearDishImage(m)"
+                                class="text-xs font-bold px-2.5 py-1.5 rounded-full bg-gray-900/75 backdrop-blur-sm text-white hover:bg-gray-900">
+                                Remove</button>
+                            <button type="button" @click="editDishId = null" title="Close"
+                                class="ml-auto w-8 h-8 rounded-full bg-gray-900/75 backdrop-blur-sm text-white hover:bg-gray-900 font-bold">✕</button>
+                        </div>
+                        <div class="absolute left-4 right-4 bottom-3">
+                            <button type="button" @click="renameDish(m)" title="Rename"
+                                class="text-2xl font-extrabold text-white text-left leading-tight hover:underline decoration-gray-500 decoration-dashed underline-offset-4 break-words"
+                                x-text="m.name"></button>
+                            <div class="text-[11px] font-semibold text-gray-400"
+                                x-text="m.image_url
+                                    ? (m.image_source === 'family' ? 'Your photo' : 'Stock photo')
+                                    : 'No photo yet'"></div>
+                        </div>
+                    </div>
+
+                    <div class="px-4 pb-5 pt-1 flex flex-col gap-5">
+                        <div class="grid grid-cols-3 gap-2">
+                            <div class="bg-gray-900 rounded-xl px-3 py-2">
+                                <div class="text-base font-extrabold text-white tabular-nums"
+                                    x-text="((m.prep_ahead_mins || 0) + (m.finish_mins || 0)) + ' min'"></div>
+                                <div class="text-[11px] font-semibold text-gray-500">hands-on</div>
+                            </div>
+                            <div class="bg-gray-900 rounded-xl px-3 py-2">
+                                <div class="text-base font-extrabold text-white tabular-nums"
+                                    x-text="m.unattended_mins ? m.unattended_mins + ' min' : 'none'"></div>
+                                <div class="text-[11px] font-semibold text-gray-500">cooking on its own</div>
+                            </div>
+                            <div class="bg-gray-900 rounded-xl px-3 py-2">
+                                <div class="text-base font-extrabold text-white tabular-nums" x-text="m.serves || 4"></div>
+                                <div class="text-[11px] font-semibold text-gray-500">serves</div>
+                            </div>
+                        </div>
+                        <div class="text-[11px] font-semibold text-gray-400 -mt-3" x-text="dishBlurb(m)"></div>
+
+                        <!-- What the dish IS. Both were in the model from the
+                             start and on no screen: the only way to fix a
+                             misfiled dish was to ask the agent and hope. Whole
+                             meals get the category chips too — a category is the
+                             family's rule vocabulary as well as a plate slot, and
+                             "no repeats on protein" must be able to catch chicken
+                             alfredo. -->
+                        <div class="flex flex-col gap-2">
+                            <div class="text-xs font-semibold text-gray-500 uppercase tracking-widest">What it is</div>
+                            <div class="text-xs text-gray-500 -mt-1"
+                                x-text="m.type === 'meal'
+                                    ? 'A whole dinner on its own — nothing is served beside it.'
+                                    : 'Which slot it can fill on a plate. More than one means any of them.'"></div>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button type="button" @click="toggleWholeMeal(m)"
+                                    class="text-xs font-bold px-2.5 py-1.5 rounded-lg border transition-colors"
+                                    :class="m.type === 'meal'
+                                        ? 'bg-violet-500/15 border-violet-400/50 text-violet-200'
+                                        : 'border-gray-700 text-gray-400 hover:text-violet-300'"
+                                    :title="m.type === 'meal'
+                                        ? 'A whole dinner on its own. Tap to make it fill one slot instead.'
+                                        : 'Mark as a whole dinner on its own'">Whole meal</button>
+                                <template x-for="c in categories" :key="'dc-' + m.id + c.id">
+                                    <button type="button" @click="toggleDishCategory(m, c)"
+                                        class="text-xs font-bold px-2.5 py-1.5 rounded-lg border transition-colors"
+                                        :class="(m.category_ids || []).includes(c.id)
+                                            ? 'bg-pink-500/15 border-pink-400/50 text-pink-200'
+                                            : 'border-gray-700 text-gray-400 hover:text-pink-300'"
+                                        x-text="c.name"></button>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- How far it goes. A tray is a tray: feeding more people
+                             means making another whole one, not one-and-a-half of
+                             one. The consequence of the number is said where the
+                             number is set. -->
+                        <div class="flex flex-col gap-2">
+                            <div class="text-xs font-semibold text-gray-500 uppercase tracking-widest">How much it makes</div>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="text-xs text-gray-500">Serves</span>
+                                <div class="inline-flex items-center border border-gray-700 rounded-lg overflow-hidden">
+                                    <button type="button" aria-label="Serves fewer"
+                                        @click="setDishServes(m, Math.max(1, (parseInt(m.serves) || 4) - 1))"
+                                        class="w-8 h-8 bg-gray-900 font-extrabold text-gray-300 hover:text-white">−</button>
+                                    <input type="number" min="1" max="50" :value="m.serves || 4"
+                                        @change="setDishServes(m, $event.target.value)" aria-label="Serves"
+                                        class="w-12 h-8 bg-transparent text-center font-extrabold text-white tabular-nums">
+                                    <button type="button" aria-label="Serves more"
+                                        @click="setDishServes(m, Math.min(50, (parseInt(m.serves) || 4) + 1))"
+                                        class="w-8 h-8 bg-gray-900 font-extrabold text-gray-300 hover:text-white">+</button>
+                                </div>
+                                <button type="button" @click="toggleWholeUnits(m)"
+                                    class="text-xs font-bold px-2.5 py-1.5 rounded-lg border transition-colors"
+                                    :class="m.whole_units
+                                        ? 'bg-sky-500/15 border-sky-400/50 text-sky-200'
+                                        : 'border-gray-700 text-gray-400 hover:text-sky-300'"
+                                    :title="m.whole_units
+                                        ? 'Made in whole units — feeding more means another whole one. Tap if you can just make more or less of it.'
+                                        : 'Made in whole units? A tray, a cake, a sheet pan.'">By the tray</button>
+                            </div>
+                            <div class="text-xs font-bold"
+                                :class="leftoverNights(m) ? 'text-teal-300' : 'text-gray-500 font-normal'"
+                                x-text="leftoverNights(m)
+                                    ? 'Feeds ' + (m.serves || 4) + ', so it comes back ' + leftoverNights(m)
+                                        + ' more night' + (leftoverNights(m) === 1 ? '' : 's') + ' as leftovers.'
+                                    : 'More than your household eats in a night means leftovers for another.'"></div>
+                        </div>
+
+                        <!-- The model guesses this from the name; the family
+                             corrects it here. -->
+                        <div class="flex flex-col gap-2">
+                            <div class="text-xs font-semibold text-gray-500 uppercase tracking-widest">When it gets proposed</div>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button type="button"
+                                    @click="(m.scope || 'everyday') === 'occasion' && toggleDishScope(m)"
+                                    class="text-xs font-bold px-2.5 py-1.5 rounded-lg border transition-colors"
+                                    :class="(m.scope || 'everyday') !== 'occasion'
+                                        ? 'bg-pink-500/15 border-pink-400/50 text-pink-200'
+                                        : 'border-gray-700 text-gray-400 hover:text-white'">Any night</button>
+                                <button type="button"
+                                    @click="(m.scope || 'everyday') !== 'occasion' && toggleDishScope(m)"
+                                    class="text-xs font-bold px-2.5 py-1.5 rounded-lg border transition-colors"
+                                    :class="(m.scope || 'everyday') === 'occasion'
+                                        ? 'bg-amber-500/15 border-amber-500/50 text-amber-300'
+                                        : 'border-gray-700 text-gray-400 hover:text-amber-300'"
+                                    title="Holiday and party food — never proposed on an ordinary night">Occasions only</button>
+                            </div>
+                        </div>
+
+                        <!-- Dishes that come as a set (M9). A pairing is a
+                             property of a dish, not a rule; the label carries the
+                             direction, because "with" and "only with" are
+                             opposite claims. -->
+                        <div class="flex flex-col gap-2">
+                            <div class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Goes with</div>
+                            <div class="flex flex-wrap items-center gap-1.5">
+                                <template x-for="p in partnerDishes(m, 'always_with')" :key="'aw-' + m.id + '-' + p.id">
+                                    <span class="px-2 py-1 rounded-lg text-xs font-semibold bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 flex items-center gap-1.5">
+                                        <span class="opacity-60">always with</span>
+                                        <span x-text="p.short_name || p.name"></span>
+                                        <button type="button" @click="dropPairing(m, p, 'always_with')"
+                                            class="text-emerald-500/70 hover:text-red-400"
+                                            title="They don't always come together">✕</button>
+                                    </span>
+                                </template>
+                                <template x-for="p in partnerDishes(m, 'only_with')" :key="'ow-' + m.id + '-' + p.id">
+                                    <span class="px-2 py-1 rounded-lg text-xs font-semibold bg-sky-500/15 border border-sky-500/40 text-sky-300 flex items-center gap-1.5">
+                                        <span class="opacity-60">only with</span>
+                                        <span x-text="p.short_name || p.name"></span>
+                                        <button type="button" @click="dropPairing(m, p, 'only_with')"
+                                            class="text-sky-500/70 hover:text-red-400"
+                                            title="Drop this restriction">✕</button>
+                                    </span>
+                                </template>
+                                <button type="button" @click="openPairingPicker(m, 'always_with')"
+                                    class="text-xs font-bold px-2.5 py-1 rounded-lg border border-dashed border-gray-700 text-gray-500 hover:text-emerald-300">
+                                    + Always comes with</button>
+                                <button type="button" @click="openPairingPicker(m, 'only_with')"
+                                    class="text-xs font-bold px-2.5 py-1 rounded-lg border border-dashed border-gray-700 text-gray-500 hover:text-sky-300">
+                                    + Only served with</button>
+                            </div>
+                        </div>
+
+                        <!-- Prep that happens OUTSIDE the cook window (M8).
+                             Opt-in per dish, because whether rice gets soaked is a
+                             fact about this household, not about rice. -->
+                        <div class="flex flex-col gap-2">
+                            <div class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Prep ahead</div>
+                            <div class="text-xs text-gray-500 -mt-1">Work that happens before the cooking window, so it gets a reminder.</div>
+                            <div class="flex flex-wrap items-center gap-1.5">
+                                <template x-for="(p, pi) in (m.prep_steps || [])" :key="'pp-' + m.id + pi">
+                                    <span class="px-2 py-1 rounded-lg text-xs font-semibold bg-amber-500/15 border border-amber-500/40 text-amber-300 flex items-center gap-1.5">
+                                        <span x-text="prepLabel(p)"></span>
+                                        <button type="button" @click="dropPrep(m, p)"
+                                            class="text-amber-500/70 hover:text-red-400"
+                                            title="Stop reminding">✕</button>
+                                    </span>
+                                </template>
+                                <button type="button" @click="addPrep(m)"
+                                    class="text-xs font-bold px-2.5 py-1 rounded-lg border border-dashed border-gray-700 text-gray-500 hover:text-amber-300">
+                                    + Add a prep step</button>
+                            </div>
+                        </div>
+
+                        <!-- Free-form tags. The extractor and the agent have always
+                             written these; this is where the family sees and fixes
+                             them. -->
+                        <div class="flex flex-col gap-2">
+                            <div class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Tags</div>
+                            <div class="text-xs text-gray-500 -mt-1">Words your meal rules can match — spicy, crockpot, kid-favorite.</div>
+                            <div class="flex flex-wrap items-center gap-1.5">
+                                <template x-for="t in (m.tags || [])" :key="'tg-' + m.id + t">
+                                    <span class="px-2 py-1 rounded-lg text-xs font-semibold bg-amber-500/10 border border-amber-500/40 text-amber-200 flex items-center gap-1.5">
+                                        <span x-text="t"></span>
+                                        <button type="button" @click="dropDishTag(m, t)"
+                                            class="text-amber-500/70 hover:text-red-400"
+                                            title="Remove this tag">✕</button>
+                                    </span>
+                                </template>
+                                <button type="button" @click="addDishTag(m)"
+                                    class="text-xs font-bold px-2.5 py-1 rounded-lg border border-dashed border-gray-700 text-gray-500 hover:text-amber-300">
+                                    + Add a tag</button>
+                            </div>
+                        </div>
+
+                        <button type="button" @click="deleteDish(m)"
+                            class="self-start text-xs font-bold text-red-400 hover:text-red-300">Delete this dish</button>
+                    </div>
+                </div>
+            </div>
+        </template>
+
         <!-- "+ List" result. A skip nobody can see reads as a bug — which is
              exactly how this was reported — and whether beans are a staple is a
              judgement about THIS household, so each one says why in plain words
@@ -1479,7 +1575,7 @@
              x-data ancestor is silently inert, which is how this dialog spent a
              release unable to open at all. -->
         <div x-show="drain" x-cloak
-            class="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-4"
+            class="fixed inset-0 z-[90] bg-black/60 flex items-center justify-center p-4"
             @click.self="drain = null">
             <div class="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl max-w-lg w-full p-6">
                 <h3 class="text-lg font-bold text-white mb-1"
@@ -1537,7 +1633,7 @@
              actually eaten rather than assuming last night. MUST stay inside
              the x-data root above. -->
         <div x-show="againOpen" x-cloak
-            class="fixed inset-0 z-[70] bg-black/60 flex items-start justify-center p-4 pt-16"
+            class="fixed inset-0 z-[90] bg-black/60 flex items-start justify-center p-4 pt-16"
             @click.self="againOpen = false" @keydown.escape.window="againOpen = false">
             <div class="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl max-w-lg w-full p-5">
                 <h3 class="text-sm font-bold text-white mb-1"
@@ -1590,7 +1686,7 @@
         </div>
 
         <div x-show="pickerOpen" x-cloak
-            class="fixed inset-0 z-[70] bg-black/60 flex items-start justify-center p-4 pt-16"
+            class="fixed inset-0 z-[90] bg-black/60 flex items-start justify-center p-4 pt-16"
             @click.self="closePicker()" @keydown.escape.window="closePicker()">
             <div class="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl max-w-lg w-full p-5">
                 <h3 class="text-sm font-bold text-white"
@@ -1657,7 +1753,7 @@
              explanation is the same silent-skip failure the "+ List" dialog
              already had to be fixed for once. -->
         <div x-show="cart" x-cloak
-            class="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-4"
+            class="fixed inset-0 z-[90] bg-black/60 flex items-center justify-center p-4"
             @click.self="cart = null">
             <div class="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl max-w-lg w-full p-6">
                 <h3 class="text-lg font-bold text-white mb-1"
@@ -1775,6 +1871,9 @@
                 ruleDraft: blankMealRule(),
                 repertoire: [], showRepertoire: false, mealDraft: '', mealBusy: false,
                 showOccasionDishes: false,
+                // The dish grid (v2.499.249): which dish's editor sheet is
+                // open, and the grid's own search and category filter.
+                editDishId: null, dishQuery: '', dishFilter: 'all',
                 runSheet: null, runSheetBusy: false,
                 kitchen: { ovens: 1, burners: 4, cooks: 1 },
                 showMealSettings: false,
@@ -2300,8 +2399,12 @@
                 // Mirrors meals.leftover_nights: a pot is made whole, so a dish
                 // serving more than the household feeds tonight and beyond.
                 leftoverNights(dish) {
+                    // `members` is not always a list here (the page's member
+                    // slot is shared with other loaders), and every dish card
+                    // asks this now, so a non-array must read as "unknown".
                     const head = this.mealCfg.household_headcount
-                        || (this.members || []).filter(m => m.role !== 'helper').length;
+                        || (Array.isArray(this.members) ? this.members : [])
+                            .filter(m => m.role !== 'helper').length;
                     const serves = parseInt(dish.serves) || 0;
                     if (!head || !serves) return 0;
                     return Math.max(0, Math.floor(serves / head) - 1);
@@ -3210,8 +3313,81 @@
                 // list shows by default. Occasion dishes are still here, one
                 // tap away — hidden, never gone.
                 shownDishes() {
-                    return (this.repertoire || []).filter(
-                        d => this.showOccasionDishes || (d.scope || 'everyday') !== 'occasion');
+                    const q = (this.dishQuery || '').trim().toLowerCase();
+                    const f = this.dishFilter || 'all';
+                    return (this.repertoire || []).filter(d => {
+                        if (!this.showOccasionDishes && (d.scope || 'everyday') === 'occasion') return false;
+                        if (f === 'meal' && d.type !== 'meal') return false;
+                        if (f !== 'all' && f !== 'meal' && !(d.category_ids || []).includes(f)) return false;
+                        if (q && !(String(d.name || '').toLowerCase().includes(q)
+                            || (d.tags || []).some(t => String(t).toLowerCase().includes(q)))) return false;
+                        return true;
+                    });
+                },
+
+                // The grid's filter chips: All, Whole meals, then the family's
+                // own categories in plate order. A chip that would match
+                // nothing is left off rather than drawn as a dead end.
+                dishFilters() {
+                    const pool = (this.repertoire || []).filter(d =>
+                        this.showOccasionDishes || (d.scope || 'everyday') !== 'occasion');
+                    const out = [{ id: 'all', label: 'All', count: pool.length },
+                                 { id: 'meal', label: 'Whole meals',
+                                   count: pool.filter(d => d.type === 'meal').length }];
+                    (this.categories || []).forEach(c => out.push({ id: c.id, label: c.name,
+                        count: pool.filter(d => (d.category_ids || []).includes(c.id)).length }));
+                    return out.filter(x => x.id === 'all' || x.count || x.id === this.dishFilter);
+                },
+
+                // A one-item list (or none) so the editor sheet can bind the
+                // dish as `m` with x-for, and close itself when it is deleted.
+                editingDish() {
+                    const d = this.editDishId && (this.repertoire || []).find(x => x.id === this.editDishId);
+                    return d ? [d] : [];
+                },
+
+                // The card's second line: what it is and how much work it is.
+                dishCardMeta(d) {
+                    const names = Object.fromEntries((this.categories || []).map(c => [c.id, c.name]));
+                    const kind = d.type === 'meal' ? 'Whole meal'
+                        : ((d.category_ids || []).map(id => names[id]).filter(Boolean).join(' or ')
+                           || d.side_type || 'Dish');
+                    const hands = (d.prep_ahead_mins || 0) + (d.finish_mins || 0);
+                    return hands ? kind + ', ' + hands + ' min' : kind;
+                },
+
+                // What is SET on a dish, for the card — never the empty
+                // affordances, which live in the editor sheet.
+                dishFlags(d) {
+                    const out = [];
+                    if (d.type === 'meal') out.push({ cls: 'text-violet-200', text: 'Whole meal' });
+                    const n = this.leftoverNights(d);
+                    if (n) out.push({ cls: 'text-teal-200', text: '+' + n + ' night' + (n === 1 ? '' : 's') });
+                    if (d.whole_units) out.push({ cls: 'text-sky-200', text: 'By the tray' });
+                    if ((d.scope || 'everyday') === 'occasion') out.push({ cls: 'text-amber-200', text: 'Occasion' });
+                    if ((d.prep_steps || []).length) out.push({ cls: 'text-amber-300', text: 'Prep ahead' });
+                    this.partnerDishes(d, 'always_with').forEach(p =>
+                        out.push({ cls: 'text-emerald-200', text: 'with ' + (p.short_name || p.name) }));
+                    this.partnerDishes(d, 'only_with').forEach(p =>
+                        out.push({ cls: 'text-sky-200', text: 'only with ' + (p.short_name || p.name) }));
+                    (d.tags || []).forEach(t => out.push({ cls: 'text-gray-200', text: t }));
+                    return out;
+                },
+
+                // No picture is a normal state: the same flat type tint the
+                // wall's week board uses (shopping_lists dayTint), keyed by
+                // the family's own categories in plate order.
+                dishTint(d) {
+                    if (d.type === 'meal') return 'bg-gradient-to-br from-purple-900 to-gray-900';
+                    const TINTS = ['bg-gradient-to-br from-rose-900 to-gray-900',
+                                   'bg-gradient-to-br from-emerald-900 to-gray-900',
+                                   'bg-gradient-to-br from-amber-900 to-gray-900',
+                                   'bg-gradient-to-br from-lime-900 to-gray-900',
+                                   'bg-gradient-to-br from-slate-800 to-gray-900',
+                                   'bg-gradient-to-br from-fuchsia-900 to-gray-900'];
+                    const first = (d.category_ids || [])[0];
+                    const i = (this.categories || []).findIndex(c => c.id === first);
+                    return i < 0 ? 'bg-gradient-to-br from-slate-800 to-gray-900' : TINTS[i % TINTS.length];
                 },
 
                 occasionDishCount() {
