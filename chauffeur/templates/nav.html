@@ -82,7 +82,7 @@
   vocabulary: an HA card configured as `tabs=calendar,lists` names slugs that
   the grouped bar no longer shows, and must keep finding them.
 #}
-{% set ADMIN_NAV = ['home', 'schedule', 'errands', 'meals', 'lists', 'rhythms', 'work',
+{% set ADMIN_NAV = ['home', 'schedule', 'errands', 'meals', 'rhythms', 'work',
                     'trips', 'map', 'music'] %}
 {% set _qp = request.query_params %}
 {% set _full_nav = _qp.get('kiosk') == 'true' or _qp.get('tabs') is not none %}
@@ -98,7 +98,9 @@
   the current page switches in place — the strip hides every other
   `[data-page-tab]` block and says so with a `chf-page-tab` event — and any
   other tab is an ordinary link. A page joins a group by being named here; it
-  writes no tab markup of its own.
+  writes no tab markup of its own. `param` opens a tab when the address
+  carries that query parameter and names no tab: `meals?list=<id>` (an
+  occasion's shopping link) is asking for a list, so it lands on Groceries.
 
   The strip is a browser affordance: a kiosk, a filtered embed or a panel
   keeps its own navigation and sees every block, as before.
@@ -109,6 +111,10 @@
         {'key': 'calendar', 'label': 'Calendar', 'href': 'calendar', 'path': '/calendar'},
         {'key': 'moments', 'label': 'Moments', 'href': 'moments', 'path': '/moments'},
         {'key': 'occasions', 'label': 'Occasions', 'href': 'occasions', 'path': '/occasions'}],
+    'meals': [
+        {'key': 'meals', 'label': 'Meals', 'href': 'meals?tab=meals', 'path': '/meals', 'tab': 'meals'},
+        {'key': 'groceries', 'label': 'Groceries', 'href': 'meals?tab=groceries', 'path': '/meals', 'tab': 'groceries', 'param': 'list'},
+        {'key': 'lists', 'label': 'Lists', 'href': 'lists', 'path': '/lists'}],
     'errands': [
         {'key': 'errands', 'label': 'Errands', 'href': 'errands?tab=errands', 'path': '/errands', 'tab': 'errands'},
         {'key': 'tasks', 'label': 'Tasks', 'href': 'errands?tab=tasks', 'path': '/errands', 'tab': 'tasks'}],
@@ -130,6 +136,7 @@
       {% set _pg.group = gslug %}
       {% if _pg.first is none %}{% set _pg.first = t %}{% endif %}
       {% if _tab and t.tab == _tab %}{% set _pg.active = t %}{% endif %}
+      {% if not _tab and t.param and _qp.get(t.param) and t.path in _path %}{% set _pg.active = t %}{% endif %}
     {% endif %}
   {% endfor %}
 {% endfor %}
@@ -173,7 +180,7 @@
                     <div class="ml-10 flex items-baseline space-x-4">
                         {% for slug in _bar_order %}{% for item in NAV_ITEMS if item.slug == slug %}
                         <a href="{{ _up }}{{ PAGE_GROUPS[item.slug][0].href if (item.slug in PAGE_GROUPS and not _full_nav) else item.href }}" data-slug="{{ item.slug }}"
-                            class="{% if item.match in _path or (_pg.group == item.slug and not _full_nav) %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
+                            class="{% if item.match in _path or (_pg.group == item.slug and not _full_nav) %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 whitespace-nowrap transition-colors">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 {% for d in item.paths %}
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{{ d }}"></path>

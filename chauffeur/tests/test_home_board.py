@@ -2150,7 +2150,10 @@ def scenario_every_tile_type_knows_where_its_tap_goes():
     pageless = set(ast.literal_eval(_literal('PAGELESS')))
     # PAGES is a JS object literal, not Python — keys are bare and the comments
     # inside it are not. Read the pairs rather than trying to eval it.
-    pages = dict(re.findall(r"(\w+):\s*'([a-z0-9_]+)'", _literal('PAGES')))
+    # A value may carry its own view (`errands?tab=tasks`); the route is the
+    # part before the `?`.
+    pages = {k: v.split('?')[0] for k, v in
+             re.findall(r"(\w+):\s*'([a-z0-9_]+(?:\?[a-z0-9_=&]+)?)'", _literal('PAGES'))}
 
     for spec in home_board.WIDGETS:
         key = spec['key']

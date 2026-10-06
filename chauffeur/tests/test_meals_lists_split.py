@@ -295,7 +295,9 @@ def scenario_neither_page_can_strand_a_list():
                 page.wait_for_timeout(1800)
                 return set(page.evaluate(CHIPS))
 
-        meals, lists_ = chips('meals'), chips('lists')
+        # The grocery list is the Groceries tab of /meals (v2.499.247);
+        # `?list=` below opens that tab on its own.
+        meals, lists_ = chips('meals?tab=groceries'), chips('lists')
         check('Pharmacy' not in meals and 'Hardware' not in meals,
               f"Meals & Groceries is still offering the other lists: {meals}")
         check({'Pharmacy', 'Hardware'} <= lists_,

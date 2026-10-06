@@ -293,7 +293,9 @@ def scenario_every_page_tab_is_served_and_drawn():
         page = t['href'].split('?')[0]
         check(page in routes, f"tab {t['key']} links to '{page}', which nothing serves")
         if t.get('tab'):
-            src = open(os.path.join(tpl, page + '.html'), encoding='utf-8').read()
+            # /meals and /lists are one template (shopping.html, page_mode)
+            name = {'meals': 'shopping'}.get(page, page)
+            src = open(os.path.join(tpl, name + '.html'), encoding='utf-8').read()
             check(f'data-page-tab="{t["tab"]}"' in src,
                   f"{page}.html has no block for its '{t['tab']}' tab")
 
@@ -313,7 +315,7 @@ def scenario_folded_pages_live_in_a_group():
     through the group that took it in."""
     admin = set(_admin_nav())
     grouped = {t['key'] for t in _page_groups()}
-    for slug in ('calendar', 'moments', 'occasions', 'chores', 'intake'):
+    for slug in ('calendar', 'moments', 'occasions', 'chores', 'intake', 'lists'):
         check(slug in admin or slug in grouped,
               f"'{slug}' left the admin bar and no page group took it in")
 

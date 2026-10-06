@@ -81,7 +81,8 @@
     })();
     </script>
 
-    <div class="flex-1 overflow-y-auto bg-gray-900/50" x-data="shoppingPage()" x-init="init()" x-cloak>
+    <div class="flex-1 overflow-y-auto bg-gray-900/50" x-data="shoppingPage()" x-init="init()" x-cloak
+        x-effect="window.chfSetPageTabCount && window.chfSetPageTabCount('groceries', ((lists || []).find(l => l.is_default) || {}).open_count)">
         <!-- 3xl (768px) was right for a single column and wastes half a wide
                  screen once Our meals and Shopping sit side by side. Kiosk stays
                  unbounded; phones are unaffected either way. -->
@@ -109,7 +110,7 @@
                  family is eating decides what has to be bought. The page read
                  as "shopping, with meals wedged in" when the list blurb sat
                  above this. -->
-            <section class="mb-10" x-show="!isKiosk && !isLists">
+            <section class="mb-10" x-show="!isKiosk && !isLists" data-page-tab="meals">
                 <div class="flex items-baseline justify-between mb-3 gap-3">
                     <h3 class="text-lg font-bold text-white">Meals</h3>
                     <!-- One drawer for everything that configures or maintains
@@ -959,6 +960,11 @@
             </section>
 
             <!-- ===== OUR MEALS  |  SHOPPING =====
+                 Since v2.499.247 the two columns are two TABS of the Meals
+                 group in a browser (nav.html PAGE_GROUPS: Meals · Groceries ·
+                 Lists) — the dish list was long enough that reading them side
+                 by side meant scrolling past one to use the other. A panel or
+                 kiosk has no strip and keeps the side-by-side layout below.
                  Two vertical lists that are read together: what we cook, and
                  what has to be bought. Stacked, the dish list pushed the
                  shopping list off the bottom of a page named after both — which
@@ -973,8 +979,8 @@
                  dish list stays collapsed there because the vertical budget
                  that made it a problem is exactly what a phone has least of. -->
             <div class="grid gap-6 items-start mb-10"
-                :class="isKiosk || isLists ? '' : 'lg:grid-cols-2'">
-                <div class="min-w-0" x-show="!isKiosk && !isLists">
+                :class="isKiosk || isLists || !isPanel ? '' : 'lg:grid-cols-2'">
+                <div class="min-w-0" x-show="!isKiosk && !isLists" data-page-tab="meals">
                     <div class="flex items-baseline justify-between mb-3 gap-3">
                         <h3 class="text-lg font-bold text-white">Our meals</h3>
                         <button @click="showRepertoire = !showRepertoire"
@@ -1243,7 +1249,7 @@
                 </div>
                 </div>
 
-                <div class="min-w-0">
+                <div class="min-w-0" data-page-tab="groceries">
 
             <!-- ===== THE LISTS ===== -->
             <section x-show="!isKiosk" class="mb-2">
@@ -1254,8 +1260,8 @@
                     snap the shelf, or type it here. Whoever the solver sends to the store gets it.
                 </p>
                 <p class="text-gray-400 mb-4" x-show="isLists">
-                    Every list except the groceries, which lives on
-                    <a href="meals" class="text-pink-300 hover:text-pink-200 font-semibold">Meals &amp; Groceries</a>.
+                    Every list except the groceries, which has
+                    <a href="meals?tab=groceries" class="text-pink-300 hover:text-pink-200 font-semibold">its own tab</a>.
                     Anyone can add — say it to Argyle, snap the shelf, or type it here.
                 </p>
             </section>
@@ -1739,6 +1745,8 @@
                 // worse than either page owning it.
                 pinnedList: (params.get('list') || '').trim(),
                 isKiosk: ['true', '1', 'yes'].includes((params.get('kiosk') || '').toLowerCase()),
+                // A wall panel has no tab strip, so it keeps the two columns.
+                isPanel: document.documentElement.hasAttribute('data-panel'),
                 hideTitle: ['none', 'off', '0', 'false', 'hide'].includes(
                     (params.get('title') || '').toLowerCase()),
                 draft: '', candidates: [], photoBusy: false, photoKind: 'other',

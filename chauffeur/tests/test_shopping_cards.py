@@ -566,7 +566,7 @@ def scenario_removing_an_item_actually_removes_it():
         return
     try:
         for path, listname, target, rest in (
-                ('meals', 'Groceries', 'eggs', ['bread', 'milk']),
+                ('meals?tab=groceries', 'Groceries', 'eggs', ['bread', 'milk']),
                 ('lists', 'Pharmacy', 'plasters', ['toothpaste'])):
             handle = served.browser()
             with handle as page:
@@ -596,7 +596,7 @@ def scenario_removing_an_item_actually_removes_it():
         # And the cart's Clear, which is the same hook one row down.
         handle = served.browser()
         with handle as page:
-            page.goto(served.url('meals'), wait_until='networkidle')
+            page.goto(served.url('meals?tab=groceries'), wait_until='networkidle')
             page.wait_for_timeout(1800)
             for name in ('milk', 'bread'):
                 page.locator(f'div.group:has-text("{name}")').first.locator(

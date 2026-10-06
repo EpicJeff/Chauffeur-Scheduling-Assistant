@@ -68,6 +68,19 @@ def main():
         page.wait_for_timeout(200)
         check(_visible(page, '#new-task-title'), 'the Tasks tab does not show the task input')
 
+        # Meals opens on the planner; the grocery list is its own tab, and a
+        # link that names a list (an occasion's shopping) lands on it.
+        page.goto(served.url('meals'), wait_until='domcontentloaded')
+        check(_visible(page, '[data-page-tab="meals"]'), 'Meals is not the default view')
+        check(not _visible(page, '[data-page-tab="groceries"]'), 'the grocery list shows beside Meals')
+        page.click('#page-tabs [data-tab-key="groceries"]')
+        page.wait_for_timeout(200)
+        check(_visible(page, '[data-page-tab="groceries"]'), 'clicking Groceries did not show it')
+        page.goto(served.url('meals?list=whatever'), wait_until='domcontentloaded')
+        check(_visible(page, '[data-page-tab="groceries"]'), 'meals?list= did not open Groceries')
+        lists = page.get_attribute('#page-tabs [data-tab-key="lists"]', 'href')
+        check(lists.split('?')[0].endswith('lists'), f'the Lists tab is not a link to /lists: {lists}')
+
         # A panel keeps its own navigation and sees every block.
         page.goto(served.url('work?panel=true'), wait_until='domcontentloaded')
         check(page.query_selector('#page-tabs') is None, 'a panel draws the tab strip')
