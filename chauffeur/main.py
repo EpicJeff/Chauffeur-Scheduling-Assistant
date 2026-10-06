@@ -1645,7 +1645,13 @@ def account_set_password_page(request: Request):
 def config(request: Request):
     # The gas-station picker map (and its Mapbox context) went to Drive setup
     # with the cars (v2.499.254).
-    return templates.TemplateResponse(request=request, name="config.html")
+    # The Gemini model picker offers the models the app's own pools know
+    # (services/model_pools.py DEFAULT_POOLS, lite then flash), never a list
+    # invented in the template (v2.499.258).
+    from services import model_pools as _mp
+    gemini_models = list(dict.fromkeys(_mp.DEFAULT_POOLS['lite'] + _mp.DEFAULT_POOLS['flash']))
+    return templates.TemplateResponse(request=request, name="config.html",
+                                      context={'gemini_model_options': gemini_models})
 
 @app.get("/calendar", response_class=HTMLResponse)
 def calendar_view(request: Request):

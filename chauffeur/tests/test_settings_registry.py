@@ -59,6 +59,49 @@ def scenario_no_setting_is_unreachable():
           + ', '.join(f"{e['key']} ({e['why']})" for e in u))
 
 
+FAKE_PAGE = """<div x-data="page()">
+  <!-- llm_gemini_model moved away; this comment is not a control -->
+  {# nor is this: llm_ollama_model #}
+  <input x-model="llmOllamaUrl">
+  {% include 'part.html' %}
+</div>
+<script>function page(){ return { llmProvider: "",
+  save(){ post({ llm_provider: this.llmProvider }); } }; }</script>
+"""
+FAKE_PART = """<span x-text="webResearchCap"></span>
+<script>const k = "serpapi_reserve";</script>
+"""
+
+
+def scenario_a_key_only_a_script_mentions_is_not_reachable():
+    """The loophole the first version had (closed v2.499.258).
+
+    config.html read `llm_provider` and the three model keys on load and
+    re-posted them on every save, with no control on screen, and the audit
+    called them reachable because the words were in the file. A key that
+    only `<script>` (or a comment) mentions is loaded and saved, never
+    changed by hand — so it must be flagged; a markup binding must not be.
+    """
+    import tempfile
+    tpl = tempfile.mkdtemp(prefix='registry_audit_')
+    with open(os.path.join(tpl, 'fake.html'), 'w', encoding='utf-8') as fh:
+        fh.write(FAKE_PAGE)
+    with open(os.path.join(tpl, 'part.html'), 'w', encoding='utf-8') as fh:
+        fh.write(FAKE_PART)
+    fake = [reg._e(k, 'ai', 'Fake ' + k.replace('_', ' '), 'a fake entry for this scenario',
+                   page='fake')
+            for k in ('llm_provider', 'llm_gemini_model', 'llm_ollama_model',
+                      'llm_ollama_url', 'web_research_cap', 'serpapi_reserve')]
+    real = reg.ENTRIES
+    reg.ENTRIES = fake
+    try:
+        flagged = {e['key'] for e in reg.audit_ui(tpl)['unreachable']}
+    finally:
+        reg.ENTRIES = real
+    check(flagged == {'llm_provider', 'llm_gemini_model', 'llm_ollama_model', 'serpapi_reserve'},
+          f"script- and comment-only keys must be flagged, markup bindings must not: {sorted(flagged)}")
+
+
 def scenario_every_entry_carries_an_owner_and_words_to_search_on():
     for e in reg.ENTRIES:
         check(e['page'] and e['anchor'],

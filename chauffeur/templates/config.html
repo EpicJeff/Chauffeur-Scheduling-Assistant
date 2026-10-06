@@ -530,13 +530,56 @@
                             events" — not synthesised in bulk from a description of the family.
                         </p>
 
+                        <!-- Provider and models (v2.499.258). These four were
+                             loaded and re-sent by this page with no control on
+                             it; the inputs reuse the API-key field's skin. The
+                             provider values are the two services/llm.py
+                             dispatches on; the Gemini models are the app's own
+                             pools (main.py config route), and an unknown saved
+                             model stays selectable. -->
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                            <div>
+                                <label for="llmProvider"
+                                    class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Model provider</label>
+                                <select id="llmProvider" x-model="llmProvider" @change="saveSettings()"
+                                    class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white">
+                                    <option value="" x-show="!llmProvider">— not chosen —</option>
+                                    <option value="gemini">Gemini (Google)</option>
+                                    <option value="ollama">Ollama (a local model server)</option>
+                                </select>
+                            </div>
                             <div>
                                 <label
                                     class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Gemini API Key</label>
                                 <input type="password" x-model="llmGeminiApiKey" @change="saveSettings()"
                                     placeholder="Enter Gemini API Key"
                                     class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
+                            </div>
+                            <div x-show="llmProvider !== 'ollama'">
+                                <label for="llmGeminiModel"
+                                    class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Gemini model</label>
+                                <select id="llmGeminiModel" x-model="llmGeminiModel" @change="saveSettings()"
+                                    class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
+                                    <template x-for="m in geminiModelOptions()" :key="m">
+                                        <option :value="m" x-text="m" :selected="m === llmGeminiModel"></option>
+                                    </template>
+                                </select>
+                                <p class="text-gray-600 text-xs mt-1">Used by trip planning and the connection test. Everything else picks from the app's model pools by itself.</p>
+                            </div>
+                            <div x-show="llmProvider === 'ollama'">
+                                <label for="llmOllamaUrl"
+                                    class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Ollama URL</label>
+                                <input type="text" id="llmOllamaUrl" x-model="llmOllamaUrl" @change="saveSettings()"
+                                    placeholder="http://localhost:11434"
+                                    class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
+                            </div>
+                            <div x-show="llmProvider === 'ollama'">
+                                <label for="llmOllamaModel"
+                                    class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Ollama model</label>
+                                <input type="text" id="llmOllamaModel" x-model="llmOllamaModel" @change="saveSettings()"
+                                    placeholder="qwen2.5:7b"
+                                    class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
+                                <p class="text-gray-600 text-xs mt-1">The model's name as the Ollama server knows it.</p>
                             </div>
                         </div>
 
@@ -2127,9 +2170,7 @@
                 routeCacheDurationMins: 1440,
                 timeFormat24h: false,
                 disableMapbox: false,
-                disableMapboxMatrix: false,
                 enableMapboxMatrix: true,
-                disableMapboxDirections: false,
                 enableMapboxDirections: true,
                 enableMapboxCategory: true,
                 mapboxMatrixLimit: 90000,
@@ -2139,8 +2180,6 @@
                 mapboxCategoryLimit: 45000,
                 enableMapboxMapLoads: true,
                 mapboxMapLoadsLimit: 45000,
-                mapsStats: null,
-                statsInterval: null,
                 homeLocation: '',
                 locationSuggestions: [],
                 calendarIds: [],
@@ -2163,6 +2202,8 @@
                 serpapiReserve: 100,
                 serpapiMonthlyLimit: 250,
                 llmGeminiModel: 'gemini-3.5-flash-lite',
+                // The app's own Gemini pools (main.py config route).
+                geminiModels: {{ (gemini_model_options or [])|tojson }},
                 llmOllamaUrl: 'http://localhost:11434',
                 llmOllamaModel: 'qwen2.5:7b',
 
@@ -2176,7 +2217,6 @@
                 llmTestSuccess: null,
 
                 newDriver: { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', max_drive_time_from_home: '', calendarIds: [], hashtags: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '' },
-                newDriverCalendarInput: '',
                 newDriverHashtagInput: '',
                 newPassenger: { name: '', hashtags: [], calendar_ids: [], requires_attendance: false },
                 scopeTuneOpen: false,
@@ -2191,7 +2231,6 @@
                 icsFeedBusy: false,
                 icsSyncingId: null,
                 newPassengerHashtagInput: '',
-                newPassengerCalendarInput: '',
                 editDriverId: null,
                 editPassengerId: null,
                 members: [],
@@ -2494,6 +2533,13 @@
                         + `Add it under "Subscribe to a calendar feed" below instead — `
                         + `you'll pick which calendar its events land on.`;
                 },
+                // An unknown saved model (a pool override, an older id) stays
+                // selectable rather than silently showing the first option.
+                geminiModelOptions() {
+                    const opts = (this.geminiModels || []).slice();
+                    if (this.llmGeminiModel && !opts.includes(this.llmGeminiModel)) opts.unshift(this.llmGeminiModel);
+                    return opts;
+                },
                 async addCalendarId() {
                     const val = this.newCalendarIdInput.trim();
                     if (this.looksLikeFeedUrl(val)) {
@@ -2698,14 +2744,12 @@
                         phone_number: d.phone_number || '',
                         cell_carrier: d.cell_carrier || '',
                     };
-                    this.newDriverCalendarInput = '';
                     this.newDriverHashtagInput = '';
                 },
                 cancelEditDriver() {
                     this.editDriverId = null;
                     this.showDriverForm = false;
                     this.newDriver = { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', max_drive_time_from_home: '', home_location: '', calendarIds: [], hashtags: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '' };
-                    this.newDriverCalendarInput = '';
                     this.newDriverHashtagInput = '';
                 },
                 async deleteDriver(docId) {
@@ -2781,35 +2825,8 @@
                     this.showDriverForm = false;
                     this._scrollToPanel('passengerFormPanel');
                 },
-                openNewDriver() {
-                    this.cancelEditDriver();
-                    this.showDriverForm = true;
-                    this.showPassengerForm = false;
-                    this._scrollToPanel('driverFormPanel');
-                },
-                openNewPassenger() {
-                    this.passengerFormMember = null;
-                    this.cancelEditPassenger();
-                    this.showPassengerForm = true;
-                    this.showDriverForm = false;
-                    this._scrollToPanel('passengerFormPanel');
-                },
 
                 // --- Passengers ---
-                getPassengerColor(passenger) {
-                    const PALETTE = ["#3B82F6", "#10B981", "#8B5CF6", "#EC4899", "#14B8A6", "#F97316", "#06B6D4", "#84CC16"];
-                    if (passenger.calendar_ids && passenger.calendar_ids.length > 0) {
-                        const calId = passenger.calendar_ids[0];
-                        if (this.calendarMetadata[calId]) {
-                            return this.calendarMetadata[calId].backgroundColor;
-                        }
-                    }
-                    const idStr = passenger.id || '';
-                    if (!idStr) return '#8B5CF6'; // purple fallback
-                    let sum = 0;
-                    for (let i = 0; i < idStr.length; i++) sum += idStr.charCodeAt(i);
-                    return PALETTE[sum % PALETTE.length];
-                },
                 async loadPassengers() {
                     try {
                         const res = await fetch(`${this.apiBase}api/passengers`);

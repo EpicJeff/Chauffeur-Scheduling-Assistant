@@ -371,7 +371,7 @@ has no visibility scoping and lists render on kitchen kiosks, so `hidden_from`
 must be designed first, enforced at storage and on every surface, or gifts stay
 out.
 
-## Config decentralisation (STARTED 2026-08-07, v2.97.0 — continue this)
+## Config decentralisation (STARTED 2026-08-07, v2.97.0 — DONE 2026-10-06, v2.499.258)
 
 Measured when the O0 kitchen block went in: **`templates/config.html` was 5,631
 lines and `Settings` carries 83 fields**, all saved through one whole-object
@@ -406,14 +406,40 @@ looking, and every one works. config.html is the residue.
   setting that silently vanishes from where somebody last saw it is worse than
   one in the wrong place. config.html: 5,631 → 5,501 lines.
 
-**What remains — move a group at a time, registry entry first:**
-- Kids & school (9) → the member card / kid surfaces.
-- Cars (4) → the car entity pages.
-- Digests (7) → wherever a digest is configured.
-- Daily/household/integrations/AI/maps are the natural residue and can
-  legitimately stay on config as plumbing — the index makes them findable
-  regardless. Intake (5) already lives on `/intake`; solver tiers (2) already
-  live on Chores and Routines.
+**Finished (v2.499.250–v2.499.258, 2026-10-06).** Everything that belongs to a
+feature now lives on that feature's page; config.html went from 5,631 lines to
+4,125. Where things live now:
+- **School** (`/school`): each child's school hours, aftercare, bus and school
+  feeds and classes (Children); the school calendar, year dates and the
+  closure / half-day / late-start / first- and last-day words (Calendar).
+- **Rhythms** (`/rhythms`): the kid digest, its board cutover and kid quiet
+  hours as the Kid evenings section of Routines; Growing up (stages, pins,
+  practise-alone, the cutoff timeline) as its own tab. Moved off School at the
+  user's direction: they are about the child, not about school.
+- **Drive setup** (`/drive_setup`, Schedule group): routing and priority rules,
+  the solver switches and horizons, traffic and tolls, the parents' tomorrow
+  digest, the cars and car alerts, protected time and outside hands.
+- **Errands → Rules**: errand rules. **Trips**: trip hashtags. **Work → Mind**:
+  proactive heads-ups (beside the Mind's own dials). **Calendar**: Status Days.
+- **Meals & Groceries**: the whole meals and kitchen group (since v2.98.0).
+  **Intake**: the mailbox. **Chores / Routines**: the status tiers.
+
+**What stays on Config, on purpose — household plumbing, findable through the
+index:** the family calendars, time zone and default calendar; home address
+and route cache; Mapbox switches, limits and usage sync; the public app URL,
+Music Assistant and the Home Assistant dev fallback; the AI provider, keys and
+models, web research and the connection test; family chat suggestions; the
+weather entity and the weekly digest; cache and database tools; People
+(members, roles and scope, accounts, devices and pairing, driver and passenger
+profiles, calendar feeds); and Boards & House (the boards list and shelf, the
+house facade editor). Each moved block left a pointer card where it used to be,
+and old anchors forward to the new page.
+
+`audit_ui()` now reads markup only (scripts and comments stripped) — a key a
+page merely loads and re-posts is not a control. That rule is what surfaced
+the AI provider and model keys, which Config had carried in JS with nothing on
+screen; they have controls now. A control whose binding does not spell its key
+declares the binding as `ui_marker`.
 
 Rule going forward: **a new setting is registered in the registry and placed on
 its feature's surface, never appended to config.html.**

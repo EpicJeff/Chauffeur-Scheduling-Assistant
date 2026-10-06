@@ -7,7 +7,8 @@ Four things left Config for the surface they belong to:
   - Status Days (the day types and the days set with them) → the Calendar
     page (#status-days);
   - the house facade editor → Config's Boards tab, renamed Boards & House,
-    with config#home still landing on it.
+    with config#home still landing on it;
+  - and (v2.499.258) Config's AI provider and model keys get real controls.
 
 What only a browser can check: each save sends ONLY its own key (the
 settings POST merges), the Status Days editor does its whole job from the
@@ -165,6 +166,37 @@ def main():
                 page.screenshot(path=os.path.join(OUT, 'config-boards-house.png'))
             page.goto(served.url('config'), wait_until='networkidle')
             page.wait_for_timeout(400)
+
+            # AI provider and models (v2.499.258): real controls now, not
+            # keys the page only loaded and re-posted.
+            from services import model_pools
+            opts = page.eval_on_selector_all('#llmGeminiModel option', 'els => els.map(e => e.value)')
+            check(opts[:len(model_pools.DEFAULT_POOLS['lite'])] == model_pools.DEFAULT_POOLS['lite']
+                  and set(model_pools.DEFAULT_POOLS['flash']) <= set(opts),
+                  f"the Gemini model picker does not offer the app's pools: {opts}")
+            page.select_option('#llmGeminiModel', 'gemini-3.5-flash')
+            page.wait_for_timeout(700)
+            check(storage.get_settings().get('llm_gemini_model') == 'gemini-3.5-flash',
+                  'the Gemini model choice did not save')
+            check(not page.is_visible('#llmOllamaUrl'), 'the Ollama fields show before Ollama is chosen')
+            page.select_option('#llmProvider', 'ollama')
+            page.wait_for_timeout(700)
+            check(page.is_visible('#llmOllamaUrl'), 'choosing Ollama did not show its fields')
+            page.fill('#llmOllamaModel', 'llama3.1:8b')
+            page.dispatch_event('#llmOllamaModel', 'change')
+            page.fill('#llmOllamaUrl', 'http://ollama.lan:11434')
+            page.dispatch_event('#llmOllamaUrl', 'change')
+            page.wait_for_timeout(900)
+            st = storage.get_settings()
+            check(st.get('llm_provider') == 'ollama' and st.get('llm_ollama_model') == 'llama3.1:8b'
+                  and st.get('llm_ollama_url') == 'http://ollama.lan:11434',
+                  f"the provider and Ollama fields did not save: {st.get('llm_provider')}, "
+                  f"{st.get('llm_ollama_model')}, {st.get('llm_ollama_url')}")
+            if OUT:
+                page.evaluate("document.getElementById('llmProvider').scrollIntoView({block: 'center'})")
+                page.wait_for_timeout(200)
+                page.screenshot(path=os.path.join(OUT, 'config-ai-models.png'))
+
             check(page.locator('a[href$="trips#trip-hashtags"]').count() >= 1, 'Config has no pointer to trip hashtags')
             check(page.locator('a[href$="work?tab=mind#heads-ups"]').count() >= 1, 'Config has no pointer to heads-ups')
             check(page.locator('a[href$="calendar#status-days"]').count() >= 1, 'Config has no pointer to Status Days')

@@ -104,24 +104,24 @@ ENTRIES: List[dict] = [
     _e('panel_widgets', 'panel', 'Home board tiles',
        'Which tiles the wall panel home screen shows, and in what order. '
        'A tile with nothing to say hides itself either way.',
-       page='home', anchor='board-settings'),
+       page='home', anchor='board-settings', ui_marker='tile-add'),
     _e('panel_tabs', 'panel', 'Shelf buttons (old form)',
        'The wall panel shelf, as one curated list. Superseded by the board '
        'order and the hidden list below, which is what the Boards tab writes; '
        'this is still read when those are empty, so a shelf curated before '
        'v2.232.0 keeps working exactly as it did.',
-       page='config', anchor='boards', ui_marker='panel_board_order'),
+       page='config', anchor='boards', ui_marker='startBoardDrag'),
     _e('panel_board_order', 'panel', 'Board order',
        'The order your boards and the app pages sit in, left to right along '
        'the wall panel shelf. Drag them into place on the Boards tab. Six or '
        'seven fit at a size a thumb can hit; the rest move into a More button, '
        'so the order decides what stays one tap away.',
-       page='config', anchor='boards'),
+       page='config', anchor='boards', ui_marker='startBoardDrag'),
     _e('panel_board_hidden', 'panel', 'Boards hidden from the shelf',
        'Boards you have switched off on the Boards tab. They still exist and '
        'still have an address — they just do not get a button on the wall '
        'panel shelf.',
-       page='config', anchor='boards'),
+       page='config', anchor='boards', ui_marker='setShelf'),
     _e('panel_house_home', 'panel', 'Use The House as Home',
        'Open the selected house experience as Home, with the Home board as fallback when 3D is unavailable.',
        page='config', anchor='boards'),
@@ -133,7 +133,7 @@ ENTRIES: List[dict] = [
        'idle panel returns to, and what the shelf Home button opens. Set it '
        'with the house marker on the Boards tab, so you can build your own '
        'home screen and hide the one that ships.',
-       page='config', anchor='boards'),
+       page='config', anchor='boards', ui_marker='makeHome'),
     # Superseded by `panel_pages`: every board carries its own grid now, and
     # these three are what the FIRST page is built from when a household has
     # never made one. They are still real settings — an un-migrated install
@@ -155,7 +155,7 @@ ENTRIES: List[dict] = [
        'any others you have made. Each one carries its own tiles, layout, '
        'grid and background, so a hallway board and a kitchen board can be '
        'genuinely different screens rather than the same screen twice.',
-       page='config', anchor='boards'),
+       page='config', anchor='boards', ui_marker='newBoard'),
     _e('panel_grid_row_height', 'panel', 'Board row height',
        'What one row of a board grid is worth, in pixels. Tile sizes are '
        'measured in these, so a 2-row tile is twice this tall. Set per board, '
@@ -275,13 +275,13 @@ ENTRIES: List[dict] = [
     # --- the kitchen (owned by the meals surface, not the config page)
     _e('kitchen_ovens', 'kitchen', 'Ovens',
        'How many ovens the kitchen has. Two dishes at different temperatures cannot share one.',
-       page='meals', anchor='kitchen'),
+       page='meals', anchor='kitchen', ui_marker='kitchen.ovens'),
     _e('kitchen_burners', 'kitchen', 'Burners',
        'How many rings the hob has. A dish holds its ring while somebody stands at it.',
-       page='meals', anchor='kitchen'),
+       page='meals', anchor='kitchen', ui_marker='kitchen.burners'),
     _e('kitchen_cooks', 'kitchen', 'Usually cooking',
        'How many pairs of hands normally cook. Hands-on work divides between them.',
-       page='meals', anchor='kitchen'),
+       page='meals', anchor='kitchen', ui_marker='kitchen.cooks'),
 
     # --- kids & school. The school calendar is on the School page
     # (v2.499.250); the kid digest and kid quiet hours are a section of the
@@ -310,19 +310,19 @@ ENTRIES: List[dict] = [
        page='school', anchor='calendar'),
     _e('school_closed_keywords', 'kids', 'No-school keywords',
        'Words in an all-day event title that mean school is closed.',
-       page='school', anchor='calendar'),
+       page='school', anchor='calendar', ui_marker='keywordFields'),
     _e('school_half_day_keywords', 'kids', 'Half-day keywords',
        'Words in an all-day event title that mean a half day or early release.',
-       page='school', anchor='calendar'),
+       page='school', anchor='calendar', ui_marker='keywordFields'),
     _e('school_delayed_keywords', 'kids', 'Late-start keywords',
        'Words in an all-day event title that mean a late start or delayed opening.',
-       page='school', anchor='calendar'),
+       page='school', anchor='calendar', ui_marker='keywordFields'),
     _e('school_first_day_keywords', 'kids', 'First-day-of-school keywords',
        'Words in an event title that mark the first day of the school year.',
-       page='school', anchor='calendar'),
+       page='school', anchor='calendar', ui_marker='keywordFields'),
     _e('school_last_day_keywords', 'kids', 'Last-day-of-school keywords',
        'Words in an event title that mark the last day of the school year.',
-       page='school', anchor='calendar'),
+       page='school', anchor='calendar', ui_marker='keywordFields'),
 
     # --- cars
     _e('car_battery_warn_pct', 'cars', 'Battery warning',
@@ -362,7 +362,7 @@ ENTRIES: List[dict] = [
     _e('ingest_email_user', 'intake', 'Mailbox address', 'The dedicated address the family forwards to.',
        page='intake', anchor='settings'),
     _e('ingest_email_password', 'intake', 'App password',
-       'An app password, never the account password.', page='intake', anchor='settings'),
+       'An app password, never the account password.', page='intake', anchor='settings', ui_marker='passwordInput'),
     # The flip (auth arc S8). On the People surface with everything else that
     # decides who may reach the house, and DELIBERATELY next to the audit
     # report — the arc's rule is flip on evidence, so the evidence is drawn
@@ -443,7 +443,7 @@ ENTRIES: List[dict] = [
        'room hears one short sentence through its speaker — once per stalled '
        'item, never repeating. Each child also needs a cue room picked on the '
        'Routines page; no room means no cues for that child.',
-       page='routines', anchor='runway'),
+       page='routines', anchor='runway', ui_marker='saveRunwayCues'),
     _e('leave_margin_mins', 'daily', 'Leave margin',
        'Extra minutes before every departure from home: the leave-by time is '
        'the start, minus the drive, minus any arrive-early buffer, minus these '
@@ -454,11 +454,11 @@ ENTRIES: List[dict] = [
        'When somebody outside the house drives, the wall says "be ready at" — '
        'the start time minus the drive from here minus these minutes. How '
        'early everyone should be standing by the door before the car arrives.',
-       page=_DRIVE, anchor='outside-hands'),
+       page=_DRIVE, anchor='outside-hands', ui_marker='assistReadyBuffer'),
     _e('announce_targets', 'integrations', 'Room announcement speakers',
        'Pin which speaker Argyle announces through in a room; unpinned rooms '
        'pick the voice satellite, then whichever player is already on.',
-       page='map', anchor='announce'),
+       page='map', anchor='announce', ui_marker='announce-pin-select'),
 
     # --- AI
     _e('llm_provider', 'ai', 'Model provider', 'Gemini or a local Ollama.'),
@@ -493,9 +493,9 @@ ENTRIES: List[dict] = [
 
     # --- maps & quotas
     _e('disable_mapbox', 'maps', 'Turn Mapbox off', 'Stops every Mapbox call at once.'),
-    _e('disable_mapbox_matrix', 'maps', 'No travel-time matrix', 'Falls back to straight-line estimates.'),
-    _e('disable_mapbox_directions', 'maps', 'No directions', 'Stops route geometry lookups.'),
-    _e('disable_mapbox_category', 'maps', 'No category search', 'Stops "find a petrol station near" lookups.'),
+    _e('disable_mapbox_matrix', 'maps', 'No travel-time matrix', 'Falls back to straight-line estimates.', ui_marker='enableMapboxMatrix'),
+    _e('disable_mapbox_directions', 'maps', 'No directions', 'Stops route geometry lookups.', ui_marker='enableMapboxDirections'),
+    _e('disable_mapbox_category', 'maps', 'No category search', 'Stops "find a petrol station near" lookups.', ui_marker='enableMapboxCategory'),
     _e('mapbox_matrix_limit', 'maps', 'Matrix call limit', 'Monthly cap before the app stops asking.'),
     _e('mapbox_directions_limit', 'maps', 'Directions limit',
        'Monthly cap on route geometry lookups before the app stops asking.'),
@@ -714,6 +714,25 @@ def _camel(key: str) -> str:
     return head + ''.join(w[:1].upper() + w[1:] for w in rest)
 
 
+def _markup_only(body: str) -> str:
+    """A template with everything a person cannot operate taken out.
+
+    A key that only appears inside `<script>` is LOADED and SAVED by a page,
+    not CHANGED on it: config.html carried `llm_provider` and the three model
+    keys that way for months — read on load, re-posted on every save, and not
+    one control on screen — and the audit called them reachable because the
+    word was in the file. Comments go too (HTML and Jinja): a note saying a
+    setting moved away is the opposite of a control for it. What is left is
+    markup, where an Alpine binding (`x-model="llmProvider"`) or a visible
+    label is the only way a key can show up.
+    """
+    import re
+    body = re.sub(r'<script\b[^>]*>.*?</script>', ' ', body, flags=re.S | re.I)
+    body = re.sub(r'<!--.*?-->', ' ', body, flags=re.S)
+    body = re.sub(r'{#.*?#}', ' ', body, flags=re.S)
+    return body
+
+
 def audit_ui(templates_dir: str = None) -> dict:
     """Which registered settings have no way to change them by hand.
 
@@ -754,7 +773,9 @@ def audit_ui(templates_dir: str = None) -> dict:
                 body = fh.read()
         except OSError:
             return ''
-        for inc in re.findall(r"{%\s*include\s+'([^']+)'", body):
+        includes = re.findall(r"{%\s*include\s+'([^']+)'", body)
+        body = _markup_only(body)
+        for inc in includes:
             body += _read(inc, seen)
         return body
 

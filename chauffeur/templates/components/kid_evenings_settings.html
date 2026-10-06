@@ -38,7 +38,7 @@
             </div>
             <div class="flex items-center gap-2 shrink-0">
                 <label class="text-sm text-gray-400 font-semibold" for="kidDigestCutover">Board shows tomorrow after</label>
-                <input type="time" id="kidDigestCutover" x-model="kidDigestCutover" @change="save()"
+                <input type="time" id="kidDigestCutover" x-model="kidDigestCutoverTime" @change="save()"
                     class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
             </div>
             <div class="flex items-center gap-2 shrink-0">
@@ -67,7 +67,7 @@
             apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
             kidDigestEnabled: true,
             kidDigestTime: '19:30',
-            kidDigestCutover: '19:00',
+            kidDigestCutoverTime: '19:00',
             kidQuietStart: '20:30',
             kidQuietEnd: '07:00',
             saved: false,
@@ -78,7 +78,7 @@
                     const data = await res.json();
                     this.kidDigestEnabled = data.kid_digest_enabled !== false;
                     this.kidDigestTime = data.kid_digest_time || '19:30';
-                    this.kidDigestCutover = data.kid_digest_cutover_time || '19:00';
+                    this.kidDigestCutoverTime = data.kid_digest_cutover_time || '19:00';
                     this.kidQuietStart = data.kid_quiet_start || '20:30';
                     this.kidQuietEnd = data.kid_quiet_end || '07:00';
                 } catch (e) { console.error('Failed to load the kid evening settings', e); }
@@ -92,7 +92,7 @@
                         body: JSON.stringify({
                             kid_digest_enabled: !!this.kidDigestEnabled,
                             kid_digest_time: this.kidDigestTime || '19:30',
-                            kid_digest_cutover_time: this.kidDigestCutover || '19:00',
+                            kid_digest_cutover_time: this.kidDigestCutoverTime || '19:00',
                             kid_quiet_start: this.kidQuietStart || '20:30',
                             kid_quiet_end: this.kidQuietEnd || '07:00',
                         }) });
