@@ -33,7 +33,9 @@
 /* Existing primary controls outside sheets use the same profile palette. */
 [data-profile-color] button:is(.bg-blue-600,.bg-indigo-600),
 [data-profile-color] #thread-messages .bg-blue-600 { background:var(--pwa-accent); color:rgb(var(--c-gray-950)); }
-[data-profile-color][data-theme="light"] button:is(.bg-blue-600,.bg-indigo-600),
+/* Sheet buttons are re-based to the neutral sheet surface below, so white
+   text there would vanish on the light sheet; sheet primaries get white by id. */
+[data-profile-color][data-theme="light"] button:is(.bg-blue-600,.bg-indigo-600):not(.pwa-sheet button),
 [data-profile-color][data-theme="light"] #thread-messages .bg-blue-600 { color:white; }
 [data-profile-color] input[type="checkbox"] { accent-color:var(--pwa-accent) !important; }
 .pwa-adult-only { display: none; }
