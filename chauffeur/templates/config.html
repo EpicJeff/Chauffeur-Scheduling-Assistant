@@ -105,23 +105,6 @@
                         </button>
                     </li>
                     <li>
-                        <!-- Rules & Priorities moved to Drive setup (routing and
-                             priority rules) and the Errands page (errand rules)
-                             in v2.499.253-255. The entry stays, as a link, so
-                             the place people look still answers. -->
-                        <a href="drive_setup#rules" data-moved-rules
-                            title="Moved to Schedule → Drive setup"
-                            class="text-gray-400 hover:bg-gray-700 hover:text-white whitespace-nowrap w-full text-left px-4 py-2 md:py-3 rounded-lg font-bold transition-colors flex items-center text-sm md:text-base">
-                            <svg class="w-5 h-5 mr-2 md:mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z">
-                                </path>
-                            </svg>
-                            Rules & Priorities
-                            <span class="ml-auto pl-2 text-gray-500" aria-hidden="true">↗</span>
-                        </a>
-                    </li>
-                    <li>
                         <!-- Boards. Foundational enough to be a tab here rather
                              than a route of its own: from a household's side
                              there is no difference, and inventing a page to
@@ -228,16 +211,6 @@
                         <p class="text-xs text-gray-500 mt-2">★ marks the default (family) calendar — used for intake
                             proposals when it isn't clear whose event it is, and for whole-family events.</p>
                     </div>
-                    <!-- Days to display and days to solve moved to Drive setup
-                         (v2.499.253), beside the rest of what shapes the solve. -->
-                    <div class="flex flex-col gap-2 mb-6 p-5 bg-gray-900 rounded-xl border border-gray-700">
-                        <span class="font-bold text-gray-300">🗓️ How far ahead</span>
-                        <p class="text-sm text-gray-500">
-                            Days to display on the kiosk dashboard and days the solver plans now live on
-                            <a href="drive_setup#horizons" class="text-blue-400 hover:text-blue-300 font-semibold">Schedule → Drive setup</a>.
-                        </p>
-                    </div>
-
                     <!-- Route Cache Duration -->
                     <div class="mb-6">
                         <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider">Route Cache
@@ -264,17 +237,6 @@
                             <span class="text-gray-400 text-sm">Force the use of free servers (Nominatim/OSRM) to
                                 guarantee no billing charges.</span>
                         </div>
-                    </div>
-
-                    <!-- Routing & traffic policy moved to Drive setup (v2.499.253):
-                         facts about how this household drives, not quota knobs —
-                         the Mapbox tier limits below stay here. -->
-                    <div class="flex flex-col gap-2 mb-6 p-5 bg-gray-900 rounded-xl border border-gray-700">
-                        <span class="font-bold text-gray-300">🚦 Routing &amp; traffic</span>
-                        <p class="text-sm text-gray-500">
-                            Day-of traffic, the morning traffic pass and avoiding toll roads now live on
-                            <a href="drive_setup#traffic" class="text-blue-400 hover:text-blue-300 font-semibold">Schedule → Drive setup</a>.
-                        </p>
                     </div>
 
                     <!-- Detailed Mapbox Controls (Visible if Mapbox is enabled globally) -->
@@ -503,17 +465,6 @@
                             authenticates via the supervisor automatically.</p>
                     </div>
 
-                    <!-- Trip hashtags moved to the Trips page (v2.499.257),
-                         beside the trips they find; a pointer stays. -->
-                    <div class="flex flex-col gap-2 mb-6 p-5 bg-gray-900 rounded-xl border border-gray-700">
-                        <span class="font-bold text-gray-300">🧳 Trip hashtags</span>
-                        <p class="text-sm text-gray-500">
-                            The hashtags that make an all-day event a trip (and its location a
-                            temporary home) now live on
-                            <a href="trips#trip-hashtags" class="text-blue-400 hover:text-blue-300 font-semibold">Trips</a>.
-                        </p>
-                    </div>
-
                     <!-- AI assistant section -->
                     <div class="mt-8 pt-8 border-t border-gray-700">
                         <h3 class="text-2xl font-bold mb-4 text-blue-300 flex items-center gap-2">
@@ -670,23 +621,7 @@
                     </div>
 
                     <div class="mt-6 pt-6 border-t border-gray-700">
-                        <h4 class="font-bold text-white mb-4">Solver Behavior</h4>
-                        <!-- Moved to Drive setup (v2.499.253); a pointer stays. -->
-                        <div class="flex flex-col gap-2 p-5 bg-gray-900 rounded-xl border border-gray-700">
-                            <span class="font-bold text-gray-300">⚖️ Balancing the load and suggested routes</span>
-                            <p class="text-sm text-gray-500">
-                                Balance Driving Load and Suggested Driver Routes now live on
-                                <a href="drive_setup#solver-behavior" class="text-blue-400 hover:text-blue-300 font-semibold">Schedule → Drive setup</a>,
-                                with the rules and the planning horizon.
-                            </p>
-                        </div>
-                    </div>
-
-                    <div class="mt-6 pt-6 border-t border-gray-700">
                         <h4 class="font-bold text-white mb-4">Digests & Weather</h4>
-                        <!-- The parents' tomorrow digest moved to Drive setup
-                             (v2.499.253). The weather it reads stays here with the
-                             weekly digest. -->
                         <div class="flex flex-col sm:flex-row sm:items-center gap-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
                             <div class="flex items-center gap-2 shrink-0">
                                 <label class="text-sm text-gray-400 font-semibold" for="weatherEntity">Weather</label>
@@ -700,9 +635,7 @@
                             </div>
                             <p class="text-sm text-gray-500">
                                 The Home Assistant weather integration the forecasts read from — the
-                                parents' Tomorrow Digest (now on
-                                <a href="drive_setup#tomorrow-digest" class="text-blue-400 hover:text-blue-300 font-semibold">Schedule → Drive setup</a>)
-                                the wall's weather tile and the kitchen. Auto-detect uses the first weather
+                                parents' Tomorrow Digest, the wall's weather tile and the kitchen. Auto-detect uses the first weather
                                 entity; the line is simply omitted when Home Assistant is unreachable.
                             </p>
                         </div>
@@ -736,53 +669,6 @@
                                 driver, kids' activity counts, chores verified and points earned, rewards granted,
                                 and routine completion with streaks. Everyone gets it through the normal message
                                 notifications.
-                            </p>
-                        </div>
-                        <!-- Proactive heads-ups moved to Work → Mind (v2.499.257):
-                             the watchers are Argyle noticing stuck things. -->
-                        <div class="flex flex-col gap-2 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
-                            <span class="font-bold text-gray-300">🔔 Proactive heads-ups</span>
-                            <p class="text-sm text-gray-500">
-                                The switch for Argyle's consolidated heads-up about stuck things
-                                (events with no driver, waiting proposals, unclaimed chores) now lives on
-                                <a href="work?tab=mind#heads-ups" class="text-blue-400 hover:text-blue-300 font-semibold">Work → Mind</a>.
-                            </p>
-                        </div>
-                        <!-- School moved to its own page (v2.499.250): the school
-                             calendar and its words and each child's hours/bus/feeds.
-                             The kid evening digest and kid quiet hours went with it,
-                             then on to Rhythms → Routines (v2.499.256), beside the
-                             routines board that shows the same cards. A pointer
-                             stays where they used to be. -->
-                        <div class="flex flex-col gap-2 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
-                            <span class="font-bold text-gray-300">🏫 School, the kid digest and kid quiet hours</span>
-                            <p class="text-sm text-gray-500">
-                                The school calendar and the words it is read with, and each child's
-                                school hours and bus, now live on
-                                <a href="school" class="text-blue-400 hover:text-blue-300 font-semibold">School</a>.
-                                The evening "🌙 Tomorrow" digest and kid quiet hours live on
-                                <a href="rhythms?tab=routines#kid-evenings" class="text-blue-400 hover:text-blue-300 font-semibold">Rhythms → Routines</a>.
-                            </p>
-                        </div>
-                        <!-- Where this family eats moved to Shopping & Meals
-                             (2026-08-07) along with every other meals setting —
-                             it decides which gaps count as chances to eat, which
-                             is a fact about how they eat, not about the app. -->
-                        <!-- Settings live on the surface that owns them
-                             (2026-08-07). A pointer stays where they used to be,
-                             because a setting that silently vanishes from where
-                             somebody last saw it is worse than one in the wrong
-                             place. -->
-                        <div class="flex flex-col gap-2 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
-                            <span class="font-bold text-gray-300">🍽️ Meals, shopping and the kitchen</span>
-                            <p class="text-sm text-gray-500">
-                                Where this family eats, the shape of a plate, the shop day and how
-                                early to ask, prep reminders, the Walmart cart and the kitchen's
-                                ovens and burners now live on
-                                <a href="meals#how" class="text-blue-400 hover:text-blue-300 font-semibold">Meals &amp; Groceries</a>,
-                                beside the plates and lists they govern. Everything in the app is
-                                findable from
-                                <a href="settings" class="text-blue-400 hover:text-blue-300 font-semibold">Find a setting</a>.
                             </p>
                         </div>
                     </div>
@@ -1724,12 +1610,6 @@
                                                 </template>
                                             </select>
                                         </div>
-                                        <!-- School hours, aftercare, the bus and school task
-                                             feeds moved to the School page (v2.499.251). -->
-                                        <p x-show="memberEdit.role === 'child'" class="w-full text-sm text-gray-500">
-                                            🏫 School hours, aftercare, the bus and school feeds are on the
-                                            <a href="school?tab=children" class="text-blue-400 hover:text-blue-300 font-semibold">School page</a>.
-                                        </p>
                                         <button @click="testNotify(member)" x-show="member.notify_service"
                                             class="bg-purple-700 hover:bg-purple-600 text-white font-bold px-4 py-3 rounded transition-colors shadow-md text-sm">Test
                                             Notify</button>
@@ -1795,70 +1675,6 @@
                     </div>
                 </div>
 
-                <!-- Cars moved to Drive setup (v2.499.254) with car alerts and
-                     the home gas station; a pointer stays where they used to be. -->
-                <div x-show="activeTab === 'family'" x-cloak
-                    class="flex flex-col gap-2 p-5 mb-10 bg-gray-900 rounded-xl border border-gray-700">
-                    <span class="font-bold text-gray-300">🚗 Cars</span>
-                    <p class="text-sm text-gray-500">
-                        The household fleet — seats, who may drive each car, car seats, when a car is in
-                        the shop, its Home Assistant sensors — and the charge, fuel and gas-station alerts
-                        now live on
-                        <a href="drive_setup#cars" class="text-blue-400 hover:text-blue-300 font-semibold">Schedule → Drive setup → Cars</a>.
-                    </p>
-                </div>
-
-                <!-- Protected time moved to Drive setup (v2.499.254); a pointer
-                     stays where it used to be. -->
-                <div x-show="activeTab === 'family'" x-cloak
-                    class="flex flex-col gap-2 p-5 mb-10 bg-gray-900 rounded-xl border border-gray-700">
-                    <span class="font-bold text-gray-300">🛡️ Protected time</span>
-                    <p class="text-sm text-gray-500">
-                        A run club, therapy, a standing coffee — time the solver defends instead of
-                        filling — now lives on
-                        <a href="drive_setup#protected-time" class="text-blue-400 hover:text-blue-300 font-semibold">Schedule → Drive setup → Protected time</a>.
-                    </p>
-                </div>
-
-                <!-- Growing up moved to the School page (v2.499.250), then to
-                     its own tab of Rhythms (v2.499.256); a pointer stays where
-                     it used to be. -->
-                <div x-show="activeTab === 'family'" x-cloak
-                    class="flex flex-col gap-2 p-5 mb-10 bg-gray-900 rounded-xl border border-gray-700">
-                    <span class="font-bold text-gray-300">🌱 Growing up</span>
-                    <p class="text-sm text-gray-500">
-                        The stages a child grows through — confirming a move up, pinning a stage,
-                        whether they can practise on their own, and the ages the stages change at —
-                        now live on
-                        <a href="rhythms?tab=growing-up" class="text-blue-400 hover:text-blue-300 font-semibold">Rhythms → Growing up</a>.
-                        Birthdays stay on each person's identity card above.
-                    </p>
-                </div>
-
-                <!-- Outside hands moved to Drive setup (v2.499.254); a pointer
-                     stays where they used to be. -->
-                <div x-show="activeTab === 'family'" x-cloak
-                    class="flex flex-col gap-2 p-5 mb-10 bg-gray-900 rounded-xl border border-gray-700">
-                    <span class="font-bold text-gray-300">🤝 Outside hands</span>
-                    <p class="text-sm text-gray-500">
-                        The carpool parents and anyone else outside the house who helps, and how early
-                        to be ready when one of them drives, now live on
-                        <a href="drive_setup#outside-hands" class="text-blue-400 hover:text-blue-300 font-semibold">Schedule → Drive setup → Outside hands</a>.
-                    </p>
-                </div>
-
-                <!-- Status Days moved to the Calendar page (v2.499.257); a
-                     pointer stays where they used to be. -->
-                <div x-show="activeTab === 'family'" x-cloak
-                    class="flex flex-col gap-2 p-5 mb-10 bg-gray-900 rounded-xl border border-gray-700">
-                    <span class="font-bold text-gray-300">💙 Status Days</span>
-                    <p class="text-sm text-gray-500">
-                        The family's day types ("Chemo Day", "Night Shift") in your own words, and the
-                        days set with them, now live on
-                        <a href="calendar#status-days" class="text-blue-400 hover:text-blue-300 font-semibold">Schedule → Calendar → Status days</a>.
-                    </p>
-                </div>
-
                 <!-- Passenger profile form (People tab sub-panel) -->
                 <div x-show="activeTab === 'family' && showPassengerForm" x-cloak x-transition.opacity
                     id="passengerFormPanel" style="order: 2"
@@ -1916,10 +1732,6 @@
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                        <div class="w-full mt-4" x-show="editPassengerId && passengerFormMember">
-                            <p class="text-xs text-gray-500">Subscribed ICS feeds moved to the person —
-                                <b>People → Identity → 📅 Google Calendars</b>, where the calendars they land on are set.</p>
                         </div>
                         <div
                             class="mt-6 p-4 bg-gray-900/50 rounded-lg border border-gray-600 flex items-center justify-between">

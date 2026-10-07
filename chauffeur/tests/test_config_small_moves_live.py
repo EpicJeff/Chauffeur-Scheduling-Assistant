@@ -197,9 +197,11 @@ def main():
                 page.wait_for_timeout(200)
                 page.screenshot(path=os.path.join(OUT, 'config-ai-models.png'))
 
-            check(page.locator('a[href$="trips#trip-hashtags"]').count() >= 1, 'Config has no pointer to trip hashtags')
-            check(page.locator('a[href$="work?tab=mind#heads-ups"]').count() >= 1, 'Config has no pointer to heads-ups')
-            check(page.locator('a[href$="calendar#status-days"]').count() >= 1, 'Config has no pointer to Status Days')
+            # Moved settings leave no pointer behind on Config (v2.499.261);
+            # Find a setting in the nav is how anyone finds them.
+            for href in ('trips#trip-hashtags', 'work?tab=mind#heads-ups', 'calendar#status-days'):
+                check(page.locator(f'a[href$="{href}"]:not(nav a)').count() == 0,
+                      f'Config still carries a pointer to {href}')
             check(page.locator('#trip-hashtags, #proactiveWatchersEnabled, [data-status-add]').count() == 0,
                   'Config still draws a moved control')
 

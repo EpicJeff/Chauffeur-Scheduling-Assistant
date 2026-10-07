@@ -203,15 +203,11 @@ def main():
             names = page.locator('#growing-up').inner_text()
             check('Ada' in names and 'Ben' in names, 'the children are not on Growing up')
 
-            # Config keeps a pointer where each block used to be.
+            # Config leaves no pointer where each block used to be (v2.499.261).
             page.goto(served.url('config'), wait_until='domcontentloaded')
-            # (Config rewrites its own links to absolute paths.)
-            check(page.locator('main a[href$="/school"], a[href$="/school"]:not(nav a)').count() >= 1,
-                  'Config has no pointer to School')
-            check(page.locator('a[href$="rhythms?tab=growing-up"]').count() >= 1,
-                  'Config has no pointer to Growing up')
-            check(page.locator('a[href$="rhythms?tab=routines#kid-evenings"]').count() >= 1,
-                  'Config has no pointer to the kid digest')
+            check(page.locator('a[href*="rhythms?tab="]:not(nav a), a[href*="school?tab="]:not(nav a), '
+                               'a[href$="/school"]:not(nav a)').count() == 0,
+                  'Config still carries a pointer to School or Rhythms')
 
             errors = [e for e in handle.errors if 'Failed to load resource' not in e]
             check(not errors, f'page errors: {errors[:3]}')

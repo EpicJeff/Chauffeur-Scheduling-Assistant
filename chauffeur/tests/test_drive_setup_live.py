@@ -311,15 +311,11 @@ def main():
             check(_visible(page, '#errand-rules') and 'Grocery runs' in page.locator('#errand-rules').inner_text(),
                   'switching to Rules in place did not load the rules')
 
-            # Config keeps a pointer where each block used to be, and no
-            # longer carries the controls.
+            # Config no longer carries the controls, nor a pointer where each
+            # block used to be (v2.499.261).
             page.goto(served.url('config'), wait_until='domcontentloaded')
-            for anchor in ('horizons', 'traffic', 'solver-behavior', 'tomorrow-digest', 'rules',
-                           'cars', 'protected-time', 'outside-hands'):
-                check(page.locator(f'a[href$="drive_setup#{anchor}"]').count() >= 1,
-                      f'Config has no pointer to drive_setup#{anchor}')
-            check(page.locator('a[data-moved-rules]').count() == 1,
-                  "Config's Rules & Priorities entry is not a link to where the rules went")
+            check(page.locator('a[href*="drive_setup#"]:not(nav a)').count() == 0,
+                  'Config still carries a pointer to Drive setup')
             check(page.locator('text=Create Errand Rule').count() == 0, 'Config still carries errand rules')
 
             errors = [e for e in handle.errors if 'Failed to load resource' not in e]

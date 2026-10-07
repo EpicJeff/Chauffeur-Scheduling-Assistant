@@ -333,8 +333,6 @@ def scenario_the_hand_path_exists():
           "the cutoff timeline is draggable and shows the kids on it")
     check('Nothing is ever deleted' in school,
           "and the promise is written where the parent makes the decision")
-    check('rhythms?tab=growing-up' in config,
-          "and Config still says where Growing up went")
     app = open(os.path.join(tpl, 'app.html'), encoding='utf-8').read()
     check('kidCan(' in app and 'kidHorizonDays' in app,
           "the PWA shell asks for capabilities by name")
