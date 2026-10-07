@@ -363,6 +363,10 @@ ENTRIES: List[dict] = [
        page='intake', anchor='settings'),
     _e('ingest_email_password', 'intake', 'App password',
        'An app password, never the account password.', page='intake', anchor='settings', ui_marker='passwordInput'),
+    _e('ingest_daily_limit', 'intake', 'AI requests per day for email intake',
+       'How many emails the AI may read a day (default 500). Past it, mail '
+       'waits in line until midnight; nothing is skipped.',
+       page='intake', anchor='ingest-daily-limit', ui_marker='ingestDailyLimit'),
     # The flip (auth arc S8). On the People surface with everything else that
     # decides who may reach the house, and DELIBERATELY next to the audit
     # report — the arc's rule is flip on evidence, so the evidence is drawn

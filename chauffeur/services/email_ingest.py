@@ -36,6 +36,7 @@ import email.header
 import imaplib
 import re
 import threading
+import time
 
 from services import storage
 
@@ -46,6 +47,13 @@ _run_lock = threading.Lock()
 
 DEFAULT_HOST = 'imap.gmail.com'
 MAX_MESSAGES_PER_RUN = 20
+# AI requests email intake may send per day (`ingest_daily_limit`). Each email
+# is one request, two when the first Gemma model fails and its sibling is
+# tried. A family that gets more mail raises it; one that wants to spend less
+# lowers it. Counted from the request ledger, so failed requests count too.
+DEFAULT_DAILY_LIMIT = 500
+WORKFLOW = 'intake.email'
+_WAIT_KEY = 'ingest_wait'
 MAX_BODY_CHARS = 7000
 CONFIDENCE_FLOOR = 0.4
 MAX_DAYS_AHEAD = 400
@@ -162,7 +170,50 @@ def sender_blocked(from_addr: str, blocklist: list, subject=None):
 
 class ExtractionDeferred(RuntimeError):
     """The model could not take this email NOW (admission pause, rate limit,
-    timeout). The email must be retried later, never dropped."""
+    timeout). The email must be retried later, never dropped. `retry_at` is
+    when it will next be tried (epoch seconds), when known."""
+    def __init__(self, reason, retry_at=None):
+        super().__init__(reason)
+        self.retry_at = retry_at
+
+
+def daily_limit(settings: dict) -> int:
+    try:
+        return max(0, int(settings.get('ingest_daily_limit', DEFAULT_DAILY_LIMIT)))
+    except (TypeError, ValueError):
+        return DEFAULT_DAILY_LIMIT
+
+
+def wait_status(settings: dict = None) -> dict:
+    """What the Intake page needs to explain a wait: today's request count
+    against the allowance, and - while intake is waiting - why and until when.
+    `waiting` is None once a later email has been read."""
+    from services import llm_budget
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    key = settings.get('llm_gemini_api_key', '') or ''
+    used = llm_budget.workflow_attempts_today(key, WORKFLOW) if key else 0
+    wait = storage.get_app_state(_WAIT_KEY) or None
+    if wait and (wait.get('retry_at') or 0) <= time.time() and not wait.get('cap'):
+        # The retry time has passed; the next poll is due, not a wait.
+        wait = {**wait, 'due': True}
+    return {'used_today': used, 'daily_limit': daily_limit(settings), 'waiting': wait}
+
+
+def _note_wait(reason: str, retry_at: float, cap: bool = False) -> dict:
+    """Remember why intake stopped, keeping the first real failure's words
+    while the backoff that followed it only moves the retry time."""
+    prev = storage.get_app_state(_WAIT_KEY) or {}
+    if 'paused after provider failure' in reason and prev.get('reason'):
+        reason = prev['reason']
+    wait = {'reason': reason[:300], 'retry_at': retry_at, 'since': prev.get('since') or time.time(),
+            'cap': cap}
+    storage.set_app_state(_WAIT_KEY, wait)
+    return wait
+
+
+def _clear_wait() -> None:
+    if storage.get_app_state(_WAIT_KEY):
+        storage.set_app_state(_WAIT_KEY, None)
 
 
 def _cursor_key(user: str) -> str:
@@ -501,14 +552,14 @@ def extract_items(subject: str, from_addr: str, body: str, member_names: list,
     # pool free for interactive chat.
     res = model_pools.call_pool_json('background', api_key, EXTRACTION_SYSTEM, prompt,
                                      temperature=0.1, timeout_s=60, gemma_timeout_s=180,
-                                     settings=settings, workflow='intake.email')
+                                     settings=settings, workflow=WORKFLOW)
     if not isinstance(res, dict):
         return []
     if res.get('error'):
         # Paused, rate-limited or timed out: the email is fine, the model is
         # busy. The caller keeps it in line rather than dropping it.
         if res.get('deferred') or res.get('transient'):
-            raise ExtractionDeferred(str(res['error']))
+            raise ExtractionDeferred(str(res['error']), res.get('retry_at'))
         raise RuntimeError(str(res['error']))
     items = res.get('items')
     return items if isinstance(items, list) else []
@@ -940,14 +991,33 @@ def _match_thread(msg: dict) -> None:
         print(f"[email_ingest] thread match failed: {e}")
 
 
-def run_ingest() -> dict:
+def run_ingest(manual: bool = False) -> dict:
     """One poll: fetch → extract → normalize → dedupe → propose.
-    Returns {'checked', 'proposed', 'error'}. Serialized under _run_lock."""
+    Returns {'checked', 'proposed', 'error'}, plus 'deferred', 'wait'
+    ({reason, retry_at}) and 'more' (a full batch: more mail is waiting).
+    Serialized under _run_lock.
+
+    `manual` is a person pressing "Check mailbox now": the failure backoff
+    does not apply, because they asked. The daily allowance still does -
+    that one is the family's own setting."""
+    from services import llm_budget
     with _run_lock:
+        if manual:
+            with llm_budget.manual_scope():
+                return _run_ingest_locked()
         return _run_ingest_locked()
 
 
+def _defer(summary: dict, reason: str, retry_at: float, cap: bool = False) -> None:
+    summary['deferred'] = True
+    summary['wait'] = _note_wait(reason, retry_at, cap=cap)
+    when = datetime.datetime.fromtimestamp(retry_at).strftime('%I:%M %p').lstrip('0')
+    storage.add_ingest_log({'from': '', 'subject': '(poll)',
+                            'outcome': f'waiting: {summary["wait"]["reason"]} - next try {when}'})
+
+
 def _run_ingest_locked() -> dict:
+    from services import llm_budget
     summary = {'checked': 0, 'proposed': 0, 'skipped': 0, 'duplicates': 0, 'error': None}
     settings = storage.get_settings() or {}
     sender_defaults = settings.get('ingest_sender_defaults') or []
@@ -962,6 +1032,9 @@ def _run_ingest_locked() -> dict:
 
     if not messages:
         return summary
+    summary['more'] = len(messages) >= MAX_MESSAGES_PER_RUN
+    api_key = settings.get('llm_gemini_api_key', '') or ''
+    limit = daily_limit(settings)
 
     member_names = [m.get('name') for m in storage.get_all_members() if m.get('name')]
     existing = storage.get_proposals()
@@ -1008,22 +1081,31 @@ def _run_ingest_locked() -> dict:
             continue
 
         entry = sender_default(msg['from'], sender_defaults)
+        if api_key and llm_budget.workflow_attempts_today(api_key, WORKFLOW) >= limit:
+            # The family's own daily allowance. Kept in line, read tomorrow.
+            summary['checked'] -= 1
+            _defer(summary, f"today's email intake allowance of {limit} AI requests is used up "
+                            f"(raise it under Family mailbox on this page)",
+                   llm_budget.next_midnight(), cap=True)
+            break
         try:
             items = extract_items(msg['subject'], msg['from'], msg['text'],
                                   member_names, known_block=known_block)
         except ExtractionDeferred as e:
             # Stop here and keep this email (and everything after it) in
-            # line; the next poll after the pause picks up exactly here.
+            # line; the next try (at most five minutes off) picks up here.
             summary['checked'] -= 1
-            summary['deferred'] = True
-            storage.add_ingest_log({'from': '', 'subject': '(poll)',
-                                    'outcome': f'waiting: AI busy, will retry ({e})'})
+            retry_at = (e.retry_at or (llm_budget.workflow_pause(api_key, WORKFLOW) if api_key else None)
+                        or time.time() + llm_budget.WORKFLOW_PAUSE_STEPS[0])
+            _defer(summary, str(e), retry_at)
             break
         except Exception as e:
+            _clear_wait()
             storage.add_ingest_log({**log, 'outcome': f'error: extraction failed ({e})'})
             _match_thread(msg)
             mark_handled(settings, msg)
             continue
+        _clear_wait()
         _match_thread(msg)
 
         proposed_here = dropped = duped = supplies_only = 0

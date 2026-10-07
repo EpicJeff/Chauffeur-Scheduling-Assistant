@@ -32,16 +32,19 @@ def scenario_retry_amplification():
             result=model_pools.call_pool_json('mind','amplification','s','u',settings={},workflow='mind.think')
             check(result.get('error') and len(calls)==1,'one failed deep think makes one wire attempt, not twelve')
         importlib.reload(budget)
-        with patch('time.time',return_value=1800000301):
+        with patch('time.time',return_value=1800000030):
             result=model_pools.call_pool_json('mind','amplification','s','u',settings={},workflow='mind.think')
-            check(result.get('deferred') and len(calls)==1,'five-minute tick and restart cannot bypass cooldown')
-        with patch('time.time',return_value=1800000901):
+            check(result.get('deferred') and len(calls)==1,'a quick retry and a restart cannot bypass the backoff')
+        with patch('time.time',return_value=1800000061):
             model_pools.call_pool_json('mind','amplification','s','u',settings={},workflow='mind.think')
-            check(len(calls)==2,'one probe after fifteen-minute backoff')
-        with patch('time.time',return_value=1800001802):
+            check(len(calls)==2,'one probe after the one-minute backoff')
+        with patch('time.time',return_value=1800000122):
             model_pools.call_pool_json('mind','amplification','s','u',settings={},workflow='mind.think')
-            check(len(calls)==2,'second failure expands backoff to thirty minutes')
-        with patch('time.time',return_value=1800002702),patch('urllib.request.urlopen',ok):
+            check(len(calls)==2,'second failure expands the backoff to two minutes')
+        with patch('time.time',return_value=1800000182):
+            model_pools.call_pool_json('mind','amplification','s','u',settings={},workflow='mind.think')
+            check(len(calls)==3,'and the probe after it goes out')
+        with patch('time.time',return_value=1800000183+300+1),patch('urllib.request.urlopen',ok):
             result=model_pools.call_pool_json('mind','amplification','s','u',settings={},workflow='mind.think')
             check(result.get('insights')==[] and budget.workflow_ready('amplification','mind.think'),'success clears workflow failure streak')
     check(all('flash' in m and 'lite' not in m for m in model_pools.models_for('mind',{})), 'Mind never degrades to Lite/Gemma')
@@ -173,9 +176,9 @@ def scenario_a_model_penalty_never_pauses_the_workflow():
          patch('time.time', return_value=t0):
         model_pools.call_pool_json('background', 'penalty', 's', 'u', settings={}, workflow='intake.email')
     check(calls == ['gemma-4-31b-it', 'gemma-3-27b-it'], f'both tried: {calls}')
-    with patch('time.time', return_value=t0 + 901):
+    with patch('time.time', return_value=t0 + 61):
         check(budget.workflow_ready('penalty', 'intake.email'),
-              'the workflow is back after the 15-minute backoff, not six hours')
+              'the workflow is back after the one-minute backoff, not six hours')
     with contextlib_closing(budget._connect()) as db:
         until = db.execute("SELECT until FROM pauses WHERE account=? AND scope=?",
                            (budget._account('penalty'), 'model:gemma-3-27b-it')).fetchone()[0]
@@ -194,6 +197,58 @@ def scenario_a_model_penalty_never_pauses_the_workflow():
     model_pools.reset_cooldowns()
 
 
+def scenario_no_backoff_is_ever_longer_than_five_minutes():
+    """User, 2026-10-07: there is no reason to ever wait more than five
+    minutes to retry. Ten straight failures still land at five."""
+    t0 = 1830000000
+    with contextlib_closing(budget._connect()) as db, db:
+        for i in range(10):
+            budget._write_workflow_pause(db, budget._account('ladder'), 'workflow:intake.email', 0, t0)
+        until = db.execute("SELECT until FROM pauses WHERE account=? AND scope=?",
+                           (budget._account('ladder'), 'workflow:intake.email')).fetchone()[0]
+    check(until - t0 == 300, f'the ladder tops out at five minutes, got {until - t0}s')
+
+
+def scenario_a_person_asking_skips_the_backoff():
+    """Check mailbox now must do what was asked: the workflow backoff yields
+    to a manual run, and a success then clears it for the automatic poll."""
+    t0 = 1840000000
+    with contextlib_closing(budget._connect()) as db, db:
+        db.execute("INSERT OR REPLACE INTO pauses VALUES(?,?,?,?)",
+                   (budget._account('asked'), 'workflow:intake.email', t0 + 200, 2))
+    model_pools.reset_cooldowns()
+    gemma_ok = lambda *a, **k: io.BytesIO(b'{"candidates":[{"content":{"parts":[{"text":"{\\"items\\":[]}"}]}}]}')
+    with patch('urllib.request.urlopen', gemma_ok), patch('time.sleep', lambda _: None), \
+         patch('time.time', return_value=t0):
+        res = model_pools.call_pool_json('background', 'asked', 's', 'u', settings={}, workflow='intake.email')
+        check(res.get('deferred'), f'the automatic poll still waits out the backoff: {res}')
+        with budget.manual_scope():
+            res = model_pools.call_pool_json('background', 'asked', 's', 'u', settings={}, workflow='intake.email')
+        check(res.get('items') == [], f'a manual run goes straight through: {res}')
+        check(budget.workflow_ready('asked', 'intake.email'), 'and its success lifts the backoff')
+    model_pools.reset_cooldowns()
+
+
+def scenario_a_penalised_model_hands_over_to_its_sibling():
+    """A model already under its own penalty (a withdrawn 404, a per-day
+    429) is skipped for the next model; it no longer stalls the workflow."""
+    t0 = 1850000000
+    with contextlib_closing(budget._connect()) as db, db:
+        db.execute("INSERT OR REPLACE INTO pauses VALUES(?,?,?,?)",
+                   (budget._account('sibling'), 'model:gemma-4-31b-it', t0 + 21600, 1))
+    model_pools.reset_cooldowns()
+    calls = []
+    def wire(req, **kw):
+        calls.append(req.full_url.split('/models/')[1].split(':')[0])
+        return io.BytesIO(b'{"candidates":[{"content":{"parts":[{"text":"{\\"items\\":[]}"}]}}]}')
+    with patch('urllib.request.urlopen', wire), patch('time.sleep', lambda _: None), \
+         patch('time.time', return_value=t0):
+        res = model_pools.call_pool_json('background', 'sibling', 's', 'u', settings={}, workflow='intake.email')
+    check(res.get('_model') == 'gemma-3-27b-it' and calls == ['gemma-3-27b-it'],
+          f'the penalised model is skipped, the sibling answers: {res} {calls}')
+    model_pools.reset_cooldowns()
+
+
 from contextlib import closing as contextlib_closing
 
 
@@ -202,4 +257,7 @@ if __name__=='__main__':
     scenario_retry_amplification();scenario_shared_budget_and_reserve()
     scenario_concurrency_and_day_reset();scenario_daily_quota_survives_restart()
     scenario_background_gemma_falls_through_once()
+    scenario_no_backoff_is_ever_longer_than_five_minutes()
+    scenario_a_person_asking_skips_the_backoff()
+    scenario_a_penalised_model_hands_over_to_its_sibling()
     print('LLM request budget passed (all provider calls mocked)')

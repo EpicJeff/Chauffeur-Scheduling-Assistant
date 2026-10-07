@@ -26,12 +26,31 @@ _wire_attempts = contextvars.ContextVar('llm_wire_attempts', default=None)
 # not be paused by its own first attempt. The caller applies it only when the
 # whole call failed (apply_held_pauses).
 _held_pauses = contextvars.ContextVar('llm_held_pauses', default=None)
+# Set while a person has explicitly asked for the work (Intake's "Check
+# mailbox now"): the WORKFLOW backoff is skipped, because they asked. A
+# model's own penalty (a 429 or a withdrawn 404) still stands - that model
+# would only fail again - and the pool moves on to the next model instead.
+_manual = contextvars.ContextVar('llm_manual', default=False)
 
 
 class Deferred(RuntimeError):
-    def __init__(self, reason, retry_at):
+    """`scope` says what is blocking: 'workflow' (this workflow's failure
+    backoff - nothing else will be tried), 'model' (this one model is
+    penalised) or 'allowance' (a local daily allowance for this model or
+    class). Only 'workflow' should stop a pool from trying another model."""
+    def __init__(self, reason, retry_at, scope='workflow'):
         super().__init__(reason)
         self.retry_at = retry_at
+        self.scope = scope
+
+
+@contextlib.contextmanager
+def manual_scope():
+    token = _manual.set(True)
+    try:
+        yield
+    finally:
+        _manual.reset(token)
 
 
 @contextlib.contextmanager
@@ -73,19 +92,25 @@ def apply_held_pauses(held):
         _write_workflow_pause(db, account, scope, retry_at, now)
 
 
-WORKFLOW_PAUSE_CAP = 7200
+# Backoff for a background workflow after a whole call fails: 1 min, 2, then
+# 5 and never longer. Google's Gemma endpoints fail in short bursts, and the
+# old 15 min-2 h ladder left email sitting unread for no reason a family could
+# see (user, 2026-10-07: no reason to ever wait more than 5 minutes). Spend is
+# still bounded by the daily allowances below, not by the backoff.
+WORKFLOW_PAUSE_STEPS = (60, 120, 300)
+WORKFLOW_PAUSE_CAP = WORKFLOW_PAUSE_STEPS[-1]
 
 
 def _write_workflow_pause(db, account, scope, retry_at, now):
-    """Backoff for a background WORKFLOW: 15 min, 30, 60, then 2 h. It never
+    """Backoff for a background WORKFLOW (WORKFLOW_PAUSE_STEPS). It never
     inherits a model's own retry_at — a 404 (6 h) or a per-day 429 (until
     midnight) is that MODEL's penalty, already written under its 'model:'
     scope. Copying it here paused all of email intake for six hours because
     one withdrawn Gemma id answered 404 (device, 2026-10-05) while other
     models were fine."""
     row = db.execute('SELECT failures FROM pauses WHERE account=? AND scope=?', (account, scope)).fetchone()
-    failures = min((row[0] if row else 0) + 1, 4)
-    until = now + min(WORKFLOW_PAUSE_CAP, 900 * 2 ** (failures - 1))
+    failures = min((row[0] if row else 0) + 1, len(WORKFLOW_PAUSE_STEPS))
+    until = now + WORKFLOW_PAUSE_STEPS[failures - 1]
     db.execute('INSERT INTO pauses VALUES(?,?,?,?) ON CONFLICT(account,scope) DO UPDATE SET until=excluded.until,failures=excluded.failures',
                (account, scope, until, failures))
 
@@ -128,7 +153,7 @@ def _limit(model):
     if 'flash-lite' in model:
         return 500
     if model.startswith('gemma'):
-        return 1000
+        return 14400   # Google's published per-model free-tier day for Gemma
     return None  # paid Pro and unknown model classes: record without guessing quota
 
 
@@ -137,6 +162,29 @@ def workflow_ready(key, workflow):
         row = db.execute('SELECT until FROM pauses WHERE account=? AND scope=?',
                          (_account(key), 'workflow:' + workflow)).fetchone()
     return not row or row[0] <= time.time()
+
+
+def workflow_pause(key, workflow):
+    """When this workflow's failure backoff ends (epoch seconds), or None
+    when it is not paused - so a page can say when it will try again."""
+    with contextlib.closing(_connect()) as db:
+        row = db.execute('SELECT until FROM pauses WHERE account=? AND scope=?',
+                         (_account(key), 'workflow:' + workflow)).fetchone()
+    return row[0] if row and row[0] > time.time() else None
+
+
+def workflow_attempts_today(key, workflow):
+    """Provider requests this workflow has sent today (Pacific day), failed
+    ones included - each one was a request against the quota."""
+    day, _ = _day(time.time())
+    with contextlib.closing(_connect()) as db:
+        return db.execute('SELECT COUNT(*) FROM attempts WHERE account=? AND day=? AND workflow=?',
+                          (_account(key), day, workflow)).fetchone()[0]
+
+
+def next_midnight():
+    """When today's allowances reset (Pacific midnight, epoch seconds)."""
+    return _day(time.time())[1]
 
 
 def _reserve(key, model):
@@ -157,17 +205,22 @@ def _reserve(key, model):
                 db.execute('UPDATE pauses SET until=? WHERE account=? AND scope=?', (now, account, scope))
                 row = None
             if row and row[0] > now:
-                raise Deferred('AI requests paused after provider failure', row[0])
+                if scope.startswith('workflow:'):
+                    if _manual.get():
+                        continue          # a person asked; the backoff yields
+                    raise Deferred('AI requests paused after provider failure', row[0])
+                raise Deferred(f'{model} is paused after a provider failure', row[0], 'model')
         limit = _limit(model)
         count = db.execute('SELECT COUNT(*) FROM attempts WHERE account=? AND day=? AND model=?',
                            (account, day, model)).fetchone()[0]
         if limit is not None and count >= limit:
-            raise Deferred('Local daily AI request allowance reached', midnight)
+            raise Deferred(f"{model}'s daily request allowance ({limit}) is used up", midnight, 'allowance')
         if background and is_flash(model):
             used = db.execute('SELECT COUNT(*) FROM attempts WHERE account=? AND day=? AND background=1 AND flash=1',
                               (account, day)).fetchone()[0]
             if used >= BACKGROUND_FLASH_LIMIT:
-                raise Deferred('Automated Flash allowance reached; remaining capacity reserved for user work', midnight)
+                raise Deferred('Automated Flash allowance reached; remaining capacity reserved for user work',
+                               midnight, 'allowance')
         cursor = db.execute('INSERT INTO attempts(account,day,model,workflow,background,flash,started,outcome) VALUES(?,?,?,?,?,?,?,?)',
                             (account, day, model, workflow, int(background), int(is_flash(model)), now, 'started'))
         reservation = cursor.lastrowid

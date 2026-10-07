@@ -1355,6 +1355,8 @@ class Settings(BaseModel):
     ingest_email_host: str = "imap.gmail.com"
     ingest_email_user: str = ""
     ingest_email_password: str = ""
+    # AI requests email intake may send per day (services/email_ingest).
+    ingest_daily_limit: int = 500
     # --- Outbound mail: invites, verification, resets (auth arc S3) ---
     # A SEPARATE sender by default, with `smtp_use_intake` offered as a
     # mirror rather than assumed. The intake mailbox analyses everything that

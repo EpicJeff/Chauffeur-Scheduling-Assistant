@@ -1047,14 +1047,26 @@ def flush_assignment_notifications():
 
 async def email_ingest_loop():
     """Poll the family intake mailbox every 10 minutes (services/email_ingest).
-    New proposals push a review nudge to parents."""
+    New proposals push a review nudge to parents.
+
+    Sooner when there is a reason: a full batch means more mail is waiting
+    (next poll in 30 s), and a wait after an AI failure is retried the moment
+    its backoff ends (at most five minutes) rather than at the next 10-minute
+    tick. A wait on the daily allowance is not chased; the normal tick finds
+    it lifted after midnight."""
     await asyncio.sleep(120)
     while True:
+        delay = 600
         try:
             from services import storage as _st, email_ingest
             settings = _st.get_settings() or {}
             if settings.get('ingest_email_enabled') and settings.get('ingest_email_user'):
                 summary = await asyncio.to_thread(email_ingest.run_ingest)
+                wait = summary.get('wait') or {}
+                if summary.get('deferred') and not wait.get('cap') and wait.get('retry_at'):
+                    delay = max(30, min(600, wait['retry_at'] - time.time() + 5))
+                elif summary.get('more') and not summary.get('deferred'):
+                    delay = 30
                 n = summary.get('proposed', 0)
                 if n:
                     def _nudge_parents():
@@ -1071,7 +1083,7 @@ async def email_ingest_loop():
                     await asyncio.to_thread(_nudge_parents)
         except Exception as e:
             print(f"Email ingest loop error: {e}")
-        await asyncio.sleep(600)
+        await asyncio.sleep(delay)
 
 async def ics_sync_loop():
     """Hourly re-sync of subscribed ICS feeds (services/ics_sync.py). Hourly
@@ -4121,6 +4133,7 @@ class IngestConfig(BaseModel):
     ingest_email_user: Optional[str] = None
     ingest_email_password: Optional[str] = None
     ingest_sender_defaults: Optional[list] = None
+    ingest_daily_limit: Optional[int] = None
 
 class ProposalApprove(BaseModel):
     calendar_id: str
@@ -4156,6 +4169,7 @@ _INTAKE_RRULES = {'daily': 'FREQ=DAILY', 'weekly': 'FREQ=WEEKLY',
 
 @app.get("/api/ingest/config")
 def get_ingest_config():
+    from services import email_ingest
     s = storage.get_settings() or {}
     return {
         'ingest_email_enabled': bool(s.get('ingest_email_enabled')),
@@ -4164,6 +4178,7 @@ def get_ingest_config():
         'has_password': bool(s.get('ingest_email_password')),
         'ingest_sender_defaults': s.get('ingest_sender_defaults') or [],
         'ingest_sender_blocklist': s.get('ingest_sender_blocklist') or [],
+        'ingest_daily_limit': email_ingest.daily_limit(s),
     }
 
 
@@ -4316,6 +4331,8 @@ def unblock_ingest_sender(req: IngestBlockRequest):
 @app.post("/api/ingest/config")
 def set_ingest_config(cfg: IngestConfig):
     updates = {k: v for k, v in cfg.model_dump().items() if v is not None}
+    if 'ingest_daily_limit' in updates:
+        updates['ingest_daily_limit'] = max(0, int(updates['ingest_daily_limit']))
     # An empty password field in the UI means "keep the stored one".
     if updates.get('ingest_email_password') == '':
         updates.pop('ingest_email_password')
@@ -4331,12 +4348,21 @@ def set_ingest_config(cfg: IngestConfig):
 
 @app.post("/api/ingest/run")
 def run_ingest_now():
+    """A person pressed "Check mailbox now": runs at once, past any failure
+    backoff (only the family's daily allowance can still stop it)."""
     from services import email_ingest
-    summary = email_ingest.run_ingest()
+    summary = email_ingest.run_ingest(manual=True)
     # Pending count lets the UI tell "nothing new" apart from "the background
     # poll beat you to it moments ago" — both report checked: 0.
     summary['pending'] = len(storage.get_proposals('proposed'))
     return summary
+
+@app.get("/api/ingest/status")
+def ingest_status():
+    """Why intake is waiting (if it is), until when, and today's AI requests
+    against the allowance - so the page never waits without saying why."""
+    from services import email_ingest
+    return email_ingest.wait_status()
 
 @app.get("/api/ingest/log")
 def ingest_log(limit: int = 50):

@@ -379,7 +379,10 @@ def _call_chain(tier, api_key, system_prompt, user_prompt, temperature, timeout_
                                           max_output_tokens=max_output_tokens,
                                           **({"thinking_level": thinking_level} if thinking_level is not None else {}))
         except llm_budget.Deferred as e:
-            if background:
+            # Only the workflow's own backoff stops a background call. A
+            # penalised or used-up MODEL is a reason to try the next one,
+            # not to stall the whole workflow until that model recovers.
+            if background and getattr(e, 'scope', 'workflow') == 'workflow':
                 return {'error': str(e), 'deferred': True, 'retry_at': e.retry_at}
             last_err = str(e)
             deferred_until = min(deferred_until or e.retry_at, e.retry_at)

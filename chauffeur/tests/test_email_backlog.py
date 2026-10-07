@@ -61,7 +61,7 @@ def scenario_a_pause_keeps_mail_in_line():
     check(storage.ingest_seen('<m11@x>') and not storage.ingest_seen('<m12@x>'), "only handled mail is marked seen")
     check(threads.call_count == 1, "the paused email was not thread-matched (it will be on retry)")
     log = storage.get_ingest_log()
-    check(any(r['outcome'].startswith('waiting: AI busy') for r in log)
+    check(any(r['outcome'].startswith('waiting: ') and 'next try' in r['outcome'] for r in log)
           and not any('two' == r.get('subject') for r in log),
           f"one 'waiting' row, no per-email error for the paused one: {[r['outcome'] for r in log]}")
     # Next poll, model back: two and three go through.
@@ -235,6 +235,55 @@ def scenario_skip_the_backlog():
         check(e.status_code == 400, "bad date refused")
 
 
+def scenario_a_wait_says_why_and_when():
+    """The Intake page explains a wait: the real failure's words (not the
+    generic backoff line that follows it), when it tries again, and the wait
+    clears as soon as an email is read."""
+    import time as _t
+    _reset()
+
+    def failing(subject, *a, **k):
+        raise email_ingest.ExtractionDeferred('gemma-4-31b-it: HTTP Error 500', _t.time() + 60)
+    summary, _ = _run([_msg(11, 'one')], failing)
+    w = email_ingest.wait_status()['waiting']
+    check(w and '500' in w['reason'] and w['retry_at'] > _t.time(), f'reason and retry time recorded: {w}')
+
+    def backoff(subject, *a, **k):
+        raise email_ingest.ExtractionDeferred('AI requests paused after provider failure', _t.time() + 120)
+    _run([_msg(11, 'one')], backoff)
+    w = email_ingest.wait_status()['waiting']
+    check('500' in w['reason'], f'the backoff keeps the first failure as the reason: {w}')
+
+    _run([_msg(11, 'one')], lambda *a, **k: [])
+    check(email_ingest.wait_status()['waiting'] is None, 'reading an email clears the wait')
+
+
+def scenario_the_daily_allowance_is_the_familys_setting():
+    _reset()
+    storage.get_settings = lambda: {**SETTINGS, 'llm_gemini_api_key': 'k', 'ingest_daily_limit': 2}
+    calls = []
+
+    def extract(subject, *a, **k):
+        calls.append(subject)
+        return []
+    with mock.patch('services.llm_budget.workflow_attempts_today', side_effect=lambda key, wf: len(calls)):
+        summary, _ = _run([_msg(11, 'one'), _msg(12, 'two'), _msg(13, 'three')], extract)
+        check(calls == ['one', 'two'], f'two requests allowed, the third waits: {calls}')
+        check(summary.get('deferred') and summary['wait']['cap'], f'it says it is the allowance: {summary}')
+        check('allowance of 2' in summary['wait']['reason'], f"and names the number: {summary['wait']}")
+        check(storage.get_app_state(CURSOR) == 12, 'the third email stays in line for tomorrow')
+        # The button cannot spend past the family's own limit either.
+        with mock.patch.object(email_ingest, 'fetch_new_messages', return_value=([_msg(13, 'three')], None)), \
+             mock.patch.object(email_ingest, 'extract_items', side_effect=extract), \
+             mock.patch.object(email_ingest, '_match_thread'):
+            res = email_ingest.run_ingest(manual=True)
+        check(res.get('deferred') and calls == ['one', 'two'], f'manual runs respect the allowance: {res}')
+    st = email_ingest.wait_status()
+    check(st['daily_limit'] == 2, f'status reports the allowance: {st}')
+    storage.get_settings = lambda: dict(SETTINGS)
+    check(email_ingest.daily_limit({}) == email_ingest.DEFAULT_DAILY_LIMIT, 'unset means the default')
+
+
 SCENARIOS = [
     scenario_new_mail_goes_before_rereads,
     scenario_skip_the_backlog,
@@ -243,7 +292,10 @@ SCENARIOS = [
     scenario_deferral_detection,
     scenario_rescan_skips_what_went_through,
     scenario_missed_summary_and_queue,
+    scenario_a_wait_says_why_and_when,
+    scenario_the_daily_allowance_is_the_familys_setting,
 ]
+
 
 if __name__ == "__main__":
     import traceback
