@@ -72,31 +72,41 @@ Success:
 `tools/vendor_assets.py` gains, all pinned and committed under
 `static/vendor/` like everything else:
 
-- `maplibre-gl`, the latest **6.x** at vendoring time, pinned
-  (`maplibre-gl.mjs`, its worker, `maplibre-gl.css`). v6 ships ESM only and
+- `maplibre-gl` **6.13.0** (latest at spec time): `maplibre-gl.mjs` (1.08 MB),
+  `maplibre-gl-worker.mjs` (0.51 MB), `maplibre-gl.css`. v6 ships ESM only and
   requires WebGL2. HA pins 5.24.0 only because v6's worker URL broke its rspack
   bundle; Chauffeur does not bundle, so that reason does not apply, and the
-  OpenStreetMap website itself already runs v6.
-- `@maplibre/maplibre-gl-leaflet` **0.1.4 or later** (the first release with a
-  v6/ESM build), pinned.
-- **The plugin's import of MapLibre.** If the plugin's ESM build imports
-  MapLibre by bare specifier (`from 'maplibre-gl'`), which a browser cannot
-  resolve without a bundler or import map, `vendor_assets.py` rewrites that one
-  specifier to the relative `./maplibre-gl.mjs` while vendoring, and fails
-  loudly if the pattern it expects is not found. (Fallback if that proves
-  brittle: set `window.maplibregl` from the imported module and load the
-  plugin's UMD build.) The live test pins whichever is used.
-- From VersaTiles' published releases: the `colorful` and `eclipse` style JSON,
-  the sprite sheet(s) those styles reference (1x and 2x), and glyph PBFs for
-  only the font stacks those two styles reference.
+  OpenStreetMap website itself already runs v6. The module finds its worker
+  beside itself (`new URL(..., import.meta.url)`), so the two files must sit in
+  the same directory.
+- `@maplibre/maplibre-gl-leaflet` **0.1.4**, its **UMD** build
+  (`leaflet-maplibre-gl.js`). Checked: the package's ESM build imports both
+  `leaflet` and `maplibre-gl` by bare specifier, and Chauffeur's Leaflet is a
+  global script, not a module, so the ESM build cannot be used without an
+  import map. The UMD build reads `window.L` and `window.maplibregl`, so the
+  page imports MapLibre's module, assigns it to `window.maplibregl`, then
+  loads the plugin script. Its peer range covers MapLibre `^6.0.0`.
+- From VersaTiles' published releases (`versatiles-style` **v6.3.1**,
+  `versatiles-fonts` **v3.0.0**): the English-label variants of the
+  `colorful` and `eclipse` styles (`styles/<name>/en.json`, which prefer
+  `name_en` and fall back to `name`), the `base` sprite sheet they reference
+  (`base.json`/`.png` and `@2x`), and glyph PBFs for the only two font stacks
+  they reference, `noto_sans_regular` and `noto_sans_bold`.
 
 Glyphs are trimmed to the ranges a US family's map needs: `0-255` through
 `1024-1279` (Latin, Latin Extended, IPA, Greek, Cyrillic) plus `8192-8447`
-(General Punctuation — the curly apostrophe in "O’Brien Rd"). A label needing
-any other range renders without that label rather than failing the map; CJK is
-covered by the device's own fonts via `localIdeographFontFamily`. Target: about
-1 MB of map assets (HA ships 5.4 MB untrimmed). The script prints the total, as
-it does today.
+(General Punctuation — the curly apostrophe in "O’Brien Rd"), about 600 KB per
+font stack. Any other range is answered by a small route (section 2a) with a
+valid **empty** glyph set, so a label in another script draws without those
+characters instead of failing its tile; CJK ideographs are drawn from the
+device's own fonts by MapLibre's default `localIdeographFontFamily`. Map
+assets total about 1.6 MB of style files and 1.6 MB of library (HA ships
+5.4 MB of style files untrimmed). The script prints the total, as it does
+today.
+
+`vendor_assets.py` gains a `map` argument that vendors only the map assets,
+without the full wipe-and-refetch the bare command does, so adding the map
+does not silently re-pull every font and script.
 
 The vendored style JSON files are stored **unmodified**, so re-vendoring is a
 straight replace. All rewriting happens at runtime (section 2).
@@ -110,13 +120,22 @@ Assets live under `static/vendor/maplibre/` (library) and
 section 3.
 
 - **Loading.** `ensureLeaflet()` stays and still always loads Leaflet. A new
-  `ensureVector()` loads MapLibre and the plugin with dynamic `import()` of the
-  vendored `.mjs` files (`apiBase`-relative, memoised once per page like
-  `ensureLeaflet`) plus MapLibre's stylesheet, and is only called when
+  `ensureVector()` loads MapLibre with dynamic `import()` of the vendored
+  `maplibre-gl.mjs` (`apiBase`-relative, memoised once per page like
+  `ensureLeaflet`), assigns the module to `window.maplibregl`, loads the
+  plugin's UMD script and MapLibre's stylesheet, and is only called when
   `canVector()` is true. MapLibre v6 resolves its worker from the module's own
   URL, so no `setWorkerUrl` call is needed and ingress paths just work.
 - **`canVector()`** — a one-off probe, memoised per page:
-  `document.createElement('canvas').getContext('webgl2')` is non-null.
+  `document.createElement('canvas').getContext('webgl2')` is non-null (the
+  probe context is released straight away). It runs only when a map is first
+  built, never when the component is merely included.
+- **`vector` option** (default `true`). The photographic House promises it
+  never touches WebGL (`tests/test_house_exterior_live.py` asserts zero WebGL
+  attempts after opening the bus map), so `house_life.js` passes
+  `vector: false` when `document.body.dataset.houseRender === 'hybrid'`. The
+  3D House's bus map, which already sits beside three.js, takes the vector
+  map.
 - **Base layer factory.** `ensure()` builds the base layer through one
   function: a vector layer when `canVector()` and `ensureVector()` succeeded,
   otherwise today's `L.tileLayer('https://tile.openstreetmap.org/...')`. The
@@ -131,6 +150,8 @@ section 3.
     `static/vendor/map-style/`, built from `location` plus `apiBase` so ingress
     (`/api/hassio_ingress/<token>/`) and the board's extra path segment both
     resolve. The rewritten style is memoised per theme per page.
+  - MapLibre's own attribution control is off; Leaflet's control carries the
+    OSM credit, so it is shown once, in the same place as today.
 - **Interaction.** The vector layer is created with its own MapLibre
   interaction off; Leaflet drives pan/zoom and the plugin keeps the GL map in
   step. `interactive: false` therefore still yields a picture (Leaflet handlers
@@ -141,13 +162,37 @@ section 3.
 - Markers (`iconFor`), popups (`popupFor`), chips, `refresh`, `recenter`,
   `startPolling`/`stopPolling` and `fallbackCenter` are unchanged.
 
+### 2a. Serving the module and the glyphs
+
+- **`.mjs` MIME type.** Browsers refuse to run a module served with a
+  non-JavaScript MIME type, and Python's `mimetypes` table does not reliably
+  know `.mjs` (it varies by platform and version). `main.py` registers
+  `mimetypes.add_type('text/javascript', '.mjs')` before the `/static` mount.
+- **Glyph route.** `GET /static/vendor/map-style/glyphs/{fontstack}/{range}.pbf`
+  is registered before the `/static` mount (the same pattern as
+  `/static/mdi/{fname}`): it serves the vendored PBF when it exists and
+  otherwise a valid empty glyph set for that stack and range (a few bytes of
+  protobuf), with a long `Cache-Control`. `fontstack` must be one of the
+  vendored stacks and `range` must match `^\d+-\d+$`, or it answers 400. It is
+  classified `ANYONE` in `services/auth.py` — font outlines, the same files any
+  browser fetches before sign-in.
+
 ### 3. Theme
 
 - **Resolver** `mapTheme()` returns `'light'` or `'dark'`:
   1. `html[data-panel-theme]` when present (wall/board pages): `light` → light,
      `dark` → dark, `auto` → `prefers-color-scheme`;
   2. else `html[data-theme]` (PWA, `app.html`): `light` / `dark`;
-  3. else `prefers-color-scheme`.
+  3. else, on an HA-themed page (`html.ha-theme`), the luminance of the
+     computed `--ha-bg`: light above 0.5, dark otherwise;
+  4. else `html.dark` (every admin page carries it) → dark;
+  5. else `prefers-color-scheme`.
+
+  Consequence worth stating: /map is an admin page with `class="dark"`, so it
+  becomes a dark map. The board CSS comment in `home.html` ("the /map page is
+  allowed to be bright") justified a bright raster map there only because the
+  inverted tiles were the alternative; with a designed dark style it follows the page like
+  everything else.
 - `light` → `colorful`, `dark` → `eclipse`.
 - **Live switching.** One page-level `MutationObserver` on `<html>`'s
   `data-panel-theme` and `data-theme`, plus a `matchMedia` change listener,
