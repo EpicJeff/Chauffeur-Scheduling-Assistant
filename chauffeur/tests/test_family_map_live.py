@@ -314,6 +314,51 @@ def scenario_the_probe_is_lazy_and_asked_once(served):
         check(page.evaluate("webglAttempts") == 1, 'two maps, one probe')
 
 
+def scenario_osmf_unreachable_falls_back_to_raster(served):
+    # Review finding 1: a blocked or down vector host must not leave pins on a
+    # blank background — the raster host may still answer.
+    with served.browser() as page:
+        tiles = Tiles(page)
+        page.unroute('https://vector.openstreetmap.org/**')
+        page.route('https://vector.openstreetmap.org/**', lambda r: r.abort())
+        open_map(page, served)
+        page.wait_for_function("_fmInstance.base === 'raster'", timeout=15000)
+        page.wait_for_function("document.querySelectorAll('#family-map .leaflet-tile-loaded').length > 0")
+        check(tiles.raster, 'raster tiles requested once vectors could not load')
+        check(page.locator('#family-map .leaflet-marker-icon').count() == 2, 'pins survive')
+
+
+def scenario_theme_change_during_first_load_is_kept(served):
+    # Review finding 2: the wall applies a cached theme and corrects it when
+    # the profile lands — a flip while the first style is loading must stick.
+    with served.browser() as page:
+        Tiles(page)
+
+        def slow_style(route):
+            resp = route.fetch()
+            time.sleep(1.5)
+            route.fulfill(response=resp)
+        page.route('**/static/vendor/map-style/eclipse.json', slow_style)
+        page.add_init_script("""setTimeout(() =>
+            document.documentElement.setAttribute('data-theme', 'light'), 300);""")
+        open_map(page, served)
+        page.wait_for_function("_fmInstance.base === 'vector'")
+        page.wait_for_function(
+            "_fmInstance.baseLayer.getMaplibreMap().getStyle().name === 'versatiles-colorful'",
+            timeout=10000)
+        check(page.evaluate("_fmInstance.theme") == 'light', 'instance theme follows the late flip')
+
+
+def scenario_vector_zoom_is_bounded(served):
+    # Review finding 3: the raster layer used to cap Leaflet at 19; the vector
+    # layer sets no bound, so the map zoomed into a featureless blur.
+    with served.browser() as page:
+        Tiles(page)
+        open_map(page, served)
+        page.wait_for_function("_fmInstance.base === 'vector'")
+        check(page.evaluate("_fmInstance.map.getMaxZoom()") == 19, 'vector map caps zoom at 19')
+
+
 if __name__ == '__main__':
     served = live_app(seed)
     if served is None:
@@ -324,7 +369,10 @@ if __name__ == '__main__':
             for fn in (scenario_theme_follows_the_page_and_the_last_flip_wins,
                        scenario_context_loss_drops_to_raster_and_keeps_the_pins,
                        scenario_destroy_mid_load_and_a_second_map,
-                       scenario_board_cards_interactive_on_and_off_and_the_invert_trick):
+                       scenario_board_cards_interactive_on_and_off_and_the_invert_trick,
+                       scenario_osmf_unreachable_falls_back_to_raster,
+                       scenario_theme_change_during_first_load_is_kept,
+                       scenario_vector_zoom_is_bounded):
                 fn(served)
                 print(f'  ok  {fn.__name__}')
         for fn in (scenario_resolver_and_asset_base, scenario_raster_when_there_is_no_webgl2,

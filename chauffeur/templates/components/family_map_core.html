@@ -356,6 +356,9 @@
                         // the page around it is doing.
                         el.style.isolation = 'isolate';
                         inst.map = L.map(el, {
+                            // The raster layer used to set this; a vector
+                            // layer sets no bound and would zoom into a blur.
+                            maxZoom: 19,
                             zoomControl: opts.interactive,
                             dragging: opts.interactive,
                             scrollWheelZoom: opts.interactive,
@@ -402,6 +405,11 @@
                             _vectorMaps.add(inst);
                             watchTheme();
                             inst.setBaseClass();
+                            // The page may have changed theme while the style
+                            // was loading (the wall corrects a cached theme
+                            // when the profile lands) — the observer could
+                            // not restyle a map that did not exist yet.
+                            inst.applyTheme();
                             return;
                         } catch (e) { /* fall through to the raster map */ }
                     }
@@ -425,6 +433,16 @@
 
                 watchContext() {
                     const gl = inst.baseLayer.getMaplibreMap();
+                    // OSMF's vector host unreachable (a blocker, an outage)
+                    // while the raster host may still answer: a source error
+                    // before any tile has arrived means this map would only
+                    // ever be pins on a flat colour, so it goes raster. Once
+                    // tiles have drawn, a stray tile error is just a gap.
+                    let tilesArrived = false;
+                    gl.on('sourcedata', e => { if (e.tile) tilesArrived = true; });
+                    gl.on('error', e => {
+                        if (!tilesArrived && e && e.sourceId) inst.toRaster();
+                    });
                     gl.on('webglcontextlost', () => {
                         clearTimeout(inst.lostTimer);
                         inst.lostTimer = setTimeout(() => inst.toRaster(), CONTEXT_GRACE_MS);
