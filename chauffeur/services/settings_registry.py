@@ -642,7 +642,8 @@ ENTRIES: List[dict] = [
     _e('thread_stall_days', 'threads', 'Stalls after (days)',
        'How many days of no movement before an open thread counts as quiet '
        'and becomes a finding (default 7). A thread with a next-action date '
-       'in the past stalls immediately regardless of this.', page='threads'),
+       'in the past stalls immediately regardless of this.',
+       page='work?tab=threads', anchor='threads-settings'),
 
     # --- Negotiation (the smallest change that makes a day work) ---
     _e('negotiation_enabled', 'negotiation', 'Look for deals',
@@ -667,35 +668,35 @@ ENTRIES: List[dict] = [
     _e('programs_enabled', 'programs', 'Programs',
        'Find real plans for what people want to do, claim the time, and count '
        'what happens. Off means no asks, no re-baselining and no findings.',
-       page='programs'),
+       page='rhythms?tab=programs', anchor='programs-settings'),
     _e('programs_ask_grace_hours', 'programs', 'Ask after (hours)',
        'How long after a practice window ends before asking whether it '
        'happened (default 2). Quiet hours are always honoured on top of this.',
-       page='programs'),
+       page='rhythms?tab=programs', anchor='programs-pacing'),
     _e('programs_rebaseline_days', 'programs', 'Look back (days)',
        'How far back the check for a struggling program looks (default 21).',
-       page='programs'),
+       page='rhythms?tab=programs', anchor='programs-pacing'),
     _e('programs_rebaseline_cooldown_days', 'programs', 'Re-baseline at most every (days)',
        'The minimum gap between two timeline stretches, so a plan cannot '
-       'chatter about bending (default 14).', page='programs'),
+       'chatter about bending (default 14).', page='rhythms?tab=programs', anchor='programs-pacing'),
     _e('programs_generate_enabled', 'programs', 'Make a plan when none is found',
        'When research turns up no published program for an aim, let the app '
        'write one and label it as made by the app (default on). Off means '
        'those programs claim practice time and carry no plan at all.',
-       page='programs'),
+       page='rhythms?tab=programs', anchor='programs-settings'),
     _e('program_lessons_enabled', 'programs', 'Lesson scripts',
        'Write a short scripted lesson for each practice session the night '
        'before — the session still shows its plain steps with this off '
-       '(default on).', page='programs', anchor='lessons'),
+       '(default on).', page='rhythms?tab=programs', anchor='lessons'),
     _e('lesson_help_daily_cap', 'programs', 'Questions a day during a session',
        'How many times anybody in the house may tap Explain this inside a '
        'lesson before the app stops answering for the day (default 20). '
        'Zero switches it off. Nothing asked or answered is ever recorded.',
-       page='programs', anchor='lessons'),
+       page='rhythms?tab=programs', anchor='lessons'),
     _e('programs_research_pages', 'programs', 'Pages to read',
        'How many real pages a curation run reads before proposing a plan '
        '(default 4). One run per program, cached for its life.',
-       page='programs'),
+       page='rhythms?tab=programs', anchor='programs-pacing'),
 ]
 
 BY_KEY: Dict[str, dict] = {e['key']: e for e in ENTRIES}
@@ -739,6 +740,46 @@ def _markup_only(body: str) -> str:
     return body
 
 
+_CALL_TOKEN = None
+
+
+def _drawer_spans(body: str, tab: str = None):
+    """Where each `{% call settings_drawer(...) %}` ... `{% endcall %}` sits.
+
+    Call blocks nest (a drawer holds `settings_section` calls), so the
+    matching endcall is found by depth rather than by the first one.
+
+    `tab` narrows to the drawers that serve that page tab (a drawer names
+    its tabs, space separated, as its first argument)."""
+    import re
+    global _CALL_TOKEN
+    if _CALL_TOKEN is None:
+        _CALL_TOKEN = re.compile(r'{%-?\s*(call\b[^%]*?|endcall)\s*-?%}')
+    spans, stack = [], []
+    for m in _CALL_TOKEN.finditer(body):
+        tok = m.group(1).strip()
+        if tok == 'endcall':
+            if stack:
+                start, is_drawer = stack.pop()
+                if is_drawer:
+                    spans.append((start, m.end()))
+        else:
+            mine = 'settings_drawer(' in tok
+            if mine and tab:
+                named = re.match(r"call\s+settings_drawer\(\s*['\"]([^'\"]*)", tok)
+                mine = bool(named) and tab in named.group(1).split()
+            stack.append((m.start(), mine))
+    return spans
+
+
+def _anchor_at(body: str, anchor: str):
+    """Where an anchor is declared: a literal `id="..."`, or the section a
+    `settings_section('...')` call stamps with that id at render time."""
+    import re
+    return (re.search(r'id="%s"' % re.escape(anchor), body)
+            or re.search(r"settings_section\(\s*'%s'" % re.escape(anchor), body))
+
+
 def audit_ui(templates_dir: str = None) -> dict:
     """Which registered settings have no way to change them by hand.
 
@@ -779,11 +820,9 @@ def audit_ui(templates_dir: str = None) -> dict:
                 body = fh.read()
         except OSError:
             return ''
-        includes = re.findall(r"{%\s*include\s+'([^']+)'", body)
         body = _markup_only(body)
-        for inc in includes:
-            body += _read(inc, seen)
-        return body
+        return re.sub(r"{%-?\s*include\s+'([^']+)'[^%]*%}",
+                      lambda m: _read(m.group(1), seen), body)
 
     # `page` is the ROUTE a setting is linked to (`meals#planning`), and for
     # most destinations the template is that word plus `.html`. Not for all of
@@ -795,9 +834,10 @@ def audit_ui(templates_dir: str = None) -> dict:
                       'dashboard_v2': 'dashboard.html'}
 
     def _text(page):
-        if page not in cache:
-            cache[page] = _read(PAGE_TEMPLATES.get(page, f'{page}.html'), set())
-        return cache[page]
+        base = page.split('?')[0]
+        if base not in cache:
+            cache[base] = _read(PAGE_TEMPLATES.get(base, f'{base}.html'), set())
+        return cache[base]
 
     missing = []
     for e in ENTRIES:
@@ -805,6 +845,19 @@ def audit_ui(templates_dir: str = None) -> dict:
         if not body:
             missing.append({**e, 'why': f"no template for page '{e['page']}'"})
             continue
+        # Tab-scoped entries answer to the drawer that serves their tab; an
+        # entry with no tab on a multi-tab page (it lives on some other tab,
+        # outside any drawer) is not this rule's business.
+        tab = e['page'].partition('?tab=')[2] or None
+        spans = [] if (not tab and 'data-page-tab' in body) else _drawer_spans(body, tab)
+        if spans and e['page'].split('?')[0] != 'config':
+            if e['anchor'] == 'general':
+                missing.append({**e, 'why': f"a drawer page needs a real anchor (on '{e['page']}')"})
+                continue
+            at = _anchor_at(body, e['anchor'])
+            if at and not any(a <= at.start() < b for a, b in spans):
+                missing.append({**e, 'why': f"#{e['anchor']} sits outside the settings drawer on '{e['page']}'"})
+                continue
         # Word-boundary match so `kitchen_ovens` is not satisfied by a comment
         # mentioning `kitchen_ovens_limit`, and the camelCase form catches the
         # Alpine bindings the config page is written in.
@@ -820,8 +873,7 @@ def audit_ui(templates_dir: str = None) -> dict:
         # grepping a template proves a control EXISTS, not that anything can
         # get you to it — and the settings drawer spent a version nested inside
         # an unrelated panel, so every link landed on a hidden element.
-        if e['anchor'] != 'general' and not re.search(
-                r'id="%s"' % re.escape(e['anchor']), body):
+        if e['anchor'] != 'general' and not _anchor_at(body, e['anchor']):
             missing.append({**e,
                             'why': f"no #{e['anchor']} target on '{e['page']}'"})
     return {'unreachable': missing}

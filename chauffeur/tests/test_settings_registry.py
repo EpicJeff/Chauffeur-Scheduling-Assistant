@@ -155,6 +155,35 @@ def scenario_an_empty_search_is_the_whole_index():
           "a blank box lists everything rather than nothing")
 
 
+def scenario_a_drawer_page_keeps_its_settings_in_the_drawer():
+    """Placement rule 1, enforced: on a page that has a settings drawer,
+    every registry anchor of that page sits inside the drawer. Config is a
+    settings page and is exempt."""
+    tpl = tempfile.mkdtemp(prefix='reg_drawer_')
+    with open(os.path.join(tpl, 'demo.html'), 'w', encoding='utf-8') as fh:
+        fh.write("{% call settings_drawer('demo', 'Demo') %}"
+                 "{% call settings_section('inside', 'In') %}<input x-model=\"s.thread_stall_days\">{% endcall %}"
+                 "{% endcall %}"
+                 "<div id=\"outside\"><input x-model=\"s.gift_lead_days\"></div>")
+    spans = reg._drawer_spans(open(os.path.join(tpl, 'demo.html'), encoding='utf-8').read())
+    check(len(spans) == 1, f'one drawer, nested section call included: {spans}')
+    saved = reg.ENTRIES[:]
+    try:
+        reg.ENTRIES[:] = [
+            reg._e('thread_stall_days', 'threads', 'a', 'b', page='demo', anchor='inside'),
+            reg._e('gift_lead_days', 'meals', 'a', 'b', page='demo', anchor='outside'),
+            reg._e('days_to_show', 'daily', 'a', 'b', page='demo'),
+        ]
+        why = {e['key']: e['why'] for e in reg.audit_ui(tpl)['unreachable']}
+    finally:
+        reg.ENTRIES[:] = saved
+    check('thread_stall_days' not in why, 'an anchor inside the drawer was flagged')
+    check('outside the settings drawer' in why.get('gift_lead_days', ''),
+          'an anchor outside the drawer was not flagged')
+    check('needs a real anchor' in why.get('days_to_show', ''),
+          'a general anchor on a drawer page was not flagged')
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

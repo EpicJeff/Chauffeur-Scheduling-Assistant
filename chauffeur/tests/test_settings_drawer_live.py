@@ -126,6 +126,37 @@ def main():
                   f'the phone sheet is not an 88vh bottom sheet: {sheet}')
             _shot(page, 'threads-open-phone')
 
+            # Programs: a deep link from another tab lands on the section.
+            page.set_viewport_size({'width': 1300, 'height': 900})
+            P = '[data-settings-for~="programs"]'
+            page.goto(served.url('rhythms?tab=routines#lessons'), wait_until='networkidle')
+            page.wait_for_selector(P + '[data-open]')
+            check(_visible(page, '[data-page-tab="programs"]'), 'rhythms#lessons did not open Programs')
+            # The sheet is short enough to need no scroll at 900px, so "in view"
+            # is the claim (a taller page scrolls it to the top).
+            top = page.evaluate("() => { const r = document.getElementById('lessons').getBoundingClientRect(); return r.top >= 60 && r.bottom <= innerHeight ? r.top : -1; }")
+            check(top >= 0, f'#lessons is not in view in the drawer: {top}')
+            check(page.locator(P + ' [data-settings-chip]').count() == 3, 'Programs has no jump chips')
+            _shot(page, 'programs-open-desktop')
+
+            # Escape belongs to a global prompt open above the drawer.
+            page.evaluate("() => { window.promptConfirm('Write lessons now?', 'Test'); }")
+            page.wait_for_selector('#cc-confirm-modal:not(.hidden)')
+            page.keyboard.press('Escape')
+            page.wait_for_timeout(200)
+            check(_visible(page, P), 'Escape on a prompt closed the drawer under it')
+            if _visible(page, '#cc-confirm-modal'):
+                page.click('#cc-confirm-modal button:has-text("Cancel")')
+
+            # A switch saves, reports, sticks.
+            before = storage.get_settings()
+            page.click('#programs-settings input[type=checkbox] >> nth=0')
+            page.wait_for_selector(P + ' [data-settings-status]:has-text("Saved")')
+            check('programs_enabled' in _changed(before, storage.get_settings()) or
+                  'programs_generate_enabled' in _changed(before, storage.get_settings()),
+                  'the Programs switch did not save')
+            page.click(P + ' [aria-label="Close settings"]')
+
             # Walls: no bar, no gear, no drawer.
             for q in ('work?kiosk=true', 'work?panel=true', 'work?tabs=threads'):
                 page.goto(served.url(q), wait_until='domcontentloaded')
