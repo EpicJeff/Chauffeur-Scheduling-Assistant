@@ -184,6 +184,42 @@ def scenario_a_drawer_page_keeps_its_settings_in_the_drawer():
           'a general anchor on a drawer page was not flagged')
 
 
+def scenario_a_tabless_entry_never_hides_inside_a_drawer():
+    """On a tabbed page with drawers, an entry without `?tab=` is skipped by the
+    drawer check. So such an entry must not point INTO a drawer: it would
+    escape the very check that guards it."""
+    import re
+    base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'templates')
+    cache = {}
+
+    def read(rel, seen):
+        if rel in seen:
+            return ''
+        seen.add(rel)
+        try:
+            with open(os.path.join(base, rel), encoding='utf-8') as fh:
+                body = fh.read()
+        except OSError:
+            return ''
+        return re.sub(r"{%-?\s*include\s+'([^']+)'[^%]*%}", lambda m: read(m.group(1), seen), body)
+
+    bad = []
+    for e in reg.ENTRIES:
+        page = e['page'].split('?')[0]
+        if '?tab=' in e['page'] or page == 'config':
+            continue
+        if page not in cache:
+            cache[page] = read(reg.PAGE_TEMPLATES.get(page, f'{page}.html')
+                               if hasattr(reg, 'PAGE_TEMPLATES') else f'{page}.html', set())
+        body = cache[page]
+        if 'data-page-tab' not in body or 'settings_drawer(' not in body:
+            continue
+        at = reg._anchor_at(body, e['anchor'])
+        if at and any(a <= at.start() < b for a, b in reg._drawer_spans(body)):
+            bad.append(f"{e['key']} -> {e['page']}#{e['anchor']}")
+    check(not bad, f'entries inside a drawer must carry ?tab=: {bad}')
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

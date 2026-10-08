@@ -150,11 +150,10 @@ def main():
 
             # A switch saves, reports, sticks.
             before = storage.get_settings()
-            page.click('#programs-settings input[type=checkbox] >> nth=0')
+            page.click(P + ' input[x-model="s.programs_enabled"]')
             page.wait_for_selector(P + ' [data-settings-status]:has-text("Saved")')
-            check('programs_enabled' in _changed(before, storage.get_settings()) or
-                  'programs_generate_enabled' in _changed(before, storage.get_settings()),
-                  'the Programs switch did not save')
+            check('programs_enabled' in _changed(before, storage.get_settings()),
+                  'the Programs switch did not save programs_enabled')
             page.click(P + ' [aria-label="Close settings"]')
 
             # Walls: no bar, no gear, no drawer.

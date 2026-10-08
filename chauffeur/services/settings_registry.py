@@ -349,7 +349,7 @@ ENTRIES: List[dict] = [
     _e('weekly_digest_time', 'digests', 'Weekly digest time', 'What time it goes out.'),
     _e('proactive_watchers_enabled', 'digests', 'Proactive nudges',
        'Let the app raise unassigned events, stale proposals and approaching occasions on its own.',
-       page='mind', anchor='heads-ups'),
+       page='work?tab=mind', anchor='heads-ups'),
     _e('weather_entity', 'digests', 'Weather entity',
        'The Home Assistant entity the digests read the forecast from.'),
 
@@ -594,29 +594,29 @@ ENTRIES: List[dict] = [
     # --- The Mind ---
     _e('mind_enabled', 'mind', 'The Mind',
        'Argyle watches whole-family state and keeps a small set of noticed '
-       'insights. Off means completely off — no reads, no LLM calls.', page='mind'),
+       'insights. Off means completely off — no reads, no LLM calls.', page='work?tab=mind', anchor='mind-general'),
     _e('mind_wake_start', 'mind', 'Wakes at',
-       'The Mind only thinks between these times (default 06:00).', page='mind'),
+       'The Mind only thinks between these times (default 06:00).', page='work?tab=mind', anchor='mind-general'),
     _e('mind_wake_end', 'mind', 'Sleeps at',
-       'Thinking stops here (default 22:00). Equal times = always awake.', page='mind'),
+       'Thinking stops here (default 22:00). Equal times = always awake.', page='work?tab=mind', anchor='mind-general'),
     _e('mind_think_cadence_min', 'mind', 'Thinks every (minutes)',
-       'How often the deep reflection runs while awake (default 60).', page='mind'),
+       'How often the deep reflection runs while awake (default 60).', page='work?tab=mind', anchor='mind-general'),
     _e('mind_sentinel_cadence_s', 'mind', 'Listens every (seconds)',
-       'How often changed state is checked for noticings (default 120).', page='mind'),
+       'How often changed state is checked for noticings (default 120).', page='work?tab=mind', anchor='mind-general'),
     _e('mind_max_insights', 'mind', 'Insights kept',
        'The most insights shown at once; the Mind curates down to this (default 7).',
-       page='mind'),
+       page='work?tab=mind', anchor='mind-general'),
     _e('mind_cap_think', 'mind', 'Daily think cap',
-       'Hard ceiling on deep-think LLM calls per day (default 20).', page='mind'),
+       'Hard ceiling on deep-think LLM calls per day (default 20).', page='work?tab=mind', anchor='mind-general'),
     _e('mind_cap_sentinel', 'mind', 'Daily listen cap',
-       'Hard ceiling on sentinel LLM calls per day (default 400).', page='mind'),
+       'Hard ceiling on sentinel LLM calls per day (default 400).', page='work?tab=mind', anchor='mind-general'),
     _e('mind_cap_promote', 'mind', 'Daily promote cap',
-       'Hard ceiling on urgency-check LLM calls per day (default 50).', page='mind'),
+       'Hard ceiling on urgency-check LLM calls per day (default 50).', page='work?tab=mind', anchor='mind-general'),
     _e('mind_cap_handle', 'mind', 'Daily handle cap',
-       'Hard ceiling on Handle-it proposal runs per day (default 30).', page='mind'),
+       'Hard ceiling on Handle-it proposal runs per day (default 30).', page='work?tab=mind', anchor='mind-general'),
     _e('mind_direct_categories', 'mind', 'Graduated categories',
        'Insight categories approved for direct delivery (phase B). Empty until '
-       'you graduate one from the Mind page.', page='mind'),
+       'you graduate one from the Mind page.', page='work?tab=mind', anchor='mind-general'),
 
     # --- Missions (a multi-step agent loop on the paid pro model) ---
     _e('missions_enabled', 'missions', 'Missions',
@@ -648,21 +648,21 @@ ENTRIES: List[dict] = [
     # --- Negotiation (the smallest change that makes a day work) ---
     _e('negotiation_enabled', 'negotiation', 'Look for deals',
        'When a day cannot be covered, work out what would fix it before saying '
-       'so. Off means findings go back to reporting the conflict.', page='mind'),
+       'so. Off means findings go back to reporting the conflict.', page='work?tab=mind', anchor='negotiation'),
     _e('negotiation_sweep_budget', 'negotiation', 'Background tries',
        'How many re-solves one background sweep may spend looking for a deal '
        '(default 8). The sweep runs unattended, so this is kept small.',
-       page='mind'),
+       page='work?tab=mind', anchor='negotiation'),
     _e('negotiation_deep_budget', 'negotiation', 'On-demand tries',
        'How many re-solves a Find a way tap may spend (default 40). Somebody '
        'is waiting on purpose, so it goes further down the same queue.',
-       page='mind'),
+       page='work?tab=mind', anchor='negotiation'),
     _e('negotiation_shift_mins', 'negotiation', 'How far a thing may move',
        'The minute steps a deal may ask an event to move, smallest first '
-       '(default 15 then 30).', page='mind'),
+       '(default 15 then 30).', page='work?tab=mind', anchor='negotiation'),
     _e('negotiation_solve_seconds', 'negotiation', 'Seconds per try',
        'Time limit on each re-solve (default 2). The daily solve gets five; a '
-       'negotiation runs many in one question.', page='mind'),
+       'negotiation runs many in one question.', page='work?tab=mind', anchor='negotiation'),
 
     # --- Programs (an ambition with a plan attached) ---
     _e('programs_enabled', 'programs', 'Programs',
@@ -776,7 +776,7 @@ def _anchor_at(body: str, anchor: str):
     """Where an anchor is declared: a literal `id="..."`, or the section a
     `settings_section('...')` call stamps with that id at render time."""
     import re
-    return (re.search(r'id="%s"' % re.escape(anchor), body)
+    return (re.search(r'(?<![\w-])id="%s"' % re.escape(anchor), body)
             or re.search(r"settings_section\(\s*'%s'" % re.escape(anchor), body))
 
 

@@ -1,3 +1,4 @@
+{% from 'components/settings_drawer.html' import settings_drawer, settings_section, settings_off with context %}
 {# The whole mind page body + its Alpine island. Included by
    the standalone /mind wrapper AND by the combined /work page —
    chrome (nav, control_center, hearth) belongs to the HOST page,
@@ -7,12 +8,15 @@
             <h2 class="panel-page-title">The Mind</h2>
             <p class="text-sm text-gray-500 mb-5">
                 Argyle watches whole-family state and keeps a small set of noticed
-                insights. This page holds the dials underneath it, the full lane
+                insights. This page holds the full lane
                 (including anything held back from kids), its history, and which
                 categories have earned direct delivery.
             </p>
 
-            <div class="space-y-4">
+            {{ settings_off('The Mind is off — nothing is being noticed.', 'mind', 'mind-general', 'loaded && !s.mind_enabled') }}
+            {% call settings_drawer('mind', 'Mind', sections=[('mind-general', 'The Mind'), ('negotiation', 'Negotiation'), ('heads-ups', 'Heads-ups')]) %}
+            {% call settings_section('mind-general', 'The Mind') %}
+            <div class="bg-gray-900 rounded-xl p-4 space-y-4">
                 <label class="flex items-center justify-between bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
                     <span class="text-sm font-semibold text-gray-200">The Mind is on</span>
                     <input type="checkbox" x-model="s.mind_enabled" @change="save()"
@@ -103,8 +107,10 @@
                         show here once you graduate one from this page.
                     </p>
                 </div>
-
-                <h3 class="text-sm font-semibold text-gray-300 pt-2">Negotiation</h3>
+            </div>
+            {% endcall %}
+            {% call settings_section('negotiation', 'Negotiation') %}
+            <div class="bg-gray-900 rounded-xl p-4 space-y-4">
                 <p class="text-[11px] text-gray-500 -mt-2 px-1">
                     When a day cannot be covered, this works out what would fix it —
                     who could shift an event, take a drive, or skip something —
@@ -153,21 +159,13 @@
                     first, the larger step is always double), and the time
                     limit on each re-solve.
                 </p>
-
-                {# Proactive heads-ups (proactive_watchers_enabled), moved from
-                   Config → General → Digests in v2.499.257: the watchers are
-                   Argyle noticing stuck things, which is the Mind's business.
-                   A setting, so never drawn on a panel, kiosk or filtered
-                   embed of /work or /mind (the errand_rules guard in
-                   errands.html is the precedent). Toggle skin: "Look for
-                   deals" above. It saves only its own key. #}
-                {% set _rq = request.query_params %}
-                {% if _rq.get('panel') != 'true' and _rq.get('kiosk') != 'true' and _rq.get('tabs') is none %}
-                <h3 id="heads-ups" class="text-sm font-semibold text-gray-300 pt-2">Heads-ups</h3>
+            </div>
+            {% endcall %}
+            {% call settings_section('heads-ups', 'Heads-ups') %}
+            <div class="bg-gray-900 rounded-xl p-4 space-y-3">
                 <label class="flex items-center justify-between bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
                     <span class="text-sm font-semibold text-gray-200">Proactive heads-ups</span>
                     <span class="flex items-center gap-2">
-                        <span class="text-xs text-emerald-400 font-bold" x-show="watchersSaved" x-transition.opacity>Saved ✓</span>
                         <input type="checkbox" id="proactiveWatchersEnabled" x-model="proactiveWatchersEnabled"
                             @change="saveWatchers()" class="h-5 w-5 accent-pink-400">
                     </span>
@@ -179,15 +177,16 @@
                     reward requests, past-due errands, and a weekly prep-kit idea check. Each item is
                     mentioned exactly once, never between 9pm and 8am.
                 </p>
-                {% endif %}
             </div>
+            {% endcall %}
+            {% endcall %}
 
             <!-- Admin-only sections: /api/mind/admin 403s a non-parent, and the
                  settings form above must keep working regardless. -->
             <p class="text-xs text-gray-500 italic bg-gray-800/60 border border-gray-700 rounded-xl px-4 py-3 mt-6"
                 x-show="adminChecked && !adminAllowed" x-cloak>
                 Only a parent can see the insight lane, its history, and
-                the graduation controls. The dials above still work for you.
+                the graduation controls. The Mind's settings still work for you.
             </p>
 
             <template x-if="adminChecked && adminAllowed">
@@ -378,6 +377,7 @@
 
                 // Admin-only payload (403s a non-parent viewer; the settings
                 // form above must keep working regardless — see loadAdmin()).
+                loaded: false,
                 adminChecked: false,
                 adminAllowed: false,
                 insights: [],
@@ -396,6 +396,7 @@
                             if (d[k] !== undefined && d[k] !== null) this.s[k] = d[k];
                         }
                         this.proactiveWatchersEnabled = d.proactive_watchers_enabled !== false;
+                        if (r.ok) this.loaded = true;
                     } catch (e) { /* defaults already in place */ }
                 },
 
@@ -403,8 +404,8 @@
                 // out of `s` on purpose: it saves alone, a single-key body,
                 // like graduate() below.
                 proactiveWatchersEnabled: true,
-                watchersSaved: false,
                 async saveWatchers() {
+                    window.chfSettingsSaving();
                     try {
                         const r = await fetch(this.apiBase + 'api/settings', {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -412,12 +413,13 @@
                         });
                         if (!r.ok) {
                             const err = await r.json().catch(() => ({}));
-                            return showGlobalAlert(err.detail || 'Could not save that just now.');
+                            const msg = err.detail || 'Could not save that just now.';
+                            if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
+                            return;
                         }
-                        this.watchersSaved = true;
-                        setTimeout(() => { this.watchersSaved = false; }, 1600);
+                        window.chfSettingsSaved(true);
                     } catch (e) {
-                        showGlobalAlert('Could not save that just now.');
+                        if (!window.chfSettingsSaved(false, 'Could not save that just now.')) showGlobalAlert('Could not save that just now.');
                     }
                 },
 
@@ -590,8 +592,9 @@
                 // Sends only the keys this page owns — /api/settings merges
                 // with exclude_unset, so no other surface's settings are at risk.
                 async save() {
+                    window.chfSettingsSaving();
                     try {
-                        await fetch(this.apiBase + 'api/settings', {
+                        const r = await fetch(this.apiBase + 'api/settings', {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
                                 mind_enabled: !!this.s.mind_enabled,
@@ -611,8 +614,15 @@
                                 negotiation_solve_seconds: Math.max(0.5, parseFloat(this.s.negotiation_solve_seconds) || 2)
                             })
                         });
+                        if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            const msg = err.detail || 'Could not save that just now.';
+                            if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
+                            return;
+                        }
+                        window.chfSettingsSaved(true);
                     } catch (e) {
-                        showGlobalAlert('Could not save that just now.');
+                        if (!window.chfSettingsSaved(false, 'Could not save that just now.')) showGlobalAlert('Could not save that just now.');
                     }
                 }
             }
