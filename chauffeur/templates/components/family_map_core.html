@@ -19,12 +19,18 @@
         every member's HA state to build its map tile; making the tile fetch
         the same states again would double the panel's cost to Home Assistant
         to draw one picture.
-     2. **A map that is not a control.** On the board every tile is a door —
-        the whole card is an <a> to the page it summarises — and a Leaflet map
-        swallows the drag and the tap that door depends on. `interactive:
-        false` turns the handlers off, and the tile puts `pointer-events: none`
-        over the top, so the map is a picture of where everyone is and touching
-        it opens the real one.
+     2. **A map that may or may not be a control.** Every board map card has
+        its own `interactive` setting. Off, the card is a door — the whole
+        card is an <a> to /map, so `interactive: false` turns Leaflet's
+        handlers off and the tile puts `pointer-events: none` over the top.
+        On, it is a full map with popups. home.html rebuilds the instance
+        when the setting flips, because Leaflet bakes its handlers in at
+        construction.
+
+     The base map is vector when the browser can draw it (MapLibre GL inside
+     Leaflet via maplibre-gl-leaflet, OSMF Shortbread tiles, a light or dark
+     VersaTiles style that follows the page) and today's raster OSM tiles
+     when it cannot. Spec: docs/superpowers/specs/2026-10-08-vector-family-map-design.md.
 -->
 <style>
     /* Leaflet popups default to white chrome; follow the HA theme when active. */
@@ -42,6 +48,13 @@
         padding: 0 3px;
         background: rgb(255 255 255 / 0.6);
     }
+
+    /* A dark vector map would otherwise carry Leaflet's white credit chip. */
+    .fm-dark .leaflet-control-attribution {
+        background: rgb(0 0 0 / 0.55);
+        color: #d4d4d4;
+    }
+    .fm-dark .leaflet-control-attribution a { color: #93c5fd; }
 </style>
 <script>
     window.FamilyMap = window.FamilyMap || (function () {
@@ -83,6 +96,152 @@
                 document.head.appendChild(js);
             });
             return window._fmLeafletLoading;
+        }
+
+        // ---- The vector base map ------------------------------------------
+        const OSMF_TILEJSON = 'https://vector.openstreetmap.org/shortbread_v1/tilejson.json';
+        const OSM_TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+        const OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+        const STYLE_FOR = { light: 'colorful', dark: 'eclipse' };
+        // How long a lost WebGL context gets to come back before this map
+        // gives up on vectors. Browsers cap live contexts per page and take
+        // the oldest; HA saw those never return.
+        const CONTEXT_GRACE_MS = 3000;
+
+        // Absolute, because MapLibre resolves glyph and sprite URLs inside its
+        // worker, where a relative path has no page to be relative to. Built
+        // from the page's own location plus the climb (`apiBase`), so ingress
+        // and the board's extra segment resolve the same way the scripts do.
+        // `href` exists for the test; callers leave it out.
+        function assetBase(prefix, href) {
+            return new URL((prefix === undefined ? apiBase : prefix)
+                           + 'static/vendor/map-style/', href || location.href).href;
+        }
+
+        let _canVector = null;
+        // Asked only when a map is first built — never at include time, so a
+        // page that never opens a map makes no WebGL attempt at all.
+        function canVector() {
+            if (_canVector !== null) return _canVector;
+            try {
+                const gl = document.createElement('canvas').getContext('webgl2');
+                _canVector = !!gl;
+                const lose = gl && gl.getExtension('WEBGL_lose_context');
+                if (lose) lose.loseContext();   // the probe holds no context
+            } catch (e) { _canVector = false; }
+            return _canVector;
+        }
+
+        // MapLibre v6 is ESM only, the Leaflet bridge is its UMD build (its
+        // ESM build imports `leaflet` by bare name, and our Leaflet is a
+        // global script), so: import the module, publish it as the global
+        // the bridge reads, then load the bridge. Once per page.
+        function ensureVector() {
+            if (window._fmVectorLoading) return window._fmVectorLoading;
+            window._fmVectorLoading = (async () => {
+                const css = document.createElement('link');
+                css.rel = 'stylesheet';
+                css.href = apiBase + 'static/vendor/maplibre/maplibre-gl.css';
+                document.head.appendChild(css);
+                const mod = await import(new URL(apiBase + 'static/vendor/maplibre/maplibre-gl.mjs',
+                                                 location.href).href);
+                window.maplibregl = mod;
+                await new Promise((resolve, reject) => {
+                    const js = document.createElement('script');
+                    js.src = apiBase + 'static/vendor/maplibre/leaflet-maplibre-gl.js';
+                    js.onload = resolve;
+                    js.onerror = reject;
+                    document.head.appendChild(js);
+                });
+                if (!L.maplibreGL) throw new Error('maplibre-gl-leaflet did not register');
+            })();
+            // A failed load stays failed for this page: every map goes raster.
+            window._fmVectorLoading.catch(() => {});
+            return window._fmVectorLoading;
+        }
+
+        function luminance(css) {
+            const s = String(css || '').trim();
+            let r, g, b, m;
+            if ((m = s.match(/^#([0-9a-f]{3})$/i))) {
+                [r, g, b] = m[1].split('').map(c => parseInt(c + c, 16));
+            } else if ((m = s.match(/^#([0-9a-f]{6})$/i))) {
+                [r, g, b] = [0, 2, 4].map(i => parseInt(m[1].substr(i, 2), 16));
+            } else if ((m = s.match(/^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/i))) {
+                [r, g, b] = [m[1], m[2], m[3]].map(Number);
+            } else {
+                return null;
+            }
+            return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+        }
+
+        function prefersLight() {
+            try { return window.matchMedia('(prefers-color-scheme: light)').matches; }
+            catch (e) { return false; }
+        }
+
+        // Which style the page wants. Order matters: the wall's own setting,
+        // then the PWA's, then an HA theme's background, then the admin
+        // pages' permanent `dark` class, then the device.
+        function mapTheme() {
+            const root = document.documentElement;
+            const panel = root.getAttribute('data-panel-theme');
+            if (panel === 'light' || panel === 'dark') return panel;
+            if (panel === 'auto') return prefersLight() ? 'light' : 'dark';
+            const pwa = root.getAttribute('data-theme');
+            if (pwa === 'light' || pwa === 'dark') return pwa;
+            if (root.classList.contains('ha-theme')) {
+                const lum = luminance(getComputedStyle(root).getPropertyValue('--ha-bg'));
+                if (lum !== null) return lum > 0.5 ? 'light' : 'dark';
+            }
+            if (root.classList.contains('dark')) return 'dark';
+            return prefersLight() ? 'light' : 'dark';
+        }
+
+        // The vendored VersaTiles style is stored as published. Here it is
+        // pointed at OSMF's tiles (through TileJSON, as OSMF asks, never a
+        // hard-coded tile URL) and at our own copies of its fonts and icons.
+        function rewriteStyle(style, base) {
+            const s = JSON.parse(JSON.stringify(style));
+            Object.keys(s.sources || {}).forEach(k => {
+                if (s.sources[k].type === 'vector') {
+                    s.sources[k] = { type: 'vector', url: OSMF_TILEJSON };
+                }
+            });
+            s.glyphs = base + 'glyphs/{fontstack}/{range}.pbf';
+            const sprites = Array.isArray(s.sprite) ? s.sprite
+                : (s.sprite ? [{ id: 'default', url: s.sprite }] : []);
+            s.sprite = sprites.map(sp => ({ id: sp.id, url: base + 'sprites/' + sp.url.split('/').pop() }));
+            return s;
+        }
+
+        const _styles = {};
+        function styleFor(theme) {
+            const name = STYLE_FOR[theme];
+            if (!_styles[name]) {
+                _styles[name] = fetch(apiBase + `static/vendor/map-style/${name}.json`)
+                    .then(r => { if (!r.ok) throw new Error(`style ${name}: ${r.status}`); return r.json(); })
+                    .then(s => rewriteStyle(s, assetBase()));
+                // A failed fetch is not remembered; the next map may retry.
+                _styles[name].catch(() => { delete _styles[name]; });
+            }
+            return _styles[name];
+        }
+
+        // Every live vector map, so one observer can restyle them all.
+        const _vectorMaps = new Set();
+        let _watching = false;
+        function watchTheme() {
+            if (_watching) return;
+            _watching = true;
+            const onChange = () => _vectorMaps.forEach(i => i.applyTheme());
+            new MutationObserver(onChange).observe(document.documentElement, {
+                attributes: true,
+                attributeFilter: ['data-panel-theme', 'data-theme', 'class', 'style']
+            });
+            try {
+                window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', onChange);
+            } catch (e) { /* old browser: theme follows on the next map build */ }
         }
 
         function iconFor(loc, size) {
@@ -168,9 +327,15 @@
 
             const inst = {
                 el: el, opts: opts, map: null, markers: {}, didFit: false, timer: null,
+                base: null, theme: null, baseLayer: null, lostTimer: null, gen: 0,
 
                 async ensure() {
+                    // A destroy() that lands while Leaflet is still loading
+                    // (Alpine replacing the tile) must not be undone by this
+                    // call resuming and building a map anyway.
+                    const gen = inst.gen;
                     await ensureLeaflet();
+                    if (gen !== inst.gen) return null;
                     // A map whose container was thrown away (Alpine re-rendering
                     // a tile, a PWA tab rebuilt) is dead weight holding a
                     // detached node — rebuild rather than draw into nothing.
@@ -200,15 +365,87 @@
                             touchZoom: opts.interactive,
                             tap: opts.interactive
                         }).setView([39.5, -98.35], 4);
-                        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                            maxZoom: 19,
-                            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                        }).addTo(inst.map);
+                        await inst.addBase();
                     }
                     // The container may have just become visible (a PWA tab
                     // switch, a tile that was off screen).
                     setTimeout(() => { if (inst.map) inst.map.invalidateSize(); }, 50);
                     return inst.map;
+                },
+
+                setBaseClass() {
+                    el.classList.toggle('fm-vector', inst.base === 'vector');
+                    el.classList.toggle('fm-raster', inst.base === 'raster');
+                    el.classList.toggle('fm-dark', inst.base === 'vector' && inst.theme === 'dark');
+                },
+
+                async addBase() {
+                    const map = inst.map;
+                    if (canVector()) {
+                        try {
+                            await ensureVector();
+                            const theme = mapTheme();
+                            const style = await styleFor(theme);
+                            // Torn down (or rebuilt) while we waited: draw nothing.
+                            if (inst.map !== map) return;
+                            inst.theme = theme;
+                            // The bridge always turns MapLibre's own credit
+                            // off and hands Leaflet's control whatever
+                            // `customAttribution` says, so the OSM credit
+                            // shows once, where it always has.
+                            inst.baseLayer = L.maplibreGL({
+                                style: style,
+                                attributionControl: { customAttribution: OSM_ATTRIBUTION }
+                            }).addTo(map);
+                            inst.base = 'vector';
+                            inst.watchContext();
+                            _vectorMaps.add(inst);
+                            watchTheme();
+                            inst.setBaseClass();
+                            return;
+                        } catch (e) { /* fall through to the raster map */ }
+                    }
+                    if (inst.map === map) inst.toRaster();
+                },
+
+                // Once raster, raster for this instance's life: no flapping.
+                toRaster() {
+                    if (!inst.map || inst.base === 'raster') return;
+                    clearTimeout(inst.lostTimer);
+                    _vectorMaps.delete(inst);
+                    if (inst.baseLayer) {
+                        try { inst.map.removeLayer(inst.baseLayer); } catch (e) { }
+                    }
+                    inst.baseLayer = L.tileLayer(OSM_TILES, {
+                        maxZoom: 19, attribution: OSM_ATTRIBUTION
+                    }).addTo(inst.map);
+                    inst.base = 'raster';
+                    inst.setBaseClass();
+                },
+
+                watchContext() {
+                    const gl = inst.baseLayer.getMaplibreMap();
+                    gl.on('webglcontextlost', () => {
+                        clearTimeout(inst.lostTimer);
+                        inst.lostTimer = setTimeout(() => inst.toRaster(), CONTEXT_GRACE_MS);
+                    });
+                    gl.on('webglcontextrestored', () => clearTimeout(inst.lostTimer));
+                },
+
+                async applyTheme() {
+                    if (inst.base !== 'vector') return;
+                    const theme = mapTheme();
+                    if (theme === inst.theme) return;
+                    inst.theme = theme;
+                    inst.setBaseClass();
+                    try {
+                        const style = await styleFor(theme);
+                        // Only the LAST flip gets to draw: a slower earlier
+                        // fetch landing second must not win.
+                        if (inst.base === 'vector' && inst.theme === theme) {
+                            inst.baseLayer.getMaplibreMap().setStyle(style);
+                        }
+                    } catch (e) { /* keep the style it has */ }
                 },
 
                 // `locations` is optional: hand it an array (the board already
@@ -310,7 +547,14 @@
 
                 destroy() {
                     inst.stopPolling();
+                    inst.gen++;
+                    clearTimeout(inst.lostTimer);
+                    _vectorMaps.delete(inst);
                     if (inst.map) { inst.map.remove(); inst.map = null; }
+                    inst.base = null;
+                    inst.baseLayer = null;
+                    inst.theme = null;
+                    el.classList.remove('fm-vector', 'fm-raster', 'fm-dark');
                     inst.markers = {};
                     inst.didFit = false;
                 }
@@ -318,6 +562,8 @@
             return inst;
         }
 
-        return { create: create, fetchLocations: fetchLocations, ensureLeaflet: ensureLeaflet };
+        return { create: create, fetchLocations: fetchLocations, ensureLeaflet: ensureLeaflet,
+                 mapTheme: mapTheme, rewriteStyle: rewriteStyle, assetBase: assetBase,
+                 canVector: canVector };
     })();
 </script>
