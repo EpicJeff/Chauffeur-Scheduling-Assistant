@@ -63,6 +63,7 @@
          here could never draw its pairing code. -->
     <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
 </head>
+{% from 'components/settings_drawer.html' import settings_drawer, settings_section, settings_off with context %}
 <body class="flex flex-col">
     {% include 'nav.html' %}
     {% include 'components/trip_gallery.html' %}
@@ -98,7 +99,7 @@
                 </svg>
             </div>
             <h2 class="text-xl font-bold text-white mb-2">No Trips Found</h2>
-            <p class="text-gray-400 text-center max-w-md">We couldn't find any events marked as trips. Add one of your trip hashtags (set below) to an all-day event in Google Calendar, or create one with New Trip.</p>
+            <p class="text-gray-400 text-center max-w-md">We couldn't find any events marked as trips. Add one of your trip hashtags to an all-day event in Google Calendar, or create one with New Trip.</p>
         </div>
 
         <!-- The gallery is components/trip_gallery.html now, and this page is one
@@ -109,29 +110,26 @@
         </div>
         <div id="trips-grid" class="hidden"></div>
 
-        {# Trip hashtags (trip_hashtags), moved from Config → General in
-           v2.499.257: the words that make an all-day event a trip belong
-           beside the trips they find. A setting, so a browser thing only —
-           the Trips board on a panel is served from home.html, and a kiosk
-           or filtered embed of this page never gets the markup (the
-           errand_rules guard in errands.html is the precedent). The chips
-           and input are Config's, unchanged; it saves only its own key. #}
-        {% set _rq = request.query_params %}
-        {% if _rq.get('panel') != 'true' and _rq.get('kiosk') != 'true' and _rq.get('tabs') is none %}
-        <section id="trip-hashtags" x-data="tripHashtagsPanel()" x-init="init()"
-            class="glass-panel rounded-2xl p-6 mt-8">
-            <div class="flex items-center gap-3 mb-2">
-                <h2 class="text-lg font-bold text-white">Trip hashtags</h2>
-                <span class="text-xs text-emerald-400 font-bold" x-show="saved" x-transition.opacity>Saved ✓</span>
-            </div>
-            <div class="flex gap-2 mb-2 max-w-lg">
+
+    </main>
+
+    {# Trip hashtags (trip_hashtags): the words that make an all-day event a
+       trip. A setting, so it lives in the Trips drawer, placed outside main and
+       its .glass-panel (which would trap the drawer's fixed positioning); the
+       macro keeps it off kiosks, filtered embeds and panels. It saves only its
+       own key. #}
+    {% call settings_drawer('trips', 'Trips') %}
+    <section id="trip-hashtags" data-settings-section x-data="tripHashtagsPanel()" x-init="init()" class="scroll-mt-28">
+        <div class="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-2">Trip hashtags</div>
+        <div class="bg-gray-900 rounded-xl p-4">
+            <div class="flex gap-2 mb-2">
                 <input type="text" id="newTripHashtagInput" x-model="newTripHashtagInput" @keydown.enter="addTripHashtag()"
                     placeholder="e.g. #trip"
-                    class="flex-1 bg-gray-800 border border-gray-600 rounded p-3 text-white font-mono focus:outline-none focus:border-blue-500">
+                    class="flex-1 min-w-0 bg-gray-800 border border-gray-600 rounded p-3 text-white font-mono focus:outline-none focus:border-blue-500">
                 <button @click="addTripHashtag()" data-add-trip-hashtag
                     class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 rounded transition-colors flex items-center shadow-md">Add</button>
             </div>
-            <div class="flex flex-wrap gap-2 max-w-lg mb-2">
+            <div class="flex flex-wrap gap-2 mb-2">
                 <template x-for="(tag, index) in tripHashtags" :key="index">
                     <div data-trip-hashtag
                         class="flex items-center bg-gray-700 border border-gray-600 px-3 py-1.5 rounded-full text-sm font-bold shadow-sm text-blue-200">
@@ -150,14 +148,15 @@
             <p class="text-gray-500 text-sm mt-1">If an all-day event contains any of these hashtags, its
                 location will be used as a temporary Home Location for the event's duration, and the
                 event shows here as a trip.</p>
-        </section>
+        </div>
+    </section>
+    {% endcall %}
         <script>
             function tripHashtagsPanel() {
                 return {
                     apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
                     tripHashtags: [],
                     newTripHashtagInput: '',
-                    saved: false,
                     async init() {
                         try {
                             const r = await fetch(`${this.apiBase}api/settings`);
@@ -180,26 +179,25 @@
                     },
                     // Only this key: the server merges.
                     async save() {
+                        window.chfSettingsSaving();
                         try {
                             const r = await fetch(`${this.apiBase}api/settings`, {
                                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ trip_hashtags: this.tripHashtags.slice() }) });
                             if (!r.ok) {
                                 const d = await r.json().catch(() => ({}));
-                                return showGlobalAlert(d.detail || "Couldn't save that.");
+                                const msg = d.detail || 'Could not save that just now.';
+                                if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
+                                return;
                             }
-                            this.saved = true;
-                            setTimeout(() => { this.saved = false; }, 1600);
+                            window.chfSettingsSaved(true);
                         } catch (e) {
-                            showGlobalAlert("Couldn't reach Chauffeur.");
+                            if (!window.chfSettingsSaved(false, 'Could not save that just now.')) showGlobalAlert('Could not save that just now.');
                         }
                     },
                 };
             }
         </script>
-        {% endif %}
-
-    </main>
 
     <!-- Create Trip Modal -->
     <div id="create-trip-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">

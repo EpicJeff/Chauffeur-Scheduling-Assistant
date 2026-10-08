@@ -16,6 +16,7 @@
     <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
 </head>
 
+{% from 'components/settings_drawer.html' import settings_drawer, settings_section, settings_off with context %}
 <body class="bg-gray-900 text-white h-screen flex flex-col overflow-hidden">
     {% include 'nav.html' %}
 
@@ -30,9 +31,10 @@
     </header>
 
     <!-- Announce into a room: Argyle speaks on that room's satellite or
-         media player. anchor: announce (settings_registry: announce_targets
-         — the per-room speaker pin lives behind the ⚙️). -->
-    <div id="announce" class="hidden px-6 lg:px-10 pb-3 shrink-0">
+         media player. The per-room speaker pins and Argyle's voice
+         (settings_registry: announce_targets, anchor: announce) live in the
+         Map drawer, below. -->
+    <div id="announce-strip" class="hidden px-6 lg:px-10 pb-3 shrink-0">
         <div class="rounded-2xl border p-3 flex flex-wrap gap-2 items-center"
              style="border-color: var(--panel-line)">
             <select id="announce-room" class="bg-gray-800 rounded-lg px-2 py-2 text-sm"></select>
@@ -43,21 +45,6 @@
                 class="flex-1 min-w-40 bg-gray-800 rounded-lg px-3 py-2 text-sm">
             <button id="announce-send"
                 class="bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 text-sm font-bold">Say it</button>
-            <button id="announce-pin-toggle" title="Choose this room's speaker"
-                class="rounded-lg px-2 py-2 text-sm border hover:bg-gray-800"
-                style="border-color: var(--panel-line)">⚙️</button>
-            <div id="announce-pin" class="hidden w-full flex items-center gap-2 text-sm">
-                <span style="color: var(--panel-dim, #9ca3af)">Speaker for this room:</span>
-                <select id="announce-pin-select" class="bg-gray-800 rounded-lg px-2 py-1 text-sm"></select>
-            </div>
-            <!-- Argyle's voice, everywhere at once. Not a Chauffeur setting:
-                 the HA pipeline is the single source of truth every mouth
-                 reads, and this dropdown is a remote control that writes to
-                 it (POST /api/announce/voice). -->
-            <div id="announce-voice-row" class="hidden w-full flex items-center gap-2 text-sm">
-                <span style="color: var(--panel-dim, #9ca3af)">Argyle's voice:</span>
-                <select id="announce-voice-select" class="bg-gray-800 rounded-lg px-2 py-1 text-sm"></select>
-            </div>
             <div id="announce-status" class="hidden w-full text-sm" style="color: var(--panel-dim, #9ca3af)"></div>
         </div>
     </div>
@@ -76,6 +63,33 @@
          Assistant, which already controls Music Assistant natively — the PWA
          Music tab remains the family's music surface. -->
 
+    {% call settings_drawer('map', 'Map') %}
+    {% call settings_section('announce', 'Announcements') %}
+    <div class="bg-gray-900 rounded-xl p-4 space-y-4">
+        <!-- Argyle's voice, everywhere at once. Not a Chauffeur setting: the
+             HA pipeline is the single source of truth every mouth reads, and
+             this dropdown is a remote control that writes to it
+             (POST /api/announce/voice). -->
+        <label class="block">
+            <span class="text-xs font-semibold text-gray-200">Argyle's voice</span>
+            <select id="announce-voice-select" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm"></select>
+        </label>
+        <div>
+            <div class="text-xs font-semibold text-gray-200">Speaker for each room</div>
+            <p class="text-[11px] text-gray-500 mt-0.5">Unpinned rooms use the voice satellite, then whichever player is already on.</p>
+            <div id="announce-pins" class="mt-2 space-y-2"></div>
+            <p id="announce-pins-empty" class="hidden text-xs text-gray-500 italic">No rooms with a speaker yet.</p>
+        </div>
+        <template id="announce-pin-row">
+            <label class="flex items-center justify-between gap-3">
+                <span class="announce-pin-room text-sm text-gray-300"></span>
+                <select class="announce-pin-select min-w-0 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm"></select>
+            </label>
+        </template>
+    </div>
+    {% endcall %}
+    {% endcall %}
+
     <script>
         // Room announcements — the by-hand twin of the announce_to_room agent
         // tool. Sender is always Argyle here: this page lives on shared
@@ -92,6 +106,7 @@
                     this.rooms = rooms || [];
                     this.members = members || [];
                 } catch (e) { this.rooms = []; }
+                this.buildPins();
                 if (!this.rooms.length) return;   // no speakers: no button
                 this.el('announce-toggle').classList.remove('hidden');
                 this.el('announce-room').innerHTML = this.rooms.map(r =>
@@ -99,64 +114,86 @@
                 this.el('announce-for').innerHTML = '<option value="">No DM copy</option>' +
                     this.members.map(m => `<option value="${m.id}">For ${m.name}</option>`).join('');
                 this.el('announce-toggle').onclick = () => {
-                    this.el('announce').classList.toggle('hidden');
+                    this.el('announce-strip').classList.toggle('hidden');
                     this.el('announce-text').focus();
                 };
-                this.el('announce-room').onchange = () => this.fillPin();
-                this.el('announce-pin-toggle').onclick = () => {
-                    this.el('announce-pin').classList.toggle('hidden');
-                    this.el('announce-voice-row').classList.toggle('hidden');
-                    this.loadVoices();     // lazy: a websocket round-trip HA-side
-                };
-                this.el('announce-pin-select').onchange = () => this.savePin();
                 this.el('announce-send').onclick = () => this.send();
                 this.el('announce-text').addEventListener('keydown', e => {
                     if (e.key === 'Enter') this.send();
                 });
-                this.fillPin();
             },
             room() { return this.rooms.find(r => r.id === this.el('announce-room').value); },
-            fillPin() {
-                const r = this.room();
-                if (!r) return;
-                this.el('announce-pin-select').innerHTML =
-                    '<option value="">Automatic</option>' + (r.candidates || []).map(c =>
-                        `<option value="${c.entity_id}" ${c.entity_id === r.pinned ? 'selected' : ''}>${c.name}</option>`).join('');
+            // One speaker pin per room, in the Map drawer. Built once the rooms
+            // are known; the drawer's markup is server-rendered, so these ids
+            // exist by DOMContentLoaded.
+            buildPins() {
+                const host = this.el('announce-pins'), tpl = this.el('announce-pin-row');
+                if (!host || !tpl) return;
+                host.innerHTML = '';
+                this.rooms.forEach(r => {
+                    const row = tpl.content.firstElementChild.cloneNode(true);
+                    row.querySelector('.announce-pin-room').textContent = r.name;
+                    const sel = row.querySelector('.announce-pin-select');
+                    sel.dataset.room = r.id;
+                    sel.setAttribute('aria-label', 'Speaker for ' + r.name);
+                    sel.innerHTML = '<option value="">Automatic</option>' + (r.candidates || []).map(c =>
+                        `<option value="${c.entity_id}">${c.name}</option>`).join('');
+                    sel.value = r.pinned || '';
+                    sel.onchange = () => this.savePin(r, sel.value);
+                    host.appendChild(row);
+                });
+                this.el('announce-pins-empty').classList.toggle('hidden', this.rooms.length > 0);
             },
             voicesLoaded: false,
             async loadVoices() {
                 if (this.voicesLoaded) return;
                 this.voicesLoaded = true;
+                const sel = this.el('announce-voice-select');
+                const none = () => { sel.innerHTML = '<option value="">No voices to choose from</option>'; sel.disabled = true; };
                 try {
                     const v = await fetch(apiBase + 'api/announce/voices').then(r => r.json());
-                    if (!(v.voices || []).length) {      // nothing to offer: no empty dropdown
-                        this.el('announce-voice-row').classList.add('hidden');
-                        return;
-                    }
-                    this.el('announce-voice-select').innerHTML = v.voices.map(o =>
+                    if (!(v.voices || []).length) { none(); return; }   // nothing to offer
+                    sel.innerHTML = v.voices.map(o =>
                         `<option value="${o.voice_id}" ${o.voice_id === v.current ? 'selected' : ''}>${o.name || o.voice_id}</option>`).join('');
-                    this.el('announce-voice-select').onchange = async () => {
-                        const res = await fetch(apiBase + 'api/announce/voice', {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ voice: this.el('announce-voice-select').value }),
-                        }).then(x => x.json());
-                        this.status(res.message || 'Voice set.');
+                    sel.onchange = async () => {
+                        window.chfSettingsSaving();
+                        try {
+                            const res = await fetch(apiBase + 'api/announce/voice', {
+                                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ voice: sel.value }),
+                            });
+                            const data = await res.json().catch(() => ({}));
+                            if (!res.ok) { window.chfSettingsSaved(false, data.detail || data.message || 'Could not save that just now.'); return; }
+                            window.chfSettingsSaved(true);
+                            this.status(data.message || 'Voice set.');
+                        } catch (e) { window.chfSettingsSaved(false, 'Could not save that just now.'); }
                     };
-                } catch (e) { this.el('announce-voice-row').classList.add('hidden'); }
+                } catch (e) { none(); }
             },
-            async savePin() {
-                const r = this.room();
-                if (!r) return;
-                r.pinned = this.el('announce-pin-select').value || null;
+            async savePin(r, value) {
+                const prev = r.pinned;
+                r.pinned = value || null;
                 // The whole map travels: a partial-save of one room's pin
                 // would drop every other room's.
                 const announceTargets = {};
                 this.rooms.forEach(x => { if (x.pinned) announceTargets[x.id] = x.pinned; });
-                await fetch(apiBase + 'api/settings', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ announce_targets: announceTargets }),
-                });
-                this.status(r.pinned ? 'Pinned.' : 'Back to automatic.');
+                window.chfSettingsSaving();
+                try {
+                    const res = await fetch(apiBase + 'api/settings', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ announce_targets: announceTargets }),
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        r.pinned = prev;
+                        const sel = document.querySelector('.announce-pin-select[data-room="' + CSS.escape(r.id) + '"]');
+                        if (sel) sel.value = prev || '';
+                        window.chfSettingsSaved(false, err.detail || 'Could not save that just now.');
+                        return;
+                    }
+                    window.chfSettingsSaved(true);
+                    this.status(r.pinned ? 'Pinned.' : 'Back to automatic.');
+                } catch (e) { window.chfSettingsSaved(false, 'Could not save that just now.'); }
             },
             async send() {
                 const r = this.room(), text = this.el('announce-text').value.trim();
@@ -180,6 +217,12 @@
                 s.classList.remove('hidden');
             },
         };
+
+        // The voice is a websocket round-trip HA-side: ask once, when the Map
+        // drawer first opens.
+        window.addEventListener('chf-settings-opened', e => {
+            if (e.detail && e.detail.tab === 'map') Announce.loadVoices();
+        });
 
         document.addEventListener('DOMContentLoaded', () => {
             initFamilyMap();
