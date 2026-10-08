@@ -1285,6 +1285,42 @@ def ha_frontend_translation_file(path: str):
                     headers={'Cache-Control': 'max-age=31536000, immutable'})
 
 
+# The vector family map's module is `.mjs`, and a browser refuses to run a
+# module served as anything but JavaScript. Python's mimetypes table does not
+# reliably know the extension (it depends on the platform's mime.types), so
+# StaticFiles would guess text/plain on exactly the hosts that lack it.
+import mimetypes as _mimetypes
+_mimetypes.add_type('text/javascript', '.mjs')
+
+_MAP_FONTSTACKS = ('noto_sans_regular', 'noto_sans_bold')  # tools/vendor_assets.py MAP_FONTSTACKS
+
+
+def _empty_glyphs(fontstack: str, glyph_range: str) -> bytes:
+    """A valid glyph PBF holding no glyphs: `glyphs { stacks { name, range } }`.
+    Both strings are short (validated), so every length fits one varint byte."""
+    name, rng = fontstack.encode(), glyph_range.encode()
+    inner = b'\x0a' + bytes([len(name)]) + name + b'\x12' + bytes([len(rng)]) + rng
+    return b'\x0a' + bytes([len(inner)]) + inner
+
+
+@app.get("/static/vendor/map-style/glyphs/{fontstack}/{glyph_range}.pbf")
+def map_glyphs(fontstack: str, glyph_range: str):
+    """The vector map's font glyphs. We vendor only the ranges a US family's
+    map needs (tools/vendor_assets.py); MapLibre treats a failed range as a
+    failed TILE, so any other range gets a valid empty set and the label just
+    draws without those characters."""
+    if fontstack not in _MAP_FONTSTACKS or not re.match(r'^\d{1,5}-\d{1,5}$', glyph_range):
+        raise HTTPException(status_code=400, detail="Path not allowed")
+    path = os.path.join(STATIC_DIR, 'vendor', 'map-style', 'glyphs', fontstack, f'{glyph_range}.pbf')
+    if os.path.isfile(path):
+        with open(path, 'rb') as f:
+            content = f.read()
+    else:
+        content = _empty_glyphs(fontstack, glyph_range)
+    return Response(content=content, media_type='application/x-protobuf',
+                    headers={'Cache-Control': 'max-age=604800'})
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 

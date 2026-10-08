@@ -75,6 +75,9 @@ RULES = [
     # page-relative by the borrowed frontend chunks. Strings, served to any
     # browser by HA itself before sign-in.
     ('GET', '/static/translations/{path:path}', ANYONE, None),
+    # The vector family map's font glyphs (main.map_glyphs): outlines of
+    # Noto Sans, the same files any browser fetches before sign-in.
+    ('GET', '/static/vendor/map-style/glyphs/{fontstack}/{glyph_range}.pbf', ANYONE, None),
     (ANY, '/sw.js', ANYONE, None),
     (ANY, '/api/vapid_public_key', ANYONE, None),
     # Sign-in itself. `/auth` mints the token, so it cannot require one; it is
