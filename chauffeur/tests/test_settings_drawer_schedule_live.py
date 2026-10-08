@@ -105,6 +105,30 @@ def main():
             page.wait_for_selector(O + '[data-open]')
             _shot(page, 'occasions-open-phone')
 
+            page.set_viewport_size({'width': 1300, 'height': 900})
+            E = '[data-settings-for~="errands"]'
+            for start in ('errands', 'errands?tab=tasks'):
+                page.goto(served.url(start), wait_until='networkidle')
+                _shot(page, 'errands-closed-' + start.replace('?tab=', '-'))
+                page.click('#page-settings-gear')
+                page.wait_for_selector(E + '[data-open]')
+                page.wait_for_selector('#errand-rules [x-model="newErrandRule.title"]', state='visible')
+                check(_visible(page, '#errand-rules'), f'{start}: the rules are not in the drawer')
+                _shot(page, 'errands-open-' + start.replace('?tab=', '-'))
+                page.click(E + ' [aria-label="Close settings"]')
+            page.goto(served.url('errands?tab=rules'), wait_until='networkidle')
+            page.wait_for_selector(E + '[data-open]')
+            check('tab=rules' not in page.url, f'the retired tab survived: {page.url}')
+            check(page.locator('#page-tabs [data-tab-key="rules"]').count() == 0, 'the Rules tab is still on the bar')
+            page.set_viewport_size({'width': 390, 'height': 844})
+            page.goto(served.url('errands'), wait_until='networkidle')
+            page.click('#page-settings-gear')
+            page.wait_for_selector(E + '[data-open]')
+            page.wait_for_selector('#errand-rules [x-model="newErrandRule.title"]', state='visible')
+            _shot(page, 'errands-open-phone')
+            check(page.evaluate("() => document.documentElement.scrollWidth <= innerWidth + 1"),
+                  'the phone page scrolls sideways')
+
             errors = [e for e in handle.errors if 'Failed to load resource' not in e]
             check(not errors, f'page errors: {errors[:3]}')
     finally:

@@ -1736,6 +1736,8 @@ def moment_popup(request: Request):
 
 @app.get("/errands")
 def errands(request: Request):
+    if request.query_params.get('tab') == 'rules':
+        return RedirectResponse('errands?settings=open')
     return _page_or_board(request, "errands", "errands.html")
 
 @app.get("/occasions")

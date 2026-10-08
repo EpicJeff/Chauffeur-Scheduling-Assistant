@@ -3,11 +3,12 @@
    Priorities tab to the Errands page's Rules tab (v2.499.255) — the rules
    sit beside the errands they govern. The markup is Config's, unchanged; it
    has its own Alpine scope so the Errands page's list logic is untouched,
-   and it loads only when its tab is opened: the rules are parent-only, and
-   the Errands page is a family page. #}
-<div x-data="errandRulesPanel()" x-init="init()" id="errand-rules">
-    <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700">
-        <h2 class="text-3xl font-bold text-indigo-300 mb-2">Errand Rules</h2>
+   and it loads only when the Errands drawer first opens (v2.499.290: the Rules
+   tab became the drawer): the rules are parent-only, and the Errands page is
+   a family page. #}
+<div x-data="errandRulesPanel()" x-init="init()" id="errand-rules" class="scroll-mt-28">
+    <div class="p-4 md:p-6">
+        <h2 class="text-2xl font-bold text-indigo-300 mb-2">Errand Rules</h2>
         <p class="text-sm text-gray-500 mb-6">Who may, must or must not run an errand, the hours it can
             happen in, and which errands are done together. Rules for the family's drives live on
             <a href="dashboard_v2#rules" class="text-blue-400 hover:text-blue-300 font-semibold">Drives → Rules</a>.</p>
@@ -254,10 +255,30 @@
             editErrandRuleId: null,
 
             init() {
-                const open = () => { if (!this.loaded) { this.loaded = true; this.load(); } };
-                if (new URLSearchParams(window.location.search).get('tab') === 'rules'
-                        || !document.getElementById('page-tabs')) open();
-                window.addEventListener('chf-page-tab', ev => { if (ev.detail === 'rules') open(); });
+                window.addEventListener('chf-settings-opened', e => {
+                    const t = e.detail && e.detail.tab;
+                    if ((t === 'errands' || t === 'tasks') && !this.loaded) { this.loaded = true; this.load(); }
+                });
+            },
+            // The save report pattern: the drawer's header mark when it is
+            // open, the global alert only when no drawer is.
+            _fail(msg) { if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg); },
+            async _send(url, method, body) {
+                window.chfSettingsSaving();
+                try {
+                    const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' },
+                                                 body: body === undefined ? undefined : JSON.stringify(body) });
+                    if (!r.ok) {
+                        const err = await r.json().catch(() => ({}));
+                        this._fail(err.detail || 'Could not save that just now.');
+                        return false;
+                    }
+                    window.chfSettingsSaved(true);
+                    return true;
+                } catch (e) {
+                    this._fail('Could not save that just now.');
+                    return false;
+                }
             },
             async load() {
                 await this.loadErrandRules();
@@ -345,27 +366,19 @@
                 }
             },
             async toggleErrandRuleState(rule) {
-                try {
-                    rule.is_enabled = !rule.is_enabled;
-                    await fetch(`${this.apiBase}api/errand_rules/${rule.doc_id}`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(rule)
-                    });
-                    await this.loadErrandRules();
-                } catch (e) {
-                    console.error("Failed to toggle errand rule state", e);
-                }
+                rule.is_enabled = !rule.is_enabled;
+                await this._send(`${this.apiBase}api/errand_rules/${rule.doc_id}`, 'PUT', rule);
+                await this.loadErrandRules();
             },
             async deleteErrandRule(docId) {
                 if (!await promptConfirm('Delete this errand rule?',
                                          'This cannot be undone.', 'Delete')) return;
-                await fetch(`${this.apiBase}api/errand_rules/${docId}`, { method: 'DELETE' });
+                await this._send(`${this.apiBase}api/errand_rules/${docId}`, 'DELETE');
                 await this.loadErrandRules();
             },
             async submitErrandRule() {
-                if (!this.newErrandRule.title) return showGlobalAlert('Title is required');
-                if (this.newErrandRule.constraint_type === 'grouping' && this.newErrandRule.filter_sets.length < 2) return showGlobalAlert('You must specify at least two filter sets to group errands');
+                if (!this.newErrandRule.title) return this._fail('Title is required');
+                if (this.newErrandRule.constraint_type === 'grouping' && this.newErrandRule.filter_sets.length < 2) return this._fail('You must specify at least two filter sets to group errands');
                 const payload = {
                     title: this.newErrandRule.title,
                     constraint_type: this.newErrandRule.constraint_type,
@@ -386,25 +399,12 @@
                     is_enabled: true
                 };
                 
-                try {
-                    if (this.editErrandRuleId) {
-                        await fetch(`${this.apiBase}api/errand_rules/${this.editErrandRuleId}`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload)
-                        });
-                    } else {
-                        await fetch(`${this.apiBase}api/errand_rules`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload)
-                        });
-                    }
-                    this.cancelEditErrandRule();
-                    await this.loadErrandRules();
-                } catch (e) {
-                    console.error("Failed to save errand rule", e);
-                }
+                const ok = this.editErrandRuleId
+                    ? await this._send(`${this.apiBase}api/errand_rules/${this.editErrandRuleId}`, 'PUT', payload)
+                    : await this._send(`${this.apiBase}api/errand_rules`, 'POST', payload);
+                if (!ok) return;
+                this.cancelEditErrandRule();
+                await this.loadErrandRules();
             },
         };
     }

@@ -107,6 +107,10 @@ const dom = new JSDOM(html, {
         json: () => Promise.resolve(key ? routes[key] : []) });
     };
     w.showGlobalAlert = () => {};
+    // static/settings_drawer.js is stripped with every other src script; the
+    // Errands drawer (settings-drawer arc) needs its component to exist.
+    w.chfSettingsDrawer = () => ({ drawerOpen: false, drawerState: null, drawerOpenFor() {},
+      drawerClose() {}, drawerStatus() {}, drawerEscape() {}, drawerJump() {}, drawerStatusText() { return ''; } });
     w.promptConfirm = () => Promise.resolve(false);
     w.matchMedia = () => ({ matches: false, addEventListener() {} });
     w.EventSource = function () { return { addEventListener() {}, close() {} }; };

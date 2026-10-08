@@ -1,3 +1,4 @@
+{% from 'components/settings_drawer.html' import settings_drawer, settings_section with context %}
 {% import 'components/errand_lists.html' as errand_lists %}
 <!DOCTYPE html>
 <html lang="en" class="dark">
@@ -126,16 +127,13 @@
         </div>
         </div>
 
-        {# Errand rules (v2.499.255), moved from Config's Rules & Priorities
-           tab to sit beside the errands they govern. A browser tab only: a
-           panel or kiosk sees every [data-page-tab] block at once, and the
-           rules are parent administration with no business on a wall. #}
-        {% set _qp = request.query_params %}
-        {% if _qp.get('panel') != 'true' and _qp.get('kiosk') != 'true' and _qp.get('tabs') is none %}
-        <div data-page-tab="rules" class="px-8 pb-8 min-h-0 overflow-y-auto">
-            {% include 'components/errand_rules.html' %}
-        </div>
-        {% endif %}
+        {# Errand rules: the Errands drawer (settings-drawer arc). Outside every
+           [data-page-tab] block so a hidden tab never hides it; the gear
+           opens it from the Errands or the Tasks tab. The macro draws nothing
+           for a panel, kiosk or filtered embed. #}
+        {% call settings_drawer('errands tasks', 'Errands') %}
+        {% include 'components/errand_rules.html' %}
+        {% endcall %}
     </div>
 
     <!-- Edit Modal (Hidden by default) -->

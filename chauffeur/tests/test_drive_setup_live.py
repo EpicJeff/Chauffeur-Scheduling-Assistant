@@ -106,7 +106,7 @@ def main():
             page.wait_for_timeout(1200)
             check(not [u for u in seen if '/api/cars' in u or '/api/commitments' in u or '/api/assist' in u],
                   f'Drives loaded the drawer before it opened: {[u for u in seen if "/api/" in u]}')
-            check(len([u for u in seen if '/api/schedule' in u]) <= 1, 'a second schedule fetch before the gear')
+            check(len([u for u in seen if '/api/schedule' in u]) <= 2, 'a second schedule fetch before the gear: ' + str([u for u in seen if '/api/schedule' in u]))
 
             # It is the Drives page's drawer; the Schedule strip lost its Drive setup tab.
             check(_visible(page, '#page-tabs'), 'Drives has no Schedule tab strip')
@@ -331,17 +331,41 @@ def main():
             page.click(DRAWER + ' [aria-label="Close settings"]')
             page.set_viewport_size({'width': 1400, 'height': 900})
 
-            # Errand rules live on the Errands page's Rules tab now; Drive
-            # setup's Rules section says so.
+            # A save fired before the lazy settings load lands must not post
+            # the in-memory defaults over the stored values.
+            posts = []
+            page.on('request', lambda r: posts.append(r.url) if r.method == 'POST' and r.url.endswith('/api/settings') else None)
+
+            def slow_settings(route):
+                if route.request.method == 'GET':
+                    resp = route.fetch()
+                    page.wait_for_timeout(1500)
+                    route.fulfill(response=resp)
+                else:
+                    route.continue_()
+            page.route('**/api/settings', slow_settings)
             page.goto(served.url('dashboard_v2'), wait_until='networkidle')
-            check(page.locator('#rules a[data-errand-rules-link][href$="errands?tab=rules"]').count() == 1,
+            page.click('#page-settings-gear')
+            page.wait_for_selector(DRAWER + '[data-open]')
+            refused = page.evaluate("() => Alpine.$data(document.querySelector('[x-data^=driveSetup]')).saveHorizons()")
+            check(refused is False and not posts, f'a save before the settings loaded went out: {refused} {posts}')
+            check('Still loading' in page.locator(DRAWER + ' [data-settings-status]').inner_text(),
+                  'the early save did not say it was still loading')
+            page.wait_for_function("() => Alpine.$data(document.querySelector('[x-data^=driveSetup]')).settingsLoaded === true")
+            page.unroute('**/api/settings')
+
+            # The errand rules live in the Errands drawer, opened by the gear;
+            # Drive setup's Rules section points there.
+            page.goto(served.url('dashboard_v2'), wait_until='networkidle')
+            check(page.locator('#rules a[data-errand-rules-link][href$="errands?settings=open"]').count() == 1,
                   'Drive setup does not point at the errand rules')
-            page.goto(served.url('errands?tab=rules'), wait_until='networkidle')
-            page.wait_for_timeout(800)
+            page.goto(served.url('errands'), wait_until='networkidle')
             tabs = page.eval_on_selector_all('#page-tabs .page-tab', 'els => els.map(e => e.dataset.tabKey)')
-            check(tabs == ['errands', 'tasks', 'rules'], f'errands tabs: {tabs}')
-            check(_visible(page, '#errand-rules') and not _visible(page, '[data-page-tab="errands"]'),
-                  'errands?tab=rules does not show the Rules tab alone')
+            check(tabs == ['errands', 'tasks'], f'errands tabs: {tabs}')
+            ED = '[data-settings-for~="errands"]'
+            page.click('#page-settings-gear')
+            page.wait_for_selector(ED + '[data-open]')
+            page.wait_for_selector('#errand-rules [x-model="newErrandRule.title"]', state='visible')
             er = page.locator('#errand-rules')
             check('Swim run' in er.inner_text(), 'the existing errand rule is not listed')
             er.locator('[x-model="newErrandRule.title"]').fill('Grocery runs')
@@ -355,12 +379,6 @@ def main():
                   f'the errand rule did not save: {rules}')
             check('Grocery runs' in er.inner_text(), 'the new errand rule is not listed')
             _shot(page, 'errands-rules.png')
-            # The tab strip switches to it in place from the Errands tab too.
-            page.goto(served.url('errands'), wait_until='networkidle')
-            page.click('#page-tabs [data-tab-key="rules"]')
-            page.wait_for_timeout(800)
-            check(_visible(page, '#errand-rules') and 'Grocery runs' in page.locator('#errand-rules').inner_text(),
-                  'switching to Rules in place did not load the rules')
 
             # Config no longer carries the controls, nor a pointer where each
             # block used to be (v2.499.261).

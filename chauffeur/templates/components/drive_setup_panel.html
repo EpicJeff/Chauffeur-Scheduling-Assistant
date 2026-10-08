@@ -68,7 +68,7 @@
                     <p class="text-sm text-gray-500 -mt-2 mb-6">
                         Routing rules say who drives what; priority rules say which events matter most when
                         not everything can be covered. Rules for errands live with the errands, on
-                        <a href="errands?tab=rules" class="text-blue-400 hover:text-blue-300 font-semibold" data-errand-rules-link>Errands → Rules</a>.
+                        <a href="errands?settings=open" class="text-blue-400 hover:text-blue-300 font-semibold" data-errand-rules-link>Errands → Rules</a>.
                     </p>
 
                     <div class="flex space-x-4 mb-6 border-b border-gray-700 pb-2">
@@ -798,6 +798,7 @@
         function driveSetup() {
             return {
                 apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
+                settingsLoaded: false,
                 rulesSubTab: 'routing',
                 saving: false,
 
@@ -911,6 +912,7 @@
                         const res = await fetch(`${this.apiBase}api/settings`);
                         if (!res.ok) return;
                         const data = await res.json();
+                        this.settingsLoaded = true;
                         this.enableStandardRules = data.enable_standard_rules !== false;
                         this.enableAiRules = data.enable_ai_rules !== false;
                         this.enableStandardPriorityRules = data.enable_standard_priority_rules !== false;
@@ -935,6 +937,16 @@
                 },
                 async postSettings(payload) {
                     window.chfSettingsSaving();
+                    // The island loads lazily on the first open, so until
+                    // loadSettings() lands every field holds a DEFAULT, not
+                    // the stored value; posting one would overwrite the real
+                    // setting with it. Refuse instead (one guard in the one
+                    // shared poster, rather than disabling a dozen inputs).
+                    if (!this.settingsLoaded) {
+                        const msg = 'Still loading — try again in a moment.';
+                        if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
+                        return false;
+                    }
                     try {
                         const res = await fetch(`${this.apiBase}api/settings`, {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1326,7 +1338,7 @@
                     this.nearbyStations = [];
                     // Only the station: the server merges, so the thresholds a
                     // half-typed field holds are not saved behind your back.
-                    await this.postSettings({ car_fuel_station: (this.carFuelStation || '').trim() });
+                    if (!await this.postSettings({ car_fuel_station: (this.carFuelStation || '').trim() })) return;
                     showGlobalAlert(`Home gas station set: ${st.name}`);
                 },
                 async loadCommitments() {
