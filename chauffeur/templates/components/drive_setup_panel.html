@@ -1,75 +1,26 @@
-<!DOCTYPE html>
-<html lang="en" class="dark">
+{# Drive setup, folded into the Drives drawer (settings-drawer arc).
 
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Drive setup</title>
-    <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
-    {% include 'ha_theme.html' %}
-    <script defer src="{{ 'static/vendor/alpine-collapse.min.js'|ver }}"></script>
-    <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
-    <style>
-        [x-cloak] { display: none !important; }
-        body { background-color: #111827; color: #e2e8f0; font-family: 'Inter', sans-serif; }
-    </style>
-    <!-- Mapbox GL: station-picker map (Car alerts). No map load is billed
-         until the picker actually instantiates a map. -->
-    <link href="{{ 'static/vendor/mapbox-gl.css'|ver }}" rel="stylesheet">
-    <script src="{{ 'static/vendor/mapbox-gl.js'|ver }}"></script>
-    <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
-</head>
+   Everything that decides how drives get assigned: routing and priority rules,
+   cars, protected time, outside hands, and the solver (horizons, behaviour,
+   traffic, the evening digest). It began as its own page, /drive_setup
+   (v2.499.253); the Drives page (dashboard.html) now includes this inside its
+   settings drawer and /drive_setup forwards.
 
-{# Everything that decides how drives get assigned, in one parent place
-   (v2.499.253). It used to be spread across Config: the Rules & Priorities
-   tab, the solver switches and the planning horizons on General, routing and
-   traffic policy beside the Mapbox quotas, and the parents' tomorrow digest.
-   A tab of the Schedule group (nav.html PAGE_GROUPS), beside the Drives list
-   these settings shape. The cars, protected time and outside hands joined
-   it from Config → People in v2.499.254.
-
-   The markup is Config's, moved rather than redrawn: the same cards, inputs
-   and wording. The page saves ONLY its own keys — POST /api/settings merges —
-   so it can never clobber a setting it does not show, and Config no longer
-   sends any of these.
-
-   The Alpine root sits on <body>, as on Config, because these controls came
-   from there and the sign-in gate (admin_gate) nests inside it the same way. #}
-<body class="bg-gray-900 text-white h-screen flex flex-col overflow-hidden" x-data="driveSetup()" x-init="init()">
-{% include 'components/admin_gate.html' %}
-    {% include 'nav.html' %}
-
-    <div class="flex-1 overflow-y-auto bg-gray-900/50">
-    <div class="panel-page max-w-5xl mx-auto p-6 lg:p-10 w-full" x-cloak>
-
-        <header class="mb-6">
-            <h2 class="panel-page-title">Drive setup</h2>
-            <p class="text-gray-400 text-sm">How the solver hands out drives: the rules you have written,
-                the cars it can use, the time it must leave alone, the people outside the house who
-                drive for you, how far ahead it plans, how it balances the load and prices a drive,
-                and the evening look at tomorrow. Parents only.</p>
-        </header>
-
-        {# The section switcher: Config's own Rules sub-tab row (config.html,
-           `rulesSubTab`), one row up. Sections are x-show, so every anchor
-           is in the DOM and openAnchor() can find the section it lives in. #}
-        <div class="flex space-x-4 mb-6 border-b border-gray-700 pb-2 overflow-x-auto" id="drive-sections">
-            <template x-for="s in sections" :key="s.key">
-                <button @click="setSection(s.key)" :data-section-tab="s.key"
-                    :class="section === s.key ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-200'"
-                    class="pb-2 font-bold px-4 text-xl whitespace-nowrap" x-text="s.label"></button>
-            </template>
-        </div>
+   ONE island, driveSetup(), unchanged: the markup and script are the page's
+   own, moved rather than redrawn. The sections are stacked (the drawer's jump
+   chips replace the old section switcher); each is a top-level section here.
+   Each save sends ONLY its own keys. #}
+<div x-data="driveSetup()" x-init="init()" class="flex flex-col gap-6">
 
         <!-- Rules: routing and priority rules (moved from Config → Rules &
              Priorities). Errand rules went to the Errands page. -->
-        <section id="rules" data-drive-section="rules" x-show="section === 'rules'" class="space-y-10">
-                    <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700">
-                        <div class="flex items-center justify-between mb-6">
-                            <h2 class="text-3xl font-bold text-indigo-300">Scheduling Rules & Priorities</h2>
-                            <div class="flex gap-4">
+        <section id="rules" data-drive-section="rules" data-settings-section class="scroll-mt-28 space-y-10">
+                    <div class="bg-gray-900 p-4 rounded-xl border border-gray-700">
+                        <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+                            <h2 class="text-xl font-bold text-indigo-300">Scheduling Rules & Priorities</h2>
+                            <div class="flex flex-wrap gap-2">
                                 <button @click="analyzeHabits()" :disabled="!!analyzingHabits"
-                                    class="bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800 disabled:opacity-50 text-white font-bold px-6 py-2 rounded-lg transition-colors flex items-center shadow-lg">
+                                    class="bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800 disabled:opacity-50 text-white font-bold px-4 py-2 whitespace-nowrap rounded-lg transition-colors flex items-center shadow-lg">
                                     <svg x-show="!analyzingHabits" class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
                                     </svg>
@@ -80,14 +31,14 @@
                                     <span x-text="analyzingHabits ? 'Analyzing Overrides...' : 'Analyze My Habits'"></span>
                                 </button>
                                 <button @click="showDebugLogs = !showDebugLogs" x-show="debugLogs.length > 0" x-cloak
-                                    class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-4 py-2 rounded-lg transition-colors flex items-center shadow-lg">
+                                    class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-4 py-2 whitespace-nowrap rounded-lg transition-colors flex items-center shadow-lg">
                                     <svg class="w-5 h-5 mr-2 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M4 18h16a2 2 0 002-2V6a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
                                     </svg>
                                     Logs
                                 </button>
                                 <button @click="startNewRule()"
-                                    class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-2 rounded-lg transition-colors flex items-center shadow-lg">
+                                    class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 whitespace-nowrap rounded-lg transition-colors flex items-center shadow-lg">
                                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                             d="M12 4v16m8-8H4"></path>
@@ -131,9 +82,9 @@
 
         <!-- Cars (moved from Config → People). The fleet limits who can take
              which drive, so it lives with the rest of what shapes the solve. -->
-        <section id="cars" data-drive-section="cars" x-show="section === 'cars'"
-            class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
-            <h2 class="text-3xl font-bold mb-2 text-teal-300">Cars</h2>
+        <section id="cars" data-settings-section data-drive-section="cars"
+            class="scroll-mt-28 bg-gray-900 p-4 rounded-xl border border-gray-700">
+            <h2 class="text-xl font-bold mb-2 text-teal-300">Cars</h2>
             <p class="text-gray-400 text-sm mb-4">The household fleet. Cars limit who can take which
                 events: passenger seats, who's allowed behind the wheel, and car-seat restrictions. The
                 solver assigns a car to every drive and never double-books one; two drivers can reuse a
@@ -386,10 +337,9 @@
                     </div>
                 </div>
             </div>
-            <div id="car-alerts" class="mt-6 pt-4 border-t border-gray-700" x-show="cars.length">
+            <div id="car-alerts" class="scroll-mt-28 mt-6 pt-4 border-t border-gray-700" x-show="cars.length">
                 <div class="flex items-center justify-between mb-2">
                     <h3 class="text-sm font-bold text-gray-300">Car alerts</h3>
-                    <span class="text-xs text-emerald-400 font-bold" x-show="saved === 'alerts'" x-transition.opacity>Saved ✓</span>
                 </div>
                 <div class="flex flex-wrap items-end gap-4">
                     <div>
@@ -459,9 +409,9 @@
              An adult's life used to exist here only as an obstacle —
              a calendar event whose whole job was making you
              unavailable. This is time that is FOR something. -->
-        <section id="protected-time" data-drive-section="protected" x-show="section === 'protected'"
-            class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
-            <h2 class="text-3xl font-bold mb-2 text-emerald-300">Protected time</h2>
+        <section id="protected-time" data-settings-section data-drive-section="protected"
+            class="scroll-mt-28 bg-gray-900 p-4 rounded-xl border border-gray-700">
+            <h2 class="text-xl font-bold mb-2 text-emerald-300">Protected time</h2>
             <p class="text-gray-400 text-sm mb-4">A run club, therapy, choir, a standing coffee —
                 a piece of somebody's own life the solver <b>defends</b> instead of filling. Drives
                 stop landing in the window, an override that steals it gets called out before the
@@ -535,9 +485,9 @@
              NOT members — no login, no PIN, no headcount, no wall
              board. The `helper` role is the other thing entirely, an
              external person who DOES hold the app. -->
-        <section id="outside-hands" data-drive-section="hands" x-show="section === 'hands'"
-            class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
-            <h2 class="text-3xl font-bold mb-2 text-teal-300">Outside hands</h2>
+        <section id="outside-hands" data-settings-section data-drive-section="hands"
+            class="scroll-mt-28 bg-gray-900 p-4 rounded-xl border border-gray-700">
+            <h2 class="text-xl font-bold mb-2 text-teal-300">Outside hands</h2>
             <p class="text-gray-400 text-sm mb-4">People outside this house who do work for it —
                 the carpool parent, the neighbour who comes to do the dishes. They have no login
                 and are never counted as family; they exist so the app can be told
@@ -660,9 +610,9 @@
         <!-- Solver & horizons: how far ahead, how the load is spread, how a
              drive is priced, and the parents' evening digest. Each block was
              a piece of Config's General tab; each saves only its own keys. -->
-        <section id="solver" data-drive-section="solver" x-show="section === 'solver'"
-            class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
-            <h2 class="text-3xl font-bold mb-2 text-indigo-300">Solver &amp; horizons</h2>
+        <section id="solver" data-settings-section data-drive-section="solver"
+            class="scroll-mt-28 bg-gray-900 p-4 rounded-xl border border-gray-700">
+            <h2 class="text-xl font-bold mb-2 text-indigo-300">Solver &amp; horizons</h2>
             <p class="text-gray-400 text-sm mb-2">What the solver looks at, how it decides, and what the
                 parents hear about it the evening before.</p>
 
@@ -670,10 +620,9 @@
                  to Solve"). Days to solve had no hand path at all until
                  2026-08-07; showing more than is solved just shows
                  unassigned days. -->
-            <div id="horizons" class="mt-6 pt-6 border-t border-gray-700">
+            <div id="horizons" class="scroll-mt-28 mt-6 pt-6 border-t border-gray-700">
                 <div class="flex items-center justify-between mb-4">
                     <h4 class="font-bold text-white">How far ahead</h4>
-                    <span class="text-xs text-emerald-400 font-bold" x-show="saved === 'horizons'" x-transition.opacity>Saved ✓</span>
                 </div>
                 <div class="mb-6">
                     <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider" for="daysToShow">Days to
@@ -698,12 +647,11 @@
             </div>
 
             <!-- Solver behaviour (Config → General → Solver Behavior). -->
-            <div id="solver-behavior" class="mt-6 pt-6 border-t border-gray-700">
+            <div id="solver-behavior" class="scroll-mt-28 mt-6 pt-6 border-t border-gray-700">
                 <div class="flex items-center justify-between mb-4">
                     <h4 class="font-bold text-white">Solver Behavior</h4>
-                    <span class="text-xs text-emerald-400 font-bold" x-show="saved === 'solver'" x-transition.opacity>Saved ✓</span>
                 </div>
-                <div class="flex flex-col sm:flex-row sm:items-center gap-4 mb-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                <div class="flex flex-col gap-4 mb-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
                     <div class="flex items-center space-x-3 shrink-0">
                         <label class="relative inline-flex items-center cursor-pointer">
                             <input type="checkbox" id="loadBalancingEnabled" x-model="loadBalancingEnabled" @change="saveSolver()"
@@ -732,7 +680,7 @@
                         </span>
                     </p>
                 </div>
-                <div class="flex flex-col sm:flex-row sm:items-center gap-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                <div class="flex flex-col gap-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
                     <div class="flex items-center space-x-3 shrink-0">
                         <label class="relative inline-flex items-center cursor-pointer">
                             <input type="checkbox" id="suggestedRoutesEnabled" x-model="suggestedRoutesEnabled" @change="saveSolver()"
@@ -754,10 +702,9 @@
             <!-- Routing & traffic policy (v2.166.0; Config → General). Facts
                  about the household, not quota knobs — which is why they
                  moved here and the Mapbox tier limits stayed on Config. -->
-            <div id="traffic" class="mt-6 pt-6 border-t border-gray-700">
+            <div id="traffic" class="scroll-mt-28 mt-6 pt-6 border-t border-gray-700">
                 <div class="flex items-center justify-between mb-4">
                     <h4 class="font-bold text-white">Routing &amp; Traffic</h4>
-                    <span class="text-xs text-emerald-400 font-bold" x-show="saved === 'traffic'" x-transition.opacity>Saved ✓</span>
                 </div>
                 <p x-show="disableMapbox" class="text-sm text-amber-300 mb-4">
                     Mapbox is switched off in
@@ -807,12 +754,11 @@
             <!-- The parents' tomorrow digest (Config → General → Digests &
                  Weather). The weather entity it reads stays on Config with
                  the weekly digest, for now. -->
-            <div id="tomorrow-digest" class="mt-6 pt-6 border-t border-gray-700">
+            <div id="tomorrow-digest" class="scroll-mt-28 mt-6 pt-6 border-t border-gray-700">
                 <div class="flex items-center justify-between mb-4">
                     <h4 class="font-bold text-white">The evening before</h4>
-                    <span class="text-xs text-emerald-400 font-bold" x-show="saved === 'digest'" x-transition.opacity>Saved ✓</span>
                 </div>
-                <div class="flex flex-col sm:flex-row sm:items-center gap-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                <div class="flex flex-col gap-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
                     <div class="flex items-center space-x-3 shrink-0">
                         <label class="relative inline-flex items-center cursor-pointer">
                             <input type="checkbox" id="tomorrowDigestEnabled" x-model="tomorrowDigestEnabled" @change="saveDigest()"
@@ -838,8 +784,7 @@
                 </div>
             </div>
         </section>
-    </div>
-    </div>
+</div>
 
     <script>
         // Station-picker map (Car alerts). The GL map and markers live OUTSIDE
@@ -853,16 +798,7 @@
         function driveSetup() {
             return {
                 apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
-                sections: [
-                    { key: 'rules', label: 'Rules' },
-                    { key: 'cars', label: 'Cars' },
-                    { key: 'protected', label: 'Protected time' },
-                    { key: 'hands', label: 'Outside hands' },
-                    { key: 'solver', label: 'Solver & horizons' },
-                ],
-                section: 'rules',
                 rulesSubTab: 'routing',
-                saved: '',
                 saving: false,
 
                 // Shared lookups the rule lists draw with.
@@ -941,8 +877,18 @@
                 assistReadyBuffer: 10,
 
                 async init() {
-                    window.addEventListener('hashchange', () => this.openAnchor());
-                    this.openAnchor();
+                    // A link into the priority rules (#priority-rules) has to open
+                    // its sub-tab: the drawer opens at the anchor, the sub-tab hides it.
+                    const subFromHash = () => {
+                        let id = '';
+                        try { id = decodeURIComponent((location.hash || '').slice(1)); } catch (e) { }
+                        const el = id ? document.getElementById(id) : null;
+                        const sub = el && el.closest('[data-rules-sub]');
+                        if (sub) this.rulesSubTab = sub.getAttribute('data-rules-sub');
+                    };
+                    window.addEventListener('hashchange', subFromHash);
+                    window.addEventListener('chf-settings-opened', subFromHash);
+                    subFromHash();
                     await Promise.all([this.loadSettings(), this.loadDrivers(), this.loadPassengers(),
                                        this.loadCars(), this.loadMembers()]);
                     this.loadCommitments();     // not awaited: each section stands alone
@@ -950,32 +896,6 @@
                     this.loadHaOptions();       // not awaited: HA may be slow or absent
                     await Promise.all([this.loadRules(), this.loadPriorityRules()]);
                     this.loadMatchedEvents();   // non-blocking: a solve can take a moment
-                },
-
-                // An anchor (#traffic, from the settings index) can live in a
-                // section that is not open. Open its section — and its Rules
-                // sub-tab — first, then scroll to it; otherwise the deep link
-                // lands on a hidden element and the reader hunts. Anything after
-                // a '?' in the hash is dropped: the house appends its own query
-                // to the garage link, which puts it after the '#'.
-                openAnchor() {
-                    const id = decodeURIComponent((window.location.hash || '').slice(1)).split('?')[0];
-                    if (!id) return;
-                    const el = document.getElementById(id);
-                    if (!el) return;
-                    const sec = el.closest('[data-drive-section]');
-                    if (sec) this.section = sec.getAttribute('data-drive-section');
-                    const sub = el.closest('[data-rules-sub]');
-                    if (sub) this.rulesSubTab = sub.getAttribute('data-rules-sub');
-                    this.$nextTick(() => setTimeout(() => el.scrollIntoView({ block: 'start' }), 50));
-                },
-                // The address keeps the section (replaceState, so no history
-                // entry per click) and a reload opens where you were.
-                setSection(key) {
-                    this.section = key;
-                    try {
-                        history.replaceState(history.state, '', window.location.pathname + window.location.search + '#' + key);
-                    } catch (e) { }
                 },
 
                 async loadSettings() {
@@ -1005,23 +925,22 @@
                         this.assistReadyBuffer = (data.assist_ready_buffer_mins ?? 10);
                     } catch (e) { console.error('Failed to load settings', e); }
                 },
-                async postSettings(payload, which) {
+                async postSettings(payload) {
+                    window.chfSettingsSaving();
                     try {
                         const res = await fetch(`${this.apiBase}api/settings`, {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(payload) });
                         if (!res.ok) {
                             const d = await res.json().catch(() => ({}));
-                            showGlobalAlert(d.detail || "Couldn't save that.");
+                            const msg = d.detail || "Couldn't save that.";
+                            if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
                             return false;
                         }
-                        if (which) {
-                            this.saved = which;
-                            setTimeout(() => { if (this.saved === which) this.saved = ''; }, 1600);
-                        }
+                        window.chfSettingsSaved(true);
                         return true;
                     } catch (e) {
-                        showGlobalAlert("Couldn't reach Chauffeur.");
+                        if (!window.chfSettingsSaved(false, "Couldn't reach Chauffeur.")) showGlobalAlert("Couldn't reach Chauffeur.");
                         return false;
                     }
                 },
@@ -1033,33 +952,33 @@
                         enable_ai_rules: !!this.enableAiRules,
                         enable_standard_priority_rules: !!this.enableStandardPriorityRules,
                         enable_ai_priority_rules: !!this.enableAiPriorityRules,
-                    }, 'rules');
+                    });
                 },
                 saveHorizons() {
                     return this.postSettings({
                         days_to_show: parseInt(this.daysToShow) || 7,
                         days_to_build: parseInt(this.daysToBuild) || 7,
-                    }, 'horizons');
+                    });
                 },
                 saveSolver() {
                     return this.postSettings({
                         load_balancing_enabled: !!this.loadBalancingEnabled,
                         load_balancing_metric: this.loadBalancingMetric || 'occupied_time',
                         suggested_routes_enabled: !!this.suggestedRoutesEnabled,
-                    }, 'solver');
+                    });
                 },
                 saveTraffic() {
                     return this.postSettings({
                         traffic_live_enabled: !!this.trafficLiveEnabled,
                         traffic_morning_hour: Math.max(0, Math.min(23, parseInt(this.trafficMorningHour, 10) || 0)),
                         routing_avoid_tolls: !!this.routingAvoidTolls,
-                    }, 'traffic');
+                    });
                 },
                 saveDigest() {
                     return this.postSettings({
                         tomorrow_digest_enabled: !!this.tomorrowDigestEnabled,
                         tomorrow_digest_time: this.tomorrowDigestTime || '20:00',
-                    }, 'digest');
+                    });
                 },
 
                 // --- People and Home Assistant, for the car and protected-time forms ---
@@ -1102,7 +1021,7 @@
                         car_fuel_warn_pct: parseFloat(this.carFuelWarnPct) || 25,
                         car_auto_errand: !!this.carAutoErrand,
                         car_fuel_station: (this.carFuelStation || '').trim(),
-                    }, 'alerts');
+                    });
                 },
                 saveAssistBuffer() {
                     return this.postSettings({
@@ -1399,7 +1318,7 @@
                     this.nearbyStations = [];
                     // Only the station: the server merges, so the thresholds a
                     // half-typed field holds are not saved behind your back.
-                    await this.postSettings({ car_fuel_station: (this.carFuelStation || '').trim() }, 'alerts');
+                    await this.postSettings({ car_fuel_station: (this.carFuelStation || '').trim() });
                     showGlobalAlert(`Home gas station set: ${st.name}`);
                 },
                 async loadCommitments() {
@@ -1941,8 +1860,3 @@
             };
         }
     </script>
-    {% include 'components/control_center.html' %}
-    {% include 'components/emoji_picker.html' %}
-    {% include 'components/moments_hearth.html' %}
-</body>
-</html>

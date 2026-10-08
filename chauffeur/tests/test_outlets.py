@@ -274,7 +274,7 @@ def scenario_the_hand_paths_exist():
                        'templates')
     # Protected time moved to Drive setup (v2.499.254); quiet hours and lanes
     # stay on the member card in Config.
-    setup = open(os.path.join(tpl, 'drive_setup.html'), encoding='utf-8').read()
+    setup = open(os.path.join(tpl, 'components', 'drive_setup_panel.html'), encoding='utf-8').read()
     check('saveCommitment' in setup and 'deleteCommitment' in setup
           and 'Protected time' in setup and 'id="protected-time"' in setup,
           "protected time works by hand on Drive setup")

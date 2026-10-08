@@ -162,7 +162,7 @@ def scenario_both_hand_overs_are_reachable():
     check("assist:" in errands,
           "and hands them the task under the prefixed id the server reads")
 
-    setup = open(os.path.join(TPL, 'drive_setup.html'), encoding='utf-8').read()
+    setup = open(os.path.join(TPL, 'components', 'drive_setup_panel.html'), encoding='utf-8').read()
     check('toggleAssistSurface' in setup and 'helps_with' in setup,
           "'helps with' is set by pills on the contact, by hand")
 

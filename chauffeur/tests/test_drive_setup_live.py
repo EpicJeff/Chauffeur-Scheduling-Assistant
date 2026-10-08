@@ -1,13 +1,17 @@
-"""The Drive setup page, actually served (v2.499.253).
+"""Drive setup, now the Drives drawer on /dashboard_v2 (settings-drawer arc).
+
+It began as the Drive setup page (v2.499.253), a tab of the Schedule group; the
+settings-drawer arc folded it into the Drives drawer behind the gear, with the
+leave margin beside it, and /drive_setup forwards. Same ids, same assertions.
+
 
 Everything that decides how drives get assigned lived on Config: the Rules &
 Priorities tab, the solver switches and horizons, routing and traffic policy
 and the parents' tomorrow digest. It moved to /drive_setup, a tab of the
 Schedule group. What only a browser can check:
 
-  - the page draws inside the Schedule tab strip, its section switcher shows
-    one section at a time, and a deep link to an anchor in a closed section
-    (the settings index's `drive_setup#traffic`) opens that section;
+  - the drawer opens from the gear, holds six stacked sections with six jump
+    chips, and the old addresses (`drive_setup#traffic`) land on their anchor;
   - a change saves ONLY its own keys: the settings POST merges, and a page
     that sent everything it had loaded could still clobber a setting another
     page changed meanwhile;
@@ -28,7 +32,9 @@ from live_app import live_app
 
 from services import storage
 
-OUT = sys.argv[sys.argv.index('--out') + 1] if '--out' in sys.argv else None
+DRAWER = '[data-settings-for~="drives"]'
+OUT = (sys.argv[sys.argv.index('--out') + 1] if '--out' in sys.argv
+       else os.environ.get('CHF_SHOTS'))
 
 
 def check(cond, msg):
@@ -94,21 +100,27 @@ def main():
         with handle as page:
             page.set_viewport_size({'width': 1400, 'height': 900})
             _sign_in(page, served)
-            page.goto(served.url('drive_setup'), wait_until='networkidle')
+            page.goto(served.url('dashboard_v2'), wait_until='networkidle')
             page.wait_for_timeout(600)
 
-            # It is a tab of the Schedule group, and the tab it is on is lit.
-            check(_visible(page, '#page-tabs'), 'Drive setup has no Schedule tab strip')
+            # It is the Drives page's drawer; the Schedule strip lost its Drive setup tab.
+            check(_visible(page, '#page-tabs'), 'Drives has no Schedule tab strip')
             tabs = page.eval_on_selector_all('#page-tabs .page-tab', 'els => els.map(e => e.dataset.tabKey)')
-            check(tabs == ['drives', 'calendar', 'moments', 'occasions', 'setup'], f'tabs: {tabs}')
-            lit = page.eval_on_selector_all('#page-tabs .page-tab.bg-blue-600', 'els => els.map(e => e.dataset.tabKey)')
-            check(lit == ['setup'], f'the lit tab is {lit}, not Drive setup')
-
+            check(tabs == ['drives', 'calendar', 'moments', 'occasions'], f'tabs: {tabs}')
+            check(not _visible(page, DRAWER), 'the Drives drawer starts open')
+            _shot(page, 'drive-setup-closed.png')
+            page.click('#page-settings-gear')
+            page.wait_for_selector(DRAWER + '[data-open]')
+            page.wait_for_timeout(900)
+            check(page.locator(DRAWER + ' [data-settings-chip]').count() == 6,
+                  'the Drives drawer does not carry six jump chips')
+            for sec in ('leave-margin', 'rules', 'cars', 'protected-time', 'outside-hands', 'solver'):
+                check(page.locator(DRAWER + ' #' + sec).count() == 1, f'#{sec} is not in the Drives drawer once')
             _shot(page, 'drive-setup-top.png')
 
-            # Rules is the default section; the rule already written is listed.
-            check(_visible(page, '#rules') and not _visible(page, '#solver'),
-                  'Rules is not the only section showing')
+            # Sections are stacked, so all of them are showing; the rule already written is listed.
+            check(_visible(page, '#rules') and _visible(page, '#solver'),
+                  'the sections are not stacked')
             cards = '#routing-rules [x-data="{ expanded: false }"]'
             check(page.locator(cards).count() == 1 and 'Dad' in page.locator(cards).first.inner_text(),
                   'the existing rule is not listed')
@@ -142,9 +154,7 @@ def main():
                   'the Priority Rules sub-tab did not switch')
 
             # Solver & horizons: one change, and nothing else moves.
-            page.click('#drive-sections [data-section-tab="solver"]')
-            page.wait_for_timeout(200)
-            check(_visible(page, '#solver') and not _visible(page, '#rules'), 'clicking Solver did not show it')
+            page.locator('#solver').scroll_into_view_if_needed()
             check(page.input_value('#daysToShow') == '9' and page.input_value('#daysToBuild') == '5',
                   'the horizons did not load')
             before = dict(storage.get_settings())
@@ -187,9 +197,7 @@ def main():
             _shot(page, 'drive-setup-solver.png')
 
             # Cars: one added and then edited by hand, through the form.
-            page.click('#drive-sections [data-section-tab="cars"]')
-            page.wait_for_timeout(200)
-            check(_visible(page, '#cars') and not _visible(page, '#solver'), 'clicking Cars did not show it')
+            page.locator('#cars').scroll_into_view_if_needed()
             page.locator('#cars').get_by_role('button', name='+ Add a Car').click()
             page.locator('#cars [x-model="newCar.name"]').fill('Minivan')
             page.locator('#cars [x-model\\.number="newCar.seat_capacity"]').fill('6')
@@ -221,9 +229,8 @@ def main():
             _shot(page, 'drive-setup-cars.png')
 
             # Protected time: a commitment added by hand.
-            page.click('#drive-sections [data-section-tab="protected"]')
-            page.wait_for_timeout(200)
-            check(_visible(page, '#protected-time'), 'clicking Protected time did not show it')
+            page.locator('#protected-time').scroll_into_view_if_needed()
+            check(_visible(page, '#protected-time'), 'Protected time is not showing')
             pt = page.locator('#protected-time')
             pt.locator('[x-model="commitmentForm.title"]').fill('Thursday run')
             pt.locator('[data-commitment-member]').select_option('dad')
@@ -237,10 +244,9 @@ def main():
             _shot(page, 'drive-setup-protected.png')
 
             # Outside hands: one added by hand, and the be-ready buffer alone.
-            page.click('#drive-sections [data-section-tab="hands"]')
-            page.wait_for_timeout(200)
+            page.locator('#outside-hands').scroll_into_view_if_needed()
             oh = page.locator('#outside-hands')
-            check(_visible(page, '#outside-hands'), 'clicking Outside hands did not show it')
+            check(_visible(page, '#outside-hands'), 'Outside hands is not showing')
             oh.locator('[x-model="assistForm.name"]').fill('Sarah Whitfield')
             oh.locator('[x-model="assistForm.relation_label"]').fill("Emma's mom")
             oh.get_by_role('button', name='🚗 Driving').click()
@@ -260,29 +266,58 @@ def main():
                   f'the buffer save touched other settings: {_changed(before, after)}')
             _shot(page, 'drive-setup-hands.png')
 
-            # A deep link to an anchor in a closed section opens it.
-            page.goto(served.url('drive_setup#traffic'), wait_until='networkidle')
+            # Old addresses still land, hash and all.
+            for old, anchor in (('drive_setup', None), ('drive_setup#traffic', 'traffic'),
+                                ('drive_setup#priority-rules', 'priority-rules'), ('drive_setup#car-alerts', 'car-alerts'),
+                                ('config#outside-hands', 'outside-hands')):
+                page.goto(served.url(old), wait_until='networkidle')
+                page.wait_for_selector(DRAWER + '[data-open]')
+                page.wait_for_timeout(1800)
+                check('dashboard_v2' in page.url, f'{old} did not forward to Drives: {page.url}')
+                check('settings=open' not in page.url, f'{old} left settings=open in the address: {page.url}')
+                if anchor:
+                    top, bar = page.evaluate(
+                        "(a) => [document.getElementById(a).getBoundingClientRect().top,"
+                        " document.querySelector('[data-settings-for~=\"drives\"] .sticky').getBoundingClientRect().bottom]", anchor)
+                    check(bar - 1 <= top < 300, f'{old} did not land on #{anchor} below the header: {top} vs {bar}')
+                if anchor == 'priority-rules':
+                    check(_visible(page, '#priority-rules'), 'the Priority sub-tab did not open by link')
+                if anchor == 'car-alerts':
+                    _shot(page, 'drive-setup-car-alerts.png')
+                page.click(DRAWER + ' [aria-label="Close settings"]')
+            # Leave margin moved out of the toolbar and into the drawer.
+            page.goto(served.url('dashboard_v2'), wait_until='networkidle')
+            check(not _visible(page, '#header-buttons #leave-margin-mins'), 'leave margin still sits in the toolbar')
+            page.click('#page-settings-gear')
+            page.wait_for_selector(DRAWER + '[data-open]')
             page.wait_for_timeout(600)
-            check(_visible(page, '#traffic') and not _visible(page, '#rules'),
-                  'drive_setup#traffic did not open Solver & horizons')
-            page.goto(served.url('drive_setup#priority-rules'), wait_until='networkidle')
-            page.wait_for_timeout(600)
-            check(_visible(page, '#priority-rules'), 'drive_setup#priority-rules did not open the Priority sub-tab')
+            box = page.evaluate("() => { const r = document.querySelector('[data-settings-for~=\"drives\"]').getBoundingClientRect(); return [r.width, innerWidth]; }")
+            check(box[0] == box[1], f'the Drives drawer is trapped by an ancestor: {box}')
+            check(_visible(page, '#leave-margin') and _visible(page, '#leave-margin-mins'),
+                  'the leave margin is not in the drawer')
+            before = dict(storage.get_settings())
+            page.fill('#leave-margin-mins', '12')
+            page.dispatch_event('#leave-margin-mins', 'change')
+            page.wait_for_selector(DRAWER + ' [data-settings-status]:has-text("Saved")')
+            after = dict(storage.get_settings())
+            check(after.get('leave_margin_mins') == 12, 'the leave margin did not save')
+            check(_changed(before, after) == {'leave_margin_mins'}, 'the leave margin save touched other settings')
+            page.click(DRAWER + ' [aria-label="Close settings"]')
 
+            # Phone: the sheet is a bottom sheet and nothing scrolls sideways.
+            page.set_viewport_size({'width': 390, 'height': 844})
             page.goto(served.url('drive_setup#car-alerts'), wait_until='networkidle')
-            page.wait_for_timeout(600)
-            check(_visible(page, '#car-alerts') and not _visible(page, '#rules'),
-                  'drive_setup#car-alerts did not open Cars')
-
-            # An old link to a moved Config anchor lands on its new home.
-            page.goto(served.url('config#outside-hands'), wait_until='networkidle')
-            page.wait_for_timeout(800)
-            check('/drive_setup' in page.url and _visible(page, '#outside-hands'),
-                  f'config#outside-hands did not forward to Drive setup: {page.url}')
+            page.wait_for_selector(DRAWER + '[data-open]')
+            page.wait_for_timeout(1500)
+            check(page.evaluate("() => document.documentElement.scrollWidth <= innerWidth + 1"),
+                  'the phone page scrolls sideways')
+            _shot(page, 'drive-setup-phone.png')
+            page.click(DRAWER + ' [aria-label="Close settings"]')
+            page.set_viewport_size({'width': 1400, 'height': 900})
 
             # Errand rules live on the Errands page's Rules tab now; Drive
             # setup's Rules section says so.
-            page.goto(served.url('drive_setup'), wait_until='networkidle')
+            page.goto(served.url('dashboard_v2'), wait_until='networkidle')
             check(page.locator('#rules a[data-errand-rules-link][href$="errands?tab=rules"]').count() == 1,
                   'Drive setup does not point at the errand rules')
             page.goto(served.url('errands?tab=rules'), wait_until='networkidle')
@@ -314,7 +349,7 @@ def main():
             # Config no longer carries the controls, nor a pointer where each
             # block used to be (v2.499.261).
             page.goto(served.url('config'), wait_until='domcontentloaded')
-            check(page.locator('a[href*="drive_setup#"]:not(nav a)').count() == 0,
+            check(page.locator('a[href*="drive_setup"]:not(nav a)').count() == 0,
                   'Config still carries a pointer to Drive setup')
             check(page.locator('text=Create Errand Rule').count() == 0, 'Config still carries errand rules')
 

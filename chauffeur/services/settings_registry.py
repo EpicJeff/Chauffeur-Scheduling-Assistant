@@ -56,7 +56,7 @@ GROUPS = [
 
 _CONFIG = 'config'
 # Everything that decides how drives get assigned (v2.499.253).
-_DRIVE = 'drive_setup'
+_DRIVE = 'dashboard_v2'
 
 
 def _e(key, group, label, help_text, page=_CONFIG, anchor='general', ui_marker=None):

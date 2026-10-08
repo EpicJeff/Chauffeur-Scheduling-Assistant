@@ -146,6 +146,9 @@ def scenario_one_margin_every_surface():
                     page.screenshot(path=os.path.join(shots, 'schedule-margin-5.png'))
 
                 # One setting, on the Schedule page, moves every surface.
+                # (the admin gate overlays a signed-out page: open the drawer the way the gear does)
+                page.evaluate("() => window.chfOpenSettings('drives')")
+                page.wait_for_selector('[data-settings-for~="drives"][data-open]')
                 page.wait_for_selector('#leave-margin-mins', state='visible')
                 check(page.input_value('#leave-margin-mins') == '5',
                       'the Schedule page shows the current margin')

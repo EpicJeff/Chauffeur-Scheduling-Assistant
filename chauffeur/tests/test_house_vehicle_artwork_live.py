@@ -15,23 +15,23 @@ def main():
     try:
         with served.browser() as page:
             page.goto(served.url('drive_setup#cars'))
-            page.wait_for_function('window.Alpine && Alpine.$data(document.body).cars.length > 0')
-            page.evaluate("const app=Alpine.$data(document.body); app.section='cars'; app.editCar(app.cars[0]);")
+            page.wait_for_function('window.Alpine && Alpine.$data(document.querySelector("[x-data^=driveSetup]"))?.cars?.length > 0')
+            page.evaluate("const app=Alpine.$data(document.querySelector('[x-data^=driveSetup]')); app.section='cars'; app.editCar(app.cars[0]);")
             artwork = Path(__file__).resolve().parents[1]/'static/house_hybrid/vehicles/mercedes-gls-2022-white.png'
             page.get_by_label('House driveway artwork', exact=True).set_input_files(str(artwork))
-            page.wait_for_function("Alpine.$data(document.body).newCar.exterior_image?.startsWith('data:image/png;base64,')")
-            before = page.evaluate('Alpine.$data(document.body).newCar.exterior_image')
+            page.wait_for_function("Alpine.$data(document.querySelector('[x-data^=driveSetup]')).newCar.exterior_image?.startsWith('data:image/png;base64,')")
+            before = page.evaluate('Alpine.$data(document.querySelector("[x-data^=driveSetup]")).newCar.exterior_image')
             im = Image.open(io.BytesIO(base64.b64decode(before.split(',', 1)[1])))
             assert im.size == (512, 512) and im.mode == 'RGBA'
             alpha_min, alpha_max = im.getextrema()[-1]
             assert alpha_min == 0 and alpha_max >= 250, 'Upload must retain transparency and solid body panels'
-            car_id = page.evaluate('Alpine.$data(document.body).newCar.id')
-            await_save = "async()=>{const app=Alpine.$data(document.body); app.newCar.allowed_driver_ids=[app.drivers[0].id]; await app.submitCar();}"
+            car_id = page.evaluate('Alpine.$data(document.querySelector("[x-data^=driveSetup]")).newCar.id')
+            await_save = "async()=>{const app=Alpine.$data(document.querySelector('[x-data^=driveSetup]')); app.newCar.allowed_driver_ids=[app.drivers[0].id]; await app.submitCar();}"
             page.evaluate(await_save)
             saved = next(c for c in page.request.get(served.url('api/cars')).json() if c['id'] == car_id)
             assert saved['exterior_image'] == before
-            page.evaluate('(car)=>Alpine.$data(document.body).editCar(car)', saved)
-            assert page.evaluate('Alpine.$data(document.body).newCar.exterior_image') == before
+            page.evaluate('(car)=>Alpine.$data(document.querySelector("[x-data^=driveSetup]")).editCar(car)', saved)
+            assert page.evaluate('Alpine.$data(document.querySelector("[x-data^=driveSetup]")).newCar.exterior_image') == before
             state = page.request.get(served.url('api/house/state')).json()
             row = next(c for c in state['garage']['cars'] if c['id'] == car_id)
             assert row['exterior_image'] == before

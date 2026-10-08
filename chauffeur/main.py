@@ -1469,9 +1469,23 @@ def root_redirect(request: Request):
 def dashboard_legacy():
     return RedirectResponse(url="dashboard_v2")
 
+def _drive_setup_context() -> dict:
+    """The Mapbox context the Drive setup panel (inside the Drives drawer)
+    carries for the gas-station picker map: same quota gate the trip map uses,
+    the map only instantiates when the picker opens."""
+    import datetime as _dt
+    current_month = _dt.datetime.now().strftime("%Y-%m")
+    allow_map_loads = (maps.get_map_option('enable_mapbox_map_loads', True)
+                       and storage.get_mapbox_usage(current_month, 'map_loads')
+                       < maps.get_map_option('mapbox_map_loads_limit', 45000))
+    return {"mapbox_key": maps.get_mapbox_api_key() or "",
+            "allow_map_loads": allow_map_loads}
+
+
 @app.get("/dashboard_v2")
 def dashboard(request: Request):
-    return _page_or_board(request, "schedule", "dashboard.html")
+    return _page_or_board(request, "schedule", "dashboard.html",
+                          context=_drive_setup_context())
 
 @app.get("/home")
 def home_board_page(request: Request):
@@ -1766,24 +1780,13 @@ def school_page(request: Request):
 
 @app.get("/drive_setup")
 def drive_setup_page(request: Request):
-    """Everything that decides how drives get assigned, in one parent place
-    (v2.499.253): routing and priority rules, the solver switches and
-    horizons, routing and traffic policy, the parents' tomorrow digest, the
-    cars, protected time and outside hands.
-    A tab of the Schedule group beside the Drives list. A shell anyone can
-    load; every read and write behind it is a parent-gated API.
-
-    Since v2.499.254 it also holds the cars, protected time and outside
-    hands, so it carries the Mapbox context for the gas-station picker map
-    (same quota gate the trip map uses: the map only instantiates when the
-    picker opens)."""
-    import datetime as _dt
-    current_month = _dt.datetime.now().strftime("%Y-%m")
-    allow_map_loads = maps.get_map_option('enable_mapbox_map_loads', True)         and storage.get_mapbox_usage(current_month, 'map_loads')         < maps.get_map_option('mapbox_map_loads_limit', 45000)
-    return templates.TemplateResponse(request=request, name="drive_setup.html", context={
-        "mapbox_key": maps.get_mapbox_api_key() or "",
-        "allow_map_loads": allow_map_loads,
-    })
+    """Drive setup folded into the Drives drawer (settings-drawer arc): the
+    rules, cars, protected time, outside hands and solver settings that began
+    here (v2.499.253) now open from the gear on the Drives page. The address
+    forwards so bookmarks and the settings index still land; the browser
+    carries a fragment (`#traffic`) across a redirect whose Location has none,
+    and settings_drawer.js opens the drawer at it."""
+    return RedirectResponse("dashboard_v2?settings=open")
 
 
 @app.get("/work")

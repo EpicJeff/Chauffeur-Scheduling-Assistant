@@ -126,7 +126,7 @@ def scenario_the_settings_reach_the_model_and_the_page():
               f"{key} is not a Settings field — the save endpoint silently "
               "drops keys the model does not carry")
     # Routing & traffic moved to Drive setup (v2.499.253).
-    page = open(os.path.join(root, 'templates', 'drive_setup.html'),
+    page = open(os.path.join(root, 'templates', 'components', 'drive_setup_panel.html'),
                 encoding='utf-8').read()
     for prop in ('trafficLiveEnabled', 'trafficMorningHour', 'routingAvoidTolls'):
         check(page.count(prop) >= 4,

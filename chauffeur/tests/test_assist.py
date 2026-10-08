@@ -386,7 +386,7 @@ def scenario_every_agent_capability_has_a_hand_path():
     tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        'templates')
     # Outside hands moved to Drive setup (v2.499.254).
-    setup = open(os.path.join(tpl, 'drive_setup.html'), encoding='utf-8').read()
+    setup = open(os.path.join(tpl, 'components', 'drive_setup_panel.html'), encoding='utf-8').read()
     check('assistContacts' in setup and 'saveAssistContact' in setup
           and 'id="outside-hands"' in setup,
           "contacts can be added by hand on Drive setup → Outside hands")

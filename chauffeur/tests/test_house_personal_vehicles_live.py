@@ -61,14 +61,14 @@ def main():
             # Assign through the actual car editor (Drive setup since
             # v2.499.254) and check persistence/API.
             page.goto(served.url('drive_setup#cars'))
-            page.wait_for_function('window.Alpine && Alpine.$data(document.body).cars.length===3')
+            page.wait_for_function('window.Alpine && Alpine.$data(document.querySelector("[x-data^=driveSetup]"))?.cars?.length===3')
             for key, profile in PROFILES.items():
-                page.evaluate('(id)=>{const app=Alpine.$data(document.body);app.section="cars";app.editCar(app.cars.find(c=>c.id===id))}', key)
+                page.evaluate('(id)=>{const app=Alpine.$data(document.querySelector("[x-data^=driveSetup]"));app.section="cars";app.editCar(app.cars.find(c=>c.id===id))}', key)
                 page.get_by_label('House vehicle appearance', exact=True).select_option(profile)
-                page.evaluate('async()=>{await Alpine.$data(document.body).submitCar()}')
+                page.evaluate('async()=>{await Alpine.$data(document.querySelector("[x-data^=driveSetup]")).submitCar()}')
                 saved = next(c for c in page.request.get(served.url('api/cars')).json() if c['id'] == key)
                 assert saved['house_artwork'] == profile
-                page.evaluate('(car)=>Alpine.$data(document.body).editCar(car)', saved)
+                page.evaluate('(car)=>Alpine.$data(document.querySelector("[x-data^=driveSetup]")).editCar(car)', saved)
                 assert page.get_by_label('House vehicle appearance', exact=True).input_value() == profile
             feed = page.request.get(served.url('api/house/state')).json()['garage']['cars']
             assert {c['id']: c['house_artwork'] for c in feed} == PROFILES

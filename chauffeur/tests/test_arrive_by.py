@@ -236,7 +236,7 @@ def scenario_the_reason_is_reachable_by_hand_and_by_agent():
     # The rule editor moved to Drive setup (v2.499.253): the form is the
     # drive_rules component, the save/edit/reset code is the page's own.
     cfg = ''.join(open(os.path.join(here, 'templates', *rel), encoding='utf-8').read()
-                  for rel in (('drive_setup.html',), ('components', 'drive_rules.html')))
+                  for rel in (('components', 'drive_setup_panel.html'), ('components', 'drive_rules.html')))
     check("{% include 'components/drive_rules.html' %}" in cfg,
           "Drive setup draws the rule editor")
     check('newRule.buffer_reason' in cfg, "the rule editor has the field")

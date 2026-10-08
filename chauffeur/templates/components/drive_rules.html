@@ -1,12 +1,12 @@
 {# Routing rules and priority rules — the two halves of "who takes which
    drive" that a family writes by hand (or Argyle writes and they correct).
    Moved verbatim from Config's Rules & Priorities tab onto Drive setup
-   (v2.499.253); included by drive_setup.html and bound to its Alpine root
+   (v2.499.253); included by drive_setup_panel.html and bound to its Alpine root
    (driveSetup()), which owns the rules state, the rule-toggle save and the
    location autocomplete. The two blocks are the page's Rules sub-tabs:
    `rulesSubTab` switches them, and `data-rules-sub` is how a deep link
    (#routing-rules, #priority-rules) opens the right one. #}
-                    <div id="routing-rules" data-rules-sub="routing" x-show="rulesSubTab === 'routing'" x-transition.opacity>
+                    <div id="routing-rules" class="scroll-mt-28" data-rules-sub="routing" x-show="rulesSubTab === 'routing'" x-transition.opacity>
                         <div class="flex flex-col sm:flex-row flex-wrap gap-6 mb-8 p-5 bg-gray-900 rounded-xl border border-gray-700">
                             <div class="flex items-center space-x-3 w-full sm:w-auto">
                                 <label class="relative inline-flex items-center cursor-pointer">
@@ -589,7 +589,7 @@
 
 
                         </div>
-                    <div id="priority-rules" data-rules-sub="priority" x-show="rulesSubTab === 'priority'" x-transition.opacity x-cloak>
+                    <div id="priority-rules" class="scroll-mt-28" data-rules-sub="priority" x-show="rulesSubTab === 'priority'" x-transition.opacity x-cloak>
                         <div class="flex flex-col sm:flex-row flex-wrap gap-6 mb-8 p-5 bg-gray-900 rounded-xl border border-gray-700">
                             <div class="flex items-center space-x-3 w-full sm:w-auto">
                                 <label class="relative inline-flex items-center cursor-pointer">
