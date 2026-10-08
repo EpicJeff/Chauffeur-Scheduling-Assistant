@@ -201,6 +201,8 @@ def scenario_a_tabless_entry_never_hides_inside_a_drawer():
                 body = fh.read()
         except OSError:
             return ''
+        if rel == 'nav.html':
+            return ''  # the page bar's own tab markers are not this page's tabs
         return re.sub(r"{%-?\s*include\s+'([^']+)'[^%]*%}", lambda m: read(m.group(1), seen), body)
 
     bad = []

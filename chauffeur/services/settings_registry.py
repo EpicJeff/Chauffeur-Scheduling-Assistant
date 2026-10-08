@@ -413,10 +413,10 @@ ENTRIES: List[dict] = [
        'account does not own, so keep it the same or a verified alias.',
        page='config', anchor='people'),
     _e('ingest_sender_defaults', 'intake', 'Sender routing',
-       'Which calendar a given sender usually belongs to.', page='intake', anchor='settings'),
+       'Which calendar a given sender usually belongs to.', page='intake', anchor='intake-senders'),
     _e('ingest_sender_blocklist', 'intake', 'Blocked senders',
        'Addresses and domains whose mail is skipped instead of read.',
-       page='intake', anchor='settings'),
+       page='intake', anchor='intake-blocked'),
 
     # --- integrations
     _e('public_base_url', 'integrations', 'Public URL',

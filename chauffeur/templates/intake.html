@@ -18,6 +18,7 @@
     <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
 </head>
 
+{% from 'components/settings_drawer.html' import settings_drawer, settings_section, settings_off with context %}
 <body class="flex flex-col h-screen overflow-hidden">
     {% include 'nav.html' %}
 
@@ -446,13 +447,13 @@
                 </div>
             </section>
 
-            <!-- ===== Mailbox settings ===== -->
-            <section class="mb-16">
-                <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">Family mailbox</h3>
-                <div id="settings" class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+            <!-- ===== Mailbox settings (the Intake drawer) ===== -->
+            {% call settings_drawer('intake', 'Intake', sections=[('settings', 'Mailbox'), ('ingest-daily-limit', 'Daily limit'), ('intake-senders', 'Senders'), ('intake-blocked', 'Blocked')]) %}
+            {% call settings_section('settings', 'Family mailbox') %}
+            <div class="bg-gray-900 rounded-xl p-4 space-y-4">
                     <div class="flex items-center gap-3 mb-5">
                         <label class="relative inline-flex items-center cursor-pointer">
-                            <input type="checkbox" x-model="config.ingest_email_enabled" class="sr-only peer">
+                            <input type="checkbox" x-model="config.ingest_email_enabled" @change="saveConfig()" class="sr-only peer">
                             <div
                                 class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
                             </div>
@@ -462,26 +463,28 @@
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
                         <div>
                             <label class="block text-gray-400 mb-1 text-sm">IMAP host</label>
-                            <input type="text" x-model="config.ingest_email_host" placeholder="imap.gmail.com"
+                            <input type="text" x-model="config.ingest_email_host" @change="saveConfig()" placeholder="imap.gmail.com"
                                 class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white font-mono text-sm">
                         </div>
                         <div>
                             <label class="block text-gray-400 mb-1 text-sm">Mailbox address</label>
-                            <input type="text" x-model="config.ingest_email_user" placeholder="family.chauffeur@gmail.com"
+                            <input type="text" x-model="config.ingest_email_user" @change="saveConfig()" placeholder="family.chauffeur@gmail.com"
                                 class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white font-mono text-sm">
                         </div>
                         <div>
                             <label class="block text-gray-400 mb-1 text-sm"
                                 x-text="config.has_password ? 'App password (saved — leave blank to keep)' : 'App password'"></label>
-                            <input type="password" x-model="passwordInput" placeholder="xxxx xxxx xxxx xxxx"
+                            <input type="password" x-model="passwordInput" @change="saveConfig()" placeholder="xxxx xxxx xxxx xxxx"
                                 class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white font-mono text-sm">
                         </div>
                     </div>
 
-                    <div class="mb-5" id="ingest-daily-limit">
+            </div>
+            {% endcall %}
+                    <div class="scroll-mt-28" id="ingest-daily-limit">
                         <label for="ingestDailyLimit" class="block text-gray-400 mb-1 text-sm font-semibold">AI requests per day for email intake</label>
                         <div class="flex items-center gap-3 flex-wrap">
-                            <input id="ingestDailyLimit" type="number" min="0" step="10" x-model.number="config.ingest_daily_limit"
+                            <input id="ingestDailyLimit" type="number" min="0" step="10" x-model.number="config.ingest_daily_limit" @change="saveConfig()"
                                 class="w-32 bg-gray-900 border border-gray-600 rounded-lg p-3 text-white font-mono text-sm">
                             <span class="text-xs text-gray-500">Each email is one request (two if the first AI model fails and
                                 another is tried). When the day's allowance is used up, the rest waits in line until
@@ -489,6 +492,8 @@
                         </div>
                     </div>
 
+            {% call settings_section('intake-senders', 'Which calendar a sender goes to') %}
+            <div class="bg-gray-900 rounded-xl p-4 space-y-3">
                     <label class="block text-gray-400 mb-1 text-sm font-semibold">Sender defaults (optional)</label>
                     <p class="text-xs text-gray-500 mb-3">Routing hints, not a filter — every email is analyzed either
                         way. When a pattern matches the From address ("@school.org", "coach.dan"), proposals from that
@@ -497,22 +502,26 @@
                         whole-family or unclear items.</p>
                     <template x-for="(entry, idx) in config.ingest_sender_defaults" :key="idx">
                         <div class="flex gap-2 mb-2">
-                            <input type="text" x-model="entry.pattern" placeholder="@school.org"
+                            <input type="text" x-model="entry.pattern" @change="saveConfig()" placeholder="@school.org"
                                 class="flex-1 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white font-mono text-sm">
-                            <select x-model="entry.calendar_id"
+                            <select x-model="entry.calendar_id" @change="saveConfig()"
                                 class="w-64 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white text-sm">
                                 <option value="">No default calendar</option>
                                 <template x-for="opt in calendarTargets" :key="opt.id + opt.label">
                                     <option :value="opt.id" x-text="opt.label"></option>
                                 </template>
                             </select>
-                            <button @click="config.ingest_sender_defaults.splice(idx, 1)"
+                            <button @click="config.ingest_sender_defaults.splice(idx, 1); saveConfig()"
                                 class="text-red-400 hover:text-red-300 bg-red-500/10 px-3 rounded-lg font-bold">✕</button>
                         </div>
                     </template>
                     <button @click="config.ingest_sender_defaults.push({pattern: '', calendar_id: ''})"
-                        class="text-blue-400 hover:text-blue-300 font-bold text-sm mb-5">+ Add sender default</button>
+                        class="text-blue-400 hover:text-blue-300 font-bold text-sm">+ Add sender default</button>
 
+            </div>
+            {% endcall %}
+            {% call settings_section('intake-blocked', 'Blocked senders') %}
+            <div class="bg-gray-900 rounded-xl p-4 space-y-3">
                     <!-- Blocked senders. Deliberately NOT hidden away: a filter you
                          cannot see is the thing that makes mail rules unnerving. -->
                     <label class="block text-gray-400 mb-1 text-sm font-semibold">Skip rules</label>
@@ -558,13 +567,9 @@
                     <p class="text-xs mb-5" :class="blockEditing ? 'text-amber-400/80' : 'text-transparent'"
                         x-text="blockEditing ? ('Editing ' + blockEditing + ' — clearing the keywords makes it skip everything from that sender.') : '·'"></p>
 
-                    <div class="flex gap-3">
-                        <button @click="saveConfig()" :disabled="savingConfig"
-                            class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold px-6 py-3 rounded-lg transition-colors"
-                            x-text="savingConfig ? 'Saving...' : 'Save Settings'"></button>
-                    </div>
-                </div>
-            </section>
+            </div>
+            {% endcall %}
+            {% endcall %}
         </div>
     </div>
 
@@ -591,6 +596,7 @@
                 status: { waiting: null },
                 rescanning: false,
                 savingConfig: false,
+                _saveAgain: false,
                 uploadingPhoto: false,
                 busyId: null,
                 misfiled: [],
@@ -1016,15 +1022,15 @@
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ pattern, label: label || '', keywords }) });
                         const data = await res.json();
-                        if (!res.ok) { showGlobalAlert(data.detail || "Couldn't save that skip rule."); return; }
+                        if (!res.ok) { const m = data.detail || "Couldn't save that skip rule."; if (!window.chfSettingsSaved(false, m)) showGlobalAlert(m); return; }
                         this.config.ingest_sender_blocklist = data.ingest_sender_blocklist || [];
                         this.blockInput = '';
                         this.blockKeywords = '';
                         this.blockEditing = null;
                         await Promise.all([this.loadProposals(), this.loadLog(),
                                            this.loadIgnoredSenders()]);
-                        showGlobalAlert(editing ? `Updated ${pattern} ✉️` : `Skipping ${pattern} ✉️`, 'success');
-                    } catch (e) { showGlobalAlert("Couldn't save that skip rule."); }
+                        if (!window.chfSettingsSaved(true)) showGlobalAlert(editing ? `Updated ${pattern} ✉️` : `Skipping ${pattern} ✉️`, 'success');
+                    } catch (e) { if (!window.chfSettingsSaved(false, "Couldn't save that skip rule.")) showGlobalAlert("Couldn't save that skip rule."); }
                 },
                 async unblockSender(pattern) {
                     // Removing the rule you happen to be editing leaves the
@@ -1036,9 +1042,10 @@
                             body: JSON.stringify({ pattern }) });
                         const data = await res.json();
                         this.config.ingest_sender_blocklist = data.ingest_sender_blocklist || [];
+                        window.chfSettingsSaved(true);
                         // An unblocked sender becomes offerable again.
                         await Promise.all([this.loadLog(), this.loadIgnoredSenders()]);
-                    } catch (e) { showGlobalAlert("Couldn't unblock that sender."); }
+                    } catch (e) { if (!window.chfSettingsSaved(false, "Couldn't unblock that sender.")) showGlobalAlert("Couldn't unblock that sender."); }
                 },
                 async loadTargets() {
                     try {
@@ -1161,7 +1168,9 @@
                     } finally { this.checking = false; }
                 },
                 async saveConfig() {
+                    if (this.savingConfig) { this._saveAgain = true; return; }
                     this.savingConfig = true;
+                    window.chfSettingsSaving();
                     try {
                         const payload = {
                             ingest_email_enabled: this.config.ingest_email_enabled,
@@ -1176,14 +1185,23 @@
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(payload)
                         });
-                        if (res.ok) {
-                            this.passwordInput = '';
-                            showGlobalAlert('Intake settings saved.');
-                            await Promise.all([this.loadConfig(), this.loadStatus()]);
-                        } else {
-                            showGlobalAlert('Could not save settings.');
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            const msg = err.detail || 'Could not save the mailbox settings.';
+                            if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
+                            return;
                         }
-                    } finally { this.savingConfig = false; }
+                        // No loadConfig() here: it would overwrite the field the
+                        // person has just moved into.
+                        if (payload.ingest_email_password) { this.passwordInput = ''; this.config.has_password = true; }
+                        window.chfSettingsSaved(true);
+                        this.loadStatus();
+                    } catch (e) {
+                        if (!window.chfSettingsSaved(false, 'Could not save the mailbox settings.')) showGlobalAlert('Could not save the mailbox settings.');
+                    } finally {
+                        this.savingConfig = false;
+                        if (this._saveAgain) { this._saveAgain = false; this.saveConfig(); }
+                    }
                 },
             }
         }

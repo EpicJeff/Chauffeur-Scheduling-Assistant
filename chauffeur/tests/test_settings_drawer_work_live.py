@@ -115,6 +115,35 @@ def main():
             _shot(page, 'missions-open-desktop')
             page.click(X + ' [aria-label="Close settings"]')
 
+            # Intake: the mailbox in the drawer, saved as you go (no Save button).
+            I = '[data-settings-for~="intake"]'
+            page.goto(served.url('intake'), wait_until='networkidle')
+            _shot(page, 'intake-closed-desktop')
+            page.click('#page-settings-gear')
+            page.wait_for_selector(I + '[data-open]')
+            check(page.locator(I + ' button:has-text("Save Settings")').count() == 0, 'Intake still has a Save button')
+            posts = []
+            page.on('request', lambda r: posts.append(r.url) if r.method == 'POST' and r.url.endswith('/api/ingest/config') else None)
+            host = I + ' input[x-model="config.ingest_email_host"]'
+            page.click(host)
+            page.keyboard.press('Control+A')
+            page.keyboard.type('imap.example.com', delay=20)
+            page.wait_for_timeout(300)
+            check(not posts, f'typing saved per keystroke: {len(posts)} posts')
+            page.click('#ingestDailyLimit')          # blur commits the host
+            page.wait_for_selector(I + ' [data-settings-status]:has-text("Saved")')
+            check(len(posts) == 1, f'one blur, {len(posts)} saves')
+            check(storage.get_settings().get('ingest_email_host') == 'imap.example.com', 'the host did not save')
+            _shot(page, 'intake-open-desktop')
+            page.click(I + ' [aria-label="Close settings"]')
+            page.set_viewport_size({'width': 390, 'height': 844})
+            page.goto(served.url('intake'), wait_until='networkidle')
+            _shot(page, 'intake-closed-phone')
+            page.click('#page-settings-gear')
+            page.wait_for_selector(I + '[data-open]')
+            _shot(page, 'intake-open-phone')
+            page.click(I + ' [aria-label="Close settings"]')
+
             errors = [e for e in handle.errors if 'Failed to load resource' not in e]
             check(not errors, f'page errors: {errors[:3]}')
     finally:

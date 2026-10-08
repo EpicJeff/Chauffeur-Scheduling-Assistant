@@ -57,9 +57,11 @@ def main():
                 os.makedirs(OUT, exist_ok=True)
                 page.screenshot(path=os.path.join(OUT, 'intake-wait.png'))
 
+            page.click('#page-settings-gear')
+            page.wait_for_selector('[data-settings-for~="intake"][data-open]')
             page.fill('#ingestDailyLimit', '120')
-            page.get_by_role('button', name='Save').first.click()
-            page.wait_for_timeout(800)
+            page.dispatch_event('#ingestDailyLimit', 'change')
+            page.wait_for_selector('[data-settings-for~="intake"] [data-settings-status]:has-text("Saved")')
             check(storage.get_settings().get('ingest_daily_limit') == 120,
                   f"the allowance did not save: {storage.get_settings().get('ingest_daily_limit')}")
             check('0 of 120' in page.locator('[data-intake-usage]').inner_text(),
