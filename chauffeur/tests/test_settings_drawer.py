@@ -76,6 +76,28 @@ def scenario_the_drawer_script_loads_everywhere():
               f'{path}?{q} does not load settings_drawer.js')
 
 
+def scenario_growing_up_lives_on_config_people():
+    base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'templates')
+    cfg = open(os.path.join(base, 'config.html'), encoding='utf-8').read()
+    rh = open(os.path.join(base, 'rhythms.html'), encoding='utf-8').read()
+    check("include 'components/growing_up.html'" in cfg, 'Config does not include Growing up')
+    check('id="growing-up"' in cfg, 'Config has no #growing-up anchor')
+    check('growing_up.html' not in rh, 'Rhythms still carries Growing up')
+    from services import settings_registry as reg
+    e = reg.BY_KEY['stage_cutoffs']
+    check((e['page'], e['anchor']) == ('config', 'growing-up'), f'stage_cutoffs points at {e}')
+    # A redirect has no page body, so assert on the response itself.
+    import main
+    from starlette.requests import Request
+    route = next(r for r in main.app.routes if getattr(r, 'path', None) == '/rhythms')
+    req = Request({'type': 'http', 'method': 'GET', 'path': '/rhythms',
+                   'query_string': b'tab=growing-up', 'headers': [],
+                   'app': main.app, 'router': main.app.router})
+    resp = route.endpoint(req)
+    check(resp.status_code in (302, 303, 307) and resp.headers['location'].endswith('config#growing-up'),
+          f'rhythms?tab=growing-up does not forward to Config: {resp.status_code} {resp.headers.get("location")}')
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith('scenario_')]
 
 if __name__ == '__main__':

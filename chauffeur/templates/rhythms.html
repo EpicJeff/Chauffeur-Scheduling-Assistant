@@ -24,7 +24,7 @@
          independent Alpine islands; /routines and /programs keep working.
          One at a time (v2.499.247): each section is a tab of the Rhythms
          group (nav.html PAGE_GROUPS), with Chores beside them. Growing up
-         joined as a fourth tab in v2.499.256. -->
+         moved to Config > People (v2.499.285). -->
     <div class="flex-1 overflow-y-auto bg-gray-900/50">
         <div class="max-w-6xl mx-auto">
             <section id="routines" data-page-tab="routines" class="min-w-0">
@@ -33,19 +33,12 @@
             <section id="programs" data-page-tab="programs" class="min-w-0">
                 {% include 'components/programs_page.html' %}
             </section>
-            {# Growing up (v2.499.256), moved from School: the stages a child
-               grows through are about the child. Parent settings, so a
-               browser tab only — a panel, kiosk or filtered embed sees every
-               [data-page-tab] block at once and must not get this one (the
-               errand_rules guard in errands.html is the precedent). #}
-            {% set _rq = request.query_params %}
-            {% if _rq.get('panel') != 'true' and _rq.get('kiosk') != 'true' and _rq.get('tabs') is none %}
-            <section id="growing-up" data-page-tab="growing-up" class="min-w-0">
-                {% include 'components/growing_up.html' %}
-            </section>
-            {% endif %}
         </div>
     </div>
+    <script>
+        // Growing up lives on Config > People now; old links follow it.
+        if ((window.location.hash || '') === '#growing-up') window.location.replace('config#growing-up');
+    </script>
     {% include 'components/control_center.html' %}
     {% include 'components/moments_hearth.html' %}
 </body>

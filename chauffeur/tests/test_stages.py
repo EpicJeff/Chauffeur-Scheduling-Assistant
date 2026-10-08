@@ -318,13 +318,12 @@ def scenario_the_hand_path_exists():
     tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        'templates')
     config = open(os.path.join(tpl, 'config.html'), encoding='utf-8').read()
-    # Growing up moved to the School page (v2.499.250), then to its own tab
-    # of Rhythms (v2.499.256); birthdays stay on the identity card.
+    # Growing up moved to the School page (v2.499.250), Rhythms (v2.499.256),
+    # then Config > People (v2.499.285); birthdays stay on the identity card.
     school = open(os.path.join(tpl, 'components', 'growing_up.html'), encoding='utf-8').read()
-    rhythms = open(os.path.join(tpl, 'rhythms.html'), encoding='utf-8').read()
-    check("include 'components/growing_up.html'" in rhythms
-          and 'data-page-tab="growing-up"' in rhythms,
-          "Growing up is a tab of the Rhythms page")
+    check("include 'components/growing_up.html'" in config
+          and 'id="growing-up"' in config,
+          "Growing up is a section of Config > People")
     check('memberEdit.birthdate' in config, "birthdays stay on the identity card")
     check('acknowledgeStage' in school and 'pinStage' in school
           and 'saveStageCutoffs' in school,

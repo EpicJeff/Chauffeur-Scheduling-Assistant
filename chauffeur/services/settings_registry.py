@@ -441,7 +441,7 @@ ENTRIES: List[dict] = [
        'The three ages where a child moves from Sprout to Explorer to '
        'Navigator to Copilot — roughly preschool, elementary, middle and high '
        'school. Change them to match your schools.',
-       page='rhythms', anchor='growing-up'),
+       page='config', anchor='growing-up'),
     _e('runway_cues_enabled', 'kids', 'Runway voice cues',
        'When a morning or bedtime runway falls genuinely behind, the child\'s '
        'room hears one short sentence through its speaker — once per stalled '

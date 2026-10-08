@@ -80,7 +80,7 @@ def main():
             page.goto(served.url('rhythms?tab=routines'), wait_until='networkidle')
             page.wait_for_timeout(600)
             tabs = page.eval_on_selector_all('#page-tabs .page-tab', 'els => els.map(e => e.dataset.tabKey)')
-            check(tabs == ['chores', 'routines', 'programs', 'growing-up'], f'Rhythms tabs: {tabs}')
+            check(tabs == ['chores', 'routines', 'programs'], f'Rhythms tabs: {tabs}')
             page.click('#page-settings-gear')
             page.wait_for_selector('[data-settings-for~="routines"][data-open]')
             check(_visible(page, '#kid-evenings'), 'the kid evening section is not in the Routines drawer')
@@ -106,20 +106,20 @@ def main():
             page.wait_for_selector('[data-settings-for~="routines"][data-open]')
             check(_visible(page, '#kid-evenings'), '/routines lost the kid evening section')
 
-            # --- Growing up: a fourth tab, switched in place.
-            page.goto(served.url('rhythms?tab=routines'), wait_until='networkidle')
-            page.wait_for_timeout(400)
-            page.click('#page-tabs [data-tab-key="growing-up"]')
+            # --- Growing up lives on Config > People now.
+            # Config sits behind the admin gate; sign in as a parent.
+            token = storage.create_member_token('mum')
+            page.evaluate('t => localStorage.setItem("chauffeur_admin_token", t)', token)
+            page.goto(served.url('config#growing-up'), wait_until='networkidle')
+            page.wait_for_selector('#growing-up [x-ref="stageTrack"]', state='visible')
             page.wait_for_timeout(300)
-            check(_visible(page, '#growing-up'), 'clicking Growing up did not show it')
-            check(not _visible(page, '[data-page-tab="routines"]'), 'Routines still shows beside Growing up')
-            check('tab=growing-up' in page.url, f'the URL forgot the tab: {page.url}')
+            check(_visible(page, '#growing-up'), 'config#growing-up did not show Growing up')
             names = page.locator('#growing-up').inner_text()
             check('Ada' in names and 'Ben' in names, 'the children are not on Growing up')
 
             # Drag the first cutoff handle (6) left by two years' worth.
             h = page.locator('[data-cutoff-handle="0"]')
-            h.scroll_into_view_if_needed()
+            h.evaluate('el => el.scrollIntoView({block: "center"})')
             page.wait_for_timeout(200)
             box = h.bounding_box()
             track = page.locator('#growing-up [x-ref="stageTrack"]').bounding_box()
@@ -137,16 +137,24 @@ def main():
                   f"the dragged cutoff did not save: {after.get('stage_cutoffs')}")
             stray = _changed(before, after) - {'stage_cutoffs'}
             check(not stray, f'the cutoff save touched other settings: {stray}')
-            _el_shot(page.locator('#growing-up .select-none'), 'rhythms-growing-up-timeline.png')
+            _el_shot(page.locator('#growing-up .select-none'), 'config-growing-up-timeline.png')
             if OUT:
                 page.evaluate("document.getElementById('growing-up').scrollIntoView({block: 'start'})")
                 page.wait_for_timeout(200)
-                page.screenshot(path=os.path.join(OUT, 'rhythms-growing-up.png'))
+                page.screenshot(path=os.path.join(OUT, 'config-growing-up.png'))
+                page.set_viewport_size({'width': 390, 'height': 844})
+                page.evaluate("document.getElementById('growing-up').scrollIntoView({block: 'start'})")
+                page.wait_for_timeout(300)
+                page.screenshot(path=os.path.join(OUT, 'config-growing-up-phone.png'))
+                page.set_viewport_size({'width': 1400, 'height': 900})
 
-            # An index link opens the tab its anchor lives in.
-            page.goto(served.url('rhythms#growing-up'), wait_until='networkidle')
-            page.wait_for_timeout(600)
-            check(_visible(page, '#growing-up'), 'rhythms#growing-up did not open Growing up')
+            # Old links follow Growing up to Config.
+            for old in ('rhythms#growing-up', 'rhythms?tab=growing-up'):
+                page.goto(served.url(old), wait_until='networkidle')
+                page.wait_for_timeout(600)
+                check(page.url.split('#')[0].split('?')[0].endswith('/config') and page.url.endswith('#growing-up'),
+                      f'{old} did not forward to Config: {page.url}')
+                check(_visible(page, '#growing-up'), f'{old} did not show Growing up')
 
             # --- Never on a wall.
             for path in ('routines?kiosk=true', 'rhythms?kiosk=true', 'rhythms?panel=true',
@@ -155,8 +163,6 @@ def main():
                 page.wait_for_timeout(400)
                 check(page.locator('#kid-evenings, #kidDigestTime').count() == 0,
                       f'the kid evening settings are drawn on {path}')
-                check(page.locator('#growing-up, [data-cutoff-handle]').count() == 0,
-                      f'Growing up is drawn on {path}')
 
             errors = [e for e in handle.errors if 'Failed to load resource' not in e]
             check(not errors, f'page errors: {errors[:3]}')

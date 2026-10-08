@@ -757,7 +757,7 @@ def _stage_findings(now: datetime.datetime):
             out.append(Finding(
                 key=f"stage:{p['member_id']}:{p['to']}",
                 line=(f"🌱 {p['name']} is {p['age']} now — ready to be a "
-                      f"{p['to'].capitalize()}. Confirm it in Rhythms → Growing up."),
+                      f"{p['to'].capitalize()}. Confirm it in Config → People."),
                 kind='stage', severity='decide', subject_type='member',
                 subject_id=f"{p['member_id']}:{p['to']}"))
         return out

@@ -1740,6 +1740,8 @@ def mind_page(request: Request):
 def rhythms_page(request: Request):
     """Routines + Programs side by side — presentation-only merge of the same
     components the standalone pages serve."""
+    if request.query_params.get('tab') == 'growing-up':
+        return RedirectResponse('config#growing-up')
     return templates.TemplateResponse(request=request, name="rhythms.html")
 
 

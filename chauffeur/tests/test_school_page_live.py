@@ -187,18 +187,18 @@ def main():
             check(_visible(page, '#calendar'), 'school#calendar did not open Calendar')
             check(not _visible(page, '#children'), 'Children still shows on the Calendar link')
 
-            # Evenings and Growing up left School for Rhythms (v2.499.256):
-            # the old links forward to the new homes.
-            for old, want_tab, anchor in (('school#growing-up', 'tab=growing-up', '#growing-up'),
-                                          ('school?tab=growing', 'tab=growing-up', '#growing-up'),
-                                          ('school#evenings', 'tab=routines', '#kid-evenings'),
-                                          ('school?tab=evenings', 'tab=routines', '#kid-evenings')):
+            # Evenings left School for Rhythms (v2.499.256), Growing up for
+            # Config > People: the old links forward to the new homes.
+            for old, want, anchor in (('school#growing-up', '/config', '#growing-up'),
+                                      ('school?tab=growing', '/config', '#growing-up'),
+                                      ('school#evenings', '/rhythms', '#kid-evenings'),
+                                      ('school?tab=evenings', '/rhythms', '#kid-evenings')):
                 page.goto(served.url(old), wait_until='networkidle')
                 page.wait_for_timeout(600)
-                check('/rhythms' in page.url and want_tab in page.url,
-                      f'{old} did not forward to Rhythms: {page.url}')
+                check(want in page.url,
+                      f'{old} did not forward to {want}: {page.url}')
                 check(_visible(page, anchor), f'{old} did not land on {anchor}')
-            page.goto(served.url('rhythms?tab=growing-up'), wait_until='networkidle')
+            page.goto(served.url('config#growing-up'), wait_until='networkidle')
             page.wait_for_timeout(600)
             names = page.locator('#growing-up').inner_text()
             check('Ada' in names and 'Ben' in names, 'the children are not on Growing up')
