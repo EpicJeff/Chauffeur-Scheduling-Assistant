@@ -1880,21 +1880,6 @@
                     window.addEventListener('chf-settings-opened', async e => {
                         if (this.isLists || !e.detail || e.detail.tab !== 'meals') return;
                         const loading = this.rulesLoaded ? null : this.loadRules();
-                        // The sheet's sections fill in as the page's loads land
-                        // (rules, plate, categories), pushing the section a link
-                        // named down the sheet. Keep the reader on it, until
-                        // they scroll for themselves.
-                        const el = e.detail.anchor && document.getElementById(e.detail.anchor);
-                        const panel = el && el.closest('[role="dialog"]');
-                        if (panel) {
-                            let last = panel.scrollTop;
-                            for (const wait of [250, 450, 800]) {
-                                await new Promise(r => setTimeout(r, wait));
-                                if (Math.abs(panel.scrollTop - last) > 2) break;
-                                el.scrollIntoView({ block: 'start' });
-                                last = panel.scrollTop;
-                            }
-                        }
                         if (loading) await loading;
                     });
                     await this.loadMembers();

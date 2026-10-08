@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 {% import 'components/chores_lanes.html' as chores_lanes %}
+{% from 'components/settings_drawer.html' import settings_drawer, settings_section, settings_off with context %}
 <html lang="en" class="dark">
 
 <head>
@@ -187,6 +188,7 @@
 
             <template x-if="!isKiosk">
                 <div>
+            {{ settings_off('The reward store is off — nobody can ask for a reward.', 'chores', 'rewards', 'features.rewards_enabled === false') }}
                     <!-- ===== Pending reward requests ===== -->
                     <section class="mb-10" x-show="redemptions.length > 0">
                         <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">Pending Reward Requests</h3>
@@ -408,7 +410,10 @@
                             </div>
                         </div>
                     </section>
-
+                </div>
+            </template>
+        </div>
+        {% call settings_drawer('chores', 'Chores', sections=[('petxp', 'Critters & pet XP'), ('rewards', 'Reward store'), ('tiers', 'Status tiers')]) %}
                     <!-- ===== Pet XP rates (pets arc P2) =====
                          Here rather than on a pets page of its own, because
                          this IS where the economy gets tuned. The panel says
@@ -416,7 +421,7 @@
                          a parent looking at two number boxes has no other way
                          to know that one of them costs real money and the
                          other never will. -->
-                    <section class="mb-10" id="petxp">
+                    <section class="mb-10 scroll-mt-28" id="petxp">
                         <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">Critters &amp; Pet XP</h3>
                         <div class="bg-gray-800 border border-gray-700 rounded-xl p-4 space-y-4">
                             <!-- THE WHOLE GAME, ON OR OFF (services/household_features.py).
@@ -435,7 +440,6 @@
                                             : 'Off: no critters anywhere on the wall or in the app. Pets and XP are kept, and XP still adds up.'"></span>
                                 </span>
                             </label>
-                            <p class="text-[11px] text-emerald-400" x-show="featureSaved === 'critters_enabled'" x-cloak>Saved.</p>
                             <p class="text-xs text-gray-400 leading-relaxed">
                                 Pet experience is its own currency. A verified chore pays
                                 <strong class="text-gray-200">points and XP</strong>, so nobody has to choose
@@ -503,12 +507,11 @@
                                     <span class="block text-[11px] text-gray-500 mt-1">Per pair of people.</span>
                                 </label>
                             </div>
-                            <p class="text-[11px] text-emerald-400" x-show="petXpSaved" x-cloak>Saved.</p>
                         </div>
                     </section>
 
                     <!-- ===== Rewards admin ===== -->
-                    <section class="mb-10" id="rewards">
+                    <section class="mb-10 scroll-mt-28" id="rewards">
                         <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">Rewards Store</h3>
                         <!-- The store, open or closed (services/household_features.py).
                              Closed, nobody can ask or pledge and the wall and app stop
@@ -527,7 +530,6 @@
                                             : 'Off: the store and family goals are hidden from the wall and the app. Points still add up, nothing is deleted, and requests already waiting can still be decided.'"></span>
                                 </span>
                             </label>
-                            <p class="text-[11px] text-emerald-400" x-show="featureSaved === 'rewards_enabled'" x-cloak>Saved.</p>
                         </div>
                         <div class="space-y-3 mb-5">
                             <div x-show="rewards.length === 0" class="text-gray-500 bg-gray-800 rounded-xl p-6">
@@ -621,9 +623,7 @@
 
                     {% set tier_kind = 'chore' %}
                     {% include 'components/status_tiers_editor.html' %}
-                </div>
-            </template>
-        </div>
+        {% endcall %}
     </div>
 
     <script>
@@ -643,12 +643,10 @@
                          pet_xp_routine_all_bonus: 10, pet_pve_daily_cap: 5,
                          pet_pvp_enabled: true, pet_pvp_pair_cap: 3,
                          pet_xp_daily_grant: 15 },
-                petXpSaved: false,
                 // The two whole-feature switches. Seeded from the page head so
                 // the boxes are right before the settings fetch lands.
                 features: { critters_enabled: chfFeatureOn('critters'),
                             rewards_enabled: chfFeatureOn('rewards') },
-                featureSaved: null,
                 get manageCatalog() { return !this.isKiosk; },
                 // Seasons (services/seasons.py): the editor works in month +
                 // day fields and the API in "MM-DD" strings.
@@ -673,26 +671,43 @@
                              season_end: two(f.e_month || 1) + '-' + two(f.e_day || 1) };
                 },
                 async setRewardActive(rw, on) {
-                    const res = await fetch(`${this.apiBase}api/rewards/${rw.id}/active`, {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ active: on }),
-                    });
-                    if (!res.ok) showGlobalAlert('Could not switch that reward');
+                    window.chfSettingsSaving();
+                    try {
+                        const res = await fetch(`${this.apiBase}api/rewards/${rw.id}/active`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ active: on }),
+                        });
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            const msg = err.detail || 'Could not switch that reward.';
+                            if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
+                        } else {
+                            window.chfSettingsSaved(true);
+                        }
+                    } catch (e) {
+                        if (!window.chfSettingsSaved(false, 'Could not switch that reward.')) showGlobalAlert('Could not switch that reward.');
+                    }
                     await this.loadRewards();
                 },
                 async saveFeature(key) {
+                    window.chfSettingsSaving();
                     try {
                         const res = await fetch(`${this.apiBase}api/settings`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ [key]: !!this.features[key] }),
                         });
-                        if (!res.ok) throw new Error('save failed');
-                        this.featureSaved = key;
-                        setTimeout(() => { if (this.featureSaved === key) this.featureSaved = null; }, 2000);
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            this.features[key] = !this.features[key];
+                            const msg = err.detail || 'Could not save that switch.';
+                            if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
+                            return;
+                        }
+                        window.chfSettingsSaved(true);
                     } catch (e) {
                         this.features[key] = !this.features[key];
-                        showGlobalAlert('Could not save that switch');
+                        if (!window.chfSettingsSaved(false, 'Could not save that switch.')) showGlobalAlert('Could not save that switch.');
                     }
                 },
                 async loadPetXp() {
@@ -707,16 +722,23 @@
                     } catch (e) { /* defaults stand */ }
                 },
                 async savePetXp() {
+                    window.chfSettingsSaving();
                     try {
                         const res = await fetch(`${this.apiBase}api/settings`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(this.petXp),
                         });
-                        if (!res.ok) throw new Error('save failed');
-                        this.petXpSaved = true;
-                        setTimeout(() => { this.petXpSaved = false; }, 2000);
-                    } catch (e) { showGlobalAlert('Could not save pet XP rates'); }
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            const msg = err.detail || 'Could not save pet XP rates.';
+                            if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
+                            return;
+                        }
+                        window.chfSettingsSaved(true);
+                    } catch (e) {
+                        if (!window.chfSettingsSaved(false, 'Could not save pet XP rates.')) showGlobalAlert('Could not save pet XP rates.');
+                    }
                 },
                 isKiosk: new URLSearchParams(window.location.search).get('kiosk') === 'true',
                 hideTitle: ['none', 'off', '0', 'false', 'hide'].includes(
@@ -1167,22 +1189,42 @@
                     const url = this.editRewardId
                         ? `${this.apiBase}api/rewards/${this.editRewardId}`
                         : `${this.apiBase}api/rewards`;
-                    const res = await fetch(url, {
-                        method: this.editRewardId ? 'PUT' : 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ ...this.rewardEdit, ...this.seasonOut(this.rewardEdit) })
-                    });
-                    if (!res.ok) {
-                        const err = await res.json().catch(() => ({}));
-                        showGlobalAlert(err.detail || 'Could not save reward');
-                        return;
+                    window.chfSettingsSaving();
+                    try {
+                        const res = await fetch(url, {
+                            method: this.editRewardId ? 'PUT' : 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ ...this.rewardEdit, ...this.seasonOut(this.rewardEdit) })
+                        });
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            const msg = err.detail || 'Could not save reward.';
+                            if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
+                            return;
+                        }
+                        window.chfSettingsSaved(true);
+                        this.cancelEditReward();
+                        await this.loadRewards();
+                    } catch (e) {
+                        if (!window.chfSettingsSaved(false, 'Could not save reward.')) showGlobalAlert('Could not save reward.');
                     }
-                    this.cancelEditReward();
-                    await this.loadRewards();
                 },
                 async deleteReward(rw) {
                     if (!await promptConfirm('Delete reward', `Delete reward "${rw.title}"?`, 'Delete')) return;
-                    await fetch(`${this.apiBase}api/rewards/${rw.id}`, { method: 'DELETE' });
+                    window.chfSettingsSaving();
+                    try {
+                        const res = await fetch(`${this.apiBase}api/rewards/${rw.id}`, { method: 'DELETE' });
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            const msg = err.detail || 'Could not delete that reward.';
+                            if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
+                            return;
+                        }
+                        window.chfSettingsSaved(true);
+                    } catch (e) {
+                        if (!window.chfSettingsSaved(false, 'Could not delete that reward.')) showGlobalAlert('Could not delete that reward.');
+                        return;
+                    }
                     await this.loadRewards();
                 },
             };

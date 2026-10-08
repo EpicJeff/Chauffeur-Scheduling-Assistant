@@ -70,6 +70,9 @@ def run():
         b = served.browser()
         with b as page:
             page.goto(served.url('chores'))
+            page.wait_for_selector('#page-settings-gear')
+            page.click('#page-settings-gear')
+            page.wait_for_selector('[data-settings-for~="chores"][data-open]')
             page.wait_for_selector('#petxp')
             crit = page.locator('input[x-model="features.critters_enabled"]')
             rew = page.locator('input[x-model="features.rewards_enabled"]')
@@ -97,6 +100,9 @@ def run():
         b = served.browser()
         with b as page:
             page.goto(served.url('chores'))
+            page.wait_for_selector('#page-settings-gear')
+            page.click('#page-settings-gear')
+            page.wait_for_selector('[data-settings-for~="chores"][data-open]')
             page.wait_for_selector('#rewards h4:has-text("Ice cream")')
             box = page.locator('input[aria-label="Offer Ice cream"]')
             check(box.is_checked(), "a new reward does not show as on")
@@ -106,6 +112,10 @@ def run():
                 ".then(rs => rs.some(r => r.title === 'Ice cream' && r.active === false))")
             check(not any(r.get('title') == 'Ice cream' and r.get('active') is not False
                           for r in storage.get_rewards()), "the tap never reached the reward")
+            if OUT:
+                page.locator('#rewards').screenshot(path=os.path.join(OUT, 'rewards_rows.png'))
+            page.click('[data-settings-for~="chores"] [aria-label="Close settings"]')
+            page.wait_for_selector('[data-settings-for~="chores"]', state='hidden')
             # a chore with the Summer preset, saved through the form
             page.fill('input[placeholder="Take out the trash"]', 'Mow the lawn')
             page.locator('button:has-text("Summer")').first.click()
@@ -116,8 +126,6 @@ def run():
                   "the season did not save: %s" % row)
             page.wait_for_timeout(300)
             _shot(page, 'chores_seasons.png')
-            if OUT:
-                page.locator('#rewards').screenshot(path=os.path.join(OUT, 'rewards_rows.png'))
             check(not b.errors, "chores page script errors: %s" % b.errors)
         storage.patch_settings({'rewards_enabled': False})
 

@@ -53,6 +53,7 @@
             drawerState: '',
             drawerMsg: '',
             _drawerTimer: null,
+            _drawerKeepOff: null,
 
             drawerOpenFor(detail) {
                 const d = detail || {};
@@ -68,15 +69,49 @@
                 this.$nextTick(() => {
                     const panel = this.$refs.drawerPanel;
                     const target = d.anchor ? document.getElementById(d.anchor) : null;
-                    if (target && this.$root.contains(target)) target.scrollIntoView({ block: 'start' });
-                    else if (panel) panel.scrollTop = 0;
+                    this.drawerKeepStop();
+                    if (target && this.$root.contains(target)) {
+                        target.scrollIntoView({ block: 'start' });
+                        this.drawerKeep(panel, target);
+                    } else if (panel) panel.scrollTop = 0;
                     if (panel) panel.focus({ preventScroll: true });
                     window.dispatchEvent(new CustomEvent('chf-settings-opened', { detail: { tab: d.tab, anchor: d.anchor || null } }));
                 });
             },
+            // Sections fill in as a page's loads land, pushing the anchor a
+            // link named down the panel. For ~1.5s keep the reader on it,
+            // until they act for themselves (or the drawer closes).
+            drawerKeep(panel, target) {
+                if (!panel) return;
+                const stop = () => this.drawerKeepStop();
+                const events = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
+                events.forEach(n => panel.addEventListener(n, stop, { passive: true }));
+                const started = Date.now();
+                let ro = null;
+                const settle = () => {
+                    if (Date.now() - started > 1500) { stop(); return; }
+                    if (Math.abs(target.getBoundingClientRect().top - panel.getBoundingClientRect().top) > 60)
+                        target.scrollIntoView({ block: 'start' });
+                };
+                const timer = setInterval(settle, 120);
+                if (window.ResizeObserver && panel.firstElementChild) {
+                    ro = new ResizeObserver(settle);
+                    ro.observe(panel.firstElementChild.nextElementSibling || panel.firstElementChild);
+                }
+                this._drawerKeepOff = () => {
+                    clearInterval(timer);
+                    if (ro) ro.disconnect();
+                    events.forEach(n => panel.removeEventListener(n, stop));
+                    this._drawerKeepOff = null;
+                };
+            },
+            drawerKeepStop() {
+                if (this._drawerKeepOff) this._drawerKeepOff();
+            },
             drawerClose() {
                 if (!this.drawerOpen) return;
                 this.drawerOpen = false;
+                this.drawerKeepStop();
                 const tab = this.drawerTab;
                 // A hash that pointed in here would reopen it on reload.
                 try {

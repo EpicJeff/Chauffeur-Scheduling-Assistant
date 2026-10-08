@@ -141,7 +141,7 @@ setTimeout(() => {
 def _render_chores():
     import main
     req = types.SimpleNamespace(url=types.SimpleNamespace(path='/chores'),
-                                query_params={})
+                                query_params={'kiosk': 'true'})
     return main.templates.env.get_template('chores.html').render(request=req)
 
 
