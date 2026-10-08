@@ -720,6 +720,7 @@
      as plain JavaScript by the jsdom tests — a Jinja expression inside it is a
      syntax error there, and the board's own harness is the last thing that
      should have to learn about server-side templating. -->
+{% from 'components/settings_drawer.html' import settings_drawer, settings_section, settings_off with context %}
 <body class="min-h-screen" data-board-slug="{{ board_slug or '' }}">
     <div id="panel-bg-image"></div>
     <div id="panel-bg-scrim"></div>
@@ -801,16 +802,6 @@
             <button x-show="!arranging" @click="startArrange()"
                 class="text-xs font-semibold ed-input rounded-lg px-3 py-1.5">
                 ✎ Edit
-            </button>
-            <!-- The BOARD's own settings — what it is called, what it wears,
-                 where it lives, and the grid its tiles are spans of. Beside
-                 Edit rather than inside it: these are true of the board whether
-                 or not you are moving tiles around, and a wall panel's address
-                 is the one thing somebody needs to read WITHOUT touching the
-                 layout. -->
-            <button @click="openBoardSettings()"
-                class="text-xs font-semibold ed-input rounded-lg px-3 py-1.5">
-                ⚙ Settings
             </button>
         </div>
 
@@ -1180,19 +1171,11 @@
              form; the numbers only mean anything next to the board they
              describe, which is the same argument every other part of this arc
              made. -->
-        <div id="board-settings"
-            x-show="boardSettings" x-cloak @click.self="closeBoardSettings()"
-            @keydown.escape.window="closeBoardSettings()"
-            class="fixed inset-0 z-40 flex items-end sm:items-center justify-center p-3 sm:p-6"
-            style="background: rgba(0,0,0,.55)">
-            <div class="ed-card rounded-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto p-5"
-                x-show="boardSettings">
-                <div class="flex items-center gap-2 mb-4">
-                    <span class="text-base font-black ed-title">Board settings</span>
-                    <button type="button" class="ml-auto ed-btn px-2"
-                        @click="closeBoardSettings()" title="Close">✕</button>
-                </div>
-
+        {% set _bk = 'music' if '/music' in request.url.path else ('board' if '/board/' in request.url.path else 'home') %}
+        {% call settings_drawer(_bk, 'Board') %}
+        <section id="board-settings" data-settings-section class="scroll-mt-28 flex flex-col"
+            @chf-settings-opened.window="$event.detail.tab === '{{ _bk }}' && openBoardSettings()"
+            @chf-settings-closed.window="$event.detail.tab === '{{ _bk }}' && closeBoardSettings()">
                 <!-- Icon and name, together: they are the shelf button. -->
                 <div class="flex items-center gap-2 mb-1">
                     <button type="button" @click="iconPicking = !iconPicking"
@@ -1201,7 +1184,7 @@
                         x-html="boardIconHtml(page().icon, 'w-5 h-5')"></button>
                     <input type="text" :value="page().name"
                         @input="setPageField('name', $event.target.value)"
-                        placeholder="Board name"
+                        placeholder="Board name" id="boardSettingsName"
                         class="flex-1 min-w-0 ed-input rounded px-2 py-1.5 text-sm ed-title">
                 </div>
                 <!-- Grouped, and capped in height so a set this size opens a
@@ -1309,19 +1292,19 @@
                 </p>
 
                 <div class="flex items-center gap-2 mt-5">
-                    <button type="button" @click="closeBoardSettings()"
+                    <button type="button" @click="chfCloseSettings()"
                         class="flex-1 rounded-lg py-2 text-sm font-semibold
                                bg-sky-600 hover:bg-sky-500 text-white">
                         Done
                     </button>
                     <button type="button" x-show="page().slug !== 'home'"
-                        @click="removePage(); closeBoardSettings()"
+                        @click="removePage(); chfCloseSettings()"
                         class="rounded-lg px-3 py-2 text-sm ed-btn hover:text-red-400
                                border border-gray-700"
                         x-text="isBuiltinPage(page().slug) ? 'Reset' : 'Delete'"></button>
                 </div>
-            </div>
-        </div>
+        </section>
+        {% endcall %}
 
         <!-- The card picker, opened by the + on a container tile. Same
              partial as the tile palette, minus the containers: a card cannot
@@ -4644,7 +4627,13 @@
                     // Straight into its settings: a board with no tiles is not
                     // a thing to look at yet, and its picture and grid are the
                     // next two decisions anybody makes.
-                    this.boardSettings = true;
+                    // openBoardSettings re-points at the viewed board; the new
+                    // one is the one wanted, so tell it to leave the index be.
+                    this.keepPageIndex = true;
+                    // No key: the page bar's own (nav.html), which is the key
+                    // the drawer was drawn under. A panel has no bar and no
+                    // drawer, so this is a no-op there.
+                    window.chfOpenSettings();
                 },
 
                 // A slug nothing else has claimed — checked against the SHIPPED
@@ -5169,6 +5158,7 @@
                 cardEd() { return this.editing || this._noInstance; },
                 tileEd() { return this.tileEditing || this._noInstance; },
                 cardPicking: null,      // the container tile being added to
+                keepPageIndex: false,
                 boardSettings: false,   // the board's own settings, open
 
                 openCardEditor(tileId, drawnId) {
@@ -5208,23 +5198,27 @@
                 // on should not rename a different one because the draft
                 // happened to be parked on index 0.
                 openBoardSettings() {
-                    if (this.pageSlug) {
+                    if (this.pageSlug && !this.keepPageIndex) {
                         const i = (this.draft.panel_pages || [])
                             .findIndex(p => p.slug === this.pageSlug);
                         if (i >= 0) this.pageIndex = i;
                     }
+                    this.keepPageIndex = false;
                     this.iconPicking = false;
                     this.boardSettings = true;
                 },
 
                 async closeBoardSettings() {
+                    // Run by the drawer's closed event, however it closed
+                    // (✕, Done, Escape, backdrop). Once per open.
+                    if (!this.boardSettings) return;
                     this.boardSettings = false;
                     this.iconPicking = false;
                     // Saved on close rather than on a button somewhere else:
                     // the grid numbers change what the board looks like, and
                     // a change you have to go and confirm elsewhere is the
                     // form this arc is dismantling.
-                    await this.save();
+                    await this.save(true);
                 },
 
                 // The TILE's own settings, reached from the ✎ on the tile
@@ -6889,6 +6883,7 @@
                 },
 
                 async save() {
+                    const quiet = arguments[0] === true;
                     // NOTHING IS SENT FROM A DRAFT THAT WAS NEVER LOADED.
                     //
                     // `draft` starts on the initialiser's defaults — dark
@@ -6964,7 +6959,7 @@
                         });
                         if (!r.ok) throw new Error(await r.text());
                         await this.load();
-                        showGlobalAlert('Panel setup saved.');
+                        if (!quiet) showGlobalAlert('Panel setup saved.');
                     } catch (e) {
                         showGlobalAlert('Could not save the panel setup: ' + e.message);
                     }

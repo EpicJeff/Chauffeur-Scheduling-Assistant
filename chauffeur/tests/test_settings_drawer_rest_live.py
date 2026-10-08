@@ -134,6 +134,52 @@ def main():
             check(page.evaluate("() => document.documentElement.scrollWidth <= innerWidth + 1"),
                   'the phone page scrolls sideways')
 
+            # Home, Music and custom boards: the board's settings are the drawer.
+            page.set_viewport_size({'width': 1300, 'height': 900})
+            H = '[data-settings-for~="home"]'
+            page.goto(served.url('home'), wait_until='networkidle')
+            check(page.locator('[x-data="homeBoard()"] button:has-text("Settings")').count() == 0,
+                  "the board toolbar's Settings survived")
+            check(page.locator('button:has-text("Edit")').first.is_visible(), 'Edit left the toolbar')
+            _shot(page, 'home-closed-desktop')
+            page.click('#page-settings-gear')
+            page.wait_for_selector(H + '[data-open]')
+            page.fill('#boardSettingsName', 'Our home')
+            page.wait_for_timeout(200)
+            _shot(page, 'home-open-desktop')
+            page.keyboard.press('Escape')
+            page.wait_for_timeout(800)
+            pages = storage.get_settings().get('panel_pages') or []
+            check(any((p.get('name') == 'Our home') for p in pages), 'closing the drawer did not save the board name')
+            page.click('#page-settings-gear')
+            page.wait_for_selector(H + '[data-open]')
+            page.click(H + ' button[title="Icon"]')
+            page.click(H + ' button:has-text("🙂")')
+            page.wait_for_selector('#emoji-picker-back', state='attached')
+            check(page.evaluate("() => { const el = document.querySelector('#emoji-picker-back');"
+                                " return getComputedStyle(el).zIndex > 85; }"), 'emoji picker sits below the drawer')
+            page.keyboard.press('Escape')
+            page.goto(served.url('music'), wait_until='networkidle')
+            page.click('#page-settings-gear')
+            page.wait_for_selector('[data-settings-for~="music"][data-open]')
+            _shot(page, 'music-open-desktop')
+            s = storage.get_settings()
+            s['panel_pages'] = (s.get('panel_pages') or []) + [
+                {'slug': 'hall', 'name': 'Hall', 'icon': '🗂️', 'v': 5, 'widgets': [], 'spans': {}}]
+            storage.update_settings(s)
+            page.goto(served.url('board/hall'), wait_until='networkidle')
+            page.click('#page-settings-gear')
+            page.wait_for_selector('[data-settings-for~="board"][data-open]')
+            check(page.input_value('#boardSettingsName') == 'Hall', 'the board drawer opened on the wrong board')
+            _shot(page, 'board-open-desktop')
+            page.set_viewport_size({'width': 390, 'height': 844})
+            page.goto(served.url('home'), wait_until='networkidle')
+            page.click('#page-settings-gear')
+            page.wait_for_selector(H + '[data-open]')
+            _shot(page, 'home-open-phone')
+            page.goto(served.url('home?panel=true'), wait_until='domcontentloaded')
+            check(page.query_selector('[data-settings-for]') is None, 'a panel drew the board drawer')
+
             errors = [e for e in handle.errors if 'Failed to load resource' not in e]
             check(not errors, f'page errors: {errors[:3]}')
     finally:
