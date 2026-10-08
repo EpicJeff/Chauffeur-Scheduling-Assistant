@@ -110,6 +110,33 @@ events — you are not designing anything. You are calling these.
   widen to its viewport limit, then scroll horizontally. Never squeeze names,
   controls, or task labels until they overlap.
 
+## Where settings go
+
+Every browser admin page carries a page bar (`nav.html`): its tabs, or its
+name, and **⚙ Settings** at the right end. The gear opens the active tab's
+drawer — `templates/components/settings_drawer.html`, behaviour in
+`static/settings_drawer.js` — and nothing else.
+
+1. **Settings for the whole page** live in the page's drawer, never in the
+   work flow.
+2. **Settings for one item** live in that item's editor (a reward's active
+   switch, a child's school hours, a dish's details), not in the drawer.
+3. **Work actions that write a setting** stay in the work area: Block sender
+   in Intake, Graduate in Mind.
+4. **A feature switched off** shows an honest one-line state in the work area
+   with a **Turn on…** button that opens the drawer at the switch
+   (`settings_off`). Never a blank or silently empty work area.
+5. **No pointers** ("settings are now in ⚙") where a setting used to be.
+6. **Walls never show settings.** Kiosk, `?tabs=` and panel views render no
+   drawer; the macro enforces it.
+
+Mechanics: wrap the existing markup in `{% call settings_drawer(tab, title,
+sections) %}` inside the page's own Alpine island and outside any
+`<template>`; no `transform`/`filter`/`backdrop-filter` ancestor; each
+section root keeps its registry anchor as its `id`; saves report through
+`chfSettingsSaving()` / `chfSettingsSaved(ok, message)`. Config and Find a
+setting are settings pages and have no drawer.
+
 ## Spatial house surfaces
 
 - Put an affordance on the object or room it opens. Its label and icon must

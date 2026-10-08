@@ -150,7 +150,29 @@
   {% endfor %}
 {% endfor %}
 {% set _active_tab = _pg.active or _pg.first %}
-{% set _show_tabs = _pg.group and not _full_nav and _qp.get('panel') != 'true' %}
+{#
+  THE PAGE BAR (settings-drawer arc). Every browser admin page gets one:
+  a grouped page shows its tabs, an ungrouped page its name, and the right
+  end carries ⚙ Settings, which settings_drawer.js shows only when the
+  active tab has a drawer. `_bar.key` is the key a drawer names in
+  `data-settings-for`. Config and Find a setting get the bar without a
+  gear: they ARE settings pages.
+#}
+{% set _bar = namespace(key=none, label=none) %}
+{% if _pg.group %}
+  {% set _bar.key = _active_tab.key %}
+{% elif '/board/' in _path %}
+  {% set _bar.key = 'board' %}{% set _bar.label = 'Board' %}
+{% elif _path.endswith('/config') %}
+  {% set _bar.key = 'config' %}{% set _bar.label = 'Settings' %}
+{% elif _path.endswith('/settings') %}
+  {% set _bar.key = 'settings' %}{% set _bar.label = 'Find a setting' %}
+{% else %}
+  {% for item in NAV_ITEMS if item.match in _path and _bar.key is none %}
+    {% set _bar.key = item.slug %}{% set _bar.label = item.label %}
+  {% endfor %}
+{% endif %}
+{% set _show_bar = _bar.key and not _full_nav and _qp.get('panel') != 'true' %}
 {#
   How far to climb before a relative link means anything.
 
@@ -259,25 +281,41 @@
         </div>
     </div>
 
-    {% if _show_tabs %}
-    {# The page group's tab strip. Same pill vocabulary as Settings' section
-       tabs (config.html, `activeTab`), laid out as a row: blue for where you
-       are, gray for where you could go. A count chip rides a tab only when a
-       page reports one (window.chfSetPageTabCount). #}
-    <div id="page-tabs" class="border-t border-gray-800" data-group="{{ _pg.group }}">
-        <div class="px-4 sm:px-6 lg:px-8 flex items-center gap-1 h-11 overflow-x-auto" style="scrollbar-width: none">
-            {% for t in PAGE_GROUPS[_pg.group] %}
-            {% set _here = t.key == _active_tab.key %}
-            <a href="{{ _up }}{{ t.href }}" data-tab-key="{{ t.key }}"
-                {% if t.tab and t.path in _path %}data-inpage-tab="{{ t.tab }}"{% endif %}
-                class="page-tab {% if _here %}bg-blue-600 text-white{% else %}text-gray-400 hover:bg-gray-700 hover:text-white{% endif %} whitespace-nowrap px-3 py-1.5 rounded-lg text-sm font-bold transition-colors flex items-center gap-1.5">
-                {{ t.label }}
-                <span class="page-tab-count hidden text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300"></span>
-            </a>
-            {% endfor %}
+    {% if _show_bar %}
+    {# The page bar: a group's tab strip (same pill vocabulary as Settings' section
+       tabs, config.html `activeTab`: blue for where you are, gray for where you
+       could go) or the page's name, with the settings gear at the right end.
+       A count chip rides a tab only when a page reports one
+       (window.chfSetPageTabCount). #}
+    <div id="page-tabs" class="border-t border-gray-800" data-group="{{ _pg.group or '' }}" data-bar-key="{{ _bar.key }}">
+        <div class="px-4 sm:px-6 lg:px-8 flex items-center gap-2 h-11">
+            <div class="flex items-center gap-1 min-w-0 flex-1 overflow-x-auto" style="scrollbar-width: none">
+                {% if _pg.group %}
+                {% for t in PAGE_GROUPS[_pg.group] %}
+                {% set _here = t.key == _active_tab.key %}
+                <a href="{{ _up }}{{ t.href }}" data-tab-key="{{ t.key }}"
+                    {% if t.tab and t.path in _path %}data-inpage-tab="{{ t.tab }}"{% endif %}
+                    class="page-tab {% if _here %}bg-blue-600 text-white{% else %}text-gray-400 hover:bg-gray-700 hover:text-white{% endif %} whitespace-nowrap px-3 py-1.5 rounded-lg text-sm font-bold transition-colors flex items-center gap-1.5">
+                    {{ t.label }}
+                    <span class="page-tab-count hidden text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300"></span>
+                </a>
+                {% endfor %}
+                {% else %}
+                <span class="page-bar-name whitespace-nowrap px-3 py-1.5 text-sm font-bold text-white">{{ _bar.label }}</span>
+                {% endif %}
+            </div>
+            <button type="button" id="page-settings-gear" aria-label="Settings for this page"
+                class="hidden shrink-0 whitespace-nowrap px-3 py-1.5 rounded-lg text-sm font-bold text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-1.5">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                </svg>
+                Settings
+            </button>
         </div>
     </div>
-    {% if _active_tab.tab and _active_tab.path in _path %}
+    {% if _pg.group and _active_tab.tab and _active_tab.path in _path %}
     <style id="page-tab-style">html:not([data-panel]) [data-page-tab]:not([data-page-tab="{{ _active_tab.tab }}"]) { display: none !important; }</style>
     {% endif %}
     <script>
@@ -286,6 +324,7 @@
         const ACTIVE = ['bg-blue-600', 'text-white'];
         const IDLE = ['text-gray-400', 'hover:bg-gray-700', 'hover:text-white'];
         function mark(key) {
+            strip.dataset.barKey = key;
             strip.querySelectorAll('.page-tab').forEach(a => {
                 const on = a.dataset.tabKey === key;
                 ACTIVE.forEach(c => a.classList.toggle(c, on));
@@ -316,8 +355,7 @@
             window.dispatchEvent(new CustomEvent('chf-page-tab', { detail: tab }));
         });
         window.chfPageTab = function () {
-            const on = strip.querySelector('.page-tab.bg-blue-600');
-            return on ? on.dataset.tabKey : null;
+            return strip.dataset.barKey || null;
         };
         window.chfSetPageTabCount = function (key, count) {
             const a = strip.querySelector('[data-tab-key="' + key + '"] .page-tab-count');
@@ -329,6 +367,8 @@
     })();
     </script>
     {% endif %}
+
+    <script src="{{ 'static/settings_drawer.js'|ver }}"></script>
 
     <!-- Mobile menu, show/hide based on menu state. -->
     <div class="md:hidden hidden absolute top-16 left-0 w-full bg-gray-900 border-b border-gray-800 shadow-2xl z-[70]" id="mobile-menu">

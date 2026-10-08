@@ -46,28 +46,6 @@
             {% endif %}
         </div>
     </div>
-    <script>
-        // An anchor (rhythms#growing-up, rhythms#kid-evenings from the
-        // settings index) can live in a tab that is not open. Open its tab
-        // first, then scroll to it, or the deep link lands on a hidden
-        // element. Same opener as school.html.
-        (function () {
-            function openAnchor() {
-                const id = (window.location.hash || '').slice(1);
-                if (!id) return;
-                const el = document.getElementById(id);
-                const block = el && el.closest('[data-page-tab]');
-                if (!block) return;
-                const tab = block.getAttribute('data-page-tab');
-                const link = document.querySelector('#page-tabs a[data-inpage-tab="' + tab + '"]');
-                if (link && !link.classList.contains('bg-blue-600')) link.click();
-                setTimeout(() => el.scrollIntoView({ block: 'start' }), 50);
-            }
-            window.addEventListener('hashchange', openAnchor);
-            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', openAnchor);
-            else openAnchor();
-        })();
-    </script>
     {% include 'components/control_center.html' %}
     {% include 'components/moments_hearth.html' %}
 </body>

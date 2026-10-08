@@ -2,6 +2,7 @@
    the standalone /threads wrapper AND by the combined /work page —
    chrome (nav, control_center, hearth) belongs to the HOST page,
    never here. #}
+{% from 'components/settings_drawer.html' import settings_drawer, settings_section, settings_off with context %}
         <div x-data="threadsPage()" x-init="load()"
             x-effect="window.chfSetPageTabCount && window.chfSetPageTabCount('threads', stalledList.length)" class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
 
@@ -13,19 +14,22 @@
                 it needs a room of its own: stalled ones surface first.
             </p>
 
-            <!-- Settings: thread_stall_days lives here, not on /config. -->
-            <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3 mb-5 flex items-center justify-between gap-3">
+            {% call settings_drawer('threads', 'Threads') %}
+            {% call settings_section('threads-settings', 'Stalls') %}
+            <div class="bg-gray-900 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
                 <div>
-                    <div class="text-xs font-semibold text-gray-200">Stalls after (days)</div>
+                    <label for="threadStallDays" class="text-xs font-semibold text-gray-200">Stalls after (days)</label>
                     <p class="text-[11px] text-gray-500 mt-0.5">
                         No movement for this long on an open thread counts as
                         quiet. A past next-action date stalls it immediately
                         either way.
                     </p>
                 </div>
-                <input type="number" min="1" x-model.number="s.thread_stall_days" @change="saveStallDays()"
-                    class="w-20 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-center shrink-0">
+                <input type="number" min="1" id="threadStallDays" x-model.number="s.thread_stall_days" @change="saveStallDays()"
+                    class="w-20 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-center shrink-0">
             </div>
+            {% endcall %}
+            {% endcall %}
 
             <!-- Create form -->
             <div class="bg-gray-800 rounded-2xl border border-gray-700 p-4 mb-6">
@@ -715,6 +719,7 @@
                 async saveStallDays() {
                     const days = Math.max(1, parseInt(this.s.thread_stall_days, 10) || 7);
                     this.s.thread_stall_days = days;
+                    window.chfSettingsSaving();
                     try {
                         const r = await fetch(this.apiBase + 'api/settings', {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -722,9 +727,14 @@
                         });
                         if (!r.ok) {
                             const err = await r.json().catch(() => ({}));
-                            showGlobalAlert(err.detail || 'Could not save that just now.');
+                            const msg = err.detail || 'Could not save that just now.';
+                            if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
+                            return;
                         }
-                    } catch (e) { showGlobalAlert('Could not save that just now.'); }
+                        window.chfSettingsSaved(true);
+                    } catch (e) {
+                        if (!window.chfSettingsSaved(false, 'Could not save that just now.')) showGlobalAlert('Could not save that just now.');
+                    }
                 },
             }
         }
