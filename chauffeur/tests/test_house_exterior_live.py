@@ -288,7 +288,10 @@ def main():
             page.wait_for_selector('#hybrid-room-frame[data-phase="room"]')
             page.locator('#hybrid-outside').tap()
             mode('exterior')
-            assert page.evaluate('webglAttempts') == 0
+            # The bus map (opened above) probes once for WebGL2 and, finding
+            # none under this stub, draws raster. Nothing else on the page
+            # asks: the photographic House builds no 3D scene.
+            assert page.evaluate('webglAttempts') == 1
             assert not served.errors(), served.errors()
             # Exercise the actual transition as well as reduced motion.
             page.emulate_media(reduced_motion='no-preference')
@@ -313,7 +316,7 @@ def main():
             page.wait_for_function("document.querySelector('#exterior-cars-shortcut')?.textContent.includes('2 home')")
             assert page.locator('.exterior-garage-car').count()==2
             assert not page.evaluate('chfEffectsProbe().running')
-            (out/'results.json').write_text(json.dumps({'passed':True,'views':1,'webglAttempts':0}, indent=2))
+            (out/'results.json').write_text(json.dumps({'passed':True,'views':1,'webglAttempts':1}, indent=2))
             print('PASS: single exterior, shared previews and hold visits, history, touch and live traffic')
     except Exception:
         print('BROWSER ERRORS', served.errors(), flush=True)

@@ -652,13 +652,17 @@
            and the attribution live in other panes and keep their real
            colours. Chosen over a dark tile provider (Carto et al) on
            purpose — no second tile host, no new attribution terms, nothing
-           else for a wall panel to depend on. */
-        .board-map .leaflet-tile-pane {
+           else for a wall panel to depend on.
+           Since the vector map (v2.499.272, family_map_core.html) this is the
+           RASTER FALLBACK's night look only: a vector map draws a designed
+           dark style, and its canvas sits in this same tile pane, so an
+           unscoped filter would invert it too. */
+        .board-map.fm-raster .leaflet-tile-pane {
             filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.6);
         }
-        html[data-panel-theme="light"] .board-map .leaflet-tile-pane { filter: none; }
+        html[data-panel-theme="light"] .board-map.fm-raster .leaflet-tile-pane { filter: none; }
         @media (prefers-color-scheme: light) {
-            html[data-panel-theme="auto"] .board-map .leaflet-tile-pane { filter: none; }
+            html[data-panel-theme="auto"] .board-map.fm-raster .leaflet-tile-pane { filter: none; }
         }
 
         /* The column count is the household's, so the tracks cannot be

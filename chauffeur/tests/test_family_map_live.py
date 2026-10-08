@@ -236,6 +236,84 @@ def scenario_destroy_mid_load_and_a_second_map(served):
         check(not served.errors(), served.errors())
 
 
+def _board_with_map(page, served, interactive):
+    """/home?panel=true with the real board, its map card's `interactive` set."""
+    def patch(route):
+        resp = route.fetch()
+        body = resp.json()
+        tiles = [t for t in body.get('tiles', []) if t.get('type') == 'map']
+        check(tiles and not tiles[0]['data'].get('empty'),
+              'the default board must carry a non-empty map card for the seeded family')
+        tiles[0]['data']['interactive'] = interactive
+        route.fulfill(response=resp, json=body)
+    page.route(re.compile(r'.*/api/home_board(\?.*)?$'), patch)
+    page.goto(served.url('home?panel=true'))
+    page.wait_for_selector('.board-map .leaflet-marker-icon')
+
+
+def scenario_board_cards_interactive_on_and_off_and_the_invert_trick(served):
+    with served.browser(has_touch=True) as page:
+        Tiles(page)
+        _board_with_map(page, served, interactive=True)
+        page.wait_for_selector('.board-map.fm-vector canvas.maplibregl-canvas')
+        check(page.evaluate("getComputedStyle(document.querySelector('.board-map .leaflet-tile-pane')).filter")
+              == 'none', 'a vector board map must never be colour-inverted')
+        check(page.locator('.board-map').first.evaluate("e => getComputedStyle(e).pointerEvents") != 'none',
+              'interactive card takes pointer events')
+        check(not served.errors(), served.errors())
+    with served.browser(has_touch=True) as page:
+        Tiles(page)
+        _board_with_map(page, served, interactive=False)
+        page.wait_for_selector('.board-map.fm-vector')
+        check(page.locator('.board-map').first.evaluate("e => getComputedStyle(e).pointerEvents") == 'none',
+              'non-interactive card stays a door')
+    with served.browser(has_touch=True) as page:
+        Tiles(page)
+        page.add_init_script("""const real = HTMLCanvasElement.prototype.getContext;
+            HTMLCanvasElement.prototype.getContext = function (kind, ...a) {
+                if (/webgl/.test(kind)) return null; return real.call(this, kind, ...a); };""")
+        page.add_init_script("try { localStorage.setItem('chauffeurPanelTheme', 'dark'); } catch (e) {}")
+        _board_with_map(page, served, interactive=True)
+        page.wait_for_selector('.board-map.fm-raster')
+        check('invert' in page.evaluate(
+              "getComputedStyle(document.querySelector('.board-map .leaflet-tile-pane')).filter"),
+              'a raster board map on a dark panel keeps the night inversion')
+
+
+COUNT_WEBGL = """window.webglAttempts = 0;
+    const real = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (kind, ...a) {
+        if (/webgl/.test(kind)) { window.webglAttempts++; return null; }
+        return real.call(this, kind, ...a); };"""
+
+
+def scenario_the_probe_is_lazy_and_asked_once(served):
+    # Review Focus 5: including the component costs no WebGL attempt; drawing
+    # maps costs exactly one, however many maps there are.
+    with served.browser() as page:
+        Tiles(page)
+        page.add_init_script(COUNT_WEBGL)
+
+        def no_map(route):
+            resp = route.fetch()
+            body = resp.json()
+            body['tiles'] = [t for t in body.get('tiles', []) if t.get('type') != 'map']
+            route.fulfill(response=resp, json=body)
+        page.route(re.compile(r'.*/api/home_board(\?.*)?$'), no_map)
+        page.goto(served.url('home?panel=true'))
+        page.wait_for_function("window.FamilyMap && document.querySelector('.board-tile, [data-tile-id], main')")
+        page.wait_for_timeout(1500)
+        check(page.evaluate("webglAttempts") == 0, 'a page with no map open must not probe WebGL')
+    with served.browser() as page:
+        Tiles(page)
+        page.add_init_script(COUNT_WEBGL)
+        open_map(page, served)
+        page.evaluate("""async () => { const d = document.createElement('div');
+            d.style.cssText = 'width:300px;height:200px'; document.body.appendChild(d);
+            await FamilyMap.create(d, {}).ensure(); return true; }""")
+        check(page.evaluate("webglAttempts") == 1, 'two maps, one probe')
+
+
 if __name__ == '__main__':
     served = live_app(seed)
     if served is None:
@@ -245,10 +323,12 @@ if __name__ == '__main__':
             print('  ok  scenario_vector_map_on_the_map_page')
             for fn in (scenario_theme_follows_the_page_and_the_last_flip_wins,
                        scenario_context_loss_drops_to_raster_and_keeps_the_pins,
-                       scenario_destroy_mid_load_and_a_second_map):
+                       scenario_destroy_mid_load_and_a_second_map,
+                       scenario_board_cards_interactive_on_and_off_and_the_invert_trick):
                 fn(served)
                 print(f'  ok  {fn.__name__}')
-        for fn in (scenario_resolver_and_asset_base, scenario_raster_when_there_is_no_webgl2):
+        for fn in (scenario_resolver_and_asset_base, scenario_raster_when_there_is_no_webgl2,
+                   scenario_the_probe_is_lazy_and_asked_once):
             fn(served)
             print(f'  ok  {fn.__name__}')
     finally:
