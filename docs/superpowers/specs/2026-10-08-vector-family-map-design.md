@@ -1,6 +1,6 @@
 # Vector family map — design
 
-**Status:** approved in conversation 2026-10-08; spec awaiting review.
+**Status:** approved 2026-10-08 (MapLibre v6 revision); implementation plan next.
 **Scope:** the family map only — everything drawn through `FamilyMap.create`
 (`templates/components/family_map_core.html`): the /map page
 (`components/family_map.html`), board map cards (`home.html`), and the House
@@ -72,9 +72,20 @@ Success:
 `tools/vendor_assets.py` gains, all pinned and committed under
 `static/vendor/` like everything else:
 
-- `maplibre-gl` **5.24.0** (`maplibre-gl.js`, `maplibre-gl.css`) — the version
-  HA pins; v6 is not adopted.
-- `@maplibre/maplibre-gl-leaflet`, latest release at vendoring time, pinned.
+- `maplibre-gl`, the latest **6.x** at vendoring time, pinned
+  (`maplibre-gl.mjs`, its worker, `maplibre-gl.css`). v6 ships ESM only and
+  requires WebGL2. HA pins 5.24.0 only because v6's worker URL broke its rspack
+  bundle; Chauffeur does not bundle, so that reason does not apply, and the
+  OpenStreetMap website itself already runs v6.
+- `@maplibre/maplibre-gl-leaflet` **0.1.4 or later** (the first release with a
+  v6/ESM build), pinned.
+- **The plugin's import of MapLibre.** If the plugin's ESM build imports
+  MapLibre by bare specifier (`from 'maplibre-gl'`), which a browser cannot
+  resolve without a bundler or import map, `vendor_assets.py` rewrites that one
+  specifier to the relative `./maplibre-gl.mjs` while vendoring, and fails
+  loudly if the pattern it expects is not found. (Fallback if that proves
+  brittle: set `window.maplibregl` from the imported module and load the
+  plugin's UMD build.) The live test pins whichever is used.
 - From VersaTiles' published releases: the `colorful` and `eclipse` style JSON,
   the sprite sheet(s) those styles reference (1x and 2x), and glyph PBFs for
   only the font stacks those two styles reference.
@@ -99,8 +110,11 @@ Assets live under `static/vendor/maplibre/` (library) and
 section 3.
 
 - **Loading.** `ensureLeaflet()` stays and still always loads Leaflet. A new
-  `ensureVector()` loads MapLibre and the plugin (same `apiBase`-relative,
-  once-per-page promise pattern) and is only called when `canVector()` is true.
+  `ensureVector()` loads MapLibre and the plugin with dynamic `import()` of the
+  vendored `.mjs` files (`apiBase`-relative, memoised once per page like
+  `ensureLeaflet`) plus MapLibre's stylesheet, and is only called when
+  `canVector()` is true. MapLibre v6 resolves its worker from the module's own
+  URL, so no `setWorkerUrl` call is needed and ingress paths just work.
 - **`canVector()`** — a one-off probe, memoised per page:
   `document.createElement('canvas').getContext('webgl2')` is non-null.
 - **Base layer factory.** `ensure()` builds the base layer through one
