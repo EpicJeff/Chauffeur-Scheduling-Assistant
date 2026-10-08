@@ -200,7 +200,7 @@
     /* admin: Drive setup is the car editor, and it is a DESKTOP destination.
        A wall panel must never land there — the fleet card already carries
        the answer, so on a panel this zone simply has no way through. */
-    garage:   { label: 'Garage',        url: 'drive_setup#cars', admin: true,
+    garage:   { label: 'Garage',        url: 'dashboard_v2#cars', admin: true,
                 num: function (s) {
                   return ((s.garage || {}).cars || []).filter(function (c) {
                     return c.warn; }).length;

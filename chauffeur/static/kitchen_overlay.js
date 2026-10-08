@@ -85,7 +85,7 @@ window.kitchenTileIsland = function () {
                 window: 'calendar', radio: 'music',
                 /* the garage's page is the CAR EDITOR: /cars is not a route,
                    the fleet lives on Drive setup */
-                garage: 'drive_setup#cars',
+                garage: 'dashboard_v2#cars',
                 /* the study's zones open the same pages the room's own
                    second tap does (house.js STUDY_ZONE_META) */
                 study_board: 'mind', study_desk: 'mind', study_tray: 'intake',

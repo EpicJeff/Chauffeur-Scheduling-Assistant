@@ -190,7 +190,8 @@
     {% endcall %}
     {% endcall %}
 
-    <div data-status-types-empty x-show="loaded && !statusProtocols.length" x-cloak
+    <p data-status-load-failed x-show="loadFailed" x-cloak class="text-sm text-red-300 mb-3">Could not load status days just now. Reload to try again.</p>
+    <div data-status-types-empty x-show="loaded && !loadFailed && !statusProtocols.length" x-cloak
         class="bg-gray-800 rounded-2xl border border-gray-700 px-4 py-3 mb-4 flex items-center justify-between gap-3">
         <p class="text-sm text-gray-300">No status day types yet — a type is what a day can be (snow day, sick day).</p>
         <button type="button" @click="chfOpenSettings('calendar', 'status-day-types')"
@@ -247,6 +248,7 @@
             members: [],
             saving: false,
             loaded: false,
+            loadFailed: false,
             statusProtocols: [],
             statusDays: [],
             showStatusForm: false,
@@ -267,12 +269,15 @@
                         fetch(`${this.apiBase}api/status/protocols`),
                         fetch(`${this.apiBase}api/status/days`),
                     ]);
-                    this.statusProtocols = pRes.ok ? await pRes.json() : [];
-                    this.statusDays = dRes.ok ? await dRes.json() : [];
+                    if (!pRes.ok || !dRes.ok) throw new Error('status load failed');
+                    this.statusProtocols = await pRes.json();
+                    this.statusDays = await dRes.json();
+                    this.loadFailed = false;
+                    this.loaded = true;
                 } catch (e) {
                     console.error("Failed to load status data", e);
+                    this.loadFailed = true;
                 }
-                this.loaded = true;
             },
             statusMemberName(memberId) {
                 const m = this.members.find(x => x.id === memberId);

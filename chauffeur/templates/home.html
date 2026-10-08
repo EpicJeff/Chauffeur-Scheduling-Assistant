@@ -2057,13 +2057,13 @@
                     // The fleet card's door is the CAR EDITOR — /cars is not a
                     // page, the cars live on Drive setup (v2.499.254), and
                     // that is where a low car gets its battery entity typed in.
-                    cars: 'drive_setup#cars',
+                    cars: 'dashboard_v2#cars',
                 },
 
                 link(key) {
                     // A page may name its own view (`errands?tab=tasks`); the
                     // board's flags (panel, kiosk, theme) still ride along.
-                    // ...and may name a section (`drive_setup#cars`), which has
+                    // ...and may name a section (`dashboard_v2#cars`), which has
                     // to come AFTER the query or it swallows the flags.
                     const [dest, hash] = (this.PAGES[key] || key).split('#');
                     const [page, own] = dest.split('?');

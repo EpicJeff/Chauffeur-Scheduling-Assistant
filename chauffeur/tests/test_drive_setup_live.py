@@ -100,8 +100,13 @@ def main():
         with handle as page:
             page.set_viewport_size({'width': 1400, 'height': 900})
             _sign_in(page, served)
+            seen = []
+            page.on('request', lambda r: seen.append(r.url))
             page.goto(served.url('dashboard_v2'), wait_until='networkidle')
-            page.wait_for_timeout(600)
+            page.wait_for_timeout(1200)
+            check(not [u for u in seen if '/api/cars' in u or '/api/commitments' in u or '/api/assist' in u],
+                  f'Drives loaded the drawer before it opened: {[u for u in seen if "/api/" in u]}')
+            check(len([u for u in seen if '/api/schedule' in u]) <= 1, 'a second schedule fetch before the gear')
 
             # It is the Drives page's drawer; the Schedule strip lost its Drive setup tab.
             check(_visible(page, '#page-tabs'), 'Drives has no Schedule tab strip')
@@ -112,6 +117,8 @@ def main():
             page.click('#page-settings-gear')
             page.wait_for_selector(DRAWER + '[data-open]')
             page.wait_for_timeout(900)
+            page.wait_for_function("() => Alpine.$data(document.querySelector('[x-data^=driveSetup]')).cars !== undefined")
+            check(any('/api/cars' in u for u in seen), 'opening the drawer did not load the cars')
             check(page.locator(DRAWER + ' [data-settings-chip]').count() == 6,
                   'the Drives drawer does not carry six jump chips')
             for sec in ('leave-margin', 'rules', 'cars', 'protected-time', 'outside-hands', 'solver'):
@@ -285,6 +292,15 @@ def main():
                 if anchor == 'car-alerts':
                     _shot(page, 'drive-setup-car-alerts.png')
                 page.click(DRAWER + ' [aria-label="Close settings"]')
+            page.goto(served.url('dashboard_v2#cars?from=house'), wait_until='networkidle')
+            page.wait_for_selector(DRAWER + '[data-open]')
+            page.wait_for_timeout(1500)
+            top = page.evaluate("() => document.getElementById('cars').getBoundingClientRect().top")
+            check(0 <= top < 300, f'dashboard_v2#cars?from=house did not open at Cars: {top}')
+            page.click(DRAWER + ' [aria-label="Close settings"]')
+            # A wall view loads none of the drawer's weight.
+            page.goto(served.url('dashboard_v2?kiosk=true'), wait_until='domcontentloaded')
+            check(page.locator('script[src*="mapbox-gl"]').count() == 0, 'a kiosk view loads Mapbox GL')
             # Leave margin moved out of the toolbar and into the drawer.
             page.goto(served.url('dashboard_v2'), wait_until='networkidle')
             check(not _visible(page, '#header-buttons #leave-margin-mins'), 'leave margin still sits in the toolbar')

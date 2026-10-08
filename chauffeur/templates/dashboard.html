@@ -22,10 +22,15 @@
          loaded Alpine (found in S8, the same gap as the trip pages). -->
     <script defer src="{{ 'static/vendor/alpine-collapse.min.js'|ver }}"></script>
     <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
+    {%- set _q = request.query_params %}
+    {%- set _wall = _q.get('kiosk') == 'true' or _q.get('tabs') is not none or _q.get('panel') == 'true' %}
+    {% if not _wall %}
     <!-- Mapbox GL: the station picker in the Drives drawer (Car alerts). No map
-         load is billed until the picker actually instantiates a map. -->
+         load is billed until the picker actually instantiates a map. Walls
+         render no drawer, so they load none of it. -->
     <link href="{{ 'static/vendor/mapbox-gl.css'|ver }}" rel="stylesheet">
     <script src="{{ 'static/vendor/mapbox-gl.js'|ver }}"></script>
+    {% endif %}
 </head>
 
 <body class="p-0 m-0">
@@ -422,7 +427,7 @@
     {% include 'components/drive_setup_panel.html' %}
     {% endcall %}
     {% include 'components/control_center.html' %}
-    {% include 'components/emoji_picker.html' %}
+    {% if not _wall %}{% include 'components/emoji_picker.html' %}{% endif %}
     <!-- 📸 Moments hearth overlay (kiosk mode only; no card mount on the
          schedule board — the unbidden pop is the point here) -->
     {% include 'components/moments_hearth.html' %}

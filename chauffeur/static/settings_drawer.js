@@ -115,7 +115,7 @@
                 const tab = this.drawerTab;
                 // A hash that pointed in here would reopen it on reload.
                 try {
-                    const id = decodeURIComponent((location.hash || '').slice(1));
+                    const id = decodeURIComponent((location.hash || '').slice(1)).split('?')[0];
                     const el = id ? document.getElementById(id) : null;
                     if (el && this.$root.contains(el))
                         history.replaceState(history.state, '', location.pathname + location.search);
@@ -171,7 +171,7 @@
     function openFromAddress() {
         let handled = false;
         let id = '';
-        try { id = decodeURIComponent((location.hash || '').slice(1)); } catch (e) { }
+        try { id = decodeURIComponent((location.hash || '').slice(1)).split('?')[0]; } catch (e) { }
         const el = id ? document.getElementById(id) : null;
         if (el) {
             const block = el.closest('[data-page-tab]');

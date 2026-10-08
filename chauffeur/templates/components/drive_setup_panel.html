@@ -10,7 +10,7 @@
    own, moved rather than redrawn. The sections are stacked (the drawer's jump
    chips replace the old section switcher); each is a top-level section here.
    Each save sends ONLY its own keys. #}
-<div x-data="driveSetup()" x-init="init()" class="flex flex-col gap-6">
+<div x-data="driveSetup()" x-init="init()" @chf-settings-opened.window="if ($event.detail && $event.detail.tab === 'drives') loadOnce()" class="flex flex-col gap-6">
 
         <!-- Rules: routing and priority rules (moved from Config → Rules &
              Priorities). Errand rules went to the Errands page. -->
@@ -881,7 +881,7 @@
                     // its sub-tab: the drawer opens at the anchor, the sub-tab hides it.
                     const subFromHash = () => {
                         let id = '';
-                        try { id = decodeURIComponent((location.hash || '').slice(1)); } catch (e) { }
+                        try { id = decodeURIComponent((location.hash || '').slice(1)).split('?')[0]; } catch (e) { }
                         const el = id ? document.getElementById(id) : null;
                         const sub = el && el.closest('[data-rules-sub]');
                         if (sub) this.rulesSubTab = sub.getAttribute('data-rules-sub');
@@ -889,6 +889,14 @@
                     window.addEventListener('hashchange', subFromHash);
                     window.addEventListener('chf-settings-opened', subFromHash);
                     subFromHash();
+                    // Lazy: the island is initialised while the drawer is hidden, so the
+                    // loads wait for the first time the Drives drawer opens (deep links
+                    // and ?settings=open fire the same event).
+                },
+
+                async loadOnce() {
+                    if (this._loaded) return;
+                    this._loaded = true;
                     await Promise.all([this.loadSettings(), this.loadDrivers(), this.loadPassengers(),
                                        this.loadCars(), this.loadMembers()]);
                     this.loadCommitments();     // not awaited: each section stands alone
