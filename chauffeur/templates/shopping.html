@@ -1,4 +1,5 @@
 {% import 'components/shopping_lists.html' as shopping_lists %}
+{% from 'components/settings_drawer.html' import settings_drawer, settings_section, settings_off with context %}
 {#
   TWO DESTINATIONS, ONE TEMPLATE. `page_mode` (set by the route in main.py)
   is either:
@@ -113,18 +114,6 @@
             <section class="mb-10" x-show="!isKiosk && !isLists" data-page-tab="meals">
                 <div class="flex items-baseline justify-between mb-3 gap-3">
                     <h3 class="text-lg font-bold text-white">Meals</h3>
-                    <!-- One drawer for everything that configures or maintains
-                         the meals machinery: the rules, the kitchen, where we
-                         eat, the shape of a plate, provisioning, prep, the cart
-                         and dish pictures. Four sibling text buttons up here
-                         made the reader choose between things that were never
-                         alternatives; Our meals now has its own column heading
-                         and this is the only control left. -->
-                    <div class="flex items-baseline gap-3 shrink-0">
-                        <button @click="openMealSettings()"
-                            class="text-xs font-bold text-gray-500 hover:text-white"
-                            x-text="showMealSettings ? 'Hide how this works' : 'How this works'"></button>
-                    </div>
                 </div>
 
                 <!-- 🍽️ Tonight — the repertoire as a FILTER RESULT. Deliberately
@@ -386,37 +375,16 @@
                 </div>
 
 
-                <!-- ===== HOW THIS WORKS =====
-                     One drawer for the machinery behind the meals: the rules,
-                     the kitchen, how this family eats, the shape of a plate,
-                     provisioning, prep reminders and the cart. A SIBLING of
-                     Tonight and Our meals, never nested inside either — it was
-                     briefly nested inside Our meals, which meant every
-                     "Find a setting" deep link landed on an element that was
-                     display:none until somebody happened to open an unrelated
-                     panel. The coverage audit could not catch that: grepping a
-                     template proves a control EXISTS, not that it is reachable.
-                     Anchors here are what /settings links to. -->
-                    <div id="how" class="bg-gray-900 rounded-xl border border-gray-700 p-4 mt-4 mb-4">
-                        <!-- One way to open this drawer. Flipping the flag here
-                             directly was the bug: only openMealSettings() loads
-                             the rules, so opening from THIS control showed a
-                             populated household "No rules yet". -->
-                        <button @click="openMealSettings()"
-                            class="w-full flex items-center justify-between text-left">
-                            <span class="text-xs font-black uppercase tracking-widest text-pink-200">
-                                ⚙️ How this works
-                            </span>
-                            <span class="text-[11px] font-bold text-gray-500"
-                                x-text="showMealSettings ? 'Hide' : 'Show'"></span>
-                        </button>
-                        <div x-show="showMealSettings" x-cloak class="mt-4 space-y-5">
+            {% if page_mode == 'meals' %}
+            {% call settings_drawer('meals', 'Meals', sections=[('rules', 'How we eat'), ('dining', 'Dining'), ('plate', 'Plate'), ('planning', 'Planning'), ('prep', 'Prep'), ('walmart', 'Walmart'), ('pictures', 'Pictures'), ('kitchen', 'Kitchen')]) %}
+            <span id="how" class="block"></span>
+
                 <!-- How we eat (M11). Rhythms rather than dishes: how often
                      meat comes up, that takeout is occasional, that one pot of
                      beans runs for a few days before the next. A rule that
                      matches NO dish is the silent failure mode, so every rule
                      shows what it currently covers. -->
-                            <div id="rules">
+                            <div id="rules" class="scroll-mt-28">
                     <div class="flex items-baseline justify-between mb-1 gap-3">
                         <h4 class="text-xs font-black uppercase tracking-widest text-gray-400">
                             ⚖️ How we eat
@@ -591,7 +559,7 @@
                             <!-- Where this family eats. A house rule, not a fact
                                  about cars: it decides which gaps in the day
                                  count as chances to eat at all. -->
-                            <div id="dining">
+                            <div id="dining" class="scroll-mt-28">
                                 <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
                                     🍽️ Where this family eats
                                 </div>
@@ -628,7 +596,7 @@
                             <!-- The shape of a plate. Had no hand path at all
                                  until now: composed dinners were built from
                                  numbers only the API could change. -->
-                            <div id="plate">
+                            <div id="plate" class="scroll-mt-28">
                                 <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
                                     🍲 What a plate looks like
                                 </div>
@@ -720,7 +688,7 @@
                                  grocery run, a day or two before it, and buy for
                                  that span — these are what the week plan is
                                  anchored to, not a generic seven days. -->
-                            <div id="planning">
+                            <div id="planning" class="scroll-mt-28">
                                 <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
                                     🛒 Planning and shopping
                                 </div>
@@ -809,7 +777,7 @@
 
                             <!-- Prep that happens outside the cook window, and
                                  the reminder that is the whole point of it. -->
-                            <div id="prep">
+                            <div id="prep" class="scroll-mt-28">
                                 <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
                                     ⏰ Prep reminders
                                 </div>
@@ -840,7 +808,7 @@
 
                             <!-- The cart. Lives here because the list it builds
                                  from is on this page. -->
-                            <div id="walmart">
+                            <div id="walmart" class="scroll-mt-28">
                                 <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
                                     🛍️ Walmart cart
                                 </div>
@@ -910,7 +878,7 @@
                                  you do once in a while, and it was competing for
                                  attention with the two things that are actually
                                  navigation. -->
-                            <div id="pictures">
+                            <div id="pictures" class="scroll-mt-28">
                                 <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
                                     🖼️ Dish pictures
                                 </div>
@@ -923,7 +891,7 @@
                                     Your own photo of a dish always outranks a stock one.
                                 </p>
                             </div>
-                            <div id="kitchen">
+                            <div id="kitchen" class="scroll-mt-28">
                         <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
                             🍳 The kitchen
                         </div>
@@ -955,8 +923,8 @@
                             at different temperatures cannot share it however much room is left.
                         </p>
                             </div>
-                        </div>
-                    </div>
+            {% endcall %}
+            {% endif %}
             </section>
 
             <!-- ===== OUR MEALS  |  SHOPPING =====
@@ -1876,7 +1844,6 @@
                 editDishId: null, dishQuery: '', dishFilter: 'all',
                 runSheet: null, runSheetBusy: false,
                 kitchen: { ovens: 1, burners: 4, cooks: 1 },
-                showMealSettings: false,
                 groceryDays: [], groceryReason: '', groceryTripMins: 90,
                 // Every meals setting, owned by this page. Defaults mirror the
                 // Settings model exactly so a failed load changes nothing.
@@ -1906,13 +1873,29 @@
                 get allDays() { return this.weekDays(); },
 
                 async init() {
-                    // The drawer's contents load lazily, and for a while exactly
-                    // one of the two controls that open it remembered to fetch
-                    // the rules. Watching the flag makes the load a property of
-                    // BEING OPEN rather than of which button was pressed — the
-                    // only version of this that a third control can't break.
-                    this.$watch('showMealSettings', open => {
-                        if (open && !this.rulesLoaded) this.loadRules();
+                    // The Meals drawer loads its rules when it opens, from
+                    // whichever control (gear, deep link, hash) opened it.
+                    // Registered FIRST: a #planning link opens the drawer at
+                    // Alpine init, long before the awaits below finish.
+                    window.addEventListener('chf-settings-opened', async e => {
+                        if (this.isLists || !e.detail || e.detail.tab !== 'meals') return;
+                        const loading = this.rulesLoaded ? null : this.loadRules();
+                        // The sheet's sections fill in as the page's loads land
+                        // (rules, plate, categories), pushing the section a link
+                        // named down the sheet. Keep the reader on it, until
+                        // they scroll for themselves.
+                        const el = e.detail.anchor && document.getElementById(e.detail.anchor);
+                        const panel = el && el.closest('[role="dialog"]');
+                        if (panel) {
+                            let last = panel.scrollTop;
+                            for (const wait of [250, 450, 800]) {
+                                await new Promise(r => setTimeout(r, wait));
+                                if (Math.abs(panel.scrollTop - last) > 2) break;
+                                el.scrollIntoView({ block: 'start' });
+                                last = panel.scrollTop;
+                            }
+                        }
+                        if (loading) await loading;
                     });
                     await this.loadMembers();
                     await this.loadLists();
@@ -1933,7 +1916,6 @@
                         this.loadWeek();
                         this.loadKitchen();
                         this.loadCategories();
-                        this.openFromHash();
                     }
                     // Open the dish list where there is room for it. Collapsing
                     // it was only ever about the shopping list being pushed off
@@ -2150,6 +2132,7 @@
                     const excl = [...new Set([...d.exclude_dish_ids,
                         ...this.minusMatches(minus).map(x => x.id)])];
                     this.ruleBusy = true;
+                    window.chfSettingsSaving();
                     try {
                         const body = {
                             name: (d.name || '').trim() || tags.join(', ')
@@ -2175,7 +2158,13 @@
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify(body)
                             });
-                        if (!r.ok) { showGlobalAlert('Could not save that rule.'); return; }
+                        if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            const msg = err.detail || 'Could not save that rule.';
+                            if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
+                            return;
+                        }
+                        window.chfSettingsSaved(true);
                         const res = await r.json();
                         // A rule matching nothing is the silent failure this
                         // whole surface exists to prevent — say it out loud.
@@ -2188,29 +2177,51 @@
                         await this.loadRules();
                         this.loadWeek();
                     } catch (e) {
-                        showGlobalAlert('Could not reach the server.');
+                        if (!window.chfSettingsSaved(false, 'Could not save that just now.')) showGlobalAlert('Could not reach the server.');
                     } finally {
                         this.ruleBusy = false;
                     }
                 },
 
                 async toggleRule(r) {
-                    await fetch(this.apiBase + 'api/meals/rules/' + r.id, {
-                        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ is_enabled: !r.is_enabled })
-                    });
-                    await this.loadRules();
-                    this.loadWeek();
+                    window.chfSettingsSaving();
+                    try {
+                        const res = await fetch(this.apiBase + 'api/meals/rules/' + r.id, {
+                            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ is_enabled: !r.is_enabled })
+                        });
+                        if (!await this.reportSave(res)) return;
+                        await this.loadRules();
+                        this.loadWeek();
+                    } catch (e) { this.reportSaveFailed(); }
+                },
+                // THE SAVE REPORT PATTERN for the plain saves below: the open
+                // drawer's header shows the outcome; the old alert is only the
+                // fallback when no drawer is open.
+                async reportSave(r) {
+                    if (r.ok) { window.chfSettingsSaved(true); return true; }
+                    const err = await r.json().catch(() => ({}));
+                    const msg = err.detail || 'Could not save that just now.';
+                    if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
+                    return false;
+                },
+                reportSaveFailed() {
+                    const msg = 'Could not save that just now.';
+                    if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
                 },
 
                 async deleteRule(r) {
                     if (!await promptConfirm('Remove this rule?',
                         'The plan will stop honouring "' + (r.name || r.description)
                         + '". You can always add it again.')) return;
-                    await fetch(this.apiBase + 'api/meals/rules/' + r.id,
-                                { method: 'DELETE' });
-                    await this.loadRules();
-                    this.loadWeek();
+                    window.chfSettingsSaving();
+                    try {
+                        const res = await fetch(this.apiBase + 'api/meals/rules/' + r.id,
+                                    { method: 'DELETE' });
+                        if (!await this.reportSave(res)) return;
+                        await this.loadRules();
+                        this.loadWeek();
+                    } catch (e) { this.reportSaveFailed(); }
                 },
 
                 async getPictures() {
@@ -2338,12 +2349,16 @@
                     if (Number(c.max_per_plate) < Number(c.min_per_plate)) {
                         c.max_per_plate = c.min_per_plate;
                     }
-                    await fetch(this.apiBase + 'api/meals/categories', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(c)
-                    });
-                    await this.loadCategories();
-                    await this.refreshMeals();
+                    window.chfSettingsSaving();
+                    try {
+                        const res = await fetch(this.apiBase + 'api/meals/categories', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(c)
+                        });
+                        if (!await this.reportSave(res)) return;
+                        await this.loadCategories();
+                        await this.refreshMeals();
+                    } catch (e) { this.reportSaveFailed(); }
                 },
                 async addCategory() {
                     const name = (this.newCategoryName || '').trim();
@@ -2357,10 +2372,14 @@
                     if (!await promptConfirm('Remove category',
                         `Remove "${c.name}"? ${c.dish_count || 0} dish(es) will no longer be `
                         + 'filed under it, and plates will stop asking for one.', 'Remove')) return;
-                    await fetch(this.apiBase + 'api/meals/categories/' + c.id, { method: 'DELETE' });
-                    await this.loadCategories();
-                    await this.loadRepertoire();
-                    await this.refreshMeals();
+                    window.chfSettingsSaving();
+                    try {
+                        const res = await fetch(this.apiBase + 'api/meals/categories/' + c.id, { method: 'DELETE' });
+                        if (!await this.reportSave(res)) return;
+                        await this.loadCategories();
+                        await this.loadRepertoire();
+                        await this.refreshMeals();
+                    } catch (e) { this.reportSaveFailed(); }
                 },
                 // --- What a dish is, by hand ---
                 async patchDish(dish, patch) {
@@ -2967,28 +2986,6 @@
                     return bits.join(' · ');
                 },
 
-                openMealSettings() {
-                    // Loading is handled by the $watch on showMealSettings, so
-                    // opening the drawer from anywhere fetches what it shows.
-                    this.showMealSettings = !this.showMealSettings;
-                },
-
-                // A deep link from Find-a-setting names an anchor INSIDE the
-                // drawer, so the drawer has to open itself before the browser
-                // can scroll to it — otherwise the link silently lands on a
-                // hidden element and looks like the setting is missing.
-                openFromHash() {
-                    const id = (window.location.hash || '').replace('#', '');
-                    const mine = ['how', 'rules', 'dining', 'plate', 'planning',
-                                  'prep', 'walmart', 'kitchen', 'pictures'];
-                    if (!mine.includes(id)) return;
-                    this.showMealSettings = true;   // the $watch loads the rules
-                    this.$nextTick(() => {
-                        const el = document.getElementById(id);
-                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    });
-                },
-
                 async loadKitchen() {
                     try {
                         const r = await fetch(this.apiBase + 'api/settings');
@@ -3040,7 +3037,9 @@
 
                 async saveMealCfg() {
                     const c = this.mealCfg;
-                    await fetch(this.apiBase + 'api/settings', {
+                    window.chfSettingsSaving();
+                    try {
+                    const res = await fetch(this.apiBase + 'api/settings', {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             household_headcount: Math.max(0, parseInt(c.household_headcount, 10) || 0),
@@ -3065,9 +3064,11 @@
                             walmart_impact_campaign_id: (c.walmart_impact_campaign_id || '').trim()
                         })
                     });
+                    if (!await this.reportSave(res)) return;
                     await this.loadPlate();
                     await this.loadWeek();
                     this.loadGroceryDays();
+                    } catch (e) { this.reportSaveFailed(); }
                 },
 
                 // Sends THREE keys, not eighty-three. /api/settings has always
@@ -3075,7 +3076,9 @@
                 // settings needs no new endpoint - only the discipline of
                 // sending what it owns.
                 async saveKitchen() {
-                    await fetch(this.apiBase + 'api/settings', {
+                    window.chfSettingsSaving();
+                    try {
+                    const res = await fetch(this.apiBase + 'api/settings', {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             kitchen_ovens: Math.max(1, parseInt(this.kitchen.ovens, 10) || 1),
@@ -3083,8 +3086,10 @@
                             kitchen_cooks: Math.max(1, parseInt(this.kitchen.cooks, 10) || 1)
                         })
                     });
+                    if (!await this.reportSave(res)) return;
                     await this.loadPlate();
                     await this.loadWeek();
+                    } catch (e) { this.reportSaveFailed(); }
                 },
 
                 async toggleRunSheet() {

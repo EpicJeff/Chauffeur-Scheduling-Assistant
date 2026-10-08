@@ -71,7 +71,7 @@
                     if (target && this.$root.contains(target)) target.scrollIntoView({ block: 'start' });
                     else if (panel) panel.scrollTop = 0;
                     if (panel) panel.focus({ preventScroll: true });
-                    window.dispatchEvent(new CustomEvent('chf-settings-opened', { detail: { tab: d.tab } }));
+                    window.dispatchEvent(new CustomEvent('chf-settings-opened', { detail: { tab: d.tab, anchor: d.anchor || null } }));
                 });
             },
             drawerClose() {
