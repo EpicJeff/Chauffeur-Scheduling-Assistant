@@ -81,7 +81,9 @@ def main():
             page.wait_for_timeout(600)
             tabs = page.eval_on_selector_all('#page-tabs .page-tab', 'els => els.map(e => e.dataset.tabKey)')
             check(tabs == ['chores', 'routines', 'programs', 'growing-up'], f'Rhythms tabs: {tabs}')
-            check(_visible(page, '#kid-evenings'), 'the kid evening section is not on the Routines view')
+            page.click('#page-settings-gear')
+            page.wait_for_selector('[data-settings-for~="routines"][data-open]')
+            check(_visible(page, '#kid-evenings'), 'the kid evening section is not in the Routines drawer')
             check(page.input_value('#kidDigestTime') == '19:30', 'the kid digest time did not load')
             before = dict(storage.get_settings())
             page.fill('#kidDigestTime', '19:45')
@@ -95,10 +97,13 @@ def main():
             check(after.get('kid_quiet_start') == '20:30' and after.get('days_to_show') == 9,
                   'an unrelated setting changed')
             _el_shot(page.locator('#kid-evenings'), 'rhythms-kid-evenings.png')
+            page.click('[data-settings-for~="routines"] [aria-label="Close settings"]')
 
             # The standalone /routines draws the same section in a browser.
             page.goto(served.url('routines'), wait_until='networkidle')
             page.wait_for_timeout(400)
+            page.click('#page-settings-gear')
+            page.wait_for_selector('[data-settings-for~="routines"][data-open]')
             check(_visible(page, '#kid-evenings'), '/routines lost the kid evening section')
 
             # --- Growing up: a fourth tab, switched in place.

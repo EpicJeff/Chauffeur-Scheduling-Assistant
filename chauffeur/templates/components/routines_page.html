@@ -1,3 +1,4 @@
+{% from 'components/settings_drawer.html' import settings_drawer, settings_section, settings_off with context %}
 {% import 'components/routine_lanes.html' as routine_lanes %}
 {% import 'components/kid_digest_lanes.html' as kid_digest_lanes %}
 {# The whole routines page body: lanes, editor, its Alpine island and
@@ -15,15 +16,6 @@
                         each member's My Day. No points — streaks instead. Optional time of day; leave days unchecked
                         for every day.</p>
                 </div>
-                <!-- Runway voice cues (R3): the house-wide switch, on the page
-                     that owns runways. Per-child rooms are on each member
-                     block below. -->
-                <label id="runway" x-show="!isKiosk"
-                    class="flex items-center gap-2 text-sm font-bold text-gray-300 cursor-pointer bg-gray-800/60 border border-gray-700 rounded-lg px-3 py-2.5 self-center">
-                    <input type="checkbox" x-model="runwayCues" @change="saveRunwayCues()"
-                        class="w-4 h-4 accent-blue-500">
-                    🔊 Runway voice cues
-                </label>
                 <!-- New routine: only members with no routine yet -->
                 <div x-show="!isKiosk && availableMembers().length > 0" class="flex items-center gap-2">
                     <select x-model="newRoutineMemberId"
@@ -541,24 +533,27 @@
                             </div>
                         </div>
                     </section>
-
-                    {% set tier_kind = 'routine' %}
-                    {% include 'components/status_tiers_editor.html' %}
                 </div>
             </template>
 
-            {# Kid evenings (v2.499.256): the kid digest and kid quiet hours,
-               moved from School → Evenings to sit with the routines whose
-               kiosk board shows the same 🌙 cards. Settings are a browser
-               thing: the routines kiosk (?kiosk=true), a panel (?panel=true)
-               and a filtered embed (?tabs=) never get the markup at all —
-               the errand_rules.html guard in errands.html is the precedent. #}
-            {% set _rq = request.query_params %}
-            {% if _rq.get('panel') != 'true' and _rq.get('kiosk') != 'true' and _rq.get('tabs') is none %}
-            <div class="mt-6">
-                {% include 'components/kid_evenings_settings.html' %}
+            {# Runway cues, status tiers and kid evenings: the Routines drawer.
+               Inside the island, outside the x-if template. The drawer macro
+               renders nothing on a kiosk, panel or filtered embed. #}
+            {% call settings_drawer('routines', 'Routines', sections=[('runway', 'Runway'), ('tiers', 'Status tiers'), ('kid-evenings', 'Kid evenings')]) %}
+            {% call settings_section('runway', 'Runway voice cues') %}
+            <div class="bg-gray-900 rounded-xl p-4">
+                <label class="flex items-center gap-2 text-sm font-bold text-gray-300 cursor-pointer">
+                    <input type="checkbox" x-model="runwayCues" @change="saveRunwayCues()"
+                        class="w-4 h-4 accent-blue-500">
+                    🔊 Runway voice cues
+                </label>
+                <p class="text-[11px] text-gray-500 mt-2">Each child also needs a cue room, picked on their routine.</p>
             </div>
-            {% endif %}
+            {% endcall %}
+            {% set tier_kind = 'routine' %}
+            {% include 'components/status_tiers_editor.html' %}
+            {% include 'components/kid_evenings_settings.html' %}
+            {% endcall %}
         </div>
     </div>
     <script>
@@ -624,11 +619,22 @@
                     } catch (e) { /* default on */ }
                 },
                 async saveRunwayCues() {
-                    const r = await fetch(`${this.apiBase}api/settings`, {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ runway_cues_enabled: !!this.runwayCues })
-                    });
-                    if (!r.ok) showGlobalAlert('Could not save the cue switch');
+                    window.chfSettingsSaving();
+                    try {
+                        const r = await fetch(`${this.apiBase}api/settings`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ runway_cues_enabled: !!this.runwayCues })
+                        });
+                        if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            const msg = err.detail || 'Could not save that just now.';
+                            if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
+                            return;
+                        }
+                        window.chfSettingsSaved(true);
+                    } catch (e) {
+                        if (!window.chfSettingsSaved(false, 'Could not save that just now.')) showGlobalAlert('Could not save that just now.');
+                    }
                 },
                 cueRooms: [],
                 async loadCueRooms() {

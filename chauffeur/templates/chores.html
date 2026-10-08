@@ -423,7 +423,7 @@
                          other never will. -->
                     <section class="mb-10 scroll-mt-28" id="petxp">
                         <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">Critters &amp; Pet XP</h3>
-                        <div class="bg-gray-800 border border-gray-700 rounded-xl p-4 space-y-4">
+                        <div class="bg-gray-900 border border-gray-700 rounded-xl p-4 space-y-4">
                             <!-- THE WHOLE GAME, ON OR OFF (services/household_features.py).
                                  Same control as "Battles between family" below. Off
                                  hides; it never takes: pets and XP are kept, and XP
@@ -431,7 +431,7 @@
                             <label class="flex items-center gap-3 cursor-pointer">
                                 <input type="checkbox" x-model="features.critters_enabled"
                                     @change="saveFeature('critters_enabled')"
-                                    class="w-5 h-5 rounded bg-gray-900 border-gray-600">
+                                    class="w-5 h-5 rounded bg-gray-800 border-gray-600">
                                 <span>
                                     <span class="block text-xs font-bold text-gray-300">Critters</span>
                                     <span class="block text-[11px] text-gray-500"
@@ -452,7 +452,7 @@
                                     <span class="block text-xs font-bold text-gray-300 mb-1">XP per chore point</span>
                                     <input type="number" min="0" step="0.5" x-model.number="petXp.pet_xp_per_chore_point"
                                         @change="savePetXp()"
-                                        class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white">
+                                        class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white">
                                     <span class="block text-[11px] text-gray-500 mt-1">A 10-point chore mints
                                         <span x-text="Math.round(10 * (petXp.pet_xp_per_chore_point || 0))"></span> XP.</span>
                                 </label>
@@ -460,7 +460,7 @@
                                     <span class="block text-xs font-bold text-gray-300 mb-1">XP per routine</span>
                                     <input type="number" min="0" step="1" x-model.number="petXp.pet_xp_per_routine"
                                         @change="savePetXp()"
-                                        class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white">
+                                        class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white">
                                     <span class="block text-[11px] text-gray-500 mt-1">Once per item per day, however
                                         many times it is tapped.</span>
                                 </label>
@@ -468,7 +468,7 @@
                                     <span class="block text-xs font-bold text-gray-300 mb-1">Daily XP for everyone</span>
                                     <input type="number" min="0" step="1" x-model.number="petXp.pet_xp_daily_grant"
                                         @change="savePetXp()"
-                                        class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white">
+                                        class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white">
                                     <span class="block text-[11px] text-gray-500 mt-1">Everyone gets this each day just for
                                         using the app, so grown-ups with no chores can play too.</span>
                                 </label>
@@ -476,7 +476,7 @@
                                     <span class="block text-xs font-bold text-gray-300 mb-1">Rewarded battles a day</span>
                                     <input type="number" min="0" step="1" x-model.number="petXp.pet_pve_daily_cap"
                                         @change="savePetXp()"
-                                        class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white">
+                                        class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white">
                                     <span class="block text-[11px] text-gray-500 mt-1">Past this the fight still happens
                                         and the replay still plays &mdash; only the XP stops.</span>
                                 </label>
@@ -484,7 +484,7 @@
                                     <span class="block text-xs font-bold text-gray-300 mb-1">Full routine day bonus</span>
                                     <input type="number" min="0" step="1" x-model.number="petXp.pet_xp_routine_all_bonus"
                                         @change="savePetXp()"
-                                        class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white">
+                                        class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white">
                                     <span class="block text-[11px] text-gray-500 mt-1">First time everything due today
                                         is done.</span>
                                 </label>
@@ -492,7 +492,7 @@
                             <div class="pt-1 border-t border-gray-700/60 grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <label class="flex items-center gap-3 cursor-pointer">
                                     <input type="checkbox" x-model="petXp.pet_pvp_enabled" @change="savePetXp()"
-                                        class="w-5 h-5 rounded bg-gray-900 border-gray-600">
+                                        class="w-5 h-5 rounded bg-gray-800 border-gray-600">
                                     <span>
                                         <span class="block text-xs font-bold text-gray-300">Battles between family</span>
                                         <span class="block text-[11px] text-gray-500">Always level-matched, so more chores
@@ -503,7 +503,7 @@
                                     <span class="block text-xs font-bold text-gray-300 mb-1">Family battles a day</span>
                                     <input type="number" min="0" step="1" x-model.number="petXp.pet_pvp_pair_cap"
                                         @change="savePetXp()"
-                                        class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white">
+                                        class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white">
                                     <span class="block text-[11px] text-gray-500 mt-1">Per pair of people.</span>
                                 </label>
                             </div>
@@ -517,11 +517,11 @@
                              Closed, nobody can ask or pledge and the wall and app stop
                              showing it; this catalog and the requests already waiting
                              stay here, so a parent can still tidy and decide. -->
-                        <div class="bg-gray-800 border border-gray-700 rounded-xl p-4 mb-3">
+                        <div class="bg-gray-900 border border-gray-700 rounded-xl p-4 mb-3">
                             <label class="flex items-center gap-3 cursor-pointer">
                                 <input type="checkbox" x-model="features.rewards_enabled"
                                     @change="saveFeature('rewards_enabled')"
-                                    class="w-5 h-5 rounded bg-gray-900 border-gray-600">
+                                    class="w-5 h-5 rounded bg-gray-800 border-gray-600">
                                 <span>
                                     <span class="block text-xs font-bold text-gray-300">Rewards</span>
                                     <span class="block text-[11px] text-gray-500"
@@ -532,11 +532,11 @@
                             </label>
                         </div>
                         <div class="space-y-3 mb-5">
-                            <div x-show="rewards.length === 0" class="text-gray-500 bg-gray-800 rounded-xl p-6">
+                            <div x-show="rewards.length === 0" class="text-gray-500 bg-gray-900 rounded-xl p-6">
                                 No rewards yet — give those points something to buy.
                             </div>
                             <template x-for="rw in rewards" :key="rw.id">
-                                <div class="bg-gray-800 border border-gray-700 p-4 rounded-xl flex justify-between items-center gap-3"
+                                <div class="bg-gray-900 border border-gray-700 p-4 rounded-xl flex justify-between items-center gap-3"
                                     :class="rw.offered === false && 'opacity-50'">
                                     <div class="min-w-0">
                                         <div class="flex items-center gap-2 flex-wrap">
@@ -569,7 +569,7 @@
                                             :title="rw.active === false ? 'Off: the family does not see it' : 'On: in the store when in season'">
                                             <input type="checkbox" :checked="rw.active !== false"
                                                 @change="setRewardActive(rw, $event.target.checked)"
-                                                class="w-5 h-5 rounded bg-gray-900 border-gray-600"
+                                                class="w-5 h-5 rounded bg-gray-800 border-gray-600"
                                                 :aria-label="'Offer ' + rw.title">
                                             <span class="text-xs font-bold text-gray-300" x-text="rw.active === false ? 'Off' : 'On'"></span>
                                         </label>

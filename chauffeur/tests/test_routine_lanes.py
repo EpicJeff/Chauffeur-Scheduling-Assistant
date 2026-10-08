@@ -154,7 +154,7 @@ setTimeout(() => {
 def _render_routines():
     import main
     req = types.SimpleNamespace(url=types.SimpleNamespace(path='/routines'),
-                                query_params={})
+                                query_params={'kiosk': 'true'})
     return main.templates.env.get_template('routines.html').render(request=req)
 
 

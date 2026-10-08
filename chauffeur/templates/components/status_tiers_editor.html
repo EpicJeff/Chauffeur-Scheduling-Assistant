@@ -17,7 +17,7 @@
         and spending points on a reward never lowers it.
     </p>
 
-    <div class="bg-gray-800 border border-gray-700 rounded-xl p-4">
+    <div class="bg-gray-900 border border-gray-700 rounded-xl p-4">
         <div class="hidden sm:flex gap-2 items-center px-1 pb-2 text-[10px] font-black uppercase tracking-widest text-gray-500">
             <div class="w-16">Emoji</div>
             <div class="flex-1">Name</div>
@@ -30,16 +30,16 @@
                     <div class="flex items-center gap-2">
                         <button type="button" title="Pick an emoji"
                             @click="EmojiPicker.open($event.currentTarget, v => t.emoji = v)"
-                            class="shrink-0 bg-gray-900 border border-gray-600 rounded p-2.5 text-xl leading-none"
+                            class="shrink-0 bg-gray-800 border border-gray-600 rounded p-2.5 text-xl leading-none"
                             x-text="t.emoji || '😀'"></button>
                         <input type="text" x-model="t.emoji" maxlength="8" placeholder="⭐"
-                            class="w-16 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white text-center">
+                            class="w-16 bg-gray-800 border border-gray-600 rounded-lg p-2.5 text-white text-center">
                     </div>
                     <input type="text" x-model="t.name" placeholder="Super Helper"
-                        class="flex-1 min-w-[10rem] bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white">
+                        class="flex-1 min-w-[10rem] bg-gray-800 border border-gray-600 rounded-lg p-2.5 text-white">
                     <input type="number" min="0" x-model.number="t.threshold"
                         :placeholder="kind === 'routine' ? 'days' : 'points'"
-                        class="w-40 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white">
+                        class="w-40 bg-gray-800 border border-gray-600 rounded-lg p-2.5 text-white">
                     <button @click="removeTier(i)" title="Remove"
                         class="w-8 h-8 shrink-0 text-red-400 hover:text-red-300 bg-red-500/10 rounded-lg font-bold">✕</button>
                 </div>

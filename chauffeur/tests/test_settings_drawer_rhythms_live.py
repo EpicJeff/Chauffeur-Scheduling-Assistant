@@ -83,6 +83,37 @@ def main():
             page.wait_for_selector(C + '[data-open]')
             _shot(page, 'chores-open-phone')
 
+            # --- Routines drawer (task 8)
+            page.set_viewport_size({'width': 1300, 'height': 900})
+            R = '[data-settings-for~="routines"]'
+            page.goto(served.url('rhythms?tab=routines'), wait_until='networkidle')
+            check(not page.locator('#kid-evenings').is_visible(), 'kid evenings still sit in the work flow')
+            check(not page.locator('#runway').is_visible(), 'runway cues still sit in the work flow')
+            _shot(page, 'routines-closed-desktop')
+            page.click('#page-settings-gear')
+            page.wait_for_selector(R + '[data-open]')
+            check(page.locator(R + ' [data-settings-chip]').count() == 3, 'Routines drawer has no three chips')
+            before = storage.get_settings()
+            page.fill('#kidDigestTime', '19:15')
+            page.dispatch_event('#kidDigestTime', 'change')
+            page.wait_for_selector(R + ' [data-settings-status]:has-text("Saved")')
+            check(_changed(before, storage.get_settings()) <= {'kid_digest_enabled', 'kid_digest_time', 'kid_digest_cutover_time', 'kid_quiet_start', 'kid_quiet_end'},
+                  'kid evenings saved outside its keys')
+            before = storage.get_settings()
+            page.uncheck(R + ' #runway input[type=checkbox]')
+            page.wait_for_function("() => document.querySelector('[data-settings-for~=routines] [data-settings-status]').textContent.includes('Saved')")
+            check(_changed(before, storage.get_settings()) == {'runway_cues_enabled'}, 'the runway switch changed more')
+            _shot(page, 'routines-open-desktop')
+            page.click(R + ' [aria-label="Close settings"]')
+            page.set_viewport_size({'width': 390, 'height': 844})
+            page.goto(served.url('rhythms?tab=routines'), wait_until='networkidle')
+            page.click('#page-settings-gear')
+            page.wait_for_selector(R + '[data-open]')
+            _shot(page, 'routines-open-phone')
+            page.click(R + ' [aria-label="Close settings"]')
+            page.goto(served.url('routines'), wait_until='networkidle')
+            check(_visible(page, '#page-settings-gear'), 'standalone /routines shows no gear')
+
             errors = [e for e in handle.errors if 'Failed to load resource' not in e]
             check(not errors, f'page errors: {errors[:3]}')
     finally:
