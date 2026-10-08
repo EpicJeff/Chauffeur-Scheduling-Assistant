@@ -1749,7 +1749,8 @@ def rhythms_page(request: Request):
 def school_page(request: Request):
     """Everything about school in one parent place (v2.499.250): each child's
     hours, bus and feeds, and the school calendar and its words. (The kid
-    digest, kid quiet hours and Growing up moved to Rhythms in v2.499.256.)
+    digest and kid quiet hours moved to Rhythms in v2.499.256; Growing up
+    went on to Config > People in v2.499.285.)
     A shell anyone can load; every read and write behind it is a
     parent-gated API.
 

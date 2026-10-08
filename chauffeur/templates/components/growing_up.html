@@ -1,17 +1,18 @@
 {# Growing up: the stages a child grows through (load arc A4) — confirming
    a move up, pinning a stage, whether they can practise on their own, and
    the ages the stages change at (stage_cutoffs). Config → People until
-   v2.499.250, then School → Growing up, and since v2.499.256 a tab of the
-   Rhythms group (rhythms?tab=growing-up): growing up is about the child,
-   not about school. The markup and script are School's, moved unchanged.
+   v2.499.250, then School → Growing up, then a Rhythms tab (v2.499.256),
+   and since v2.499.285 a section of Config → People again (#growing-up):
+   it is a parent decision about people. The markup and script are
+   School's, moved unchanged.
 
-   A settings section, never drawn on a wall: rhythms.html includes this only
-   in a browser (no ?panel=true, ?kiosk=true or ?tabs=). Its own Alpine scope;
+   A settings section, never drawn on a wall: config.html is its only
+   includer and Config is not a wall page. Its own Alpine scope;
    the cutoffs save ONLY stage_cutoffs (POST /api/settings merges), and the
    pins and the practise switch go through the member API as before. #}
-<div id="growing-up-panel" x-data="growingUpPanel()" x-init="init()" class="panel-page max-w-5xl mx-auto p-6 lg:p-10 w-full" x-cloak>
+<div id="growing-up-panel" x-data="growingUpPanel()" x-init="init()" class="w-full" x-cloak>
     <header class="mb-6">
-        <h2 class="panel-page-title">🌱 Growing up</h2>
+        <h3 class="text-2xl font-bold mb-1 text-blue-300">🌱 Growing up</h3>
         <p class="text-gray-400 text-sm">The stages a child grows through and what each one changes. Parents only.</p>
     </header>
     <div class="bg-gray-900 p-5 rounded-xl border border-gray-700">
