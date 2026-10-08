@@ -15,14 +15,14 @@
 - All paths below are relative to `chauffeur/` unless they start with `docs/`. Run tests from `chauffeur/`.
 - Run tests with `HA_BASE_URL` unset (`env -u HA_BASE_URL python tests/<file>.py` in bash). Five test files go red with it set.
 - Per change: run the task's own test files plus `python tools/test.py --focus`. Do not run the full suite per commit; it runs once at the end (Task 5). Never pipe test output through `head`/`tail`.
-- Every commit bumps the patch number of `version:` in `config.yaml` (currently `2.499.267`; each task takes the next number), uses the message form `type(scope): summary (vX.Y.Z)` with the Co-Authored-By trailer, and is pushed. No double quotes in commit messages if committing from PowerShell.
+- Every commit bumps the patch number of `version:` in `config.yaml` (currently `2.499.268`; each task takes the next number), uses the message form `type(scope): summary (vX.Y.Z)` with the Co-Authored-By trailer, and is pushed. No double quotes in commit messages if committing from PowerShell.
 - Never round-trip source files through PowerShell `Get-Content`/`Set-Content`. Use the Edit/Write tools.
 - Pinned versions, exactly: `maplibre-gl` **6.13.0**, `@maplibre/maplibre-gl-leaflet` **0.1.4**, VersaTiles style **v6.3.1**, VersaTiles fonts **v3.0.0**.
 - Tile endpoint, exactly: `https://vector.openstreetmap.org/shortbread_v1/tilejson.json`. Raster fallback stays `https://tile.openstreetmap.org/{z}/{x}/{y}.png`.
 - Styles: `light` → `colorful`, `dark` → `eclipse`. Font stacks: `noto_sans_regular`, `noto_sans_bold`. Glyph ranges: `0-255`, `256-511`, `512-767`, `768-1023`, `1024-1279`, `8192-8447`.
 - Context-loss grace before falling back to raster: 3000 ms.
 - No browser dialogs (`alert`/`confirm`/`prompt`). No add-on tile proxy or cache. Trip, trip kiosk, drive setup and the House neighbourhood are not touched.
-- The photographic House never touches WebGL: `house_life.js` passes `vector: false` there.
+- Every `FamilyMap` gets the vector map, both House experiences included (user's ruling: the photographic House may use WebGL features). The WebGL probe runs only when a map is first built, so a page that never opens a map makes zero WebGL attempts.
 
 ## Review Focus
 
@@ -32,7 +32,7 @@ The input classes the spec implies that are most likely to bite, each pinned by 
 2. **Theme flipped twice quickly** (light→dark→light before the first style lands): the map must end on the last theme, not the one whose fetch finished last. Pinned in Task 3 (theme scenario).
 3. **A map destroyed while it is still loading** (Alpine replaces the tile mid-load): no orphaned vector layer, no console error. Pinned in Task 3 (destroy-mid-load scenario).
 4. **Two vector maps on one page** (a board with two map cards): the memoised loader is reused and both draw vectors. Pinned in Task 3 (second-instance scenario).
-5. **The photographic House** opening its bus map: zero WebGL attempts, as `tests/test_house_exterior_live.py` already asserts. Pinned in Task 4 (that existing test is run).
+5. **A page that includes the map component but has not opened a map** (the photographic House before its bus map opens): zero WebGL attempts; opening the bus map adds exactly one, the memoised probe. Pinned in Task 4 (`tests/test_house_exterior_live.py`'s two counters).
 
 ---
 
@@ -45,7 +45,7 @@ The input classes the spec implies that are most likely to bite, each pinned by 
 - Modify `services/auth.py` — one `RULES` row for the glyph route.
 - Modify `templates/components/family_map_core.html` — loader, probe, style rewrite, theme resolver, base-layer factory, fallback. Callers keep the same `FamilyMap.create(el, opts)` API.
 - Modify `templates/home.html` — scope the dark-invert filter to the raster fallback.
-- Modify `static/house_life.js` — `vector: false` in the photographic House.
+- Modify `tests/test_house_exterior_live.py` — its post-bus-map WebGL counter expects the map's one probe.
 - Create `tests/test_map_vendor.py` — pins the vendored files.
 - Create `tests/test_map_assets_routes.py` — pins MIME and the glyph route.
 - Create `tests/test_family_map_live.py` — the real-browser scenarios.
@@ -464,7 +464,7 @@ git push
 
 **Interfaces:**
 - Consumes: Task 1's files under `static/vendor/maplibre/` and `static/vendor/map-style/`; Task 2's glyph route.
-- Produces (on `window.FamilyMap`): `create(el, opts)` (unchanged signature; new option `vector: true`), `fetchLocations()`, `ensureLeaflet()`, plus `mapTheme() -> 'light'|'dark'`, `rewriteStyle(style, base) -> style`, `assetBase(prefix, href?) -> absolute URL string ending in 'static/vendor/map-style/'`, `canVector() -> boolean`. Instances gain `inst.base` (`'vector'|'raster'|null`), `inst.theme`, `inst.baseLayer`, `inst.toRaster()`. Container classes: `fm-vector` / `fm-raster`, plus `fm-dark` on a dark vector map.
+- Produces (on `window.FamilyMap`): `create(el, opts)` (unchanged signature and options), `fetchLocations()`, `ensureLeaflet()`, plus `mapTheme() -> 'light'|'dark'`, `rewriteStyle(style, base) -> style`, `assetBase(prefix, href?) -> absolute URL string ending in 'static/vendor/map-style/'`, `canVector() -> boolean`. Instances gain `inst.base` (`'vector'|'raster'|null`), `inst.theme`, `inst.baseLayer`, `inst.toRaster()`. Container classes: `fm-vector` / `fm-raster`, plus `fm-dark` on a dark vector map.
 - Constants inside the component: `OSMF_TILEJSON`, `OSM_TILES`, `OSM_ATTRIBUTION`, `STYLE_FOR = {light: 'colorful', dark: 'eclipse'}`, `CONTEXT_GRACE_MS = 3000`.
 
 - [ ] **Step 1: Write the failing live test**
@@ -795,8 +795,8 @@ In the IIFE, directly after `function ensureLeaflet() { ... }`, add:
         }
 
         let _canVector = null;
-        // Asked only when a map is first built — never at include time; the
-        // photographic House counts WebGL attempts and must see none.
+        // Asked only when a map is first built — never at include time, so a
+        // page that never opens a map makes no WebGL attempt at all.
         function canVector() {
             if (_canVector !== null) return _canVector;
             try {
@@ -923,14 +923,6 @@ In the IIFE, directly after `function ensureLeaflet() { ... }`, add:
 
 - [ ] **Step 6: Build the base layer through one factory**
 
-In `create(el, opts)`, add `vector: true` to the defaults object (after `fallbackZoom: 14`), with the comment:
-
-```js
-                // false = always the raster map. The photographic House sets it:
-                // that experience promises it never touches WebGL.
-                vector: true
-```
-
 Add `base: null, theme: null, baseLayer: null, lostTimer: null, gen: 0,` to the `inst` object literal (after `timer: null,`).
 
 In `ensure()`, replace the opening `await ensureLeaflet();` with:
@@ -961,7 +953,7 @@ and add these methods to `inst` (after `ensure()`):
 
                 async addBase() {
                     const map = inst.map;
-                    if (opts.vector && canVector()) {
+                    if (canVector()) {
                         try {
                             await ensureVector();
                             const theme = mapTheme();
@@ -1076,11 +1068,11 @@ git push
 
 ---
 
-### Task 4: The board's dark trick goes raster-only; the photographic House stays WebGL-free
+### Task 4: The board's dark trick goes raster-only; the House test counts the map's probe
 
 **Files:**
 - Modify: `templates/home.html:645-662` (the `.board-map .leaflet-tile-pane` rules and their comment)
-- Modify: `static/house_life.js:48-50`
+- Modify: `tests/test_house_exterior_live.py:291`
 - Test: `tests/test_family_map_live.py` (add a board scenario); run `tests/test_house_exterior_live.py`
 
 **Interfaces:**
@@ -1179,25 +1171,31 @@ and append to the comment above them (before its closing `*/`):
 
 (Write the real version number in place of `v2.499.x` — the one this commit takes.)
 
-- [ ] **Step 4: Keep the photographic House off WebGL**
+- [ ] **Step 4: Let the House test count the map's probe**
 
-In `static/house_life.js`, change
+`tests/test_house_exterior_live.py` stubs WebGL off and counts attempts. The
+photographic House draws no 3D scene, but its bus map now probes once for
+WebGL2 (memoised per page) and, finding none, draws raster. The user ruled
+that the photographic House may use WebGL features, so the counter after the
+bus map has opened expects that one probe. Leave the line-58 check (`== 0`,
+before any map opens) untouched.
 
-```js
-          map=busMap=FamilyMap.create(document.getElementById('house-bus-map'),{
-            interactive:true,fallbackCenter:data.center?[data.center.latitude,data.center.longitude]:null
-          });
+At line 291, change
+
+```python
+            assert page.evaluate('webglAttempts') == 0
 ```
 
 to
 
-```js
-          map=busMap=FamilyMap.create(document.getElementById('house-bus-map'),{
-            interactive:true,fallbackCenter:data.center?[data.center.latitude,data.center.longitude]:null,
-            // The photographic House never touches WebGL; its bus map stays raster.
-            vector:document.body.dataset.houseRender!=='hybrid'
-          });
+```python
+            # The bus map (opened above) probes once for WebGL2 and, finding
+            # none under this stub, draws raster. Nothing else on the page
+            # asks: the photographic House builds no 3D scene.
+            assert page.evaluate('webglAttempts') == 1
 ```
+
+Also change the matching value in the results file at line 316 from `'webglAttempts':0` to `'webglAttempts':1`.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -1205,7 +1203,7 @@ Run: `env -u HA_BASE_URL python tests/test_family_map_live.py`
 Expected: all scenarios `ok`, including the board scenario.
 
 Run: `env -u HA_BASE_URL python tests/test_house_exterior_live.py --out <scratch dir>`
-Expected: passes; in particular both `webglAttempts == 0` assertions hold after the bus map has been opened.
+Expected: passes — zero attempts before the bus map opens, exactly one after, and the existing bus-map marker assertions (`.leaflet-marker-icon` count 2, `.leaflet-pane` count 0 after close) hold on the raster map.
 
 Run: `env -u HA_BASE_URL python tools/test.py --focus`
 Expected: green.
@@ -1215,8 +1213,8 @@ Expected: green.
 Bump the version, then:
 
 ```bash
-git add templates/home.html static/house_life.js tests/test_family_map_live.py config.yaml
-git commit -m "fix(board): night inversion only for the raster map; photographic House bus map stays raster (vX.Y.Z)" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
+git add templates/home.html tests/test_house_exterior_live.py tests/test_family_map_live.py config.yaml
+git commit -m "fix(board): night inversion only for the raster map (vX.Y.Z)" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 git push
 ```
 
@@ -1232,7 +1230,7 @@ git push
 At the top of the entries in `system_capabilities.md` (above the v2.499.263 entry), add, with the real version numbers from Tasks 1–4:
 
 ```markdown
-**The family map draws vectors (v2.499.A–.D; `templates/components/family_map_core.html`, `tools/vendor_assets.py` `vendor_map`, `main.py` `map_glyphs`, `services/auth.py`, `templates/home.html`, `static/house_life.js`, `tests/test_map_vendor.py`, `tests/test_map_assets_routes.py`, `tests/test_family_map_live.py`; spec `docs/superpowers/specs/2026-10-08-vector-family-map-design.md`).** Everything drawn through `FamilyMap.create` (/map, board map cards, the 3D House's bus map) keeps Leaflet for markers, popups, fit, ⌖ and `interactive`, and swaps only the base layer: MapLibre GL 6.13.0 inside Leaflet via maplibre-gl-leaflet 0.1.4 (UMD build; the page imports MapLibre's ESM module and publishes it as `window.maplibregl`), drawing OSMF's Shortbread vector tiles (resolved from `vector.openstreetmap.org/shortbread_v1/tilejson.json`, fetched by the browser directly — no add-on proxy, by the user's decision). Styles are VersaTiles v6.3.1 `colorful` (light) and `eclipse` (dark), English labels, vendored unmodified and rewritten in the browser (tiles to OSMF, glyphs and sprites to absolute `static/vendor/map-style/` URLs from `apiBase`). Theme follows the page: `data-panel-theme`, then `data-theme`, then an HA theme's `--ha-bg` luminance, then the admin pages' `html.dark`, then the device; live restyle on change, last flip wins. Glyphs vendored only for Latin–Cyrillic + General Punctuation in `noto_sans_regular`/`noto_sans_bold`; any other range is answered by `GET /static/vendor/map-style/glyphs/{fontstack}/{glyph_range}.pbf` with a valid empty glyph set (ANYONE), because MapLibre fails a whole tile on a failed range. `.mjs` is registered as `text/javascript`. Falls back to the old raster OSM map, once and for good per instance, on no WebGL2, a failed module/style load, or a WebGL context lost for 3 s; markers survive the swap. The board's night inversion now applies to the raster fallback only (`.board-map.fm-raster`). The photographic House passes `vector: false` (it never touches WebGL). /map, an admin page, is now a dark map. Trip, trip kiosk, drive setup and the House neighbourhood are unchanged (Mapbox). NOT device-verified.
+**The family map draws vectors (v2.499.A–.D; `templates/components/family_map_core.html`, `tools/vendor_assets.py` `vendor_map`, `main.py` `map_glyphs`, `services/auth.py`, `templates/home.html`, `tests/test_map_vendor.py`, `tests/test_map_assets_routes.py`, `tests/test_family_map_live.py`; spec `docs/superpowers/specs/2026-10-08-vector-family-map-design.md`).** Everything drawn through `FamilyMap.create` (/map, board map cards, the 3D House's bus map) keeps Leaflet for markers, popups, fit, ⌖ and `interactive`, and swaps only the base layer: MapLibre GL 6.13.0 inside Leaflet via maplibre-gl-leaflet 0.1.4 (UMD build; the page imports MapLibre's ESM module and publishes it as `window.maplibregl`), drawing OSMF's Shortbread vector tiles (resolved from `vector.openstreetmap.org/shortbread_v1/tilejson.json`, fetched by the browser directly — no add-on proxy, by the user's decision). Styles are VersaTiles v6.3.1 `colorful` (light) and `eclipse` (dark), English labels, vendored unmodified and rewritten in the browser (tiles to OSMF, glyphs and sprites to absolute `static/vendor/map-style/` URLs from `apiBase`). Theme follows the page: `data-panel-theme`, then `data-theme`, then an HA theme's `--ha-bg` luminance, then the admin pages' `html.dark`, then the device; live restyle on change, last flip wins. Glyphs vendored only for Latin–Cyrillic + General Punctuation in `noto_sans_regular`/`noto_sans_bold`; any other range is answered by `GET /static/vendor/map-style/glyphs/{fontstack}/{glyph_range}.pbf` with a valid empty glyph set (ANYONE), because MapLibre fails a whole tile on a failed range. `.mjs` is registered as `text/javascript`. Falls back to the old raster OSM map, once and for good per instance, on no WebGL2, a failed module/style load, or a WebGL context lost for 3 s; markers survive the swap. The board's night inversion now applies to the raster fallback only (`.board-map.fm-raster`). Both House experiences take the vector bus map; the WebGL probe runs only when a map is first built (memoised per page), so a page that never opens a map makes no WebGL attempt. /map, an admin page, is now a dark map. Trip, trip kiosk, drive setup and the House neighbourhood are unchanged (Mapbox). NOT device-verified.
 ```
 
 Update the "Current through" line to the final version and today's date.

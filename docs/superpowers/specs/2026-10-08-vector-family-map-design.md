@@ -129,13 +129,15 @@ section 3.
 - **`canVector()`** — a one-off probe, memoised per page:
   `document.createElement('canvas').getContext('webgl2')` is non-null (the
   probe context is released straight away). It runs only when a map is first
-  built, never when the component is merely included.
-- **`vector` option** (default `true`). The photographic House promises it
-  never touches WebGL (`tests/test_house_exterior_live.py` asserts zero WebGL
-  attempts after opening the bus map), so `house_life.js` passes
-  `vector: false` when `document.body.dataset.houseRender === 'hybrid'`. The
-  3D House's bus map, which already sits beside three.js, takes the vector
-  map.
+  built, never when the component is merely included, so a page that never
+  opens a map makes no WebGL attempt at all.
+- **Both House experiences take the vector bus map.** The photographic House
+  draws no 3D scene, but nothing stops a feature on that page from using
+  WebGL (the user's ruling, 2026-10-08). `tests/test_house_exterior_live.py`
+  counts WebGL attempts with WebGL stubbed off; its check after the bus map
+  opens changes from zero attempts to exactly one, the map's single memoised
+  probe, after which the map falls back to raster as designed. Its check
+  before any map opens stays at zero.
 - **Base layer factory.** `ensure()` builds the base layer through one
   function: a vector layer when `canVector()` and `ensureVector()` succeeded,
   otherwise today's `L.tileLayer('https://tile.openstreetmap.org/...')`. The
