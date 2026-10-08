@@ -184,6 +184,28 @@ def scenario_a_drawer_page_keeps_its_settings_in_the_drawer():
           'a general anchor on a drawer page was not flagged')
 
 
+def scenario_a_style_rule_naming_page_tab_does_not_blind_the_drawer_check():
+    """nav.html carries a <style> naming [data-page-tab]; that must not make
+    every page look tabbed and silence the placement rule for tab-less entries."""
+    tpl = tempfile.mkdtemp(prefix='reg_style_')
+    with open(os.path.join(tpl, 'navx.html'), 'w', encoding='utf-8') as fh:
+        fh.write('<style id="page-tab-style">[data-page-tab]{display:none}</style>')
+    with open(os.path.join(tpl, 'demo.html'), 'w', encoding='utf-8') as fh:
+        fh.write("{% include 'navx.html' %}"
+                 "{% call settings_drawer('demo', 'Demo') %}"
+                 "{% call settings_section('inside', 'In') %}<input x-model=\"s.thread_stall_days\">{% endcall %}"
+                 "{% endcall %}"
+                 "<div id=\"outside\"><input x-model=\"s.gift_lead_days\"></div>")
+    saved = reg.ENTRIES[:]
+    try:
+        reg.ENTRIES[:] = [reg._e('gift_lead_days', 'meals', 'a', 'b', page='demo', anchor='outside')]
+        why = {e['key']: e['why'] for e in reg.audit_ui(tpl)['unreachable']}
+    finally:
+        reg.ENTRIES[:] = saved
+    check('outside the settings drawer' in why.get('gift_lead_days', ''),
+          f'a style rule blinded the drawer check: {why}')
+
+
 def scenario_a_tabless_entry_never_hides_inside_a_drawer():
     """On a tabbed page with drawers, an entry without `?tab=` is skipped by the
     drawer check. So such an entry must not point INTO a drawer: it would
@@ -201,8 +223,6 @@ def scenario_a_tabless_entry_never_hides_inside_a_drawer():
                 body = fh.read()
         except OSError:
             return ''
-        if rel == 'nav.html':
-            return ''  # the page bar's own tab markers are not this page's tabs
         return re.sub(r"{%-?\s*include\s+'([^']+)'[^%]*%}", lambda m: read(m.group(1), seen), body)
 
     bad = []
@@ -214,7 +234,8 @@ def scenario_a_tabless_entry_never_hides_inside_a_drawer():
             cache[page] = read(reg.PAGE_TEMPLATES.get(page, f'{page}.html')
                                if hasattr(reg, 'PAGE_TEMPLATES') else f'{page}.html', set())
         body = cache[page]
-        if 'data-page-tab' not in body or 'settings_drawer(' not in body:
+        body = reg._markup_only(body)
+        if not re.search(r'<[^>]*\sdata-page-tab="', body) or 'settings_drawer(' not in body:
             continue
         at = reg._anchor_at(body, e['anchor'])
         if at and any(a <= at.start() < b for a, b in reg._drawer_spans(body)):

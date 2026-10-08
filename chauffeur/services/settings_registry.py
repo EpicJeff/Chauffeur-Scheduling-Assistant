@@ -735,6 +735,7 @@ def _markup_only(body: str) -> str:
     """
     import re
     body = re.sub(r'<script\b[^>]*>.*?</script>', ' ', body, flags=re.S | re.I)
+    body = re.sub(r'<style[^>]*>.*?</style>', ' ', body, flags=re.S | re.I)
     body = re.sub(r'<!--.*?-->', ' ', body, flags=re.S)
     body = re.sub(r'{#.*?#}', ' ', body, flags=re.S)
     return body
@@ -849,7 +850,7 @@ def audit_ui(templates_dir: str = None) -> dict:
         # entry with no tab on a multi-tab page (it lives on some other tab,
         # outside any drawer) is not this rule's business.
         tab = e['page'].partition('?tab=')[2] or None
-        spans = [] if (not tab and 'data-page-tab' in body) else _drawer_spans(body, tab)
+        spans = [] if (not tab and re.search(r'<[^>]*\sdata-page-tab="', body)) else _drawer_spans(body, tab)
         if spans and e['page'].split('?')[0] != 'config':
             if e['anchor'] == 'general':
                 missing.append({**e, 'why': f"a drawer page needs a real anchor (on '{e['page']}')"})

@@ -1193,7 +1193,11 @@
                         }
                         // No loadConfig() here: it would overwrite the field the
                         // person has just moved into.
-                        if (payload.ingest_email_password) { this.passwordInput = ''; this.config.has_password = true; }
+                        if (payload.ingest_email_password) {
+                            // Clear it only if it is still what was sent: the person may have typed a new one mid-save.
+                            if (this.passwordInput.trim() === payload.ingest_email_password) this.passwordInput = '';
+                            this.config.has_password = true;
+                        }
                         window.chfSettingsSaved(true);
                         this.loadStatus();
                     } catch (e) {
