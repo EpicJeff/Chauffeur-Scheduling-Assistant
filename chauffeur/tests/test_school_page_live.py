@@ -91,13 +91,13 @@ def main():
             page.goto(served.url('school'), wait_until='networkidle')
             page.wait_for_timeout(600)
 
-            check(_visible(page, '#page-tabs'), 'the School page has no tab strip')
-            tabs = page.eval_on_selector_all('#page-tabs .page-tab', 'els => els.map(e => e.dataset.tabKey)')
-            check(tabs == ['children', 'calendar'], f'tabs: {tabs}')
+            name = page.inner_text('#page-tabs .page-bar-name').strip()
+            check(name == 'School', f'the bar does not just say School: {name!r}')
+            check(page.locator('#page-tabs [data-tab-key]').count() == 0, 'School still has tabs')
             check(page.locator('#evenings, #growing-up, #kidQuietStart').count() == 0,
                   'the kid digest or Growing up is still drawn on School')
-            check(_visible(page, '[data-page-tab="children"]'), 'Children is not the default view')
-            check(not _visible(page, '[data-page-tab="calendar"]'), 'Calendar shows beside Children')
+            check(_visible(page, '#children'), 'Children is not visible by default')
+            check(page.locator('[data-page-tab]').count() == 0, 'a data-page-tab is left on School')
             # Children: one card per child, saving only the school fields.
             ada = page.locator('[data-child="kid_ada"]')
             check(ada.count() == 1 and page.locator('[data-child="kid_ben"]').count() == 1,
@@ -163,9 +163,9 @@ def main():
             _shot(page, 'school-children.png')
 
             # Calendar: a new vocabulary word saves, again alone.
-            page.click('#page-tabs [data-tab-key="calendar"]')
-            page.wait_for_timeout(200)
-            check(_visible(page, '#calendar'), 'clicking Calendar did not show it')
+            page.click('#page-settings-gear')
+            page.wait_for_selector('[data-settings-for~="school"][data-open]', timeout=5000)
+            check(_visible(page, '#calendar'), 'the gear did not open the calendar settings')
             shown = page.input_value('#kw-schoolHalfDayKeywords')
             check('early release' in shown, f'the half-day words do not show the defaults: {shown!r}')
             before = dict(storage.get_settings())
@@ -179,13 +179,18 @@ def main():
             check(not stray, f'the Calendar save touched non-school settings: {stray}')
             check(after.get('school_closed_keywords') == 'no school, holiday',
                   'the closure words were rewritten by an unrelated edit')
+            check('Saved' in page.inner_text('[data-settings-for~="school"]'),
+                  'the drawer header never said Saved')
             _shot(page, 'school-calendar.png')
 
             # A deep link to an anchor in a closed tab opens that tab.
             page.goto(served.url('school#calendar'), wait_until='networkidle')
             page.wait_for_timeout(600)
-            check(_visible(page, '#calendar'), 'school#calendar did not open Calendar')
-            check(not _visible(page, '#children'), 'Children still shows on the Calendar link')
+            page.wait_for_selector('[data-settings-for~="school"][data-open]', timeout=5000)
+            check(_visible(page, '#calendar'), 'school#calendar did not open the drawer at Calendar')
+            page.goto(served.url('school?tab=calendar'), wait_until='networkidle')
+            page.wait_for_selector('[data-settings-for~="school"][data-open]', timeout=5000)
+            check('tab=' not in page.url, f'the forward kept tab=: {page.url}')
 
             # Evenings left School for Rhythms (v2.499.256), Growing up for
             # Config > People: the old links forward to the new homes.
@@ -193,6 +198,7 @@ def main():
                                       ('school?tab=growing', '/config', '#growing-up'),
                                       ('school#evenings', '/rhythms', '#kid-evenings'),
                                       ('school?tab=evenings', '/rhythms', '#kid-evenings')):
+                page.goto('about:blank')  # a bookmark is a fresh load, not a hash hop
                 page.goto(served.url(old), wait_until='networkidle')
                 page.wait_for_timeout(600)
                 check(want in page.url,
@@ -208,6 +214,18 @@ def main():
             check(page.locator('a[href*="rhythms?tab="]:not(nav a), a[href*="school?tab="]:not(nav a), '
                                'a[href$="/school"]:not(nav a)').count() == 0,
                   'Config still carries a pointer to School or Rhythms')
+
+            # Closed and open, desktop and a 390px phone.
+            for label, size in (('desktop', {'width': 1300, 'height': 900}), ('phone', {'width': 390, 'height': 844})):
+                page.set_viewport_size(size)
+                page.goto('about:blank')
+                page.goto(served.url('school'), wait_until='networkidle')
+                page.wait_for_timeout(500)
+                _shot(page, f'school-closed-{label}.png')
+                page.click('#page-settings-gear')
+                page.wait_for_selector('[data-settings-for~="school"][data-open]', timeout=5000)
+                page.wait_for_timeout(500)
+                _shot(page, f'school-open-{label}.png')
 
             errors = [e for e in handle.errors if 'Failed to load resource' not in e]
             check(not errors, f'page errors: {errors[:3]}')

@@ -1772,6 +1772,8 @@ def school_page(request: Request):
 
     The built-in calendar words ride in with the page so an unset vocabulary
     shows the words actually being matched, from the one place they live."""
+    if request.query_params.get('tab') == 'calendar':
+        return RedirectResponse('school?settings=open')
     from services import school as _school
     defaults = {'school_closed_keywords': _school.DEFAULT_CLOSED_KEYWORDS}
     for key, words in _school.VOCAB_SETTINGS.values():

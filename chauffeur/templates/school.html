@@ -17,6 +17,7 @@
 
 <body class="flex flex-col h-screen overflow-hidden">
     {% include 'nav.html' %}
+    {% from 'components/settings_drawer.html' import settings_drawer, settings_section, settings_off with context %}
 
     <!-- Everything about school in one parent place (v2.499.250). The setup
          used to be spread across Config's General tab (the school calendar)
@@ -49,7 +50,7 @@
              (PUT /api/members merges). School task feeds and classes are the
              plumbing of the child's school list; the list itself stays the
              child's (K4: parents never get a dashboard about the kid). -->
-        <section id="children" data-page-tab="children" class="min-w-0 space-y-4">
+        <section id="children" class="min-w-0 space-y-4">
             <p x-show="kidsLoaded && !kids.length" class="text-gray-500 text-sm italic">
                 No children on the roster yet. Add one in
                 <a href="config" class="text-blue-400 hover:text-blue-300 font-semibold">Config → People</a>.</p>
@@ -324,13 +325,11 @@
             </template>
         </section>
 
-        <!-- Calendar: what a school day is. Moved from Config → General. -->
-        <section id="calendar" data-page-tab="calendar" class="min-w-0">
+        {% call settings_drawer('school', 'School') %}
+        {% call settings_section('calendar', 'School calendar') %}
+        <div class="flex flex-col gap-4">
             <div class="flex flex-col gap-3 p-5 bg-gray-900 rounded-xl border border-gray-700">
-                <div class="flex items-center justify-between">
-                    <span class="font-bold text-gray-300">🏫 School Calendar</span>
-                    <span class="text-xs text-emerald-400 font-bold" x-show="saved === 'calendar'" x-transition.opacity>Saved ✓</span>
-                </div>
+                <span class="font-bold text-gray-300">🏫 School Calendar</span>
                 <div class="flex flex-col sm:flex-row sm:items-center gap-4 flex-wrap">
                     <div class="flex items-center gap-2 shrink-0">
                         <label class="text-sm text-gray-400 font-semibold">Calendar</label>
@@ -346,13 +345,13 @@
                             </template>
                         </select>
                     </div>
-                    <div class="flex items-center gap-2 flex-1 min-w-[260px]">
+                    <div class="flex items-center gap-2 flex-1 min-w-0 sm:min-w-[260px]">
                         <label class="text-sm text-gray-400 font-semibold shrink-0">or any calendar ID</label>
                         <input type="text" x-model="schoolCalendarId" @change="saveCalendar()"
                             placeholder="district_abc123@group.calendar.google.com"
                             class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500 w-full">
                     </div>
-                    <div class="flex items-center gap-2 shrink-0">
+                    <div class="flex items-center gap-2 flex-wrap shrink-0">
                         <label class="text-sm text-gray-400 font-semibold" title="Auto-detected from the calendar's First/Last Day of School events; setting either date takes manual control">School year override</label>
                         <input type="date" x-model="schoolYearStart" @change="saveCalendar()"
                             class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
@@ -380,7 +379,7 @@
             <!-- The words the calendar is read with. Closure words were
                  always editable; the other four were hardcoded in
                  services/school.py until this page. -->
-            <div class="flex flex-col gap-3 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+            <div class="flex flex-col gap-3 p-5 bg-gray-900 rounded-xl border border-gray-700">
                 <span class="font-bold text-gray-300">🔤 The words on your district's calendar</span>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-3">
                     <template x-for="w in keywordFields" :key="w.model">
@@ -400,7 +399,9 @@
                     usual words.
                 </p>
             </div>
-        </section>
+        </div>
+        {% endcall %}
+        {% endcall %}
     </div>
 
     <script>
@@ -502,21 +503,22 @@
                         this.calendarMetadata = Object.assign({}, this.calendarMetadata, metadata);
                     } catch (e) { /* the raw ids still show */ }
                 },
-                async postSettings(payload, which) {
+                async postSettings(payload) {
+                    window.chfSettingsSaving();
                     try {
                         const res = await fetch(`${this.apiBase}api/settings`, {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(payload) });
                         if (!res.ok) {
-                            const d = await res.json().catch(() => ({}));
-                            showGlobalAlert(d.detail || "Couldn't save that.");
+                            const err = await res.json().catch(() => ({}));
+                            const msg = err.detail || 'Could not save that just now.';
+                            if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
                             return false;
                         }
-                        this.saved = which;
-                        setTimeout(() => { if (this.saved === which) this.saved = ''; }, 1600);
+                        window.chfSettingsSaved(true);
                         return true;
                     } catch (e) {
-                        showGlobalAlert("Couldn't reach Chauffeur.");
+                        if (!window.chfSettingsSaved(false, 'Could not save that just now.')) showGlobalAlert('Could not save that just now.');
                         return false;
                     }
                 },
@@ -540,7 +542,7 @@
                     // school_delayed_keywords, school_first_day_keywords,
                     // school_last_day_keywords — one per keywordFields row.
                     this.keywordFields.forEach(w => { payload[w.key] = this.wordsFor(w); });
-                    const ok = await this.postSettings(payload, 'calendar');
+                    const ok = await this.postSettings(payload);
                     if (ok) {
                         // An emptied box shows the usual words again.
                         this.keywordFields.forEach(w => {

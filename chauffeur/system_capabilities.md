@@ -1,7 +1,9 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.290 (2026-10-08).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.291 (2026-10-08).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
+
+**School's calendar settings move into the School drawer; School is one page again (settings-drawer arc; `templates/school.html`, `templates/nav.html` `PAGE_GROUPS`, `main.py` `/school`, `tests/test_school_page_live.py`).** The School calendar, school year override and the district's calendar words (all five keyword boxes) are the `calendar` section of a School drawer opened by the page bar gear; saves keep their keys and endpoint and report in the drawer header. School leaves `PAGE_GROUPS`: the bar says just School, there are no tabs, and Children is the page. `school?tab=calendar` forwards to `school?settings=open`; `school#calendar` opens the drawer; the old evenings/growing-up forwards stay.
 
 **Errand rules move from the Rules tab into the Errands drawer (settings-drawer arc; `templates/errands.html`, `templates/components/errand_rules.html`, `templates/nav.html`, `main.py`, `templates/components/drive_setup_panel.html`).** The Errands bar is two tabs, Errands and Tasks; the gear opens one drawer (`data-settings-for=errands tasks`, outside every tab block) holding the unchanged errand-rule editor and list (`#errand-rules`), which loads on the first open. `errands?tab=rules` forwards to `errands?settings=open`; Drive setup's Rules link points at the same address. Rule saves, toggles and deletes report through the drawer header mark (global alert only when no drawer is open). The Drives drawer's shared settings poster now refuses to send until `api/settings` has loaded (it says Still loading), so a save fired during the lazy load cannot post defaults over stored values.
 
