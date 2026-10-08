@@ -68,7 +68,7 @@
                     <p class="text-sm text-gray-500 -mt-2 mb-6">
                         Routing rules say who drives what; priority rules say which events matter most when
                         not everything can be covered. Rules for errands live with the errands, on
-                        <a href="errands?settings=open" class="text-blue-400 hover:text-blue-300 font-semibold" data-errand-rules-link>Errands → Rules</a>.
+                        <a href="errands?settings=open" class="text-blue-400 hover:text-blue-300 font-semibold" data-errand-rules-link>Errands → ⚙ Settings</a>.
                     </p>
 
                     <div class="flex space-x-4 mb-6 border-b border-gray-700 pb-2">
@@ -799,6 +799,7 @@
             return {
                 apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
                 settingsLoaded: false,
+                settingsLoadFailed: false,
                 rulesSubTab: 'routing',
                 saving: false,
 
@@ -896,10 +897,14 @@
                 },
 
                 async loadOnce() {
-                    if (this._loaded) return;
-                    this._loaded = true;
+                    // The latch is set only once the settings landed, so a failed
+                    // load is retried on the next drawer open.
+                    if (this._loaded || this._loading) return;
+                    this._loading = true;
                     await Promise.all([this.loadSettings(), this.loadDrivers(), this.loadPassengers(),
                                        this.loadCars(), this.loadMembers()]);
+                    this._loaded = this.settingsLoaded;
+                    this._loading = false;
                     this.loadCommitments();     // not awaited: each section stands alone
                     this.loadAssistContacts();
                     this.loadHaOptions();       // not awaited: HA may be slow or absent
@@ -910,9 +915,10 @@
                 async loadSettings() {
                     try {
                         const res = await fetch(`${this.apiBase}api/settings`);
-                        if (!res.ok) return;
+                        if (!res.ok) { this.settingsLoadFailed = true; return; }
                         const data = await res.json();
                         this.settingsLoaded = true;
+                        this.settingsLoadFailed = false;
                         this.enableStandardRules = data.enable_standard_rules !== false;
                         this.enableAiRules = data.enable_ai_rules !== false;
                         this.enableStandardPriorityRules = data.enable_standard_priority_rules !== false;
@@ -933,7 +939,7 @@
                         this.carAutoErrand = data.car_auto_errand === true;
                         this.carFuelStation = data.car_fuel_station || '';
                         this.assistReadyBuffer = (data.assist_ready_buffer_mins ?? 10);
-                    } catch (e) { console.error('Failed to load settings', e); }
+                    } catch (e) { this.settingsLoadFailed = true; console.error('Failed to load settings', e); }
                 },
                 async postSettings(payload) {
                     window.chfSettingsSaving();
@@ -943,7 +949,9 @@
                     // setting with it. Refuse instead (one guard in the one
                     // shared poster, rather than disabling a dozen inputs).
                     if (!this.settingsLoaded) {
-                        const msg = 'Still loading — try again in a moment.';
+                        const msg = this.settingsLoadFailed
+                            ? 'Could not load these settings — close and reopen to retry.'
+                            : 'Still loading — try again in a moment.';
                         if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
                         return false;
                     }

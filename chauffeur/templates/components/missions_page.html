@@ -44,7 +44,7 @@
                     </div>
                     <p class="text-[11px] text-gray-500 mt-0.5">Billed key used ONLY by missions (the pro pool). Regular Chauffeur traffic stays on the free key.</p>
                     <div class="flex gap-2 mt-2">
-                        <input type="password" id="llmGeminiPaidApiKey" x-model="paidKeyDraft" @change="savePaidKey()" autocomplete="off"
+                        <input type="password" id="llmGeminiPaidApiKey" x-model="paidKeyDraft" @change="savePaidKey()" autocomplete="new-password"
                             :placeholder="paidKeySet ? 'Paste a new key to replace it' : 'Paste the key'"
                             class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
                         <button type="button" x-show="paidKeySet" @click="removePaidKey()"

@@ -8657,7 +8657,7 @@
             const drivers = contacts.filter(c => c.active !== false &&
                 (!(c.helps_with || []).length || (c.helps_with || []).includes('driving')));
             if (!drivers.length && !current) {
-                showGlobalAlert('Nobody outside the house is set up yet — add the carpool parents in Schedule → Drive setup → Outside hands.');
+                showGlobalAlert('Nobody outside the house is set up yet — add the carpool parents in Drives → ⚙ Settings → Outside hands.');
                 return;
             }
 

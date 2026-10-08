@@ -26,7 +26,12 @@
     function promptOpen() {
         return !!document.querySelector(
             '#cc-confirm-modal:not(.hidden), #cc-alert-modal:not(.hidden),' +
-            ' #cc-input-modal:not(.hidden), #cc-choice-modal:not(.hidden)');
+            ' #cc-input-modal:not(.hidden), #cc-choice-modal:not(.hidden)') ||
+            // The emoji picker (z 2000) owns Escape too.
+            (function () {
+                var r = document.getElementById('emoji-picker-root');
+                return !!r && r.style.display !== 'none';
+            })();
     }
 
     window.chfOpenSettings = function (tab, anchor) {

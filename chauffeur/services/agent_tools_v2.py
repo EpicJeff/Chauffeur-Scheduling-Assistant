@@ -1180,7 +1180,7 @@ def cover_with_assist(event_name: str, contact_name: str = None,
                           for c in storage.get_assist_contacts()) or 'nobody yet'
         return {"status": "error",
                 "message": f"I don't know '{contact_name}'. Outside hands I know: {known}. "
-                           f"A parent can add them in Schedule → Drive setup → Outside hands."}
+                           f"A parent can add them in Drives → ⚙ Settings → Outside hands."}
     storage.set_assist_assignment(
         key, contact['id'], scope=('series' if use_series else 'instance'),
         event_date=('' if use_series else str(match.get('start') or '')[:10]),

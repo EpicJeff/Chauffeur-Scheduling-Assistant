@@ -1298,7 +1298,7 @@
                         Done
                     </button>
                     <button type="button" x-show="page().slug !== 'home'"
-                        @click="removePage(); chfCloseSettings()"
+                        @click="if (await removePage()) chfCloseSettings()"
                         class="rounded-lg px-3 py-2 text-sm ed-btn hover:text-red-400
                                border border-gray-700"
                         x-text="isBuiltinPage(page().slug) ? 'Reset' : 'Delete'"></button>
@@ -4673,7 +4673,7 @@
 
                 async removePage() {
                     const p = this.page();
-                    if (!p || p.slug === 'home') return;
+                    if (!p || p.slug === 'home') return false;
                     const reset = this.isBuiltinPage(p.slug);
                     if (!await promptConfirm(
                         reset ? 'Reset board' : 'Delete board',
@@ -4681,9 +4681,10 @@
                             ? `Throw away your changes to “${p.name}” and go back `
                               + `to the board Chauffeur ships?`
                             : `Delete “${p.name}” and its ${(p.widgets || []).length} tiles?`,
-                        reset ? 'Reset' : 'Delete', 'Keep it')) return;
+                        reset ? 'Reset' : 'Delete', 'Keep it')) return false;
                     this.draft.panel_pages.splice(this.draft.panel_pages.indexOf(p), 1);
                     this.pageIndex = Math.max(0, this.pageIndex - 1);
+                    return true;
                 },
 
                 // What actually gets saved. The slug is re-derived for any page

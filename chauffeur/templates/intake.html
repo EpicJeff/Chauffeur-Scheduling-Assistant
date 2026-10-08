@@ -463,18 +463,18 @@
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
                         <div>
                             <label class="block text-gray-400 mb-1 text-sm">IMAP host</label>
-                            <input type="text" x-model="config.ingest_email_host" @change="saveConfig()" placeholder="imap.gmail.com"
+                            <input type="text" autocomplete="off" x-model="config.ingest_email_host" @change="saveConfig()" placeholder="imap.gmail.com"
                                 class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white font-mono text-sm">
                         </div>
                         <div>
                             <label class="block text-gray-400 mb-1 text-sm">Mailbox address</label>
-                            <input type="text" x-model="config.ingest_email_user" @change="saveConfig()" placeholder="family.chauffeur@gmail.com"
+                            <input type="text" autocomplete="off" x-model="config.ingest_email_user" @change="saveConfig()" placeholder="family.chauffeur@gmail.com"
                                 class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white font-mono text-sm">
                         </div>
                         <div>
                             <label class="block text-gray-400 mb-1 text-sm"
                                 x-text="config.has_password ? 'App password (saved — leave blank to keep)' : 'App password'"></label>
-                            <input type="password" x-model="passwordInput" @change="saveConfig()" placeholder="xxxx xxxx xxxx xxxx"
+                            <input type="password" autocomplete="new-password" x-model="passwordInput" @change="saveConfig()" placeholder="xxxx xxxx xxxx xxxx"
                                 class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white font-mono text-sm">
                         </div>
                     </div>
@@ -1040,6 +1040,10 @@
                         const res = await fetch(`${this.apiBase}api/ingest/unblock-sender`, {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ pattern }) });
+                        if (!res.ok) {
+                            if (!window.chfSettingsSaved(false, "Couldn't unblock that sender.")) showGlobalAlert("Couldn't unblock that sender.");
+                            return;
+                        }
                         const data = await res.json();
                         this.config.ingest_sender_blocklist = data.ingest_sender_blocklist || [];
                         window.chfSettingsSaved(true);

@@ -231,7 +231,10 @@
                                 </div>
                             </div>
                         </template>
-                        <template x-if="errandRules.length === 0">
+                        <template x-if="loadError">
+                            <p class="text-sm text-red-400 text-center p-4" data-errand-load-error>Could not load the errand rules — close and reopen to retry.</p>
+                        </template>
+                        <template x-if="errandRules.length === 0 && !loadError">
                             <p class="text-sm text-gray-500 italic text-center p-4">No errand rules configured.</p>
                         </template>
                     </div>
@@ -246,6 +249,7 @@
             // its own depth (test_template_js).
             apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
             loaded: false,
+            loadError: false,
             forbidden: false,
             drivers: [],
             passengers: [],
@@ -257,7 +261,11 @@
             init() {
                 window.addEventListener('chf-settings-opened', e => {
                     const t = e.detail && e.detail.tab;
-                    if ((t === 'errands' || t === 'tasks') && !this.loaded) { this.loaded = true; this.load(); }
+                    if ((t === 'errands' || t === 'tasks') && !this.loaded) {
+                        this.loaded = true;
+                        // Latch only on success: a failed load retries on the next open.
+                        this.load().then(() => { if (this.loadError) this.loaded = false; });
+                    }
                 });
             },
             // The save report pattern: the drawer's header mark when it is
@@ -295,11 +303,13 @@
                 try {
                     const res = await fetch(`${this.apiBase}api/errand_rules`);
                     if (res.status === 401 || res.status === 403) { this.forbidden = true; return; }
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
                     const data = await res.json();
                     this.errandRules = Array.isArray(data) ? data : [];
+                    this.loadError = false;
                 } catch (e) {
                     console.error("Failed to load errand rules", e);
-                    this.errandRules = [];
+                    this.loadError = true;
                 }
             },
             addErrandRuleKeyword() {
