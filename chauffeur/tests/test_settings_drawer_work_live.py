@@ -88,6 +88,33 @@ def main():
             page.wait_for_selector(M + '[data-open]')
             _shot(page, 'mind-open-phone')
 
+            # Missions: seven controls in the drawer; the paid key is set / not set only.
+            page.set_viewport_size({'width': 1300, 'height': 900})
+            X = '[data-settings-for~="missions"]'
+            page.goto(served.url('work?tab=missions'), wait_until='networkidle')
+            page.wait_for_selector('[data-page-tab="missions"] [data-settings-off]', state='visible')
+            _shot(page, 'missions-closed-desktop')
+            page.click('#page-settings-gear')
+            page.wait_for_selector(X + '[data-open]')
+            check(page.inner_text(X + ' [data-paid-key-state]').strip() == 'Not set', 'key state is not Not set')
+            page.fill('#llmGeminiPaidApiKey', 'paid-123')
+            page.dispatch_event('#llmGeminiPaidApiKey', 'change')
+            page.wait_for_selector(X + ' [data-settings-status]:has-text("Saved")')
+            check(storage.get_settings().get('llm_gemini_paid_api_key') == 'paid-123', 'the paid key did not save')
+            page.reload(wait_until='networkidle')
+            page.click('#page-settings-gear')
+            page.wait_for_selector(X + '[data-open]')
+            check(page.input_value('#llmGeminiPaidApiKey') == '', 'the stored key is shown in the field')
+            check(page.inner_text(X + ' [data-paid-key-state]').strip() == 'Set', 'key state is not Set')
+            page.fill(X + ' input[x-model\\.number="s.mission_cap_launch"]', '4')
+            page.dispatch_event(X + ' input[x-model\\.number="s.mission_cap_launch"]', 'change')
+            page.wait_for_selector(X + ' [data-settings-status]:has-text("Saved")')
+            check(storage.get_settings().get('llm_gemini_paid_api_key') == 'paid-123',
+                  'saving another control wiped the paid key')
+            check(storage.get_settings().get('mission_cap_launch') == 4, 'the launch cap did not save')
+            _shot(page, 'missions-open-desktop')
+            page.click(X + ' [aria-label="Close settings"]')
+
             errors = [e for e in handle.errors if 'Failed to load resource' not in e]
             check(not errors, f'page errors: {errors[:3]}')
     finally:

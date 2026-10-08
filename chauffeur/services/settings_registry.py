@@ -622,21 +622,21 @@ ENTRIES: List[dict] = [
     _e('missions_enabled', 'missions', 'Missions',
        'Argyle can work multi-step missions (research, compare, draft, '
        'propose) on the paid pro model. Off means completely off — no LLM '
-       'calls, no ticks.', page='missions'),
+       'calls, no ticks.', page='work?tab=missions', anchor='missions-settings'),
     _e('llm_gemini_paid_api_key', 'missions', 'Paid Gemini API key',
        'Billed key used ONLY by missions (the pro pool). Regular Chauffeur '
-       'traffic stays on the free key.', page='missions'),
+       'traffic stays on the free key.', page='work?tab=missions', anchor='missions-settings'),
     _e('model_pool_pro', 'missions', 'Pro model pool',
        'Comma-separated pro models missions may use '
-       '(default gemini-3.1-pro-preview).', page='missions'),
+       '(default gemini-3.1-pro-preview).', page='work?tab=missions', anchor='missions-settings'),
     _e('mission_cap_launch', 'missions', 'Daily launch cap',
-       'Missions that may be started per day (default 3).', page='missions'),
+       'Missions that may be started per day (default 3).', page='work?tab=missions', anchor='missions-settings'),
     _e('mission_step_cap', 'missions', 'Steps per mission',
        'LLM calls one mission may spend before it must stop (default 40).',
-       page='missions'),
+       page='work?tab=missions', anchor='missions-settings'),
     _e('mission_cap_pro_calls', 'missions', 'Daily pro-call cap',
        'Total paid-model calls per day across all missions (default 120).',
-       page='missions'),
+       page='work?tab=missions', anchor='missions-settings'),
 
     # --- Threads (open loops with people outside the family) ---
     _e('thread_stall_days', 'threads', 'Stalls after (days)',
