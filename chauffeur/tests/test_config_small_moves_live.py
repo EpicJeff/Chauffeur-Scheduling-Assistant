@@ -108,30 +108,37 @@ def main():
             # --- Calendar: Status Days, the whole hand path.
             page.goto(served.url('calendar'), wait_until='networkidle')
             page.wait_for_timeout(600)
-            check(page.locator('[data-status-days-link]').count() == 1, 'the Calendar header has no Status days link')
+            check(page.locator('[data-status-days-link]').count() == 0, 'the Calendar header still has a Status days link')
             sd = page.locator('#status-days')
             sd.scroll_into_view_if_needed()
             check(sd.is_visible(), 'the Calendar page has no Status days section')
+            # The day types live in the Calendar drawer (settings-drawer arc);
+            # setting and clearing days stay on the page.
+            dr = page.locator('[data-settings-for~="calendar"]')
+            page.click('#page-settings-gear')
+            page.wait_for_selector('[data-settings-for~="calendar"][data-open]')
             # Add a day type.
-            sd.locator('[data-status-add]').click()
-            sd.locator('[data-status-name]').fill('Chemo Day')
-            sd.locator('[data-status-kid]').fill("Mom's resting today. Grandma's picking you up.")
-            sd.locator('select[x-model="newStatusProtocol.member_id"]').select_option('mum')
-            sd.locator('[data-status-submit]').click()
+            dr.locator('[data-status-add]').click()
+            dr.locator('[data-status-name]').fill('Chemo Day')
+            dr.locator('[data-status-kid]').fill("Mom's resting today. Grandma's picking you up.")
+            dr.locator('select[x-model="newStatusProtocol.member_id"]').select_option('mum')
+            dr.locator('[data-status-submit]').click()
             page.wait_for_timeout(800)
             protos = storage.get_all_status_protocols()
             check(len(protos) == 1 and protos[0]['name'] == 'Chemo Day' and protos[0].get('member_id') == 'mum',
                   f'the day type was not created: {protos}')
-            check(sd.locator('[data-status-row]').count() == 1, 'the new day type is not listed')
+            check(dr.locator('[data-status-row]').count() == 1, 'the new day type is not listed')
             # Edit it.
-            sd.locator('[data-status-edit]').click()
-            check(sd.locator('[data-status-name]').input_value() == 'Chemo Day', 'Edit did not load the day type')
-            sd.locator('[data-status-name]').fill('Treatment Day')
-            sd.locator('[data-status-submit]').click()
+            dr.locator('[data-status-edit]').click()
+            check(dr.locator('[data-status-name]').input_value() == 'Chemo Day', 'Edit did not load the day type')
+            dr.locator('[data-status-name]').fill('Treatment Day')
+            dr.locator('[data-status-submit]').click()
             page.wait_for_timeout(800)
             protos = storage.get_all_status_protocols()
             check(len(protos) == 1 and protos[0]['name'] == 'Treatment Day',
                   f'the edit did not save: {protos}')
+            page.locator('[data-settings-for~="calendar"] [aria-label="Close settings"]').click()
+            page.wait_for_timeout(300)
             # Set a day with it, then clear it.
             tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
             sd.locator('input[x-model="newStatusDay.date"]').fill(tomorrow)
@@ -146,11 +153,14 @@ def main():
             page.locator('#cc-confirm-execute-btn').click()
             page.wait_for_timeout(800)
             check(not storage.get_status_days(), 'clearing the day did not remove it')
-            # Delete the day type.
-            sd.locator('[data-status-delete]').click()
+            # Delete the day type (from the drawer).
+            page.click('#page-settings-gear')
+            page.wait_for_selector('[data-settings-for~="calendar"][data-open]')
+            dr.locator('[data-status-delete]').click()
             page.locator('#cc-confirm-execute-btn').click()
             page.wait_for_timeout(800)
             check(not storage.get_all_status_protocols(), 'deleting the day type did not remove it')
+            page.locator('[data-settings-for~="calendar"] [aria-label="Close settings"]').click()
 
             # --- Config: Boards & House, config#home, and the pointers.
             # Signed in as a parent (the admin gate), as the house editor
@@ -208,8 +218,8 @@ def main():
             # --- Never on a wall.
             for path, sel in (('trips?kiosk=true', '#trip-hashtags'),
                               ('trips?tabs=trips', '#trip-hashtags'),
-                              ('calendar?kiosk=true', '#status-days, [data-status-days-link]'),
-                              ('calendar?tabs=calendar', '#status-days, [data-status-days-link]'),
+                              ('calendar?kiosk=true', '#status-days, [data-settings-for]'),
+                              ('calendar?tabs=calendar', '#status-days, [data-settings-for]'),
                               ('work?panel=true', '#heads-ups, #proactiveWatchersEnabled'),
                               ('mind?kiosk=true', '#heads-ups, #proactiveWatchersEnabled')):
                 page.goto(served.url(path), wait_until='domcontentloaded')

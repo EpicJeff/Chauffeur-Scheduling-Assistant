@@ -173,7 +173,7 @@ def scenario_the_page_owns_its_setting():
     tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        'templates')
     occ = open(os.path.join(tpl, 'occasions.html'), encoding='utf-8').read()
-    check('id="gifts"' in occ, "the deep-link anchor exists")
+    check("settings_section('gifts'" in occ, "the deep-link anchor exists (the drawer section carries the id)")
     check('giftLeadDays' in occ and 'saveGiftLead' in occ,
           "and the control is real, not just an anchor")
     cfg = open(os.path.join(tpl, 'config.html'), encoding='utf-8').read()

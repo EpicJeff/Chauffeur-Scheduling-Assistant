@@ -9,9 +9,11 @@
    this only without ?panel=true, ?kiosk=true or ?tabs= (the errand_rules
    guard in errands.html is the precedent). The PWA's quick "set a status
    day" row reads the same /api/status/protocols. #}
+{% from 'components/settings_drawer.html' import settings_drawer, settings_section with context %}
 <section id="status-days" x-data="statusDaysPanel()" x-init="init()" class="panel-page w-full px-2 sm:px-4 lg:px-6 pb-8">
-    <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700">
-        <h2 class="text-3xl font-bold mb-2 text-sky-300">Status Days</h2>
+    {% call settings_drawer('calendar', 'Calendar') %}
+    {% call settings_section('status-day-types', 'Status day types') %}
+    <div class="bg-gray-900 rounded-xl p-4">
         <p class="text-gray-400 text-sm mb-4">Family day types — "Chemo Day", "Night Shift",
             "Trip Day" — so the kids never come home guessing. Write what a day means <b>in your
             own words</b>: what the kids should hear (the plan, plus something they can do) and
@@ -20,7 +22,7 @@
             the change of plans too — never leave them guessing in either direction.</p>
         <div class="space-y-3">
             <template x-for="p in statusProtocols" :key="p.id">
-                <div data-status-row class="bg-gray-900 p-4 rounded-xl shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3"
+                <div data-status-row class="bg-gray-800 p-4 rounded-xl shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3"
                     :class="p.enabled === false ? 'opacity-50' : ''">
                     <div>
                         <h3 class="text-lg font-bold text-white">
@@ -184,7 +186,19 @@
                 </div>
             </div>
         </div>
-        <div class="mt-6 pt-4 border-t border-gray-700" x-show="statusProtocols.length">
+    </div>
+    {% endcall %}
+    {% endcall %}
+
+    <div data-status-types-empty x-show="loaded && !statusProtocols.length" x-cloak
+        class="bg-gray-800 rounded-2xl border border-gray-700 px-4 py-3 mb-4 flex items-center justify-between gap-3">
+        <p class="text-sm text-gray-300">No status day types yet — a type is what a day can be (snow day, sick day).</p>
+        <button type="button" @click="chfOpenSettings('calendar', 'status-day-types')"
+            class="shrink-0 text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-500">Add a type…</button>
+    </div>
+    <div x-show="statusProtocols.length" x-cloak class="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700">
+        <h2 class="text-3xl font-bold mb-2 text-sky-300">Status Days</h2>
+        <div>
             <h3 class="text-sm font-bold text-gray-300 mb-2">Upcoming status days</h3>
             <template x-for="d in statusDays" :key="d.id">
                 <div class="flex items-center gap-2 mb-1 text-sm text-gray-300">
@@ -232,6 +246,7 @@
             apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
             members: [],
             saving: false,
+            loaded: false,
             statusProtocols: [],
             statusDays: [],
             showStatusForm: false,
@@ -257,6 +272,7 @@
                 } catch (e) {
                     console.error("Failed to load status data", e);
                 }
+                this.loaded = true;
             },
             statusMemberName(memberId) {
                 const m = this.members.find(x => x.id === memberId);
@@ -293,6 +309,7 @@
                 const f = this.newStatusProtocol;
                 if (!f.name.trim()) { showGlobalAlert('Give the day type a name.'); return; }
                 this.saving = true;
+                window.chfSettingsSaving();
                 const payload = {
                     emoji: f.emoji || '💙', name: f.name.trim(),
                     member_id: f.member_id || null, need: f.need,
@@ -317,20 +334,37 @@
                             body: JSON.stringify(payload) });
                     if (!res.ok) {
                         const d = await res.json().catch(() => ({}));
-                        showGlobalAlert(d.detail || 'Could not save the day type.');
+                        const msg = d.detail || 'Could not save the day type.';
+                        if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
                         this.saving = false;
                         return;
                     }
+                    window.chfSettingsSaved(true);
                     this.showStatusForm = false;
                     this.editStatusId = null;
                     await this.loadStatusData();
-                } catch (e) { showGlobalAlert('Could not save the day type.'); }
+                } catch (e) {
+                    if (!window.chfSettingsSaved(false, 'Could not save the day type.')) showGlobalAlert('Could not save the day type.');
+                }
                 this.saving = false;
             },
             async deleteStatusProtocolUi(p) {
                 if (!await promptConfirm('Delete Day Type',
                     `Delete "${p.name}"? Any upcoming days set with it are removed too.`, 'Delete')) return;
-                await fetch(`${this.apiBase}api/status/protocols/${p.id}`, { method: 'DELETE' });
+                window.chfSettingsSaving();
+                try {
+                    const res = await fetch(`${this.apiBase}api/status/protocols/${p.id}`, { method: 'DELETE' });
+                    if (!res.ok) {
+                        const d = await res.json().catch(() => ({}));
+                        const msg = d.detail || 'Could not delete the day type.';
+                        if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
+                        return;
+                    }
+                    window.chfSettingsSaved(true);
+                } catch (e) {
+                    if (!window.chfSettingsSaved(false, 'Could not delete the day type.')) showGlobalAlert('Could not delete the day type.');
+                    return;
+                }
                 await this.loadStatusData();
             },
             async addStatusDayUi() {

@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
 </head>
 
+{% from 'components/settings_drawer.html' import settings_drawer, settings_section with context %}
 <body class="flex flex-col h-screen overflow-hidden">
     {% include 'nav.html' %}
 
@@ -33,17 +34,21 @@
         the context that ties them together and generates the work.
     </p>
 
-    <!-- A6. Config decentralisation: the one setting this page owns lives on
-         this page, not on config.html. The lead is not "the day of the
-         party" on purpose — a pickup order placed the night before is a
-         present that is not there. -->
-    <div id="gifts" class="flex flex-wrap items-center gap-2 mb-5 text-sm text-gray-400">
+    {# A6. Config decentralisation: the one setting this page owns lives on
+       this page, not on config.html — in the Occasions drawer. The lead is
+       not "the day of the party" on purpose — a pickup order placed the
+       night before is a present that is not there. #}
+    {% call settings_drawer('occasions', 'Occasions') %}
+    {% call settings_section('gifts', 'Presents') %}
+    <div class="bg-gray-900 rounded-xl px-4 py-3 flex flex-wrap items-center gap-2 text-sm text-gray-400">
         <span>🎁 A present should be in hand</span>
         <input type="number" min="0" max="30" x-model.number="giftLeadDays"
             @change="saveGiftLead()"
-            class="w-16 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-center">
+            class="w-16 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-white text-center">
         <span>day(s) before the party.</span>
     </div>
+    {% endcall %}
+    {% endcall %}
 
     <!-- New occasion. Two required answers and everything else optional: the
          window and the tags are what make it useful, not what make it exist. -->
@@ -781,12 +786,22 @@
             async saveGiftLead() {
                 const n = Math.max(0, Math.min(30, parseInt(this.giftLeadDays) || 0));
                 this.giftLeadDays = n;
+                window.chfSettingsSaving();
                 try {
-                    await fetch(this.apiBase + 'api/settings', {
+                    const r = await fetch(this.apiBase + 'api/settings', {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ gift_lead_days: n })
                     });
-                } catch (e) { showGlobalAlert("Couldn't save that."); }
+                    if (!r.ok) {
+                        const err = await r.json().catch(() => ({}));
+                        const msg = err.detail || 'Could not save that just now.';
+                        if (!window.chfSettingsSaved(false, msg)) showGlobalAlert(msg);
+                        return;
+                    }
+                    window.chfSettingsSaved(true);
+                } catch (e) {
+                    if (!window.chfSettingsSaved(false, 'Could not save that just now.')) showGlobalAlert('Could not save that just now.');
+                }
             },
             giftPicked(o, c) {
                 return (this.giftPicks[o.id] || []).some(p => p.item_id === c.item_id);

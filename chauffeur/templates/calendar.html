@@ -76,10 +76,6 @@
 
     <header class="panel-page px-6 pt-6 pb-2 lg:px-10 lg:pt-8 shrink-0 flex items-end justify-between gap-4">
         <h2 class="panel-page-title">Calendar</h2>
-        {% if request.query_params.get('panel') != 'true' and request.query_params.get('kiosk') != 'true' and request.query_params.get('tabs') is none %}
-        <a href="#status-days" data-status-days-link
-            class="text-sm font-bold text-sky-300 hover:text-sky-200 bg-sky-500/10 px-3 py-1.5 rounded-lg border border-sky-500/20 mb-1">💙 Status days</a>
-        {% endif %}
     </header>
 
     <main class="flex-1 w-full p-2 sm:p-4 lg:p-6 flex flex-col h-[calc(100vh-64px)]">
