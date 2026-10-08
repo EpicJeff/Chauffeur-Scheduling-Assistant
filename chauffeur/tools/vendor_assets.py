@@ -14,6 +14,7 @@ COMMITTED, and `static/vendor/` is what the templates point at. Re-run it only
 to bump a pinned version below, then commit the result.
 
     python tools/vendor_assets.py
+    python tools/vendor_assets.py map     # only the vector map's files
 
 Fonts are the fiddly part. Google Fonts' css2 endpoint serves a different
 stylesheet per User-Agent — ask as a modern Chrome and you get woff2 sliced by
@@ -29,10 +30,12 @@ and goes LAST in the font stacks, after Apple's and Microsoft's, so only a
 device with no emoji font of its own (which is exactly Raspberry Pi OS) ever
 loads it.
 """
+import io
 import os
 import re
 import shutil
 import sys
+import tarfile
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -59,6 +62,24 @@ SCRIPTS = [
 # have to sit next to it or the zoom control and the marker come out blank.
 LEAFLET_IMAGES = ['layers.png', 'layers-2x.png', 'marker-icon.png',
                   'marker-icon-2x.png', 'marker-shadow.png']
+
+# The vector family map (spec: docs/superpowers/specs/2026-10-08-vector-family-map-design.md).
+# MapLibre v6 ships ESM only; its worker sits BESIDE the module, which finds it
+# through import.meta.url, so both land in the same directory. The Leaflet
+# plugin is its UMD build on purpose: the ESM build imports `leaflet` and
+# `maplibre-gl` by bare specifier, and our Leaflet is a global script.
+MAPLIBRE = '6.13.0'
+MAPLIBRE_LEAFLET = '0.1.4'
+VERSATILES_STYLE = 'v6.3.1'
+VERSATILES_FONTS = 'v3.0.0'
+# English-label variants (`en.json`: name_en, falling back to name).
+MAP_STYLES = ['colorful', 'eclipse']
+# The only two stacks those styles reference, and the ranges a US family's
+# map needs: Latin through Cyrillic, plus General Punctuation for the curly
+# apostrophe. Anything else is answered empty by main.py's glyph route.
+MAP_FONTSTACKS = ['noto_sans_regular', 'noto_sans_bold']
+MAP_GLYPH_RANGES = ['0-255', '256-511', '512-767', '768-1023', '1024-1279', '8192-8447']
+MAP_SPRITES = ['base.json', 'base.png', 'base@2x.json', 'base@2x.png']
 
 FONTS = [
     # (css2 url, output stylesheet, family rename or None)
@@ -109,7 +130,55 @@ def vendor_font(url, out_name, rename):
     write(f'fonts/{subdir}/{out_name}', css.encode('utf-8'))
 
 
+def _tar_members(data):
+    """A release tarball as {member name: bytes}, read in memory — nothing
+    from the archive is ever written to disk under its own name."""
+    out = {}
+    with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as tar:
+        for member in tar.getmembers():
+            if member.isfile():
+                name = member.name[2:] if member.name.startswith('./') else member.name
+                out[name] = tar.extractfile(member).read()
+    return out
+
+
+def vendor_map():
+    """MapLibre, its Leaflet bridge, and the VersaTiles style files."""
+    for sub in ('maplibre', 'map-style'):
+        shutil.rmtree(os.path.join(VENDOR, sub), ignore_errors=True)
+
+    base = f'https://unpkg.com/maplibre-gl@{MAPLIBRE}/dist/'
+    for name in ('maplibre-gl.mjs', 'maplibre-gl-worker.mjs', 'maplibre-gl.css'):
+        write(f'maplibre/{name}', fetch(base + name))
+    write('maplibre/leaflet-maplibre-gl.js',
+          fetch(f'https://unpkg.com/@maplibre/maplibre-gl-leaflet@{MAPLIBRE_LEAFLET}'
+                '/leaflet-maplibre-gl.js'))
+
+    release = ('https://github.com/versatiles-org/versatiles-style/releases/download/'
+               + VERSATILES_STYLE)
+    styles = _tar_members(fetch(release + '/styles.tar.gz'))
+    for name in MAP_STYLES:
+        write(f'map-style/{name}.json', styles[f'{name}/en.json'])
+    sprites = _tar_members(fetch(release + '/sprites.tar.gz'))
+    for name in MAP_SPRITES:
+        write(f'map-style/sprites/{name}', sprites[name])
+
+    fonts = _tar_members(fetch(
+        'https://github.com/versatiles-org/versatiles-fonts/releases/download/'
+        f'{VERSATILES_FONTS}/noto_sans.tar.gz'))
+    for stack in MAP_FONTSTACKS:
+        for rng in MAP_GLYPH_RANGES:
+            write(f'map-style/glyphs/{stack}/{rng}.pbf', fonts[f'{stack}/{rng}.pbf'])
+
+
 def main():
+    # `python tools/vendor_assets.py map` refreshes only the map's files, so
+    # bumping MapLibre does not silently re-pull every font and script.
+    if sys.argv[1:] == ['map']:
+        os.makedirs(VENDOR, exist_ok=True)
+        vendor_map()
+        return
+
     if os.path.isdir(VENDOR):
         shutil.rmtree(VENDOR)
     os.makedirs(VENDOR, exist_ok=True)
@@ -122,6 +191,9 @@ def main():
     for name in LEAFLET_IMAGES:
         write(f'leaflet/images/{name}',
               fetch(f'https://unpkg.com/leaflet@1.9.4/dist/images/{name}'))
+
+    print('vector map')
+    vendor_map()
 
     print('fonts')
     for url, out_name, rename in FONTS:
