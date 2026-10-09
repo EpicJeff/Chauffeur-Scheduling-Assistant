@@ -32,6 +32,7 @@ RETENTION_DAYS = 120
 # only in propose-wrapped form. Adding a tool to the registry later leaves it
 # write-classed until someone consciously promotes it.
 READ_TOOLS = frozenset({
+    'list_situations', 'explain_situation',
     'get_current_state', 'get_errands', 'get_pet_status', 'get_point_balances',
     'get_family_goals', 'get_family_messages', 'list_chores',
     'list_open_findings', 'list_insights', 'list_programs',

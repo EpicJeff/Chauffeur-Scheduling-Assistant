@@ -797,6 +797,22 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.dismiss_insight(args.get("insight_id", ""),
                                                     member_role=role)
                     if res.get("message"): agent_message = res["message"]
+                elif func_name in ("list_situations", "explain_situation", "act_on_situation",
+                                   "start_ask", "mark_ask_sent", "answer_ask"):
+                    from services import agent_tools_v2 as _atv2
+                    # Same actor resolution as the thread tools below: resolved
+                    # HERE at dispatch, never taken from the model.
+                    actor = acting_member
+                    if actor is None and driver:
+                        from services import storage as _st
+                        actor = _st.get_member_by_driver_id(driver_id)
+                    fn = getattr(_atv2, func_name)
+                    allowed = fn.__code__.co_varnames[:fn.__code__.co_argcount]
+                    kwargs = {k: v for k, v in (args or {}).items() if k in allowed and k != 'acting_member'}
+                    res = fn(**kwargs, acting_member=actor)
+                    if isinstance(res, dict) and res.get("schedule_dirty"):
+                        schedule_dirty = True
+                    if res.get("message"): agent_message = res["message"]
                 elif func_name in ("list_threads", "create_thread",
                                    "update_thread_action", "add_thread_note",
                                    "draft_thread_message", "close_thread",

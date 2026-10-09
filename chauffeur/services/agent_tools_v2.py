@@ -1381,6 +1381,146 @@ def dismiss_insight(insight_id: str, member_role: str = None) -> Dict[str, Any]:
     return {"status": "success" if ok else "error"}
 
 
+# --- Situations: the card's verbs as tools (spec §4). acting_member is
+# resolved by the DISPATCH LAYER, never taken from the model. ---------------
+
+def _situation_lines(rows: list) -> str:
+    out = []
+    for s in rows:
+        nxt = (s.get('next_step') or {}).get('label') or '-'
+        asks = '; '.join(f"asked {a.get('to_name')} by {a.get('channel')}: {a.get('state')}"
+                         + (f"/{a['outcome']}" if a.get('outcome') else '')
+                         for a in (s.get('asks') or []) if a.get('state') != 'withdrawn')
+        out.append(f"- [{s['kind']}] {s['title']}: {s.get('status_note') or ''} -> next: {nxt}"
+                   + (f" ({asks})" if asks else ''))
+    return '\n'.join(out)
+
+
+def _resolve_situation(ref: str, kind: str = None, viewer: dict = None):
+    from services import situations as _sit
+    ref = (ref or '').strip()
+    if not ref:
+        return None, 'Say which one.'
+    for k in ([kind] if kind in _sit.KINDS else _sit.KINDS):
+        if _sit.load(k, ref):
+            return (k, ref), None
+    rows = _sit.list_situations(viewer, kinds=(kind,) if kind in _sit.KINDS else None)
+    hits = [s for s in rows if ref.lower() in (s.get('title') or '').lower()]
+    if len(hits) == 1:
+        return (hits[0]['kind'], hits[0]['id']), None
+    if not hits:
+        return None, f"Nothing open matches '{ref}'."
+    names = '; '.join(h['title'] for h in hits[:5])
+    return None, f"Which one: {names}?"
+
+
+def list_situations(kinds: str = None, limit: int = 10, acting_member: dict = None) -> Dict[str, Any]:
+    from services import situations as _sit
+    want = tuple(k for k in (kinds or '').split(',') if k in _sit.KINDS) or None
+    rows = _sit.list_situations(acting_member, kinds=want)[:max(1, min(int(limit or 10), 30))]
+    if not rows:
+        return {"status": "success", "message": "Nothing needs anyone right now.", "situations": []}
+    return {"status": "success", "message": _situation_lines(rows), "situations": rows}
+
+
+def explain_situation(ref: str, kind: str = None, acting_member: dict = None) -> Dict[str, Any]:
+    from services import situations as _sit
+    found, why = _resolve_situation(ref, kind, acting_member)
+    if not found:
+        return {"status": "error", "message": why}
+    s = _sit.view(found[0], found[1], acting_member)
+    opts = '\n'.join(f"  {i + 1}. {o['label']} [{o['verb']}, option {o['id']}]" for i, o in enumerate(s['options']))
+    asks = '\n'.join(f"  - asked {a.get('to_name')} by {a.get('channel')}: {a.get('what')}: {a.get('state')}"
+                     + (f" / {a['outcome']}" if a.get('outcome') else '') for a in s['asks']) or '  (none)'
+    msg = (f"{s['title']}\nStatus: {s['status_note']}\nOptions:\n{opts}\nAsks so far:\n{asks}")
+    return {"status": "success", "message": msg, "situation": s}
+
+
+def act_on_situation(ref: str, verb: str, option_id: str = None, kind: str = None, text: str = None,
+                     next_action_at: str = None, acting_member: dict = None) -> Dict[str, Any]:
+    from services import situations as _sit
+    if not acting_member or acting_member.get('role') not in ('parent', 'adult'):
+        return {"status": "error", "message": "Only a parent or adult can do that."}
+    found, why = _resolve_situation(ref, kind, acting_member)
+    if not found:
+        return {"status": "error", "message": why}
+    k, sid = found
+    if not option_id:
+        opts = [o for o in _sit.options_for(k, _sit.load(k, sid)) if o['verb'] == verb]
+        if len(opts) != 1:
+            return {"status": "error",
+                    "message": ("Say which option: " + '; '.join(f"{o['label']} ({o['id']})" for o in opts))
+                    if opts else f"'{verb}' is not on the table for that one."}
+        option_id = opts[0]['id']
+    payload = {}
+    if verb in ('answer', 'draft', 'research'):
+        payload['text'] = text or ''
+    if verb == 'advance':
+        payload['next_action'] = text or ''
+        payload['next_action_at'] = next_action_at
+    res = _sit.act(k, sid, verb, option_id=option_id, payload=payload, actor=acting_member)
+    if res.get('status') == 'refused':
+        return {"status": "error", "message": res.get('message')}
+    return res
+
+
+def start_ask(ref: str, to_name: str, what: str, channel: str, kind: str = None,
+              acting_member: dict = None) -> Dict[str, Any]:
+    from services import situations as _sit, asks as _asks
+    if not acting_member or acting_member.get('role') not in ('parent', 'adult'):
+        return {"status": "error", "message": "Only a parent or adult can ask."}
+    found, why = _resolve_situation(ref, kind, acting_member)
+    if not found:
+        return {"status": "error", "message": why}
+    k, sid = found
+    row = _sit.load(k, sid)
+    to = {'name': to_name}
+    from services import storage
+    member = next((m for m in storage.get_all_members() if (m.get('name') or '').lower() == (to_name or '').lower()), None)
+    contact = next((c for c in storage.get_assist_contacts() if (c.get('name') or '').lower() == (to_name or '').lower()), None)
+    if member:
+        to['member_id'] = member['id']
+    elif contact:
+        to['contact_id'] = contact['id']
+    unlocks = None
+    for o in _sit.options_for(k, row):
+        if o['verb'] != 'ask':
+            continue
+        if to.get('contact_id') and (o['payload'].get('to') or {}).get('contact_id') == to['contact_id']:
+            unlocks, what = o['payload'].get('unlocks'), what or o['payload'].get('what')
+            break
+        if o['id'] == 'ask:new' and unlocks is None:
+            unlocks, what = o['payload'].get('unlocks'), what or o['payload'].get('what')
+    if unlocks and unlocks.get('action_type') == 'assist_assignment' and to.get('contact_id'):
+        unlocks = {**unlocks, 'payload': {**unlocks['payload'], 'contact_id': to['contact_id']}}
+    event = _sit._cached_event(((unlocks or {}).get('payload') or {}).get('event_id')) if unlocks else None
+    res = _asks.create(k, sid, to, what, channel, acting_member['id'], unlocks=unlocks, event=event)
+    if res.get('status') != 'success':
+        return {"status": "error", "message": res.get('message')}
+    a = res['ask']
+    how = {'chauffeur': f"Sent to {a['to_name']} on Chauffeur with Yes/No.",
+           'email': "Here's the email. Copy it into your mail app, then tell me when it's sent:",
+           'text': "Here's the text. Copy it, send it, then tell me when it's sent:",
+           'in_person': "Here's what to say. Tell me once you've asked:"}[channel]
+    draft = (f"Subject: {a['draft_subject']}\n\n" if a.get('draft_subject') else '') + (a.get('draft_body') or '')
+    return {"status": "success", "ask_id": a['id'], "draft": draft,
+            "message": f"{how}\n\n{draft}" if channel != 'chauffeur' else how}
+
+
+def mark_ask_sent(ask_id: str, acting_member: dict = None) -> Dict[str, Any]:
+    from services import asks as _asks
+    res = _asks.mark_sent(ask_id, acting_member)
+    return {**res, "status": "error" if res.get('status') == 'refused' else res.get('status')}
+
+
+def answer_ask(ask_id: str, answer: str, acting_member: dict = None) -> Dict[str, Any]:
+    from services import asks as _asks, storage
+    recipient = (storage.get_ask(ask_id) or {}).get('to_member_id')
+    res = _asks.answer(ask_id, (answer or '').lower(), acting_member,
+                       reported=(acting_member or {}).get('id') != recipient)
+    return {**res, "status": "error" if res.get('status') == 'refused' else res.get('status')}
+
+
 def _match_thread(thread_title: str):
     """Fuzzy title match against open threads, same shape as `_match_task` —
     the model knows a thread by what it's about, never by its id."""
@@ -4093,6 +4233,56 @@ def get_available_tools() -> List[Dict]:
                            "required": ["insight_id"]}
         },
         {
+            "name": "list_situations",
+            "description": "What needs a person right now: uncovered rides, Argyle's observations, stalled threads, missions waiting on a decision, ranked, each with where it stands, the next step, and who has been asked so far ('what needs my attention?', 'anything I need to deal with?').",
+            "parameters": {"type": "object",
+                           "properties": {"kinds": {"type": "string", "description": "Optional comma list of finding,insight,thread,mission."},
+                                          "limit": {"type": "integer", "description": "How many, default 10."}},
+                           "required": []}
+        },
+        {
+            "name": "explain_situation",
+            "description": "The full picture of one thing that needs a person: status, every option with its id, and the asks so far. Takes an id or a title fragment ('tell me about the Thursday soccer one').",
+            "parameters": {"type": "object",
+                           "properties": {"ref": {"type": "string", "description": "The situation's id or a fragment of its title."},
+                                          "kind": {"type": "string", "description": "Optional: finding|insight|thread|mission."}},
+                           "required": ["ref"]}
+        },
+        {
+            "name": "act_on_situation",
+            "description": "Do one of a situation's options: assign a driver, approve a step, set a thread's next step, answer a mission, snooze, dismiss, take it yourself, mark it handled. Use start_ask to ask somebody.",
+            "parameters": {"type": "object",
+                           "properties": {"ref": {"type": "string", "description": "Id or title fragment."},
+                                          "verb": {"type": "string", "enum": ["assign", "plan", "prepare", "do", "done", "skip", "research", "draft", "advance", "answer", "close", "snooze", "dismiss", "own"]},
+                                          "option_id": {"type": "string", "description": "The option id from explain_situation, when the verb has more than one."},
+                                          "kind": {"type": "string"},
+                                          "text": {"type": "string", "description": "For answer/draft/research: the text. For advance: the next action."},
+                                          "next_action_at": {"type": "string", "description": "For advance: YYYY-MM-DD."}},
+                           "required": ["ref", "verb"]}
+        },
+        {
+            "name": "start_ask",
+            "description": "Ask somebody for something about a situation, by a channel the person chose: 'text Sarah and ask her to drive Kate Thursday', 'email the inspector to come Friday', 'message Dad on Chauffeur'. Returns the draft to copy (or sends it on Chauffeur).",
+            "parameters": {"type": "object",
+                           "properties": {"ref": {"type": "string"}, "to_name": {"type": "string"},
+                                          "what": {"type": "string", "description": "The commitment being asked for, as a short phrase."},
+                                          "channel": {"type": "string", "enum": ["chauffeur", "email", "text", "in_person"]},
+                                          "kind": {"type": "string"}},
+                           "required": ["ref", "to_name", "what", "channel"]}
+        },
+        {
+            "name": "mark_ask_sent",
+            "description": "The person says they sent the drafted text/email or asked in person.",
+            "parameters": {"type": "object", "properties": {"ask_id": {"type": "string"}}, "required": ["ask_id"]}
+        },
+        {
+            "name": "answer_ask",
+            "description": "Record what the person asked said ('Sarah said yes', 'Mike can't'), which applies the agreed change once.",
+            "parameters": {"type": "object",
+                           "properties": {"ask_id": {"type": "string"}, "answer": {"type": "string", "enum": ["yes", "no"]}},
+                           "required": ["ask_id", "answer"]}
+        },
+        {
             "name": "list_threads",
             "description": "Lists open loops with somebody outside the family — a vendor callback, a permit still pending ('any open threads?', 'what's outstanding with the pest guy?', 'what's Ben carrying?'). Each one shows who owns it, what's next, and whether it's stalled.",
             "parameters": {
@@ -5565,6 +5755,42 @@ class DismissInsightTool(BaseModel):
     """
     insight_id: str = Field(..., description="The insight's id, from list_insights.")
 
+class ListSituationsTool(BaseModel):
+    """What needs a person right now, ranked, with status, next step and asks so far."""
+    kinds: Optional[str] = Field(None, description="Optional comma list of finding,insight,thread,mission.")
+    limit: Optional[int] = Field(10, description="How many, default 10.")
+
+class ExplainSituationTool(BaseModel):
+    """The full picture of one situation: status, every option with its id, the asks so far."""
+    ref: str = Field(..., description="The situation's id or a fragment of its title.")
+    kind: Optional[str] = Field(None, description="Optional: finding|insight|thread|mission.")
+
+class ActOnSituationTool(BaseModel):
+    """Do one of a situation's options (not asking somebody: that is start_ask)."""
+    ref: str = Field(..., description="Id or title fragment.")
+    verb: str = Field(..., description="assign|plan|prepare|do|done|skip|research|draft|advance|answer|close|snooze|dismiss|own")
+    option_id: Optional[str] = Field(None, description="The option id from explain_situation.")
+    kind: Optional[str] = None
+    text: Optional[str] = Field(None, description="For answer/draft/research: the text. For advance: the next action.")
+    next_action_at: Optional[str] = Field(None, description="For advance: YYYY-MM-DD.")
+
+class StartAskTool(BaseModel):
+    """Ask somebody for something about a situation by a chosen channel; returns the draft."""
+    ref: str
+    to_name: str
+    what: str = Field(..., description="The commitment being asked for, as a short phrase.")
+    channel: str = Field(..., description="chauffeur|email|text|in_person")
+    kind: Optional[str] = None
+
+class MarkAskSentTool(BaseModel):
+    """The person says they sent the drafted text/email or asked in person."""
+    ask_id: str
+
+class AnswerAskTool(BaseModel):
+    """Record what the person asked said; yes applies the agreed change once."""
+    ask_id: str
+    answer: str = Field(..., description="yes|no")
+
 class ListProgramsTool(BaseModel):
     """
     Lists ambitions with a real plan attached — a curated curriculum, reserved practice time, a session log. Each shows who it's for, its state, the phase ahead, and sessions logged.
@@ -6040,6 +6266,12 @@ TOOL_SCHEMAS = {
     "list_open_findings": ListOpenFindingsTool.model_json_schema(),
     "list_insights": ListInsightsTool.model_json_schema(),
     "dismiss_insight": DismissInsightTool.model_json_schema(),
+    "list_situations": ListSituationsTool.model_json_schema(),
+    "explain_situation": ExplainSituationTool.model_json_schema(),
+    "act_on_situation": ActOnSituationTool.model_json_schema(),
+    "start_ask": StartAskTool.model_json_schema(),
+    "mark_ask_sent": MarkAskSentTool.model_json_schema(),
+    "answer_ask": AnswerAskTool.model_json_schema(),
     "list_programs": ListProgramsTool.model_json_schema(),
     "claim_chore": ClaimChoreTool.model_json_schema(),
     "negotiate_day": NegotiateDayTool.model_json_schema(),
@@ -7195,6 +7427,34 @@ def handle_dismiss_insight(args: dict) -> dict:
     # acting-member gate needed here.
     return dismiss_insight(args.get("insight_id") or "")
 
+def _registry_parent() -> dict:
+    # Registry path (action buttons, missions) runs in admin contexts; the
+    # parent of record stands in, as the admin surface's approvals do.
+    from services import storage
+    return next((m for m in storage.get_all_members() if m.get('role') == 'parent'), None)
+
+def handle_list_situations(args: dict) -> dict:
+    return list_situations(kinds=args.get('kinds'), limit=args.get('limit') or 10,
+                           acting_member=_registry_parent())
+
+def handle_explain_situation(args: dict) -> dict:
+    return explain_situation(args.get('ref') or '', kind=args.get('kind'), acting_member=_registry_parent())
+
+def handle_act_on_situation(args: dict) -> dict:
+    return act_on_situation(args.get('ref') or '', args.get('verb') or '', option_id=args.get('option_id'),
+                            kind=args.get('kind'), text=args.get('text'),
+                            next_action_at=args.get('next_action_at'), acting_member=_registry_parent())
+
+def handle_start_ask(args: dict) -> dict:
+    return start_ask(args.get('ref') or '', args.get('to_name') or '', args.get('what') or '',
+                     args.get('channel') or '', kind=args.get('kind'), acting_member=_registry_parent())
+
+def handle_mark_ask_sent(args: dict) -> dict:
+    return mark_ask_sent(args.get('ask_id') or '', acting_member=_registry_parent())
+
+def handle_answer_ask(args: dict) -> dict:
+    return answer_ask(args.get('ask_id') or '', args.get('answer') or '', acting_member=_registry_parent())
+
 def handle_list_programs(args: dict) -> dict:
     # The v1 loop resolves no member and can produce no actor -- unlike
     # list_insights, list_programs REQUIRES one (a program is somebody's
@@ -7541,6 +7801,12 @@ TOOL_HANDLERS = {
     "list_open_findings": handle_list_open_findings,
     "list_insights": handle_list_insights,
     "dismiss_insight": handle_dismiss_insight,
+    "list_situations": handle_list_situations,
+    "explain_situation": handle_explain_situation,
+    "act_on_situation": handle_act_on_situation,
+    "start_ask": handle_start_ask,
+    "mark_ask_sent": handle_mark_ask_sent,
+    "answer_ask": handle_answer_ask,
     "list_programs": handle_list_programs,
     "claim_chore": handle_claim_chore,
     "negotiate_day": handle_negotiate_day,
