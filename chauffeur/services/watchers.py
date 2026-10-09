@@ -881,7 +881,8 @@ def run_watchers(now: datetime.datetime = None) -> int:
     # subject, so a fresh day's key earns nothing.
     def _settled(f):
         row = storage.get_finding_by_identity(_findings.identity(f))
-        return bool(row and row.get('state') in ('dismissed', 'in_hand'))
+        return bool(row and (row.get('state') in ('dismissed', 'in_hand')
+                             or (row.get('snoozed_until') or 0) > now_ts))
     fresh = [f for f in findings
              if f.dm and f.key not in notified and not _settled(f)]
     if not fresh:

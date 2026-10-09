@@ -29,6 +29,8 @@ window.Situations = (function () {
       if (a.outcome === 'superseded') return 'said yes, but someone else already has it';
       if (a.outcome === 'stale') return 'said yes, but the time moved; confirm';
       if (a.outcome === 'failed') return 'said yes; finish by hand';
+      if (a.outcome === 'manual') return 'said yes; apply by hand';
+      if (a.outcome === 'claimed') return 'said yes; applying';
       return 'said yes';
     }
     if (a.state === 'no') return 'said no';
@@ -107,14 +109,32 @@ window.Situations = (function () {
     if (ctx.onChange) ctx.onChange();
   }
 
-  function askFlowHtml(s, option, channels) {
+  function askFlowHtml(s, option) {
     const to = (option.payload.to || {}).name;
     const head = to ? `Ask ${esc(to)}: ${esc(option.payload.what)}` : `Ask someone to ${esc(option.payload.what)}`;
     const nameBox = to ? '' : `<input class="sit-ask-name w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-sm text-gray-100 mb-2" placeholder="Who?">`;
     return `<div class="text-xs text-gray-300 mb-1">${head}</div>${nameBox}
       <div class="text-[11px] text-gray-500 mb-1">How?</div>
-      <div class="flex flex-wrap gap-2">${channels.map(c => `<button class="${QUIET}" data-ask-channel="${c}">${esc(CHANNEL_LABELS[c])}</button>`).join('')}
-        <button class="${QUIET}" data-ask-cancel="1">Cancel</button></div>`;
+      <div class="sit-ask-channels flex flex-wrap gap-2"><button class="${QUIET}" data-ask-cancel="1">Cancel</button></div>`;
+  }
+
+  function channelButtons(channels) {
+    return channels.map(c => `<button class="${QUIET}" data-ask-channel="${esc(c.channel)}">${esc(c.label || CHANNEL_LABELS[c.channel] || c.channel)}</button>`).join('')
+      + `<button class="${QUIET}" data-ask-cancel="1">Cancel</button>`;
+  }
+
+  // The server says how a person can be reached (a member adds Chauffeur;
+  // every copy channel is always there), from a known id or a typed name.
+  async function lookupChannels(ctx, to) {
+    const q = new URLSearchParams();
+    if (to.name) q.set('name', to.name);
+    if (to.member_id) q.set('member_id', to.member_id);
+    if (to.contact_id) q.set('contact_id', to.contact_id);
+    try {
+      const r = await fetch(`${ctx.apiBase || ''}api/asks/channels?${q.toString()}`);
+      if (r.ok) return await r.json();
+    } catch (e) { /* fall through to the copy channels */ }
+    return { to, channels: ['email', 'text', 'in_person'].map(c => ({ channel: c, label: CHANNEL_LABELS[c], link: null })) };
   }
 
   function draftHtml(a, ch) {
@@ -134,24 +154,36 @@ window.Situations = (function () {
 
   async function ask(s, option, ctx, card) {
     const flow = card.querySelector('.sit-ask-flow');
-    const to = option.payload.to || {};
-    const channels = to.member_id ? ['chauffeur', 'email', 'text', 'in_person'] : ['email', 'text', 'in_person'];
-    flow.innerHTML = askFlowHtml(s, option, channels);
+    let to = Object.assign({}, option.payload.to || {});
+    flow.innerHTML = askFlowHtml(s, option);
     flow.style.display = 'block';
+    const channelsEl = flow.querySelector('.sit-ask-channels');
+    const nameBox = flow.querySelector('.sit-ask-name');
+    const refreshChannels = async () => {
+      const typed = nameBox ? nameBox.value.trim() : '';
+      if (nameBox && !typed) { channelsEl.innerHTML = channelButtons([]); return; }
+      const d = await lookupChannels(ctx, typed ? { name: typed } : to);
+      to = Object.assign({}, to, d.to || {});
+      channelsEl.innerHTML = channelButtons(d.channels || []);
+    };
+    if (nameBox) nameBox.addEventListener('change', refreshChannels);
+    refreshChannels();
+    let inFlight = false;
     flow.onclick = async (ev) => {
       const b = ev.target.closest('button'); if (!b) return;
       if (b.dataset.askCancel) { flow.style.display = 'none'; flow.innerHTML = ''; return; }
       if (b.dataset.askChannel) {
-        const name = flow.querySelector('.sit-ask-name');
-        const body = { kind: s.kind, id: s.id, option_id: option.id, channel: b.dataset.askChannel,
-                       to: Object.assign({}, to, name && name.value ? { name: name.value } : {}) };
+        if (inFlight) return;
+        const body = { kind: s.kind, id: s.id, option_id: option.id, channel: b.dataset.askChannel, to };
         if (!body.to.name) { alert_('Who are you asking?'); return; }
+        inFlight = true;
         try {
           const data = await post(ctx, 'api/asks', body);
           const a = data.ask, ch = (data.channels || []).find(c => c.channel === b.dataset.askChannel) || { channel: b.dataset.askChannel };
           if (b.dataset.askChannel === 'chauffeur') { flow.style.display = 'none'; alert_(`Sent to ${a.to_name} on Chauffeur.`); if (ctx.onChange) ctx.onChange(); return; }
           a.link = ch.link; flow.innerHTML = draftHtml(a, ch);
         } catch (e) { alert_(e.message); }
+        finally { inFlight = false; }
         return;
       }
       if (b.dataset.askCopy) {

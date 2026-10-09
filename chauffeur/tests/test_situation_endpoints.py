@@ -118,6 +118,20 @@ def scenario_answer_gate_refuses_a_bystander():
 SCENARIOS = [scenario_list_is_viewer_filtered, scenario_act_is_server_bound_and_gated,
              scenario_ask_flow_over_http, scenario_answer_gate_refuses_a_bystander]
 
+def scenario_channels_resolve_a_typed_name():
+    fid, iid = _reset()
+    import main
+    _as('mom')
+    res = main.asks_channels_lookup(name='Nan', request=_Req('mom'))
+    check(res['to'].get('member_id') == 'nan' and any(c['channel'] == 'chauffeur' for c in res['channels']),
+          f"a member's name resolves and offers Chauffeur: {res}")
+    res = main.asks_channels_lookup(name='Somebody Else', request=_Req('mom'))
+    check(res['to'] == {'name': 'Somebody Else'} and {c['channel'] for c in res['channels']} == {'email', 'text', 'in_person'},
+          f"an unknown name still gets every copy channel: {res}")
+
+
+SCENARIOS += [scenario_channels_resolve_a_typed_name]
+
 if __name__ == "__main__":
     import traceback
     failed = 0

@@ -100,6 +100,21 @@ SCENARIOS = [scenario_migration_is_idempotent_and_keeps_nudges,
              scenario_legacy_ask_does_not_attach_to_a_newer_occurrence,
              scenario_adapters_keep_the_old_shape]
 
+def scenario_covered_without_a_contact_keeps_the_name():
+    _reset()
+    start = (NOON + datetime.timedelta(days=2)).replace(hour=16)
+    storage.set_cached_schedule({'events': [{'id': 'ev1', 'title': 'Soccer', 'start': start.isoformat(),
+                                             'end': start.isoformat()}], 'assignments': {}, 'unassigned': ['ev1']})
+    res = cov.start_ask('ev1', contact_name='Beth Ray', asked_by='mom')
+    ans = cov.answer_ask(res['ask_id'], 'covered', member_id='mom')
+    check(ans['status'] == 'success' and 'Beth Ray' in ans['message'], f"covered by the named person: {ans}")
+    names = [c.get('name') for c in storage.get_assist_contacts()]
+    check('Beth Ray' in names and 'A friend' not in names, f"the contact is Beth, not 'A friend': {names}")
+    check(storage.get_ask(res['ask_id'])['to_name'] == 'Beth Ray', "the ask keeps its name")
+
+
+SCENARIOS += [scenario_covered_without_a_contact_keeps_the_name]
+
 if __name__ == "__main__":
     import traceback
     failed = 0

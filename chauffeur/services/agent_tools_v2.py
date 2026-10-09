@@ -1402,7 +1402,10 @@ def _resolve_situation(ref: str, kind: str = None, viewer: dict = None):
     if not ref:
         return None, 'Say which one.'
     for k in ([kind] if kind in _sit.KINDS else _sit.KINDS):
-        if _sit.load(k, ref):
+        row = _sit.load(k, ref)
+        if row:
+            if not _sit.can_see(k, row, viewer):
+                return None, "That one is not yours to see."
             return (k, ref), None
     rows = _sit.list_situations(viewer, kinds=(kind,) if kind in _sit.KINDS else None)
     hits = [s for s in rows if ref.lower() in (s.get('title') or '').lower()]
@@ -1482,15 +1485,23 @@ def start_ask(ref: str, to_name: str, what: str, channel: str, kind: str = None,
         to['member_id'] = member['id']
     elif contact:
         to['contact_id'] = contact['id']
-    unlocks = None
+    # The commitment is the SERVER's when an option binds it. A `what` the
+    # model wrote that differs from the option's is a different ask: recorded
+    # as written, unbound, so a yes never applies something they did not agree to.
+    unlocks, bound_what = None, None
     for o in _sit.options_for(k, row):
         if o['verb'] != 'ask':
             continue
         if to.get('contact_id') and (o['payload'].get('to') or {}).get('contact_id') == to['contact_id']:
-            unlocks, what = o['payload'].get('unlocks'), what or o['payload'].get('what')
+            unlocks, bound_what = o['payload'].get('unlocks'), o['payload'].get('what')
             break
         if o['id'] == 'ask:new' and unlocks is None:
-            unlocks, what = o['payload'].get('unlocks'), what or o['payload'].get('what')
+            unlocks, bound_what = o['payload'].get('unlocks'), o['payload'].get('what')
+    what = (what or '').strip()
+    if bound_what and not what:
+        what = bound_what
+    elif bound_what and what != bound_what:
+        unlocks = None
     if unlocks and unlocks.get('action_type') == 'assist_assignment' and to.get('contact_id'):
         unlocks = {**unlocks, 'payload': {**unlocks['payload'], 'contact_id': to['contact_id']}}
     event = _sit._cached_event(((unlocks or {}).get('payload') or {}).get('event_id')) if unlocks else None
@@ -7428,17 +7439,23 @@ def handle_dismiss_insight(args: dict) -> dict:
     return dismiss_insight(args.get("insight_id") or "")
 
 def _registry_parent() -> dict:
-    # Registry path (action buttons, missions) runs in admin contexts; the
-    # parent of record stands in, as the admin surface's approvals do.
+    # Registry WRITES (action buttons, mission proposals) run in admin
+    # contexts; the parent of record stands in, as the admin surface's
+    # approvals do.
     from services import storage
     return next((m for m in storage.get_all_members() if m.get('role') == 'parent'), None)
 
+# Registry READS carry no person. They see what any adult sees (findings and
+# plain insights) and never a parents-only row: a mission transcript is
+# readable by adults.
+_REGISTRY_READER = {'id': None, 'role': 'adult'}
+
 def handle_list_situations(args: dict) -> dict:
     return list_situations(kinds=args.get('kinds'), limit=args.get('limit') or 10,
-                           acting_member=_registry_parent())
+                           acting_member=_REGISTRY_READER)
 
 def handle_explain_situation(args: dict) -> dict:
-    return explain_situation(args.get('ref') or '', kind=args.get('kind'), acting_member=_registry_parent())
+    return explain_situation(args.get('ref') or '', kind=args.get('kind'), acting_member=_REGISTRY_READER)
 
 def handle_act_on_situation(args: dict) -> dict:
     return act_on_situation(args.get('ref') or '', args.get('verb') or '', option_id=args.get('option_id'),

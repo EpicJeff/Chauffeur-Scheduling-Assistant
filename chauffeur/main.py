@@ -5650,6 +5650,31 @@ def asks_create(body: dict = Body(default={}), request: Request = None):
     return {**res, 'channels': _asks.channels_for(to)}
 
 
+@app.get("/api/asks/channels")
+def asks_channels_lookup(name: str = '', member_id: str = None, contact_id: str = None,
+                         request: Request = None):
+    """Resolve a typed name to a member or contact and say how they can be
+    reached. Every copy channel is always offered; a member adds Chauffeur."""
+    from services import asks as _asks
+    _mind_actor(request, None)
+    to = {'name': (name or '').strip()}
+    if member_id and storage.get_member(member_id):
+        to['member_id'] = member_id
+    elif contact_id and storage.get_assist_contact(contact_id):
+        to['contact_id'] = contact_id
+    elif to['name']:
+        low = to['name'].lower()
+        member = next((m for m in storage.get_all_members()
+                       if (m.get('name') or '').lower() == low and not m.get('system')), None)
+        contact = next((c for c in storage.get_assist_contacts()
+                        if (c.get('name') or '').lower() == low), None)
+        if member:
+            to['member_id'] = member['id']
+        elif contact:
+            to['contact_id'] = contact['id']
+    return {"to": to, "channels": _asks.channels_for(to)}
+
+
 @app.get("/api/asks/{ask_id}/channels")
 def asks_channels(ask_id: str, request: Request = None):
     from services import asks as _asks

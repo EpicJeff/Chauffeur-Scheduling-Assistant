@@ -175,8 +175,8 @@ def scenario_stale_option_id_is_refused():
     res = situations.act('insight', iid, 'done', option_id='done:st1', actor={'id': 'mom', 'role': 'parent'})
     check(res['status'] == 'success', f"a current option runs: {res}")
     res = situations.act('insight', iid, 'done', option_id='done:st1', actor={'id': 'mom', 'role': 'parent'})
-    check(res['status'] == 'refused' and 'no longer' in res['message'],
-          f"the same id a second time is stale and refused: {res}")
+    check(res['status'] == 'refused',
+          f"the same id a second time is stale and refused (the plan closed, so the row is settled): {res}")
     res = situations.act('insight', iid, 'launch_rocket', option_id='x', actor={'id': 'mom', 'role': 'parent'})
     check(res['status'] == 'refused', "a verb outside the set is refused")
 
@@ -213,6 +213,60 @@ def scenario_write_gate():
 SCENARIOS += [scenario_act_resolves_the_option_server_side, scenario_stale_option_id_is_refused,
               scenario_own_is_not_done, scenario_write_gate]
 
+
+def scenario_snoozed_finding_leaves_the_lane():
+    _reset()
+    soon = _unassigned_event()
+    fid = storage.add_finding({'identity': 'unassigned:ev1', 'kind': 'unassigned', 'severity': 'decide',
+                               'line': 'ride', 'subject_type': 'event', 'subject_id': 'ev1',
+                               'due_at': soon.timestamp(), 'state': 'open'})
+    res = situations.act('finding', fid, 'snooze', option_id='snooze:7', actor={'id': 'mom', 'role': 'parent'})
+    check(res['status'] == 'success', f"snooze runs: {res}")
+    rows = situations.list_situations({'id': 'mom', 'role': 'parent'}, kinds=('finding',))
+    check(rows == [], "a parked finding is out of the lane")
+    storage.update_finding(fid, {'snoozed_until': time.time() - 1})
+    rows = situations.list_situations({'id': 'mom', 'role': 'parent'}, kinds=('finding',))
+    check([r['id'] for r in rows] == [fid], "and back when the date passes")
+
+
+def scenario_a_dismissed_finding_cannot_be_taken_back_by_own():
+    _reset()
+    soon = _unassigned_event()
+    fid = storage.add_finding({'identity': 'unassigned:ev1', 'kind': 'unassigned', 'severity': 'decide',
+                               'line': 'ride', 'subject_type': 'event', 'subject_id': 'ev1',
+                               'due_at': soon.timestamp(), 'state': 'dismissed', 'resolved_by': 'dismiss'})
+    s = situations.view('finding', fid, viewer={'id': 'mom', 'role': 'parent'})
+    check(s['options'] == [] and s['next_step'] is None, f"a closed situation offers nothing: {s['options']}")
+    res = situations.act('finding', fid, 'own', option_id='own', actor={'id': 'dad', 'role': 'adult'})
+    check(res['status'] == 'refused' and storage.get_finding(fid)['state'] == 'dismissed',
+          "dismissed is dismissed, even against an old card")
+
+
+def scenario_an_adult_cannot_act_on_a_parents_only_insight():
+    _reset()
+    iid = storage.add_mind_insight({'slug': 's', 'line': 'secret', 'category': 'c', 'approach': 'x',
+                                    'identity': 'c:1', 'sensitivity': 'sensitive'})
+    res = situations.act('insight', iid, 'dismiss', option_id='dismiss', actor={'id': 'dad', 'role': 'adult'})
+    check(res['status'] == 'refused' and storage.get_mind_insight(iid)['state'] == 'active',
+          "an adult acting by id on a sensitive insight is refused")
+    res = situations.act('insight', iid, 'dismiss', option_id='dismiss', actor={'id': 'mom', 'role': 'parent'})
+    check(res['status'] == 'success', "a parent can")
+
+
+def scenario_mission_since_is_its_last_step_not_the_note():
+    _reset()
+    mid = storage.add_mission({'goal': 'g', 'status': 'running', 'created_by': 'mom', 'tier': 'flash',
+                               'origin_kind': 'manual', 'step_count': 1})
+    storage.add_mission_step(mid, {'kind': 'note', 'name': 'x', 'result_json': {}})
+    step_ts = storage.get_mission_steps(mid)[-1]['ts']
+    time.sleep(0.01)
+    storage.update_mission(mid, {'status_note': 'n', 'note_ts': time.time(), 'note_source': 'argyle', 'note_rev': 0})
+    s = situations.view('mission', mid, viewer={'id': 'mom', 'role': 'parent'})
+    check(abs(s['since'] - step_ts) < 0.001, f"since is the last step, not the note write: {s['since']} vs {step_ts}")
+
+
+SCENARIOS += [scenario_snoozed_finding_leaves_the_lane, scenario_a_dismissed_finding_cannot_be_taken_back_by_own,
+              scenario_an_adult_cannot_act_on_a_parents_only_insight, scenario_mission_since_is_its_last_step_not_the_note]
 
 if __name__ == "__main__":
     import traceback

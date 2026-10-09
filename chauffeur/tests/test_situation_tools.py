@@ -66,13 +66,52 @@ def scenario_act_and_ask_through_tools():
     check(res['status'] == 'success' and res['draft'] and res['ask_id'], f"an ask from chat returns a draft: {res}")
     check(tools.mark_ask_sent(res['ask_id'], acting_member=MOM)['status'] == 'success', "sent it")
     res2 = tools.answer_ask(res['ask_id'], 'yes', acting_member=MOM)
-    check(res2['status'] == 'success' and res2.get('outcome') == 'applied', f"a free ask's yes is recorded as applied (nothing to unlock): {res2}")
+    check(res2['status'] == 'success' and res2.get('outcome') == 'manual', f"a free ask's yes is recorded, nothing applied: {res2}")
     listed = tools.list_situations(kinds='thread', acting_member=MOM)
     check(listed['status'] == 'success' and 'Deck permit' in listed['message'] and 'inspector' in listed['message'],
           f"the list reads the ledger: {listed['message']}")
 
 
 SCENARIOS = [scenario_parity_both_ways, scenario_fuzzy_resolve_and_ambiguity, scenario_act_and_ask_through_tools]
+
+def scenario_registry_reads_never_see_sensitive_rows():
+    _reset()
+    storage.add_mind_insight({'slug': 'n', 'line': 'normal', 'category': 'c', 'approach': 'x', 'identity': 'c:1'})
+    storage.add_mind_insight({'slug': 's', 'line': 'SECRET', 'category': 'c', 'approach': 'x', 'identity': 'c:2',
+                              'sensitivity': 'sensitive'})
+    start = (NOON + datetime.timedelta(days=2)).replace(hour=16)
+    storage.set_cached_schedule({'events': [{'id': 'ev1', 'title': 'Soccer', 'start': start.isoformat(),
+                                             'end': start.isoformat()}], 'assignments': {}, 'unassigned': ['ev1']})
+    storage.add_finding({'identity': 'unassigned:ev1', 'kind': 'unassigned', 'severity': 'decide', 'line': 'ride',
+                         'subject_type': 'event', 'subject_id': 'ev1', 'due_at': start.timestamp(), 'state': 'open'})
+    msg = tools.handle_list_situations({})['message']
+    check('normal' in msg and 'ride' in msg and 'SECRET' not in msg,
+          f"a mission's read sees findings and plain insights, never a sensitive row: {msg}")
+    iid = storage.get_mind_insight_by_slug('s')['id']
+    res = tools.explain_situation(iid, acting_member={'id': 'dad', 'role': 'adult'})
+    check(res['status'] == 'error', "an adult cannot be told about a parents-only insight by id")
+
+
+def scenario_start_ask_keeps_the_servers_commitment_or_unbinds():
+    _reset()
+    storage.add_assist_contact({'id': 'c1', 'name': 'Sarah', 'kinds': ['driving'], 'active': True})
+    start = (NOON + datetime.timedelta(days=2)).replace(hour=16)
+    storage.set_cached_schedule({'events': [{'id': 'ev1', 'title': 'Soccer', 'start': start.isoformat(),
+                                             'end': start.isoformat()}], 'assignments': {}, 'unassigned': ['ev1']})
+    fid = storage.add_finding({'identity': 'unassigned:ev1', 'kind': 'unassigned', 'severity': 'decide',
+                               'line': 'No driver yet: Soccer', 'subject_type': 'event', 'subject_id': 'ev1',
+                               'due_at': start.timestamp(), 'state': 'open', 'fingerprint': f"ev1|{start.timestamp()}"})
+    res = tools.start_ask('Soccer', 'Sarah', '', 'text', acting_member=MOM)
+    a = storage.get_ask(res['ask_id'])
+    check(a['what'].startswith('drive Soccer') and (a['unlocks'] or {}).get('action_type') == 'assist_assignment',
+          f"no what from the model: the server's commitment, bound: {a['what']} / {a['unlocks']}")
+    res = tools.start_ask('Soccer', 'Sarah', 'pick Kate up afterwards and bring her home', 'text', acting_member=MOM)
+    a = storage.get_ask(res['ask_id'])
+    check(a['what'] == 'pick Kate up afterwards and bring her home' and a['unlocks'] is None,
+          f"a different commitment is recorded unbound: {a['what']} / {a['unlocks']}")
+
+
+SCENARIOS += [scenario_registry_reads_never_see_sensitive_rows, scenario_start_ask_keeps_the_servers_commitment_or_unbinds]
 
 if __name__ == "__main__":
     import traceback

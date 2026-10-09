@@ -355,17 +355,12 @@ def answer_ask(ask_id: str, answer: str, member_id: str = None,
     if answer != 'covered':
         return {'status': 'error', 'message': f"Unknown answer '{answer}'."}
 
-    if not ask.get('to_contact_id'):
-        # Somebody new said yes. They become a real contact so that next time
-        # they are a tier-2 candidate instead of a blank field.
-        import uuid as _uuid
-        new_name = (contact_name or '').strip() or 'A friend'
-        cid = _uuid.uuid4().hex
-        storage.add_assist_contact({'id': cid, 'name': new_name, 'kinds': ['driving'], 'active': True})
-        unlocks = dict(ask.get('unlocks') or {})
-        unlocks.setdefault('payload', {})['contact_id'] = cid
-        storage.update_ask(ask['id'], {'to_contact_id': cid, 'to_name': new_name, 'unlocks': unlocks})
-        name = new_name
+    if contact_name and (contact_name or '').strip() and contact_name.strip() != ask.get('to_name'):
+        # The reply named who said yes; the ask takes that name. The contact
+        # itself is minted by asks._effect (keyed by the ask id), so running
+        # the effect twice never makes two people.
+        storage.update_ask(ask['id'], {'to_name': contact_name.strip()})
+        name = contact_name.strip()
     res = _asks.answer(ask['id'], 'yes', actor, reported=True)
     if res.get('status') != 'success':
         return res

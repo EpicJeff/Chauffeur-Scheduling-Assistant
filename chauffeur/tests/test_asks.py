@@ -211,6 +211,70 @@ SCENARIOS = [scenario_every_channel_is_offered_whatever_we_know, scenario_a_draf
              scenario_failed_effect_and_interrupted_claim_recover,
              scenario_no_returns_the_situation_to_its_options]
 
+def scenario_a_yes_with_nothing_to_apply_is_manual_not_applied():
+    _reset()
+    start = _event(); fid = _finding(start)
+    a = asks.create('finding', fid, {'name': 'Sarah', 'contact_id': 'c1'}, 'bring the cones', 'text', 'mom')['ask']
+    asks.mark_sent(a['id'], MOM)
+    r = asks.answer(a['id'], 'yes', MOM, reported=True)
+    row = storage.get_ask(a['id'])
+    check(r['outcome'] == 'manual' and row['outcome'] == 'manual' and 'by hand' in r['message'],
+          f"nothing was done for them, so it is not applied: {r}")
+    check(asks.recover() == 0, "recovery leaves a manual yes alone")
+
+
+def scenario_a_fresh_claim_is_never_run_twice():
+    _reset()
+    start = _event(); fid = _finding(start)
+    a = asks.create('finding', fid, {'name': 'Sarah', 'contact_id': 'c1'}, 'drive Kate', 'text', 'mom', unlocks=_unlocks())['ask']
+    asks.mark_sent(a['id'], MOM)
+    storage.update_ask(a['id'], {'state': 'yes', 'answered_at': time.time(), 'answered_by': 'mom',
+                                 'outcome': 'claimed', 'claim_ts': time.time()})
+    with mock.patch.object(storage, 'set_assist_assignment', wraps=storage.set_assist_assignment) as sa:
+        r = asks.answer(a['id'], 'yes', MOM, reported=True)
+        check(r.get('outcome') == 'claimed' and sa.call_count == 0,
+              f"a duplicate tap while applying runs nothing: {r} / {sa.call_count}")
+    r = asks.answer(a['id'], 'no', MOM, reported=True)
+    check(r['status'] == 'refused' and storage.get_ask(a['id'])['state'] == 'yes',
+          "a no cannot overwrite a yes being applied")
+
+
+def scenario_a_new_contact_is_minted_once_per_ask():
+    _reset()
+    start = _event(); fid = _finding(start)
+    u = _unlocks(); u['payload']['contact_id'] = ''
+    a = asks.create('finding', fid, {'name': 'Beth'}, 'drive Kate', 'text', 'mom', unlocks=u)['ask']
+    asks.mark_sent(a['id'], MOM)
+    before = len(storage.get_assist_contacts())
+    asks.answer(a['id'], 'yes', MOM, reported=True)
+    storage.update_ask(a['id'], {'outcome': 'claimed', 'claim_ts': time.time() - 300})
+    asks.recover()
+    beths = [c for c in storage.get_assist_contacts() if c.get('name') == 'Beth']
+    check(len(storage.get_assist_contacts()) == before + 1 and len(beths) == 1,
+          f"one Beth, however many times the effect runs: {len(beths)}")
+    check(storage.get_ask(a['id'])['outcome'] == 'applied', "and the ask ends applied")
+
+
+def scenario_siblings_are_the_same_occurrence_only():
+    _reset()
+    start = _event(); fid = _finding(start)
+    old_start = start - datetime.timedelta(days=7)
+    storage.add_ask({'situation_kind': 'finding', 'situation_id': None, 'event_id': 'ev1',
+                     'event_start': old_start.isoformat(), 'to_name': 'Sarah', 'to_contact_id': 'c1',
+                     'what': 'take Soccer', 'channel': 'text', 'asked_by': 'mom', 'state': 'yes',
+                     'outcome': 'applied', 'applied_at': time.time() - 7 * 86400,
+                     'unlocks': {'action_type': 'assist_assignment',
+                                 'payload': {'event_id': 'ev1', 'contact_id': 'c1'},
+                                 'fingerprint': f"ev1|{old_start.timestamp()}"}})
+    b = asks.create('finding', fid, {'name': 'Mike', 'contact_id': 'c2'}, 'drive Kate', 'text', 'mom', unlocks=_unlocks('c2'))['ask']
+    asks.mark_sent(b['id'], MOM)
+    r = asks.answer(b['id'], 'yes', MOM, reported=True)
+    check(r['outcome'] == 'applied', f"last week's covered ride is not this week's sibling: {r}")
+
+
+SCENARIOS += [scenario_a_yes_with_nothing_to_apply_is_manual_not_applied, scenario_a_fresh_claim_is_never_run_twice,
+              scenario_a_new_contact_is_minted_once_per_ask, scenario_siblings_are_the_same_occurrence_only]
+
 if __name__ == "__main__":
     import traceback
     failed = 0

@@ -18,6 +18,9 @@ from services import storage
 logger = logging.getLogger(__name__)
 
 CHANNELS = ('chauffeur', 'email', 'text', 'in_person')
+# Outcomes nothing moves past. `manual` is a yes the app had nothing to apply
+# for; only `applied` ever means the promised work was done.
+FINAL_OUTCOMES = ('applied', 'superseded', 'stale', 'failed', 'manual')
 CLAIM_STALE_S = 60
 CAP_DRAFTS_DEFAULT = 40
 WRITE_ROLES = ('parent', 'adult')
@@ -234,20 +237,25 @@ def answer(ask_id: str, answer: str, actor: dict, reported: bool = False) -> dic
         allowed = bool(actor_id) and actor_id == ask.get('to_member_id')
     if not allowed:
         return {'status': 'refused', 'message': "That ask isn't yours to answer."}
-    if ask['state'] in ('withdrawn', 'expired'):
-        return {'status': 'refused', 'message': f"That ask was {ask['state']}."}
-    if ask['state'] == 'no':
-        return {'status': 'success', 'message': 'Already answered no.', 'already': True}
-    if ask['state'] == 'yes' and ask.get('outcome') not in (None, 'claimed'):
-        return {'status': 'success', 'outcome': ask['outcome'], 'already': True,
-                'message': _outcome_message(ask)}
+    with storage.db_lock:
+        ask = storage.get_ask(ask_id)
+        if ask['state'] in ('withdrawn', 'expired'):
+            return {'status': 'refused', 'message': f"That ask was {ask['state']}."}
+        if ask['state'] == 'no':
+            return {'status': 'success', 'message': 'Already answered no.', 'already': True}
+        if ask['state'] == 'yes' and answer == 'no':
+            return {'status': 'refused', 'message': f"{ask['to_name']} already said yes."}
+        if ask['state'] == 'yes' and ask.get('outcome') not in (None, 'claimed'):
+            return {'status': 'success', 'outcome': ask['outcome'], 'already': True,
+                    'message': _outcome_message(ask)}
+        if answer == 'no':
+            storage.update_ask(ask_id, {'state': 'no', 'answered_at': time.time(), 'answered_by': actor_id})
+        elif ask['state'] != 'yes':
+            storage.update_ask(ask_id, {'state': 'yes', 'answered_at': time.time(), 'answered_by': actor_id})
     if answer == 'no':
-        storage.update_ask(ask_id, {'state': 'no', 'answered_at': time.time(), 'answered_by': actor_id})
         _refresh_card(storage.get_ask(ask_id))
         _touch(ask.get('situation_kind'), ask.get('situation_id'))
         return {'status': 'success', 'message': f"OK, {ask['to_name']} can't. Back to the options."}
-    if ask['state'] != 'yes':
-        storage.update_ask(ask_id, {'state': 'yes', 'answered_at': time.time(), 'answered_by': actor_id})
     res = apply(ask_id)
     _refresh_card(storage.get_ask(ask_id))
     _touch(ask.get('situation_kind'), ask.get('situation_id'))
@@ -265,6 +273,10 @@ def _outcome_message(ask: dict) -> str:
         return f"{ask.get('to_name')} said yes, but the time moved. Confirm with them."
     if o == 'failed':
         return f"{ask.get('to_name')} said yes; finish by hand: {ask.get('what')}."
+    if o == 'manual':
+        return f"{ask.get('to_name')} said yes; apply by hand: {ask.get('what')}."
+    if o == 'claimed':
+        return 'Still applying that; one moment.'
     return ''
 
 
@@ -276,6 +288,11 @@ def _siblings(ask: dict) -> list:
     if ask.get('event_id'):
         ids = {a['id'] for a in same}
         same += [a for a in storage.get_asks(event_id=ask['event_id']) if a['id'] not in ids]
+    # The same need is the same occurrence: a recurring event keeps its id
+    # week to week, so last week's covered ride is not this week's sibling.
+    fp = (ask.get('unlocks') or {}).get('fingerprint')
+    if fp:
+        same = [a for a in same if (a.get('unlocks') or {}).get('fingerprint') in (None, fp)]
     return [a for a in same if a['id'] != ask['id']]
 
 
@@ -287,12 +304,18 @@ def apply(ask_id: str) -> dict:
         ask = storage.get_ask(ask_id)
         if not ask or ask.get('state') != 'yes':
             return {'outcome': None, 'message': 'Not a yes.'}
-        if ask.get('outcome') in ('applied', 'superseded', 'stale', 'failed'):
+        if ask.get('outcome') in FINAL_OUTCOMES:
             return {'outcome': ask['outcome'], 'already': True, 'message': _outcome_message(ask)}
+        if ask.get('outcome') == 'claimed' and time.time() - float(ask.get('claim_ts') or 0) < CLAIM_STALE_S:
+            # Somebody is applying this right now (a duplicate tap, or a tap
+            # racing the sweep). Nothing runs twice.
+            return {'outcome': 'claimed', 'message': 'Still applying that; one moment.'}
         unlocks = ask.get('unlocks') or {}
         if not unlocks:
-            storage.update_ask(ask_id, {'outcome': 'applied', 'applied_at': time.time()})
-            return {'outcome': 'applied', 'message': f"✓ {ask['to_name']} said yes."}
+            # A yes with nothing the app can do about it: recorded, never
+            # pretended applied. The person finishes by hand.
+            storage.update_ask(ask_id, {'outcome': 'manual', 'applied_at': time.time()})
+            return {'outcome': 'manual', 'message': _outcome_message(storage.get_ask(ask_id))}
         if unlocks.get('fingerprint') and unlocks.get('action_type') == 'assist_assignment':
             now_fp = fingerprint_for_event((unlocks.get('payload') or {}).get('event_id'))
             if now_fp != unlocks['fingerprint']:
@@ -324,10 +347,10 @@ def _effect(ask: dict) -> None:
     if kind == 'assist_assignment':
         contact_id = p.get('contact_id') or ask.get('to_contact_id')
         if not contact_id:
-            import uuid as _uuid
-            contact_id = _uuid.uuid4().hex
-            storage.add_assist_contact({'id': contact_id, 'name': ask.get('to_name') or 'A friend',
-                                        'kinds': ['driving'], 'active': True})
+            contact_id = f"ask-{ask['id']}"
+            if not storage.get_assist_contact(contact_id):
+                storage.add_assist_contact({'id': contact_id, 'name': ask.get('to_name') or 'A friend',
+                                            'kinds': ['driving'], 'active': True})
             storage.update_ask(ask['id'], {'to_contact_id': contact_id})
         storage.set_assist_assignment(p['event_id'], contact_id, note=f"ask {ask['id']}",
                                       event_date=p.get('event_date') or '', event_title=p.get('event_title') or '',

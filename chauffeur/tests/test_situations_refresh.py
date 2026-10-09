@@ -133,6 +133,23 @@ SCENARIOS = [scenario_note_is_written_on_change_not_on_read, scenario_one_logica
              scenario_out_of_order_result_is_discarded, scenario_bad_model_output_falls_back,
              scenario_cap_and_no_key, scenario_the_note_write_does_not_bump_rev]
 
+def scenario_argyle_options_are_for_threads_only():
+    _reset()
+    storage.set_cached_schedule({'events': [], 'assignments': {}, 'unassigned': []})
+    fid = storage.add_finding({'identity': 'x:1', 'kind': 'errand_pastdue', 'severity': 'approve', 'line': 'late',
+                               'subject_type': 'errand', 'subject_id': 'e1', 'state': 'open'})
+    situations._pool_call = _fake_pool({'status_note': 'Overdue since Monday.',
+                                        'options': [{'label': 'Look it up', 'verb': 'research', 'payload': {'text': 'x'}}]})
+    res = situations.refresh('finding', fid)
+    check(res['status'] == 'noted', f"the note lands: {res}")
+    s = situations.view('finding', fid, viewer={'id': 'mom', 'role': 'parent'})
+    check(s['status_note'] == 'Overdue since Monday.', "the sentence is kept")
+    check(not any(o['id'].endswith(':argyle:0') for o in s['options']) and s['next_step']['verb'] != 'research',
+          f"a thread verb never becomes a finding's main button: {[o['id'] for o in s['options']]}")
+
+
+SCENARIOS += [scenario_argyle_options_are_for_threads_only]
+
 if __name__ == "__main__":
     import traceback
     failed = 0

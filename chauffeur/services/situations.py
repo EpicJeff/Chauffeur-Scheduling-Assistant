@@ -203,20 +203,27 @@ def _options_mission(row: dict) -> list:
         prop = storage.get_action_proposal(pid) if pid else None
         if prop and prop.get('status') == 'proposed':
             out.append(_opt('do', prop.get('summary') or 'Approve', {'proposal_id': pid}, pid))
+    if _is_done('mission', row):
+        return out         # a finished mission keeps only the decisions it left behind
     return out + _tail('mission', row)
 
 
 def options_for(kind: str, row: dict) -> list:
     builder = {'finding': _options_finding, 'insight': _options_insight,
                'thread': _options_thread, 'mission': _options_mission}[kind]
+    if kind != 'mission' and _is_done(kind, row):
+        return []          # a closed situation offers nothing; dismissed is dismissed
     opts = [o for o in builder(row) if o['verb'] in VERBS]
     if row.get(OWNER):
         # Somebody took it: finishing is the next step; the rest stays offered.
         opts.sort(key=lambda o: 0 if o['id'] == 'done' else 1)
-    # Argyle's cached suggestions ride along, already verb-checked at refresh.
-    for extra in (row.get('next_steps') or []):
-        if extra.get('verb') in VERBS and extra.get('id') not in {o['id'] for o in opts}:
-            opts.insert(0, extra)
+    # Argyle's cached suggestions ride along on THREADS only (the verbs it may
+    # suggest are thread moves), already verb-checked at refresh, and only
+    # while the note describes the row as it stands.
+    if kind == 'thread' and (row.get('note_rev') or 0) == (row.get('rev') or 0):
+        for extra in (row.get('next_steps') or []):
+            if extra.get('verb') in VERBS and extra.get('id') not in {o['id'] for o in opts}:
+                opts.insert(0, extra)
     return opts
 
 
@@ -256,7 +263,8 @@ def _since(kind: str, row: dict) -> float:
     if kind == 'thread':
         return _last_ts(row)
     if kind == 'mission':
-        return row.get('updated_at') or row.get('created_at') or 0
+        steps = row.get('steps') or []
+        return (steps[-1].get('ts') if steps else None) or row.get('created_at') or 0
     if kind == 'insight':
         return row.get('created_ts') or 0
     return row.get('created_at') or 0
@@ -375,7 +383,9 @@ def rank(rows: list) -> list:
 def _rows_of(kind: str, include_done: bool) -> list:
     if kind == 'finding':
         from services import findings as _f
-        return [('finding', r['id']) for r in _f.open_findings(include_in_hand=True)]
+        now_ts = time.time()
+        return [('finding', r['id']) for r in _f.open_findings(include_in_hand=True)
+                if (r.get('snoozed_until') or 0) <= now_ts]
     if kind == 'insight':
         from services import mind as _m
         return [('insight', r['id']) for r in _m.visible_insights({'role': 'parent'})]
@@ -463,7 +473,11 @@ def act(kind: str, sid: str, verb: str, option_id: str = None, payload: dict = N
     row = load(kind, sid)
     if not row:
         return {'status': 'error', 'message': 'That is no longer here.'}
+    if not can_see(kind, row, actor):
+        return _refused("That one is not yours to handle.")
     opts = options_for(kind, row)
+    if _is_done(kind, row) and not needs_attention(kind, row, opts):
+        return _refused("That one is already settled.")
     opt = next((o for o in opts if o['id'] == (option_id or verb) and o['verb'] == verb), None)
     if not opt:
         return _refused("That option is no longer on the table; the situation moved. Take another look.")
@@ -682,7 +696,7 @@ def refresh(kind: str, sid: str) -> dict:
         request_refresh(kind, sid)
         return {'status': 'superseded'}
     options = []
-    for i, o in enumerate(res.get('options') or []):
+    for i, o in enumerate(res.get('options') or [] if kind == 'thread' else []):
         verb = (o or {}).get('verb')
         if verb not in ('advance', 'draft', 'research', 'close'):
             continue

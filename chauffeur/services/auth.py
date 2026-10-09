@@ -366,6 +366,12 @@ RULES = [
     # Mind insight lane: same discipline — SIGNED_IN at the route, role
     # decided in the handler (`_mind_actor`) for dismiss/act/admin.
     (ANY, '/api/mind/*', SIGNED_IN, None),
+    # Situations and asks (spec 2026-10-09-situations-design): reads filter
+    # by viewer, writes gate inside; the recipient of an ask may answer it.
+    (ANY, '/api/situations', SIGNED_IN, None),
+    (ANY, '/api/situations/*', SIGNED_IN, None),
+    (ANY, '/api/asks', SIGNED_IN, None),
+    (ANY, '/api/asks/*', SIGNED_IN, None),
     # Missions: reads for any signed-in member; launching/approving/answering
     # is parent/adult work decided in the handler (`_mind_actor`, reused).
     (ANY, '/api/missions/*', SIGNED_IN, None),
