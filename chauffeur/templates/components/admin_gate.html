@@ -16,7 +16,9 @@
        whoever is looking. Set a password for yourself and you are in; no mail
        round trip to yourself.
 
-   Included by both admin pages so the two cannot drift apart. #}
+   Included by nav.html on every admin page (not a panel, not a kiosk), so
+   none of them can drift apart — and so that, once enforcement is on, a page
+   that is refused always has a way to sign in. #}
 
 <div x-data="adminGate()" x-init="init()">
 
@@ -32,6 +34,14 @@
      PWA's identity the other way round. Neither side touches the other's
      keys now. #}
   <script>
+    // Called by nav's fetch wrapper on a refusal that wants a member or a
+    // parent. Defined HERE, before Alpine boots: the page's first fetches
+    // fire before the gate's component exists, so an early refusal is kept
+    // as a flag the component reads when it initialises.
+    window.chfAdminRefused = function () {
+      window.__chfAdminRefused = true;
+      if (window.__chfAdminGate) window.__chfAdminGate.refused();
+    };
     window.chfAdminSession = function () {
       try {
         const token = localStorage.getItem('chauffeur_admin_token') || '';
@@ -58,6 +68,9 @@
             init = init || {};
             const h = new Headers(init.headers || (typeof input === 'object' && input.headers) || {});
             if (token && !h.has('X-Member-Token')) h.set('X-Member-Token', token);
+            // The person outranks the furniture: never let a paired browser's
+            // device token ride beside the session (identify prefers it).
+            if (token) h.delete('X-Device-Token');
             if (!h.has('X-Device-Id')) h.set('X-Device-Id', did);
             init.headers = h;
           }
@@ -146,18 +159,34 @@
 </div>
 
 <script>
+// nav.html's climb for pages below one path segment (/board/{slug}).
+const _gateUp = '{{ _up|default("") }}';
 function adminGate() {
   return {
     state: 'checking', parents: [], claimId: '', claimEmail: '',
     email: '', password: '', error: '', busy: false,
 
+    // A refusal that wants a person: the session in hand is dead (expired,
+    // revoked, somebody else's), so ask again instead of leaving a refused
+    // page with no door. Only a page that is 'in' has anything to lose.
+    refused() {
+      if (this.state !== 'in' || !window.chfAdminSession()) return;
+      this.error = 'Your sign-in no longer works here. Sign in again.';
+      this.state = 'sign-in';
+    },
+
     async init() {
+      window.__chfAdminGate = this;
       if (window.chfHouseParent && window.chfHouseParent()) { this.state = 'in'; return; }
       try {
-        const r = await fetch('api/account/setup');
+        const r = await fetch(_gateUp + 'api/account/setup');
         const d = await r.json();
         this.parents = (d.parents || []);
         if (!d.claimed && d.may_claim) { this.state = 'first-run'; return; }
+        // Nobody holds a password yet and this is not the ingress first run:
+        // there is no account to sign in to, so the overlay would be a wall
+        // with no door. The server's own guard still answers.
+        if (!d.claimed) { this.state = 'in'; return; }
         // Carry an admin session from before the keys were split: a PWA token
         // that belongs to a PARENT is the one this page was using. Anybody
         // else's is left alone, which is the whole point of the split.
@@ -173,6 +202,7 @@ function adminGate() {
         // gated call answers 403 and the page asks again. Verifying up front
         // would put a round trip in front of every load for the common case.
         this.state = window.chfAdminSession() ? 'in' : 'sign-in';
+        if (window.__chfAdminRefused) this.refused();   // a refusal that beat Alpine here
       } catch (e) {
         // Never trap somebody out of their own admin page because a status
         // call failed — enforcement lives on the server, not on this overlay.
@@ -183,7 +213,7 @@ function adminGate() {
     async claim() {
       this.busy = true; this.error = '';
       try {
-        const r = await fetch('api/account/claim', {
+        const r = await fetch(_gateUp + 'api/account/claim', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ member_id: this.claimId, email: this.claimEmail,
                                  password: this.password }) });
@@ -197,7 +227,7 @@ function adminGate() {
     async signIn() {
       this.busy = true; this.error = '';
       try {
-        const r = await fetch('api/account/login', {
+        const r = await fetch(_gateUp + 'api/account/login', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: this.email, password: this.password }) });
         const d = await r.json();
@@ -209,7 +239,7 @@ function adminGate() {
 
     async forgot() {
       if (!this.email) { this.error = 'Type your email first.'; return; }
-      await fetch('api/account/forgot', {
+      await fetch(_gateUp + 'api/account/forgot', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: this.email }) });
       // Same words whether or not the address exists — the server answers the

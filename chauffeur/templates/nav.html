@@ -186,6 +186,15 @@
 {# The <nav> element is a bare wrapper so that the top bar and the panel shelf
    are siblings inside it: `?tabs=none` hides the nav and both go with it, and
    every existing `nav a[href]` selector keeps working. #}
+{# The admin gate rides EVERY admin page (auth arc, fixed 2026-10-09): the
+   sign-in overlay and the session's fetch wrapper. It used to be included by
+   the dashboard and config pages alone, so once enforcement was on, Work,
+   Errands, Rhythms and every other admin page were refused with no way to
+   sign in. A wall panel (`?panel=true`) or a kiosk (`?kiosk=true`) is a
+   place, not a person: no gate, it pairs as a device instead. #}
+{% if not _full_nav and _qp.get('panel') != 'true' %}
+{% include 'components/admin_gate.html' %}
+{% endif %}
 <nav>
 <div id="top-nav-bar" class="bg-gray-900 border-b border-gray-800 sticky top-0 z-[60] w-full">
     <div class="px-4 mx-auto sm:px-6 lg:px-8">
@@ -549,15 +558,23 @@
                 const foreign = /^[a-z]+:\/\//i.test(url) && !url.startsWith(window.location.origin);
                 if (!foreign) {
                     const parentVisit = window.chfHouseParent && window.chfHouseParent();
-                    const dt = parentVisit ? '' : localStorage.getItem('chauffeur_device_token');
+                    // An admin page signed in as a parent acts as that parent,
+                    // never as the furniture: `identify` prefers a device token
+                    // over a member token when both arrive, so a browser that
+                    // was ever paired as a trusted screen used to turn every
+                    // admin fetch into the DEVICE tier (refused "member or
+                    // parent" once enforcing, with a valid session in hand).
+                    const admin = !parentVisit && window.chfAdminSession ? window.chfAdminSession() : null;
+                    const person = parentVisit || admin;
+                    const dt = person ? '' : localStorage.getItem('chauffeur_device_token');
                     const did = localStorage.getItem('chauffeur_device_id');
-                    if (dt || did || parentVisit) {
+                    if (dt || did || person) {
                         init = init || {};
                         const h = new Headers(init.headers
                             || (typeof input === 'object' && input.headers) || {});
                         if (dt && !h.has('X-Device-Token')) h.set('X-Device-Token', dt);
                         if (did && !h.has('X-Device-Id')) h.set('X-Device-Id', did);
-                        if (parentVisit) { h.delete('X-Device-Token'); h.set('X-Member-Token', parentVisit.token); }
+                        if (person) { h.delete('X-Device-Token'); if (!h.has('X-Member-Token')) h.set('X-Member-Token', person.token); }
                         init.headers = h;
                     }
                 }
@@ -584,9 +601,17 @@
                 try {
                     const refusal = res && (res.status === 401 || res.status === 403)
                         ? (res.headers.get('X-Auth-Refusal') || '') : '';
-                    if (refusal.split(',').includes('device')
+                    const tiers = refusal.split(',');
+                    if (tiers.includes('device')
                         && typeof window.chfRequestPairing === 'function') {
                         window.chfRequestPairing();
+                    }
+                    // A refusal wanting a PERSON on an admin page: the session
+                    // is dead or missing, so the gate asks again (it used to
+                    // promise this and never did it).
+                    if ((tiers.includes('member') || tiers.includes('parent'))
+                        && typeof window.chfAdminRefused === 'function') {
+                        window.chfAdminRefused();
                     }
                 } catch (e) { /* never let this swallow the response */ }
                 return res;
