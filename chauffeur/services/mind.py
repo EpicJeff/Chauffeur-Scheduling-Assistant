@@ -999,11 +999,17 @@ def deep_think(now: datetime.datetime = None, force: bool = False) -> dict:
             # (and a stale proposal_json wired to the Approve button, or a
             # snooze that silences it the moment it returns). It is a new
             # observation; it starts with nothing attached.
+            # The situation's leftovers go the same way: nobody has taken
+            # the new observation, and Argyle's cached next steps / status
+            # note described the old one (situations build 2, M5).
             storage.update_mind_insight(existing['id'], {
                 **fields, 'state': 'active', 'outcome': None,
                 'resolved_ts': None, 'created_ts': time.time(),
                 'plan_json': None, 'proposal_json': None,
-                'snoozed_until': None})
+                'snoozed_until': None,
+                'sit_owner_member_id': None, 'sit_owned_at': None,
+                'next_steps': [], 'status_note': '', 'note_source': 'fallback',
+                'note_rev': None})
             _touched_insight(existing['id'])
         else:
             _touched_insight(storage.add_mind_insight(fields))

@@ -312,9 +312,6 @@
                 graduation: [],
                 heldBack: {no_refs: 0, no_lever: 0},
                 situations: [],
-                busy: {},      // insight id -> Handle-it call in flight
-                noMove: {},    // insight id -> the agent's no-move note
-                snoozeOpen: {}, // insight id -> Not-now quick-pick row open
 
                 async load() {
                     try {
@@ -388,119 +385,6 @@
                     if (outcome === 'acted') return 'bg-teal-500/20 text-teal-300';
                     if (outcome === 'expired') return 'bg-amber-500/20 text-amber-300';
                     return 'bg-gray-700 text-gray-300';   // dismissed / unknown
-                },
-
-                async dismiss(id) {
-                    try {
-                        const r = await fetch(this.apiBase + `api/mind/insights/${id}/dismiss`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-                        if (!r.ok) {
-                            const err = await r.json().catch(() => ({}));
-                            showGlobalAlert(err.detail || "Couldn't dismiss that.");
-                        }
-                    } catch (e) { showGlobalAlert("Couldn't dismiss that."); }
-                    this.loadAdmin();
-                },
-
-                async act(id) {
-                    try {
-                        const r = await fetch(this.apiBase + `api/mind/insights/${id}/act`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-                        if (!r.ok) {
-                            const err = await r.json().catch(() => ({}));
-                            showGlobalAlert(err.detail || "Couldn't handle that.");
-                        }
-                    } catch (e) { showGlobalAlert("Couldn't handle that."); }
-                    this.loadAdmin();
-                },
-
-                snoozedLabel(ins) {
-                    if (!ins.snoozed_until || ins.snoozed_until * 1000 < Date.now()) return '';
-                    return 'snoozed until ' + new Date(ins.snoozed_until * 1000)
-                        .toLocaleDateString([], { month: 'short', day: 'numeric' });
-                },
-
-                async plan(id) {
-                    this.busy[id] = true;
-                    try {
-                        const r = await fetch(this.apiBase + `api/mind/insights/${id}/plan`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-                        const d = r.ok ? await r.json() : {};
-                        if (d.status === 'no_plan') {
-                            showGlobalAlert("Argyle doesn't see a plan that would genuinely help here.");
-                        } else if (d.status === 'capped') {
-                            showGlobalAlert("Argyle has hit today's thinking budget — try tomorrow.");
-                        } else if (d.status !== 'planned') {
-                            showGlobalAlert("Argyle couldn't come up with a plan just now.");
-                        }
-                    } catch (e) { showGlobalAlert("Argyle couldn't come up with a plan just now."); }
-                    this.busy[id] = false;
-                    this.loadAdmin();
-                },
-
-                async snooze(id, days) {
-                    this.snoozeOpen[id] = false;
-                    try {
-                        const r = await fetch(this.apiBase + `api/mind/insights/${id}/snooze`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ days }) });
-                        if (!r.ok) showGlobalAlert("Couldn't park that.");
-                    } catch (e) { showGlobalAlert("Couldn't park that."); }
-                    this.loadAdmin();
-                },
-
-                async stepDo(id, stepId, action) {
-                    this.busy[id] = true;
-                    try {
-                        const r = await fetch(this.apiBase + `api/mind/insights/${id}/step/${stepId}/${action}`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-                        // Parse either way — `detail` off an unparsed Response is
-                        // always undefined, so every 400/403 read as the generic line.
-                        const d = await r.json().catch(() => ({}));
-                        if (!r.ok) {
-                            showGlobalAlert(d.detail || "Couldn't do that step.");
-                        } else if (action === 'bind' && d.status === 'no_move') {
-                            showGlobalAlert(d.note || "Argyle doesn't have a move for that step.");
-                        } else if (action === 'bind' && d.status === 'capped') {
-                            showGlobalAlert("Argyle has hit today's thinking budget — try tomorrow.");
-                        }
-                    } catch (e) { showGlobalAlert("Couldn't do that step."); }
-                    this.busy[id] = false;
-                    this.loadAdmin();
-                },
-
-                async propose(id) {
-                    this.busy[id] = true;
-                    try {
-                        const r = await fetch(this.apiBase + `api/mind/insights/${id}/propose`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-                        const d = r.ok ? await r.json() : {};
-                        if (d.status === 'proposed') {
-                            const ins = this.insights.find(i => i.id === id);
-                            if (ins) ins.proposal_json = { proposal_id: d.proposal_id, summary: d.summary };
-                        } else if (d.status === 'no_move') {
-                            this.noMove[id] = d.note || "I don't have a move for this one.";
-                        } else {
-                            showGlobalAlert(d.status === 'capped'
-                                ? "Argyle has hit today's thinking budget — try tomorrow."
-                                : "Argyle couldn't come up with anything just now.");
-                        }
-                    } catch (e) {
-                        showGlobalAlert("Argyle couldn't come up with anything just now.");
-                    }
-                    delete this.busy[id];
-                },
-
-                async clearIt(id) {
-                    try {
-                        const r = await fetch(this.apiBase + `api/mind/insights/${id}/clear`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-                        if (!r.ok) {
-                            const err = await r.json().catch(() => ({}));
-                            showGlobalAlert(err.detail || "Couldn't clear that.");
-                        }
-                    } catch (e) { showGlobalAlert("Couldn't clear that."); }
-                    this.loadAdmin();
                 },
 
                 // Appends to mind_direct_categories via the same merge-semantics

@@ -270,7 +270,27 @@ def scenario_configured_operation_cap_still_applies():
     check(len(CALLS) == 1, 'reaching operation cap prevents another pool call')
 
 
+def scenario_a_revived_insight_is_nobody_s_and_has_no_stale_note():
+    """M5 (situations build 1 deferred minor): a revived row also sheds its
+    situation leftovers — who had taken it, Argyle's cached next steps and
+    its status note — the same way it sheds plan/proposal/snooze."""
+    _reset()
+    mind._pool_call = _fake_pool([{'slug': 'r', 'line': 'back', 'category': 'c', 'refs': ['#x']}])
+    mind.deep_think(NOON)
+    row = storage.get_mind_insights(state='active')[0]
+    storage.update_mind_insight(row['id'], {'state': 'retired', 'outcome': 'expired', 'resolved_ts': time.time(),
+                                            'sit_owner_member_id': 'mom', 'sit_owned_at': time.time(),
+                                            'next_steps': [{'id': 'advance:argyle:0', 'verb': 'advance', 'label': 'x', 'payload': {}}],
+                                            'status_note': 'old words', 'note_source': 'argyle'})
+    mind._pool_call = _fake_pool([{'slug': 'r', 'line': 'back again', 'category': 'c', 'refs': ['#x']}])
+    mind.deep_think(NOON, force=True)
+    row = storage.get_mind_insight(row['id'])
+    check(row['state'] == 'active' and not row.get('sit_owner_member_id') and not row.get('next_steps')
+          and row.get('note_source') != 'argyle', f"a revived insight starts with nothing attached: {row}")
+
+
 if __name__ == '__main__':
+    scenario_a_revived_insight_is_nobody_s_and_has_no_stale_note()
     scenario_think_reconciles()
     scenario_unchanged_snapshot_skips()
     scenario_force_overrides_hash()
