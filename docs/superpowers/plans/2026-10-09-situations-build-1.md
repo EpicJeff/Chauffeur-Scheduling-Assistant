@@ -23,7 +23,7 @@
 - No new LLM calls on reads, ticks or sweeps. Caps: `situation_cap_notes` 60/day, `ask_cap_drafts` 40/day.
 - Dismissed is dismissed (v2.499.297): nothing here reopens a dismissed finding or insight.
 - No browser dialogs: `showGlobalAlert` / `promptConfirm` / `promptInput` only.
-- Every commit: bump `config.yaml` `version` (next is `2.499.301`, then +1 per commit), commit message ends `(vX.Y.Z)`, push.
+- Every commit: bump `config.yaml` `version` (next is `2.499.303`, then +1 per commit; v2.499.301-302 were the plan commits), commit message ends `(vX.Y.Z)`, push.
 - Persisted prose (code comments, docstrings, commit bodies, `system_capabilities.md`) is normal English.
 
 ## Review Focus
@@ -159,7 +159,7 @@ After `update_coverage_ask` (line ~3053) add:
 ```python
 # --- Asks: the one ledger of who was asked what, by which channel, and what
 # came back (spec: docs/superpowers/specs/2026-10-09-situations-design.md §2).
-# coverage_asks is read-only legacy from v2.499.301 on; see get_coverage_ask.
+# coverage_asks is read-only legacy from v2.499.303 on; see get_coverage_ask.
 
 def add_ask(data: dict) -> str:
     import uuid as _uuid
@@ -260,10 +260,10 @@ Expected: `3/3 scenarios passed`. Then `env -u HA_BASE_URL ../venv/Scripts/pytho
 
 - [ ] **Step 6: Commit**
 
-Bump `config.yaml` to `2.499.301`.
+Bump `config.yaml` to `2.499.303`.
 ```bash
 git add chauffeur/config.yaml chauffeur/services/storage.py chauffeur/services/findings.py chauffeur/services/watchers.py chauffeur/tests/test_situations_storage.py
-git commit -m "feat(situations): asks ledger table, insight by id, findings in_hand (v2.499.301)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(situations): asks ledger table, insight by id, findings in_hand (v2.499.303)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 git push origin main
 ```
 
@@ -891,10 +891,10 @@ Expected: `5/5 scenarios passed`. If `_people` for an event finding fails on `at
 
 - [ ] **Step 5: Commit**
 
-Bump `config.yaml` to `2.499.302`.
+Bump `config.yaml` to `2.499.304`.
 ```bash
 git add chauffeur/config.yaml chauffeur/services/situations.py chauffeur/services/asks.py chauffeur/tests/test_situations.py
-git commit -m "feat(situations): the view-model - one shape, typed options, rank, viewer gates (v2.499.302)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(situations): the view-model - one shape, typed options, rank, viewer gates (v2.499.304)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 git push origin main
 ```
 
@@ -1168,10 +1168,10 @@ Expected: `9/9 scenarios passed`. If `assign_driver_to_event_fuzzy` needs the dr
 
 - [ ] **Step 5: Commit**
 
-Bump `config.yaml` to `2.499.303`.
+Bump `config.yaml` to `2.499.305`.
 ```bash
 git add chauffeur/config.yaml chauffeur/services/situations.py chauffeur/tests/test_situations.py
-git commit -m "feat(situations): act - one verb dispatcher, server-bound options, own vs done (v2.499.303)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(situations): act - one verb dispatcher, server-bound options, own vs done (v2.499.305)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 git push origin main
 ```
 
@@ -1543,10 +1543,10 @@ Run: `env -u HA_BASE_URL ../venv/Scripts/python.exe tests/test_situations_refres
 
 - [ ] **Step 7: Commit**
 
-Bump `config.yaml` to `2.499.304`.
+Bump `config.yaml` to `2.499.306`.
 ```bash
 git add chauffeur/config.yaml chauffeur/services chauffeur/main.py chauffeur/templates/components/mind_page.html chauffeur/tests/test_situations_refresh.py
-git commit -m "feat(situations): Argyle's status note on state change - rev, coalescing, superseded results dropped, caps (v2.499.304)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(situations): Argyle's status note on state change - rev, coalescing, superseded results dropped, caps (v2.499.306)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 git push origin main
 ```
 
@@ -2208,10 +2208,10 @@ Run: `env -u HA_BASE_URL ../venv/Scripts/python.exe tests/test_asks.py` → `9/9
 
 - [ ] **Step 5: Commit**
 
-Bump `config.yaml` to `2.499.305`.
+Bump `config.yaml` to `2.499.307`.
 ```bash
 git add chauffeur/config.yaml chauffeur/services/asks.py chauffeur/services/storage.py chauffeur/services/watchers.py chauffeur/tests/test_asks.py
-git commit -m "feat(asks): the ledger - every channel a draft, three answer gates, claim-then-apply with recovery (v2.499.305)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(asks): the ledger - every channel a draft, three answer gates, claim-then-apply with recovery (v2.499.307)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 git push origin main
 ```
 
@@ -2227,7 +2227,7 @@ git push origin main
 - Test: `tests/test_asks_migration.py` (new); `tests/test_coverage_ladder.py` unchanged and must pass
 
 **Interfaces:**
-- `storage.get_coverage_asks(state=None, event_id=None)` returns legacy-shaped rows read from `asks` (reverse state map: `sent→waiting`, `yes→covered` when `outcome=='applied'` else `waiting`-equivalent `yes`, `no→declined`, `expired→expired`, `withdrawn→declined`); `storage.get_coverage_ask(ask_id)` resolves an `asks` id or a `legacy_id`; `add_coverage_ask` and `update_coverage_ask` raise `RuntimeError('coverage_asks is read-only since v2.499.306; use asks')`.
+- `storage.get_coverage_asks(state=None, event_id=None)` returns legacy-shaped rows read from `asks` (reverse state map: `sent→waiting`, `yes→covered` when `outcome=='applied'` else `waiting`-equivalent `yes`, `no→declined`, `expired→expired`, `withdrawn→declined`); `storage.get_coverage_ask(ask_id)` resolves an `asks` id or a `legacy_id`; `add_coverage_ask` and `update_coverage_ask` raise `RuntimeError('coverage_asks is read-only since v2.499.308; use asks')`.
 - `coverage_options.start_ask` → `asks.create(..., channel='text', draft_mode='template')` + `mark_sent`; returns the same `{'status','ask_id','text','message'}` shape.
 - `coverage_options.answer_ask(ask_id, answer, member_id, contact_name)` → same four answers, same return shapes including `schedule_dirty`.
 
@@ -2360,7 +2360,7 @@ Expected: FAIL — `AttributeError: module 'services.migrations' has no attribut
 Replace the four coverage functions in `services/storage.py`:
 
 ```python
-# --- coverage_asks: READ-ONLY legacy since v2.499.306. The ledger is `asks`
+# --- coverage_asks: READ-ONLY legacy since v2.499.308. The ledger is `asks`
 # (services/asks.py); these readers map an asks row back to the shape the
 # coverage ladder, the nudge loop and the old DM buttons were written for.
 
@@ -2391,10 +2391,10 @@ def get_coverage_ask(ask_id: str) -> Optional[dict]:
     return _legacy_ask_view(a) if a else None
 
 def add_coverage_ask(data: dict) -> str:
-    raise RuntimeError('coverage_asks is read-only since v2.499.306; use asks')
+    raise RuntimeError('coverage_asks is read-only since v2.499.308; use asks')
 
 def update_coverage_ask(ask_id: str, data: dict) -> bool:
-    raise RuntimeError('coverage_asks is read-only since v2.499.306; use asks')
+    raise RuntimeError('coverage_asks is read-only since v2.499.308; use asks')
 ```
 
 - [ ] **Step 4: The coverage_options adapters**
@@ -2405,7 +2405,7 @@ In `ladder`, replace the `waiting` lookup with `waiting = [a for a in storage.ge
 def start_ask(event_id: str, contact_id: str = None, contact_name: str = None,
               asked_by: str = None) -> dict:
     """Record that a parent is asking somebody. Returns the drafted text — the
-    parent sends it themselves. Since v2.499.306 this is an adapter over
+    parent sends it themselves. Since v2.499.308 this is an adapter over
     services.asks: a text-channel ask, template-drafted (no LLM call on this
     path), sent at once."""
     from services import asks as _asks
@@ -2571,7 +2571,7 @@ async def migrate_coverage_asks_v2499306():
             'draft_body': '', 'draft_subject': '', 'draft_source': 'template', 'link': None})
         done += 1
     if done:
-        logger.info(f"v2.499.306 coverage_asks migration: {done} asks carried into the ledger")
+        logger.info(f"v2.499.308 coverage_asks migration: {done} asks carried into the ledger")
 ```
 
 Add `import datetime` at the top of `migrations.py` if missing, and to `run_all_migrations`:
@@ -2589,10 +2589,10 @@ Run: `env -u HA_BASE_URL ../venv/Scripts/python.exe tests/test_asks_migration.py
 
 - [ ] **Step 7: Commit**
 
-Bump `config.yaml` to `2.499.306`.
+Bump `config.yaml` to `2.499.308`.
 ```bash
 git add chauffeur/config.yaml chauffeur/services/coverage_options.py chauffeur/services/storage.py chauffeur/services/migrations.py chauffeur/main.py chauffeur/tests/test_asks_migration.py chauffeur/tests/test_coverage_ladder.py
-git commit -m "refactor(coverage): coverage_asks migrate into the asks ledger; coverage_options and the legacy readers become adapters (v2.499.306)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "refactor(coverage): coverage_asks migrate into the asks ledger; coverage_options and the legacy readers become adapters (v2.499.308)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 git push origin main
 ```
 
@@ -2952,10 +2952,10 @@ Run: `env -u HA_BASE_URL ../venv/Scripts/python.exe tests/test_situation_endpoin
 
 - [ ] **Step 6: Commit**
 
-Bump `config.yaml` to `2.499.307`.
+Bump `config.yaml` to `2.499.309`.
 ```bash
 git add chauffeur/config.yaml chauffeur/main.py chauffeur/templates/app.html chauffeur/tests/test_situation_endpoints.py
-git commit -m "feat(situations): endpoints for situations and asks; the ask card in chat with Yes/No that follow the ledger (v2.499.307)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(situations): endpoints for situations and asks; the ask card in chat with Yes/No that follow the ledger (v2.499.309)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 git push origin main
 ```
 
@@ -3322,10 +3322,10 @@ Run: `env -u HA_BASE_URL ../venv/Scripts/python.exe tests/test_situation_tools.p
 
 - [ ] **Step 6: Commit**
 
-Bump `config.yaml` to `2.499.308`.
+Bump `config.yaml` to `2.499.310`.
 ```bash
 git add chauffeur/config.yaml chauffeur/services/agent_tools_v2.py chauffeur/services/agent_router.py chauffeur/services/missions.py chauffeur/static/situations.js chauffeur/tests/test_situation_tools.py
-git commit -m "feat(agent): situation tools - list, explain, act, start_ask, mark sent, answer; parity with the card (v2.499.308)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(agent): situation tools - list, explain, act, start_ask, mark sent, answer; parity with the card (v2.499.310)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 git push origin main
 ```
 
@@ -3737,10 +3737,10 @@ Run: `../venv/Scripts/python.exe tools/build_tailwind.py && env -u HA_BASE_URL .
 
 - [ ] **Step 6: Commit**
 
-Bump `config.yaml` to `2.499.309`.
+Bump `config.yaml` to `2.499.311`.
 ```bash
 git add chauffeur/config.yaml chauffeur/static chauffeur/templates chauffeur/services/home_board.py chauffeur/tests/test_situations_lane_live.py chauffeur/tests/test_mind_tile.py
-git commit -m "feat(situations): the Needs-you lane - one card builder on /mind, the PWA Family tab and the board tile; findings get a hand path (v2.499.309)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(situations): the Needs-you lane - one card builder on /mind, the PWA Family tab and the board tile; findings get a hand path (v2.499.311)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 git push origin main
 ```
 
@@ -3921,13 +3921,13 @@ Run: `env -u HA_BASE_URL ../venv/Scripts/python.exe tools/test.py situations ask
 
 - [ ] **Step 4: Docs**
 
-`chauffeur/system_capabilities.md`: bump "Current through" to the final version and add one entry at the top, in the file's house style (bold lead sentence naming the version and files, then bullets), covering: the situation shape and verbs; `own` vs `done` and findings `in_hand`; Argyle's note on state change with `rev`/coalescing/caps/fallback; the asks ledger (channels always offered, drafts, three answer gates, claimed→applied with outcomes and recovery, fixed commitment, Chauffeur ask card); `coverage_asks` → `asks` with adapters and migration; the six tools; the Needs-you lane on /mind, the PWA Family tab and the tile; endpoints; what build 2 will add. `chauffeur/docs/roadmap.md`: under the Needs You arc, one line that the tile shipped as the Needs-you lane in v2.499.309. Memory `agentic-layer-field-feedback.md`: mark sub-project 2 build 1 shipped with the version range; next is build 2.
+`chauffeur/system_capabilities.md`: bump "Current through" to the final version and add one entry at the top, in the file's house style (bold lead sentence naming the version and files, then bullets), covering: the situation shape and verbs; `own` vs `done` and findings `in_hand`; Argyle's note on state change with `rev`/coalescing/caps/fallback; the asks ledger (channels always offered, drafts, three answer gates, claimed→applied with outcomes and recovery, fixed commitment, Chauffeur ask card); `coverage_asks` → `asks` with adapters and migration; the six tools; the Needs-you lane on /mind, the PWA Family tab and the tile; endpoints; what build 2 will add. `chauffeur/docs/roadmap.md`: under the Needs You arc, one line that the tile shipped as the Needs-you lane in v2.499.311. Memory `agentic-layer-field-feedback.md`: mark sub-project 2 build 1 shipped with the version range; next is build 2.
 
 - [ ] **Step 5: Commit**
 
-Bump `config.yaml` to `2.499.310`.
+Bump `config.yaml` to `2.499.312`.
 ```bash
 git add chauffeur/config.yaml chauffeur/system_capabilities.md chauffeur/docs/roadmap.md chauffeur/tests/test_situations_acceptance.py
-git commit -m "test(situations): the five acceptance scenarios end to end; capabilities and roadmap for build 1 (v2.499.310)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "test(situations): the five acceptance scenarios end to end; capabilities and roadmap for build 1 (v2.499.312)" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 git push origin main
 ```
