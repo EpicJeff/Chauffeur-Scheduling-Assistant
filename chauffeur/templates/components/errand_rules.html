@@ -261,7 +261,7 @@
             init() {
                 window.addEventListener('chf-settings-opened', e => {
                     const t = e.detail && e.detail.tab;
-                    if ((t === 'errands' || t === 'tasks') && !this.loaded) {
+                    if (t === 'errands' && !this.loaded) {
                         this.loaded = true;
                         // Latch only on success: a failed load retries on the next open.
                         this.load().then(() => { if (this.loadError) this.loaded = false; });

@@ -37,22 +37,20 @@
     <div class="flex-1 flex flex-col overflow-hidden bg-gray-900/50"
         x-data="errandsPage()" x-init="start()">
         
-        <!-- Header -->
-        <header class="panel-page p-8 pb-4">
-            <h2 class="panel-page-title">Errands &amp; tasks</h2>
-            <p class="text-gray-400">An <b>errand</b> is a drive — it has a place to go, and the solver
-                fits it into somebody's routes. A <b>task</b> is work with a deadline and nowhere to
-                drive: sign the form, make the call, renew the passports.</p>
-        </header>
-
         <!-- Household tasks (load arc A2 — the keystone).
              Deliberately on THIS page beside the errands: the distinction
              between "do something" and "go somewhere" is the whole point of
-             the object, and it is learnable because the header above names
-             both. Since v2.499.247 they are two tabs of one page rather than
-             two stacked blocks (nav.html PAGE_GROUPS); a panel still sees
-             both. -->
+             the object. Since v2.499.247 they are two tabs of one page rather
+             than two stacked blocks (nav.html PAGE_GROUPS); a panel still sees
+             both. Each tab carries its own header, so a tab describes what is
+             on it — a kiosk that sees both blocks gets both, each above its
+             own list. -->
         <div data-page-tab="tasks" class="px-8 pb-2 min-h-0 overflow-y-auto">
+            <header class="panel-page pt-8 pb-4">
+                <h2 class="panel-page-title">Tasks</h2>
+                <p class="text-gray-400">A <b>task</b> is work with a deadline and nowhere to drive:
+                    sign the form, make the call, renew the passports.</p>
+            </header>
             <div class="bg-gray-800/60 rounded-xl border border-gray-700/50 p-4">
                 <div class="flex items-center justify-between mb-3">
                     <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-widest">The household list</h3>
@@ -82,6 +80,11 @@
         </div>
 
         <div data-page-tab="errands" class="flex-1 flex flex-col min-h-0">
+        <header class="panel-page p-8 pb-4">
+            <h2 class="panel-page-title">Errands</h2>
+            <p class="text-gray-400">An <b>errand</b> is a drive — it has a place to go, and the solver
+                fits it into somebody's routes.</p>
+        </header>
         <!-- Input Area -->
         <div class="px-8 pb-6">
             <div class="relative bg-gray-800 rounded-xl shadow-sm border border-gray-700/50 flex flex-col focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent transition-all">
@@ -127,11 +130,12 @@
         </div>
         </div>
 
-        {# Errand rules: the Errands drawer (settings-drawer arc). Outside every
-           [data-page-tab] block so a hidden tab never hides it; the gear
-           opens it from the Errands or the Tasks tab. The macro draws nothing
-           for a panel, kiosk or filtered embed. #}
-        {% call settings_drawer('errands tasks', 'Errands') %}
+        {# Errand rules: the Errands drawer (settings-drawer arc). Rules are
+           about errands only, so the gear shows on the Errands tab and not on
+           Tasks, which has no settings. Outside every [data-page-tab] block so
+           `errands?tab=rules` forwards and deep links still find it. The macro
+           draws nothing for a panel, kiosk or filtered embed. #}
+        {% call settings_drawer('errands', 'Errands') %}
         {% include 'components/errand_rules.html' %}
         {% endcall %}
     </div>

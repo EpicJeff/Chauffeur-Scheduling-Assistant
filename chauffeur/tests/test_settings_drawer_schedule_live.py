@@ -107,15 +107,27 @@ def main():
 
             page.set_viewport_size({'width': 1300, 'height': 900})
             E = '[data-settings-for~="errands"]'
-            for start in ('errands', 'errands?tab=tasks'):
-                page.goto(served.url(start), wait_until='networkidle')
-                _shot(page, 'errands-closed-' + start.replace('?tab=', '-'))
-                page.click('#page-settings-gear')
-                page.wait_for_selector(E + '[data-open]')
-                page.wait_for_selector('#errand-rules [x-model="newErrandRule.title"]', state='visible')
-                check(_visible(page, '#errand-rules'), f'{start}: the rules are not in the drawer')
-                _shot(page, 'errands-open-' + start.replace('?tab=', '-'))
-                page.click(E + ' [aria-label="Close settings"]')
+            page.goto(served.url('errands'), wait_until='networkidle')
+            _shot(page, 'errands-closed-errands')
+            check(page.locator('[data-page-tab="errands"] .panel-page-title').inner_text().strip() == 'Errands',
+                  'the Errands tab is not headed Errands')
+            page.click('#page-settings-gear')
+            page.wait_for_selector(E + '[data-open]')
+            page.wait_for_selector('#errand-rules [x-model="newErrandRule.title"]', state='visible')
+            check(_visible(page, '#errand-rules'), 'errands: the rules are not in the drawer')
+            _shot(page, 'errands-open-errands')
+            page.click(E + ' [aria-label="Close settings"]')
+            # Tasks has no settings of its own: its own header, and no gear.
+            page.click('#page-tabs [data-tab-key="tasks"]')
+            page.wait_for_timeout(200)
+            check(page.locator('[data-page-tab="tasks"] .panel-page-title').inner_text().strip() == 'Tasks',
+                  'the Tasks tab is not headed Tasks')
+            check(not page.locator('[data-page-tab="errands"] .panel-page-title').is_visible(),
+                  'the Errands header shows on the Tasks tab')
+            check(not page.locator('#page-settings-gear').is_visible(), 'Tasks shows a gear')
+            page.goto(served.url('errands?tab=tasks'), wait_until='networkidle')
+            check(not page.locator('#page-settings-gear').is_visible(), 'errands?tab=tasks shows a gear')
+            _shot(page, 'errands-closed-tasks')
             page.goto(served.url('errands?tab=rules'), wait_until='networkidle')
             page.wait_for_selector(E + '[data-open]')
             check('tab=rules' not in page.url, f'the retired tab survived: {page.url}')
