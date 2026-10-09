@@ -872,11 +872,11 @@ def run_watchers(now: datetime.datetime = None) -> int:
     # record the family already dismissed. Some kinds date their notify key
     # (one nudge a day while a gap stands); the dismissal covers the
     # subject, so a fresh day's key earns nothing.
-    def _dismissed(f):
+    def _settled(f):
         row = storage.get_finding_by_identity(_findings.identity(f))
-        return bool(row and row.get('state') == 'dismissed')
+        return bool(row and row.get('state') in ('dismissed', 'in_hand'))
     fresh = [f for f in findings
-             if f.dm and f.key not in notified and not _dismissed(f)]
+             if f.dm and f.key not in notified and not _settled(f)]
     if not fresh:
         storage.set_app_state('watcher_notified', notified)
         return 0

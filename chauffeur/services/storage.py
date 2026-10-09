@@ -489,6 +489,7 @@ with db_lock:
     # holds: state, and the nudges that turn a forgotten conversation into one
     # lock-screen tap.
     coverage_asks_table = db.table('coverage_asks')
+    asks_table = db.table('asks')
     mind_noticings_table = db.table('mind_noticings')
     mind_insights_table = db.table('mind_insights')
     missions_table = db.table('missions')
@@ -2939,6 +2940,13 @@ def get_mind_insight_by_identity(identity: str) -> Optional[dict]:
     rows = sorted((dict(r) for r in res), key=lambda r: r.get('created_ts') or 0)
     return rows[-1]
 
+def get_mind_insight(insight_id: str) -> Optional[dict]:
+    if not insight_id:
+        return None
+    with db_lock:
+        res = mind_insights_table.search(Query().id == insight_id)
+        return dict(res[0]) if res else None
+
 def prune_mind(insights_before_ts: float, noticings_before_ts: float = None) -> int:
     """Old noticings and old RETIRED insights, each on its own clock (spec:
     noticings 14d, retired insights 120d). Active insights are live state and
@@ -3051,6 +3059,53 @@ def add_coverage_ask(data: dict) -> str:
 def update_coverage_ask(ask_id: str, data: dict) -> bool:
     with db_lock:
         return bool(coverage_asks_table.update(data, Query().id == ask_id))
+
+# --- Asks: the one ledger of who was asked what, by which channel, and what
+# came back (spec: docs/superpowers/specs/2026-10-09-situations-design.md §2).
+
+def add_ask(data: dict) -> str:
+    import uuid as _uuid
+    row = {'id': _uuid.uuid4().hex, 'asked_at': time.time(), 'state': 'drafted',
+           'nudges_sent': 0, 'sent_at': None, 'answered_at': None, 'answered_by': None,
+           'outcome': None, 'applied_at': None, 'unlock_error': None, **data}
+    with db_lock:
+        asks_table.insert(row)
+    return row['id']
+
+def get_ask(ask_id: str) -> Optional[dict]:
+    if not ask_id:
+        return None
+    with db_lock:
+        res = asks_table.search(Query().id == ask_id)
+        return dict(res[0]) if res else None
+
+def get_ask_by_legacy_id(legacy_id: str) -> Optional[dict]:
+    if not legacy_id:
+        return None
+    with db_lock:
+        res = asks_table.search(Query().legacy_id == legacy_id)
+        return dict(res[0]) if res else None
+
+def update_ask(ask_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(asks_table.update(data, Query().id == ask_id))
+
+def get_asks(situation_kind: str = None, situation_id: str = None, state: str = None,
+             event_id: str = None, to_member_id: str = None) -> List[dict]:
+    with db_lock:
+        rows = [dict(a) for a in asks_table.all()]
+    if situation_kind:
+        rows = [a for a in rows if a.get('situation_kind') == situation_kind]
+    if situation_id:
+        rows = [a for a in rows if a.get('situation_id') == situation_id]
+    if state:
+        rows = [a for a in rows if a.get('state') == state]
+    if event_id:
+        rows = [a for a in rows if str(a.get('event_id') or '') == str(event_id)]
+    if to_member_id:
+        rows = [a for a in rows if a.get('to_member_id') == to_member_id]
+    rows.sort(key=lambda a: a.get('asked_at') or 0)
+    return rows
 
 # --- Requests (load arc A3) ---
 # An ask with a state. A request is ALWAYS answered: silence is the failure

@@ -21,6 +21,9 @@ Three rules keep it honest:
   kinds actually scanned. The weekly prep-kit check does not run on most
   sweeps, and a record it opened must not be auto-closed by a sweep that never
   asked the question.
+- **In hand is still open.** A finding somebody took (`in_hand`) keeps its
+  sentence current and still closes by absence; it is never re-added and
+  never DM'd.
 - **Dismissed is dismissed.** A parent who said "leave it" is not asked again
   while the SUBJECT is the same: the sentence changing (a countdown, a count of
   days, a severity bump, a deal found) never reopens it. Each finding carries
@@ -83,8 +86,10 @@ def identity(f: Finding) -> str:
     return f"{f.kind}:{f.key}"
 
 
-def open_findings(severity: str = None) -> list:
+def open_findings(severity: str = None, include_in_hand: bool = False) -> list:
     rows = storage.get_findings(state='open')
+    if include_in_hand:
+        rows = rows + storage.get_findings(state='in_hand')
     if severity:
         rows = [r for r in rows if r.get('severity') == severity]
     order = {'decide': 0, 'approve': 1, 'fyi': 2}
@@ -111,7 +116,7 @@ def reconcile(found, scanned_kinds, now_ts: float = None) -> dict:
     for ident, f in seen.items():
         existing = storage.get_finding_by_identity(ident)
         fp = fingerprint(f)
-        if existing and existing.get('state') == 'open':
+        if existing and existing.get('state') in ('open', 'in_hand'):
             # Keep the sentence current — a deadline slips, a count changes —
             # without touching created_at, which is how long this has been true.
             storage.update_finding(existing['id'], {
@@ -137,7 +142,7 @@ def reconcile(found, scanned_kinds, now_ts: float = None) -> dict:
         opened += 1
 
     closed = expired = 0
-    for row in storage.get_findings(state='open'):
+    for row in storage.get_findings(state='open') + storage.get_findings(state='in_hand'):
         if row.get('identity') in seen:
             continue
         if row.get('kind') not in scanned:
