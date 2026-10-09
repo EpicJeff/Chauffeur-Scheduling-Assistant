@@ -2744,14 +2744,17 @@ def _tile_errand_list(now, config=None, **_):
 
 
 def _tile_mind(now, config=None, **_):
-    """Argyle noticed: the Mind's curated lane. Boards have no viewer, so this
-    payload is built with no identity — sensitive rows are never in it."""
-    from services import mind as _mind
-    rows = _mind.visible_insights(None)
-    return {'insights': [{'id': r['id'], 'line': r['line'],
-                          'detail': r.get('detail') or '',
-                          'domain': r.get('domain') or ''}
-                         for r in rows]} if rows else None
+    """Needs you, identity-free (the tile always asks with no viewer, so a
+    sensitive row or a finding never reaches a wall): title, Argyle's line,
+    and the next step as words, never a button."""
+    from services import situations as _sit
+    rows = _sit.list_situations(None, kinds=('finding', 'insight'))
+    if not rows:
+        return None
+    return {'situations': [{'kind': s['kind'], 'id': s['id'], 'title': s['title'],
+                            'status_note': s['status_note'] if s['note_source'] == 'argyle' else '',
+                            'next_label': (s.get('next_step') or {}).get('label') or ''}
+                           for s in rows[:6]]}
 
 
 def _trip_rows(now, back_days: int = 0, viewer: Optional[dict] = None):

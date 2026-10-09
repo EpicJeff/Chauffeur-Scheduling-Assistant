@@ -5570,8 +5570,18 @@ def mind_admin(request: Request = None):
 # except answering an ask addressed to you.
 
 def _situation_viewer(request):
+    """Who is looking. A control-center page carries no member identity (it
+    authenticates as a trusted place, see _is_admin_surface), and it is the
+    parent-only screen, so it reads as the parent of record. A wall panel
+    (DEVICE tier) is not an admin surface and stays identity-free."""
     viewer_id = _acting_id(request, None)
-    return storage.get_member(viewer_id) if viewer_id else None
+    viewer = storage.get_member(viewer_id) if viewer_id else None
+    if viewer is None and _is_admin_surface(request):
+        try:
+            viewer = _approver_of_record(None)
+        except HTTPException:
+            viewer = None
+    return viewer
 
 
 @app.get("/api/situations")

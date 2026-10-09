@@ -10,7 +10,7 @@ def scenario_tile_filters_sensitive():
     storage.add_mind_insight({'slug': 'b', 'line': 'secret', 'category': 'c',
                               'sensitivity': 'sensitive'})
     data = home_board._tile_mind(datetime.datetime.now())
-    lines = [i['line'] for i in data['insights']]
+    lines = [s['title'] for s in data['situations']]
     check(lines == ['normal'], f"sensitive absent from tile payload, got {lines}")
 
 def scenario_tile_registered():
