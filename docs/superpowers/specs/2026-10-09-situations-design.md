@@ -58,7 +58,7 @@ option = { id: str, label: str, verb: str, payload: dict }
 
 **Verbs are a closed set.** `assign` (a family driver, via the override rail), `ask` (someone, by a channel — Section 2), `plan` (an insight: create its plan via `mind.make_plan`), `prepare` (an unbound tool step: bind it to a proposal via `mind.bind_step`), `do` (execute an existing proposal through `chat_actions.act_on_proposal`), `done` (a human step, or a situation the owner finished by hand), `skip` (a plan step), `research` (`web.research`, threads), `draft` (thread mail via `threads.draft_message`), `advance` (set a thread's next action and date), `answer` (a mission's `waiting_user` question), `close`, `snooze`, `dismiss`, `own` ("I'll handle it myself"). The UI renders a verb the same way everywhere; the agent executes a verb the same way everywhere; `situations.act(kind, id, verb, option_id, payload, actor)` is the single implementation both call.
 
-**Options are bound server-side.** A client or the model names an `option_id`; the server re-derives the situation's current options and executes only one it finds there. `payload` is accepted only for verbs whose payload is free text (`answer`, `advance`, the `what` of an `ask`); proposal ids, event ids and assignments always come from the server-built option, never from the request.
+**Options are bound server-side.** A client or the model names an `option_id`; the server re-derives the situation's current options and executes only one it finds there. `payload` is accepted only for verbs whose payload is free text (`answer`, `advance`); proposal ids, event ids and assignments always come from the server-built option, never from the request. An `ask` option's `what` is the commitment the recipient is answering: it is fixed when the ask is created and is never edited. The draft *wording* is editable; the commitment is not. To ask for something different, the person withdraws the ask and starts another ("Change the ask" does both in one tap), which rebinds `unlocks` from the new option or, for a `what` the server cannot bind, leaves it unbound so a yes is recorded without automatic application and the next step reads "apply by hand: {what}". A Chauffeur DM shows the `what` line above the body as the thing Yes/No answers; for copy channels, the person's own report of yes answers the `what` shown on the card.
 
 **Taking it is not finishing it.** `own` records who took the situation (`owner_member_id`, `owned_at`) and moves it from *needs you now* to *in hand*; it does not close anything. What ends ownership is reality (a finding whose condition no longer appears closes `done/auto` as today; a thread or mission moves on) or the owner's explicit `done`. Findings gain the state `in_hand`: `reconcile` treats it like `open` (the sentence keeps updating, absence still closes it) and never re-adds a row for it. No follow-up nudges on owned situations in this slice.
 
@@ -66,12 +66,12 @@ option = { id: str, label: str, verb: str, payload: dict }
 
 | Kind | Options | Status note |
 |---|---|---|
-| finding | Deterministic: the coverage ladder and the finding's own `action`, as today. The ladder's tier-1 driver is an `assign` option; tier-2 outside hand is an `ask`; tier-3 is `self`/`dismiss`. | Argyle |
+| finding | Deterministic: the coverage ladder and the finding's own `action`, as today. The ladder's tier-1 driver is an `assign` option; tier-2 outside hand is an `ask`; tier-3 is `own`/`dismiss`. | Argyle |
 | insight | Before a plan: next step is `plan`, labelled with the `approach` sentence ("Plan: ask Sarah to take Thursday"). After: each open step is an option — an unbound tool step is `prepare` (labelled with the step text), a bound one is `do`, a human step is `done`, any step `skip`. The highlighted one is the first open step. | Argyle |
 | thread | Argyle proposes 1–3 from history and state (`draft` a reply, `advance` with a date, `research`, `close`), typed with the closed verb set; the deterministic set (`advance`, `draft`, `close`) is always present underneath. | Argyle; fallback "Waiting on {counterparty} since {date}; next: {next_action} ({date})" |
 | mission | Deterministic from status: `answer` when `waiting_user`, `do` for a waiting proposal, `close` (drop). | Argyle; fallback "{status}: {last step name}" |
 
-**When Argyle writes.** Every situation row carries a revision counter `rev`, bumped by each mutation of the row and by any change to one of its asks (created, sent, answered, withdrawn). `situations.refresh(kind, id)` is requested after a state change, never on read:
+**When Argyle writes.** Every situation row carries a revision counter `rev`, bumped by each mutation of the row and by any change to one of its asks (created, sent, answered, withdrawn). Writing the cached note itself (`status_note`, `next_steps`, `note_ts`, `note_rev`, `note_source`) never bumps `rev`. `rev` exists for the note only; whether an agreement still holds is judged by the separate action fingerprint in Section 2. `situations.refresh(kind, id)` is requested after a state change, never on read:
 
 - thread: history append (note, sent, received, research), state change, next-action change;
 - mission: a step appended, status change;
@@ -121,7 +121,7 @@ ask = {
 }
 ```
 
-**`asks` is the only ledger.** `coverage_options` keeps every public function (`start_ask`, `answer_ask`, the nudge sweep, undo, expiry, rearm) and every endpoint and DM button it serves, but they become adapters over `asks`: `waiting` → `sent`, `covered` → `yes` + `outcome: applied`, `declined` → `no`, `expired` → `expired`, undo → back to `sent` with `rearmed_at`. Migration is idempotent, keyed by `legacy_id`; a legacy row's situation is the finding identity `unassigned:{event_id}`, derived from its `event_id`. The old table is read once, then retained for one release as recovery only — nothing reads or writes it after migration. The existing coverage tests run against the adapters unchanged.
+**`asks` is the only ledger.** `coverage_options` keeps every public function (`start_ask`, `answer_ask`, the nudge sweep, undo, expiry, rearm) and every endpoint and DM button it serves, but they become adapters over `asks`: `waiting` → `sent`, `covered` → `yes` + `outcome: applied`, `declined` → `no`, `expired` → `expired`, undo → back to `sent` with `rearmed_at`. Migration is idempotent, keyed by `legacy_id`. An event ask's authoritative link is `event_id` + `event_start`, which every legacy row has; `situation_id` is filled only when a finding exists whose identity is `unassigned:{event_id}` **and** whose fingerprint matches that start (`get_finding_by_identity` returns the latest row, which may be a newer occurrence of a recurring event — that row is not this ask's situation). With no match the ask has no situation: it is still answerable through its own endpoints, its yes still applies through the existing coverage path (assist assignment on `event_id` + date, which never needed a finding), and it appears on a card only when a finding with a matching fingerprint exists at read time (the card matches asks by `event_id` + `event_start`, not by `situation_id`). Legacy DM buttons post their old ask id to the old endpoints, which resolve it through `legacy_id` to the `asks` row. The old table is read once, then retained for one release as recovery only — nothing reads or writes it after migration. The existing coverage tests run against the adapters unchanged.
 
 **Who may do what to an ask.** Three different acts, three gates:
 
@@ -136,11 +136,12 @@ Answering never carries authority to change anything; **applying** does, and it 
 **Yes, then applying.** The person's yes and what the app did with it are two facts, kept separately:
 
 1. The ask records `state: yes`, `answered_at`, `answered_by` under the storage lock, only if it was `sent` or `drafted`; a second yes is a no-op that returns the recorded outcome (idempotent retries, duplicate taps).
-2. `unlocks` was built by the server when the ask was created and carries the situation's `rev` and, for event asks, the finding's fingerprint. Applying validates them against the present: the situation still open, the fingerprint unchanged (the event has not moved), no sibling ask on the same situation already applied.
-3. Applying is a single claim under the lock: the first ask to apply writes `applied_at` and `outcome: applied`; any later yes on the same need records `outcome: superseded` and the card says so ("Mike also said yes — Sarah already has it; let him know"). A yes that arrives after the event changed records `outcome: stale` and the situation's next step becomes "confirm with {name}: the time moved". A failed apply records `outcome: failed` with `unlock_error` and the next step becomes "finish by hand: {what}".
-4. The situation re-reads after any outcome.
+2. `unlocks` was built by the server when the ask was created and carries an **action fingerprint**: only the facts that would invalidate the agreement. For an event ask that is the finding's fingerprint (the occurrence and its time); for a thread advance, the thread id; for a proposal, the proposal id. It never includes `rev`, so marking the ask sent, a sibling ask, or a note refresh cannot make an ordinary yes stale. Applying validates the fingerprint against the present (the event has not moved; the proposal still exists and is unapproved) and checks that no sibling ask on the same need has already applied.
+3. Applying is claimed, then completed, and the two are recorded separately. Under the storage lock, with the yes, the ask takes `outcome: claimed` and `claim_ts` — only if no sibling on the same need is `claimed` or `applied` (a later yes takes `superseded` right there, and the card says so: "Mike also said yes — Sarah already has it; let him know"); a fingerprint mismatch takes `stale` and the next step becomes "confirm with {name}: the time moved". Outside the lock the effect runs under the asker's identity (`assign_driver_to_event_fuzzy`, the assist assignment, `act_on_proposal`), idempotently: the proposal or assignment is keyed by the ask id, so running it twice produces one effect. On success the ask takes `applied_at` and `outcome: applied`; on an exception, `failed` with `unlock_error` and the next step "finish by hand: {what}". The effect and the outcome write are not one transaction (the effect may call out), which is why the claim exists.
+4. **Recovery.** A yes whose outcome is `claimed` for longer than 60 s was interrupted between claim and completion. The watcher sweep (and any later answer call on the same ask) resumes it: it re-runs the idempotent effect; if the effect reports already done (the proposal is approved, the assignment exists for this ask id) the outcome becomes `applied`, otherwise `failed`. A process stopped after recording yes but before the claim is the same path: a retry of the answer call sees `yes` with no outcome and proceeds to claim. No path leaves a yes with nothing recorded against it.
+5. The situation re-reads after any outcome.
 
-A `yes` is never overwritten by an outcome; the ledger line reads "Sarah said yes Thu 9:40 — covering" or "— already covered by Mike".
+A `yes` is never overwritten by an outcome; the ledger line reads "Sarah said yes Thu 9:40 — covering" or "— already covered by Mike". Only `applied` means the promised work was done.
 
 **Visible everywhere.** The card lists the situation's asks: "Asked Sarah by text Thu 9:10 — waiting", "Mike said no Wed". The DM heads-up for a finding gains the same clause.
 
@@ -164,7 +165,7 @@ This is the first hand path findings have had: Handle, Dismiss, the ask flow.
 
 **The DM heads-up** for a finding adds the next step and any ask: "🚨 No driver yet: Soccer Thu 4:00 → Ask Sarah (asked Mike by text Wed, said no)". The action cards are unchanged.
 
-**Endpoints.** `GET /api/situations` (ranked, viewer-filtered, optional `kinds=`), `GET /api/situations/{kind}/{id}`, `POST /api/situations/{kind}/{id}/act` with `{verb, option_id, payload}`; `POST /api/asks` (create + draft), `POST /api/asks/{id}/sent`, `POST /api/asks/{id}/answer`. Every existing endpoint stays; the new ones compose them, so current tests and tools keep working. Write endpoints carry the same parent/adult gate as the Mind endpoints; sensitive insights keep their parents-only render.
+**Endpoints.** `GET /api/situations` (ranked, viewer-filtered, optional `kinds=`), `GET /api/situations/{kind}/{id}`, `POST /api/situations/{kind}/{id}/act` with `{verb, option_id, payload}`; `POST /api/asks` (create + draft), `POST /api/asks/{id}/sent`, `POST /api/asks/{id}/answer`. Every existing endpoint stays; the new ones compose them, so current tests and tools keep working. Write endpoints carry the same parent/adult gate as the Mind endpoints, with one exception: `POST /api/asks/{id}/answer` admits the member the ask is addressed to, whatever their role (Section 2). Sensitive insights keep their parents-only render.
 
 ## Section 4 — Agent tools and hand-path parity
 
@@ -192,7 +193,7 @@ Rules carried over unchanged: parent/adult only for anything that writes, except
 
 **Failure honesty.** A fallback note is marked `note_source: fallback` and the card leaves Argyle's line empty; the deterministic facts are always there. A failed draft falls back to the template. A failed `unlocks` on `yes` leaves the ask at `yes` with `unlock_error` set and the situation's next step becomes "finish by hand: {what}" — the person's yes is never lost because an assignment call failed.
 
-**Migration.** `coverage_asks` → `asks` on first boot (kind `finding`, nudge fields intact), old table retained one release. Rows without `status_note` get the fallback on first read; no backfill calls are made.
+**Migration.** `coverage_asks` → `asks` on first boot (idempotent by `legacy_id`; `event_id` + `event_start` authoritative, `situation_id` only on a fingerprint match; nudge fields intact), old table retained one release. Rows without `status_note` get the fallback on first read; no backfill calls are made.
 
 **Tests.** Own tests plus named related, per the project's gate rule:
 
@@ -208,6 +209,8 @@ Rules carried over unchanged: parent/adult only for anything that writes, except
 1. Text an outside helper from a finding → "Sent it" → "She said yes" → coverage applied exactly once → the finding retires by absence on the next sweep.
 2. A helper receives a Chauffeur ask → answers Yes from their own identity → the ledger updates and the assignment is applied under the asker's authority.
 3. A mission finishes with a proposal still pending → it stays in the actionable group → approving the proposal resolves it and it moves to history.
+4. The ordinary path never goes stale: ask Sarah → mark sent → a sibling ask to Mike → a note refresh → Sarah says yes → `applied`, one assignment.
+5. Interrupted applying: execution stops once after the yes is recorded and once after the claim; in both cases the retry (answer call or sweep) ends with exactly one assignment and a ledger reading `applied`.
 
 **Two builds under this one spec.**
 
@@ -227,6 +230,8 @@ Seven findings from design review, all accepted and folded in above:
 7. Mission grouping is by `needs_attention`, independent of engine status.
 
 Three end-to-end acceptance scenarios were added to Section 5.
+
+Second review, four more, all accepted: (8) `rev` serves the note only and writing the note never bumps it; applying is judged by a separate action fingerprint, so an ordinary yes cannot go stale. (9) Applying is claimed then completed, recorded separately, idempotent by ask id, with sweep-driven recovery of an interrupted claim; only `applied` means the work was done. (10) An ask's `what` is a fixed commitment; wording is editable, the commitment is not; "Change the ask" withdraws and re-creates with rebound (or deliberately unbound) `unlocks`. (11) Legacy asks link by `event_id` + `event_start`; `situation_id` only on a fingerprint match; cards match asks by the same pair; legacy buttons resolve by `legacy_id`. Scenarios 4 and 5 added.
 
 ## Out of scope (named so they stay out)
 
