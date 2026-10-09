@@ -507,6 +507,7 @@ def make_plan(insight_id: str, actor: dict = None,
     plan = {'created_ts': time.time(), 'steps': steps}
     storage.update_mind_insight(insight_id, {'plan_json': plan,
                                              'state': 'in_hand'})
+    _touched_insight(insight_id)
     return {'status': 'planned', 'plan': plan}
 
 
@@ -608,7 +609,16 @@ def close_step(insight_id: str, step_id: str, status: str) -> dict:
 
     if not storage.mutate_mind_insight(insight_id, _apply):
         return {'status': 'not_found'}
+    _touched_insight(insight_id)
     return {'status': 'success', **out}
+
+
+def _touched_insight(insight_id: str) -> None:
+    """The situations layer writes the row's rev and asks for a status note
+    (spec 2026-10-09-situations-design §1). Lazy import: situations imports
+    this module for visible_insights."""
+    from services import situations as _sit
+    _sit.touched('insight', insight_id)
 
 
 def steps_due(row: dict, today: datetime.date = None) -> list:
@@ -994,8 +1004,9 @@ def deep_think(now: datetime.datetime = None, force: bool = False) -> dict:
                 'resolved_ts': None, 'created_ts': time.time(),
                 'plan_json': None, 'proposal_json': None,
                 'snoozed_until': None})
+            _touched_insight(existing['id'])
         else:
-            storage.add_mind_insight(fields)
+            _touched_insight(storage.add_mind_insight(fields))
 
     storage.consume_mind_noticings([r['id'] for r in fresh_noticings])
     storage.set_app_state('mind_last_snapshot_hash', h)

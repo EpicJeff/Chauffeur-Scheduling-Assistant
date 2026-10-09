@@ -89,6 +89,16 @@
                         <input type="number" min="0" x-model.number="s.mind_cap_handle" @change="save()"
                             class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
                     </div>
+                    <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                        <div class="text-xs font-semibold text-gray-400 mb-1">Daily status-note cap</div>
+                        <input type="number" min="0" x-model.number="s.situation_cap_notes" @change="save()"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
+                    </div>
+                    <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                        <div class="text-xs font-semibold text-gray-400 mb-1">Daily ask-draft cap</div>
+                        <input type="number" min="0" x-model.number="s.ask_cap_drafts" @change="save()"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
+                    </div>
                 </div>
                 <p class="text-[11px] text-gray-500 -mt-2 px-1">
                     Hard ceilings on LLM calls per day for the think / sentinel / promote
@@ -374,6 +384,7 @@
                     mind_think_cadence_min: 60, mind_sentinel_cadence_s: 120,
                     mind_max_insights: 7, mind_cap_think: 20, mind_cap_sentinel: 400,
                     mind_cap_promote: 50, mind_cap_handle: 30, mind_direct_categories: [],
+                    situation_cap_notes: 60, ask_cap_drafts: 40,
                     negotiation_enabled: true, negotiation_sweep_budget: 8,
                     negotiation_deep_budget: 40, negotiation_shift_mins: 15,
                     negotiation_solve_seconds: 2
@@ -613,6 +624,8 @@
                                 mind_cap_sentinel: Math.max(0, parseInt(this.s.mind_cap_sentinel, 10) || 0),
                                 mind_cap_promote: Math.max(0, parseInt(this.s.mind_cap_promote, 10) || 0),
                                 mind_cap_handle: Math.max(0, parseInt(this.s.mind_cap_handle, 10) || 0),
+                                situation_cap_notes: Math.max(0, parseInt(this.s.situation_cap_notes, 10) || 0),
+                                ask_cap_drafts: Math.max(0, parseInt(this.s.ask_cap_drafts, 10) || 0),
                                 negotiation_enabled: !!this.s.negotiation_enabled,
                                 negotiation_sweep_budget: Math.max(1, parseInt(this.s.negotiation_sweep_budget, 10) || 8),
                                 negotiation_deep_budget: Math.max(1, parseInt(this.s.negotiation_deep_budget, 10) || 40),

@@ -5643,6 +5643,8 @@ def missions_answer(mission_id: str, body: dict = Body(default={}),
                                           'result_json': {'text': text}})
     if row.get('status') == 'waiting_user':
         storage.update_mission(mission_id, {'status': 'running'})
+    from services import situations as _sit
+    _sit.touched('mission', mission_id)
     return {"status": "success"}
 
 
@@ -5654,6 +5656,8 @@ def missions_drop(mission_id: str, body: dict = Body(default={}),
         raise HTTPException(status_code=404, detail="No such mission")
     import time as _t
     storage.update_mission(mission_id, {'status': 'dropped', 'finished_at': _t.time()})
+    from services import situations as _sit
+    _sit.touched('mission', mission_id)
     return {"status": "success"}
 
 

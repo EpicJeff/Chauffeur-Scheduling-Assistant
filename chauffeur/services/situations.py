@@ -566,8 +566,176 @@ def _run(kind, sid, verb, p, actor, row) -> dict:
     return _refused("That is not something I can do here.")
 
 
-# --- refresh (filled in by the next task) ------------------------------------
+# --- refresh: Argyle's note, on state change only ----------------------------
+
+REFRESH_DELAY_S = 2.0
+NOTE_TIMEOUT_S = 20
+CAP_NOTES_DEFAULT = 60
+
+NOTE_SYSTEM = (
+    "You are Argyle, a family home's assistant. You are shown ONE thing that "
+    "needs a person: its facts, recent history and open asks. Write "
+    "status_note: one or two plain sentences on where it stands (no advice, "
+    "no praise). Then options: up to 3 concrete next moves, each with a verb "
+    "from this closed list and ONLY this list: advance (payload next_action, "
+    "next_action_at YYYY-MM-DD), draft (payload text: what the message should "
+    "say), research (payload text: the question), close (payload state "
+    "done|dropped). A move names a person or a thing. Return STRICT JSON: "
+    '{"status_note": "...", "options": [{"label": "...", "verb": "...", '
+    '"payload": {}}]}. Never invent facts.'
+)
+
+_pending: dict = {}
+_pending_lock = threading.Lock()
+
+
+def _pool_call(tier, api_key, system, prompt, **kw):
+    """Indirection so tests stub one attribute (mind.py precedent)."""
+    from services import model_pools
+    return model_pools.call_pool_json(tier, api_key, system, prompt, **kw)
+
+
+def _bump_call(kind: str, cap: int) -> bool:
+    day = datetime.date.today().isoformat()
+    key = f'situation_calls:{day}'
+    counts = dict(storage.get_app_state(key) or {})
+    if int(counts.get(kind, 0)) >= cap:
+        return False
+    counts[kind] = int(counts.get(kind, 0)) + 1
+    storage.set_app_state(key, counts)
+    return True
+
+
+def _count_held(kind: str):
+    day = datetime.date.today().isoformat()
+    key = f'situation_held:{day}'
+    counts = dict(storage.get_app_state(key) or {})
+    counts[kind] = int(counts.get(kind, 0)) + 1
+    storage.set_app_state(key, counts)
+
+
+def held_notes_today() -> int:
+    day = datetime.date.today().isoformat()
+    return int((storage.get_app_state(f'situation_held:{day}') or {}).get('note', 0))
+
+
+def _facts(kind: str, row: dict) -> str:
+    lines = [f"kind: {kind}", f"state: {_state(kind, row)}",
+             f"since: {_fmt_day(_since(kind, row))}", f"people: {', '.join(_people(kind, row)) or '-'}"]
+    if kind == 'thread':
+        lines.append(f"title: {row.get('title')}; goal: {row.get('goal') or '-'}; "
+                     f"counterparty: {row.get('counterparty_name') or '-'}; "
+                     f"next: {row.get('next_action') or '-'} ({row.get('next_action_at') or 'no date'})")
+        for h in (row.get('history') or [])[-10:]:
+            lines.append(f"- [{h.get('kind')}] {_fmt_day(h.get('ts'))} {h.get('who') or ''}: {(h.get('text') or '')[:200]}")
+    elif kind == 'mission':
+        lines.append(f"goal: {row.get('goal')}; summary: {row.get('summary') or '-'}; error: {row.get('error') or '-'}")
+        for s in (row.get('steps') or [])[-10:]:
+            lines.append(f"- [{s.get('kind')}] {s.get('name')}: {json.dumps(s.get('result_json') or {})[:200]}")
+    elif kind == 'finding':
+        lines.append(f"line: {row.get('line')}; severity: {row.get('severity')}; due: {_fmt_day(row.get('due_at'))}")
+    else:
+        lines.append(f"line: {row.get('line')}; detail: {row.get('detail') or '-'}; approach: {row.get('approach') or '-'}")
+        for s in ((row.get('plan_json') or {}).get('steps') or []):
+            lines.append(f"- step [{s.get('status')}] {s.get('text')}")
+    from services import asks as _asks
+    for a in _asks.asks_for(kind, row['id'], row):
+        lines.append(f"- ask {a.get('to_name')} by {a.get('channel')}: {a.get('what')} -> {a.get('state')}"
+                     f"{(' / ' + a['outcome']) if a.get('outcome') else ''}")
+    return '\n'.join(lines)
+
+
+def _write_fallback(kind, sid, row):
+    _update(kind, sid, {'status_note': fallback_note(kind, row), 'next_steps': [],
+                        'note_ts': time.time(), 'note_rev': int(row.get('rev') or 0),
+                        'note_source': 'fallback'})
+
+
+def refresh(kind: str, sid: str) -> dict:
+    """One call, synchronous. Captures rev first; a result for an older rev is
+    thrown away. Writing the note never bumps rev."""
+    row = load(kind, sid)
+    if not row:
+        return {'status': 'not_found'}
+    settings = storage.get_settings() or {}
+    api_key = settings.get('llm_gemini_api_key', '')
+    if not api_key:
+        _write_fallback(kind, sid, row)
+        return {'status': 'no_key'}
+    cap = int(settings.get('situation_cap_notes', CAP_NOTES_DEFAULT))
+    if not _bump_call('note', cap):
+        _count_held('note')
+        _write_fallback(kind, sid, row)
+        return {'status': 'capped'}
+    rev_at_start = int(row.get('rev') or 0)
+    try:
+        res = _pool_call('interactive', api_key, NOTE_SYSTEM, _facts(kind, row),
+                         timeout_s=NOTE_TIMEOUT_S, background=True, workflow='situations.note')
+    except Exception as e:
+        logger.warning(f"[situations] note call failed for {kind}/{sid}: {e}")
+        res = None
+    if not isinstance(res, dict) or not (res.get('status_note') or '').strip():
+        _write_fallback(kind, sid, row)
+        return {'status': 'fallback'}
+    fresh = load(kind, sid) or {}
+    if int(fresh.get('rev') or 0) != rev_at_start:
+        request_refresh(kind, sid)
+        return {'status': 'superseded'}
+    options = []
+    for i, o in enumerate(res.get('options') or []):
+        verb = (o or {}).get('verb')
+        if verb not in ('advance', 'draft', 'research', 'close'):
+            continue
+        payload = dict((o.get('payload') or {}))
+        if verb == 'close' and payload.get('state') not in ('done', 'dropped'):
+            continue
+        options.append({'id': f"{verb}:argyle:{i}", 'label': (o.get('label') or verb)[:120],
+                        'verb': verb, 'payload': payload})
+    _update(kind, sid, {'status_note': res['status_note'].strip()[:400], 'next_steps': options,
+                        'note_ts': time.time(), 'note_rev': rev_at_start, 'note_source': 'argyle'})
+    return {'status': 'noted'}
+
 
 def request_refresh(kind: str, sid: str) -> None:
-    """Placeholder until the refresh task lands; the act path calls it."""
-    return None
+    """Coalesced: repeat requests inside REFRESH_DELAY_S for the same row
+    collapse to one call, run on a timer thread so the mutator never waits."""
+    key = (kind, sid)
+    if REFRESH_DELAY_S <= 0:
+        # Tests: no timer thread, no race with flush_refreshes.
+        _run_pending(key)
+        return
+    with _pending_lock:
+        old = _pending.pop(key, None)
+        if old:
+            old.cancel()
+        t = threading.Timer(REFRESH_DELAY_S, _run_pending, args=(key,))
+        t.daemon = True
+        _pending[key] = t
+        t.start()
+
+
+def _run_pending(key):
+    with _pending_lock:
+        _pending.pop(key, None)
+    try:
+        refresh(*key)
+    except Exception as e:
+        logger.warning(f"[situations] refresh failed for {key}: {e}")
+
+
+def flush_refreshes() -> int:
+    """Tests only: run everything pending now, on this thread."""
+    with _pending_lock:
+        keys = list(_pending)
+        for t in _pending.values():
+            t.cancel()
+        _pending.clear()
+    for key in keys:
+        _run_pending(key)
+    return len(keys)
+
+
+def touched(kind: str, sid: str) -> None:
+    """A mutator says the row moved: bump rev, ask for a note."""
+    bump_rev(kind, sid)
+    request_refresh(kind, sid)

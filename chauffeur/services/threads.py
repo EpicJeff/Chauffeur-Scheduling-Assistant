@@ -177,6 +177,8 @@ def send_drafted(thread_id: str, subject: str, body: str, to: str,
         'who': who,
     })
     storage.update_thread(thread_id, {'state': 'waiting'})
+    from services import situations as _sit
+    _sit.touched('thread', thread_id)
     return {'status': 'ok'}
 
 
@@ -241,6 +243,8 @@ def research(thread_id: str, question: str) -> dict:
         'text': text,
         'who': 'argyle',
     })
+    from services import situations as _sit
+    _sit.touched('thread', thread_id)
     return {'status': 'ok', 'answer': answer, 'facts': facts,
             'sources': sources, 'dropped': result.get('dropped') or 0}
 
@@ -302,6 +306,8 @@ def create(title: str, owner_member_id: str = None, goal: str = '',
         'text': f'Opened: {title}',
         'who': created_by,
     })
+    from services import situations as _sit
+    _sit.touched('thread', thread_id)
     return thread_id
 
 
@@ -330,6 +336,8 @@ def advance(thread_id: str, next_action: str, next_action_at: str = None,
         'text': text,
         'who': who,
     })
+    from services import situations as _sit
+    _sit.touched('thread', thread_id)
     return True
 
 
@@ -341,7 +349,11 @@ def note(thread_id: str, text: str, who: str = None, url: str = None) -> bool:
     entry = {'kind': 'note', 'text': text, 'who': who}
     if url:
         entry['url'] = url
-    return storage.append_thread_history(thread_id, entry)
+    ok = storage.append_thread_history(thread_id, entry)
+    if ok:
+        from services import situations as _sit
+        _sit.touched('thread', thread_id)
+    return ok
 
 
 def close(thread_id: str, state: str = 'done', who: str = None) -> bool:
@@ -359,6 +371,8 @@ def close(thread_id: str, state: str = 'done', who: str = None) -> bool:
         'text': f'Closed as {state}',
         'who': who,
     })
+    from services import situations as _sit
+    _sit.touched('thread', thread_id)
     return True
 
 

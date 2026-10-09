@@ -133,13 +133,15 @@ def reconcile(found, scanned_kinds, now_ts: float = None) -> dict:
             if existing['fingerprint'] == fp:
                 continue       # settled; the words may differ, the subject does not
             reopened += 1
-        storage.add_finding({
+        new_id = storage.add_finding({
             'identity': ident, 'kind': f.kind, 'severity': f.severity,
             'line': f.line, 'subject_type': f.subject_type,
             'subject_id': f.subject_id, 'due_at': f.due_at,
             'proposal_id': f.proposal_id, 'fingerprint': fp,
             'created_at': now_ts, 'last_seen_at': now_ts, 'state': 'open'})
         opened += 1
+        from services import situations as _sit
+        _sit.touched('finding', new_id)
 
     closed = expired = 0
     for row in storage.get_findings(state='open') + storage.get_findings(state='in_hand'):

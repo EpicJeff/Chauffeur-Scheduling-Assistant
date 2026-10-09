@@ -617,6 +617,13 @@ ENTRIES: List[dict] = [
     _e('mind_direct_categories', 'mind', 'Graduated categories',
        'Insight categories approved for direct delivery (phase B). Empty until '
        'you graduate one from the Mind page.', page='work?tab=mind', anchor='mind-general'),
+    _e('situation_cap_notes', 'mind', 'Daily status-note cap',
+       "Hard ceiling on the one-line status notes Argyle writes when a finding, insight, "
+       "thread or mission changes (default 60). Over the cap the card shows the plain facts.",
+       page='work?tab=mind', anchor='mind-general'),
+    _e('ask_cap_drafts', 'mind', 'Daily ask-draft cap',
+       "Hard ceiling on drafted asks per day (default 40). Over the cap a template draft is used.",
+       page='work?tab=mind', anchor='mind-general'),
 
     # --- Missions (a multi-step agent loop on the paid pro model) ---
     _e('missions_enabled', 'missions', 'Missions',

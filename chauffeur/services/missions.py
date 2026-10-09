@@ -184,6 +184,8 @@ def _close(mission_id: str, status: str, **fields) -> dict:
     if status in ('done', 'blocked', 'dropped'):
         fields.setdefault('finished_at', time.time())
     storage.update_mission(mission_id, fields)
+    from services import situations as _sit
+    _sit.touched('mission', mission_id)
     return storage.get_mission(mission_id)
 
 
@@ -267,6 +269,8 @@ def step(mission: dict) -> dict:
                                        'args_json': res.get('args') or {},
                                        'result_json': {**made,
                                                        'why': res.get('why')}})
+        from services import situations as _sit
+        _sit.touched('mission', mid)
         return storage.get_mission(mid)
 
     if action == 'research':
@@ -364,6 +368,8 @@ def launch(goal: str, origin_kind: str = 'manual', origin_ref=None,
         thread = storage.get_thread(origin_ref)
         if thread:
             _seed_thread_context(mid, thread)
+    from services import situations as _sit
+    _sit.touched('mission', mid)
     logger.info(f"[missions] launched {mid} ({origin_kind}): {goal[:80]}")
     return {'status': 'launched', 'mission_id': mid,
             'message': 'Mission started — watch the Missions page; nothing '

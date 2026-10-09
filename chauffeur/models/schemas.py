@@ -1569,6 +1569,8 @@ class Settings(BaseModel):
     mind_cap_sentinel: Optional[int] = 400
     mind_cap_promote: Optional[int] = 50
     mind_cap_handle: Optional[int] = 30
+    situation_cap_notes: Optional[int] = 60   # situations: status-note calls per day
+    ask_cap_drafts: Optional[int] = 40        # asks: drafted asks per day
     # Insight categories graduated to direct delivery (phase B). Empty until
     # a category is promoted from the Mind page.
     mind_direct_categories: List[str] = Field(default_factory=list)
