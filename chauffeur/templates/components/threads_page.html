@@ -111,6 +111,13 @@
                                     <summary class="text-[11px] text-gray-500 cursor-pointer py-1.5">details</summary>
                                     <div class="space-y-2">
                                         <div class="text-xs text-gray-500" x-show="t.goal" x-text="t.goal"></div>
+                                        <!-- The next action a person set, always visible here even
+                                             when the card's note (Argyle's words) says something else. -->
+                                        <div class="thread-next text-xs text-gray-300" x-show="t.next_action">
+                                            <span class="text-gray-500">Next: </span>
+                                            <span x-text="t.next_action"></span>
+                                            <span class="text-gray-500" x-show="t.next_action_at" x-text="' by ' + fmtDate(t.next_action_at)"></span>
+                                        </div>
                                         <div class="text-[11px] text-gray-500">
                                             <span x-text="counterpartyLabel(t)"></span>
                                             <span class="text-gray-700"> · </span>

@@ -71,6 +71,21 @@ def main():
             check(n_hits['hits'] == 1, f"own fired exactly one act request through two binds, got {n_hits}")
             check(n_hits['extra'], "extraHtml landed inside the card")
             check(not n_hits['details'], "the card draws no empty details element any more")
+            # A date-string due (a thread's next_action_at) is a calendar day,
+            # drawn as that day in every time zone; and a read-only viewer (a
+            # child owner on the House tab) gets no buttons and no extra form.
+            probe = page.evaluate("""() => {
+                const s = { kind: 'thread', id: 'x', title: 'T', state: 'open', due: '2026-10-05', options: [
+                    { id: 'own', verb: 'own', label: 'Mine' }], next_step: { id: 'own', verb: 'own', label: 'Mine' } };
+                const d = document.createElement('div');
+                d.innerHTML = Situations.cardHtml(s, { canWrite: true });
+                const meta = d.querySelector('.situation-card > div:nth-child(2)').textContent;
+                const c = document.createElement('div');
+                c.innerHTML = Situations.cardHtml(s, { canWrite: false, extraHtml: () => '' });
+                return { meta, buttons: c.querySelectorAll('button').length, forms: c.querySelectorAll('form').length };
+            }""")
+            check('Oct 5' in probe['meta'], f"a date-string due is drawn as its own day, got {probe['meta']!r}")
+            check(probe['buttons'] == 0 and probe['forms'] == 0, f"a read-only viewer gets no buttons or forms: {probe}")
             check(not b.errors, f"script errors: {b.errors}")
     finally:
         served.stop()

@@ -20,6 +20,7 @@ from services import storage
 logger = logging.getLogger(__name__)
 
 KINDS = ('finding', 'insight', 'thread', 'mission')
+MISSION_HISTORY_CAP = 60      # the terminal rows /api/missions/admin ships; the lane matches it
 VERBS = frozenset({'assign', 'ask', 'plan', 'prepare', 'do', 'done', 'skip',
                    'research', 'draft', 'advance', 'answer', 'close', 'snooze',
                    'dismiss', 'own'})
@@ -392,8 +393,22 @@ def _rows_of(kind: str, include_done: bool) -> list:
     if kind == 'thread':
         return [('thread', t['id']) for t in storage.get_threads(include_closed=include_done)]
     if kind == 'mission':
-        return [('mission', m['id']) for m in storage.get_missions()
-                if include_done or m.get('status') not in ('dropped',)]
+        # Live rows always; terminal rows capped to the same 60 newest that
+        # /api/missions/admin ships (get_missions is newest-first), so every
+        # card on /missions has its details row and a 15-second poll never
+        # views the whole retention window.
+        # A done/blocked row still gets viewed without include_done: one with
+        # a decision left behind is live (group 'now'), and the caller drops
+        # the rest by group. Only 'dropped' is skipped outright.
+        out, terminal = [], 0
+        for m in storage.get_missions():
+            st = m.get('status')
+            if st in ('done', 'blocked', 'dropped'):
+                if (st == 'dropped' and not include_done) or terminal >= MISSION_HISTORY_CAP:
+                    continue
+                terminal += 1
+            out.append(('mission', m['id']))
+        return out
     return []
 
 

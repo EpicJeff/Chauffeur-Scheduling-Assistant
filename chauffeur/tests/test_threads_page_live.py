@@ -92,6 +92,18 @@ def main():
             from services import mailer
             check(mailer._test_sent and mailer._test_sent[-1][2] == 'TYPED BY A PERSON',
                   f"send posted the box, got {mailer._test_sent}")
+            # The next action a person set is visible in the details header,
+            # whatever the card's note says.
+            check('email the inspector' in page.locator('#threads details .thread-next').first.text_content(),
+                  "the details show the next action")
+            # A quiet close on the card asks first: there is no reopen.
+            pool = page.locator('#threads .situation-card:has-text("Pool opening")').first
+            pool.locator('button:has-text("Done with it")').first.click()
+            page.wait_for_selector('#cc-confirm-modal:visible', timeout=5000)
+            page.locator('#cc-confirm-cancel-btn:visible').first.click()
+            page.wait_for_timeout(500)
+            pool_row = [t for t in storage.get_threads(include_closed=True) if t['title'] == 'Pool opening'][0]
+            check(pool_row['state'] == 'waiting', f"cancel keeps the thread open: {pool_row['state']}")
             # Nothing lost: Work this, Edit, Add note, Research still reachable.
             for label in ('Work this', 'Edit', 'Add note', 'Research'):
                 check(page.locator(f'details button:has-text("{label}")').count() >= 1, f"{label} still has a home")

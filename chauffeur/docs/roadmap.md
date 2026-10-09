@@ -41,7 +41,7 @@ routines + streaks · rewards store with parent-approved redemptions.
   and insights as one ranked list of situations on /mind, the PWA Family tab
   and the board tile, drawn by one card builder (`static/situations.js`).
   Spec: `docs/superpowers/specs/2026-10-09-situations-design.md`.
-  Build 2 SHIPPED v2.499.315–.320: /threads and /missions redrawn on the
+  Build 2 SHIPPED v2.499.315–.321: /threads and /missions redrawn on the
   same card (the old forms kept in details), the PWA House tab's threads,
   and the watcher DM heads-up naming each finding's next step and asks.
 

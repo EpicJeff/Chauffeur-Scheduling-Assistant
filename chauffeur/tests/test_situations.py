@@ -268,6 +268,26 @@ def scenario_mission_since_is_its_last_step_not_the_note():
 SCENARIOS += [scenario_snoozed_finding_leaves_the_lane, scenario_a_dismissed_finding_cannot_be_taken_back_by_own,
               scenario_an_adult_cannot_act_on_a_parents_only_insight, scenario_mission_since_is_its_last_step_not_the_note]
 
+
+def scenario_done_missions_are_capped_like_the_admin_history():
+    """The lane's history is the same 60 newest terminal rows /api/missions/admin
+    ships (so every card has its details), and the poll never views the whole
+    retention window; live rows are never dropped by the cap."""
+    _reset()
+    for i in range(70):
+        storage.add_mission({'goal': f'old {i}', 'status': 'done', 'created_by': 'mom', 'tier': 'flash',
+                             'origin_kind': 'manual', 'step_count': 0, 'created_at': 1000.0 + i})
+    live = storage.add_mission({'goal': 'live', 'status': 'running', 'created_by': 'mom', 'tier': 'flash',
+                                'origin_kind': 'manual', 'step_count': 0, 'created_at': 1.0})
+    rows = situations.list_situations({'id': 'mom', 'role': 'parent'}, kinds=('mission',), include_done=True)
+    done = [s for s in rows if s['group'] == 'done']
+    check(len(done) == 60, f"60 newest terminal rows, got {len(done)}")
+    check('old 0' not in {s['title'] for s in done} and 'old 69' in {s['title'] for s in done}, "the newest kept, the oldest dropped")
+    check(any(s['id'] == live for s in rows), "the oldest LIVE row still shows")
+
+
+SCENARIOS += [scenario_done_missions_are_capped_like_the_admin_history]
+
 if __name__ == "__main__":
     import traceback
     failed = 0

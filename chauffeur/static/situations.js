@@ -50,7 +50,12 @@ window.Situations = (function () {
 
   function dueLabel(due) {
     if (!due) return '';
-    const ts = typeof due === 'number' ? due : Date.parse(due) / 1000;
+    // A bare date (a thread's next_action_at) is a calendar day: parse it as
+    // LOCAL midnight, or Date.parse's UTC midnight shows the day before
+    // anywhere west of Greenwich.
+    const ts = typeof due === 'number' ? due
+      : /^\d{4}-\d{2}-\d{2}$/.test(due) ? new Date(due + 'T00:00:00').getTime() / 1000
+      : Date.parse(due) / 1000;
     return isNaN(ts) ? String(due) : when(ts);
   }
 
@@ -93,6 +98,11 @@ window.Situations = (function () {
 
   async function act(s, option, ctx) {
     const payload = {};
+    // Closing is the one verb with no way back (a closed thread cannot be
+    // reopened), so it asks first wherever the card is drawn.
+    if (option.verb === 'close' && window.promptConfirm) {
+      if (!await promptConfirm(`${option.label}?`, s.title, option.label, 'Keep it')) return;
+    }
     if (['advance', 'answer', 'draft', 'research'].includes(option.verb)) {
       const ask = { advance: 'What is the next step?', answer: 'Your answer', draft: 'What should the message say?', research: 'What should I look up?' }[option.verb];
       const text = window.promptInput ? await promptInput(ask, '') : null;
