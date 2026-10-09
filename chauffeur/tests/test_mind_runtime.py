@@ -67,7 +67,7 @@ def scenario_full_cycle():
     check(res.get('think', {}).get('status') == 'thought', f"cycle ran: {res}")
 
     tile = home_board._tile_mind(datetime.datetime.now())
-    lines = [i['line'] for i in tile['insights']]
+    lines = [s['title'] for s in tile['situations']]
     check('Sunscreen keeps running out' in lines, "insight reaches the board tile")
     check('Rough week for a kid' not in lines, "sensitive never reaches a board")
 

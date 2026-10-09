@@ -36,6 +36,12 @@ routines + streaks · rewards store with parent-approved redemptions.
 
 ## Next-up candidates (no platform prerequisites)
 
+- **Needs you lane — SHIPPED v2.499.311 (2026-10-09).** The Needs You tile
+  that the findings arc left unbuilt landed as the Needs-you lane: findings
+  and insights as one ranked list of situations on /mind, the PWA Family tab
+  and the board tile, drawn by one card builder (`static/situations.js`).
+  Spec: `docs/superpowers/specs/2026-10-09-situations-design.md`.
+
 - **Agent tools for the family hub. SHIPPED v2.25.0 (2026-08-01)** — six
   tools in both stacks (send/read family messages + DMs with full push
   fan-out, list/claim chores, routine status), PWA sender identity trusted
