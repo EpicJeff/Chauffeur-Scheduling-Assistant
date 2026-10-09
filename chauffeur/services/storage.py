@@ -3031,34 +3031,41 @@ def prune_missions(before_ts: float) -> int:
 
 # --- Coverage asks (findings arc, slice 2) ---
 
+# --- coverage_asks: READ-ONLY legacy since v2.499.308. The ledger is `asks`
+# (services/asks.py); these readers map an asks row back to the shape the
+# coverage ladder, the nudge loop and the old DM buttons were written for.
+
+_ASK_TO_LEGACY = {'drafted': 'waiting', 'sent': 'waiting', 'no': 'declined',
+                  'withdrawn': 'declined', 'expired': 'expired'}
+
+def _legacy_ask_view(a: dict) -> dict:
+    state = _ASK_TO_LEGACY.get(a.get('state'), 'waiting')
+    if a.get('state') == 'yes':
+        state = 'covered' if a.get('outcome') == 'applied' else 'waiting'
+    return {'id': a['id'], 'event_id': a.get('event_id'), 'event_title': a.get('event_title'),
+            'event_date': a.get('event_date'), 'event_start': a.get('event_start'),
+            'contact_id': a.get('to_contact_id') or '', 'contact_name': a.get('to_name') or '',
+            'asked_by': a.get('asked_by') or '', 'state': state,
+            'asked_at': a.get('sent_at') or a.get('asked_at'), 'nudges_sent': a.get('nudges_sent') or 0,
+            'rearmed_at': a.get('rearmed_at'), 'resolved_at': a.get('answered_at'),
+            'resolved_by': a.get('answered_by') or '', 'legacy_id': a.get('legacy_id')}
+
 def get_coverage_asks(state: str = None, event_id: str = None) -> List[dict]:
-    with db_lock:
-        rows = [dict(a) for a in coverage_asks_table.all()]
+    rows = [_legacy_ask_view(a) for a in get_asks(event_id=event_id) if a.get('event_id')]
     if state:
         rows = [a for a in rows if a.get('state') == state]
-    if event_id:
-        rows = [a for a in rows if a.get('event_id') == event_id]
     rows.sort(key=lambda a: a.get('asked_at') or 0)
     return rows
 
 def get_coverage_ask(ask_id: str) -> Optional[dict]:
-    if not ask_id:
-        return None
-    with db_lock:
-        res = coverage_asks_table.search(Query().id == ask_id)
-        return dict(res[0]) if res else None
+    a = get_ask(ask_id) or get_ask_by_legacy_id(ask_id)
+    return _legacy_ask_view(a) if a else None
 
 def add_coverage_ask(data: dict) -> str:
-    import uuid as _uuid
-    row = {'id': _uuid.uuid4().hex, 'asked_at': time.time(), 'state': 'waiting',
-           'nudges_sent': 0, **data}
-    with db_lock:
-        coverage_asks_table.insert(row)
-    return row['id']
+    raise RuntimeError('coverage_asks is read-only since v2.499.308; use asks')
 
 def update_coverage_ask(ask_id: str, data: dict) -> bool:
-    with db_lock:
-        return bool(coverage_asks_table.update(data, Query().id == ask_id))
+    raise RuntimeError('coverage_asks is read-only since v2.499.308; use asks')
 
 # --- Asks: the one ledger of who was asked what, by which channel, and what
 # came back (spec: docs/superpowers/specs/2026-10-09-situations-design.md §2).

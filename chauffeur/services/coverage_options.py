@@ -213,10 +213,9 @@ def ladder(ev, cache=None, now=None) -> dict:
 
     # An ask already out for this event is the answer — the ladder must not
     # re-offer a rung the family is already standing on.
-    waiting = [a for a in storage.get_coverage_asks(state='waiting')
-               if str(a.get('event_id')) == ev_id]
+    waiting = storage.get_asks(event_id=ev_id, state='sent')
     if waiting:
-        who = waiting[0].get('contact_name') or 'someone'
+        who = waiting[0].get('to_name') or 'someone'
         return {'tier': 0, 'line': f"⏳ {title} ({when}) — asked {who}, waiting to hear back.",
                 'reasons': [], 'driver': None, 'contacts': [], 'actions': [],
                 'severity': 'fyi', 'ask_id': waiting[0].get('id')}
@@ -280,8 +279,11 @@ FINAL_NUDGE_LEAD_HOURS = 18        # ... and once more before the event itself
 
 def start_ask(event_id: str, contact_id: str = None, contact_name: str = None,
               asked_by: str = None) -> dict:
-    """Record that a parent is asking somebody. Returns the drafted text — the
-    parent sends it themselves, from their own phone, in their own thread."""
+    """Record that a parent is asking somebody. Returns the drafted text; the
+    parent sends it themselves. Since v2.499.308 this is an adapter over
+    services.asks: a text-channel ask, template-drafted (no LLM call on this
+    path), sent at once."""
+    from services import asks as _asks
     cache = storage.get_cached_schedule() or {}
     ev = next((e for e in (cache.get('events') or [])
                if str(e.get('id')) == str(event_id)), None)
@@ -290,13 +292,24 @@ def start_ask(event_id: str, contact_id: str = None, contact_name: str = None,
     contact = storage.get_assist_contact(contact_id) if contact_id else None
     name = contact_name or (contact or {}).get('name') or ''
     start = _parse(ev.get('start'))
-    ask_id = storage.add_coverage_ask({
-        'event_id': str(event_id), 'event_title': ev.get('title') or '',
-        'event_date': start.date().isoformat() if start else '',
-        'event_start': ev.get('start') or '',
-        'contact_id': contact_id or '', 'contact_name': name,
-        'asked_by': asked_by or '', 'state': 'waiting'})
-    # Needing an outside hand at all is friction (services/vitals.py) — a ride
+    title = ev.get('title') or 'an event'
+    when = f" {start.strftime('%A')} at {start.strftime('%I:%M %p').lstrip('0')}" if start else ''
+    fp = _asks.fingerprint_for_event(str(event_id))
+    finding = storage.get_finding_by_identity(f"unassigned:{event_id}")
+    sid = finding['id'] if finding and finding.get('fingerprint') == fp \
+        and finding.get('state') in ('open', 'in_hand') else None
+    res = _asks.create('finding', sid, {'name': name, 'contact_id': contact_id}, f"take {title}{when}",
+                       'text', asked_by or '', draft_mode='template', event=ev, trusted=True,
+                       unlocks={'action_type': 'assist_assignment',
+                                'payload': {'event_id': str(event_id), 'contact_id': contact_id or '',
+                                            'event_title': title,
+                                            'event_date': start.date().isoformat() if start else ''},
+                                'fingerprint': fp})
+    if res.get('status') != 'success':
+        return res
+    ask = res['ask']
+    _asks.mark_sent(ask['id'], storage.get_member(asked_by or '') or {'id': asked_by or '', 'role': 'parent'})
+    # Needing an outside hand at all is friction (services/vitals.py): a ride
     # the family could not cover itself. Counting never breaks the asking.
     try:
         import datetime as _dt
@@ -304,63 +317,60 @@ def start_ask(event_id: str, contact_id: str = None, contact_name: str = None,
     except Exception:
         pass
     text = draft_ask(ev, name or None)
-    return {'status': 'success', 'ask_id': ask_id, 'text': text,
+    return {'status': 'success', 'ask_id': ask['id'], 'text': text,
             'message': f"Asked{' ' + name if name else ''} — I'll check back. "
                        f"Send this:\n\n{text}"}
 
 
 def answer_ask(ask_id: str, answer: str, member_id: str = None,
                contact_name: str = None) -> dict:
-    """covered | no | waiting | undo. 'covered' writes the assist assignment,
-    which is what actually takes the event out of the solve and closes the
-    finding on the next sweep."""
-    ask = storage.get_coverage_ask(ask_id)
+    """covered | no | waiting | undo: the legacy vocabulary, over the asks
+    ledger. 'covered' is a reported yes, which applies (once) the assist
+    assignment that takes the event out of the solve."""
+    from services import asks as _asks
+    ask = storage.get_ask(ask_id) or storage.get_ask_by_legacy_id(ask_id)
     if not ask:
         return {'status': 'error', 'message': 'That ask is no longer here.'}
-    name = contact_name or ask.get('contact_name') or 'They'
+    actor = storage.get_member(member_id or '') or {'id': member_id, 'role': 'parent'}
+    name = contact_name or ask.get('to_name') or 'They'
 
     if answer == 'waiting':
-        # Re-arm rather than resolve: still waiting is an answer about the ask,
-        # not about the drive.
-        storage.update_coverage_ask(ask_id, {'nudges_sent': 0,
-                                             'rearmed_at': _now_ts()})
+        storage.update_ask(ask['id'], {'nudges_sent': 0, 'rearmed_at': _now_ts()})
         return {'status': 'success', 'message': "Fine — I'll ask again later."}
 
     if answer == 'undo':
-        if ask.get('contact_id'):
+        if ask.get('to_contact_id') and ask.get('event_id'):
             storage.clear_assist_assignment(ask['event_id'], actor=member_id)
-        storage.update_coverage_ask(ask_id, {'state': 'waiting', 'resolved_at': None,
-                                             'nudges_sent': 0})
+        storage.update_ask(ask['id'], {'state': 'sent', 'answered_at': None, 'answered_by': None,
+                                       'outcome': None, 'applied_at': None, 'nudges_sent': 0,
+                                       'rearmed_at': _now_ts()})
         return {'status': 'success', 'message': 'Undone — still waiting to hear.'}
 
     if answer == 'no':
-        storage.update_coverage_ask(ask_id, {'state': 'declined',
-                                             'resolved_at': _now_ts(),
-                                             'resolved_by': member_id or ''})
+        res = _asks.answer(ask['id'], 'no', actor, reported=True)
+        if res.get('status') != 'success':
+            return res
         return {'status': 'success', 'message': f"OK — {name} can't. Back to the list."}
 
     if answer != 'covered':
         return {'status': 'error', 'message': f"Unknown answer '{answer}'."}
 
-    contact_id = ask.get('contact_id')
-    if not contact_id:
+    if not ask.get('to_contact_id'):
         # Somebody new said yes. They become a real contact so that next time
         # they are a tier-2 candidate instead of a blank field.
         import uuid as _uuid
         new_name = (contact_name or '').strip() or 'A friend'
-        contact_id = _uuid.uuid4().hex
-        storage.add_assist_contact({'id': contact_id, 'name': new_name,
-                                    'kinds': ['driving'], 'active': True})
-        storage.update_coverage_ask(ask_id, {'contact_id': contact_id,
-                                             'contact_name': new_name})
+        cid = _uuid.uuid4().hex
+        storage.add_assist_contact({'id': cid, 'name': new_name, 'kinds': ['driving'], 'active': True})
+        unlocks = dict(ask.get('unlocks') or {})
+        unlocks.setdefault('payload', {})['contact_id'] = cid
+        storage.update_ask(ask['id'], {'to_contact_id': cid, 'to_name': new_name, 'unlocks': unlocks})
         name = new_name
-    storage.set_assist_assignment(ask['event_id'], contact_id,
-                                  note='confirmed by text',
-                                  event_date=ask.get('event_date') or '',
-                                  event_title=ask.get('event_title') or '',
-                                  actor=member_id)
-    storage.update_coverage_ask(ask_id, {'state': 'covered', 'resolved_at': _now_ts(),
-                                         'resolved_by': member_id or ''})
+    res = _asks.answer(ask['id'], 'yes', actor, reported=True)
+    if res.get('status') != 'success':
+        return res
+    if res.get('outcome') != 'applied':
+        return {'status': 'success', 'message': res.get('message') or '', 'outcome': res.get('outcome')}
     return {'status': 'success', 'schedule_dirty': True,
             'message': f"✓ {name} has {ask.get('event_title') or 'it'}."}
 
@@ -371,29 +381,32 @@ def _now_ts():
 
 
 def due_nudges(now=None) -> list:
-    """Waiting asks whose next question is due. The cadence is written to match
-    how a text conversation actually goes: soon after sending (most replies
-    land inside the hour), once more that evening, and a last one before the
-    event — after which silence has to be treated as a no."""
+    """Sent event asks whose next question is due; an ask whose event has
+    passed expires here. Same cadence as before: soon after sending (most
+    replies land inside the hour), once more that evening, and a last one
+    before the event, after which silence has to be treated as a no. Rows
+    are legacy-shaped so the push loop in main.py reads them unchanged."""
     now = now or datetime.datetime.now()
     now_ts = now.timestamp()
     out = []
-    for ask in storage.get_coverage_asks(state='waiting'):
-        base = ask.get('rearmed_at') or ask.get('asked_at') or 0
+    for ask in storage.get_asks(state='sent'):
+        if not ask.get('event_id'):
+            continue
+        base = ask.get('rearmed_at') or ask.get('sent_at') or ask.get('asked_at') or 0
         sent = int(ask.get('nudges_sent') or 0)
         start = _parse(ask.get('event_start'))
-        # The event has come and gone — stop asking, and say nothing further.
+        # The event has come and gone: stop asking, and say nothing further.
         if start and start < now:
-            storage.update_coverage_ask(ask['id'], {'state': 'expired',
-                                                    'resolved_at': now_ts})
+            storage.update_ask(ask['id'], {'state': 'expired', 'answered_at': now_ts})
             continue
-        final_due = (start - datetime.timedelta(hours=FINAL_NUDGE_LEAD_HOURS)
-                     if start else None)
+        final_due = (start - datetime.timedelta(hours=FINAL_NUDGE_LEAD_HOURS) if start else None)
+        due = False
         if sent < len(NUDGE_SCHEDULE_HOURS):
-            if now_ts - base >= NUDGE_SCHEDULE_HOURS[sent] * 3600:
-                out.append(ask)
+            due = now_ts - base >= NUDGE_SCHEDULE_HOURS[sent] * 3600
         elif final_due and now >= final_due and sent == len(NUDGE_SCHEDULE_HOURS):
-            out.append(ask)
+            due = True
+        if due:
+            out.append(storage._legacy_ask_view(ask))
     return out
 
 

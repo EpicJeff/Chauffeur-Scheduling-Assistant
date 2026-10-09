@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import time
 from services import storage
 from services.maps import search_places
@@ -402,6 +403,53 @@ async def migrate_shopping_slug_v2351():
                     + ", ".join(touched))
 
 
+async def migrate_coverage_asks_v2499308():
+    """coverage_asks → asks (the one ledger, spec §2). Idempotent by legacy_id.
+    event_id + event_start are the authoritative link; situation_id is set
+    only when a finding exists for that exact occurrence. The old table is
+    left in place, read-only, for one release of recovery."""
+    done = 0
+    with storage.db_lock:
+        legacy = [dict(r) for r in storage.coverage_asks_table.all()]
+    state_map = {'waiting': 'sent', 'covered': 'yes', 'declined': 'no', 'expired': 'expired'}
+    for r in legacy:
+        if storage.get_ask_by_legacy_id(r['id']):
+            continue
+        start = None
+        try:
+            start = datetime.datetime.fromisoformat(
+                str(r.get('event_start') or '').replace('Z', '+00:00')).replace(tzinfo=None)
+        except (TypeError, ValueError):
+            pass
+        fp = f"{r.get('event_id')}|{start.timestamp() if start else ''}"
+        finding = storage.get_finding_by_identity(f"unassigned:{r.get('event_id')}")
+        sid = finding['id'] if finding and finding.get('fingerprint') == fp else None
+        state = state_map.get(r.get('state'), 'sent')
+        storage.add_ask({
+            'legacy_id': r['id'], 'situation_kind': 'finding', 'situation_id': sid,
+            'event_id': str(r.get('event_id') or ''), 'event_start': r.get('event_start') or '',
+            'event_title': r.get('event_title') or '', 'event_date': r.get('event_date') or '',
+            'to_name': r.get('contact_name') or '', 'to_contact_id': r.get('contact_id') or None,
+            'to_member_id': None, 'what': f"take {r.get('event_title') or 'the ride'}",
+            'channel': 'text', 'asked_by': r.get('asked_by') or '',
+            'asked_at': r.get('asked_at') or time.time(), 'sent_at': r.get('asked_at'),
+            'state': state, 'nudges_sent': int(r.get('nudges_sent') or 0),
+            'rearmed_at': r.get('rearmed_at'), 'answered_at': r.get('resolved_at'),
+            'answered_by': r.get('resolved_by') or None,
+            'outcome': 'applied' if state == 'yes' else None,
+            'applied_at': r.get('resolved_at') if state == 'yes' else None,
+            'unlocks': {'action_type': 'assist_assignment',
+                        'payload': {'event_id': str(r.get('event_id') or ''),
+                                    'contact_id': r.get('contact_id') or '',
+                                    'event_title': r.get('event_title') or '',
+                                    'event_date': r.get('event_date') or ''},
+                        'fingerprint': fp},
+            'draft_body': '', 'draft_subject': '', 'draft_source': 'template', 'link': None})
+        done += 1
+    if done:
+        logger.info(f"v2.499.308 coverage_asks migration: {done} asks carried into the ledger")
+
+
 async def run_all_migrations():
     """Runs all data migrations in the background after startup"""
     await asyncio.sleep(5) # Let the app start up completely
@@ -429,6 +477,10 @@ async def run_all_migrations():
         await migrate_clip_playback_v21311()
     except Exception as e:
         logger.error(f"Error running clip playback migration: {e}")
+    try:
+        await migrate_coverage_asks_v2499308()
+    except Exception as e:
+        logger.error(f"Error running coverage asks migration: {e}")
     # LAST: the two above write media, so let them settle before relocating.
     try:
         await migrate_media_layout_v2660()

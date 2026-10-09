@@ -22,7 +22,7 @@ THU = (NOON + datetime.timedelta(days=1)).replace(hour=17)
 def _reset():
     for t in (storage.members_table, storage.drivers_table, storage.cache_table,
               storage.assist_contacts_table, storage.assist_assignments_table,
-              storage.assist_history_table, storage.coverage_asks_table,
+              storage.assist_history_table, storage.coverage_asks_table, storage.asks_table,
               storage.protected_commitments_table, storage.findings_table,
               storage.optional_decisions_table):
         t.truncate()

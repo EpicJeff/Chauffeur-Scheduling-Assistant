@@ -9272,8 +9272,7 @@ def _sweep_coverage_nudges(now=None):
                if m.get('role') == 'parent' and not m.get('system')]
     sent = 0
     for ask in due:
-        storage.update_coverage_ask(ask['id'],
-                                    {'nudges_sent': int(ask.get('nudges_sent') or 0) + 1})
+        storage.update_ask(ask['id'], {'nudges_sent': int(ask.get('nudges_sent') or 0) + 1})
         asker = storage.get_member(ask.get('asked_by') or '') if ask.get('asked_by') else None
         targets = [asker] if asker else parents
         actions = [{"action": "cover_yes", "title": "Covered"},
