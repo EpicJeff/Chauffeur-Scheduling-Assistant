@@ -61,9 +61,9 @@ def scenario_read_tool_dispatches_and_transcribes():
     _reset()
     mid = _mk()
     calls = {}
-    from services import agent_tools
-    orig = agent_tools.execute_tool
-    agent_tools.execute_tool = lambda n, a: calls.setdefault('call', (n, a)) or {'status': 'ok'}
+    from services import agent_tools_v2
+    orig = agent_tools_v2.execute_tool
+    agent_tools_v2.execute_tool = lambda n, a: calls.setdefault('call', (n, a)) or {'status': 'ok'}
     missions._llm = _script(
         {'action': 'tool', 'tool': 'get_current_state', 'args': {}},
         {'action': 'finish', 'summary': 'looked'})
@@ -71,7 +71,7 @@ def scenario_read_tool_dispatches_and_transcribes():
         missions.step(storage.get_mission(mid))
         row = missions.step(storage.get_mission(mid))
     finally:
-        agent_tools.execute_tool = orig
+        agent_tools_v2.execute_tool = orig
     check(calls['call'][0] == 'get_current_state', "read tool really dispatched")
     kinds = [s['kind'] for s in storage.get_mission_steps(mid)]
     check(kinds == ['tool', 'llm'] or kinds == ['tool', 'note', 'llm'] or
@@ -83,16 +83,16 @@ def scenario_write_tool_becomes_proposal_never_executes():
     _reset()
     mid = _mk()
     executed = {}
-    from services import agent_tools
-    orig = agent_tools.execute_tool
-    agent_tools.execute_tool = lambda n, a: executed.setdefault(n, a) or {'status': 'ok'}
+    from services import agent_tools_v2
+    orig = agent_tools_v2.execute_tool
+    agent_tools_v2.execute_tool = lambda n, a: executed.setdefault(n, a) or {'status': 'ok'}
     missions._llm = _script(
         {'action': 'propose', 'tool': 'add_errand', 'args': {'name': 'pick up cake'},
          'summary': 'Add cake pickup errand', 'why': 'party needs cake'})
     try:
         missions.step(storage.get_mission(mid))
     finally:
-        agent_tools.execute_tool = orig
+        agent_tools_v2.execute_tool = orig
     check(not executed, "engine executed NOTHING")
     steps = storage.get_mission_steps(mid)
     prop = [s for s in steps if s['kind'] == 'proposal']
@@ -156,8 +156,8 @@ def scenario_step_cap_blocks():
 
 
 def scenario_read_tools_exist_in_registry():
-    from services import agent_tools
-    missing = missions.READ_TOOLS - set(agent_tools.TOOL_HANDLERS)
+    from services import agent_tools_v2
+    missing = missions.READ_TOOLS - set(agent_tools_v2.TOOL_HANDLERS)
     check(not missing, f"READ_TOOLS all real, missing: {missing}")
     check('send_direct_message' not in missions.proposable_tools()
           and 'send_direct_message' not in missions.READ_TOOLS,

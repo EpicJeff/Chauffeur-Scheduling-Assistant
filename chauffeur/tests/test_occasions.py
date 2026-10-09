@@ -250,16 +250,16 @@ def scenario_carryover_links_backwards_and_only_on_a_real_match():
 def scenario_the_tools_are_in_both_stacks_and_speak_plainly():
     reset_db(); _members()
     _settings()
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     want = {'add_occasion', 'get_occasion', 'add_occasion_guests',
             'source_for_occasion'}
     v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
     check(want <= v2, f"v2 missing {want - v2}")
-    check(want <= set(agent_tools.TOOL_SCHEMAS)
-          and want <= set(agent_tools.TOOL_HANDLERS),
-          f"v1 missing {want - set(agent_tools.TOOL_HANDLERS)}")
+    check(want <= set(agent_tools_v2.TOOL_SCHEMAS)
+          and want <= set(agent_tools_v2.TOOL_HANDLERS),
+          f"v1 missing {want - set(agent_tools_v2.TOOL_HANDLERS)}")
 
-    agent_tools.execute_tool('add_occasion', {
+    agent_tools_v2.execute_tool('add_occasion', {
         'title': 'Thanksgiving 2026', 'anchor_date': DAY, 'kind': 'thanksgiving',
         'window_start': WIN_START, 'window_end': WIN_END,
         'dish_tags': 'thanksgiving'})
@@ -267,14 +267,14 @@ def scenario_the_tools_are_in_both_stacks_and_speak_plainly():
     check(len(rows) == 1 and rows[0]['title'] == 'Thanksgiving 2026',
           f"the v1 bridge writes through, got {rows}")
 
-    res = agent_tools.execute_tool('add_occasion_guests', {
+    res = agent_tools_v2.execute_tool('add_occasion_guests', {
         'occasion_name': 'Thanksgiving', 'who': 'the Wilsons',
         'headcount': 4, 'cannot_eat': 'shellfish'})
     check('7 eating' in res['message'],
           f"and answers with the new headcount, got {res['message']}")
     check('shellfish' in res['message'], "naming what it will keep off the plan")
 
-    read = agent_tools.execute_tool('get_occasion', {'occasion_name': 'Thanksgiving'})
+    read = agent_tools_v2.execute_tool('get_occasion', {'occasion_name': 'Thanksgiving'})
     check('the Wilsons' in read['message'], f"the read-back is plain, got {read}")
 
 
@@ -406,13 +406,13 @@ def scenario_the_watcher_anticipates_but_does_not_nag():
 
 def scenario_the_gap_report_is_sayable():
     reset_db(); _members(); _settings()
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     check('get_occasion_gaps' in {t['name'] for t in agent_tools_v2.get_available_tools()}
-          and 'get_occasion_gaps' in agent_tools.TOOL_HANDLERS,
+          and 'get_occasion_gaps' in agent_tools_v2.TOOL_HANDLERS,
           "the tool is in both stacks")
     o = occasions.create("Ellie's 8th", '2026-09-14', 'birthday')
     occasions.answer(o['id'], 'cake', True)
-    res = agent_tools.execute_tool('get_occasion_gaps', {'occasion_name': 'Ellie'})
+    res = agent_tools_v2.execute_tool('get_occasion_gaps', {'occasion_name': 'Ellie'})
     check('cake' in res['message'].lower(),
           f"it names what is missing, got {res['message']}")
     check('%' not in res['message'], "and quotes no percentage")
@@ -518,15 +518,15 @@ def scenario_insights_fail_one_at_a_time():
 
 def scenario_insights_are_sayable():
     reset_db(); _members(); _settings()
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     check('get_occasion_insights' in {t['name'] for t in agent_tools_v2.get_available_tools()}
-          and 'get_occasion_insights' in agent_tools.TOOL_HANDLERS,
+          and 'get_occasion_insights' in agent_tools_v2.TOOL_HANDLERS,
           "the tool is in both stacks")
     o = _occasion()
     turkey = _dish('roast turkey', short_name='turkey', type='entree',
                    needs_ahead='thaw', serves=12)
     meals.set_plate_lock(DAY, True, 'Thanksgiving', [turkey['id']])
-    res = agent_tools.execute_tool('get_occasion_insights',
+    res = agent_tools_v2.execute_tool('get_occasion_insights',
                                    {'occasion_name': 'Thanksgiving'})
     check('thaw' in res['message'].lower(),
           f"it says the useful thing, got {res['message']}")
@@ -746,12 +746,12 @@ def scenario_attendance_and_guests_both_feed_the_headcount_once():
 
 def scenario_attendance_is_sayable_in_both_stacks():
     reset_db(); _members(with_helper=True); _settings()
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     check('set_occasion_attendance' in {t['name'] for t in agent_tools_v2.get_available_tools()}
-          and 'set_occasion_attendance' in agent_tools.TOOL_HANDLERS,
+          and 'set_occasion_attendance' in agent_tools_v2.TOOL_HANDLERS,
           "the tool is in both stacks")
     _occasion()
-    res = agent_tools.execute_tool('set_occasion_attendance', {
+    res = agent_tools_v2.execute_tool('set_occasion_attendance', {
         'occasion_name': 'Thanksgiving', 'who': 'Dad', 'coming': False})
     check('not coming' in res['message'] and '2 eating' in res['message'],
           f"it answers with the new headcount, got {res['message']}")

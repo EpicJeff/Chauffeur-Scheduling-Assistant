@@ -133,9 +133,9 @@ def scenario_page_route_serves_template():
 # --- Task 8: Doorways — thread button and chat tool in both stacks --------
 
 def scenario_chat_tool_wired_into_both_stacks():
-    from services import agent_tools, agent_tools_v2
-    check('launch_mission' in agent_tools.TOOL_SCHEMAS
-          and 'launch_mission' in agent_tools.TOOL_HANDLERS, "v1 wired")
+    from services import agent_tools_v2
+    check('launch_mission' in agent_tools_v2.TOOL_SCHEMAS
+          and 'launch_mission' in agent_tools_v2.TOOL_HANDLERS, "v1 wired")
     decls = agent_tools_v2.get_available_tools()   # match the real signature
     check(any(d.get('name') == 'launch_mission' for d in decls), "v2 declared")
     # If get_available_tools takes arguments (settings/actor), pass what its

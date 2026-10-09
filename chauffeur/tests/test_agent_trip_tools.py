@@ -16,7 +16,7 @@ import zoneinfo
 os.environ.setdefault("CHAUFFEUR_DATA_DIR", tempfile.mkdtemp(prefix="chauffeur_agenttools_"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from services import agent_tools, storage, trip_planner  # noqa: E402
+from services import agent_tools_v2, storage, trip_planner  # noqa: E402
 
 # offline: no place enrichment lookups
 trip_planner.enrich_poi_data = lambda name, location, trip_location: {}
@@ -46,7 +46,7 @@ def mk_draft(event_id):
 
 
 def add(event_id, name, **kw):
-    res = agent_tools.handle_add_trip_accommodation(
+    res = agent_tools_v2.handle_add_trip_accommodation(
         dict(event_id=event_id, name=name, location=name, **kw))
     check(res["status"] == "success", f"add failed: {res}")
     return res
@@ -117,7 +117,7 @@ def scenario_edit_accommodation():
     add("draft_trip_edit", "Paris Hotel")   # full span by default
 
     # re-date by night ordinals, matched by (partial) name, then add the next leg
-    res = agent_tools.handle_edit_trip_accommodation(
+    res = agent_tools_v2.handle_edit_trip_accommodation(
         {"event_id": "draft_trip_edit", "name": "paris", "check_in_night": 1, "nights": 4})
     check(res["status"] == "success", f"edit failed: {res}")
     add("draft_trip_edit", "Wine Chateau", check_in_night=5, nights=6)
@@ -126,23 +126,23 @@ def scenario_edit_accommodation():
     check(stays["Wine Chateau"] == ("2030-01-05", "2030-01-11"), f"edited leg 2: {stays}")
 
     # nights-only edit keeps the current check-in as baseline
-    agent_tools.handle_edit_trip_accommodation(
+    agent_tools_v2.handle_edit_trip_accommodation(
         {"event_id": "draft_trip_edit", "name": "Wine Chateau", "nights": 3})
     a = {x["name"]: x for x in get_accs("draft_trip_edit")}["Wine Chateau"]
     check((a["check_in_date"], a["check_out_date"]) == ("2030-01-05", "2030-01-08"),
           f"nights-only edit shortens from existing check-in, got {a['check_in_date']} -> {a['check_out_date']}")
 
     # rename + notes; miss and ambiguity errors
-    agent_tools.handle_edit_trip_accommodation(
+    agent_tools_v2.handle_edit_trip_accommodation(
         {"event_id": "draft_trip_edit", "name": "Paris Hotel", "new_name": "Le Meurice", "notes": "splurge"})
     names = [a["name"] for a in get_accs("draft_trip_edit")]
     check("Le Meurice" in names, "rename applied")
-    res = agent_tools.handle_edit_trip_accommodation(
+    res = agent_tools_v2.handle_edit_trip_accommodation(
         {"event_id": "draft_trip_edit", "name": "Nonexistent Place"})
     check(res["status"] == "error", "missing accommodation -> error")
     add("draft_trip_edit", "Twin A", check_in_night=8, nights=1)
     add("draft_trip_edit", "Twin B", check_in_night=9, nights=2)
-    res = agent_tools.handle_edit_trip_accommodation(
+    res = agent_tools_v2.handle_edit_trip_accommodation(
         {"event_id": "draft_trip_edit", "name": "Twin", "nights": 1})
     check(res["status"] == "error" and "Multiple" in res["message"], "ambiguous name -> error")
 
@@ -153,7 +153,7 @@ def scenario_overlapping_add_rejected():
     day->home-base map."""
     mk_draft("draft_trip_overlap")
     add("draft_trip_overlap", "Paris Hotel", check_in_night=1, nights=4)
-    res = agent_tools.handle_add_trip_accommodation(dict(
+    res = agent_tools_v2.handle_add_trip_accommodation(dict(
         event_id="draft_trip_overlap", name="Rival Hotel", location="Rival Hotel",
         check_in_night=3, nights=3))
     check(res["status"] == "error", f"overlapping add must be rejected: {res}")
@@ -162,7 +162,7 @@ def scenario_overlapping_add_rejected():
     check(len(get_accs("draft_trip_overlap")) == 1, "rejected stay must not be persisted")
 
     # zero-night stay rejected too
-    res = agent_tools.handle_add_trip_accommodation(dict(
+    res = agent_tools_v2.handle_add_trip_accommodation(dict(
         event_id="draft_trip_overlap", name="Blip Inn", location="Blip Inn",
         check_in_date="2030-01-06", check_out_date="2030-01-06"))
     check(res["status"] == "error", f"zero-night add must be rejected: {res}")
@@ -174,7 +174,7 @@ def scenario_edit_clips_neighbors():
     mk_draft("draft_trip_clip")
     add("draft_trip_clip", "Paris Hotel", check_in_night=1, nights=4)     # nights 1-4
     add("draft_trip_clip", "Wine Chateau", check_in_night=5, nights=6)    # nights 5-10
-    res = agent_tools.handle_edit_trip_accommodation(
+    res = agent_tools_v2.handle_edit_trip_accommodation(
         {"event_id": "draft_trip_clip", "name": "Wine Chateau", "check_in_night": 4, "nights": 7})
     check(res["status"] == "success", f"edit failed: {res}")
     stays = {a["name"]: (a["check_in_date"], a["check_out_date"]) for a in get_accs("draft_trip_clip")}
@@ -184,7 +184,7 @@ def scenario_edit_clips_neighbors():
     check("Adjusted neighboring stays" in res["message"], "clip reported to the agent")
 
     # an edit that would fully cover another stay is rejected, not silently applied
-    res = agent_tools.handle_edit_trip_accommodation(
+    res = agent_tools_v2.handle_edit_trip_accommodation(
         {"event_id": "draft_trip_clip", "name": "Wine Chateau", "check_in_night": 1, "nights": 10})
     check(res["status"] == "error" and "fully cover" in res["message"],
           f"swallowing edit must be rejected: {res}")
@@ -197,12 +197,12 @@ def scenario_poi_gate_demotes_and_keeps_anchors():
     a 60-min 'anchor' is demoted (with a note back to the agent); real multi-day
     anchors are stored as ONE POI with days_claimed."""
     mk_draft("draft_trip_poigate")
-    res = agent_tools.handle_add_trip_poi(dict(
+    res = agent_tools_v2.handle_add_trip_poi(dict(
         event_id="draft_trip_poigate", name="Quick Museum", location="Quick Museum",
         duration_mins=60, is_background=True))
     check(res["status"] == "success", f"add failed: {res}")
     check("regular POI" in res["message"], f"demotion reported to the agent: {res['message']}")
-    res = agent_tools.handle_add_trip_poi(dict(
+    res = agent_tools_v2.handle_add_trip_poi(dict(
         event_id="draft_trip_poigate", name="Magic Kingdom", location="Magic Kingdom",
         duration_mins=600, is_background=True, days_claimed=3))
     check(res["status"] == "success", f"add failed: {res}")
@@ -224,7 +224,7 @@ def scenario_poi_coord_veto_via_agent():
     prev = trip_planner.enrich_poi_data
     trip_planner.enrich_poi_data = rich
     try:
-        res = agent_tools.handle_add_trip_poi(dict(
+        res = agent_tools_v2.handle_add_trip_poi(dict(
             event_id="draft_trip_coords", name="Beaune Wine Cave", location="Beaune",
             duration_mins=90, approx_lat=47.02, approx_lng=4.84))
         check(res["status"] == "success", f"add failed: {res}")
@@ -241,14 +241,14 @@ def scenario_flight_add_by_trip_days():
     the day BEFORE the trip (day 0), landing day 1; return departs the last day.
     Agent-facing messages must speak in trip days, never mock dates."""
     mk_draft("draft_trip_flights")
-    res = agent_tools.handle_add_trip_flight(dict(
+    res = agent_tools_v2.handle_add_trip_flight(dict(
         event_id="draft_trip_flights", origin="JFK", destination="CDG",
         airline="Delta", flight_number="DL123",
         departure_day=0, departure_time="18:00", arrival_day=1, arrival_time="08:30"))
     check(res["status"] == "success", f"add outbound failed: {res}")
     check("2029" not in res["message"] and "2030" not in res["message"],
           f"draft flight message must not leak mock dates: {res['message']}")
-    res = agent_tools.handle_add_trip_flight(dict(
+    res = agent_tools_v2.handle_add_trip_flight(dict(
         event_id="draft_trip_flights", origin="CDG", destination="JFK",
         airline="Delta", flight_number="DL124", departure_day=11, departure_time="16:00"))
     check(res["status"] == "success", f"add return failed: {res}")
@@ -269,14 +269,14 @@ def scenario_flight_add_by_trip_days():
 
 def scenario_flight_bad_times_rejected():
     mk_draft("draft_trip_flightbad")
-    res = agent_tools.handle_add_trip_flight(dict(
+    res = agent_tools_v2.handle_add_trip_flight(dict(
         event_id="draft_trip_flightbad", origin="JFK", destination="CDG",
         departure_day=1, departure_time="18:00", arrival_day=1, arrival_time="08:30"))
     check(res["status"] == "error" and "NEXT day" in res["message"],
           f"arrival before departure must be rejected with overnight guidance: {res}")
     check(not storage.get_trip_metadata("draft_trip_flightbad").get("flights"),
           "rejected flight must not be persisted")
-    res = agent_tools.handle_add_trip_flight(dict(
+    res = agent_tools_v2.handle_add_trip_flight(dict(
         event_id="draft_trip_flightbad", origin="JFK", destination="CDG",
         departure_day=1, departure_time="6pm"))
     check(res["status"] == "error", f"unparseable time must be rejected: {res}")
@@ -284,15 +284,15 @@ def scenario_flight_bad_times_rejected():
 
 def scenario_flight_duplicate_rejected():
     mk_draft("draft_trip_flightdup")
-    agent_tools.handle_add_trip_flight(dict(
+    agent_tools_v2.handle_add_trip_flight(dict(
         event_id="draft_trip_flightdup", origin="JFK", destination="CDG",
         flight_number="DL123", departure_day=1, departure_time="08:00"))
-    res = agent_tools.handle_add_trip_flight(dict(
+    res = agent_tools_v2.handle_add_trip_flight(dict(
         event_id="draft_trip_flightdup", origin="JFK", destination="CDG",
         flight_number="DL 123", departure_day=1, departure_time="09:00"))
     check(res["status"] == "error" and "already exists" in res["message"],
           f"same flight number + day must be rejected: {res}")
-    res = agent_tools.handle_add_trip_flight(dict(
+    res = agent_tools_v2.handle_add_trip_flight(dict(
         event_id="draft_trip_flightdup", origin="JFK", destination="CDG",
         departure_day=1, departure_time="11:00"))
     check(res["status"] == "error", f"same route + day without number must be rejected: {res}")
@@ -302,7 +302,7 @@ def scenario_flight_duplicate_rejected():
 
 def scenario_flight_edit_and_delete():
     mk_draft("draft_trip_flightedit")
-    agent_tools.handle_add_trip_flight(dict(
+    agent_tools_v2.handle_add_trip_flight(dict(
         event_id="draft_trip_flightedit", origin="JFK", destination="CDG",
         airline="Delta", flight_number="DL123", departure_day=1, departure_time="08:00",
         estimated_price_usd=900.0))
@@ -310,7 +310,7 @@ def scenario_flight_edit_and_delete():
     meta = storage.get_trip_metadata("draft_trip_flightedit")
     meta["flights"][0]["is_live_price"] = True
     storage.set_trip_metadata("draft_trip_flightedit", meta)
-    res = agent_tools.handle_edit_trip_flight(dict(
+    res = agent_tools_v2.handle_edit_trip_flight(dict(
         event_id="draft_trip_flightedit", origin="JFK", destination="CDG",
         departure_time="10:15", estimated_price_usd=850.0))
     check(res["status"] == "success", f"edit failed: {res}")
@@ -321,15 +321,15 @@ def scenario_flight_edit_and_delete():
     check(f["estimated_price_usd"] == 850.0, "price applied")
 
     # ambiguity is an error, never a guess
-    agent_tools.handle_add_trip_flight(dict(
+    agent_tools_v2.handle_add_trip_flight(dict(
         event_id="draft_trip_flightedit", origin="JFK", destination="CDG",
         flight_number="DL999", departure_day=3, departure_time="08:00"))
-    res = agent_tools.handle_edit_trip_flight(dict(
+    res = agent_tools_v2.handle_edit_trip_flight(dict(
         event_id="draft_trip_flightedit", origin="JFK", destination="CDG", airline="United"))
     check(res["status"] == "error" and "Multiple" in res["message"],
           f"ambiguous route match -> error: {res}")
 
-    res = agent_tools.handle_delete_trip_flight(dict(
+    res = agent_tools_v2.handle_delete_trip_flight(dict(
         event_id="draft_trip_flightedit", flight_number="DL999"))
     check(res["status"] == "success", f"delete failed: {res}")
     check(len(storage.get_trip_metadata("draft_trip_flightedit")["flights"]) == 1,
@@ -342,7 +342,7 @@ def scenario_generate_flights_tool():
     message speaks in trip days (never mock dates)."""
     from models.schemas import TripFlight
     mk_draft("draft_trip_flightgen")
-    agent_tools.handle_add_trip_flight(dict(
+    agent_tools_v2.handle_add_trip_flight(dict(
         event_id="draft_trip_flightgen", origin="JFK", destination="CDG",
         departure_day=0, departure_time="18:00"))
 
@@ -354,7 +354,7 @@ def scenario_generate_flights_tool():
                    departure_time="2030-01-11T11:00:00"),
     ])
     try:
-        res = agent_tools.handle_generate_trip_flights(dict(event_id="draft_trip_flightgen"))
+        res = agent_tools_v2.handle_generate_trip_flights(dict(event_id="draft_trip_flightgen"))
     finally:
         trip_planner.generate_trip_flights = prev
     check(res["status"] == "success", f"generate failed: {res}")
@@ -401,16 +401,15 @@ def scenario_v2_router_flight_tool():
 
 
 def scenario_tool_registered():
-    check("edit_trip_accommodation" in agent_tools.TOOL_SCHEMAS, "schema registered")
+    check("edit_trip_accommodation" in agent_tools_v2.TOOL_SCHEMAS, "schema registered")
     for t in ("generate_trip_flights", "add_trip_flight", "edit_trip_flight", "delete_trip_flight"):
-        check(t in agent_tools.TOOL_SCHEMAS, f"{t} schema registered")
-        check(t in agent_tools.TOOL_HANDLERS, f"{t} handler registered")
-    props = agent_tools.TOOL_SCHEMAS["add_trip_flight"].get("properties", {})
+        check(t in agent_tools_v2.TOOL_SCHEMAS, f"{t} schema registered")
+        check(t in agent_tools_v2.TOOL_HANDLERS, f"{t} handler registered")
+    props = agent_tools_v2.TOOL_SCHEMAS["add_trip_flight"].get("properties", {})
     check("departure_day" in props and "arrival_day" in props,
           "flight add tool exposes trip-day ordinals to the LLM")
-    check("edit_trip_accommodation" in agent_tools.TOOL_HANDLERS
-          if hasattr(agent_tools, "TOOL_HANDLERS") else True, "handler registered")
-    schema = agent_tools.TOOL_SCHEMAS["add_trip_accommodation"]
+    check("edit_trip_accommodation" in agent_tools_v2.TOOL_HANDLERS, "handler registered")
+    schema = agent_tools_v2.TOOL_SCHEMAS["add_trip_accommodation"]
     props = schema.get("properties", {})
     check("check_in_night" in props and "nights" in props,
           "add tool exposes trip-night ordinals to the LLM")

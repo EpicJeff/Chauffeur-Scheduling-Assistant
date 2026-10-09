@@ -225,10 +225,10 @@ def scenario_deciding_by_words_finds_the_event():
 
 
 def scenario_both_agent_stacks_carry_the_tools():
-    from services import agent_tools, agent_tools_v2
-    check("decide_optional_event" in agent_tools.TOOL_HANDLERS
-          and "set_event_optional" in agent_tools.TOOL_HANDLERS
-          and "decide_optional_event" in agent_tools.TOOL_SCHEMAS,
+    from services import agent_tools_v2
+    check("decide_optional_event" in agent_tools_v2.TOOL_HANDLERS
+          and "set_event_optional" in agent_tools_v2.TOOL_HANDLERS
+          and "decide_optional_event" in agent_tools_v2.TOOL_SCHEMAS,
           "the v1 stack has schema and handler")
     v2_names = {t.get("name") for t in agent_tools_v2.get_available_tools()}
     check({"decide_optional_event", "set_event_optional"} <= v2_names,

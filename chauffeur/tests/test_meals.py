@@ -378,14 +378,14 @@ def scenario_plan_tool_in_both_stacks_and_rest():
         "assignments": {"practice": "d-mom"}, "matched_rules": {},
         "scheduled_errands": [],
     })
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
     check('get_eating_plan' in v2, "v2 (widget/Gemma) exposes the plan tool")
-    check('get_eating_plan' in agent_tools.TOOL_SCHEMAS
-          and 'get_eating_plan' in agent_tools.TOOL_HANDLERS,
+    check('get_eating_plan' in agent_tools_v2.TOOL_SCHEMAS
+          and 'get_eating_plan' in agent_tools_v2.TOOL_HANDLERS,
           "v1 stack exposes it too — capabilities go in BOTH stacks")
 
-    msg = agent_tools.execute_tool('get_eating_plan', {'target_date': DAY})['message']
+    msg = agent_tools_v2.execute_tool('get_eating_plan', {'target_date': DAY})['message']
     check("Pack" in msg, f"the v1 bridge reaches the same derivation, got {msg}")
 
     import main
@@ -800,13 +800,13 @@ def scenario_leftovers_expire_and_can_be_cleared():
 def scenario_leftovers_tools_in_both_stacks():
     reset_db(); _seed_people()
     _settings()
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     want = {"mark_leftovers", "clear_leftovers"}
     v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
     check(want <= v2, f"v2 missing {want - v2}")
-    check(want <= set(agent_tools.TOOL_SCHEMAS)
-          and want <= set(agent_tools.TOOL_HANDLERS), "v1 stack incomplete")
-    agent_tools.execute_tool("mark_leftovers", {"what": "chili", "target_date": DAY})
+    check(want <= set(agent_tools_v2.TOOL_SCHEMAS)
+          and want <= set(agent_tools_v2.TOOL_HANDLERS), "registry incomplete")
+    agent_tools_v2.execute_tool("mark_leftovers", {"what": "chili", "target_date": DAY})
     check(storage.get_leftovers(DAY), "the v1 bridge writes through")
 
 
@@ -1259,13 +1259,13 @@ def scenario_m5_tools_in_both_stacks():
     _pantry()
     storage.set_cached_schedule({"events": [], "assignments": {},
                                  "matched_rules": {}, "scheduled_errands": []})
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     want = {"get_tonights_plate", "change_tonights_plate", "add_dishes"}
     v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
     check(want <= v2, f"v2 missing {want - v2}")
-    check(want <= set(agent_tools.TOOL_SCHEMAS)
-          and want <= set(agent_tools.TOOL_HANDLERS), "v1 stack incomplete")
-    out = agent_tools.execute_tool("get_tonights_plate", {"target_date": DAY})
+    check(want <= set(agent_tools_v2.TOOL_SCHEMAS)
+          and want <= set(agent_tools_v2.TOOL_HANDLERS), "registry incomplete")
+    out = agent_tools_v2.execute_tool("get_tonights_plate", {"target_date": DAY})
     check(out.get('status') == 'success', f"the v1 bridge reaches it, got {out}")
 
 
@@ -2632,8 +2632,8 @@ def scenario_a_rule_can_say_whole_meals():
     check('whole meals' in meals.describe_meal_rule(res['rule']),
           "the description says it the family's way, not schema vocabulary")
 
-    from services import agent_tools, agent_tools_v2
-    said = agent_tools.execute_tool('set_meal_rule', {
+    from services import agent_tools_v2
+    said = agent_tools_v2.execute_tool('set_meal_rule', {
         'description': 'one-pot dinners now and then',
         'whole_meals': True, 'max_servings': 1, 'window_days': 7})
     check(said['status'] == 'success' and 'lasagna' in said['message'],
@@ -2665,8 +2665,8 @@ def scenario_a_rule_matching_nothing_says_so():
     _dish('lentil curry', type='entree', tags=['vegetarian'])
     res = meals.add_meal_rule('no venison', 'frequency_cap', tags=['venison'])
     check(res['match_count'] == 0, "matches nothing")
-    from services import agent_tools
-    said = agent_tools.execute_tool("set_meal_rule", {
+    from services import agent_tools_v2
+    said = agent_tools_v2.execute_tool("set_meal_rule", {
         "description": "we hardly ever eat venison", "tags": "venison"})
     check('not match any dish' in said['message'],
           f"and the agent says so rather than claiming success, got {said}")
@@ -2889,12 +2889,12 @@ def scenario_editing_keeps_what_the_rule_applies_to():
 def scenario_rule_tools_in_both_stacks():
     reset_db(); _seed_people(); _settings()
     _rules_repertoire()
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     want = {"set_meal_rule", "get_meal_rules"}
     v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
     check(want <= v2, f"v2 missing {want - v2}")
-    check(want <= set(agent_tools.TOOL_SCHEMAS)
-          and want <= set(agent_tools.TOOL_HANDLERS), "v1 stack incomplete")
+    check(want <= set(agent_tools_v2.TOOL_SCHEMAS)
+          and want <= set(agent_tools_v2.TOOL_HANDLERS), "registry incomplete")
     import inspect
     from services import agent_router
     src = inspect.getsource(agent_router)
@@ -2902,12 +2902,12 @@ def scenario_rule_tools_in_both_stacks():
         check(src.count(f'"{name}"') >= 2,
               f"{name} is not both dispatched and listed terminal in the router")
 
-    made = agent_tools.execute_tool("set_meal_rule", {
+    made = agent_tools_v2.execute_tool("set_meal_rule", {
         "description": "we only eat meat about once a week", "tags": "meat",
         "max_servings": 1, "window_days": 7})
     check(made['status'] == 'success' and 'covers' in made['message'],
           f"set by voice and names what it covers, got {made}")
-    listed = agent_tools.execute_tool("get_meal_rules", {})
+    listed = agent_tools_v2.execute_tool("get_meal_rules", {})
     check('meat' in listed['message'] and 'week' in listed['message'],
           f"and reads back in plain words, got {listed}")
 
@@ -3078,12 +3078,12 @@ def scenario_a_far_future_night_is_not_pruned():
 def scenario_lock_tools_in_both_stacks():
     reset_db(); _seed_people(); _settings()
     _dish('steak', type='entree')
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     want = {"plan_specific_dinner", "unlock_dinner"}
     v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
     check(want <= v2, f"v2 missing {want - v2}")
-    check(want <= set(agent_tools.TOOL_SCHEMAS)
-          and want <= set(agent_tools.TOOL_HANDLERS), "v1 stack incomplete")
+    check(want <= set(agent_tools_v2.TOOL_SCHEMAS)
+          and want <= set(agent_tools_v2.TOOL_HANDLERS), "registry incomplete")
     import inspect
     from services import agent_router
     src = inspect.getsource(agent_router)
@@ -3092,7 +3092,7 @@ def scenario_lock_tools_in_both_stacks():
               f"{name} is not both dispatched and listed terminal in the router")
 
     tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
-    res = agent_tools.execute_tool("plan_specific_dinner", {
+    res = agent_tools_v2.execute_tool("plan_specific_dinner", {
         "target_date": tomorrow, "dish_names": "steak", "note": "Mom's birthday"})
     check(res['status'] == 'success' and "Mom's birthday" in res['message'],
           f"set by voice, got {res}")
@@ -3101,11 +3101,11 @@ def scenario_lock_tools_in_both_stacks():
 
     # "Grandma is bringing dinner" — no dishes named at all.
     day_after = (datetime.date.today() + datetime.timedelta(days=2)).isoformat()
-    res2 = agent_tools.execute_tool("plan_specific_dinner", {
+    res2 = agent_tools_v2.execute_tool("plan_specific_dinner", {
         "target_date": day_after, "note": "Grandma is bringing dinner"})
     check(res2['status'] == 'success', f"a night with nobody here cooking, got {res2}")
 
-    agent_tools.execute_tool("unlock_dinner", {"target_date": tomorrow})
+    agent_tools_v2.execute_tool("unlock_dinner", {"target_date": tomorrow})
     check(not storage.get_plate(tomorrow), "and released by voice")
 
 
@@ -3245,12 +3245,12 @@ def scenario_pairing_tools_in_both_stacks():
     _dish('brisket', type='entree')
     _dish('beans', type='side', side_type='other')
     _dish('fries', type='side', side_type='starch')
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     want = {"pair_dishes", "unpair_dishes"}
     v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
     check(want <= v2, f"v2 missing {want - v2}")
-    check(want <= set(agent_tools.TOOL_SCHEMAS)
-          and want <= set(agent_tools.TOOL_HANDLERS), "v1 stack incomplete")
+    check(want <= set(agent_tools_v2.TOOL_SCHEMAS)
+          and want <= set(agent_tools_v2.TOOL_HANDLERS), "registry incomplete")
     import inspect
     from services import agent_router
     src = inspect.getsource(agent_router)
@@ -3258,14 +3258,14 @@ def scenario_pairing_tools_in_both_stacks():
         check(src.count(f'"{name}"') >= 2,
               f"{name} is not both dispatched and listed terminal in the router")
 
-    res = agent_tools.execute_tool("pair_dishes", {
+    res = agent_tools_v2.execute_tool("pair_dishes", {
         "dish_name": "brisket", "partner_names": "beans and fries"})
     check(res['status'] == 'success', f"set by voice, got {res}")
     b = storage.find_dish_by_name('brisket')
     check(len(b['always_with']) == 2,
           f"'beans and fries' parsed as two partners, got {b['always_with']}")
 
-    gone = agent_tools.execute_tool("unpair_dishes", {"dish_name": "brisket"})
+    gone = agent_tools_v2.execute_tool("unpair_dishes", {"dish_name": "brisket"})
     check(gone['status'] == 'success'
           and not storage.find_dish_by_name('brisket')['always_with'],
           f"and undone by voice, got {gone}")
@@ -3417,12 +3417,12 @@ def scenario_an_already_made_dish_needs_no_prep():
 def scenario_prep_tools_in_both_stacks():
     reset_db(); _seed_people(); _settings()
     _dish('white rice', type='side', side_type='starch')
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     want = {"set_dish_prep", "clear_dish_prep", "get_prep_ahead"}
     v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
     check(want <= v2, f"v2 missing {want - v2}")
-    check(want <= set(agent_tools.TOOL_SCHEMAS)
-          and want <= set(agent_tools.TOOL_HANDLERS), "v1 stack incomplete")
+    check(want <= set(agent_tools_v2.TOOL_SCHEMAS)
+          and want <= set(agent_tools_v2.TOOL_HANDLERS), "registry incomplete")
     import inspect
     from services import agent_router
     src = inspect.getsource(agent_router)
@@ -3430,14 +3430,14 @@ def scenario_prep_tools_in_both_stacks():
         check(src.count(f'"{name}"') >= 2,
               f"{name} is not both dispatched and listed terminal in the router")
 
-    res = agent_tools.execute_tool("set_dish_prep", {
+    res = agent_tools_v2.execute_tool("set_dish_prep", {
         "dish_name": "white rice", "action": "soak", "when": "night_before"})
     check(res['status'] == 'success' and 'night before' in res['message'],
           f"set by voice, got {res}")
     d = storage.find_dish_by_name('white rice')
     check(meals.dish_prep_steps(d)[0]['when'] == 'night_before', "and it stuck")
 
-    gone = agent_tools.execute_tool("clear_dish_prep", {"dish_name": "white rice"})
+    gone = agent_tools_v2.execute_tool("clear_dish_prep", {"dish_name": "white rice"})
     check(gone['status'] == 'success'
           and not meals.dish_prep_steps(storage.find_dish_by_name('white rice')),
           f"and can be undone by voice, got {gone}")
@@ -3695,12 +3695,12 @@ def scenario_m6_tools_in_both_stacks():
               grocery_weekday=(datetime.date.today().weekday() + 2) % 7,
               grocery_plan_lead_days=2)
     _week_repertoire()
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     want = {"get_week_dinners", "approve_week_dinners"}
     v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
     check(want <= v2, f"v2 missing {want - v2}")
-    check(want <= set(agent_tools.TOOL_SCHEMAS)
-          and want <= set(agent_tools.TOOL_HANDLERS), "v1 stack incomplete")
+    check(want <= set(agent_tools_v2.TOOL_SCHEMAS)
+          and want <= set(agent_tools_v2.TOOL_HANDLERS), "registry incomplete")
     # The router must both DISPATCH them and treat them as terminal, or the
     # week answer costs a needless 40-80s concluding Gemma round.
     import inspect
@@ -3710,10 +3710,10 @@ def scenario_m6_tools_in_both_stacks():
         check(src.count(f'"{name}"') >= 2,
               f"{name} is not both dispatched and listed terminal in the router")
 
-    read = agent_tools.execute_tool("get_week_dinners", {})
+    read = agent_tools_v2.execute_tool("get_week_dinners", {})
     check(read['status'] == 'success' and 'Shopping' in read['message'],
           f"the v1 bridge reads the week, got {read}")
-    done = agent_tools.execute_tool("approve_week_dinners", {})
+    done = agent_tools_v2.execute_tool("approve_week_dinners", {})
     check(done['status'] == 'success' and 'nights are set' in done['message'],
           f"and approves it, got {done}")
     check(all(d['pinned'] for d in meals.compose_week(
@@ -3725,18 +3725,18 @@ def scenario_m3_tools_in_both_stacks():
     reset_db(); _seed_people()
     _settings()
     storage.set_cached_schedule(_tight_evening())
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     want = {"suggest_dinner", "add_meal_to_repertoire",
             "add_meal_ingredients_to_list", "mark_meal_served"}
     v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
     check(want <= v2, f"v2 missing {want - v2}")
-    check(want <= set(agent_tools.TOOL_SCHEMAS)
-          and want <= set(agent_tools.TOOL_HANDLERS), "v1 stack incomplete")
+    check(want <= set(agent_tools_v2.TOOL_SCHEMAS)
+          and want <= set(agent_tools_v2.TOOL_HANDLERS), "registry incomplete")
 
     storage.get_settings = lambda: {"home_location": HOME}   # no LLM key
-    agent_tools.execute_tool("add_meal_to_repertoire", {"name": "Chili"})
+    agent_tools_v2.execute_tool("add_meal_to_repertoire", {"name": "Chili"})
     check(storage.find_meal_by_name("Chili"), "the v1 bridge writes through")
-    res = agent_tools.execute_tool("mark_meal_served", {"meal_name": "Chili"})
+    res = agent_tools_v2.execute_tool("mark_meal_served", {"meal_name": "Chili"})
     check(storage.find_meal_by_name("Chili")['last_served_at'],
           f"and rotation is recorded, got {res}")
 
@@ -4012,12 +4012,12 @@ def scenario_the_run_sheet_is_pull_not_push_in_both_stacks():
     _dish('roast beef', type='entree', prep_ahead_mins=15, finish_mins=15,
           unattended_mins=90, equipment='oven', oven_temp_f=325)
     _dish('green salad', type='side', side_type='salad', finish_mins=10)
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     check('get_run_sheet' in {t['name'] for t in agent_tools_v2.get_available_tools()},
           "v2 offers it")
-    check('get_run_sheet' in agent_tools.TOOL_SCHEMAS
-          and 'get_run_sheet' in agent_tools.TOOL_HANDLERS, "and so does v1")
-    res = agent_tools.execute_tool('get_run_sheet',
+    check('get_run_sheet' in agent_tools_v2.TOOL_SCHEMAS
+          and 'get_run_sheet' in agent_tools_v2.TOOL_HANDLERS, "and so does v1")
+    res = agent_tools_v2.execute_tool('get_run_sheet',
                                    {'target_date': DAY, 'serve_at': '18:00'})
     check('Start at' in res['message'] and '18:00' in res['message'],
           f"and it answers with clock times, got {res['message'][:120]}")
@@ -4118,13 +4118,13 @@ def scenario_hosting_is_sayable_and_answers_with_the_consequence():
           unattended_mins=90, equipment='oven', oven_temp_f=325)
     _dish('apple pie', type='dessert', finish_mins=10, unattended_mins=45,
           equipment='oven', oven_temp_f=425)
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     check('set_hosting' in {t['name'] for t in agent_tools_v2.get_available_tools()},
           "v2 offers it")
-    check('set_hosting' in agent_tools.TOOL_SCHEMAS
-          and 'set_hosting' in agent_tools.TOOL_HANDLERS, "and so does v1")
+    check('set_hosting' in agent_tools_v2.TOOL_SCHEMAS
+          and 'set_hosting' in agent_tools_v2.TOOL_HANDLERS, "and so does v1")
 
-    res = agent_tools.execute_tool('set_hosting',
+    res = agent_tools_v2.execute_tool('set_hosting',
                                    {'target_date': DAY, 'serving_for': 12, 'cooks': 2})
     check(storage.get_plate(DAY)['serving_for'] == 12,
           f"the v1 bridge writes through, got {res}")
@@ -4139,13 +4139,13 @@ def scenario_dish_scope_is_sayable_in_both_stacks():
     reset_db(); _seed_people()
     _settings()
     _dish('roast turkey', type='entree')
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     check('set_dish_scope' in {t['name'] for t in agent_tools_v2.get_available_tools()},
           "v2 offers the tool")
-    check('set_dish_scope' in agent_tools.TOOL_SCHEMAS
-          and 'set_dish_scope' in agent_tools.TOOL_HANDLERS, "and so does v1")
+    check('set_dish_scope' in agent_tools_v2.TOOL_SCHEMAS
+          and 'set_dish_scope' in agent_tools_v2.TOOL_HANDLERS, "and so does v1")
 
-    res = agent_tools.execute_tool('set_dish_scope', {'dish_name': 'turkey'})
+    res = agent_tools_v2.execute_tool('set_dish_scope', {'dish_name': 'turkey'})
     check(storage.find_dish_by_name('roast turkey')['scope'] == 'occasion',
           f"the v1 bridge writes through, got {res}")
     check('pick' in res['message'] and 'leftover' in res['message'],
@@ -4246,13 +4246,13 @@ def scenario_setting_what_a_dish_is_by_hand_and_by_voice():
     differently. Both stacks, because the chat widget uses the other one."""
     reset_db()
     beans = _dish('black beans', type='side', side_type='starch')
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     check('set_dish_categories' in {t['name'] for t in agent_tools_v2.get_available_tools()},
           "v2 offers the tool")
-    check('set_dish_categories' in agent_tools.TOOL_SCHEMAS
-          and 'set_dish_categories' in agent_tools.TOOL_HANDLERS, "and so does v1")
+    check('set_dish_categories' in agent_tools_v2.TOOL_SCHEMAS
+          and 'set_dish_categories' in agent_tools_v2.TOOL_HANDLERS, "and so does v1")
 
-    res = agent_tools.execute_tool('set_dish_categories',
+    res = agent_tools_v2.execute_tool('set_dish_categories',
                                    {'dish_name': 'black beans',
                                     'categories': 'protein, starches/carbs'})
     got = storage.get_dish(beans['id'])
@@ -4398,8 +4398,8 @@ def scenario_whole_units_never_changes_the_leftover_forecast():
 def scenario_by_the_tray_is_settable_by_hand_and_by_voice():
     reset_db()
     lasagna = _dish('lasagna', type='entree', serves=6)
-    from services import agent_tools, agent_tools_v2
-    agent_tools.execute_tool('set_dish_categories',
+    from services import agent_tools_v2
+    agent_tools_v2.execute_tool('set_dish_categories',
                              {'dish_name': 'lasagna', 'whole_units': True})
     check(storage.get_dish(lasagna['id'])['whole_units'] is True,
           "the v1 bridge writes it through")

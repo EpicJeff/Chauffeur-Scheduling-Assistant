@@ -238,13 +238,13 @@ def test_taking_xp_back_can_never_undo_a_level():
 
 
 def test_the_award_tool_is_in_both_agent_stacks():
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     reset_db()
     _member("k1", "Ada")
     msg = agent_tools_v2.award_pet_xp("Ada", 40)['message']
     check('40' in msg and 'level' in msg.lower(), "bad spoken answer: %r" % msg)
-    check('award_pet_xp' in agent_tools.TOOL_SCHEMAS
-          and 'award_pet_xp' in agent_tools.TOOL_HANDLERS,
+    check('award_pet_xp' in agent_tools_v2.TOOL_SCHEMAS
+          and 'award_pet_xp' in agent_tools_v2.TOOL_HANDLERS,
           "missing from the loop's stack")
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     router = open(os.path.join(here, 'services', 'agent_router.py'),

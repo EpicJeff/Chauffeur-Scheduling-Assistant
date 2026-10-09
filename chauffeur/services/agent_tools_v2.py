@@ -1,6 +1,8 @@
+import json
 import uuid
 import datetime
 from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, Field
 
 def _get_target_element_id(entity_type: str, entity_id: str) -> str:
     """Helper to generate consistent DOM element IDs for UI anchoring."""
@@ -1586,9 +1588,8 @@ def launch_mission(goal: str, thread_title: str = None, actor: dict = None) -> d
     if not actor or (actor.get('role') or '') not in ('parent', 'adult'):
         return {'status': 'refused',
                 'message': 'Only a parent or adult can start a mission.'}
-    from services import agent_tools as _v1
-    return _v1.handle_launch_mission({'goal': goal, 'thread_title': thread_title,
-                                      '_member_id': actor.get('id')})
+    return handle_launch_mission({'goal': goal, 'thread_title': thread_title,
+                                  '_member_id': actor.get('id')})
 
 
 def close_thread(thread_title: str, state: str = None,
@@ -3615,23 +3616,22 @@ def _bump_stream():
 
 
 def manage_trip_flights(trip_id: str, action: str, prompt: str = "", flight: Dict[str, Any] = None) -> Dict[str, Any]:
-    """Flight management for the v2 router. Thin wrapper over the validated v1
-    handlers (generation, dedup, trip-day ordinals, draft-safe messages) so both
-    agent stacks share one implementation."""
-    from services import agent_tools
+    """Flight management for the router. Thin wrapper over the validated
+    registry handlers (generation, dedup, trip-day ordinals, draft-safe
+    messages) so the router and the action buttons share one implementation."""
     action = (action or "generate").lower()
     args = {"event_id": trip_id}
     if isinstance(flight, dict):
         args.update(flight)
 
     if action == "generate":
-        res = agent_tools.handle_generate_trip_flights({"event_id": trip_id, "prompt": prompt or ""})
+        res = handle_generate_trip_flights({"event_id": trip_id, "prompt": prompt or ""})
     elif action == "add":
-        res = agent_tools.handle_add_trip_flight(args)
+        res = handle_add_trip_flight(args)
     elif action == "edit":
-        res = agent_tools.handle_edit_trip_flight(args)
+        res = handle_edit_trip_flight(args)
     elif action == "delete":
-        res = agent_tools.handle_delete_trip_flight(args)
+        res = handle_delete_trip_flight(args)
     else:
         return {"status": "error",
                 "message": f"Unknown flight action '{action}' — use generate, add, edit, or delete."}
@@ -4834,14 +4834,13 @@ def get_available_tools() -> List[Dict]:
     ]
 
 # ---------------------------------------------------------------------------
-# v1 tool bridge — full-parity access to the scheduling-core, errand, memory,
-# places, and deep trip-planning tools that were never natively ported to v2.
-# Schemas come straight from v1's Pydantic models (single source of truth via
-# agent_tools.get_openai_tools); execution delegates to agent_tools.execute_tool
-# in the router. Admin context only — these are NEVER added to the PWA driver
-# toolset, since a driver on the go must not reconfigure global scheduling.
+# Admin tools — the scheduling-core, errand, memory, places and deep
+# trip-planning tools. Schemas come from the registry's Pydantic models
+# (get_openai_tools below); the router executes them through execute_tool.
+# Admin context only — these are NEVER added to the PWA driver toolset, since
+# a driver on the go must not reconfigure global scheduling.
 # ---------------------------------------------------------------------------
-BRIDGED_V1_TOOLS = [
+ADMIN_TOOLS = [
     "get_current_state",
     "add_routing_rule", "delete_routing_rule",
     "add_priority_rule", "delete_priority_rule",
@@ -4861,7 +4860,7 @@ BRIDGED_V1_TOOLS = [
 # re-solve — the router sets schedule_dirty for these, mirroring the override
 # tools. Reads (get_current_state, get_errands) and non-schedule writes
 # (update_memory, search_places, trip-planning) are excluded.
-SCHEDULE_MUTATING_V1_TOOLS = {
+SCHEDULE_MUTATING_ADMIN_TOOLS = {
     "add_routing_rule", "delete_routing_rule",
     "add_priority_rule", "delete_priority_rule",
     "run_solver",
@@ -4871,14 +4870,13 @@ SCHEDULE_MUTATING_V1_TOOLS = {
 }
 
 
-def get_bridged_v1_tools() -> List[Dict]:
-    """v1 tool schemas reshaped into v2's flat {name, description, parameters}
-    format for the admin (non-driver) toolset. Pulled live from v1's
+def get_admin_tools() -> List[Dict]:
+    """Registry schemas reshaped into the router's flat {name, description,
+    parameters} format for the admin (non-driver) toolset. Pulled live from
     get_openai_tools() so the Pydantic models stay the single source of truth."""
-    from services import agent_tools
-    by_name = {t["function"]["name"]: t["function"] for t in agent_tools.get_openai_tools()}
+    by_name = {t["function"]["name"]: t["function"] for t in get_openai_tools()}
     bridged = []
-    for name in BRIDGED_V1_TOOLS:
+    for name in ADMIN_TOOLS:
         fn = by_name.get(name)
         if not fn:
             continue
@@ -5098,3 +5096,2518 @@ def get_driver_tools() -> List[Dict]:
             }
         }
     ]
+
+
+# ==============================================================================
+# REGISTRY — every tool by name: argument models, JSON schemas, dict-args
+# handlers and execute_tool. This is what the router's admin toolset,
+# chat_actions' action buttons and the missions catalogue read. Moved here
+# verbatim from services/agent_tools.py (v1) on 2026-10-09 so there is one
+# tool module; handlers that wrap the functions above now call them directly.
+# ==============================================================================
+
+class GetCurrentStateTool(BaseModel):
+    """
+    Retrieves the current state of the Chauffeur schedule, including drivers, passengers, and active rules.
+    If date is provided, fetches the schedule for that date. Otherwise, fetches today.
+    """
+    date: str = Field("", description="The date to fetch the schedule for (YYYY-MM-DD). If omitted or empty, fetches today.")
+
+class AddRoutingRuleTool(BaseModel):
+    """
+    Creates a new routing rule. Use this for hard constraints (required, unavailable), soft steering (preferred, avoid), time buffers, tolerances, attendance actions, or to GROUP multiple events together into a single trip.
+    """
+    driver_id: str = Field(..., description="The ID of the driver this rule applies to.")
+    constraint_type: str = Field(..., description="Type of constraint: 'required', 'preferred', 'unavailable', 'avoid', 'attendance', 'buffer', 'tolerance', 'duplicate', 'group'. Use 'unavailable' to forbid a driver outright; use 'avoid' to make them a last resort.")
+    keywords: List[str] = Field(..., description="List of keywords to match against the event title and description.")
+    passenger_ids: List[str] = Field(default=[], description="List of passenger IDs this rule applies to.")
+    days_of_week: List[int] = Field(default=[], description="Days of week (0=Mon, 6=Sun). Empty means all days.")
+    time_start: str = Field(default="", description="Start time constraint (HH:MM). Empty means anytime.")
+    time_end: str = Field(default="", description="End time constraint (HH:MM). Empty means anytime.")
+    location: str = Field(default="", description="Location string to match.")
+    filter_sets: List[Dict[str, Any]] = Field(default=[], description="For 'group' rules, specify multiple independent event filters here to group events together.")
+    attendance_action: str = Field(default="", description="For 'attendance' rules: 'stay' or 'dropoff_pickup'.")
+    tolerance_mins: int = Field(default=0, description="For 'tolerance' rules: minutes allowed.")
+    tolerance_type: str = Field(default="both", description="For 'tolerance' rules: 'arrival', 'departure', 'both'.")
+    buffer_before_mins: int = Field(default=0, description="For 'buffer' rules: minutes before event.")
+    buffer_after_mins: int = Field(default=0, description="For 'buffer' rules: minutes after event.")
+    buffer_reason: Optional[str] = Field(default=None, description="For 'buffer' rules: why they arrive early, in the family's words ('Warm-up'). Shown to them, so never invented.")
+    duplicate_action: str = Field(default="", description="For 'duplicate' rules: 'schedule_one' or 'schedule_all'.")
+    grouping_period: str = Field(default="daily", description="For 'duplicate' rules: 'daily', 'weekly', 'monthly'.")
+
+class DeleteRoutingRuleTool(BaseModel):
+    """
+    Deletes an existing routing rule by its ID.
+    """
+    rule_id: str = Field(..., description="The ID of the routing rule to delete.")
+
+class AddPriorityRuleTool(BaseModel):
+    """
+    Creates a new priority rule to mark an event's relative IMPORTANCE.
+    Do NOT use this for grouping events (use AddRoutingRuleTool with constraint_type='group' for a standing rule, or GroupEventsRideTogetherTool for one day's occurrences).
+    """
+    weight_modifier: int = Field(..., description="Score modifier added to this event's base assignment reward. Scale: 1000 = mild nudge, 100000 = outranks passenger-continuity bonuses, 500000 = near-mandatory. Use 100000 for critical must-route events like doctor appointments. Negative values deprioritize. Do NOT use this for 'staying' at an event, that is an attendance rule.")
+    keywords: List[str] = Field(..., description="List of keywords to match against the event title and description.")
+    passenger_ids: List[str] = Field(default=[], description="List of passenger IDs this rule applies to.")
+    days_of_week: List[int] = Field(default=[], description="Days of week (0=Mon, 6=Sun). Empty means all days.")
+    time_start: str = Field(default="", description="Start time constraint (HH:MM). Empty means anytime.")
+    time_end: str = Field(default="", description="End time constraint (HH:MM). Empty means anytime.")
+    location: str = Field(default="", description="Location string to match.")
+
+class DeletePriorityRuleTool(BaseModel):
+    """
+    Deletes an existing priority rule by its ID.
+    """
+    rule_id: str = Field(..., description="The ID of the priority rule to delete.")
+
+class RunSolverTool(BaseModel):
+    """
+    Triggers the graph scheduling solver to evaluate the current events and rules.
+    Always run this after modifying rules to check if your changes created a valid schedule.
+    """
+    date: str = Field("", description="The date to solve for (YYYY-MM-DD). If omitted or empty, solves today.")
+
+class AddOverrideTool(BaseModel):
+    """
+    Creates a direct override for a specific event to assign a specific driver.
+    This is for one-off manual assignments. It supersedes all routing rules.
+    """
+    event_id: str = Field(..., description="The ID of the event.")
+    driver_id: str = Field(..., description="The ID of the driver to manually assign.")
+    date_str: str = Field(..., description="The date of the event (YYYY-MM-DD).")
+    event_title: str = Field("", description="Optional title of the event for display purposes. Leave empty if none.")
+
+class DeleteOverrideTool(BaseModel):
+    """
+    Removes a manual driver assignment for a specific event.
+    """
+    event_id: str = Field(..., description="The ID of the event to clear the override for.")
+
+class ManageCarTool(BaseModel):
+    """
+    Creates, updates, or deletes a family car, or marks it unavailable (loaned out, in the shop).
+    Cars limit who can drive which events: seat capacity, allowed drivers, and car-seat passenger
+    restrictions. A driver listed on no car keeps an unrestricted personal car. Use action
+    'set_unavailable' for things like 'the minivan is loaned to Aunt Sarah through Friday'.
+    """
+    action: str = Field(..., description="'create', 'update', 'delete', 'set_unavailable' (add an unavailability date range), or 'clear_unavailable' (remove all unavailability ranges).")
+    car_id: str = Field("", description="Car id or exact car name. Required for every action except 'create'.")
+    name: str = Field("", description="Car name, e.g. 'Minivan'. Required for 'create'.")
+    seat_capacity: int = Field(0, description="Passenger seats excluding the driver. Defaults to 4 on create; 0 means 'leave unchanged' on update.")
+    allowed_driver_ids: List[str] = Field(default=[], description="Driver IDs permitted to drive this car.")
+    allowed_passenger_ids: List[str] = Field(default=[], description="Passenger IDs allowed to ride (car-seat restrictions). Empty means anyone fits.")
+    default_driver_id: str = Field("", description="The driver who usually has this car; the solver avoids reassigning it away from them.")
+    unavailable_start: str = Field("", description="For 'set_unavailable': first unavailable date (YYYY-MM-DD, inclusive).")
+    unavailable_end: str = Field("", description="For 'set_unavailable': last unavailable date (YYYY-MM-DD, inclusive).")
+    unavailable_reason: str = Field("", description="For 'set_unavailable': why, e.g. 'loaned to Aunt Sarah'.")
+
+class UpdateMemoryTool(BaseModel):
+    """
+    Saves custom instructions or rules for yourself to remember persistently across sessions. Use this when the user tells you to 'remember' a global preference or instruction.
+    """
+    memory_text: str = Field(..., description="The complete text of all custom instructions you want to persist.")
+
+class AddErrandTool(BaseModel):
+    """
+    Adds a new errand to the queue.
+    """
+    title: str = Field(..., description="The name or title of the errand (e.g. 'Get Groceries').")
+    duration_mins: int = Field(..., description="Estimated duration of the errand in minutes.")
+    location: str = Field(..., description="The location of the errand.")
+    priority: int = Field(default=2, description="Priority: 1 (High), 2 (Medium), 3 (Low).")
+    tags: List[str] = Field(default=[], description="List of tags.")
+    recurrence_rule: str = Field(default="", description="Recurrence: 'daily', 'weekly', 'monthly', or empty for one-off.")
+    starts_on: float = Field(default=0.0, description="Unix timestamp for the anchor/starts-on date. If 0, uses current time.")
+    window_days: Optional[int] = Field(default=None, description="Number of valid days to schedule this errand.")
+    allowed_drivers: List[str] = Field(default=[], description="List of driver IDs allowed.")
+    required_drivers: List[str] = Field(default=[], description="List of driver IDs required (use this if the user says who MUST do the errand).")
+    prohibited_drivers: List[str] = Field(default=[], description="List of driver IDs prohibited.")
+    allowed_passengers: List[str] = Field(default=[], description="List of passenger IDs allowed.")
+    required_passengers: List[str] = Field(default=[], description="List of passenger IDs required.")
+    prohibited_passengers: List[str] = Field(default=[], description="List of passenger IDs prohibited.")
+    time_window_start: str = Field(default="", description="Start time constraint (HH:MM).")
+    time_window_end: str = Field(default="", description="End time constraint (HH:MM).")
+    buffer_mins: int = Field(default=0, description="Buffer time in minutes before/after.")
+    tolerance_mins: int = Field(default=0, description="Tolerance for late arrival in minutes.")
+    group_id: str = Field(default="", description="Group ID to schedule multiple errands together.")
+
+class UpdateErrandTool(BaseModel):
+    """
+    Updates an existing errand or marks it as completed.
+    """
+    errand_id: str = Field(..., description="The ID of the errand to update.")
+    is_completed: bool = Field(default=False, description="Set to true to mark the errand as completed (this will automatically reschedule it if recurring).")
+    title: str = Field(default="", description="Optional new title.")
+    duration_mins: int = Field(default=0, description="Optional new duration.")
+    location: str = Field(default="", description="Optional new location.")
+    starts_on: float = Field(default=0.0, description="Optional new starts_on unix timestamp.")
+    allowed_drivers: Optional[List[str]] = Field(default=None, description="Optional List of driver IDs allowed.")
+    required_drivers: Optional[List[str]] = Field(default=None, description="Optional List of driver IDs required.")
+    prohibited_drivers: Optional[List[str]] = Field(default=None, description="Optional List of driver IDs prohibited.")
+    allowed_passengers: Optional[List[str]] = Field(default=None, description="Optional List of passenger IDs allowed.")
+    required_passengers: Optional[List[str]] = Field(default=None, description="Optional List of passenger IDs required.")
+    prohibited_passengers: Optional[List[str]] = Field(default=None, description="Optional List of passenger IDs prohibited.")
+    time_window_start: Optional[str] = Field(default=None, description="Optional Start time constraint (HH:MM).")
+    time_window_end: Optional[str] = Field(default=None, description="Optional End time constraint (HH:MM).")
+    buffer_mins: Optional[int] = Field(default=None, description="Optional Buffer time in minutes.")
+    tolerance_mins: Optional[int] = Field(default=None, description="Optional Tolerance for late arrival.")
+    group_id: Optional[str] = Field(default=None, description="Optional Group ID.")
+
+class DeleteErrandTool(BaseModel):
+    """
+    Deletes an errand completely.
+    """
+    errand_id: str = Field(..., description="The ID of the errand to delete.")
+
+class GetErrandsTool(BaseModel):
+    """
+    Gets a list of all active errands.
+    """
+    pass
+
+class AddErrandRuleTool(BaseModel):
+    """
+    Creates a new errand rule constraint.
+    """
+    title: str = Field(..., description="A descriptive title for the rule.")
+    constraint_type: str = Field(..., description="Type: 'driver_assignment', 'passenger_assignment', 'time_of_day', 'buffer_tolerance', 'grouping'.")
+    location: str = Field(default="", description="Location substring to match.")
+    keywords: List[str] = Field(default=[], description="Keywords to match in errand title.")
+    keywords_match_all: bool = Field(default=False, description="If True, all keywords must match.")
+    allowed_drivers: List[str] = Field(default=[], description="List of driver IDs allowed (optional).")
+    required_drivers: List[str] = Field(default=[], description="List of driver IDs required (optional).")
+    prohibited_drivers: List[str] = Field(default=[], description="List of driver IDs prohibited (optional).")
+    allowed_passengers: List[str] = Field(default=[], description="List of passenger IDs allowed (optional).")
+    required_passengers: List[str] = Field(default=[], description="List of passenger IDs required (optional).")
+    prohibited_passengers: List[str] = Field(default=[], description="List of passenger IDs prohibited (optional).")
+    time_window_start: str = Field(default="", description="Start time constraint (HH:MM).")
+    time_window_end: str = Field(default="", description="End time constraint (HH:MM).")
+    window_days: Optional[int] = Field(default=None, description="Number of valid days to schedule this errand.")
+    buffer_mins: int = Field(default=0, description="Minutes before/after errand.")
+    tolerance_mins: int = Field(default=0, description="Tolerance for scheduling outside preferred windows.")
+    filter_sets: List[Dict[str, Any]] = Field(default=[], description="For 'grouping' rules, list of filter objects (each with keywords, keywords_match_all, location) to group errands.")
+
+class DeleteErrandRuleTool(BaseModel):
+    """
+    Deletes an existing errand rule by its doc_id.
+    """
+    rule_id: str = Field(..., description="The doc_id of the errand rule to delete.")
+
+class SearchPlacesTool(BaseModel):
+    """
+    Searches for Points of Interest (POIs) or addresses (e.g. 'gas station', 'Target', '123 Main St') near an optional proximity location.
+    Use this to find a location before creating an errand if you don't know the exact address.
+    """
+    query: str = Field(..., description="The name, category, or address to search for (e.g., 'gas station', 'Starbucks').")
+    proximity_location: str = Field(default="", description="A known location (address or name) to search near. Usually one of the driver's scheduled stops.")
+
+class GenerateTripPlanTool(BaseModel):
+    """
+    Generates a complete trip itinerary, including multiple Points of Interest (POIs) and Accommodations, in a single AI pass.
+    Always use this when the user asks you to plan a trip, generate ideas for a trip, or suggests a list of things to do on a trip.
+    """
+    event_id: str = Field(..., description="The event ID of the Trip.")
+    prompt: str = Field(..., description="The user's original request.")
+    proposed_itinerary: str = Field(default="", description="If you proposed a specific day-by-day itinerary to the user in your response, provide the full text of that itinerary here so the background planner can align the scheduled days/times exactly with what you told the user.")
+
+class AddTripPoiTool(BaseModel):
+    """
+    Adds a Point of Interest (POI) to a specific Trip. Use this when a user says they want to visit a location during a trip.
+    """
+    event_id: str = Field(..., description="The event ID of the Trip.")
+    name: str = Field(..., description="The name of the POI (e.g. 'Eiffel Tower').")
+    location: str = Field(..., description="The address/location of the POI.")
+    mapbox_id: Optional[str] = Field(default=None, description="The Mapbox ID if found via search_places.")
+    category: Optional[str] = Field(default="sightseeing", description="Category (sightseeing, food, activity, shopping, other).")
+    duration_mins: int = Field(default=60, description="Duration in minutes.")
+    notes: Optional[str] = Field(default="", description="Any notes.")
+    occurrences: Optional[int] = Field(default=1, description="Number of times to add this standalone POI (e.g. 'two surf lessons'). NOT for multi-day anchors — use days_claimed.")
+    is_background: Optional[bool] = Field(default=False, description="True only for an ANCHOR: a half-day-or-longer experience worth organizing a whole day around (theme park, 'explore the old town'). Never for a single attraction under ~3 hours. Anchors are containers, not summaries: also add each named sight the anchor covers as its own POI with parent_container set to the anchor, or those sights are invisible to the itinerary.")
+    days_claimed: Optional[int] = Field(default=1, description="Anchors only: number of FULL DAYS this anchor occupies ('3 days at Disney' = one POI with days_claimed 3).")
+    parent_container: Optional[str] = Field(default=None, description="If this POI is inside or part of an anchor (background) POI on the trip, that anchor's name or id. Links the sight to its day container so it schedules on the anchor's claimed days.")
+    approx_lat: Optional[float] = Field(default=None, description="Your best estimate of the POI's latitude (region-level accuracy). Used to reject a map match in the wrong city — always provide it.")
+    approx_lng: Optional[float] = Field(default=None, description="Your best estimate of the POI's longitude. Always provide it with approx_lat.")
+    valid_days_of_week: Optional[List[int]] = Field(default_factory=list, description="List of valid days (0=Mon, 6=Sun) to schedule this POI.")
+
+class AddTripAccommodationTool(BaseModel):
+    """
+    Adds an Accommodation to a specific Trip. Use this when a user says they are staying at a specific hotel, resort, or Airbnb.
+    For a multi-leg trip (e.g. '4 days in Paris, then 3 days in wine country, then 2 days at the coast'), add ONE accommodation
+    per leg and set check_in_night/nights so the stays are consecutive and non-overlapping (leg 2 checks in the night leg 1
+    checks out). The scheduler uses each day's accommodation as that day's home base, so POIs cluster to the correct leg
+    automatically. If no dates/nights are given, the stay spans the whole trip.
+    """
+    event_id: str = Field(..., description="The event ID of the Trip.")
+    name: str = Field(..., description="The name of the Accommodation (e.g. 'Hyatt Place').")
+    location: str = Field(..., description="The address/location of the Accommodation.")
+    mapbox_id: Optional[str] = Field(default=None, description="The Mapbox ID if found via search_places.")
+    check_in_night: Optional[int] = Field(default=None, description="1-indexed trip night to check in (night 1 = first night of the trip). Preferred over absolute dates for draft trips.")
+    nights: Optional[int] = Field(default=None, description="Number of nights for this stay. Used with check_in_night.")
+    check_in_date: Optional[str] = Field(default=None, description="Absolute check-in date YYYY-MM-DD. Only use when the user gave explicit calendar dates; otherwise prefer check_in_night/nights.")
+    check_out_date: Optional[str] = Field(default=None, description="Absolute check-out date YYYY-MM-DD.")
+    approx_lat: Optional[float] = Field(default=None, description="Your best estimate of the accommodation's latitude (city-level accuracy). Used to reject a map match in the wrong city — always provide it.")
+    approx_lng: Optional[float] = Field(default=None, description="Your best estimate of the accommodation's longitude. Always provide it with approx_lat.")
+    notes: Optional[str] = Field(default="", description="Any notes.")
+
+class EditTripAccommodationTool(BaseModel):
+    """
+    Edits an existing Trip Accommodation — use it to change stay dates (e.g. to split a trip into legs), name, location, or notes.
+    Identify the accommodation by accommodation_id, or by name (exact or unambiguous partial match).
+    """
+    event_id: str = Field(..., description="The event ID of the Trip.")
+    accommodation_id: Optional[str] = Field(default=None, description="The ID of the accommodation to edit, if known.")
+    name: Optional[str] = Field(default=None, description="Name of the accommodation to edit (used to find it when accommodation_id is not given).")
+    new_name: Optional[str] = Field(default=None, description="New name, if renaming.")
+    location: Optional[str] = Field(default=None, description="New address/location, if moving.")
+    check_in_night: Optional[int] = Field(default=None, description="1-indexed trip night to check in (night 1 = first night of the trip).")
+    nights: Optional[int] = Field(default=None, description="Number of nights for this stay. Used with check_in_night.")
+    check_in_date: Optional[str] = Field(default=None, description="Absolute check-in date YYYY-MM-DD (prefer check_in_night for drafts).")
+    check_out_date: Optional[str] = Field(default=None, description="Absolute check-out date YYYY-MM-DD.")
+    approx_lat: Optional[float] = Field(default=None, description="When changing location: your estimate of the new latitude, to reject a map match in the wrong city.")
+    approx_lng: Optional[float] = Field(default=None, description="When changing location: your estimate of the new longitude.")
+    notes: Optional[str] = Field(default=None, description="New notes.")
+
+class EditTripPoiTool(BaseModel):
+    """
+    Edits the properties of an existing Trip POI. Use this when the user asks you to update a POI's location, name, priority, or duration.
+    """
+    event_id: str = Field(..., description="The event ID of the Trip.")
+    poi_id: str = Field(..., description="The ID of the POI to edit.")
+    name: Optional[str] = Field(default=None, description="Optional new name.")
+    location: Optional[str] = Field(default=None, description="Optional new location/address.")
+    category: Optional[str] = Field(default=None, description="Optional new category.")
+    duration_mins: Optional[int] = Field(default=None, description="Optional new duration in minutes.")
+    priority: Optional[str] = Field(default=None, description="Optional new priority (must, want, stretch).")
+    approx_lat: Optional[float] = Field(default=None, description="When changing location: your estimate of the new latitude, to reject a map match in the wrong city.")
+    approx_lng: Optional[float] = Field(default=None, description="When changing location: your estimate of the new longitude.")
+    valid_days_of_week: Optional[List[int]] = Field(default=None, description="Optional list of integers representing valid days (0=Mon, 6=Sun).")
+
+class GenerateTripFlightsTool(BaseModel):
+    """
+    Generates and adds realistic round-trip flight suggestions to a Trip in one step, using the
+    configured home location as the origin and the trip's destination and dates. ALWAYS use this when
+    the user asks to add, suggest, or find flights WITHOUT giving specific flight details — do NOT ask
+    them for flight numbers, times, or airports first. The flights are added as editable estimates.
+    """
+    event_id: str = Field(..., description="The event ID of the Trip.")
+    prompt: str = Field(default="", description="The user's request verbatim, including any stated origin, airline, or cabin preferences. Empty is fine for a bare 'add flights'.")
+
+class AddTripFlightTool(BaseModel):
+    """
+    Adds a single specific flight to a Trip. Use this when the user provides the flight's details
+    (route and day/time, e.g. a flight they already booked). If the user asks for flights WITHOUT
+    details, use generate_trip_flights instead — never interrogate them for details.
+    On draft trips give times as departure_day/arrival_day trip-day ordinals with 'HH:MM' — the draft's
+    mock calendar dates are an implementation detail and must never be shown to the user.
+    """
+    event_id: str = Field(..., description="The event ID of the Trip.")
+    origin: str = Field(..., description="Origin airport code or city (e.g. 'JFK' or 'New York').")
+    destination: str = Field(..., description="Destination airport code or city.")
+    airline: Optional[str] = Field(default=None, description="Airline name (e.g. 'Delta').")
+    flight_number: Optional[str] = Field(default=None, description="Flight number (e.g. 'DL123'), if known.")
+    departure_day: Optional[int] = Field(default=None, description="1-indexed trip day of departure (day 1 = the trip's arrival day). 0 = the day BEFORE the trip starts (overnight outbound legs). Preferred over ISO datetimes for drafts.")
+    departure_time: Optional[str] = Field(default=None, description="Departure time 'HH:MM' 24h (paired with departure_day), or a full ISO datetime 'YYYY-MM-DDTHH:MM:SS' when the user gave explicit calendar dates.")
+    arrival_day: Optional[int] = Field(default=None, description="1-indexed trip day of arrival. Overnight flights usually land the day AFTER departure_day.")
+    arrival_time: Optional[str] = Field(default=None, description="Arrival time 'HH:MM' 24h (paired with arrival_day), or a full ISO datetime.")
+    class_type: Optional[str] = Field(default=None, description="Cabin class (e.g. 'Economy', 'Business').")
+    estimated_price_usd: Optional[float] = Field(default=None, description="Estimated total price for the WHOLE travel party in USD.")
+    notes: Optional[str] = Field(default="", description="Any notes (layovers, seat preference, booking status).")
+
+class EditTripFlightTool(BaseModel):
+    """
+    Edits an existing flight on a Trip — times, airline, route, class, price, or notes.
+    Identify the flight by flight_id (preferred), by flight_number, or by origin/destination (must match
+    exactly one flight). Only the fields you provide are changed; use new_origin/new_destination/
+    new_flight_number to change those values. On draft trips prefer departure_day/arrival_day trip-day
+    ordinals — mock calendar dates must never be shown to the user.
+    """
+    event_id: str = Field(..., description="The event ID of the Trip.")
+    flight_id: Optional[str] = Field(default=None, description="The ID of the flight to edit, if known.")
+    flight_number: Optional[str] = Field(default=None, description="Flight number used to FIND the flight when flight_id is not given.")
+    origin: Optional[str] = Field(default=None, description="Origin used to FIND the flight when flight_id/flight_number are not given.")
+    destination: Optional[str] = Field(default=None, description="Destination used to FIND the flight when flight_id/flight_number are not given.")
+    new_flight_number: Optional[str] = Field(default=None, description="New flight number, if changing it.")
+    new_origin: Optional[str] = Field(default=None, description="New origin, if changing it.")
+    new_destination: Optional[str] = Field(default=None, description="New destination, if changing it.")
+    airline: Optional[str] = Field(default=None, description="New airline name.")
+    departure_day: Optional[int] = Field(default=None, description="New 1-indexed trip day of departure (0 = day before the trip).")
+    departure_time: Optional[str] = Field(default=None, description="New departure time 'HH:MM' (paired with departure_day or the flight's existing date), or a full ISO datetime.")
+    arrival_day: Optional[int] = Field(default=None, description="New 1-indexed trip day of arrival.")
+    arrival_time: Optional[str] = Field(default=None, description="New arrival time 'HH:MM', or a full ISO datetime.")
+    class_type: Optional[str] = Field(default=None, description="New cabin class.")
+    estimated_price_usd: Optional[float] = Field(default=None, description="New estimated total price in USD for the whole party.")
+    notes: Optional[str] = Field(default=None, description="New notes.")
+
+class DeleteTripFlightTool(BaseModel):
+    """
+    Deletes a flight from a Trip. Identify it by flight_id (preferred), by flight_number, or by
+    origin/destination (must match exactly one flight).
+    """
+    event_id: str = Field(..., description="The event ID of the Trip.")
+    flight_id: Optional[str] = Field(default=None, description="The ID of the flight to delete, if known.")
+    flight_number: Optional[str] = Field(default=None, description="Flight number used to find the flight.")
+    origin: Optional[str] = Field(default=None, description="Origin used to find the flight.")
+    destination: Optional[str] = Field(default=None, description="Destination used to find the flight.")
+
+class StartDriveTool(BaseModel):
+    """Logs a telemetry event that the driver has started a leg, and returns a navigation URL."""
+    driver_id: str = Field(..., description="The ID of the driver.")
+    event_id: str = Field(..., description="The ID of the event/errand the driver is heading to.")
+    destination: str = Field(..., description="The location the driver is heading to.")
+
+class UpdateDriveStatusTool(BaseModel):
+    """Updates the completion status of a drive leg or event."""
+    event_id: str = Field(..., description="The exact event ID to mark completed.")
+    status: str = Field(default="completed", description="The status, usually 'completed'.")
+    leg_id: str = Field(default="", description="The exact leg ID if known (e.g. 'route_evt1_evt2').")
+
+class ReopenChoreTool(BaseModel):
+    """
+    Puts a chore back in the pot (open, claimable now). Use when a verified chore needs doing again this period or to release a chore someone claimed but isn't doing. Chores finished and awaiting verification cannot be reopened.
+    """
+    chore_title: str = Field(..., description="The chore's name (fuzzy matched).")
+
+class ChallengePetBattleTool(BaseModel):
+    """
+    Asks another family member for a pet battle on behalf of a child. Only
+    ASKS -- the other person still has to accept, and the fight is always
+    level-matched so it is never decided by who did more chores.
+    """
+    challenger_name: str
+    opponent_name: str
+
+class AwardPetXpTool(BaseModel):
+    """
+    Gives (or takes back) pet experience for a family member. Pet XP is a
+    separate currency from chore points and can never become chore points.
+    """
+    member_name: str
+    amount: int
+
+class GetPetStatusTool(BaseModel):
+    """
+    Reports how somebody's pet critter is doing: its level, its element and
+    how far it is from levelling up. There is no win-loss record to report.
+    """
+    member_name: Optional[str] = None
+
+class GetPointBalancesTool(BaseModel):
+    """
+    Gets the current chore-point balance for every child, sorted highest first.
+    """
+    pass
+
+class GetFamilyGoalsTool(BaseModel):
+    """
+    Lists the pooled 'family goal' rewards (like Family Movie Night) with how many points each child has pledged and how much is left to fund.
+    """
+    pass
+
+class ContributeToFamilyGoalTool(BaseModel):
+    """
+    Pledges some of a child's points toward a pooled family-goal reward. Pledged points are held, not spent — a parent grants the goal once it's fully funded. Ask which child is pledging if unknown.
+    """
+    reward_title: str = Field(..., description="The family goal's name (fuzzy matched).")
+    amount: int = Field(..., description="How many points to pledge.")
+    member_name: str = Field(..., description="Which child is pledging.")
+
+class AdjustPointsTool(BaseModel):
+    """
+    Adds, subtracts, or sets a child's chore points (a parent-level manual adjustment recorded in the points history). Use delta for relative changes ('give Bob 20 points' -> delta 20, 'take away 5' -> delta -5) or set_to for an absolute balance ('set Bob to 100'). Provide exactly one of delta / set_to.
+    """
+    member_name: str = Field(..., description="The child's name.")
+    delta: Optional[int] = Field(default=None, description="Relative point change; negative to subtract.")
+    set_to: Optional[int] = Field(default=None, description="Absolute target balance.")
+    note: str = Field(default="", description="Short reason shown in the points history, e.g. 'Helped carry groceries'.")
+
+class SendFamilyMessageTool(BaseModel):
+    """
+    Posts a message to the family chat channel everyone sees. The sender must be known: pass from_member with the speaker's name; if the speaker is unknown, ask who it is before sending.
+    """
+    message_text: str = Field(..., description="The message to post, in the sender's voice.")
+    from_member: Optional[str] = Field(default=None, description="Who the message is from (family member name).")
+
+class SendDirectMessageTool(BaseModel):
+    """
+    Sends a private direct message to one family member ('tell Mom I'll be late'). Sender must be known via from_member; ask if unknown.
+    """
+    recipient_name: str = Field(..., description="The family member to message (fuzzy matched by name).")
+    message_text: str = Field(..., description="The message to send, in the sender's voice.")
+    from_member: Optional[str] = Field(default=None, description="Who the message is from.")
+
+class GetFamilyMessagesTool(BaseModel):
+    """
+    Reads the most recent messages from the family chat channel.
+    """
+    limit: int = Field(default=10, description="How many recent messages to read (max 25).")
+
+class ListChoresTool(BaseModel):
+    """
+    Lists the family chore pot: open chores, who has claimed what, and what awaits parent verification.
+    """
+    pass
+
+class ListOpenFindingsTool(BaseModel):
+    """
+    Lists what still needs a parent: drives with nobody assigned, things waiting on an approval, and decisions nobody has made yet.
+    """
+    pass
+
+class ListInsightsTool(BaseModel):
+    """
+    Lists what Argyle's Mind has noticed about the family lately (the 'Argyle noticed' lane) — patterns, gentle observations, and things it's keeping an eye on.
+    """
+    pass
+
+class DismissInsightTool(BaseModel):
+    """
+    Dismisses one Mind insight by id after the user says they don't want it or it's not useful.
+    """
+    insight_id: str = Field(..., description="The insight's id, from list_insights.")
+
+class ListProgramsTool(BaseModel):
+    """
+    Lists ambitions with a real plan attached — a curated curriculum, reserved practice time, a session log. Each shows who it's for, its state, the phase ahead, and sessions logged.
+    """
+    member_name: Optional[str] = Field(default=None, description="See one family member's programs by name, if said.")
+
+class ClaimChoreTool(BaseModel):
+    """
+    Claims an open chore for a family member ('Ben will take the dishes'). member_name is required; ask who is claiming if unknown.
+    """
+    chore_title: str = Field(..., description="The chore's name (fuzzy matched).")
+    member_name: Optional[str] = Field(default=None, description="Who is claiming it.")
+
+class NegotiateDayTool(BaseModel):
+    """
+    Works out what would make a broken day cover — whose event could move fifteen minutes, who could take a drive, what could be skipped. Read-only: it finds the deal, it does not ask anybody.
+    """
+    day: Optional[str] = Field(None, description="The day to work on — 'Tuesday', 'tomorrow', or YYYY-MM-DD. Defaults to today.")
+    event_title: Optional[str] = Field(None, description="Narrow to one uncovered event by title.")
+
+class GetRoutineStatusTool(BaseModel):
+    """
+    Checks a family member's daily routine progress and streak ('did Ben finish his routine?').
+    """
+    member_name: str = Field(..., description="Whose routine to check.")
+    target_date: str = Field(default="today", description="Day to check (YYYY-MM-DD, 'today', 'yesterday').")
+
+class PostWeeklyDigestTool(BaseModel):
+    """
+    Posts the 'Family Week in Review' WEEKLY stats digest (driving, activities, chores, rewards, routines) into the family chat right now — the on-demand resend of the weekly automatic post. NOT for a single day's schedule (that's get_drive_digest, which posts nothing).
+    """
+    pass
+
+class GetKidTasksTool(BaseModel):
+    """
+    Reads a child's school/deadline list — homework, tests, things to bring. Read-only; omit member_name for all kids.
+    """
+    member_name: Optional[str] = Field(None, description="Which child's list; omit for all kids.")
+
+class AddKidTaskTool(BaseModel):
+    """
+    Adds a task to a child's school/deadline list (homework, test, project, thing to bring). Direct action, not a calendar event.
+    """
+    title: str = Field(..., description="What's due, e.g. 'Math worksheet'.")
+    due_date: str = Field(..., description="When it's due: 'tomorrow', a weekday name, or YYYY-MM-DD.")
+    member_name: Optional[str] = Field(None, description="Which child.")
+    kind: Optional[str] = Field(None, description="homework | test | project | bring | other")
+
+class CompleteKidTaskTool(BaseModel):
+    """
+    Checks a task off a child's school list by fuzzy title match.
+    """
+    task_title: str = Field(..., description="The task to check off.")
+    member_name: Optional[str] = Field(None, description="Which child.")
+
+class AddShoppingItemsTool(BaseModel):
+    """
+    Adds one or more things to a family shopping list ("we're out of milk", "add eggs and butter", "put paper towels on the Costco list"). Direct action for anyone including children — a list item costs nothing and never needs approval. Not for errands or calendar events.
+    """
+    items: str = Field(..., description="What to add; comma- or 'and'-separated values are split into separate items.")
+    list_name: Optional[str] = Field(None, description="Which list or store; omit for the default list.")
+
+class GetShoppingListItemsTool(BaseModel):
+    """
+    Reads what is still needed on a shopping list ("what's on the grocery list?").
+    """
+    list_name: Optional[str] = Field(None, description="Which list or store; omit for the default list.")
+
+class CheckOffShoppingItemTool(BaseModel):
+    """
+    Checks something off the shopping list because it is now in the cart ("got the milk"). Use while shopping; fuzzy match on open items.
+    """
+    item_name: str = Field(..., description="The item that was picked up.")
+    list_name: Optional[str] = Field(None, description="Which list or store; omit for the default list.")
+
+class RemoveShoppingItemTool(BaseModel):
+    """
+    Removes something from the shopping list entirely because it is no longer wanted ("take cilantro off the list"). NOT for items that were bought — use CheckOffShoppingItemTool for those.
+    """
+    item_name: str = Field(..., description="The item to remove.")
+    list_name: Optional[str] = Field(None, description="Which list or store; omit for the default list.")
+
+class SuggestDinnerTool(BaseModel):
+    """
+    Answers "what's for dinner?" by filtering the family's OWN meals against today's schedule (time at home, who eats in the car, allergies). Does not invent recipes and does not know what food is in the house.
+    """
+    target_date: Optional[str] = Field(None, description="Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
+
+class AddMealToRepertoireTool(BaseModel):
+    """
+    Adds one of the family's regular meals in their OWN WORDS — a bare name ("tacos") or a whole plate written out ("chicken, rice, beans black red or pinto, veggies, salad"). A short name, cook times, portability and components (including substitutable options) are all derived. Never ask for cook times or ingredients. A plate is ONE meal, not one per component.
+    """
+    name: str = Field(..., description="The family's description of the meal, verbatim — a name or a full plate.")
+
+class AddMealIngredientsToListTool(BaseModel):
+    """
+    Puts a meal's fresh ingredients on the shopping list; staples the family always has are skipped.
+    """
+    meal_name: str = Field(..., description="Which meal from the repertoire.")
+    list_name: Optional[str] = Field(None, description="Which list or store; omit for the default list.")
+
+class MarkMealServedTool(BaseModel):
+    """
+    Records that the family had a meal ("we had tacos"), keeping the rotation honest. Adds it to the repertoire if missing.
+    """
+    meal_name: str = Field(..., description="What they ate.")
+
+class GetTonightsPlateTool(BaseModel):
+    """
+    Answers "what's for dinner?" with the actual plate - entree, sides and any dessert - composed against today's schedule.
+    """
+    target_date: Optional[str] = Field(None, description="Which day: today (default), tomorrow, a weekday name, or YYYY-MM-DD.")
+
+class SetMealRuleTool(BaseModel):
+    """
+    Records how this household EATS: meat about once a week, takeout occasionally, one kind of beans at a time for a few days.
+    """
+    description: str = Field(..., description="The rule in the family own words.")
+    kind: Optional[str] = Field("frequency_cap", description="frequency_cap (how often, whole set), batch_cycle (one at a time), or repeat_spacing (no repeats: per-dish cooldown of window_days).")
+    tags: Optional[str] = Field(None, description="Comma separated dish tags, e.g. meat or beans.")
+    dish_names: Optional[str] = Field(None, description="Comma separated specific dishes.")
+    takeout: Optional[bool] = Field(False, description="true when the rule is about takeout.")
+    whole_meals: Optional[bool] = Field(False, description="true when the rule is about whole meals / one-pot dinners (a dish that is the entire plate, like lasagna or chili).")
+    max_servings: Optional[int] = Field(1, description="How many times, for frequency_cap.")
+    window_days: Optional[int] = Field(7, description="Per how many days (7 = a week); for repeat_spacing, the per-dish cooldown (21 = three weeks).")
+    dwell_days: Optional[int] = Field(3, description="How many days one batch lasts.")
+    except_dishes: Optional[str] = Field(None, description="Comma separated dishes the rule should NOT cover.")
+
+class GetMealRulesTool(BaseModel):
+    """
+    Lists the household meal rules.
+    """
+    pass
+
+class PlanSpecificDinnerTool(BaseModel):
+    """
+    Sets a specific dinner on a specific date and LOCKS it ("steak Monday for Mom's birthday", "Grandma is bringing dinner Tuesday").
+    """
+    target_date: str = Field(..., description="Which day: tomorrow, Monday, or YYYY-MM-DD.")
+    dish_names: Optional[str] = Field(None, description="Comma separated dishes; omit if nobody here is cooking.")
+    note: Optional[str] = Field(None, description="Why, e.g. Mom's birthday.")
+
+class UnlockDinnerTool(BaseModel):
+    """
+    Releases a locked night back to the proposal engine.
+    """
+    target_date: str = Field(..., description="Which day.")
+
+class PairDishesTool(BaseModel):
+    """
+    Records that dishes always come together ("brisket always comes with beans and fries"). Directed - the partners stay free to appear elsewhere.
+    """
+    dish_name: str = Field(..., description="The dish that brings the others.")
+    partner_names: str = Field(..., description="Comma separated dishes that come with it.")
+    exclusive: Optional[bool] = Field(False, description="true for 'X is only ever served with Y'.")
+
+class AddOccasionTool(BaseModel):
+    """
+    Records a holiday, birthday, party or get-together ("Thanksgiving is on the 26th and my parents are here from the 25th to the 29th"). The window makes holiday dishes available without putting them on any plate.
+    """
+    title: str = Field(..., description="What to call it, e.g. Thanksgiving 2026.")
+    anchor_date: str = Field(..., description="The day itself.")
+    kind: Optional[str] = Field("gathering", description="thanksgiving|christmas|easter|birthday|party|gathering")
+    window_start: Optional[str] = Field("", description="YYYY-MM-DD when guests arrive. Optional.")
+    window_end: Optional[str] = Field("", description="YYYY-MM-DD when it ends. Optional.")
+    dish_tags: Optional[str] = Field("", description="Comma separated repertoire tags this brings out.")
+
+class GetOccasionTool(BaseModel):
+    """
+    Reads the state of a holiday or party - guests, headcount, lists and outstanding errands.
+    """
+    occasion_name: Optional[str] = Field("", description="Which one; omit for the next one coming up.")
+
+class GetOccasionInsightsTool(BaseModel):
+    """
+    The judgement calls around a holiday or party that a checklist cannot make: who is carrying all the work, what is undecided and what waiting costs, the clearest day to act, deadlines that fall out of the food (thawing pushes back the buy date), and clashes between cooking and driving.
+    """
+    occasion_name: Optional[str] = Field("", description="Which one; omit for the next one coming up.")
+
+class GetOccasionGapsTool(BaseModel):
+    """
+    Says what is still MISSING for a holiday or party - a diff against the usual shape of that kind of occasion and against last year's, ordered by how little time is left. Use whenever someone asks whether they have forgotten something.
+    """
+    occasion_name: Optional[str] = Field("", description="Which one; omit for the next one coming up.")
+
+class SetOccasionAttendanceTool(BaseModel):
+    """
+    Records whether someone in the FAMILY is coming to an occasion ("Grandad is not coming to Thanksgiving this year"). Everyone in the household is assumed in except helpers. For people outside the family use add_occasion_guests.
+    """
+    occasion_name: str = Field(..., description="Which occasion.")
+    who: str = Field(..., description="A family member's name.")
+    coming: bool = Field(..., description="true if they are coming, false if not.")
+
+class AddOccasionGuestsTool(BaseModel):
+    """
+    Adds people to an occasion's guest list ("the Wilsons are coming, there are four of them"). Allergies bind like a family member's.
+    """
+    occasion_name: str = Field(..., description="Which occasion.")
+    who: str = Field(..., description="A name or a household.")
+    headcount: Optional[int] = Field(1, description="How many people that is.")
+    cannot_eat: Optional[str] = Field("", description="Comma separated allergies/avoidances.")
+
+class SourceForOccasionTool(BaseModel):
+    """
+    Turns what an occasion needs into a real shopping list scaled to the headcount ("party favours for a shark party").
+    """
+    occasion_name: str = Field(..., description="Which occasion.")
+    needed: str = Field(..., description="What they need, in their words.")
+
+class SuggestGiftIdeasTool(BaseModel):
+    """
+    Finds present ideas for a party the family was INVITED to by searching a real shop, and reports what it actually stocks under the budget ("what should we get Jack?"). Never invents a product or a price.
+    """
+    occasion_name: str = Field(..., description="Which party.")
+    extra: str = Field("", description="Anything known about the child, e.g. they are into dinosaurs.")
+
+class GetRunSheetTool(BaseModel):
+    """
+    Works out when to start cooking and what goes on when, counting back from when the family eats ("when do I need to start on Thursday?", "what time does the turkey go in?"). Accounts for one oven at two temperatures and for how many people are cooking.
+    """
+    target_date: Optional[str] = Field("today", description="The night, e.g. today, Saturday, 2026-11-26.")
+    serve_at: Optional[str] = Field("", description="Optional HH:MM to eat at; omit to use the family's own sitting.")
+
+class SetHostingTool(BaseModel):
+    """
+    Records how many people are eating on a night and how many are cooking ("we are having twelve people on Saturday", "four of us are cooking Thursday"). Headcount multiplies hands-on work; cooks divide it. serving_for=0 clears it back to an ordinary night.
+    """
+    target_date: str = Field(..., description="The night, e.g. Saturday, tomorrow, or 2026-11-26.")
+    serving_for: int = Field(..., description="Whole headcount including the family. 0 clears it.")
+    cooks: Optional[int] = Field(0, description="How many people are cooking. 0 leaves it as is.")
+
+class SetDishScopeTool(BaseModel):
+    """
+    Marks a dish as holiday and party food rather than everyday food, so it stops being suggested on ordinary nights ("turkey is only for holidays", "we only make deviled eggs for parties"). The dish stays pickable by hand and its leftovers still count.
+    """
+    dish_name: str = Field(..., description="Which dish, e.g. turkey.")
+    occasion_only: Optional[bool] = Field(True, description="true for holiday/party only, false to return it to everyday.")
+
+class SetDishCategoriesTool(BaseModel):
+    """
+    Corrects what a dish IS on the plate, using the family's own categories ("black beans are a protein, not just a starch", "spaghetti and meat sauce is a whole meal", "the chili serves eight"). A dish may belong to several categories and then fills whichever one the plate still needs, never two at once.
+    """
+    dish_name: str = Field(..., description="Which dish, e.g. black beans.")
+    categories: Optional[str] = Field("", description="Comma-separated category names in the family's own words, e.g. 'protein, starches/carbs'.")
+    whole_meal: Optional[bool] = Field(None, description="true if it is a whole dinner on its own.")
+    serves: Optional[int] = Field(None, description="How many people it feeds.")
+    whole_units: Optional[bool] = Field(None, description="true if made in indivisible whole units (a tray, a cake, a sheet pan).")
+
+class UnpairDishesTool(BaseModel):
+    """
+    Removes a pairing between dishes.
+    """
+    dish_name: str = Field(..., description="Which dish.")
+    partner_name: Optional[str] = Field(None, description="Which partner; omit to clear all pairings for that dish.")
+
+class SetDishPrepTool(BaseModel):
+    """
+    Records prep done OUTSIDE the cook window and sets its reminder ("we soak the rice the night before", "the chicken marinates an hour first").
+    """
+    dish_name: str = Field(..., description="Which dish, e.g. rice or chicken.")
+    action: str = Field(..., description="The verb: soak, marinate, thaw, take out of the freezer.")
+    when: Optional[str] = Field("hours_before", description="night_before | hours_before | morning_of")
+    hours: Optional[float] = Field(1.0, description="How many hours before dinner, when using hours_before.")
+
+class ClearDishPrepTool(BaseModel):
+    """
+    Removes prep from a dish ("we don't soak the rice anymore").
+    """
+    dish_name: str = Field(..., description="Which dish.")
+    action: Optional[str] = Field(None, description="Which step; omit to clear all prep for that dish.")
+
+class GetPrepAheadTool(BaseModel):
+    """
+    Answers "is there anything I need to do tonight" / "do I need to soak anything" for tonight and tomorrow.
+    """
+    pass
+
+class GetShoppingTripTool(BaseModel):
+    """
+    Answers "when are we going shopping" / "when is the grocery run" with the SCHEDULED trip and how many things are waiting.
+    """
+    list_name: Optional[str] = Field(None, description="Which list or store; omit for the default list.")
+
+class ScheduleShoppingTripTool(BaseModel):
+    """
+    Creates a recurring shopping trip for a list ("schedule a grocery run", "add a weekly Costco run"). The solver then fits it into the week.
+    """
+    store: Optional[str] = Field(None, description="Where they shop, e.g. Kroger on Main St.")
+    list_name: Optional[str] = Field(None, description="Which list; omit for the default list.")
+    weekly: Optional[bool] = Field(True, description="true (default) for a standing weekly run, false for a one-off.")
+
+class GetWeekDinnersTool(BaseModel):
+    """
+    Answers "what are we eating this week" / "what's the meal plan" / "what do I need to buy for" - every night in the span the next grocery run has to cover.
+    """
+    pass
+
+class ApproveWeekDinnersTool(BaseModel):
+    """
+    The family approves the whole week ("that looks good", "plan the week"). Pins every night and puts the span's fresh ingredients on the shopping list.
+    """
+    pass
+
+class ChangeTonightsPlateTool(BaseModel):
+    """
+    Adds or drops ONE dish for ONE evening ("we've got corn too", "no salad tonight"). Changes only that evening's plate; the family's list of what they cook is untouched.
+    """
+    dish_name: str = Field(..., description="Which dish, e.g. corn.")
+    action: Optional[str] = Field(None, description="add (default) or remove.")
+    target_date: Optional[str] = Field(None, description="Which day: today (default), tomorrow, a weekday name, or YYYY-MM-DD.")
+
+class AddDishesTool(BaseModel):
+    """
+    Adds things the family COOKS to their repertoire, in their own words. Every alternative becomes its own dish, typed as a whole meal, entree, side or dessert. Not for what is being eaten tonight.
+    """
+    description: str = Field(..., description="Their description, verbatim.")
+
+class RefineMealDishTool(BaseModel):
+    """
+    Answers a question about a vague part of a meal ("the potatoes are russet, roasted"), making that dish's cook time and shopping line accurate.
+    """
+    dish_name: str = Field(..., description="The vague dish, e.g. 'potatoes'.")
+    detail: str = Field(..., description="What they said, e.g. 'russet, roasted'.")
+
+class MarkLeftoversTool(BaseModel):
+    """
+    Records that food is ALREADY MADE for a day ("we're having leftovers tonight", "the rice is already made"), so the app stops holding cook time for work nobody will do and keeps those ingredients off the shopping list.
+    """
+    what: Optional[str] = Field(None, description="What the leftovers are, e.g. 'chili'. Omit for plain 'we have leftovers'.")
+    target_date: Optional[str] = Field(None, description="Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
+    parts: Optional[str] = Field(None, description="Only if PART of a meal is left over, e.g. 'rice and beans'.")
+
+class ClearLeftoversTool(BaseModel):
+    """
+    Undoes a leftovers note for a day ("actually we're cooking tonight").
+    """
+    target_date: Optional[str] = Field(None, description="Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
+
+class GetEatingPlanTool(BaseModel):
+    """
+    Answers "what's the plan for dinner?", "do we have time to cook tonight?", "who's eating when?" from the SCHEDULE: time at home to cook, whether the family eats in shifts, who eats in the car and by when their food must be ready, and whether anyone has no gap to eat. Does NOT know what food is in the house.
+    """
+    target_date: Optional[str] = Field(None, description="Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
+
+class SetHouseholdStatusTool(BaseModel):
+    """
+    Sets (or clears) a family status day — a pre-authored day type like 'Chemo Day' or 'Trip Day' ("today is a chemo day", "set rest day for tomorrow", "clear tomorrow's chemo day"). Setting it tells the kids in the family's own words and notifies the other adults. Day types are created on the Calendar page (Status days), not here.
+    """
+    protocol_name: str = Field(..., description="Which day type, e.g. 'Chemo Day' — fuzzy matched against the family's configured status day types.")
+    target_date: Optional[str] = Field(None, description="Which day (or span start): 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
+    end_date: Optional[str] = Field(None, description="Optional span end for multi-day statuses ('Dad's away Tuesday through Friday') — same date formats. Omit for a single day.")
+    note: Optional[str] = Field(None, description="Optional one-line 'today's different' nudge, e.g. 'rougher than usual'.")
+    clear: Optional[bool] = Field(None, description="True to clear this status from that day instead of setting it (announces the change of plans).")
+
+class GetHouseholdStatusTool(BaseModel):
+    """
+    Reads the family status for a day ("is tomorrow a chemo day?", "what's today's status?"). Read-only.
+    """
+    target_date: Optional[str] = Field(None, description="Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
+
+class GetDriveDigestTool(BaseModel):
+    """
+    Shows the drive digest for one day as a read-only answer (drives per driver sorted by time, prep-kit items, weather) — 'today's digest', 'the tomorrow digest', 'Friday's drives'. Never posts to any channel.
+    """
+    target_date: Optional[str] = Field(None, description="Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
+    member_name: Optional[str] = Field(None, description="Limit to one family member's drives; omit for all drivers.")
+
+class DecideOptionalEventTool(BaseModel):
+    """
+    Records whether the family is attending an OPTIONAL event's occurrence on a date: "she's going to open gym today" -> attend, "skip gymnastics tonight" -> skip, "leave it open" -> clear. attend makes it a firm commitment (a driver will be found or a real alarm raised); skip takes it out of the day's plan with nobody scheduled or chased. Only works on events already marked optional.
+    """
+    event_name: str = Field(..., description="The name of the event or a substring of it.")
+    decision: str = Field(..., description="attend | skip | clear. attend = going for sure; skip = not going today; clear = undecided again (goes if it fits).")
+    target_date: Optional[str] = Field("today", description="The date of the occurrence, YYYY-MM-DD or relative ('today', 'tomorrow').")
+
+class SetEventOptionalTool(BaseModel):
+    """
+    Marks an event as OPTIONAL ("open gym is optional") or firm again ("practice is mandatory now"). Optional events are scheduled when the day allows but dropped first on conflicts, with calm messaging instead of no-driver alarms. Applies to the whole recurring series by default.
+    """
+    event_name: str = Field(..., description="The name of the event or a substring of it.")
+    optional: bool = Field(True, description="true to mark optional, false to make it a firm commitment again.")
+    scope: Optional[str] = Field("series", description="series (default) = every occurrence; instance = only the one on target_date.")
+    target_date: Optional[str] = Field("today", description="A date the event occurs on, used to find it.")
+
+class CancelEventTool(BaseModel):
+    """
+    Cancels ONE occurrence of a calendar event ("practice is canceled", "call off swim tomorrow — coach is sick"). Records it with the reason, marks the Google event CANCELED, and pushes the assigned driver and the kids. Nothing is deleted — the event stays on the calendar struck through, and can be restored. Parents/adults only.
+    """
+    event_name: str = Field(..., description="The name of the event or a substring of it.")
+    target_date: Optional[str] = Field("today", description="The date of the occurrence, YYYY-MM-DD or relative ('today', 'tomorrow').")
+    reason: Optional[str] = Field(None, description="Why it was canceled ('coach is sick') — rides the pushes and the record.")
+
+class GroupEventsRideTogetherTool(BaseModel):
+    """
+    Groups specific event occurrences on ONE day to ride together ("Ava's swim and Ben's dive can go together", "put both kids in the car for swim and dive"): one driver takes all of them, they never count as a conflict, and the route is one trip with no drive home in between. Applies to that day's occurrences only -- other weeks are untouched. For a standing rule across weeks use AddRoutingRuleTool with constraint_type='group' instead. Parents/adults only.
+    """
+    event_names: List[str] = Field(..., description="Two or more event names (or substrings), all on target_date. The last one is the event the others join.")
+    target_date: Optional[str] = Field("today", description="The day of the occurrences, YYYY-MM-DD or relative ('today', 'tomorrow').")
+
+class UngroupEventTool(BaseModel):
+    """
+    Takes one event occurrence out of its ride-together group ("swim doesn't ride with dive anymore"). A group left with one event dissolves. Parents/adults only.
+    """
+    event_name: str = Field(..., description="The name of the event or a substring of it.")
+    target_date: Optional[str] = Field("today", description="The date of the occurrence.")
+
+class RestoreEventTool(BaseModel):
+    """
+    Un-cancels a previously canceled event occurrence ("practice is back on") — restores the Google title, re-plans the drive, tells everyone it is happening after all. Parents/adults only.
+    """
+    event_name: str = Field(..., description="The name of the event or a substring of it.")
+    target_date: Optional[str] = Field("today", description="The date of the occurrence.")
+
+class LaunchMissionTool(BaseModel):
+    """Start a multi-step Argyle mission (research, compare, draft, propose).
+    Parent/adult only. Nothing executes without human approval."""
+    goal: str = Field(description="What the mission should achieve, in one sentence.")
+    thread_title: Optional[str] = Field(None, description="Existing thread this belongs to, if any (fuzzy matched).")
+
+class CreateThreadTool(BaseModel):
+    """Opens a thread — a tracked open loop with someone OUTSIDE the family
+    (a vendor, a company, a coach). Nothing is sent by opening it; messages
+    are drafted on the thread later and a person reviews and sends them."""
+    title: str = Field(description="Short name for the loop (e.g. \"Ana's Cleaning — biweekly service\").")
+    goal: str = Field(default="", description="What done looks like.")
+    kind: str = Field(default="vendor", description="'vendor' or 'project'.")
+    counterparty_name: str = Field(default="", description="Who is on the other end.")
+    counterparty_email: str = Field(default="", description="Their email, if known.")
+    next_action: str = Field(default="", description="The first concrete move (e.g. 'send an intro email asking for a quote').")
+
+# A unified schema registry
+TOOL_SCHEMAS = {
+    "start_drive": StartDriveTool.model_json_schema(),
+    "update_drive_status": UpdateDriveStatusTool.model_json_schema(),
+    "get_current_state": GetCurrentStateTool.model_json_schema(),
+    "add_routing_rule": AddRoutingRuleTool.model_json_schema(),
+    "delete_routing_rule": DeleteRoutingRuleTool.model_json_schema(),
+    "add_priority_rule": AddPriorityRuleTool.model_json_schema(),
+    "delete_priority_rule": DeletePriorityRuleTool.model_json_schema(),
+    "run_solver": RunSolverTool.model_json_schema(),
+    "add_override": AddOverrideTool.model_json_schema(),
+    "delete_override": DeleteOverrideTool.model_json_schema(),
+    "manage_car": ManageCarTool.model_json_schema(),
+    "update_memory": UpdateMemoryTool.model_json_schema(),
+    "add_errand": AddErrandTool.model_json_schema(),
+    "update_errand": UpdateErrandTool.model_json_schema(),
+    "delete_errand": DeleteErrandTool.model_json_schema(),
+    "get_errands": GetErrandsTool.model_json_schema(),
+    "add_errand_rule": AddErrandRuleTool.model_json_schema(),
+    "delete_errand_rule": DeleteErrandRuleTool.model_json_schema(),
+    "search_places": SearchPlacesTool.model_json_schema(),
+    "generate_trip_plan": GenerateTripPlanTool.model_json_schema(),
+    "add_trip_poi": AddTripPoiTool.model_json_schema(),
+    "add_trip_accommodation": AddTripAccommodationTool.model_json_schema(),
+    "edit_trip_accommodation": EditTripAccommodationTool.model_json_schema(),
+    "edit_trip_poi": EditTripPoiTool.model_json_schema(),
+    "generate_trip_flights": GenerateTripFlightsTool.model_json_schema(),
+    "add_trip_flight": AddTripFlightTool.model_json_schema(),
+    "edit_trip_flight": EditTripFlightTool.model_json_schema(),
+    "delete_trip_flight": DeleteTripFlightTool.model_json_schema(),
+    "challenge_pet_battle": ChallengePetBattleTool.model_json_schema(),
+    "award_pet_xp": AwardPetXpTool.model_json_schema(),
+    "get_pet_status": GetPetStatusTool.model_json_schema(),
+    "get_point_balances": GetPointBalancesTool.model_json_schema(),
+    "adjust_points": AdjustPointsTool.model_json_schema(),
+    "get_family_goals": GetFamilyGoalsTool.model_json_schema(),
+    "contribute_to_family_goal": ContributeToFamilyGoalTool.model_json_schema(),
+    "reopen_chore": ReopenChoreTool.model_json_schema(),
+    "send_family_message": SendFamilyMessageTool.model_json_schema(),
+    "send_direct_message": SendDirectMessageTool.model_json_schema(),
+    "get_family_messages": GetFamilyMessagesTool.model_json_schema(),
+    "list_chores": ListChoresTool.model_json_schema(),
+    "list_open_findings": ListOpenFindingsTool.model_json_schema(),
+    "list_insights": ListInsightsTool.model_json_schema(),
+    "dismiss_insight": DismissInsightTool.model_json_schema(),
+    "list_programs": ListProgramsTool.model_json_schema(),
+    "claim_chore": ClaimChoreTool.model_json_schema(),
+    "negotiate_day": NegotiateDayTool.model_json_schema(),
+    "get_routine_status": GetRoutineStatusTool.model_json_schema(),
+    "post_weekly_digest": PostWeeklyDigestTool.model_json_schema(),
+    "get_drive_digest": GetDriveDigestTool.model_json_schema(),
+    "decide_optional_event": DecideOptionalEventTool.model_json_schema(),
+    "set_event_optional": SetEventOptionalTool.model_json_schema(),
+    "cancel_event": CancelEventTool.model_json_schema(),
+    "restore_event": RestoreEventTool.model_json_schema(),
+    "group_events_ride_together": GroupEventsRideTogetherTool.model_json_schema(),
+    "ungroup_event": UngroupEventTool.model_json_schema(),
+    "get_kid_tasks": GetKidTasksTool.model_json_schema(),
+    "add_kid_task": AddKidTaskTool.model_json_schema(),
+    "complete_kid_task": CompleteKidTaskTool.model_json_schema(),
+    "set_household_status": SetHouseholdStatusTool.model_json_schema(),
+    "get_household_status": GetHouseholdStatusTool.model_json_schema(),
+    "add_shopping_items": AddShoppingItemsTool.model_json_schema(),
+    "get_shopping_list_items": GetShoppingListItemsTool.model_json_schema(),
+    "check_off_shopping_item": CheckOffShoppingItemTool.model_json_schema(),
+    "remove_shopping_item_by_name": RemoveShoppingItemTool.model_json_schema(),
+    "get_eating_plan": GetEatingPlanTool.model_json_schema(),
+    "suggest_dinner": SuggestDinnerTool.model_json_schema(),
+    "add_meal_to_repertoire": AddMealToRepertoireTool.model_json_schema(),
+    "add_meal_ingredients_to_list": AddMealIngredientsToListTool.model_json_schema(),
+    "mark_meal_served": MarkMealServedTool.model_json_schema(),
+    "mark_leftovers": MarkLeftoversTool.model_json_schema(),
+    "clear_leftovers": ClearLeftoversTool.model_json_schema(),
+    "refine_meal_dish": RefineMealDishTool.model_json_schema(),
+    "get_tonights_plate": GetTonightsPlateTool.model_json_schema(),
+    "change_tonights_plate": ChangeTonightsPlateTool.model_json_schema(),
+    "add_dishes": AddDishesTool.model_json_schema(),
+    "get_week_dinners": GetWeekDinnersTool.model_json_schema(),
+    "approve_week_dinners": ApproveWeekDinnersTool.model_json_schema(),
+    "get_shopping_trip": GetShoppingTripTool.model_json_schema(),
+    "set_meal_rule": SetMealRuleTool.model_json_schema(),
+    "get_meal_rules": GetMealRulesTool.model_json_schema(),
+    "plan_specific_dinner": PlanSpecificDinnerTool.model_json_schema(),
+    "unlock_dinner": UnlockDinnerTool.model_json_schema(),
+    "pair_dishes": PairDishesTool.model_json_schema(),
+    "unpair_dishes": UnpairDishesTool.model_json_schema(),
+    "set_dish_scope": SetDishScopeTool.model_json_schema(),
+    "set_dish_categories": SetDishCategoriesTool.model_json_schema(),
+    "set_hosting": SetHostingTool.model_json_schema(),
+    "get_run_sheet": GetRunSheetTool.model_json_schema(),
+    "add_occasion": AddOccasionTool.model_json_schema(),
+    "get_occasion": GetOccasionTool.model_json_schema(),
+    "get_occasion_gaps": GetOccasionGapsTool.model_json_schema(),
+    "get_occasion_insights": GetOccasionInsightsTool.model_json_schema(),
+    "add_occasion_guests": AddOccasionGuestsTool.model_json_schema(),
+    "set_occasion_attendance": SetOccasionAttendanceTool.model_json_schema(),
+    "source_for_occasion": SourceForOccasionTool.model_json_schema(),
+    "suggest_gift_ideas": SuggestGiftIdeasTool.model_json_schema(),
+    "set_dish_prep": SetDishPrepTool.model_json_schema(),
+    "clear_dish_prep": ClearDishPrepTool.model_json_schema(),
+    "get_prep_ahead": GetPrepAheadTool.model_json_schema(),
+    "schedule_shopping_trip": ScheduleShoppingTripTool.model_json_schema(),
+    "launch_mission": LaunchMissionTool.model_json_schema(),
+    "create_thread": CreateThreadTool.model_json_schema(),
+}
+
+def get_openai_tools() -> List[Dict[str, Any]]:
+    """Formats schemas for OpenAI/Ollama tool calling API."""
+    import copy
+    
+    def scrub_schema(obj):
+        if isinstance(obj, dict):
+            if isinstance(obj.get("title"), str):
+                obj.pop("title", None)
+            obj.pop("additionalProperties", None)
+            for k, v in list(obj.items()):
+                scrub_schema(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                scrub_schema(item)
+        return obj
+
+    tools = []
+    for name, schema in TOOL_SCHEMAS.items():
+        clean_schema = scrub_schema(copy.deepcopy(schema))
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": clean_schema.get("description", ""),
+                "parameters": clean_schema
+            }
+        })
+    return tools
+
+def handle_get_current_state(args: dict) -> dict:
+    from services import storage
+    state = {
+        "drivers": storage.get_all_drivers(),
+        "passengers": storage.get_all_passengers(),
+        "cars": storage.get_all_cars(),
+        "routing_rules": storage.get_all_rules(),
+        "priority_rules": storage.get_all_priority_rules(),
+        "overrides": storage.get_all_overrides(),
+    }
+    date_str = args.get("date")
+    if not date_str:
+        import datetime
+        date_str = datetime.datetime.now().strftime('%Y-%m-%d')
+        
+    import main
+    res = main.refresh_schedule_logic(date_str, date_str, force_refresh=False)
+    
+    clean_events = []
+    if "events" in res:
+        for e in res["events"]:
+            # Make sure to only include events for the requested date, just in case
+            if e.get("start_date") == date_str:
+                clean_e = {k: v for k, v in e.items() if k not in ['polyline', 'distance_matrix', 'steps', 'geometry']}
+                clean_events.append(clean_e)
+                
+    state["schedule"] = clean_events
+    return state
+
+def handle_manage_car(args: dict) -> dict:
+    from services import storage
+    action = (args.get("action") or "").strip().lower()
+    cars = storage.get_all_cars()
+
+    if action == "create":
+        from models.schemas import Car
+        car = Car(
+            name=(args.get("name") or "").strip() or "Car",
+            seat_capacity=int(args.get("seat_capacity") or 4),
+            allowed_driver_ids=args.get("allowed_driver_ids") or [],
+            allowed_passenger_ids=(args.get("allowed_passenger_ids") or None),
+            default_driver_id=(args.get("default_driver_id") or None),
+        )
+        doc_id = storage.add_car(car.model_dump())
+        return {"status": "success", "car_id": car.id, "doc_id": doc_id}
+
+    needle = (args.get("car_id") or "").strip().lower()
+    car = next((c for c in cars if str(c.get("id", "")).lower() == needle
+                or (c.get("name") or "").strip().lower() == needle), None)
+    if not car:
+        known = ", ".join(f"{c.get('name')} ({c.get('id')})" for c in cars) or "none"
+        return {"status": "error", "message": f"No car matching '{args.get('car_id')}'. Known cars: {known}"}
+    doc_id = car["doc_id"]
+    updated = {k: v for k, v in car.items() if k != "doc_id"}
+
+    if action == "delete":
+        storage.delete_car(doc_id)
+        return {"status": "success", "deleted": car.get("name")}
+    if action == "set_unavailable":
+        if not args.get("unavailable_start") or not args.get("unavailable_end"):
+            return {"status": "error", "message": "unavailable_start and unavailable_end (YYYY-MM-DD) are required"}
+        updated["unavailable_ranges"] = (updated.get("unavailable_ranges") or []) + [{
+            "start": args["unavailable_start"], "end": args["unavailable_end"],
+            "reason": args.get("unavailable_reason") or ""}]
+        storage.update_car(doc_id, updated)
+        return {"status": "success", "car": updated["name"], "unavailable_ranges": updated["unavailable_ranges"]}
+    if action == "clear_unavailable":
+        updated["unavailable_ranges"] = []
+        storage.update_car(doc_id, updated)
+        return {"status": "success", "car": updated["name"], "unavailable_ranges": []}
+    if action == "update":
+        if (args.get("name") or "").strip():
+            updated["name"] = args["name"].strip()
+        if args.get("default_driver_id"):
+            updated["default_driver_id"] = args["default_driver_id"]
+        if int(args.get("seat_capacity") or 0) > 0:
+            updated["seat_capacity"] = int(args["seat_capacity"])
+        if args.get("allowed_driver_ids"):
+            updated["allowed_driver_ids"] = args["allowed_driver_ids"]
+        if args.get("allowed_passenger_ids"):
+            updated["allowed_passenger_ids"] = args["allowed_passenger_ids"]
+        storage.update_car(doc_id, updated)
+        return {"status": "success", "car": updated}
+    return {"status": "error", "message": f"Unknown action '{action}'. Use create/update/delete/set_unavailable/clear_unavailable."}
+
+def handle_add_routing_rule(args: dict) -> dict:
+    from services import storage
+    args.setdefault('filter_sets', [])
+    args.setdefault('buffer_before_mins', 0)
+    args.setdefault('buffer_after_mins', 0)
+    args.setdefault('buffer_reason', None)
+    args.setdefault('attendance_action', 'stay')
+    
+    rule_id = storage.add_rule(args)
+    return {"status": "success", "rule_id": rule_id}
+
+def handle_delete_routing_rule(args: dict) -> dict:
+    from services import storage
+    try:
+        rule_id = int(args.get("rule_id", 0))
+        storage.delete_rule(rule_id)
+        return {"status": "success"}
+    except ValueError:
+        return {"status": "error", "message": "rule_id must be an integer"}
+
+def handle_add_priority_rule(args: dict) -> dict:
+    from services import storage
+    rule_id = storage.add_priority_rule(args)
+    return {"status": "success", "rule_id": rule_id}
+
+def handle_delete_priority_rule(args: dict) -> dict:
+    from services import storage
+    try:
+        rule_id = int(args.get("rule_id", 0))
+        storage.delete_priority_rule(rule_id)
+        return {"status": "success"}
+    except ValueError:
+        return {"status": "error", "message": "rule_id must be an integer"}
+
+def handle_run_solver(args: dict) -> dict:
+    import main
+    date = args.get('date') or None
+    res = main.refresh_schedule_logic(date, date, force_refresh=True)
+    
+    clean_events = []
+    if 'events' in res:
+        for e in res['events']:
+            clean_e = {k: v for k, v in e.items() if k not in ['polyline', 'distance_matrix', 'steps', 'geometry', 'description']}
+            clean_events.append(clean_e)
+            
+    return {
+        "status": "success",
+        "message": "Solver completed successfully.",
+        "schedule": clean_events
+    }
+
+def handle_add_override(args: dict) -> dict:
+    from services import storage
+    import uuid
+    override_data = {
+        "id": uuid.uuid4().hex,
+        "event_id": args.get("event_id"),
+        "driver_id": args.get("driver_id"),
+        "date_str": args.get("date_str"),
+        "event_title": args.get("event_title")
+    }
+    storage.add_override(override_data)
+    return {"status": "success", "message": f"Assigned driver {override_data['driver_id']} to event {override_data['event_id']}."}
+
+def handle_delete_override(args: dict) -> dict:
+    from services import storage
+    storage.delete_override_by_event(args.get("event_id"))
+    return {"status": "success", "message": f"Removed override for event {args.get('event_id')}."}
+
+def handle_update_memory(args: dict) -> dict:
+    from services import storage
+    settings = storage.get_settings()
+    settings['ai_memory'] = args.get("memory_text", "")
+    storage.update_settings(settings)
+    return {"status": "success", "message": "Memory updated successfully."}
+
+def handle_add_errand(args: dict) -> dict:
+    from services import maps, storage
+    import time
+    starts_on = args.get('starts_on', 0.0)
+    if not starts_on: starts_on = time.time()
+    errand = {
+        'title': args.get('title'),
+        'duration_mins': args.get('duration_mins', 30),
+        'location': maps.resolve_routable_location(args.get('location')),
+        'priority': args.get('priority', 2),
+        'tags': args.get('tags', []),
+        'recurrence_rule': args.get('recurrence_rule') or None,
+        'starts_on': starts_on,
+        'created_at': time.time(),
+        'is_completed': False,
+        'status': 'pending',
+        'allowed_drivers': args.get('allowed_drivers', []),
+        'required_drivers': args.get('required_drivers', []),
+        'prohibited_drivers': args.get('prohibited_drivers', []),
+        'allowed_passengers': args.get('allowed_passengers', []),
+        'required_passengers': args.get('required_passengers', []),
+        'prohibited_passengers': args.get('prohibited_passengers', []),
+        'time_window_start': args.get('time_window_start') or None,
+        'time_window_end': args.get('time_window_end') or None,
+        'buffer_mins': args.get('buffer_mins', 0),
+        'tolerance_mins': args.get('tolerance_mins', 0),
+        'group_id': args.get('group_id') or None,
+        'window_days': args.get('window_days')
+    }
+    storage.add_errand(errand)
+    return {"status": "success", "message": "Errand added."}
+
+def handle_update_errand(args: dict) -> dict:
+    from services import storage
+    errand_id = args.get('errand_id')
+    errand = storage.get_errand(errand_id)
+    if not errand: return {"status": "error", "message": "Errand not found."}
+    
+    if args.get('is_completed'):
+        storage.complete_errand(errand_id)
+        return {"status": "success", "message": "Errand marked as completed and rescheduled if recurring."}
+    
+    update_data = {}
+    if args.get('title'): update_data['title'] = args.get('title')
+    if args.get('duration_mins'): update_data['duration_mins'] = args.get('duration_mins')
+    if args.get('location'):
+        from services import maps
+        update_data['location'] = maps.resolve_routable_location(args.get('location'))
+    if args.get('starts_on'): update_data['starts_on'] = args.get('starts_on')
+    
+    for field in ['allowed_drivers', 'required_drivers', 'prohibited_drivers', 
+                  'allowed_passengers', 'required_passengers', 'prohibited_passengers']:
+        if args.get(field) is not None:
+            update_data[field] = args.get(field)
+            
+    for field in ['time_window_start', 'time_window_end', 'group_id']:
+        if args.get(field) is not None:
+            update_data[field] = args.get(field) or None
+            
+    for field in ['buffer_mins', 'tolerance_mins']:
+        if args.get(field) is not None:
+            update_data[field] = args.get(field)
+    
+    if update_data:
+        storage.update_errand(errand_id, update_data)
+        
+    return {"status": "success", "message": "Errand updated."}
+
+def handle_delete_errand(args: dict) -> dict:
+    from services import storage
+    storage.delete_errand(args.get('errand_id'))
+    return {"status": "success", "message": "Errand deleted."}
+
+def handle_get_errands(args: dict) -> dict:
+    from services import storage
+    errands = storage.get_all_errands()
+    return {"status": "success", "errands": errands}
+
+def handle_add_errand_rule(args: dict) -> dict:
+    from services import storage
+    rule_id = storage.add_errand_rule(args)
+    return {"status": "success", "rule_id": rule_id}
+
+def handle_delete_errand_rule(args: dict) -> dict:
+    from services import storage
+    try:
+        rule_id = int(args.get("rule_id", 0))
+        storage.delete_errand_rule(rule_id)
+        return {"status": "success"}
+    except ValueError:
+        return {"status": "error", "message": "rule_id must be an integer"}
+
+def handle_search_places(args: dict) -> dict:
+    from services import maps
+    query = args.get("query")
+    proximity = args.get("proximity_location") or None
+    results = maps.search_places(query, proximity)
+    if not results:
+        return {"status": "success", "message": "No places found matching the query."}
+    return {"status": "success", "results": results}
+
+def handle_generate_trip_plan(args: dict) -> dict:
+    from services import storage
+    from models.schemas import TripMetadata
+    from services.trip_planner import generate_trip_plan
+    
+    event_id = args.get('event_id')
+    user_prompt = args.get('prompt', '')
+    proposed_itinerary = args.get('proposed_itinerary', '')
+    
+    meta = storage.get_trip_metadata(event_id)
+    if not meta:
+        return {"status": "error", "message": f"Trip {event_id} not found."}
+        
+    duration_nights = meta.get('draft_duration_nights')
+    if duration_nights is None:
+        start_ts = meta.get('mock_start_date')
+        end_ts = meta.get('mock_end_date')
+        if start_ts and end_ts:
+            duration_nights = max(1, int((end_ts - start_ts) / 86400) + 1)
+        else:
+            duration_nights = 3
+            
+    trip_obj = TripMetadata(**meta)
+    warning, pois, accs, flights = generate_trip_plan(trip_obj, user_prompt, duration_nights, proposed_itinerary)
+    
+    if 'pois' not in meta:
+        meta['pois'] = []
+    if 'accommodations' not in meta:
+        meta['accommodations'] = []
+    if 'flights' not in meta:
+        meta['flights'] = []
+        
+    for poi in pois:
+        poi_dict = poi.model_dump() if hasattr(poi, 'model_dump') else poi.dict()
+        meta['pois'].append(poi_dict)
+        
+    for acc in accs:
+        acc_dict = acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict()
+        meta['accommodations'].append(acc_dict)
+        
+    for flight in flights:
+        flight_dict = flight.model_dump() if hasattr(flight, 'model_dump') else flight.dict()
+        meta['flights'].append(flight_dict)
+        
+    storage.set_trip_metadata(event_id, meta)
+    
+    res = {
+        "status": "success",
+        "message": f"Generated and added {len(pois)} POIs, {len(accs)} accommodations, and {len(flights)} flights to the trip."
+    }
+    if warning:
+        res["budget_warning"] = warning
+    return res
+
+def handle_add_trip_poi(args: dict) -> dict:
+    from services import storage
+    from services.trip_planner import enrich_poi_data
+    event_id = args.get('event_id')
+    metadata = storage.get_trip_metadata(event_id) or {"event_id": event_id, "pois": []}
+    import uuid
+    
+    name = args.get('name')
+    location = args.get('location')
+    trip_location = metadata.get('location', '')
+    
+    enrichment = enrich_poi_data(name, location, trip_location)
+    from services.trip_validation import vet_poi, reground_area_anchors
+    is_bg, days_claimed, occurrences = vet_poi(enrichment, args)
+
+    parent_id = None
+    if not is_bg:  # anchors have no parents
+        parent_id = _resolve_parent_anchor(args.get('parent_container'), metadata.get('pois') or [])
+
+    pois_to_add = []
+    for i in range(occurrences):
+        name_label = name if occurrences == 1 else f"{name} ({i+1} of {occurrences})"
+        poi = {
+            "id": uuid.uuid4().hex,
+            "name": name_label,
+            "location": enrichment.get('location') or location,
+            "mapbox_id": enrichment.get('mapbox_id') or args.get('mapbox_id'),
+            "category": args.get('category', 'sightseeing'),
+            "duration_mins": args.get('duration_mins', 60),
+            "notes": args.get('notes', ''),
+            "is_scheduled": False,
+            "scheduled_start": None,
+            "scheduled_end": None,
+            "occurrences": 1,
+            "is_background": is_bg,
+            "days_claimed": days_claimed if is_bg else 1,
+            "parent_container": parent_id,
+            "valid_days_of_week": args.get('valid_days_of_week', [])
+        }
+
+        for k, v in enrichment.items():
+            if k not in ['location', 'mapbox_id'] and k not in poi:
+                poi[k] = v
+
+        pois_to_add.append(poi)
+
+    if 'pois' not in metadata:
+        metadata['pois'] = []
+    metadata['pois'].extend(pois_to_add)
+    # A new child moves its area anchor's centroid — re-ground before saving so
+    # the map is right immediately, not only after the next solve.
+    reground_area_anchors(metadata['pois'])
+    storage.set_trip_metadata(event_id, metadata)
+
+    msg = f"Added {occurrences} POI(s) '{name}' to trip."
+    if args.get('is_background') and not is_bg:
+        msg += " Note: added as a regular POI, not a day anchor — it lasts under 3 hours."
+    if args.get('parent_container') and not is_bg and not parent_id:
+        msg += f" Note: no anchor matching '{args.get('parent_container')}' was found — the POI is not linked to a day container."
+    return {"status": "success", "message": msg}
+
+
+def _resolve_parent_anchor(raw, pois):
+    """Anchor name-or-id -> anchor id, with the same fuzzy-name semantics as the
+    planner's _resolve_parent_containers. None when nothing matches."""
+    if not raw:
+        return None
+    raw_l = str(raw).lower().strip()
+    for a in pois:
+        if not a.get('is_background'):
+            continue
+        a_name = (a.get('name') or '').lower().strip()
+        if a.get('id') == raw or (a_name and (raw_l == a_name or raw_l in a_name or a_name in raw_l)):
+            return a.get('id')
+    return None
+
+def _trip_date_bounds(metadata):
+    """The trip's (start, end) datetimes: mock window for drafts, calendar
+    event dates otherwise. Either may be None."""
+    import datetime
+    if metadata.get('is_draft') and metadata.get('mock_start_date'):
+        start = datetime.datetime.fromtimestamp(metadata['mock_start_date'], tz=datetime.timezone.utc)
+        if metadata.get('mock_end_date'):
+            end = datetime.datetime.fromtimestamp(metadata['mock_end_date'], tz=datetime.timezone.utc)
+        else:
+            end = start + datetime.timedelta(days=metadata.get('draft_duration_nights') or 1)
+        return start, end
+    if not metadata.get('is_draft'):
+        from services.calendar import get_event_dates
+        return get_event_dates(metadata.get('event_id'))
+    return None, None
+
+
+def _resolve_stay_dates(args, metadata):
+    """Resolve an accommodation stay to (check_in, check_out) YYYY-MM-DD strings.
+
+    Priority: explicit dates > 1-indexed trip-night ordinals (night 1 = the
+    trip's first night, so night N = trip start + N-1 days) > full trip span
+    (the historical default). Ordinal-derived stays are clamped to the trip
+    window; explicit dates are trusted as given. Returns "" when unknowable.
+    """
+    import datetime
+    start_dt, end_dt = _trip_date_bounds(metadata)
+    start_d = start_dt.date() if start_dt else None
+    end_d = end_dt.date() if end_dt else None
+
+    def parse(s):
+        try:
+            return datetime.datetime.strptime(s, '%Y-%m-%d').date()
+        except (TypeError, ValueError):
+            return None
+
+    ci_d = parse(args.get('check_in_date'))
+    co_d = parse(args.get('check_out_date'))
+    night = args.get('check_in_night')
+    nights = args.get('nights')
+
+    if ci_d is None and night and start_d:
+        ci_d = start_d + datetime.timedelta(days=int(night) - 1)
+    if ci_d is None:
+        ci_d = start_d
+    if co_d is None and ci_d and nights:
+        co_d = ci_d + datetime.timedelta(days=int(nights))
+    if co_d is None:
+        co_d = end_d
+    if co_d and end_d and co_d > end_d and not args.get('check_out_date'):
+        co_d = end_d
+    return (ci_d.strftime('%Y-%m-%d') if ci_d else ""), (co_d.strftime('%Y-%m-%d') if co_d else "")
+
+
+def _night_ordinal(date_str, metadata):
+    """1-indexed trip night for a YYYY-MM-DD date, or None."""
+    import datetime
+    start_dt, _ = _trip_date_bounds(metadata)
+    if not start_dt:
+        return None
+    try:
+        d = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
+    except (TypeError, ValueError):
+        return None
+    return (d - start_dt.date()).days + 1
+
+
+def _stay_label(ci, co, metadata):
+    """Agent-facing label for a stay range. Draft trips speak in trip nights —
+    their mock calendar dates must never surface anywhere a user could see."""
+    if metadata.get('is_draft'):
+        a, b = _night_ordinal(ci, metadata), _night_ordinal(co, metadata)
+        if a is not None and b is not None:
+            return f"night {a}" if b - a == 1 else f"nights {a}-{b - 1}"
+    return f"{ci} -> {co}"
+
+
+def _validate_stay(ci, co, metadata, exclude_id=None):
+    """Error string if a stay range is invalid or overlaps an existing stay, else None.
+
+    Overlapping stays poison the scheduler's day->home-base map, so the agent
+    gets a correctable error instead of a silent write."""
+    from services.trip_validation import parse_stay_range, find_stay_overlap
+    rng = parse_stay_range(ci, co)
+    if rng and rng[1] <= rng[0]:
+        return "Check-out must be after check-in — a stay needs at least one night."
+    conflict = find_stay_overlap(ci, co, metadata.get('accommodations'), exclude_id=exclude_id)
+    if conflict is not None:
+        return (f"The requested stay ({_stay_label(ci, co, metadata)}) overlaps the existing stay "
+                f"'{conflict.get('name')}' ({_stay_label(conflict.get('check_in_date'), conflict.get('check_out_date'), metadata)}). "
+                f"Legs must be contiguous and non-overlapping — shorten that stay first with "
+                f"edit_trip_accommodation, or choose non-overlapping check_in_night/nights.")
+    return None
+
+
+def _clip_neighbors(new_ci, new_co, metadata, exclude_id):
+    """Make room for an edited stay: clip other stays out of [new_ci, new_co).
+
+    An edit expresses fresh user intent, so neighboring stays yield — their
+    dates are clipped to the edited range's edges (rejecting edits outright
+    would deadlock: two full-span stays could never be re-dated into legs).
+    A stay whose entire range falls inside the edited one cannot be clipped;
+    that returns an error instead — deleting a stay must be the agent's
+    explicit call, never a side effect. Returns (clip_notes, error)."""
+    from services.trip_validation import parse_stay_range
+    rng = parse_stay_range(new_ci, new_co)
+    if rng is None:
+        return [], None
+    ci, co = rng
+    notes = []
+    for a in metadata.get('accommodations') or []:
+        if a.get('id') == exclude_id:
+            continue
+        arng = parse_stay_range(a.get('check_in_date'), a.get('check_out_date'))
+        if not arng or not (arng[0] < co and ci < arng[1]):
+            continue
+        if ci <= arng[0] and arng[1] <= co:
+            return [], (f"Those dates would fully cover the existing stay '{a.get('name')}' "
+                        f"({_stay_label(a.get('check_in_date'), a.get('check_out_date'), metadata)}). "
+                        f"Delete or re-date that stay first.")
+        if arng[0] < ci:
+            a['check_out_date'] = ci.strftime('%Y-%m-%d')
+        else:
+            a['check_in_date'] = co.strftime('%Y-%m-%d')
+        notes.append(f"'{a.get('name')}' is now "
+                     f"{_stay_label(a.get('check_in_date'), a.get('check_out_date'), metadata)}")
+    return notes, None
+
+
+def handle_add_trip_accommodation(args: dict) -> dict:
+    from services import storage
+    from services.trip_planner import enrich_poi_data
+    from services.trip_validation import vet_accommodation
+    event_id = args.get('event_id')
+    metadata = storage.get_trip_metadata(event_id) or {"event_id": event_id, "pois": [], "accommodations": []}
+    import uuid
+
+    name = args.get('name')
+    location = args.get('location')
+    trip_location = metadata.get('location', '')
+
+    enrichment = enrich_poi_data(name, location, trip_location)
+    vet_accommodation(enrichment, args)
+
+    check_in_date, check_out_date = _resolve_stay_dates(args, metadata)
+    err = _validate_stay(check_in_date, check_out_date, metadata)
+    if err:
+        return {"status": "error", "message": err}
+
+    acc = {
+        "id": uuid.uuid4().hex,
+        "name": name,
+        "location": enrichment.get('location') or location,
+        "mapbox_id": enrichment.get('mapbox_id') or args.get('mapbox_id'),
+        "lat": enrichment.get('lat'),
+        "lng": enrichment.get('lng'),
+        "check_in_date": check_in_date,
+        "check_out_date": check_out_date,
+        "notes": args.get('notes', '')
+    }
+    
+    if "accommodations" not in metadata:
+        metadata["accommodations"] = []
+    metadata["accommodations"].append(acc)
+    
+    storage.set_trip_metadata(event_id, metadata)
+    
+    if acc['check_in_date'] and acc['check_out_date']:
+        span = _stay_label(acc['check_in_date'], acc['check_out_date'], metadata)
+    else:
+        span = "no dates"
+    return {
+        "status": "success",
+        "message": f"Added Accommodation '{name}' to trip ({span})."
+    }
+
+def handle_edit_trip_accommodation(args: dict) -> dict:
+    from services import storage
+    event_id = args.get('event_id')
+    metadata = storage.get_trip_metadata(event_id)
+    if not metadata or not metadata.get('accommodations'):
+        return {"status": "error", "message": "Trip not found or has no accommodations."}
+
+    accs = metadata['accommodations']
+    acc = None
+    if args.get('accommodation_id'):
+        acc = next((a for a in accs if a.get('id') == args['accommodation_id']), None)
+    if acc is None and args.get('name'):
+        name_l = args['name'].strip().lower()
+        exact = [a for a in accs if (a.get('name') or '').strip().lower() == name_l]
+        partial = [a for a in accs if name_l in (a.get('name') or '').strip().lower()]
+        matches = exact or partial
+        if len(matches) > 1:
+            names = ", ".join(a.get('name', '?') for a in matches)
+            return {"status": "error",
+                    "message": f"Multiple accommodations match '{args['name']}': {names}. Use accommodation_id."}
+        acc = matches[0] if matches else None
+    if acc is None:
+        return {"status": "error", "message": "Accommodation not found."}
+
+    # resolve and validate any date change BEFORE mutating anything, so a
+    # rejected edit leaves the stay untouched
+    new_ci = new_co = None
+    clip_notes = []
+    if any(args.get(k) is not None for k in ('check_in_date', 'check_out_date', 'check_in_night', 'nights')):
+        from services.trip_validation import parse_stay_range
+        res_args = dict(args)
+        # keep the current dates as the baseline unless an ordinal overrides them
+        if not res_args.get('check_in_date') and not res_args.get('check_in_night'):
+            res_args['check_in_date'] = acc.get('check_in_date')
+        if not res_args.get('check_out_date') and not res_args.get('nights'):
+            res_args['check_out_date'] = acc.get('check_out_date')
+        new_ci, new_co = _resolve_stay_dates(res_args, metadata)
+        rng = parse_stay_range(new_ci, new_co)
+        if rng and rng[1] <= rng[0]:
+            return {"status": "error",
+                    "message": "Check-out must be after check-in — a stay needs at least one night."}
+        clip_notes, err = _clip_neighbors(new_ci, new_co, metadata, acc.get('id'))
+        if err:
+            return {"status": "error", "message": err}
+
+    if args.get('new_name'):
+        acc['name'] = args['new_name']
+    if args.get('location'):
+        from services.trip_planner import enrich_poi_data
+        from services.trip_validation import reconcile_coords
+        enrichment = enrich_poi_data(acc.get('name'), args['location'], metadata.get('location', ''))
+        reconcile_coords(enrichment, {'name': acc.get('name'), 'location': args['location'],
+                                      'approx_lat': args.get('approx_lat'),
+                                      'approx_lng': args.get('approx_lng')})
+        # the old coords/ids described the old location — replace, never keep stale
+        acc['location'] = enrichment.get('location') or args['location']
+        acc['lat'] = enrichment.get('lat')
+        acc['lng'] = enrichment.get('lng')
+        acc['mapbox_id'] = enrichment.get('mapbox_id')
+    if args.get('notes') is not None:
+        acc['notes'] = args['notes']
+
+    if new_ci:
+        acc['check_in_date'] = new_ci
+    if new_co:
+        acc['check_out_date'] = new_co
+
+    storage.set_trip_metadata(event_id, metadata)
+    if acc.get('check_in_date') and acc.get('check_out_date'):
+        span = _stay_label(acc['check_in_date'], acc['check_out_date'], metadata)
+    else:
+        span = "no dates"
+    msg = f"Updated accommodation '{acc.get('name')}' ({span})."
+    if clip_notes:
+        msg += " Adjusted neighboring stays to make room: " + "; ".join(clip_notes) + "."
+    return {"status": "success", "message": msg}
+
+def handle_edit_trip_poi(args: dict) -> dict:
+    from services import storage
+    event_id = args.get('event_id')
+    poi_id = args.get('poi_id')
+    metadata = storage.get_trip_metadata(event_id)
+    if not metadata or 'pois' not in metadata:
+        return {"status": "error", "message": "Trip not found or has no POIs."}
+        
+    target_poi = next((p for p in metadata['pois'] if p['id'] == poi_id), None)
+    if not target_poi:
+        return {"status": "error", "message": "POI not found in this trip."}
+        
+    for field in ['name', 'category', 'duration_mins', 'priority']:
+        if args.get(field) is not None:
+            target_poi[field] = args.get(field)
+
+    if args.get('location') is not None:
+        # re-ground the POI: keeping the old coords/ids for a new location would
+        # leave the scheduler routing to the old place
+        from services.trip_planner import enrich_poi_data
+        from services.trip_validation import reconcile_coords
+        enrichment = enrich_poi_data(target_poi.get('name'), args['location'], metadata.get('location', ''))
+        reconcile_coords(enrichment, {'name': target_poi.get('name'), 'location': args['location'],
+                                      'approx_lat': args.get('approx_lat'),
+                                      'approx_lng': args.get('approx_lng')})
+        target_poi['location'] = enrichment.get('location') or args['location']
+        target_poi['lat'] = enrichment.get('lat')
+        target_poi['lng'] = enrichment.get('lng')
+        target_poi['mapbox_id'] = enrichment.get('mapbox_id')
+
+    if args.get('valid_days_of_week') is not None:
+        target_poi['valid_days_of_week'] = args.get('valid_days_of_week')
+            
+    storage.set_trip_metadata(event_id, metadata)
+    return {"status": "success", "message": f"Updated POI {target_poi['name']}."}
+
+
+def _resolve_flight_dt(day, time_str, metadata, existing_iso=None):
+    """Resolve a flight time to an ISO datetime string.
+
+    Accepts a full ISO datetime in time_str, or a 1-indexed trip-day ordinal
+    (day 1 = the trip's first day; 0 = the day before, for overnight outbound
+    legs) paired with an 'HH:MM' time. Missing pieces fall back to the existing
+    value's date/time (edits), then to 12:00. Returns (iso_or_None, error_or_None).
+    """
+    import datetime
+    time_str = str(time_str) if time_str is not None else ''
+    if 'T' in time_str:
+        try:
+            datetime.datetime.fromisoformat(time_str)
+        except ValueError:
+            return None, (f"Could not parse '{time_str}' — use 'YYYY-MM-DDTHH:MM:SS', "
+                          f"or a trip-day ordinal with an 'HH:MM' time.")
+        return time_str, None
+
+    hhmm = None
+    if time_str:
+        try:
+            hhmm = datetime.datetime.strptime(time_str, '%H:%M').strftime('%H:%M')
+        except ValueError:
+            return None, (f"Could not parse time '{time_str}' — use 'HH:MM' (24h) "
+                          f"or a full ISO datetime.")
+
+    date_part = None
+    if day is not None:
+        start_dt, _ = _trip_date_bounds(metadata)
+        if not start_dt:
+            return None, ("The trip has no dates yet, so trip-day ordinals can't be "
+                          "resolved — give a full ISO datetime instead.")
+        date_part = (start_dt.date() + datetime.timedelta(days=int(day) - 1)).strftime('%Y-%m-%d')
+    elif existing_iso and 'T' in str(existing_iso):
+        date_part = str(existing_iso).split('T')[0]
+    if date_part is None:
+        return None, ("Provide departure_day/arrival_day (1-indexed trip day) with the "
+                      "'HH:MM' time, or a full ISO datetime.")
+    if hhmm is None:
+        if existing_iso and 'T' in str(existing_iso):
+            hhmm = str(existing_iso).split('T')[1][:5]
+        else:
+            hhmm = '12:00'
+    return f"{date_part}T{hhmm}:00", None
+
+
+def _flight_time_label(iso_str, metadata):
+    """Agent-facing label for a flight time. Draft trips speak in trip days —
+    their mock calendar dates must never surface anywhere a user could see."""
+    if not iso_str:
+        return "time TBD"
+    date_part, _, time_part = str(iso_str).partition('T')
+    time_part = time_part[:5]
+    if metadata.get('is_draft'):
+        n = _night_ordinal(date_part, metadata)
+        if n is not None:
+            return f"day {n}" + (f" {time_part}" if time_part else "")
+    return f"{date_part} {time_part}".strip()
+
+
+def _validate_flight_times(dep_iso, arr_iso):
+    import datetime
+    if dep_iso and arr_iso:
+        try:
+            if datetime.datetime.fromisoformat(arr_iso) <= datetime.datetime.fromisoformat(dep_iso):
+                return ("Arrival is not after departure. Remember overnight flights land the "
+                        "NEXT day — set arrival_day to departure_day + 1.")
+        except ValueError:
+            pass
+    return None
+
+
+def _find_trip_flight(args, flights):
+    """Locate a flight by flight_id, flight_number, or origin/destination.
+    Returns (flight, error_or_None); ambiguity is an error, never a guess."""
+    if args.get('flight_id'):
+        f = next((x for x in flights if x.get('id') == args['flight_id']), None)
+        return (f, None) if f else (None, "No flight with that flight_id on this trip.")
+
+    def norm(s):
+        return str(s or '').replace(' ', '').strip().lower()
+
+    matches = flights
+    if args.get('flight_number'):
+        fn = norm(args['flight_number'])
+        matches = [x for x in matches if norm(x.get('flight_number')) == fn]
+    elif args.get('origin') or args.get('destination'):
+        def loose(a, b):
+            a, b = norm(a), norm(b)
+            return bool(a) and bool(b) and (a in b or b in a)
+        if args.get('origin'):
+            matches = [x for x in matches if loose(args['origin'], x.get('origin'))]
+        if args.get('destination'):
+            matches = [x for x in matches if loose(args['destination'], x.get('destination'))]
+    else:
+        return None, "Provide flight_id, flight_number, or origin/destination to identify the flight."
+
+    if not matches:
+        return None, "No matching flight found on this trip."
+    if len(matches) > 1:
+        desc = "; ".join(f"{x.get('airline') or '?'} {x.get('flight_number') or ''} "
+                         f"{x.get('origin')}->{x.get('destination')} (id {x.get('id')})"
+                         for x in matches)
+        return None, f"Multiple flights match: {desc}. Use flight_id."
+    return matches[0], None
+
+
+def handle_generate_trip_flights(args: dict) -> dict:
+    from services import storage
+    from models.schemas import TripMetadata
+    from services.trip_planner import generate_trip_flights
+
+    event_id = args.get('event_id')
+    meta = storage.get_trip_metadata(event_id)
+    if not meta:
+        return {"status": "error", "message": f"Trip {event_id} not found."}
+
+    trip_obj = TripMetadata(**meta)
+    warning, flights = generate_trip_flights(trip_obj, args.get('prompt', ''))
+
+    if 'flights' not in meta:
+        meta['flights'] = []
+
+    # same-route-same-day flights are re-suggestions, not additions
+    def key(origin, destination, dep):
+        return (str(origin or '').strip().lower(), str(destination or '').strip().lower(),
+                str(dep or '').split('T')[0])
+    existing_keys = {key(f.get('origin'), f.get('destination'), f.get('departure_time'))
+                     for f in meta['flights']}
+    added = []
+    for flight in flights:
+        d = flight.model_dump() if hasattr(flight, 'model_dump') else flight.dict()
+        if key(d.get('origin'), d.get('destination'), d.get('departure_time')) in existing_keys:
+            continue
+        meta['flights'].append(d)
+        added.append(d)
+
+    storage.set_trip_metadata(event_id, meta)
+
+    if added:
+        lines = "; ".join(f"{f.get('airline') or 'TBD'} {f.get('origin')} -> {f.get('destination')} "
+                          f"departing {_flight_time_label(f.get('departure_time'), meta)}"
+                          for f in added)
+        msg = (f"Generated and added {len(added)} flight(s) to the trip: {lines}. "
+               f"These are estimates the user can correct with edit_trip_flight.")
+    else:
+        msg = "No new flights were added."
+    res = {"status": "success", "message": msg}
+    if warning:
+        res["budget_warning"] = warning
+    return res
+
+
+def handle_add_trip_flight(args: dict) -> dict:
+    from services import storage
+    import uuid
+    event_id = args.get('event_id')
+    metadata = storage.get_trip_metadata(event_id) or {
+        "event_id": event_id, "pois": [], "accommodations": [], "flights": []}
+
+    dep_iso = arr_iso = None
+    if args.get('departure_day') is not None or args.get('departure_time'):
+        dep_iso, err = _resolve_flight_dt(args.get('departure_day'), args.get('departure_time'), metadata)
+        if err:
+            return {"status": "error", "message": err}
+    if args.get('arrival_day') is not None or args.get('arrival_time'):
+        arr_iso, err = _resolve_flight_dt(args.get('arrival_day'), args.get('arrival_time'), metadata)
+        if err:
+            return {"status": "error", "message": err}
+    err = _validate_flight_times(dep_iso, arr_iso)
+    if err:
+        return {"status": "error", "message": err}
+
+    flights = metadata.get('flights') or []
+    dep_date = (dep_iso or '').split('T')[0]
+    fn = str(args.get('flight_number') or '').replace(' ', '').lower()
+    for f in flights:
+        f_date = str(f.get('departure_time') or '').split('T')[0]
+        same_number = fn and str(f.get('flight_number') or '').replace(' ', '').lower() == fn
+        same_route = (str(f.get('origin') or '').strip().lower() == str(args.get('origin') or '').strip().lower()
+                      and str(f.get('destination') or '').strip().lower() == str(args.get('destination') or '').strip().lower())
+        if (same_number or (not fn and same_route)) and dep_date and f_date == dep_date:
+            return {"status": "error",
+                    "message": (f"That flight already exists on this trip: "
+                                f"{f.get('airline') or '?'} {f.get('flight_number') or ''} "
+                                f"{f.get('origin')}->{f.get('destination')} departing "
+                                f"{_flight_time_label(f.get('departure_time'), metadata)} "
+                                f"(id {f.get('id')}). Use edit_trip_flight to change it.")}
+
+    flight = {
+        "id": uuid.uuid4().hex,
+        "airline": args.get('airline'),
+        "flight_number": args.get('flight_number'),
+        "origin": args.get('origin'),
+        "destination": args.get('destination'),
+        "departure_time": dep_iso,
+        "arrival_time": arr_iso,
+        "class_type": args.get('class_type'),
+        "estimated_price_usd": args.get('estimated_price_usd'),
+        "is_live_price": False,
+        "notes": args.get('notes', ''),
+    }
+    if 'flights' not in metadata:
+        metadata['flights'] = []
+    metadata['flights'].append(flight)
+    storage.set_trip_metadata(event_id, metadata)
+
+    msg = (f"Added flight {args.get('origin')} -> {args.get('destination')} "
+           f"(departs {_flight_time_label(dep_iso, metadata)}).")
+    assumed = [w for w, d, t in (("departure", args.get('departure_day'), args.get('departure_time')),
+                                 ("arrival", args.get('arrival_day'), args.get('arrival_time')))
+               if d is not None and not t]
+    if assumed:
+        msg += f" Note: {' and '.join(assumed)} time assumed 12:00 — give the real time to correct it."
+    return {"status": "success", "message": msg}
+
+
+def handle_edit_trip_flight(args: dict) -> dict:
+    from services import storage
+    event_id = args.get('event_id')
+    metadata = storage.get_trip_metadata(event_id)
+    if not metadata or not metadata.get('flights'):
+        return {"status": "error", "message": "Trip not found or has no flights."}
+
+    f, err = _find_trip_flight(args, metadata['flights'])
+    if err:
+        return {"status": "error", "message": err}
+
+    # resolve and validate time changes BEFORE mutating anything, so a rejected
+    # edit leaves the flight untouched
+    dep_iso = arr_iso = None
+    if args.get('departure_day') is not None or args.get('departure_time'):
+        dep_iso, err = _resolve_flight_dt(args.get('departure_day'), args.get('departure_time'),
+                                          metadata, existing_iso=f.get('departure_time'))
+        if err:
+            return {"status": "error", "message": err}
+    if args.get('arrival_day') is not None or args.get('arrival_time'):
+        arr_iso, err = _resolve_flight_dt(args.get('arrival_day'), args.get('arrival_time'),
+                                          metadata, existing_iso=f.get('arrival_time'))
+        if err:
+            return {"status": "error", "message": err}
+    err = _validate_flight_times(dep_iso or f.get('departure_time'), arr_iso or f.get('arrival_time'))
+    if err:
+        return {"status": "error", "message": err}
+
+    if args.get('airline') is not None:
+        f['airline'] = args['airline']
+    if args.get('class_type') is not None:
+        f['class_type'] = args['class_type']
+    if args.get('notes') is not None:
+        f['notes'] = args['notes']
+    if args.get('new_flight_number'):
+        f['flight_number'] = args['new_flight_number']
+    if args.get('new_origin'):
+        f['origin'] = args['new_origin']
+    if args.get('new_destination'):
+        f['destination'] = args['new_destination']
+    if args.get('estimated_price_usd') is not None:
+        f['estimated_price_usd'] = args['estimated_price_usd']
+        # a hand-edited price is an estimate again, not a SerpApi live quote
+        f['is_live_price'] = False
+    if dep_iso:
+        f['departure_time'] = dep_iso
+    if arr_iso:
+        f['arrival_time'] = arr_iso
+
+    storage.set_trip_metadata(event_id, metadata)
+    return {"status": "success",
+            "message": (f"Updated flight {f.get('origin')} -> {f.get('destination')} "
+                        f"(departs {_flight_time_label(f.get('departure_time'), metadata)}).")}
+
+
+def handle_delete_trip_flight(args: dict) -> dict:
+    from services import storage
+    event_id = args.get('event_id')
+    metadata = storage.get_trip_metadata(event_id)
+    if not metadata or not metadata.get('flights'):
+        return {"status": "error", "message": "Trip not found or has no flights."}
+
+    f, err = _find_trip_flight(args, metadata['flights'])
+    if err:
+        return {"status": "error", "message": err}
+
+    metadata['flights'] = [x for x in metadata['flights'] if x.get('id') != f.get('id')]
+    storage.set_trip_metadata(event_id, metadata)
+    return {"status": "success",
+            "message": (f"Deleted flight {f.get('airline') or ''} {f.get('flight_number') or ''} "
+                        f"{f.get('origin')} -> {f.get('destination')}.").replace("  ", " ")}
+
+
+def handle_start_drive(args: dict) -> dict:
+    from services import storage
+    import urllib.parse
+    event = {
+        "driver_id": args.get("driver_id"),
+        "event_id": args.get("event_id"),
+        "action": "started driving",
+        "location": args.get("destination")
+    }
+    storage.add_telemetry_event(event)
+    dest = urllib.parse.quote(args.get("destination", ""))
+    return {
+        "status": "success",
+        "message": f"Navigation link: https://www.google.com/maps/dir/?api=1&destination={dest}"
+    }
+
+def handle_update_drive_status(args: dict) -> dict:
+    from services import storage
+    leg_id = args.get("leg_id")
+    event_id = args.get("event_id")
+    status = args.get("status", "completed")
+    
+    if leg_id:
+        storage.mark_drive_status(leg_id, status)
+    if event_id:
+        storage.mark_drive_status(f"route_{event_id}", status)
+        storage.mark_drive_status(f"final_{event_id}", status)
+        storage.mark_drive_status(f"route_{event_id}_1", status)
+        storage.mark_drive_status(f"route_{event_id}_2", status)
+        # We don't know the full route_{prev}_{event} but this covers single legs.
+
+    return {"status": "success", "message": f"Marked drive status as {status}."}
+
+def handle_challenge_pet_battle(args: dict) -> dict:
+    return challenge_pet_battle(args.get("challenger_name", ""),
+                                args.get("opponent_name", ""))
+
+def handle_award_pet_xp(args: dict) -> dict:
+    return award_pet_xp(args.get("member_name", ""), args.get("amount", 0))
+
+def handle_get_pet_status(args: dict) -> dict:
+    return get_pet_status(args.get("member_name"))
+
+def handle_get_point_balances(args: dict) -> dict:
+    # Shared implementation with the v2 (Gemma router) stack so both agent
+    # stacks stay in lockstep on chore-point behavior.
+    return get_point_balances()
+
+def handle_adjust_points(args: dict) -> dict:
+    return adjust_points(args.get("member_name", ""),
+                         delta=args.get("delta"), set_to=args.get("set_to"),
+                         note=args.get("note", ""))
+
+def handle_get_family_goals(args: dict) -> dict:
+    return get_family_goals()
+
+def handle_contribute_to_family_goal(args: dict) -> dict:
+    return contribute_to_family_goal(args.get("reward_title", ""),
+                                     args.get("amount"),
+                                     member_name=args.get("member_name"))
+
+def handle_reopen_chore(args: dict) -> dict:
+    return reopen_chore(args.get("chore_title", ""))
+
+def handle_send_family_message(args: dict) -> dict:
+    return send_family_message(args.get("message_text", ""),
+                               from_member=args.get("from_member"))
+
+def handle_send_direct_message(args: dict) -> dict:
+    return send_direct_message(args.get("recipient_name", ""),
+                               args.get("message_text", ""),
+                               from_member=args.get("from_member"))
+
+def handle_get_family_messages(args: dict) -> dict:
+    return get_family_messages(limit=args.get("limit", 10))
+
+def handle_list_chores(args: dict) -> dict:
+    return list_chores()
+
+def handle_list_open_findings(args: dict) -> dict:
+    return list_open_findings()
+
+def handle_list_insights(args: dict) -> dict:
+    # v1 loop runs only in admin contexts, so no acting-member gate needed;
+    # member_role stays unset, which visible_insights treats like the wall
+    # panel (no sensitive rows) — the safe default with no resolved identity.
+    return list_insights()
+
+def handle_dismiss_insight(args: dict) -> dict:
+    # Same "admin-only context" reasoning as handle_post_weekly_digest: no
+    # acting-member gate needed here.
+    return dismiss_insight(args.get("insight_id") or "")
+
+def handle_list_programs(args: dict) -> dict:
+    # The v1 loop resolves no member and can produce no actor -- unlike
+    # list_insights, list_programs REQUIRES one (a program is somebody's
+    # personal ambition, not household-visible the way an insight's safe
+    # default is), so this always comes back refused from this loop. It is
+    # wired for parity with the catalog anyway, exactly as list_insights was
+    # -- a read tool only, never a write, since a write here would have no
+    # actor to attribute it to.
+    return list_programs(member_name=args.get("member_name"))
+
+def handle_claim_chore(args: dict) -> dict:
+    return claim_chore(args.get("chore_title", ""),
+                       member_name=args.get("member_name"))
+
+def handle_negotiate_day(args: dict) -> dict:
+    # The v1 loop is admin-only, so the caller is a grown-up by construction —
+    # but negotiate_day gates on a resolved member, so give it the first parent
+    # rather than None. `ask_deal` is deliberately absent from this registry:
+    # fanning out asks needs an identity this loop cannot produce.
+    from services import storage
+    parents = [m for m in storage.get_all_members()
+               if m.get('role') == 'parent' and not m.get('system')]
+    return negotiate_day(day=args.get("day"),
+                         event_title=args.get("event_title"),
+                         acting_member=parents[0] if parents else None)
+
+def handle_get_kid_tasks(args: dict) -> dict:
+    return get_kid_tasks(args.get("member_name") or "")
+
+def handle_add_kid_task(args: dict) -> dict:
+    return add_kid_task(args.get("title") or "", args.get("due_date") or "",
+                        member_name=args.get("member_name") or "",
+                        kind=args.get("kind") or "other")
+
+def handle_complete_kid_task(args: dict) -> dict:
+    return complete_kid_task(args.get("task_title") or "",
+                             member_name=args.get("member_name") or "")
+
+def handle_add_shopping_items(args: dict) -> dict:
+    return add_shopping_items(args.get("items") or "",
+                              list_name=args.get("list_name") or "")
+
+def handle_get_shopping_list_items(args: dict) -> dict:
+    return get_shopping_list_items(args.get("list_name") or "")
+
+def handle_check_off_shopping_item(args: dict) -> dict:
+    return check_off_shopping_item(args.get("item_name") or "",
+                                   list_name=args.get("list_name") or "")
+
+def handle_remove_shopping_item(args: dict) -> dict:
+    return remove_shopping_item_by_name(args.get("item_name") or "",
+                                        list_name=args.get("list_name") or "")
+
+def handle_suggest_dinner(args: dict) -> dict:
+    return suggest_dinner(args.get("target_date") or "today")
+
+def handle_add_meal_to_repertoire(args: dict) -> dict:
+    return add_meal_to_repertoire(args.get("name") or "")
+
+def handle_add_meal_ingredients_to_list(args: dict) -> dict:
+    return add_meal_ingredients_to_list(args.get("meal_name") or "",
+                                        list_name=args.get("list_name") or "")
+
+def handle_mark_meal_served(args: dict) -> dict:
+    return mark_meal_served(args.get("meal_name") or "")
+
+def handle_get_tonights_plate(args: dict) -> dict:
+    return get_tonights_plate(args.get("target_date") or "today")
+
+def handle_set_meal_rule(args: dict) -> dict:
+    # Keywords, not positions: the v2 signature grows (whole_meals landed
+    # between takeout and max_servings) and a positional bridge silently
+    # shifts every argument after the insertion point.
+    return set_meal_rule(args.get("description") or "",
+                         kind=args.get("kind") or "frequency_cap",
+                         tags=args.get("tags") or "",
+                         dish_names=args.get("dish_names") or "",
+                         takeout=bool(args.get("takeout")),
+                         whole_meals=bool(args.get("whole_meals")),
+                         max_servings=int(args.get("max_servings") or 1),
+                         window_days=int(args.get("window_days") or 7),
+                         dwell_days=int(args.get("dwell_days") or 3),
+                         except_dishes=args.get("except_dishes") or "")
+
+def handle_get_meal_rules(args: dict) -> dict:
+    return get_meal_rules()
+
+def handle_plan_specific_dinner(args: dict) -> dict:
+    return plan_specific_dinner(args.get("target_date") or "",
+                                args.get("dish_names") or "",
+                                args.get("note") or "")
+
+def handle_unlock_dinner(args: dict) -> dict:
+    return unlock_dinner(args.get("target_date") or "")
+
+def handle_pair_dishes(args: dict) -> dict:
+    return pair_dishes(args.get("dish_name") or "", args.get("partner_names") or "",
+                       bool(args.get("exclusive")))
+
+def handle_unpair_dishes(args: dict) -> dict:
+    return unpair_dishes(args.get("dish_name") or "", args.get("partner_name") or "")
+
+def handle_add_occasion(args: dict) -> dict:
+    return add_occasion(args.get("title") or "", args.get("anchor_date") or "",
+                        args.get("kind") or "gathering",
+                        args.get("window_start") or "", args.get("window_end") or "",
+                        args.get("dish_tags") or "")
+
+def handle_get_occasion(args: dict) -> dict:
+    return get_occasion(args.get("occasion_name") or "")
+
+def handle_get_occasion_insights(args: dict) -> dict:
+    return get_occasion_insights(args.get("occasion_name") or "")
+
+def handle_get_occasion_gaps(args: dict) -> dict:
+    return get_occasion_gaps(args.get("occasion_name") or "")
+
+def handle_set_occasion_attendance(args: dict) -> dict:
+    return set_occasion_attendance(args.get("occasion_name") or "",
+                                   args.get("who") or "",
+                                   bool(args.get("coming", True)))
+
+def handle_add_occasion_guests(args: dict) -> dict:
+    return add_occasion_guests(args.get("occasion_name") or "",
+                               args.get("who") or "",
+                               int(args.get("headcount") or 1),
+                               args.get("cannot_eat") or "")
+
+def handle_suggest_gift_ideas(args: dict) -> dict:
+    return suggest_gift_ideas(args.get("occasion_name") or "",
+                              args.get("extra") or "")
+
+def handle_source_for_occasion(args: dict) -> dict:
+    return source_for_occasion(args.get("occasion_name") or "",
+                               args.get("needed") or "")
+
+def handle_get_run_sheet(args: dict) -> dict:
+    return get_run_sheet(args.get("target_date") or "today",
+                         args.get("serve_at") or "")
+
+def handle_set_hosting(args: dict) -> dict:
+    return set_hosting(args.get("target_date") or "",
+                       int(args.get("serving_for") or 0),
+                       int(args.get("cooks") or 0))
+
+def handle_set_dish_categories(args: dict) -> dict:
+    return set_dish_categories(args.get("dish_name") or "",
+                               args.get("categories") or "",
+                               args.get("whole_meal"),
+                               args.get("serves"),
+                               args.get("whole_units"))
+
+def handle_set_dish_scope(args: dict) -> dict:
+    occ = args.get("occasion_only")
+    return set_dish_scope(args.get("dish_name") or "",
+                          True if occ is None else bool(occ))
+
+def handle_set_dish_prep(args: dict) -> dict:
+    return set_dish_prep(args.get("dish_name") or "", args.get("action") or "",
+                         args.get("when") or "hours_before",
+                         args.get("hours") or 1.0)
+
+def handle_clear_dish_prep(args: dict) -> dict:
+    return clear_dish_prep(args.get("dish_name") or "", args.get("action") or "")
+
+def handle_get_prep_ahead(args: dict) -> dict:
+    return get_prep_ahead()
+
+def handle_get_shopping_trip(args: dict) -> dict:
+    return get_shopping_trip(args.get("list_name") or "")
+
+def handle_schedule_shopping_trip(args: dict) -> dict:
+    return schedule_shopping_trip(args.get("store") or "",
+                                  args.get("list_name") or "",
+                                  args.get("weekly", True))
+
+def handle_get_week_dinners(args: dict) -> dict:
+    return get_week_dinners()
+
+def handle_approve_week_dinners(args: dict) -> dict:
+    return approve_week_dinners()
+
+def handle_change_tonights_plate(args: dict) -> dict:
+    return change_tonights_plate(args.get("dish_name") or "",
+                                 action=args.get("action") or "add",
+                                 target_date=args.get("target_date") or "today")
+
+def handle_add_dishes(args: dict) -> dict:
+    return add_dishes(args.get("description") or "")
+
+def handle_refine_meal_dish(args: dict) -> dict:
+    return refine_meal_dish(args.get("dish_name") or "", args.get("detail") or "")
+
+def handle_mark_leftovers(args: dict) -> dict:
+    return mark_leftovers(args.get("what") or "",
+                          target_date=args.get("target_date") or "today",
+                          parts=args.get("parts") or "")
+
+def handle_clear_leftovers(args: dict) -> dict:
+    return clear_leftovers(args.get("target_date") or "today",
+                           what=args.get("what") or "")
+
+def handle_get_eating_plan(args: dict) -> dict:
+    return get_eating_plan(args.get("target_date") or "today")
+
+def handle_get_drive_digest(args: dict) -> dict:
+    return get_drive_digest(target_date=args.get("target_date") or "today",
+                            member_name=args.get("member_name") or "")
+
+def handle_post_weekly_digest(args: dict) -> dict:
+    # v1 loop runs only in admin contexts, so no acting-member gate needed.
+    return post_weekly_digest_now()
+
+def handle_set_household_status(args: dict) -> dict:
+    return set_household_status(args.get("protocol_name") or "",
+                                target_date=args.get("target_date") or "today",
+                                note=args.get("note") or "",
+                                clear=bool(args.get("clear")),
+                                end_date=args.get("end_date") or "")
+
+def handle_get_household_status(args: dict) -> dict:
+    return get_household_status(target_date=args.get("target_date") or "today")
+
+def handle_get_routine_status(args: dict) -> dict:
+    return get_routine_status(args.get("member_name", ""),
+                              args.get("target_date", "today"))
+
+def handle_decide_optional_event(args: dict) -> dict:
+    from services import optional_events
+    return optional_events.decide_by_title(args.get("event_name"),
+                                           args.get("target_date") or "today",
+                                           args.get("decision"))
+
+def handle_set_event_optional(args: dict) -> dict:
+    from services import optional_events
+    return optional_events.set_optional_flag(args.get("event_name"),
+                                             args.get("target_date") or "today",
+                                             bool(args.get("optional", True)),
+                                             args.get("scope") or "series")
+
+def handle_cancel_event(args: dict) -> dict:
+    # This stack serves the admin dashboard and HA voice — parent surfaces,
+    # no resolved member — so the parent/adult gate passes on None.
+    from services import cancellations
+    return cancellations.cancel_by_title(args.get("event_name") or "",
+                                         args.get("target_date") or "today",
+                                         reason=args.get("reason") or "")
+
+def handle_restore_event(args: dict) -> dict:
+    from services import cancellations
+    return cancellations.cancel_by_title(args.get("event_name") or "",
+                                         args.get("target_date") or "today",
+                                         restore=True)
+
+def handle_group_events_ride_together(args: dict) -> dict:
+    # Admin dashboard / HA voice: parent surfaces, so the gate passes on None
+    # (same reasoning as handle_cancel_event).
+    from services import ride_groups
+    return ride_groups.group_by_titles(args.get("event_names") or [],
+                                       args.get("target_date") or "today")
+
+def handle_ungroup_event(args: dict) -> dict:
+    from services import ride_groups
+    return ride_groups.ungroup_by_title(args.get("event_name") or "",
+                                        args.get("target_date") or "today")
+
+def handle_launch_mission(args: dict) -> dict:
+    # v1 loop is admin-only (dashboard/HA voice), so no acting-member gate is
+    # needed here — same "trusted context" reasoning as handle_send_family_message
+    # and handle_cancel_event. _member_id rides through as attribution only.
+    from services import missions, storage as _st
+    thread = None
+    title = (args.get('thread_title') or '').strip()
+    if title:
+        thread = missions._match_thread(title)
+    return missions.launch(args.get('goal') or '',
+                           origin_kind='thread' if thread else 'chat',
+                           origin_ref=thread['id'] if thread else None,
+                           created_by=args.get('_member_id'),
+                           tier='mission')
+
+def handle_create_thread(args: dict) -> dict:
+    # Reached only through the approve rail (a parent's tap) or the trusted
+    # v1 contexts — opening a thread sends nothing; the threads page's
+    # human-only Send is still the sole way words leave the house.
+    from services import threads as _threads
+    title = (args.get('title') or '').strip()
+    if not title:
+        return {"status": "error", "message": "The thread needs a title."}
+    kind = (args.get('kind') or 'vendor').strip().lower()
+    thread_id = _threads.create(
+        title=title,
+        owner_member_id=args.get('_member_id'),
+        goal=(args.get('goal') or '').strip(),
+        kind=kind if kind in ('vendor', 'project') else 'vendor',
+        counterparty_name=(args.get('counterparty_name') or '').strip(),
+        counterparty_email=(args.get('counterparty_email') or '').strip(),
+        next_action=(args.get('next_action') or '').strip(),
+        created_by=args.get('_member_id'))
+    return {"status": "success", "id": thread_id,
+            "message": f"Opened a thread: {title}."}
+
+TOOL_HANDLERS = {
+    "start_drive": handle_start_drive,
+    "update_drive_status": handle_update_drive_status,
+    "get_current_state": handle_get_current_state,
+    "add_routing_rule": handle_add_routing_rule,
+    "delete_routing_rule": handle_delete_routing_rule,
+    "add_priority_rule": handle_add_priority_rule,
+    "delete_priority_rule": handle_delete_priority_rule,
+    "run_solver": handle_run_solver,
+    "add_override": handle_add_override,
+    "delete_override": handle_delete_override,
+    "manage_car": handle_manage_car,
+    "update_memory": handle_update_memory,
+    "add_errand": handle_add_errand,
+    "update_errand": handle_update_errand,
+    "delete_errand": handle_delete_errand,
+    "get_errands": handle_get_errands,
+    "add_errand_rule": handle_add_errand_rule,
+    "delete_errand_rule": handle_delete_errand_rule,
+    "search_places": handle_search_places,
+    "generate_trip_plan": handle_generate_trip_plan,
+    "add_trip_poi": handle_add_trip_poi,
+    "add_trip_accommodation": handle_add_trip_accommodation,
+    "edit_trip_accommodation": handle_edit_trip_accommodation,
+    "edit_trip_poi": handle_edit_trip_poi,
+    "generate_trip_flights": handle_generate_trip_flights,
+    "add_trip_flight": handle_add_trip_flight,
+    "edit_trip_flight": handle_edit_trip_flight,
+    "delete_trip_flight": handle_delete_trip_flight,
+    "challenge_pet_battle": handle_challenge_pet_battle,
+    "award_pet_xp": handle_award_pet_xp,
+    "get_pet_status": handle_get_pet_status,
+    "get_point_balances": handle_get_point_balances,
+    "adjust_points": handle_adjust_points,
+    "get_family_goals": handle_get_family_goals,
+    "contribute_to_family_goal": handle_contribute_to_family_goal,
+    "reopen_chore": handle_reopen_chore,
+    "send_family_message": handle_send_family_message,
+    "send_direct_message": handle_send_direct_message,
+    "get_family_messages": handle_get_family_messages,
+    "list_chores": handle_list_chores,
+    "list_open_findings": handle_list_open_findings,
+    "list_insights": handle_list_insights,
+    "dismiss_insight": handle_dismiss_insight,
+    "list_programs": handle_list_programs,
+    "claim_chore": handle_claim_chore,
+    "negotiate_day": handle_negotiate_day,
+    "get_routine_status": handle_get_routine_status,
+    "post_weekly_digest": handle_post_weekly_digest,
+    "get_drive_digest": handle_get_drive_digest,
+    "decide_optional_event": handle_decide_optional_event,
+    "set_event_optional": handle_set_event_optional,
+    "cancel_event": handle_cancel_event,
+    "restore_event": handle_restore_event,
+    "group_events_ride_together": handle_group_events_ride_together,
+    "ungroup_event": handle_ungroup_event,
+    "get_kid_tasks": handle_get_kid_tasks,
+    "add_kid_task": handle_add_kid_task,
+    "complete_kid_task": handle_complete_kid_task,
+    "set_household_status": handle_set_household_status,
+    "get_household_status": handle_get_household_status,
+    "add_shopping_items": handle_add_shopping_items,
+    "get_shopping_list_items": handle_get_shopping_list_items,
+    "check_off_shopping_item": handle_check_off_shopping_item,
+    "remove_shopping_item_by_name": handle_remove_shopping_item,
+    "get_eating_plan": handle_get_eating_plan,
+    "suggest_dinner": handle_suggest_dinner,
+    "add_meal_to_repertoire": handle_add_meal_to_repertoire,
+    "add_meal_ingredients_to_list": handle_add_meal_ingredients_to_list,
+    "mark_meal_served": handle_mark_meal_served,
+    "mark_leftovers": handle_mark_leftovers,
+    "clear_leftovers": handle_clear_leftovers,
+    "refine_meal_dish": handle_refine_meal_dish,
+    "get_tonights_plate": handle_get_tonights_plate,
+    "change_tonights_plate": handle_change_tonights_plate,
+    "add_dishes": handle_add_dishes,
+    "get_week_dinners": handle_get_week_dinners,
+    "approve_week_dinners": handle_approve_week_dinners,
+    "get_shopping_trip": handle_get_shopping_trip,
+    "set_meal_rule": handle_set_meal_rule,
+    "get_meal_rules": handle_get_meal_rules,
+    "plan_specific_dinner": handle_plan_specific_dinner,
+    "unlock_dinner": handle_unlock_dinner,
+    "pair_dishes": handle_pair_dishes,
+    "unpair_dishes": handle_unpair_dishes,
+    "set_dish_scope": handle_set_dish_scope,
+    "set_dish_categories": handle_set_dish_categories,
+    "set_hosting": handle_set_hosting,
+    "get_run_sheet": handle_get_run_sheet,
+    "add_occasion": handle_add_occasion,
+    "get_occasion": handle_get_occasion,
+    "get_occasion_gaps": handle_get_occasion_gaps,
+    "get_occasion_insights": handle_get_occasion_insights,
+    "add_occasion_guests": handle_add_occasion_guests,
+    "set_occasion_attendance": handle_set_occasion_attendance,
+    "source_for_occasion": handle_source_for_occasion,
+    "suggest_gift_ideas": handle_suggest_gift_ideas,
+    "set_dish_prep": handle_set_dish_prep,
+    "clear_dish_prep": handle_clear_dish_prep,
+    "get_prep_ahead": handle_get_prep_ahead,
+    "schedule_shopping_trip": handle_schedule_shopping_trip,
+    "launch_mission": handle_launch_mission,
+    "create_thread": handle_create_thread,
+}
+
+def execute_tool(name: str, args: dict) -> dict:
+    handler = TOOL_HANDLERS.get(name)
+    if not handler:
+        return {"status": "error", "message": f"Unknown tool {name}"}
+    try:
+        return handler(args)
+    except Exception as e:
+        import traceback
+        return {"status": "error", "message": str(e), "traceback": traceback.format_exc()}

@@ -46,8 +46,8 @@ EXCLUDED_TOOLS = frozenset({'send_direct_message'})
 
 
 def proposable_tools() -> frozenset:
-    from services import agent_tools, chat_actions
-    return (frozenset(agent_tools.TOOL_HANDLERS) - READ_TOOLS - EXCLUDED_TOOLS) \
+    from services import agent_tools_v2, chat_actions
+    return (frozenset(agent_tools_v2.TOOL_HANDLERS) - READ_TOOLS - EXCLUDED_TOOLS) \
         | frozenset(chat_actions.ADMIN_ACTIONS)
 
 
@@ -78,15 +78,14 @@ _llm = _llm_live
 
 
 def _catalog() -> str:
-    from services import agent_tools
+    from services import agent_tools_v2
     lines = []
     for name in sorted(READ_TOOLS):
-        schema = agent_tools.TOOL_SCHEMAS.get(name) or {}
+        schema = agent_tools_v2.TOOL_SCHEMAS.get(name) or {}
         props = ', '.join((schema.get('properties') or {}).keys()) or 'no args'
         lines.append(f"- READ {name}({props})")
     for name in sorted(proposable_tools()):
-        from services import agent_tools as _at
-        schema = _at.TOOL_SCHEMAS.get(name) or {}
+        schema = agent_tools_v2.TOOL_SCHEMAS.get(name) or {}
         props = ', '.join((schema.get('properties') or {}).keys()) or 'payload'
         lines.append(f"- PROPOSE {name}({props})")
     return '\n'.join(lines)
@@ -245,8 +244,8 @@ def step(mission: dict) -> dict:
                 'result_json': {'note': f"{name} is not a READ tool — use "
                                         f"propose for changes"}})
             return storage.get_mission(mid)
-        from services import agent_tools
-        out = agent_tools.execute_tool(name, res.get('args') or {})
+        from services import agent_tools_v2
+        out = agent_tools_v2.execute_tool(name, res.get('args') or {})
         storage.add_mission_step(mid, {'kind': 'tool', 'name': name,
                                        'args_json': res.get('args') or {},
                                        'result_json': out})

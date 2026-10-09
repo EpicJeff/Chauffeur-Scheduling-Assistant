@@ -89,13 +89,13 @@ def scenario_chat_create_event_resolves_location():
 
 
 def scenario_agent_errand_resolves_location():
-    from services import agent_tools
+    from services import agent_tools_v2
     _clear_cache()
     with storage.db_lock:
         storage.errands_table.truncate()
     with mock.patch.object(maps, '_geocode_address_api_lookup',
                            return_value=(35.78, -78.88, ADDRESS)):
-        res = agent_tools.handle_add_errand({"title": "Drop off forms", "location": VENUE})
+        res = agent_tools_v2.handle_add_errand({"title": "Drop off forms", "location": VENUE})
     check(res.get("status") == "success", f"errand added, got {res}")
     errands = storage.get_all_errands()
     check(errands and errands[0]["location"] == ADDRESS,

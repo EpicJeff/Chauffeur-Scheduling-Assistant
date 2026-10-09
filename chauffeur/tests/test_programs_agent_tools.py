@@ -1,12 +1,12 @@
 """Argyle can find a plan and count a session. It cannot claim the week."""
 from harness import check
-from services import agent_tools, agent_tools_v2, storage
+from services import agent_tools_v2, storage
 
 
 def scenario_reads_are_in_both_stacks():
     names = {t['name'] for t in agent_tools_v2.get_available_tools()}
     check('list_programs' in names, "the Gemma stack can list programs")
-    check('list_programs' in agent_tools.TOOL_SCHEMAS, "and so can the v1 loop")
+    check('list_programs' in agent_tools_v2.TOOL_SCHEMAS, "and so can the v1 loop")
 
 
 def scenario_approving_is_never_a_chat_tool():
@@ -14,7 +14,7 @@ def scenario_approving_is_never_a_chat_tool():
     tap on a screen showing what it will do."""
     names = {t['name'] for t in agent_tools_v2.get_available_tools()}
     check('approve_program' not in names, "approval is not a chat tool")
-    check('approve_program' not in agent_tools.TOOL_SCHEMAS, "in either stack")
+    check('approve_program' not in agent_tools_v2.TOOL_SCHEMAS, "in either stack")
 
 
 def scenario_writes_refuse_an_unresolved_caller():

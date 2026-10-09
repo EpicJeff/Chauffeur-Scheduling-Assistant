@@ -111,14 +111,14 @@ def test_only_the_person_asked_may_answer():
 def test_the_agent_can_ask_but_never_accept():
     """Handing consent to an assistant would mean a kid could be dragged into
     a fight by a sibling talking to a speaker in another room."""
-    from services import agent_tools_v2, agent_tools
+    from services import agent_tools_v2
     reset_db()
     _pair()
     msg = agent_tools_v2.challenge_pet_battle("Ada", "Ben")['message']
     check('up to them' in msg.lower(), "the agent did not say it was an ask: %r" % msg)
     check(storage.get_pet_challenges("k2")[0]['state'] == 'pending',
           "the agent resolved the challenge itself")
-    names = ' '.join(agent_tools.TOOL_SCHEMAS)
+    names = ' '.join(agent_tools_v2.TOOL_SCHEMAS)
     check('accept' not in names and 'respond_pet' not in names,
           "an accept-on-behalf tool exists: %s" % names)
 
@@ -434,7 +434,7 @@ def test_both_battle_pushes_land_on_the_battle():
 
 
 def test_the_hand_path_and_both_agent_stacks():
-    from services import agent_tools, auth
+    from services import agent_tools_v2, auth
     base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         'templates', 'components')
     overlay = open(os.path.join(base, 'pet_battle.html'), encoding='utf-8').read()
@@ -447,8 +447,8 @@ def test_the_hand_path_and_both_agent_stacks():
                    'watch(', "api/pets/battles/", 'waiting'):
         check(needle in overlay, "the overlay has no hand path for %s" % needle)
     for tool in ('challenge_pet_battle', 'get_pet_status'):
-        check(tool in agent_tools.TOOL_SCHEMAS, "%s missing from the loop's schemas" % tool)
-        check(tool in agent_tools.TOOL_HANDLERS, "%s missing from the loop's handlers" % tool)
+        check(tool in agent_tools_v2.TOOL_SCHEMAS, "%s missing from the loop's schemas" % tool)
+        check(tool in agent_tools_v2.TOOL_HANDLERS, "%s missing from the loop's handlers" % tool)
     router = open(os.path.join(os.path.dirname(base), '..', 'services',
                                'agent_router.py'), encoding='utf-8').read()
     for tool in ('challenge_pet_battle', 'get_pet_status'):

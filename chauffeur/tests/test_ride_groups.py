@@ -314,11 +314,11 @@ def scenario_the_endpoints_run():
 
 def scenario_both_agent_stacks_group_by_name():
     import main
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     _reset()
     main.trigger_background_refresh = lambda *a, **k: None
-    check({"group_events_ride_together", "ungroup_event"} <= set(agent_tools.TOOL_HANDLERS)
-          and {"group_events_ride_together", "ungroup_event"} <= set(agent_tools.TOOL_SCHEMAS),
+    check({"group_events_ride_together", "ungroup_event"} <= set(agent_tools_v2.TOOL_HANDLERS)
+          and {"group_events_ride_together", "ungroup_event"} <= set(agent_tools_v2.TOOL_SCHEMAS),
           "the v1 stack has schema and handler")
     v2_names = {t.get("name") for t in agent_tools_v2.get_available_tools()}
     check({"group_events_ride_together", "ungroup_event"} <= v2_names,
@@ -331,7 +331,7 @@ def scenario_both_agent_stacks_group_by_name():
     a, b = pair()
     _cache(a, b)
     day = DAY.date().isoformat()
-    res = agent_tools.TOOL_HANDLERS["group_events_ride_together"](
+    res = agent_tools_v2.TOOL_HANDLERS["group_events_ride_together"](
         {"event_names": ["swim", "dive"], "target_date": day})
     check(res.get("status") == "success" and len(storage.get_ride_group_rows()) == 2,
           f"v1 groups by name: {res} / {storage.get_ride_group_rows()}")

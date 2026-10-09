@@ -4,9 +4,10 @@ from typing import Dict, Any, Optional, List
 
 from services.agent_tools_v2 import (
     get_available_tools,
-    get_bridged_v1_tools,
-    BRIDGED_V1_TOOLS,
-    SCHEDULE_MUTATING_V1_TOOLS,
+    get_admin_tools,
+    ADMIN_TOOLS,
+    SCHEDULE_MUTATING_ADMIN_TOOLS,
+    execute_tool,
     get_calendar_events,
     assign_driver_to_event_fuzzy,
     add_trip_poi,
@@ -345,7 +346,7 @@ sending or claiming, and never pass from_member/member_name for them.
     elif bridge_ok:
         # Full-parity v1 bridge tools (routing/priority rules, errands, solver,
         # memory, places, deep trip planning).
-        tools = tools + get_bridged_v1_tools()
+        tools = tools + get_admin_tools()
     if propose_only:
         tools = [t for t in tools if t.get("name") in PROPOSE_ONLY_TOOLS]
         system_prompt += (
@@ -1172,7 +1173,7 @@ sending or claiming, and never pass from_member/member_name for them.
                         created_by_member_id=(acting_member or {}).get("id"))
                     if res.get("card"): card = res["card"]
                     if res.get("message"): agent_message = res["message"]
-                elif func_name in BRIDGED_V1_TOOLS and bridge_ok:
+                elif func_name in ADMIN_TOOLS and bridge_ok:
                     # Full-parity bridge: scheduling-core, errand, memory,
                     # places and deep trip-planning tools delegate to v1's
                     # tested handlers. Admin context only — the `bridge_ok`
@@ -1181,10 +1182,9 @@ sending or claiming, and never pass from_member/member_name for them.
                     # non-admin @argyle asker. Schedule-mutating
                     # tools flag schedule_dirty so the client re-solves, exactly
                     # like the override tools above.
-                    from services import agent_tools
-                    res = agent_tools.execute_tool(func_name, args)
+                    res = execute_tool(func_name, args)
                     if isinstance(res, dict) and res.get("status") == "success" \
-                            and func_name in SCHEDULE_MUTATING_V1_TOOLS:
+                            and func_name in SCHEDULE_MUTATING_ADMIN_TOOLS:
                         schedule_dirty = True
                     if isinstance(res, dict) and res.get("message"):
                         agent_message = res["message"]

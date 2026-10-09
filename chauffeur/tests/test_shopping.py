@@ -315,15 +315,15 @@ def scenario_photo_dedupes_and_caps_candidates():
 
 def scenario_tools_registered_in_both_stacks():
     _reset()
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     want = {"add_shopping_items", "get_shopping_list_items",
             "check_off_shopping_item", "remove_shopping_item_by_name"}
     v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
     check(want <= v2, f"v2 (widget/Gemma) is missing {want - v2}")
-    check(want <= set(agent_tools.TOOL_SCHEMAS), "v1 schemas incomplete")
-    check(want <= set(agent_tools.TOOL_HANDLERS), "v1 handlers incomplete")
+    check(want <= set(agent_tools_v2.TOOL_SCHEMAS), "v1 schemas incomplete")
+    check(want <= set(agent_tools_v2.TOOL_HANDLERS), "v1 handlers incomplete")
     # v1 handlers must actually reach the same implementation.
-    agent_tools.execute_tool("add_shopping_items", {"items": "salt"})
+    agent_tools_v2.execute_tool("add_shopping_items", {"items": "salt"})
     lid = storage.ensure_default_shopping_list()['id']
     check([i['name'] for i in storage.get_shopping_items(lid)] == ["salt"],
           "the v1 bridge writes through to the same storage as v2")
@@ -435,12 +435,12 @@ def scenario_a_trip_is_offered_only_for_a_list_carrying_weight():
 
 def scenario_m7_tools_in_both_stacks():
     _reset()
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     want = {"get_shopping_trip", "schedule_shopping_trip"}
     v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
     check(want <= v2, f"v2 missing {want - v2}")
-    check(want <= set(agent_tools.TOOL_SCHEMAS)
-          and want <= set(agent_tools.TOOL_HANDLERS), "v1 stack incomplete")
+    check(want <= set(agent_tools_v2.TOOL_SCHEMAS)
+          and want <= set(agent_tools_v2.TOOL_HANDLERS), "registry incomplete")
     import inspect
     from services import agent_router
     src = inspect.getsource(agent_router)
@@ -448,9 +448,9 @@ def scenario_m7_tools_in_both_stacks():
         check(src.count(f'"{name}"') >= 2,
               f"{name} is not both dispatched and listed terminal in the router")
 
-    ask = agent_tools.execute_tool("get_shopping_trip", {})
+    ask = agent_tools_v2.execute_tool("get_shopping_trip", {})
     check("no trip scheduled" in ask['message'], f"reads the absence, got {ask}")
-    made = agent_tools.execute_tool("schedule_shopping_trip", {"store": "Kroger"})
+    made = agent_tools_v2.execute_tool("schedule_shopping_trip", {"store": "Kroger"})
     check(made['status'] == 'success', f"creates it by voice, got {made}")
     from services import shopping
     check(shopping.errand_for_list(storage.ensure_default_shopping_list()['id']),

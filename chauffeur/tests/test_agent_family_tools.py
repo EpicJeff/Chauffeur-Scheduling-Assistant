@@ -189,9 +189,8 @@ def test_weekly_digest_tool(mom, ben, nanny):
               f"empty week reports honestly instead of posting: {res}")
 
     # Registered in BOTH stacks (the lockstep rule).
-    from services import agent_tools as v1
-    check('post_weekly_digest' in v1.TOOL_SCHEMAS and 'post_weekly_digest' in v1.TOOL_HANDLERS,
-          "v1 stack registration present")
+    check('post_weekly_digest' in tools.TOOL_SCHEMAS and 'post_weekly_digest' in tools.TOOL_HANDLERS,
+          "registry registration present")
     check(any(t.get('name') == 'post_weekly_digest' for t in tools.get_available_tools()),
           "v2 stack schema present")
 

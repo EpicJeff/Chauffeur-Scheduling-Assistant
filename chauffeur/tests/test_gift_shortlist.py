@@ -235,11 +235,11 @@ def scenario_picks_land_private_and_cart_ready():
 def scenario_the_tool_is_in_both_stacks_and_never_invents():
     """Both agent stacks, and the chat answer stays a SUGGESTION — a present
     is not a thing to have chosen for you by a chat message."""
-    from services import agent_tools, agent_tools_v2
+    from services import agent_tools_v2
     v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
     check('suggest_gift_ideas' in v2, "v2 has it")
-    check('suggest_gift_ideas' in agent_tools.TOOL_SCHEMAS
-          and 'suggest_gift_ideas' in agent_tools.TOOL_HANDLERS, "v1 has it")
+    check('suggest_gift_ideas' in agent_tools_v2.TOOL_SCHEMAS
+          and 'suggest_gift_ideas' in agent_tools_v2.TOOL_HANDLERS, "v1 has it")
 
     _reset(); _household()
     o = _party(budget=25)
@@ -249,7 +249,7 @@ def scenario_the_tool_is_in_both_stacks_and_never_invents():
          mock.patch('services.walmart.search_backend', return_value='affiliate'), \
          mock.patch('services.walmart.search',
                     side_effect=lambda q, limit=4, max_price=None: _found(_item('1', 'Art Case', 19.97))):
-        res = agent_tools.execute_tool('suggest_gift_ideas',
+        res = agent_tools_v2.execute_tool('suggest_gift_ideas',
                                        {'occasion_name': "Jack's party"})
     check(res['status'] == 'success' and 'Art Case' in res['message'],
           f"the v1 bridge answers with the REAL product: {res['message']!r}")

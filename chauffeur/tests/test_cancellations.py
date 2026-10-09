@@ -221,10 +221,10 @@ def scenario_the_cancel_push_replaces_the_schedule_change_push():
 
 
 def scenario_both_agent_stacks_carry_the_tools():
-    from services import agent_tools, agent_tools_v2
-    check("cancel_event" in agent_tools.TOOL_HANDLERS
-          and "restore_event" in agent_tools.TOOL_HANDLERS
-          and "cancel_event" in agent_tools.TOOL_SCHEMAS,
+    from services import agent_tools_v2
+    check("cancel_event" in agent_tools_v2.TOOL_HANDLERS
+          and "restore_event" in agent_tools_v2.TOOL_HANDLERS
+          and "cancel_event" in agent_tools_v2.TOOL_SCHEMAS,
           "the v1 stack has schema and handler")
     v2_names = {t.get("name") for t in agent_tools_v2.get_available_tools()}
     check({"cancel_event", "restore_event"} <= v2_names,

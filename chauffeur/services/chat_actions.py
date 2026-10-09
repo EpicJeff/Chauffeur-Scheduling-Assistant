@@ -270,7 +270,7 @@ def _skip_occurrence(payload: dict) -> dict:
 
 def _execute(action_type: str, payload: dict) -> dict:
     """Run an approved action through the tested handlers."""
-    from services import agent_tools
+    from services import agent_tools_v2
     if action_type == "add_car_stop":
         return _add_car_stop(payload)
     if action_type == "reassign_driver":
@@ -313,8 +313,8 @@ def _execute(action_type: str, payload: dict) -> dict:
     if action_type == "reshape_program":
         from services import programs as _prog
         return _prog.reshape(payload.get('program_id'))
-    if action_type in agent_tools.TOOL_HANDLERS:
-        return agent_tools.execute_tool(action_type, payload)
+    if action_type in agent_tools_v2.TOOL_HANDLERS:
+        return agent_tools_v2.execute_tool(action_type, payload)
     return {"status": "error", "message": f"Unknown action type '{action_type}'."}
 
 

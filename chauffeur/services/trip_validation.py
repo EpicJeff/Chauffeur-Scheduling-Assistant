@@ -8,7 +8,7 @@ outright — so bad data must be caught here, at the boundary, before storage.
 
 Every path that persists trip POIs or accommodations must run through this
 module: plan generation (services/trip_planner.py), agent tools
-(services/agent_tools.py), and any future importer. The scheduler's hard
+(the registry in services/agent_tools_v2.py), and any future importer. The scheduler's hard
 fences are the backstop, not the defense; the post-solve audit
 (trip_scheduler.audit_solve) is the last-resort detector.
 
