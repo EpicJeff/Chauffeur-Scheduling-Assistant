@@ -370,6 +370,38 @@ SCENARIOS = [
     scenario_undo_puts_it_back,
 ]
 
+
+def scenario_heads_up_names_the_next_step_and_the_asks():
+    _reset()
+    storage.asks_table.truncate()
+    from services import asks
+    soon = (NOON + datetime.timedelta(days=1)).replace(hour=16)
+    storage.set_cached_schedule({"events": [{"id": "ev1", "title": "Soccer", "start": soon.isoformat(),
+                                             "end": (soon + datetime.timedelta(hours=1)).isoformat()}],
+                                 "assignments": {}, "unassigned": ["ev1"]})
+    storage.add_assist_contact({'id': 'c1', 'name': 'Sarah', 'kinds': ['driving'], 'active': True})
+    n, posts = _run()
+    body = _bodies(posts)[0]
+    check('→ Assign' in body or '→ Ask' in body, f"the heads-up says the next step: {body}")
+    fid = storage.get_findings(state='open')[0]['id']
+    a = asks.create('finding', fid, {'name': 'Mike'}, 'drive Soccer', 'text', 'mom')['ask']
+    asks.mark_sent(a['id'], {'id': 'mom', 'role': 'parent'})
+    asks.answer(a['id'], 'no', {'id': 'mom', 'role': 'parent'}, reported=True)
+    storage.set_app_state('watcher_notified', {})     # let it notify again
+    n, posts = _run(now=NOON + datetime.timedelta(hours=2))
+    body = _bodies(posts)[0]
+    check('asked Mike by text, said no' in body, f"the heads-up carries the asks so far: {body}")
+
+
+def scenario_heads_up_clause_survives_a_missing_record():
+    _reset()
+    from services import watchers as _w, findings as _f
+    f = _f.Finding(key='x:1', line='🚨 Something', kind='unassigned', subject_type='event', subject_id='nope')
+    check(_w._heads_up_line(f) == '🚨 Something', "no record, no situation: the line alone")
+
+
+SCENARIOS += [scenario_heads_up_names_the_next_step_and_the_asks, scenario_heads_up_clause_survives_a_missing_record]
+
 if __name__ == "__main__":
     import traceback
     failed = 0

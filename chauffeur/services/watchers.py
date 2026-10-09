@@ -828,6 +828,34 @@ def _unclaimed_batch(unclaimed) -> Finding:
                    subject_id='__unclaimed_batch__')
 
 
+def _heads_up_line(f) -> str:
+    """The DM's line for one finding: what it is, then what to do about it
+    and who has already been asked (spec 2026-10-09-situations-design §3).
+    Reads the situation the sweep just reconciled; with no record yet (or
+    anything odd) it is the line alone, never a crash in the sweep."""
+    try:
+        from services import situations as _sit
+        row = storage.get_finding_by_identity(_findings.identity(f))
+        if not row:
+            return f.line
+        s = _sit.view('finding', row['id'], {'role': 'parent'})
+        if not s:
+            return f.line
+        out = f.line
+        nxt = s.get('next_step') or {}
+        if nxt.get('verb') not in (None, 'own', 'dismiss', 'snooze'):
+            out += f" → {nxt.get('label')}"
+        said = {'sent': 'waiting', 'drafted': 'not sent yet', 'yes': 'said yes', 'no': 'said no'}
+        asks = [a for a in (s.get('asks') or []) if a.get('state') in said]
+        if asks:
+            out += ' (' + '; '.join(f"asked {a.get('to_name')} by {a.get('channel')}, {said[a['state']]}"
+                                    for a in asks[-3:]) + ')'
+        return out
+    except Exception as e:
+        print(f"[watchers] heads-up clause failed: {e}")
+        return f.line
+
+
 def run_watchers(now: datetime.datetime = None) -> int:
     """One sweep: collect, reconcile the record table, then DM each parent one
     consolidated heads-up about the findings that earned an interruption.
@@ -894,7 +922,7 @@ def run_watchers(now: datetime.datetime = None) -> int:
     if not parents:
         return 0
 
-    body = "👋 Heads-up — needs a look:\n" + "\n".join(f"• {f.line}" for f in fresh)
+    body = "👋 Heads-up — needs a look:\n" + "\n".join(f"• {_heads_up_line(f)}" for f in fresh)
     body += "\n\nAsk me for options, or handle it on the dashboard."
 
     from services.agent_tools_v2 import _post_chat_message
