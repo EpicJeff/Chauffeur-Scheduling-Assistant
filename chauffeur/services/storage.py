@@ -6390,6 +6390,12 @@ def get_chat_message(message_id: str) -> Optional[dict]:
         res = chat_messages_table.search(Query().id == message_id)
         return dict(res[0]) if res else None
 
+def update_chat_message_card(message_id: str, card: dict) -> bool:
+    """An interactive card follows its record (an ask's Yes/No buttons follow
+    the ledger), so the stored message is rewritten when the record moves."""
+    with db_lock:
+        return bool(chat_messages_table.update({'card': card}, Query().id == message_id))
+
 
 def delete_chat_message(message_id: str) -> Optional[dict]:
     """Remove a message outright — no tombstone. Returns the deleted message

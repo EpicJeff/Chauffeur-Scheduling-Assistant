@@ -858,6 +858,13 @@ def run_watchers(now: datetime.datetime = None) -> int:
         _findings.reconcile(findings, scanned, now_ts)
     except Exception as e:
         print(f"[watchers] finding reconcile failed: {e}")
+    # A yes whose applying was interrupted between claim and completion is
+    # finished here (services/asks.py recover): the effect is idempotent.
+    try:
+        from services import asks as _asks
+        _asks.recover(now)
+    except Exception as e:
+        print(f"[watchers] ask recovery failed: {e}")
 
     if not (QUIET_END_HOUR <= now.hour < QUIET_START_HOUR):
         return 0
