@@ -397,12 +397,17 @@ def _rows_of(kind: str, include_done: bool) -> list:
     return []
 
 
-def list_situations(viewer: Optional[dict], kinds=None, include_done: bool = False) -> list:
+def list_situations(viewer: Optional[dict], kinds=None, include_done: bool = False,
+                    owner: str = None) -> list:
+    """`owner` narrows THREADS to one member's own (the PWA House tab's
+    view); the other kinds have no owner and are unaffected."""
     out = []
     for kind in (kinds or KINDS):
         for k, sid in _rows_of(kind, include_done):
             row = load(k, sid)
             if not row or not can_see(k, row, viewer):
+                continue
+            if owner and k == 'thread' and row.get('owner_member_id') != owner:
                 continue
             s = view(k, sid, viewer)
             if s and (include_done or s['group'] != 'done'):

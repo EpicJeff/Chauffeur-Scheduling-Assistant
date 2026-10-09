@@ -5585,11 +5585,11 @@ def _situation_viewer(request):
 
 
 @app.get("/api/situations")
-def situations_list(kinds: str = None, include_done: int = 0, request: Request = None):
+def situations_list(kinds: str = None, include_done: int = 0, owner: str = None, request: Request = None):
     from services import situations as _sit
     want = tuple(k for k in (kinds or '').split(',') if k in _sit.KINDS) or None
     return {"situations": _sit.list_situations(_situation_viewer(request), kinds=want,
-                                               include_done=bool(include_done))}
+                                               include_done=bool(include_done), owner=owner or None)}
 
 
 @app.get("/api/situations/{kind}/{sid}")

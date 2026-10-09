@@ -93,6 +93,17 @@ def main():
             nxt = page.locator('#mind-content .sit-next button').first.inner_text()
             check(nxt.startswith('Plan:'), f"an insight leads with its plan step, got {nxt!r}")
             _shot(page, 'pwa-lane')
+            # The House tab's threads: the same builder, the parent's own
+            # threads, the note form riding inside the card. (The thread is
+            # opened here, after the lane counts above, which it would join.)
+            from services import threads
+            threads.create('Deck permit', owner_member_id='mom', next_action='call county', created_by='mom')
+            # #house-threads is the real House tab container (not shown until
+            # that tab is picked), so the cards are checked attached, not visible.
+            page.evaluate("async () => { await fetchHouseThreads(); }")
+            page.wait_for_selector('#house-threads .situation-card', state='attached', timeout=15000)
+            check('Deck permit' in page.locator('#house-threads .sit-title').first.text_content(), "the House tab draws the parent's thread as a card")
+            check(page.locator('#house-threads form input[id^="house-thread-note-"]').count() == 1, "the note form rides inside the card")
             check(not b.errors, f"PWA script errors: {b.errors}")
 
         b = served.browser(color_scheme='dark')

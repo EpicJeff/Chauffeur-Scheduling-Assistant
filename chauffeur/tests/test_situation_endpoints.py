@@ -132,6 +132,26 @@ def scenario_channels_resolve_a_typed_name():
 
 SCENARIOS += [scenario_channels_resolve_a_typed_name]
 
+
+def scenario_owner_filter_and_child_view():
+    fid, iid = _reset()
+    import main
+    from services import threads
+    storage.add_member({'id': 'teen', 'name': 'Sam', 'role': 'child', 'is_child': True})
+    mine = threads.create('Science fair form', owner_member_id='teen', next_action='ask Ms Lee', created_by='mom')
+    theirs = threads.create('Deck permit', owner_member_id='mom', next_action='call', created_by='mom')
+    _as('teen')
+    rows = main.situations_list(kinds='thread', owner='teen', request=_Req('teen'))['situations']
+    check([r['id'] for r in rows] == [mine], f"a child sees their own thread, and only theirs: {[r['id'] for r in rows]}")
+    _as('mom')
+    rows = main.situations_list(kinds='thread', owner='teen', request=_Req('mom'))['situations']
+    check([r['id'] for r in rows] == [mine], "owner= narrows a parent's view the same way")
+    rows = main.situations_list(kinds='thread', request=_Req('mom'))['situations']
+    check({r['id'] for r in rows} == {mine, theirs}, "no owner= means every thread for a parent")
+
+
+SCENARIOS += [scenario_owner_filter_and_child_view]
+
 if __name__ == "__main__":
     import traceback
     failed = 0
