@@ -210,6 +210,9 @@ def options_for(kind: str, row: dict) -> list:
     builder = {'finding': _options_finding, 'insight': _options_insight,
                'thread': _options_thread, 'mission': _options_mission}[kind]
     opts = [o for o in builder(row) if o['verb'] in VERBS]
+    if row.get(OWNER):
+        # Somebody took it: finishing is the next step; the rest stays offered.
+        opts.sort(key=lambda o: 0 if o['id'] == 'done' else 1)
     # Argyle's cached suggestions ride along, already verb-checked at refresh.
     for extra in (row.get('next_steps') or []):
         if extra.get('verb') in VERBS and extra.get('id') not in {o['id'] for o in opts}:
@@ -395,3 +398,176 @@ def list_situations(viewer: Optional[dict], kinds=None, include_done: bool = Fal
             if s and (include_done or s['group'] != 'done'):
                 out.append(s)
     return rank(out)
+
+
+# --- acting ------------------------------------------------------------------
+
+def bump_rev(kind: str, sid: str) -> int:
+    """Every mutation of the row, or of one of its asks, moves the revision.
+    Writing the cached note never does (see refresh)."""
+    with storage.db_lock:
+        row = load(kind, sid) or {}
+        rev = int(row.get('rev') or 0) + 1
+        _update(kind, sid, {'rev': rev})
+    return rev
+
+
+def _refused(msg: str) -> dict:
+    return {'status': 'refused', 'message': msg}
+
+
+def _can_write(actor) -> bool:
+    return bool(actor) and actor.get('role') in WRITE_ROLES
+
+
+def own(kind: str, sid: str, actor: dict) -> dict:
+    fields = {OWNER: actor['id'], OWNED_AT: time.time()}
+    if kind == 'finding':
+        fields['state'] = 'in_hand'
+    if not _update(kind, sid, fields):
+        return {'status': 'error', 'message': 'That is no longer here.'}
+    bump_rev(kind, sid)
+    return {'status': 'success', 'message': f"{actor.get('name') or 'You'} took it."}
+
+
+def done(kind: str, sid: str, actor: dict) -> dict:
+    if kind == 'finding':
+        from services import findings as _f
+        res = _f.resolve(sid, 'tap', member_id=actor.get('id'))
+    elif kind == 'insight':
+        res = {'status': 'success'} if storage.update_mind_insight(sid, {
+            'state': 'retired', 'outcome': 'acted', 'resolved_ts': time.time()}) else \
+            {'status': 'error', 'message': 'No such insight'}
+    elif kind == 'thread':
+        from services import threads as _th
+        res = {'status': 'success'} if _th.close(sid, 'done', who=actor.get('id')) else \
+            {'status': 'error', 'message': 'No such thread'}
+    else:
+        res = {'status': 'success'} if storage.update_mission(sid, {
+            'status': 'done', 'finished_at': time.time()}) else {'status': 'error', 'message': 'No such mission'}
+    if res.get('status') == 'success':
+        bump_rev(kind, sid)
+        request_refresh(kind, sid)
+    return res
+
+
+def act(kind: str, sid: str, verb: str, option_id: str = None, payload: dict = None,
+        actor: dict = None) -> dict:
+    """The single implementation behind every card button and every agent
+    tool. The option is re-derived from the row RIGHT NOW; an id from an
+    earlier view that no longer exists is refused, nothing runs."""
+    if kind not in KINDS or verb not in VERBS:
+        return _refused("That is not something I can do here.")
+    if not _can_write(actor):
+        return _refused("Only a parent or adult can do that.")
+    row = load(kind, sid)
+    if not row:
+        return {'status': 'error', 'message': 'That is no longer here.'}
+    opts = options_for(kind, row)
+    opt = next((o for o in opts if o['id'] == (option_id or verb) and o['verb'] == verb), None)
+    if not opt:
+        return _refused("That option is no longer on the table; the situation moved. Take another look.")
+    p = dict(opt['payload'])
+    free = payload or {}
+    if verb in ('answer', 'advance', 'draft', 'research'):
+        p.update({k: v for k, v in free.items()
+                  if k in ('text', 'next_action', 'next_action_at', 'note')})
+    if verb == 'snooze' and isinstance(free.get('days'), int):
+        p['days'] = max(1, min(60, free['days']))
+
+    res = _run(kind, sid, verb, p, actor, row)
+    if res.get('status') in ('success', 'proposed', 'planned'):
+        bump_rev(kind, sid)
+        request_refresh(kind, sid)
+    return res
+
+
+def _run(kind, sid, verb, p, actor, row) -> dict:
+    if verb == 'own':
+        return own(kind, sid, actor)
+    if verb == 'done' and not p.get('step_id'):
+        return done(kind, sid, actor)
+    if verb == 'dismiss':
+        if kind == 'finding':
+            from services import findings as _f
+            return _f.resolve(sid, 'dismiss', member_id=actor.get('id'))
+        ok = storage.update_mind_insight(sid, {'state': 'retired', 'outcome': 'dismissed',
+                                               'resolved_ts': time.time()})
+        return {'status': 'success' if ok else 'error', 'message': 'Left it.'}
+    if verb == 'snooze':
+        days = int(p.get('days') or 7)
+        if kind == 'insight':
+            storage.update_mind_insight(sid, {'snoozed_until': time.time() + days * 86400})
+        else:
+            storage.update_finding(sid, {'snoozed_until': time.time() + days * 86400})
+        return {'status': 'success', 'message': f"Parked for {days} days.", 'days': days}
+    if verb == 'assign':
+        from services.agent_tools_v2 import assign_driver_to_event_fuzzy
+        res = assign_driver_to_event_fuzzy(p.get('event_name'), p.get('driver_name'), p.get('target_date'))
+        if res.get('status') == 'success':
+            res['schedule_dirty'] = True
+        return res
+    if verb == 'do':
+        from services import chat_actions as _ca, mind as _mind
+        res = _ca.act_on_proposal(p['proposal_id'], 'approve', actor)
+        if res.get('status') == 'success' and kind == 'insight' and p.get('step_id'):
+            closed = _mind.close_step(sid, p['step_id'], 'done')
+            res['plan'] = closed.get('plan')
+        if res.get('status') == 'success' and kind == 'insight' and not p.get('step_id'):
+            storage.update_mind_insight(sid, {'state': 'retired', 'outcome': 'acted', 'resolved_ts': time.time()})
+        return res
+    if verb == 'plan':
+        from services import mind as _mind
+        return _mind.make_plan(sid, actor)
+    if verb == 'prepare':
+        from services import mind as _mind
+        return _mind.bind_step(sid, p['step_id'], actor)
+    if verb in ('done', 'skip'):
+        from services import mind as _mind
+        return _mind.close_step(sid, p['step_id'], 'done' if verb == 'done' else 'skipped')
+    if verb == 'advance':
+        from services import threads as _th
+        if not (p.get('next_action') or '').strip():
+            return {'status': 'error', 'message': 'Say what the next step is.'}
+        ok = _th.advance(sid, p['next_action'], next_action_at=p.get('next_action_at'),
+                         note=p.get('note'), who=actor.get('id'))
+        return {'status': 'success' if ok else 'error', 'message': 'Next step set.'}
+    if verb == 'draft':
+        from services import threads as _th
+        res = _th.draft_message(sid, intent=p.get('text') or '')
+        return {**res, 'status': res.get('status') or 'success'}
+    if verb == 'research':
+        from services import threads as _th
+        if not (p.get('text') or '').strip():
+            return {'status': 'error', 'message': 'Say what to look up.'}
+        return _th.research(sid, p['text'])
+    if verb == 'answer':
+        text = (p.get('text') or '').strip()
+        if not text:
+            return {'status': 'error', 'message': 'Say something to send.'}
+        storage.add_mission_step(sid, {'kind': 'note', 'name': 'user_answer', 'result_json': {'text': text}})
+        if row.get('status') == 'waiting_user':
+            storage.update_mission(sid, {'status': 'running'})
+        return {'status': 'success', 'message': 'Answered.'}
+    if verb == 'close':
+        state = p.get('state') or 'done'
+        if kind == 'thread':
+            from services import threads as _th
+            ok = _th.close(sid, state, who=actor.get('id'))
+        else:
+            ok = storage.update_mission(sid, {'status': 'dropped' if state == 'dropped' else 'done',
+                                              'finished_at': time.time()})
+        return {'status': 'success' if ok else 'error', 'message': 'Closed.'}
+    if verb == 'ask':
+        # The ask flow has its own endpoint/tool (asks.create); the option only
+        # carries what the ask would be. Reaching here means a client posted
+        # an ask verb to /act. Point it at the right door.
+        return {'status': 'error', 'message': 'Start the ask with POST /api/asks.'}
+    return _refused("That is not something I can do here.")
+
+
+# --- refresh (filled in by the next task) ------------------------------------
+
+def request_refresh(kind: str, sid: str) -> None:
+    """Placeholder until the refresh task lands; the act path calls it."""
+    return None

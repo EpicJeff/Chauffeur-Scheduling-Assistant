@@ -151,6 +151,69 @@ SCENARIOS = [scenario_finding_view_has_facts_options_and_fallback_note,
              scenario_thread_and_mission_views,
              scenario_rank_and_viewer_gates]
 
+def scenario_act_resolves_the_option_server_side():
+    _reset()
+    soon = _unassigned_event()
+    fid = storage.add_finding({'identity': 'unassigned:ev1', 'kind': 'unassigned', 'severity': 'approve',
+                               'line': 'No driver yet', 'subject_type': 'event', 'subject_id': 'ev1',
+                               'due_at': soon.timestamp(), 'state': 'open'})
+    s = situations.view('finding', fid, viewer={'id': 'mom', 'role': 'parent'})
+    assign = next(o for o in s['options'] if o['verb'] == 'assign')
+    res = situations.act('finding', fid, 'assign', option_id=assign['id'],
+                         payload={'driver_name': 'Dad'},      # ignored: payload is server-built
+                         actor={'id': 'mom', 'role': 'parent'})
+    check(res['status'] == 'success' and res.get('schedule_dirty'), f"assign ran: {res}")
+    ov = [o for o in storage.get_all_overrides() if str(o.get('event_id')) == 'ev1']
+    check(ov and ov[0].get('driver_id') == 'mom', f"the SERVER's driver was assigned, not the client's: {ov}")
+
+
+def scenario_stale_option_id_is_refused():
+    _reset()
+    iid = storage.add_mind_insight({'slug': 's', 'line': 'x', 'category': 'c', 'approach': 'y',
+                                    'identity': 'c:1', 'state': 'in_hand', 'plan_json': {'steps': [
+                                        {'id': 'st1', 'kind': 'human', 'text': 'Call', 'status': 'open'}]}})
+    res = situations.act('insight', iid, 'done', option_id='done:st1', actor={'id': 'mom', 'role': 'parent'})
+    check(res['status'] == 'success', f"a current option runs: {res}")
+    res = situations.act('insight', iid, 'done', option_id='done:st1', actor={'id': 'mom', 'role': 'parent'})
+    check(res['status'] == 'refused' and 'no longer' in res['message'],
+          f"the same id a second time is stale and refused: {res}")
+    res = situations.act('insight', iid, 'launch_rocket', option_id='x', actor={'id': 'mom', 'role': 'parent'})
+    check(res['status'] == 'refused', "a verb outside the set is refused")
+
+
+def scenario_own_is_not_done():
+    _reset()
+    soon = _unassigned_event()
+    fid = storage.add_finding({'identity': 'unassigned:ev1', 'kind': 'unassigned', 'severity': 'decide',
+                               'line': 'ride', 'subject_type': 'event', 'subject_id': 'ev1',
+                               'due_at': soon.timestamp(), 'state': 'open'})
+    res = situations.act('finding', fid, 'own', option_id='own', actor={'id': 'dad', 'role': 'adult'})
+    row = storage.get_finding(fid)
+    check(res['status'] == 'success' and row['state'] == 'in_hand' and row[situations.OWNER] == 'dad',
+          f"own moves to in hand with an owner: {row}")
+    s = situations.view('finding', fid, viewer={'id': 'mom', 'role': 'parent'})
+    check(s['group'] == 'in_hand' and s['next_step']['verb'] == 'done', "in hand: next step is Handled")
+    res = situations.act('finding', fid, 'done', option_id='done', actor={'id': 'dad', 'role': 'adult'})
+    check(storage.get_finding(fid)['state'] == 'done' and storage.get_finding(fid)['resolved_by'] == 'tap',
+          "done closes it the way a tap always has")
+
+
+def scenario_write_gate():
+    _reset()
+    tid = threads.create('T', owner_member_id='mom', created_by='mom')
+    res = situations.act('thread', tid, 'close', option_id='close:done', actor={'id': 'kid', 'role': 'child'})
+    check(res['status'] == 'refused', "a child cannot act")
+    res = situations.act('thread', tid, 'close', option_id='close:done', actor=None)
+    check(res['status'] == 'refused', "no actor cannot act (the tool layer passes the admin surface's nominee)")
+    res = situations.act('thread', tid, 'close', option_id='close:done', actor={'id': 'mom', 'role': 'parent'})
+    check(res['status'] == 'success' and storage.get_thread(tid)['state'] == 'done', "a parent can")
+    check((storage.get_thread(tid).get('rev') or 0) >= 1, "an act bumps rev")
+
+
+SCENARIOS += [scenario_act_resolves_the_option_server_side, scenario_stale_option_id_is_refused,
+              scenario_own_is_not_done, scenario_write_gate]
+
+
 if __name__ == "__main__":
     import traceback
     failed = 0
