@@ -78,6 +78,7 @@ window.Situations = (function () {
       ${buttons}
       <div class="sit-ask-flow mt-2" style="display:none"></div>
       <div class="sit-asks">${(s.asks || []).filter(a => a.state !== 'withdrawn').map(a => askLine(a, ctx)).join('')}</div>
+      ${ctx.extraHtml ? ctx.extraHtml(s) : ''}
     </div>`;
   }
 
@@ -196,21 +197,26 @@ window.Situations = (function () {
     };
   }
 
-  function render(el, list, ctx) {
-    ctx = ctx || {};
-    el.innerHTML = (list || []).map(s => cardHtml(s, ctx)).join('');
-    el.__situations = {}; (list || []).forEach(s => { el.__situations[`${s.kind}:${s.id}`] = s; });
-    el.__sitCtx = ctx;
+  function verbLabel(verb) { return VERB_LABELS[verb] || verb; }
+
+  // One delegated listener per lane element. Pages that draw the cards
+  // themselves (Alpine x-html) call bind() with a lookup; render() calls it
+  // for its own map. Re-binding only swaps the ctx: never a second listener.
+  function bind(el, ctx) {
+    el.__sitCtx = ctx || {};
     if (el.__sitBound) return;
     el.__sitBound = true;
     el.addEventListener('click', async (ev) => {
-      const ctx2 = el.__sitCtx || ctx;
+      const ctx2 = el.__sitCtx || {};
       const b = ev.target.closest('button'); if (!b || !el.contains(b)) return;
       if (b.closest('.sit-ask-flow')) return;      // the flow has its own handler
       const card = b.closest('.situation-card'); if (!card) return;
-      const s = el.__situations[`${card.dataset.kind}:${card.dataset.id}`]; if (!s) return;
+      const s = (ctx2.lookup && ctx2.lookup(card.dataset.kind, card.dataset.id))
+             || (el.__situations || {})[`${card.dataset.kind}:${card.dataset.id}`];
+      if (!s) return;
       if (b.dataset.sitAct) {
         const option = (s.options || []).find(o => o.id === b.dataset.sitAct); if (!option) return;
+        if (ctx2.intercept && ctx2.intercept(s, option, card)) return;
         if (option.verb === 'ask') return ask(s, option, ctx2, card);
         return act(s, option, ctx2);
       }
@@ -227,5 +233,12 @@ window.Situations = (function () {
     });
   }
 
-  return { VERB_LABELS, cardHtml, render, act, ask };
+  function render(el, list, ctx) {
+    ctx = ctx || {};
+    el.innerHTML = (list || []).map(s => cardHtml(s, ctx)).join('');
+    el.__situations = {}; (list || []).forEach(s => { el.__situations[`${s.kind}:${s.id}`] = s; });
+    bind(el, ctx);
+  }
+
+  return { VERB_LABELS, verbLabel, cardHtml, render, bind, act, ask };
 })();
