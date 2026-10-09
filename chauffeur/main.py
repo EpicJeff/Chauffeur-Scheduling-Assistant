@@ -5564,6 +5564,146 @@ def mind_admin(request: Request = None):
             "held_back": _mind.held_back_today()}
 
 
+# --- Situations: one shape for everything that needs a person --------------
+# Spec: docs/superpowers/specs/2026-10-09-situations-design.md. Reads filter by
+# the viewer (a wall and a child see the same thing); writes are parent/adult,
+# except answering an ask addressed to you.
+
+def _situation_viewer(request):
+    viewer_id = _acting_id(request, None)
+    return storage.get_member(viewer_id) if viewer_id else None
+
+
+@app.get("/api/situations")
+def situations_list(kinds: str = None, include_done: int = 0, request: Request = None):
+    from services import situations as _sit
+    want = tuple(k for k in (kinds or '').split(',') if k in _sit.KINDS) or None
+    return {"situations": _sit.list_situations(_situation_viewer(request), kinds=want,
+                                               include_done=bool(include_done))}
+
+
+@app.get("/api/situations/{kind}/{sid}")
+def situation_get(kind: str, sid: str, request: Request = None):
+    from services import situations as _sit
+    row = _sit.load(kind, sid)
+    if not row:
+        raise HTTPException(status_code=404, detail="No such situation")
+    viewer = _situation_viewer(request)
+    if not _sit.can_see(kind, row, viewer) and not _is_admin_surface(request):
+        raise HTTPException(status_code=403, detail="Not yours to see")
+    return _sit.view(kind, sid, viewer)
+
+
+@app.post("/api/situations/{kind}/{sid}/act")
+def situations_act(kind: str, sid: str, body: dict = Body(default={}),
+                   request: Request = None, background_tasks: BackgroundTasks = None):
+    from services import situations as _sit
+    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+    res = _sit.act(kind, sid, body.get('verb') or '', option_id=body.get('option_id'),
+                   payload=body.get('payload') or {}, actor=actor)
+    if res.get('status') == 'refused':
+        raise HTTPException(status_code=403, detail=res.get('message'))
+    if res.get('status') == 'error':
+        raise HTTPException(status_code=400, detail=res.get('message'))
+    _mind_refresh_if_dirty(res, background_tasks)
+    return res
+
+
+@app.post("/api/asks")
+def asks_create(body: dict = Body(default={}), request: Request = None):
+    from services import situations as _sit, asks as _asks
+    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+    kind, sid = body.get('kind'), body.get('id')
+    to, what, unlocks = dict(body.get('to') or {}), (body.get('what') or '').strip(), None
+    if body.get('option_id') and kind and sid:
+        row = _sit.load(kind, sid)
+        opt = next((o for o in _sit.options_for(kind, row or {}) if o['id'] == body['option_id']
+                    and o['verb'] == 'ask'), None) if row else None
+        if not opt:
+            raise HTTPException(status_code=400, detail="That ask is no longer on the table")
+        p = opt['payload']
+        what = p.get('what') or what
+        unlocks = p.get('unlocks')
+        if (p.get('to') or {}).get('contact_id') or (p.get('to') or {}).get('member_id'):
+            to = p['to']
+        if unlocks and unlocks.get('action_type') == 'assist_assignment' and to.get('contact_id'):
+            unlocks = {**unlocks, 'payload': {**unlocks['payload'], 'contact_id': to['contact_id']}}
+    event = None
+    if unlocks:
+        event = _sit._cached_event(((unlocks.get('payload') or {}).get('event_id')))
+    res = _asks.create(kind, sid, to, what, body.get('channel') or '', actor['id'], unlocks=unlocks,
+                       event=event)
+    if res.get('status') == 'refused':
+        raise HTTPException(status_code=403, detail=res.get('message'))
+    if res.get('status') != 'success':
+        raise HTTPException(status_code=400, detail=res.get('message'))
+    return {**res, 'channels': _asks.channels_for(to)}
+
+
+@app.get("/api/asks/{ask_id}/channels")
+def asks_channels(ask_id: str, request: Request = None):
+    from services import asks as _asks
+    _mind_actor(request, None)
+    a = storage.get_ask(ask_id)
+    if not a:
+        raise HTTPException(status_code=404, detail="No such ask")
+    return {"channels": _asks.channels_for({'name': a['to_name'], 'member_id': a.get('to_member_id'),
+                                            'contact_id': a.get('to_contact_id')})}
+
+
+def _ask_actor(request, claimed):
+    """Any resolved member: the gate is inside asks.answer (the recipient of
+    an ask may answer it whatever their role). Admin surfaces nominate the
+    parent of record, as every other control-center write does."""
+    actor_id = _acting_id(request, claimed)
+    actor = storage.get_member(actor_id) if actor_id else None
+    if actor:
+        return actor
+    if _is_admin_surface(request):
+        return _approver_of_record(None)
+    raise HTTPException(status_code=403, detail="Sign in first")
+
+
+@app.post("/api/asks/{ask_id}/sent")
+def asks_sent(ask_id: str, body: dict = Body(default={}), request: Request = None):
+    from services import asks as _asks
+    res = _asks.mark_sent(ask_id, _ask_actor(request, body.get('member_id')))
+    if res.get('status') == 'refused':
+        raise HTTPException(status_code=403, detail=res.get('message'))
+    if res.get('status') != 'success':
+        raise HTTPException(status_code=400, detail=res.get('message'))
+    return res
+
+
+@app.post("/api/asks/{ask_id}/withdraw")
+def asks_withdraw(ask_id: str, body: dict = Body(default={}), request: Request = None):
+    from services import asks as _asks
+    res = _asks.withdraw(ask_id, _ask_actor(request, body.get('member_id')))
+    if res.get('status') == 'refused':
+        raise HTTPException(status_code=403, detail=res.get('message'))
+    if res.get('status') != 'success':
+        raise HTTPException(status_code=400, detail=res.get('message'))
+    return res
+
+
+@app.post("/api/asks/{ask_id}/answer")
+def asks_answer(ask_id: str, body: dict = Body(default={}), request: Request = None,
+                background_tasks: BackgroundTasks = None):
+    from services import asks as _asks
+    actor = _ask_actor(request, body.get('member_id'))
+    a = storage.get_ask(ask_id)
+    if not a:
+        raise HTTPException(status_code=404, detail="No such ask")
+    reported = bool(body.get('reported')) or (actor.get('id') != a.get('to_member_id'))
+    res = _asks.answer(ask_id, body.get('answer') or '', actor, reported=reported)
+    if res.get('status') == 'refused':
+        raise HTTPException(status_code=403, detail=res.get('message'))
+    if res.get('status') != 'success':
+        raise HTTPException(status_code=400, detail=res.get('message'))
+    _mind_refresh_if_dirty(res, background_tasks)
+    return res
+
+
 # --- Missions (spec: 2026-09-04-mission-engine-design) ---
 
 @app.get("/api/missions/admin")

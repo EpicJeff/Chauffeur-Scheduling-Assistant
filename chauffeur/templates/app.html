@@ -5413,7 +5413,9 @@
         }
 
         function renderCard(card) {
-            if (!card || card.kind !== 'action_proposal') return '';
+            if (!card) return '';
+            if (card.kind === 'ask') return renderAskCard(card);
+            if (card.kind !== 'action_proposal') return '';
             let footer;
             if (card.status === 'proposed' && (card.actions || []).length) {
                 footer = `<div class="flex gap-2 mt-2">` + card.actions.map(a =>
@@ -5431,6 +5433,40 @@
                 <div class="text-xs text-gray-200 font-medium">${mfEscape(card.title || '')}</div>
                 ${footer}
             </div>`;
+        }
+
+        // An ask addressed to the signed-in member: the `what` line is the
+        // thing Yes/No answers; the buttons follow the ledger, not the moment
+        // the message was drawn (the server rewrites the card on answer).
+        function renderAskCard(card) {
+            let footer;
+            if ((card.actions || []).length) {
+                footer = `<div class="flex gap-2 mt-2">` + card.actions.map(a =>
+                    `<button onclick="answerAsk('${card.ask_id}','${a.act}')" class="px-3 py-1 rounded-lg text-xs font-semibold ${a.style === 'primary' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'}">${mfEscape(a.label)}</button>`
+                ).join('') + `</div>`;
+            } else {
+                const label = card.state === 'yes' ? (card.outcome === 'applied' ? "\u2713 Yes \u2014 it's yours" : '\u2713 Yes')
+                            : card.state === 'no' ? 'No' : card.state === 'withdrawn' ? 'Withdrawn' : (card.state || '');
+                footer = `<div class="text-xs mt-1 ${card.state === 'yes' ? 'text-green-400' : 'text-gray-500'}">${mfEscape(label)}</div>`;
+            }
+            return `<div class="mt-1 px-3 py-2 rounded-xl bg-gray-900 border border-gray-700">
+                <div class="inline-block text-xs uppercase tracking-wide font-bold text-violet-300 bg-violet-900/40 px-2 py-0.5 rounded mb-1">Can you?</div>
+                <div class="text-xs text-gray-200 font-medium">${mfEscape(card.what || '')}</div>
+                ${footer}
+            </div>`;
+        }
+
+        async function answerAsk(askId, act) {
+            if (!selectedMemberId) return;
+            try {
+                const res = await fetch(`${apiBase}api/asks/${askId}/answer`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ answer: act, member_id: selectedMemberId }) });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) showGlobalAlert(data.detail || "Couldn't answer that.");
+                else if (data.message) showGlobalAlert(data.message);
+                await refreshThread();
+            } catch (e) { showGlobalAlert("Couldn't answer that."); }
         }
 
         async function actOnProposal(proposalId, act) {
