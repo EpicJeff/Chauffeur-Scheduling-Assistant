@@ -21,10 +21,14 @@ Three rules keep it honest:
   kinds actually scanned. The weekly prep-kit check does not run on most
   sweeps, and a record it opened must not be auto-closed by a sweep that never
   asked the question.
-- **Dismissed stays dismissed.** A parent who said "leave it" is not asked
-  again while the finding says the same thing. If the LINE changes — a new
-  time, a new deadline, a different gap — the situation has materially moved
-  and it may open again.
+- **Dismissed is dismissed.** A parent who said "leave it" is not asked again
+  while the SUBJECT is the same: the sentence changing (a countdown, a count of
+  days, a severity bump, a deal found) never reopens it. Each finding carries
+  a fingerprint — what would have to change for this to be a new situation
+  (the event's time, the task's due date, the chore's new completion, a new
+  missing item) — and only a different fingerprint opens a new record. The
+  family's verdict (2026-10-09): bringing a dismissed thing back is a
+  violation of the dismissal.
 """
 import time
 from typing import NamedTuple, Optional
@@ -53,10 +57,21 @@ class Finding(NamedTuple):
     due_at: Optional[float] = None
     proposal_id: Optional[str] = None
     action: Optional[dict] = None  # {'label', 'action_type', 'payload'}
+    fp: Optional[str] = None       # fingerprint override; see fingerprint()
 
 
 def make(key, line, **kw) -> Finding:
     return Finding(key=key, line=line, **kw)
+
+
+def fingerprint(f: Finding) -> str:
+    """What would have to change for a dismissed finding to be a NEW one.
+    Collectors override `fp` where the subject has more state than its id and
+    deadline; the default is the subject and when it is due. The line is never
+    part of it — words are not the situation."""
+    if f.fp is not None:
+        return f.fp
+    return f"{f.subject_id or f.key}|{f.due_at}"
 
 
 def identity(f: Finding) -> str:
@@ -95,25 +110,30 @@ def reconcile(found, scanned_kinds, now_ts: float = None) -> dict:
     opened = reopened = 0
     for ident, f in seen.items():
         existing = storage.get_finding_by_identity(ident)
+        fp = fingerprint(f)
         if existing and existing.get('state') == 'open':
             # Keep the sentence current — a deadline slips, a count changes —
             # without touching created_at, which is how long this has been true.
             storage.update_finding(existing['id'], {
                 'line': f.line, 'severity': f.severity, 'due_at': f.due_at,
                 'proposal_id': f.proposal_id or existing.get('proposal_id'),
-                'last_seen_at': now_ts})
+                'fingerprint': fp, 'last_seen_at': now_ts})
             continue
         if existing and existing.get('state') == 'dismissed':
-            # Settled — unless the situation itself has changed.
-            if (existing.get('line') or '') == f.line:
+            if not existing.get('fingerprint'):
+                # Dismissed before fingerprints existed: adopt this one
+                # silently. The migration itself never reopens anything.
+                storage.update_finding(existing['id'], {'fingerprint': fp})
                 continue
+            if existing['fingerprint'] == fp:
+                continue       # settled; the words may differ, the subject does not
             reopened += 1
         storage.add_finding({
             'identity': ident, 'kind': f.kind, 'severity': f.severity,
             'line': f.line, 'subject_type': f.subject_type,
             'subject_id': f.subject_id, 'due_at': f.due_at,
-            'proposal_id': f.proposal_id, 'created_at': now_ts,
-            'last_seen_at': now_ts, 'state': 'open'})
+            'proposal_id': f.proposal_id, 'fingerprint': fp,
+            'created_at': now_ts, 'last_seen_at': now_ts, 'state': 'open'})
         opened += 1
 
     closed = expired = 0

@@ -84,6 +84,36 @@ def scenario_ghost_coverage_reads_as_covered():
         storage.get_cached_schedule = orig
 
 
+def scenario_snapshot_lines_carry_refs_the_model_can_cite():
+    """Every event, finding and thread line carries a short tag (#e…, #f…,
+    #t…) so an insight can say WHAT it is about; identity is built from
+    those, never from the model's own slug."""
+    from services import threads as th
+    orig = storage.get_cached_schedule
+    try:
+        start = (datetime.datetime.now() + datetime.timedelta(days=1)) \
+            .strftime('%Y-%m-%dT10:00:00')
+        storage.get_cached_schedule = lambda: {
+            'events': [{'id': 'evt1234567890', 'title': 'Karate', 'start': start,
+                        'end': start}], 'assignments': {}}
+        storage.findings_table.truncate()
+        storage.add_finding({'identity': 'unassigned:evt1234567890', 'kind': 'unassigned',
+                             'severity': 'decide', 'line': 'No driver yet: Karate',
+                             'state': 'open', 'id': 'fnd1234567890'})
+        storage.threads_table.truncate()
+        tid = th.create('Deck permit', owner_member_id='mom',
+                        next_action='call county', created_by='mom')
+        text = mind.snapshot(datetime.datetime.now())
+        karate = [l for l in text.splitlines() if 'Karate' in l and 'driver' in l]
+        check(karate and '#eevt12345' in karate[0], f"event line tagged: {karate}")
+        fnd = [l for l in text.splitlines() if 'No driver yet' in l]
+        check(fnd and '#ffnd12345' in fnd[0], f"finding line tagged: {fnd}")
+        deck = [l for l in text.splitlines() if 'Deck permit' in l]
+        check(deck and f"#t{tid[:8]}" in deck[0], f"thread line tagged: {deck}")
+    finally:
+        storage.get_cached_schedule = orig
+
+
 def scenario_wake_window():
     s = {'mind_wake_start': '06:00', 'mind_wake_end': '22:00'}
     check(mind.in_wake_window(datetime.datetime(2026, 8, 27, 12, 0), s), "noon is awake")
@@ -111,6 +141,7 @@ if __name__ == '__main__':
     scenario_hash_stability()
     scenario_visibility_gate()
     scenario_ghost_coverage_reads_as_covered()
+    scenario_snapshot_lines_carry_refs_the_model_can_cite()
     scenario_wake_window()
     scenario_open_threads_reach_snapshot()
     print("test_mind_snapshot OK")

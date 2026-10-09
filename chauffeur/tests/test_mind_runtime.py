@@ -50,10 +50,14 @@ def scenario_full_cycle():
             check('sunscreen is out' in prompt,
                   "the noticing reached the deep think prompt")
             return {'insights': [
+                # Every insight says what it is about and names a move; one
+                # without either is held back and never reaches a tile.
                 {'slug': 'sunscreen', 'line': 'Sunscreen keeps running out',
+                 'refs': ['Mom'], 'approach': 'put sunscreen on the standing list',
                  'category': 'supply-gap', 'sensitivity': 'normal',
                  'domain': 'supply', 'confidence': 0.9},
                 {'slug': 'quiet-kid', 'line': 'Rough week for a kid',
+                 'refs': ['Addison'], 'approach': 'ask Addison about Thursday',
                  'category': 'overload', 'sensitivity': 'sensitive',
                  'domain': 'kids', 'confidence': 0.6}]}
         raise AssertionError(f"unexpected tier {tier}")

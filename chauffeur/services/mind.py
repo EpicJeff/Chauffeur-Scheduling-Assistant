@@ -85,6 +85,57 @@ def _event_dt(raw):
         return None
 
 
+def ref(prefix: str, obj_id) -> str:
+    """The short tag a snapshot line carries (#e1a2b3c4 for an event, #f… a
+    finding, #t… a thread) so an insight can say what it is ABOUT. Members
+    go by name. These, not the model's slug, are an insight's identity."""
+    return f"#{prefix}{str(obj_id or '')[:8]}"
+
+
+def norm_refs(refs) -> list:
+    return sorted({str(r).strip().lower() for r in (refs or []) if str(r).strip()})
+
+
+def insight_identity(category: str, refs) -> str:
+    """What an insight is about, not what it is called: the category plus a
+    hash of its normalised refs. Two thinks that cite the same things under
+    different slugs are the same insight; a dismissed identity stays
+    dismissed whatever the model calls it next time."""
+    cat = (category or 'other').strip().lower()
+    digest = hashlib.sha1(json.dumps(norm_refs(refs)).encode()).hexdigest()[:12]
+    return f"{cat}:{digest}"
+
+
+def row_identity(row: dict) -> str:
+    """Rows from before identities existed answer to their slug, so an old
+    dismissal keeps holding and an old active row is found by the think that
+    re-emits its slug."""
+    return row.get('identity') or f"slug:{row.get('slug')}"
+
+
+HELD_BACK_KINDS = ('no_refs', 'no_lever')
+
+
+def _record_held_back(counts: dict):
+    if not any(counts.values()):
+        return
+    key = f"mind_held_back:{datetime.date.today().isoformat()}"
+    cur = dict(storage.get_app_state(key) or {})
+    for k, n in counts.items():
+        cur[k] = int(cur.get(k, 0)) + int(n)
+    storage.set_app_state(key, cur)
+
+
+def held_back_today() -> dict:
+    """How many of today's thoughts never reached the lane because they cited
+    nothing (`no_refs`) or proposed nothing (`no_lever`). Real counts, so the
+    admin page can say it happened instead of the lane looking empty for no
+    reason."""
+    key = f"mind_held_back:{datetime.date.today().isoformat()}"
+    cur = storage.get_app_state(key) or {}
+    return {k: int(cur.get(k, 0)) for k in HELD_BACK_KINDS}
+
+
 def snapshot(now: datetime.datetime = None) -> str:
     """One compact text block of family state. Sections are independent:
     a provider that raises contributes nothing and never sinks the rest."""
@@ -130,12 +181,13 @@ def snapshot(now: datetime.datetime = None) -> str:
                 driver = _driver_name(d_id)
             lines.append(f"- {dt.strftime('%Y-%m-%d %H:%M')} "
                          f"{e.get('title') or '?'} [{', '.join(attendees)}] "
-                         f"driver: {driver}")
+                         f"driver: {driver} {ref('e', e.get('id'))}")
         return '\n'.join(lines[:120])
 
     def _findings():
         from services import findings as _f
-        return '\n'.join(f"- ({r.get('severity')}) {r.get('line')}"
+        return '\n'.join(f"- ({r.get('severity')}) {r.get('line')} "
+                         f"{ref('f', r.get('id'))}"
                          for r in _f.open_findings()[:30])
 
     def _family_chat():
@@ -198,8 +250,10 @@ def snapshot(now: datetime.datetime = None) -> str:
                 tag = 'active'
             else:
                 tag = f"{r['state']}/{r.get('outcome')}"
+            about = ', '.join(r.get('refs') or [])
             lines.append(f"- [{tag}] [{_fmt_day(r.get('created_ts'))}] "
-                         f"({r.get('category')}) {r.get('line')}")
+                         f"({r.get('category')}) {r.get('line')}"
+                         f"{(' — about: ' + about) if about else ''}")
         return '\n'.join(lines)
 
     def _vitals():
@@ -222,7 +276,7 @@ def snapshot(now: datetime.datetime = None) -> str:
             next_action = t.get('next_action') or 'no next action set'
             lines.append(f"- {t.get('title') or '?'} (owner: "
                          f"{owner.get('name') or 'unassigned'}) — {next_action}"
-                         f"{tag}")
+                         f"{tag} {ref('t', t.get('id'))}")
         return '\n'.join(lines)
 
     section('FAMILY VITALS (against this family\'s own baseline — never '
@@ -792,10 +846,19 @@ THINK_SYSTEM = (
     "when you spot real outside-facing work with no home yet — but never "
     "invent one that isn't plainly there.\n\n"
     "You are shown your own previous insights and how the family reacted. A "
-    "dismissed insight means they heard you and said no — do not repeat it. "
+    "dismissed insight means they heard you and said no — do not repeat it, "
+    "and do not re-describe the same things under a new name. "
     "Curate: return the FULL DESIRED set of current insights (max {max_n}); "
-    "any active slug you omit is retired. Keep a slug stable while the "
-    "observation is the same one.\n\n"
+    "any active insight you omit is retired.\n\n"
+    "WHAT IT IS ABOUT: every insight names its `refs` — the tags of the "
+    "exact lines it rests on (#e… events, #f… findings, #t… threads, copied "
+    "exactly) and the members by name. An insight with no refs is a feeling "
+    "about the week, not an observation; it is thrown away unread. A pattern "
+    "('six activity nights in a row') cites the six events.\n\n"
+    "A REAL MOVE: `approach` names a concrete first step with a named person "
+    "or thing in it — 'ask Sarah to take Thursday's pickup', 'move the dentist "
+    "to the 14th' — never advice ('consider sharing the load', 'keep an eye "
+    "on it'). An insight with no move is thrown away too.\n\n"
     "A row marked snoozed was parked by the family until the date shown — "
     "leave it out of your desired set and do not re-describe it. A row "
     "marked in hand has a plan being worked — never restate its "
@@ -803,9 +866,10 @@ THINK_SYSTEM = (
     "Mark sensitivity 'sensitive' for anything about a child's emotional "
     "state, stress, health, or another member's private strain — those render "
     "to parents only.\n\n"
-    "Return STRICT JSON: {{\"insights\": [{{\"slug\": \"kebab-case-stable\", "
+    "Return STRICT JSON: {{\"insights\": [{{\"slug\": \"kebab-case-label\", "
+    "\"refs\": [\"#e1a2b3c4\", \"Addison\"], "
     "\"line\": \"one plain sentence\", \"detail\": \"1-2 optional sentences\", "
-    "\"approach\": \"one line: the shape of the fix you would build\", "
+    "\"approach\": \"one line: the concrete first move, with who or what in it\", "
     "\"domain\": \"kids|meals|cars|schedule|supply|other\", "
     "\"sensitivity\": \"normal|sensitive\", \"category\": "
     "\"reusable-pattern-slug\", \"confidence\": 0.0}}]}}. "
@@ -846,10 +910,44 @@ def deep_think(now: datetime.datetime = None, force: bool = False) -> dict:
         logger.warning(f"[mind] deep think failed: {res}")
         return {'status': 'error'}
 
-    desired = [i for i in (res.get('insights') or [])
-               if (i.get('slug') or '').strip() and (i.get('line') or '').strip()]
+    # An insight is kept only when it says what it is about (refs) and
+    # names a move (approach). The rest is held back — never stored, but
+    # counted, so the admin page can say so.
+    held = {'no_refs': 0, 'no_lever': 0}
+    desired = []
+    for i in (res.get('insights') or []):
+        if not ((i.get('slug') or '').strip() and (i.get('line') or '').strip()):
+            continue
+        refs = norm_refs(i.get('refs'))
+        if not refs:
+            held['no_refs'] += 1
+            continue
+        if not (i.get('approach') or '').strip():
+            held['no_lever'] += 1
+            continue
+        i = dict(i, refs=refs,
+                 identity=insight_identity(i.get('category'), refs))
+        desired.append(i)
+    _record_held_back(held)
     desired = desired[:max_n]
-    desired_slugs = {i['slug'] for i in desired}
+    desired_ids = {i['identity'] for i in desired}
+
+    # Rows from before identities existed: a think that re-emits the slug of
+    # a legacy row is talking about that row. Adopt the new identity on it so
+    # an active one updates in place and an expired one is revived, instead
+    # of either being reborn as a twin. Live rows win over retired ones; a
+    # dismissed legacy row keeps its slug-identity so it keeps suppressing.
+    legacy_by_slug = {}
+    for r in storage.get_mind_insights():
+        if r.get('identity') or r.get('outcome') == 'dismissed':
+            continue
+        prev = legacy_by_slug.get(r['slug'])
+        if not prev or (prev['state'] == 'retired' and r['state'] != 'retired'):
+            legacy_by_slug[r['slug']] = r
+    for item in desired:
+        old = legacy_by_slug.get(item['slug'])
+        if old and not storage.get_mind_insight_by_identity(item['identity']):
+            storage.update_mind_insight(old['id'], {'identity': item['identity']})
 
     active = storage.get_mind_insights(state='active')
     for row in active:
@@ -857,19 +955,22 @@ def deep_think(now: datetime.datetime = None, force: bool = False) -> dict:
         # into a silent dismiss. It rejoins the reconcile when it wakes.
         if (row.get('snoozed_until') or 0) > time.time():
             continue
-        if row['slug'] not in desired_slugs:
+        if row_identity(row) not in desired_ids:
             storage.update_mind_insight(row['id'], {
                 'state': 'retired', 'outcome': 'expired',
                 'resolved_ts': time.time()})
-    # Only a DISMISSED slug stays suppressed — the family heard it and said
-    # no. Acted and expired slugs may return: the situation being back is
-    # exactly what the lane should say.
-    dismissed_slugs = {r['slug']
-                       for r in storage.get_mind_insights(state='retired')
-                       if r.get('outcome') == 'dismissed'}
+    # Only a DISMISSED identity stays suppressed — the family heard it and
+    # said no, and it stays no whatever the model calls it next time. Acted
+    # and expired ones may return: the situation being back is exactly what
+    # the lane should say. Legacy dismissals (no identity) hold by slug.
+    dismissed_ids = {row_identity(r)
+                     for r in storage.get_mind_insights(state='retired')
+                     if r.get('outcome') == 'dismissed'}
     for item in desired:
-        existing = storage.get_mind_insight_by_slug(item['slug'])
-        fields = {'line': item['line'], 'detail': item.get('detail') or '',
+        existing = storage.get_mind_insight_by_identity(item['identity'])
+        fields = {'slug': item['slug'], 'identity': item['identity'],
+                  'refs': item['refs'],
+                  'line': item['line'], 'detail': item.get('detail') or '',
                   'domain': item.get('domain') or '',
                   'sensitivity': item.get('sensitivity') or 'normal',
                   'category': item.get('category') or 'other',
@@ -877,8 +978,9 @@ def deep_think(now: datetime.datetime = None, force: bool = False) -> dict:
                   'approach': item.get('approach') or ''}
         if existing and existing['state'] in ('active', 'in_hand'):
             storage.update_mind_insight(existing['id'], fields)
-        elif item['slug'] in dismissed_slugs:
-            pass  # a dismissed slug is never resurrected
+        elif item['identity'] in dismissed_ids \
+                or f"slug:{item['slug']}" in dismissed_ids:
+            pass  # a dismissed identity is never resurrected
         elif existing:
             # acted/expired slug returning: revive the SAME row (slugs stay
             # unique) as a fresh observation — and FRESH means the last life's
@@ -893,7 +995,7 @@ def deep_think(now: datetime.datetime = None, force: bool = False) -> dict:
                 'plan_json': None, 'proposal_json': None,
                 'snoozed_until': None})
         else:
-            storage.add_mind_insight({'slug': item['slug'], **fields})
+            storage.add_mind_insight(fields)
 
     storage.consume_mind_noticings([r['id'] for r in fresh_noticings])
     storage.set_app_state('mind_last_snapshot_hash', h)

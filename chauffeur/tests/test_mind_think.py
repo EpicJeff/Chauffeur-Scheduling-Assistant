@@ -9,10 +9,17 @@ from services import storage, mind
 
 CALLS = []
 
-def _fake_pool(insights):
+def _fake_pool(insights, raw=False):
+    """Fake think output. Unless `raw`, every insight gets what the prompt
+    now demands — refs (defaulting to its own slug, so legacy fixtures keep
+    one identity per slug) and a concrete approach."""
+    def fill(i):
+        if raw:
+            return i
+        return {'refs': [f"#{i['slug']}"], 'approach': 'do the one obvious thing', **i}
     def f(tier, api_key, system, prompt, **kw):
         CALLS.append({'tier': tier, 'prompt': prompt})
-        return {'insights': insights}
+        return {'insights': [fill(dict(i)) for i in insights]}
     return f
 
 def _reset():
@@ -193,6 +200,62 @@ def scenario_a_revived_slug_starts_clean():
           "so it is actually in the lane")
 
 
+def scenario_identity_is_what_it_is_about_not_what_it_is_called():
+    """Two thinks name the same observation differently; same refs + same
+    category = the same insight, so the lane holds ONE row, not a twin."""
+    _reset()
+    mind._pool_call = _fake_pool([
+        {'slug': 'addison-overload', 'line': 'Addison has six late nights',
+         'category': 'overload', 'refs': ['#e1a2b3c4', 'Addison', '#e9f8e7d6']}])
+    mind.deep_think(NOON)
+    mind._pool_call = _fake_pool([
+        {'slug': 'six-nights-addison', 'line': 'Six nights in a row for Addison',
+         'category': 'overload', 'refs': ['addison', '#e9f8e7d6', '#e1a2b3c4']}])
+    mind.deep_think(NOON, force=True)
+    active = storage.get_mind_insights(state='active')
+    check(len(active) == 1, f"one insight, not a renamed twin: {[r['slug'] for r in active]}")
+    check(active[0]['line'] == 'Six nights in a row for Addison', "the row updated in place")
+    check(active[0].get('identity'), "the row carries its identity")
+
+
+def scenario_a_dismissed_identity_blocks_a_renamed_insight():
+    _reset()
+    mind._pool_call = _fake_pool([{'slug': 'first-name', 'line': 'x', 'category': 'c',
+                                   'refs': ['#t1111aaaa']}])
+    mind.deep_think(NOON)
+    row = storage.get_mind_insights(state='active')[0]
+    storage.update_mind_insight(row['id'], {'state': 'retired', 'outcome': 'dismissed',
+                                            'resolved_ts': time.time()})
+    mind._pool_call = _fake_pool([{'slug': 'second-name', 'line': 'x reworded',
+                                   'category': 'c', 'refs': ['#t1111aaaa']}])
+    mind.deep_think(NOON, force=True)
+    check(storage.get_mind_insights(state='active') == [],
+          "dismissed is dismissed, whatever the model calls it this time")
+
+
+def scenario_no_refs_or_no_lever_is_held_back():
+    """"The week looks crazy, consider sharing the load" dies here: an insight
+    that cites nothing, or proposes nothing, is never stored — and the
+    holding-back is counted so the admin page can say it happened."""
+    _reset()
+    storage.set_app_state(f"mind_held_back:{datetime.date.today().isoformat()}", None)
+    mind._pool_call = _fake_pool([
+        {'slug': 'vague', 'line': 'The week looks crazy', 'category': 'overload',
+         'approach': 'consider sharing the load', 'refs': []},
+        {'slug': 'no-move', 'line': 'Addison is stretched', 'category': 'overload',
+         'refs': ['Addison'], 'approach': ''},
+        {'slug': 'real', 'line': 'Tue and Thu collide for Addison', 'category': 'overload',
+         'refs': ['#e1a2b3c4', '#e9f8e7d6'], 'approach': 'Ask Sarah to take Thursday'},
+    ], raw=True)
+    mind.deep_think(NOON, force=True)
+    active = storage.get_mind_insights(state='active')
+    check([r['slug'] for r in active] == ['real'],
+          f"only the insight with refs and a move lands: {[r['slug'] for r in active]}")
+    held = mind.held_back_today()
+    check(held == {'no_refs': 1, 'no_lever': 1},
+          f"held-back counts are real, got {held}")
+
+
 def scenario_configured_operation_cap_still_applies():
     _reset()
     key = 'mind_calls:' + datetime.date.today().isoformat()
@@ -217,5 +280,8 @@ if __name__ == '__main__':
     scenario_mid_think_chat_is_not_skipped()
     scenario_think_stores_approach_and_spares_parked_rows()
     scenario_a_revived_slug_starts_clean()
+    scenario_identity_is_what_it_is_about_not_what_it_is_called()
+    scenario_a_dismissed_identity_blocks_a_renamed_insight()
+    scenario_no_refs_or_no_lever_is_held_back()
     scenario_configured_operation_cap_still_applies()
     print("test_mind_think OK")

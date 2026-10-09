@@ -249,7 +249,8 @@ def _chore_findings(now_ts: float):
                 line=(f"✅ '{c.get('title')}' has waited "
                       f"{_days_ago(c['done_at'], now_ts)} day(s) for your OK"),
                 kind='chore_verify', severity='approve',
-                subject_type='chore', subject_id=str(c.get('id'))))
+                subject_type='chore', subject_id=str(c.get('id')),
+                fp=f"{c.get('id')}:{int(c['done_at'])}"))
         elif state == 'open' and c.get('created_at') \
                 and now_ts - c['created_at'] >= UNCLAIMED_CHORE_DAYS * 86400:
             unclaimed.append((f"chore_unclaimed:{c.get('id')}", c.get('title') or 'Chore'))
@@ -384,7 +385,9 @@ def _occasion_findings(now: datetime.datetime):
             line=f"🎉 {o['title']} is {when} — still to sort: {names}{more}",
             kind='occasion_gap', severity='decide',
             subject_type='occasion', subject_id=str(o['id']),
-            due_at=datetime.datetime.combine(anchor, datetime.time.max).timestamp()))
+            due_at=datetime.datetime.combine(anchor, datetime.time.max).timestamp(),
+            # A NEW missing item is a new situation; the countdown is not.
+            fp=f"{o['id']}|{','.join(sorted(g['label'] for g in urgent))}"))
     return out
 
 
@@ -437,7 +440,8 @@ def _thread_stalls(now: datetime.datetime):
             key=f"thread_stall:{thread_id}",
             line=f"🧵 {title} has stalled — {what}",
             kind='thread_stall', severity=severity, dm=dm,
-            subject_type='thread', subject_id=str(thread_id)))
+            subject_type='thread', subject_id=str(thread_id),
+            fp=f"{thread_id}|{t.get('next_action_at') or ''}"))
     return out
 
 
@@ -794,7 +798,7 @@ def _household_task_findings(now: datetime.datetime):
                 line=(f"📋 Past due: {title} — was due "
                       f"{'yesterday' if days == 1 else f'{days} days ago'}"),
                 kind='household_task', severity='approve',
-                subject_type='task', subject_id=f"overdue:{t['id']}"))
+                subject_type='task', subject_id=f"overdue:{t['id']}", fp=due))
         elif not t.get('assigned_to') and (due_d - today).days <= UNCLAIMED_TASK_LEAD_DAYS:
             when = 'today' if due_d == today else (
                 'tomorrow' if (due_d - today).days == 1 else due_d.strftime('%a'))
@@ -803,7 +807,7 @@ def _household_task_findings(now: datetime.datetime):
                 line=f"📋 Nobody has {title} — due {when}",
                 kind='household_task', severity='decide',
                 subject_type='task', subject_id=f"unclaimed:{t['id']}",
-                due_at=due_ts))
+                due_at=due_ts, fp=due))
     return out
 
 
@@ -864,8 +868,15 @@ def run_watchers(now: datetime.datetime = None) -> int:
     notified = {k: ts for k, ts in notified.items() if ts >= cutoff}
 
     # The signal policy, applied in one line: only findings that carry a
-    # solution or a clock get to interrupt a person.
-    fresh = [f for f in findings if f.dm and f.key not in notified]
+    # solution or a clock get to interrupt a person — and never one whose
+    # record the family already dismissed. Some kinds date their notify key
+    # (one nudge a day while a gap stands); the dismissal covers the
+    # subject, so a fresh day's key earns nothing.
+    def _dismissed(f):
+        row = storage.get_finding_by_identity(_findings.identity(f))
+        return bool(row and row.get('state') == 'dismissed')
+    fresh = [f for f in findings
+             if f.dm and f.key not in notified and not _dismissed(f)]
     if not fresh:
         storage.set_app_state('watcher_notified', notified)
         return 0

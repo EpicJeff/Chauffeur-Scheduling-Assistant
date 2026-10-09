@@ -2926,6 +2926,19 @@ def get_mind_insight_by_slug(slug: str) -> Optional[dict]:
         res = mind_insights_table.search(Query().slug == slug)
         return dict(res[0]) if res else None
 
+def get_mind_insight_by_identity(identity: str) -> Optional[dict]:
+    """The row for what an insight is ABOUT (mind.insight_identity), whatever
+    state it is in — the dismissed ones matter most: they are how a settled
+    answer stays settled under a new name."""
+    if not identity:
+        return None
+    with db_lock:
+        res = mind_insights_table.search(Query().identity == identity)
+    if not res:
+        return None
+    rows = sorted((dict(r) for r in res), key=lambda r: r.get('created_ts') or 0)
+    return rows[-1]
+
 def prune_mind(insights_before_ts: float, noticings_before_ts: float = None) -> int:
     """Old noticings and old RETIRED insights, each on its own clock (spec:
     noticings 14d, retired insights 120d). Active insights are live state and

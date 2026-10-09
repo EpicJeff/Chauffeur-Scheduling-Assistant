@@ -82,6 +82,22 @@ def scenario_the_admin_page_can_approve_without_a_member_identity():
         _auth.identify, _ca._execute = orig_identify, orig_execute
 
 
+def scenario_admin_json_reports_what_was_held_back():
+    _reset(); _reset_people()
+    import main, datetime
+    from services import auth as _auth
+    storage.set_app_state(f"mind_held_back:{datetime.date.today().isoformat()}",
+                          {'no_refs': 2, 'no_lever': 1})
+    orig = _auth.identify
+    try:
+        _auth.identify = lambda h, q: {'tier': _auth.SERVICE, 'member': None}
+        res = main.mind_admin(request=None)
+    finally:
+        _auth.identify = orig
+    check(res.get('held_back') == {'no_refs': 2, 'no_lever': 1},
+          f"the admin page can say how many thoughts were held back, got {res.get('held_back')}")
+
+
 def scenario_a_named_parent_is_not_overwritten_by_the_nomination():
     """A claim beats the stand-in: whoever actually tapped is who approved."""
     _reset(); _reset_people()
@@ -379,6 +395,7 @@ if __name__ == '__main__':
     scenario_act_records_outcome()
     scenario_lane_is_filtered()
     scenario_the_admin_page_can_approve_without_a_member_identity()
+    scenario_admin_json_reports_what_was_held_back()
     scenario_a_named_parent_is_not_overwritten_by_the_nomination()
     scenario_an_enrolled_panel_still_cannot_approve()
     scenario_no_parent_on_record_is_an_honest_refusal()

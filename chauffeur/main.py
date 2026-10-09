@@ -5560,7 +5560,8 @@ def mind_admin(request: Request = None):
     return {"insights": storage.get_mind_insights(state='active') + in_hand_rows,
             "history": storage.get_mind_insights(state='retired')[-60:],
             "counters": _mind.category_counters(),
-            "graduation": _mind.graduation_candidates()}
+            "graduation": _mind.graduation_candidates(),
+            "held_back": _mind.held_back_today()}
 
 
 # --- Missions (spec: 2026-09-04-mission-engine-design) ---

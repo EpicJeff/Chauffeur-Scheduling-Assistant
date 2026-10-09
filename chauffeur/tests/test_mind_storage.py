@@ -34,6 +34,9 @@ def scenario_insight_lifecycle():
                                     'proposal_json': None, 'confidence': 0.8})
     row = storage.get_mind_insight_by_slug('ellie-overload')
     check(row and row['id'] == iid, "insight retrievable by slug")
+    storage.update_mind_insight(iid, {'identity': 'overload:abc123'})
+    check(storage.get_mind_insight_by_identity('overload:abc123')['id'] == iid,
+          "insight retrievable by identity")
     check(row['state'] == 'active', "new insight defaults active")
     check(storage.update_mind_insight(iid, {'state': 'retired', 'outcome': 'dismissed',
                                             'resolved_ts': time.time()}),
