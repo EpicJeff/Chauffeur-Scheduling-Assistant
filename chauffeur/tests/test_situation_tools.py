@@ -23,7 +23,8 @@ def _reset():
 
 
 MOM = {'id': 'mom', 'name': 'Mom', 'role': 'parent'}
-SIX = ('list_situations', 'explain_situation', 'act_on_situation', 'start_ask', 'mark_ask_sent', 'answer_ask')
+SIX = ('list_situations', 'explain_situation', 'act_on_situation', 'start_ask', 'mark_ask_sent', 'answer_ask',
+       'next_situation')
 
 
 def scenario_parity_both_ways():

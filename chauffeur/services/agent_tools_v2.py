@@ -1396,39 +1396,80 @@ def _situation_lines(rows: list) -> str:
     return '\n'.join(out)
 
 
-def _resolve_situation(ref: str, kind: str = None, viewer: dict = None):
-    from services import situations as _sit
+NO_FOCUS = "Which one? Ask me what needs your attention first, or name it."
+
+
+def _resolve_situation(ref: str, kind: str = None, viewer: dict = None, focus_key: str = None):
+    """An id, a title fragment, or - with no ref - the conversation's focus.
+    Naming one makes it the focus. Never guesses between candidates."""
+    from services import situations as _sit, triage as _tri
     ref = (ref or '').strip()
     if not ref:
-        return None, 'Say which one.'
+        f = _tri.get_focus(focus_key)
+        if not f:
+            return None, NO_FOCUS
+        row = _sit.load(f['kind'], f['id'])
+        if not row or not _sit.can_see(f['kind'], row, viewer):
+            return None, NO_FOCUS
+        return (f['kind'], f['id']), None
+    found = None
     for k in ([kind] if kind in _sit.KINDS else _sit.KINDS):
         row = _sit.load(k, ref)
         if row:
             if not _sit.can_see(k, row, viewer):
                 return None, "That one is not yours to see."
-            return (k, ref), None
-    rows = _sit.list_situations(viewer, kinds=(kind,) if kind in _sit.KINDS else None)
-    hits = [s for s in rows if ref.lower() in (s.get('title') or '').lower()]
-    if len(hits) == 1:
-        return (hits[0]['kind'], hits[0]['id']), None
-    if not hits:
-        return None, f"Nothing open matches '{ref}'."
-    names = '; '.join(h['title'] for h in hits[:5])
-    return None, f"Which one: {names}?"
+            found = (k, ref)
+            break
+    if not found:
+        rows = _sit.list_situations(viewer, kinds=(kind,) if kind in _sit.KINDS else None)
+        hits = [s for s in rows if ref.lower() in (s.get('title') or '').lower()]
+        if len(hits) == 1:
+            found = (hits[0]['kind'], hits[0]['id'])
+        elif not hits:
+            return None, f"Nothing open matches '{ref}'."
+        else:
+            names = '; '.join(h['title'] for h in hits[:5])
+            return None, f"Which one: {names}?"
+    row = _sit.load(found[0], found[1]) or {}
+    title = {'finding': row.get('line'), 'insight': row.get('line'),
+             'thread': row.get('title'), 'mission': row.get('goal')}.get(found[0]) or ''
+    _tri.set_focus(focus_key, found[0], found[1], title)
+    return found, None
 
 
-def list_situations(kinds: str = None, limit: int = 10, acting_member: dict = None) -> Dict[str, Any]:
+def list_situations(kinds: str = None, limit: int = 10, acting_member: dict = None,
+                    spoken: bool = False) -> Dict[str, Any]:
     from services import situations as _sit
     want = tuple(k for k in (kinds or '').split(',') if k in _sit.KINDS) or None
-    rows = _sit.list_situations(acting_member, kinds=want)[:max(1, min(int(limit or 10), 30))]
+    rows = _sit.list_situations(acting_member, kinds=want, spoken=spoken)[:max(1, min(int(limit or 10), 30))]
     if not rows:
         return {"status": "success", "message": "Nothing needs anyone right now.", "situations": []}
     return {"status": "success", "message": _situation_lines(rows), "situations": rows}
 
 
-def explain_situation(ref: str, kind: str = None, acting_member: dict = None) -> Dict[str, Any]:
+def next_situation(skip_current: bool = False, acting_member: dict = None, focus_key: str = None) -> Dict[str, Any]:
+    """The one most pressing situation as a sentence; sets the conversation's
+    focus. Terminal: the message IS the spoken answer. Sensitive insights are
+    never spoken (triage.next_for lists with spoken=True)."""
+    from services import triage as _tri
+    had = _tri.get_focus(focus_key) is not None
+    s = _tri.next_for(acting_member, focus_key, skip_current=bool(skip_current))
+    if s is None:
+        msg = ("That's everything. Nothing else needs anyone right now." if (skip_current and had)
+               else "Nothing needs anyone right now.")
+        return {"status": "success", "message": msg, "situation": None, "focus": None}
+    line = _tri.spoken(s)
+    if not focus_key:
+        # No conversation to hold the focus: end with the title so the
+        # follow-up can name it.
+        line += f" (Say '{s.get('title')}' to take it further.)"
+    return {"status": "success", "message": line, "situation": s, "focus": _tri.get_focus(focus_key)}
+
+
+def explain_situation(ref: str = '', kind: str = None, acting_member: dict = None,
+                      focus_key: str = None) -> Dict[str, Any]:
     from services import situations as _sit
-    found, why = _resolve_situation(ref, kind, acting_member)
+    found, why = _resolve_situation(ref, kind, acting_member, focus_key)
     if not found:
         return {"status": "error", "message": why}
     s = _sit.view(found[0], found[1], acting_member)
@@ -1439,12 +1480,12 @@ def explain_situation(ref: str, kind: str = None, acting_member: dict = None) ->
     return {"status": "success", "message": msg, "situation": s}
 
 
-def act_on_situation(ref: str, verb: str, option_id: str = None, kind: str = None, text: str = None,
-                     next_action_at: str = None, acting_member: dict = None) -> Dict[str, Any]:
+def act_on_situation(ref: str = '', verb: str = '', option_id: str = None, kind: str = None, text: str = None,
+                     next_action_at: str = None, acting_member: dict = None, focus_key: str = None) -> Dict[str, Any]:
     from services import situations as _sit
     if not acting_member or acting_member.get('role') not in ('parent', 'adult'):
         return {"status": "error", "message": "Only a parent or adult can do that."}
-    found, why = _resolve_situation(ref, kind, acting_member)
+    found, why = _resolve_situation(ref, kind, acting_member, focus_key)
     if not found:
         return {"status": "error", "message": why}
     k, sid = found
@@ -1467,12 +1508,12 @@ def act_on_situation(ref: str, verb: str, option_id: str = None, kind: str = Non
     return res
 
 
-def start_ask(ref: str, to_name: str, what: str, channel: str, kind: str = None,
-              acting_member: dict = None) -> Dict[str, Any]:
+def start_ask(ref: str = '', to_name: str = '', what: str = '', channel: str = '', kind: str = None,
+              acting_member: dict = None, focus_key: str = None) -> Dict[str, Any]:
     from services import situations as _sit, asks as _asks
     if not acting_member or acting_member.get('role') not in ('parent', 'adult'):
         return {"status": "error", "message": "Only a parent or adult can ask."}
-    found, why = _resolve_situation(ref, kind, acting_member)
+    found, why = _resolve_situation(ref, kind, acting_member, focus_key)
     if not found:
         return {"status": "error", "message": why}
     k, sid = found
@@ -1518,14 +1559,37 @@ def start_ask(ref: str, to_name: str, what: str, channel: str, kind: str = None,
             "message": f"{how}\n\n{draft}" if channel != 'chauffeur' else how}
 
 
-def mark_ask_sent(ask_id: str, acting_member: dict = None) -> Dict[str, Any]:
+def _focus_ask(focus_key: str, acting_member: dict):
+    """The focus situation's ONE live ask, or a refusal naming the choice."""
+    from services import triage as _tri
+    if not _tri.get_focus(focus_key):
+        return None, NO_FOCUS
+    live = _tri.focus_live_asks(focus_key, acting_member)
+    if len(live) == 1:
+        return live[0]['id'], None
+    if not live:
+        return None, "Nobody has been asked about that one yet."
+    names = ', or '.join(f"{a.get('to_name')} by {a.get('channel')}" for a in live)
+    return None, f"Which ask: {names}?"
+
+
+def mark_ask_sent(ask_id: str = None, acting_member: dict = None, focus_key: str = None) -> Dict[str, Any]:
     from services import asks as _asks
+    if not ask_id:
+        ask_id, why = _focus_ask(focus_key, acting_member)
+        if not ask_id:
+            return {"status": "error", "message": why}
     res = _asks.mark_sent(ask_id, acting_member)
     return {**res, "status": "error" if res.get('status') == 'refused' else res.get('status')}
 
 
-def answer_ask(ask_id: str, answer: str, acting_member: dict = None) -> Dict[str, Any]:
+def answer_ask(ask_id: str = None, answer: str = None, acting_member: dict = None,
+               focus_key: str = None) -> Dict[str, Any]:
     from services import asks as _asks, storage
+    if not ask_id:
+        ask_id, why = _focus_ask(focus_key, acting_member)
+        if not ask_id:
+            return {"status": "error", "message": why}
     recipient = (storage.get_ask(ask_id) or {}).get('to_member_id')
     res = _asks.answer(ask_id, (answer or '').lower(), acting_member,
                        reported=(acting_member or {}).get('id') != recipient)
@@ -4252,46 +4316,53 @@ def get_available_tools() -> List[Dict]:
                            "required": []}
         },
         {
-            "name": "explain_situation",
-            "description": "The full picture of one thing that needs a person: status, every option with its id, and the asks so far. Takes an id or a title fragment ('tell me about the Thursday soccer one').",
+            "name": "next_situation",
+            "description": "The ONE most pressing thing that needs a person, in a sentence, and it becomes the thing you are talking about: 'what needs my attention?', 'what's most urgent?', 'anything I need to deal with?'. Say skip_current for 'next', 'not that one', 'what else'. Use list_situations only for 'what's open', 'everything outstanding'.",
             "parameters": {"type": "object",
-                           "properties": {"ref": {"type": "string", "description": "The situation's id or a fragment of its title."},
+                           "properties": {"skip_current": {"type": "boolean", "description": "Move to the next one down the list."}},
+                           "required": []}
+        },
+        {
+            "name": "explain_situation",
+            "description": "The full picture of one thing that needs a person: status, every option with its id, and the asks so far. Takes an id or a title fragment ('tell me about the Thursday soccer one'); with no ref it is the one we are talking about.",
+            "parameters": {"type": "object",
+                           "properties": {"ref": {"type": "string", "description": "The situation's id or a fragment of its title. Leave empty for the one we are talking about."},
                                           "kind": {"type": "string", "description": "Optional: finding|insight|thread|mission."}},
-                           "required": ["ref"]}
+                           "required": []}
         },
         {
             "name": "act_on_situation",
-            "description": "Do one of a situation's options: assign a driver, approve a step, set a thread's next step, answer a mission, snooze, dismiss, take it yourself, mark it handled. Use start_ask to ask somebody.",
+            "description": "Do one of a situation's options: assign a driver, approve a step, set a thread's next step, answer a mission, snooze, dismiss, take it yourself, mark it handled, or say Argyle read a reply wrong (unread). 'Handle it' / 'do that' with no name means the one we are talking about. Use start_ask to ask somebody.",
             "parameters": {"type": "object",
-                           "properties": {"ref": {"type": "string", "description": "Id or title fragment."},
-                                          "verb": {"type": "string", "enum": ["assign", "plan", "prepare", "do", "done", "skip", "research", "draft", "advance", "answer", "close", "snooze", "dismiss", "own"]},
+                           "properties": {"ref": {"type": "string", "description": "Id or title fragment; empty for the one we are talking about."},
+                                          "verb": {"type": "string", "enum": ["assign", "plan", "prepare", "do", "done", "skip", "research", "draft", "advance", "answer", "close", "snooze", "dismiss", "own", "unread"]},
                                           "option_id": {"type": "string", "description": "The option id from explain_situation, when the verb has more than one."},
                                           "kind": {"type": "string"},
                                           "text": {"type": "string", "description": "For answer/draft/research: the text. For advance: the next action."},
                                           "next_action_at": {"type": "string", "description": "For advance: YYYY-MM-DD."}},
-                           "required": ["ref", "verb"]}
+                           "required": ["verb"]}
         },
         {
             "name": "start_ask",
-            "description": "Ask somebody for something about a situation, by a channel the person chose: 'text Sarah and ask her to drive Kate Thursday', 'email the inspector to come Friday', 'message Dad on Chauffeur'. Returns the draft to copy (or sends it on Chauffeur).",
+            "description": "Ask somebody for something about a situation, by a channel the person chose: 'text Sarah and ask her to drive Kate Thursday', 'email the inspector to come Friday', 'message Dad on Chauffeur'. With no ref it is about the one we are talking about. Returns the draft to copy (or sends it on Chauffeur).",
             "parameters": {"type": "object",
-                           "properties": {"ref": {"type": "string"}, "to_name": {"type": "string"},
+                           "properties": {"ref": {"type": "string", "description": "Empty for the one we are talking about."}, "to_name": {"type": "string"},
                                           "what": {"type": "string", "description": "The commitment being asked for, as a short phrase."},
                                           "channel": {"type": "string", "enum": ["chauffeur", "email", "text", "in_person"]},
                                           "kind": {"type": "string"}},
-                           "required": ["ref", "to_name", "what", "channel"]}
+                           "required": ["to_name", "what", "channel"]}
         },
         {
             "name": "mark_ask_sent",
-            "description": "The person says they sent the drafted text/email or asked in person.",
-            "parameters": {"type": "object", "properties": {"ask_id": {"type": "string"}}, "required": ["ask_id"]}
+            "description": "The person says they sent the drafted text/email or asked in person ('sent it', 'I asked her'). With no ask_id it is the open ask on the one we are talking about.",
+            "parameters": {"type": "object", "properties": {"ask_id": {"type": "string"}}, "required": []}
         },
         {
             "name": "answer_ask",
-            "description": "Record what the person asked said ('Sarah said yes', 'Mike can't'), which applies the agreed change once.",
+            "description": "Record what the person asked said ('Sarah said yes', 'Mike can't', 'she said no'), which applies the agreed change once. With no ask_id it is the open ask on the one we are talking about.",
             "parameters": {"type": "object",
                            "properties": {"ask_id": {"type": "string"}, "answer": {"type": "string", "enum": ["yes", "no"]}},
-                           "required": ["ask_id", "answer"]}
+                           "required": ["answer"]}
         },
         {
             "name": "list_threads",
@@ -5771,14 +5842,18 @@ class ListSituationsTool(BaseModel):
     kinds: Optional[str] = Field(None, description="Optional comma list of finding,insight,thread,mission.")
     limit: Optional[int] = Field(10, description="How many, default 10.")
 
+class NextSituationTool(BaseModel):
+    """The one most pressing thing that needs a person, as a sentence; it becomes the thing being talked about."""
+    skip_current: Optional[bool] = Field(False, description="Move to the next one down the list.")
+
 class ExplainSituationTool(BaseModel):
     """The full picture of one situation: status, every option with its id, the asks so far."""
-    ref: str = Field(..., description="The situation's id or a fragment of its title.")
+    ref: Optional[str] = Field('', description="The situation's id or a fragment of its title; empty for the one being talked about.")
     kind: Optional[str] = Field(None, description="Optional: finding|insight|thread|mission.")
 
 class ActOnSituationTool(BaseModel):
     """Do one of a situation's options (not asking somebody: that is start_ask)."""
-    ref: str = Field(..., description="Id or title fragment.")
+    ref: Optional[str] = Field('', description="Id or title fragment; empty for the one being talked about.")
     verb: str = Field(..., description="assign|plan|prepare|do|done|skip|research|draft|advance|answer|close|snooze|dismiss|own")
     option_id: Optional[str] = Field(None, description="The option id from explain_situation.")
     kind: Optional[str] = None
@@ -5787,7 +5862,7 @@ class ActOnSituationTool(BaseModel):
 
 class StartAskTool(BaseModel):
     """Ask somebody for something about a situation by a chosen channel; returns the draft."""
-    ref: str
+    ref: Optional[str] = ''
     to_name: str
     what: str = Field(..., description="The commitment being asked for, as a short phrase.")
     channel: str = Field(..., description="chauffeur|email|text|in_person")
@@ -5795,11 +5870,11 @@ class StartAskTool(BaseModel):
 
 class MarkAskSentTool(BaseModel):
     """The person says they sent the drafted text/email or asked in person."""
-    ask_id: str
+    ask_id: Optional[str] = None
 
 class AnswerAskTool(BaseModel):
     """Record what the person asked said; yes applies the agreed change once."""
-    ask_id: str
+    ask_id: Optional[str] = None
     answer: str = Field(..., description="yes|no")
 
 class ListProgramsTool(BaseModel):
@@ -6278,6 +6353,7 @@ TOOL_SCHEMAS = {
     "list_insights": ListInsightsTool.model_json_schema(),
     "dismiss_insight": DismissInsightTool.model_json_schema(),
     "list_situations": ListSituationsTool.model_json_schema(),
+    "next_situation": NextSituationTool.model_json_schema(),
     "explain_situation": ExplainSituationTool.model_json_schema(),
     "act_on_situation": ActOnSituationTool.model_json_schema(),
     "start_ask": StartAskTool.model_json_schema(),
@@ -7454,6 +7530,9 @@ def handle_list_situations(args: dict) -> dict:
     return list_situations(kinds=args.get('kinds'), limit=args.get('limit') or 10,
                            acting_member=_REGISTRY_READER)
 
+def handle_next_situation(args: dict) -> dict:
+    return next_situation(skip_current=bool(args.get('skip_current')), acting_member=_REGISTRY_READER)
+
 def handle_explain_situation(args: dict) -> dict:
     return explain_situation(args.get('ref') or '', kind=args.get('kind'), acting_member=_REGISTRY_READER)
 
@@ -7819,6 +7898,7 @@ TOOL_HANDLERS = {
     "list_insights": handle_list_insights,
     "dismiss_insight": handle_dismiss_insight,
     "list_situations": handle_list_situations,
+    "next_situation": handle_next_situation,
     "explain_situation": handle_explain_situation,
     "act_on_situation": handle_act_on_situation,
     "start_ask": handle_start_ask,

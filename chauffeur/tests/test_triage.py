@@ -145,6 +145,76 @@ def scenario_focus_entries_are_pruned_after_a_day():
 SCENARIOS += [scenario_focus_set_read_and_cursor, scenario_focus_on_a_closed_situation_is_dropped,
               scenario_focus_entries_are_pruned_after_a_day]
 
+from services import agent_tools_v2 as tools  # noqa: E402
+
+
+def scenario_next_situation_speaks_one_and_sets_focus():
+    _reset()
+    a = threads.create('Pest control', owner_member_id='mom', next_action='call back',
+                       next_action_at=(NOON - datetime.timedelta(days=1)).date().isoformat(), created_by='mom')
+    res = tools.next_situation(acting_member=MOM, focus_key='conv:1')
+    check(res['status'] == 'success' and res['message'].startswith('Pest control.') and 'Next: ' in res['message'],
+          f"one sentence: {res}")
+    check(triage.get_focus('conv:1')['id'] == a, "focus is set")
+    res = tools.next_situation(skip_current=True, acting_member=MOM, focus_key='conv:1')
+    check(res['status'] == 'success' and 'Nothing else' in res['message'], f"the end of the list says so: {res}")
+    storage.threads_table.truncate()
+    res = tools.next_situation(acting_member=MOM, focus_key='conv:9')
+    check(res['message'] == 'Nothing needs anyone right now.', f"empty: {res}")
+
+
+def scenario_ref_less_tools_use_the_focus():
+    _reset()
+    tid = threads.create('Deck permit', owner_member_id='mom', next_action='call', created_by='mom')
+    storage.update_thread(tid, {'created_at': time.time() - 9 * 86400})
+    res = tools.explain_situation(acting_member=MOM, focus_key='conv:1')
+    check(res['status'] == 'error' and 'what needs your attention' in res['message'], f"no focus: the way out: {res}")
+    tools.next_situation(acting_member=MOM, focus_key='conv:1')
+    res = tools.explain_situation(acting_member=MOM, focus_key='conv:1')
+    check(res['status'] == 'success' and res['situation']['id'] == tid, f"ref-less explain is the focus: {res}")
+    res = tools.act_on_situation(verb='advance', text='email the inspector', next_action_at='2026-10-20',
+                                 acting_member=MOM, focus_key='conv:1')
+    check(res['status'] == 'success' and storage.get_thread(tid)['next_action'] == 'email the inspector', f"ref-less act: {res}")
+    res = tools.start_ask(to_name='the inspector', what='come Friday', channel='email', acting_member=MOM, focus_key='conv:1')
+    check(res['status'] == 'success' and res['ask_id'], f"ref-less ask: {res}")
+    res = tools.mark_ask_sent(acting_member=MOM, focus_key='conv:1')
+    check(res['status'] == 'success' and storage.get_ask(res['ask']['id'])['state'] == 'sent', f"ref-less sent: {res}")
+    res = tools.answer_ask(answer='yes', acting_member=MOM, focus_key='conv:1')
+    check(res['status'] == 'success' and res.get('outcome') == 'manual', f"ref-less yes: {res}")
+    other = threads.create('Gutters', owner_member_id='mom', created_by='mom')
+    tools.explain_situation('Gutters', acting_member=MOM, focus_key='conv:1')
+    check(triage.get_focus('conv:1')['id'] == other, "naming a situation makes it the focus")
+
+
+def scenario_ref_less_answer_with_two_live_asks_refuses():
+    _reset()
+    tid = threads.create('Deck permit', owner_member_id='mom', created_by='mom')
+    triage.set_focus('conv:1', 'thread', tid, 'Deck permit')
+    tools.start_ask(to_name='Sarah', what='come Friday', channel='text', acting_member=MOM, focus_key='conv:1')
+    tools.start_ask(to_name='Mike', what='come Friday', channel='email', acting_member=MOM, focus_key='conv:1')
+    res = tools.answer_ask(answer='yes', acting_member=MOM, focus_key='conv:1')
+    check(res['status'] == 'error' and 'Sarah' in res['message'] and 'Mike' in res['message'], f"two live asks: which? {res}")
+    check(all(a['state'] == 'drafted' for a in storage.get_asks(situation_kind='thread', situation_id=tid)), "nothing answered")
+    res = tools.answer_ask(answer='yes', acting_member=MOM, focus_key='conv:none')
+    check(res['status'] == 'error', "no focus, no ask: refused plainly")
+
+
+def scenario_next_situation_is_declared_and_terminal():
+    decl = {t['name']: t for t in tools.get_available_tools()}
+    check('next_situation' in decl, "declared to the model")
+    check('next_situation' in tools.TOOL_HANDLERS and 'next_situation' in tools.TOOL_SCHEMAS, "in the registry")
+    from services import agent_router
+    src = open('services/agent_router.py', encoding='utf-8').read()
+    check('"next_situation"' in src.split('TERMINAL_ACTION_TOOLS = {')[1].split('}')[0], "terminal: no concluding round")
+    check('next_situation' in agent_router.PROPOSE_ONLY_READS and 'list_situations' in agent_router.PROPOSE_ONLY_READS,
+          "a read on the propose-only rail")
+    verb_enum = decl['act_on_situation']['parameters']['properties']['verb']['enum']
+    check('unread' not in verb_enum or 'unread' in situations.VERBS, "the enum never names a verb the server lacks")
+
+
+SCENARIOS += [scenario_next_situation_speaks_one_and_sets_focus, scenario_ref_less_tools_use_the_focus,
+              scenario_ref_less_answer_with_two_live_asks_refuses, scenario_next_situation_is_declared_and_terminal]
+
 if __name__ == "__main__":
     import traceback
     failed = 0

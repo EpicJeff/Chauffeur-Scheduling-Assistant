@@ -23,7 +23,7 @@ KINDS = ('finding', 'insight', 'thread', 'mission')
 MISSION_HISTORY_CAP = 60      # the terminal rows /api/missions/admin ships; the lane matches it
 VERBS = frozenset({'assign', 'ask', 'plan', 'prepare', 'do', 'done', 'skip',
                    'research', 'draft', 'advance', 'answer', 'close', 'snooze',
-                   'dismiss', 'own'})
+                   'dismiss', 'own', 'unread'})
 WRITE_ROLES = ('parent', 'adult')
 # Situation ownership ("I'll handle it myself") lives in its own fields: a
 # thread row already uses owner_member_id for who CARRIES the thread.

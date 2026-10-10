@@ -124,6 +124,7 @@ PROPOSE_ONLY_READS = {
     "suggest_dinner",
     "list_chores", "list_open_findings", "list_insights",
     "list_threads", "list_programs", "program_progress",
+    "list_situations", "next_situation",
 }
 PROPOSE_ONLY_TOOLS = PROPOSE_ONLY_READS | {"propose_family_action"}
 
@@ -407,7 +408,7 @@ sending or claiming, and never pass from_member/member_name for them.
                              "complete_household_task", "claim_household_task",
                              "get_household_load",
                              "get_family_messages", "list_chores",
-                             "list_open_findings",
+                             "list_open_findings", "next_situation",
                              "claim_chore", "get_routine_status",
                              "post_weekly_digest", "get_drive_digest",
                              "get_kid_tasks", "add_kid_task", "complete_kid_task",
