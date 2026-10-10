@@ -134,6 +134,9 @@
                                                     <span class="text-gray-400" x-text="' ' + fmtWho(h.who) + ': '"></span>
                                                     <span x-text="h.text"></span>
                                                     <a x-show="h.url" :href="h.url" target="_blank" rel="noopener" class="text-blue-400 underline underline-offset-2"> ↗</a>
+                                                    <!-- What Argyle read a reply as (services/replies.py), beside the reply itself. -->
+                                                    <span x-show="h.reading" class="thread-reading block pl-3 text-gray-400 italic"
+                                                          x-text="h.reading ? ('Argyle read it as ' + h.reading.answer + (h.reading.summary ? ' — “' + h.reading.summary + '”' : '') + (h.reading.disputed ? ' (disputed)' : '')) : ''"></span>
                                                 </div>
                                             </template>
                                         </div>
