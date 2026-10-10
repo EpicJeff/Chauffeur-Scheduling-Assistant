@@ -44,6 +44,11 @@ routines + streaks · rewards store with parent-approved redemptions.
   Build 2 SHIPPED v2.499.315–.321: /threads and /missions redrawn on the
   same card (the old forms kept in details), the PWA House tab's threads,
   and the watcher DM heads-up naming each finding's next step and asks.
+  Sub-project 3 SHIPPED v2.499.327–.337 (2026-10-10): "what needs my
+  attention?" is one spoken situation held as the conversation's focus,
+  voice acts as the parent of record, and a vendor's reply on a thread is
+  read once and recorded, never applied. Spec:
+  `docs/superpowers/specs/2026-10-10-triage-and-replies-design.md`.
 
 - **Agent tools for the family hub. SHIPPED v2.25.0 (2026-08-01)** — six
   tools in both stacks (send/read family messages + DMs with full push
