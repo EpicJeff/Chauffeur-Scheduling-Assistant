@@ -4408,7 +4408,7 @@ def get_available_tools() -> List[Dict]:
             "description": "Do one of a situation's options: assign a driver, approve a step, set a thread's next step, answer a mission, snooze, dismiss, take it yourself, mark it handled, or say Argyle read a reply wrong (unread). 'Handle it' / 'do that' with no name means the one we are talking about. Use start_ask to ask somebody.",
             "parameters": {"type": "object",
                            "properties": {"ref": {"type": "string", "description": "Id or title fragment; empty for the one we are talking about."},
-                                          "verb": {"type": "string", "enum": ["assign", "plan", "prepare", "do", "done", "skip", "research", "draft", "advance", "answer", "close", "snooze", "dismiss", "own", "unread"]},
+                                          "verb": {"type": "string", "enum": ["assign", "plan", "prepare", "do", "done", "skip", "research", "draft", "advance", "answer", "close", "snooze", "dismiss", "own", "unread", "release"]},
                                           "option_id": {"type": "string", "description": "The option id from explain_situation, when the verb has more than one."},
                                           "kind": {"type": "string"},
                                           "text": {"type": "string", "description": "For answer/draft/research: the text. For advance: the next action."},

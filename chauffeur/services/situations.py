@@ -23,7 +23,7 @@ KINDS = ('finding', 'insight', 'thread', 'mission')
 MISSION_HISTORY_CAP = 60      # the terminal rows /api/missions/admin ships; the lane matches it
 VERBS = frozenset({'assign', 'ask', 'plan', 'prepare', 'do', 'done', 'skip',
                    'research', 'draft', 'advance', 'answer', 'close', 'snooze',
-                   'dismiss', 'own', 'unread'})
+                   'dismiss', 'own', 'unread', 'release'})
 WRITE_ROLES = ('parent', 'adult')
 # Situation ownership ("I'll handle it myself") lives in its own fields: a
 # thread row already uses owner_member_id for who CARRIES the thread.
@@ -230,8 +230,15 @@ def _options_mission(row: dict) -> list:
     steps = row.get('steps') or []
     if row.get('status') == 'waiting_user':
         asked = next((s for s in reversed(steps) if s.get('kind') == 'ask'), None)
-        q = ((asked or {}).get('result_json') or {}).get('question') or 'Argyle has a question'
-        out.append(_opt('answer', q, {}))
+        rj = (asked or {}).get('result_json') or {}
+        if (asked or {}).get('name') == 'release':
+            # The contact card leaves the house only on this tap (browse missions §1).
+            out.append(_opt('release', f"Share with {rj.get('site')}", {'decision': 'approve'}, 'approve'))
+            out.append(_opt('release', 'Not these', {'decision': 'decline'}, 'decline'))
+            out.append(_opt('release', 'Stop the mission', {'decision': 'stop'}, 'stop'))
+        else:
+            q = rj.get('question') or 'Argyle has a question'
+            out.append(_opt('answer', q, {}))
     for s in steps:
         if s.get('kind') != 'proposal':
             continue
@@ -334,7 +341,7 @@ def _is_done(kind: str, row: dict) -> bool:
 def needs_attention(kind: str, row: dict, opts: list) -> bool:
     """Independent of engine status: anything with a decision left is live."""
     if kind == 'mission':
-        return any(o['verb'] in ('answer', 'do') for o in opts)
+        return any(o['verb'] in ('answer', 'do', 'release') for o in opts)
     if kind == 'thread':
         from services import threads as _th
         return bool(_th.is_stalled(row)) and not _is_done(kind, row)
@@ -641,6 +648,9 @@ def _run(kind, sid, verb, p, actor, row) -> dict:
             ok = storage.update_mission(sid, {'status': 'dropped' if state == 'dropped' else 'done',
                                               'finished_at': time.time()})
         return {'status': 'success' if ok else 'error', 'message': 'Closed.'}
+    if verb == 'release':
+        from services import missions as _m
+        return _m.release(sid, p.get('decision'), actor)
     if verb == 'unread':
         from services import asks as _asks
         return _asks.unread(p.get('ask_id'), actor)

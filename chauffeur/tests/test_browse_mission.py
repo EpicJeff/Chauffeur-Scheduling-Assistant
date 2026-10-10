@@ -138,10 +138,75 @@ def scenario_shots_route_is_classified():
     check(auth.resolve('GET', '/api/missions/x/shots/turn_01.png') == auth.resolve('GET', '/api/missions/x'), "the shot is gated like the transcript")
 
 
+def scenario_release_approved_resumes_with_the_values_once():
+    _reset()
+    runs = []
+    seq = [_report('needs_release', wanted_fields=['first_name', 'email']), _report('done', text='Tue 8-noon')]
+    missions._browse = lambda **kw: runs.append(kw) or seq.pop(0)
+    mid = _mission()
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
+    missions.step(storage.get_mission(mid))
+    res = situations.act('mission', mid, 'release', option_id='release:approve', actor={'id': 'mom', 'role': 'parent'})
+    check(res['status'] == 'success', f"approve through the card: {res}")
+    row = storage.get_mission(mid)
+    check(row['status'] == 'running' and row['releases'][0]['site'] == 'bodewell.com' and row['releases'][0]['fields'] == ['first_name', 'email']
+          and row['releases'][0]['approved_by'] == 'mom', f"recorded: {row.get('releases')}")
+    check(len(runs) == 2 and runs[1]['released'] == {'first_name': 'Jeff', 'email': 'ffejnosliw@gmail.com'} and runs[1]['start_url'].startswith('https://bodewell.com'),
+          f"the browse resumed where it stopped with the released values: {runs[1]}")
+    # The same site again in this mission: no second ask.
+    seq.append(_report('needs_release', wanted_fields=['first_name']))
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g2', 'site': 'bodewell.com'}
+    missions.step(storage.get_mission(mid))
+    check(runs[-1]['released'] == {'first_name': 'Jeff', 'email': 'ffejnosliw@gmail.com'}, "released values ride every later browse of that site")
+
+
+def scenario_release_approved_twice_resumes_once():
+    _reset()
+    runs = []
+    seq = [_report('needs_release', wanted_fields=['zip']), _report('done')]
+    missions._browse = lambda **kw: runs.append(kw) or seq.pop(0)
+    mid = _mission()
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
+    missions.step(storage.get_mission(mid))
+    a = missions.release(mid, 'approve', {'id': 'mom', 'role': 'parent'})
+    b = missions.release(mid, 'approve', {'id': 'mom', 'role': 'parent'})
+    check(a['status'] == 'success' and b.get('already') and len(runs) == 2, f"a second approve is a no-op: {b} runs={len(runs)}")
+
+
+def scenario_release_declined_hands_off_and_stop_blocks():
+    _reset()
+    missions._browse = lambda **kw: _report('needs_release', wanted_fields=['email'])
+    mid = _mission()
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
+    missions.step(storage.get_mission(mid))
+    res = situations.act('mission', mid, 'release', option_id='release:decline', actor={'id': 'mom', 'role': 'parent'})
+    last = storage.get_mission_steps(mid)[-1]
+    check(res['status'] == 'success' and last['kind'] == 'ask' and last['name'] == 'handoff' and storage.get_mission(mid)['status'] == 'waiting_user', f"decline hands off: {last}")
+    _reset()
+    missions._browse = lambda **kw: _report('needs_release', wanted_fields=['email'])
+    mid = _mission()
+    missions.step(storage.get_mission(mid))
+    missions.release(mid, 'stop', {'id': 'mom', 'role': 'parent'})
+    check(storage.get_mission(mid)['status'] == 'blocked' and 'kept' in (storage.get_mission(mid).get('error') or ''), "stop blocks the mission honestly")
+    check(missions.release(mid, 'approve', {'id': 'kid', 'role': 'child'})['status'] == 'refused', "a child cannot release")
+
+
+def scenario_release_verb_is_in_the_closed_set_everywhere():
+    import re
+    from services import agent_tools_v2 as tools
+    check('release' in situations.VERBS, "the verb")
+    src = open('static/situations.js', encoding='utf-8').read()
+    check("'release'" in re.search(r"VERB_LABELS\s*=\s*\{([^}]*)\}", src).group(1), "the card label")
+    enum = next(t for t in tools.get_available_tools() if t['name'] == 'act_on_situation')['parameters']['properties']['verb']['enum']
+    check('release' in enum, "the tool enum")
+
+
 SCENARIOS = [scenario_browse_action_runs_the_runner_and_transcribes, scenario_needs_release_pauses_with_the_values_and_tells_the_person,
              scenario_captcha_and_payment_hand_off, scenario_left_the_site_and_refusals_are_notes_the_planner_reads,
              scenario_browse_cap_refuses_before_running, scenario_a_lost_browse_is_reclaimed_by_the_tick,
-             scenario_browsing_mission_is_moving_not_done, scenario_shots_route_is_classified]
+             scenario_browsing_mission_is_moving_not_done, scenario_shots_route_is_classified,
+             scenario_release_approved_resumes_with_the_values_once, scenario_release_approved_twice_resumes_once,
+             scenario_release_declined_hands_off_and_stop_blocks, scenario_release_verb_is_in_the_closed_set_everywhere]
 
 if __name__ == "__main__":
     import traceback

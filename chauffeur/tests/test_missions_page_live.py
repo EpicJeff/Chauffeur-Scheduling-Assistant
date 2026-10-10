@@ -81,7 +81,7 @@ def main():
                 page.locator('#cc-alert-modal button:has-text("OK")').click()
             # Launch still works (flash: the pro tier needs the paid key).
             page.fill('#missions textarea[placeholder*="What should Argyle work on"]', 'Book the dentist')
-            page.locator('#missions select').first.select_option('flash')
+            page.locator('#missions select[x-model="launchTier"]').first.select_option('flash')
             page.locator('#missions button:has-text("Launch")').click()
             page.wait_for_timeout(800)
             check(any(m['goal'] == 'Book the dentist' for m in storage.get_missions()), "the launch form launched")

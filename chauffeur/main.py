@@ -5820,6 +5820,21 @@ def mission_shot(mission_id: str, name: str, request: Request = None):
     return FileResponse(path, media_type='image/png')
 
 
+@app.post("/api/missions/{mission_id}/release")
+def missions_release(mission_id: str, body: dict = Body(default={}), request: Request = None):
+    """A release ask answered by hand: approve shares the contact card with
+    one site for this mission and resumes the browse; decline hands over;
+    stop blocks (services/missions.release)."""
+    from services import missions as _missions
+    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+    res = _missions.release(mission_id, (body.get('decision') or '').strip(), actor)
+    if res.get('status') == 'refused':
+        raise HTTPException(status_code=403, detail=res.get('message'))
+    if res.get('status') == 'error':
+        raise HTTPException(status_code=400, detail=res.get('message'))
+    return res
+
+
 @app.post("/api/missions/{mission_id}/answer")
 def missions_answer(mission_id: str, body: dict = Body(default={}),
                     request: Request = None):

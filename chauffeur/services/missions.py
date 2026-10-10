@@ -351,6 +351,46 @@ def finish_browse(mission_id: str, step_id: str, report: dict) -> None:
     _close(mission_id, 'running')
 
 
+def release(mission_id: str, decision: str, actor: dict) -> dict:
+    """The person's answer to a release ask: approve (record the site and
+    fields on the mission and resume the pending browse with the values),
+    decline (hand the page over), stop (block the mission). Idempotent: a
+    release already acted on answers `already`."""
+    if not actor or (actor.get('role') or '') not in ('parent', 'adult'):
+        return {'status': 'refused', 'message': "Only a parent or adult can release the family's details."}
+    mission = storage.get_mission(mission_id)
+    if not mission:
+        return {'status': 'error', 'message': 'No such mission.'}
+    steps = storage.get_mission_steps(mission_id)
+    ask = next((s for s in reversed(steps) if s.get('kind') == 'ask'), None)
+    if not ask or ask.get('name') != 'release' or mission.get('status') != 'waiting_user':
+        return {'status': 'success', 'already': True, 'message': 'That release was already answered.'}
+    rj = ask.get('result_json') or {}
+    if decision == 'approve':
+        rel = {'site': rj.get('site'), 'fields': rj.get('fields') or [], 'approved_by': actor.get('id'), 'at': time.time()}
+        with storage.db_lock:
+            row = storage.get_mission(mission_id)
+            if row.get('status') != 'waiting_user':
+                return {'status': 'success', 'already': True, 'message': 'Already answered.'}
+            storage.update_mission(mission_id, {'releases': (row.get('releases') or []) + [rel], 'status': 'running'})
+        storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'release_approved', 'result_json': {'site': rel['site'], 'fields': rel['fields']}})
+        pending = rj.get('browse') or {}
+        start_browse(storage.get_mission(mission_id), pending.get('goal') or mission.get('goal'), pending.get('site') or rel['site'],
+                     start_url=pending.get('start_url'), released=rj.get('values') or {})
+        return {'status': 'success', 'message': f"Shared with {rel['site']}. Carrying on."}
+    if decision == 'decline':
+        url = ((rj.get('browse') or {}).get('start_url')) or ''
+        q = f"I got as far as {url}. The form wants {', '.join(rj.get('fields') or [])}, which you kept. Finish it on your phone and tell me what you found."
+        storage.add_mission_step(mission_id, {'kind': 'ask', 'name': 'handoff', 'result_json': {'question': q, 'url': url, 'filled': {}, 'reason': 'details not shared'}})
+        _close(mission_id, 'waiting_user')
+        _dm_person(mission, q)
+        return {'status': 'success', 'message': 'Kept. Finish it on your phone and tell me what you found.'}
+    if decision == 'stop':
+        _close(mission_id, 'blocked', error='the family kept its details')
+        return {'status': 'success', 'message': 'Stopped.'}
+    return {'status': 'error', 'message': 'approve, decline or stop'}
+
+
 def step(mission: dict) -> dict:
     """Advance ONE step. Returns the fresh mission row. All state transitions
     live here so tick() stays a scheduler and tests drive this directly."""
