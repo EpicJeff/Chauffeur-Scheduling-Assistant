@@ -3010,6 +3010,10 @@ def add_mission_step(mission_id: str, data: dict) -> str:
         mission_steps_table.insert(row)
     return row['id']
 
+def update_mission_step(step_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(mission_steps_table.update(data, Query().id == step_id))
+
 def get_mission_steps(mission_id: str) -> List[dict]:
     with db_lock:
         rows = [dict(r) for r in

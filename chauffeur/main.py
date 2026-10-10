@@ -5805,6 +5805,21 @@ def missions_proposal_act(mission_id: str, proposal_id: str,
     return result
 
 
+@app.get("/api/missions/{mission_id}/shots/{name}")
+def mission_shot(mission_id: str, name: str, request: Request = None):
+    """A browse step's screenshot (parent-gated like the transcript). Lives
+    under the data dir, never under the moments media root."""
+    _mind_actor(request, request.query_params.get('member_id') if request else None)
+    from services import missions as _missions
+    import re as _re
+    if not _re.fullmatch(r'[a-z0-9_]+\.png', name or '') or not _re.fullmatch(r'[a-z0-9]+', mission_id or ''):
+        raise HTTPException(status_code=404, detail="No such image")
+    path = os.path.join(_missions.browse_dir(mission_id), name)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="No such image")
+    return FileResponse(path, media_type='image/png')
+
+
 @app.post("/api/missions/{mission_id}/answer")
 def missions_answer(mission_id: str, body: dict = Body(default={}),
                     request: Request = None):

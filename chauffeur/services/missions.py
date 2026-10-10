@@ -13,6 +13,8 @@ Laws in force here:
 import datetime
 import json
 import logging
+import os
+import threading
 import time
 
 from services import storage, model_pools
@@ -26,6 +28,12 @@ CAPS_DEFAULT = {'launch': 3, 'steps': 40, 'pro_calls': 120}
 STEPS_PER_TICK = 1
 RETRY_DELAY_S = 300
 MAX_CONSEC_ERRORS = 3
+# A browse (services/browse.py) runs in its own thread while the mission sits
+# in `browsing`; a browse step with no result after this long is reclaimed by
+# the tick (the thread died, or the process restarted).
+BROWSE_LOST_S = 600
+BROWSE_CAP_DEFAULT = 400
+_browse_async = True                     # tests run the runner inline
 RETENTION_DAYS = 120
 
 # Default-deny read classification: a registry tool NOT named here is offered
@@ -130,6 +138,7 @@ def _system_prompt(now: datetime.datetime, settings: dict = None) -> str:
         '{"action":"propose","tool":"<PROPOSE tool>","args":{...},'
         '"summary":"<one line a parent reads>","why":"<reason>"}\n'
         '{"action":"research","question":"<web question>"}\n'
+        '{"action":"browse","goal":"<what to learn or do on the site, in words>","site":"<the site, e.g. bodewell.com>"}\n'
         '{"action":"draft","thread_title":"<thread>","intent":"<what the '
         'message should do>"}\n'
         '{"action":"ask_user","question":"<one question>"}\n'
@@ -138,6 +147,13 @@ def _system_prompt(now: datetime.datetime, settings: dict = None) -> str:
         '{"action":"give_up","reason":"<honest blocker>"}\n\n'
         "Prefer finishing with a small set of strong proposals over endless "
         "research.\n"
+        "To find a thing's details, search our own mail (search_mail) before "
+        "the web. To deal with a company, prefer its official site. Use browse "
+        "only for what reading cannot answer, and name the site. Before any "
+        "form that wants the family's details, expect a release step and wait "
+        "for it. A browse that stops at a wall is a result, not a failure: the "
+        "person is handed the link. Never claim a booking, a price or a slot a "
+        "browse did not show.\n"
         "If the outcome is a choice the family must make, use ask_user and "
         "wait for the answer — NEVER finish with a question in your summary; "
         "a finished mission cannot hear replies.\n"
@@ -201,6 +217,138 @@ def _match_thread(title: str):
         return exact[0]
     sub = [t for t in rows if title in (t.get('title') or '').lower()]
     return sub[0] if len(sub) == 1 else None
+
+
+def browse_dir(mission_id: str) -> str:
+    """Screenshots live under the data dir, never under the moments media
+    root (the wall's screensaver draws from there)."""
+    d = os.path.join(os.path.dirname(storage.DB_PATH), 'browse', mission_id)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _browse_live(**kw):
+    from services import browse
+    return browse.run(**kw)
+
+
+_browse = _browse_live
+
+
+def _post(dm, argyle, body, card=None):
+    from services.agent_tools_v2 import _post_chat_message
+    return _post_chat_message(dm, argyle, body, card=card)
+
+
+def _dm_person(mission: dict, text: str) -> None:
+    """One message to whoever started the mission (the parents when nobody
+    did), in their Argyle DM. Never raises."""
+    try:
+        argyle = storage.ensure_argyle_member()
+        who = storage.get_member(mission.get('created_by') or '') if mission.get('created_by') else None
+        people = [who] if who else [m for m in storage.get_all_members() if m.get('role') == 'parent' and not m.get('system')]
+        for m in people:
+            _post(storage.get_or_create_dm(argyle['id'], m['id']), argyle, text)
+    except Exception as e:
+        logger.warning(f"[missions] DM failed: {e}")
+
+
+def _released_for(mission: dict, site: str) -> dict:
+    """The contact-card values a parent already released to this site in
+    this mission (one approval per site per mission)."""
+    from services import browse as _b
+    card = _b.contact_card()
+    for r in mission.get('releases') or []:
+        if r.get('site') == _b._domain(f'https://{site}' if '://' not in site else site):
+            return {f: card[f] for f in r.get('fields') or [] if f in card}
+    return {}
+
+
+def start_browse(mission: dict, goal: str, site: str, start_url: str = None, released: dict = None) -> str:
+    """Add the browse step, park the mission in `browsing`, run the runner in
+    a daemon thread (inline in tests). Returns the step id, or '' when the
+    day's turn cap refuses the run."""
+    mid = mission['id']
+    settings = storage.get_settings() or {}
+    cap = int(settings.get('mission_cap_browse_turns', BROWSE_CAP_DEFAULT))
+    day = datetime.date.today().isoformat()
+    used = int((storage.get_app_state(f'mission_calls:{day}') or {}).get('browse_turns', 0))
+    if used >= cap:
+        storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
+                                       'result_json': {'note': f"browse cap ({cap} turns/day) reached; try tomorrow or raise it"}})
+        return ''
+    sid = storage.add_mission_step(mid, {'kind': 'browse', 'name': site, 'args_json': {'goal': goal, 'site': site, 'start_url': start_url},
+                                         'result_json': None})
+    storage.update_mission(mid, {'status': 'browsing'})
+    kw = dict(goal=goal, site=site, released=released if released is not None else _released_for(mission, site),
+              consent={'captcha': bool(settings.get('missions_captcha_attempts'))}, start_url=start_url, out_dir=browse_dir(mid))
+
+    def work():
+        try:
+            report = _browse(**kw)
+        except Exception as e:
+            report = {'outcome': 'error', 'text': str(e)[:200], 'learned': {}, 'stopped_at': start_url or site, 'wanted_fields': [],
+                      'turns': 0, 'tokens_in': 0, 'tokens_out': 0, 'seconds': 0, 'screenshots': [], 'filled': {}}
+        finish_browse(mid, sid, report)
+
+    if _browse_async:
+        threading.Thread(target=work, daemon=True).start()
+    else:
+        work()
+    return sid
+
+
+def finish_browse(mission_id: str, step_id: str, report: dict) -> None:
+    """The report becomes the step's result; the outcome maps to running (the
+    planner reads it), a `release` ask, or a `handoff` ask."""
+    from services import browse as _b
+    mission = storage.get_mission(mission_id)
+    if not mission:
+        return
+    step_row = next((s for s in storage.get_mission_steps(mission_id) if s['id'] == step_id), None)
+    args = (step_row or {}).get('args_json') or {}
+    site = args.get('site') or ''
+    # Count the day's turns, whatever the outcome.
+    day = datetime.date.today().isoformat()
+    with storage.db_lock:
+        counts = dict(storage.get_app_state(f'mission_calls:{day}') or {})
+        counts['browse_turns'] = int(counts.get('browse_turns', 0)) + int(report.get('turns') or 0)
+        storage.set_app_state(f'mission_calls:{day}', counts)
+    shots = [os.path.basename(p) for p in report.get('screenshots') or []]
+    storage.update_mission_step(step_id, {'result_json': {**report, 'screenshots': shots}})
+    outcome = report.get('outcome')
+    text = report.get('text') or ''
+    if outcome == 'needs_release':
+        card = _b.contact_card()
+        fields = [f for f in report.get('wanted_fields') or [] if f in card]
+        missing = [f for f in report.get('wanted_fields') or [] if f not in card]
+        if not fields:
+            storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'browse',
+                                                  'result_json': {'note': f"the form wants {', '.join(missing)}; the contact card has none of it (Missions settings)"}})
+            _close(mission_id, 'running')
+            return
+        values = {f: card[f] for f in fields}
+        domain = _b._domain(f'https://{site}')
+        q = f"Share with {domain}: " + ' · '.join(values.values()) + '?'
+        storage.add_mission_step(mission_id, {'kind': 'ask', 'name': 'release',
+                                              'result_json': {'question': q, 'site': domain, 'fields': fields, 'values': values,
+                                                              'missing': missing,
+                                                              'browse': {'goal': args.get('goal'), 'site': site, 'start_url': report.get('stopped_at')}}})
+        _close(mission_id, 'waiting_user')
+        _dm_person(mission, f"Argyle needs a yes: {q} (mission: {mission.get('goal')}). Approve on the Missions page or the thread card.")
+        return
+    if outcome == 'captcha_failed' or (outcome == 'blocked' and 'payment' in text.lower()):
+        url = report.get('stopped_at') or ''
+        filled = report.get('filled') or {}
+        reason = text
+        q = (f"I got as far as {url}. " + (f"Filled so far: {', '.join(f'{k}={v}' for k, v in filled.items())}. " if filled else '')
+             + f"{reason}. Finish it on your phone and tell me what you found.")
+        storage.add_mission_step(mission_id, {'kind': 'ask', 'name': 'handoff',
+                                              'result_json': {'question': q, 'url': url, 'filled': filled, 'reason': reason}})
+        _close(mission_id, 'waiting_user')
+        _dm_person(mission, q)
+        return
+    _close(mission_id, 'running')
 
 
 def step(mission: dict) -> dict:
@@ -281,6 +429,16 @@ def step(mission: dict) -> dict:
         storage.add_mission_step(mid, {'kind': 'tool', 'name': 'research',
                                        'args_json': {'question': res.get('question')},
                                        'result_json': out})
+        return storage.get_mission(mid)
+
+    if action == 'browse':
+        goal = (res.get('goal') or '').strip()
+        site = (res.get('site') or '').strip().lower().replace('https://', '').replace('http://', '').split('/')[0]
+        if not goal or not site:
+            storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
+                                           'result_json': {'note': 'browse needs a goal and a site'}})
+            return storage.get_mission(mid)
+        start_browse(storage.get_mission(mid), goal, site)
         return storage.get_mission(mid)
 
     if action == 'draft':
@@ -392,6 +550,15 @@ def tick(now: datetime.datetime = None) -> dict:
         if (row.get('retry_at') or 0) <= ts:
             storage.update_mission(row['id'], {'status': 'running',
                                                'retry_at': None})
+
+    # A browse whose thread died (crash, restart) must not strand the mission.
+    for row in storage.get_missions(status='browsing'):
+        steps = storage.get_mission_steps(row['id'])
+        b = next((s for s in reversed(steps) if s.get('kind') == 'browse'), None)
+        if b and b.get('result_json') is None and (b.get('ts') or 0) < ts - BROWSE_LOST_S:
+            storage.add_mission_step(row['id'], {'kind': 'note', 'name': 'browse',
+                                                 'result_json': {'note': 'the browse was lost (no result after 10 minutes)'}})
+            storage.update_mission(row['id'], {'status': 'running'})
 
     running = sorted(storage.get_missions(status='running'),
                      key=lambda r: r.get('created_at') or 0)
