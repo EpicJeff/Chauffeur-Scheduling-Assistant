@@ -531,3 +531,68 @@ def open_by_owner() -> Dict[str, int]:
             continue
         counts[owner] = counts.get(owner, 0) + 1
     return counts
+
+
+# --- a photo on a thread (browse missions §3) --------------------------------------
+
+CAP_PHOTO_DEFAULT = 20
+PHOTO_SYSTEM = (
+    "You transcribe what a photo says that a repair, order or school office "
+    "would ask for: model and serial numbers, dates, amounts, names, reference "
+    "numbers, addresses. Verbatim, line by line, nothing inferred, nothing "
+    "added. If the image shows none of that, say what it shows in one line. "
+    'Return STRICT JSON: {"text": "..."}'
+)
+NOT_READ = 'photo added (not read)'
+
+
+def read_photo(thread_id: str, media_id: str, data: bytes, mime: str) -> Optional[str]:
+    """One vision-tier call under thread_cap_photo_reads; None when there is
+    no key, the cap is reached, or the call fails. Never raises."""
+    import base64
+    settings = storage.get_settings() or {}
+    api_key = settings.get('llm_gemini_api_key', '')
+    if not api_key:
+        return None
+    from services import situations as _sit
+    if not _sit._bump_call('photo', int(settings.get('thread_cap_photo_reads', CAP_PHOTO_DEFAULT))):
+        return None
+    thread = storage.get_thread(thread_id) or {}
+    prompt = f"Thread: {thread.get('title') or ''}. The attached photo was added to it."
+    try:
+        res = _pool_call('vision', api_key, PHOTO_SYSTEM, prompt, timeout_s=60,
+                         images=[{'mime': mime or 'image/jpeg', 'b64': base64.b64encode(data).decode()}])
+    except Exception as e:
+        print(f"[threads] photo read failed: {e}")
+        return None
+    text = (res or {}).get('text') if isinstance(res, dict) else None
+    return ' '.join(str(text).split())[:2000] if text else None
+
+
+def add_photo(thread_id: str, data: bytes, mime: str, who: Optional[str], caption: str = '') -> dict:
+    """Store the image beside moments, log it on the thread, read it once,
+    and answer a mission waiting on THIS thread with the transcription."""
+    thread = storage.get_thread(thread_id)
+    if not thread:
+        return {'status': 'not_found'}
+    saved = storage.save_photo_bytes(data, mime)
+    if not saved:
+        return {'status': 'error', 'reason': 'unsupported image'}
+    entry = {'kind': 'photo', 'url': saved['url'], 'media_id': saved['id'], 'text': NOT_READ,
+             'who': who, 'caption': (caption or '').strip()[:200]}
+    storage.append_thread_history(thread_id, entry)
+    text = read_photo(thread_id, saved['id'], data, mime)
+    if text:
+        storage.update_thread_history_entry(thread_id, {'media_id': saved['id']}, {'text': text})
+        entry['text'] = text
+    from services import situations as _sit
+    # A mission waiting on a question on this thread takes the photo as the answer.
+    for m in storage.get_missions(status='waiting_user'):
+        if m.get('origin_kind') == 'thread' and m.get('origin_ref') == thread_id:
+            answer = f"(photo) {text or NOT_READ}" + (f" — {entry['caption']}" if entry['caption'] else '')
+            storage.add_mission_step(m['id'], {'kind': 'note', 'name': 'user_answer',
+                                               'result_json': {'text': answer, 'photo_url': saved['url']}})
+            storage.update_mission(m['id'], {'status': 'running'})
+            _sit.touched('mission', m['id'])
+    _sit.touched('thread', thread_id)
+    return {'status': 'ok', 'entry': entry, 'read': bool(text)}

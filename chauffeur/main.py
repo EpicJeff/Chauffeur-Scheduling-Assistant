@@ -6460,6 +6460,36 @@ def draft_thread_message(thread_id: str, body: dict = Body(default={}),
     return res
 
 
+@app.post("/api/threads/{thread_id}/photo")
+async def thread_photo(thread_id: str, file: UploadFile = File(...), caption: str = Form(''),
+                       member_id: Optional[str] = Form(None), request: Request = None):
+    """A photo on a thread (browse missions §3): a parent or adult, or the
+    thread's owner whatever their role. Images only; read once by the vision
+    tier; answers a mission waiting on this thread."""
+    thread = storage.get_thread(thread_id)
+    if not thread:
+        raise HTTPException(status_code=404, detail="No such thread")
+    actor_id = _acting_id(request, member_id)
+    actor = storage.get_member(actor_id) if actor_id else None
+    is_owner = bool(actor and thread.get('owner_member_id') == actor.get('id'))
+    if actor and actor.get('role') in ('child', 'helper', 'guest') and not is_owner:
+        raise HTTPException(status_code=403, detail="Only a parent, an adult or the thread's owner can add a photo")
+    if actor is None and not _is_admin_surface(request):
+        raise HTTPException(status_code=403, detail="Sign in to add a photo")
+    _live_thread_or_refuse(thread_id)
+    mime = (file.content_type or '').lower()
+    if not mime.startswith('image/'):
+        raise HTTPException(status_code=400, detail="Images only")
+    data = await file.read()
+    if not data or len(data) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="The image is empty or over 15 MB")
+    from services import threads as _threads
+    res = _threads.add_photo(thread_id, data, mime, (actor or {}).get('id'), caption=caption)
+    if res.get('status') != 'ok':
+        raise HTTPException(status_code=400, detail=res.get('reason') or 'could not store the photo')
+    return res
+
+
 @app.post("/api/threads/{thread_id}/send")
 def send_thread_message(thread_id: str, body: dict = Body(default={}),
                         request: Request = None):

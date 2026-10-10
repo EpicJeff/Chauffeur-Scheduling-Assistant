@@ -648,6 +648,10 @@ ENTRIES: List[dict] = [
     _e('mission_cap_pro_calls', 'missions', 'Daily pro-call cap',
        'Total paid-model calls per day across all missions (default 120).',
        page='work?tab=missions', anchor='missions-settings'),
+    _e('thread_cap_photo_reads', 'missions', 'Daily photo-read cap',
+       'Hard ceiling on photos Argyle reads off a thread per day (default 20). Over the cap a photo is '
+       'kept but not read.',
+       page='work?tab=missions', anchor='missions-settings'),
 
     # --- Threads (open loops with people outside the family) ---
     _e('thread_stall_days', 'threads', 'Stalls after (days)',

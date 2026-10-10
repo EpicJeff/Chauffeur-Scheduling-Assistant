@@ -1591,6 +1591,8 @@ class Settings(BaseModel):
     mission_step_cap: Optional[int] = 40
     # Total paid-model calls per day across all missions.
     mission_cap_pro_calls: Optional[int] = 120
+    # Photos Argyle reads off a thread per day (services/threads.read_photo).
+    thread_cap_photo_reads: Optional[int] = 20
     # --- Threads (open loops with people outside the family) ---
     # Days of no movement before an open thread counts as quiet (services/
     # threads.py: is_stalled). An overdue next_action_at stalls regardless.

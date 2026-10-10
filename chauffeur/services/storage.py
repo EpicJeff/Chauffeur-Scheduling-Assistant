@@ -6259,17 +6259,24 @@ def save_photo_data_url(data_url: str) -> Optional[dict]:
         if not head.startswith('data:image/') or not b64:
             return None
         mime = head.split(':', 1)[1].split(';', 1)[0].lower()
-        ext = _PHOTO_EXT_BY_MIME.get(mime)
-        if not ext:
-            return None
         raw = base64.b64decode(b64)
     except Exception:
         return None
-    if not raw:
+    return save_photo_bytes(raw, mime)
+
+
+def save_photo_bytes(data: bytes, mime: str) -> Optional[dict]:
+    """Persist image bytes as a FILE in the media store (jpeg/png/webp), the
+    way save_photo_data_url does for inline photos; a thread's photo lands
+    here too. Returns {'id','url','mime'} or None for an unsupported mime or
+    empty bytes."""
+    import uuid as _uuid
+    ext = _PHOTO_EXT_BY_MIME.get((mime or '').lower().split(';')[0])
+    if not ext or not data:
         return None
     media_id = _uuid.uuid4().hex + ext
     with open(media_write_path(media_id), 'wb') as f:
-        f.write(raw)
+        f.write(data)
     return {'id': media_id, 'url': f'/api/media/{media_id}',
             'mime': _MEDIA_SERVE_MIME.get(ext, 'image/jpeg')}
 
