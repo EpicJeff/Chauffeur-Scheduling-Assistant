@@ -216,7 +216,7 @@
                                                     <label class="text-gray-500 text-xs font-bold uppercase">Photo</label>
                                                     <template x-if="editItem.image_id">
                                                         <span class="flex items-center gap-2">
-                                                            <img :src="apiBase + 'api/media/' + editItem.image_id"
+                                                            <img :src="window.chfAuthUrl(apiBase + 'api/media/' + editItem.image_id)"
                                                                 class="w-12 h-12 rounded-lg object-cover border border-gray-700">
                                                             <button @click="editItem.image_id = ''"
                                                                 class="text-xs font-bold text-red-400 hover:text-red-300">Remove</button>

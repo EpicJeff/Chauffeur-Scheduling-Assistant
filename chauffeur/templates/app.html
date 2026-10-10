@@ -2528,7 +2528,7 @@
                         // A photo beats any glyph for a pre-reader: THEIR
                         // backpack, THEIR cleats — drawn where the big glyph
                         // would have been.
-                        ? `<img src="${apiBase}api/media/${firstOpen.image_id}" alt=""
+                        ? `<img src="${window.chfAuthUrl(apiBase + 'api/media/' + firstOpen.image_id)}" alt=""
                               class="w-full object-cover ${sh.tight ? 'max-h-32' : 'max-h-48'}">`
                         : `<div class="flex items-center justify-center ${sh.tight ? 'py-3' : 'py-6'}" style="background:${kidTint(0.16)}">
                         <span style="font-size:${heroPx}px;line-height:1">${kidGlyph(firstOpen)}</span>
@@ -4785,7 +4785,8 @@
         function momentPosterSrc(att) {
             const u = String((att || {}).url || '');
             if (!u.startsWith('/api/media/')) return '';
-            return `${apiBase}api/media/${u.split('/').pop().split('.')[0]}.jpg`;
+            // An <img> poster: the token rides the query string (S8).
+            return window.chfAuthUrl(`${apiBase}api/media/${u.split('/').pop().split('.')[0]}.jpg`);
         }
 
         // --- Sharing a moment OUT of Chauffeur (v2.384.0) -------------------
@@ -6223,7 +6224,7 @@
                 <label class="flex items-center gap-3 py-2.5 px-4 bg-gray-900 border border-gray-800 rounded-xl cursor-pointer active:opacity-70">
                     <input type="checkbox" onchange="houseCheckItem('${i.id}', this.checked)"
                         class="w-6 h-6 rounded-full accent-pink-500 shrink-0">
-                    ${i.image_id ? `<img src="${apiBase}api/media/${i.image_id}" alt=""
+                    ${i.image_id ? `<img src="${window.chfAuthUrl(apiBase + 'api/media/' + i.image_id)}" alt=""
                         class="w-9 h-9 rounded-lg object-cover border border-gray-700 shrink-0">` : ''}
                     <span class="flex-1 min-w-0 text-[15px] font-bold text-gray-100">${mfEscape(i.name)}${i.qty
                         ? ` <span class="text-gray-500 font-normal">(${mfEscape(i.qty)})</span>` : ''}

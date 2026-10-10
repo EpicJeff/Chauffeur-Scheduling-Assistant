@@ -193,6 +193,20 @@ RULES = [
     # HA additionally validates its own per-camera access token.
     ('GET', '/api/camera_proxy/{entity_id}', WALL, None),
     ('GET', '/api/camera_proxy_stream/{entity_id}', WALL, None),
+    # The hosted CUSTOM cards' lanes (services/ha_cards; the card host in
+    # static/ha_card_host.js), found the day after the flip: a wall mounts
+    # the card, so it fetches the card's own JavaScript, its icons and the
+    # live state refresher on the panel's tier, and an interactive tile calls
+    # a service — allowlisted at the SERVER against the toggle domains, which
+    # is what makes a kitchen screen a safe caller. The editor's reads (the
+    # catalog, the resource registry) stay administration below.
+    ('GET', '/api/ha/card/states', WALL, None),
+    ('GET', '/api/ha/card/resource', WALL, None),
+    ('GET', '/api/ha/card/mdi/{name}', WALL, None),
+    ('POST', '/api/ha/card/service', WALL, None),
+    # HA-relative artwork (entity_picture, area pictures) drawn as a bare
+    # <img> by the board's picture tiles; the proxy allowlists its paths.
+    ('GET', '/api/ha/image', WALL, None),
     (ANY, '/api/ha/*', PARENTS, None),
     (ANY, '/api/telemetry/*', PARENTS, None),
     (ANY, '/api/push_subscriptions/*', PARENTS, None),

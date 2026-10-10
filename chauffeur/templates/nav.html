@@ -819,7 +819,8 @@
                 document.body.prepend(img);
             }
             const raw = map[currentSlug()] || map.default;
-            const url = raw ? (raw.startsWith('api/') ? apiBase + raw : raw) : '';
+            // A background is headerless: the token rides the query string.
+            const url = raw ? (raw.startsWith('api/') ? window.chfAuthUrl(apiBase + raw) : raw) : '';
             img.style.backgroundImage = url
                 ? `url("${url}")`
                 : 'radial-gradient(1200px 800px at 20% 0%, #1e293b 0%, #0b1020 60%)';
@@ -1247,8 +1248,12 @@
                     if (r.ok) list = await r.json();
                 } catch (e) { /* gradient + clock is still a fine idle face */ }
                 if (window._chfSsActive) return;
+                // A slide is a CSS background: it can carry no header, so the
+                // token rides the query string (S8) or the wall goes black at
+                // the flip — every photo refused, no gradient to fall back to.
                 ssUrls = (list.urls || []).map(u =>
-                    (u.startsWith('http') || u.startsWith('/') || u.startsWith('data:')) ? u : apiBase + u);
+                    (u.startsWith('http') || u.startsWith('data:')) ? u
+                    : window.chfAuthUrl(u.startsWith('/') ? u : apiBase + u));
                 // Shuffle client-side so every activation starts somewhere new
                 // but the server stays deterministic and cacheable.
                 for (let i = ssUrls.length - 1; i > 0; i--) {

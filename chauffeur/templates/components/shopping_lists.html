@@ -183,7 +183,7 @@
                                  x-show — a hidden img with a bound src still
                                  FETCHES, and 'api/media/null' 404ed per row. -->
                             <template x-if="it.image_id">
-                                <img :src="apiBase + 'api/media/' + it.image_id"
+                                <img :src="window.chfAuthUrl(apiBase + 'api/media/' + it.image_id)"
                                     @click="imgPreview = it.image_id" alt=""
                                     class="w-9 h-9 rounded-lg object-cover border border-gray-600 shrink-0 cursor-pointer">
                             </template>
@@ -225,7 +225,7 @@
                 <div x-show="imgPreview" x-cloak @click="imgPreview = null"
                     class="fixed inset-0 z-[95] bg-black/85 flex items-center justify-center p-6 cursor-pointer">
                     <template x-if="imgPreview">
-                        <img :src="apiBase + 'api/media/' + imgPreview"
+                        <img :src="window.chfAuthUrl(apiBase + 'api/media/' + imgPreview)"
                             class="max-w-full max-h-full rounded-2xl shadow-2xl">
                     </template>
                 </div>

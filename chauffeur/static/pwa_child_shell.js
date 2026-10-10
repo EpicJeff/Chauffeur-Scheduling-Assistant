@@ -128,7 +128,7 @@ function pwaChildRoutineDetail(index) {
     const day = pwaChildDay;
     if (!day || day.owner !== selectedMemberId) return;
     const item = day.items[index], interactive = day.offset === 0;
-    pwaChildDialog(item.title, `<div class="child-task-art ${item.image_id ? 'child-task-photo' : ''}">${item.image_id ? `<img src="${apiBase}api/media/${encodeURIComponent(item.image_id)}" alt="">` : kidGlyph(item)}</div>
+    pwaChildDialog(item.title, `<div class="child-task-art ${item.image_id ? 'child-task-photo' : ''}">${item.image_id ? `<img src="${window.chfAuthUrl(apiBase + 'api/media/' + encodeURIComponent(item.image_id))}" alt="">` : kidGlyph(item)}</div>
         ${item.description ? `<p>${mfEscape(item.description)}</p>` : ''}
         ${item.steps?.length && !item.checked ? kidStepRows(item, interactive) : interactive ? `<button class="child-primary" onclick="pwaChildCheck(${index},${!item.checked})">${item.checked ? 'Mark not done' : pwaChildStage() === 'sprout' ? 'I did it!' : 'Mark done'}</button>` : '<p>This is a preview of your routine.</p>'}`);
 }
@@ -178,7 +178,7 @@ function pwaChildRenderDay({data, routineData, programItems, balance, jobs = [],
             html += `<section class="child-step"><p class="child-progress">${done} of ${items.length} done · One little step</p>`;
             if (nextTask) {
                 const item = nextTask.item;
-                html += `<div class="child-task-art">${item.image_id ? `<img src="${apiBase}api/media/${encodeURIComponent(item.image_id)}" alt="">` : kidGlyph(item)}</div><h2>${mfEscape(item.title)}</h2><button class="child-primary" onclick="pwaChildCheck(${nextTask.index},true)">${item.steps?.length ? 'Let’s do it' : 'I did it! ✓'}</button>`;
+                html += `<div class="child-task-art">${item.image_id ? `<img src="${window.chfAuthUrl(apiBase + 'api/media/' + encodeURIComponent(item.image_id))}" alt="">` : kidGlyph(item)}</div><h2>${mfEscape(item.title)}</h2><button class="child-primary" onclick="pwaChildCheck(${nextTask.index},true)">${item.steps?.length ? 'Let’s do it' : 'I did it! ✓'}</button>`;
             } else html += '<h2>You did your routine!</h2><p>Time for something else.</p>';
             html += '</section><div class="child-shortcuts">';
             if (current[1]) html += `<button onclick="pwaChildRoutineDetail(${current[1].index})">${kidGlyph(current[1].item)}<span>Then: ${mfEscape(current[1].item.title)}</span></button>`;

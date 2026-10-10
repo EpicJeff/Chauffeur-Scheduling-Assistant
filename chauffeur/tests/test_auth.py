@@ -150,6 +150,29 @@ def scenario_e2_the_lanes_real_callers_actually_use():
           "the chat stream lane opened the Assist webhook")
 
 
+def scenario_e4_the_wall_lanes_the_flip_actually_broke():
+    """Found the day after the household flipped enforcement (2026-10-09): a
+    wall panel mounts HA's cards (hosted-builtin-cards arc) and draws HA
+    pictures (the entity/area picture tiles), and every one of those lanes
+    sat under the `/api/ha/*` PARENTS wildcard. Custom cards said "Home
+    Assistant would not hand over <url>", the live state refresher 403'd,
+    and picture tiles went blank — while the built-in bundle (already a WALL
+    lane) kept working, which is why "some cards work" was the report."""
+    for m, p in (('GET', '/api/ha/card/states'),
+                 ('GET', '/api/ha/card/resource'),
+                 ('GET', '/api/ha/card/mdi/{name}'),
+                 ('POST', '/api/ha/card/service'),
+                 ('GET', '/api/ha/image')):
+        tiers = auth.resolve(m, p) or frozenset()
+        check(auth.DEVICE in tiers,
+              f"{m} {p} refuses the wall panel that actually calls it: {tiers}")
+    # The editor's own reads stay administration: the catalog and the
+    # resource registry are for the parent building the board, not the wall.
+    for p in ('/api/ha/card/catalog', '/api/ha/card/resources'):
+        check(auth.resolve('GET', p) == auth.PARENTS,
+              f"{p} opened to the wall along with the card lanes")
+
+
 def scenario_e3_no_cors_wildcard_ever_again():
     """S8 took CORS off `*`. The old config allowed credentials, which
     Starlette honours by ECHOING any Origin — every website on earth could

@@ -403,6 +403,51 @@ def scenario_a_page_carrying_alpine_components_loads_alpine():
           "even show its pairing code):\n  " + "\n  ".join(broken))
 
 
+def scenario_a_picture_carries_the_token_on_its_query_string():
+    """The flip's second day (2026-10-09): the screensaver went black and the
+    HA picture tiles went blank. An <img src>, a CSS background-image and
+    `new Image()` can set no headers, so a bare `api/media/...`,
+    `api/ha/image?...` or `api/panel/media-image/...` URL is ANONYMOUS — the
+    fetch wrappers never see it — and dies with a 401 once enforcing. The
+    same class as the EventSource rule below: every picture URL built in a
+    template or in the PWA's child shell runs through `chfAuthUrl`. Uploads
+    and blob downloads go through fetch (header-carrying) and are exempt;
+    the loose window (helper within shouting distance) mirrors the stream
+    rule.
+    """
+    import re as _re
+    PIC = _re.compile(r"api/(media/|ha/image\?|panel/media-image)")
+    files = sorted(glob.glob(os.path.join(TPL, '**', '*.html'), recursive=True))
+    files.append(os.path.join(os.path.dirname(TPL), 'static', 'pwa_child_shell.js'))
+    broken = []
+    for path in files:
+        name = os.path.relpath(path, os.path.dirname(TPL))
+        src = open(path, encoding='utf-8').read()
+        for m in PIC.finditer(src):
+            before = src[max(0, m.start() - 160):m.start()]
+            line = src[src.rfind('\n', 0, m.start()) + 1:src.find('\n', m.end())]
+            stripped = line.strip()
+            if stripped.startswith(('//', '#', '*', '<!--', '{#')) or 'fetch(' in before \
+                    or 'startsWith(' in line or 'FETCHES' in line:
+                continue
+            span = src[max(0, m.start() - 400):m.end() + 160]
+            if 'chfAuthUrl' not in span:
+                broken.append(f"{name}: {stripped[:90]}")
+    check(not broken,
+          "a picture URL built without chfAuthUrl — the image is anonymous and "
+          "blank once enforcing:\n  " + "\n  ".join(broken))
+    # The two sinks that take a URL list rather than building one: the
+    # screensaver playlist and the panel background map.
+    nav = open(os.path.join(TPL, 'nav.html'), encoding='utf-8').read()
+    ss = nav[nav.find('ssUrls = (list.urls || [])'):][:400]
+    check('chfAuthUrl' in ss, "the screensaver playlist urls do not carry the token (black screen at the flip)")
+    bg = nav[nav.find('function applyBackground(map)'):][:900]
+    check('chfAuthUrl' in bg, "the panel background url does not carry the token")
+    home = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    hbg = home[home.find('applyBackground() {'):][:600]
+    check('chfAuthUrl' in hbg, "the board background url does not carry the token")
+
+
 def scenario_a_stream_carries_the_token_on_its_query_string():
     """Auth arc S8. The fetch wrappers attach the token as a header — but
     EventSource can set no headers at all, so an SSE connection opened with a

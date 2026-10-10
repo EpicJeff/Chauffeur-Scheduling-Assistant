@@ -3162,8 +3162,9 @@
                     const el = document.getElementById('panel-bg-image');
                     if (!el) return;
                     const bg = this.board.background;
+                    // Headerless (CSS): the token rides the query string.
                     const next = bg
-                        ? `url("${bg.startsWith('api/') ? this.apiBase + bg : bg}")`
+                        ? `url("${bg.startsWith('api/') ? window.chfAuthUrl(this.apiBase + bg) : bg}")`
                         : 'radial-gradient(1200px 800px at 20% 0%, #1e293b 0%, #0b1020 60%)';
                     if (el.style.backgroundImage !== next) el.style.backgroundImage = next;
                 },
@@ -3533,9 +3534,9 @@
                                 this.esc(c.type)} is not drawn here</span></div>`;
                         case 'picture':
                             return `<div class="nc-picture">`
-                                + (c.picture ? `<img src="${this.esc(
+                                + (c.picture ? `<img src="${this.esc(window.chfAuthUrl(
                                     this.apiBase + 'api/ha/image?path='
-                                    + encodeURIComponent(c.picture))}" alt="">` : '')
+                                    + encodeURIComponent(c.picture)))}" alt="">` : '')
                                 + '<div class="nc-picture-bar">'
                                 + (c.show_name === false ? ''
                                     : `<span>${this.esc(c.name)}</span>`)
@@ -3722,8 +3723,8 @@
                     // to upload a picture of the pool house.
                     const picture = (c.display === 'picture' && c.picture)
                         ? `<div class="nc-area-picture">
-                             <img src="${this.esc(this.apiBase + 'api/ha/image?path='
-                                + encodeURIComponent(c.picture))}" alt="">
+                             <img src="${this.esc(window.chfAuthUrl(this.apiBase + 'api/ha/image?path='
+                                + encodeURIComponent(c.picture)))}" alt="">
                              ${alerts ? `<div class="nc-area-badges">${alerts}</div>` : ''}
                            </div>` : '';
                     return `<div class="nc-area${picture ? ' has-picture' : ''}">

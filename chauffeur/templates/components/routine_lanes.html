@@ -42,7 +42,7 @@
                                                  shrinks; a Copilot's disappears — the same
                                                  A4 scale the PWA has always drawn. -->
                                             <template x-if="it.image_id && shellBig(s)">
-                                                <img :src="rlApiBase + 'api/media/' + it.image_id" alt=""
+                                                <img :src="window.chfAuthUrl(rlApiBase + 'api/media/' + it.image_id)" alt=""
                                                     class="rounded-lg object-cover shrink-0"
                                                     :class="shellOf(s).glyph_scale === 'xl' ? 'w-12 h-12' : 'w-8 h-8'">
                                             </template>
