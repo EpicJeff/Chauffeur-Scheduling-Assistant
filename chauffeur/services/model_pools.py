@@ -213,13 +213,13 @@ def _maybe_discover(tier: str, api_key: str, settings: dict, wait: bool = False)
 
 
 def api_key_for_pool(pool_name: str, settings: dict) -> str:
-    """The pro pool bills the paid key; every other pool stays on the free
-    key. This helper is the ONLY reader of llm_gemini_paid_api_key — the
+    """The pro and cu pools bill the paid key; every other pool stays on the
+    free key. This helper is the ONLY reader of llm_gemini_paid_api_key — the
     source-pin test in test_missions_pins.py is the fence that keeps regular
     traffic from ever spending paid money. Missing paid key returns '' so a
     caller fails loudly instead of quietly billing the free key."""
     s = settings or {}
-    if pool_name == 'pro':
+    if pool_name in ('pro', 'cu'):
         return s.get('llm_gemini_paid_api_key', '') or ''
     return s.get('llm_gemini_api_key', '') or ''
 
