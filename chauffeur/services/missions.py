@@ -316,6 +316,13 @@ def finish_browse(mission_id: str, step_id: str, report: dict) -> None:
         storage.set_app_state(f'mission_calls:{day}', counts)
     shots = [os.path.basename(p) for p in report.get('screenshots') or []]
     storage.update_mission_step(step_id, {'result_json': {**report, 'screenshots': shots}})
+    # The thread may return after the mission moved on (dropped by a parent,
+    # reclaimed by the tick): the report stays on its step, nothing else moves.
+    mission = storage.get_mission(mission_id)
+    if (mission or {}).get('status') != 'browsing':
+        storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'browse',
+                                              'result_json': {'note': 'the browse finished after the mission had moved on; its report is above'}})
+        return
     outcome = report.get('outcome')
     text = report.get('text') or ''
     if outcome == 'needs_release':
@@ -323,13 +330,21 @@ def finish_browse(mission_id: str, step_id: str, report: dict) -> None:
         fields = [f for f in report.get('wanted_fields') or [] if f in card]
         missing = [f for f in report.get('wanted_fields') or [] if f not in card]
         if not fields:
-            storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'browse',
-                                                  'result_json': {'note': f"the form wants {', '.join(missing)}; the contact card has none of it (Missions settings)"}})
-            _close(mission_id, 'running')
+            # Nothing on the card answers the form: the person finishes it by hand.
+            url = report.get('stopped_at') or ''
+            q = (f"I got as far as {url}. The form wants {', '.join(missing)}, which the contact card doesn't have "
+                 f"(Missions settings). Finish it on your phone and tell me what you found.")
+            storage.add_mission_step(mission_id, {'kind': 'ask', 'name': 'handoff',
+                                                  'result_json': {'question': q, 'url': url, 'filled': report.get('filled') or {},
+                                                                  'reason': f"the contact card has no {', '.join(missing)}"}})
+            _close(mission_id, 'waiting_user')
+            _dm_person(mission, q)
             return
         values = {f: card[f] for f in fields}
         domain = _b._domain(f'https://{site}')
         q = f"Share with {domain}: " + ' · '.join(values.values()) + '?'
+        if missing:
+            q += f" (It also wants {', '.join(missing)}, which the contact card doesn't have; fill it in Missions settings first if you can.)"
         storage.add_mission_step(mission_id, {'kind': 'ask', 'name': 'release',
                                               'result_json': {'question': q, 'site': domain, 'fields': fields, 'values': values,
                                                               'missing': missing,
@@ -375,16 +390,23 @@ def release(mission_id: str, decision: str, actor: dict) -> dict:
             storage.update_mission(mission_id, {'releases': (row.get('releases') or []) + [rel], 'status': 'running'})
         storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'release_approved', 'result_json': {'site': rel['site'], 'fields': rel['fields']}})
         pending = rj.get('browse') or {}
+        # The card as it is NOW: a parent who fixed a stale value before
+        # tapping Share releases the corrected one (spec §1, "Not these" fixes the card).
+        from services import browse as _b
+        card = _b.contact_card()
+        values = {f: card[f] for f in rel['fields'] if f in card} or (rj.get('values') or {})
         start_browse(storage.get_mission(mission_id), pending.get('goal') or mission.get('goal'), pending.get('site') or rel['site'],
-                     start_url=pending.get('start_url'), released=rj.get('values') or {})
+                     start_url=pending.get('start_url'), released=values)
         return {'status': 'success', 'message': f"Shared with {rel['site']}. Carrying on."}
     if decision == 'decline':
         url = ((rj.get('browse') or {}).get('start_url')) or ''
-        q = f"I got as far as {url}. The form wants {', '.join(rj.get('fields') or [])}, which you kept. Finish it on your phone and tell me what you found."
+        q = (f"I got as far as {url}. The form wants {', '.join(rj.get('fields') or [])}, which you kept. "
+             f"If a value was wrong, fix the contact card in Missions settings and start the mission again; "
+             f"otherwise finish it on your phone and tell me what you found.")
         storage.add_mission_step(mission_id, {'kind': 'ask', 'name': 'handoff', 'result_json': {'question': q, 'url': url, 'filled': {}, 'reason': 'details not shared'}})
         _close(mission_id, 'waiting_user')
         _dm_person(mission, q)
-        return {'status': 'success', 'message': 'Kept. Finish it on your phone and tell me what you found.'}
+        return {'status': 'success', 'message': 'Kept. Fix the contact card in Missions settings if a value was wrong; otherwise finish it on your phone and tell me what you found.'}
     if decision == 'stop':
         _close(mission_id, 'blocked', error='the family kept its details')
         return {'status': 'success', 'message': 'Stopped.'}

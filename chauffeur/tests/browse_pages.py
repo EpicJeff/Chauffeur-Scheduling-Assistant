@@ -17,6 +17,9 @@ PAGES = {
     '/denied': '<h1>Access denied</h1><p>unusual traffic from your network</p>',
     '/other': '<h1>Other site</h1>',
     '/zip': '<h1>Where</h1><form><label>Zip *<input name="zip" required></label><button type="submit">Next</button></form>',
+    '/confirmform': '<h1>Last step</h1><form action="/form2" method="get"><label>Zip *<input name="zip" required></label><button type="submit" id="c">Confirm</button></form>',
+    '/withframe': '<h1>Framed</h1><iframe src="/redir" title="partner"></iframe><p>stay here</p>',
+    '/topay': '<h1>Almost</h1><a id="cont" href="/pay">Continue</a>',
 }
 
 

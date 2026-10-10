@@ -101,10 +101,22 @@ def _launch(headless: bool = True):
     return pw, browser
 
 
+# Two-label public suffixes under which a site keeps three labels
+# (bbc.co.uk is a site; co.uk is not). Enough for the family's world.
+PUBLIC_SUFFIXES = frozenset({'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'com.au', 'net.au', 'org.au', 'co.nz', 'co.jp',
+                             'com.br', 'co.za', 'com.mx', 'co.in', 'com.sg', 'co.kr', 'com.ar', 'com.tr'})
+
+
 def _domain(url: str) -> str:
+    """The registrable domain the allowlist works in: the last two labels, or
+    three under a known public suffix; an IP or a bare host stays itself."""
     host = (urlparse(url).hostname or '').lower()
     parts = host.split('.')
-    return '.'.join(parts[-2:]) if len(parts) >= 2 and not host.replace('.', '').isdigit() else host
+    if len(parts) < 2 or host.replace('.', '').isdigit():
+        return host
+    if len(parts) >= 3 and '.'.join(parts[-2:]) in PUBLIC_SUFFIXES:
+        return '.'.join(parts[-3:])
+    return '.'.join(parts[-2:])
 
 
 MODEL = 'gemini-3.8-flash'
@@ -113,7 +125,9 @@ MODEL = 'gemini-3.8-flash'
 def _client(api_key: str):
     """Test seam: tests hand back a fake client."""
     from google import genai
-    return genai.Client(api_key=api_key)
+    from google.genai import types
+    # A hung request must not hold the runner's thread past the mission's reclaim.
+    return genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=120_000))
 
 
 def _to_types(contents: list):
@@ -221,6 +235,44 @@ def _under_click(page, x, y) -> dict:
     }""", [x, y])
 
 
+def _enter_target(page) -> str:
+    """What Enter would press: the focused element's form's default submit
+    control, by its text. '' when the focus is outside a form (an address
+    bar, a search box with no form, nothing focused)."""
+    try:
+        return page.evaluate("""() => {
+            const el = document.activeElement; const f = el && el.form; if (!f) return '';
+            const b = f.querySelector('button:not([type=button]):not([type=reset]), input[type=submit]');
+            return b ? ((b.innerText || b.value || b.getAttribute('aria-label') || '')).trim().slice(0, 120) : '';
+        }""") or ''
+    except Exception:
+        return ''
+
+
+def _wants_enter(name: str, args: dict) -> bool:
+    if name in ('type_text_at', 'type'):
+        return bool(args.get('press_enter'))
+    if name in ('key_combination', 'press_key', 'hotkey'):
+        k = args.get('keys') or args.get('key') or ''
+        keys = k if isinstance(k, list) else [k]
+        return any(str(x).strip().lower() in ('enter', 'return') for x in keys)
+    return False
+
+
+def _contains_value(text: str, value: str) -> bool:
+    """A card value typed as a whole word (or, for a value under three
+    characters such as an apartment number or a state code, typed on its
+    own). Substring containment refused 'Cafe CDT805P2N3S1' as the apartment
+    '2' and 'cancel' as the state 'NC'."""
+    t = (text or '').strip().lower()
+    v = (value or '').strip().lower()
+    if not t or not v:
+        return False
+    if len(v) < 3:
+        return t == v
+    return re.search(r'(?<!\w)' + re.escape(v) + r'(?!\w)', t) is not None
+
+
 def _personal_violation(text: str, released: dict, card: dict):
     """A typed string that is a contact-card value not released, or any email
     or phone shape when none was released. Returns the offending field name."""
@@ -228,7 +280,7 @@ def _personal_violation(text: str, released: dict, card: dict):
     if not t:
         return None
     for name, value in card.items():
-        if value and value.lower() in t.lower() and name not in released:
+        if _contains_value(t, value) and name not in released:
             return name
     if EMAIL_SHAPE.search(t) and 'email' not in released:
         return 'email'
@@ -251,6 +303,7 @@ def _act(page, name, args):
                 page.keyboard.press('Backspace')
         page.keyboard.type(str(args.get('text', '')))
         if args.get('press_enter'):
+            # The loop already asked what Enter would press (the never-submit guard).
             page.keyboard.press('Enter')
     elif name in ('navigate', 'open_web_browser'):
         if args.get('url'):
@@ -309,7 +362,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
     os.makedirs(out_dir, exist_ok=True)
     t0 = time.time()
     report = {'outcome': 'error', 'text': '', 'learned': {}, 'stopped_at': start_url or '', 'wanted_fields': [],
-              'turns': 0, 'tokens_in': 0, 'tokens_out': 0, 'seconds': 0.0, 'screenshots': [], 'filled': {}}
+              'turns': 0, 'actions': 0, 'tokens_in': 0, 'tokens_out': 0, 'seconds': 0.0, 'screenshots': [], 'filled': {}}
 
     def finish(outcome, text):
         report['outcome'] = outcome
@@ -336,11 +389,31 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
         # A server redirect FROM an allowed domain teaches its target
         # (geappliances.com → bodewell.com); a link the model clicks does not.
         try:
+            # Only the page itself moving: a beacon, a script or an iframe
+            # that redirects teaches nothing.
+            if not r.request.is_navigation_request() or r.frame != page.main_frame:
+                return
             loc = r.headers.get('location', '')
             if 300 <= r.status < 400 and loc.startswith('http') and _domain(r.url) in allowed:
                 allowed.add(_domain(loc))
         except Exception:
             pass
+
+    def page_checks(scan):
+        """Payment, access denied, a form wanting unreleased fields, a check
+        with consent off: each ends the run. None when the page is fine."""
+        report['stopped_at'] = page.url
+        if _is_payment(scan):
+            return finish('blocked', f'this part needs a payment card; do it yourself here: {page.url}')
+        if _is_denied(scan):
+            return finish('captcha_failed', f'the site answered access denied at {page.url}')
+        wanted = _wanted(scan, released, card)
+        if wanted:
+            report['wanted_fields'] = wanted
+            return finish('needs_release', f"the form at {page.url} wants: {', '.join(wanted)}")
+        if _has_captcha(scan) and not consent.get('captcha'):
+            return finish('captcha_failed', f'a human-verification check at {page.url}; not attempted (consent is off)')
+        return None
 
     try:
         ctx = browser.new_context(viewport={'width': W, 'height': H}, locale='en-US')
@@ -362,17 +435,9 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                 return finish('capped', f"stopped after {caps['seconds']} s")
             # The page first: what it wants and warns about, before the model acts on it.
             scan = _scan(page)
-            report['stopped_at'] = page.url
-            if _is_payment(scan):
-                return finish('blocked', f'this part needs a payment card; do it yourself here: {page.url}')
-            if _is_denied(scan):
-                return finish('captcha_failed', f'the site answered access denied at {page.url}')
-            wanted = _wanted(scan, released, card)
-            if wanted:
-                report['wanted_fields'] = wanted
-                return finish('needs_release', f"the form at {page.url} wants: {', '.join(wanted)}")
-            if _has_captcha(scan) and not consent.get('captcha'):
-                return finish('captcha_failed', f'a human-verification check at {page.url}; not attempted (consent is off)')
+            stop = page_checks(scan)
+            if stop:
+                return stop
             step = _model_step(contents, settings)
             report['turns'] = turn
             ti, to = step.get('tokens') or (0, 0)
@@ -410,7 +475,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                         report['wanted_fields'] = [bad]
                         return finish('needs_release', f'the model wanted to type a {bad} that was not released')
                     for k, v in released.items():
-                        if v and v.lower() in str(args.get('text') or '').lower():
+                        if _contains_value(str(args.get('text') or ''), v):
                             report['filled'][k] = v
                 if name in ('navigate', 'open_web_browser') and args.get('url') and _domain(args['url']) not in allowed:
                     strikes += 1
@@ -419,11 +484,33 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                     results.append((name, args, {'error': 'that is another site; stay on ' + site}))
                     continue
                 before = page.url
-                try:
-                    _act(page, name, args)
-                    res = {}
-                except Exception as e:
-                    res = {'error': str(e)[:160]}
+                enter = _wants_enter(name, args)
+                if enter and name in ('type_text_at', 'type'):
+                    # Type first (focus lands with the click), then ask what Enter would press.
+                    try:
+                        _act(page, name, {**args, 'press_enter': False})
+                    except Exception as e:
+                        pass
+                    target = _enter_target(page)
+                    if STOP_WORDS.search(target):
+                        return finish('blocked', f'would submit: Enter would press "{target}"')
+                    try:
+                        page.keyboard.press('Enter')
+                        page.wait_for_timeout(900)
+                        res = {}
+                    except Exception as e:
+                        res = {'error': str(e)[:160]}
+                else:
+                    if enter:
+                        target = _enter_target(page)
+                        if STOP_WORDS.search(target):
+                            return finish('blocked', f'would submit: Enter would press "{target}"')
+                    try:
+                        _act(page, name, args)
+                        res = {}
+                    except Exception as e:
+                        res = {'error': str(e)[:160]}
+                report['actions'] += 1
                 if _domain(page.url) not in allowed:
                     strikes += 1
                     if strikes > 1:
@@ -435,6 +522,13 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                     res = {'error': 'that led to another site; undone. Stay on ' + site}
                 if sd:
                     res['safety_acknowledgement'] = 'true'
+                if page.url != before:
+                    # The call moved the page: the next call in this turn must
+                    # not act on a payment page, a wall or an unreleased form.
+                    scan = _scan(page)
+                    stop = page_checks(scan)
+                    if stop:
+                        return stop
                 shot = page.screenshot(type='png')
                 p = os.path.join(out_dir, f'turn_{turn:02d}.png')
                 with open(p, 'wb') as f:

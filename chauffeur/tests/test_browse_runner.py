@@ -57,7 +57,7 @@ def scenario_done_report_shape():
     browse._model_step = _script('DONE. Earliest Tue 8-noon. Trip charge $114.95.')
     r = browse.run('read the page', SITE, {}, {}, start_url=f'{URL}/form2', out_dir=OUT)
     check(r['outcome'] == 'done' and '$114.95' in r['text'], f"a plain finish: {r}")
-    for k in ('outcome', 'text', 'learned', 'stopped_at', 'wanted_fields', 'turns', 'tokens_in', 'tokens_out', 'seconds', 'screenshots', 'filled'):
+    for k in ('outcome', 'text', 'learned', 'stopped_at', 'wanted_fields', 'turns', 'actions', 'tokens_in', 'tokens_out', 'seconds', 'screenshots', 'filled'):
         check(k in r, f"report carries {k}")
     check(r['stopped_at'].endswith('/form2') and r['turns'] == 1 and r['screenshots'] and os.path.exists(r['screenshots'][0]), f"facts: {r}")
 
@@ -216,11 +216,75 @@ def scenario_live_step_builds_the_computer_use_call():
         browse._client = orig
 
 
+def scenario_enter_never_submits_a_booking_form():
+    """Review fix 1: Enter inside a form whose submit control is a stop word is
+    the same as clicking it. A plain Next form may still be submitted by Enter."""
+    _reset()
+    cx, cy = _xy(f'{URL}/confirmform', 'input[name=zip]')
+    browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': cx, 'y': cy, 'text': '27519', 'press_enter': True}}], 'DONE.')
+    r = browse.run('x', SITE, {'zip': '27519'}, {}, start_url=f'{URL}/confirmform', out_dir=OUT)
+    check(r['outcome'] == 'blocked' and 'submit' in r['text'].lower() and '/form2' not in r['stopped_at'], f"Enter on a Confirm form is refused: {r}")
+    browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': cx, 'y': cy, 'text': '27519'}}],
+                                 [{'name': 'key_combination', 'args': {'keys': ['Enter']}}], 'DONE.')
+    r = browse.run('x', SITE, {'zip': '27519'}, {}, start_url=f'{URL}/confirmform', out_dir=OUT)
+    check(r['outcome'] == 'blocked' and '/form2' not in r['stopped_at'], f"a bare Enter key press is refused the same way: {r}")
+    zx, zy = _xy(f'{URL}/zip', 'input[name=zip]')
+    browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': zx, 'y': zy, 'text': '27519', 'press_enter': True}}], 'DONE.')
+    r = browse.run('x', SITE, {'zip': '27519'}, {}, start_url=f'{URL}/zip', out_dir=OUT)
+    check(r['outcome'] == 'done', f"Enter on a plain Next form passes: {r}")
+
+
+def scenario_typing_guard_matches_whole_values_only():
+    """Review fix 3: a short card value (apt '2', state 'NC') must not refuse
+    every string that contains those characters."""
+    storage.get_settings = lambda: {'contact_apt': '2', 'contact_state': 'NC', 'contact_zip': '27519', 'llm_gemini_paid_api_key': 'paid'}
+    browse.free_memory_mb = lambda: 4096
+    card = browse.contact_card()
+    check(browse._personal_violation('Cafe CDT805P2N3S1', {}, card) is None, "a model number is not the apartment")
+    check(browse._personal_violation('cancel', {}, card) is None, "'cancel' is not the state")
+    check(browse._personal_violation('NC', {}, card) == 'state', "the state typed on its own is still refused")
+    check(browse._personal_violation('zip 27519 please', {}, card) == 'zip', "a whole value inside a sentence is refused")
+    browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': 300, 'y': 160, 'text': 'CDT805P2N3S1'}}], 'DONE.')
+    r = browse.run('x', SITE, {'zip': '27519'}, {}, start_url=f'{URL}/zip', out_dir=OUT)
+    check(r['outcome'] == 'done' and not r['filled'], f"typing a model number neither refuses nor claims apt was filled: {r}")
+
+
+def scenario_only_main_frame_navigations_teach_the_allowlist():
+    """Review fix 4: a redirecting subresource (an iframe, a beacon) must not
+    allowlist its target."""
+    _reset()
+    other = f'http://localhost:{PORT}/other'
+    browse._model_step = _script([{'name': 'navigate', 'args': {'url': other}}], [{'name': 'navigate', 'args': {'url': other}}], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/withframe', out_dir=OUT)
+    check(r['outcome'] == 'blocked' and 'left the site' in r['text'], f"the iframe's redirect taught nothing: {r}")
+
+
+def scenario_every_call_in_a_turn_is_checked_against_the_page_it_lands_on():
+    """Review fix 5: a click that lands on the payment page followed by a type
+    in the SAME turn must stop before the typing."""
+    _reset()
+    cont = _xy(f'{URL}/topay', '#cont')
+    browse._model_step = _script([_click(cont), {'name': 'type_text_at', 'args': {'x': 100, 'y': 100, 'text': '4111'}}], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/topay', out_dir=OUT)
+    check(r['outcome'] == 'blocked' and 'payment' in r['text'].lower() and r['actions'] == 1, f"the payment page stops the turn mid-way, before the type: {r}")
+
+
+def scenario_domain_keeps_two_label_public_suffixes():
+    """Review fix 8: bbc.co.uk is a site; co.uk is not."""
+    check(browse._domain('https://www.bbc.co.uk/x') == 'bbc.co.uk', browse._domain('https://www.bbc.co.uk/x'))
+    check(browse._domain('https://shop.example.com.au/') == 'example.com.au', "com.au")
+    check(browse._domain('https://www.bodewell.com/guest') == 'bodewell.com' and browse._domain('http://127.0.0.1:8/') == '127.0.0.1'
+          and browse._domain('http://localhost:8/') == 'localhost', "plain domains, ips and localhost unchanged")
+
+
 SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
              scenario_captcha_consent_on_is_capped, scenario_caps_and_availability,
-             scenario_pool_cu_bills_the_paid_key_only, scenario_live_step_builds_the_computer_use_call]
+             scenario_pool_cu_bills_the_paid_key_only, scenario_live_step_builds_the_computer_use_call,
+             scenario_enter_never_submits_a_booking_form, scenario_typing_guard_matches_whole_values_only,
+             scenario_only_main_frame_navigations_teach_the_allowlist,
+             scenario_every_call_in_a_turn_is_checked_against_the_page_it_lands_on, scenario_domain_keeps_two_label_public_suffixes]
 
 if __name__ == "__main__":
     import traceback

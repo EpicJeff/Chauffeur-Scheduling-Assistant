@@ -72,7 +72,7 @@ def main():
                 page.locator('#missions details summary').first.click()     # the lane re-rendered; open it again
                 page.wait_for_timeout(400)
             tl = page.locator('#missions details[open]').first.inner_text()
-            check('Finish it on your phone' in tl and page.locator('#missions details[open] a[href^="https://bodewell.com"]').count() >= 1,
+            check('finish it on your phone' in tl.lower() and page.locator('#missions details[open] a[href^="https://bodewell.com"]').count() >= 1,
                   f"the hand-off shows its link: open={page.locator('#missions details[open]').count()} text={tl[:400]!r}")
             check(not b.errors, f"script errors: {b.errors}")
     finally:

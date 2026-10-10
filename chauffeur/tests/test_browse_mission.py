@@ -201,12 +201,73 @@ def scenario_release_verb_is_in_the_closed_set_everywhere():
     check('release' in enum, "the tool enum")
 
 
+def scenario_a_browse_that_returns_after_the_mission_moved_on_changes_nothing():
+    """Review fix 2: the thread's report lands on the step, but a mission that
+    was dropped (or reclaimed) meanwhile keeps its status."""
+    _reset()
+    mid = _mission()
+    sid = storage.add_mission_step(mid, {'kind': 'browse', 'name': 'bodewell.com', 'args_json': {'goal': 'g', 'site': 'bodewell.com'}, 'result_json': None})
+    storage.update_mission(mid, {'status': 'dropped', 'finished_at': time.time()})
+    missions.finish_browse(mid, sid, _report('needs_release', wanted_fields=['email']))
+    row = storage.get_mission(mid)
+    check(row['status'] == 'dropped', f"a dropped mission stays dropped: {row['status']}")
+    steps = storage.get_mission_steps(mid)
+    check(steps[0]['result_json']['outcome'] == 'needs_release', "the report is still on the step")
+    check(not [st for st in steps if st['kind'] == 'ask'] and not SENT, "no release ask, no DM")
+
+
+def scenario_missing_card_fields_are_told_to_the_person():
+    """Review fix 6: a form wanting a field the card lacks is a hand-off, and a
+    release ask names what is missing."""
+    _reset()
+    missions._browse = lambda **kw: _report('needs_release', wanted_fields=['preferred'])
+    mid = _mission()
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
+    row = missions.step(storage.get_mission(mid))
+    ask = storage.get_mission_steps(mid)[-1]
+    check(row['status'] == 'waiting_user' and ask['kind'] == 'ask' and ask['name'] == 'handoff' and 'preferred' in ask['result_json']['question']
+          and 'contact card' in ask['result_json']['question'].lower(), f"only-missing fields hand off and say why: {ask}")
+    check(SENT and 'preferred' in SENT[0], f"the DM says it: {SENT}")
+    _reset()
+    missions._browse = lambda **kw: _report('needs_release', wanted_fields=['email', 'preferred'])
+    mid = _mission()
+    missions.step(storage.get_mission(mid))
+    ask = storage.get_mission_steps(mid)[-1]
+    check(ask['name'] == 'release' and 'preferred' in ask['result_json']['question'] and 'preferred' in SENT[0],
+          f"a release ask names the field the card lacks: {ask['result_json']['question']}")
+
+
+def scenario_approve_reads_the_card_as_it_is_now_and_decline_names_the_card():
+    """Review fix 7 (spec §1: Not these opens the card to fix): a parent who
+    fixes the card before tapping Share releases the corrected value; a decline
+    tells them where the card is."""
+    _reset()
+    runs = []
+    seq = [_report('needs_release', wanted_fields=['email']), _report('done')]
+    missions._browse = lambda **kw: runs.append(kw) or seq.pop(0)
+    mid = _mission()
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
+    missions.step(storage.get_mission(mid))
+    storage.get_settings = lambda: {'missions_enabled': True, 'llm_gemini_paid_api_key': 'paid', 'llm_gemini_api_key': 'k',
+                                    'contact_first_name': 'Jeff', 'contact_email': 'fixed@example.com', 'contact_zip': '27519'}
+    missions.release(mid, 'approve', {'id': 'mom', 'role': 'parent'})
+    check(runs[-1]['released'] == {'email': 'fixed@example.com'}, f"the corrected card value is what goes out: {runs[-1]['released']}")
+    _reset()
+    missions._browse = lambda **kw: _report('needs_release', wanted_fields=['email'])
+    mid = _mission()
+    missions.step(storage.get_mission(mid))
+    res = missions.release(mid, 'decline', {'id': 'mom', 'role': 'parent'})
+    check('contact card' in res['message'].lower() and 'contact card' in SENT[-1].lower(), f"decline names the card: {res} {SENT[-1]}")
+
+
 SCENARIOS = [scenario_browse_action_runs_the_runner_and_transcribes, scenario_needs_release_pauses_with_the_values_and_tells_the_person,
              scenario_captcha_and_payment_hand_off, scenario_left_the_site_and_refusals_are_notes_the_planner_reads,
              scenario_browse_cap_refuses_before_running, scenario_a_lost_browse_is_reclaimed_by_the_tick,
              scenario_browsing_mission_is_moving_not_done, scenario_shots_route_is_classified,
              scenario_release_approved_resumes_with_the_values_once, scenario_release_approved_twice_resumes_once,
-             scenario_release_declined_hands_off_and_stop_blocks, scenario_release_verb_is_in_the_closed_set_everywhere]
+             scenario_release_declined_hands_off_and_stop_blocks, scenario_release_verb_is_in_the_closed_set_everywhere,
+             scenario_a_browse_that_returns_after_the_mission_moved_on_changes_nothing, scenario_missing_card_fields_are_told_to_the_person,
+             scenario_approve_reads_the_card_as_it_is_now_and_decline_names_the_card]
 
 if __name__ == "__main__":
     import traceback

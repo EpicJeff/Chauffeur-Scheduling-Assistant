@@ -53,7 +53,7 @@ routines + streaks · rewards store with parent-approved redemptions.
   search (`search_mail`/`read_mail`) and a photo on a thread, read once by
   the vision tier, answering a waiting mission. Spec:
   `docs/superpowers/specs/2026-10-10-browse-missions-design.md`.
-  Build 2 SHIPPED v2.499.349–.356 (2026-10-10): the browse step (Gemini
+  Build 2 SHIPPED v2.499.349–.357 (2026-10-10): the browse step (Gemini
   Computer Use over headless Chromium on the paid key, guards in code),
   the household contact card released per site per mission, consented
   capped CAPTCHA attempts, the hand-off DM, Chromium in the image. Build 3
