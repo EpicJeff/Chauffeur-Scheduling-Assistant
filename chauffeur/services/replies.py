@@ -98,7 +98,7 @@ def read(thread_id: str, message_id: str) -> Optional[dict]:
     if reading is None:
         # No reading: the card's next step still names the reply (deterministic,
         # situations._options_thread) and the owner is still told.
-        _notify(thread, entry, None)
+        _notify(thread, entry, None, now=_now())
         return None
     storage.update_thread_history_entry(thread_id, {'message_id': message_id}, {'reading': reading})
     from services import asks as _asks, situations as _sit
@@ -106,10 +106,83 @@ def read(thread_id: str, message_id: str) -> Optional[dict]:
         _asks.record_reading(ask['id'], reading['answer'], message_id, summary=reading['summary'])
     _sit.bump_rev('thread', thread_id)
     _sit.request_refresh('thread', thread_id)
-    _notify(thread, entry, reading)
+    _notify(thread, entry, reading, now=_now())
     return reading
 
 
-def _notify(thread: dict, entry: dict, reading: Optional[dict]) -> None:
-    """Filled in by Task 8 (one DM to the owner, deferred through quiet hours)."""
-    return None
+# --- one message to the owner ----------------------------------------------------
+
+def _now() -> datetime.datetime:
+    """The module's one clock, so a test can pin the hour."""
+    return datetime.datetime.now()
+
+
+def _post(dm: dict, argyle: dict, body: str, card: dict = None) -> dict:
+    from services.agent_tools_v2 import _post_chat_message
+    return _post_chat_message(dm, argyle, body, card=card)
+
+
+def _in_window(now: datetime.datetime) -> bool:
+    from services.watchers import QUIET_END_HOUR, QUIET_START_HOUR
+    return QUIET_END_HOUR <= now.hour < QUIET_START_HOUR
+
+
+def dm_line(thread: dict, entry: dict, reading: Optional[dict], next_label: str = '') -> str:
+    who = thread.get('counterparty_name') or (entry.get('text') or '').split(':')[0].replace('Received from ', '') or 'They'
+    title = thread.get('title') or 'a thread'
+    if not reading:
+        return f"{who} replied on '{title}' — read it."
+    line = f"{who} replied on '{title}': {reading.get('summary') or reading.get('answer')}"
+    return line + (f" → {next_label}" if next_label else '') + '.'
+
+
+def _recipients(thread: dict) -> list:
+    owner = storage.get_member(thread.get('owner_member_id') or '') if thread.get('owner_member_id') else None
+    if owner and (owner.get('status') or 'active') == 'active':
+        return [owner]
+    return [m for m in storage.get_all_members() if m.get('role') == 'parent' and not m.get('system')]
+
+
+def _send(thread: dict, entry: dict, reading: Optional[dict]) -> bool:
+    from services import situations as _sit
+    s = _sit.view('thread', thread['id'], _sit.parent_of_record())
+    nxt = ((s or {}).get('next_step') or {}).get('label') or ''
+    body = dm_line(thread, entry, reading, nxt)
+    argyle = storage.ensure_argyle_member()
+    sent = False
+    for m in _recipients(thread):
+        try:
+            _post(storage.get_or_create_dm(argyle['id'], m['id']), argyle, body)
+            sent = True
+        except Exception as e:
+            logger.warning(f"[replies] DM to {m.get('name')} failed: {e}")
+    return sent
+
+
+def _notify(thread: dict, entry: dict, reading: Optional[dict], now: datetime.datetime = None) -> None:
+    """One message to the owner (the parents when none), at once inside the
+    watcher's waking window, else deferred to the first in-window sweep.
+    Never for a closed thread."""
+    if thread.get('state') in ('done', 'dropped'):
+        return
+    now = now or _now()
+    if _in_window(now) and _send(thread, entry, reading):
+        storage.update_thread_history_entry(thread['id'], {'message_id': entry.get('message_id')}, {'dm_pending': False})
+        return
+    storage.update_thread_history_entry(thread['id'], {'message_id': entry.get('message_id')}, {'dm_pending': True})
+
+
+def flush_pending_dms(now: datetime.datetime = None) -> int:
+    """Called by run_watchers inside the window: post every deferred reply
+    DM on an open thread, once. A failed post keeps the mark for next time."""
+    now = now or _now()
+    if not _in_window(now):
+        return 0
+    posted = 0
+    for thread in storage.get_threads(include_closed=False):
+        for h in list(thread.get('history') or []):
+            if h.get('kind') == 'received' and h.get('dm_pending'):
+                if _send(thread, h, h.get('reading')):
+                    storage.update_thread_history_entry(thread['id'], {'message_id': h.get('message_id')}, {'dm_pending': False})
+                    posted += 1
+    return posted

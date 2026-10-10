@@ -897,6 +897,14 @@ def run_watchers(now: datetime.datetime = None) -> int:
     if not (QUIET_END_HOUR <= now.hour < QUIET_START_HOUR):
         return 0
 
+    # Reply DMs deferred through the night (services/replies.py) go out on
+    # the first in-window sweep, once each.
+    try:
+        from services import replies as _replies
+        _replies.flush_pending_dms(now)
+    except Exception as e:
+        print(f"[watchers] reply DM flush failed: {e}")
+
     notified = dict(storage.get_app_state('watcher_notified') or {})
     # prune old markers so the dict never grows without bound
     cutoff = now_ts - NOTIFIED_RETENTION_DAYS * 86400

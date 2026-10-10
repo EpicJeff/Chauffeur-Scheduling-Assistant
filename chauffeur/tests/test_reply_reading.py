@@ -203,6 +203,93 @@ SCENARIOS += [scenario_reading_yes_records_manual_never_applies, scenario_readin
               scenario_reading_with_no_live_ask_lands_on_history_only, scenario_reading_never_overwrites_a_human_answer,
               scenario_unread_reverts_a_reading_and_refuses_a_tap]
 
+SENT = []
+
+
+def _capture_post():
+    def p(dm, argyle, body, card=None):
+        SENT.append({'dm': dm, 'body': body})
+        return {'id': f'm{len(SENT)}'}
+    replies._post = p
+
+
+def scenario_one_dm_to_the_owner_inside_the_window():
+    _reset()
+    SENT.clear(); _capture_post()
+    # replies._now is the module's one clock; pin it inside the window.
+    replies._now = lambda: datetime.datetime.now().replace(hour=12, minute=0)
+    try:
+        replies._pool_call = _fake_pool({'answer': 'yes', 'summary': 'Friday 9am works'})
+        tid = _thread()
+        threads.send_drafted(tid, 'S', 'B', 'ops@pestco.example', who='mom')
+        _reply(tid)
+        replies.read(tid, '<m1@pestco>')
+        check(len(SENT) == 1, f"exactly one DM went: {SENT}")
+        body = SENT[0]['body']
+        check("Pest Co replied on 'Pest control'" in body and 'Friday 9am works' in body and '→' in body, f"the line: {body}")
+        # storage.get_or_create_dm keys the channel by the sorted member pair.
+        check('mom' in (SENT[0]['dm'].get('dm_key') or ''), f"to the owner: {SENT[0]['dm']}")
+        h = storage.get_thread(tid)['history'][-1]
+        check(not h.get('dm_pending'), "nothing pending")
+    finally:
+        replies._now = datetime.datetime.now
+
+
+def scenario_dm_outside_quiet_hours_is_deferred_once():
+    _reset()
+    SENT.clear(); _capture_post()
+    replies._pool_call = _fake_pool({'answer': 'no', 'summary': 'cannot do Friday'})
+    tid = _thread()
+    threads.send_drafted(tid, 'S', 'B', 'ops@pestco.example', who='mom')
+    _reply(tid, mid='<late>')
+    late = datetime.datetime.now().replace(hour=23, minute=0)
+    # The real flow stores the reading on the entry before notifying; the
+    # flush reads it back from there.
+    reading = {'answer': 'no', 'summary': 'cannot do Friday', 'ts': time.time(), 'source': 'argyle'}
+    storage.update_thread_history_entry(tid, {'message_id': '<late>'}, {'reading': reading})
+    thread = storage.get_thread(tid)
+    entry = [x for x in thread['history'] if x.get('message_id') == '<late>'][0]
+    replies._notify(thread, entry, reading, now=late)
+    check(not SENT, "nothing posted at 23:00")
+    h = [x for x in storage.get_thread(tid)['history'] if x.get('message_id') == '<late>'][0]
+    check(h.get('dm_pending') is True, "marked pending")
+    morning = datetime.datetime.now().replace(hour=9, minute=0)
+    n = replies.flush_pending_dms(now=morning)
+    check(n == 1 and len(SENT) == 1 and 'cannot do Friday' in SENT[0]['body'], f"posted once by the morning sweep: {SENT}")
+    check(replies.flush_pending_dms(now=morning) == 0 and len(SENT) == 1, "a second sweep posts nothing")
+    # A pending DM on a thread that closes overnight is never sent.
+    _reply(tid, mid='<late2>')
+    thread = storage.get_thread(tid)
+    entry = [x for x in thread['history'] if x.get('message_id') == '<late2>'][0]
+    replies._notify(thread, entry, None, now=late)
+    threads.close(tid, 'done', who='mom')
+    check(replies.flush_pending_dms(now=morning) == 0 and len(SENT) == 1, "nothing for a closed thread")
+
+
+def scenario_no_reading_still_tells_the_owner_to_read_it():
+    _reset()
+    SENT.clear(); _capture_post()
+    replies._now = lambda: datetime.datetime.now().replace(hour=12, minute=0)
+    try:
+        storage.get_settings = lambda: {'thread_stall_days': 7}      # no key: no reading
+        tid = _thread()
+        threads.send_drafted(tid, 'S', 'B', 'ops@pestco.example', who='mom')
+        _reply(tid, mid='<nk>', text='We can do Friday at 9.\nThanks')
+        replies.read(tid, '<nk>')
+        check(len(SENT) == 1 and 'read it' in SENT[0]['body'], f"'a reply came in — read it': {SENT}")
+    finally:
+        replies._now = datetime.datetime.now
+
+
+def scenario_sweep_flushes_pending_dms_inside_the_window():
+    src = open('services/watchers.py', encoding='utf-8').read()
+    after_gate = src.split('if not (QUIET_END_HOUR <= now.hour < QUIET_START_HOUR):')[1]
+    check('flush_pending_dms' in after_gate, "run_watchers flushes pending reply DMs after the quiet-hours gate")
+
+
+SCENARIOS += [scenario_one_dm_to_the_owner_inside_the_window, scenario_dm_outside_quiet_hours_is_deferred_once,
+              scenario_no_reading_still_tells_the_owner_to_read_it, scenario_sweep_flushes_pending_dms_inside_the_window]
+
 if __name__ == "__main__":
     import traceback
     failed = 0
