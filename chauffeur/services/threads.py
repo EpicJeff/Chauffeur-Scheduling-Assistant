@@ -134,11 +134,12 @@ def draft_message(thread_id: str, intent: str = '') -> dict:
         'who': 'argyle',
     })
     return {'status': 'ok', 'subject': subject, 'body': body,
-            'to': thread.get('counterparty_email', '')}
+            'to': thread.get('counterparty_email', ''),
+            'intent': (intent or '').strip()}
 
 
 def send_drafted(thread_id: str, subject: str, body: str, to: str,
-                  who: str = None) -> dict:
+                  who: str = None, intent: str = '') -> dict:
     """Send exactly what is passed in — the client's editable box at the
     moment of the tap, edited or not — never what `draft_message` proposed
     a request ago. This function has no memory of the draft and never
@@ -177,9 +178,17 @@ def send_drafted(thread_id: str, subject: str, body: str, to: str,
         'who': who,
     })
     storage.update_thread(thread_id, {'state': 'waiting'})
+    # The mail is now a thing the counterparty can answer: a ledger row with
+    # the household address as the sender (spec 2026-10-10 §2). The intent
+    # the draft was asked for is the commitment; else the subject line.
+    from services import asks as _asks
+    ask_id = _asks.record_sent('thread', thread_id,
+                               {'name': thread.get('counterparty_name') or to, 'email': to,
+                                'contact_id': thread.get('contact_id')},
+                               intent or subject, subject, body, who)
     from services import situations as _sit
     _sit.touched('thread', thread_id)
-    return {'status': 'ok'}
+    return {'status': 'ok', 'ask_id': ask_id}
 
 
 def _web_research(question: str) -> dict:

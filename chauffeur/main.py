@@ -6478,7 +6478,7 @@ def send_thread_message(thread_id: str, body: dict = Body(default={}),
     msg_body = body.get('body') or ''
     to = body.get('to') or ''
     res = _threads.send_drafted(thread_id, subject, msg_body, to,
-                                who=(actor or {}).get('id'))
+                                who=(actor or {}).get('id'), intent=body.get('intent') or '')
     if res.get('status') == 'not_found':
         raise HTTPException(status_code=404, detail="No such thread")
     return res

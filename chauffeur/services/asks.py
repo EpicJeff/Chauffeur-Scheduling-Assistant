@@ -164,6 +164,26 @@ def create(kind: str, sid: Optional[str], to: dict, what: str, channel: str, ask
     return {'status': 'success', 'ask': storage.get_ask(ask_id)}
 
 
+def record_sent(kind: str, sid: Optional[str], to: dict, what: str, subject: str, body: str,
+                asked_by: Optional[str]) -> str:
+    """A mail that already left by the household address (threads.send_drafted)
+    becomes a `sent` ledger row: the reply has something to answer. No draft
+    call (the words are the person's), no unlocks (nothing to apply), no
+    refresh request (the send's own touch covers it)."""
+    if not asked_by:
+        from services import situations as _sit
+        asked_by = ((_sit.parent_of_record() or {}).get('id')) or ''
+    data = {'situation_kind': kind, 'situation_id': sid, 'to_name': (to or {}).get('name') or 'them',
+            'to_member_id': None, 'to_contact_id': (to or {}).get('contact_id'),
+            'to_email': (to or {}).get('email') or '',
+            'what': (what or '').strip() or (subject or '').strip() or 'reply',
+            'channel': 'email', 'asked_by': asked_by, 'unlocks': None,
+            'state': 'sent', 'sent_at': time.time(), 'sent_via': 'household',
+            'draft_subject': subject or '', 'draft_body': body or '', 'draft_source': 'person',
+            'event_id': None, 'event_start': '', 'event_title': '', 'event_date': ''}
+    return storage.add_ask(data)
+
+
 def _touch(kind, sid):
     if kind and sid:
         from services import situations as _sit

@@ -675,6 +675,7 @@
                             subject: d.subject || '',
                             body: d.body || '',
                             to: d.to || t.counterparty_email || '',
+                            intent: d.intent || '',
                         };
                     } catch (e) {
                         showGlobalAlert("Argyle couldn't draft that just now.");
@@ -700,7 +701,7 @@
                     try {
                         const r = await fetch(this.apiBase + `api/threads/${t.id}/send`, {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ to, subject, body })
+                            body: JSON.stringify({ to, subject, body, intent: d.intent || '' })
                         });
                         const res = await r.json().catch(() => ({}));
                         if (!r.ok || res.status !== 'ok') {
