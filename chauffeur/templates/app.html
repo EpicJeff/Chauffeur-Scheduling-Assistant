@@ -6312,7 +6312,28 @@
                         <input type="text" id="house-thread-note-${mfEscape(s.id)}" placeholder="A call made, a document received…" autocomplete="off"
                             class="flex-1 bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-[13px] text-gray-100 placeholder-gray-600">
                         <button type="submit" class="px-3 rounded-xl bg-gray-800 border border-gray-700 text-gray-300 text-xs font-bold active:bg-gray-700 shrink-0">Add note</button>
-                    </form>` : '' });
+                    </form>
+                    <label class="inline-flex items-center gap-1 text-xs text-gray-400 mt-1.5 cursor-pointer">📷 Add a photo
+                        <input type="file" accept="image/*" capture="environment" class="hidden" data-thread-photo
+                               onchange="houseAddThreadPhoto(event, '${mfEscape(s.id)}')"></label>` : '' });
+        }
+
+        // A photo on a thread (browse missions §3): the fetch wrapper adds the
+        // member token; multipart, so no Content-Type of our own.
+        async function houseAddThreadPhoto(ev, threadId) {
+            const f = ev.target.files && ev.target.files[0];
+            if (!f) return;
+            const fd = new FormData();
+            fd.append('file', f); fd.append('caption', '');
+            if (selectedMemberId) fd.append('member_id', selectedMemberId);
+            try {
+                const r = await fetch(`${apiBase}api/threads/${threadId}/photo`, { method: 'POST', body: fd });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok) { showGlobalAlert(d.detail || "Couldn't add that photo."); return; }
+                showGlobalAlert(d.read ? 'Photo added and read.' : 'Photo added (not read).');
+                fetchHouseThreads();
+            } catch (e) { showGlobalAlert("Couldn't add that photo."); }
+            finally { ev.target.value = ''; }
         }
 
         async function houseAddThreadNote(ev, id) {

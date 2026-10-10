@@ -132,8 +132,17 @@
                                                 <div class="text-[11px] text-gray-500">
                                                     <span class="text-gray-600" x-text="fmtTs(h.ts)"></span>
                                                     <span class="text-gray-400" x-text="' ' + fmtWho(h.who) + ': '"></span>
-                                                    <span x-text="h.text"></span>
-                                                    <a x-show="h.url" :href="h.url" target="_blank" rel="noopener" class="text-blue-400 underline underline-offset-2"> ↗</a>
+                                                    <span x-show="h.kind !== 'photo'" x-text="h.text"></span>
+                                                    <a x-show="h.url && h.kind !== 'photo'" :href="h.url" target="_blank" rel="noopener" class="text-blue-400 underline underline-offset-2"> ↗</a>
+                                                    <!-- A photo entry: the thumbnail and what it says. An <img> sends
+                                                         no header, so the media URL carries the token (chfAuthUrl). -->
+                                                    <template x-if="h.kind === 'photo'">
+                                                        <div class="mt-1">
+                                                            <img class="thread-photo rounded-lg max-h-40 border border-gray-800" alt=""
+                                                                 :src="window.chfAuthUrl ? window.chfAuthUrl(apiBase + 'api/media/' + h.media_id) : (apiBase + 'api/media/' + h.media_id)">
+                                                            <div class="thread-photo-text text-gray-400 mt-0.5" x-text="(h.caption ? h.caption + ' — ' : '') + h.text"></div>
+                                                        </div>
+                                                    </template>
                                                     <!-- What Argyle read a reply as (services/replies.py), beside the reply itself. -->
                                                     <span x-show="h.reading" class="thread-reading block pl-3 text-gray-400 italic"
                                                           x-text="h.reading ? ('Argyle read it as ' + h.reading.answer + (h.reading.summary ? ' — “' + h.reading.summary + '”' : '') + (h.reading.disputed ? ' (disputed)' : '')) : ''"></span>
@@ -150,6 +159,13 @@
                                                 class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Advance</button>
                                             <button @click="researchOpen[t.id] = !researchOpen[t.id]"
                                                 class="text-xs font-bold px-3 py-1.5 rounded-lg bg-indigo-700 text-white active:bg-indigo-800">Research</button>
+                                            <!-- A photo on the thread (browse missions §3): the label, the
+                                                 letter, the receipt. Stored beside moments, read once by the
+                                                 vision tier, and it answers a mission waiting on this thread. -->
+                                            <button @click="$el.parentElement.querySelector('input[data-thread-photo]').click()"
+                                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Photo</button>
+                                            <input type="file" accept="image/*" capture="environment" class="hidden" data-thread-photo
+                                                   @change="uploadPhoto(t, $event)">
                                             <!-- Work this: opens a MISSION on this thread (POST
                                                  /api/missions/launch, origin_kind 'thread') — Argyle
                                                  researches/compares/drafts over the next hour on the
@@ -509,6 +525,21 @@
                     } catch (e) { showGlobalAlert("Couldn't start that thread."); }
                 },
 
+                async uploadPhoto(t, ev) {
+                    const f = ev.target.files && ev.target.files[0];
+                    if (!f) return;
+                    const fd = new FormData();
+                    fd.append('file', f);
+                    fd.append('caption', '');
+                    try {
+                        const r = await fetch(this.apiBase + `api/threads/${t.id}/photo`, { method: 'POST', body: fd });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok) { showGlobalAlert(d.detail || "Couldn't add that photo."); return; }
+                        showGlobalAlert(d.read ? 'Photo added and read.' : 'Photo added (not read).');
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't add that photo."); }
+                    finally { ev.target.value = ''; }
+                },
                 async submitNote(t) {
                     const text = (this.noteText[t.id] || '').trim();
                     if (!text) return;
