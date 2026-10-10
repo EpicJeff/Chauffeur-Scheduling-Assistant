@@ -173,10 +173,54 @@ def scenario_caps_and_availability():
     check(r['outcome'] == 'refused' and 'paid' in r['text'].lower(), "no paid key: refused before any turn")
 
 
+def scenario_pool_cu_bills_the_paid_key_only():
+    from services import model_pools
+    check(model_pools.DEFAULT_POOLS.get('cu') == ['gemini-3.8-flash'] and model_pools.TIER_CHAINS.get('browse') == ['cu'], "pool cu, tier browse")
+    check(model_pools.api_key_for_pool('cu', {'llm_gemini_api_key': 'free', 'llm_gemini_paid_api_key': 'paid'}) == 'paid', "cu bills the paid key")
+    check(model_pools.api_key_for_pool('cu', {'llm_gemini_api_key': 'free'}) == '', "no paid key: nothing, never the free key")
+    src = open('services/browse.py', encoding='utf-8').read()
+    check('llm_gemini_paid_api_key' not in src and 'api_key_for_pool' in src, "browse.py reads the key through the resolver only")
+
+
+def scenario_live_step_builds_the_computer_use_call():
+    """The live step converts the neutral contents and sends the computer-use
+    tool; the client is faked so no network is touched."""
+    captured = {}
+
+    class FakeModels:
+        def generate_content(self, model, contents, config):
+            captured['model'] = model
+            captured['contents'] = contents
+            captured['config'] = config
+            from google.genai import types
+            fc = types.FunctionCall(name='click_at', args={'x': 10, 'y': 20, 'safety_decision': {'decision': 'require_confirmation', 'explanation': 'cookie'}})
+            cand = types.Candidate(content=types.Content(role='model', parts=[types.Part(function_call=fc)]))
+            return types.GenerateContentResponse(candidates=[cand], usage_metadata=types.GenerateContentResponseUsageMetadata(prompt_token_count=5, candidates_token_count=2))
+
+    class FakeClient:
+        models = FakeModels()
+    orig = browse._client
+    browse._client = lambda key: FakeClient()
+    try:
+        step = browse._model_step_live([{'role': 'user', 'parts': [{'text': 'hi'}, {'image': b'\x89PNG'}]}], {'llm_gemini_paid_api_key': 'paid'})
+        check(step['calls'] == [{'name': 'click_at', 'args': {'x': 10, 'y': 20, 'safety_decision': {'decision': 'require_confirmation', 'explanation': 'cookie'}}}], f"calls parsed: {step['calls']}")
+        check(step['tokens'] == (5, 2) and step['content'] is not None, "usage and the model content to append")
+        check(captured['model'] == browse.MODEL, "the cu model")
+        tool = captured['config'].tools[0]
+        check(getattr(tool, 'computer_use', None) is not None, "the computer-use tool is on the call")
+        browse._model_step_live([{'role': 'user', 'function_responses': [('click_at', {'url': 'u', 'safety_acknowledgement': 'true'}, b'\x89PNG')]}], {'llm_gemini_paid_api_key': 'paid'})
+        parts = captured['contents'][-1].parts
+        check(parts and parts[0].function_response and parts[0].function_response.response.get('safety_acknowledgement') == 'true'
+              and parts[0].function_response.parts, "a function response carries the url, the acknowledgement and the screenshot")
+    finally:
+        browse._client = orig
+
+
 SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
-             scenario_captcha_consent_on_is_capped, scenario_caps_and_availability]
+             scenario_captcha_consent_on_is_capped, scenario_caps_and_availability,
+             scenario_pool_cu_bills_the_paid_key_only, scenario_live_step_builds_the_computer_use_call]
 
 if __name__ == "__main__":
     import traceback

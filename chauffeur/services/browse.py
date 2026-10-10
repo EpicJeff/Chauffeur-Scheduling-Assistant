@@ -107,9 +107,61 @@ def _domain(url: str) -> str:
     return '.'.join(parts[-2:]) if len(parts) >= 2 and not host.replace('.', '').isdigit() else host
 
 
+MODEL = 'gemini-3.8-flash'
+
+
+def _client(api_key: str):
+    """Test seam: tests hand back a fake client."""
+    from google import genai
+    return genai.Client(api_key=api_key)
+
+
+def _to_types(contents: list):
+    from google.genai import types
+    out = []
+    for c in contents:
+        if hasattr(c, 'parts') and not isinstance(c, dict):
+            out.append(c)
+            continue
+        if 'parts' in c:
+            parts = []
+            for p in c['parts']:
+                if 'text' in p:
+                    parts.append(types.Part(text=p['text']))
+                elif 'image' in p:
+                    parts.append(types.Part.from_bytes(data=p['image'], mime_type='image/png'))
+            out.append(types.Content(role=c.get('role', 'user'), parts=parts))
+        elif 'function_responses' in c:
+            parts = [types.Part(function_response=types.FunctionResponse(
+                name=n, response=r,
+                parts=[types.FunctionResponsePart(inline_data=types.FunctionResponseBlob(mime_type='image/png', data=shot))]))
+                for n, r, shot in c['function_responses']]
+            out.append(types.Content(role='user', parts=parts))
+    return out
+
+
 def _model_step_live(contents, settings):
-    """Task 3 fills this in. Until then the runner refuses without a model."""
-    raise RuntimeError('no model')
+    """One computer-use turn on gemini-3.8-flash (pool cu, paid key)."""
+    from google.genai import types
+    from services import model_pools
+    key = model_pools.api_key_for_pool('cu', settings)
+    client = _client(key)
+    config = types.GenerateContentConfig(
+        temperature=1, top_p=0.95, max_output_tokens=8192,
+        tools=[types.Tool(computer_use=types.ComputerUse(environment=types.Environment.ENVIRONMENT_BROWSER))],
+        thinking_config=types.ThinkingConfig(include_thoughts=True))
+    typed = _to_types(contents)
+    resp = client.models.generate_content(model=MODEL, contents=typed, config=config)
+    um = resp.usage_metadata
+    tokens = (int(getattr(um, 'prompt_token_count', 0) or 0),
+              int(getattr(um, 'candidates_token_count', 0) or 0) + int(getattr(um, 'thoughts_token_count', 0) or 0)) if um else (0, 0)
+    cand = resp.candidates[0] if resp.candidates else None
+    parts = (cand.content.parts if cand and cand.content else None) or []
+    calls = [{'name': p.function_call.name, 'args': dict(p.function_call.args or {})} for p in parts if p.function_call]
+    text = ' '.join(p.text for p in parts if p.text and not getattr(p, 'thought', False))
+    # The runner holds the neutral list; the model's Content is appended as-is
+    # (it is already a types.Content), and _to_types passes it through.
+    return {'calls': calls, 'text': text, 'content': cand.content if cand else None, 'tokens': tokens}
 
 
 _model_step = _model_step_live

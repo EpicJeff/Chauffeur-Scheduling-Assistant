@@ -67,6 +67,9 @@ DEFAULT_POOLS = {
     # gemini-2.5-pro is closed to new users; the live pro id is the -preview
     # one (device-verified error text, 2026-09-06). Served via v1beta only.
     'pro': ["gemini-3.1-pro-preview"],
+    # Browse missions (services/browse.py): Gemini Computer Use on flash,
+    # billed on the paid key like the pro pool. One model; no free fallback.
+    'cu': ["gemini-3.8-flash"],
 }
 
 TIER_CHAINS = {
@@ -78,6 +81,7 @@ TIER_CHAINS = {
     # excluded; flash first because flyers/screenshots are the hard case and
     # volume is family-scale (dozens/week vs the ~120/day flash quota).
     'vision': ['flash', 'lite'],
+    'browse': ['cu'],
     'house_photo': ['flash'],  # architecture must not silently fall back to Lite
     # Missions (services/missions.py). 'mission' is the ONLY tier that touches
     # the pro pool and it never falls back to a free pool — a mission pauses
