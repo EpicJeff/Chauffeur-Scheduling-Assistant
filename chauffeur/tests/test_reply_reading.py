@@ -290,6 +290,52 @@ def scenario_sweep_flushes_pending_dms_inside_the_window():
 SCENARIOS += [scenario_one_dm_to_the_owner_inside_the_window, scenario_dm_outside_quiet_hours_is_deferred_once,
               scenario_no_reading_still_tells_the_owner_to_read_it, scenario_sweep_flushes_pending_dms_inside_the_window]
 
+
+def _next(tid):
+    return situations.view('thread', tid, MOM)['next_step']
+
+
+def scenario_next_step_follows_the_reading():
+    _reset()
+    tid = _thread()
+    res = threads.send_drafted(tid, 'S', 'B', 'ops@pestco.example', who='mom')
+    replies._pool_call = _fake_pool({'answer': 'yes', 'summary': 'Friday 9am works'})
+    _reply(tid, mid='<1>'); replies.read(tid, '<1>')
+    n = _next(tid)
+    check(n['verb'] == 'advance' and n['id'] == 'advance:confirm' and n['label'] == 'Confirm with Pest Co: Friday 9am works'
+          and n['payload'].get('next_action') == 'Confirm with Pest Co: Friday 9am works', f"yes → confirm: {n}")
+    opts = situations.view('thread', tid, MOM)['options']
+    un = [o for o in opts if o['verb'] == 'unread']
+    check(len(un) == 1 and un[0]['id'] == f"unread:{res['ask_id']}" and un[0]['label'] == 'Argyle got it wrong', f"the revert is on the card: {opts}")
+    out = situations.act('thread', tid, 'unread', option_id=un[0]['id'], actor=MOM)
+    check(out['status'] == 'success' and storage.get_ask(res['ask_id'])['state'] == 'sent', f"unread through act: {out}")
+    n = _next(tid)
+    check(n['id'] == 'advance:read' and n['label'].startswith('Read their reply'), f"after unread: read it yourself: {n}")
+    check(not [o for o in situations.view('thread', tid, MOM)['options'] if o['verb'] == 'unread'], "nothing left to revert")
+    replies._pool_call = _fake_pool({'answer': 'question', 'summary': 'which Friday?'})
+    threads.send_drafted(tid, 'S2', 'B', 'ops@pestco.example', who='mom')
+    _reply(tid, mid='<2>'); replies.read(tid, '<2>')
+    n = _next(tid)
+    check(n['verb'] == 'draft' and n['id'] == 'draft:reply' and n['label'] == 'Reply: which Friday?'
+          and n['payload'].get('text') == 'which Friday?', f"question → reply: {n}")
+    replies._pool_call = _fake_pool({'answer': 'no', 'summary': 'cannot do Friday'})
+    threads.send_drafted(tid, 'S3', 'B', 'ops@pestco.example', who='mom')
+    _reply(tid, mid='<3>'); replies.read(tid, '<3>')
+    n = _next(tid)
+    check(n['id'] not in ('advance:confirm', 'draft:reply', 'advance:read'), f"no → the ordinary options: {n}")
+    storage.get_settings = lambda: {'thread_stall_days': 7}
+    threads.send_drafted(tid, 'S4', 'B', 'ops@pestco.example', who='mom')
+    _reply(tid, mid='<4>', text='We can do Friday at 9.\nThanks, Pest Co')
+    replies.read(tid, '<4>')
+    n = _next(tid)
+    check(n['id'] == 'advance:read' and n['label'] == 'Read their reply: We can do Friday at 9.', f"no reading → the first line: {n}")
+    threads.note(tid, 'called them', who='mom')
+    n = _next(tid)
+    check(n['id'] != 'advance:read', f"once the person acts the ordinary options return: {n}")
+
+
+SCENARIOS += [scenario_next_step_follows_the_reading]
+
 if __name__ == "__main__":
     import traceback
     failed = 0

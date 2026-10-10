@@ -176,9 +176,40 @@ def _options_insight(row: dict) -> list:
     return out + _tail('insight', row)
 
 
+def _reply_option(row: dict):
+    """The highlighted move after a counterparty's reply (spec 2026-10-10
+    §2), while that reply is the newest real thing on the thread. Deterministic:
+    the reading, when there is one, else the mail's first line."""
+    history = [h for h in (row.get('history') or []) if h.get('kind') != 'drafted']
+    if not history or history[-1].get('kind') != 'received':
+        return None
+    h = history[-1]
+    who = row.get('counterparty_name') or 'them'
+    reading = h.get('reading') or {}
+    answer = reading.get('answer') if not reading.get('disputed') else None
+    summary = (reading.get('summary') or '').strip()
+    if answer == 'yes':
+        label = f"Confirm with {who}: {summary}" if summary else f"Confirm with {who}"
+        return _opt('advance', label, {'next_action': label}, 'confirm')
+    if answer == 'no':
+        return None
+    if answer == 'question':
+        return _opt('draft', f"Reply: {summary}" if summary else 'Reply to them', {'text': summary}, 'reply')
+    # The received entry reads "Received from {addr}: {subject}\n\n{body}":
+    # the mail's first line is the first non-empty line after the blank one.
+    body = (h.get('text') or '')
+    first = next((ln.strip() for ln in body.split('\n')[2:] if ln.strip()), '') if '\n\n' in body else ''
+    hint = summary or first
+    label = f"Read their reply: {hint}" if hint else 'Read their reply'
+    return _opt('advance', label, {'next_action': label}, 'read')
+
+
 def _options_thread(row: dict) -> list:
     from services import threads as _th
     out = []
+    lead = _reply_option(row)
+    if lead:
+        out.append(lead)
     stalled = _th.is_stalled(row)
     if stalled == 'overdue' or not row.get('next_action'):
         out.append(_opt('advance', 'Set the next step', {}))
@@ -186,6 +217,10 @@ def _options_thread(row: dict) -> list:
     if stalled != 'overdue' and row.get('next_action'):
         out.append(_opt('advance', 'Change the next step', {}))
     out.append(_opt('research', 'Look something up', {}))
+    from services import asks as _asks
+    for a in _asks.asks_for('thread', row.get('id'), row):
+        if a.get('answered_by') == 'argyle' and a.get('state') in ('yes', 'no'):
+            out.append(_opt('unread', 'Argyle got it wrong', {'ask_id': a['id']}, a['id']))
     out.append(_opt('close', 'Done with it', {'state': 'done'}, 'done'))
     return out + _tail('thread', row)
 
@@ -604,6 +639,9 @@ def _run(kind, sid, verb, p, actor, row) -> dict:
             ok = storage.update_mission(sid, {'status': 'dropped' if state == 'dropped' else 'done',
                                               'finished_at': time.time()})
         return {'status': 'success' if ok else 'error', 'message': 'Closed.'}
+    if verb == 'unread':
+        from services import asks as _asks
+        return _asks.unread(p.get('ask_id'), actor)
     if verb == 'ask':
         # The ask flow has its own endpoint/tool (asks.create); the option only
         # carries what the ask would be. Reaching here means a client posted

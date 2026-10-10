@@ -40,13 +40,20 @@ window.Situations = (function () {
     return a.state || '';
   }
 
+  // A reading-answered ask says so: a person can always tell a tap from
+  // what Argyle read, and the quiet "Argyle got it wrong" option undoes it.
+  function readLine(a) {
+    const base = a.state === 'yes' ? 'Argyle read their reply as yes' : 'Argyle read their reply as no';
+    return a.read_summary ? `${base} — "${a.read_summary}"` : base;
+  }
+
   function askLine(a, ctx) {
     const report = ctx.canWrite && !ctx.readOnly && (a.state === 'sent' || a.state === 'drafted')
       ? ` <button class="${QUIET}" data-ask-answer="yes" data-ask-id="${a.id}">said yes</button>`
         + ` <button class="${QUIET}" data-ask-answer="no" data-ask-id="${a.id}">said no</button>`
         + (a.state === 'drafted' ? ` <button class="${QUIET}" data-ask-sent="${a.id}">Sent it</button>` : '')
       : '';
-    return `<div class="text-xs text-gray-400 mt-1" data-ask-line="${a.id}">Asked ${esc(a.to_name)} by ${esc(CHANNEL_LABELS[a.channel] || a.channel)} ${esc(when(a.sent_at || a.asked_at))}: ${esc(askState(a))}${report}</div>`;
+    return `<div class="text-xs text-gray-400 mt-1" data-ask-line="${a.id}">Asked ${esc(a.to_name)} by ${esc(CHANNEL_LABELS[a.channel] || a.channel)} ${esc(when(a.sent_at || a.asked_at))}: ${esc(a.answered_by === 'argyle' ? readLine(a) : askState(a))}${report}</div>`;
   }
 
   function dueLabel(due) {
@@ -106,7 +113,9 @@ window.Situations = (function () {
     }
     if (['advance', 'answer', 'draft', 'research'].includes(option.verb)) {
       const ask = { advance: 'What is the next step?', answer: 'Your answer', draft: 'What should the message say?', research: 'What should I look up?' }[option.verb];
-      const text = window.promptInput ? await promptInput(ask, '') : null;
+      // A reading-built option (confirm, reply) arrives pre-filled; the
+      // person edits or accepts instead of retyping.
+      const text = window.promptInput ? await promptInput(ask, option.payload.next_action || option.payload.text || '') : null;
       if (!text) return;
       if (option.verb === 'advance') {
         payload.next_action = text;
