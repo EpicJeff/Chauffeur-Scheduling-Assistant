@@ -1622,6 +1622,42 @@ def answer_ask(ask_id: str = None, answer: str = None, acting_member: dict = Non
     return {**res, "status": "error" if res.get('status') == 'refused' else res.get('status')}
 
 
+# --- The family's mailbox (browse missions §3): read-only, parents and adults. --
+
+def _mail_reader(acting_member: dict):
+    """ALLOWLIST: a resolved parent or adult. An anonymous panel (actor None)
+    and a child, helper or guest are refused the same way."""
+    if not (acting_member or {}).get('id') or (acting_member or {}).get('role') not in ('parent', 'adult'):
+        return {"status": "error", "message": "Only a signed-in parent or adult can search the family mailbox."}
+    return None
+
+
+def search_mail(query: str, since_days: int = 365, limit: int = 5, acting_member: dict = None) -> Dict[str, Any]:
+    refusal = _mail_reader(acting_member)
+    if refusal:
+        return refusal
+    from services import mail_search as _ms
+    res = _ms.search(query or '', since_days=since_days or 365, limit=limit or 5)
+    if res.get('status') != 'success':
+        return {"status": "error", "message": res.get('message') or 'mailbox error'}
+    hits = res['hits']
+    if not hits:
+        return {"status": "success", "message": f"Nothing in the family mailbox matches '{query}'.", "hits": []}
+    lines = [f"- uid {h['uid']} · {h['date'][:10]} · {h['from']} · {h['subject']}: {h['snippet'][:160]}" for h in hits]
+    return {"status": "success", "message": "Found in the family mailbox:\n" + '\n'.join(lines), "hits": hits}
+
+
+def read_mail(uid: int, acting_member: dict = None) -> Dict[str, Any]:
+    refusal = _mail_reader(acting_member)
+    if refusal:
+        return refusal
+    from services import mail_search as _ms
+    res = _ms.read(uid)
+    if res.get('status') != 'success':
+        return {"status": "error", "message": res.get('message') or 'mailbox error'}
+    return {"status": "success", "message": f"{res['subject']} — from {res['from']} {res['date'][:10]}\n\n{res['text']}", **res}
+
+
 def _match_thread(thread_title: str):
     """Fuzzy title match against open threads, same shape as `_match_task` —
     the model knows a thread by what it's about, never by its id."""
@@ -4391,6 +4427,20 @@ def get_available_tools() -> List[Dict]:
                            "required": ["answer"]}
         },
         {
+            "name": "search_mail",
+            "description": "Search the family's own mailbox for a thing's details: an order confirmation, a model number, a warranty, a school letter ('find the email about the dishwasher', 'what did the school send about the trip?'). Parent/adult only. Returns sender, date, subject and a snippet per hit; use read_mail for the whole message.",
+            "parameters": {"type": "object",
+                           "properties": {"query": {"type": "string", "description": "A few words to match in sender, subject or body."},
+                                          "since_days": {"type": "integer", "description": "How far back, default 365."},
+                                          "limit": {"type": "integer", "description": "How many, default 5, max 10."}},
+                           "required": ["query"]}
+        },
+        {
+            "name": "read_mail",
+            "description": "Read one message from the family mailbox by the uid search_mail returned. Parent/adult only.",
+            "parameters": {"type": "object", "properties": {"uid": {"type": "integer"}}, "required": ["uid"]}
+        },
+        {
             "name": "list_threads",
             "description": "Lists open loops with somebody outside the family — a vendor callback, a permit still pending ('any open threads?', 'what's outstanding with the pest guy?', 'what's Ben carrying?'). Each one shows who owns it, what's next, and whether it's stalled.",
             "parameters": {
@@ -5903,6 +5953,16 @@ class AnswerAskTool(BaseModel):
     ask_id: Optional[str] = None
     answer: str = Field(..., description="yes|no")
 
+class SearchMailTool(BaseModel):
+    """Search the family's own mailbox for a thing's details; returns sender, date, subject, snippet per hit."""
+    query: str = Field(..., description="A few words to match in sender, subject or body.")
+    since_days: Optional[int] = Field(365, description="How far back.")
+    limit: Optional[int] = Field(5, description="How many, max 10.")
+
+class ReadMailTool(BaseModel):
+    """Read one message from the family mailbox by uid."""
+    uid: int
+
 class ListProgramsTool(BaseModel):
     """
     Lists ambitions with a real plan attached — a curated curriculum, reserved practice time, a session log. Each shows who it's for, its state, the phase ahead, and sessions logged.
@@ -6385,6 +6445,8 @@ TOOL_SCHEMAS = {
     "start_ask": StartAskTool.model_json_schema(),
     "mark_ask_sent": MarkAskSentTool.model_json_schema(),
     "answer_ask": AnswerAskTool.model_json_schema(),
+    "search_mail": SearchMailTool.model_json_schema(),
+    "read_mail": ReadMailTool.model_json_schema(),
     "list_programs": ListProgramsTool.model_json_schema(),
     "claim_chore": ClaimChoreTool.model_json_schema(),
     "negotiate_day": NegotiateDayTool.model_json_schema(),
@@ -7577,6 +7639,14 @@ def handle_mark_ask_sent(args: dict) -> dict:
 def handle_answer_ask(args: dict) -> dict:
     return answer_ask(args.get('ask_id') or '', args.get('answer') or '', acting_member=_registry_parent())
 
+def handle_search_mail(args: dict) -> dict:
+    # Registry context is the trusted admin/mission loop: the parent of record reads.
+    return search_mail(args.get('query') or '', since_days=args.get('since_days') or 365,
+                       limit=args.get('limit') or 5, acting_member=_registry_parent())
+
+def handle_read_mail(args: dict) -> dict:
+    return read_mail(int(args.get('uid') or 0), acting_member=_registry_parent())
+
 def handle_list_programs(args: dict) -> dict:
     # The v1 loop resolves no member and can produce no actor -- unlike
     # list_insights, list_programs REQUIRES one (a program is somebody's
@@ -7930,6 +8000,8 @@ TOOL_HANDLERS = {
     "start_ask": handle_start_ask,
     "mark_ask_sent": handle_mark_ask_sent,
     "answer_ask": handle_answer_ask,
+    "search_mail": handle_search_mail,
+    "read_mail": handle_read_mail,
     "list_programs": handle_list_programs,
     "claim_chore": handle_claim_chore,
     "negotiate_day": handle_negotiate_day,

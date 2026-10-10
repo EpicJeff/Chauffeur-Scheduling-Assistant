@@ -826,7 +826,7 @@ sending or claiming, and never pass from_member/member_name for them.
                                                     member_role=role)
                     if res.get("message"): agent_message = res["message"]
                 elif func_name in ("list_situations", "next_situation", "explain_situation", "act_on_situation",
-                                   "start_ask", "mark_ask_sent", "answer_ask"):
+                                   "start_ask", "mark_ask_sent", "answer_ask", "search_mail", "read_mail"):
                     from services import agent_tools_v2 as _atv2, situations as _sit
                     # Same actor resolution as the thread tools below: resolved
                     # HERE at dispatch, never taken from the model. A caller with

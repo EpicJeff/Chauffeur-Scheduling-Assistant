@@ -111,8 +111,39 @@ def scenario_limit_is_capped():
     check(len(res['hits']) == mail_search.MAX_LIMIT, f"never more than {mail_search.MAX_LIMIT}: {len(res['hits'])}")
 
 
+from services import agent_tools_v2 as tools, missions  # noqa: E402
+
+
+def scenario_tools_gate_and_read_through():
+    now = datetime.datetime.now(datetime.timezone.utc)
+    _reset({3: _raw('orders@cafeappliances.com', 'Your Cafe order', 'Model CDT805P2N3S1', now)})
+    res = tools.search_mail('cafe', acting_member=MOM)
+    check(res['status'] == 'success' and 'CDT805P2N3S1' in res['message'] and res['hits'], f"a parent searches: {res}")
+    res = tools.search_mail('cafe', acting_member=KID)
+    check(res['status'] == 'error' and 'parent or adult' in res['message'], "a child is refused")
+    res = tools.search_mail('cafe', acting_member=None)
+    check(res['status'] == 'error', "no actor is refused (an anonymous panel)")
+    res = tools.read_mail(3, acting_member=MOM)
+    check(res['status'] == 'success' and 'CDT805P2N3S1' in res['message'], f"read through: {res}")
+
+
+def scenario_registry_and_missions_know_the_tools():
+    for name in ('search_mail', 'read_mail'):
+        check(name in tools.TOOL_HANDLERS and name in tools.TOOL_SCHEMAS, f"{name} in the registry")
+        check(name in {t['name'] for t in tools.get_available_tools()}, f"{name} offered to the model")
+        check(name in missions.READ_TOOLS, f"{name} is a mission READ tool")
+    src = open('services/agent_router.py', encoding='utf-8').read()
+    check('"search_mail"' in src and '"read_mail"' in src, "the router dispatches both")
+    now = datetime.datetime.now(datetime.timezone.utc)
+    _reset({3: _raw('a@b.c', 'Hit', 'word', now)})
+    storage.add_member({'id': 'mom', 'name': 'Mom', 'role': 'parent'})
+    out = tools.execute_tool('search_mail', {'query': 'word'})
+    check(out.get('status') == 'success' and out.get('hits'), f"the registry executes it for a mission: {out}")
+
+
 SCENARIOS = [scenario_search_returns_snippets_newest_first_and_moves_no_cursor, scenario_read_returns_the_body_capped,
-             scenario_no_mailbox_is_an_honest_answer, scenario_query_is_quoted_for_imap, scenario_limit_is_capped]
+             scenario_no_mailbox_is_an_honest_answer, scenario_query_is_quoted_for_imap, scenario_limit_is_capped,
+             scenario_tools_gate_and_read_through, scenario_registry_and_missions_know_the_tools]
 
 if __name__ == "__main__":
     import traceback

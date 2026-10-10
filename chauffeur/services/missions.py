@@ -40,6 +40,7 @@ READ_TOOLS = frozenset({
     'get_tonights_plate', 'get_meal_rules', 'get_occasion',
     'get_occasion_insights', 'get_occasion_gaps', 'get_run_sheet',
     'get_prep_ahead', 'search_places', 'suggest_gift_ideas',
+    'search_mail', 'read_mail',
 })
 
 # Never offered, not even propose-wrapped. DMs are private space (mind law).
