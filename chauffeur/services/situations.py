@@ -551,8 +551,10 @@ def act(kind: str, sid: str, verb: str, option_id: str = None, payload: dict = N
     p = dict(opt['payload'])
     free = payload or {}
     if verb in ('answer', 'advance', 'draft', 'research'):
+        # A blank free value never overwrites an option's pre-filled one (a
+        # reading-built "Confirm with …" arrives with its next_action set).
         p.update({k: v for k, v in free.items()
-                  if k in ('text', 'next_action', 'next_action_at', 'note')})
+                  if k in ('text', 'next_action', 'next_action_at', 'note') and v not in (None, '')})
     if verb == 'snooze' and isinstance(free.get('days'), int):
         p['days'] = max(1, min(60, free['days']))
 

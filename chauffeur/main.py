@@ -17622,11 +17622,23 @@ class ChatMessagePayload(BaseModel):
     conversation_id: Optional[str] = None
 
 @app.post("/api/chat")
-def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks):
+def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks, request: Request = None):
     from services.agent_router import process_agent_request
     from services.llm import auto_name_conversation
     import time
-    
+
+    # The person behind the request, when the caller carries one (the PWA's
+    # Argyle bar sends its member token). The admin widget and a wall carry
+    # none and stay identity-less; the router decides what that means.
+    acting_member = None
+    try:
+        acting_id = _acting_id(request, None) if request is not None else None
+        acting_member = storage.get_member(acting_id) if acting_id else None
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"chat: could not resolve the acting member: {e}")
+
     try:
         is_first = False
         if payload.conversation_id:
@@ -17648,6 +17660,7 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks):
 
         res = process_agent_request(payload.message, context=payload.context, history=conv_history,
                                     source=payload.source or "admin", driver_id=payload.driver_id,
+                                    acting_member=acting_member,
                                     focus_key=f"conv:{payload.conversation_id}" if payload.conversation_id else None)
         reply = res.get("message", "I did not understand that.")
         target_id = res.get("target_element_id")

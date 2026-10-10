@@ -57,6 +57,21 @@ def main():
             # Every entry carries the span; only the reply's is shown.
             tl = ' '.join(page.locator('#threads details[open] .thread-reading:visible').all_inner_texts())
             check('yes' in tl and 'Friday 9am works' in tl, f"the timeline shows the reading: {tl}")
+            # The card's own act() pre-fills the prompt's INPUT with the
+            # reading-built step (the page intercepts advance into its form,
+            # so drive the builder directly with a recording promptInput).
+            prefilled = page.evaluate("""async () => {
+                const sits = (await (await fetch('api/situations?kinds=thread')).json()).situations;
+                const s = sits.find(x => x.title === 'Pest control');
+                const opt = s.options.find(o => o.id === 'advance:confirm');
+                const seen = [];
+                const orig = window.promptInput;
+                window.promptInput = async (title, message, opts) => { seen.push({ title, message, value: (opts || {}).value }); return null; };
+                try { await Situations.act(s, opt, { apiBase: '' }); } finally { window.promptInput = orig; }
+                return seen;
+            }""")
+            check(prefilled and prefilled[0]['value'] == 'Confirm with Pest Co: Friday 9am works' and not prefilled[0]['message'],
+                  f"the dialog's input is pre-filled, not its message: {prefilled}")
             card.locator('button:has-text("Argyle got it wrong")').first.click()
             page.wait_for_timeout(1500)
             card = page.locator('#threads .situation-card:has-text("Pest control")').first

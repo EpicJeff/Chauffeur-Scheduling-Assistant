@@ -1399,9 +1399,19 @@ def _situation_lines(rows: list) -> str:
 NO_FOCUS = "Which one? Ask me what needs your attention first, or name it."
 
 
-def _resolve_situation(ref: str, kind: str = None, viewer: dict = None, focus_key: str = None):
+NOT_ALOUD = "That one is not for a shared speaker; open it on your phone."
+
+
+def _sensitive(kind: str, row: dict) -> bool:
+    return kind == 'insight' and (row or {}).get('sensitivity') == 'sensitive'
+
+
+def _resolve_situation(ref: str, kind: str = None, viewer: dict = None, focus_key: str = None,
+                       spoken: bool = False):
     """An id, a title fragment, or - with no ref - the conversation's focus.
-    Naming one makes it the focus. Never guesses between candidates."""
+    Naming one makes it the focus. Never guesses between candidates. `spoken`
+    is a room: a sensitive insight is never matched, listed or made the focus
+    there, by id or by fragment."""
     from services import situations as _sit, triage as _tri
     ref = (ref or '').strip()
     if not ref:
@@ -1411,6 +1421,8 @@ def _resolve_situation(ref: str, kind: str = None, viewer: dict = None, focus_ke
         row = _sit.load(f['kind'], f['id'])
         if not row or not _sit.can_see(f['kind'], row, viewer):
             return None, NO_FOCUS
+        if spoken and _sensitive(f['kind'], row):
+            return None, NOT_ALOUD
         return (f['kind'], f['id']), None
     found = None
     for k in ([kind] if kind in _sit.KINDS else _sit.KINDS):
@@ -1418,10 +1430,12 @@ def _resolve_situation(ref: str, kind: str = None, viewer: dict = None, focus_ke
         if row:
             if not _sit.can_see(k, row, viewer):
                 return None, "That one is not yours to see."
+            if spoken and _sensitive(k, row):
+                return None, NOT_ALOUD
             found = (k, ref)
             break
     if not found:
-        rows = _sit.list_situations(viewer, kinds=(kind,) if kind in _sit.KINDS else None)
+        rows = _sit.list_situations(viewer, kinds=(kind,) if kind in _sit.KINDS else None, spoken=spoken)
         hits = [s for s in rows if ref.lower() in (s.get('title') or '').lower()]
         if len(hits) == 1:
             found = (hits[0]['kind'], hits[0]['id'])
@@ -1452,7 +1466,10 @@ def next_situation(skip_current: bool = False, acting_member: dict = None, focus
     focus. Terminal: the message IS the spoken answer. Sensitive insights are
     never spoken (triage.next_for lists with spoken=True)."""
     from services import triage as _tri
-    had = _tri.get_focus(focus_key) is not None
+    # The raw entry, not get_focus: a focus whose situation was handled
+    # between turns is dead, and get_focus would drop it with the cursor
+    # "next" needs to continue from.
+    had = _tri.has_entry(focus_key)
     s = _tri.next_for(acting_member, focus_key, skip_current=bool(skip_current))
     if s is None:
         msg = ("That's everything. Nothing else needs anyone right now." if (skip_current and had)
@@ -1467,9 +1484,9 @@ def next_situation(skip_current: bool = False, acting_member: dict = None, focus
 
 
 def explain_situation(ref: str = '', kind: str = None, acting_member: dict = None,
-                      focus_key: str = None) -> Dict[str, Any]:
+                      focus_key: str = None, spoken: bool = False) -> Dict[str, Any]:
     from services import situations as _sit
-    found, why = _resolve_situation(ref, kind, acting_member, focus_key)
+    found, why = _resolve_situation(ref, kind, acting_member, focus_key, spoken)
     if not found:
         return {"status": "error", "message": why}
     s = _sit.view(found[0], found[1], acting_member)
@@ -1481,27 +1498,36 @@ def explain_situation(ref: str = '', kind: str = None, acting_member: dict = Non
 
 
 def act_on_situation(ref: str = '', verb: str = '', option_id: str = None, kind: str = None, text: str = None,
-                     next_action_at: str = None, acting_member: dict = None, focus_key: str = None) -> Dict[str, Any]:
+                     next_action_at: str = None, acting_member: dict = None, focus_key: str = None,
+                     spoken: bool = False) -> Dict[str, Any]:
     from services import situations as _sit
     if not acting_member or acting_member.get('role') not in ('parent', 'adult'):
         return {"status": "error", "message": "Only a parent or adult can do that."}
-    found, why = _resolve_situation(ref, kind, acting_member, focus_key)
+    found, why = _resolve_situation(ref, kind, acting_member, focus_key, spoken)
     if not found:
         return {"status": "error", "message": why}
     k, sid = found
     if not option_id:
-        opts = [o for o in _sit.options_for(k, _sit.load(k, sid)) if o['verb'] == verb]
+        all_opts = _sit.options_for(k, _sit.load(k, sid))
+        opts = [o for o in all_opts if o['verb'] == verb]
+        # "Handle it": the highlighted next step wins when it carries this verb.
+        if len(opts) > 1 and all_opts and all_opts[0]['verb'] == verb:
+            opts = [all_opts[0]]
         if len(opts) != 1:
             return {"status": "error",
                     "message": ("Say which option: " + '; '.join(f"{o['label']} ({o['id']})" for o in opts))
                     if opts else f"'{verb}' is not on the table for that one."}
         option_id = opts[0]['id']
+    # Only what the person SAID goes in; an option built from a reading
+    # arrives pre-filled, and an empty text must not blank it.
     payload = {}
-    if verb in ('answer', 'draft', 'research'):
-        payload['text'] = text or ''
+    if verb in ('answer', 'draft', 'research') and (text or '').strip():
+        payload['text'] = text.strip()
     if verb == 'advance':
-        payload['next_action'] = text or ''
-        payload['next_action_at'] = next_action_at
+        if (text or '').strip():
+            payload['next_action'] = text.strip()
+        if next_action_at:
+            payload['next_action_at'] = next_action_at
     res = _sit.act(k, sid, verb, option_id=option_id, payload=payload, actor=acting_member)
     if res.get('status') == 'refused':
         return {"status": "error", "message": res.get('message')}
@@ -1509,11 +1535,11 @@ def act_on_situation(ref: str = '', verb: str = '', option_id: str = None, kind:
 
 
 def start_ask(ref: str = '', to_name: str = '', what: str = '', channel: str = '', kind: str = None,
-              acting_member: dict = None, focus_key: str = None) -> Dict[str, Any]:
+              acting_member: dict = None, focus_key: str = None, spoken: bool = False) -> Dict[str, Any]:
     from services import situations as _sit, asks as _asks
     if not acting_member or acting_member.get('role') not in ('parent', 'adult'):
         return {"status": "error", "message": "Only a parent or adult can ask."}
-    found, why = _resolve_situation(ref, kind, acting_member, focus_key)
+    found, why = _resolve_situation(ref, kind, acting_member, focus_key, spoken)
     if not found:
         return {"status": "error", "message": why}
     k, sid = found

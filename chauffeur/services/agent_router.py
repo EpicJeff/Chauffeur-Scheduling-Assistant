@@ -220,8 +220,12 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
         try:
             from services import triage as _tri, situations as _sit
             _f = _tri.get_focus(focus_key)
-            if _f:
-                _s = _sit.view(_f['kind'], _f['id'], acting_member or _sit.parent_of_record())
+            # A group channel shares one focus: only a speaker who may SEE the
+            # situation is told its title (a child is not told a parent's).
+            _row = _sit.load(_f['kind'], _f['id']) if _f else None
+            _viewer = acting_member or _sit.parent_of_record()
+            if _f and _row and _sit.can_see(_f['kind'], _row, _viewer):
+                _s = _sit.view(_f['kind'], _f['id'], _viewer)
                 _nxt = ((_s or {}).get('next_step') or {}).get('label') or '-'
                 system_prompt += (f"\nFOCUS: {_f['kind']} \"{_f.get('title')}\" — next step: {_nxt}. "
                                   "\"Handle it\", \"do that\", \"ask X by Y\", \"she said yes\", \"sent it\", "
@@ -829,13 +833,15 @@ sending or claiming, and never pass from_member/member_name for them.
                     # no identity (HA voice, the admin widget) acts as the parent
                     # of record — the rule the admin pages already use — and is
                     # treated as a ROOM: nothing sensitive is read out. Never on
-                    # the propose-only rail, never in driver mode.
+                    # the propose-only rail, never in driver mode, and never for
+                    # the PWA: a phone always carries a person, so one that cannot
+                    # name its member is refused rather than promoted.
                     actor = acting_member
                     substituted = False
                     if actor is None and driver:
                         from services import storage as _st
                         actor = _st.get_member_by_driver_id(driver_id)
-                    elif actor is None and not propose_only:
+                    elif actor is None and not propose_only and source != 'pwa':
                         actor = _sit.parent_of_record()
                         substituted = actor is not None
                     fn = getattr(_atv2, func_name)

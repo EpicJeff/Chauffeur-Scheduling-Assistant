@@ -84,6 +84,9 @@ def _ask_clause(asks: list) -> str:
         state = a.get('state')
         words = {'drafted': 'not sent yet', 'sent': 'waiting', 'yes': 'said yes', 'no': 'said no',
                  'expired': 'no answer'}.get(state, state or '')
+        # A reading is never spoken as a tap: the ear has no card to tell them apart.
+        if a.get('answered_by') == 'argyle' and state in ('yes', 'no'):
+            words = f"Argyle read their reply as {state}"
         parts.append(f"asked {a.get('to_name')} by {a.get('channel')}, {words}")
     return '; '.join(parts)
 
@@ -144,6 +147,12 @@ def _alive(f: dict) -> bool:
     return not (situations._is_done(f['kind'], row) and not situations.needs_attention(f['kind'], row, opts))
 
 
+def has_entry(key: Optional[str]) -> bool:
+    """Whether the conversation has ANY focus entry, live or dead. A dead one
+    still tells "next" where the list was; get_focus would delete it."""
+    return bool(key) and key in _load_map()
+
+
 def get_focus(key: Optional[str]) -> Optional[dict]:
     """The conversation's current situation, or None. A focus whose
     situation is gone, settled or snoozed is dropped here, so a follow-up
@@ -169,10 +178,14 @@ def next_for(viewer: Optional[dict], key: Optional[str], skip_current: bool = Fa
         return None
     idx = 0
     if skip_current:
-        f = get_focus(key)
+        # The RAW entry, not get_focus: a focus whose situation was handled
+        # between turns is dead, but its cursor still says where the list
+        # was. The row after it slid into its place, so the cursor itself is
+        # the next one; only a row still listed moves one past itself.
+        f = _load_map().get(key) if key else None
         if f:
             pos = next((i for i, s in enumerate(ranked) if s['kind'] == f['kind'] and s['id'] == f['id']), None)
-            idx = (pos + 1) if pos is not None else int(f.get('cursor') or 0) + 1
+            idx = (pos + 1) if pos is not None else int(f.get('cursor') or 0)
     if idx >= len(ranked):
         clear_focus(key)
         return None

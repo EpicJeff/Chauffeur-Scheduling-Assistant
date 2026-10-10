@@ -358,6 +358,120 @@ def scenario_e2e_next_walks_the_list_without_repeating_a_closed_row():
 
 SCENARIOS += [scenario_e2e_voice_ask_round_trip, scenario_e2e_next_walks_the_list_without_repeating_a_closed_row]
 
+
+# --- final review fixes ------------------------------------------------------
+
+def scenario_a_pwa_turn_with_no_person_never_becomes_the_parent():
+    """A PWA always carries a person; one that cannot name its member gets no
+    substitution, so a passenger child's chat cannot act as the parent."""
+    _reset()
+    tid = threads.create('Deck permit', owner_member_id='mom', created_by='mom')
+    triage.set_focus('conv:p', 'thread', tid, 'Deck permit')
+    call = {'name': 'act_on_situation', 'arguments': {'verb': 'own'}}
+    res = _with_gemma(_fake_gemma(call), lambda: agent_router.process_agent_request('handle it', source='pwa', focus_key='conv:p'))
+    check(storage.get_thread(tid).get(situations.OWNER) is None and 'parent or adult' in res['message'],
+          f"a PWA with no member is refused, not substituted: {res}")
+    src = open('main.py', encoding='utf-8').read()
+    block = src.split('def handle_chat(')[1].split('\ndef ')[0]
+    check('acting_member=' in block and '_acting_id(request' in block,
+          "handle_chat resolves the signed-in member and hands it to the router")
+
+
+def scenario_voice_fragment_never_names_a_sensitive_insight():
+    _reset()
+    storage.add_mind_insight({'slug': 's', 'line': 'Kate seems anxious about school', 'category': 'c', 'approach': 'x',
+                              'identity': 'c:2', 'sensitivity': 'sensitive'})
+    threads.create('School supplies order', owner_member_id='mom', created_by='mom')
+    res = _with_gemma(_fake_gemma({'name': 'explain_situation', 'arguments': {'ref': 'school'}}),
+                      lambda: agent_router.process_agent_request('tell me about the school one', focus_key='voice:1'))
+    check('anxious' not in res['message'] and 'School supplies' in res['message'], f"the ambiguity list is spoken-safe: {res}")
+    res = _with_gemma(_fake_gemma({'name': 'explain_situation', 'arguments': {'ref': 'anxious'}}),
+                      lambda: agent_router.process_agent_request('the anxious one', focus_key='voice:1'))
+    check('Kate seems' not in res['message'] and 'Nothing open matches' in res['message'],
+          f"a unique fragment on a sensitive row is not named aloud (only the person's own word echoes): {res}")
+    f = triage.get_focus('voice:1')
+    check(not f or f['kind'] != 'insight', f"the sensitive row never becomes the room's focus: {f}")
+    iid = storage.get_mind_insight_by_slug('s')['id']
+    res = _with_gemma(_fake_gemma({'name': 'explain_situation', 'arguments': {'ref': iid}}),
+                      lambda: agent_router.process_agent_request('that one', focus_key='voice:1'))
+    check('anxious' not in res['message'], f"an id hit is refused aloud too: {res}")
+    res = tools.explain_situation('anxious', acting_member=MOM, focus_key='conv:phone')
+    check(res['status'] == 'success', "a parent on her own phone still may")
+
+
+def scenario_next_after_closing_the_focus_continues_from_the_cursor():
+    _reset()
+    a = threads.create('A overdue', owner_member_id='mom', next_action='x',
+                       next_action_at=(NOON - datetime.timedelta(days=1)).date().isoformat(), created_by='mom')
+    b = threads.create('B quiet', owner_member_id='mom', created_by='mom')
+    storage.update_thread(b, {'created_at': time.time() - 9 * 86400})
+    c = threads.create('C quiet too', owner_member_id='mom', created_by='mom')
+    storage.update_thread(c, {'created_at': time.time() - 10 * 86400})
+    check(tools.next_situation(acting_member=MOM, focus_key='conv:4')['situation']['id'] == a, "A first")
+    check(tools.next_situation(skip_current=True, acting_member=MOM, focus_key='conv:4')['situation']['id'] == b, "then B")
+    threads.close(b, 'done', who='mom')
+    nxt = tools.next_situation(skip_current=True, acting_member=MOM, focus_key='conv:4')['situation']
+    check(nxt and nxt['id'] == c, f"B handled, 'next' continues to C, never back to A: {nxt and nxt['title']}")
+
+
+def scenario_handle_it_accepts_the_reading_built_step():
+    _reset()
+    from services import replies, mailer
+    mailer.send = lambda to, subject, body, settings=None: {'sent': True}
+    mailer.configured = lambda *a, **k: True
+    replies._post = lambda *a, **k: {'id': 'x'}
+    tid = threads.create('Pest control', owner_member_id='mom', counterparty_name='Pest Co',
+                         counterparty_email='ops@pestco.example', created_by='mom')
+    threads.send_drafted(tid, 'S', 'B', 'ops@pestco.example', who='mom')
+    threads.match_inbound('ops@pestco.example', 'Re: S', 'Friday at 9 works.', message_id='<m1>')
+    storage.update_thread_history_entry(tid, {'message_id': '<m1>'},
+                                        {'reading': {'answer': 'yes', 'summary': 'Friday 9am works', 'ts': time.time(), 'source': 'argyle'}})
+    triage.set_focus('conv:h', 'thread', tid, 'Pest control')
+    res = tools.act_on_situation(verb='advance', acting_member=MOM, focus_key='conv:h')
+    check(res['status'] == 'success' and storage.get_thread(tid)['next_action'] == 'Confirm with Pest Co: Friday 9am works',
+          f"'handle it' with no text takes the pre-filled step: {res} / {storage.get_thread(tid)['next_action']}")
+    # A second thread whose newest entry is a question: the reply lead is a draft.
+    tid2 = threads.create('Gutters', owner_member_id='mom', counterparty_name='Gutter Co',
+                          counterparty_email='ops@gutter.example', created_by='mom')
+    threads.send_drafted(tid2, 'S', 'B', 'ops@gutter.example', who='mom')
+    threads.match_inbound('ops@gutter.example', 'Re: S', 'Which Friday did you mean?', message_id='<g1>')
+    storage.update_thread_history_entry(tid2, {'message_id': '<g1>'},
+                                        {'reading': {'answer': 'question', 'summary': 'which Friday?', 'ts': time.time(), 'source': 'argyle'}})
+    triage.set_focus('conv:h', 'thread', tid2, 'Gutters')
+    threads._pool_call = lambda tier, key, system, prompt, **kw: {'subject': 'Re', 'body': 'BODY ' + prompt}
+    res = tools.act_on_situation(verb='draft', acting_member=MOM, focus_key='conv:h')
+    check(res.get('status') == 'ok' and 'which Friday?' in res.get('body', ''), f"the reply draft carries the summary as intent: {res}")
+
+
+def scenario_spoken_clause_names_a_reading_as_argyles():
+    _reset()
+    from services import mailer, asks
+    mailer.send = lambda to, subject, body, settings=None: {'sent': True}
+    mailer.configured = lambda *a, **k: True
+    tid = threads.create('Pest control', owner_member_id='mom', counterparty_name='Pest Co',
+                         counterparty_email='ops@pestco.example', created_by='mom')
+    res = threads.send_drafted(tid, 'S', 'B', 'ops@pestco.example', who='mom')
+    asks.record_reading(res['ask_id'], 'yes', '<m1>', summary='Friday works')
+    line = triage.spoken(situations.view('thread', tid, MOM))
+    check('Argyle read their reply as yes' in line and 'said yes' not in line, f"a reading is never spoken as a tap: {line}")
+
+
+def scenario_focus_line_never_shows_a_title_the_speaker_cannot_see():
+    _reset()
+    fid = _finding('No driver: soccer', 'decide', 6, 'ev1')
+    triage.set_focus('channel:fam', 'finding', fid, 'No driver: soccer')
+    cap = {}
+    kid = {'id': 'kid', 'name': 'Kate', 'role': 'child'}
+    _with_gemma(_fake_gemma(None, cap), lambda: agent_router.process_agent_request('hi', source='family', acting_member=kid, focus_key='channel:fam'))
+    check('FOCUS:' not in cap['system'], "a child in the family channel is not told a parent's focus")
+    _with_gemma(_fake_gemma(None, cap), lambda: agent_router.process_agent_request('hi', source='family', acting_member=MOM, focus_key='channel:fam'))
+    check('FOCUS:' in cap['system'], "the parent still is")
+
+
+SCENARIOS += [scenario_a_pwa_turn_with_no_person_never_becomes_the_parent, scenario_voice_fragment_never_names_a_sensitive_insight,
+              scenario_next_after_closing_the_focus_continues_from_the_cursor, scenario_handle_it_accepts_the_reading_built_step,
+              scenario_spoken_clause_names_a_reading_as_argyles, scenario_focus_line_never_shows_a_title_the_speaker_cannot_see]
+
 if __name__ == "__main__":
     import traceback
     failed = 0

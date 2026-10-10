@@ -115,7 +115,7 @@ window.Situations = (function () {
       const ask = { advance: 'What is the next step?', answer: 'Your answer', draft: 'What should the message say?', research: 'What should I look up?' }[option.verb];
       // A reading-built option (confirm, reply) arrives pre-filled; the
       // person edits or accepts instead of retyping.
-      const text = window.promptInput ? await promptInput(ask, option.payload.next_action || option.payload.text || '') : null;
+      const text = window.promptInput ? await promptInput(ask, '', { value: option.payload.next_action || option.payload.text || '' }) : null;
       if (!text) return;
       if (option.verb === 'advance') {
         payload.next_action = text;
