@@ -100,3 +100,90 @@ def spoken(s: dict) -> str:
         clause = _ask_clause(s.get('asks') or [])
         out += f" Next: {nxt}" + (f" — {clause}" if clause else '') + '.'
     return out
+
+
+# --- focus ---------------------------------------------------------------------
+
+def _load_map() -> dict:
+    return dict(storage.get_app_state(FOCUS_KEY) or {})
+
+
+def _prune(m: dict, now: float) -> dict:
+    return {k: v for k, v in m.items() if isinstance(v, dict) and (v.get('set_at') or 0) >= now - FOCUS_TTL_S}
+
+
+def set_focus(key: Optional[str], kind: str, sid: str, title: str, cursor: int = 0) -> Optional[dict]:
+    if not key:
+        return None
+    now = time.time()
+    f = {'kind': kind, 'id': sid, 'title': title or '', 'cursor': int(cursor or 0), 'set_at': now}
+    with storage.db_lock:
+        m = _prune(_load_map(), now)
+        m[key] = f
+        storage.set_app_state(FOCUS_KEY, m)
+    return f
+
+
+def clear_focus(key: Optional[str]) -> None:
+    if not key:
+        return
+    with storage.db_lock:
+        m = _load_map()
+        if key in m:
+            del m[key]
+            storage.set_app_state(FOCUS_KEY, m)
+
+
+def _alive(f: dict) -> bool:
+    row = situations.load(f.get('kind'), f.get('id'))
+    if not row:
+        return False
+    if (row.get('snoozed_until') or 0) > time.time():
+        return False
+    opts = situations.options_for(f['kind'], row)
+    return not (situations._is_done(f['kind'], row) and not situations.needs_attention(f['kind'], row, opts))
+
+
+def get_focus(key: Optional[str]) -> Optional[dict]:
+    """The conversation's current situation, or None. A focus whose
+    situation is gone, settled or snoozed is dropped here, so a follow-up
+    can never act on a dead row."""
+    if not key:
+        return None
+    f = _load_map().get(key)
+    if not f:
+        return None
+    if (f.get('set_at') or 0) < time.time() - FOCUS_TTL_S or not _alive(f):
+        clear_focus(key)
+        return None
+    return f
+
+
+def next_for(viewer: Optional[dict], key: Optional[str], skip_current: bool = False) -> Optional[dict]:
+    """The situation to speak now. The first on the ranked list, or the one
+    after the focus when `skip_current`. Sets focus and cursor; clears the
+    focus and returns None when the list is exhausted."""
+    ranked = triage_rank(situations.list_situations(viewer, spoken=True))
+    if not ranked:
+        clear_focus(key)
+        return None
+    idx = 0
+    if skip_current:
+        f = get_focus(key)
+        if f:
+            pos = next((i for i, s in enumerate(ranked) if s['kind'] == f['kind'] and s['id'] == f['id']), None)
+            idx = (pos + 1) if pos is not None else int(f.get('cursor') or 0) + 1
+    if idx >= len(ranked):
+        clear_focus(key)
+        return None
+    s = ranked[idx]
+    set_focus(key, s['kind'], s['id'], s.get('title') or '', cursor=idx)
+    return s
+
+
+def focus_live_asks(key: Optional[str], viewer: Optional[dict]) -> list:
+    f = get_focus(key)
+    if not f:
+        return []
+    s = situations.view(f['kind'], f['id'], viewer)
+    return [a for a in (s or {}).get('asks') or [] if a.get('state') in ('drafted', 'sent')]

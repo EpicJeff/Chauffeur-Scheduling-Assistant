@@ -94,6 +94,57 @@ def scenario_spoken_list_never_holds_a_sensitive_insight():
 SCENARIOS = [scenario_rank_tiers_across_four_kinds, scenario_spoken_sentence_per_kind,
              scenario_spoken_list_never_holds_a_sensitive_insight]
 
+
+def scenario_focus_set_read_and_cursor():
+    _reset()
+    a = threads.create('Pest control', owner_member_id='mom', next_action='call back',
+                       next_action_at=(NOON - datetime.timedelta(days=1)).date().isoformat(), created_by='mom')
+    b = threads.create('Gutters', owner_member_id='mom', created_by='mom')
+    storage.update_thread(b, {'created_at': time.time() - 9 * 86400})
+    check(triage.get_focus('conv:1') is None, "no focus to begin with")
+    first = triage.next_for(MOM, 'conv:1')
+    check(first and first['id'] == a, f"the overdue thread comes first: {first and first['title']}")
+    f = triage.get_focus('conv:1')
+    check(f and f['kind'] == 'thread' and f['id'] == a and f['cursor'] == 0, f"focus is the first one: {f}")
+    second = triage.next_for(MOM, 'conv:1', skip_current=True)
+    check(second and second['id'] == b, f"'next' moves down the list: {second and second['title']}")
+    check(triage.get_focus('conv:1')['cursor'] == 1, "the cursor advanced")
+    third = triage.next_for(MOM, 'conv:1', skip_current=True)
+    check(third is None and triage.get_focus('conv:1') is None, "the end of the list clears the focus")
+    check(triage.get_focus('conv:other') is None, "another conversation has its own focus")
+
+
+def scenario_focus_on_a_closed_situation_is_dropped():
+    _reset()
+    a = threads.create('Pest control', owner_member_id='mom', next_action='call back',
+                       next_action_at=(NOON - datetime.timedelta(days=1)).date().isoformat(), created_by='mom')
+    triage.next_for(MOM, 'conv:1')
+    threads.close(a, 'done', who='mom')
+    check(triage.get_focus('conv:1') is None, "a focus whose situation closed is gone")
+    fid = _finding('No driver: soccer', 'decide', 6, 'ev1')
+    triage.set_focus('conv:2', 'finding', fid, 'No driver: soccer')
+    storage.update_finding(fid, {'snoozed_until': time.time() + 7 * 86400})
+    check(triage.get_focus('conv:2') is None, "a snoozed focus is gone too")
+
+
+def scenario_focus_entries_are_pruned_after_a_day():
+    _reset()
+    a = threads.create('Pest control', owner_member_id='mom', created_by='mom')
+    triage.set_focus('conv:old', 'thread', a, 'Pest control')
+    m = dict(storage.get_app_state(triage.FOCUS_KEY) or {})
+    m['conv:old']['set_at'] = time.time() - 2 * 86400
+    storage.set_app_state(triage.FOCUS_KEY, m)
+    triage.set_focus('conv:new', 'thread', a, 'Pest control')
+    m = storage.get_app_state(triage.FOCUS_KEY) or {}
+    check('conv:old' not in m and 'conv:new' in m, f"a day-old focus is pruned on the next write: {list(m)}")
+    check(triage.get_focus(None) is None, "no key, no focus")
+    triage.set_focus(None, 'thread', a, 'Pest control')
+    check(None not in (storage.get_app_state(triage.FOCUS_KEY) or {}), "nothing is written under no key")
+
+
+SCENARIOS += [scenario_focus_set_read_and_cursor, scenario_focus_on_a_closed_situation_is_dropped,
+              scenario_focus_entries_are_pruned_after_a_day]
+
 if __name__ == "__main__":
     import traceback
     failed = 0
