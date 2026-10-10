@@ -2459,7 +2459,7 @@ git push
 - [ ] **Step 1: `system_capabilities.md`** — bump "Current through v2.499.337 (2026-10-10)" and add, above the v2.499.323 entry, in the same bold-lead paragraph-plus-bullets style:
 
 ```markdown
-**Triage and replies: the one thing, held in conversation; voice as the parent of record; a vendor's reply read once (v2.499.327–.336; `services/triage.py`, `services/replies.py`, `services/agent_tools_v2.py` `next_situation` + focus-aware situation tools, `services/agent_router.py` `focus_key`/FOCUS line/parent-of-record dispatch, `main.py` three entry points + `_approver_of_record`, `services/asks.py` `record_sent`/`record_reading`/`unread`, `services/threads.py` `send_drafted(intent)`/`match_inbound(message_id)`, `services/email_ingest.py` `_match_thread`, `services/situations.py` `parent_of_record`/`list_situations(spoken)`/`_reply_option`/`unread`, `services/watchers.py` flush, `static/situations.js`, `templates/components/threads_page.html`, `templates/components/mind_page.html`; spec `docs/superpowers/specs/2026-10-10-triage-and-replies-design.md`, plan `docs/superpowers/plans/2026-10-10-triage-and-replies.md`; tests `test_triage.py`, `test_reply_reading.py`, `test_reply_reading_live.py`).** Sub-project 3 of the agentic-layer plan.
+**Triage and replies: the one thing, held in conversation; voice as the parent of record; a vendor's reply read once (v2.499.327–.337; `services/triage.py`, `services/replies.py`, `services/agent_tools_v2.py` `next_situation` + focus-aware situation tools, `services/agent_router.py` `focus_key`/FOCUS line/parent-of-record dispatch, `main.py` three entry points + `_approver_of_record`, `services/asks.py` `record_sent`/`record_reading`/`unread`, `services/threads.py` `send_drafted(intent)`/`match_inbound(message_id)`, `services/email_ingest.py` `_match_thread`, `services/situations.py` `parent_of_record`/`list_situations(spoken)`/`_reply_option`/`unread`, `services/watchers.py` flush, `static/situations.js`, `templates/components/threads_page.html`, `templates/components/mind_page.html`; spec `docs/superpowers/specs/2026-10-10-triage-and-replies-design.md`, plan `docs/superpowers/plans/2026-10-10-triage-and-replies.md`; tests `test_triage.py`, `test_reply_reading.py`, `test_reply_reading_live.py`).** Sub-project 3 of the agentic-layer plan.
 
 - **`next_situation`.** "What needs my attention?" answers with ONE situation as a deterministic sentence (title · Argyle's note when hers · "Next: {step}" · the asks clause), terminal (no concluding LLM round). `triage.triage_rank` orders across the four kinds: tier 0 overdue or due within 24 h (decide findings by due, a thread whose next action passed, a mission waiting on an answer); 1 decide findings, stalled threads, missions with a pending proposal; 2 approve; 3 insights by confidence; 4 fyi. The lanes keep `situations.rank`.
 - **Focus.** One app-state map `triage_focus` keyed `conv:<id>` (widget), `voice:<id>` (HA Assist), `channel:<id>` (Argyle DM); set by `next_situation` and by naming a situation; `get_focus` drops a settled, snoozed or day-old one. The router injects one FOCUS line when a live focus exists; `explain_situation`/`act_on_situation`/`start_ask` take no ref for it; `answer_ask`/`mark_ask_sent` take no ask id and resolve the focus situation's one live ask, refusing with names when there are two. "Next" walks the ranked list from the cursor and skips rows that closed between turns. No `conversation_id` → no focus; the sentence ends with the title.
@@ -2475,14 +2475,14 @@ git push
 - [ ] **Step 2: `docs/roadmap.md`** — under the Needs-you entry's "Build 2 SHIPPED" lines add:
 
 ```markdown
-  Sub-project 3 SHIPPED v2.499.327–.336 (2026-10-10): "what needs my
+  Sub-project 3 SHIPPED v2.499.327–.337 (2026-10-10): "what needs my
   attention?" is one spoken situation held as the conversation's focus,
   voice acts as the parent of record, and a vendor's reply on a thread is
   read once and recorded, never applied. Spec:
   `docs/superpowers/specs/2026-10-10-triage-and-replies-design.md`.
 ```
 
-- [ ] **Step 3: Memory** — in `agentic-layer-field-feedback.md`, replace the "(3) triage + replies — spec … awaiting the user's spec review, then writing-plans." clause with: "(3) triage + replies SHIPPED v2.499.327–.336 (2026-10-10), NOT device-verified; plan `docs/superpowers/plans/2026-10-10-triage-and-replies.md`. Declined for this sub-project and still open: typed replies under a Chauffeur ask card, forwarded replies for personal asks." Keep the locked decisions sentence.
+- [ ] **Step 3: Memory** — in `agentic-layer-field-feedback.md`, replace the "(3) triage + replies — spec … awaiting the user's spec review, then writing-plans." clause with: "(3) triage + replies SHIPPED v2.499.327–.337 (2026-10-10), NOT device-verified; plan `docs/superpowers/plans/2026-10-10-triage-and-replies.md`. Declined for this sub-project and still open: typed replies under a Chauffeur ask card, forwarded replies for personal asks." Keep the locked decisions sentence.
 
 - [ ] **Step 4: Run the gate once**
 

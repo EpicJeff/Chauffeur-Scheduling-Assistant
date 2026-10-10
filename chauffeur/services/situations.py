@@ -413,9 +413,11 @@ def _rows_of(kind: str, include_done: bool) -> list:
 
 
 def list_situations(viewer: Optional[dict], kinds=None, include_done: bool = False,
-                    owner: str = None) -> list:
+                    owner: str = None, spoken: bool = False) -> list:
     """`owner` narrows THREADS to one member's own (the PWA House tab's
-    view); the other kinds have no owner and are unaffected."""
+    view); the other kinds have no owner and are unaffected. `spoken` is a
+    room, not a hand: a sensitive insight is never read aloud, whatever the
+    viewer's role (spec 2026-10-10 §1)."""
     out = []
     for kind in (kinds or KINDS):
         for k, sid in _rows_of(kind, include_done):
@@ -423,6 +425,8 @@ def list_situations(viewer: Optional[dict], kinds=None, include_done: bool = Fal
             if not row or not can_see(k, row, viewer):
                 continue
             if owner and k == 'thread' and row.get('owner_member_id') != owner:
+                continue
+            if spoken and k == 'insight' and row.get('sensitivity') == 'sensitive':
                 continue
             s = view(k, sid, viewer)
             if s and (include_done or s['group'] != 'done'):
