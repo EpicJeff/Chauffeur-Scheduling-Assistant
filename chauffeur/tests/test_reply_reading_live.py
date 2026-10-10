@@ -47,8 +47,12 @@ def main():
             page.wait_for_selector('#threads .situation-card', timeout=15000)
             card = page.locator('#threads .situation-card:has-text("Pest control")').first
             line = card.locator('[data-ask-line]').first.inner_text()
+            check(line.startswith('Emailed Pest Co'), f"a household send reads 'Emailed …': {line}")
             check('Argyle read their reply as yes' in line and 'Friday 9am works' in line, f"the reading line: {line}")
-            check(card.locator('button:has-text("Argyle got it wrong")').count() == 1, "the revert button is on the card")
+            check(card.locator('[data-ask-line] button:has-text("Argyle got it wrong")').count() == 1,
+                  "the revert is a quiet button under the ask's ledger line")
+            check(card.locator('.sit-options button:has-text("Argyle got it wrong")').count() == 0,
+                  "and not repeated in the option row")
             check(card.locator('.sit-next button').first.inner_text().startswith('Confirm with Pest Co'),
                   "the next step is the confirm")
             # The timeline, under the card's details, shows what Argyle read.
@@ -72,13 +76,32 @@ def main():
             }""")
             check(prefilled and prefilled[0]['value'] == 'Confirm with Pest Co: Friday 9am works' and not prefilled[0]['message'],
                   f"the dialog's input is pre-filled, not its message: {prefilled}")
-            card.locator('button:has-text("Argyle got it wrong")').first.click()
+            card.locator('[data-ask-line] button:has-text("Argyle got it wrong")').first.click()
             page.wait_for_timeout(1500)
             card = page.locator('#threads .situation-card:has-text("Pest control")').first
             line = card.locator('[data-ask-line]').first.inner_text()
             check('waiting' in line and 'Argyle read' not in line, f"after the tap, waiting again: {line}")
             check(card.locator('.sit-next button').first.inner_text().startswith('Read their reply'), "next step: read it")
             check(not b.errors, f"script errors: {b.errors}")
+
+        # The PWA House tab draws the same card for the owner, reading line included.
+        from services import asks, threads
+        tid = [t for t in storage.get_threads() if t['title'] == 'Pest control'][0]['id']
+        a = storage.get_asks(situation_kind='thread', situation_id=tid)[0]
+        asks.record_reading(a['id'], 'yes', '<m1>', summary='Friday 9am works')
+        b = served.browser(color_scheme='dark')
+        with b as page:
+            page.set_viewport_size({'width': 390, 'height': 844})
+            page.goto(served.url('app'), wait_until='networkidle')
+            page.evaluate("localStorage.setItem('chauffeur_member_id', 'mom');")
+            page.goto(served.url('app'), wait_until='networkidle')
+            page.evaluate("async () => { await fetchHouseThreads(); }")
+            page.wait_for_selector('#house-threads .situation-card', state='attached', timeout=15000)
+            line = page.locator('#house-threads [data-ask-line]').first.text_content()
+            check('Argyle read their reply as yes' in line, f"the House card carries the reading line: {line}")
+            check(page.locator('#house-threads [data-ask-line] button:has-text("Argyle got it wrong")').count() == 1,
+                  "and the revert under it")
+            check(not b.errors, f"PWA script errors: {b.errors}")
     finally:
         served.stop()
 

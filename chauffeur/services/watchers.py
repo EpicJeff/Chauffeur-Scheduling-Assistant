@@ -867,6 +867,15 @@ def run_watchers(now: datetime.datetime = None) -> int:
     whether it was a polite hour to say so.
     """
     now = now or datetime.datetime.now()
+    # Reply DMs deferred through the night (services/replies.py) go out on
+    # the first in-window sweep, once each — before the heads-up toggle, which
+    # governs findings, not a reply the family is waiting on. The flush
+    # itself keeps to the waking window.
+    try:
+        from services import replies as _replies
+        _replies.flush_pending_dms(now)
+    except Exception as e:
+        print(f"[watchers] reply DM flush failed: {e}")
     settings = storage.get_settings() or {}
     if not settings.get('proactive_watchers_enabled', True):
         return 0
@@ -896,14 +905,6 @@ def run_watchers(now: datetime.datetime = None) -> int:
 
     if not (QUIET_END_HOUR <= now.hour < QUIET_START_HOUR):
         return 0
-
-    # Reply DMs deferred through the night (services/replies.py) go out on
-    # the first in-window sweep, once each.
-    try:
-        from services import replies as _replies
-        _replies.flush_pending_dms(now)
-    except Exception as e:
-        print(f"[watchers] reply DM flush failed: {e}")
 
     notified = dict(storage.get_app_state('watcher_notified') or {})
     # prune old markers so the dict never grows without bound

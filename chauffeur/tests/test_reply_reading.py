@@ -283,8 +283,10 @@ def scenario_no_reading_still_tells_the_owner_to_read_it():
 
 def scenario_sweep_flushes_pending_dms_inside_the_window():
     src = open('services/watchers.py', encoding='utf-8').read()
-    after_gate = src.split('if not (QUIET_END_HOUR <= now.hour < QUIET_START_HOUR):')[1]
-    check('flush_pending_dms' in after_gate, "run_watchers flushes pending reply DMs after the quiet-hours gate")
+    body = src.split('def run_watchers(')[1]
+    before_toggle = body.split("proactive_watchers_enabled")[0]
+    check('flush_pending_dms' in before_toggle,
+          "run_watchers flushes pending reply DMs before the heads-up toggle (the flush keeps to the window itself)")
 
 
 SCENARIOS += [scenario_one_dm_to_the_owner_inside_the_window, scenario_dm_outside_quiet_hours_is_deferred_once,
@@ -390,6 +392,66 @@ def scenario_e2e_capped_reply_is_filed_unread_and_not_read_twice():
 
 
 SCENARIOS += [scenario_e2e_thread_mail_reply_reading_and_revert, scenario_e2e_capped_reply_is_filed_unread_and_not_read_twice]
+
+
+# --- the deferred minors, fixed ------------------------------------------------
+
+def scenario_deferred_dm_flushes_even_with_heads_ups_off():
+    _reset()
+    SENT.clear(); _capture_post()
+    storage.get_settings = lambda: {'llm_gemini_api_key': 'k', 'thread_stall_days': 7, 'proactive_watchers_enabled': False}
+    tid = _thread()
+    threads.send_drafted(tid, 'S', 'B', 'ops@pestco.example', who='mom')
+    _reply(tid, mid='<night>')
+    thread = storage.get_thread(tid)
+    entry = [x for x in thread['history'] if x.get('message_id') == '<night>'][0]
+    replies._notify(thread, entry, None, now=datetime.datetime.now().replace(hour=23, minute=0))
+    check(not SENT, "deferred at night")
+    from services import watchers
+    watchers.run_watchers(datetime.datetime.now().replace(hour=9, minute=0))
+    check(len(SENT) == 1, f"the morning sweep posts it although heads-ups are off: {SENT}")
+
+
+def scenario_reading_counts_against_the_ingest_daily_limit():
+    _reset()
+    from services import email_ingest
+    replies._pool_call = _fake_pool({'answer': 'info', 'summary': 'x'})
+    tid = _thread()
+    _reply(tid, mid='<w>')
+    replies.read(tid, '<w>')
+    check(CALLS and CALLS[0]['kw'].get('workflow') == email_ingest.WORKFLOW,
+          f"the reading is an intake request and counts as one: {CALLS and CALLS[0]['kw']}")
+
+
+def scenario_dm_does_not_repeat_the_summary():
+    _reset()
+    tid = _thread()
+    thread = storage.get_thread(tid)
+    entry = {'kind': 'received', 'text': 'Received from ops@pestco.example: Re\n\nQuote is $500', 'message_id': '<i>'}
+    reading = {'answer': 'info', 'summary': 'Quote is $500', 'ts': time.time(), 'source': 'argyle'}
+    line = replies.dm_line(thread, entry, reading, 'Read their reply: Quote is $500')
+    check(line.count('Quote is $500') == 1 and 'Read their reply' in line, f"said once: {line}")
+    line = replies.dm_line(thread, entry, {'answer': 'yes', 'summary': 'Friday 9am works', 'ts': 0, 'source': 'argyle'},
+                           'Confirm with Pest Co: Friday 9am works')
+    check(line.count('Friday 9am works') == 1, f"said once for a yes too: {line}")
+
+
+def scenario_record_sent_never_trusts_a_non_member_as_the_asker():
+    _reset()
+    tid = _thread()
+    res = threads.send_drafted(tid, 'S', 'B', 'ops@pestco.example', who='argyle')
+    check(storage.get_ask(res['ask_id'])['asked_by'] == 'mom', "a sender that is not a member becomes the parent of record")
+
+
+def scenario_the_call_counter_holds_the_lock():
+    src = open('services/situations.py', encoding='utf-8').read()
+    body = src.split('def _bump_call(')[1].split('\ndef ')[0]
+    check('with storage.db_lock' in body, "the per-day call counter is a locked read-modify-write")
+
+
+SCENARIOS += [scenario_deferred_dm_flushes_even_with_heads_ups_off, scenario_reading_counts_against_the_ingest_daily_limit,
+              scenario_dm_does_not_repeat_the_summary, scenario_record_sent_never_trusts_a_non_member_as_the_asker,
+              scenario_the_call_counter_holds_the_lock]
 
 if __name__ == "__main__":
     import traceback

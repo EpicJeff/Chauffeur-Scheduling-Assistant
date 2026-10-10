@@ -684,11 +684,13 @@ def _pool_call(tier, api_key, system, prompt, **kw):
 def _bump_call(kind: str, cap: int) -> bool:
     day = datetime.date.today().isoformat()
     key = f'situation_calls:{day}'
-    counts = dict(storage.get_app_state(key) or {})
-    if int(counts.get(kind, 0)) >= cap:
-        return False
-    counts[kind] = int(counts.get(kind, 0)) + 1
-    storage.set_app_state(key, counts)
+    # Locked: the ingest poll and a request thread both bump this.
+    with storage.db_lock:
+        counts = dict(storage.get_app_state(key) or {})
+        if int(counts.get(kind, 0)) >= cap:
+            return False
+        counts[kind] = int(counts.get(kind, 0)) + 1
+        storage.set_app_state(key, counts)
     return True
 
 

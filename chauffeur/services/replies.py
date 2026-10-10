@@ -66,9 +66,12 @@ def _classify(thread: dict, entry: dict, ask: Optional[dict], settings: dict) ->
     prompt = (f"Thread: {thread.get('title')}. "
               + (f"What was asked: {ask.get('what')}. " if ask else "Nothing specific was asked. ")
               + f"The reply:\n{text}")
+    # Counted as an INTAKE request: the family's ingest_daily_limit bounds
+    # every AI call the mailbox causes, this one included.
+    from services.email_ingest import WORKFLOW as INTAKE_WORKFLOW
     try:
         res = _pool_call('interactive', api_key, READ_SYSTEM, prompt, timeout_s=READ_TIMEOUT_S,
-                         background=True, workflow='replies.read')
+                         background=True, workflow=INTAKE_WORKFLOW)
     except Exception as e:
         logger.warning(f"[replies] reading failed: {e}")
         return None
@@ -135,7 +138,12 @@ def dm_line(thread: dict, entry: dict, reading: Optional[dict], next_label: str 
     title = thread.get('title') or 'a thread'
     if not reading:
         return f"{who} replied on '{title}' — read it."
-    line = f"{who} replied on '{title}': {reading.get('summary') or reading.get('answer')}"
+    summary = reading.get('summary') or reading.get('answer') or ''
+    # The next step often quotes the summary ("Read their reply: Quote is
+    # $500"); say it once.
+    if next_label and summary and summary in next_label:
+        return f"{who} replied on '{title}' → {next_label}."
+    line = f"{who} replied on '{title}': {summary}"
     return line + (f" → {next_label}" if next_label else '') + '.'
 
 

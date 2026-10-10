@@ -53,7 +53,14 @@ window.Situations = (function () {
         + ` <button class="${QUIET}" data-ask-answer="no" data-ask-id="${a.id}">said no</button>`
         + (a.state === 'drafted' ? ` <button class="${QUIET}" data-ask-sent="${a.id}">Sent it</button>` : '')
       : '';
-    return `<div class="text-xs text-gray-400 mt-1" data-ask-line="${a.id}">Asked ${esc(a.to_name)} by ${esc(CHANNEL_LABELS[a.channel] || a.channel)} ${esc(when(a.sent_at || a.asked_at))}: ${esc(a.answered_by === 'argyle' ? readLine(a) : askState(a))}${report}</div>`;
+    // A reading-answered ask carries its own quiet undo, right under the line.
+    const unread = ctx.canWrite && !ctx.readOnly && a.answered_by === 'argyle' && (a.state === 'yes' || a.state === 'no')
+      ? ` <button class="${QUIET}" data-sit-act="unread:${esc(a.id)}">${esc(VERB_LABELS.unread)}</button>` : '';
+    // A mail that left by the household address reads as what it was.
+    const lead = a.sent_via === 'household'
+      ? `Emailed ${esc(a.to_name)}`
+      : `Asked ${esc(a.to_name)} by ${esc(CHANNEL_LABELS[a.channel] || a.channel)}`;
+    return `<div class="text-xs text-gray-400 mt-1" data-ask-line="${a.id}">${lead} ${esc(when(a.sent_at || a.asked_at))}: ${esc(a.answered_by === 'argyle' ? readLine(a) : askState(a))}${report}${unread}</div>`;
   }
 
   function dueLabel(due) {
@@ -71,7 +78,8 @@ window.Situations = (function () {
     ctx = ctx || {};
     const opts = s.options || [];
     const next = s.next_step;
-    const rest = opts.filter(o => !next || o.id !== next.id);
+    // unread lives under its ask's ledger line (askLine), not in the option row.
+    const rest = opts.filter(o => (!next || o.id !== next.id) && o.verb !== 'unread');
     const buttons = (ctx.canWrite && !ctx.readOnly)
       ? `<div class="sit-next mt-2">${next ? `<button class="${PRIMARY}" data-sit-act="${esc(next.id)}">${esc(next.label)}</button>` : ''}</div>
          <div class="sit-options flex flex-wrap gap-2 mt-1.5">${rest.map(o => `<button class="${QUIET}" data-sit-act="${esc(o.id)}">${esc(o.label)}</button>`).join('')}</div>`

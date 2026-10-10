@@ -189,6 +189,16 @@ No new endpoints: the card's **Argyle got it wrong** posts `POST /api/situations
 
 **One build under this spec**, split into two tasks in the plan: (1) triage, focus, voice; (2) thread ledger rows, reading, DM, `unread`.
 
+## Amendments after the build (2026-10-10)
+
+From the whole-branch review and the user's reading of its minors:
+
+1. **A reply waiting on the person ranks tier 1.** A thread whose highlighted next step is a reply lead (`advance:confirm`, `draft:reply`, `advance:read`: a yes to confirm, a question to answer, or a reply nobody has read) sits right after today's business, never under the insights. A `no` leaves the ordinary options and the ordinary rank; the person acting on the thread returns it to its place. The tier table in Section 1 reads accordingly.
+2. **Deferred reply DMs flush before the heads-up toggle.** `run_watchers` posts pending reply DMs on the first in-window sweep whether or not proactive heads-ups are on: the toggle governs findings, not a reply the family is waiting on. The flush itself keeps to the waking window.
+3. **A reading counts against the ingest daily limit**: the call runs under the intake workflow (`intake.email`), as Section 5 said; `reply_cap_reads` still bounds it on its own.
+4. **The card's wording and placement follow Section 2**: a household send reads "Emailed {name} {day}: …", and **Argyle got it wrong** is a quiet button under that ask's ledger line, not in the option row.
+5. The owner DM says the summary once when the next step already quotes it; `record_sent` records a member or the parent of record, never a stray id; the per-day call counter is a locked read-modify-write; the PWA House card's reading line is pinned in the live test.
+
 ## Out of scope (named so they stay out)
 
 - Typed replies under a Chauffeur ask card ("sure", "can't") — declined for this sub-project.

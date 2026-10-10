@@ -170,7 +170,8 @@ def record_sent(kind: str, sid: Optional[str], to: dict, what: str, subject: str
     becomes a `sent` ledger row: the reply has something to answer. No draft
     call (the words are the person's), no unlocks (nothing to apply), no
     refresh request (the send's own touch covers it)."""
-    if not asked_by:
+    if not asked_by or not storage.get_member(asked_by):
+        # A member, else the parent of record: never a system id or a stray string.
         from services import situations as _sit
         asked_by = ((_sit.parent_of_record() or {}).get('id')) or ''
     data = {'situation_kind': kind, 'situation_id': sid, 'to_name': (to or {}).get('name') or 'them',

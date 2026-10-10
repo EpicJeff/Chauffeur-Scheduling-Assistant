@@ -16,6 +16,8 @@ from typing import Optional
 from services import storage, situations
 
 FOCUS_KEY = 'triage_focus'
+# The option ids situations._reply_option highlights after a counterparty's reply.
+REPLY_LEADS = ('advance:confirm', 'draft:reply', 'advance:read')
 FOCUS_TTL_S = 24 * 3600
 DAY_S = 24 * 3600
 
@@ -51,6 +53,12 @@ def tier(s: dict, now: float = None) -> int:
     if kind == 'thread':
         if due is not None and due < now:
             return 0
+        # Somebody wrote back and is waiting on us: a reply nobody has acted
+        # on (read as yes, a question, or not read at all) sits right after
+        # today's business, never under the insights. A 'no' leaves the
+        # ordinary options and the ordinary rank.
+        if ((s.get('next_step') or {}).get('id') or '') in REPLY_LEADS:
+            return 1
         return 1 if s.get('needs_attention') else 4
     if kind == 'mission':
         if state == 'waiting_user':

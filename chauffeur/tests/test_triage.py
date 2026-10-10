@@ -468,6 +468,44 @@ def scenario_focus_line_never_shows_a_title_the_speaker_cannot_see():
     check('FOCUS:' in cap['system'], "the parent still is")
 
 
+def scenario_a_reply_waiting_on_the_person_ranks_right_after_due_today():
+    """Somebody wrote back and is waiting on us: that belongs near the top,
+    not under the insights. Any reading but 'no' (and an unread reply) puts
+    the thread in tier 1; the person acting on it returns it to its place."""
+    _reset()
+    from services import mailer
+    mailer.send = lambda to, subject, body, settings=None: {'sent': True}
+    mailer.configured = lambda *a, **k: True
+    _finding('No driver: soccer today', 'decide', 6, 'ev-soon')               # tier 0
+    storage.add_mind_insight({'slug': 'i', 'line': 'Thursday is tight', 'category': 'c', 'approach': 'ask Sarah',
+                              'identity': 'c:1', 'confidence': 0.8})         # tier 3
+    tid = threads.create('Pest control', owner_member_id='mom', counterparty_name='Pest Co',
+                         counterparty_email='ops@pestco.example', created_by='mom')
+    threads.send_drafted(tid, 'S', 'B', 'ops@pestco.example', who='mom')
+    threads.match_inbound('ops@pestco.example', 'Re: S', 'Which Friday did you mean?', message_id='<q>')
+    s = situations.view('thread', tid, MOM)
+    check(triage.tier(s) == 1, f"an unread reply is tier 1: {triage.tier(s)} / {s['next_step']}")
+    storage.update_thread_history_entry(tid, {'message_id': '<q>'},
+                                        {'reading': {'answer': 'question', 'summary': 'which Friday?', 'ts': time.time(), 'source': 'argyle'}})
+    s = situations.view('thread', tid, MOM)
+    check(triage.tier(s) == 1, "a question is tier 1")
+    titles = [x['title'] for x in triage.triage_rank(situations.list_situations(MOM))]
+    check(titles.index('No driver: soccer today') < titles.index('Pest control') < titles.index('Thursday is tight'),
+          f"after today's ride, before the insights: {titles}")
+    storage.update_thread_history_entry(tid, {'message_id': '<q>'},
+                                        {'reading': {'answer': 'yes', 'summary': 'Friday works', 'ts': time.time(), 'source': 'argyle'}})
+    check(triage.tier(situations.view('thread', tid, MOM)) == 1, "a yes to confirm is tier 1")
+    storage.update_thread_history_entry(tid, {'message_id': '<q>'},
+                                        {'reading': {'answer': 'no', 'summary': 'cannot', 'ts': time.time(), 'source': 'argyle'}})
+    check(triage.tier(situations.view('thread', tid, MOM)) == 4, "a no leaves the ordinary options and the ordinary rank")
+    storage.update_thread_history_entry(tid, {'message_id': '<q>'},
+                                        {'reading': {'answer': 'question', 'summary': 'which Friday?', 'ts': time.time(), 'source': 'argyle'}})
+    threads.note(tid, 'called them back', who='mom')
+    check(triage.tier(situations.view('thread', tid, MOM)) == 4, "once the person acts the thread sinks back")
+
+
+SCENARIOS += [scenario_a_reply_waiting_on_the_person_ranks_right_after_due_today]
+
 SCENARIOS += [scenario_a_pwa_turn_with_no_person_never_becomes_the_parent, scenario_voice_fragment_never_names_a_sensitive_insight,
               scenario_next_after_closing_the_focus_continues_from_the_cursor, scenario_handle_it_accepts_the_reading_built_step,
               scenario_spoken_clause_names_a_reading_as_argyles, scenario_focus_line_never_shows_a_title_the_speaker_cannot_see]
