@@ -282,6 +282,52 @@ def answer(ask_id: str, answer: str, actor: dict, reported: bool = False) -> dic
     return {'status': 'success', **res}
 
 
+def record_reading(ask_id: str, answer: str, message_id: str, summary: str = '') -> bool:
+    """Argyle read a reply as a clear yes or no (services/replies.py). The
+    ask records it and NOTHING is applied: a yes is `manual` ("apply by
+    hand"), because a household-sent ask never carries unlocks. Only a
+    waiting ask moves; a human answer already recorded stands. Not a tool,
+    not an endpoint: the only caller is the reading."""
+    if answer not in ('yes', 'no'):
+        return False
+    with storage.db_lock:
+        ask = storage.get_ask(ask_id)
+        if not ask or ask.get('state') not in ('sent', 'drafted') or ask.get('sent_via') != 'household':
+            return False
+        fields = {'state': answer, 'answered_at': time.time(), 'answered_by': 'argyle',
+                  'read_from': message_id, 'read_summary': (summary or '')[:160]}
+        if answer == 'yes':
+            fields['outcome'] = 'manual'
+        storage.update_ask(ask_id, fields)
+    _touch(ask.get('situation_kind'), ask.get('situation_id'))
+    return True
+
+
+def unread(ask_id: str, actor: dict) -> dict:
+    """"Argyle got it wrong": a reading-answered ask goes back to waiting; the
+    reply and its reading stay on the history, marked disputed. A tapped or
+    reported answer is never undone here (withdraw is for that)."""
+    ask = storage.get_ask(ask_id)
+    if not ask:
+        return {'status': 'error', 'message': 'That ask is no longer here.'}
+    if not _can_write(actor):
+        return {'status': 'refused', 'message': 'Only a parent or adult can do that.'}
+    if ask.get('answered_by') != 'argyle':
+        who = (storage.get_member(ask.get('answered_by') or '') or {}).get('name') or 'somebody'
+        return {'status': 'refused', 'message': f"That was answered by {who}, not read by Argyle."}
+    with storage.db_lock:
+        storage.update_ask(ask_id, {'state': 'sent', 'answered_at': None, 'answered_by': None,
+                                    'outcome': None, 'read_from': None, 'read_summary': None})
+    if ask.get('situation_kind') == 'thread' and ask.get('read_from'):
+        thread = storage.get_thread(ask['situation_id']) or {}
+        entry = next((h for h in thread.get('history') or [] if h.get('message_id') == ask['read_from']), None)
+        if entry and entry.get('reading'):
+            storage.update_thread_history_entry(ask['situation_id'], {'message_id': ask['read_from']},
+                                                {'reading': {**entry['reading'], 'disputed': True}})
+    _touch(ask.get('situation_kind'), ask.get('situation_id'))
+    return {'status': 'success', 'message': "Noted. Back to waiting on them; read the reply yourself."}
+
+
 def _outcome_message(ask: dict) -> str:
     o = ask.get('outcome')
     if o == 'applied':

@@ -73,8 +73,7 @@ def _reply(tid, text='Friday at 9 works for us.', mid='<m1@pestco>'):
 
 def scenario_a_matched_reply_is_read_once_and_stored_on_the_entry():
     _reset()
-    # 'info' until Task 7 adds asks.record_reading; Task 7 switches this to 'yes'.
-    replies._pool_call = _fake_pool({'answer': 'info', 'summary': 'Friday 9am works'})
+    replies._pool_call = _fake_pool({'answer': 'yes', 'summary': 'Friday 9am works'})
     tid = _thread()
     threads.send_drafted(tid, 'Can you come Friday?', 'B', 'ops@pestco.example', who='mom', intent='come Friday morning')
     rev0 = storage.get_thread(tid)['rev']
@@ -85,7 +84,7 @@ def scenario_a_matched_reply_is_read_once_and_stored_on_the_entry():
     check('come Friday morning' in CALLS[0]['prompt'] and 'Pest control' in CALLS[0]['prompt'], "the prompt carries the ask and the title")
     h = storage.get_thread(tid)['history'][-1]
     check(h['kind'] == 'received' and h.get('message_id') == '<m1@pestco>', f"the entry knows its mail: {h}")
-    check(h.get('reading', {}).get('answer') == 'info' and h['reading']['summary'] == 'Friday 9am works'
+    check(h.get('reading', {}).get('answer') == 'yes' and h['reading']['summary'] == 'Friday 9am works'
           and h['reading']['source'] == 'argyle', f"the reading is on the entry: {h}")
     check(storage.get_thread(tid)['rev'] > rev0, "a reading moves the rev so the note refreshes")
     replies.read(tid, '<m1@pestco>')
@@ -129,6 +128,80 @@ def scenario_the_module_never_applies_and_never_reads_dms():
 
 SCENARIOS += [scenario_a_matched_reply_is_read_once_and_stored_on_the_entry, scenario_no_key_cap_or_failure_leaves_no_reading,
               scenario_the_module_never_applies_and_never_reads_dms]
+
+
+def scenario_reading_yes_records_manual_never_applies():
+    _reset()
+    replies._pool_call = _fake_pool({'answer': 'yes', 'summary': 'Friday 9am works'})
+    tid = _thread()
+    res = threads.send_drafted(tid, 'Can you come Friday?', 'B', 'ops@pestco.example', who='mom', intent='come Friday morning')
+    _reply(tid)
+    replies.read(tid, '<m1@pestco>')
+    a = storage.get_ask(res['ask_id'])
+    check(a['state'] == 'yes' and a['outcome'] == 'manual' and a['answered_by'] == 'argyle', f"recorded, apply by hand: {a}")
+    check(a['read_from'] == '<m1@pestco>' and a['read_summary'] == 'Friday 9am works', "the reading is on the ask")
+    check(a['applied_at'] is None, "nothing applied")
+
+
+def scenario_reading_no_question_info_unclear():
+    _reset()
+    tid = _thread()
+    for i, (answer, expect_state) in enumerate([('no', 'no'), ('question', 'sent'), ('info', 'sent'), ('unclear', 'sent')]):
+        res = threads.send_drafted(tid, f'S{i}', 'B', 'ops@pestco.example', who='mom')
+        replies._pool_call = _fake_pool({'answer': answer, 'summary': f'{answer} summary'})
+        _reply(tid, mid=f'<r{i}>')
+        replies.read(tid, f'<r{i}>')
+        a = storage.get_ask(res['ask_id'])
+        check(a['state'] == expect_state, f"{answer}: the ask is {a['state']}, expected {expect_state}")
+        h = [x for x in storage.get_thread(tid)['history'] if x.get('message_id') == f'<r{i}>'][0]
+        check(h['reading']['answer'] == answer, "the reading is on the history whatever the answer")
+
+
+def scenario_reading_with_no_live_ask_lands_on_history_only():
+    _reset()
+    tid = _thread()
+    replies._pool_call = _fake_pool({'answer': 'yes', 'summary': 'sure'})
+    _reply(tid, mid='<x>')
+    r = replies.read(tid, '<x>')
+    check(r and r['answer'] == 'yes' and not storage.get_asks(situation_kind='thread', situation_id=tid), "no ask to answer; the reading is kept")
+
+
+def scenario_reading_never_overwrites_a_human_answer():
+    _reset()
+    tid = _thread()
+    res = threads.send_drafted(tid, 'S', 'B', 'ops@pestco.example', who='mom')
+    asks.answer(res['ask_id'], 'no', MOM, reported=True)
+    replies._pool_call = _fake_pool({'answer': 'yes', 'summary': 'sure'})
+    _reply(tid, mid='<y>')
+    replies.read(tid, '<y>')
+    a = storage.get_ask(res['ask_id'])
+    check(a['state'] == 'no' and a['answered_by'] == 'mom', f"the owner's no stands: {a}")
+    h = [x for x in storage.get_thread(tid)['history'] if x.get('message_id') == '<y>'][0]
+    check(h['reading']['answer'] == 'yes', "the reading still lands on the history")
+
+
+def scenario_unread_reverts_a_reading_and_refuses_a_tap():
+    _reset()
+    tid = _thread()
+    res = threads.send_drafted(tid, 'S', 'B', 'ops@pestco.example', who='mom')
+    replies._pool_call = _fake_pool({'answer': 'yes', 'summary': 'Friday works'})
+    _reply(tid, mid='<z>')
+    replies.read(tid, '<z>')
+    out = asks.unread(res['ask_id'], MOM)
+    a = storage.get_ask(res['ask_id'])
+    check(out['status'] == 'success' and a['state'] == 'sent' and a['answered_by'] is None and a['outcome'] is None
+          and a['read_from'] is None, f"back to waiting: {a}")
+    h = [x for x in storage.get_thread(tid)['history'] if x.get('message_id') == '<z>'][0]
+    check(h['reading']['disputed'] is True and h['reading']['answer'] == 'yes', "the reading is kept, disputed")
+    asks.answer(res['ask_id'], 'yes', MOM, reported=True)
+    out = asks.unread(res['ask_id'], MOM)
+    check(out['status'] == 'refused' and 'Mom' in out['message'], f"a human answer is not undone this way: {out}")
+    check(asks.unread(res['ask_id'], {'id': 'kid', 'role': 'child'})['status'] == 'refused', "a child cannot")
+
+
+SCENARIOS += [scenario_reading_yes_records_manual_never_applies, scenario_reading_no_question_info_unclear,
+              scenario_reading_with_no_live_ask_lands_on_history_only, scenario_reading_never_overwrites_a_human_answer,
+              scenario_unread_reverts_a_reading_and_refuses_a_tap]
 
 if __name__ == "__main__":
     import traceback
