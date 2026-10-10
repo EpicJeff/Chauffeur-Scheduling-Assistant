@@ -656,7 +656,7 @@ ENTRIES: List[dict] = [
        "The family's own contact details, filled once. A mission releases them to a site only after a parent "
        "approves that site, once per mission.",
        page='work?tab=missions', anchor='contact-card'),
-    _e('contact_last_name', 'missions', 'Contact card: last name', "The family"s surname as a site"s form would want it. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
+    _e('contact_last_name', 'missions', 'Contact card: last name', "The family's surname as a site's form would want it. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
     _e('contact_email', 'missions', 'Contact card: email', "The household email a site may write to. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
     _e('contact_phone', 'missions', 'Contact card: phone', "The household phone a site may call or text. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
     _e('contact_street', 'missions', 'Contact card: street', "The street address a technician would come to. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
