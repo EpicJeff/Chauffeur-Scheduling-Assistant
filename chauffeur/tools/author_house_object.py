@@ -176,7 +176,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out',required=True)
     parser.add_argument('--settings-file')
-    parser.add_argument('--model',default='gemini-3.5-flash')
+    parser.add_argument('--model', default='gemini-3.8-flash')
     parser.add_argument('--render-only',action='store_true')
     args=parser.parse_args()
     key=read_key(args.settings_file)

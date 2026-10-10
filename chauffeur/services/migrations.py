@@ -403,6 +403,24 @@ async def migrate_shopping_slug_v2351():
                     + ", ".join(touched))
 
 
+def migrate_retired_gemini_models_v2499324():
+    """A stored `llm_gemini_model` that names a model Google has withdrawn
+    (model_pools.RETIRED_MODELS) is moved to the schema default. The trip
+    planner calls that setting directly, outside the pools, so a retired id
+    there fails every trip rather than rotating. Idempotent: a live id is
+    left alone, and nothing else in settings is touched."""
+    from services import storage
+    from services.model_pools import RETIRED_MODELS
+    from models.schemas import Settings
+    settings = storage.get_settings() or {}
+    current = settings.get('llm_gemini_model')
+    if current in RETIRED_MODELS:
+        fallback = Settings.model_fields['llm_gemini_model'].default
+        storage.patch_settings({'llm_gemini_model': fallback})
+        logger.warning(f"[migrations] llm_gemini_model {current!r} was retired by Google; "
+                       f"moved to {fallback!r}")
+
+
 async def migrate_coverage_asks_v2499308():
     """coverage_asks → asks (the one ledger, spec §2). Idempotent by legacy_id.
     event_id + event_start are the authoritative link; situation_id is set
@@ -481,6 +499,10 @@ async def run_all_migrations():
         await migrate_coverage_asks_v2499308()
     except Exception as e:
         logger.error(f"Error running coverage asks migration: {e}")
+    try:
+        migrate_retired_gemini_models_v2499324()
+    except Exception as e:
+        logger.error(f"Error running retired model migration: {e}")
     # LAST: the two above write media, so let them settle before relocating.
     try:
         await migrate_media_layout_v2660()

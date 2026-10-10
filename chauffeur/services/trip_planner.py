@@ -104,7 +104,7 @@ def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_nights: in
         api_key = None
     else:
         url = ""
-        model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
+        model = settings.get('llm_gemini_model', 'gemini-3.5-flash-lite')
         api_key = settings.get('llm_gemini_api_key')
         
     num_pois = max(1, duration_nights * 4)
@@ -1095,7 +1095,7 @@ def generate_trip_accommodations(trip: TripMetadata, user_prompt: str) -> Tuple[
         api_key = None
     else:
         url = ""
-        model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
+        model = settings.get('llm_gemini_model', 'gemini-3.5-flash-lite')
         api_key = settings.get('llm_gemini_api_key')
         
     system_prompt = """You are an expert travel agent. 
@@ -1249,7 +1249,7 @@ def generate_trip_flights(trip: 'TripMetadata', user_prompt: str) -> Tuple[Optio
         api_key = None
     else:
         url = ""
-        model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
+        model = settings.get('llm_gemini_model', 'gemini-3.5-flash-lite')
         api_key = settings.get('llm_gemini_api_key')
 
     home_location = settings.get('home_location')
@@ -1374,7 +1374,7 @@ def generate_trip_plan(trip: 'TripMetadata', user_prompt: str, duration_nights: 
         api_key = None
     else:
         url = ""
-        model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
+        model = settings.get('llm_gemini_model', 'gemini-3.5-flash-lite')
         api_key = settings.get('llm_gemini_api_key')
         
     # Ask for what we actually want shipped (~3/night = 30 for a 10-night trip,
@@ -1749,7 +1749,7 @@ def suggest_trip_dates(trip: TripMetadata) -> Tuple[Optional[str], Optional[dict
         api_key = "ollama"
     else:
         url = "https://generativelanguage.googleapis.com/v1beta/models"
-        model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
+        model = settings.get('llm_gemini_model', 'gemini-3.5-flash-lite')
         api_key = settings.get('llm_gemini_api_key')
         
     if not api_key:

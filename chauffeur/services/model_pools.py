@@ -6,7 +6,8 @@ of 2026-08-30):
 
 - lite:  gemini-3.5-flash-lite (500), gemini-3.1-flash-lite (500),
          gemini-2.5-flash-lite (20)  -> ~1,020/day, answers in seconds.
-- flash: gemini-3.8/3.7/3.6/3.5/3.1/3/2.5-flash (20 each) -> ~140/day, highest quality.
+- flash: gemini-3.8/3.7/3.6/3/2.5-flash (20 each) -> ~100/day, highest quality
+         (3.5-flash retired by Google 2026-10-09; see RETIRED_MODELS).
 - gemma: gemma-4-31b-it (14,400) + whatever large Gemma the key lists (discovered daily), but
          44-180s per call measured on the free API (2026-07-30).
 - pro:   gemini-3.1-pro-preview (paid key only, mission tier exclusive).
@@ -48,9 +49,16 @@ import datetime
 
 logger = logging.getLogger(__name__)
 
+# Ids Google has withdrawn from the API. Kept so a stored setting that still
+# names one can be moved off it (migrations.migrate_retired_gemini_models_*)
+# and so a test refuses them in any pool default: a retired id costs a 404
+# round trip per call until the 6-hour cooldown, every day.
+#   gemini-3.5-flash — deprecation notice received 2026-10-09.
+RETIRED_MODELS = ("gemini-3.5-flash",)
+
 DEFAULT_POOLS = {
     'lite': ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"],
-    'flash': ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash",
+    'flash': ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash",
               "gemini-3-flash", "gemini-2.5-flash"],
     # Only a starting point: the Gemma pool is rebuilt from the key's own
     # model list once a day (refresh_gemma_models). gemma-4-26b-it was a

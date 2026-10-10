@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.323 (2026-10-09).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.324 (2026-10-09).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 
 **Flip day, part 2: the wall's picture sinks carry the token, and the custom-card lanes are wall lanes (v2.499.323; `services/auth.py` RULES, `templates/nav.html` screensaver + `applyBackground`, `templates/home.html`, `templates/app.html`, `templates/components/routine_lanes.html`, `routines_page.html`, `shopping_lists.html`, `static/pwa_child_shell.js`; tests `test_auth.scenario_e4_the_wall_lanes_the_flip_actually_broke`, `test_template_js.scenario_a_picture_carries_the_token_on_its_query_string`).** Second report after the flip: the screensaver went black, and "a bunch of the Home Assistant cards" said *Home Assistant would not hand over …* while others worked.
@@ -803,7 +803,7 @@ Distinct from standard rules, priority rules allow dynamic modification of the `
 Every Gemini call in the app routes through quota-bucket pools so same-ability models combine their free-tier daily limits (each MODEL has its own quota; caps as of 2026-08-02):
 
 - **lite** — `gemini-3.5-flash-lite` (500/day), `gemini-3.1-flash-lite` (500/day), `gemini-2.5-flash-lite` (20/day tail) → ~1,020 fast requests/day.
-- **flash** — `gemini-3.8-flash`,`gemini-3.7-flash`,`gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3-flash`, `gemini-2.5-flash` (20/day each) → ~100 quality requests/day.
+- **flash** — `gemini-3.8-flash`,`gemini-3.7-flash`,`gemini-3.6-flash`, `gemini-3-flash`, `gemini-2.5-flash` (20/day each) → ~100 quality requests/day. `gemini-3.5-flash` was retired by Google (notice 2026-10-09, v2.499.324): it is named in `model_pools.RETIRED_MODELS`, a test refuses any retired id in a pool default, and `migrate_retired_gemini_models_v2499324` moves a stored `llm_gemini_model` off it (the trip planner reads that setting directly, outside the pools). A `model_pool_flash` override set by hand is the household's own and is not rewritten.
 - **gemma** — `gemma-4-31b-it` plus the large Gemmas the key lists (discovered daily since v2.499.239; `gemma-4-26b-it` was here until Google withdrew it 2026-10-05), but 44-180s per call.
 - **pro** — `gemini-3.1-pro-preview` (paid key, mission-tier only; 2.5-pro is closed to new users, and preview ids are served on v1beta — all Gemini calls now use v1beta) → billed per call, no free-tier quota to combine.
 

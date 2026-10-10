@@ -184,9 +184,9 @@ def main():
             check(opts[:len(model_pools.DEFAULT_POOLS['lite'])] == model_pools.DEFAULT_POOLS['lite']
                   and set(model_pools.DEFAULT_POOLS['flash']) <= set(opts),
                   f"the Gemini model picker does not offer the app's pools: {opts}")
-            page.select_option('#llmGeminiModel', 'gemini-3.5-flash')
+            page.select_option('#llmGeminiModel', 'gemini-3.8-flash')
             page.wait_for_timeout(700)
-            check(storage.get_settings().get('llm_gemini_model') == 'gemini-3.5-flash',
+            check(storage.get_settings().get('llm_gemini_model') == 'gemini-3.8-flash',
                   'the Gemini model choice did not save')
             check(not page.is_visible('#llmOllamaUrl'), 'the Ollama fields show before Ollama is chosen')
             page.select_option('#llmProvider', 'ollama')

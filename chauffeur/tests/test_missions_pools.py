@@ -38,7 +38,35 @@ def scenario_pro_pool_overridable():
           "model_pool_pro setting overrides the default like every other pool")
 
 
+def scenario_retired_models_are_out_of_the_pools_and_out_of_settings():
+    """Google retired gemini-3.5-flash (the household's email, 2026-10-09). A
+    retired id in a pool default costs a 404 round trip per call until the 6h
+    cooldown; a retired id in the trip planner's own setting fails every
+    trip. So: the id is gone from the defaults, named in RETIRED_MODELS, and
+    the migration moves a stored setting off it."""
+    from services import storage, migrations
+    check('gemini-3.5-flash' in model_pools.RETIRED_MODELS, "the retired id is named")
+    for pool, models in model_pools.DEFAULT_POOLS.items():
+        for m in model_pools.RETIRED_MODELS:
+            check(m not in models, f"retired {m} still in the {pool} pool defaults")
+    # harness.py pins storage.get_settings to a fixed dict; this scenario
+    # needs the real settings row, so read it straight from the table.
+    patched = storage.get_settings
+    storage.get_settings = lambda: (dict(storage.settings_table.all()[0]) if storage.settings_table.all() else {})
+    try:
+        storage.update_settings({'llm_gemini_model': 'gemini-3.5-flash', 'calendar_ids': []})
+        migrations.migrate_retired_gemini_models_v2499324()
+        check(storage.get_settings().get('llm_gemini_model') == 'gemini-3.5-flash-lite',
+              f"a stored retired model was not moved: {storage.get_settings().get('llm_gemini_model')}")
+        check(storage.get_settings().get('calendar_ids') == [], "the migration rewrote other settings")
+        migrations.migrate_retired_gemini_models_v2499324()     # idempotent, and leaves a live id alone
+        check(storage.get_settings().get('llm_gemini_model') == 'gemini-3.5-flash-lite', "second run changed it")
+    finally:
+        storage.get_settings = patched
+
+
 if __name__ == '__main__':
+    scenario_retired_models_are_out_of_the_pools_and_out_of_settings()
     scenario_pro_pool_and_mission_tier()
     scenario_mission_flash_is_pure_flash()
     scenario_key_routing()
