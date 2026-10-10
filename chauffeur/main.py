@@ -6484,7 +6484,8 @@ async def thread_photo(thread_id: str, file: UploadFile = File(...), caption: st
     if not data or len(data) > 15 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="The image is empty or over 15 MB")
     from services import threads as _threads
-    res = _threads.add_photo(thread_id, data, mime, (actor or {}).get('id'), caption=caption)
+    # The vision read takes seconds: off the loop, so the panels keep being served.
+    res = await asyncio.to_thread(_threads.add_photo, thread_id, data, mime, (actor or {}).get('id'), caption)
     if res.get('status') != 'ok':
         raise HTTPException(status_code=400, detail=res.get('reason') or 'could not store the photo')
     return res

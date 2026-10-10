@@ -41,14 +41,23 @@ def _configured(settings: dict) -> bool:
     return bool(user and password)
 
 
+def _fold(word: str) -> str:
+    """7-bit: imaplib encodes every str criterion as ASCII, and an RFC 3501
+    quoted-string is 7-bit anyway, so an accent is folded (café -> cafe) and
+    a word with nothing left after folding is dropped by the caller."""
+    import unicodedata
+    w = unicodedata.normalize('NFKD', word or '').encode('ascii', 'ignore').decode()
+    return re.sub(r'[\x00-\x1f\x7f]', '', w)
+
+
 def _quote(word: str) -> str:
-    # IMAP quoted-string: backslash-escape quotes and backslashes; drop control chars.
-    w = re.sub(r'[\x00-\x1f]', '', word).replace('\\', '\\\\').replace('"', '\\"')
+    # IMAP quoted-string: backslash-escape quotes and backslashes.
+    w = word.replace('\\', '\\\\').replace('"', '\\"')
     return f'"{w}"'
 
 
 def _criteria(query: str, since_days: int) -> list:
-    words = [w[:WORD_CHARS] for w in re.split(r'\s+', (query or '').strip()[:QUERY_CHARS]) if w][:MAX_WORDS]
+    words = [w for w in (_fold(w)[:WORD_CHARS] for w in re.split(r'\s+', (query or '').strip()[:QUERY_CHARS])) if w][:MAX_WORDS]
     since = (datetime.date.today() - datetime.timedelta(days=max(1, int(since_days or 365)))).strftime('%d-%b-%Y')
     if not words:
         return ['SINCE', since]

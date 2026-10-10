@@ -28,6 +28,10 @@ class FakeIMAP:
 
     def uid(self, cmd, *args):
         if cmd == 'SEARCH':
+            # imaplib encodes every str criterion as ASCII; a non-ASCII word raises here, as it does there.
+            for a in args:
+                if isinstance(a, str):
+                    a.encode('ascii')
             self.searches.append(args)
             crit = ' '.join(str(a) for a in args if a is not None)
             # Crude matcher: every quoted word in the criteria is a candidate.
@@ -104,6 +108,17 @@ def scenario_query_is_quoted_for_imap():
     check(crit.count('TEXT "') <= mail_search.MAX_WORDS and len(crit) < 600, f"a runaway query is cut: {len(crit)} chars")
 
 
+def scenario_non_ascii_query_is_folded_not_an_error():
+    now = datetime.datetime.now(datetime.timezone.utc)
+    fake = _reset({5: _raw('orders@cafeappliances.com', 'Your Cafe order', 'Model CDT805P2N3S1', now)})
+    res = mail_search.search('café dishwasher')
+    check(res['status'] == 'success' and [h['uid'] for h in res['hits']] == [5], f"an accent is folded, the search runs: {res}")
+    crit = ' '.join(str(a) for a in fake.searches[-1])
+    check('"cafe"' in crit and 'é' not in crit, f"cafe, 7-bit: {crit}")
+    res = mail_search.search('日本')
+    check(res['status'] == 'success', f"a word that folds to nothing is dropped, not an error: {res}")
+
+
 def scenario_limit_is_capped():
     now = datetime.datetime.now(datetime.timezone.utc)
     _reset({i: _raw('a@b.c', f'hit {i}', 'word', now) for i in range(1, 30)})
@@ -127,6 +142,21 @@ def scenario_tools_gate_and_read_through():
     check(res['status'] == 'success' and 'CDT805P2N3S1' in res['message'], f"read through: {res}")
 
 
+def scenario_a_room_hears_headers_only():
+    """Voice acts as the parent of record and is treated as a ROOM (triage
+    arc): the mailbox's bodies are never read out; the headers may be."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    _reset({3: _raw('teacher@school.org', 'About Kate', 'Kate was in a fight today. Details: CDT805P2N3S1', now)})
+    res = tools.search_mail('Kate', acting_member=MOM, spoken=True)
+    check(res['status'] == 'success' and 'About Kate' in res['message'] and 'CDT805P2N3S1' not in res['message'],
+          f"spoken: subject yes, snippet no: {res}")
+    check(res['hits'] and 'snippet' not in res['hits'][0], "spoken hits carry no snippet either")
+    res = tools.read_mail(3, acting_member=MOM, spoken=True)
+    check(res['status'] == 'error' and 'out loud' in res['message'], f"spoken read is refused: {res}")
+    res = tools.read_mail(3, acting_member=MOM)
+    check(res['status'] == 'success', "typed read still works")
+
+
 def scenario_registry_and_missions_know_the_tools():
     for name in ('search_mail', 'read_mail'):
         check(name in tools.TOOL_HANDLERS and name in tools.TOOL_SCHEMAS, f"{name} in the registry")
@@ -143,7 +173,9 @@ def scenario_registry_and_missions_know_the_tools():
 
 SCENARIOS = [scenario_search_returns_snippets_newest_first_and_moves_no_cursor, scenario_read_returns_the_body_capped,
              scenario_no_mailbox_is_an_honest_answer, scenario_query_is_quoted_for_imap, scenario_limit_is_capped,
-             scenario_tools_gate_and_read_through, scenario_registry_and_missions_know_the_tools]
+             scenario_non_ascii_query_is_folded_not_an_error,
+             scenario_tools_gate_and_read_through, scenario_a_room_hears_headers_only,
+             scenario_registry_and_missions_know_the_tools]
 
 if __name__ == "__main__":
     import traceback

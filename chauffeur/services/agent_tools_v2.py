@@ -1632,7 +1632,11 @@ def _mail_reader(acting_member: dict):
     return None
 
 
-def search_mail(query: str, since_days: int = 365, limit: int = 5, acting_member: dict = None) -> Dict[str, Any]:
+def search_mail(query: str, since_days: int = 365, limit: int = 5, acting_member: dict = None,
+                spoken: bool = False) -> Dict[str, Any]:
+    """`spoken`: the router sets it when a caller with no identity (HA voice,
+    the admin widget) acts as the parent of record — a ROOM, where anybody
+    may be listening. A room hears who wrote and about what, never the body."""
     refusal = _mail_reader(acting_member)
     if refusal:
         return refusal
@@ -1643,14 +1647,21 @@ def search_mail(query: str, since_days: int = 365, limit: int = 5, acting_member
     hits = res['hits']
     if not hits:
         return {"status": "success", "message": f"Nothing in the family mailbox matches '{query}'.", "hits": []}
+    if spoken:
+        hits = [{k: v for k, v in h.items() if k != 'snippet'} for h in hits]
+        lines = [f"- uid {h['uid']} · {h['date'][:10]} · {h['from']} · {h['subject']}" for h in hits]
+        return {"status": "success", "message": "Found in the family mailbox (headers only out loud):\n" + '\n'.join(lines),
+                "hits": hits}
     lines = [f"- uid {h['uid']} · {h['date'][:10]} · {h['from']} · {h['subject']}: {h['snippet'][:160]}" for h in hits]
     return {"status": "success", "message": "Found in the family mailbox:\n" + '\n'.join(lines), "hits": hits}
 
 
-def read_mail(uid: int, acting_member: dict = None) -> Dict[str, Any]:
+def read_mail(uid: int, acting_member: dict = None, spoken: bool = False) -> Dict[str, Any]:
     refusal = _mail_reader(acting_member)
     if refusal:
         return refusal
+    if spoken:
+        return {"status": "error", "message": "I can't read the family's mail out loud — open it on your phone."}
     from services import mail_search as _ms
     res = _ms.read(uid)
     if res.get('status') != 'success':

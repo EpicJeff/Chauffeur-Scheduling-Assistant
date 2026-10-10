@@ -101,6 +101,56 @@ def scenario_photo_answers_only_its_own_mission():
     check(storage.get_mission(mb)['status'] == 'waiting_user', "the mission on B is untouched")
 
 
+def scenario_an_unread_photo_leaves_the_mission_waiting():
+    """Spec §3: the mission resumes with the photo as its answer. 'photo added
+    (not read)' is not an answer: no key or over the cap, the photo stays on
+    the thread for a person and the mission keeps waiting."""
+    _reset()
+    storage.get_settings = lambda: {'thread_stall_days': 7}
+    threads._pool_call = _fake_pool({'text': 'x'})
+    a = threads.create('A', owner_member_id='mom', created_by='mom')
+    ma = storage.add_mission({'goal': 'fix A', 'origin_kind': 'thread', 'origin_ref': a, 'created_by': 'mom', 'status': 'waiting_user'})
+    storage.add_mission_step(ma, {'kind': 'ask', 'name': 'question', 'result_json': {'question': 'Send me a photo of the label'}})
+    res = threads.add_photo(a, PNG, 'image/png', 'mom')
+    check(res['status'] == 'ok' and res['read'] is False, "stored, not read")
+    check(storage.get_mission(ma)['status'] == 'waiting_user', "the mission keeps waiting")
+    check(not [st for st in storage.get_mission_steps(ma) if st['name'] == 'user_answer'], "no answer was invented")
+
+
+def scenario_the_vision_call_does_not_block_the_loop():
+    """The endpoint is async (it awaits the upload); the vision call takes
+    seconds and must run off the loop so the wall panels and the other phone
+    keep being served."""
+    import time
+    _reset()
+
+    def slow(tier, key, system, prompt, **kw):
+        time.sleep(0.4)
+        return {'text': 'ok'}
+    threads._pool_call = slow
+    tid = threads.create('T', owner_member_id='mom', created_by='mom')
+    ticks = []
+    done = {}
+
+    async def run():
+        import main
+        from starlette.datastructures import UploadFile, Headers
+        up = UploadFile(io.BytesIO(PNG), filename='label.png', headers=Headers({'content-type': 'image/png'}))
+
+        async def handler():
+            await main.thread_photo(tid, file=up, caption='', member_id='mom', request=None)
+            done['at'] = time.monotonic()
+
+        async def ticker():
+            for _ in range(10):
+                await asyncio.sleep(0.05)
+                ticks.append(time.monotonic())
+        await asyncio.gather(handler(), ticker())
+    asyncio.run(run())
+    during = [t for t in ticks if t < done['at']]
+    check(len(during) >= 4, f"the loop kept ticking during the vision call: {len(during)} ticks before it returned")
+
+
 def scenario_photo_gates():
     """Through the handler: a parent may; the owner child may; another child may not."""
     _reset()
@@ -129,7 +179,8 @@ def scenario_non_image_is_refused():
 
 
 SCENARIOS = [scenario_photo_is_stored_read_and_logged, scenario_cap_failure_and_no_key_leave_not_read,
-             scenario_photo_answers_only_its_own_mission, scenario_photo_gates, scenario_non_image_is_refused]
+             scenario_photo_answers_only_its_own_mission, scenario_an_unread_photo_leaves_the_mission_waiting,
+             scenario_the_vision_call_does_not_block_the_loop, scenario_photo_gates, scenario_non_image_is_refused]
 
 if __name__ == "__main__":
     import traceback

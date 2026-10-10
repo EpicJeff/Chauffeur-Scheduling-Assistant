@@ -586,10 +586,12 @@ def add_photo(thread_id: str, data: bytes, mime: str, who: Optional[str], captio
         storage.update_thread_history_entry(thread_id, {'media_id': saved['id']}, {'text': text})
         entry['text'] = text
     from services import situations as _sit
-    # A mission waiting on a question on this thread takes the photo as the answer.
-    for m in storage.get_missions(status='waiting_user'):
+    # A mission waiting on a question on this thread takes the photo as the
+    # answer — when it was read. "photo added (not read)" is not an answer:
+    # the photo stays on the thread for a person and the mission keeps waiting.
+    for m in (storage.get_missions(status='waiting_user') if text else []):
         if m.get('origin_kind') == 'thread' and m.get('origin_ref') == thread_id:
-            answer = f"(photo) {text or NOT_READ}" + (f" — {entry['caption']}" if entry['caption'] else '')
+            answer = f"(photo) {text}" + (f" — {entry['caption']}" if entry['caption'] else '')
             storage.add_mission_step(m['id'], {'kind': 'note', 'name': 'user_answer',
                                                'result_json': {'text': answer, 'photo_url': saved['url']}})
             storage.update_mission(m['id'], {'status': 'running'})
