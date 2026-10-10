@@ -215,6 +215,97 @@ def scenario_next_situation_is_declared_and_terminal():
 SCENARIOS += [scenario_next_situation_speaks_one_and_sets_focus, scenario_ref_less_tools_use_the_focus,
               scenario_ref_less_answer_with_two_live_asks_refuses, scenario_next_situation_is_declared_and_terminal]
 
+from services import agent_router  # noqa: E402
+
+
+def _fake_gemma(tool_call, captured=None):
+    state = {'n': 0}
+
+    def fake(prompt, tools, system_prompt):
+        if captured is not None:
+            captured['tools'] = [t['name'] for t in tools]
+            captured['system'] = system_prompt
+        state['n'] += 1
+        if state['n'] == 1 and tool_call:
+            return {'tool_calls': [tool_call], 'message': ''}
+        # An EMPTY concluding message: the router keeps the tool's own
+        # message as the reply, which is what these scenarios assert on.
+        return {'tool_calls': [], 'message': ''}
+    return fake
+
+
+def _with_gemma(fake, fn):
+    orig = agent_router.call_gemma_with_fallback
+    agent_router.call_gemma_with_fallback = fake
+    try:
+        return fn()
+    finally:
+        agent_router.call_gemma_with_fallback = orig
+
+
+def scenario_voice_acts_as_the_parent_of_record():
+    _reset()
+    storage.add_assist_contact({'id': 'c1', 'name': 'Sarah', 'kinds': ['driving'], 'active': True})
+    fid = _finding('No driver yet: Soccer', 'decide', 30, 'ev1')
+    start = NOON + datetime.timedelta(hours=30)
+    storage.set_cached_schedule({'events': [{'id': 'ev1', 'title': 'Soccer', 'start': start.isoformat(),
+                                             'end': start.isoformat()}], 'assignments': {}, 'unassigned': ['ev1']})
+    call = {'name': 'next_situation', 'arguments': {}}
+    res = _with_gemma(_fake_gemma(call), lambda: agent_router.process_agent_request('what needs my attention', focus_key='voice:1'))
+    check(res['message'].startswith('No driver yet: Soccer.'), f"voice hears the ride with no identity: {res}")
+    call = {'name': 'start_ask', 'arguments': {'to_name': 'Sarah', 'what': 'drive Kate Thursday', 'channel': 'text'}}
+    res = _with_gemma(_fake_gemma(call), lambda: agent_router.process_agent_request('text Sarah and ask her', focus_key='voice:1'))
+    asks = storage.get_asks(situation_kind='finding', situation_id=fid)
+    check(len(asks) == 1 and asks[0]['asked_by'] == 'mom', f"the ask is the parent of record's: {asks}")
+    res = _with_gemma(_fake_gemma(call), lambda: agent_router.process_agent_request('text Sarah', focus_key='voice:1', propose_only=True))
+    check(len(storage.get_asks(situation_kind='finding', situation_id=fid)) == 1, "propose-only never reaches start_ask")
+    kid = {'id': 'kid', 'name': 'Kate', 'role': 'child'}
+    res = _with_gemma(_fake_gemma(call), lambda: agent_router.process_agent_request('text Sarah', source='family',
+                                                                                     acting_member=kid, focus_key='channel:9'))
+    check(len(storage.get_asks(situation_kind='finding', situation_id=fid)) == 1 and 'parent or adult' in res['message'],
+          f"a child via @argyle is refused as today: {res}")
+
+
+def scenario_voice_never_hears_a_sensitive_insight():
+    _reset()
+    storage.add_mind_insight({'slug': 's', 'line': 'SECRET', 'category': 'c', 'approach': 'x', 'identity': 'c:2',
+                              'sensitivity': 'sensitive'})
+    for name in ('next_situation', 'list_situations'):
+        res = _with_gemma(_fake_gemma({'name': name, 'arguments': {}}),
+                          lambda: agent_router.process_agent_request('what needs me', focus_key='voice:1'))
+        check('SECRET' not in res['message'], f"{name} on voice never speaks a sensitive insight: {res}")
+    res = _with_gemma(_fake_gemma({'name': 'list_situations', 'arguments': {}}),
+                      lambda: agent_router.process_agent_request('what needs me', source='family', acting_member=MOM))
+    check('SECRET' in res['message'], "a parent on her own phone still sees it in the list")
+
+
+def scenario_focus_line_present_exactly_when_live():
+    _reset()
+    tid = threads.create('Deck permit', owner_member_id='mom', next_action='call', created_by='mom')
+    cap = {}
+    _with_gemma(_fake_gemma(None, cap), lambda: agent_router.process_agent_request('hi', focus_key='conv:1'))
+    check('FOCUS:' not in cap['system'], "no focus, no line")
+    triage.set_focus('conv:1', 'thread', tid, 'Deck permit')
+    _with_gemma(_fake_gemma(None, cap), lambda: agent_router.process_agent_request('hi', focus_key='conv:1'))
+    check('FOCUS: thread "Deck permit"' in cap['system'] and 'Handle it' in cap['system'], f"the line: {cap['system'][-400:]}")
+    threads.close(tid, 'done', who='mom')
+    _with_gemma(_fake_gemma(None, cap), lambda: agent_router.process_agent_request('hi', focus_key='conv:1'))
+    check('FOCUS:' not in cap['system'], "a settled focus is not injected")
+
+
+def scenario_voice_without_a_conversation_has_no_focus():
+    _reset()
+    threads.create('Deck permit', owner_member_id='mom', next_action='call',
+                   next_action_at=(NOON - datetime.timedelta(days=1)).date().isoformat(), created_by='mom')
+    res = _with_gemma(_fake_gemma({'name': 'next_situation', 'arguments': {}}),
+                      lambda: agent_router.process_agent_request('what needs my attention'))
+    check(res['message'].startswith('Deck permit.') and "Say 'Deck permit'" in res['message'], f"ends with the title: {res}")
+    check(not storage.get_app_state(triage.FOCUS_KEY), "nothing written with no key")
+
+
+SCENARIOS += [scenario_voice_acts_as_the_parent_of_record, scenario_voice_never_hears_a_sensitive_insight,
+              scenario_focus_line_present_exactly_when_live, scenario_voice_without_a_conversation_has_no_focus]
+
 if __name__ == "__main__":
     import traceback
     failed = 0

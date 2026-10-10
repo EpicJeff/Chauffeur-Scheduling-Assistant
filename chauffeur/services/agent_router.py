@@ -141,7 +141,8 @@ def _propose_only_refusal(func_name: str) -> str:
 def process_agent_request(user_prompt: str, context: Optional[Dict] = None, history: Optional[List[Dict]] = None,
                           source: str = "admin", driver_id: Optional[str] = None,
                           acting_member: Optional[Dict] = None,
-                          propose_only: bool = False) -> Dict[str, Any]:
+                          propose_only: bool = False,
+                          focus_key: Optional[str] = None) -> Dict[str, Any]:
     """
     Main entrypoint for the Agent Orchestrator.
     Decides whether to route to Gemma (tools) or Gemini (heavy lifting).
@@ -154,6 +155,10 @@ def process_agent_request(user_prompt: str, context: Optional[Dict] = None, hist
     (see PROPOSE_ONLY_TOOLS): reads still run and propose_family_action still
     posts a card, everything else is refused before dispatch. Only the Mind's
     bind/propose taps pass it — chat is unaffected.
+    focus_key names the conversation ("conv:<id>" for the widget, "voice:<id>"
+    for HA Assist, "channel:<id>" for the Argyle DM). The situation tools hold
+    the thing being talked about under it (services/triage.py); it is handed to
+    them at dispatch and never shown to the model as a parameter.
     """
     # Resolve driver context (PWA chat only). The driver must actually exist —
     # a stale localStorage id must not grant driver tools acting on nobody.
@@ -206,6 +211,24 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                 "person is meant only when two of them are genuinely close.\n")
     except Exception as e:
         logger.warning(f"Could not inject family roster: {e}")
+
+    # THE THING WE ARE TALKING ABOUT. After "what needs my attention" the
+    # follow-ups ("handle it", "ask Sarah by text", "she said yes", "next")
+    # need no title: the situation tools fall back to this focus. Only a live
+    # focus is injected; triage.get_focus drops a settled one itself.
+    if focus_key:
+        try:
+            from services import triage as _tri, situations as _sit
+            _f = _tri.get_focus(focus_key)
+            if _f:
+                _s = _sit.view(_f['kind'], _f['id'], acting_member or _sit.parent_of_record())
+                _nxt = ((_s or {}).get('next_step') or {}).get('label') or '-'
+                system_prompt += (f"\nFOCUS: {_f['kind']} \"{_f.get('title')}\" — next step: {_nxt}. "
+                                  "\"Handle it\", \"do that\", \"ask X by Y\", \"she said yes\", \"sent it\", "
+                                  "\"next\", \"skip it\" refer to this one unless another is named: call the "
+                                  "situation tools with NO ref for it.\n")
+        except Exception as e:
+            logger.warning(f"Could not inject focus: {e}")
 
     if not driver:
         if acting_member is not None:
@@ -798,18 +821,31 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.dismiss_insight(args.get("insight_id", ""),
                                                     member_role=role)
                     if res.get("message"): agent_message = res["message"]
-                elif func_name in ("list_situations", "explain_situation", "act_on_situation",
+                elif func_name in ("list_situations", "next_situation", "explain_situation", "act_on_situation",
                                    "start_ask", "mark_ask_sent", "answer_ask"):
-                    from services import agent_tools_v2 as _atv2
+                    from services import agent_tools_v2 as _atv2, situations as _sit
                     # Same actor resolution as the thread tools below: resolved
-                    # HERE at dispatch, never taken from the model.
+                    # HERE at dispatch, never taken from the model. A caller with
+                    # no identity (HA voice, the admin widget) acts as the parent
+                    # of record — the rule the admin pages already use — and is
+                    # treated as a ROOM: nothing sensitive is read out. Never on
+                    # the propose-only rail, never in driver mode.
                     actor = acting_member
+                    substituted = False
                     if actor is None and driver:
                         from services import storage as _st
                         actor = _st.get_member_by_driver_id(driver_id)
+                    elif actor is None and not propose_only:
+                        actor = _sit.parent_of_record()
+                        substituted = actor is not None
                     fn = getattr(_atv2, func_name)
                     allowed = fn.__code__.co_varnames[:fn.__code__.co_argcount]
-                    kwargs = {k: v for k, v in (args or {}).items() if k in allowed and k != 'acting_member'}
+                    kwargs = {k: v for k, v in (args or {}).items()
+                              if k in allowed and k not in ('acting_member', 'focus_key', 'spoken')}
+                    if 'focus_key' in allowed:
+                        kwargs['focus_key'] = focus_key
+                    if 'spoken' in allowed:
+                        kwargs['spoken'] = substituted
                     res = fn(**kwargs, acting_member=actor)
                     if isinstance(res, dict) and res.get("schedule_dirty"):
                         schedule_dirty = True

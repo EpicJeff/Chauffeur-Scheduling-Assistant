@@ -3847,7 +3847,8 @@ def converse_ha_assist(req: ConverseRequest):
                 conv_history = conv.get("messages", [])
             storage.add_message_to_conversation(conv_id, {'role': 'user', 'content': req.text, 'timestamp': time.time()})
 
-        res = process_agent_request(req.text, history=conv_history)
+        res = process_agent_request(req.text, history=conv_history,
+                                    focus_key=f"voice:{req.conversation_id}" if req.conversation_id else None)
 
         if conv_id:
             storage.add_message_to_conversation(conv_id, {'role': 'assistant', 'content': res.get("message", "Done."), 'timestamp': time.time()})
@@ -5357,13 +5358,13 @@ def _approver_of_record(actor):
     """
     if actor:
         return actor
-    parents = [m for m in storage.get_all_members()
-               if m.get('role') == 'parent' and not m.get('system')]
-    if not parents:
+    from services import situations as _sit
+    parent = _sit.parent_of_record()
+    if not parent:
         raise HTTPException(
             status_code=400,
             detail="There is no parent on record to approve this as.")
-    return parents[0]
+    return parent
 
 
 def _mind_refresh_if_dirty(result, background_tasks):
@@ -15884,7 +15885,8 @@ def _run_argyle_mention(channel: dict, sender: dict, body: str):
                  "Greet them briefly by name and ask how you can help.")
     card = None
     try:
-        res = process_agent_request(query, source="family", acting_member=sender)
+        res = process_agent_request(query, source="family", acting_member=sender,
+                                    focus_key=f"channel:{channel.get('id')}" if channel.get('id') else None)
         reply = (res or {}).get("message") or "Sorry — I couldn't work that out."
         card = res.get("card")
         if res.get("schedule_dirty"):
@@ -17645,7 +17647,8 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks):
             storage.add_message_to_conversation(payload.conversation_id, {'role': 'user', 'content': payload.message, 'timestamp': time.time()})
 
         res = process_agent_request(payload.message, context=payload.context, history=conv_history,
-                                    source=payload.source or "admin", driver_id=payload.driver_id)
+                                    source=payload.source or "admin", driver_id=payload.driver_id,
+                                    focus_key=f"conv:{payload.conversation_id}" if payload.conversation_id else None)
         reply = res.get("message", "I did not understand that.")
         target_id = res.get("target_element_id")
         

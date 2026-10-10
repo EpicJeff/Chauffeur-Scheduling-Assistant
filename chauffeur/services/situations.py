@@ -454,6 +454,14 @@ def _can_write(actor) -> bool:
     return bool(actor) and actor.get('role') in WRITE_ROLES
 
 
+def parent_of_record() -> Optional[dict]:
+    """Who a surface with no person acts as: the household's first parent.
+    main._approver_of_record and the router's voice path both nominate this
+    one member, so an ask from a satellite is asked by somebody real."""
+    return next((m for m in storage.get_all_members()
+                 if m.get('role') == 'parent' and not m.get('system')), None)
+
+
 def own(kind: str, sid: str, actor: dict) -> dict:
     fields = {OWNER: actor['id'], OWNED_AT: time.time()}
     if kind == 'finding':
