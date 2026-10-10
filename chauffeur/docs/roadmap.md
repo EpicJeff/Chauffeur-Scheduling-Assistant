@@ -49,6 +49,10 @@ routines + streaks · rewards store with parent-approved redemptions.
   voice acts as the parent of record, and a vendor's reply on a thread is
   read once and recorded, never applied. Spec:
   `docs/superpowers/specs/2026-10-10-triage-and-replies-design.md`.
+  Browse missions build 1 SHIPPED v2.499.343–.346 (2026-10-10): mail
+  search (`search_mail`/`read_mail`) and a photo on a thread, read once by
+  the vision tier, answering a waiting mission. Spec:
+  `docs/superpowers/specs/2026-10-10-browse-missions-design.md`.
 
 - **Agent tools for the family hub. SHIPPED v2.25.0 (2026-08-01)** — six
   tools in both stacks (send/read family messages + DMs with full push
