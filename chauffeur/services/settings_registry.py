@@ -652,6 +652,27 @@ ENTRIES: List[dict] = [
        'Hard ceiling on photos Argyle reads off a thread per day (default 20). Over the cap a photo is '
        'kept but not read.',
        page='work?tab=missions', anchor='missions-settings'),
+    _e('contact_first_name', 'missions', 'Contact card: first name',
+       "The family's own contact details, filled once. A mission releases them to a site only after a parent "
+       "approves that site, once per mission.",
+       page='work?tab=missions', anchor='contact-card'),
+    _e('contact_last_name', 'missions', 'Contact card: last name', "The family"s surname as a site"s form would want it. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
+    _e('contact_email', 'missions', 'Contact card: email', "The household email a site may write to. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
+    _e('contact_phone', 'missions', 'Contact card: phone', "The household phone a site may call or text. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
+    _e('contact_street', 'missions', 'Contact card: street', "The street address a technician would come to. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
+    _e('contact_apt', 'missions', 'Contact card: apt / suite', "Apartment, suite or unit, if any. Released with the street address, per site per mission.", page='work?tab=missions', anchor='contact-card'),
+    _e('contact_city', 'missions', 'Contact card: city', "The city of the household address. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
+    _e('contact_state', 'missions', 'Contact card: state', "The state or province of the household address. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
+    _e('contact_zip', 'missions', 'Contact card: ZIP', "The ZIP or postal code of the household address. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
+    _e('contact_preferred', 'missions', 'Contact card: preferred contact',
+       'How the household prefers a site to reach it: text, email or phone. Released per site per mission like the rest of the card.', page='work?tab=missions', anchor='contact-card'),
+    _e('missions_captcha_attempts', 'missions', 'Let Argyle attempt human-verification checks',
+       "Off by default. On, a browse may tick a CAPTCHA checkbox and try at most two image challenges, then hands "
+       "the page to you.",
+       page='work?tab=missions', anchor='browse'),
+    _e('mission_cap_browse_turns', 'missions', 'Daily browse-turn cap',
+       "Hard ceiling on browser actions Argyle takes per day across missions (default 400), billed on the paid key.",
+       page='work?tab=missions', anchor='browse'),
 
     # --- Threads (open loops with people outside the family) ---
     _e('thread_stall_days', 'threads', 'Stalls after (days)',

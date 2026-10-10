@@ -1593,6 +1593,20 @@ class Settings(BaseModel):
     mission_cap_pro_calls: Optional[int] = 120
     # Photos Argyle reads off a thread per day (services/threads.read_photo).
     thread_cap_photo_reads: Optional[int] = 20
+    # Browse missions: the household contact card (the family's own details,
+    # released per site per mission) and the browser's switches.
+    contact_first_name: Optional[str] = ''
+    contact_last_name: Optional[str] = ''
+    contact_email: Optional[str] = ''
+    contact_phone: Optional[str] = ''
+    contact_street: Optional[str] = ''
+    contact_apt: Optional[str] = ''
+    contact_city: Optional[str] = ''
+    contact_state: Optional[str] = ''
+    contact_zip: Optional[str] = ''
+    contact_preferred: Optional[str] = ''        # text | email | phone
+    missions_captcha_attempts: Optional[bool] = False
+    mission_cap_browse_turns: Optional[int] = 400
     # --- Threads (open loops with people outside the family) ---
     # Days of no movement before an open thread counts as quiet (services/
     # threads.py: is_stalled). An overdue next_action_at stalls regardless.
