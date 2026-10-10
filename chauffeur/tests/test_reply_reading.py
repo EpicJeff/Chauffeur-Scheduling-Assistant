@@ -336,6 +336,61 @@ def scenario_next_step_follows_the_reading():
 
 SCENARIOS += [scenario_next_step_follows_the_reading]
 
+
+def scenario_e2e_thread_mail_reply_reading_and_revert():
+    """Spec acceptance 3."""
+    _reset()
+    SENT.clear(); _capture_post()
+    replies._now = lambda: datetime.datetime.now().replace(hour=12, minute=0)
+    try:
+        notes = []
+        situations._pool_call = lambda tier, key, system, prompt, **kw: (notes.append(prompt) or {'status_note': 'They can do Friday.', 'options': []})
+        tid = _thread()
+        res = threads.send_drafted(tid, 'Can you come Friday?', 'B', 'ops@pestco.example', who='mom', intent='come Friday morning')
+        check(storage.get_ask(res['ask_id'])['state'] == 'sent', "sent")
+        replies._pool_call = _fake_pool({'answer': 'yes', 'summary': 'Friday 9am works'})
+        _reply(tid); replies.read(tid, '<m1@pestco>')
+        situations.flush_refreshes()
+        a = storage.get_ask(res['ask_id'])
+        check(a['state'] == 'yes' and a['outcome'] == 'manual', "yes, manual")
+        check(_next(tid)['label'] == 'Confirm with Pest Co: Friday 9am works', "next step")
+        check(len(SENT) == 1 and 'Confirm with Pest Co' in SENT[0]['body'], f"one DM naming the next step: {SENT}")
+        check(storage.get_thread(tid).get('status_note') == 'They can do Friday.', "the note refreshed")
+        un = [o for o in situations.view('thread', tid, MOM)['options'] if o['verb'] == 'unread'][0]
+        situations.act('thread', tid, 'unread', option_id=un['id'], actor=MOM)
+        check(storage.get_ask(res['ask_id'])['state'] == 'sent' and _next(tid)['id'] == 'advance:read', "reverted")
+        h = [x for x in storage.get_thread(tid)['history'] if x.get('message_id') == '<m1@pestco>'][0]
+        check(h['reading']['disputed'] is True, "the reading is kept as disputed")
+    finally:
+        replies._now = datetime.datetime.now
+
+
+def scenario_e2e_capped_reply_is_filed_unread_and_not_read_twice():
+    """Spec acceptance 4."""
+    _reset()
+    SENT.clear(); _capture_post()
+    replies._now = lambda: datetime.datetime.now().replace(hour=12, minute=0)
+    try:
+        storage.get_settings = lambda: {'llm_gemini_api_key': 'k', 'thread_stall_days': 7, 'reply_cap_reads': 0}
+        replies._pool_call = _fake_pool({'answer': 'yes', 'summary': 'x'})
+        tid = _thread()
+        res = threads.send_drafted(tid, 'S', 'B', 'ops@pestco.example', who='mom')
+        from services import email_ingest
+        msg = {'from': 'ops@pestco.example', 'subject': 'Re: S', 'text': 'Friday at 9 works.\nThanks', 'message_id': '<cap>'}
+        email_ingest._match_thread(msg)
+        check(not CALLS, "capped: no call")
+        check(storage.get_ask(res['ask_id'])['state'] == 'sent', "the ask waits")
+        check(_next(tid)['label'] == 'Read their reply: Friday at 9 works.', f"first line: {_next(tid)}")
+        check(len(SENT) == 1 and 'read it' in SENT[0]['body'], "the DM says a reply came in")
+        email_ingest._match_thread(msg)
+        check(not CALLS and len(SENT) == 1 and len([h for h in storage.get_thread(tid)['history'] if h['kind'] == 'received']) == 1,
+              "the next poll does not read or file it again")
+    finally:
+        replies._now = datetime.datetime.now
+
+
+SCENARIOS += [scenario_e2e_thread_mail_reply_reading_and_revert, scenario_e2e_capped_reply_is_filed_unread_and_not_read_twice]
+
 if __name__ == "__main__":
     import traceback
     failed = 0

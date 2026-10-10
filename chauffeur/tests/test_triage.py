@@ -306,6 +306,58 @@ def scenario_voice_without_a_conversation_has_no_focus():
 SCENARIOS += [scenario_voice_acts_as_the_parent_of_record, scenario_voice_never_hears_a_sensitive_insight,
               scenario_focus_line_present_exactly_when_live, scenario_voice_without_a_conversation_has_no_focus]
 
+
+def scenario_e2e_voice_ask_round_trip():
+    """Spec acceptance 1: voice, no identity: triage → text Sarah → sent it →
+    she said yes → applied once → the finding retires by absence."""
+    _reset()
+    storage.add_assist_contact({'id': 'c1', 'name': 'Sarah', 'kinds': ['driving'], 'active': True})
+    start = (NOON + datetime.timedelta(days=2)).replace(hour=16)
+    storage.set_cached_schedule({'events': [{'id': 'ev1', 'title': 'Soccer', 'start': start.isoformat(),
+                                             'end': start.isoformat()}], 'assignments': {}, 'unassigned': ['ev1']})
+    fid = storage.add_finding({'identity': 'unassigned:ev1', 'kind': 'unassigned', 'severity': 'decide',
+                               'line': 'No driver yet: Soccer', 'subject_type': 'event', 'subject_id': 'ev1',
+                               'due_at': start.timestamp(), 'state': 'open', 'fingerprint': f"ev1|{start.timestamp()}"})
+    turn = lambda call, text: _with_gemma(_fake_gemma(call), lambda: agent_router.process_agent_request(text, focus_key='voice:7'))
+    res = turn({'name': 'next_situation', 'arguments': {}}, 'what needs my attention')
+    check(res['message'].startswith('No driver yet: Soccer.'), f"turn 1: {res}")
+    res = turn({'name': 'start_ask', 'arguments': {'to_name': 'Sarah', 'what': '', 'channel': 'text'}}, 'text Sarah and ask her')
+    a = storage.get_asks(situation_kind='finding', situation_id=fid)[0]
+    check(a['state'] == 'drafted' and a['asked_by'] == 'mom' and (a['unlocks'] or {}).get('action_type') == 'assist_assignment', f"turn 2: {a}")
+    res = turn({'name': 'mark_ask_sent', 'arguments': {}}, 'sent it')
+    check(storage.get_ask(a['id'])['state'] == 'sent', f"turn 3: {res}")
+    res = turn({'name': 'answer_ask', 'arguments': {'answer': 'yes'}}, 'she said yes')
+    a = storage.get_ask(a['id'])
+    check(a['state'] == 'yes' and a['outcome'] == 'applied', f"turn 4: {a}")
+    res = turn({'name': 'answer_ask', 'arguments': {'answer': 'yes'}}, 'she said yes')
+    check(storage.get_ask(a['id'])['outcome'] == 'applied' and res['status'] != 'error', "a duplicate yes is a no-op")
+    check(storage.get_ask(a['id'])['applied_at'] is not None, "applied once, stamped once")
+    from services import findings as _f
+    _f.reconcile([], {'unassigned'}, time.time())
+    check(storage.get_finding(fid)['state'] != 'open', "absence on the next sweep retires the finding")
+    check(triage.get_focus('voice:7') is None, "and the focus is gone with it")
+
+
+def scenario_e2e_next_walks_the_list_without_repeating_a_closed_row():
+    """Spec acceptance 2."""
+    _reset()
+    a = threads.create('A overdue', owner_member_id='mom', next_action='x',
+                       next_action_at=(NOON - datetime.timedelta(days=1)).date().isoformat(), created_by='mom')
+    b = threads.create('B quiet', owner_member_id='mom', created_by='mom')
+    storage.update_thread(b, {'created_at': time.time() - 9 * 86400})
+    c = threads.create('C quiet too', owner_member_id='mom', created_by='mom')
+    storage.update_thread(c, {'created_at': time.time() - 10 * 86400})
+    first = tools.next_situation(acting_member=MOM, focus_key='conv:3')['situation']['id']
+    check(first == a, "tier 0 first")
+    threads.close(b, 'done', who='mom')
+    second = tools.next_situation(skip_current=True, acting_member=MOM, focus_key='conv:3')['situation']['id']
+    check(second == c, f"B closed between turns is skipped: got {second}")
+    res = tools.next_situation(skip_current=True, acting_member=MOM, focus_key='conv:3')
+    check(res['situation'] is None, "then the list ends")
+
+
+SCENARIOS += [scenario_e2e_voice_ask_round_trip, scenario_e2e_next_walks_the_list_without_repeating_a_closed_row]
+
 if __name__ == "__main__":
     import traceback
     failed = 0

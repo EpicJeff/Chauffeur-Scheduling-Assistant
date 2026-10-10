@@ -90,7 +90,10 @@ def read(thread_id: str, message_id: str) -> Optional[dict]:
     if not thread or not message_id:
         return None
     entry = _entry(thread, message_id)
-    if not entry or entry.get('reading'):
+    # Handled once: a stored reading, or a notify that already ran (it marks
+    # dm_pending True or False either way). A rescan must not read, or tell
+    # the owner, a second time.
+    if not entry or entry.get('reading') or 'dm_pending' in entry:
         return None if not entry else entry.get('reading')
     settings = storage.get_settings() or {}
     ask = live_ask(thread_id)
