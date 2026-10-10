@@ -201,7 +201,7 @@
 
                                                 <!-- Answer box: only while Argyle is actually waiting on one. -->
                                                 <div class="mt-2 bg-gray-800/60 border border-amber-700/40 rounded-xl p-3"
-                                                    x-show="mission.status === 'waiting_user'" x-cloak>
+                                                    x-show="mission.status === 'waiting_user' && !isReleasePending(mission)" x-cloak>
                                                     <div class="text-xs font-semibold text-amber-300 mb-1.5"
                                                         x-text="lastAskQuestion(mission) || 'Argyle is waiting on an answer.'"></div>
                                                     <div class="flex gap-2">
@@ -547,6 +547,23 @@
                     return s.length > 400 ? s.slice(0, 400) + '…' : s;
                 },
 
+                isLastAsk(mission, step) {
+                    const asks = (mission.steps || []).filter(s => s.kind === 'ask');
+                    return asks.length > 0 && asks[asks.length - 1].id === step.id;
+                },
+                isReleasePending(mission) {
+                    const asks = (mission.steps || []).filter(s => s.kind === 'ask');
+                    return asks.length > 0 && asks[asks.length - 1].name === 'release';
+                },
+                async releaseMission(m, decision) {
+                    try {
+                        const r = await fetch(this.apiBase + `api/missions/${m.id}/release`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision }) });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok) { showGlobalAlert(d.detail || "That didn't work."); return; }
+                        if (d.message) showGlobalAlert(d.message);
+                        await this.loadAdmin();
+                    } catch (e) { showGlobalAlert("That didn't work."); }
+                },
                 lastAskQuestion(mission) {
                     const asks = (mission.steps || []).filter(s => s.kind === 'ask');
                     if (!asks.length) return '';

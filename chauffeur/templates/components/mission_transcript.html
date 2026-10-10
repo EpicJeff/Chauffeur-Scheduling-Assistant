@@ -67,9 +67,47 @@
 
                                             <!-- ask: the question that (while the mission is waiting_user)
                                                  also heads the answer box below -->
-                                            <template x-if="step.kind === 'ask'">
+                                            <template x-if="step.kind === 'ask' && !['release', 'handoff'].includes(step.name)">
                                                 <div class="text-sm text-amber-200 mt-1"
                                                     x-text="'Argyle asks: ' + ((step.result_json || {}).question || '')"></div>
+                                            </template>
+
+                                            <!-- browse: the runner's report, its outcome and its last screenshot
+                                                 (browse missions §2). The screenshot route is parent-gated and an
+                                                 <img> sends no header, so the URL carries the token (chfAuthUrl). -->
+                                            <template x-if="step.kind === 'browse'">
+                                                <div class="mt-1">
+                                                    <div class="text-xs text-gray-400" x-text="'Browsed ' + (step.name || '') + ' — ' + ((step.result_json || {}).outcome || 'running…')"></div>
+                                                    <div class="text-sm text-gray-200 mt-0.5 whitespace-pre-wrap" x-text="(step.result_json || {}).text || ''"></div>
+                                                    <div class="text-[11px] text-gray-500 mt-0.5" x-show="(step.result_json || {}).stopped_at" x-text="'Stopped at ' + ((step.result_json || {}).stopped_at || '')"></div>
+                                                    <template x-if="((step.result_json || {}).screenshots || []).length">
+                                                        <img class="browse-shot rounded-lg border border-gray-800 mt-1 max-h-48" alt=""
+                                                             :src="window.chfAuthUrl(apiBase + 'api/missions/' + mission.id + '/shots/' + ((step.result_json || {}).screenshots || []).slice(-1)[0])">
+                                                    </template>
+                                                </div>
+                                            </template>
+                                            <!-- release: the exact values a site wants, and the three answers.
+                                                 Nothing leaves the house until Share is tapped (browse missions §1). -->
+                                            <template x-if="step.kind === 'ask' && step.name === 'release'">
+                                                <div class="mt-1 bg-amber-500/10 border border-amber-500/30 rounded-xl p-2">
+                                                    <div class="text-sm text-amber-200" x-text="(step.result_json || {}).question || ''"></div>
+                                                    <div class="text-[11px] text-gray-400 mt-0.5" x-text="'Fields: ' + ((step.result_json || {}).fields || []).join(', ')"></div>
+                                                    <div class="flex flex-wrap gap-2 mt-1.5" x-show="mission.status === 'waiting_user' && isLastAsk(mission, step)">
+                                                        <button @click="releaseMission(mission, 'approve')" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Share</button>
+                                                        <button @click="releaseMission(mission, 'decline')" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Not these</button>
+                                                        <button @click="releaseMission(mission, 'stop')" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Stop</button>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                            <!-- handoff: where Argyle got to, and the link to finish it by hand. -->
+                                            <template x-if="step.kind === 'ask' && step.name === 'handoff'">
+                                                <div class="mt-1 text-sm text-amber-200">
+                                                    <span x-text="(step.result_json || {}).question || ''"></span>
+                                                    <a :href="(step.result_json || {}).url" target="_blank" rel="noopener" class="text-blue-400 underline underline-offset-2 ml-1">Open it</a>
+                                                </div>
+                                            </template>
+                                            <template x-if="step.kind === 'note' && step.name === 'release_approved'">
+                                                <div class="text-xs text-gray-400 italic mt-1" x-text="'Shared with ' + ((step.result_json || {}).site || '') + '.'"></div>
                                             </template>
 
                                             <!-- note: the two interactions this page itself writes get plain
@@ -87,8 +125,8 @@
                                             </template>
 
                                             <div class="text-[11px] text-gray-500 font-mono mt-0.5 break-all"
-                                                x-show="!['proposal', 'draft', 'ask'].includes(step.kind)
-                                                        && !(step.kind === 'note' && ['user_answer', 'proposal_approve', 'proposal_dismiss'].includes(step.name))"
+                                                x-show="!['proposal', 'draft', 'ask', 'browse'].includes(step.kind)
+                                                        && !(step.kind === 'note' && ['user_answer', 'proposal_approve', 'proposal_dismiss', 'release_approved'].includes(step.name))"
                                                 x-text="stepResultText(step)"></div>
                                         </div>
                                     </template>
