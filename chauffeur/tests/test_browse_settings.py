@@ -29,7 +29,16 @@ def scenario_settings_schema_and_registry_know_every_key():
     check("settings_section('contact-card'" in src, "the contact card is its own section")
 
 
-SCENARIOS = [scenario_contact_card_reads_only_filled_fields, scenario_settings_schema_and_registry_know_every_key]
+def scenario_the_image_ships_chromium_and_the_smoke_test_stays_out_of_the_gate():
+    check('playwright install --with-deps chromium' in open('Dockerfile', encoding='utf-8').read(), "the image ships Chromium")
+    req = open('requirements.txt', encoding='utf-8').read()
+    check('playwright' in req and 'google-genai' in req, "both packages are in requirements")
+    smoke = open('tests/test_browse_smoke_real.py', encoding='utf-8').read()
+    check("os.environ.get('CHF_BROWSE_SMOKE') != '1'" in smoke and 'sys.exit(0)' in smoke, "the real-site smoke test skips unless opted in")
+
+
+SCENARIOS = [scenario_contact_card_reads_only_filled_fields, scenario_settings_schema_and_registry_know_every_key,
+             scenario_the_image_ships_chromium_and_the_smoke_test_stays_out_of_the_gate]
 
 if __name__ == "__main__":
     import traceback

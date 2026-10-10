@@ -12,6 +12,11 @@ WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# Chromium for browse missions (services/browse.py). Headless only; the
+# runner refuses honestly when this is missing, so a failed install here
+# degrades to "no browser on this box", never a crash.
+RUN python -m playwright install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY . .
 
