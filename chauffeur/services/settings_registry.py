@@ -624,6 +624,10 @@ ENTRIES: List[dict] = [
     _e('ask_cap_drafts', 'mind', 'Daily ask-draft cap',
        "Hard ceiling on drafted asks per day (default 40). Over the cap a template draft is used.",
        page='work?tab=mind', anchor='mind-general'),
+    _e('reply_cap_reads', 'mind', 'Daily reply-reading cap',
+       "Hard ceiling on replies Argyle reads from the family mailbox per day (default 40). Over the cap "
+       "a reply is filed on its thread unread, and the card says to read it.",
+       page='work?tab=mind', anchor='mind-general'),
 
     # --- Missions (a multi-step agent loop on the paid pro model) ---
     _e('missions_enabled', 'missions', 'Missions',

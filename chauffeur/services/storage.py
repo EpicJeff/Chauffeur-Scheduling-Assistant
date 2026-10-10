@@ -3321,6 +3321,22 @@ def append_thread_history(thread_id: str, entry: dict) -> bool:
         threads_table.update({'history': row['history']}, Query().id == thread_id)
         return True
 
+def update_thread_history_entry(thread_id: str, match: dict, fields: dict) -> bool:
+    """Update the first history entry whose keys equal `match` (a reply is
+    found by its mail's message_id). Entries have no ids of their own."""
+    with db_lock:
+        res = threads_table.search(Query().id == thread_id)
+        if not res:
+            return False
+        row = dict(res[0])
+        history = list(row.get('history') or [])
+        for i, h in enumerate(history):
+            if all(h.get(k) == v for k, v in (match or {}).items()):
+                history[i] = {**h, **fields}
+                threads_table.update({'history': history}, Query().id == thread_id)
+                return True
+    return False
+
 def delete_thread(thread_id: str):
     with db_lock:
         threads_table.remove(Query().id == thread_id)

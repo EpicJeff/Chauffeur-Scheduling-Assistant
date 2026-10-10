@@ -446,9 +446,14 @@ def _tokens(text: str) -> set:
     return set(re.findall(r"[a-z0-9]+", (text or '').lower()))
 
 
-def match_inbound(from_addr: str, subject: str = '', body: str = '') -> Optional[str]:
+def match_inbound(from_addr: str, subject: str = '', body: str = '',
+                  message_id: str = None) -> Optional[str]:
     """Does this piece of inbound mail belong to an open thread? If so,
     record it there and say which one. If not, do nothing and say so.
+
+    A `message_id` already on an open thread's history means this mail was
+    filed before (a rescan): that thread id is returned and nothing is
+    appended, so a reply is never read twice (services/replies.py).
 
     Matching is `counterparty_email` first, case-insensitive — that alone
     resolves the common case, one thread per counterparty. When more than
@@ -470,6 +475,11 @@ def match_inbound(from_addr: str, subject: str = '', body: str = '') -> Optional
     addr = (from_addr or '').strip().lower()
     if not addr:
         return None
+    mid = (message_id or '').strip() or None
+    if mid:
+        for t in storage.get_threads(include_closed=False):
+            if any(h.get('message_id') == mid for h in (t.get('history') or [])):
+                return t['id']
 
     candidates = [t for t in storage.get_threads(include_closed=False)
                   if (t.get('counterparty_email') or '').strip().lower() == addr]
@@ -503,6 +513,7 @@ def match_inbound(from_addr: str, subject: str = '', body: str = '') -> Optional
         'kind': 'received',
         'text': text,
         'who': None,
+        'message_id': mid,
     })
     if thread.get('state') == 'waiting':
         storage.update_thread(thread_id, {'state': 'open'})

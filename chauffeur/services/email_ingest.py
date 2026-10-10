@@ -983,12 +983,22 @@ def _match_thread(msg: dict) -> None:
     reply from a vendor can carry both a date-bound item AND be an update to
     an open thread, and neither should suppress the other. Runs once per
     email, AFTER extraction settles, so a retried email is never matched
-    twice. A failure here must never break ingest."""
+    twice. A matched reply is then READ once (services/replies.py), under its
+    own cap, inside this poll. A failure here must never break ingest."""
     try:
         from services import threads
-        threads.match_inbound(msg['from'], msg['subject'], msg['text'])
+        thread_id = threads.match_inbound(msg['from'], msg['subject'], msg['text'],
+                                          message_id=msg.get('message_id'))
     except Exception as e:
         print(f"[email_ingest] thread match failed: {e}")
+        return
+    if not thread_id or not msg.get('message_id'):
+        return
+    try:
+        from services import replies
+        replies.read(thread_id, msg['message_id'])
+    except Exception as e:
+        print(f"[email_ingest] reply reading failed: {e}")
 
 
 def run_ingest(manual: bool = False) -> dict:
