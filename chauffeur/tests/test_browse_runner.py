@@ -462,6 +462,25 @@ def scenario_the_browser_is_at_home():
           "the model is told: type the ZIP and press Enter/Find, never a nearby suggestion; a 'location detected' result is not about the ZIP")
 
 
+def scenario_a_report_of_a_wall_is_the_wall():
+    """2026-10-11, the guest form filled: the model wrote "A reCAPTCHA ('I'm not
+    a robot') appeared, preventing further navigation" and the runner recorded
+    done, so no hand-off reached the person and the planner went elsewhere. A
+    final report that says a human check blocked it, or ends with WALL:
+    captcha, is captcha_failed; a report that merely mentions one is not."""
+    _reset(consent=False)
+    browse._model_step = _script("A reCAPTCHA human-verification check (\"I'm not a robot\") appeared above the NEXT button, preventing further navigation without completing verification. No availability was displayed. LEARNED: availability=unknown")
+    r = browse.run('x', SITE, dict(CARD), {'captcha': False}, start_url=f'{URL}/form', out_dir=OUT)
+    check(r['outcome'] == 'captcha_failed' and 'robot' in r['text'], f"the wall in words is the wall: {r['outcome']} {r['text'][:80]}")
+    browse._model_step = _script("The form needs a photo of the label. WALL: captcha")
+    r = browse.run('x', SITE, dict(CARD), {'captcha': False}, start_url=f'{URL}/form', out_dir=OUT)
+    check(r['outcome'] == 'captcha_failed', f"the WALL: line is the wall: {r['outcome']}")
+    browse._model_step = _script("Earliest Tue 8-noon; trip charge $114.95. No captcha was needed. LEARNED: fee=$114.95")
+    r = browse.run('x', SITE, dict(CARD), {'captcha': False}, start_url=f'{URL}/form', out_dir=OUT)
+    check(r['outcome'] == 'done' and r['learned'].get('fee') == '$114.95', f"a mention is not a wall: {r['outcome']}")
+    check('WALL:' in browse.RUNNER_SYSTEM and 'type_text_at' in browse.RUNNER_SYSTEM, "the model is told the WALL: exit and that typing clicks the box itself")
+
+
 SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
@@ -475,7 +494,7 @@ SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_ty
              scenario_the_model_can_say_what_it_needs_and_knows_what_the_card_holds, scenario_the_clock_is_ten_minutes,
              scenario_a_slow_page_does_not_end_the_run, scenario_the_start_url_is_the_host_that_answers,
              scenario_every_turn_is_on_the_ledger, scenario_the_same_click_three_times_is_told_so,
-             scenario_a_recaptcha_badge_is_not_a_wall, scenario_the_browser_is_at_home]
+             scenario_a_recaptcha_badge_is_not_a_wall, scenario_the_browser_is_at_home, scenario_a_report_of_a_wall_is_the_wall]
 
 if __name__ == "__main__":
     import traceback

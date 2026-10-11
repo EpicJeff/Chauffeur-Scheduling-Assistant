@@ -67,8 +67,13 @@ RUNNER_SYSTEM = (
     "state, zip, preferred). When you were given a ZIP or city, type it and press Enter or the Find/Go "
     "button; never use a 'use my location' button, and never pick a suggested nearby place that is not the "
     "ZIP's own town. A result about 'the location detected' is not about the ZIP you were given: search by "
-    "the ZIP before you report it."
+    "the ZIP before you report it. type_text_at clicks the box itself: no separate click first. If a "
+    "human-verification check (a CAPTCHA, 'I'm not a robot') blocks you and you may not or cannot pass it, "
+    "end your report with one more line: WALL: captcha."
 )
+WALL_LINE = re.compile(r'WALL:\s*captcha', re.I)
+WALL_WORDS = re.compile(r"(captcha|not a robot|human[- ]verification|verify you are human).{0,120}"
+                        r"(prevent|block|cannot|can't|could not|couldn't|unable|without completing|stopp)", re.I | re.S)
 NEED_LINE = re.compile(r'NEED:\s*(.+)$', re.I | re.M)
 
 
@@ -744,6 +749,10 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                 if needed:
                     report['wanted_fields'] = needed
                     return finish('needs_release', text.strip() or f"the page needs: {', '.join(needed)}")
+                if WALL_LINE.search(text) or WALL_WORDS.search(text):
+                    # The model met the check and stopped: that is the wall, and
+                    # the person gets the page, not a 'done' the planner reads past.
+                    return finish('captcha_failed', text.strip())
                 return finish('done', text.strip() or 'finished with nothing to report')
             results = []
             for i_call, call in enumerate(calls):
