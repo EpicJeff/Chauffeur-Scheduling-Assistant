@@ -299,6 +299,46 @@ def scenario_system_chromium_is_the_fallback_when_the_bundle_is_missing():
           "the image waits longer for the download and falls back to the apt chromium")
 
 
+def scenario_typing_into_a_contact_field_is_a_release_question_even_with_an_empty_card():
+    """2026-10-11, the first live run: the card was empty, the page wanted a
+    ZIP, and the model guessed a city. A guess is worthless: typing anything
+    into a field labelled like a contact-card field that is not released ends
+    the run needs_release naming that field, card or no card."""
+    storage.get_settings = lambda: {'llm_gemini_paid_api_key': 'paid'}      # an empty card
+    browse.free_memory_mb = lambda: 4096
+    zx, zy = _xy(f'{URL}/locate', 'input[name=postal]')      # NOT marked required: the scan does not see it
+    browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': zx, 'y': zy, 'text': '35203'}}], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/locate', out_dir=OUT)
+    check(r['outcome'] == 'needs_release' and r['wanted_fields'] == ['zip'] and r['actions'] == 0, f"an invented ZIP never lands: {r}")
+    # A released value types fine into the same box.
+    browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': zx, 'y': zy, 'text': '27519'}}], 'DONE.')
+    r = browse.run('x', SITE, {'zip': '27519'}, {}, start_url=f'{URL}/locate', out_dir=OUT)
+    check(r['outcome'] == 'done' and r['filled'] == {'zip': '27519'}, f"released: typed: {r}")
+
+
+def scenario_the_model_can_say_what_it_needs_and_knows_what_the_card_holds():
+    """The runner names the card's FILLED fields (never their values) and gives
+    the model one exit: a NEED: line, which is a release question."""
+    _reset()
+    seen = []
+
+    def fake(contents, settings):
+        seen.append(contents[0]['parts'][0]['text'])
+        return {'calls': [], 'text': "The page wants a service ZIP and a street before it shows slots. NEED: zip, street", 'content': None, 'tokens': (1, 1)}
+    browse._model_step = fake
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/start', out_dir=OUT)
+    check(r['outcome'] == 'needs_release' and r['wanted_fields'] == ['zip', 'street'], f"NEED: is a release question: {r}")
+    check('first_name' in seen[0] and 'zip' in seen[0] and 'Jeff' not in seen[0] and '27519' not in seen[0], f"the prompt names the card's fields, never values: {seen[0][-400:]}")
+    storage.get_settings = lambda: {'llm_gemini_paid_api_key': 'paid'}
+    seen.clear()
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/start', out_dir=OUT)
+    check('nothing yet' in seen[0].lower() and r['outcome'] == 'needs_release', f"an empty card is said plainly, and NEED still asks: {seen[0][-300:]}")
+
+
+def scenario_the_clock_is_ten_minutes():
+    check(browse.DEFAULT_CAPS['seconds'] == 600 and browse.DEFAULT_CAPS['turns'] == 40, f"caps: {browse.DEFAULT_CAPS}")
+
+
 SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
@@ -307,7 +347,9 @@ SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_ty
              scenario_enter_never_submits_a_booking_form, scenario_typing_guard_matches_whole_values_only,
              scenario_only_main_frame_navigations_teach_the_allowlist,
              scenario_every_call_in_a_turn_is_checked_against_the_page_it_lands_on, scenario_domain_keeps_two_label_public_suffixes,
-             scenario_system_chromium_is_the_fallback_when_the_bundle_is_missing]
+             scenario_system_chromium_is_the_fallback_when_the_bundle_is_missing,
+             scenario_typing_into_a_contact_field_is_a_release_question_even_with_an_empty_card,
+             scenario_the_model_can_say_what_it_needs_and_knows_what_the_card_holds, scenario_the_clock_is_ten_minutes]
 
 if __name__ == "__main__":
     import traceback

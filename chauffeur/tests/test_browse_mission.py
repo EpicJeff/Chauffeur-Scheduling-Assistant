@@ -216,18 +216,33 @@ def scenario_a_browse_that_returns_after_the_mission_moved_on_changes_nothing():
     check(not [st for st in steps if st['kind'] == 'ask'] and not SENT, "no release ask, no DM")
 
 
-def scenario_missing_card_fields_are_told_to_the_person():
-    """Review fix 6: a form wanting a field the card lacks is a hand-off, and a
-    release ask names what is missing."""
+def scenario_missing_card_fields_are_asked_for_not_handed_off():
+    """2026-10-11: with an empty card the mission must ASK for the details,
+    not hand the page over. A release ask names what is missing and where to
+    fill it; Share with the card still empty keeps waiting; Share after the
+    card is filled resumes with the values."""
     _reset()
-    missions._browse = lambda **kw: _report('needs_release', wanted_fields=['preferred'])
+    storage.get_settings = lambda: {'missions_enabled': True, 'llm_gemini_paid_api_key': 'paid', 'llm_gemini_api_key': 'k'}
+    runs = []
+    seq = [_report('needs_release', wanted_fields=['zip', 'city']), _report('done')]
+    missions._browse = lambda **kw: runs.append(kw) or seq.pop(0)
     mid = _mission()
     missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
     row = missions.step(storage.get_mission(mid))
     ask = storage.get_mission_steps(mid)[-1]
-    check(row['status'] == 'waiting_user' and ask['kind'] == 'ask' and ask['name'] == 'handoff' and 'preferred' in ask['result_json']['question']
-          and 'contact card' in ask['result_json']['question'].lower(), f"only-missing fields hand off and say why: {ask}")
-    check(SENT and 'preferred' in SENT[0], f"the DM says it: {SENT}")
+    check(row['status'] == 'waiting_user' and ask['kind'] == 'ask' and ask['name'] == 'release' and ask['result_json']['missing'] == ['zip', 'city']
+          and 'zip' in ask['result_json']['question'] and 'contact card' in ask['result_json']['question'].lower(),
+          f"an empty card is a question naming the fields and the card: {ask['result_json']['question']}")
+    check(SENT and 'zip' in SENT[-1] and 'contact card' in SENT[-1].lower(), f"the DM asks the same: {SENT}")
+    s_ = situations.view('mission', mid, {'id': 'mom', 'role': 'parent'})
+    check(s_['next_step']['verb'] == 'release' and 'zip' in s_['next_step']['label'], f"the card leads with it: {s_['next_step']}")
+    res = missions.release(mid, 'approve', {'id': 'mom', 'role': 'parent'})
+    check(res['status'] == 'success' and not res.get('already') and 'zip' in res['message'] and storage.get_mission(mid)['status'] == 'waiting_user' and len(runs) == 1,
+          f"Share with the card still empty keeps waiting and says what to fill: {res}")
+    storage.get_settings = lambda: {'missions_enabled': True, 'llm_gemini_paid_api_key': 'paid', 'llm_gemini_api_key': 'k',
+                                    'contact_zip': '27519', 'contact_city': 'Cary'}
+    res = missions.release(mid, 'approve', {'id': 'mom', 'role': 'parent'})
+    check(res['status'] == 'success' and len(runs) == 2 and runs[1]['released'] == {'zip': '27519', 'city': 'Cary'}, f"filled, then Share: the browse resumes with the values: {runs[-1] if runs else None}")
     _reset()
     missions._browse = lambda **kw: _report('needs_release', wanted_fields=['email', 'preferred'])
     mid = _mission()
@@ -235,6 +250,21 @@ def scenario_missing_card_fields_are_told_to_the_person():
     ask = storage.get_mission_steps(mid)[-1]
     check(ask['name'] == 'release' and 'preferred' in ask['result_json']['question'] and 'preferred' in SENT[0],
           f"a release ask names the field the card lacks: {ask['result_json']['question']}")
+
+
+def scenario_the_planner_may_resume_a_browse_where_it_stopped():
+    _reset()
+    runs = []
+    missions._browse = lambda **kw: runs.append(kw) or _report('done')
+    mid = _mission()
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com', 'start_url': 'https://www.bodewell.com/service-area/x/cary'}
+    missions.step(storage.get_mission(mid))
+    check(runs and runs[0]['start_url'] == 'https://www.bodewell.com/service-area/x/cary', f"start_url rides through: {runs}")
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com', 'start_url': 'https://elsewhere.example/x'}
+    missions.step(storage.get_mission(mid))
+    check(runs[-1]['start_url'] is None, "a start_url off the site is ignored")
+    src = missions._system_prompt(__import__('datetime').datetime.now(), {})
+    check('start_url' in src and 'resume' in src.lower() and 'found the site' in src.lower(), "the planner is told how to resume and not to finish with 'I found the site'")
 
 
 def scenario_approve_reads_the_card_as_it_is_now_and_decline_names_the_card():
@@ -266,7 +296,8 @@ SCENARIOS = [scenario_browse_action_runs_the_runner_and_transcribes, scenario_ne
              scenario_browsing_mission_is_moving_not_done, scenario_shots_route_is_classified,
              scenario_release_approved_resumes_with_the_values_once, scenario_release_approved_twice_resumes_once,
              scenario_release_declined_hands_off_and_stop_blocks, scenario_release_verb_is_in_the_closed_set_everywhere,
-             scenario_a_browse_that_returns_after_the_mission_moved_on_changes_nothing, scenario_missing_card_fields_are_told_to_the_person,
+             scenario_a_browse_that_returns_after_the_mission_moved_on_changes_nothing, scenario_missing_card_fields_are_asked_for_not_handed_off,
+             scenario_the_planner_may_resume_a_browse_where_it_stopped,
              scenario_approve_reads_the_card_as_it_is_now_and_decline_names_the_card]
 
 if __name__ == "__main__":

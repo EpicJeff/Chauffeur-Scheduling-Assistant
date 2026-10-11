@@ -20,6 +20,7 @@ PAGES = {
     '/confirmform': '<h1>Last step</h1><form action="/form2" method="get"><label>Zip *<input name="zip" required></label><button type="submit" id="c">Confirm</button></form>',
     '/withframe': '<h1>Framed</h1><iframe src="/redir" title="partner"></iframe><p>stay here</p>',
     '/topay': '<h1>Almost</h1><a id="cont" href="/pay">Continue</a>',
+    '/locate': '<h1>Service areas</h1><label>ZIP Code<input name="postal"></label><button type="button">Find</button>',
 }
 
 

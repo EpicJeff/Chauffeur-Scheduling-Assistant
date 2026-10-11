@@ -138,7 +138,8 @@ def _system_prompt(now: datetime.datetime, settings: dict = None) -> str:
         '{"action":"propose","tool":"<PROPOSE tool>","args":{...},'
         '"summary":"<one line a parent reads>","why":"<reason>"}\n'
         '{"action":"research","question":"<web question>"}\n'
-        '{"action":"browse","goal":"<what to learn or do on the site, in words>","site":"<the site, e.g. bodewell.com>"}\n'
+        '{"action":"browse","goal":"<what to learn or do on the site, in words>","site":"<the site, e.g. bodewell.com>",'
+        '"start_url":"<optional: to RESUME a capped browse, its stopped_at>"}\n'
         '{"action":"draft","thread_title":"<thread>","intent":"<what the '
         'message should do>"}\n'
         '{"action":"ask_user","question":"<one question>"}\n'
@@ -152,9 +153,13 @@ def _system_prompt(now: datetime.datetime, settings: dict = None) -> str:
         "the web. To deal with a company, prefer its official site. Use browse "
         "only for what reading cannot answer, and name the site. Before any "
         "form that wants the family's details, expect a release step and wait "
-        "for it. A browse that stops at a wall is a result, not a failure: the "
-        "person is handed the link. Never claim a booking, a price or a slot a "
-        "browse did not show.\n"
+        "for it. A browse that stops at a wall (a check, a payment field) is a "
+        "result, not a failure: the person is handed the link. A browse that was "
+        "capped (out of turns or time) is unfinished: resume it ONCE with "
+        "start_url set to its stopped_at. Never claim a booking, a price or a "
+        "slot a browse did not show, and never finish with 'I found the site' "
+        "when the goal asked for windows, a fee or a way to book: resume, ask "
+        "the person, or hand them the link.\n"
         "If the outcome is a choice the family must make, use ask_user and "
         "wait for the answer — NEVER finish with a question in your summary; "
         "a finished mission cannot hear replies.\n"
@@ -337,22 +342,18 @@ def finish_browse(mission_id: str, step_id: str, report: dict) -> None:
         card = _b.contact_card()
         fields = [f for f in report.get('wanted_fields') or [] if f in card]
         missing = [f for f in report.get('wanted_fields') or [] if f not in card]
-        if not fields:
-            # Nothing on the card answers the form: the person finishes it by hand.
-            url = report.get('stopped_at') or ''
-            q = (f"I got as far as {url}. The form wants {', '.join(missing)}, which the contact card doesn't have "
-                 f"(Missions settings). Finish it on your phone and tell me what you found.")
-            storage.add_mission_step(mission_id, {'kind': 'ask', 'name': 'handoff',
-                                                  'result_json': {'question': q, 'url': url, 'filled': report.get('filled') or {},
-                                                                  'reason': f"the contact card has no {', '.join(missing)}"}})
-            _close(mission_id, 'waiting_user')
-            _dm_person(mission, q)
-            return
         values = {f: card[f] for f in fields}
         domain = _b._domain(f'https://{site}')
-        q = f"Share with {domain}: " + ' · '.join(values.values()) + '?'
-        if missing:
-            q += f" (It also wants {', '.join(missing)}, which the contact card doesn't have; fill it in Missions settings first if you can.)"
+        # A field the card lacks is a QUESTION, never a guess and never a
+        # hand-off (2026-10-11): the ask names it and where to fill it, and
+        # Share keeps waiting until the card has it (release() re-reads).
+        if values:
+            q = f"Share with {domain}: " + ' · '.join(values.values()) + '?'
+            if missing:
+                q += f" It also needs your {', '.join(missing)}: fill them in the contact card (Missions settings), then tap Share."
+        else:
+            q = (f"{domain} needs your {', '.join(missing)} to go on. Fill them in the contact card "
+                 f"(Missions settings), then tap Share.")
         storage.add_mission_step(mission_id, {'kind': 'ask', 'name': 'release',
                                               'result_json': {'question': q, 'site': domain, 'fields': fields, 'values': values,
                                                               'missing': missing,
@@ -390,7 +391,15 @@ def release(mission_id: str, decision: str, actor: dict) -> dict:
         return {'status': 'success', 'already': True, 'message': 'That release was already answered.'}
     rj = ask.get('result_json') or {}
     if decision == 'approve':
-        rel = {'site': rj.get('site'), 'fields': rj.get('fields') or [], 'approved_by': actor.get('id'), 'at': time.time()}
+        from services import browse as _b
+        card = _b.contact_card()
+        wanted = list(rj.get('fields') or []) + [f for f in (rj.get('missing') or []) if f not in (rj.get('fields') or [])]
+        still = [f for f in wanted if f not in card]
+        if still:
+            # Nothing leaves the house that the card does not hold: the ask stays.
+            return {'status': 'success', 'already': False,
+                    'message': f"The contact card still has no {', '.join(still)}. Fill it in Missions settings, then tap Share."}
+        rel = {'site': rj.get('site'), 'fields': wanted, 'approved_by': actor.get('id'), 'at': time.time()}
         with storage.db_lock:
             row = storage.get_mission(mission_id)
             if row.get('status') != 'waiting_user':
@@ -398,10 +407,8 @@ def release(mission_id: str, decision: str, actor: dict) -> dict:
             storage.update_mission(mission_id, {'releases': (row.get('releases') or []) + [rel], 'status': 'running'})
         storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'release_approved', 'result_json': {'site': rel['site'], 'fields': rel['fields']}})
         pending = rj.get('browse') or {}
-        # The card as it is NOW: a parent who fixed a stale value before
-        # tapping Share releases the corrected one (spec §1, "Not these" fixes the card).
-        from services import browse as _b
-        card = _b.contact_card()
+        # The card as it is NOW: a parent who fixed a stale value, or filled a
+        # missing one, before tapping Share releases what the card holds now.
         values = {f: card[f] for f in rel['fields'] if f in card} or (rj.get('values') or {})
         start_browse(storage.get_mission(mission_id), pending.get('goal') or mission.get('goal'), pending.get('site') or rel['site'],
                      start_url=pending.get('start_url'), released=values)
@@ -552,7 +559,11 @@ def step(mission: dict) -> dict:
             storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
                                            'result_json': {'note': 'browse needs a goal and a site'}})
             return storage.get_mission(mid)
-        start_browse(storage.get_mission(mid), goal, site)
+        from services import browse as _b
+        start_url = (res.get('start_url') or '').strip() or None
+        if start_url and _b._domain(start_url) != _b._domain(f'https://{site}'):
+            start_url = None            # resume only where the site itself stopped
+        start_browse(storage.get_mission(mid), goal, site, start_url=start_url)
         return storage.get_mission(mid)
 
     if action == 'draft':

@@ -35,7 +35,7 @@ def contact_card(settings: Optional[dict] = None) -> dict:
 # --- the runner -------------------------------------------------------------------
 
 OUTCOMES = ('done', 'needs_release', 'captcha_failed', 'blocked', 'refused', 'capped', 'error')
-DEFAULT_CAPS = {'turns': 40, 'seconds': 300, 'captcha_attempts': 3}
+DEFAULT_CAPS = {'turns': 40, 'seconds': 600, 'captcha_attempts': 3}
 W, H = 1440, 900
 MEMORY_FLOOR_MB = 600
 STOP_WORDS = re.compile(r'\b(submit|book(ing)?|schedule now|confirm|place (my |the )?order|pay(ment)?|checkout|purchase|reserve|finish booking|complete booking)\b', re.I)
@@ -59,8 +59,13 @@ RUNNER_SYSTEM = (
     "books, confirms, pays or orders. Stop and report when a form wants a value you were not given, when a "
     "payment field appears, when a human-verification check appears (unless told you may try, and then at "
     "most the allowed attempts), when the page says access denied, or when the goal is met. Your report "
-    "states only what the screen showed. End your report with one line: LEARNED: key=value; key=value."
+    "states only what the screen showed. End your report with one line: LEARNED: key=value; key=value. "
+    "Never guess or invent a location, a name or any detail the family would have to supply: if the page "
+    "needs one of the family's contact-card fields that you were not given, stop and end your report with "
+    "one more line: NEED: field, field (fields: first_name, last_name, email, phone, street, apt, city, "
+    "state, zip, preferred)."
 )
+NEED_LINE = re.compile(r'NEED:\s*(.+)$', re.I | re.M)
 
 
 def available() -> tuple:
@@ -356,6 +361,43 @@ def _act(page, name, args):
     page.wait_for_timeout(900)
 
 
+def _needed(text: str) -> list:
+    """The model's NEED: line, as contact-card field names, in its order."""
+    m = NEED_LINE.search(text or '')
+    if not m:
+        return []
+    out = []
+    for part in re.split(r'[,\s]+', m.group(1).lower()):
+        f = part.strip('.;:')
+        if f in CONTACT_FIELDS and f not in out:
+            out.append(f)
+    return out
+
+
+def _field_at(page, x, y):
+    """The contact-card field a text box under the point stands for (by its
+    label, name, placeholder or autocomplete), or None. Typing anything into
+    such a box without that field released is a guess, and a guess is a
+    release question, not an action."""
+    try:
+        label = page.evaluate("""([x, y]) => {
+            const el = document.elementFromPoint(x, y); if (!el) return '';
+            const i = el.closest('input, textarea, select') || (el.tagName === 'LABEL' && el.control) || null;
+            if (!i || (i.type && ['hidden', 'submit', 'button', 'checkbox', 'radio'].includes(i.type))) return '';
+            const parts = [];
+            if (i.id) { const l = document.querySelector(`label[for="${i.id}"]`); if (l) parts.push(l.innerText); }
+            const p = i.closest('label'); if (p) parts.push(p.innerText);
+            parts.push(i.name || '', i.placeholder || '', i.getAttribute('aria-label') || '', i.getAttribute('autocomplete') || '');
+            return parts.join(' ');
+        }""", [x, y]) or ''
+    except Exception:
+        return None
+    for name, rx in CONTACT_LABELS.items():
+        if rx.search(label):
+            return name
+    return None
+
+
 def _learned(text: str) -> dict:
     m = re.search(r'LEARNED:\s*(.+)$', text or '', re.I | re.M)
     out = {}
@@ -444,7 +486,10 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
         with open(report['screenshots'][-1], 'wb') as f:
             f.write(shot)
         given = ', '.join(f"{k}={v}" for k, v in released.items()) or 'nothing'
+        holds = ', '.join(f for f in CONTACT_FIELDS if f in card)
         prompt = (f"GOAL: {goal}\nSITE: {site}\nValues you may enter: {given}.\n"
+                  + (f"The family's contact card holds these fields (values come only when released): {holds}.\n" if holds
+                     else "The family's contact card holds nothing yet; ask with NEED: for any field the page wants.\n")
                   + ("You may attempt a human-verification check, at most the allowed attempts.\n" if consent.get('captcha') else
                      "Do NOT attempt any human-verification check; stop and report instead.\n"))
         contents = [{'role': 'user', 'parts': [{'text': RUNNER_SYSTEM + '\n\n' + prompt}, {'image': shot}]}]
@@ -467,6 +512,10 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
             if not calls:
                 text = step.get('text') or ''
                 report['learned'] = _learned(text)
+                needed = [f for f in _needed(text) if f not in released]
+                if needed:
+                    report['wanted_fields'] = needed
+                    return finish('needs_release', text.strip() or f"the page needs: {', '.join(needed)}")
                 return finish('done', text.strip() or 'finished with nothing to report')
             results = []
             for call in calls:
@@ -488,6 +537,11 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                     if STOP_WORDS.search(el.get('text') or ''):
                         return finish('blocked', f'would submit: a "{el.get("text")}" button')
                 if name in ('type_text_at', 'type'):
+                    if 'x' in args:
+                        field = _field_at(page, *_px(args['x'], args['y']))
+                        if field and field not in released:
+                            report['wanted_fields'] = [field]
+                            return finish('needs_release', f"the page's {field} box wants the family's {field}; nothing was typed")
                     bad = _personal_violation(args.get('text'), released, card)
                     if bad:
                         report['wanted_fields'] = [bad]
