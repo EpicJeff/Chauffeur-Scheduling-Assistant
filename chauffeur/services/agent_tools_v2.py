@@ -1669,6 +1669,40 @@ def read_mail(uid: int, acting_member: dict = None, spoken: bool = False) -> Dic
     return {"status": "success", "message": f"{res['subject']} — from {res['from']} {res['date'][:10]}\n\n{res['text']}", **res}
 
 
+def start_mission_for(goal: str, title: str = None, acting_member: dict = None, focus_key: str = None) -> Dict[str, Any]:
+    """'Get the dishwasher fixed': open a thread and a mission on it, and
+    make the thread the thing we are talking about. Parents and adults
+    (voice as the parent of record). One of each: a live mission on an open
+    thread about the same thing is named, not doubled."""
+    if not acting_member or acting_member.get('role') not in ('parent', 'adult'):
+        return {"status": "error", "message": "Only a parent or adult can start that."}
+    from services import storage, threads as _threads, missions as _missions, triage as _tri
+    goal = (goal or '').strip()
+    if not goal:
+        return {"status": "error", "message": "Say what to get done."}
+    settings = storage.get_settings() or {}
+    if not settings.get('missions_enabled', False):
+        return {"status": "error", "message": "Missions are off (Missions settings)."}
+    words = [w for w in goal.lower().split() if len(w) > 2][:3]
+    for m in storage.get_missions(status=['running', 'browsing', 'waiting_user', 'waiting_retry']):
+        if m.get('origin_kind') != 'thread':
+            continue
+        t = storage.get_thread(m.get('origin_ref') or '')
+        hay = ((t or {}).get('title', '') + ' ' + (t or {}).get('goal', '') + ' ' + m.get('goal', '')).lower()
+        if t and t.get('state') not in ('done', 'dropped') and words and all(w in hay for w in words):
+            _tri.set_focus(focus_key, 'thread', t['id'], t.get('title') or '')
+            return {"status": "success", "thread_id": t['id'], "mission_id": m['id'],
+                    "message": f"That's already under way: \"{t.get('title')}\". I'll come back when I have something or need you."}
+    tid = _threads.create(title=(title or goal)[:80], owner_member_id=acting_member['id'], goal=goal, kind='vendor',
+                          created_by=acting_member['id'])
+    res = _missions.launch(goal, origin_kind='thread', origin_ref=tid, created_by=acting_member['id'], tier='mission')
+    if res.get('status') not in ('success', 'launched') or not res.get('mission_id'):
+        return {"status": "error", "message": res.get('message') or 'could not start the mission', "thread_id": tid}
+    _tri.set_focus(focus_key, 'thread', tid, (title or goal)[:80])
+    return {"status": "success", "thread_id": tid, "mission_id": res['mission_id'],
+            "message": "On it. I'll come back when I have something or need you."}
+
+
 def _match_thread(thread_title: str):
     """Fuzzy title match against open threads, same shape as `_match_task` —
     the model knows a thread by what it's about, never by its id."""
@@ -4452,6 +4486,14 @@ def get_available_tools() -> List[Dict]:
             "parameters": {"type": "object", "properties": {"uid": {"type": "integer"}}, "required": ["uid"]}
         },
         {
+            "name": "start_mission_for",
+            "description": "Start getting something done that takes several steps with people or companies outside the family: 'get the dishwasher fixed', 'find someone to clean the gutters', 'sort out the permit'. Opens a thread and puts Argyle to work on it; Argyle comes back with questions and results. Nothing is booked, paid or sent without the person. Parent/adult only.",
+            "parameters": {"type": "object",
+                           "properties": {"goal": {"type": "string", "description": "What to get done, in the person's words."},
+                                          "title": {"type": "string", "description": "A short name for the thread, if the person gave one."}},
+                           "required": ["goal"]}
+        },
+        {
             "name": "list_threads",
             "description": "Lists open loops with somebody outside the family — a vendor callback, a permit still pending ('any open threads?', 'what's outstanding with the pest guy?', 'what's Ben carrying?'). Each one shows who owns it, what's next, and whether it's stalled.",
             "parameters": {
@@ -5974,6 +6016,11 @@ class ReadMailTool(BaseModel):
     """Read one message from the family mailbox by uid."""
     uid: int
 
+class StartMissionForTool(BaseModel):
+    """Start getting something done with people or companies outside the family: opens a thread and a mission on it."""
+    goal: str = Field(..., description="What to get done, in the person's words.")
+    title: Optional[str] = Field(None, description="A short name for the thread, if given.")
+
 class ListProgramsTool(BaseModel):
     """
     Lists ambitions with a real plan attached — a curated curriculum, reserved practice time, a session log. Each shows who it's for, its state, the phase ahead, and sessions logged.
@@ -6458,6 +6505,7 @@ TOOL_SCHEMAS = {
     "answer_ask": AnswerAskTool.model_json_schema(),
     "search_mail": SearchMailTool.model_json_schema(),
     "read_mail": ReadMailTool.model_json_schema(),
+    "start_mission_for": StartMissionForTool.model_json_schema(),
     "list_programs": ListProgramsTool.model_json_schema(),
     "claim_chore": ClaimChoreTool.model_json_schema(),
     "negotiate_day": NegotiateDayTool.model_json_schema(),
@@ -7658,6 +7706,9 @@ def handle_search_mail(args: dict) -> dict:
 def handle_read_mail(args: dict) -> dict:
     return read_mail(int(args.get('uid') or 0), acting_member=_registry_parent())
 
+def handle_start_mission_for(args: dict) -> dict:
+    return start_mission_for(args.get('goal') or '', title=args.get('title'), acting_member=_registry_parent())
+
 def handle_list_programs(args: dict) -> dict:
     # The v1 loop resolves no member and can produce no actor -- unlike
     # list_insights, list_programs REQUIRES one (a program is somebody's
@@ -8013,6 +8064,7 @@ TOOL_HANDLERS = {
     "answer_ask": handle_answer_ask,
     "search_mail": handle_search_mail,
     "read_mail": handle_read_mail,
+    "start_mission_for": handle_start_mission_for,
     "list_programs": handle_list_programs,
     "claim_chore": handle_claim_chore,
     "negotiate_day": handle_negotiate_day,

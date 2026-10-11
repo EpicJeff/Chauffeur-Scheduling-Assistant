@@ -401,6 +401,8 @@ sending or claiming, and never pass from_member/member_name for them.
     # get_point_balances is a query, but its message is already the complete
     # spoken answer — treating it terminal saves a 40-80s concluding round.
     TERMINAL_ACTION_TOOLS = {"assign_driver_to_event_fuzzy", "remove_override_for_event_fuzzy",
+                             # Browse missions §4: "On it." is the whole reply.
+                             "start_mission_for",
                              # Optional events: the write confirms itself out
                              # loud ("skipped — nobody will be scheduled").
                              "decide_optional_event", "set_event_optional",
@@ -826,7 +828,8 @@ sending or claiming, and never pass from_member/member_name for them.
                                                     member_role=role)
                     if res.get("message"): agent_message = res["message"]
                 elif func_name in ("list_situations", "next_situation", "explain_situation", "act_on_situation",
-                                   "start_ask", "mark_ask_sent", "answer_ask", "search_mail", "read_mail"):
+                                   "start_ask", "mark_ask_sent", "answer_ask", "search_mail", "read_mail",
+                                   "start_mission_for"):
                     from services import agent_tools_v2 as _atv2, situations as _sit
                     # Same actor resolution as the thread tools below: resolved
                     # HERE at dispatch, never taken from the model. A caller with
