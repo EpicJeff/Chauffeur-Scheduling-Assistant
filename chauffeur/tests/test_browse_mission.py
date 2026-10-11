@@ -303,6 +303,48 @@ def scenario_the_planner_sees_the_browse_outcome_first_and_never_the_ledger():
     check('turns_log' not in line and 'scroll down' not in line, "the ledger is for people, not the planner")
 
 
+def scenario_a_pricing_goal_is_not_finished_without_a_browse():
+    """2026-10-11: seeded with the thread's earlier "Call 844-… to get pricing",
+    the planner finished in one step, zero tools: "requires a phone call, I
+    cannot make phone calls". A goal about pricing, availability or scheduling
+    is not finished until this mission has browsed the site (once refused,
+    then the planner is free)."""
+    _reset()
+    runs = []
+    missions._browse = lambda **kw: runs.append(kw) or _report('done', text='Earliest Tue 8-noon; trip charge $114.95')
+    mid = storage.add_mission({'goal': 'Get pricing and schedule service for the GE Cafe dishwasher', 'origin_kind': 'manual', 'created_by': 'mom', 'tier': 'mission'})
+    plan = [{'action': 'finish', 'summary': 'Bodewell requires a phone call to provide pricing. I cannot make phone calls.', 'next_action': 'Call 844-988-4066'},
+            {'action': 'browse', 'goal': 'get slots and the fee', 'site': 'bodewell.com'},
+            {'action': 'finish', 'summary': 'Tue 8-noon; $114.95', 'next_action': 'Book Tue'}]
+    missions._llm = lambda m, s, u, st: plan.pop(0)
+    row = missions.step(storage.get_mission(mid))
+    last = storage.get_mission_steps(mid)[-1]
+    check(row['status'] == 'running' and last['kind'] == 'note' and last['name'] == 'finish_refused' and 'browse' in last['result_json']['note'].lower(),
+          f"the early finish is refused with the reason: {row['status']} {last}")
+    row = missions.step(storage.get_mission(mid))
+    check(runs and row['status'] == 'running', "then it browses")
+    row = missions.step(storage.get_mission(mid))
+    check(row['status'] == 'done' and '$114.95' in row['summary'], f"a finish after the browse stands: {row['status']} {row.get('summary')}")
+    # A goal that is not about a site's prices or slots finishes freely.
+    _reset()
+    mid = storage.add_mission({'goal': 'find out when the library closes on Sundays', 'origin_kind': 'manual', 'created_by': 'mom', 'tier': 'mission'})
+    missions._llm = lambda m, s, u, st: {'action': 'finish', 'summary': 'It closes at 5.'}
+    check(missions.step(storage.get_mission(mid))['status'] == 'done', "a plain question finishes")
+    # The refusal happens once: a planner that insists without a browse is not looped forever.
+    _reset()
+    mid = storage.add_mission({'goal': 'get a quote for gutter cleaning', 'origin_kind': 'manual', 'created_by': 'mom', 'tier': 'mission'})
+    missions._llm = lambda m, s, u, st: {'action': 'finish', 'summary': 'They only quote by phone.', 'next_action': 'Call them'}
+    missions.step(storage.get_mission(mid))
+    check(missions.step(storage.get_mission(mid))['status'] == 'done', "the second insistence is allowed")
+
+
+def scenario_the_planner_is_told_history_is_not_fact_and_to_start_deep():
+    src = missions._system_prompt(__import__('datetime').datetime.now(), {})
+    check('phone' in src.lower() and 'browse' in src.lower() and ('history' in src.lower() or 'earlier' in src.lower()),
+          "earlier thread notes (a 'call them' next step) are to be verified by a browse, never repeated")
+    check('deepest' in src.lower() or 'scheduling page' in src.lower(), "a browse starts at the deepest relevant URL already known")
+
+
 SCENARIOS = [scenario_browse_action_runs_the_runner_and_transcribes, scenario_needs_release_pauses_with_the_values_and_tells_the_person,
              scenario_captcha_and_payment_hand_off, scenario_left_the_site_and_refusals_are_notes_the_planner_reads,
              scenario_browse_cap_refuses_before_running, scenario_a_lost_browse_is_reclaimed_by_the_tick,
@@ -311,6 +353,7 @@ SCENARIOS = [scenario_browse_action_runs_the_runner_and_transcribes, scenario_ne
              scenario_release_declined_hands_off_and_stop_blocks, scenario_release_verb_is_in_the_closed_set_everywhere,
              scenario_a_browse_that_returns_after_the_mission_moved_on_changes_nothing, scenario_missing_card_fields_are_asked_for_not_handed_off,
              scenario_the_planner_may_resume_a_browse_where_it_stopped, scenario_the_planner_sees_the_browse_outcome_first_and_never_the_ledger,
+             scenario_a_pricing_goal_is_not_finished_without_a_browse, scenario_the_planner_is_told_history_is_not_fact_and_to_start_deep,
              scenario_approve_reads_the_card_as_it_is_now_and_decline_names_the_card]
 
 if __name__ == "__main__":

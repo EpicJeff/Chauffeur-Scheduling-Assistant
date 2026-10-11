@@ -14,6 +14,7 @@ import datetime
 import json
 import logging
 import os
+import re
 import threading
 import time
 
@@ -156,10 +157,16 @@ def _system_prompt(now: datetime.datetime, settings: dict = None) -> str:
         "for it. A browse that stops at a wall (a check, a payment field) is a "
         "result, not a failure: the person is handed the link. A browse that was "
         "capped (out of turns or time) is unfinished: resume it ONCE with "
-        "start_url set to its stopped_at. Never claim a booking, a price or a "
-        "slot a browse did not show, and never finish with 'I found the site' "
-        "when the goal asked for windows, a fee or a way to book: resume, ask "
-        "the person, or hand them the link.\n"
+        "start_url set to its stopped_at. Start a browse at the deepest relevant "
+        "URL you already know (the scheduling page research found, where a past "
+        "browse stopped), not the home page. The thread's earlier notes and next "
+        "step ('call them', a past conclusion) are history to verify by browsing, "
+        "never facts to repeat: a site needs a phone call only when a browse of it "
+        "in THIS mission showed so. Never claim a booking, a price or a slot a "
+        "browse did not show, and never finish with 'I found the site' or 'it "
+        "requires a phone call' when the goal asked for windows, a fee or a way to "
+        "book and you have not browsed: browse, resume, ask the person, or hand "
+        "them the link.\n"
         "If the outcome is a choice the family must make, use ask_user and "
         "wait for the answer — NEVER finish with a question in your summary; "
         "a finished mission cannot hear replies.\n"
@@ -434,6 +441,29 @@ def release(mission_id: str, decision: str, actor: dict) -> dict:
     return {'status': 'error', 'message': 'approve, decline or stop'}
 
 
+SITE_GOAL = re.compile(r'(pric|cost|fee|quote|availab|schedul|appointment|book|slot|window|sign ?up|register|order)', re.I)
+
+
+def _finish_too_early(mission: dict, res: dict):
+    """The reason a finish is refused, or None. A goal that asks a company's
+    site for prices, slots, quotes or a booking path is not finished until
+    this mission has browsed a site; one refusal per mission, then the
+    planner is free (the step cap bounds the rest)."""
+    if not SITE_GOAL.search(mission.get('goal') or ''):
+        return None
+    steps = storage.get_mission_steps(mission['id'])
+    # Real work was done: a browse, a proposal for a parent, or a question
+    # to the person. Only a finish on top of nothing is refused.
+    if any(st.get('kind') in ('browse', 'proposal', 'ask') for st in steps):
+        return None
+    if any(st.get('kind') == 'note' and st.get('name') == 'finish_refused' for st in steps):
+        return None
+    return ("Not finished: this goal asks a company's site for prices, availability or a way to book, and this "
+            "mission has not browsed any site yet. The thread's earlier notes (a 'call them' next step, a past "
+            "conclusion) are history to verify, not facts: browse the official site now, starting at the deepest "
+            "scheduling or pricing page you know, or ask the person. Finish only after that.")
+
+
 def _land_finish(mission: dict, res: dict) -> None:
     """A finish reaches the thread (a `mission` history entry and a
     pre-filled next step) and the person (a DM). Nothing is booked: said
@@ -602,6 +632,13 @@ def step(mission: dict) -> dict:
         return row
 
     if action == 'finish':
+        why = _finish_too_early(mission, res)
+        if why:
+            # Once: a goal about a site's prices, slots or scheduling is not
+            # finished until this mission has browsed the site (2026-10-11: the
+            # planner repeated the thread's old "call them" and finished in one step).
+            storage.add_mission_step(mid, {'kind': 'note', 'name': 'finish_refused', 'result_json': {'note': why}})
+            return storage.get_mission(mid)
         storage.add_mission_step(mid, {'kind': 'llm', 'name': 'finish',
                                        'result_json': res})
         row = _close(mid, 'done', summary=(res.get('summary') or '').strip())

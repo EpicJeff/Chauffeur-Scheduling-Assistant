@@ -1,6 +1,12 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.370 (2026-10-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.371 (2026-10-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**A goal about a site's prices or slots is not finished on top of nothing (v2.499.371; `services/missions.py` `_finish_too_early`/`SITE_GOAL`/planner rules; test `test_browse_mission.py` `scenario_a_pricing_goal_is_not_finished_without_a_browse`).** 2026-10-11: a follow-up mission on the dishwasher thread was seeded with the thread's own earlier next step ("Call 844-988-4066 to get pricing"), left there by a capped run, took it as fact and finished in one step with zero tools: "Bodewell requires a phone call; I cannot make phone calls."
+
+- **The guard.** When a mission's goal reads like a site's prices, availability, quote, scheduling, booking, sign-up or order (`SITE_GOAL`) and the mission has done nothing actionable (no `browse`, no `proposal`, no `ask` step), its first `finish` is refused: a `finish_refused` note says the thread's earlier notes are history to verify, not facts, and to browse the official site starting at the deepest scheduling or pricing page known, or ask the person. Once per mission; a second insistence stands (the step cap bounds the rest), and a mission that proposed or asked finishes freely.
+- **The planner rules.** A browse starts at the deepest relevant URL already known (the scheduling page research found, where a past browse stopped), not the home page; the thread's earlier notes and next step are history to verify by browsing, never facts to repeat; a site needs a phone call only when a browse of it in THIS mission showed so; "it requires a phone call" is not a finish for a windows/fee/booking goal without a browse.
+- **Not device-verified.**
 
 **The turn ledger and the repeat guard (v2.499.370; `services/browse.py` `turns_log`/`_action_words`/`_coarse`, `services/missions.py` `_user_prompt` browse view, `templates/components/mission_transcript.html`; tests `test_browse_runner.py` `scenario_every_turn_is_on_the_ledger`/`scenario_the_same_click_three_times_is_told_so`, `test_browse_mission.py` `scenario_the_planner_sees_the_browse_outcome_first_and_never_the_ledger`).** "Capped at 40 turns — how did it take that many?" (2026-10-11) had no answer: the transcript kept the last screenshot and the outcome.
 
