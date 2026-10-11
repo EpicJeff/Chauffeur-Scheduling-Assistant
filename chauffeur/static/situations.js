@@ -80,10 +80,15 @@ window.Situations = (function () {
     const next = s.next_step;
     // unread lives under its ask's ledger line (askLine), not in the option row.
     const rest = opts.filter(o => (!next || o.id !== next.id) && o.verb !== 'unread');
+    // A viewer who cannot act (a child owner, a wall) still reads the
+    // question Argyle's mission is waiting on (browse missions §5).
+    const askOnly = (!ctx.canWrite || ctx.readOnly) && next && /^answer:mission:/.test(next.id || '')
+      ? `<div class="sit-ask-line text-xs text-amber-200 mt-1">Argyle asks: ${esc(next.label)}</div>`
+      : '';
     const buttons = (ctx.canWrite && !ctx.readOnly)
       ? `<div class="sit-next mt-2">${next ? `<button class="${PRIMARY}" data-sit-act="${esc(next.id)}">${esc(next.label)}</button>` : ''}</div>
          <div class="sit-options flex flex-wrap gap-2 mt-1.5">${rest.map(o => `<button class="${QUIET}" data-sit-act="${esc(o.id)}">${esc(o.label)}</button>`).join('')}</div>`
-      : '';
+      : askOnly;
     const since = when(s.since);
     const meta = [s.state, since ? `since ${since}` : '', s.due ? `due ${dueLabel(s.due)}` : '', (s.people || []).join(', ')].filter(Boolean).join(' · ');
     const note = s.note_source === 'argyle'

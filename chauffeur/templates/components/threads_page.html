@@ -107,7 +107,7 @@
                                    state below never go stale after a save. #}
                                 <template x-for="t in threadRows(s.id)" :key="t.id">
                                 <details class="sit-details -mt-2 bg-gray-900/60 border border-gray-800 border-t-0 rounded-b-2xl px-3 pb-3"
-                                    :open="detailsOpen[s.id] ? true : null" @toggle="detailsOpen[s.id] = $event.target.open">
+                                    :open="detailsOpen[s.id] ? true : null" @toggle="detailsOpen[s.id] = $event.target.open; if ($event.target.open) loadMissions(t)">
                                     <summary class="text-[11px] text-gray-500 cursor-pointer py-1.5">details</summary>
                                     <div class="space-y-2">
                                         <div class="text-xs text-gray-500" x-show="t.goal" x-text="t.goal"></div>
@@ -149,6 +149,15 @@
                                                 </div>
                                             </template>
                                         </div>
+
+                                        <!-- The missions opened from this thread (browse missions §5): the
+                                             shared transcript, fetched when the details open. -->
+                                        <template x-for="mission in (threadMissions[t.id] || [])" :key="mission.id">
+                                            <div class="mt-2 border-t border-gray-800 pt-2 thread-mission">
+                                                <div class="text-[11px] text-gray-500" x-text="'Mission: ' + mission.goal + ' — ' + mission.status"></div>
+                                                {% include 'components/mission_transcript.html' %}
+                                            </div>
+                                        </template>
 
                                         <div class="flex flex-wrap gap-2 mt-1" x-show="t.state !== 'done' && t.state !== 'dropped'">
                                             <button @click="requestDraft(t)"
@@ -348,6 +357,7 @@
                 situations: [],
                 foldOpen: {},
                 detailsOpen: {},
+                threadMissions: {},      // thread id -> its missions with steps (loaded on open)
 
                 async load() {
                     try {
@@ -539,6 +549,26 @@
                         await this.load();
                     } catch (e) { showGlobalAlert("Couldn't add that photo."); }
                     finally { ev.target.value = ''; }
+                },
+                async loadMissions(t) {
+                    try {
+                        const r = await fetch(this.apiBase + `api/threads/${t.id}/missions`);
+                        const d = r.ok ? await r.json() : { missions: [] };
+                        this.threadMissions[t.id] = d.missions || [];
+                    } catch (e) { this.threadMissions[t.id] = []; }
+                },
+                // The transcript's helpers (static/mission_transcript.js), one implementation with /missions.
+                stepKindClass(kind) { return window.MissionTranscript.stepKindClass(kind); },
+                stepResultText(step) { return window.MissionTranscript.stepResultText(step); },
+                stepArgsText(step) { return window.MissionTranscript.stepArgsText(step); },
+                isLastAsk(mission, step) { return window.MissionTranscript.isLastAsk(mission, step); },
+                isReleasePending(mission) { return window.MissionTranscript.isReleasePending(mission); },
+                async releaseMission(m, decision) {
+                    try {
+                        const d = await window.MissionTranscript.release(this.apiBase, m.id, decision);
+                        if (d.message) showGlobalAlert(d.message);
+                        await this.load();
+                    } catch (e) { showGlobalAlert(e.message || "That didn't work."); }
                 },
                 async submitNote(t) {
                     const text = (this.noteText[t.id] || '').trim();

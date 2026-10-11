@@ -6390,6 +6390,24 @@ def create_thread(body: dict = Body(default={}), request: Request = None):
     return {"status": "success", "id": thread_id}
 
 
+@app.get("/api/threads/{thread_id}/missions")
+def thread_missions(thread_id: str, request: Request = None):
+    """The missions opened from this thread, newest first, with their steps —
+    the same gate as reading the thread (browse missions §5)."""
+    viewer = _situation_viewer(request)
+    from services import situations as _sit
+    row = storage.get_thread(thread_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="No such thread")
+    if not _sit.can_see('thread', row, viewer):
+        raise HTTPException(status_code=403, detail="Not yours to see")
+    rows = [m for m in storage.get_missions() if m.get('origin_kind') == 'thread' and m.get('origin_ref') == thread_id]
+    rows.sort(key=lambda m: -(m.get('created_at') or 0))
+    for m in rows:
+        m['steps'] = storage.get_mission_steps(m['id'])
+    return {"missions": rows[:5]}
+
+
 @app.patch("/api/threads/{thread_id}")
 def patch_thread(thread_id: str, body: dict = Body(default={}), request: Request = None):
     """Direct field edits — retitling, fixing a counterparty email typo.
