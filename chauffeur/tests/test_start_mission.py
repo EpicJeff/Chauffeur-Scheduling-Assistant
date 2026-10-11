@@ -127,10 +127,54 @@ def scenario_finish_on_a_closed_thread():
     check(SENT and 'closed' in SENT[-1].lower(), f"the DM says the thread was closed: {SENT[-1]}")
 
 
+def scenario_thread_card_carries_its_missions_question():
+    _reset(); _dm_capture()
+    res = tools.start_mission_for('get the dishwasher fixed', acting_member=MOM, focus_key='voice:1')
+    mid, tid = res['mission_id'], res['thread_id']
+    missions._llm = lambda m, s, u, st: {'action': 'ask_user', 'question': 'Which Friday works?'}
+    missions.step(storage.get_mission(mid))
+    s = situations.view('thread', tid, MOM)
+    check(s['next_step']['verb'] == 'answer' and s['next_step']['id'] == f'answer:mission:{mid}' and 'Which Friday' in s['next_step']['label'], f"the thread leads with the mission's question: {s['next_step']}")
+    check(triage.tier(s) == 0, "a thread waiting on the person's answer is tier 0")
+    out = tools.act_on_situation(verb='answer', text='the 17th', acting_member=MOM, focus_key='voice:1')
+    check(out['status'] == 'success' and storage.get_mission(mid)['status'] == 'running', f"'tell the mission' through the thread focus: {out}")
+    last = storage.get_mission_steps(mid)[-1]
+    check(last['name'] == 'user_answer' and last['result_json']['text'] == 'the 17th', "the answer is on the transcript")
+
+
+def scenario_thread_card_carries_its_missions_release():
+    _reset(); _dm_capture()
+    res = tools.start_mission_for('get the dishwasher fixed', acting_member=MOM, focus_key='voice:1')
+    mid, tid = res['mission_id'], res['thread_id']
+    storage.get_settings = lambda: {'missions_enabled': True, 'llm_gemini_paid_api_key': 'paid', 'thread_stall_days': 7, 'contact_first_name': 'Jeff'}
+    missions._browse_async = False
+    missions._browse = lambda **kw: {'outcome': 'needs_release', 'text': 'wants first_name', 'learned': {}, 'stopped_at': 'https://bodewell.com/f',
+                                     'wanted_fields': ['first_name'], 'turns': 1, 'tokens_in': 1, 'tokens_out': 1, 'seconds': 1, 'screenshots': [], 'filled': {}}
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
+    missions.step(storage.get_mission(mid))
+    s = situations.view('thread', tid, MOM)
+    ids = [o['id'] for o in s['options'] if o['verb'] == 'release']
+    check(ids == [f'release:mission:{mid}:approve', f'release:mission:{mid}:decline', f'release:mission:{mid}:stop'], f"the thread carries the release: {ids}")
+    seq = [{'outcome': 'done', 'text': 'ok', 'learned': {}, 'stopped_at': 'u', 'wanted_fields': [], 'turns': 1, 'tokens_in': 1, 'tokens_out': 1, 'seconds': 1, 'screenshots': [], 'filled': {}}]
+    missions._browse = lambda **kw: seq.pop(0)
+    out = situations.act('thread', tid, 'release', option_id=f'release:mission:{mid}:approve', actor=MOM)
+    check(out['status'] == 'success' and storage.get_mission(mid)['status'] == 'running' and storage.get_mission(mid)['releases'], f"approve through the thread card: {out}")
+
+
+def scenario_answer_when_not_waiting_is_refused():
+    _reset(); _dm_capture()
+    res = tools.start_mission_for('get the dishwasher fixed', acting_member=MOM, focus_key='voice:1')
+    out = tools.act_on_situation(verb='answer', text='yes', acting_member=MOM, focus_key='voice:1')
+    check(out['status'] == 'error' and 'not on the table' in out['message'], f"nothing to answer: {out}")
+    check(not [s for s in storage.get_mission_steps(res['mission_id']) if s['name'] == 'user_answer'], "nothing appended")
+
+
 SCENARIOS = [scenario_opens_thread_and_mission_and_focus, scenario_a_running_mission_is_not_duplicated, scenario_gates,
              scenario_declared_dispatched_terminal,
              scenario_ask_user_dms_the_question, scenario_finish_lands_on_the_thread_with_a_prefilled_next_step,
-             scenario_finish_without_next_action, scenario_finish_on_a_closed_thread]
+             scenario_finish_without_next_action, scenario_finish_on_a_closed_thread,
+             scenario_thread_card_carries_its_missions_question, scenario_thread_card_carries_its_missions_release,
+             scenario_answer_when_not_waiting_is_refused]
 
 if __name__ == "__main__":
     import traceback

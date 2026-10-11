@@ -57,7 +57,11 @@ def tier(s: dict, now: float = None) -> int:
         # on (read as yes, a question, or not read at all) sits right after
         # today's business, never under the insights. A 'no' leaves the
         # ordinary options and the ordinary rank.
-        if ((s.get('next_step') or {}).get('id') or '') in REPLY_LEADS:
+        lead = (s.get('next_step') or {}).get('id') or ''
+        # Its mission is waiting on the person: the thread is, too.
+        if lead.startswith('answer:mission:') or lead.startswith('release:mission:'):
+            return 0
+        if lead in REPLY_LEADS:
             return 1
         return 1 if s.get('needs_attention') else 4
     if kind == 'mission':

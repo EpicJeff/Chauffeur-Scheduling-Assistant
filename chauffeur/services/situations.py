@@ -208,9 +208,26 @@ def _reply_option(row: dict):
     return _opt('advance', label, {'next_action': label}, 'read')
 
 
+def _thread_mission(row: dict):
+    """The newest live mission opened from this thread, or None."""
+    rows = [m for m in storage.get_missions() if m.get('origin_kind') == 'thread' and m.get('origin_ref') == row.get('id')
+            and m.get('status') in ('running', 'browsing', 'waiting_user', 'waiting_retry')]
+    rows.sort(key=lambda m: m.get('created_at') or 0)
+    return rows[-1] if rows else None
+
+
 def _options_thread(row: dict) -> list:
     from services import threads as _th
     out = []
+    # The thread carries its mission's ask (browse missions §4): the question
+    # or the release leads, with ids that route to the mission in act().
+    m = _thread_mission(row)
+    if m and m.get('status') == 'waiting_user':
+        mrow = load('mission', m['id'])
+        for o in _options_mission(mrow or {}):
+            if o['verb'] in ('answer', 'release'):
+                sub = o['id'].split(':', 1)[1] if ':' in o['id'] else ''
+                out.append(_opt(o['verb'], o['label'], o['payload'], f"mission:{m['id']}" + (f":{sub}" if sub else '')))
     lead = _reply_option(row)
     if lead:
         out.append(lead)
@@ -559,6 +576,16 @@ def act(kind: str, sid: str, verb: str, option_id: str = None, payload: dict = N
     opt = next((o for o in opts if o['id'] == (option_id or verb) and o['verb'] == verb), None)
     if not opt:
         return _refused("That option is no longer on the table; the situation moved. Take another look.")
+    if kind == 'thread' and opt['id'].startswith(f"{verb}:mission:"):
+        # The thread's option is its mission's: act on the mission (its own
+        # options re-derived, every gate kept), then the thread moved too.
+        bits = opt['id'].split(':')
+        mid, sub = bits[2], ':'.join(bits[3:])
+        res = act('mission', mid, verb, option_id=f"{verb}:{sub}" if sub else verb, payload=payload, actor=actor)
+        if res.get('status') in ('success', 'proposed', 'planned'):
+            bump_rev(kind, sid)
+            request_refresh(kind, sid)
+        return res
     p = dict(opt['payload'])
     free = payload or {}
     if verb in ('answer', 'advance', 'draft', 'research'):
