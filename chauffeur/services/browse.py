@@ -98,6 +98,140 @@ def free_memory_mb():
 SYSTEM_CHROMIUM = ('chromium', 'chromium-browser', 'google-chrome', 'chrome')
 
 
+# --- the network check (Missions drawer → Browser → "Check the network") ------
+# Every browse connect on the HA VM timed out (2026-10-11) on an 8 Gbit link:
+# that is DNS or a half-configured IPv6 inside the container, not bandwidth.
+# This times each step apart so the drawer can say which, without a terminal.
+
+NETCHECK_URLS = ('https://www.bodewell.com/', 'https://repair.geappliances.com/', 'https://cdn.playwright.dev/',
+                 'https://generativelanguage.googleapis.com/')
+
+
+def _ms(t0: float) -> int:
+    return int((time.time() - t0) * 1000)
+
+
+def _timed_dns(host: str, family) -> tuple:
+    """(ms, addresses) for one address family; (None, []) when the lookup fails."""
+    import socket
+    t0 = time.time()
+    try:
+        infos = socket.getaddrinfo(host, 443, family, socket.SOCK_STREAM)
+    except Exception:
+        return None, []
+    return _ms(t0), sorted({i[4][0] for i in infos})
+
+
+def _net_verdict(r: dict) -> str:
+    """One sentence a parent can act on, from the timings."""
+    dns_any, dns4, c4, c6, get, status = (r.get('dns_any_ms'), r.get('dns_v4_ms'), r.get('connect_v4_ms'),
+                                          r.get('connect_v6_ms'), r.get('get_ms'), r.get('status'))
+    if dns_any is None and dns4 is None:
+        return "DNS cannot resolve this host at all: the container's resolver is broken or the name is wrong."
+    if dns4 is not None and dns4 > 2000 and (dns_any or 0) > 2000:
+        return "DNS is slow both ways: the container's resolver (HA's DNS or the VM's upstream) is the holdup."
+    if dns4 is not None and dns4 < 1000 and dns_any is not None and dns_any > 2000:
+        return "The IPv6 (AAAA) lookup hangs while IPv4 is quick: IPv6 is half-configured on the VM. Disable IPv6 in HA Settings > System > Network, or pin the browser to IPv4."
+    if c6 is not None and c6 > 5000 and c4 is not None and c4 < 1000:
+        return "IPv6 connects hang while IPv4 is quick: IPv6 is half-configured on the VM. Disable IPv6 in HA Settings > System > Network, or pin the browser to IPv4."
+    if c4 is None and dns4 is not None:
+        return ("The name resolves but nothing connects on its port: the host does not serve HTTPS there (bodewell.com's "
+                "apex does not; www. does) or a firewall blocks outbound HTTPS. A browse probes www. and http itself.")
+    if get is None and status is None:
+        return "The connect works but the page never answered: the site, or something between, is dropping the request."
+    if (get or 0) > 5000:
+        return "Connects are quick but the page is slow to answer: the site itself, or a proxy in the path."
+    return "Fine: DNS, connects and the page all answered quickly."
+
+
+def _pick_start(site: str, timeout_s: float = 4.0):
+    """The URL a browse of `site` starts at: the first of https://site,
+    https://www.site, http://site whose host accepts a connection. None when
+    none does (the caller keeps the https guess and reports honestly)."""
+    import socket
+    from urllib.parse import urlsplit
+    host_port = site.split('/')[0]
+    host, _, port = host_port.partition(':')
+    for scheme, h in (('https', host), ('https', 'www.' + host if not host.startswith('www.') else host), ('http', host)):
+        p = int(port) if port else (443 if scheme == 'https' else 80)
+        try:
+            infos = socket.getaddrinfo(h, p, socket.AF_INET, socket.SOCK_STREAM)
+        except Exception:
+            continue
+        if not infos:
+            continue
+        if _answers(infos[0][4][0], h, p, scheme == 'https', timeout_s):
+            return f"{scheme}://{h}{':' + port if port else ''}"
+    return None
+
+
+def _answers(addr: str, host: str, port: int, tls: bool, timeout_s: float) -> bool:
+    """A TCP connect, and for https a TLS handshake too: a host that accepts
+    the socket but does not speak HTTPS on it is not an answer."""
+    import socket
+    import ssl
+    try:
+        with socket.create_connection((addr, port), timeout=timeout_s) as sock:
+            if not tls:
+                return True
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            with ctx.wrap_socket(sock, server_hostname=host):
+                return True
+    except Exception:
+        return False
+
+
+def network_check(urls=None, timeout_s: float = 20.0) -> list:
+    """Per URL: DNS any/IPv4 timings, connect timings IPv4 and IPv6 (when an
+    AAAA exists), a plain GET, and a verdict. Never raises; a failed step is
+    None in its column."""
+    import socket
+    import urllib.request
+    from urllib.parse import urlparse
+    out = []
+    for url in (urls or NETCHECK_URLS):
+        host = urlparse(url).hostname or url
+        row = {'url': url, 'host': host, 'dns_any_ms': None, 'dns_v4_ms': None, 'connect_v4_ms': None,
+               'connect_v6_ms': None, 'get_ms': None, 'status': None, 'verdict': ''}
+        row['dns_any_ms'], _ = _timed_dns(host, 0)
+        row['dns_v4_ms'], v4 = _timed_dns(host, socket.AF_INET)
+        _, v6 = _timed_dns(host, socket.AF_INET6)
+        port = urlparse(url).port or (443 if url.startswith('https') else 80)
+        if v4:
+            row['connect_v4_ms'] = _timed_connect_port(v4[0], socket.AF_INET, port, timeout_s)
+        if v6 and socket.has_ipv6:
+            row['connect_v6_ms'] = _timed_connect_port(v6[0], socket.AF_INET6, port, timeout_s)
+        t0 = time.time()
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Chauffeur netcheck'}, method='GET')
+            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+                resp.read(2048)
+                row['status'] = resp.status
+            row['get_ms'] = _ms(t0)
+        except Exception as e:
+            code = getattr(e, 'code', None)
+            if code:
+                row['status'] = int(code)
+                row['get_ms'] = _ms(t0)
+        row['verdict'] = _net_verdict(row)
+        out.append(row)
+    return out
+
+
+def _timed_connect_port(addr: str, family, port: int, timeout_s: float):
+    import socket
+    t0 = time.time()
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout_s)
+            sock.connect((addr, port) if family == socket.AF_INET else (addr, port, 0, 0))
+    except Exception:
+        return None
+    return _ms(t0)
+
+
 def _system_chromium(bundled_path: str):
     """The add-on image falls back to Debian's chromium when Playwright's own
     download fails at build time (its CDN timed out on the HA box). None when
@@ -455,7 +589,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
     except Exception as e:
         return finish('refused', f'no browser on this box ({str(e)[:100]})')
     allowed = {_domain(f'http://{site}' if '://' not in site else site)}
-    start = start_url or (site if '://' in site else f'https://{site}')
+    start = start_url or (site if '://' in site else (_pick_start(site) or f'https://{site}'))
     captcha_attempts = 0
     strikes = 0
 

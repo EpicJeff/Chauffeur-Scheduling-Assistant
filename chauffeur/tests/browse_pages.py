@@ -4,6 +4,7 @@ import http.server
 import threading
 
 PAGES = {
+    '/': '<h1>Home</h1><a href="/start">Service</a>',
     '/start': '<h1>Service</h1><a id="go" href="/form">Schedule service</a> <a id="away" href="http://localhost:{port}/other">Marketplace</a> <a id="redir" href="/redir">Partner</a>',
     '/form': ('<h1>Step 1</h1><form action="/form2" method="get">'
               '<label>First Name *<input name="first" required></label>'

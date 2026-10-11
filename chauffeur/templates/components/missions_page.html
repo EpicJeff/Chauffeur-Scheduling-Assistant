@@ -104,6 +104,23 @@
                     <input type="number" min="0" x-model.number="s.mission_cap_browse_turns" @change="save()"
                         class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
                 </div>
+                <!-- When a browse keeps timing out: DNS and connects, IPv4 and IPv6 apart, from inside the add-on. -->
+                <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3" id="netcheck">
+                    <div class="flex items-center justify-between gap-2">
+                        <div class="text-xs font-semibold text-gray-400">If browses keep timing out</div>
+                        <button @click="netcheck()" :disabled="netBusy"
+                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-700 text-gray-200 active:bg-gray-600 disabled:opacity-50"
+                            x-text="netBusy ? 'Checking…' : 'Check the network'"></button>
+                    </div>
+                    <template x-for="r in netRows" :key="r.url">
+                        <div class="mt-2 text-[11px]">
+                            <div class="text-gray-300 font-semibold" x-text="r.host"></div>
+                            <div class="text-gray-500 font-mono"
+                                 x-text="'dns any ' + fmtMs(r.dns_any_ms) + ' · dns v4 ' + fmtMs(r.dns_v4_ms) + ' · connect v4 ' + fmtMs(r.connect_v4_ms) + ' · connect v6 ' + fmtMs(r.connect_v6_ms) + ' · page ' + fmtMs(r.get_ms) + (r.status ? ' (' + r.status + ')' : '')"></div>
+                            <div class="text-amber-200" x-text="r.verdict"></div>
+                        </div>
+                    </template>
+                </div>
             </div>
             {% endcall %}
             {% call settings_section('contact-card', 'Household contact card') %}
@@ -246,6 +263,18 @@
                     contact_first_name: '', contact_last_name: '', contact_email: '', contact_phone: '',
                     contact_street: '', contact_apt: '', contact_city: '', contact_state: '', contact_zip: '',
                     contact_preferred: '', missions_captcha_attempts: false, mission_cap_browse_turns: 400
+                },
+                netBusy: false, netRows: [],
+                fmtMs(v) { return (v === null || v === undefined) ? 'fail' : (v >= 1000 ? (v / 1000).toFixed(1) + ' s' : v + ' ms'); },
+                async netcheck() {
+                    this.netBusy = true;
+                    try {
+                        const r = await fetch(this.apiBase + 'api/browse/netcheck');
+                        const d = r.ok ? await r.json() : {};
+                        this.netRows = d.rows || [];
+                        if (!r.ok) showGlobalAlert("Couldn't run the check.");
+                    } catch (e) { showGlobalAlert("Couldn't run the check."); }
+                    this.netBusy = false;
                 },
 
                 async load() {

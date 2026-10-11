@@ -5805,6 +5805,17 @@ def missions_proposal_act(mission_id: str, proposal_id: str,
     return result
 
 
+@app.get("/api/browse/netcheck")
+async def browse_netcheck(request: Request = None):
+    """DNS and connect timings for the sites a browse uses, IPv4 and IPv6
+    apart, with a verdict (Missions drawer → Browser → Check the network).
+    Parent/adult; runs off the loop (it waits on sockets)."""
+    _mind_actor(request, request.query_params.get('member_id') if request else None)
+    from services import browse as _browse
+    rows = await asyncio.to_thread(_browse.network_check)
+    return {"rows": rows}
+
+
 @app.get("/api/missions/{mission_id}/shots/{name}")
 def mission_shot(mission_id: str, name: str, request: Request = None):
     """A browse step's screenshot (parent-gated like the transcript). Lives

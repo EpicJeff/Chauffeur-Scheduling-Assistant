@@ -354,6 +354,18 @@ def scenario_a_slow_page_does_not_end_the_run():
         browse.GOTO_TIMEOUT_MS = orig
 
 
+def scenario_the_start_url_is_the_host_that_answers():
+    """bodewell.com does not serve https on its apex (only www., and plain
+    http): a browse that starts at https://{site} hangs on any network. The
+    runner probes the candidates and starts at the one that connects."""
+    _reset()
+    browse._model_step = _script('DONE.')
+    r = browse.run('x', SITE, {}, {}, out_dir=OUT)        # no start_url: the probe picks
+    check(r['outcome'] == 'done' and r['stopped_at'].startswith(f'http://{SITE}'), f"https refused, www refused, http answered: {r['stopped_at']} {r['outcome']} {r['text']}")
+    check(browse._pick_start('127.0.0.1:1') is None or browse._pick_start('127.0.0.1:1').startswith('https://'),
+          "nothing answers: the https guess stands and the run reports the failure honestly")
+
+
 SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
@@ -365,7 +377,7 @@ SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_ty
              scenario_system_chromium_is_the_fallback_when_the_bundle_is_missing,
              scenario_typing_into_a_contact_field_is_a_release_question_even_with_an_empty_card,
              scenario_the_model_can_say_what_it_needs_and_knows_what_the_card_holds, scenario_the_clock_is_ten_minutes,
-             scenario_a_slow_page_does_not_end_the_run]
+             scenario_a_slow_page_does_not_end_the_run, scenario_the_start_url_is_the_host_that_answers]
 
 if __name__ == "__main__":
     import traceback
