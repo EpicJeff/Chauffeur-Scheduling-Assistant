@@ -71,7 +71,7 @@ def available() -> tuple:
     try:
         with sync_playwright() as p:
             path = p.chromium.executable_path
-        if not path or not os.path.exists(path):
+        if (not path or not os.path.exists(path)) and not _system_chromium(path):
             return False, 'no browser on this box (Chromium is not installed)'
     except Exception as e:
         return False, f'no browser on this box ({str(e)[:80]})'
@@ -89,12 +89,30 @@ def free_memory_mb():
     return None
 
 
+SYSTEM_CHROMIUM = ('chromium', 'chromium-browser', 'google-chrome', 'chrome')
+
+
+def _system_chromium(bundled_path: str):
+    """The add-on image falls back to Debian's chromium when Playwright's own
+    download fails at build time (its CDN timed out on the HA box). None when
+    the bundled binary is there (Playwright's own is used) or nothing is."""
+    import shutil
+    if bundled_path and os.path.exists(bundled_path):
+        return None
+    for name in SYSTEM_CHROMIUM:
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
 def _launch(headless: bool = True):
     """Test seam: tests replace this to simulate a missing binary."""
     from playwright.sync_api import sync_playwright
     pw = sync_playwright().start()
     try:
-        browser = pw.chromium.launch(headless=headless)
+        system = _system_chromium(pw.chromium.executable_path)
+        browser = pw.chromium.launch(headless=headless, executable_path=system) if system else pw.chromium.launch(headless=headless)
     except Exception:
         pw.stop()
         raise

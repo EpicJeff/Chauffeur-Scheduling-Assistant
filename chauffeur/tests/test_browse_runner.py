@@ -277,6 +277,28 @@ def scenario_domain_keeps_two_label_public_suffixes():
           and browse._domain('http://localhost:8/') == 'localhost', "plain domains, ips and localhost unchanged")
 
 
+def scenario_system_chromium_is_the_fallback_when_the_bundle_is_missing():
+    """The add-on image: Playwright's CDN download can time out at build time,
+    so the image falls back to Debian's chromium; the runner launches that
+    one when the bundled binary is absent."""
+    import os as _os
+    import shutil as _sh
+    orig_exists, orig_which = _os.path.exists, _sh.which
+    try:
+        _os.path.exists = lambda p: False
+        _sh.which = lambda n: '/usr/bin/chromium' if n == 'chromium' else None
+        check(browse._system_chromium('/nope/chrome') == '/usr/bin/chromium', "the bundle is missing: the system chromium is used")
+        _sh.which = lambda n: None
+        check(browse._system_chromium('/nope/chrome') is None, "neither: nothing (the runner refuses honestly)")
+        _os.path.exists = lambda p: True
+        check(browse._system_chromium('/bundled/chrome') is None, "the bundle exists: Playwright's own is used")
+    finally:
+        _os.path.exists, _sh.which = orig_exists, orig_which
+    df = open('Dockerfile', encoding='utf-8').read()
+    check('PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT' in df and 'apt-get install -y --no-install-recommends chromium' in df,
+          "the image waits longer for the download and falls back to the apt chromium")
+
+
 SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
@@ -284,7 +306,8 @@ SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_ty
              scenario_pool_cu_bills_the_paid_key_only, scenario_live_step_builds_the_computer_use_call,
              scenario_enter_never_submits_a_booking_form, scenario_typing_guard_matches_whole_values_only,
              scenario_only_main_frame_navigations_teach_the_allowlist,
-             scenario_every_call_in_a_turn_is_checked_against_the_page_it_lands_on, scenario_domain_keeps_two_label_public_suffixes]
+             scenario_every_call_in_a_turn_is_checked_against_the_page_it_lands_on, scenario_domain_keeps_two_label_public_suffixes,
+             scenario_system_chromium_is_the_fallback_when_the_bundle_is_missing]
 
 if __name__ == "__main__":
     import traceback
