@@ -340,6 +340,39 @@ def scenario_the_model_is_told_argyle_acts_on_websites():
     check('enter' in desc.lower() and 'pricing' in desc.lower(), f"the tool description names the web-form case: {desc}")
 
 
+def scenario_a_release_is_a_tap_never_the_models_word():
+    """2026-10-11: with the thread in focus and "enter my information" in the
+    person's message, the chat model called act_on_situation(verb='release')
+    and the tool picked the highlighted option, Share. The family's details
+    left the house on the model's say-so. Through the agent tool the release
+    verb is refused; the card's own path (situations.act) still works."""
+    _reset(); _dm_capture()
+    res = tools.start_mission_for('get the dishwasher fixed', acting_member=MOM, focus_key='voice:1')
+    mid, tid = res['mission_id'], res['thread_id']
+    storage.get_settings = lambda: {'missions_enabled': True, 'llm_gemini_paid_api_key': 'paid', 'thread_stall_days': 7, 'contact_zip': '27523'}
+    missions._browse_async = False
+    missions._browse = lambda **kw: {'outcome': 'needs_release', 'text': 'wants zip', 'learned': {}, 'stopped_at': 'https://repair.geappliances.com/x',
+                                     'wanted_fields': ['zip'], 'turns': 1, 'tokens_in': 1, 'tokens_out': 1, 'seconds': 1, 'screenshots': [], 'filled': {}}
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'repair.geappliances.com'}
+    missions.step(storage.get_mission(mid))
+    check(storage.get_mission(mid)['status'] == 'waiting_user', "waiting on the release")
+    for kwargs in ({'verb': 'release'}, {'verb': 'release', 'option_id': f'release:mission:{mid}:approve'},
+                   {'verb': 'release', 'ref': mid, 'kind': 'mission', 'option_id': 'release:approve'}):
+        out = tools.act_on_situation(acting_member=MOM, focus_key='voice:1', **kwargs)
+        check(out['status'] == 'error' and 'tap' in out['message'].lower() and 'share' in out['message'].lower(), f"refused with where to tap: {kwargs} -> {out}")
+    row = storage.get_mission(mid)
+    check(row['status'] == 'waiting_user' and not row.get('releases'), "nothing was shared, the mission still waits")
+    # The person's own tap (the card, the transcript, the endpoint) is the only yes.
+    seq = [{'outcome': 'done', 'text': 'ok', 'learned': {}, 'stopped_at': 'u', 'wanted_fields': [], 'turns': 1, 'tokens_in': 1, 'tokens_out': 1, 'seconds': 1, 'screenshots': [], 'filled': {}}]
+    missions._browse = lambda **kw: seq.pop(0)
+    out = situations.act('thread', tid, 'release', option_id=f'release:mission:{mid}:approve', actor=MOM)
+    check(out['status'] == 'success' and storage.get_mission(mid).get('releases'), f"the tap shares: {out}")
+    desc = next(t for t in tools.get_available_tools() if t['name'] == 'act_on_situation')['description']
+    check('release' in desc.lower() and 'tap' in desc.lower(), "the tool's description says a release is a tap")
+    src = open('services/agent_router.py', encoding='utf-8').read()
+    check('tap Share' in src or 'tap share' in src.lower(), "the router's standing rule says a release is the person's tap")
+
+
 SCENARIOS = [scenario_opens_thread_and_mission_and_focus, scenario_a_running_mission_is_not_duplicated, scenario_gates,
              scenario_declared_dispatched_terminal,
              scenario_ask_user_dms_the_question, scenario_finish_lands_on_the_thread_with_a_prefilled_next_step,
@@ -350,6 +383,7 @@ SCENARIOS = [scenario_opens_thread_and_mission_and_focus, scenario_a_running_mis
              scenario_launch_refused_opens_no_thread_and_launch_mission_defers,
              scenario_release_label_carries_the_values_and_a_handoff_names_its_kind,
              scenario_a_follow_up_on_the_focus_thread_reuses_it, scenario_the_model_is_told_argyle_acts_on_websites,
+             scenario_a_release_is_a_tap_never_the_models_word,
              scenario_e2e_get_the_dishwasher_fixed]
 
 if __name__ == "__main__":

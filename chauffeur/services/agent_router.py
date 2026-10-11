@@ -241,7 +241,9 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                       "to a thread. It never books, pays, submits or sends on its own. Never say you cannot "
                       "browse the web or fill out forms: for 'get times and pricing', 'enter my information', "
                       "'get a quote', 'get X fixed' call start_mission_for (on the thread we are talking about "
-                      "when there is one). A plain web question with no site to act on is research.\n")
+                      "when there is one). A plain web question with no site to act on is research. "
+                      "A RELEASE (sharing the contact card with a site) is the person's own tap: never act on it; "
+                      "tell them to tap Share on the Missions page, the thread card or the DM card.\n")
 
     if not driver:
         if acting_member is not None:

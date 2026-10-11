@@ -1503,6 +1503,14 @@ def act_on_situation(ref: str = '', verb: str = '', option_id: str = None, kind:
     from services import situations as _sit
     if not acting_member or acting_member.get('role') not in ('parent', 'adult'):
         return {"status": "error", "message": "Only a parent or adult can do that."}
+    if verb == 'release':
+        # The family's details leave the house on the person's own tap, never
+        # on the model's reading of their words (2026-10-11: "enter my
+        # information" became a Share). Share lives on the Missions page, the
+        # thread card and the DM card; decline and stop are taps there too.
+        return {"status": "error",
+                "message": "Sharing the family's details takes a tap, not a word: tap Share on the Missions page, "
+                           "the thread card or the DM card (or Not these / Stop there)."}
     found, why = _resolve_situation(ref, kind, acting_member, focus_key, spoken)
     if not found:
         return {"status": "error", "message": why}
@@ -4465,7 +4473,7 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "act_on_situation",
-            "description": "Do one of a situation's options: assign a driver, approve a step, set a thread's next step, answer a mission, snooze, dismiss, take it yourself, mark it handled, or say Argyle read a reply wrong (unread). 'Handle it' / 'do that' with no name means the one we are talking about. Use start_ask to ask somebody.",
+            "description": "Do one of a situation's options: assign a driver, approve a step, set a thread's next step, answer a mission, snooze, dismiss, take it yourself, mark it handled, or say Argyle read a reply wrong (unread). 'Handle it' / 'do that' with no name means the one we are talking about. Use start_ask to ask somebody. NEVER the release verb: sharing the family's contact details is the person's own tap (Share on the Missions page, the thread card or the DM card), not something you do from their words.",
             "parameters": {"type": "object",
                            "properties": {"ref": {"type": "string", "description": "Id or title fragment; empty for the one we are talking about."},
                                           "verb": {"type": "string", "enum": ["assign", "plan", "prepare", "do", "done", "skip", "research", "draft", "advance", "answer", "close", "snooze", "dismiss", "own", "unread", "release"]},
