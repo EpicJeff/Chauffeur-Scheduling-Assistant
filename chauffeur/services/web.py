@@ -408,17 +408,22 @@ def search(query: str, count: int = RESULTS_PER_SEARCH,
     return {'status': 'ok', 'results': rows, 'cached': False}
 
 
-def research(question: str, read_pages: int = PAGES_READ) -> dict:
+def research(question: str, read_pages: int = PAGES_READ, api_key: str = None) -> dict:
     """Answer a practical question from pages this app actually read.
 
     Returns {status, answer, facts:[{claim,url}], sources:[{title,url}],
     dropped}. `dropped` counts facts the model cited to a page we never
     fetched — the invention rate, surfaced rather than hidden.
+
+    `api_key`: a caller's own key (a mission hands over the paid one — the
+    paid project has its own quotas, so the free key's per-minute cap and
+    the model cooldowns it caused do not apply). Default: the free key.
     """
     settings = storage.get_settings() or {}
     if not settings.get('web_research_enabled', False):
         return {'status': 'disabled'}
-    api_key = settings.get('llm_gemini_api_key', '')
+    own_key = bool(api_key)
+    api_key = api_key or settings.get('llm_gemini_api_key', '')
     if not api_key:
         return {'status': 'no_key'}
 
@@ -442,7 +447,16 @@ def research(question: str, read_pages: int = PAGES_READ) -> dict:
                     'message': "The local model can't search the web. Pick "
                                "Brave or SerpApi for research in Config."}
         try:
-            grounded = _gemini_grounded(question, api_key) or {}
+            if own_key:
+                # Flash by name, whatever the free key's cooldowns say.
+                from services import model_pools as _mp
+                grounded = {}
+                for m in [x for x in _mp.DEFAULT_POOLS['flash'][:2] if x not in _mp.RETIRED_MODELS]:
+                    grounded = _gemini_grounded(question, api_key, model=m) or {}
+                    if grounded.get('answer'):
+                        break
+            else:
+                grounded = _gemini_grounded(question, api_key) or {}
         except Exception as e:
             logger.warning(f"[web] grounding failed: {e}")
             grounded = {'error': str(e)}

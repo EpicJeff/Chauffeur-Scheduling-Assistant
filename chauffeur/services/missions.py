@@ -526,7 +526,20 @@ def step(mission: dict) -> dict:
 
     if action == 'research':
         from services import web
-        out = web.research((res.get('question') or '').strip())
+        question = (res.get('question') or '').strip()
+        # A mission is paid work: its research bills the paid key (the pro
+        # pool's), out of reach of the free key's per-minute cap that the Mind,
+        # the notes and the vision reads all share. No paid key: the free one.
+        paid = model_pools.api_key_for_pool('pro', settings)
+        out = web.research(question, api_key=paid or None)
+        msg = str(out.get('message') or '') if isinstance(out, dict) else ''
+        if out.get('status') == 'error' and '429' in msg and not any(w in msg.lower() for w in ('per day', 'perday', 'daily')):
+            # A per-minute cap is a two-minute matter, not a failed step: park
+            # the mission (the tick promotes waiting_retry) and ask again.
+            storage.add_mission_step(mid, {'kind': 'note', 'name': 'research_retry',
+                                           'result_json': {'note': f"rate limited while searching for '{question}'; trying again in 2 minutes"}})
+            storage.update_mission(mid, {'status': 'waiting_retry', 'retry_at': time.time() + 120})
+            return storage.get_mission(mid)
         storage.add_mission_step(mid, {'kind': 'tool', 'name': 'research',
                                        'args_json': {'question': res.get('question')},
                                        'result_json': out})
