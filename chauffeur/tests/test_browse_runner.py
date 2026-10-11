@@ -408,6 +408,23 @@ def scenario_the_same_click_three_times_is_told_so():
     check(any('repeat' in e['action'] for e in r['turns_log']), f"the ledger says the turn was a repeat: {r['turns_log']}")
 
 
+def scenario_a_recaptcha_badge_is_not_a_wall():
+    """2026-10-11: the ZIP dialog had reCAPTCHA's invisible badge and legal
+    line on it, as most forms do; the scan called it a CAPTCHA and bailed with
+    consent off before the model acted. A badge is not a challenge: only an
+    interstitial page, or the model saying it faces a check, is."""
+    _reset(consent=False)
+    zx, zy = _xy(f'{URL}/zipdialog', 'input[name=postal]')
+    browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': zx, 'y': zy, 'text': '27519'}}], 'DONE. LEARNED: ok=1')
+    r = browse.run('x', SITE, {'zip': '27519'}, {'captcha': False}, start_url=f'{URL}/zipdialog', out_dir=OUT)
+    check(r['outcome'] == 'done' and r['filled'] == {'zip': '27519'}, f"the form with a badge is worked, consent off: {r['outcome']} {r['text']}")
+    # A cookie banner on that page (require_confirmation, no CAPTCHA in the explanation) is acknowledged, not a bail.
+    browse._model_step = _script([{'name': 'click_at', 'args': {'x': 500, 'y': 500, 'safety_decision': {'decision': 'require_confirmation', 'explanation': 'The action accepts cookies'}}}], 'DONE.')
+    r = browse.run('x', SITE, {'zip': '27519'}, {'captcha': False}, start_url=f'{URL}/zipdialog', out_dir=OUT)
+    check(r['outcome'] == 'done', f"a cookie banner on a badge page is not a CAPTCHA: {r['outcome']} {r['text']}")
+    # The real interstitial still stops with consent off (scenario_captcha_consent_off_stops_untouched covers it).
+
+
 SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
@@ -420,7 +437,8 @@ SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_ty
              scenario_typing_into_a_contact_field_is_a_release_question_even_with_an_empty_card,
              scenario_the_model_can_say_what_it_needs_and_knows_what_the_card_holds, scenario_the_clock_is_ten_minutes,
              scenario_a_slow_page_does_not_end_the_run, scenario_the_start_url_is_the_host_that_answers,
-             scenario_every_turn_is_on_the_ledger, scenario_the_same_click_three_times_is_told_so]
+             scenario_every_turn_is_on_the_ledger, scenario_the_same_click_three_times_is_told_so,
+             scenario_a_recaptcha_badge_is_not_a_wall]
 
 if __name__ == "__main__":
     import traceback

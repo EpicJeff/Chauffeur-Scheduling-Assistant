@@ -22,6 +22,13 @@ PAGES = {
     '/withframe': '<h1>Framed</h1><iframe src="/redir" title="partner"></iframe><p>stay here</p>',
     '/topay': '<h1>Almost</h1><a id="cont" href="/pay">Continue</a>',
     '/locate': '<h1>Service areas</h1><label>ZIP Code<input name="postal"></label><button type="button">Find</button>',
+    # A normal form with reCAPTCHA's invisible badge and its legal line, as most forms have: not a wall.
+    '/zipdialog': ('<h1>Schedule service</h1><div role="dialog"><p>Enter your ZIP to see availability</p>'
+                   '<label>ZIP Code<input name="postal"></label><button type="button">Continue</button></div>'
+                   '<p class="small">This site is protected by reCAPTCHA and the Google Privacy Policy and Terms of Service apply.</p>'
+                   '<iframe src="/anchor?k=recaptcha&size=invisible" title="reCAPTCHA" style="width:256px;height:60px"></iframe>'
+                   '<p>Lots of other page content here. Why choose us. Certified technicians. Genuine parts. Reliable service. '
+                   + 'More copy. ' * 120 + '</p>'),
     # A page whose HTML arrives at once but whose blocking script takes seconds: DOMContentLoaded is late.
     '/hang': '<h1>Slow site</h1><script src="/slowjs"></script><p>content</p>',
 }

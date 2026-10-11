@@ -390,8 +390,18 @@ def _is_payment(scan: dict) -> bool:
     return any(PAYMENT_PATTERNS.search(f.get('label') or '') for f in scan.get('fields') or [])
 
 
+INTERSTITIAL_MARKERS = re.compile(r"(verify you are human|i'm not a robot|human verification|checking your browser|"
+                                  r"just a moment|unusual traffic|are you a robot|complete the security check)", re.I)
+
+
 def _has_captcha(scan: dict) -> bool:
-    return bool(CAPTCHA_MARKERS.search(scan.get('text') or '') or any(CAPTCHA_MARKERS.search(fr) for fr in scan.get('frames') or []))
+    """A page that IS a human check: an interstitial whose body is little
+    but the check. A reCAPTCHA badge, its legal line or an invisible anchor
+    iframe on an ordinary form (most forms have them) is not a wall; whether
+    a widget on a form blocks is for the model to say (require_confirmation
+    with CAPTCHA in its explanation), never for the page text."""
+    text = ' '.join((scan.get('text') or '').split())
+    return len(text) < 1200 and bool(INTERSTITIAL_MARKERS.search(text))
 
 
 def _is_denied(scan: dict) -> bool:
@@ -730,7 +740,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                                                           'try something else: another element, a scroll, or report what you see'}))
                     continue
                 if sd.get('decision') == 'require_confirmation':
-                    if CAPTCHA_MARKERS.search(str(sd.get('explanation') or '')) or _has_captcha(scan):
+                    if CAPTCHA_MARKERS.search(str(sd.get('explanation') or '')):
                         if not consent.get('captcha'):
                             return finish('captcha_failed', f'a human-verification check at {page.url}; not attempted (consent is off)')
                         captcha_attempts += 1
