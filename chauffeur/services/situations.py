@@ -181,6 +181,10 @@ def _reply_option(row: dict):
     §2), while that reply is the newest real thing on the thread. Deterministic:
     the reading, when there is one, else the mail's first line."""
     history = [h for h in (row.get('history') or []) if h.get('kind') != 'drafted']
+    if history and history[-1].get('kind') == 'mission' and (history[-1].get('next_action') or '').strip():
+        # A mission just finished here: its pre-filled next step leads (browse missions §4).
+        h = history[-1]
+        return _opt('advance', h['next_action'], {'next_action': h['next_action'], 'next_action_at': h.get('next_action_at')}, 'mission')
     if not history or history[-1].get('kind') != 'received':
         return None
     h = history[-1]

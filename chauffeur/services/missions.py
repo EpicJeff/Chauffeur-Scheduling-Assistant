@@ -143,7 +143,8 @@ def _system_prompt(now: datetime.datetime, settings: dict = None) -> str:
         'message should do>"}\n'
         '{"action":"ask_user","question":"<one question>"}\n'
         '{"action":"finish","summary":"<what was achieved + what awaits '
-        'approval>"}\n'
+        'approval>","next_action":"<the one thing the person should do next, '
+        'short, imperative; optional>","next_action_at":"<YYYY-MM-DD, optional>"}\n'
         '{"action":"give_up","reason":"<honest blocker>"}\n\n'
         "Prefer finishing with a small set of strong proposals over endless "
         "research.\n"
@@ -413,6 +414,37 @@ def release(mission_id: str, decision: str, actor: dict) -> dict:
     return {'status': 'error', 'message': 'approve, decline or stop'}
 
 
+def _land_finish(mission: dict, res: dict) -> None:
+    """A finish reaches the thread (a `mission` history entry and a
+    pre-filled next step) and the person (a DM). Nothing is booked: said
+    outright whenever a browse touched a site. The `mission` entry is
+    appended AFTER the advance so it is the newest real entry the card's
+    lead reads (situations._reply_option)."""
+    summary = (res.get('summary') or '').strip()
+    nxt = (res.get('next_action') or '').strip() or "Read Argyle's summary"
+    when = res.get('next_action_at')
+    touched_site = any(s.get('kind') == 'browse' for s in storage.get_mission_steps(mission['id']))
+    tail = ' Nothing is booked.' if touched_site else ''
+    tid = mission.get('origin_ref') if mission.get('origin_kind') == 'thread' else None
+    thread = storage.get_thread(tid) if tid else None
+    if not thread:
+        _dm_person(mission, f"{summary} Next: {nxt}.{tail}")
+        return
+    from services import situations as _sit, threads as _threads
+    if thread.get('state') not in ('done', 'dropped'):
+        _threads.advance(tid, nxt, next_action_at=when, who=None)
+        entry_next, entry_when = nxt, _threads._clean_next_action_at(when)
+        _dm_person(mission, f"{summary} Next: {nxt}.{tail}")
+    else:
+        # Closed by hand while the mission ran: the note lands, the thread
+        # stays closed and is not advanced.
+        entry_next, entry_when = None, None
+        _dm_person(mission, f"{summary} (The thread \"{thread.get('title')}\" was closed, so I left it closed.){tail}")
+    storage.append_thread_history(tid, {'kind': 'mission', 'text': summary, 'next_action': entry_next,
+                                        'next_action_at': entry_when, 'mission_id': mission['id'], 'who': 'argyle'})
+    _sit.touched('thread', tid)
+
+
 def step(mission: dict) -> dict:
     """Advance ONE step. Returns the fresh mission row. All state transitions
     live here so tick() stays a scheduler and tests drive this directly."""
@@ -524,14 +556,20 @@ def step(mission: dict) -> dict:
         return storage.get_mission(mid)
 
     if action == 'ask_user':
-        storage.add_mission_step(mid, {'kind': 'ask', 'name': 'question',
-            'result_json': {'question': (res.get('question') or '').strip()}})
-        return _close(mid, 'waiting_user')
+        q = (res.get('question') or '').strip()
+        storage.add_mission_step(mid, {'kind': 'ask', 'name': 'question', 'result_json': {'question': q}})
+        row = _close(mid, 'waiting_user')
+        # Coming back (browse missions §4): the question reaches the person
+        # with the ways to answer.
+        _dm_person(mission, f"{q} (mission: {mission.get('goal')}). Reply here, or on the thread card.")
+        return row
 
     if action == 'finish':
         storage.add_mission_step(mid, {'kind': 'llm', 'name': 'finish',
                                        'result_json': res})
-        return _close(mid, 'done', summary=(res.get('summary') or '').strip())
+        row = _close(mid, 'done', summary=(res.get('summary') or '').strip())
+        _land_finish(storage.get_mission(mid), res)
+        return row
 
     if action == 'give_up':
         storage.add_mission_step(mid, {'kind': 'llm', 'name': 'give_up',

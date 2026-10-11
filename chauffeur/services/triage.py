@@ -17,7 +17,7 @@ from services import storage, situations
 
 FOCUS_KEY = 'triage_focus'
 # The option ids situations._reply_option highlights after a counterparty's reply.
-REPLY_LEADS = ('advance:confirm', 'draft:reply', 'advance:read')
+REPLY_LEADS = ('advance:confirm', 'draft:reply', 'advance:read', 'advance:mission')
 FOCUS_TTL_S = 24 * 3600
 DAY_S = 24 * 3600
 
