@@ -484,6 +484,31 @@ def scenario_a_report_of_a_wall_is_the_wall():
     check('WALL:' in browse.RUNNER_SYSTEM and 'type_text_at' in browse.RUNNER_SYSTEM, "the model is told the WALL: exit and that typing clicks the box itself")
 
 
+def scenario_a_virtual_display_means_a_headed_browser():
+    """2026-10-11: with consent on, reCAPTCHA challenged the headless browser
+    three times. A headed Chromium on the add-on's virtual display (Xvfb,
+    started by run.sh) is an ordinary browser to the check. The runner goes
+    headed whenever a display is there and says which it used."""
+    import os as _os
+    orig = dict(_os.environ)
+    try:
+        _os.environ.pop('DISPLAY', None)
+        check(browse._headless() is True, "no display: headless")
+        _os.environ['DISPLAY'] = ':99'
+        check(browse._headless() is False, "a display: headed")
+    finally:
+        _os.environ.clear()
+        _os.environ.update(orig)
+    sh = open('run.sh', encoding='utf-8').read()
+    check('Xvfb' in sh and 'DISPLAY' in sh, "run.sh starts the virtual display when Xvfb is there")
+    df = open('Dockerfile', encoding='utf-8').read()
+    check('xvfb' in df.lower(), "the apt fallback installs xvfb beside chromium")
+    _reset()
+    browse._model_step = _script('DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/start', out_dir=OUT)
+    check(r.get('browser') in ('headed', 'headless'), f"the report says which browser ran: {r.get('browser')}")
+
+
 SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
@@ -497,7 +522,8 @@ SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_ty
              scenario_the_model_can_say_what_it_needs_and_knows_what_the_card_holds, scenario_the_clock_is_ten_minutes,
              scenario_a_slow_page_does_not_end_the_run, scenario_the_start_url_is_the_host_that_answers,
              scenario_every_turn_is_on_the_ledger, scenario_the_same_click_three_times_is_told_so,
-             scenario_a_recaptcha_badge_is_not_a_wall, scenario_the_browser_is_at_home, scenario_a_report_of_a_wall_is_the_wall]
+             scenario_a_recaptcha_badge_is_not_a_wall, scenario_the_browser_is_at_home, scenario_a_report_of_a_wall_is_the_wall,
+             scenario_a_virtual_display_means_a_headed_browser]
 
 if __name__ == "__main__":
     import traceback

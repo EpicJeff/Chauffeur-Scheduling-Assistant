@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 ENV PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000
 RUN (python -m playwright install --with-deps chromium \
      || (echo "Playwright's Chromium download failed; installing Debian's chromium instead" \
-         && apt-get update && apt-get install -y --no-install-recommends chromium)) \
+         && apt-get update && apt-get install -y --no-install-recommends chromium xvfb)) \
     ; rm -rf /var/lib/apt/lists/*
 
 COPY . .

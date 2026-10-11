@@ -279,13 +279,25 @@ def _new_context(browser, settings: dict):
     return browser.new_context(**opts)
 
 
-def _launch(headless: bool = True):
+def _headless() -> bool:
+    """Headed on the add-on's virtual display (run.sh starts Xvfb and sets
+    DISPLAY): an ordinary browser to a site's human check. Headless anywhere
+    without a display (the dev box, a box without Xvfb)."""
+    return not os.environ.get('DISPLAY')
+
+
+def _launch(headless: bool = None):
     """Test seam: tests replace this to simulate a missing binary."""
     from playwright.sync_api import sync_playwright
+    if headless is None:
+        headless = _headless()
     pw = sync_playwright().start()
     try:
         system = _system_chromium(pw.chromium.executable_path)
-        browser = pw.chromium.launch(headless=headless, executable_path=system) if system else pw.chromium.launch(headless=headless)
+        kw = {'headless': headless, 'args': [f'--window-size={W},{H}']}
+        if system:
+            kw['executable_path'] = system
+        browser = pw.chromium.launch(**kw)
     except Exception:
         pw.stop()
         raise
@@ -649,7 +661,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
     t0 = time.time()
     report = {'outcome': 'error', 'text': '', 'learned': {}, 'stopped_at': start_url or '', 'wanted_fields': [],
               'turns': 0, 'actions': 0, 'tokens_in': 0, 'tokens_out': 0, 'seconds': 0.0, 'screenshots': [], 'filled': {},
-              'turns_log': []}
+              'turns_log': [], 'browser': 'headless' if _headless() else 'headed'}
 
     def finish(outcome, text):
         report['outcome'] = outcome
@@ -667,7 +679,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
     if mem is not None and mem < MEMORY_FLOOR_MB:
         return finish('refused', f'not enough room for a browser right now ({mem} MB free)')
     try:
-        pw, browser = _launch(headless=True)
+        pw, browser = _launch()
     except Exception as e:
         return finish('refused', f'no browser on this box ({str(e)[:100]})')
     allowed = {_domain(f'http://{site}' if '://' not in site else site)}
