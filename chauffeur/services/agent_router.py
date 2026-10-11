@@ -233,6 +233,15 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                                   "situation tools with NO ref for it.\n")
         except Exception as e:
             logger.warning(f"Could not inject focus: {e}")
+    # Browse missions §4: what Argyle can do in the world, so the model never
+    # answers "I can't browse or fill forms" (it said exactly that, 2026-10-11).
+    system_prompt += ("\nARGYLE ACTS IN THE WORLD through missions: it can browse a company's website and fill "
+                      "its forms with the family's details (a parent releases them first) to get appointment "
+                      "times, prices and quotes, search the family's own mailbox, and read a photo a person adds "
+                      "to a thread. It never books, pays, submits or sends on its own. Never say you cannot "
+                      "browse the web or fill out forms: for 'get times and pricing', 'enter my information', "
+                      "'get a quote', 'get X fixed' call start_mission_for (on the thread we are talking about "
+                      "when there is one). A plain web question with no site to act on is research.\n")
 
     if not driver:
         if acting_member is not None:

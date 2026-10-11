@@ -339,6 +339,21 @@ def scenario_the_clock_is_ten_minutes():
     check(browse.DEFAULT_CAPS['seconds'] == 600 and browse.DEFAULT_CAPS['turns'] == 40, f"caps: {browse.DEFAULT_CAPS}")
 
 
+def scenario_a_slow_page_does_not_end_the_run():
+    """bodewell.com on the device: 'Page.goto: Timeout 30000ms exceeded'
+    waiting for domcontentloaded. A page whose HTML came but whose scripts
+    hang is a page to look at, not an error."""
+    _reset()
+    orig = browse.GOTO_TIMEOUT_MS
+    browse.GOTO_TIMEOUT_MS = 800
+    browse._model_step = _script('DONE. LEARNED: title=Slow site')
+    try:
+        r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/hang', out_dir=OUT)
+        check(r['outcome'] == 'done' and r['learned'].get('title') == 'Slow site', f"the run went on with what rendered: {r}")
+    finally:
+        browse.GOTO_TIMEOUT_MS = orig
+
+
 SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
@@ -349,7 +364,8 @@ SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_ty
              scenario_every_call_in_a_turn_is_checked_against_the_page_it_lands_on, scenario_domain_keeps_two_label_public_suffixes,
              scenario_system_chromium_is_the_fallback_when_the_bundle_is_missing,
              scenario_typing_into_a_contact_field_is_a_release_question_even_with_an_empty_card,
-             scenario_the_model_can_say_what_it_needs_and_knows_what_the_card_holds, scenario_the_clock_is_ten_minutes]
+             scenario_the_model_can_say_what_it_needs_and_knows_what_the_card_holds, scenario_the_clock_is_ten_minutes,
+             scenario_a_slow_page_does_not_end_the_run]
 
 if __name__ == "__main__":
     import traceback

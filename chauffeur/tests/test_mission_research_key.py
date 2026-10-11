@@ -103,13 +103,38 @@ def scenario_a_per_minute_429_parks_the_mission_and_retries():
         web.research = orig
 
 
+def scenario_search_errors_are_said_plainly():
+    """A chat reply must never be a JSON dump: a 429 says rate limited, a 404
+    says a model is gone, nothing carries braces."""
+    import urllib.error
+    _reset()
+    orig = llm_budget.urlopen
+
+    def failing(code, body):
+        def f(req, timeout=60):
+            raise urllib.error.HTTPError(req.full_url, code, 'x', {}, io.BytesIO(body.encode()))
+        return f
+    try:
+        llm_budget.urlopen = failing(429, '{"error": {"code": 429, "message": "You exceeded your current quota"}}')
+        out = web.research('q one', api_key='paid')
+        check(out['status'] == 'error' and 'rate limit' in out['message'].lower() and '{' not in out['message'], f"429: {out}")
+        llm_budget.urlopen = failing(404, '{"error": {"code": 404, "message": "models/gemini-3-flash is not found"}}')
+        out = web.research('q two', api_key='paid')
+        check(out['status'] == 'error' and 'model' in out['message'].lower() and '{' not in out['message'] and len(out['message']) < 200, f"404: {out}")
+    finally:
+        llm_budget.urlopen = orig
+        model_pools._cooldowns.clear()
+
+
 def scenario_gemini_3_7_flash_is_retired():
-    check('gemini-3.7-flash' in model_pools.RETIRED_MODELS, "named as retired (removed from the API, 2026-10-11)")
-    for pool, models in model_pools.DEFAULT_POOLS.items():
-        check('gemini-3.7-flash' not in models, f"still in the {pool} pool")
+    for gone in ('gemini-3.7-flash', 'gemini-3-flash'):
+        check(gone in model_pools.RETIRED_MODELS, f"{gone} named as retired (404 from the API, 2026-10-11)")
+        for pool, models in model_pools.DEFAULT_POOLS.items():
+            check(gone not in models, f"{gone} still in the {pool} pool")
 
 
 SCENARIOS = [scenario_a_missions_research_bills_the_paid_key, scenario_paid_research_ignores_the_free_keys_cooldowns,
+             scenario_search_errors_are_said_plainly,
              scenario_a_per_minute_429_parks_the_mission_and_retries, scenario_gemini_3_7_flash_is_retired]
 
 if __name__ == "__main__":

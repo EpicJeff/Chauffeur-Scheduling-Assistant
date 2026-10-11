@@ -21,6 +21,8 @@ PAGES = {
     '/withframe': '<h1>Framed</h1><iframe src="/redir" title="partner"></iframe><p>stay here</p>',
     '/topay': '<h1>Almost</h1><a id="cont" href="/pay">Continue</a>',
     '/locate': '<h1>Service areas</h1><label>ZIP Code<input name="postal"></label><button type="button">Find</button>',
+    # A page whose HTML arrives at once but whose blocking script takes seconds: DOMContentLoaded is late.
+    '/hang': '<h1>Slow site</h1><script src="/slowjs"></script><p>content</p>',
 }
 
 
@@ -29,6 +31,14 @@ class H(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split('?')[0]
+        if path == '/slowjs':
+            import time as _t
+            _t.sleep(2.5)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/javascript')
+            self.end_headers()
+            self.wfile.write(b'window.slow = 1;')
+            return
         if path == '/redir':
             self.send_response(302)
             self.send_header('Location', f'http://localhost:{self.port}/other')

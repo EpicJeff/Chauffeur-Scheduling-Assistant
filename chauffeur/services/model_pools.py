@@ -54,13 +54,12 @@ logger = logging.getLogger(__name__)
 # and so a test refuses them in any pool default: a retired id costs a 404
 # round trip per call until the 6-hour cooldown, every day.
 #   gemini-3.5-flash — deprecation notice received 2026-10-09.
-# gemini-3.7-flash: removed from the API (the user, 2026-10-11).
-RETIRED_MODELS = ("gemini-3.5-flash", "gemini-3.7-flash")
+# gemini-3.7-flash and gemini-3-flash: gone from the API (404, 2026-10-11).
+RETIRED_MODELS = ("gemini-3.5-flash", "gemini-3.7-flash", "gemini-3-flash")
 
 DEFAULT_POOLS = {
     'lite': ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"],
-    'flash': ["gemini-3.8-flash", "gemini-3.6-flash",
-              "gemini-3-flash", "gemini-2.5-flash"],
+    'flash': ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash"],
     # Only a starting point: the Gemma pool is rebuilt from the key's own
     # model list once a day (refresh_gemma_models). gemma-4-26b-it was a
     # working default until Google withdrew it (404 on device, 2026-10-05).

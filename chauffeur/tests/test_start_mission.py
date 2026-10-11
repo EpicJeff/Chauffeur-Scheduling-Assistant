@@ -314,6 +314,32 @@ def scenario_release_label_carries_the_values_and_a_handoff_names_its_kind():
           f"the hand-off lead is marked and carries its link: {s['next_step']}")
 
 
+def scenario_a_follow_up_on_the_focus_thread_reuses_it():
+    """2026-10-11: after the first mission finished, "get available times and
+    pricing for me" opened nothing useful. A new goal said while a thread is
+    the focus, with no live mission on it, is a new mission ON THAT THREAD."""
+    _reset(); _dm_capture()
+    first = tools.start_mission_for('get the dishwasher fixed', acting_member=MOM, focus_key='voice:1')
+    storage.update_mission(first['mission_id'], {'status': 'done'})
+    again = tools.start_mission_for('get available times and pricing for my home', acting_member=MOM, focus_key='voice:1')
+    check(again['status'] == 'success' and again['thread_id'] == first['thread_id'] and again['mission_id'] != first['mission_id'],
+          f"the focus thread carries the new mission: {again}")
+    m = storage.get_mission(again['mission_id'])
+    check(m['origin_kind'] == 'thread' and m['origin_ref'] == first['thread_id'] and m['goal'].startswith('get available'), f"on the thread: {m}")
+    check(len(storage.get_threads()) == 1, "no second thread")
+    # A different conversation with no focus and no matching thread still opens its own.
+    other = tools.start_mission_for('clean the gutters', acting_member=MOM, focus_key='voice:2')
+    check(other['thread_id'] != first['thread_id'], "an unrelated goal gets its own thread")
+
+
+def scenario_the_model_is_told_argyle_acts_on_websites():
+    src = open('services/agent_router.py', encoding='utf-8').read()
+    check('start_mission_for' in src and 'never say' in src.lower() and 'website' in src.lower(),
+          "the router's prompt says Argyle browses and fills forms through missions and never denies it")
+    desc = next(t for t in tools.get_available_tools() if t['name'] == 'start_mission_for')['description']
+    check('enter' in desc.lower() and 'pricing' in desc.lower(), f"the tool description names the web-form case: {desc}")
+
+
 SCENARIOS = [scenario_opens_thread_and_mission_and_focus, scenario_a_running_mission_is_not_duplicated, scenario_gates,
              scenario_declared_dispatched_terminal,
              scenario_ask_user_dms_the_question, scenario_finish_lands_on_the_thread_with_a_prefilled_next_step,
@@ -322,7 +348,9 @@ SCENARIOS = [scenario_opens_thread_and_mission_and_focus, scenario_a_running_mis
              scenario_answer_when_not_waiting_is_refused,
              scenario_cached_argyle_note_never_hides_the_missions_ask, scenario_thread_missions_endpoint_is_parent_only,
              scenario_launch_refused_opens_no_thread_and_launch_mission_defers,
-             scenario_release_label_carries_the_values_and_a_handoff_names_its_kind, scenario_e2e_get_the_dishwasher_fixed]
+             scenario_release_label_carries_the_values_and_a_handoff_names_its_kind,
+             scenario_a_follow_up_on_the_focus_thread_reuses_it, scenario_the_model_is_told_argyle_acts_on_websites,
+             scenario_e2e_get_the_dishwasher_fixed]
 
 if __name__ == "__main__":
     import traceback

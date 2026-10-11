@@ -1703,12 +1703,24 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
             _tri.set_focus(focus_key, 'thread', t['id'], t.get('title') or '')
             return {"status": "success", "thread_id": t['id'], "mission_id": m['id'],
                     "message": f"That's already under way: \"{t.get('title')}\". I'll come back when I have something or need you."}
-    tid = _threads.create(title=(title or goal)[:80], owner_member_id=acting_member['id'], goal=goal, kind='vendor',
-                          created_by=acting_member['id'])
+    # A new goal said while a thread is the thing we are talking about, with
+    # no live mission on it, is a new mission ON THAT THREAD ("get available
+    # times and pricing" after the first mission finished), not a new thread.
+    tid = None
+    f = _tri.get_focus(focus_key) if (focus_key and not title) else None
+    if f and f.get('kind') == 'thread':
+        t = storage.get_thread(f['id'])
+        live = [m for m in storage.get_missions(status=['running', 'browsing', 'waiting_user', 'waiting_retry'])
+                if m.get('origin_kind') == 'thread' and m.get('origin_ref') == f['id']]
+        if t and t.get('state') not in ('done', 'dropped') and not live:
+            tid = t['id']
+    if not tid:
+        tid = _threads.create(title=(title or goal)[:80], owner_member_id=acting_member['id'], goal=goal, kind='vendor',
+                              created_by=acting_member['id'])
     res = _missions.launch(goal, origin_kind='thread', origin_ref=tid, created_by=acting_member['id'], tier='mission')
     if res.get('status') not in ('success', 'launched') or not res.get('mission_id'):
         return {"status": "error", "message": res.get('message') or 'could not start the mission', "thread_id": tid}
-    _tri.set_focus(focus_key, 'thread', tid, (title or goal)[:80])
+    _tri.set_focus(focus_key, 'thread', tid, (storage.get_thread(tid) or {}).get('title') or (title or goal)[:80])
     return {"status": "success", "thread_id": tid, "mission_id": res['mission_id'],
             "message": "On it. I'll come back when I have something or need you."}
 
@@ -4501,7 +4513,7 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "start_mission_for",
-            "description": "Start getting something done that takes several steps with people or companies outside the family: 'get the dishwasher fixed', 'find someone to clean the gutters', 'sort out the permit'. Opens a thread and puts Argyle to work on it; Argyle comes back with questions and results. Nothing is booked, paid or sent without the person. Parent/adult only.",
+            "description": "Start getting something done that takes several steps with people or companies outside the family: 'get the dishwasher fixed', 'find someone to clean the gutters', 'sort out the permit', 'go on their website and enter our details to get appointment times and pricing', 'get a quote from X'. Argyle CAN browse a company's website and fill its forms with the family's details (released by a parent first) to reach prices, slots and quotes; it stops short of booking or paying. Opens a thread (or works on the thread we are talking about) and puts Argyle to work; Argyle comes back with questions and results. Parent/adult only.",
             "parameters": {"type": "object",
                            "properties": {"goal": {"type": "string", "description": "What to get done, in the person's words."},
                                           "title": {"type": "string", "description": "A short name for the thread, if the person gave one."}},

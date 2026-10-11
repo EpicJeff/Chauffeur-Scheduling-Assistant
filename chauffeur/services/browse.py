@@ -37,6 +37,7 @@ def contact_card(settings: Optional[dict] = None) -> dict:
 OUTCOMES = ('done', 'needs_release', 'captcha_failed', 'blocked', 'refused', 'capped', 'error')
 DEFAULT_CAPS = {'turns': 40, 'seconds': 600, 'captcha_attempts': 3}
 W, H = 1440, 900
+GOTO_TIMEOUT_MS = 45000
 MEMORY_FLOOR_MB = 600
 STOP_WORDS = re.compile(r'\b(submit|book(ing)?|schedule now|confirm|place (my |the )?order|pay(ment)?|checkout|purchase|reserve|finish booking|complete booking)\b', re.I)
 PAYMENT_PATTERNS = re.compile(r'(cc-number|cc-csc|cc-exp|card ?number|cvc|cvv|expir)', re.I)
@@ -204,6 +205,19 @@ def _model_step_live(contents, settings):
 _model_step = _model_step_live
 
 
+def _goto(page, url: str):
+    """Open a page the way a person does: wait for it to be readable; if its
+    scripts hang (bodewell.com on the device: 30 s and no DOMContentLoaded),
+    settle for the document having arrived and look at what rendered."""
+    try:
+        page.goto(url, wait_until='domcontentloaded', timeout=GOTO_TIMEOUT_MS)
+    except Exception as e:
+        if 'Timeout' not in str(e) and 'timeout' not in str(e):
+            raise
+        page.goto(url, wait_until='commit', timeout=GOTO_TIMEOUT_MS)
+        page.wait_for_timeout(1500)
+
+
 def _px(x, y):
     return int(x) * W / 1000, int(y) * H / 1000
 
@@ -330,7 +344,7 @@ def _act(page, name, args):
             page.keyboard.press('Enter')
     elif name in ('navigate', 'open_web_browser'):
         if args.get('url'):
-            page.goto(args['url'], wait_until='domcontentloaded', timeout=30000)
+            _goto(page, args['url'])
     elif name in ('scroll_document', 'scroll_at', 'scroll'):
         mag = int(args.get('magnitude') or args.get('magnitude_in_pixels') or 600)
         d = args.get('direction', 'down')
@@ -479,7 +493,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
         ctx = browser.new_context(viewport={'width': W, 'height': H}, locale='en-US')
         page = ctx.new_page()
         page.on('response', learn_redirect)
-        page.goto(start, wait_until='domcontentloaded', timeout=30000)
+        _goto(page, start)
         page.wait_for_timeout(800)
         shot = page.screenshot(type='png')
         report['screenshots'].append(os.path.join(out_dir, 'turn_00.png'))

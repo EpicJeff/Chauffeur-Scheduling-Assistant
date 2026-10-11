@@ -408,6 +408,24 @@ def search(query: str, count: int = RESULTS_PER_SEARCH,
     return {'status': 'ok', 'results': rows, 'cached': False}
 
 
+def _plain_error(err) -> str:
+    """A search failure in words a chat reply can carry: never the API's JSON."""
+    e = str(err or '').strip()
+    if not e:
+        return 'no answer came back'
+    low = e.lower()
+    code = e[:3] if e[:3].isdigit() else ''
+    tag = f" ({code})" if code else ''
+    if code == '429' or 'quota' in low:
+        return 'rate limited for the moment; try again in a minute' + tag
+    if code == '404' or 'not found' in low:
+        return 'a model it tried is no longer offered (it will route around it)' + tag
+    if code.startswith('5'):
+        return "Google's side had an error; try again in a minute" + tag
+    first = e.split('{', 1)[0].strip() or e
+    return first[:160]
+
+
 def research(question: str, read_pages: int = PAGES_READ, api_key: str = None) -> dict:
     """Answer a practical question from pages this app actually read.
 
@@ -462,8 +480,7 @@ def research(question: str, read_pages: int = PAGES_READ, api_key: str = None) -
             grounded = {'error': str(e)}
         if not grounded.get('answer'):
             return {'status': 'error',
-                    'message': "Gemini couldn't search the web: "
-                               f"{grounded.get('error') or 'no answer came back'}"}
+                    'message': "Gemini couldn't search the web: " + _plain_error(grounded.get('error'))}
         _month_count(bump=True)
         sources = _resolve_sources(grounded.get('sources') or [])
         out = {'status': 'ok', 'answer': grounded['answer'],
