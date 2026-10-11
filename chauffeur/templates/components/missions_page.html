@@ -547,15 +547,7 @@
                 // never rewritten later), so whether it still needs a tap has
                 // to be read off the transcript: missions_proposal_act appends
                 // a note step recording whichever act actually happened.
-                proposalOutcome(mission, step) {
-                    const pid = (step.result_json || {}).proposal_id;
-                    if (!pid) return null;
-                    const note = (mission.steps || []).find(s => s.kind === 'note'
-                        && (s.name === 'proposal_approve' || s.name === 'proposal_dismiss')
-                        && (s.result_json || {}).proposal_id === pid);
-                    if (!note) return null;
-                    return note.name === 'proposal_approve' ? 'approved' : 'dismissed';
-                },
+                proposalOutcome(mission, step) { return window.MissionTranscript.proposalOutcome(mission, step); },
 
                 fmtTs(ts) {
                     if (!ts) return '';

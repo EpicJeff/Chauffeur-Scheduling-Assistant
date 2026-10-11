@@ -226,12 +226,103 @@ def scenario_e2e_get_the_dishwasher_fixed():
     check(not storage.get_action_proposals(), "nothing proposed, nothing booked")
 
 
+def scenario_cached_argyle_note_never_hides_the_missions_ask():
+    """Review C1: in production the thread carries Argyle's cached next steps
+    (note_rev == rev); the mission's ask must still lead, and the ask must
+    bump the thread so its note is re-asked for."""
+    _reset(); _dm_capture()
+    res = tools.start_mission_for('get the dishwasher fixed', acting_member=MOM, focus_key='voice:1')
+    mid, tid = res['mission_id'], res['thread_id']
+    before = storage.get_thread(tid)
+    storage.update_thread(tid, {'note_rev': before.get('rev') or 0, 'note_source': 'argyle', 'status_note': 'Waiting on the repair shop.',
+                                'next_steps': [{'id': 'advance:argyle:0', 'label': 'Call Bodewell', 'verb': 'advance', 'payload': {'next_action': 'Call Bodewell'}}]})
+    missions._llm = lambda m, s, u, st: {'action': 'ask_user', 'question': 'Which Friday works?'}
+    missions.step(storage.get_mission(mid))
+    after = storage.get_thread(tid)
+    check((after.get('rev') or 0) > (before.get('rev') or 0), "the ask moved the thread (its note is re-asked for)")
+    # Even with a note that still matches, the ask leads.
+    storage.update_thread(tid, {'note_rev': after.get('rev') or 0})
+    s = situations.view('thread', tid, MOM)
+    check(s['next_step']['id'] == f'answer:mission:{mid}' and 'Which Friday' in s['next_step']['label'], f"the question leads over the cached suggestion: {s['next_step']}")
+    check(triage.tier(s) == 0, f"tier 0, not the cached note's rank: {triage.tier(s)}")
+    check(s['next_step']['payload'].get('ask') == 'question', "the option says what kind of ask it is (the card shows a question to a child, never a hand-off's filled values)")
+
+
+def scenario_thread_missions_endpoint_is_parent_only():
+    """Review C2: a child who owns the thread may see the thread, never the
+    mission's transcript (mail results, released values)."""
+    _reset(); _dm_capture()
+    import main
+    from fastapi import HTTPException
+    tid = threads.create("Kate's science fair", owner_member_id='kid', created_by='mom')
+    mid = storage.add_mission({'goal': 'supplies', 'origin_kind': 'thread', 'origin_ref': tid, 'created_by': 'mom', 'tier': 'mission'})
+    storage.add_mission_step(mid, {'kind': 'ask', 'name': 'release', 'result_json': {'question': 'q', 'site': 's', 'fields': ['phone'], 'values': {'phone': '919-327-7497'}}})
+    orig = main._situation_viewer
+    try:
+        main._situation_viewer = lambda r: storage.get_member('kid')
+        try:
+            main.thread_missions(tid, request=None)
+            code = 200
+        except HTTPException as e:
+            code = e.status_code
+        check(code == 403, f"the owner child is refused the transcript: {code}")
+        main._situation_viewer = lambda r: storage.get_member('mom')
+        out = main.thread_missions(tid, request=None)
+        check(out['missions'] and out['missions'][0]['steps'], "a parent reads it")
+    finally:
+        main._situation_viewer = orig
+
+
+def scenario_launch_refused_opens_no_thread_and_launch_mission_defers():
+    """Review I1/I2: a capped or keyless launch opens no orphan thread; the
+    older launch_mission tool points a new goal at start_mission_for."""
+    _reset(); _dm_capture()
+    from datetime import date
+    storage.set_app_state(f"mission_calls:{date.today().isoformat()}", {'launch': 3})
+    res = tools.start_mission_for('get the dishwasher fixed', acting_member=MOM)
+    check(res['status'] == 'error' and 'cap' in res['message'].lower() and not storage.get_threads(), f"capped: no thread: {res} {storage.get_threads()}")
+    storage.set_app_state(f"mission_calls:{date.today().isoformat()}", {})
+    storage.get_settings = lambda: {'missions_enabled': True, 'thread_stall_days': 7}
+    res = tools.start_mission_for('get the dishwasher fixed', acting_member=MOM)
+    check(res['status'] == 'error' and 'key' in res['message'].lower() and not storage.get_threads(), f"no paid key: no thread: {res}")
+    desc = next(t for t in tools.get_available_tools() if t['name'] == 'launch_mission')['description']
+    check('start_mission_for' in desc and 'existing thread' in desc.lower(), "launch_mission says when start_mission_for is the one to use")
+    storage.get_settings = lambda: {'missions_enabled': True, 'llm_gemini_paid_api_key': 'paid', 'thread_stall_days': 7}
+    out = tools.launch_mission('get the dishwasher fixed', actor=MOM)
+    check(out.get('thread_id') and storage.get_threads() and storage.get_missions()[0]['origin_kind'] == 'thread', f"launch_mission with no thread named opens a thread like start_mission_for: {out}")
+
+
+def scenario_release_label_carries_the_values_and_a_handoff_names_its_kind():
+    """Review I3: the card's Share button shows what leaves the house; the
+    hand-off option is marked so the card can draw its link."""
+    _reset(); _dm_capture()
+    res = tools.start_mission_for('get the dishwasher fixed', acting_member=MOM, focus_key='voice:1')
+    mid, tid = res['mission_id'], res['thread_id']
+    storage.get_settings = lambda: {'missions_enabled': True, 'llm_gemini_paid_api_key': 'paid', 'thread_stall_days': 7, 'contact_first_name': 'Jeff', 'contact_email': 'ffejnosliw@gmail.com'}
+    missions._browse_async = False
+    missions._browse = lambda **kw: {'outcome': 'needs_release', 'text': 'x', 'learned': {}, 'stopped_at': 'https://bodewell.com/f',
+                                     'wanted_fields': ['first_name', 'email'], 'turns': 1, 'tokens_in': 1, 'tokens_out': 1, 'seconds': 1, 'screenshots': [], 'filled': {}}
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
+    missions.step(storage.get_mission(mid))
+    for kind, sid in (('mission', mid), ('thread', tid)):
+        s = situations.view(kind, sid, MOM)
+        check(s['next_step']['verb'] == 'release' and 'Jeff' in s['next_step']['label'] and 'ffejnosliw@gmail.com' in s['next_step']['label'],
+              f"the {kind} card's Share shows the exact values: {s['next_step']['label']}")
+    missions.release(mid, 'decline', MOM)
+    s = situations.view('thread', tid, MOM)
+    check(s['next_step']['verb'] == 'answer' and s['next_step']['payload'].get('ask') == 'handoff' and 'https://bodewell.com/f' in s['next_step']['label'],
+          f"the hand-off lead is marked and carries its link: {s['next_step']}")
+
+
 SCENARIOS = [scenario_opens_thread_and_mission_and_focus, scenario_a_running_mission_is_not_duplicated, scenario_gates,
              scenario_declared_dispatched_terminal,
              scenario_ask_user_dms_the_question, scenario_finish_lands_on_the_thread_with_a_prefilled_next_step,
              scenario_finish_without_next_action, scenario_finish_on_a_closed_thread,
              scenario_thread_card_carries_its_missions_question, scenario_thread_card_carries_its_missions_release,
-             scenario_answer_when_not_waiting_is_refused, scenario_e2e_get_the_dishwasher_fixed]
+             scenario_answer_when_not_waiting_is_refused,
+             scenario_cached_argyle_note_never_hides_the_missions_ask, scenario_thread_missions_endpoint_is_parent_only,
+             scenario_launch_refused_opens_no_thread_and_launch_mission_defers,
+             scenario_release_label_carries_the_values_and_a_handoff_names_its_kind, scenario_e2e_get_the_dishwasher_fixed]
 
 if __name__ == "__main__":
     import traceback

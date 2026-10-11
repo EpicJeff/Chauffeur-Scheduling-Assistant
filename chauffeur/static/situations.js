@@ -82,13 +82,21 @@ window.Situations = (function () {
     const rest = opts.filter(o => (!next || o.id !== next.id) && o.verb !== 'unread');
     // A viewer who cannot act (a child owner, a wall) still reads the
     // question Argyle's mission is waiting on (browse missions §5).
-    const askOnly = (!ctx.canWrite || ctx.readOnly) && next && /^answer:mission:/.test(next.id || '')
+    const askKind = next && next.payload ? next.payload.ask : null;
+    const askOnly = (!ctx.canWrite || ctx.readOnly) && next && /^answer:mission:/.test(next.id || '') && askKind === 'question'
       ? `<div class="sit-ask-line text-xs text-amber-200 mt-1">Argyle asks: ${esc(next.label)}</div>`
       : '';
-    const buttons = (ctx.canWrite && !ctx.readOnly)
+    // A hand-off ("finish it on your phone") carries its link as a real link,
+    // for the person who can act and the one who can only read.
+    const handUrl = next && /^answer:/.test(next.id || '') && askKind === 'handoff'
+      ? (((next.label || '').match(/https?:\/\/[^\s)]+/) || [])[0] || '').replace(/[.,;:]+$/, '') || null : null;
+    const handLink = handUrl
+      ? `<div class="mt-1"><a class="sit-link text-xs text-blue-400 underline underline-offset-2" href="${esc(handUrl)}" target="_blank" rel="noopener">Open it</a></div>`
+      : '';
+    const buttons = ((ctx.canWrite && !ctx.readOnly)
       ? `<div class="sit-next mt-2">${next ? `<button class="${PRIMARY}" data-sit-act="${esc(next.id)}">${esc(next.label)}</button>` : ''}</div>
          <div class="sit-options flex flex-wrap gap-2 mt-1.5">${rest.map(o => `<button class="${QUIET}" data-sit-act="${esc(o.id)}">${esc(o.label)}</button>`).join('')}</div>`
-      : askOnly;
+      : askOnly) + handLink;
     const since = when(s.since);
     const meta = [s.state, since ? `since ${since}` : '', s.due ? `due ${dueLabel(s.due)}` : '', (s.people || []).join(', ')].filter(Boolean).join(' · ');
     const note = s.note_source === 'argyle'

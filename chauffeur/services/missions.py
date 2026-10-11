@@ -199,12 +199,19 @@ def _user_prompt(mission: dict) -> str:
 
 
 def _close(mission_id: str, status: str, **fields) -> dict:
+    before = storage.get_mission(mission_id) or {}
     fields = {'status': status, **fields}
     if status in ('done', 'blocked', 'dropped'):
         fields.setdefault('finished_at', time.time())
     storage.update_mission(mission_id, fields)
     from services import situations as _sit
     _sit.touched('mission', mission_id)
+    # The thread carries its mission's ask (browse missions §4): when the
+    # mission starts or stops waiting on the person, or ends, the thread
+    # moved too, so its note is re-asked for with the ask in its facts.
+    if before.get('origin_kind') == 'thread' and before.get('origin_ref') and (
+            status in ('waiting_user', 'done', 'blocked', 'dropped') or before.get('status') == 'waiting_user'):
+        _sit.touched('thread', before['origin_ref'])
     return storage.get_mission(mission_id)
 
 

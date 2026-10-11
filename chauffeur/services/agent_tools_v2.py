@@ -1683,6 +1683,16 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
     settings = storage.get_settings() or {}
     if not settings.get('missions_enabled', False):
         return {"status": "error", "message": "Missions are off (Missions settings)."}
+    # What launch would refuse, asked BEFORE the thread exists: a refusal must
+    # not leave an orphan thread behind.
+    from services import model_pools as _mp
+    if not _mp.api_key_for_pool('pro', settings):
+        return {"status": "error", "message": "Missions need the paid Gemini key (Missions settings)."}
+    import datetime as _dt
+    cap = int(settings.get('mission_cap_launch', _missions.CAPS_DEFAULT['launch']))
+    used = int((storage.get_app_state(f"mission_calls:{_dt.date.today().isoformat()}") or {}).get('launch', 0))
+    if used >= cap:
+        return {"status": "error", "message": f"That's {cap} missions today — the cap resets tomorrow."}
     words = [w for w in goal.lower().split() if len(w) > 2][:3]
     for m in storage.get_missions(status=['running', 'browsing', 'waiting_user', 'waiting_retry']):
         if m.get('origin_kind') != 'thread':
@@ -1910,6 +1920,10 @@ def launch_mission(goal: str, thread_title: str = None, actor: dict = None) -> d
     if not actor or (actor.get('role') or '') not in ('parent', 'adult'):
         return {'status': 'refused',
                 'message': 'Only a parent or adult can start a mission.'}
+    if not (thread_title or '').strip():
+        # A new goal with no thread named is start_mission_for's job: the
+        # thread, the focus and the "On it." come with it (browse missions §4).
+        return start_mission_for(goal, acting_member=actor)
     return handle_launch_mission({'goal': goal, 'thread_title': thread_title,
                                   '_member_id': actor.get('id')})
 
@@ -4564,7 +4578,7 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "launch_mission",
-            "description": "Starts a multi-step Argyle MISSION for a bigger goal ('plan the birthday party', 'find someone to fix the fence'): Argyle researches, compares and drafts over the next hour and brings back proposals a parent approves on the Missions page. Nothing is booked, sent or paid automatically — never promise it will be. Parent/adult only.",
+            "description": "Starts a multi-step Argyle MISSION on an EXISTING thread the person names (thread_title): Argyle researches, compares and drafts over the next hour and brings back proposals a parent approves on the Missions page. For a NEW goal with no thread yet ('get the dishwasher fixed', 'find someone to fix the fence') use start_mission_for, which opens the thread too. Nothing is booked, sent or paid automatically — never promise it will be. Parent/adult only.",
             "parameters": {
                 "type": "object",
                 "properties": {

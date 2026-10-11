@@ -32,6 +32,24 @@
       const asks = (mission.steps || []).filter(s => s.kind === 'ask');
       return asks.length > 0 && asks[asks.length - 1].name === 'release';
     },
+    proposalOutcome(mission, step) {
+      const pid = (step.result_json || {}).proposal_id;
+      if (!pid) return null;
+      const note = (mission.steps || []).find(s => s.kind === 'note'
+        && (s.name === 'proposal_approve' || s.name === 'proposal_dismiss')
+        && (s.result_json || {}).proposal_id === pid);
+      if (!note) return null;
+      return note.name === 'proposal_approve' ? 'approved' : 'dismissed';
+    },
+    // POST a proposal's approve/dismiss; the caller refreshes its own view.
+    async actProposal(apiBase, missionId, proposalId, act) {
+      const r = await fetch(apiBase + `api/missions/${missionId}/proposals/${proposalId}/act`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ act })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || "Couldn't do that just now.");
+      return d;
+    },
     // POST the release decision; the caller refreshes its own view.
     async release(apiBase, missionId, decision) {
       const r = await fetch(apiBase + `api/missions/${missionId}/release`, {

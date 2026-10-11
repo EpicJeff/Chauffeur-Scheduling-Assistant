@@ -253,13 +253,16 @@ def _options_mission(row: dict) -> list:
         asked = next((s for s in reversed(steps) if s.get('kind') == 'ask'), None)
         rj = (asked or {}).get('result_json') or {}
         if (asked or {}).get('name') == 'release':
-            # The contact card leaves the house only on this tap (browse missions §1).
-            out.append(_opt('release', f"Share with {rj.get('site')}", {'decision': 'approve'}, 'approve'))
+            # The contact card leaves the house only on this tap (browse missions
+            # §1); the button names the exact values so the tap is never blind.
+            out.append(_opt('release', rj.get('question') or f"Share with {rj.get('site')}", {'decision': 'approve'}, 'approve'))
             out.append(_opt('release', 'Not these', {'decision': 'decline'}, 'decline'))
             out.append(_opt('release', 'Stop the mission', {'decision': 'stop'}, 'stop'))
         else:
             q = rj.get('question') or 'Argyle has a question'
-            out.append(_opt('answer', q, {}))
+            # `ask` says what kind it is: the card shows a question to a viewer
+            # who cannot act, never a hand-off's filled values.
+            out.append(_opt('answer', q, {'ask': (asked or {}).get('name') or 'question'}))
     for s in steps:
         if s.get('kind') != 'proposal':
             continue
@@ -288,6 +291,11 @@ def options_for(kind: str, row: dict) -> list:
         for extra in (row.get('next_steps') or []):
             if extra.get('verb') in VERBS and extra.get('id') not in {o['id'] for o in opts}:
                 opts.insert(0, extra)
+        # The mission's ask leads whatever the cached note suggested: a
+        # question or a release waiting on the person outranks a suggestion.
+        asks = [o for o in opts if ':mission:' in (o.get('id') or '')]
+        if asks:
+            opts = asks + [o for o in opts if ':mission:' not in (o.get('id') or '')]
     return opts
 
 

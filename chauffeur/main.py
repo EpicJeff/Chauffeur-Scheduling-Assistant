@@ -6399,7 +6399,10 @@ def thread_missions(thread_id: str, request: Request = None):
     row = storage.get_thread(thread_id)
     if not row:
         raise HTTPException(status_code=404, detail="No such thread")
-    if not _sit.can_see('thread', row, viewer):
+    # A mission's transcript (mail results, released values, the planner's
+    # words) is parent/adult reading, like every other mission read — a
+    # child who owns the thread sees the thread, not this.
+    if not _sit.can_see('thread', row, viewer) or (viewer or {}).get('role') not in _sit.WRITE_ROLES:
         raise HTTPException(status_code=403, detail="Not yours to see")
     rows = [m for m in storage.get_missions() if m.get('origin_kind') == 'thread' and m.get('origin_ref') == thread_id]
     rows.sort(key=lambda m: -(m.get('created_at') or 0))

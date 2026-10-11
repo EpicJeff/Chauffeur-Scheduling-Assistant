@@ -358,6 +358,7 @@
                 foldOpen: {},
                 detailsOpen: {},
                 threadMissions: {},      // thread id -> its missions with steps (loaded on open)
+                busy: {},                // mission id -> a proposal act in flight
 
                 async load() {
                     try {
@@ -404,6 +405,7 @@
                         this.situations = sd2.situations || [];
                         this.$nextTick(() => window.Situations.bind(this.$refs.lane, this.cardCtx()));
                     } catch (e) { showGlobalAlert("Couldn't load threads."); }
+                    this.refreshOpenMissions();
                 },
 
                 get groups() {
@@ -569,6 +571,23 @@
                         if (d.message) showGlobalAlert(d.message);
                         await this.load();
                     } catch (e) { showGlobalAlert(e.message || "That didn't work."); }
+                },
+                proposalOutcome(mission, step) { return window.MissionTranscript.proposalOutcome(mission, step); },
+                async proposalAct(missionId, proposalId, act) {
+                    this.busy[missionId] = true;
+                    try {
+                        await window.MissionTranscript.actProposal(this.apiBase, missionId, proposalId, act);
+                    } catch (e) { showGlobalAlert(e.message || "Couldn't do that just now."); }
+                    delete this.busy[missionId];
+                    await this.load();
+                },
+                // Open details keep their missions current after any act.
+                refreshOpenMissions() {
+                    for (const id of Object.keys(this.detailsOpen)) {
+                        if (!this.detailsOpen[id]) continue;
+                        const t = (this.threads || []).find(x => x.id === id);
+                        if (t) this.loadMissions(t);
+                    }
                 },
                 async submitNote(t) {
                     const text = (this.noteText[t.id] || '').trim();
