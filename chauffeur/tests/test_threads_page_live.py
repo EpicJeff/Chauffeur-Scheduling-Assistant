@@ -107,7 +107,10 @@ def main():
             # Nothing lost: Work this, Edit, Add note, Research still reachable.
             for label in ('Work this', 'Edit', 'Add note', 'Research'):
                 check(page.locator(f'details button:has-text("{label}")').count() >= 1, f"{label} still has a home")
-            # Closed group folded, with the done thread inside.
+            # Closed threads are out of the lane until asked for (2026-10-11); then the group is folded.
+            check(page.locator('#threads [data-sit-group="done"]').count() == 0, "closed is hidden by default")
+            page.locator('#threads input[x-model="showClosed"]').check()
+            page.wait_for_timeout(300)
             check(page.locator('#threads [data-sit-group="done"] .situation-card').count() == 0, "closed starts folded")
             page.locator('#threads [data-sit-group="done"] button').first.click()
             page.wait_for_timeout(300)

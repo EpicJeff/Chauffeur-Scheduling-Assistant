@@ -83,6 +83,12 @@
             <!-- The lane: one card per thread, grouped by what it needs. The
                  card is the shared builder's (static/situations.js); the
                  details underneath hold everything the old page held. -->
+            <!-- Closed threads stay out of the lane unless asked for (clutter was
+                 seeding later runs, 2026-10-11); the choice is remembered per browser. -->
+            <label class="flex items-center justify-end gap-2 text-[11px] text-gray-500 mb-2 cursor-pointer select-none">
+                <input type="checkbox" x-model="showClosed" @change="rememberClosed()" class="h-3.5 w-3.5 accent-pink-400">
+                <span>Show closed</span>
+            </label>
             <div x-ref="lane">
             <template x-for="g in groups" :key="g.key">
                 <div class="mb-6" :data-sit-group="g.key">
@@ -189,7 +195,13 @@
                                             <button @click="closeThread(t, 'dropped')"
                                                 class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Drop</button>
                                         </div>
-                                        <div class="text-[11px] text-gray-600" x-show="t.state === 'done' || t.state === 'dropped'">
+                                        <!-- Delete: by hand, confirmed; takes the thread's missions, their
+                             steps and screenshots and its asks with it. Any state. -->
+                        <div class="flex justify-end mt-1">
+                            <button @click="deleteThread(t)"
+                                class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-900 text-red-400 border border-red-900/60 active:bg-red-950">Delete</button>
+                        </div>
+                        <div class="text-[11px] text-gray-600" x-show="t.state === 'done' || t.state === 'dropped'">
                                             <span x-text="t.state === 'done' ? 'Done' : 'Dropped'"></span>
                                             <span x-show="t.closed_at" x-text="' · ' + fmtTs(t.closed_at)"></span>
                                         </div>
@@ -408,8 +420,14 @@
                     this.refreshOpenMissions();
                 },
 
+                showClosed: (() => { try { return localStorage.getItem('chf_threads_show_closed') === '1'; } catch (e) { return false; } })(),
                 get groups() {
                     const by = (g) => this.situations.filter(s => s.group === g);
+                    const all = this._allGroups(by);
+                    return this.showClosed ? all : all.filter(g => g.key !== 'done');
+                },
+                rememberClosed() { try { localStorage.setItem('chf_threads_show_closed', this.showClosed ? '1' : '0'); } catch (e) { /* private window */ } },
+                _allGroups(by) {
                     return [
                         { key: 'now', label: '⏳ Needs you now', titleClass: 'text-red-400',
                           items: by('now'), empty: 'Nothing needs you right now.', folded: false },
@@ -686,6 +704,19 @@
                     } catch (e) { showGlobalAlert("Couldn't save that."); }
                 },
 
+                async deleteThread(t) {
+                    const n = (this.threadMissions[t.id] || []).length;
+                    const ok = await promptConfirm('Delete this thread?',
+                        'It goes for good, with ' + (n ? n + ' mission' + (n === 1 ? '' : 's') + ', their steps and screenshots, ' : 'any missions opened from it, ')
+                        + 'and its asks. Drop keeps a record instead.', 'Delete', 'Keep it');
+                    if (!ok) return;
+                    try {
+                        const r = await fetch(this.apiBase + `api/threads/${t.id}`, { method: 'DELETE' });
+                        if (!r.ok) { const d = await r.json().catch(() => ({})); showGlobalAlert(d.detail || "Couldn't delete that."); return; }
+                        delete this.detailsOpen[t.id];
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't delete that."); }
+                },
                 async closeThread(t, state) {
                     const label = state === 'done' ? 'Mark this thread done?' : 'Drop this thread?';
                     const detail = state === 'done'

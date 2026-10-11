@@ -1,6 +1,12 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.371 (2026-10-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.372 (2026-10-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**Delete, by hand only; closed threads out of the lane (v2.499.372; `services/threads.py` `delete`, `services/missions.py` `delete`, `services/storage.py` `delete_mission_rows`/`delete_asks_for`, `main.py` `DELETE /api/threads/{id}` + `DELETE /api/missions/{id}`, `services/auth.py` (+ the net-check route classified), `templates/components/threads_page.html`, `templates/components/missions_page.html`; test `test_delete_thread_mission.py`).** Cancel-not-delete still holds for the app's own records; this is for clutter a person wants gone (test runs, duplicates), which was seeding later runs through the thread's context.
+
+- **Delete a thread** (Delete button in the /threads details, any state, confirmed): the thread, every mission opened from it with their steps, their asks and their screenshot folders, and the thread's own asks. **Delete a mission** (Delete beside Drop/OK on /missions, confirmed): the mission, its steps, its asks, its screenshots; the thread stays. Both parent/adult via `_mind_actor`; a child is refused; a missing one is 404. **Argyle has no delete tool** and never will; Drop remains the way to keep a record.
+- **Show closed.** /threads hides the Closed group unless the "Show closed" checkbox is on (remembered per browser in `localStorage`); the live test opts in before looking at the folded group.
+- **Not device-verified.**
 
 **A goal about a site's prices or slots is not finished on top of nothing (v2.499.371; `services/missions.py` `_finish_too_early`/`SITE_GOAL`/planner rules; test `test_browse_mission.py` `scenario_a_pricing_goal_is_not_finished_without_a_browse`).** 2026-10-11: a follow-up mission on the dishwasher thread was seeded with the thread's own earlier next step ("Call 844-988-4066 to get pricing"), left there by a capped run, took it as fact and finished in one step with zero tools: "Bodewell requires a phone call; I cannot make phone calls."
 

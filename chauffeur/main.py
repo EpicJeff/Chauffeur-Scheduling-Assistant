@@ -5865,6 +5865,18 @@ def missions_answer(mission_id: str, body: dict = Body(default={}),
     return {"status": "success"}
 
 
+@app.delete("/api/missions/{mission_id}")
+def delete_mission_route(mission_id: str, member_id: Optional[str] = None, request: Request = None):
+    """Delete one mission with its steps and screenshots (services.missions.delete).
+    Parent/adult, by hand only; Argyle has no such tool."""
+    _mind_actor(request, member_id)
+    from services import missions as _missions
+    res = _missions.delete(mission_id)
+    if res.get('status') == 'not_found':
+        raise HTTPException(status_code=404, detail="No such mission")
+    return {"status": "success", **res}
+
+
 @app.post("/api/missions/{mission_id}/drop")
 def missions_drop(mission_id: str, body: dict = Body(default={}),
                   request: Request = None):
@@ -6488,6 +6500,18 @@ def advance_thread(thread_id: str, body: dict = Body(default={}), request: Reque
     if not ok:
         raise HTTPException(status_code=404, detail="No such thread")
     return {"status": "success"}
+
+
+@app.delete("/api/threads/{thread_id}")
+def delete_thread_route(thread_id: str, member_id: Optional[str] = None, request: Request = None):
+    """Delete a thread with everything of its own (services.threads.delete).
+    Parent/adult, by hand only; Argyle has no such tool."""
+    _mind_actor(request, member_id)
+    from services import threads as _threads
+    res = _threads.delete(thread_id)
+    if res.get('status') == 'not_found':
+        raise HTTPException(status_code=404, detail="No such thread")
+    return {"status": "success", **res}
 
 
 @app.post("/api/threads/{thread_id}/close")

@@ -235,6 +235,9 @@
                                                         class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Drop</button>
                                                     <button x-show="['done', 'blocked', 'dropped'].includes(mission.status) && !mission.acknowledged_at" @click="ack(mission.id)"
                                                         class="text-xs font-bold px-2.5 py-1 rounded-lg bg-gray-700 text-gray-200 active:bg-gray-600">OK</button>
+                                                    <!-- Delete: by hand, confirmed; the mission, its steps and screenshots. -->
+                                                    <button @click="deleteMission(mission)" :disabled="!!busy[mission.id]"
+                                                        class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-900 text-red-400 border border-red-900/60 active:bg-red-950 disabled:opacity-50 ml-auto">Delete</button>
                                                 </div>
                                             </div>
                                         </details>
@@ -506,6 +509,18 @@
                     this.loadAdmin();
                 },
 
+                async deleteMission(m) {
+                    const ok = await promptConfirm('Delete this mission?',
+                        'Its steps and screenshots go with it. Drop keeps a record instead.', 'Delete', 'Keep it');
+                    if (!ok) return;
+                    this.busy[m.id] = true;
+                    try {
+                        const r = await fetch(this.apiBase + `api/missions/${m.id}`, { method: 'DELETE' });
+                        if (!r.ok) { const d = await r.json().catch(() => ({})); showGlobalAlert(d.detail || "Couldn't delete that."); }
+                    } catch (e) { showGlobalAlert("Couldn't delete that."); }
+                    delete this.busy[m.id];
+                    this.loadAdmin();
+                },
                 async drop(missionId) {
                     this.busy[missionId] = true;
                     try {

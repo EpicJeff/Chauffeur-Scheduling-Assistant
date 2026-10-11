@@ -389,6 +389,9 @@ RULES = [
     # Missions: reads for any signed-in member; launching/approving/answering
     # is parent/adult work decided in the handler (`_mind_actor`, reused).
     (ANY, '/api/missions/*', SIGNED_IN, None),
+    # The browse network check (Missions drawer): SIGNED_IN at the route,
+    # `_mind_actor` refuses a child in the handler.
+    (ANY, '/api/browse/netcheck', SIGNED_IN, None),
     # The Study's one read (task 2): same discipline — SIGNED_IN at the
     # route, role decided in the handler (`_mind_actor`).
     (ANY, '/api/study/state', SIGNED_IN, None),

@@ -388,6 +388,19 @@ def finish_browse(mission_id: str, step_id: str, report: dict) -> None:
     _close(mission_id, 'running')
 
 
+def delete(mission_id: str) -> dict:
+    """A person's delete, by hand only (no agent tool): the mission, its
+    steps, its asks and its screenshot folder. The thread it came from stays."""
+    import shutil
+    if not storage.get_mission(mission_id):
+        return {'status': 'not_found'}
+    storage.delete_mission_rows(mission_id)
+    storage.delete_asks_for('mission', mission_id)
+    d = os.path.join(os.path.dirname(storage.DB_PATH), 'browse', mission_id)
+    shutil.rmtree(d, ignore_errors=True)
+    return {'status': 'ok'}
+
+
 def release(mission_id: str, decision: str, actor: dict) -> dict:
     """The person's answer to a release ask: approve (record the site and
     fields on the mission and resume the pending browse with the values),

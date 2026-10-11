@@ -3345,6 +3345,20 @@ def delete_thread(thread_id: str):
     with db_lock:
         threads_table.remove(Query().id == thread_id)
 
+
+def delete_mission_rows(mission_id: str) -> bool:
+    """The mission row and its steps. Callers (services.missions.delete) take
+    the screenshot folder with it."""
+    with db_lock:
+        n = len(missions_table.remove(Query().id == mission_id))
+        mission_steps_table.remove(Query().mission_id == mission_id)
+    return bool(n)
+
+
+def delete_asks_for(situation_kind: str, situation_id: str) -> int:
+    with db_lock:
+        return len(asks_table.remove((Query().situation_kind == situation_kind) & (Query().situation_id == situation_id)))
+
 # --- Programs: an ambition with a plan attached ---------------------------
 # See docs/superpowers/specs/2026-08-28-programs-design.md. The session log is
 # append-only for the same reason a thread's history is: the number a person is
