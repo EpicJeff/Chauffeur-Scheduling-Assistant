@@ -194,9 +194,15 @@ def _user_prompt(mission: dict) -> str:
         lines.append(f"(Opened from thread {mission.get('origin_ref')})")
     lines.append("TRANSCRIPT SO FAR (oldest first):")
     for s in steps[-25:]:
+        rj = s.get('result_json')
+        if s['kind'] == 'browse' and isinstance(rj, dict):
+            # The planner reads the outcome, where it stopped and what was
+            # learned before the model's prose; the turn ledger is for people.
+            rj = {'outcome': rj.get('outcome'), 'stopped_at': rj.get('stopped_at'), 'learned': rj.get('learned'),
+                  'wanted_fields': rj.get('wanted_fields'), 'turns': rj.get('turns'), 'text': (rj.get('text') or '')[:500]}
         lines.append(f"[{s['idx']}] {s['kind']} {s.get('name') or ''} "
                      f"args={_compact(s.get('args_json'), 200)} "
-                     f"result={_compact(s.get('result_json'))}")
+                     f"result={_compact(rj)}")
     if not steps:
         lines.append("(none yet — plan your first move)")
     lines.append("Reply with your ONE next action as JSON.")

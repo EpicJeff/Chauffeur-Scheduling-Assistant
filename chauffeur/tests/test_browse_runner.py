@@ -366,6 +366,48 @@ def scenario_the_start_url_is_the_host_that_answers():
           "nothing answers: the https guess stands and the run reports the failure honestly")
 
 
+def scenario_every_turn_is_on_the_ledger():
+    """40 turns and nobody can say where they went (2026-10-11). The report
+    carries one line per call: the turn, the action in words, the page it
+    left the browser on, the model's and the action's milliseconds."""
+    _reset()
+    go = _xy(f'{URL}/start', '#go')
+    fx, fy = _xy(f'{URL}/form', 'input[name=first]')
+    browse._model_step = _script([{'name': 'scroll_document', 'args': {'direction': 'down'}}], [_click(go)],
+                                 [{'name': 'type_text_at', 'args': {'x': fx, 'y': fy, 'text': 'Jeff'}}], 'DONE.')
+    r = browse.run('x', SITE, {'first_name': 'Jeff', 'email': 'ffejnosliw@gmail.com', 'zip': '27519'}, {}, start_url=f'{URL}/start', out_dir=OUT)
+    log = r.get('turns_log') or []
+    check(len(log) == 4 and [e['turn'] for e in log] == [1, 2, 3, 4], f"one line per turn, the finish included: {log}")
+    for e in log:
+        for k in ('turn', 'action', 'url', 'model_ms', 'act_ms'):
+            check(k in e, f"a line carries {k}: {e}")
+    check('scroll' in log[0]['action'] and 'down' in log[0]['action'], f"a scroll in words: {log[0]}")
+    check('click' in log[1]['action'] and 'Schedule service' in log[1]['action'] and log[1]['url'].endswith('/form'), f"a click names what it hit and where it landed: {log[1]}")
+    check('type' in log[2]['action'] and 'Jeff' not in log[2]['action'] and 'first_name' in log[2]['action'], f"a type names the field, never the value: {log[2]}")
+    check(log[3]['action'].startswith('finish'), f"the finish is a line too: {log[3]}")
+
+
+def scenario_the_same_click_three_times_is_told_so():
+    """A model that keeps clicking the same spot on the same page burns the
+    turns. The third identical action on an unchanged page is refused with a
+    nudge instead of executed."""
+    _reset()
+    seen = []
+    nothing = _xy(f'{URL}/form2', 'h1')          # a heading: clicking it changes nothing
+
+    def fake(contents, settings):
+        seen.append(contents[-1])
+        if len(seen) <= 4:
+            return {'calls': [_click(nothing)], 'text': '', 'content': None, 'tokens': (1, 1)}
+        return {'calls': [], 'text': 'DONE.', 'content': None, 'tokens': (1, 1)}
+    browse._model_step = fake
+    r = browse.run('x', SITE, dict(CARD), {}, start_url=f'{URL}/form2', out_dir=OUT)
+    check(r['outcome'] == 'done' and r['actions'] == 2, f"the third and fourth identical clicks did not run: actions={r['actions']}")
+    nudges = [c for c in seen if 'function_responses' in c and any('already' in str(fr[1].get('error', '')) for fr in c['function_responses'])]
+    check(len(nudges) >= 2, f"the model was told it already did that: {len(nudges)}")
+    check(any('repeat' in e['action'] for e in r['turns_log']), f"the ledger says the turn was a repeat: {r['turns_log']}")
+
+
 SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
@@ -377,7 +419,8 @@ SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_ty
              scenario_system_chromium_is_the_fallback_when_the_bundle_is_missing,
              scenario_typing_into_a_contact_field_is_a_release_question_even_with_an_empty_card,
              scenario_the_model_can_say_what_it_needs_and_knows_what_the_card_holds, scenario_the_clock_is_ten_minutes,
-             scenario_a_slow_page_does_not_end_the_run, scenario_the_start_url_is_the_host_that_answers]
+             scenario_a_slow_page_does_not_end_the_run, scenario_the_start_url_is_the_host_that_answers,
+             scenario_every_turn_is_on_the_ledger, scenario_the_same_click_three_times_is_told_so]
 
 if __name__ == "__main__":
     import traceback

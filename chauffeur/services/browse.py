@@ -546,6 +546,39 @@ def _field_at(page, x, y):
     return None
 
 
+def _coarse(v):
+    try:
+        return int(float(v) // 20)
+    except Exception:
+        return None
+
+
+def _action_words(page, name: str, args: dict) -> str:
+    """One line a person can read on the transcript. A type names the field
+    or the length, never the text (it may be a released value)."""
+    try:
+        if name.startswith('click') or name.startswith('double'):
+            el = _under_click(page, *_px(args.get('x', 0), args.get('y', 0))) if 'x' in args else {}
+            what = (el.get('text') or '').strip().replace('\n', ' ')[:40]
+            return f"{'double-click' if 'double' in name else 'click'} ({args.get('x')},{args.get('y')})" + (f" '{what}'" if what else '')
+        if name in ('type_text_at', 'type'):
+            field = _field_at(page, *_px(args['x'], args['y'])) if 'x' in args else None
+            n = len(str(args.get('text') or ''))
+            return f"type into {field or 'a box'} ({n} chars)" + (' + Enter' if args.get('press_enter') else '')
+        if name in ('navigate', 'open_web_browser'):
+            return f"navigate {str(args.get('url') or '')[:80]}"
+        if name.startswith('scroll'):
+            return f"scroll {args.get('direction', 'down')}"
+        if name in ('key_combination', 'press_key', 'hotkey'):
+            k = args.get('keys') or args.get('key') or ''
+            return 'press ' + ('+'.join(k) if isinstance(k, list) else str(k))
+        if name in ('wait_5_seconds', 'wait'):
+            return 'wait'
+        return name or 'action'
+    except Exception:
+        return name or 'action'
+
+
 def _learned(text: str) -> dict:
     m = re.search(r'LEARNED:\s*(.+)$', text or '', re.I | re.M)
     out = {}
@@ -570,12 +603,16 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
     os.makedirs(out_dir, exist_ok=True)
     t0 = time.time()
     report = {'outcome': 'error', 'text': '', 'learned': {}, 'stopped_at': start_url or '', 'wanted_fields': [],
-              'turns': 0, 'actions': 0, 'tokens_in': 0, 'tokens_out': 0, 'seconds': 0.0, 'screenshots': [], 'filled': {}}
+              'turns': 0, 'actions': 0, 'tokens_in': 0, 'tokens_out': 0, 'seconds': 0.0, 'screenshots': [], 'filled': {},
+              'turns_log': []}
 
     def finish(outcome, text):
         report['outcome'] = outcome
         report['text'] = text
         report['seconds'] = round(time.time() - t0, 1)
+        if outcome != 'done':
+            report['turns_log'].append({'turn': report['turns'], 'action': f"{outcome}: {str(text)[:80]}",
+                                        'url': report.get('stopped_at') or '', 'model_ms': 0, 'act_ms': 0})
         return report
 
     from services import model_pools
@@ -592,6 +629,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
     start = start_url or (site if '://' in site else (_pick_start(site) or f'https://{site}'))
     captcha_attempts = 0
     strikes = 0
+    last_sig, repeats = None, 0
 
     def learn_redirect(r):
         # A server redirect FROM an allowed domain teaches its target
@@ -649,7 +687,9 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
             stop = page_checks(scan)
             if stop:
                 return stop
+            t_model = time.time()
             step = _model_step(contents, settings)
+            model_ms = _ms(t_model)
             report['turns'] = turn
             ti, to = step.get('tokens') or (0, 0)
             report['tokens_in'] += int(ti)
@@ -659,6 +699,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
             calls = step.get('calls') or []
             if not calls:
                 text = step.get('text') or ''
+                report['turns_log'].append({'turn': turn, 'action': 'finish: ' + ' '.join(text.split())[:80], 'url': page.url,
+                                            'model_ms': model_ms, 'act_ms': 0})
                 report['learned'] = _learned(text)
                 needed = [f for f in _needed(text) if f not in released]
                 if needed:
@@ -666,10 +708,27 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                     return finish('needs_release', text.strip() or f"the page needs: {', '.join(needed)}")
                 return finish('done', text.strip() or 'finished with nothing to report')
             results = []
-            for call in calls:
+            for i_call, call in enumerate(calls):
                 name, args = call.get('name') or '', dict(call.get('args') or {})
                 intent = str(args.get('intent') or '')
                 sd = args.get('safety_decision') or {}
+                words = _action_words(page, name, args)
+                line = {'turn': turn, 'action': words, 'url': page.url, 'model_ms': model_ms if i_call == 0 else 0, 'act_ms': 0}
+                report['turns_log'].append(line)
+                # The same action on the same unchanged page, a third time, is
+                # a loop: refuse it and tell the model, instead of burning the turn.
+                sig = (name, _coarse(args.get('x')), _coarse(args.get('y')), str(args.get('text') or '')[:40],
+                       str(args.get('url') or ''), str(args.get('direction') or ''), page.url)
+                if sig == last_sig:
+                    repeats += 1
+                else:
+                    last_sig, repeats = sig, 0
+                if repeats >= 2 and name not in ('wait_5_seconds', 'wait') and sd.get('decision') != 'require_confirmation':
+                    # (A repeated CAPTCHA click is an attempt; its own cap counts it.)
+                    line['action'] += ' (repeat, refused)'
+                    results.append((name, args, {'error': 'you already did exactly that twice and the page did not change; '
+                                                          'try something else: another element, a scroll, or report what you see'}))
+                    continue
                 if sd.get('decision') == 'require_confirmation':
                     if CAPTCHA_MARKERS.search(str(sd.get('explanation') or '')) or _has_captcha(scan):
                         if not consent.get('captcha'):
@@ -704,6 +763,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                     results.append((name, args, {'error': 'that is another site; stay on ' + site}))
                     continue
                 before = page.url
+                t_act = time.time()
                 enter = _wants_enter(name, args)
                 if enter and name in ('type_text_at', 'type'):
                     # Type first (focus lands with the click), then ask what Enter would press.
@@ -731,6 +791,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                     except Exception as e:
                         res = {'error': str(e)[:160]}
                 report['actions'] += 1
+                line['act_ms'] = _ms(t_act)
+                line['url'] = page.url
                 if _domain(page.url) not in allowed:
                     strikes += 1
                     if strikes > 1:

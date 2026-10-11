@@ -84,6 +84,24 @@
                                                         <img class="browse-shot rounded-lg border border-gray-800 mt-1 max-h-48" alt=""
                                                              :src="window.chfAuthUrl(apiBase + 'api/missions/' + mission.id + '/shots/' + ((step.result_json || {}).screenshots || []).slice(-1)[0])">
                                                     </template>
+                                                    <!-- The turn ledger: what each turn did, where it landed, how long the
+                                                         model and the action took; a turn with a screenshot links it. -->
+                                                    <template x-if="((step.result_json || {}).turns_log || []).length">
+                                                        <details class="mt-1">
+                                                            <summary class="text-[11px] text-gray-500 cursor-pointer" x-text="((step.result_json || {}).turns_log || []).length + ' turns'"></summary>
+                                                            <template x-for="(e, i) in ((step.result_json || {}).turns_log || [])" :key="i">
+                                                                <div class="text-[11px] text-gray-400 font-mono browse-turn">
+                                                                    <span class="text-gray-600" x-text="'#' + e.turn"></span>
+                                                                    <span x-text="' ' + e.action"></span>
+                                                                    <span class="text-gray-600" x-text="' · ' + ((e.model_ms || 0) / 1000).toFixed(1) + 's think, ' + ((e.act_ms || 0) / 1000).toFixed(1) + 's act'"></span>
+                                                                    <template x-if="((step.result_json || {}).screenshots || []).includes('turn_' + String(e.turn).padStart(2, '0') + '.png')">
+                                                                        <a class="text-blue-400 underline underline-offset-2 ml-1" target="_blank" rel="noopener"
+                                                                           :href="window.chfAuthUrl(apiBase + 'api/missions/' + mission.id + '/shots/turn_' + String(e.turn).padStart(2, '0') + '.png')">shot</a>
+                                                                    </template>
+                                                                </div>
+                                                            </template>
+                                                        </details>
+                                                    </template>
                                                 </div>
                                             </template>
                                             <!-- release: the exact values a site wants, and the three answers.

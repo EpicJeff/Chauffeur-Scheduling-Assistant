@@ -290,6 +290,19 @@ def scenario_approve_reads_the_card_as_it_is_now_and_decline_names_the_card():
     check('contact card' in res['message'].lower() and 'contact card' in SENT[-1].lower(), f"decline names the card: {res} {SENT[-1]}")
 
 
+def scenario_the_planner_sees_the_browse_outcome_first_and_never_the_ledger():
+    _reset()
+    missions._browse = lambda **kw: _report('capped', text='x' * 2000, learned={'fee': '$114.95'}, stopped_at='https://www.bodewell.com/guest',
+                                            turns_log=[{'turn': i, 'action': 'scroll down', 'url': 'u', 'model_ms': 1, 'act_ms': 1} for i in range(40)])
+    mid = _mission()
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
+    missions.step(storage.get_mission(mid))
+    prompt = missions._user_prompt(storage.get_mission(mid))
+    line = next(ln for ln in prompt.split('\n') if 'browse' in ln and 'result=' in ln)
+    check('"outcome": "capped"' in line and '$114.95' in line and 'bodewell.com/guest' in line, f"outcome, learned and stopped_at are in the planner's view: {line[:300]}")
+    check('turns_log' not in line and 'scroll down' not in line, "the ledger is for people, not the planner")
+
+
 SCENARIOS = [scenario_browse_action_runs_the_runner_and_transcribes, scenario_needs_release_pauses_with_the_values_and_tells_the_person,
              scenario_captcha_and_payment_hand_off, scenario_left_the_site_and_refusals_are_notes_the_planner_reads,
              scenario_browse_cap_refuses_before_running, scenario_a_lost_browse_is_reclaimed_by_the_tick,
@@ -297,7 +310,7 @@ SCENARIOS = [scenario_browse_action_runs_the_runner_and_transcribes, scenario_ne
              scenario_release_approved_resumes_with_the_values_once, scenario_release_approved_twice_resumes_once,
              scenario_release_declined_hands_off_and_stop_blocks, scenario_release_verb_is_in_the_closed_set_everywhere,
              scenario_a_browse_that_returns_after_the_mission_moved_on_changes_nothing, scenario_missing_card_fields_are_asked_for_not_handed_off,
-             scenario_the_planner_may_resume_a_browse_where_it_stopped,
+             scenario_the_planner_may_resume_a_browse_where_it_stopped, scenario_the_planner_sees_the_browse_outcome_first_and_never_the_ledger,
              scenario_approve_reads_the_card_as_it_is_now_and_decline_names_the_card]
 
 if __name__ == "__main__":
