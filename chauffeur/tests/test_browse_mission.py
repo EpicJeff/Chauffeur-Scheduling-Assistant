@@ -262,7 +262,8 @@ def scenario_the_planner_may_resume_a_browse_where_it_stopped():
     check(runs and runs[0]['start_url'] == 'https://www.bodewell.com/service-area/x/cary', f"start_url rides through: {runs}")
     missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com', 'start_url': 'https://elsewhere.example/x'}
     missions.step(storage.get_mission(mid))
-    check(runs[-1]['start_url'] is None, "a start_url off the site is ignored")
+    check(runs[-1]['start_url'] != 'https://elsewhere.example/x' and (runs[-1]['start_url'] or '').startswith(('https://bodewell.com', 'https://www.bodewell.com')) or runs[-1]['start_url'] is None,
+          f"a start_url off the site is ignored (the site's remembered page or nothing): {runs[-1]['start_url']}")
     src = missions._system_prompt(__import__('datetime').datetime.now(), {})
     check('start_url' in src and 'resume' in src.lower() and 'found the site' in src.lower(), "the planner is told how to resume and not to finish with 'I found the site'")
 
@@ -345,6 +346,53 @@ def scenario_the_planner_is_told_history_is_not_fact_and_to_start_deep():
     check('deepest' in src.lower() or 'scheduling page' in src.lower(), "a browse starts at the deepest relevant URL already known")
 
 
+def scenario_the_handoff_reads_cleanly():
+    """The hand-off pasted the whole report, LEARNED: and WALL: lines included,
+    into the question. One clean sentence, then what was filled."""
+    _reset()
+    missions._browse = lambda **kw: _report('captcha_failed', filled={'first_name': 'Jeff', 'email': 'ffejnosliw@gmail.com'},
+                                            text='The form ("What is your contact information?") was filled with the provided details. The form ends with an '
+                                                 "'I'm not a robot' reCAPTCHA verification required before proceeding via NEXT: SELECT APPLIANCE.\n\n"
+                                                 'LEARNED: availability=unknown; pricing=unknown\nWALL: captcha')
+    mid = _mission()
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
+    missions.step(storage.get_mission(mid))
+    q = storage.get_mission_steps(mid)[-1]['result_json']['question']
+    check('LEARNED' not in q and 'WALL' not in q and 'unknown' not in q, f"no report lines in the question: {q}")
+    check(q.startswith('I got as far as https://bodewell.com') and 'Filled so far: first_name=Jeff, email=ffejnosliw@gmail.com' in q
+          and 'reCAPTCHA' in q and q.endswith('Finish it on your phone and tell me what you found.'), f"the shape: {q}")
+    check(len(q) < 520, f"short enough to read on a phone: {len(q)}")
+
+
+def scenario_the_site_remembers_its_deepest_page():
+    """The first browse spent eight turns finding Bodewell's guest form; the
+    resumed one started there. The mission engine remembers, per site, the
+    deepest page a browse reached (where it stopped for a release, a wall or
+    a finish on that site) and starts the next browse of that site there when
+    the planner gives no start_url."""
+    _reset()
+    runs = []
+    missions._browse = lambda **kw: runs.append(kw) or _report('needs_release', wanted_fields=['first_name'],
+                                                                stopped_at='https://www.bodewell.com/guest-schedule-service')
+    mid = _mission()
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
+    missions.step(storage.get_mission(mid))
+    check(runs[0]['start_url'] is None, "nothing known yet: the front door")
+    mid2 = _mission()
+    missions.step(storage.get_mission(mid2))
+    check(runs[1]['start_url'] == 'https://www.bodewell.com/guest-schedule-service', f"the next mission on that site starts at the form: {runs[1]['start_url']}")
+    missions._browse = lambda **kw: runs.append(kw) or _report('done', stopped_at='https://www.bodewell.com/about-our-services')
+    mid3 = _mission()
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com', 'start_url': 'https://www.bodewell.com/x'}
+    missions.step(storage.get_mission(mid3))
+    check(runs[2]['start_url'] == 'https://www.bodewell.com/x', "the planner's own start_url wins over memory")
+    missions._browse = lambda **kw: runs.append(kw) or _report('blocked', text='left the site: https://elsewhere.example/', stopped_at='https://elsewhere.example/')
+    mid4 = _mission()
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
+    missions.step(storage.get_mission(mid4))
+    check(runs[3]['start_url'] == 'https://www.bodewell.com/guest-schedule-service', "a page off the site is never remembered for it")
+
+
 SCENARIOS = [scenario_browse_action_runs_the_runner_and_transcribes, scenario_needs_release_pauses_with_the_values_and_tells_the_person,
              scenario_captcha_and_payment_hand_off, scenario_left_the_site_and_refusals_are_notes_the_planner_reads,
              scenario_browse_cap_refuses_before_running, scenario_a_lost_browse_is_reclaimed_by_the_tick,
@@ -354,6 +402,7 @@ SCENARIOS = [scenario_browse_action_runs_the_runner_and_transcribes, scenario_ne
              scenario_a_browse_that_returns_after_the_mission_moved_on_changes_nothing, scenario_missing_card_fields_are_asked_for_not_handed_off,
              scenario_the_planner_may_resume_a_browse_where_it_stopped, scenario_the_planner_sees_the_browse_outcome_first_and_never_the_ledger,
              scenario_a_pricing_goal_is_not_finished_without_a_browse, scenario_the_planner_is_told_history_is_not_fact_and_to_start_deep,
+             scenario_the_handoff_reads_cleanly, scenario_the_site_remembers_its_deepest_page,
              scenario_approve_reads_the_card_as_it_is_now_and_decline_names_the_card]
 
 if __name__ == "__main__":

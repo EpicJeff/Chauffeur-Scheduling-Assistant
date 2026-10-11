@@ -311,6 +311,8 @@ def _domain(url: str) -> str:
 
 
 MODEL = 'gemini-3.8-flash'
+# Thinking per turn, bounded: turns ran 11-37 s of thinking on the device (2026-10-11).
+THINK_BUDGET = 2048
 
 
 def _client(api_key: str):
@@ -354,7 +356,7 @@ def _model_step_live(contents, settings):
     config = types.GenerateContentConfig(
         temperature=1, top_p=0.95, max_output_tokens=8192,
         tools=[types.Tool(computer_use=types.ComputerUse(environment=types.Environment.ENVIRONMENT_BROWSER))],
-        thinking_config=types.ThinkingConfig(include_thoughts=True))
+        thinking_config=types.ThinkingConfig(include_thoughts=True, thinking_budget=THINK_BUDGET))
     typed = _to_types(contents)
     resp = client.models.generate_content(model=MODEL, contents=typed, config=config)
     um = resp.usage_metadata

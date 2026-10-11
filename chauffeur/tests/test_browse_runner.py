@@ -208,6 +208,9 @@ def scenario_live_step_builds_the_computer_use_call():
         check(captured['model'] == browse.MODEL, "the cu model")
         tool = captured['config'].tools[0]
         check(getattr(tool, 'computer_use', None) is not None, "the computer-use tool is on the call")
+        tc = captured['config'].thinking_config
+        check(tc is not None and tc.thinking_budget == browse.THINK_BUDGET and 1024 <= browse.THINK_BUDGET <= 4096,
+              f"a bounded thinking budget per turn (turns ran 11-37 s of thinking, 2026-10-11): {tc}")
         browse._model_step_live([{'role': 'user', 'function_responses': [('click_at', {'url': 'u', 'safety_acknowledgement': 'true'}, b'\x89PNG')]}], {'llm_gemini_paid_api_key': 'paid'})
         parts = captured['contents'][-1].parts
         check(parts and parts[0].function_response and parts[0].function_response.response.get('safety_acknowledgement') == 'true'

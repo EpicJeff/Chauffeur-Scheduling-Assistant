@@ -303,6 +303,10 @@ def start_browse(mission: dict, goal: str, site: str, start_url: str = None, rel
         storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
                                        'result_json': {'note': f"browse cap ({cap} turns/day) reached; try tomorrow or raise it"}})
         return ''
+    if not start_url:
+        # The planner named no page: start where a past browse of this site
+        # got furthest (its form, its scheduling page), not the front door.
+        start_url = _site_page(site)
     sid = storage.add_mission_step(mid, {'kind': 'browse', 'name': site, 'args_json': {'goal': goal, 'site': site, 'start_url': start_url},
                                          'result_json': None})
     storage.update_mission(mid, {'status': 'browsing'})
@@ -334,6 +338,7 @@ def finish_browse(mission_id: str, step_id: str, report: dict) -> None:
     step_row = next((s for s in storage.get_mission_steps(mission_id) if s['id'] == step_id), None)
     args = (step_row or {}).get('args_json') or {}
     site = args.get('site') or ''
+    _remember_site_page(site, report)
     # Count the day's turns, whatever the outcome.
     day = datetime.date.today().isoformat()
     with storage.db_lock:
@@ -377,9 +382,9 @@ def finish_browse(mission_id: str, step_id: str, report: dict) -> None:
     if outcome == 'captcha_failed' or (outcome == 'blocked' and 'payment' in text.lower()):
         url = report.get('stopped_at') or ''
         filled = report.get('filled') or {}
-        reason = text
+        reason = _plain_reason(text)
         q = (f"I got as far as {url}. " + (f"Filled so far: {', '.join(f'{k}={v}' for k, v in filled.items())}. " if filled else '')
-             + f"{reason}. Finish it on your phone and tell me what you found.")
+             + f"{reason} Finish it on your phone and tell me what you found.")
         storage.add_mission_step(mission_id, {'kind': 'ask', 'name': 'handoff',
                                               'result_json': {'question': q, 'url': url, 'filled': filled, 'reason': reason}})
         _close(mission_id, 'waiting_user')
@@ -452,6 +457,45 @@ def release(mission_id: str, decision: str, actor: dict) -> dict:
         _close(mission_id, 'blocked', error='the family kept its details')
         return {'status': 'success', 'message': 'Stopped.'}
     return {'status': 'error', 'message': 'approve, decline or stop'}
+
+
+def _plain_reason(text: str) -> str:
+    """The runner's report as one short sentence for a person: the LEARNED:,
+    NEED: and WALL: lines are the runner's, not the person's."""
+    lines = [ln.strip() for ln in (text or '').split('\n')
+             if ln.strip() and not re.match(r'^(LEARNED|NEED|WALL):', ln.strip(), re.I)]
+    out = ' '.join(' '.join(lines).split())
+    if len(out) > 320:
+        cut = out[:320]
+        out = cut[:cut.rfind('. ') + 1] if '. ' in cut[120:] else cut.rstrip() + '…'
+    if out and out[-1] not in '.!?…':
+        out += '.'
+    return out
+
+
+def _site_page(site: str):
+    """Where a past browse of this site got furthest, or None."""
+    from services import browse as _b
+    mem = storage.get_app_state('browse_site_pages') or {}
+    return (mem.get(_b._domain(f'https://{site}')) or {}).get('url') or None
+
+
+def _remember_site_page(site: str, report: dict) -> None:
+    """A browse that stopped ON the site at a form that wanted the card or at
+    a human check reached the deep page worth starting from next time. A
+    finish (anywhere on the site), a page elsewhere, a cap, an error or a
+    refusal teaches nothing and never overwrites that page."""
+    from services import browse as _b
+    url = report.get('stopped_at') or ''
+    if report.get('outcome') not in ('needs_release', 'captcha_failed') or not url.startswith('http'):
+        return
+    dom = _b._domain(f'https://{site}')
+    if _b._domain(url) != dom:
+        return
+    with storage.db_lock:
+        mem = dict(storage.get_app_state('browse_site_pages') or {})
+        mem[dom] = {'url': url, 'at': time.time()}
+        storage.set_app_state('browse_site_pages', mem)
 
 
 SITE_GOAL = re.compile(r'(pric|cost|fee|quote|availab|schedul|appointment|book|slot|window|sign ?up|register|order)', re.I)
