@@ -57,7 +57,12 @@ routines + streaks · rewards store with parent-approved redemptions.
   Computer Use over headless Chromium on the paid key, guards in code),
   the household contact card released per site per mission, consented
   capped CAPTCHA attempts, the hand-off DM, Chromium in the image. Build 3
-  (the conversation) is next.
+  SHIPPED v2.499.358–.362 (2026-10-10): `start_mission_for` ("get the
+  dishwasher fixed" opens a thread and a mission, holds the thread as
+  focus), DMs on every question and finish, the finish as a thread note and
+  a pre-filled next step, the thread card carrying its mission's ask and
+  steps. The arc is built end to end; not device-verified; remote hand is
+  a later arc.
 
 - **Agent tools for the family hub. SHIPPED v2.25.0 (2026-08-01)** — six
   tools in both stacks (send/read family messages + DMs with full push

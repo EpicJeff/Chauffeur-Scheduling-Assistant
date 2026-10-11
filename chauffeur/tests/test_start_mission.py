@@ -169,12 +169,69 @@ def scenario_answer_when_not_waiting_is_refused():
     check(not [s for s in storage.get_mission_steps(res['mission_id']) if s['name'] == 'user_answer'], "nothing appended")
 
 
+def scenario_e2e_get_the_dishwasher_fixed():
+    """Spec acceptance 1, with every outside call faked."""
+    _reset(); _dm_capture()
+    from services import mail_search
+    storage.get_settings = lambda: {'missions_enabled': True, 'llm_gemini_paid_api_key': 'paid', 'llm_gemini_api_key': 'k', 'thread_stall_days': 7,
+                                    'ingest_email_host': 'h', 'ingest_email_user': 'u', 'ingest_email_password': 'p',
+                                    'contact_first_name': 'Jeff', 'contact_last_name': 'Wilson', 'contact_email': 'ffejnosliw@gmail.com',
+                                    'contact_phone': '919-327-7497', 'contact_street': '1 Chestnut Walk', 'contact_city': 'Cary', 'contact_state': 'NC', 'contact_zip': '27519',
+                                    'missions_captcha_attempts': True}
+    mail_search.search = lambda q, since_days=365, limit=5, settings=None: {'status': 'success', 'hits': [{'uid': 1, 'from': 'orders@cafeappliances.com', 'date': '2021-03-14', 'subject': 'Your Cafe order', 'snippet': 'Model CDT805P2N3S1'}]}
+    threads._pool_call = lambda tier, key, system, prompt, **kw: {'text': 'Serial LS758759B'}
+    missions._browse_async = False
+    reports = [
+        {'outcome': 'needs_release', 'text': 'the form wants contact details', 'learned': {}, 'stopped_at': 'https://bodewell.com/guest-schedule-service',
+         'wanted_fields': ['first_name', 'last_name', 'email', 'phone', 'street', 'city', 'state', 'zip'], 'turns': 9, 'tokens_in': 80000, 'tokens_out': 2000, 'seconds': 90, 'screenshots': [], 'filled': {}},
+        {'outcome': 'captcha_failed', 'text': '3 attempts at the human-verification check failed', 'learned': {}, 'stopped_at': 'https://bodewell.com/guest-schedule-service',
+         'wanted_fields': [], 'turns': 6, 'tokens_in': 50000, 'tokens_out': 1000, 'seconds': 60, 'screenshots': [], 'filled': {'first_name': 'Jeff', 'email': 'ffejnosliw@gmail.com'}},
+    ]
+    missions._browse = lambda **kw: reports.pop(0)
+    plan = [
+        {'action': 'tool', 'tool': 'search_mail', 'args': {'query': 'cafe dishwasher'}},
+        {'action': 'ask_user', 'question': 'Send me a photo of the label inside the door.'},
+        {'action': 'browse', 'goal': 'find appointment windows and the trip charge for a dishwasher repair', 'site': 'bodewell.com'},
+        {'action': 'finish', 'summary': 'Bodewell can come Tue Oct 20, 8-noon; trip charge $114.95, parts and labor extra.',
+         'next_action': 'Book Tue Oct 20, 8-noon ($114.95 trip charge)', 'next_action_at': '2026-10-17'},
+    ]
+    missions._llm = lambda m, s, u, st: plan.pop(0)
+    # 1. voice opens it
+    res = tools.start_mission_for('get the dishwasher fixed', acting_member=MOM, focus_key='voice:1')
+    mid, tid = res['mission_id'], res['thread_id']
+    # 2. the mail is found, the photo asked for
+    missions.step(storage.get_mission(mid))
+    steps = storage.get_mission_steps(mid)
+    check(any(st['kind'] == 'tool' and st['name'] == 'search_mail' and 'CDT805P2N3S1' in str(st['result_json']) for st in steps), f"the mail was searched: {steps}")
+    missions.step(storage.get_mission(mid))
+    check(storage.get_mission(mid)['status'] == 'waiting_user' and 'photo' in SENT[-1].lower(), "asks for the photo")
+    PNG = bytes.fromhex('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63f8ff1f0003030200f0b3c2d10000000049454e44ae426082')
+    threads.add_photo(tid, PNG, 'image/png', 'mom')
+    check(storage.get_mission(mid)['status'] == 'running', "the photo answers it")
+    # 3. the browse stops for the release; the parent approves from the thread
+    missions.step(storage.get_mission(mid))
+    check(storage.get_mission(mid)['status'] == 'waiting_user' and 'bodewell.com' in SENT[-1] and 'Jeff' in SENT[-1], "the release card")
+    out = situations.act('thread', tid, 'release', option_id=f'release:mission:{mid}:approve', actor=MOM)
+    check(out['status'] == 'success', f"approved: {out}")
+    # 4. the resumed browse fails the CAPTCHA -> hand-off
+    m = storage.get_mission(mid)
+    check(m['status'] == 'waiting_user' and 'bodewell.com' in SENT[-1] and 'first_name=Jeff' in SENT[-1] and 'tell me what you found' in SENT[-1].lower(), f"the hand-off: {SENT[-1]}")
+    # 5. the person answers in words; the mission finishes
+    out = tools.act_on_situation(verb='answer', text='Tue 20th 8-noon, $114.95 trip charge', acting_member=MOM, focus_key='voice:1')
+    check(out['status'] == 'success', f"answered: {out}")
+    missions.step(storage.get_mission(mid))
+    m = storage.get_mission(mid)
+    t = storage.get_thread(tid)
+    check(m['status'] == 'done' and t['next_action'].startswith('Book Tue') and '$114.95' in SENT[-1] and 'Nothing is booked' in SENT[-1], f"finished: {m['status']} / {t['next_action']} / {SENT[-1]}")
+    check(not storage.get_action_proposals(), "nothing proposed, nothing booked")
+
+
 SCENARIOS = [scenario_opens_thread_and_mission_and_focus, scenario_a_running_mission_is_not_duplicated, scenario_gates,
              scenario_declared_dispatched_terminal,
              scenario_ask_user_dms_the_question, scenario_finish_lands_on_the_thread_with_a_prefilled_next_step,
              scenario_finish_without_next_action, scenario_finish_on_a_closed_thread,
              scenario_thread_card_carries_its_missions_question, scenario_thread_card_carries_its_missions_release,
-             scenario_answer_when_not_waiting_is_refused]
+             scenario_answer_when_not_waiting_is_refused, scenario_e2e_get_the_dishwasher_fixed]
 
 if __name__ == "__main__":
     import traceback
