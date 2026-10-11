@@ -22,6 +22,11 @@ PAGES = {
     '/withframe': '<h1>Framed</h1><iframe src="/redir" title="partner"></iframe><p>stay here</p>',
     '/topay': '<h1>Almost</h1><a id="cont" href="/pay">Continue</a>',
     '/locate': '<h1>Service areas</h1><label>ZIP Code<input name="postal"></label><button type="button">Find</button>',
+    # Writes the browser's own location and timezone into the page.
+    '/where': ('<h1>Where am I</h1><div id="pos">pending</div><div id="tz"></div><script>'
+               'document.getElementById("tz").textContent = Intl.DateTimeFormat().resolvedOptions().timeZone;'
+               'navigator.geolocation.getCurrentPosition(p => { document.getElementById("pos").textContent = p.coords.latitude.toFixed(2) + "," + p.coords.longitude.toFixed(2); },'
+               ' e => { document.getElementById("pos").textContent = "denied:" + e.code; });</script>'),
     # A normal form with reCAPTCHA's invisible badge and its legal line, as most forms have: not a wall.
     '/zipdialog': ('<h1>Schedule service</h1><div role="dialog"><p>Enter your ZIP to see availability</p>'
                    '<label>ZIP Code<input name="postal"></label><button type="button">Continue</button></div>'

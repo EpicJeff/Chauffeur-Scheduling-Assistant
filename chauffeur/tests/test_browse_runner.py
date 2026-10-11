@@ -425,6 +425,43 @@ def scenario_a_recaptcha_badge_is_not_a_wall():
     # The real interstitial still stops with consent off (scenario_captcha_consent_off_stops_untouched covers it).
 
 
+def scenario_the_browser_is_at_home():
+    """2026-10-11: "Use my current location" on the site found nothing, because
+    a headless browser on the VM has no location, and the model read the
+    site's "no service areas for the location detected" as no service for the
+    ZIP. The browse context carries the household's geolocation (the home
+    address, geocoded) and timezone."""
+    _reset()
+    orig_home, orig_settings = browse._home_coords, storage.get_settings
+    browse._home_coords = lambda: (35.73, -78.85)
+    storage.get_settings = lambda: {'llm_gemini_paid_api_key': 'paid', 'timezone': 'America/New_York'}
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            b = p.chromium.launch(headless=True)
+            ctx = browse._new_context(b, storage.get_settings())
+            pg = ctx.new_page()
+            pg.goto(f'{URL}/where')
+            pg.wait_for_function("document.getElementById('pos').textContent !== 'pending'", timeout=5000)
+            pos, tz = pg.locator('#pos').inner_text(), pg.locator('#tz').inner_text()
+            b.close()
+        check(pos == '35.73,-78.85' and tz == 'America/New_York', f"the page sees home and the family's clock: {pos} {tz}")
+        browse._home_coords = lambda: None
+        with sync_playwright() as p:
+            b = p.chromium.launch(headless=True)
+            ctx = browse._new_context(b, {})
+            pg = ctx.new_page()
+            pg.goto(f'{URL}/where')
+            pg.wait_for_function("document.getElementById('pos').textContent !== 'pending'", timeout=5000)
+            pos = pg.locator('#pos').inner_text()
+            b.close()
+        check(pos.startswith('denied'), f"no home address: the site is told nothing rather than a guess: {pos}")
+    finally:
+        browse._home_coords, storage.get_settings = orig_home, orig_settings
+    check('location detected' in browse.RUNNER_SYSTEM and 'Enter' in browse.RUNNER_SYSTEM and 'suggest' in browse.RUNNER_SYSTEM.lower(),
+          "the model is told: type the ZIP and press Enter/Find, never a nearby suggestion; a 'location detected' result is not about the ZIP")
+
+
 SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
@@ -438,7 +475,7 @@ SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_ty
              scenario_the_model_can_say_what_it_needs_and_knows_what_the_card_holds, scenario_the_clock_is_ten_minutes,
              scenario_a_slow_page_does_not_end_the_run, scenario_the_start_url_is_the_host_that_answers,
              scenario_every_turn_is_on_the_ledger, scenario_the_same_click_three_times_is_told_so,
-             scenario_a_recaptcha_badge_is_not_a_wall]
+             scenario_a_recaptcha_badge_is_not_a_wall, scenario_the_browser_is_at_home]
 
 if __name__ == "__main__":
     import traceback

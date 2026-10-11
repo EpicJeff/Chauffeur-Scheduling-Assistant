@@ -64,7 +64,10 @@ RUNNER_SYSTEM = (
     "Never guess or invent a location, a name or any detail the family would have to supply: if the page "
     "needs one of the family's contact-card fields that you were not given, stop and end your report with "
     "one more line: NEED: field, field (fields: first_name, last_name, email, phone, street, apt, city, "
-    "state, zip, preferred)."
+    "state, zip, preferred). When you were given a ZIP or city, type it and press Enter or the Find/Go "
+    "button; never use a 'use my location' button, and never pick a suggested nearby place that is not the "
+    "ZIP's own town. A result about 'the location detected' is not about the ZIP you were given: search by "
+    "the ZIP before you report it."
 )
 NEED_LINE = re.compile(r'NEED:\s*(.+)$', re.I | re.M)
 
@@ -244,6 +247,31 @@ def _system_chromium(bundled_path: str):
         if found:
             return found
     return None
+
+
+def _home_coords():
+    """The household's home as (lat, lon) from the home address, geocoded
+    through the app's cache (services.bus does the same); None without one."""
+    try:
+        from services import bus
+        return bus._home_coords()
+    except Exception:
+        return None
+
+
+def _new_context(browser, settings: dict):
+    """The browser is AT HOME: the household's geolocation and timezone, so a
+    site's 'use my location' answers the family's town and a calendar shows
+    the family's day. No home address: no location at all, never a guess."""
+    opts = {'viewport': {'width': W, 'height': H}, 'locale': 'en-US'}
+    home = _home_coords()
+    if home:
+        opts['geolocation'] = {'latitude': float(home[0]), 'longitude': float(home[1])}
+        opts['permissions'] = ['geolocation']
+    tz = (settings or {}).get('timezone') or ''
+    if tz:
+        opts['timezone_id'] = tz
+    return browser.new_context(**opts)
 
 
 def _launch(headless: bool = True):
@@ -672,7 +700,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
         return None
 
     try:
-        ctx = browser.new_context(viewport={'width': W, 'height': H}, locale='en-US')
+        ctx = _new_context(browser, settings)
         page = ctx.new_page()
         page.on('response', learn_redirect)
         _goto(page, start)
