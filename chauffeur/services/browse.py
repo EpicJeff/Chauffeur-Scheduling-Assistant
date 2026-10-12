@@ -76,7 +76,9 @@ EMAIL_SHAPE = re.compile(r'[^@\s]+@[^@\s]+\.[a-z]{2,}', re.I)
 PHONE_SHAPE = re.compile(r'(\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}')
 
 RUNNER_SYSTEM = (
-    "You are driving a browser for one family on ONE site to learn something. You may enter only the values "
+    "You are driving a browser for one family on ONE site (and the booking service its own links lead to) to "
+    "learn something. A site's Book/Schedule link often leads to its booking service at another address: follow "
+    "it, that is still the site. You may enter only the values "
     "you were given below; never invent a name, address, phone or email. Never click anything that pays or "
     "orders. Stop and report when a form wants a value you were not given, when a "
     "payment field appears, when a human-verification check appears (unless told you may try, and then at "
@@ -98,7 +100,9 @@ WALL_WORDS = re.compile(r"(captcha|not a robot|human[- ]verification|verify you 
 NEED_LINE = re.compile(r'NEED:\s*(.+)$', re.I | re.M)
 SUBMIT_LINE = re.compile(r'SUBMIT:\s*(.+)$', re.I | re.M)
 SUBMIT_TEXT = (" When the only way forward is a control that books, submits, confirms, reserves, sends or applies, do NOT "
-               "press it: end your report with one more line: SUBMIT: <the button's exact text>. A parent decides.")
+               "press it: end your report with one more line: SUBMIT: <the button's exact text>. A parent decides. A link "
+               "that only leads to another page or to the site's booking service (a 'Book appointment' in the site's menu) "
+               "commits nothing: just click it.")
 NO_SUBMIT_TEXT = " Booking and submitting are off for this family: never press such a control; stop and report."
 
 
@@ -474,9 +478,35 @@ def _px(x, y):
     return int(x) * W / 1000, int(y) * H / 1000
 
 
+def _settled(page, fn):
+    """Run one page read; when the page moves under it (a click whose
+    navigation lands after the runner's wait: 'Execution context was
+    destroyed'), wait for the new page and read that, up to three times.
+    Any other failure is raised as it was."""
+    for attempt in range(3):
+        try:
+            return fn()
+        except Exception as e:
+            msg = str(e)
+            if attempt == 2 or not ('destroyed' in msg or 'navigat' in msg.lower()):
+                raise
+            try:
+                page.wait_for_load_state('domcontentloaded', timeout=5000)
+            except Exception:
+                pass
+            try:
+                page.wait_for_timeout(300)
+            except Exception:
+                pass
+
+
 def _scan(page) -> dict:
     """What the page wants and warns about: required contact fields (by label
     text or input name), payment fields, human checks, access denied."""
+    return _settled(page, lambda: _scan_now(page))
+
+
+def _scan_now(page) -> dict:
     return page.evaluate("""() => {
         const labelFor = (el) => {
             const parts = [];
@@ -527,11 +557,11 @@ def _is_denied(scan: dict) -> bool:
 
 
 def _under_click(page, x, y) -> dict:
-    return page.evaluate("""([x, y]) => {
+    return _settled(page, lambda: page.evaluate("""([x, y]) => {
         const el = document.elementFromPoint(x, y); if (!el) return {text: '', type: '', tag: ''};
         const b = el.closest('button, input[type=submit], input[type=button], input[type=image], a, [role=button]') || el;
         return { text: ((b.innerText || b.value || b.getAttribute('aria-label') || '')).trim().slice(0, 120), type: (b.getAttribute('type') || ''), tag: b.tagName };
-    }""", [x, y])
+    }""", [x, y]))
 
 
 _CONTROL_JS = """
@@ -582,10 +612,23 @@ _CONTROL_JS = """
     else t = x.innerText || x.getAttribute('aria-label') || '';
     t = (t || '').replace(/\\s+/g, ' ').trim(); if (t) selected.push(t);
   });
+  // A door, not a commitment: a link with a real address that leaves the
+  // site, or sits in the site's navigation, outside any form. Boardroom
+  // Salon's header BOOK APPOINTMENT leads to its booking vendor; nothing on
+  // this site is committed by walking through it (the vendor's own Book
+  // button is gated when it is reached). A same-site link elsewhere keeps
+  // the word rule: a 'Book now' GET on a slot page books.
+  const hrefAttr = b.tagName === 'A' ? (b.getAttribute('href') || '').trim() : '';
+  const realHref = !!hrefAttr && !/^(#|javascript:|mailto:|tel:)/i.test(hrefAttr);
+  let external = false;
+  try { external = realHref && new URL(hrefAttr, location.href).host !== location.host; } catch (_) { external = false; }
+  const chrome = !!b.closest('nav, header, [role=navigation], [role=banner]');
+  const navigation = b.tagName === 'A' && !form && realHref && (external || chrome);
   const text = (scope.innerText || '').replace(/\\s+/g, ' ').trim();
   const prices = (text.match(/(\\$\\s?\\d[\\d,]*(?:\\.\\d{2})?|\\d[\\d,]*(?:\\.\\d{2})?\\s?(?:USD|dollars))/gi) || []);
   return ({
     text: label(b), type: (b.getAttribute('type') || ''), tag: b.tagName, disabled: !!b.disabled, iframe: false, editable,
+    href: hrefAttr, navigation,
     labels: [...(b.labels || [])].map(l => (l.innerText || '').replace(/\\s+/g, ' ').trim()).filter(Boolean),
     is_submit_control: !!form && (submits.includes(b) || (buttons.length === 1 && buttons[0] === b)),
     sole_submit: !!form && submits.length === 1 && submits[0] === b,
@@ -640,7 +683,7 @@ def _control_at(page, x, y):
     """The control under a point and the state of its scope (spec §1), or
     None when nothing pressable is there. `x, y` are page pixels."""
     try:
-        h = page.evaluate_handle("([x, y]) => document.elementFromPoint(x, y)", [x, y])
+        h = _settled(page, lambda: page.evaluate_handle("([x, y]) => document.elementFromPoint(x, y)", [x, y]))
     except Exception as e:
         logger.warning(f"[browse] control read failed: {e}")
         return _unreadable_control()
@@ -652,12 +695,12 @@ def _focused_control(page):
     itself when it is a control (a link included: Enter follows it); for Enter
     inside a form, the form's default submit control (the whole record)."""
     try:
-        h = page.evaluate_handle("""() => {
+        h = _settled(page, lambda: page.evaluate_handle("""() => {
             const el = document.activeElement; if (!el) return null;
             if (el.matches('button, input[type=submit], input[type=button], input[type=image], [role=button], a[href]')) return el;
             const f = el.form; if (!f) return null;
             return f.querySelector('button:not([type=button]):not([type=reset]), input[type=submit], input[type=image]');
-        }""")
+        }"""))
     except Exception as e:
         logger.warning(f"[browse] control read failed: {e}")
         return _unreadable_control()
@@ -671,12 +714,12 @@ def _control_by_text(page, text: str):
     if not want:
         return None
     try:
-        h = page.evaluate_handle("""(want) => {
+        h = _settled(page, lambda: page.evaluate_handle("""(want) => {
             const all = [...document.querySelectorAll('button, input[type=submit], input[type=button], input[type=image], a, [role=button]')].filter(b => !b.disabled);
             const lab = (b) => ((b.innerText || b.value || b.getAttribute('aria-label') || b.getAttribute('title') || '')).replace(/\\s+/g, ' ').trim().toLowerCase();
             const exact = all.filter(b => lab(b) === want); if (exact.length === 1) return exact[0];
             const part = all.filter(b => lab(b).includes(want)); return part.length === 1 ? part[0] : null;
-        }""", want)
+        }""", want))
     except Exception as e:
         logger.warning(f"[browse] control read failed: {e}")
         return _unreadable_control()
@@ -708,6 +751,8 @@ def _classify(control, intent: str) -> str:
         words = ' '.join([label] + list(control.get('labels') or []))
         if PAY_WORDS.search(words):
             return 'pay'
+        if control.get('navigation'):
+            return 'run'   # a link that leaves the site or sits in its menu: a door, whatever it is called
         if SUBMIT_WORDS.search(words) or SUBMIT_WORDS.search(intent):
             return 'submit'
         st = control.get('state') or {}
@@ -1092,6 +1137,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
         report otherwise. `how` is the ledger word."""
         nonlocal unresolved
         kind = _classify(control, intent)
+        if control and control.get('navigation'):
+            return None   # a door: followed, never asked about, whatever the model called it
         if force_submit and kind == 'run':
             kind = 'submit'  # the model naming the control with SUBMIT: is itself the evidence
         if (kind == 'run' and approved and not pressed and control and not control.get('error') and not control.get('disabled')
@@ -1161,8 +1208,38 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
         report['stopped_at'] = page.url
         return finish('submit_unknown', f"confirmation page after an ungated press of '{unasked['button']}'")
 
+    popups = []
+
+    def follow(line, before_url):
+        """After an action: a tab the click opened becomes the page, and a page
+        the site's own link (or its script) moved to another address is
+        learned, the way a server redirect is (Boardroom's BOOK APPOINTMENT
+        opens its booking vendor, in a new tab). A typed address to a
+        stranger's site is still refused before it runs."""
+        nonlocal page
+        if popups:
+            new = popups[-1]
+            popups.clear()
+            try:
+                new.wait_for_load_state('domcontentloaded', timeout=10000)
+            except Exception:
+                pass
+            try:
+                new.wait_for_timeout(500)
+            except Exception:
+                pass
+            page = new
+            page.on('response', learn_redirect)
+            line['action'] += ' (opened a new tab)'
+        d = _domain(page.url)
+        if d and d not in allowed and page.url != before_url:
+            allowed.add(d)
+            line['action'] += f' (followed to {d})'
+        return page
+
     try:
         ctx = _new_context(browser, settings)
+        ctx.on('page', lambda p: popups.append(p))
         page = ctx.new_page()
         page.on('response', learn_redirect)
         _goto(page, start)
@@ -1242,6 +1319,31 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                             return finish('blocked', f"could not find the control '{want}' at {page.url}")
                         contents.append({'role': 'user', 'parts': [{'text': f"no control reads '{want}'; click it, or name its text exactly as the page shows it"}]})
                         continue
+                    if ctl.get('navigation'):
+                        # The model read the word on a door: walk through it and carry on.
+                        before = page.url
+                        t_act = time.time()
+                        try:
+                            ctl['handle'].click()
+                            page.wait_for_timeout(900)
+                        except Exception as e:
+                            logger.warning(f"[browse] link click failed: {e}")
+                        report['actions'] += 1
+                        line = {'turn': turn, 'action': f"click '{ctl.get('text')}' (a link, not a commitment) via SUBMIT:",
+                                'url': page.url, 'model_ms': 0, 'act_ms': _ms(t_act)}
+                        report['turns_log'].append(line)
+                        follow(line, before)
+                        line['url'] = page.url
+                        stop = page_checks(_scan(page))
+                        if stop:
+                            return stop
+                        shot = page.screenshot(type='png')
+                        p = os.path.join(out_dir, f'turn_{turn:02d}.png')
+                        with open(p, 'wb') as f:
+                            f.write(shot)
+                        report['screenshots'].append(p)
+                        contents.append({'role': 'user', 'parts': [{'text': f"'{want}' is a link, not a commitment: followed it to {page.url}. Carry on with the goal."}, {'image': shot}]})
+                        continue
                     stop = gate(ctl, '', 'SUBMIT', force_submit=True)
                     if isinstance(stop, tuple):        # (unreachable: a SUBMIT: control always resolved)
                         return finish('blocked', f"form state unreadable at {page.url}")
@@ -1249,6 +1351,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                         return stop
                     # An approved match named by SUBMIT: one click on the resolved control.
                     pressed = True
+                    before = page.url
                     t_act = time.time()
                     try:
                         ctl['handle'].click()
@@ -1256,15 +1359,16 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                     except Exception as e:
                         logger.warning(f"[browse] approved SUBMIT: click failed: {e}")
                     report['actions'] += 1
-                    report['turns_log'].append({'turn': turn, 'action': f"press '{report['attempt']['button']}' (approved, ask {str(report['attempt']['ask_id'])[:8]}) via SUBMIT:",
-                                                'url': page.url, 'model_ms': 0, 'act_ms': _ms(t_act)})
+                    line = {'turn': turn, 'action': f"press '{report['attempt']['button']}' (approved, ask {str(report['attempt']['ask_id'])[:8]}) via SUBMIT:",
+                            'url': page.url, 'model_ms': 0, 'act_ms': _ms(t_act)}
+                    report['turns_log'].append(line)
+                    follow(line, before)
+                    line['url'] = page.url
                     shot = page.screenshot(type='png')
                     p = os.path.join(out_dir, f'turn_{turn:02d}.png')
                     with open(p, 'wb') as f:
                         f.write(shot)
                     report['screenshots'].append(p)
-                    if _domain(page.url) not in allowed:
-                        return finish_attempt('unknown', f'the press led to another site: {page.url}')
                     stop = page_checks(_scan(page))
                     if stop:
                         return stop
@@ -1450,6 +1554,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                         res = {'error': str(e)[:160]}
                 report['actions'] += 1
                 line['act_ms'] = _ms(t_act)
+                follow(line, before)
                 line['url'] = page.url
                 if press_now:
                     last_press = None      # the approved press owns what the page says next
@@ -1469,15 +1574,6 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                         # Watched a turn longer: an XHR booking renders its confirmation late.
                         last_press = press
                     before_conf = _is_confirmation(new_scan)
-                if _domain(page.url) not in allowed:
-                    strikes += 1
-                    if strikes > 1:
-                        return finish('blocked', f'left the site: {page.url}')
-                    try:
-                        page.go_back(wait_until='domcontentloaded')
-                    except Exception:
-                        page.goto(before, wait_until='domcontentloaded')
-                    res = {'error': 'that led to another site; undone. Stay on ' + site}
                 if sd:
                     res['safety_acknowledgement'] = 'true'
                 if page.url != before:

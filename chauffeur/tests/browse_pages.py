@@ -126,6 +126,20 @@ PAGES = {
     '/labelbook': ('<h1>Your slot</h1><form action="/booked" method="post"><p>Tue, Oct 20 8AM-12PM</p>'
                    '<label for="bk" id="bklabel" style="display:inline-block;padding:20px">Book appointment</label>'
                    '<input type="submit" id="bk" value="Go"></form>'),
+    # A salon's home page: the header's BOOK APPOINTMENT is a door to its
+    # booking vendor on another address, not a commitment (2026-10-12).
+    '/salonhome': ('<header><nav><a id="loc" href="/start">LOCATIONS</a> '
+                   '<a id="bookhdr" href="http://localhost:{port}/vendor">BOOK APPOINTMENT</a></nav></header>'
+                   '<h1>Where men get ready</h1><form action="/start"><label>Email<input name="email"></label>'
+                   '<button type="submit">Join</button></form>'),
+    '/salonpop': ('<h1>Welcome</h1><a id="pop" href="http://localhost:{port}/vendor" target="_blank">BOOK APPOINTMENT</a>'
+                  '<p>Expert haircuts.</p>'),
+    '/vendor': '<h1>Choose a center</h1><a id="pick" href="/vendor2">Fenton</a>',
+    '/vendor2': '<h1>Choose a service</h1><p>Haircut $38</p>',
+    # A page whose click navigates a moment later (a SPA router): the read
+    # after the click must survive the context going away under it.
+    '/latenav': ('<h1>Centers</h1><button type="button" id="go">Fenton</button>'
+                 '<script>document.getElementById("go").onclick=function(){setTimeout(function(){location.href="/vendor2"},950)}</script>'),
 }
 
 

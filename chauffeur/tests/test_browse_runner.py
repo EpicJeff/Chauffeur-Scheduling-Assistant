@@ -112,9 +112,12 @@ def scenario_submit_stop_by_words_not_by_type():
 def scenario_domain_allowlist_learns_redirects_only():
     _reset()
     away = _xy(f'{URL}/start', '#away')
-    browse._model_step = _script([_click(away)], [_click(away)], 'DONE.')
+    browse._model_step = _script([_click(away)], 'DONE.')
     r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/start', out_dir=OUT)
-    check(r['outcome'] == 'blocked' and 'left the site' in r['text'], f"a link to another domain: undone once, then stopped: {r}")
+    # (2026-10-12: the site's own link to another address is followed and
+    # learned, like a redirect; see scenario_a_link_to_somewhere_else_is_a_door.)
+    check(r['outcome'] == 'done' and r['stopped_at'].endswith('/other') and 'followed to localhost' in str(r['turns_log']),
+          f"a link the site offers to another domain is followed and learned: {r['outcome']} {r['stopped_at']} {r['turns_log']}")
     redir = _xy(f'{URL}/start', '#redir')
     browse._model_step = _script([_click(redir)], 'DONE.')
     r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/start', out_dir=OUT)
@@ -1019,6 +1022,96 @@ def scenario_the_re_review_holes_are_closed():
           f"a click on the label of a submit input is that press, read by its label: {r['outcome']} {(r.get('submit') or {}).get('button')} posts={len(H.posts)}")
 
 
+def scenario_a_link_to_somewhere_else_is_a_door_not_a_commitment():
+    """Boardroom Salon, 2026-10-12: the header's BOOK APPOINTMENT is a link to
+    the salon's booking vendor on another address. The gate read the word
+    and asked a parent to approve a press that books nothing; approved, the
+    link opened the vendor in a NEW TAB the runner never looked at, and the
+    model reported "the booking link leads to an external site". A link that
+    leaves the site, or sits in the site's navigation, commits nothing on
+    this site: it is a door, and the vendor's own Book button is gated when
+    it is reached. A same-site link elsewhere keeps the word rule
+    (/linkbook's "Book now" is a GET that books)."""
+    _reset()
+    check(browse._classify(_control('/salonhome', '#bookhdr'), '') == 'run', "the header's link to the vendor is gated")
+    check(browse._classify(_control('/salonhome', '#loc'), '') == 'run', "a navigation link is gated")
+    check(browse._classify(_control('/linkbook', '#lb'), '') == 'submit', "a same-site Book link stopped being a commitment")
+    # Followed: the click on the site's own link teaches the vendor's address,
+    # the way a server redirect does; the vendor's pages are then the site's.
+    hdr = _xy(f'{URL}/salonhome', '#bookhdr')
+    pick = _xy(f'{URL}/vendor', '#pick')
+    browse._model_step = _script([_click(hdr)], [_click(pick)], 'DONE. Haircut $38.')
+    r = browse.run('book a haircut', SITE, {}, {}, start_url=f'{URL}/salonhome', out_dir=OUT)
+    check(r['outcome'] == 'done' and r['stopped_at'].endswith('/vendor2') and 'localhost' in r['stopped_at'],
+          f"the site's link to its vendor was not followed: {r['outcome']} {r['stopped_at']} {r['text']}")
+    check(any('followed' in (l.get('action') or '') for l in r['turns_log']), f"the ledger does not say the site led elsewhere: {r['turns_log']}")
+    # A typed address to a stranger's site is still refused (the site did not send us there).
+    browse._model_step = _script([{'name': 'navigate', 'args': {'url': f'http://localhost:{PORT}/other'}}],
+                                 [{'name': 'navigate', 'args': {'url': f'http://localhost:{PORT}/other'}}], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/salonhome', out_dir=OUT)
+    check(r['outcome'] == 'blocked', f"a typed address to an unlearned site got through: {r}")
+    # Named with SUBMIT: by a model that read the word: followed, not asked about.
+    browse._model_step = _script('SUBMIT: BOOK APPOINTMENT', [_click(pick)], 'DONE.')
+    r = browse.run('book a haircut', SITE, {}, {}, start_url=f'{URL}/salonhome', out_dir=OUT)
+    check(r['outcome'] == 'done' and r['stopped_at'].endswith('/vendor2'), f"SUBMIT: naming a door asked instead of walking through: {r['outcome']} {r['stopped_at']} {r['text']}")
+
+
+def scenario_a_link_that_opens_a_new_tab_is_followed_there():
+    """target=_blank: the vendor opened beside the page the runner was
+    reading, which never changed; the model saw the same home page and
+    gave up. The runner now moves to the tab the click opened."""
+    _reset()
+    pop = _xy(f'{URL}/salonpop', '#pop')
+    pick = _xy(f'{URL}/vendor', '#pick')
+    browse._model_step = _script([_click(pop)], [_click(pick)], 'DONE.')
+    r = browse.run('book a haircut', SITE, {}, {}, start_url=f'{URL}/salonpop', out_dir=OUT)
+    check(r['outcome'] == 'done' and r['stopped_at'].endswith('/vendor2'),
+          f"the new tab was not followed: {r['outcome']} {r['stopped_at']} {r['text']} {r['turns_log']}")
+    check(any('new tab' in (l.get('action') or '') for l in r['turns_log']), f"the ledger does not say a tab opened: {r['turns_log']}")
+
+
+def scenario_a_page_that_moves_under_the_read_is_read_again():
+    """Zenoti, 2026-10-12: a click on a center navigated a moment after the
+    runner's 900 ms wait, and the page read that followed died with
+    'Execution context was destroyed' -- twice, so the mission gave up. A
+    read that loses its page waits for the new one and reads that."""
+    _reset()
+    go = _xy(f'{URL}/latenav', '#go')
+    browse._model_step = _script([_click(go)], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/latenav', out_dir=OUT)
+    check(r['outcome'] == 'done' and r['stopped_at'].endswith('/vendor2'), f"the late navigation killed the run: {r['outcome']} {r['text']}")
+
+    class _Page:
+        url = 'http://x/'
+
+        def __init__(self):
+            self.calls = []
+
+        def evaluate(self, *a, **k):
+            self.calls.append('evaluate')
+            if self.calls.count('evaluate') < 3:
+                raise RuntimeError('Page.evaluate: Execution context was destroyed, most likely because of a navigation')
+            return {'fields': [], 'text': 'ok', 'frames': []}
+
+        def wait_for_load_state(self, *a, **k):
+            self.calls.append('wait')
+
+        def wait_for_timeout(self, *a, **k):
+            self.calls.append('sleep')
+    p = _Page()
+    check(browse._scan(p).get('text') == 'ok' and p.calls.count('wait') == 2, f"the scan did not wait for the page and read again: {p.calls}")
+
+    def boom(*a, **k):
+        raise RuntimeError('boom')
+    p = _Page()
+    p.evaluate = boom
+    try:
+        browse._scan(p)
+        check(False, "an unrelated error was swallowed")
+    except RuntimeError:
+        pass
+
+
 SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
@@ -1043,7 +1136,9 @@ SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_typ
              scenario_an_approved_run_that_writes_submit_presses_through_the_same_match, scenario_the_approved_match_holes_are_closed,
              scenario_an_unasked_press_after_continued_rides_beside_the_approved_attempt,
              scenario_every_press_path_goes_through_the_gate, scenario_an_in_page_confirmation_is_caught_by_the_backstop,
-             scenario_the_device_sequence_runs_ungated_until_book, scenario_the_re_review_holes_are_closed]
+             scenario_the_device_sequence_runs_ungated_until_book, scenario_the_re_review_holes_are_closed,
+             scenario_a_link_to_somewhere_else_is_a_door_not_a_commitment, scenario_a_link_that_opens_a_new_tab_is_followed_there,
+             scenario_a_page_that_moves_under_the_read_is_read_again]
 
 if __name__ == "__main__":
     import traceback
