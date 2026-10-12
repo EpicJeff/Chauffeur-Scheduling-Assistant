@@ -791,6 +791,50 @@ def scenario_continued_resumes_unapproved_and_payment_after_the_press_keeps_the_
     check('CONFIRMED:' in browse._system_text({}, approved=True) and 'CONFIRMED:' not in browse._system_text({}), "the outcome lines are taught only on an approved run")
 
 
+def scenario_an_approved_run_that_writes_submit_presses_through_the_same_match():
+    from browse_pages import H
+    approved, xy = _approved_for('/booking')
+    t = browse._system_text({}, approved={'button': 'Book appointment'})
+    check('Book appointment' in t and 'SUBMIT:' not in t and 'CONFIRMED:' in t, "an approved run is told the control, not the SUBMIT: exit")
+    browse._model_step = _script('SUBMIT: Book appointment', 'CONFIRMED: Confirmation number 12345')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT, approved=approved, on_attempt=lambda rec: True)
+    check(r['outcome'] == 'submitted' and len(H.posts) == 1 and r['attempt']['outcome'] == 'confirmed', f"SUBMIT: on an approved run presses once: {r['outcome']} posts={len(H.posts)}")
+    check(any('via SUBMIT:' in e['action'] for e in r['turns_log']), "the ledger says via SUBMIT:")
+    H.posts.clear()
+    browse._model_step = _script('SUBMIT: Book appointment')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking2', out_dir=OUT, approved=approved, on_attempt=lambda rec: True)
+    check(r['outcome'] == 'needs_submit' and not H.posts and any(c.startswith('selected:') for c in r['changed'])
+          and any(c.startswith('prices:') for c in r['changed']), f"SUBMIT: on a moved page re-asks with changed: {r['outcome']} {r['changed']}")
+    browse._model_step = _script('SUBMIT: Book appointment')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT, approved=approved, on_attempt=lambda rec: False)
+    check(r['outcome'] == 'blocked' and 'approval withdrawn' in r['text'] and not H.posts, "SUBMIT: with on_attempt false: withdrawn")
+
+
+def scenario_the_approved_match_holes_are_closed():
+    from browse_pages import H
+    approved, xy = _approved_for('/booking')
+    def boom(rec):
+        raise RuntimeError('mission gone')
+    browse._model_step = _script([_click(xy)], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT, approved=approved, on_attempt=boom)
+    check(r['outcome'] == 'blocked' and 'approval withdrawn' in r['text'] and not H.posts, f"on_attempt raising: {r['outcome']} {r['text']}")
+    browse._model_step = _script([_click(xy)], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT, approved={**approved, 'url': 'https://elsewhere.example/x'}, on_attempt=lambda rec: True)
+    check(r['outcome'] == 'needs_submit' and not H.posts and any(c.startswith('site:') for c in r['changed']), f"a domain mismatch re-asks with site: {r['changed']}")
+    # Enter and Space in one combination: one on_attempt.
+    calls = []
+    approved_f, _ = _approved_for('/booking')
+    browse._model_step = _script([{'name': 'key_combination', 'args': {'keys': ['Enter', 'Space']}}], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT, approved=approved_f, on_attempt=lambda rec: calls.append(rec) or True)
+    check(len(calls) <= 1, f"Enter+Space gates once: {len(calls)}")
+    # Approved on intent words alone: the re-run with no intent still goes through the approved path.
+    H.posts.clear()
+    approved_i, xy2 = _approved_for('/stepcontinue', '#cont', intent='submit the slot')
+    browse._model_step = _script([_click(xy2)], 'CONTINUED: next')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/stepcontinue', out_dir=OUT, approved=approved_i, on_attempt=lambda rec: True)
+    check(r['attempt'] is not None and len(H.posts) <= 1, f"an intent-approved control is pressed through the approved path: {r['outcome']} {r['attempt']}")
+
+
 SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
@@ -811,7 +855,8 @@ SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_typ
              scenario_the_fallback_classifies_unfamiliar_labels_by_evidence, scenario_the_switch_off_restores_the_old_wall,
              scenario_the_approved_press_runs_once_only_when_everything_matches, scenario_the_approved_press_refuses_when_the_page_moved,
              scenario_the_outcome_lines_and_the_end_of_the_run,
-             scenario_continued_resumes_unapproved_and_payment_after_the_press_keeps_the_attempt]
+             scenario_continued_resumes_unapproved_and_payment_after_the_press_keeps_the_attempt,
+             scenario_an_approved_run_that_writes_submit_presses_through_the_same_match, scenario_the_approved_match_holes_are_closed]
 
 if __name__ == "__main__":
     import traceback
