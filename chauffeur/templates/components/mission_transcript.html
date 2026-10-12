@@ -67,7 +67,7 @@
 
                                             <!-- ask: the question that (while the mission is waiting_user)
                                                  also heads the answer box below -->
-                                            <template x-if="step.kind === 'ask' && !['release', 'handoff'].includes(step.name)">
+                                            <template x-if="step.kind === 'ask' && !['release', 'handoff', 'submit', 'verify'].includes(step.name)">
                                                 <div class="text-sm text-amber-200 mt-1"
                                                     x-text="'Argyle asks: ' + ((step.result_json || {}).question || '')"></div>
                                             </template>
@@ -111,11 +111,48 @@
                                                     <div class="text-sm text-amber-200" x-text="(step.result_json || {}).question || ''"></div>
                                                     <div class="text-[11px] text-gray-400 mt-0.5" x-text="'Fields: ' + ((step.result_json || {}).fields || []).join(', ')"></div>
                                                     <div class="flex flex-wrap gap-2 mt-1.5" x-show="mission.status === 'waiting_user' && isLastAsk(mission, step)">
-                                                        <button @click="releaseMission(mission, 'approve')" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Share</button>
-                                                        <button @click="releaseMission(mission, 'decline')" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Not these</button>
-                                                        <button @click="releaseMission(mission, 'stop')" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Stop</button>
+                                                        <button @click="releaseMission(mission, 'approve', step)" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Share</button>
+                                                        <button @click="releaseMission(mission, 'decline', step)" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Not these</button>
+                                                        <button @click="releaseMission(mission, 'stop', step)" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Stop</button>
                                                     </div>
                                                 </div>
+                                            </template>
+                                            <!-- submit: the transaction the way the site has it, and the three answers.
+                                                 The browser presses only on Book it (spec 2026-10-11). -->
+                                            <template x-if="step.kind === 'ask' && step.name === 'submit'">
+                                                <div class="mt-1 bg-amber-500/10 border border-amber-500/30 rounded-xl p-2">
+                                                    <div class="text-sm text-amber-200" x-text="(step.result_json || {}).question || ''"></div>
+                                                    <div class="text-[11px] text-gray-400 mt-0.5" x-show="(((step.result_json || {}).state || {}).selected || []).length"
+                                                         x-text="'Selected: ' + ((((step.result_json || {}).state || {}).selected) || []).join(' · ')"></div>
+                                                    <div class="text-[11px] text-gray-400" x-show="Object.keys((step.result_json || {}).filled || {}).length"
+                                                         x-text="'Filled: ' + Object.entries((step.result_json || {}).filled || {}).map(([k, v]) => k + '=' + v).join(', ')"></div>
+                                                    <div class="text-[11px] text-gray-500 mt-0.5" x-text="(step.result_json || {}).display || ''"></div>
+                                                    <div class="flex flex-wrap gap-2 mt-1.5" x-show="mission.status === 'waiting_user' && isLastAsk(mission, step)">
+                                                        <button @click="submitMission(mission, 'approve', step)" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700"
+                                                                x-text="(step.result_json || {}).verb === 'book' ? 'Book it' : 'Submit it'"></button>
+                                                        <button @click="submitMission(mission, 'decline', step)" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">I'll finish it myself</button>
+                                                        <button @click="submitMission(mission, 'stop', step)" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Stop</button>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                            <!-- verify: the browser pressed and could not read the result; the parent says what happened. -->
+                                            <template x-if="step.kind === 'ask' && step.name === 'verify'">
+                                                <div class="mt-1 bg-amber-500/10 border border-amber-500/30 rounded-xl p-2">
+                                                    <div class="text-sm text-amber-200"><span x-text="(step.result_json || {}).question || ''"></span>
+                                                        <a :href="(step.result_json || {}).url" target="_blank" rel="noopener" class="text-blue-400 underline underline-offset-2 ml-1">Open it</a></div>
+                                                    <div class="mt-1.5" x-show="mission.status === 'waiting_user' && isLastAsk(mission, step)">
+                                                        <input type="text" x-model="verifyDetail[mission.id]" placeholder="Confirmation number or what you saw"
+                                                               class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-sm mb-1.5">
+                                                        <div class="flex flex-wrap gap-2">
+                                                            <button @click="verifyMission(mission, 'confirmed', step)" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">It went through</button>
+                                                            <button @click="verifyMission(mission, 'failed', step)" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">It did not go through</button>
+                                                            <button @click="verifyMission(mission, 'unsure', step)" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Still can't tell</button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                            <template x-if="step.kind === 'note' && ['submit_approved', 'submit_attempt', 'submitted', 'submit_rejected', 'submit_failed', 'late_evidence'].includes(step.name)">
+                                                <div class="text-xs text-gray-400 italic mt-1" x-text="submitNoteText(step)"></div>
                                             </template>
                                             <!-- handoff: where Argyle got to, and the link to finish it by hand. -->
                                             <template x-if="step.kind === 'ask' && step.name === 'handoff'">
@@ -144,7 +181,7 @@
 
                                             <div class="text-[11px] text-gray-500 font-mono mt-0.5 break-all"
                                                 x-show="!['proposal', 'draft', 'ask', 'browse'].includes(step.kind)
-                                                        && !(step.kind === 'note' && ['user_answer', 'proposal_approve', 'proposal_dismiss', 'release_approved'].includes(step.name))"
+                                                        && !(step.kind === 'note' && ['user_answer', 'proposal_approve', 'proposal_dismiss', 'release_approved', 'submit_approved', 'submit_attempt', 'submitted', 'submit_rejected', 'submit_failed', 'late_evidence'].includes(step.name))"
                                                 x-text="stepResultText(step)"></div>
                                         </div>
                                     </template>

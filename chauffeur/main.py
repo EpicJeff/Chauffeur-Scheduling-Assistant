@@ -5838,7 +5838,36 @@ def missions_release(mission_id: str, body: dict = Body(default={}), request: Re
     stop blocks (services/missions.release)."""
     from services import missions as _missions
     actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
-    res = _missions.release(mission_id, (body.get('decision') or '').strip(), actor)
+    res = _missions.release(mission_id, (body.get('decision') or '').strip(), actor, ask_id=(body.get('ask_id') or None))
+    if res.get('status') == 'refused':
+        raise HTTPException(status_code=403, detail=res.get('message'))
+    if res.get('status') == 'error':
+        raise HTTPException(status_code=400, detail=res.get('message'))
+    return res
+
+
+@app.post("/api/missions/{mission_id}/submit")
+def missions_submit(mission_id: str, body: dict = Body(default={}), request: Request = None):
+    """A submit ask answered by hand (spec 2026-10-11): approve re-runs the
+    browse with the approved record and presses once; decline hands over;
+    stop blocks. The ask id is the approval; a stale one answers moved."""
+    from services import missions as _missions
+    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+    res = _missions.submit(mission_id, (body.get('decision') or '').strip(), actor, ask_id=(body.get('ask_id') or None))
+    if res.get('status') == 'refused':
+        raise HTTPException(status_code=403, detail=res.get('message'))
+    if res.get('status') == 'error':
+        raise HTTPException(status_code=400, detail=res.get('message'))
+    return res
+
+
+@app.post("/api/missions/{mission_id}/verify")
+def missions_verify(mission_id: str, body: dict = Body(default={}), request: Request = None):
+    """A parent resolves an attempt the browser could not read: confirmed,
+    failed or unsure, with a detail (a confirmation number)."""
+    from services import missions as _missions
+    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+    res = _missions.verify(mission_id, body.get('ask_id') or None, (body.get('outcome') or '').strip(), actor, detail=body.get('detail') or '')
     if res.get('status') == 'refused':
         raise HTTPException(status_code=403, detail=res.get('message'))
     if res.get('status') == 'error':

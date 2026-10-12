@@ -2,7 +2,7 @@
    components/mission_transcript.html (/missions and the thread card's
    details). One implementation: an Alpine component exposes these under the
    names the template uses (stepKindClass, stepResultText, stepArgsText,
-   isLastAsk, isReleasePending) by delegating here. */
+   isLastAsk, isTapAskPending, submitNoteText) by delegating here. */
 (function () {
   function compact(v) {
     if (v === null || v === undefined) return '';
@@ -28,9 +28,23 @@
       const asks = (mission.steps || []).filter(s => s.kind === 'ask');
       return asks.length > 0 && asks[asks.length - 1].id === step.id;
     },
-    isReleasePending(mission) {
+    isTapAskPending(mission) {
       const asks = (mission.steps || []).filter(s => s.kind === 'ask');
-      return asks.length > 0 && asks[asks.length - 1].name === 'release';
+      return asks.length > 0 && ['release', 'submit', 'verify'].includes(asks[asks.length - 1].name);
+    },
+    isReleasePending(mission) { return this.isTapAskPending(mission); },
+    lastAskId(mission) {
+      const asks = (mission.steps || []).filter(s => s.kind === 'ask');
+      return asks.length ? asks[asks.length - 1].id : null;
+    },
+    submitNoteText(step) {
+      const r = step.result_json || {};
+      if (step.name === 'submit_approved') return `Approved: press '${r.button || ''}'.`;
+      if (step.name === 'submit_attempt') return `Pressed '${r.button || ''}' at ${r.url || ''}: ${r.outcome || 'no answer yet'}` + (r.resolved_by ? ` (${r.resolved_by.name || 'a parent'} said so)` : '') + '.';
+      if (step.name === 'submitted') return (r.verb === 'book' ? 'Booked' : 'Submitted') + (r.confirmation ? `, confirmation ${r.confirmation}` : '') + (r.by_hand ? ` (confirmed by ${r.by || 'a parent'})` : '') + '.';
+      if (step.name === 'submit_rejected') return `The site rejected it: ${r.error || ''}`;
+      if (step.name === 'submit_failed') return `Did not go through${r.detail ? ': ' + r.detail : ''}.`;
+      return r.note || '';
     },
     proposalOutcome(mission, step) {
       const pid = (step.result_json || {}).proposal_id;
@@ -50,14 +64,15 @@
       if (!r.ok) throw new Error(d.detail || "Couldn't do that just now.");
       return d;
     },
-    // POST the release decision; the caller refreshes its own view.
-    async release(apiBase, missionId, decision) {
-      const r = await fetch(apiBase + `api/missions/${missionId}/release`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision })
-      });
+    async _post(apiBase, path, body) {
+      const r = await fetch(apiBase + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.detail || "That didn't work.");
       return d;
-    }
+    },
+    // Every tap carries the ask's id: a stale card can never answer a newer question.
+    release(apiBase, missionId, decision, askId) { return this._post(apiBase, `api/missions/${missionId}/release`, { decision, ask_id: askId }); },
+    submit(apiBase, missionId, decision, askId) { return this._post(apiBase, `api/missions/${missionId}/submit`, { decision, ask_id: askId }); },
+    verify(apiBase, missionId, askId, outcome, detail) { return this._post(apiBase, `api/missions/${missionId}/verify`, { ask_id: askId, outcome, detail: detail || '' }); }
   };
 })();

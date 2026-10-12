@@ -843,6 +843,12 @@ def scenario_release_options_carry_the_ask_id():
     res = missions.release(mid, 'approve', {'id': 'mom', 'role': 'parent'}, ask_id='old')
     check(res.get('moved'), "a stale id moves nothing")
 
+def scenario_submit_and_verify_routes_are_classified_like_release():
+    from services import auth
+    for path in ('/api/missions/x/submit', '/api/missions/x/verify'):
+        check(auth.resolve('POST', path) == auth.resolve('POST', '/api/missions/x/release'), f"{path} is gated like release")
+
+
 SCENARIOS = [scenario_browse_action_runs_the_runner_and_transcribes, scenario_needs_release_pauses_with_the_values_and_tells_the_person,
              scenario_captcha_and_payment_hand_off, scenario_left_the_site_and_refusals_are_notes_the_planner_reads,
              scenario_browse_cap_refuses_before_running, scenario_a_lost_browse_is_reclaimed_by_the_tick,
@@ -870,7 +876,8 @@ SCENARIOS = [scenario_browse_action_runs_the_runner_and_transcribes, scenario_ne
              scenario_a_press_with_no_attempt_is_never_a_booking_and_the_decisions_are_claimed,
              scenario_submit_and_verify_options_carry_the_ask_id_and_route_from_the_thread,
              scenario_submit_and_verify_verbs_are_tap_only_everywhere,
-             scenario_release_options_carry_the_ask_id]
+             scenario_release_options_carry_the_ask_id,
+             scenario_submit_and_verify_routes_are_classified_like_release]
 
 if __name__ == "__main__":
     import traceback

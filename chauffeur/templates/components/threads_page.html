@@ -371,6 +371,7 @@
                 detailsOpen: {},
                 threadMissions: {},      // thread id -> its missions with steps (loaded on open)
                 busy: {},                // mission id -> a proposal act in flight
+                verifyDetail: {},        // mission id -> the words typed beside It went through
 
                 async load() {
                     try {
@@ -582,10 +583,25 @@
                 stepResultText(step) { return window.MissionTranscript.stepResultText(step); },
                 stepArgsText(step) { return window.MissionTranscript.stepArgsText(step); },
                 isLastAsk(mission, step) { return window.MissionTranscript.isLastAsk(mission, step); },
-                isReleasePending(mission) { return window.MissionTranscript.isReleasePending(mission); },
-                async releaseMission(m, decision) {
+                submitNoteText(step) { return window.MissionTranscript.submitNoteText(step); },
+                isTapAskPending(mission) { return window.MissionTranscript.isTapAskPending(mission); },
+                async releaseMission(m, decision, step) {
                     try {
-                        const d = await window.MissionTranscript.release(this.apiBase, m.id, decision);
+                        const d = await window.MissionTranscript.release(this.apiBase, m.id, decision, (step && step.id) || window.MissionTranscript.lastAskId(m));
+                        if (d.message) showGlobalAlert(d.message);
+                        await this.load();
+                    } catch (e) { showGlobalAlert(e.message || "That didn't work."); }
+                },
+                async submitMission(m, decision, step) {
+                    try {
+                        const d = await window.MissionTranscript.submit(this.apiBase, m.id, decision, step.id);
+                        if (d.message) showGlobalAlert(d.message);
+                        await this.load();
+                    } catch (e) { showGlobalAlert(e.message || "That didn't work."); }
+                },
+                async verifyMission(m, outcome, step) {
+                    try {
+                        const d = await window.MissionTranscript.verify(this.apiBase, m.id, step.id, outcome, (this.verifyDetail || {})[m.id] || '');
                         if (d.message) showGlobalAlert(d.message);
                         await this.load();
                     } catch (e) { showGlobalAlert(e.message || "That didn't work."); }

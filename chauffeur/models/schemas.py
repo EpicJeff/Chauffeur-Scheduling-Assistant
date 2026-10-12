@@ -1606,6 +1606,7 @@ class Settings(BaseModel):
     contact_zip: Optional[str] = ''
     contact_preferred: Optional[str] = ''        # text | email | phone
     missions_captcha_attempts: Optional[bool] = False
+    missions_submit_enabled: Optional[bool] = True
     mission_cap_browse_turns: Optional[int] = 400
     # --- Threads (open loops with people outside the family) ---
     # Days of no movement before an open thread counts as quiet (services/

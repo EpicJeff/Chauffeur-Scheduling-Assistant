@@ -34,9 +34,17 @@ def seed():
     storage.update_mission(mid, {'status': 'waiting_user'})
     gt = threads.create('Gutters', owner_member_id='mom', created_by='mom')
     gm = storage.add_mission({'goal': 'get the gutters cleaned', 'origin_kind': 'thread', 'origin_ref': gt, 'created_by': 'mom', 'tier': 'mission'})
-    storage.add_mission_step(gm, {'kind': 'ask', 'name': 'handoff', 'result_json': {'question': 'I got as far as https://gutterco.example/book. Finish it on your phone and tell me what you found.',
-                                                                                    'url': 'https://gutterco.example/book', 'filled': {}, 'reason': 'captcha'}})
+    storage.add_mission_step(gm, {'kind': 'ask', 'name': 'submit', 'result_json': {
+        'question': "Book at gutterco.example: Tue, Oct 20 8AM-12PM, $114.95 (button 'Book now')?", 'verb': 'book', 'site': 'gutterco.example',
+        'url': 'https://gutterco.example/book', 'button': 'Book now', 'state': {'fields': {'notes': ''}, 'selected': ['Tue, Oct 20 8AM-12PM'], 'text': 't', 'text_sha': 'a' * 64, 'prices': ['$114.95']},
+        'display': 'Trip charge $114.95', 'facts': {'slot': 'Tue, Oct 20 8AM-12PM', 'price': '$114.95'}, 'intent': '', 'filled': {'first_name': 'Jeff'}, 'changed': [],
+        'browse': {'goal': 'book', 'site': 'gutterco.example', 'start_url': 'https://gutterco.example/book', 'released': {}}}})
     storage.update_mission(gm, {'status': 'waiting_user'})
+    rt = threads.create('Roof', owner_member_id='mom', created_by='mom')
+    rm = storage.add_mission({'goal': 'get the roof inspected', 'origin_kind': 'thread', 'origin_ref': rt, 'created_by': 'mom', 'tier': 'mission'})
+    storage.add_mission_step(rm, {'kind': 'ask', 'name': 'handoff', 'result_json': {'question': 'I got as far as https://roofco.example/book. Finish it on your phone and tell me what you found.',
+                                                                                    'url': 'https://roofco.example/book', 'filled': {}, 'reason': 'captcha'}})
+    storage.update_mission(rm, {'status': 'waiting_user'})
     kt = threads.create("Kate's science fair", owner_member_id='kid', created_by='mom')
     km = storage.add_mission({'goal': 'science fair supplies', 'origin_kind': 'thread', 'origin_ref': kt, 'created_by': 'mom', 'tier': 'mission'})
     storage.add_mission_step(km, {'kind': 'ask', 'name': 'question', 'result_json': {'question': 'Which day is it?'}})
@@ -66,8 +74,10 @@ def main():
             check('Share with bodewell.com' in tl, "the release ask is shown there too")
             check('Add: call Ace Pools' in tl and det.locator('button:has-text("Approve")').count() == 1, f"a proposal step draws with its Approve: {tl[:400]}")
             check('Jeff' in card.locator('.sit-next button').first.inner_text(), "the Share button shows the exact value")
+            roof = page.locator('#threads .situation-card:has-text("Roof")').first
+            check(roof.locator('a[href="https://roofco.example/book"]').count() == 1, f"the hand-off card carries its link: {roof.inner_html()[:600]}")
             gutters = page.locator('#threads .situation-card:has-text("Gutters")').first
-            check(gutters.locator('a[href="https://gutterco.example/book"]').count() == 1, f"the hand-off card carries its link: {gutters.inner_html()[:600]}")
+            check(gutters.locator('.sit-next button').first.inner_text() == 'Book it', "the submit card leads with Book it")
             card.locator('.sit-next button').first.click()
             page.wait_for_timeout(1500)
             m = [x for x in storage.get_missions() if x['goal'] == 'get the dishwasher fixed'][0]
@@ -81,6 +91,12 @@ def main():
                 page.wait_for_timeout(800)
             tl = det.inner_text()
             check('Not these' not in tl and 'running' in tl, f"the thread's transcript followed the release: {tl[:300]}")
+            gutters.locator('.sit-next button').first.click()
+            page.wait_for_timeout(1500)
+            gm = [x for x in storage.get_missions() if x['goal'] == 'get the gutters cleaned'][0]
+            check(any(s['name'] == 'submit_approved' for s in storage.get_mission_steps(gm['id'])), "Book it from the thread approved with the ask id")
+            if page.locator('#cc-alert-modal').is_visible():
+                page.locator('#cc-alert-modal button:has-text("OK")').click()
             check(not b.errors, f"script errors: {b.errors}")
 
         b = served.browser(color_scheme='dark')

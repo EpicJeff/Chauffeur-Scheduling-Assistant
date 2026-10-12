@@ -670,6 +670,10 @@ ENTRIES: List[dict] = [
        "Off by default. On, a browse may tick a CAPTCHA checkbox and try at most two image challenges, then hands "
        "the page to you.",
        page='work?tab=missions', anchor='browse'),
+    _e('missions_submit_enabled', 'missions', 'Argyle may book and submit forms with your approval',
+       "On by default. A browse that reaches a Book, Confirm, Submit or Send button stops and asks; a parent taps Book it and the "
+       "browser presses once. Payment is never pressed, on or off. Off: the browser stops at such a button and hands you the page.",
+       page='work?tab=missions', anchor='browse'),
     _e('mission_cap_browse_turns', 'missions', 'Daily browse-turn cap',
        "Hard ceiling on browser actions Argyle takes per day across missions (default 400), billed on the paid key.",
        page='work?tab=missions', anchor='browse'),
