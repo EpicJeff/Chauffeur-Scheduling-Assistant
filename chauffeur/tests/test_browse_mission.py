@@ -407,6 +407,13 @@ def _browse_to_submit(mid):
     return missions.step(storage.get_mission(mid))
 
 
+def _press(kw):
+    """What the runner does before its one press: on_attempt authorizes and
+    mints the attempt note. The engine never invents an attempt itself."""
+    ok = kw['on_attempt']({'ask_id': kw['approved']['ask_id'], 'button': kw['approved']['button'], 'url': kw['start_url'],
+                           'state': kw['approved']['state'], 'pressed_at': 1.0, 'outcome': None, 'text': ''})
+    assert ok is True, f"on_attempt refused the press: {ok}"
+
 def scenario_needs_submit_becomes_an_ask_the_person_can_read():
     _reset()
     mid = _mission()
@@ -428,7 +435,7 @@ def scenario_approve_needs_the_ask_id_and_resumes_with_the_record():
     _browse_to_submit(mid)
     ask = storage.get_mission_steps(mid)[-1]
     runs = []
-    missions._browse = lambda **kw: runs.append(kw) or _report('submitted', text='CONFIRMED: 12345', attempt={**kw['approved'], 'pressed_at': 1.0, 'outcome': 'confirmed', 'text': 'Confirmation number 12345'})
+    missions._browse = lambda **kw: runs.append(kw) or _press(kw) or _report('submitted', text='CONFIRMED: 12345', attempt={**kw['approved'], 'pressed_at': 1.0, 'outcome': 'confirmed', 'text': 'Confirmation number 12345'})
     res = missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id='stale')
     check(res['status'] == 'success' and res.get('moved') and not runs and storage.get_mission(mid)['status'] == 'waiting_user', f"a stale id moves nothing: {res}")
     res = missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=None)
@@ -500,6 +507,17 @@ def scenario_on_attempt_authorizes_under_the_lock():
     check(missions._on_attempt_for(mid, sid)({**rec}) is False, "an older step than the newest browse is refused")
     check(missions._on_attempt_for(mid, sid2)({**rec, 'ask_id': 'wrong'}) is False, "a different ask id is refused")
     check(missions._on_attempt_for(mid, sid2)({**rec, 'ask_id': 'a9'}) is True, "with the attempt resolved, the newest step and its id authorize")
+    # Each check alone (review: three of the four were unpinned): every other condition holds.
+    for a in missions.attempts_for(mid):
+        storage.update_mission_step(a['step_id'], {'result_json': {**a, 'outcome': 'rejected'}})
+    check(missions._on_attempt_for(mid, sid2)({**rec, 'ask_id': 'a9'}) is False, "(b) the newest step, browsing, id matches, all resolved, but SPENT: refused")
+    sid_old = storage.add_mission_step(mid, {'kind': 'browse', 'name': 'bodewell.com', 'args_json': {'goal': 'g', 'site': 'bodewell.com', 'approved_ask_id': 'a11', 'approval_spent': False}, 'result_json': None})
+    # The newer step carries the same unspent approval, so only the newest-step check can refuse.
+    storage.add_mission_step(mid, {'kind': 'browse', 'name': 'bodewell.com', 'args_json': {'goal': 'g', 'site': 'bodewell.com', 'approved_ask_id': 'a11', 'approval_spent': False}, 'result_json': None})
+    check(missions._on_attempt_for(mid, sid_old)({**rec, 'ask_id': 'a11'}) is False, "(a) unspent, id matches, all resolved, browsing, but an OLDER step: refused")
+    sid_new = storage.add_mission_step(mid, {'kind': 'browse', 'name': 'bodewell.com', 'args_json': {'goal': 'g', 'site': 'bodewell.com'}, 'result_json': None})
+    check(missions._on_attempt_for(mid, sid_new)({**rec, 'ask_id': None}) is False, "(c) the newest step was never approved: a None ask id is not a match")
+    check(len([a for a in missions.attempts_for(mid) if a['outcome'] is None]) == 0, "and none of the refusals wrote an attempt")
     storage.update_mission(mid, {'status': 'running'})
     sid3 = storage.add_mission_step(mid, {'kind': 'browse', 'name': 'bodewell.com', 'args_json': {'goal': 'g', 'site': 'bodewell.com', 'approved_ask_id': 'a10', 'approval_spent': False}, 'result_json': None})
     for a in missions.attempts_for(mid):
@@ -528,7 +546,7 @@ def scenario_outcomes_after_the_press_write_the_attempt_first():
         mid = _mission()
         _browse_to_submit(mid)
         ask = storage.get_mission_steps(mid)[-1]
-        missions._browse = lambda **kw: _report(outcome, text=f'{att}: x', attempt={**kw['approved'], 'pressed_at': 1.0, 'outcome': att, 'text': 'Confirmation number 12345' if att == 'confirmed' else 'x'})
+        missions._browse = lambda **kw: _press(kw) or _report(outcome, text=f'{att}: x', attempt={**kw['approved'], 'pressed_at': 1.0, 'outcome': att, 'text': 'Confirmation number 12345' if att == 'confirmed' else 'x'})
         missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=ask['id'])
         notes = missions.attempts_for(mid)
         check(len(notes) == 1 and notes[0]['outcome'] == att, f"{outcome}: the attempt note resolved {att}: {notes}")
@@ -572,7 +590,7 @@ def scenario_verify_resolves_the_attempt_by_tap():
     mid = _mission()
     _browse_to_submit(mid)
     ask = storage.get_mission_steps(mid)[-1]
-    missions._browse = lambda **kw: _report('submit_unknown', text='UNKNOWN', attempt={**kw['approved'], 'pressed_at': 1.0, 'outcome': 'unknown', 'text': 'spinner'})
+    missions._browse = lambda **kw: _press(kw) or _report('submit_unknown', text='UNKNOWN', attempt={**kw['approved'], 'pressed_at': 1.0, 'outcome': 'unknown', 'text': 'spinner'})
     missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=ask['id'])
     vask = storage.get_mission_steps(mid)[-1]
     res = missions.verify(mid, 'stale', 'confirmed', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, detail='12345')
@@ -589,7 +607,7 @@ def scenario_verify_resolves_the_attempt_by_tap():
     mid = _mission()
     _browse_to_submit(mid)
     ask = storage.get_mission_steps(mid)[-1]
-    missions._browse = lambda **kw: _report('submit_unknown', text='UNKNOWN', attempt={**kw['approved'], 'pressed_at': 1.0, 'outcome': 'unknown', 'text': ''})
+    missions._browse = lambda **kw: _press(kw) or _report('submit_unknown', text='UNKNOWN', attempt={**kw['approved'], 'pressed_at': 1.0, 'outcome': 'unknown', 'text': ''})
     missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=ask['id'])
     vask = storage.get_mission_steps(mid)[-1]
     missions.verify(mid, vask['id'], 'failed', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, detail='nothing in my email')
@@ -605,7 +623,7 @@ def scenario_a_late_report_never_overwrites_a_parents_answer_and_only_the_live_b
     mid = _mission()
     _browse_to_submit(mid)
     ask = storage.get_mission_steps(mid)[-1]
-    missions._browse = lambda **kw: _report('submit_unknown', text='UNKNOWN', attempt={**kw['approved'], 'pressed_at': 1.0, 'outcome': 'unknown', 'text': ''})
+    missions._browse = lambda **kw: _press(kw) or _report('submit_unknown', text='UNKNOWN', attempt={**kw['approved'], 'pressed_at': 1.0, 'outcome': 'unknown', 'text': ''})
     missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=ask['id'])
     old_browse = [s for s in storage.get_mission_steps(mid) if s['kind'] == 'browse'][-1]
     vask = storage.get_mission_steps(mid)[-1]
@@ -651,6 +669,76 @@ def scenario_an_unasked_attempt_is_recorded_after_the_fact():
     check(len(a) == 1 and a[0]['unasked'] and a[0]['outcome'] == 'unknown' and a[0]['ask_id'] is None and last['name'] == 'verify' and last['result_json']['attempt_step_id'] == a[0]['step_id'],
           f"the unasked attempt and its verify ask: {a} {last['name']}")
 
+
+def scenario_an_unasked_press_after_continued_is_verified_beside_the_approved_attempt():
+    """Review fix (Task 5, I2): the runner keeps the CONTINUED attempt in
+    `attempt` and puts a later unasked press in `attempts_extra`; both reach
+    the transcript and the verify ask names the unasked press."""
+    _reset()
+    mid = _mission()
+    _browse_to_submit(mid)
+    ask = storage.get_mission_steps(mid)[-1]
+
+    def fake(**kw):
+        _press(kw)
+        return _report('submit_unknown', text="confirmation page after an ungated press of 'Go'",
+                       attempt={**kw['approved'], 'pressed_at': 1.0, 'outcome': 'continued', 'text': 'the next step of the form'},
+                       attempts_extra=[{'ask_id': None, 'button': 'Go', 'url': 'https://www.bodewell.com/x', 'state': {}, 'pressed_at': 2.0,
+                                        'outcome': 'unknown', 'text': 'Thank you', 'unasked': True}])
+    missions._browse = fake
+    missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=ask['id'])
+    atts = missions.attempts_for(mid)
+    approved = [a for a in atts if a.get('ask_id') == ask['id']]
+    unasked = [a for a in atts if a.get('unasked')]
+    last = storage.get_mission_steps(mid)[-1]
+    check(len(atts) == 2 and len(approved) == 1 and approved[0]['outcome'] == 'continued' and len(unasked) == 1 and unasked[0]['outcome'] == 'unknown',
+          f"the approved attempt resolves continued, the unasked one is on record unknown: {atts}")
+    check(last['kind'] == 'ask' and last['name'] == 'verify' and last['result_json']['button'] == 'Go' and last['result_json']['attempt_step_id'] == unasked[0]['step_id']
+          and storage.get_mission(mid)['status'] == 'waiting_user', f"the verify ask names the unasked press: {last['name']} {last.get('result_json')}")
+
+def scenario_a_press_with_no_attempt_is_never_a_booking_and_the_decisions_are_claimed():
+    """Review fixes (Task 5, minors 4-6): only on_attempt mints an attempt, so a
+    'submitted' with none on record is checked by the person, never booked; a
+    capped approve says so; decline and stop are claimed under the lock."""
+    _reset()
+    mid = _mission()
+    _browse_to_submit(mid)
+    ask = storage.get_mission_steps(mid)[-1]
+    missions._browse = lambda **kw: _report('submitted', text='CONFIRMED: 12345', attempt={**kw['approved'], 'pressed_at': 1.0, 'outcome': 'confirmed', 'text': 'Confirmation number 12345'})
+    missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=ask['id'])
+    steps = storage.get_mission_steps(mid)
+    last = steps[-1]
+    check(not any(s['name'] == 'submitted' for s in steps) and not missions.attempts_for(mid) and last['kind'] == 'ask' and last['name'] == 'handoff'
+          and 'not counting' in last['result_json']['question'] and storage.get_mission(mid)['status'] == 'waiting_user',
+          f"a submitted with no attempt on record is a question, not a booking: {last['name']} {last.get('result_json')}")
+    _reset()
+    mid = _mission()
+    _browse_to_submit(mid)
+    ask = storage.get_mission_steps(mid)[-1]
+    storage.set_app_state(f"mission_calls:{date.today().isoformat()}", {'browse_turns': 400})
+    ran = []
+    missions._browse = lambda **kw: ran.append(1) or _report('done')
+    res = missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=ask['id'])
+    last = storage.get_mission_steps(mid)[-1]
+    check(not ran and 'cap' in res['message'] and 'now' not in res['message'] and storage.get_mission(mid)['status'] == 'running'
+          and last['name'] == 'refused', f"a capped approve says so: {res} {last['name']}")
+    _reset()
+    mid = _mission()
+    _browse_to_submit(mid)
+    ask = storage.get_mission_steps(mid)[-1]
+    a = missions.submit(mid, 'decline', {'id': 'mom', 'role': 'parent'}, ask_id=ask['id'])
+    b = missions.submit(mid, 'decline', {'id': 'mom', 'role': 'parent'}, ask_id=ask['id'])
+    check(a['status'] == 'success' and not a.get('already') and b.get('already')
+          and len([s for s in storage.get_mission_steps(mid) if s['name'] == 'handoff']) == 1, f"a second decline is already: {a} {b}")
+    _reset()
+    mid = _mission()
+    _browse_to_submit(mid)
+    ask = storage.get_mission_steps(mid)[-1]
+    ran = []
+    missions._browse = lambda **kw: ran.append(1) or _report('done')
+    missions.submit(mid, 'stop', {'id': 'mom', 'role': 'parent'}, ask_id=ask['id'])
+    b = missions.submit(mid, 'approve', {'id': 'mom', 'role': 'parent'}, ask_id=ask['id'])
+    check(b.get('already') and not ran and storage.get_mission(mid)['status'] == 'blocked', f"an approve after a stop is already, nothing runs: {b}")
 
 def scenario_the_finish_says_booked_and_the_planner_knows_the_rules():
     _reset()
@@ -706,7 +794,9 @@ SCENARIOS = [scenario_browse_action_runs_the_runner_and_transcribes, scenario_ne
              scenario_a_late_report_never_overwrites_a_parents_answer_and_only_the_live_browse_moves_the_mission,
              scenario_the_reclaim_marks_a_pending_attempt_unknown_and_verifies,
              scenario_an_unasked_attempt_is_recorded_after_the_fact,
-             scenario_the_finish_says_booked_and_the_planner_knows_the_rules]
+             scenario_the_finish_says_booked_and_the_planner_knows_the_rules,
+             scenario_an_unasked_press_after_continued_is_verified_beside_the_approved_attempt,
+             scenario_a_press_with_no_attempt_is_never_a_booking_and_the_decisions_are_claimed]
 
 if __name__ == "__main__":
     import traceback

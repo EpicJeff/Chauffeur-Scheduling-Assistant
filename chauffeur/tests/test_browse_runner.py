@@ -835,6 +835,23 @@ def scenario_the_approved_match_holes_are_closed():
     check(r['attempt'] is not None and len(H.posts) <= 1, f"an intent-approved control is pressed through the approved path: {r['outcome']} {r['attempt']}")
 
 
+def scenario_an_unasked_press_after_continued_rides_beside_the_approved_attempt():
+    """Review fix (Task 5, I2): the confirmation backstop never overwrites the
+    approved attempt a CONTINUED already resolved; the unasked press is in
+    attempts_extra."""
+    from browse_pages import H, PAGES
+    approved2, xy = _approved_for('/stepcontinue', '#cont', ask_id='a2', intent='submit the slot')
+    PAGES['/sneaky'] = '<h1>Hi</h1><div id="go" role="button" onclick="location.href=\'/thanks\'">Go</div><p>plain copy</p>'
+    g = _xy(f'{URL}/sneaky', '#go')
+    browse._model_step = _script([{'name': 'click_at', 'args': {'x': xy[0], 'y': xy[1], 'intent': 'submit the slot'}}],
+                                 'CONTINUED: the booking page with Tue selected',
+                                 [{'name': 'navigate', 'args': {'url': f'{URL}/sneaky'}}], [_click(g)], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/stepcontinue', out_dir=OUT, approved=approved2, on_attempt=lambda rec: True)
+    extra = r.get('attempts_extra') or []
+    check(r['outcome'] == 'submit_unknown' and r['attempt']['outcome'] == 'continued' and r['attempt']['ask_id'] == 'a2'
+          and len(extra) == 1 and extra[0]['unasked'] and extra[0]['button'] == 'Go' and extra[0]['outcome'] == 'unknown' and extra[0]['ask_id'] is None,
+          f"the approved attempt stays continued, the unasked press rides beside it: {r['outcome']} {r.get('attempt')} {extra}")
+
 SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
@@ -856,7 +873,8 @@ SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_typ
              scenario_the_approved_press_runs_once_only_when_everything_matches, scenario_the_approved_press_refuses_when_the_page_moved,
              scenario_the_outcome_lines_and_the_end_of_the_run,
              scenario_continued_resumes_unapproved_and_payment_after_the_press_keeps_the_attempt,
-             scenario_an_approved_run_that_writes_submit_presses_through_the_same_match, scenario_the_approved_match_holes_are_closed]
+             scenario_an_approved_run_that_writes_submit_presses_through_the_same_match, scenario_the_approved_match_holes_are_closed,
+             scenario_an_unasked_press_after_continued_rides_beside_the_approved_attempt]
 
 if __name__ == "__main__":
     import traceback

@@ -916,7 +916,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
     report = {'outcome': 'error', 'text': '', 'learned': {}, 'stopped_at': start_url or '', 'wanted_fields': [],
               'turns': 0, 'actions': 0, 'tokens_in': 0, 'tokens_out': 0, 'seconds': 0.0, 'screenshots': [], 'filled': {},
               'turns_log': [], 'browser': 'headless' if _headless() else 'headed',
-              'submit': None, 'attempt': None, 'changed': []}
+              'submit': None, 'attempt': None, 'changed': [], 'attempts_extra': []}
 
     def finish(outcome, text):
         att = report.get('attempt')
@@ -1284,8 +1284,14 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                     if not press_now and not pressed and (name.startswith('click') or name.startswith('double') or enter or _wants_space(name, args)) and _is_confirmation(scan):
                         src = ctl if (name.startswith('click') or name.startswith('double')) else focused
                         label = (src or {}).get('text') or ''
-                        report['attempt'] = {'ask_id': None, 'button': label, 'url': before, 'state': (src or {}).get('state') or {},
-                                             'pressed_at': time.time(), 'outcome': 'unknown', 'text': (scan.get('text') or '')[:300], 'unasked': True}
+                        unasked = {'ask_id': None, 'button': label, 'url': before, 'state': (src or {}).get('state') or {},
+                                   'pressed_at': time.time(), 'outcome': 'unknown', 'text': (scan.get('text') or '')[:300], 'unasked': True}
+                        if report.get('attempt'):
+                            # An approved attempt already resolved this run (CONTINUED):
+                            # it stays the run's attempt; the unasked press rides beside it.
+                            report['attempts_extra'].append(unasked)
+                        else:
+                            report['attempt'] = unasked
                         report['stopped_at'] = page.url
                         return finish('submit_unknown', f"confirmation page after an ungated press of '{label}'")
                 shot = page.screenshot(type='png')
