@@ -540,7 +540,7 @@
    script on purpose — test_nav_runtime executes the LAST script block on the
    page as nav's. #}
 {% include 'components/card_timers.html' %}
-<script src="{{ 'static/house_return.js'|ver }}"></script>
+<script src="{{ 'static/house_return.js'|ver }}" data-house-home="{{ 'true' if house_home_enabled() else 'false' }}"></script>
 <script>
     // Auth arc S6: a panel is a PLACE, not a person. It holds a device token
     // rather than a member session, because it has to come up after a power

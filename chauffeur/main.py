@@ -1410,7 +1410,17 @@ def _household_features() -> dict:
         return {'critters': True, 'rewards': True}
 
 
+def _house_home_enabled() -> bool:
+    """Is The House the panel's home? nav.html hands it to house_return.js,
+    which must never offer a way back to a House the household switched off."""
+    try:
+        return bool((storage.get_settings() or {}).get('panel_house_home'))
+    except Exception:
+        return False
+
+
 templates.env.globals['household_features'] = _household_features
+templates.env.globals['house_home_enabled'] = _house_home_enabled
 templates.env.globals['shelf_order'] = _shelf_order
 templates.env.globals['shelf_boards'] = _shelf_boards
 
@@ -11029,7 +11039,11 @@ def routines_streaks():
             # has read since A4, finally reaching the wall.
             'shell': _stages.lane_shell(m),
         })
-    out.sort(key=lambda x: (-x['streak']['current'], x['name'] or ''))
+    # NAME order, the same order the hearth strip above the lanes draws its
+    # cards in (home_board._tile_kids). This was a leaderboard — longest
+    # streak first — so the lanes reordered under a strip that did not, and a
+    # child's lane sat beneath somebody else's card (2026-10-12).
+    out.sort(key=lambda x: (x['name'] or ''))
     return out
 
 # --- Prep kits (packing lists matched to events by title keywords) ---

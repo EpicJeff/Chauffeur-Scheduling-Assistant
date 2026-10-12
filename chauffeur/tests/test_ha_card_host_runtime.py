@@ -183,6 +183,25 @@ H.mountBuiltin(container, {
 """
 
 
+# A custom card's own file, requested the only way a browser can request a
+# script: a tag, with no headers. The token has to ride the URL.
+TOKEN_PROBE = r"""
+globalThis.HTMLElement = class {};
+var made = [];
+var _create = document.createElement;
+document.createElement = function (tag) { var e = _create(tag); made.push(e); return e; };
+window.chfAuthUrl = function (url) {
+  return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'device_token=dev-abc';
+};
+H.mount(fakeEl('div'), { id: 't/c0', tag: 'foo-card', apiBase: 'base/',
+  resource: '/hacsfiles/foo/foo.js?hacstag=1', resourceType: 'module',
+  config: { type: 'custom:foo-card' } });
+var script = made.filter(function (e) { return e.tagName === 'script'; })[0] || {};
+console.log(JSON.stringify({ src: script.src || null, type: script.type || null }));
+process.exit(0);
+"""
+
+
 def _run(probe=None):
     node = shutil.which('node')
     if not node:
@@ -346,6 +365,23 @@ def scenario_a_cards_own_name_survives_the_real_card():
     check(got['unnamedFallsBack'] == 'Sensor A',
           f"with no name in the config the entity's own name is the answer, "
           f"not {got['unnamedFallsBack']!r}")
+
+
+def scenario_a_cards_script_tag_carries_the_panels_token():
+    """Found 2026-10-12: enforcement on, the wall tier opened to the card
+    lanes (test_auth e4) — and custom cards still said "Home Assistant would
+    not hand over". A `<script src>` sets no headers, so the proxy saw no
+    token at all and refused it. nav's `chfAuthUrl` puts the token on the
+    query string for exactly this class of caller; the host uses it."""
+    got = _run(BUILTIN_PROBE.split('var wpr = function')[0] + TOKEN_PROBE)
+    if got is None:
+        print("  skip  node is not installed")
+        return
+    src = got['src'] or ''
+    check(src.startswith('base/api/ha/card/resource?url=')
+          and 'device_token=dev-abc' in src,
+          f"the card's script tag carries no token: {src!r}")
+    check(got['type'] == 'module', "the declared module type was lost")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

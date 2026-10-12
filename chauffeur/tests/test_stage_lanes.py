@@ -92,6 +92,25 @@ def scenario_the_lanes_actually_ask():
           "chores lanes scale rows and stop leading with points per stage")
 
 
+def scenario_the_lanes_keep_the_strips_order():
+    """The routines board draws the hearth strip over the lanes, one card
+    per child in NAME order (home_board._tile_kids). The lanes sorted by
+    streak — a leaderboard — so a child's lane sat under somebody else's
+    card and the two reordered against each other as the day went on (user
+    report 2026-10-12, with a screenshot). One fixed order for both."""
+    import main
+    _seed()
+    today = datetime.date.today().isoformat()
+    storage.set_routine_check("r-tot", "tot", today, True)
+    rows = main.routines_streaks()
+    by_id = {r['member_id']: r for r in rows}
+    check(by_id['tot']['streak']['current'] >= 1,
+          f"the seed gave Tot no streak, so this proves nothing: {by_id['tot']['streak']}")
+    check([r['name'] for r in rows] == ['Mom', 'Teen', 'Tot'],
+          f"the lanes are a leaderboard again, not the strip's order: "
+          f"{[r['name'] for r in rows]}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

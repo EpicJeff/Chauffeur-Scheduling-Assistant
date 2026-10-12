@@ -5,6 +5,18 @@
   var home = new URL(base + 'house', location.href);
   var onHouse = location.pathname.replace(/\/$/, '') === home.pathname;
   var returnKey = 'chauffeur_house_return', parentKey = 'chauffeur_house_parent';
+  // The button is a way back from a page the House opened, never a fixture
+  // of the tab (user report 2026-10-12: the House off, the Home board on the
+  // wall, and every page wore it — the address below was written once by a
+  // parent visit and a wall panel's tab lives for weeks). So: a panel page
+  // never wears it (the House links out with panel=false; a panel page has
+  // the shelf), a household with the House off never wears it (nav.html
+  // hands the setting over as data-house-home), and arriving at the House
+  // consumes the address.
+  var query = new URLSearchParams(location.search);
+  var panelPage = query.get('panel') === 'true';
+  var tag = document.currentScript;
+  var houseOn = !tag || !tag.dataset || tag.dataset.houseHome !== 'false';
   var IDLE = 5 * 60 * 1000, timer = null;
   function read(key) { try { return JSON.parse(sessionStorage.getItem(key) || 'null'); } catch (_) { return null; } }
   function save(key, value) { sessionStorage.setItem(key, JSON.stringify(value)); }
@@ -48,7 +60,7 @@
     if(session){session.active=Date.now();save(parentKey,session);}
   };
   window.chfHouseReturn = function () { lock(true); };
-  if (onHouse) lock(false);
+  if (onHouse) { lock(false); sessionStorage.removeItem(returnKey); }
   // History entries remember that this was a parent visit even if Back
   // reloads the page instead of restoring it from the browser's cache.
   var protectedVisit = !onHouse && (!!read(parentKey) || !!(history.state || {}).chfHouseVisit);
@@ -59,7 +71,7 @@
     return true;
   }
   function mount() {
-    if (!check() || onHouse || !read(returnKey)) return;
+    if (!check() || onHouse || panelPage || !houseOn || !read(returnKey)) return;
     var button = document.createElement('button');
     button.id = 'house-return'; button.type = 'button';
     button.textContent = protectedVisit ? '← Lock & return to house' : '← Back to house';

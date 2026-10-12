@@ -187,6 +187,15 @@ RULES = [
     # are the same unauthenticated statics HA hands any browser pre-sign-in —
     # but everything above them stays behind the wall tier because history
     # and registries ARE household data.
+    # ...except the frontend's own code and its default theme sheet, which
+    # a browser can only request with a `<script>`/`<link>` tag — no headers,
+    # so no token — and which are the same unauthenticated statics HA hands
+    # any browser before sign-in. Nothing of the household is in them
+    # (`frontend_file_allowed` keeps the lane to /frontend_latest/). Found
+    # 2026-10-12: the wall tier alone left the runtime refused with a 401
+    # it could never have satisfied.
+    ('GET', '/api/ha/frontend/latest/{fname}', ANYONE, None),
+    ('GET', '/api/ha/frontend/theme/{app_hash}.css', ANYONE, None),
     ('GET', '/api/ha/frontend/*', WALL, None),
     # The hosted camera elements' two lanes — a frame and the MJPEG stream —
     # drawn as bare <img> by panels, same as the artwork proxy above them.

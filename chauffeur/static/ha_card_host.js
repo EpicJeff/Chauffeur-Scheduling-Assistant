@@ -304,7 +304,12 @@
         if (loading[url]) return loading[url];
         loading[url] = new Promise(function (resolve, reject) {
             var el = document.createElement('script');
-            el.src = API.base + 'api/ha/card/resource?url=' + encodeURIComponent(url);
+            var src = API.base + 'api/ha/card/resource?url=' + encodeURIComponent(url);
+            // A script tag sets no headers, so the panel's token rides the
+            // query string — nav's chfAuthUrl, the same way an <img> or an
+            // EventSource carries it. Without it an enforcing house refused
+            // every custom card with a 401 the wall could have satisfied.
+            el.src = window.chfAuthUrl ? window.chfAuthUrl(src) : src;
             // The declared type matters: a bundle written as a classic script
             // with top-level `var` globals behaves differently in module scope.
             // HA tells us which it registered, and we believe it.

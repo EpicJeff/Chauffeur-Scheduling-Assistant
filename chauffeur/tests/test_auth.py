@@ -285,6 +285,42 @@ def scenario_i_impersonation_is_refused_only_when_enforcing():
     _with_fake_storage(body)
 
 
+def scenario_e5_the_borrowed_frontend_is_public_code_and_a_card_script_carries_a_token():
+    """Found 2026-10-12, three days after the flip: custom cards STILL did
+    not load. e4 opened the lanes to the wall tier, but a `<script src>` and a
+    `<link href>` set no headers, so the card host's script tag arrived with
+    no token at all and was refused (401) on a tier it could have satisfied.
+    The same holds for the borrowed runtime, its chunks and the theme sheet,
+    which `/api/ha/frontend/*` kept behind the wall tier.
+
+    Two different answers, on purpose. HA's frontend chunks and its default
+    theme tokens are the same unauthenticated statics HA hands any browser
+    before sign-in — nothing of the household is in them — so they are
+    public here too. A CUSTOM card's file is proxied out of HA's `/local/`
+    and `/hacsfiles/` directories, where a household's own files live, so
+    that lane stays on the wall tier and the host puts the panel's token on
+    the query string instead (nav's `chfAuthUrl`, the same way an `<img>` or
+    an EventSource carries it)."""
+    for p in ('/api/ha/frontend/latest/{fname}',
+              '/api/ha/frontend/theme/{app_hash}.css'):
+        check(auth.resolve('GET', p) == auth.ANYONE,
+              f"{p} is not public, so the borrowed runtime's own script tag "
+              f"(which can carry no token) is refused: {auth.resolve('GET', p)}")
+    # ...and only those: the registries, history and the bundle manifest ARE
+    # household data and stay on the wall tier.
+    for p in ('/api/ha/frontend/bundle', '/api/ha/frontend/history',
+              '/api/ha/frontend/icons', '/api/ha/frontend/translations'):
+        check(auth.resolve('GET', p) == auth.WALL,
+              f"{p} left the wall tier: {auth.resolve('GET', p)}")
+    check(auth.resolve('GET', '/api/ha/card/resource') == auth.WALL,
+          "a custom card's file (proxied out of HA's /local/) went public")
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            'static', 'ha_card_host.js'), encoding='utf-8').read()
+    at = src.index("api/ha/card/resource?url=")
+    check('chfAuthUrl' in src[at - 400:at + 400],
+          "the card host's script tag does not carry the panel's token")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 
