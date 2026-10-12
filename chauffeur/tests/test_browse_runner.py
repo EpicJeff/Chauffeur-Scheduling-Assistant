@@ -37,6 +37,22 @@ def _reset(consent=False, cap_turns=40, submit=True):
     H.posts.clear()
 
 
+def _recording(*turns):
+    """_script, plus the list of what each model call was shown last."""
+    inner, seen = _script(*turns), []
+
+    def fake(contents, settings):
+        seen.append(contents[-1])
+        return inner(contents, settings)
+    return fake, seen
+
+
+def _errors(seen) -> list:
+    """Every error the runner answered the model with."""
+    return [str(fr[1].get('error')) for c in seen if isinstance(c, dict) and 'function_responses' in c
+            for fr in c['function_responses'] if fr[1].get('error')]
+
+
 def _click(sel_text_xy):
     x, y = sel_text_xy
     return {'name': 'click_at', 'args': {'x': x, 'y': y}}
@@ -79,9 +95,18 @@ def scenario_submit_stop_by_words_not_by_type():
     browse._model_step = _script([{'name': 'click_at', 'args': {'x': conf[0], 'y': conf[1], 'intent': 'press the button'}}], 'DONE.')
     r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/form2', out_dir=OUT)
     check(r['outcome'] == 'needs_submit' and r['submit']['button'] == 'Confirm', f"Confirm asks: {r['outcome']}")
-    browse._model_step = _script([{'name': 'click_at', 'args': {'x': 500, 'y': 100, 'intent': 'submit the booking'}}], 'DONE.')
+    # A submit intent over a blank spot: no control, no state, so no question (it could never be re-checked).
+    # Once the model is told to name the control; a second time the run ends blocked.
+    blank = {'name': 'click_at', 'args': {'x': 500, 'y': 100, 'intent': 'submit the booking'}}
+    fake, seen = _recording([blank], 'DONE.')
+    browse._model_step = fake
     r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/form2', out_dir=OUT)
-    check(r['outcome'] == 'needs_submit' and r['submit']['button'] == '' and r['submit']['intent'] == 'submit the booking', f"a submit intent on a blank spot asks by intent: {r.get('submit')}")
+    told = _errors(seen)
+    check(r['outcome'] == 'done' and r['submit'] is None and any('SUBMIT:' in e for e in told), f"a blank-spot submit intent is refused and the model told: {r['outcome']} {told}")
+    browse._model_step = _script([blank], [blank], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/form2', out_dir=OUT)
+    check(r['outcome'] == 'blocked' and r['text'].startswith('form state unreadable') and 'could not be resolved' in r['text'] and r['submit'] is None,
+          f"the second time it is blocked, never a question with no button: {r['outcome']} {r['text']}")
 
 
 def scenario_domain_allowlist_learns_redirects_only():
@@ -538,6 +563,14 @@ def scenario_word_lists_split_pay_from_submit():
     check(browse.MONEY.findall('Trip charge $114.95 and 20 USD') == ['$114.95', '20 USD'], "money amounts")
     check(browse.CONFIRMATION_MARKERS.search('Thank you for your booking. Confirmation number 12345'), "a confirmation page")
     check(not browse.CONFIRMATION_MARKERS.search('Choose a slot. Trip charge $114.95'), "a form is not a confirmation")
+    check(not browse.COMMIT_CONTEXT.search('This site is protected by reCAPTCHA and the Google Privacy Policy and Terms of Service apply.'),
+          "reCAPTCHA's legal line is not agreement language")
+    for t in ('By clicking Book you agree', 'I agree to the terms', 'Terms and Conditions', 'Total: $114.95', 'Review your request'):
+        check(browse.COMMIT_CONTEXT.search(t), f"{t!r} is commitment language")
+    for k, want in (({'keys': 'Shift+Enter'}, ['shift', 'enter']), ({'keys': ['Control', 'Enter']}, ['control', 'enter']),
+                    ({'keys': 'NumpadEnter'}, ['enter']), ({'key': 'Return'}, ['enter']), ({'keys': ' '}, ['space']),
+                    ({'keys': ['Spacebar']}, ['space']), ({'keys': 'Tab'}, ['tab'])):
+        check(browse._keys_of(k) == want, f"{k}: {browse._keys_of(k)}")
 
 
 def scenario_control_record_reads_the_scope():
@@ -579,7 +612,8 @@ def scenario_classification_is_by_evidence_not_label():
              ('/lockin', '#lock', '', 'submit'), ('/tiles', '#t1', '', 'run'), ('/pricedcontinue', '#cont', '', 'submit'),
              ('/stepcontinue', '#cont', '', 'run'), ('/form', '#next', '', 'run'), ('/iconbtn', '#icon', '', 'submit'),
              ('/disabledbook', '#book', '', 'run'), ('/framedbook', '#w', '', 'run'), ('/framedbook', '#w', 'book the slot', 'submit'),
-             ('/tiles', '#t1', 'confirm the booking', 'submit'), ('/cookie', '#accept', 'pay for it', 'pay')]
+             ('/tiles', '#t1', 'confirm the booking', 'submit'), ('/cookie', '#accept', 'pay for it', 'pay'),
+             ('/fulltrip', '#next', '', 'run')]
     for path, sel, intent, want in cases:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
@@ -663,9 +697,15 @@ def scenario_the_fallback_classifies_unfamiliar_labels_by_evidence():
     r = browse.run('x', SITE, {'zip': '27519'}, {}, start_url=f'{URL}/iconbtn', out_dir=OUT)
     check(r['submit']['button'] == 'Submit request', "an icon button's question names its aria-label")
     xy = _xy(f'{URL}/framedbook', '#w')
-    browse._model_step = _script([{'name': 'click_at', 'args': {'x': xy[0], 'y': xy[1], 'intent': 'book the slot in the widget'}}], 'DONE.')
+    framed = {'name': 'click_at', 'args': {'x': xy[0], 'y': xy[1], 'intent': 'book the slot in the widget'}}
+    fake, seen = _recording([framed], 'DONE.')
+    browse._model_step = fake
     r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/framedbook', out_dir=OUT)
-    check(r['outcome'] == 'needs_submit' and r['submit']['button'] == '', "an iframe under the point: the intent still gates")
+    check(r['outcome'] == 'done' and r['submit'] is None and any('SUBMIT:' in e for e in _errors(seen)),
+          f"an iframe under the point: the intent still gates, refused and told (no question it cannot answer): {r['outcome']}")
+    browse._model_step = _script([framed], [framed], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/framedbook', out_dir=OUT)
+    check(r['outcome'] == 'blocked' and r['text'].startswith('form state unreadable') and r['submit'] is None, f"twice: blocked: {r['outcome']} {r['text']}")
     xy = _xy(f'{URL}/longform', '#book')
     browse._model_step = _script([_click(xy)], 'DONE.')
     r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/longform', out_dir=OUT)
@@ -821,12 +861,14 @@ def scenario_the_approved_match_holes_are_closed():
     browse._model_step = _script([_click(xy)], 'DONE.')
     r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT, approved={**approved, 'url': 'https://elsewhere.example/x'}, on_attempt=lambda rec: True)
     check(r['outcome'] == 'needs_submit' and not H.posts and any(c.startswith('site:') for c in r['changed']), f"a domain mismatch re-asks with site: {r['changed']}")
-    # Enter and Space in one combination: one on_attempt.
+    # Enter and Space in one combination, focus in the booking form: one on_attempt, one POST.
     calls = []
     approved_f, _ = _approved_for('/booking')
-    browse._model_step = _script([{'name': 'key_combination', 'args': {'keys': ['Enter', 'Space']}}], 'DONE.')
+    nx, ny = _xy(f'{URL}/booking', 'input[name=notes]')
+    browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': nx, 'y': ny, 'text': ''}}],
+                                 [{'name': 'key_combination', 'args': {'keys': ['Enter', 'Space']}}], 'DONE.')
     r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT, approved=approved_f, on_attempt=lambda rec: calls.append(rec) or True)
-    check(len(calls) <= 1, f"Enter+Space gates once: {len(calls)}")
+    check(len(calls) == 1 and len(H.posts) == 1, f"Enter+Space gates once and presses once: on_attempt={len(calls)} posts={len(H.posts)} {r['outcome']}")
     # Approved on intent words alone: the re-run with no intent still goes through the approved path.
     H.posts.clear()
     approved_i, xy2 = _approved_for('/stepcontinue', '#cont', intent='submit the slot')
@@ -852,6 +894,90 @@ def scenario_an_unasked_press_after_continued_rides_beside_the_approved_attempt(
           and len(extra) == 1 and extra[0]['unasked'] and extra[0]['button'] == 'Go' and extra[0]['outcome'] == 'unknown' and extra[0]['ask_id'] is None,
           f"the approved attempt stays continued, the unasked press rides beside it: {r['outcome']} {r.get('attempt')} {extra}")
 
+def scenario_every_press_path_goes_through_the_gate():
+    """Final review C1: type_text_at's click, a typed newline or space, a key
+    chord in a string, a drag that lands where it grabbed, and Enter on a
+    focused link each press a control; each one is gated like a click."""
+    from browse_pages import H
+    _reset()
+    book = _xy(f'{URL}/booking', '#book')
+    browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': book[0], 'y': book[1], 'text': 'x'}}], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT)
+    check(r['outcome'] == 'needs_submit' and r['submit']['button'] == 'Book appointment' and not H.posts,
+          f"type_text_at aimed at Book: its click is the press, gated: {r['outcome']} posts={len(H.posts)}")
+    cx, cy = _xy(f'{URL}/confirmform', 'input[name=zip]')
+    browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': cx, 'y': cy, 'text': 'hello\n'}}], 'DONE.')
+    r = browse.run('x', SITE, {'zip': '27519'}, {}, start_url=f'{URL}/confirmform', out_dir=OUT)
+    check(r['outcome'] == 'needs_submit' and r['submit']['button'] == 'Confirm' and '/form2' not in r['stopped_at'] and not H.posts,
+          f"a typed newline is an Enter, gated: {r['outcome']} {r['stopped_at']}")
+    browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': cx, 'y': cy, 'text': '27519'}}],
+                                 [{'name': 'key_combination', 'args': {'keys': 'Shift+Enter'}}], 'DONE.')
+    r = browse.run('x', SITE, {'zip': '27519'}, {}, start_url=f'{URL}/confirmform', out_dir=OUT)
+    check(r['outcome'] == 'needs_submit' and r['submit']['button'] == 'Confirm' and '/form2' not in r['stopped_at'],
+          f"'Shift+Enter' as one string is an Enter, gated: {r['outcome']} {r['stopped_at']}")
+    browse._model_step = _script([{'name': 'drag_and_drop', 'args': {'x': book[0], 'y': book[1], 'destination_x': book[0], 'destination_y': book[1]}}], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT)
+    check(r['outcome'] == 'needs_submit' and r['submit']['button'] == 'Book appointment' and not H.posts,
+          f"a drag from Book to Book is a click, gated: {r['outcome']} posts={len(H.posts)}")
+    tab = {'name': 'key_combination', 'args': {'keys': ['Tab']}}
+    browse._model_step = _script([tab], [{'name': 'key_combination', 'args': {'keys': ['Enter']}}], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/linkbook', out_dir=OUT)
+    check(r['outcome'] == 'needs_submit' and r['submit']['button'] == 'Book now' and not H.posts,
+          f"Enter on a focused link styled as a button is gated: {r['outcome']} {(r.get('submit') or {}).get('button')} posts={len(H.posts)}")
+    # A space typed while a button has focus would press it: refused, told, nothing pressed.
+    fake, seen = _recording([tab], [{'name': 'type', 'args': {'text': 'a b'}}], 'DONE.')
+    browse._model_step = fake
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/cookie', out_dir=OUT)
+    check(r['outcome'] == 'done' and any(browse.TYPE_NOT_A_BOX in e for e in _errors(seen)) and any('(refused)' in e['action'] for e in r['turns_log']),
+          f"a typed space on a focused button is refused: {r['outcome']} {_errors(seen)}")
+    # Typing into a real text box still works.
+    zx, zy = _xy(f'{URL}/zip', 'input[name=zip]')
+    browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': zx, 'y': zy, 'text': '27519'}}], 'DONE.')
+    r = browse.run('x', SITE, {'zip': '27519'}, {}, start_url=f'{URL}/zip', out_dir=OUT)
+    check(r['outcome'] == 'done' and r['filled'] == {'zip': '27519'}, f"a text box types: {r['outcome']} {r['filled']}")
+
+
+def scenario_an_in_page_confirmation_is_caught_by_the_backstop():
+    """Final review I6: a JS button that books in place (the body becomes a
+    confirmation, the URL never moves) is an unasked attempt too."""
+    _reset()
+    g = _xy(f'{URL}/ajaxbook', '#grab')
+    browse._model_step = _script([_click(g)], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/ajaxbook', out_dir=OUT)
+    a = r.get('attempt') or {}
+    check(r['outcome'] == 'submit_unknown' and a.get('unasked') and a.get('button') == 'Grab it' and a.get('outcome') == 'unknown'
+          and r['stopped_at'].endswith('/ajaxbook'), f"an in-page confirmation after an ungated press: {r['outcome']} {a}")
+
+
+def scenario_the_device_sequence_runs_ungated_until_book():
+    """Final review I7, the device run end to end on the local site: the
+    contact form (reCAPTCHA's legal line inside it), Next, the Dishwasher tile,
+    the slot page, then Book appointment asks; the approved run presses once."""
+    from browse_pages import H
+    _reset()
+    f = _xy(f'{URL}/fulltrip', 'input[name=first]')
+    e = _xy(f'{URL}/fulltrip', 'input[name=email]')
+    z = _xy(f'{URL}/fulltrip', 'input[name=zip]')
+    nxt = _xy(f'{URL}/fulltrip', '#next')
+    t1 = _xy(f'{URL}/tiles', '#t1')
+    tob = _xy(f'{URL}/slots', '#tobook')
+    book = _xy(f'{URL}/booking', '#book')
+    typing = [{'name': 'type_text_at', 'args': {'x': f[0], 'y': f[1], 'text': 'Jeff'}},
+              {'name': 'type_text_at', 'args': {'x': e[0], 'y': e[1], 'text': CARD['email']}},
+              {'name': 'type_text_at', 'args': {'x': z[0], 'y': z[1], 'text': CARD['zip']}}]
+    browse._model_step = _script(typing, [_click(nxt)], [_click(t1)], [_click(tob)], [_click(book)], 'DONE.')
+    r = browse.run('book the dishwasher repair', SITE, dict(CARD), {}, start_url=f'{URL}/fulltrip', out_dir=OUT)
+    urls = [x['url'] for x in r['turns_log']]
+    check(r['outcome'] == 'needs_submit' and r['submit']['button'] == 'Book appointment' and r['submit']['url'].endswith('/booking') and not H.posts,
+          f"Next, the tile and the slot link run; Book asks: {r['outcome']} {r['text'][:80]} {urls}")
+    check(any('/tiles' in u for u in urls) and any('/slots' in u for u in urls), f"the run went through every step: {urls}")
+    approved = {**r['submit'], 'ask_id': 'a1'}
+    browse._model_step = _script([_click(book)], 'CONFIRMED: Thank you for your booking. Confirmation number 12345.')
+    r = browse.run('book the dishwasher repair', SITE, dict(CARD), {}, start_url=f'{URL}/booking', out_dir=OUT,
+                   approved=approved, on_attempt=lambda rec: True)
+    check(r['outcome'] == 'submitted' and len(H.posts) == 1 and r['attempt']['outcome'] == 'confirmed', f"the approved run presses once: {r['outcome']} posts={len(H.posts)}")
+
+
 SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
@@ -874,7 +1000,9 @@ SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_typ
              scenario_the_outcome_lines_and_the_end_of_the_run,
              scenario_continued_resumes_unapproved_and_payment_after_the_press_keeps_the_attempt,
              scenario_an_approved_run_that_writes_submit_presses_through_the_same_match, scenario_the_approved_match_holes_are_closed,
-             scenario_an_unasked_press_after_continued_rides_beside_the_approved_attempt]
+             scenario_an_unasked_press_after_continued_rides_beside_the_approved_attempt,
+             scenario_every_press_path_goes_through_the_gate, scenario_an_in_page_confirmation_is_caught_by_the_backstop,
+             scenario_the_device_sequence_runs_ungated_until_book]
 
 if __name__ == "__main__":
     import traceback

@@ -247,9 +247,11 @@ def _options_thread(row: dict) -> list:
 
 
 def _options_mission(row: dict) -> list:
+    from services import missions as _missions
     out = []
     steps = row.get('steps') or []
-    if row.get('status') == 'waiting_user':
+    # A verify a late report raised on an ended mission is still answerable (final review I1).
+    if row.get('status') == 'waiting_user' or (row.get('id') and _missions.verify_open(row)):
         asked = next((s for s in reversed(steps) if s.get('kind') == 'ask'), None)
         rj = (asked or {}).get('result_json') or {}
         name = (asked or {}).get('name')
@@ -262,7 +264,12 @@ def _options_mission(row: dict) -> list:
             out.append(_opt('release', 'Stop the mission', {'decision': 'stop'}, f'{aid}:stop'))
         elif name == 'submit':
             # A booking happens only on this tap (spec 2026-10-11); the id is the approval.
-            out.append(_opt('submit', 'Book it' if rj.get('verb') == 'book' else 'Submit it', {'decision': 'approve'}, f'{aid}:approve'))
+            # The button reads the whole question (the site, the slot, the price,
+            # the button the browser will press), as Share does: never a blind tap.
+            # With the switch off no approve is offered; finishing it by hand stays.
+            if (storage.get_settings() or {}).get('missions_submit_enabled', True):
+                out.append(_opt('submit', rj.get('question') or ('Book it' if rj.get('verb') == 'book' else 'Submit it'),
+                                {'decision': 'approve'}, f'{aid}:approve'))
             out.append(_opt('submit', "I'll finish it myself", {'decision': 'decline'}, f'{aid}:decline'))
             out.append(_opt('submit', 'Stop the mission', {'decision': 'stop'}, f'{aid}:stop'))
         elif name == 'verify':
@@ -686,6 +693,11 @@ def _run(kind, sid, verb, p, actor, row) -> dict:
         text = (p.get('text') or '').strip()
         if not text:
             return {'status': 'error', 'message': 'Say something to send.'}
+        from services import missions as _m
+        if _m.tap_only_ask_pending(sid):
+            # Free text never answers a release, a booking or a verify: it would
+            # move the mission on and bury the ask under the next one.
+            return {'status': 'error', 'message': 'Answer that one with its buttons.'}
         storage.add_mission_step(sid, {'kind': 'note', 'name': 'user_answer', 'result_json': {'text': text}})
         if row.get('status') == 'waiting_user':
             storage.update_mission(sid, {'status': 'running'})

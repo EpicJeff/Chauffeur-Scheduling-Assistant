@@ -5885,6 +5885,11 @@ def missions_answer(mission_id: str, body: dict = Body(default={}),
     text = (body.get('text') or '').strip()
     if not text:
         raise HTTPException(status_code=400, detail="Say something to send")
+    from services import missions as _missions
+    if _missions.tap_only_ask_pending(mission_id):
+        # A release, a booking or a verify is answered by its buttons only
+        # (spec 2026-10-11 §2); free text would bury it under the next ask.
+        raise HTTPException(status_code=400, detail="Answer that one with its buttons.")
     storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'user_answer',
                                           'result_json': {'text': text}})
     if row.get('status') == 'waiting_user':

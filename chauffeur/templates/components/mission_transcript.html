@@ -122,6 +122,14 @@
                                             <template x-if="step.kind === 'ask' && step.name === 'submit'">
                                                 <div class="mt-1 bg-amber-500/10 border border-amber-500/30 rounded-xl p-2">
                                                     <div class="text-sm text-amber-200" x-text="(step.result_json || {}).question || ''"></div>
+                                                    <!-- A re-ask: everything that moved since the approval, one line each. -->
+                                                    <template x-if="((step.result_json || {}).changed || []).length">
+                                                        <ul class="submit-changed text-[11px] text-amber-300 mt-0.5 list-disc pl-4">
+                                                            <template x-for="(c, i) in ((step.result_json || {}).changed || [])" :key="i">
+                                                                <li x-text="c"></li>
+                                                            </template>
+                                                        </ul>
+                                                    </template>
                                                     <div class="text-[11px] text-gray-400 mt-0.5" x-show="(((step.result_json || {}).state || {}).selected || []).length"
                                                          x-text="'Selected: ' + ((((step.result_json || {}).state || {}).selected) || []).join(' · ')"></div>
                                                     <div class="text-[11px] text-gray-400" x-show="Object.keys((step.result_json || {}).filled || {}).length"
@@ -140,7 +148,7 @@
                                                 <div class="mt-1 bg-amber-500/10 border border-amber-500/30 rounded-xl p-2">
                                                     <div class="text-sm text-amber-200"><span x-text="(step.result_json || {}).question || ''"></span>
                                                         <a :href="(step.result_json || {}).url" target="_blank" rel="noopener" class="text-blue-400 underline underline-offset-2 ml-1">Open it</a></div>
-                                                    <div class="mt-1.5" x-show="mission.status === 'waiting_user' && isLastAsk(mission, step)">
+                                                    <div class="mt-1.5" x-show="verifyOpen(mission, step)">
                                                         <input type="text" x-model="verifyDetail[mission.id]" placeholder="Confirmation number or what you saw"
                                                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-sm mb-1.5">
                                                         <div class="flex flex-wrap gap-2">

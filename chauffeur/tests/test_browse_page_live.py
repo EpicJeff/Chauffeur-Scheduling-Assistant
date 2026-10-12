@@ -100,7 +100,7 @@ def main():
             check('finish it on your phone' in tl.lower() and rdet.locator('a[href^="https://bodewell.com"]').count() >= 1,
                   f"the hand-off shows its link: text={tl[:400]!r}")
             book = page.locator('#missions .situation-card:has-text("book the dishwasher")').first
-            check(book.locator('.sit-next button').first.inner_text() == 'Book it', "the submit card leads with Book it")
+            check(book.locator('.sit-next button').first.inner_text().startswith('Book at'), "the submit card leads with the whole question")
             det = book.locator('xpath=../following-sibling::details[1]').first
             det.locator('summary').first.click(); page.wait_for_timeout(500)
             tl = det.inner_text()

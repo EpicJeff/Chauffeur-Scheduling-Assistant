@@ -2,7 +2,7 @@
    components/mission_transcript.html (/missions and the thread card's
    details). One implementation: an Alpine component exposes these under the
    names the template uses (stepKindClass, stepResultText, stepArgsText,
-   isLastAsk, isTapAskPending, submitNoteText) by delegating here. */
+   isLastAsk, isTapAskPending, verifyOpen, submitNoteText) by delegating here. */
 (function () {
   function compact(v) {
     if (v === null || v === undefined) return '';
@@ -33,9 +33,17 @@
       return asks.length > 0 && ['release', 'submit', 'verify'].includes(asks[asks.length - 1].name);
     },
     isReleasePending(mission) { return this.isTapAskPending(mission); },
-    lastAskId(mission) {
-      const asks = (mission.steps || []).filter(s => s.kind === 'ask');
-      return asks.length ? asks[asks.length - 1].id : null;
+    // A verify card is answerable while it is the newest ask on a waiting
+    // mission, or on a mission that ended before a late report raised it
+    // (its attempt still unresolved): services/missions.verify_open.
+    verifyOpen(mission, step) {
+      if (!this.isLastAsk(mission, step)) return false;
+      if (mission.status === 'waiting_user') return true;
+      if (!['done', 'blocked', 'dropped'].includes(mission.status)) return false;
+      const aid = (step.result_json || {}).attempt_step_id;
+      const att = (mission.steps || []).find(s => s.id === aid);
+      const o = att ? (att.result_json || {}).outcome : 'none';
+      return o === null || o === undefined || o === 'unknown';
     },
     submitNoteText(step) {
       const r = step.result_json || {};

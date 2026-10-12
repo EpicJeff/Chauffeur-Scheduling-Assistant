@@ -77,7 +77,7 @@ def main():
             roof = page.locator('#threads .situation-card:has-text("Roof")').first
             check(roof.locator('a[href="https://roofco.example/book"]').count() == 1, f"the hand-off card carries its link: {roof.inner_html()[:600]}")
             gutters = page.locator('#threads .situation-card:has-text("Gutters")').first
-            check(gutters.locator('.sit-next button').first.inner_text() == 'Book it', "the submit card leads with Book it")
+            check(gutters.locator('.sit-next button').first.inner_text().startswith('Book at'), "the submit card leads with the whole question")
             card.locator('.sit-next button').first.click()
             page.wait_for_timeout(1500)
             m = [x for x in storage.get_missions() if x['goal'] == 'get the dishwasher fixed'][0]

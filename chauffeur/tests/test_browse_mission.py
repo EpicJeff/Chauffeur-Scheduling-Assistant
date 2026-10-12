@@ -476,10 +476,12 @@ def scenario_decline_hands_off_and_stop_reads_the_attempts():
     check(storage.get_mission(mid)['status'] == 'blocked' and 'did not book' in storage.get_mission(mid)['error'], "stop with no attempt: did not book")
     _reset()
     mid = _mission()
-    storage.add_mission_step(mid, {'kind': 'note', 'name': 'submit_attempt', 'result_json': {'ask_id': 'a1', 'browse_step_id': 'b1', 'button': 'Book appointment', 'url': 'https://www.bodewell.com/s',
-                                                                                          'state': {}, 'pressed_at': 1.0, 'outcome': 'unknown', 'text': ''}})
+    # (An unknown attempt already on the mission when a browse finishes is asked about first:
+    # the live finish raises a verify ask, final review I1. So the attempt lands after the submit ask.)
     _browse_to_submit(mid)
     ask = storage.get_mission_steps(mid)[-1]
+    storage.add_mission_step(mid, {'kind': 'note', 'name': 'submit_attempt', 'result_json': {'ask_id': 'a1', 'browse_step_id': 'b1', 'button': 'Book appointment', 'url': 'https://www.bodewell.com/s',
+                                                                                          'state': {}, 'pressed_at': 1.0, 'outcome': 'unknown', 'text': ''}})
     missions.submit(mid, 'stop', {'id': 'mom', 'role': 'parent'}, ask_id=ask['id'])
     err = storage.get_mission(mid)['error']
     check('may have gone through' in err and 'did not book' not in err, f"stop over an unresolved attempt warns: {err}")
@@ -787,7 +789,8 @@ def scenario_submit_and_verify_options_carry_the_ask_id_and_route_from_the_threa
     s = situations.view('mission', mid, {'id': 'mom', 'role': 'parent'})
     ids = [o['id'] for o in s['options'] if o['verb'] == 'submit']
     check(ids == [f"submit:{ask['id']}:approve", f"submit:{ask['id']}:decline", f"submit:{ask['id']}:stop"], f"the mission's options: {ids}")
-    check(s['next_step']['label'] == 'Book it' and s['needs_attention'], f"the lead: {s['next_step']}")
+    check(s['next_step']['label'].startswith('Book at bodewell.com') and "(button 'Book appointment')" in s['next_step']['label'] and s['needs_attention'],
+          f"the lead reads the whole question, never a blind 'Book it': {s['next_step']}")
     t = situations.view('thread', tid, {'id': 'mom', 'role': 'parent'})
     tids = [o['id'] for o in t['options'] if o['verb'] == 'submit']
     check(tids[0] == f"submit:mission:{mid}:{ask['id']}:approve", f"the thread routes with the id: {tids}")
@@ -849,6 +852,176 @@ def scenario_submit_and_verify_routes_are_classified_like_release():
         check(auth.resolve('POST', path) == auth.resolve('POST', '/api/missions/x/release'), f"{path} is gated like release")
 
 
+MOM = {'id': 'mom', 'name': 'Mom', 'role': 'parent'}
+UNASKED = {'ask_id': None, 'button': 'Grab it', 'url': 'https://www.bodewell.com/x', 'state': {}, 'pressed_at': 1.0, 'outcome': 'unknown',
+           'text': 'Thank you for your booking', 'unasked': True}
+
+
+def scenario_a_late_unasked_attempt_is_asked_about_never_orphaned():
+    """Final review I1, route 1: a late report carrying an unasked press on a
+    mission that moved on. The attempt bars every later press, so the parent
+    is asked; an ended mission keeps its status and its verify is answerable."""
+    _reset()
+    mid = _mission()
+    sid = storage.add_mission_step(mid, {'kind': 'browse', 'name': 'bodewell.com', 'args_json': {'goal': 'g', 'site': 'bodewell.com'}, 'result_json': None})
+    storage.update_mission(mid, {'status': 'running'})            # reclaimed: not live
+    missions.finish_browse(mid, sid, _report('submit_unknown', text='late', attempt=dict(UNASKED)))
+    a = missions.attempts_for(mid)
+    last = storage.get_mission_steps(mid)[-1]
+    check(len(a) == 1 and a[0]['outcome'] == 'unknown' and last['kind'] == 'ask' and last['name'] == 'verify' and last['result_json']['attempt_step_id'] == a[0]['step_id']
+          and storage.get_mission(mid)['status'] == 'waiting_user' and SENT and "I pressed 'Grab it'" in SENT[-1],
+          f"a late unasked attempt on a running mission: verify ask, waiting, DM: {last['name']} {storage.get_mission(mid)['status']} {SENT}")
+    # On a mission that already ended: the verify ask and the DM, the status kept, and the card still answers.
+    _reset()
+    mid = _mission()
+    sid = storage.add_mission_step(mid, {'kind': 'browse', 'name': 'bodewell.com', 'args_json': {'goal': 'g', 'site': 'bodewell.com'}, 'result_json': None})
+    storage.update_mission(mid, {'status': 'done', 'finished_at': time.time()})
+    missions.finish_browse(mid, sid, _report('submit_unknown', text='late', attempt=dict(UNASKED)))
+    last = storage.get_mission_steps(mid)[-1]
+    check(last['kind'] == 'ask' and last['name'] == 'verify' and storage.get_mission(mid)['status'] == 'done'
+          and SENT and 'may have happened' in SENT[-1], f"an ended mission: verify ask + DM, status stays done: {last['name']} {storage.get_mission(mid)['status']} {SENT}")
+    s = situations.view('mission', mid, MOM)
+    vids = [o['id'] for o in s['options'] if o['verb'] == 'verify']
+    check(vids == [f"verify:{last['id']}:confirmed", f"verify:{last['id']}:failed", f"verify:{last['id']}:unsure"] and s['needs_attention'],
+          f"the ended mission's verify card is offered: {vids}")
+    res = missions.verify(mid, last['id'], 'confirmed', MOM, detail='confirmation 777')
+    a = missions.attempts_for(mid)[0]
+    check(res['status'] == 'success' and a['outcome'] == 'confirmed' and a['resolved_by']['id'] == 'mom' and storage.get_mission(mid)['status'] == 'done',
+          f"resolved by tap, the mission stays done: {res} {a['outcome']} {storage.get_mission(mid)['status']}")
+    check(missions.verify(mid, last['id'], 'failed', MOM).get('already') and missions.attempts_for(mid)[0]['outcome'] == 'confirmed', "a second tap is already")
+    check(not [o for o in situations.view('mission', mid, MOM)['options'] if o['verb'] == 'verify'], "once answered, the ended mission offers no verify")
+
+
+def scenario_the_live_finish_asks_about_every_unknown_attempt_on_the_mission():
+    """Final review I1: the live finish looks at the whole mission, not only its own step."""
+    _reset()
+    mid = _mission()
+    storage.add_mission_step(mid, {'kind': 'note', 'name': 'submit_attempt', 'result_json': {**UNASKED, 'browse_step_id': 'older'}})
+    missions._browse = lambda **kw: _report('done', text='nothing more')
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
+    missions.step(storage.get_mission(mid))
+    last = storage.get_mission_steps(mid)[-1]
+    check(last['name'] == 'verify' and last['result_json']['attempt_step_id'] == missions.attempts_for(mid)[0]['step_id'] and storage.get_mission(mid)['status'] == 'waiting_user',
+          f"an older step's unknown attempt is asked about: {last['name']} {storage.get_mission(mid)['status']}")
+    # Two unknown attempts: answering one asks about the other, never runs on past it.
+    _reset()
+    mid = _mission()
+    storage.add_mission_step(mid, {'kind': 'note', 'name': 'submit_attempt', 'result_json': {**UNASKED, 'browse_step_id': 'b1', 'button': 'First'}})
+    storage.add_mission_step(mid, {'kind': 'note', 'name': 'submit_attempt', 'result_json': {**UNASKED, 'browse_step_id': 'b2', 'button': 'Second'}})
+    missions.step(storage.get_mission(mid))
+    v1 = storage.get_mission_steps(mid)[-1]
+    res = missions.verify(mid, v1['id'], 'failed', MOM)
+    asks = [s for s in storage.get_mission_steps(mid) if s['kind'] == 'ask' and s['name'] == 'verify']
+    check(len(asks) == 2 and asks[0]['result_json']['button'] == 'Second' and asks[1]['result_json']['button'] == 'First'
+          and storage.get_mission(mid)['status'] == 'waiting_user' and 'One more press' in res['message'],
+          f"the other unknown attempt is asked next: {[a['result_json']['button'] for a in asks]} {storage.get_mission(mid)['status']} {res}")
+
+
+def scenario_free_text_never_answers_a_tap_ask():
+    """Final review I1, route 2: the free-text answer path moved a waiting
+    mission to running and buried the submit or verify ask under the next one."""
+    _reset()
+    mid = _mission()
+    _browse_to_submit(mid)
+    check(missions.tap_only_ask_pending(mid), "a pending submit is tap-only")
+    res = situations.act('mission', mid, 'answer', payload={'text': 'x'}, actor=MOM)
+    check(res['status'] in ('error', 'refused') and storage.get_mission(mid)['status'] == 'waiting_user', f"act refuses an answer to a submit ask: {res}")
+    res = situations._run('mission', mid, 'answer', {'text': 'x'}, MOM, situations.load('mission', mid))
+    check(res == {'status': 'error', 'message': 'Answer that one with its buttons.'} and storage.get_mission(mid)['status'] == 'waiting_user'
+          and not [s for s in storage.get_mission_steps(mid) if s['name'] == 'user_answer'], f"the answer verb itself refuses: {res}")
+    src = open('main.py', encoding='utf-8').read()
+    route = src[src.index('def missions_answer'):src.index('def delete_mission_route')]
+    check('tap_only_ask_pending' in route and 'Answer that one with its buttons.' in route, "POST /answer refuses the same way")
+    # A plain question still takes free text.
+    _reset()
+    missions._browse = lambda **kw: _report('captcha_failed', text='3 attempts failed')
+    mid = _mission()
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
+    missions.step(storage.get_mission(mid))
+    check(not missions.tap_only_ask_pending(mid), "a hand-off takes free text")
+
+
+def scenario_resolving_attempts_holds_the_lock():
+    """Final review I3: the attempt notes are rewritten under db_lock, the
+    lock a parent's verify tap takes."""
+    import threading
+
+    class Spy:
+        def __init__(self):
+            self.inner, self.depth = threading.RLock(), 0
+
+        def __enter__(self):
+            self.inner.acquire()
+            self.depth += 1
+
+        def __exit__(self, *a):
+            self.depth -= 1
+            self.inner.release()
+    _reset()
+    mid = _mission()
+    sid = storage.add_mission_step(mid, {'kind': 'browse', 'name': 'bodewell.com', 'args_json': {}, 'result_json': None})
+    storage.add_mission_step(mid, {'kind': 'note', 'name': 'submit_attempt', 'result_json': {'ask_id': 'a1', 'browse_step_id': sid, 'button': 'B', 'url': 'u', 'state': {},
+                                                                                          'pressed_at': 1.0, 'outcome': None, 'text': ''}})
+    spy, held = Spy(), []
+    orig_lock, orig_write = storage.db_lock, missions._write_attempt
+    storage.db_lock = spy
+    missions._write_attempt = lambda step_id, data: held.append(spy.depth > 0) or orig_write(step_id, data)
+    try:
+        missions._resolve_attempts(mid, sid, {'attempt': {'ask_id': 'a1', 'outcome': 'rejected', 'text': 'taken'}}, True)
+    finally:
+        storage.db_lock, missions._write_attempt = orig_lock, orig_write
+    check(held and all(held), f"every attempt write ran under db_lock: {held}")
+
+
+def scenario_a_re_ask_names_every_change_and_the_price():
+    """Final review I5: a re-ask leads with every change (not only the first),
+    and a record whose facts carry no amount shows the page's own price."""
+    _reset()
+    mid = _mission()
+    _browse_to_submit(mid)
+    ask = storage.get_mission_steps(mid)[-1]
+    missions._browse = lambda **kw: _submit_report(changed=['selected: Thu, Oct 22 8AM-12PM (approved: Tue, Oct 20 8AM-12PM)',
+                                                            'prices: $124.95 appears; $114.95 does not', 'text: changed'],
+                                                   submit={'facts': {}, 'state': {'fields': {}, 'selected': ['Thu, Oct 22 8AM-12PM'], 'text': 't', 'text_sha': 'b' * 64, 'prices': ['$124.95']}})
+    missions.submit(mid, 'approve', MOM, ask_id=ask['id'])
+    q = storage.get_mission_steps(mid)[-1]['result_json']['question']
+    check(q.startswith('The page changed: selected Thu, Oct 22 8AM-12PM (approved: Tue, Oct 20 8AM-12PM); prices $124.95 appears; $114.95 does not. Book at bodewell.com:')
+          and 'text changed' not in q and '$124.95 (button' in q, f"both changes lead, the new price is in the question: {q}")
+    _reset()
+    mid = _mission()
+    missions._browse = lambda **kw: _submit_report(submit={'facts': {}})
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'book the Tuesday slot', 'site': 'bodewell.com'}
+    missions.step(storage.get_mission(mid))
+    q = storage.get_mission_steps(mid)[-1]['result_json']['question']
+    check('$114.95' in q and q == "Book at bodewell.com: $114.95 (button 'Book appointment')?", f"no facts: the page's price is in the question: {q}")
+    tpl = open('templates/components/mission_transcript.html', encoding='utf-8').read()
+    check('submit-changed' in tpl and '.changed' in tpl, "the transcript's submit block lists the changed lines")
+
+
+def scenario_the_switch_off_offers_no_approve():
+    """Final review M2: with booking switched off the card offers no approve
+    (finishing it by hand and stopping stay) and an approve re-runs nothing."""
+    _reset()
+    mid = _mission()
+    _browse_to_submit(mid)
+    ask = storage.get_mission_steps(mid)[-1]
+    settings = storage.get_settings()
+    storage.get_settings = lambda: {**settings, 'missions_submit_enabled': False}
+    ids = [o['id'] for o in situations.view('mission', mid, MOM)['options'] if o['verb'] == 'submit']
+    check(ids == [f"submit:{ask['id']}:decline", f"submit:{ask['id']}:stop"], f"no approve while booking is off: {ids}")
+    ran = []
+    missions._browse = lambda **kw: ran.append(1) or _report('done')
+    res = missions.submit(mid, 'approve', MOM, ask_id=ask['id'])
+    check(res == {'status': 'success', 'message': 'Booking is switched off (Missions → Browser).'} and not ran and storage.get_mission(mid)['status'] == 'waiting_user',
+          f"approve answers switched off and runs nothing: {res}")
+
+
+def scenario_the_reclaim_waits_past_the_runners_clock():
+    from services import browse
+    check(missions.BROWSE_LOST_S == 900 and missions.BROWSE_LOST_S > browse.DEFAULT_CAPS['seconds'],
+          f"a live worker (600 s clock) is never reclaimed mid-run: {missions.BROWSE_LOST_S}")
+
+
 SCENARIOS = [scenario_browse_action_runs_the_runner_and_transcribes, scenario_needs_release_pauses_with_the_values_and_tells_the_person,
              scenario_captcha_and_payment_hand_off, scenario_left_the_site_and_refusals_are_notes_the_planner_reads,
              scenario_browse_cap_refuses_before_running, scenario_a_lost_browse_is_reclaimed_by_the_tick,
@@ -877,7 +1050,12 @@ SCENARIOS = [scenario_browse_action_runs_the_runner_and_transcribes, scenario_ne
              scenario_submit_and_verify_options_carry_the_ask_id_and_route_from_the_thread,
              scenario_submit_and_verify_verbs_are_tap_only_everywhere,
              scenario_release_options_carry_the_ask_id,
-             scenario_submit_and_verify_routes_are_classified_like_release]
+             scenario_submit_and_verify_routes_are_classified_like_release,
+             scenario_a_late_unasked_attempt_is_asked_about_never_orphaned,
+             scenario_the_live_finish_asks_about_every_unknown_attempt_on_the_mission,
+             scenario_free_text_never_answers_a_tap_ask, scenario_resolving_attempts_holds_the_lock,
+             scenario_a_re_ask_names_every_change_and_the_price, scenario_the_switch_off_offers_no_approve,
+             scenario_the_reclaim_waits_past_the_runners_clock]
 
 if __name__ == "__main__":
     import traceback

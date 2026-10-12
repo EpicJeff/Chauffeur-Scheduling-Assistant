@@ -99,11 +99,19 @@ PAGES = {
     # A third-party widget in an iframe.
     '/framedbook': '<h1>Schedule</h1><iframe id="w" src="/booking" style="width:600px;height:400px"></iframe>',
     # The device sequence, start to finish: contact form -> tiles -> slots -> booking.
+    # reCAPTCHA's legal line sits INSIDE the form, as on the device: "Terms of Service" is not agreement language.
     '/fulltrip': ('<h1>Step 1</h1><form action="/tiles" method="get">'
                   '<label>First Name *<input name="first" required></label>'
                   '<label>Email *<input name="email" type="email" required></label>'
                   '<label>Zip *<input name="zip" required></label>'
+                  '<p class="small">This site is protected by reCAPTCHA and the Google Privacy Policy and Terms of Service apply.</p>'
                   '<button type="submit" id="next">Next: Select Appliance</button></form>'),
+    # A link styled as a button: Enter on it follows it (a GET that books, counted like /booked).
+    '/linkbook': '<h1>Your slot</h1><p>Tue, Oct 20 8AM-12PM</p><a id="lb" href="/booked-get" class="btn">Book now</a>',
+    # A JS button that books in place: the body becomes a confirmation, the URL never moves.
+    '/ajaxbook': ('<h1>Pick</h1><div><button type="button" id="grab">Grab it</button></div>'
+                  '<script>document.getElementById("grab").addEventListener("click", () => { document.body.innerHTML = '
+                  '"<h1>Thank you for your booking.</h1><p>Confirmation number 777</p>"; });</script>'),
 }
 
 
@@ -139,6 +147,12 @@ class H(http.server.BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/javascript')
             self.end_headers()
             self.wfile.write(b'window.slow = 1;')
+            return
+        if path == '/booked-get':
+            H.posts.append(path)
+            self.send_response(303)
+            self.send_header('Location', '/thanks')
+            self.end_headers()
             return
         if path == '/redir':
             self.send_response(302)

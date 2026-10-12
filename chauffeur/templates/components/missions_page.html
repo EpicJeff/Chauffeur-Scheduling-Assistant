@@ -578,9 +578,10 @@
                 isLastAsk(mission, step) { return window.MissionTranscript.isLastAsk(mission, step); },
                 submitNoteText(step) { return window.MissionTranscript.submitNoteText(step); },
                 isTapAskPending(mission) { return window.MissionTranscript.isTapAskPending(mission); },
+                verifyOpen(mission, step) { return window.MissionTranscript.verifyOpen(mission, step); },
                 async releaseMission(m, decision, step) {
                     try {
-                        const d = await window.MissionTranscript.release(this.apiBase, m.id, decision, (step && step.id) || window.MissionTranscript.lastAskId(m));
+                        const d = await window.MissionTranscript.release(this.apiBase, m.id, decision, step.id);
                         if (d.message) showGlobalAlert(d.message);
                         await this.loadAdmin();
                     } catch (e) { showGlobalAlert(e.message || "That didn't work."); }
