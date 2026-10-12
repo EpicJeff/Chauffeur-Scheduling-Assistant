@@ -559,6 +559,17 @@ def scenario_control_record_reads_the_scope():
     c = _control('/framedbook', '#w')
     check(c['iframe'], "an iframe under the point says so")
     check(browse._display('x' * 400) == 'x' * 300, "display is 300 characters")
+    import hashlib
+    c = _control('/booking', '#book')
+    check(len(c['state']['text_sha']) == 64 and c['state']['text_sha'] == hashlib.sha256(c['state']['text'].encode()).hexdigest(),
+          "text_sha is the sha256 of the scope text, computed in Python")
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        b = p.chromium.launch(headless=True)
+        pg = b.new_page(viewport={'width': 1440, 'height': 900})
+        pg.goto(f'{URL}/booking')
+        check(browse._control_at(pg, -5, -5) is None, "a point outside the viewport has no control")
+        b.close()
 
 
 def scenario_classification_is_by_evidence_not_label():

@@ -5,6 +5,7 @@ This module never pays; it books or submits only one approved press at a time (s
 not prompt: a test holds each one. The paid key is read only through
 model_pools.api_key_for_pool (pool 'cu').
 """
+import hashlib
 import logging
 import os
 import re
@@ -479,10 +480,6 @@ def _under_click(page, x, y) -> dict:
 
 _CONTROL_JS = """
 (target) => {
-  const sha = async (s) => {
-    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
-    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
-  };
   const label = (el) => ((el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title') || '')).replace(/\\s+/g, ' ').trim().slice(0, 120);
   const resolve = (el) => {
     if (!el) return null;
@@ -518,16 +515,55 @@ _CONTROL_JS = """
   });
   const text = (scope.innerText || '').replace(/\\s+/g, ' ').trim();
   const prices = (text.match(/(\\$\\s?\\d[\\d,]*(?:\\.\\d{2})?|\\d[\\d,]*(?:\\.\\d{2})?\\s?(?:USD|dollars))/gi) || []);
-  return sha(text).then(h => ({
+  return ({
     text: label(b), type: (b.getAttribute('type') || ''), tag: b.tagName, disabled: !!b.disabled, iframe: false,
     is_submit_control: !!form && (submits.includes(b) || (buttons.length === 1 && buttons[0] === b)),
     sole_submit: !!form && submits.length === 1 && submits[0] === b,
     only_button: buttons.length === 1 && buttons[0] === b,
     last_button: buttons.length > 0 && buttons.length <= 3 && buttons[buttons.length - 1] === b,
-    state: {fields, selected, text, text_sha: h, prices},
-  }));
+    state: {fields, selected, text, text_sha: '', prices},
+  });
 }
 """
+
+
+def _unreadable_control() -> dict:
+    """A control that could not be read: unclassifiable like an iframe, and
+    never None (None means the page showed nothing pressable)."""
+    return {'error': True, 'text': '', 'type': '', 'tag': '', 'disabled': False, 'iframe': False, 'sole_submit': False,
+            'only_button': False, 'last_button': False, 'is_submit_control': False,
+            'state': {'fields': {}, 'selected': [], 'text': '', 'text_sha': '', 'prices': []}}
+
+
+def _read_control(page, h):
+    """Evaluate the control reader on a handle. text_sha is computed here (no
+    crypto.subtle: it is missing on plain-http pages). One retry after a short
+    wait; a second failure is an `error` record, never None."""
+    c = None
+    for attempt in (1, 2):
+        try:
+            c = page.evaluate(_CONTROL_JS, h)
+            break
+        except Exception as e:
+            if attempt == 1:
+                try:
+                    page.wait_for_timeout(300)
+                except Exception:
+                    pass
+                continue
+            logger.warning(f"[browse] control read failed: {e}")
+            return _unreadable_control()
+    if not c:
+        try:
+            h.dispose()
+        except Exception:
+            pass
+        return None
+    st = c.get('state') or {}
+    st['text_sha'] = hashlib.sha256((st.get('text') or '').encode('utf-8')).hexdigest()
+    c['state'] = st
+    c['handle'] = h
+    return c
 
 
 def _control_at(page, x, y):
@@ -535,12 +571,10 @@ def _control_at(page, x, y):
     None when nothing pressable is there. `x, y` are page pixels."""
     try:
         h = page.evaluate_handle("([x, y]) => document.elementFromPoint(x, y)", [x, y])
-        c = page.evaluate(_CONTROL_JS, h)
-        if c:
-            c['handle'] = h
-        return c
-    except Exception:
-        return None
+    except Exception as e:
+        logger.warning(f"[browse] control read failed: {e}")
+        return _unreadable_control()
+    return _read_control(page, h)
 
 
 def _focused_control(page):
@@ -554,12 +588,10 @@ def _focused_control(page):
             const f = el.form; if (!f) return null;
             return f.querySelector('button:not([type=button]):not([type=reset]), input[type=submit]');
         }""")
-        c = page.evaluate(_CONTROL_JS, h)
-        if c:
-            c['handle'] = h
-        return c
-    except Exception:
-        return None
+    except Exception as e:
+        logger.warning(f"[browse] control read failed: {e}")
+        return _unreadable_control()
+    return _read_control(page, h)
 
 
 def _control_by_text(page, text: str):
@@ -571,16 +603,14 @@ def _control_by_text(page, text: str):
     try:
         h = page.evaluate_handle("""(want) => {
             const all = [...document.querySelectorAll('button, input[type=submit], input[type=button], a, [role=button]')].filter(b => !b.disabled);
-            const lab = (b) => ((b.innerText || b.value || b.getAttribute('aria-label') || b.getAttribute('title') || '')).replace(/\\s+/g, ' ').trim().toLowerCase();
+            const lab = (b) => ((b.innerText || b.value || b.getAttribute('aria-label') || b.getAttribute('title') || '')).replace(/\s+/g, ' ').trim().toLowerCase();
             const exact = all.filter(b => lab(b) === want); if (exact.length === 1) return exact[0];
             const part = all.filter(b => lab(b).includes(want)); return part.length === 1 ? part[0] : null;
         }""", want)
-        c = page.evaluate(_CONTROL_JS, h)
-        if c:
-            c['handle'] = h
-        return c
-    except Exception:
-        return None
+    except Exception as e:
+        logger.warning(f"[browse] control read failed: {e}")
+        return _unreadable_control()
+    return _read_control(page, h)
 
 
 def _snapshot_of(control: dict) -> dict:
@@ -601,7 +631,7 @@ def _classify(control, intent: str) -> str:
     intent = intent or ''
     if PAY_WORDS.search(intent):
         return 'pay'
-    if control and not control.get('iframe') and not control.get('disabled'):
+    if control and not control.get('iframe') and not control.get('disabled') and not control.get('error'):
         label = control.get('text') or ''
         if PAY_WORDS.search(label):
             return 'pay'
