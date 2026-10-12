@@ -542,6 +542,56 @@ function closeChatHelpModal() {
     </div>
 </div>
 
+{# The bar floats over the bottom of every page at z-80, so the page itself has
+   to END above it or whatever sits last (a thread's Details and Delete row,
+   a form's save button) is buried under it with no way to scroll it clear.
+   One number, measured from the bar as drawn: `--argyle-floor` is the bar's
+   height plus its 1.5rem offset plus a thumb's breathing room, kept current
+   by a ResizeObserver as the textarea grows. Two kinds of page: the admin
+   pages scroll inside `body > .overflow-y-auto` (work, mind, chores, …) or a
+   nested `.flex-1.overflow-y-auto` (config), and those scrollers take the
+   padding so the fixed-height body still fills the viewport; a page whose
+   DOCUMENT scrolls (calendar, trips, a long board) gets the padding on body,
+   and only when it actually scrolls, so a full-bleed scene page (house,
+   kitchen) is never shortened by a strip it does not need. On a wall panel
+   the shelf owns the bottom edge and the bar is a transient orb (ha_theme),
+   so none of this applies there; ?chat=none hides the bar and the floor. #}
+<style>
+    html:not([data-panel]) body:not(.chat-none) > .overflow-y-auto,
+    html:not([data-panel]) body:not(.chat-none) > :not(.overflow-y-auto) > .flex-1.overflow-y-auto {
+        padding-bottom: var(--argyle-floor, 6.5rem);
+    }
+    html:not([data-panel]) body:not(.chat-none).argyle-floor-body {
+        padding-bottom: var(--argyle-floor, 6.5rem);
+    }
+</style>
+<script>
+    (function () {
+        const bar = document.getElementById('chat-overlay-container');
+        if (!bar) return;
+        const params = new URLSearchParams(window.location.search);
+        if (['none', 'off', '0', 'false', 'hide'].includes((params.get('chat') || '').toLowerCase())) {
+            document.body.classList.add('chat-none');
+            return;
+        }
+        if (params.get('panel') === 'true') return;
+        const measure = () => {
+            const r = bar.getBoundingClientRect();
+            if (!r.height) return;
+            const floor = Math.round(window.innerHeight - r.top + 12);
+            document.documentElement.style.setProperty('--argyle-floor', floor + 'px');
+            // No scroller of its own: the document scrolls, so body carries the floor.
+            const hasScroller = document.querySelector('body > .overflow-y-auto, body > :not(.overflow-y-auto) > .flex-1.overflow-y-auto');
+            const docScrolls = document.documentElement.scrollHeight > window.innerHeight + 1;
+            document.body.classList.toggle('argyle-floor-body', !hasScroller && docScrolls);
+        };
+        measure();
+        if (window.ResizeObserver) new ResizeObserver(measure).observe(bar);
+        window.addEventListener('resize', measure);
+        window.addEventListener('load', measure);
+    })();
+</script>
+
 <script>
     const _isReadOnly = typeof isReadOnly !== 'undefined' ? isReadOnly : false;
     const _isKiosk = typeof isKiosk !== 'undefined' ? isKiosk : false;
