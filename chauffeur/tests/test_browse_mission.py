@@ -67,8 +67,8 @@ def scenario_needs_release_pauses_with_the_values_and_tells_the_person():
     check(ask['result_json']['browse']['goal'] == 'g' and ask['result_json']['browse']['start_url'].startswith('https://bodewell.com'), "the pending browse rides on the ask")
     check(SENT and 'bodewell.com' in SENT[0] and 'Jeff' in SENT[0] and 'ffejnosliw@gmail.com' in SENT[0], f"the DM shows the exact values: {SENT}")
     s = situations.view('mission', mid, {'id': 'mom', 'role': 'parent'})
-    check(s['next_step']['verb'] == 'release' and s['next_step']['id'] == 'release:approve', f"the card's next step is the approval: {s['next_step']}")
-    check([o['id'] for o in s['options'] if o['verb'] == 'release'] == ['release:approve', 'release:decline', 'release:stop'], "approve, not these, stop")
+    check(s['next_step']['verb'] == 'release' and s['next_step']['id'] == f"release:{ask['id']}:approve", f"the card's next step is the approval: {s['next_step']}")
+    check([o['id'] for o in s['options'] if o['verb'] == 'release'] == [f"release:{ask['id']}:approve", f"release:{ask['id']}:decline", f"release:{ask['id']}:stop"], "approve, not these, stop")
 
 
 def scenario_captcha_and_payment_hand_off():
@@ -147,7 +147,8 @@ def scenario_release_approved_resumes_with_the_values_once():
     mid = _mission()
     missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
     missions.step(storage.get_mission(mid))
-    res = situations.act('mission', mid, 'release', option_id='release:approve', actor={'id': 'mom', 'role': 'parent'})
+    ask_id = storage.get_mission_steps(mid)[-1]['id']
+    res = situations.act('mission', mid, 'release', option_id=f'release:{ask_id}:approve', actor={'id': 'mom', 'role': 'parent'})
     check(res['status'] == 'success', f"approve through the card: {res}")
     row = storage.get_mission(mid)
     check(row['status'] == 'running' and row['releases'][0]['site'] == 'bodewell.com' and row['releases'][0]['fields'] == ['first_name', 'email']
@@ -169,8 +170,9 @@ def scenario_release_approved_twice_resumes_once():
     mid = _mission()
     missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
     missions.step(storage.get_mission(mid))
-    a = missions.release(mid, 'approve', {'id': 'mom', 'role': 'parent'})
-    b = missions.release(mid, 'approve', {'id': 'mom', 'role': 'parent'})
+    ask_id = storage.get_mission_steps(mid)[-1]['id']
+    a = missions.release(mid, 'approve', {'id': 'mom', 'role': 'parent'}, ask_id=ask_id)
+    b = missions.release(mid, 'approve', {'id': 'mom', 'role': 'parent'}, ask_id=ask_id)
     check(a['status'] == 'success' and b.get('already') and len(runs) == 2, f"a second approve is a no-op: {b} runs={len(runs)}")
 
 
@@ -180,16 +182,18 @@ def scenario_release_declined_hands_off_and_stop_blocks():
     mid = _mission()
     missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
     missions.step(storage.get_mission(mid))
-    res = situations.act('mission', mid, 'release', option_id='release:decline', actor={'id': 'mom', 'role': 'parent'})
-    last = storage.get_mission_steps(mid)[-1]
+    ask_id = storage.get_mission_steps(mid)[-1]['id']
+    res = situations.act('mission', mid, 'release', option_id=f'release:{ask_id}:decline', actor={'id': 'mom', 'role': 'parent'})
+    last =storage.get_mission_steps(mid)[-1]
     check(res['status'] == 'success' and last['kind'] == 'ask' and last['name'] == 'handoff' and storage.get_mission(mid)['status'] == 'waiting_user', f"decline hands off: {last}")
     _reset()
     missions._browse = lambda **kw: _report('needs_release', wanted_fields=['email'])
     mid = _mission()
     missions.step(storage.get_mission(mid))
-    missions.release(mid, 'stop', {'id': 'mom', 'role': 'parent'})
+    ask_id = storage.get_mission_steps(mid)[-1]['id']
+    missions.release(mid, 'stop', {'id': 'mom', 'role': 'parent'}, ask_id=ask_id)
     check(storage.get_mission(mid)['status'] == 'blocked' and 'kept' in (storage.get_mission(mid).get('error') or ''), "stop blocks the mission honestly")
-    check(missions.release(mid, 'approve', {'id': 'kid', 'role': 'child'})['status'] == 'refused', "a child cannot release")
+    check(missions.release(mid, 'approve', {'id': 'kid', 'role': 'child'}, ask_id=ask_id)['status'] == 'refused', "a child cannot release")
 
 
 def scenario_release_verb_is_in_the_closed_set_everywhere():
@@ -237,12 +241,12 @@ def scenario_missing_card_fields_are_asked_for_not_handed_off():
     check(SENT and 'zip' in SENT[-1] and 'contact card' in SENT[-1].lower(), f"the DM asks the same: {SENT}")
     s_ = situations.view('mission', mid, {'id': 'mom', 'role': 'parent'})
     check(s_['next_step']['verb'] == 'release' and 'zip' in s_['next_step']['label'], f"the card leads with it: {s_['next_step']}")
-    res = missions.release(mid, 'approve', {'id': 'mom', 'role': 'parent'})
+    res = missions.release(mid, 'approve', {'id': 'mom', 'role': 'parent'}, ask_id=ask['id'])
     check(res['status'] == 'success' and not res.get('already') and 'zip' in res['message'] and storage.get_mission(mid)['status'] == 'waiting_user' and len(runs) == 1,
           f"Share with the card still empty keeps waiting and says what to fill: {res}")
     storage.get_settings = lambda: {'missions_enabled': True, 'llm_gemini_paid_api_key': 'paid', 'llm_gemini_api_key': 'k',
                                     'contact_zip': '27519', 'contact_city': 'Cary'}
-    res = missions.release(mid, 'approve', {'id': 'mom', 'role': 'parent'})
+    res = missions.release(mid, 'approve', {'id': 'mom', 'role': 'parent'}, ask_id=ask['id'])
     check(res['status'] == 'success' and len(runs) == 2 and runs[1]['released'] == {'zip': '27519', 'city': 'Cary'}, f"filled, then Share: the browse resumes with the values: {runs[-1] if runs else None}")
     _reset()
     missions._browse = lambda **kw: _report('needs_release', wanted_fields=['email', 'preferred'])
@@ -282,13 +286,13 @@ def scenario_approve_reads_the_card_as_it_is_now_and_decline_names_the_card():
     missions.step(storage.get_mission(mid))
     storage.get_settings = lambda: {'missions_enabled': True, 'llm_gemini_paid_api_key': 'paid', 'llm_gemini_api_key': 'k',
                                     'contact_first_name': 'Jeff', 'contact_email': 'fixed@example.com', 'contact_zip': '27519'}
-    missions.release(mid, 'approve', {'id': 'mom', 'role': 'parent'})
+    missions.release(mid, 'approve', {'id': 'mom', 'role': 'parent'}, ask_id=storage.get_mission_steps(mid)[-1]['id'])
     check(runs[-1]['released'] == {'email': 'fixed@example.com'}, f"the corrected card value is what goes out: {runs[-1]['released']}")
     _reset()
     missions._browse = lambda **kw: _report('needs_release', wanted_fields=['email'])
     mid = _mission()
     missions.step(storage.get_mission(mid))
-    res = missions.release(mid, 'decline', {'id': 'mom', 'role': 'parent'})
+    res = missions.release(mid, 'decline', {'id': 'mom', 'role': 'parent'}, ask_id=storage.get_mission_steps(mid)[-1]['id'])
     check('contact card' in res['message'].lower() and 'contact card' in SENT[-1].lower(), f"decline names the card: {res} {SENT[-1]}")
 
 
@@ -772,6 +776,73 @@ def scenario_the_finish_says_booked_and_the_planner_knows_the_rules():
           f"the re-ask: {ask2['result_json']['question']}")
     check(missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=ask['id']).get('moved'), "the spent id answers nothing")
 
+
+def scenario_submit_and_verify_options_carry_the_ask_id_and_route_from_the_thread():
+    _reset()
+    from services import threads
+    tid = threads.create('Dishwasher repair', owner_member_id='mom', goal='get it fixed', created_by='mom')
+    mid = storage.add_mission({'goal': 'book the dishwasher repair', 'origin_kind': 'thread', 'origin_ref': tid, 'created_by': 'mom', 'tier': 'mission'})
+    _browse_to_submit(mid)
+    ask = storage.get_mission_steps(mid)[-1]
+    s = situations.view('mission', mid, {'id': 'mom', 'role': 'parent'})
+    ids = [o['id'] for o in s['options'] if o['verb'] == 'submit']
+    check(ids == [f"submit:{ask['id']}:approve", f"submit:{ask['id']}:decline", f"submit:{ask['id']}:stop"], f"the mission's options: {ids}")
+    check(s['next_step']['label'] == 'Book it' and s['needs_attention'], f"the lead: {s['next_step']}")
+    t = situations.view('thread', tid, {'id': 'mom', 'role': 'parent'})
+    tids = [o['id'] for o in t['options'] if o['verb'] == 'submit']
+    check(tids[0] == f"submit:mission:{mid}:{ask['id']}:approve", f"the thread routes with the id: {tids}")
+    res = situations.act('thread', tid, 'submit', option_id=f"submit:mission:{mid}:stale:approve", actor={'id': 'mom', 'role': 'parent'})
+    check(res['status'] == 'refused' and storage.get_mission(mid)['status'] == 'waiting_user', f"a stale option is not on the table: {res}")
+    runs = []
+
+    def _unknown(**kw):
+        runs.append(kw)
+        _press(kw)
+        return _report('submit_unknown', text='UNKNOWN', attempt={**kw['approved'], 'pressed_at': 1.0, 'outcome': 'unknown', 'text': ''})
+    missions._browse = _unknown
+    res = situations.act('thread', tid, 'submit', option_id=tids[0], actor={'id': 'mom', 'name': 'Mom', 'role': 'parent'})
+    check(res['status'] == 'success' and len(runs) == 1 and runs[0]['approved']['ask_id'] == ask['id'], f"Book it from the thread resumes with the ask id: {res}")
+    vask = storage.get_mission_steps(mid)[-1]
+    s = situations.view('mission', mid, {'id': 'mom', 'role': 'parent'})
+    vids = [o['id'] for o in s['options'] if o['verb'] == 'verify']
+    check(vids == [f"verify:{vask['id']}:confirmed", f"verify:{vask['id']}:failed", f"verify:{vask['id']}:unsure"] and s['next_step']['label'] == 'It went through', f"the verify options: {vids} {s['next_step']}")
+    res = situations.act('mission', mid, 'verify', option_id=vids[0], payload={'text': 'confirmation 777'}, actor={'id': 'mom', 'name': 'Mom', 'role': 'parent'})
+    a = missions.attempts_for(mid)[0]
+    check(res['status'] == 'success' and a['outcome'] == 'confirmed' and a['detail'] == 'confirmation 777', f"the detail rides the payload text: {a}")
+    from services import triage
+    _reset()
+    mid = _mission()
+    _browse_to_submit(mid)
+    check(triage.tier(situations.view('mission', mid, {'id': 'mom', 'role': 'parent'})) == 0, "a submit ask ranks tier 0")
+
+
+def scenario_submit_and_verify_verbs_are_tap_only_everywhere():
+    import re
+    from services import agent_tools_v2 as tools
+    for v in ('submit', 'verify'):
+        check(v in situations.VERBS, f"the verb {v}")
+        src = open('static/situations.js', encoding='utf-8').read()
+        check(f"'{v}'" in re.search(r"VERB_LABELS\s*=\s*\{([^}]*)\}", src).group(1), f"the card label for {v}")
+        res = tools.act_on_situation(ref='x', verb=v, acting_member={'id': 'mom', 'role': 'parent'})
+        check(res['status'] == 'error' and 'tap' in res['message'].lower(), f"the chat tool refuses {v}: {res}")
+    enum = next(t for t in tools.get_available_tools() if t['name'] == 'act_on_situation')['parameters']['properties']['verb']['enum']
+    check('submit' not in enum and 'verify' not in enum, "the new tap-only verbs are not offered to the model (release stays listed; its handler refuses, pinned elsewhere)")
+
+
+def scenario_release_options_carry_the_ask_id():
+    _reset()
+    missions._browse = lambda **kw: _report('needs_release', wanted_fields=['email'])
+    mid = _mission()
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
+    missions.step(storage.get_mission(mid))
+    ask = storage.get_mission_steps(mid)[-1]
+    s = situations.view('mission', mid, {'id': 'mom', 'role': 'parent'})
+    check([o['id'] for o in s['options'] if o['verb'] == 'release'] == [f"release:{ask['id']}:approve", f"release:{ask['id']}:decline", f"release:{ask['id']}:stop"], "release ids carry the ask")
+    res = missions.release(mid, 'approve', {'id': 'mom', 'role': 'parent'}, ask_id=None)
+    check(res.get('moved') and storage.get_mission(mid)['status'] == 'waiting_user', f"no ask id: refused, not defaulted: {res}")
+    res = missions.release(mid, 'approve', {'id': 'mom', 'role': 'parent'}, ask_id='old')
+    check(res.get('moved'), "a stale id moves nothing")
+
 SCENARIOS = [scenario_browse_action_runs_the_runner_and_transcribes, scenario_needs_release_pauses_with_the_values_and_tells_the_person,
              scenario_captcha_and_payment_hand_off, scenario_left_the_site_and_refusals_are_notes_the_planner_reads,
              scenario_browse_cap_refuses_before_running, scenario_a_lost_browse_is_reclaimed_by_the_tick,
@@ -796,7 +867,10 @@ SCENARIOS = [scenario_browse_action_runs_the_runner_and_transcribes, scenario_ne
              scenario_an_unasked_attempt_is_recorded_after_the_fact,
              scenario_the_finish_says_booked_and_the_planner_knows_the_rules,
              scenario_an_unasked_press_after_continued_is_verified_beside_the_approved_attempt,
-             scenario_a_press_with_no_attempt_is_never_a_booking_and_the_decisions_are_claimed]
+             scenario_a_press_with_no_attempt_is_never_a_booking_and_the_decisions_are_claimed,
+             scenario_submit_and_verify_options_carry_the_ask_id_and_route_from_the_thread,
+             scenario_submit_and_verify_verbs_are_tap_only_everywhere,
+             scenario_release_options_carry_the_ask_id]
 
 if __name__ == "__main__":
     import traceback

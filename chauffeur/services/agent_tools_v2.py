@@ -1503,6 +1503,11 @@ def act_on_situation(ref: str = '', verb: str = '', option_id: str = None, kind:
     from services import situations as _sit
     if not acting_member or acting_member.get('role') not in ('parent', 'adult'):
         return {"status": "error", "message": "Only a parent or adult can do that."}
+    if verb in ('submit', 'verify'):
+        # A booking happens, and is confirmed, only on the person's own tap.
+        return {"status": "error",
+                "message": "Booking, submitting and sharing the family's details take a tap, not a word: tap it on the "
+                           "Missions page, the thread card or the DM card."}
     if verb == 'release':
         # The family's details leave the house on the person's own tap, never
         # on the model's reading of their words (2026-10-11: "enter my

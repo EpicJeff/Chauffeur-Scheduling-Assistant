@@ -23,7 +23,7 @@ KINDS = ('finding', 'insight', 'thread', 'mission')
 MISSION_HISTORY_CAP = 60      # the terminal rows /api/missions/admin ships; the lane matches it
 VERBS = frozenset({'assign', 'ask', 'plan', 'prepare', 'do', 'done', 'skip',
                    'research', 'draft', 'advance', 'answer', 'close', 'snooze',
-                   'dismiss', 'own', 'unread', 'release'})
+                   'dismiss', 'own', 'unread', 'release', 'submit', 'verify'})
 WRITE_ROLES = ('parent', 'adult')
 # Situation ownership ("I'll handle it myself") lives in its own fields: a
 # thread row already uses owner_member_id for who CARRIES the thread.
@@ -225,7 +225,7 @@ def _options_thread(row: dict) -> list:
     if m and m.get('status') == 'waiting_user':
         mrow = load('mission', m['id'])
         for o in _options_mission(mrow or {}):
-            if o['verb'] in ('answer', 'release'):
+            if o['verb'] in ('answer', 'release', 'submit', 'verify'):
                 sub = o['id'].split(':', 1)[1] if ':' in o['id'] else ''
                 out.append(_opt(o['verb'], o['label'], o['payload'], f"mission:{m['id']}" + (f":{sub}" if sub else '')))
     lead = _reply_option(row)
@@ -252,12 +252,23 @@ def _options_mission(row: dict) -> list:
     if row.get('status') == 'waiting_user':
         asked = next((s for s in reversed(steps) if s.get('kind') == 'ask'), None)
         rj = (asked or {}).get('result_json') or {}
-        if (asked or {}).get('name') == 'release':
+        name = (asked or {}).get('name')
+        aid = (asked or {}).get('id') or ''
+        if name == 'release':
             # The contact card leaves the house only on this tap (browse missions
             # §1); the button names the exact values so the tap is never blind.
-            out.append(_opt('release', rj.get('question') or f"Share with {rj.get('site')}", {'decision': 'approve'}, 'approve'))
-            out.append(_opt('release', 'Not these', {'decision': 'decline'}, 'decline'))
-            out.append(_opt('release', 'Stop the mission', {'decision': 'stop'}, 'stop'))
+            out.append(_opt('release', rj.get('question') or f"Share with {rj.get('site')}", {'decision': 'approve'}, f'{aid}:approve'))
+            out.append(_opt('release', 'Not these', {'decision': 'decline'}, f'{aid}:decline'))
+            out.append(_opt('release', 'Stop the mission', {'decision': 'stop'}, f'{aid}:stop'))
+        elif name == 'submit':
+            # A booking happens only on this tap (spec 2026-10-11); the id is the approval.
+            out.append(_opt('submit', 'Book it' if rj.get('verb') == 'book' else 'Submit it', {'decision': 'approve'}, f'{aid}:approve'))
+            out.append(_opt('submit', "I'll finish it myself", {'decision': 'decline'}, f'{aid}:decline'))
+            out.append(_opt('submit', 'Stop the mission', {'decision': 'stop'}, f'{aid}:stop'))
+        elif name == 'verify':
+            out.append(_opt('verify', 'It went through', {'outcome': 'confirmed'}, f'{aid}:confirmed'))
+            out.append(_opt('verify', 'It did not go through', {'outcome': 'failed'}, f'{aid}:failed'))
+            out.append(_opt('verify', "Still can't tell", {'outcome': 'unsure'}, f'{aid}:unsure'))
         else:
             q = rj.get('question') or 'Argyle has a question'
             # `ask` says what kind it is: the card shows a question to a viewer
@@ -370,7 +381,7 @@ def _is_done(kind: str, row: dict) -> bool:
 def needs_attention(kind: str, row: dict, opts: list) -> bool:
     """Independent of engine status: anything with a decision left is live."""
     if kind == 'mission':
-        return any(o['verb'] in ('answer', 'do', 'release') for o in opts)
+        return any(o['verb'] in ('answer', 'do', 'release', 'submit', 'verify') for o in opts)
     if kind == 'thread':
         from services import threads as _th
         return bool(_th.is_stalled(row)) and not _is_done(kind, row)
@@ -596,7 +607,8 @@ def act(kind: str, sid: str, verb: str, option_id: str = None, payload: dict = N
         return res
     p = dict(opt['payload'])
     free = payload or {}
-    if verb in ('answer', 'advance', 'draft', 'research'):
+    p['_option_id'] = opt['id']
+    if verb in ('answer', 'advance', 'draft', 'research', 'verify'):
         # A blank free value never overwrites an option's pre-filled one (a
         # reading-built "Confirm with …" arrives with its next_action set).
         p.update({k: v for k, v in free.items()
@@ -687,9 +699,16 @@ def _run(kind, sid, verb, p, actor, row) -> dict:
             ok = storage.update_mission(sid, {'status': 'dropped' if state == 'dropped' else 'done',
                                               'finished_at': time.time()})
         return {'status': 'success' if ok else 'error', 'message': 'Closed.'}
-    if verb == 'release':
+    if verb in ('release', 'submit', 'verify'):
         from services import missions as _m
-        return _m.release(sid, p.get('decision'), actor)
+        # The ask id is the option's, never the payload's: `<verb>:<ask_id>:<decision>`.
+        bits = (p.get('_option_id') or '').split(':')
+        ask_id = bits[1] if len(bits) >= 3 else None
+        if verb == 'release':
+            return _m.release(sid, p.get('decision'), actor, ask_id=ask_id)
+        if verb == 'submit':
+            return _m.submit(sid, p.get('decision'), actor, ask_id=ask_id)
+        return _m.verify(sid, ask_id, p.get('outcome'), actor, detail=p.get('text') or '')
     if verb == 'unread':
         from services import asks as _asks
         return _asks.unread(p.get('ask_id'), actor)

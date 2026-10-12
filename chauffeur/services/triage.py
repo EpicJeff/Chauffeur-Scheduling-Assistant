@@ -59,7 +59,7 @@ def tier(s: dict, now: float = None) -> int:
         # ordinary options and the ordinary rank.
         lead = (s.get('next_step') or {}).get('id') or ''
         # Its mission is waiting on the person: the thread is, too.
-        if lead.startswith('answer:mission:') or lead.startswith('release:mission:'):
+        if lead.startswith(('answer:mission:', 'release:mission:', 'submit:mission:', 'verify:mission:')):
             return 0
         if lead in REPLY_LEADS:
             return 1

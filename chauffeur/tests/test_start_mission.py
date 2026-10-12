@@ -153,11 +153,12 @@ def scenario_thread_card_carries_its_missions_release():
     missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
     missions.step(storage.get_mission(mid))
     s = situations.view('thread', tid, MOM)
+    ask_id = [st for st in storage.get_mission_steps(mid) if st['kind'] == 'ask'][-1]['id']
     ids = [o['id'] for o in s['options'] if o['verb'] == 'release']
-    check(ids == [f'release:mission:{mid}:approve', f'release:mission:{mid}:decline', f'release:mission:{mid}:stop'], f"the thread carries the release: {ids}")
+    check(ids == [f'release:mission:{mid}:{ask_id}:approve', f'release:mission:{mid}:{ask_id}:decline', f'release:mission:{mid}:{ask_id}:stop'], f"the thread carries the release: {ids}")
     seq = [{'outcome': 'done', 'text': 'ok', 'learned': {}, 'stopped_at': 'u', 'wanted_fields': [], 'turns': 1, 'tokens_in': 1, 'tokens_out': 1, 'seconds': 1, 'screenshots': [], 'filled': {}}]
     missions._browse = lambda **kw: seq.pop(0)
-    out = situations.act('thread', tid, 'release', option_id=f'release:mission:{mid}:approve', actor=MOM)
+    out = situations.act('thread', tid, 'release', option_id=f'release:mission:{mid}:{ask_id}:approve', actor=MOM)
     check(out['status'] == 'success' and storage.get_mission(mid)['status'] == 'running' and storage.get_mission(mid)['releases'], f"approve through the thread card: {out}")
 
 
@@ -211,7 +212,8 @@ def scenario_e2e_get_the_dishwasher_fixed():
     # 3. the browse stops for the release; the parent approves from the thread
     missions.step(storage.get_mission(mid))
     check(storage.get_mission(mid)['status'] == 'waiting_user' and 'bodewell.com' in SENT[-1] and 'Jeff' in SENT[-1], "the release card")
-    out = situations.act('thread', tid, 'release', option_id=f'release:mission:{mid}:approve', actor=MOM)
+    ask_id = [st for st in storage.get_mission_steps(mid) if st['kind'] == 'ask'][-1]['id']
+    out = situations.act('thread', tid, 'release', option_id=f'release:mission:{mid}:{ask_id}:approve', actor=MOM)
     check(out['status'] == 'success', f"approved: {out}")
     # 4. the resumed browse fails the CAPTCHA -> hand-off
     m = storage.get_mission(mid)
@@ -308,7 +310,7 @@ def scenario_release_label_carries_the_values_and_a_handoff_names_its_kind():
         s = situations.view(kind, sid, MOM)
         check(s['next_step']['verb'] == 'release' and 'Jeff' in s['next_step']['label'] and 'ffejnosliw@gmail.com' in s['next_step']['label'],
               f"the {kind} card's Share shows the exact values: {s['next_step']['label']}")
-    missions.release(mid, 'decline', MOM)
+    missions.release(mid, 'decline', MOM, ask_id=[st for st in storage.get_mission_steps(mid) if st['kind'] == 'ask'][-1]['id'])
     s = situations.view('thread', tid, MOM)
     check(s['next_step']['verb'] == 'answer' and s['next_step']['payload'].get('ask') == 'handoff' and 'https://bodewell.com/f' in s['next_step']['label'],
           f"the hand-off lead is marked and carries its link: {s['next_step']}")
@@ -356,8 +358,9 @@ def scenario_a_release_is_a_tap_never_the_models_word():
     missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'repair.geappliances.com'}
     missions.step(storage.get_mission(mid))
     check(storage.get_mission(mid)['status'] == 'waiting_user', "waiting on the release")
-    for kwargs in ({'verb': 'release'}, {'verb': 'release', 'option_id': f'release:mission:{mid}:approve'},
-                   {'verb': 'release', 'ref': mid, 'kind': 'mission', 'option_id': 'release:approve'}):
+    ask_id = [st for st in storage.get_mission_steps(mid) if st['kind'] == 'ask'][-1]['id']
+    for kwargs in ({'verb': 'release'}, {'verb': 'release', 'option_id': f'release:mission:{mid}:{ask_id}:approve'},
+                   {'verb': 'release', 'ref': mid, 'kind': 'mission', 'option_id': f'release:{ask_id}:approve'}):
         out = tools.act_on_situation(acting_member=MOM, focus_key='voice:1', **kwargs)
         check(out['status'] == 'error' and 'tap' in out['message'].lower() and 'share' in out['message'].lower(), f"refused with where to tap: {kwargs} -> {out}")
     row = storage.get_mission(mid)
@@ -365,7 +368,7 @@ def scenario_a_release_is_a_tap_never_the_models_word():
     # The person's own tap (the card, the transcript, the endpoint) is the only yes.
     seq = [{'outcome': 'done', 'text': 'ok', 'learned': {}, 'stopped_at': 'u', 'wanted_fields': [], 'turns': 1, 'tokens_in': 1, 'tokens_out': 1, 'seconds': 1, 'screenshots': [], 'filled': {}}]
     missions._browse = lambda **kw: seq.pop(0)
-    out = situations.act('thread', tid, 'release', option_id=f'release:mission:{mid}:approve', actor=MOM)
+    out = situations.act('thread', tid, 'release', option_id=f'release:mission:{mid}:{ask_id}:approve', actor=MOM)
     check(out['status'] == 'success' and storage.get_mission(mid).get('releases'), f"the tap shares: {out}")
     desc = next(t for t in tools.get_available_tools() if t['name'] == 'act_on_situation')['description']
     check('release' in desc.lower() and 'tap' in desc.lower(), "the tool's description says a release is a tap")

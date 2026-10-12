@@ -729,8 +729,7 @@ def release(mission_id: str, decision: str, actor: dict, ask_id: str = None) -> 
     fields on the mission and resume the pending browse with the values),
     decline (hand the page over), stop (block the mission). Idempotent: a
     release already acted on answers `already`; an ask id that is not the
-    pending ask answers `moved` and changes nothing (no id: still accepted
-    until the callers pass one)."""
+    pending ask answers `moved` and changes nothing (no id: moved too)."""
     if not actor or (actor.get('role') or '') not in ('parent', 'adult'):
         return {'status': 'refused', 'message': "Only a parent or adult can release the family's details."}
     mission = storage.get_mission(mission_id)
@@ -740,7 +739,7 @@ def release(mission_id: str, decision: str, actor: dict, ask_id: str = None) -> 
     ask = next((s for s in reversed(steps) if s.get('kind') == 'ask'), None)
     if not ask or ask.get('name') != 'release' or mission.get('status') != 'waiting_user':
         return {'status': 'success', 'already': True, 'message': 'That release was already answered.'}
-    if ask_id is not None and ask['id'] != ask_id:
+    if not ask_id or ask['id'] != ask_id:
         return {'status': 'success', 'moved': True, 'message': 'That question has moved on; look at the card again.'}
     rj = ask.get('result_json') or {}
     if decision == 'approve':
