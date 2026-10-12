@@ -685,6 +685,112 @@ def scenario_the_switch_off_restores_the_old_wall():
           "the model is told about the SUBMIT: exit only when the switch is on")
 
 
+def _approved_for(path, selector='#book', ask_id='a1', intent=''):
+    """A parent-approved record for the control on a fixture page, as the gate produces it."""
+    _reset()
+    xy = _xy(f'{URL}{path}', selector)
+    browse._model_step = _script([{'name': 'click_at', 'args': {'x': xy[0], 'y': xy[1], 'intent': intent}}], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}{path}', out_dir=OUT)
+    assert r['outcome'] == 'needs_submit', r
+    return {**r['submit'], 'ask_id': ask_id}, xy
+
+
+def scenario_the_approved_press_runs_once_only_when_everything_matches():
+    from browse_pages import H
+    approved, xy = _approved_for('/booking')
+    order = []
+    browse._model_step = _script([_click(xy)], 'CONFIRMED: Thank you for your booking. Confirmation number 12345.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT, approved=approved,
+                   on_attempt=lambda rec: order.append(('attempt', len(H.posts), rec['ask_id'])) or True)
+    check(r['outcome'] == 'submitted' and len(H.posts) == 1 and order == [('attempt', 0, 'a1')], f"one press, the attempt recorded before it: {r['outcome']} posts={len(H.posts)} {order}")
+    a = r['attempt']
+    check(a['ask_id'] == 'a1' and a['button'] == 'Book appointment' and a['outcome'] == 'confirmed' and '12345' in a['text'] and a['pressed_at'] > 0
+          and a['state']['selected'] == ['Tue, Oct 20 8AM-12PM'], f"the attempt travels with its outcome: {a}")
+    check(any(e['action'].startswith("press 'Book appointment' (approved, ask a1") for e in r['turns_log']), f"the ledger: {[e['action'] for e in r['turns_log']]}")
+    H.posts.clear()
+    browse._model_step = _script([{'name': 'double_click_at', 'args': {'x': xy[0], 'y': xy[1]}}], 'CONFIRMED: booked')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT, approved=approved, on_attempt=lambda rec: True)
+    check(r['outcome'] == 'submitted' and len(H.posts) == 1, f"an approved double-click lands one POST: {len(H.posts)}")
+    H.posts.clear()
+    nx, ny = _xy(f'{URL}/booking', 'input[name=notes]')
+    browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': nx, 'y': ny, 'text': '', 'press_enter': True}}], 'CONFIRMED: booked')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT, approved=approved, on_attempt=lambda rec: True)
+    check(r['outcome'] == 'submitted' and len(H.posts) == 1, f"an approved type+Enter lands one POST: {len(H.posts)} {r['text'][:80]}")
+
+
+def scenario_the_approved_press_refuses_when_the_page_moved():
+    from browse_pages import H
+    approved, xy = _approved_for('/booking')
+    xy2 = _xy(f'{URL}/booking2', '#book')
+    browse._model_step = _script([_click(xy2)], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking2', out_dir=OUT, approved=approved, on_attempt=lambda rec: True)
+    check(r['outcome'] == 'needs_submit' and not H.posts and r['submit']['state']['selected'] == ['Thu, Oct 22 8AM-12PM'], f"re-asked, nothing pressed: {r['outcome']} {len(H.posts)}")
+    ch = r['changed']
+    check(any(c.startswith('selected: Thu, Oct 22 8AM-12PM (approved: Tue, Oct 20 8AM-12PM)') for c in ch)
+          and any(c.startswith('prices: $124.95 appears; $114.95 does not') for c in ch) and 'text: changed' in ch, f"changed names what moved: {ch}")
+    xy3 = _xy(f'{URL}/form2', '#book')
+    browse._model_step = _script([_click(xy3)], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/form2', out_dir=OUT, approved=approved, on_attempt=lambda rec: True)
+    check(r['outcome'] == 'needs_submit' and not H.posts and r['changed'], "same label, different page state: re-ask")
+    browse._model_step = _script([_click(xy)], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT, approved=approved, on_attempt=lambda rec: False)
+    check(r['outcome'] == 'blocked' and 'approval withdrawn' in r['text'] and not H.posts and r['attempt'] is None, f"a false from on_attempt: {r['outcome']} {r['text']}")
+    browse._model_step = _script([_click(xy)], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT, approved={**approved, 'state': {}}, on_attempt=lambda rec: True)
+    check(r['outcome'] == 'needs_submit' and not H.posts and r['changed'] == ['state: the approved record held no form state'], "an empty approved state is a question, never a press")
+
+
+def scenario_the_outcome_lines_and_the_end_of_the_run():
+    from browse_pages import H, PAGES
+    approved, xy = _approved_for('/booking')
+    for line, want, att in (('REJECTED: That slot was just taken.', 'submit_rejected', 'rejected'), ('UNKNOWN: a spinner', 'submit_unknown', 'unknown'),
+                            ('DONE. nothing to say', 'submit_unknown', 'unknown')):
+        H.posts.clear()
+        browse._model_step = _script([_click(xy)], line)
+        r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT, approved=approved, on_attempt=lambda rec: True)
+        check(r['outcome'] == want and r['attempt']['outcome'] == att, f"{line!r}: {r['outcome']} {r['attempt']['outcome']}")
+    H.posts.clear()
+    browse._model_step = _script([_click(xy)], [{'name': 'scroll_document', 'args': {'direction': 'down'}}], [_click(xy)], [_click(xy)], 'CONFIRMED: late')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT, approved=approved, on_attempt=lambda rec: True)
+    check(r['outcome'] == 'submit_unknown' and len(H.posts) == 1 and any('the press is done' in e['action'] for e in r['turns_log']), f"no second press: {r['outcome']} posts={len(H.posts)}")
+    H.posts.clear()
+    browse._model_step = _script([_click(xy)])          # the model never answers: the cap ends it
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT, caps={'turns': 2}, approved=approved, on_attempt=lambda rec: True)
+    check(r['outcome'] == 'submit_unknown' and r['attempt']['outcome'] == 'unknown', f"a cap after the press is unknown, never capped: {r['outcome']}")
+    # A page that reads as a confirmation after an UNGATED press: submit_unknown with an unasked attempt.
+    _reset()
+    PAGES['/sneaky'] = '<h1>Hi</h1><div id="go" role="button" onclick="location.href=\'/thanks\'">Go</div><p>plain copy</p>'
+    g = _xy(f'{URL}/sneaky', '#go')
+    browse._model_step = _script([_click(g)], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/sneaky', out_dir=OUT)
+    check(r['outcome'] == 'submit_unknown' and r['attempt'] and r['attempt'].get('unasked') and r['attempt']['button'] == 'Go' and r['attempt']['outcome'] == 'unknown'
+          and r['attempt']['ask_id'] is None, f"the confirmation backstop: {r['outcome']} {r.get('attempt')}")
+    browse._model_step = _script([{'name': 'navigate', 'args': {'url': f'{URL}/thanks'}}], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/cookie', out_dir=OUT)
+    check(r['outcome'] == 'done' and not r['attempt'], "a navigate to a confirmation page is not a press: no backstop")
+
+
+def scenario_continued_resumes_unapproved_and_payment_after_the_press_keeps_the_attempt():
+    from browse_pages import H, PAGES
+    approved2, xy = _approved_for('/stepcontinue', '#cont', ask_id='a2', intent='submit the slot')
+    book = _xy(f'{URL}/booking', '#book')
+    browse._model_step = _script([{'name': 'click_at', 'args': {'x': xy[0], 'y': xy[1], 'intent': 'submit the slot'}}],
+                                 'CONTINUED: the booking page with Tue selected', [_click(book)], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/stepcontinue', out_dir=OUT, approved=approved2, on_attempt=lambda rec: True)
+    check(r['outcome'] == 'needs_submit' and r['attempt']['outcome'] == 'continued' and r['submit']['button'] == 'Book appointment' and not H.posts,
+          f"CONTINUED: the run goes on unapproved and the real commitment asks: {r['outcome']} {(r.get('attempt') or {}).get('outcome')}")
+    approved, xy = _approved_for('/booking')
+    browse._model_step = _script([_click(xy)], 'CONTINUED: next step')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT, approved=approved, on_attempt=lambda rec: True)
+    check(r['outcome'] == 'submit_unknown' and r['attempt']['outcome'] == 'unknown', f"an uncorroborated CONTINUED (a confirmation page) is unknown: {r['outcome']}")
+    PAGES['/bookpay'] = PAGES['/booking'].replace('action="/booked" method="post"', 'action="/payafter" method="get"')
+    approved, xy = _approved_for('/bookpay')
+    browse._model_step = _script([_click(xy)], 'UNKNOWN: a card form')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/bookpay', out_dir=OUT, approved=approved, on_attempt=lambda rec: True)
+    check(r['outcome'] == 'blocked' and 'payment' in r['text'] and r['attempt'] and r['attempt']['outcome'] == 'unknown', f"payment after the press keeps the attempt: {r['outcome']} {r.get('attempt')}")
+    check('CONFIRMED:' in browse._system_text({}, approved=True) and 'CONFIRMED:' not in browse._system_text({}), "the outcome lines are taught only on an approved run")
+
+
 SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
@@ -702,7 +808,10 @@ SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_typ
              scenario_a_virtual_display_means_a_headed_browser, scenario_word_lists_split_pay_from_submit,
              scenario_control_record_reads_the_scope, scenario_classification_is_by_evidence_not_label,
              scenario_the_gate_returns_a_question_with_the_whole_transaction, scenario_pay_words_are_a_wall_whatever_else,
-             scenario_the_fallback_classifies_unfamiliar_labels_by_evidence, scenario_the_switch_off_restores_the_old_wall]
+             scenario_the_fallback_classifies_unfamiliar_labels_by_evidence, scenario_the_switch_off_restores_the_old_wall,
+             scenario_the_approved_press_runs_once_only_when_everything_matches, scenario_the_approved_press_refuses_when_the_page_moved,
+             scenario_the_outcome_lines_and_the_end_of_the_run,
+             scenario_continued_resumes_unapproved_and_payment_after_the_press_keeps_the_attempt]
 
 if __name__ == "__main__":
     import traceback

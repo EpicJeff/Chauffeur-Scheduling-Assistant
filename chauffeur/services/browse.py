@@ -97,10 +97,41 @@ SUBMIT_TEXT = (" When the only way forward is a control that books, submits, con
 NO_SUBMIT_TEXT = " Booking and submitting are off for this family: never press such a control; stop and report."
 
 
-def _system_text(settings: dict) -> str:
+OUTCOME_LINE = re.compile(r'^(CONFIRMED|REJECTED|CONTINUED|UNKNOWN):\s*(.*)$', re.I | re.M)
+AFTER_PRESS_TEXT = (" This run carries a parent's approval for ONE press. After that approved press, read the page and end your "
+                    "report with exactly one of: CONFIRMED: <what the page says, with any confirmation number>, REJECTED: <the "
+                    "error the page shows>, CONTINUED: <the next step the page shows> when the press only moved the form to "
+                    "another step and nothing is booked or sent yet, or UNKNOWN: <what you see>. Do not act again.")
+
+
+def _system_text(settings: dict, approved: bool = False) -> str:
     """The runner's system text with the submit exit added or withheld by the switch."""
     on = (settings or {}).get('missions_submit_enabled', True)
-    return RUNNER_SYSTEM + (SUBMIT_TEXT if on else NO_SUBMIT_TEXT)
+    return RUNNER_SYSTEM + (SUBMIT_TEXT if on else NO_SUBMIT_TEXT) + (AFTER_PRESS_TEXT if approved and on else '')
+
+
+def _norm(s) -> str:
+    return ' '.join(str(s or '').split()).lower()
+
+
+def _changed(approved_state: dict, state: dict) -> list:
+    """What differs between the approved snapshot and the page now, in words a parent reads (spec §1)."""
+    a, s = approved_state or {}, state or {}
+    out = []
+    if [_norm(x) for x in a.get('selected') or []] != [_norm(x) for x in s.get('selected') or []]:
+        out.append(f"selected: {', '.join(s.get('selected') or []) or 'nothing'} (approved: {', '.join(a.get('selected') or []) or 'nothing'})")
+    af = {k: _norm(v) for k, v in (a.get('fields') or {}).items()}
+    sf = {k: _norm(v) for k, v in (s.get('fields') or {}).items()}
+    if af != sf:
+        names = sorted((set(af) ^ set(sf)) | {k for k in af if k in sf and af[k] != sf[k]})
+        out.append(f"fields: {', '.join(names)} changed")
+    ap, sp = list(a.get('prices') or []), list(s.get('prices') or [])
+    if ap != sp:
+        new, gone = [p for p in sp if p not in ap], [p for p in ap if p not in sp]
+        out.append(f"prices: {' '.join(new) or 'none'} appears; {' '.join(gone) or 'none'} does not")
+    if (a.get('text_sha') or '') != (s.get('text_sha') or ''):
+        out.append('text: changed')
+    return out
 
 
 def available() -> tuple:
@@ -688,6 +719,19 @@ def _wants_enter(name: str, args: dict) -> bool:
     return False
 
 
+def _activate(page, name, args):
+    """One activation for an approved commitment (spec §1): a click of any
+    kind, double-click included, is one click; a key is one press."""
+    if name.startswith('click') or name.startswith('double'):
+        x, y = _px(args['x'], args['y'])
+        page.mouse.click(x, y, click_count=1)
+    elif _wants_enter(name, args):
+        page.keyboard.press('Enter')
+    else:
+        page.keyboard.press('Space')
+    page.wait_for_timeout(900)
+
+
 def _contains_value(text: str, value: str) -> bool:
     """A card value typed as a whole word (or, for a value under three
     characters such as an apartment number or a state code, typed on its
@@ -866,6 +910,11 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
               'submit': None, 'attempt': None, 'changed': []}
 
     def finish(outcome, text):
+        att = report.get('attempt')
+        if att and not att.get('outcome'):
+            att['outcome'] = 'unknown'
+            if outcome in ('capped', 'error', 'done'):
+                outcome = 'submit_unknown'
         report['outcome'] = outcome
         report['text'] = text
         report['seconds'] = round(time.time() - t0, 1)
@@ -873,6 +922,12 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
             report['turns_log'].append({'turn': report['turns'], 'action': f"{outcome}: {str(text)[:80]}",
                                         'url': report.get('stopped_at') or '', 'model_ms': 0, 'act_ms': 0})
         return report
+
+    def finish_attempt(outcome, text):
+        report['attempt']['outcome'] = outcome
+        report['attempt']['text'] = (text or '')[:500]
+        report['stopped_at'] = page.url
+        return finish({'confirmed': 'submitted', 'rejected': 'submit_rejected', 'unknown': 'submit_unknown'}[outcome], (text or '').strip() or outcome)
 
     from services import model_pools
     if not model_pools.api_key_for_pool('cu', settings):
@@ -889,6 +944,9 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
     submit_on = bool(settings.get('missions_submit_enabled', True))
     facts = {}
     missed_submit = 0
+    approved = dict(approved) if approved else None
+    pressed = False
+    after_press_refusals = 0
     captcha_attempts = 0
     strikes = 0
     last_sig, repeats = None, 0
@@ -923,9 +981,10 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
             return finish('captcha_failed', f'a human-verification check at {page.url}; not attempted (consent is off)')
         return None
 
-    def gate(control, intent, how, force_submit=False):
-        """None to run the press; a finished report otherwise (Task 4 adds the
-        'PRESS' return for an approved match). `how` is the ledger word."""
+    def gate(control, intent, how, force_submit=False, can_press=True):
+        """None to run the press; 'PRESS' for an approved match; a finished
+        report otherwise. `how` is the ledger word. A SUBMIT: line has no
+        coordinates to activate, so it passes can_press=False and re-asks."""
         kind = _classify(control, intent)
         if force_submit and kind == 'run':
             kind = 'submit'  # the model naming the control with SUBMIT: is itself the evidence
@@ -939,6 +998,29 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
             return finish('blocked', f'would submit: a "{label or intent}" {how}')
         if control and not control.get('iframe') and not (control.get('state') or {}).get('text'):
             return finish('blocked', f"form state unreadable at {page.url}")
+        if approved and not pressed and can_press:
+            if not (approved.get('state') or {}).get('text_sha'):
+                report['submit'] = _submit_record(page, control, intent, facts)
+                report['changed'] = ['state: the approved record held no form state']
+                return finish('needs_submit', label)
+            same_btn = _norm(label) == _norm(approved.get('button'))
+            same_dom = _domain(page.url) == _domain(approved.get('url') or '')
+            diffs = _changed(approved.get('state'), (control or {}).get('state'))
+            if same_btn and same_dom and not diffs and control and not control.get('iframe'):
+                rec = {'ask_id': approved.get('ask_id'), 'button': label, 'url': page.url, 'state': control['state'],
+                       'pressed_at': time.time(), 'outcome': None, 'text': ''}
+                try:
+                    ok = bool(on_attempt(rec)) if on_attempt else True
+                except Exception as e:
+                    logger.warning(f"[browse] on_attempt failed: {e}")
+                    ok = False
+                if not ok:
+                    return finish('blocked', 'approval withdrawn: the mission moved on before the press')
+                report['attempt'] = rec
+                return 'PRESS'
+            report['submit'] = _submit_record(page, control, intent, facts)
+            report['changed'] = diffs or ([f"button: '{label}' (approved: '{approved.get('button')}')"] if not same_btn else [f"site: {page.url}"])
+            return finish('needs_submit', label)
         report['submit'] = _submit_record(page, control, intent, facts)
         return finish('needs_submit', label or f"the control the model meant to {intent}")
 
@@ -959,7 +1041,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                      else "The family's contact card holds nothing yet; ask with NEED: for any field the page wants.\n")
                   + ("You may attempt a human-verification check, at most the allowed attempts.\n" if consent.get('captcha') else
                      "Do NOT attempt any human-verification check; stop and report instead.\n"))
-        contents = [{'role': 'user', 'parts': [{'text': _system_text(settings) + '\n\n' + prompt}, {'image': shot}]}]
+        contents = [{'role': 'user', 'parts': [{'text': _system_text(settings, approved=bool(approved)) + '\n\n' + prompt}, {'image': shot}]}]
         for turn in range(1, caps['turns'] + 1):
             if time.time() - t0 > caps['seconds']:
                 return finish('capped', f"stopped after {caps['seconds']} s")
@@ -984,6 +1066,20 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                 report['turns_log'].append({'turn': turn, 'action': 'finish: ' + ' '.join(text.split())[:80], 'url': page.url,
                                             'model_ms': model_ms, 'act_ms': 0})
                 report['learned'] = _learned(text)
+                if pressed:
+                    m = OUTCOME_LINE.search(text)
+                    kind = m.group(1).upper() if m else 'UNKNOWN'
+                    body = (m.group(2) if m else text).strip()
+                    if kind == 'CONTINUED':
+                        scan = _scan(page)
+                        if not _is_confirmation(scan) and scan.get('fields'):
+                            report['attempt']['outcome'], report['attempt']['text'] = 'continued', body[:500]
+                            approved, pressed = None, False
+                            report['turns_log'].append({'turn': turn, 'action': 'continued: ' + body[:80], 'url': page.url, 'model_ms': model_ms, 'act_ms': 0})
+                            contents.append({'role': 'user', 'parts': [{'text': 'Noted. Carry on with the goal; a further commitment needs a new SUBMIT: line.'}]})
+                            continue
+                        return finish_attempt('unknown', body or 'CONTINUED could not be corroborated')
+                    return finish_attempt({'CONFIRMED': 'confirmed', 'REJECTED': 'rejected'}.get(kind, 'unknown'), body)
                 m = SUBMIT_LINE.search(text)
                 if m:
                     want = m.group(1).strip()
@@ -996,7 +1092,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                             return finish('blocked', f"could not find the control '{want}' at {page.url}")
                         contents.append({'role': 'user', 'parts': [{'text': f"no control reads '{want}'; click it, or name its text exactly as the page shows it"}]})
                         continue
-                    return gate(ctl, '', 'SUBMIT', force_submit=True)
+                    return gate(ctl, '', 'SUBMIT', force_submit=True, can_press=False)
                 needed = [f for f in _needed(text) if f not in released]
                 if needed:
                     report['wanted_fields'] = needed
@@ -1014,6 +1110,13 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                 words = _action_words(page, name, args)
                 line = {'turn': turn, 'action': words, 'url': page.url, 'model_ms': model_ms if i_call == 0 else 0, 'act_ms': 0}
                 report['turns_log'].append(line)
+                if pressed and name not in ('scroll_document', 'scroll_at', 'scroll', 'wait_5_seconds', 'wait', 'go_back'):
+                    after_press_refusals += 1
+                    line['action'] += ' (refused: the press is done)'
+                    if after_press_refusals >= 2:
+                        return finish_attempt('unknown', 'the model kept acting after the press')
+                    results.append((name, args, {'error': 'the press is done; report what the page says'}))
+                    continue
                 # The same action on the same unchanged page, a third time, is
                 # a loop: refuse it and tell the model, instead of burning the turn.
                 sig = (name, _coarse(args.get('x')), _coarse(args.get('y')), str(args.get('text') or '')[:40],
@@ -1036,10 +1139,13 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                         if captcha_attempts > caps['captcha_attempts']:
                             return finish('captcha_failed', f"{caps['captcha_attempts']} attempts at the human-verification check failed at {page.url}")
                 ctl = focused = None
+                press_now = False
                 if name.startswith('click') or name.startswith('double'):
                     ctl = _control_at(page, *_px(args['x'], args['y'])) if 'x' in args else None
                     stop = gate(ctl, intent, 'click')
-                    if stop:
+                    if stop == 'PRESS':
+                        press_now = True
+                    elif stop:
                         return stop
                 if name in ('type_text_at', 'type'):
                     if 'x' in args:
@@ -1071,11 +1177,18 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                         pass
                     focused = _focused_control(page)
                     stop = gate(focused, intent, 'Enter')
-                    if stop:
+                    if stop == 'PRESS':
+                        press_now = True
+                    elif stop:
                         return stop
                     try:
-                        page.keyboard.press('Enter')
-                        page.wait_for_timeout(900)
+                        if press_now:
+                            pressed = True
+                            _activate(page, 'key_combination', {'keys': ['Enter']})
+                            line['action'] = f"press '{report['attempt']['button']}' (approved, ask {str(report['attempt']['ask_id'])[:8]})"
+                        else:
+                            page.keyboard.press('Enter')
+                            page.wait_for_timeout(900)
                         res = {}
                     except Exception as e:
                         res = {'error': str(e)[:160]}
@@ -1083,15 +1196,24 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                     if enter:
                         focused = _focused_control(page)
                         stop = gate(focused, intent, 'Enter')
-                        if stop:
+                        if stop == 'PRESS':
+                            press_now = True
+                        elif stop:
                             return stop
                     if _wants_space(name, args):
                         focused = _focused_control(page)
                         stop = gate(focused, intent, 'Space')
-                        if stop:
+                        if stop == 'PRESS':
+                            press_now = True
+                        elif stop:
                             return stop
                     try:
-                        _act(page, name, args)
+                        if press_now:
+                            pressed = True
+                            _activate(page, name, args)
+                            line['action'] = f"press '{report['attempt']['button']}' (approved, ask {str(report['attempt']['ask_id'])[:8]})"
+                        else:
+                            _act(page, name, args)
                         res = {}
                     except Exception as e:
                         res = {'error': str(e)[:160]}
@@ -1116,6 +1238,13 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                     stop = page_checks(scan)
                     if stop:
                         return stop
+                    if not press_now and not pressed and (name.startswith('click') or name.startswith('double') or enter or _wants_space(name, args)) and _is_confirmation(scan):
+                        src = ctl if (name.startswith('click') or name.startswith('double')) else focused
+                        label = (src or {}).get('text') or ''
+                        report['attempt'] = {'ask_id': None, 'button': label, 'url': before, 'state': (src or {}).get('state') or {},
+                                             'pressed_at': time.time(), 'outcome': 'unknown', 'text': (scan.get('text') or '')[:300], 'unasked': True}
+                        report['stopped_at'] = page.url
+                        return finish('submit_unknown', f"confirmation page after an ungated press of '{label}'")
                 shot = page.screenshot(type='png')
                 p = os.path.join(out_dir, f'turn_{turn:02d}.png')
                 with open(p, 'wb') as f:
