@@ -1,6 +1,6 @@
 # Submit gate — a browse may book or submit a form, on a parent's tap
 
-**Date:** 2026-10-11. **Status:** approved in conversation; awaiting the user's review of this file.
+**Date:** 2026-10-11. **Status:** approved in conversation; revised the same day after the user's review (five findings, all taken: the ask id, the form's state as the thing approved, attempt and outcome, the payment path, every activation method); awaiting the user's second review.
 **Builds on:** `2026-10-10-browse-missions-design.md` (all three builds shipped, device-verified 2026-10-11).
 
 ## Problem
@@ -17,62 +17,90 @@ The user revised that decision on 2026-10-11. Dots booked nothing only because t
 
 ## Section 1 — The wall becomes a question
 
-**In the runner (`services/browse.py`).** The never-submit guard stays exactly where it is and keeps its tests; what changes is what it returns. A click, an Enter, or a stated intent that would press a submit control (`STOP_WORDS` on the element under the click, on the form's default submit control for Enter, or on the model's intent) ends the run with a new outcome, `needs_submit`, instead of `blocked`. The report carries a `submit` record:
+**Two word lists, two paths (`services/browse.py`).** The single `STOP_WORDS` list splits:
+
+- `SUBMIT_WORDS`: submit, book, booking, schedule now, confirm, reserve, send, apply, register, sign up, finish booking, complete booking, place request. A control with these words is a commitment the person may approve.
+- `PAY_WORDS`: pay, payment, checkout, purchase, buy, order now, place order, charge, complete purchase. A control with these words is money. It ends the run `blocked: payment`, with or without a card field on the page, and no approval in this slice lifts it. A saved card, an invoiced account, a "buy with one click" are exactly the cases this path exists for.
+
+The card-field guard (card number, CVC, expiry, `cc-*` autocomplete) is unchanged and also `blocked: payment`.
+
+**Every way to press a control is one check.** The runner classifies an action before running it:
+
+- a click or double-click: the control under the point (`elementFromPoint`, then its closest button, submit input, link or `role=button`);
+- Enter: the focused element's form's default submit control (as today);
+- Space, or Enter on a focused button: the focused element itself when it is a button, a submit input or `role=button`;
+- the model's stated intent, for any of the above.
+
+If the control's text or the intent matches `PAY_WORDS`: `blocked: payment`. If it matches `SUBMIT_WORDS`: the gate below. If the control is a form's submit control (`type=submit`, or the default submit control of a form, or the only button in a form) and its text matches neither list nor `NAVIGATION_WORDS` (next, continue, search, find, go, filter, sort, show, view, see, select, choose, back, previous, close, cancel, accept, got it, ok): the runner cannot classify it, and an unclassified final action is a commitment: the gate below. "Send application", "Request a quote", "Finish" all land here. A control that matches `NAVIGATION_WORDS` runs as today (a multi-step "Next" is not a booking).
+
+**The gate returns a question, not a wall.** An action that reaches the gate does not run. The run ends with the new outcome `needs_submit` and the report carries a `submit` record, the thing the person is asked to approve:
 
 ```
 submit = {
-  button: str,        # the control's text, as the page shows it ('Book appointment')
+  button: str,        # the control's text as the page shows it ('Book appointment')
   url: str,           # the page the control is on
-  facts: {str: str},  # what the model read from the screen: the LEARNED: pairs of this run
-  intent: str,        # the model's own words for the click, if it gave any
+  state: {            # the control's own form, read from the DOM at the stop
+    fields: {name: value},     # every text-like input's current value (passwords and card fields excluded)
+    selected: [str],           # the labels of checked radios and checkboxes and of selected options, in page order
+    text: str,                 # the form's visible text, whitespace collapsed, first 1,500 characters
+  },
+  facts: {str: str},  # the model's LEARNED: pairs so far, latest value per key: the human summary (slot, price)
+  intent: str,        # the model's words for the action, if any
 }
 ```
 
-The model gets an explicit exit as well, the way `NEED:` and `WALL:` work: when the only way forward is a submit, book, confirm or order control, it ends its report with `SUBMIT: <button text>` and the runner returns `needs_submit` with that text. Either path, the facts are the `LEARNED:` pairs found in any of the model's turn texts so far in this run (the model writes prose beside its calls; the runner keeps the latest value per key), so a guard-triggered stop mid-turn has the slot and price the model already read; a submit with no facts is still a submit (the ask then shows the button and the page only, and the guarded click checks the button alone).
+`state` is the transaction. A scheduling page that shows Tuesday in a paragraph while Thursday is selected has Thursday in `selected`; a page whose price moved has a different `text`. The model's `facts` are shown to the person but never used as the check. The model also gets an explicit exit, as with `NEED:` and `WALL:`: when the only way forward is such a control, it ends its report with `SUBMIT: <button text>`; the runner finds the control by that text, reads its form's state and returns `needs_submit` the same way (no control with that text: `needs_submit` with an empty state, and the question names the button only).
 
-The payment guard is untouched: a page with a card-number, CVC or expiry field ends the run `blocked: payment` before any typing, before and after a submit. The domain guard, the typing guard, the release detection and the CAPTCHA policy are unchanged.
+**The approved action, guarded.** `run()` takes `approved: dict | None`, the `submit` record a parent approved, plus `on_attempt`, a callable the mission engine supplies (Section 2). With `approved` set the runner permits exactly one action that the gate would stop, and only when, at the moment of the action:
 
-**The approved click.** `run()` takes one more argument, `approved: dict | None`, the `submit` record a parent approved. With it set, the runner allows exactly one click or Enter that `STOP_WORDS` would otherwise stop, and only when:
+- the control's text equals `approved.button` (case-insensitive, whitespace collapsed);
+- the page is on the site and `_domain(page.url) == _domain(approved.url)`;
+- the control's form state equals `approved.state`: the same `selected` list, the same `fields` values (the released values re-typed into a fresh session count as the same), and the same `text`. The comparison is exact after whitespace collapsing; a timestamp or a counter in the form text makes the page a different transaction, which is the correct answer when in doubt.
 
-- the element under the click (or the form's default submit control, for Enter) has text that matches `approved.button`, compared case-insensitively with whitespace collapsed;
-- the page is on the site (the domain allowlist, as today);
-- every value in `approved.facts` still appears in the page's visible text (whitespace collapsed, case-insensitive).
+Anything short of that, the action does not run and the run ends `needs_submit` again with the current record and a `changed` list naming what differs ("selected: Thu, Oct 22 8AM–12PM (approved: Tue, Oct 20 8AM–12PM)", "text: $124.95 appears; $114.95 does not"). Before the permitted action runs, the runner calls `on_attempt(record)` and waits for it to return: the attempt is on the mission's transcript before the press lands. Then the action runs, the page settles, the screenshot and the scan follow as for any navigation, and the model reads the result.
 
-A click that fails any check does not run; the run ends `needs_submit` again with the current button, page and facts and a `changed` list naming which approved facts are no longer on the screen ("$114.95 is no longer shown; the page says $124.95"). After the approved click runs, the runner waits for the page to settle, takes its screenshot and scans it as for any navigation; the model is then expected to read the confirmation and finish; the runner returns `submitted` with the model's report and the `LEARNED:` pairs (a confirmation number when the page shows one). A second submit control reached after the approved click is a new `needs_submit`; one approval is one click.
+**Three outcomes after the action.** The model is told: "After an approved press, read the page and end your report with exactly one of: `CONFIRMED: <what the page says, with any confirmation number>`, `REJECTED: <the error the page shows>`, or `UNKNOWN: <what you see>`." The runner maps them to the outcomes `submitted`, `submit_rejected`, `submit_unknown`; a report with none of the three, a page that never settled, a timeout, a cap or an error after the action is `submit_unknown`. A page whose controls carry payment words or whose fields are card fields after the action is `blocked: payment` on top of the attempt already recorded; the attempt is never lost. A second gated control after a confirmed action is a new `needs_submit`; one approval is one action.
 
-**Outcomes.** `OUTCOMES` gains `needs_submit` and `submitted`. The ledger line for the stop reads `needs_submit: Book appointment`; the approved click's line reads `click (x,y) 'Book appointment' (approved)`.
+**Outcomes and the ledger.** `OUTCOMES` gains `needs_submit`, `submitted`, `submit_rejected`, `submit_unknown`. Ledger lines: `needs_submit: Book appointment`, `press 'Book appointment' (approved)`, `blocked: payment (Pay now)`.
 
 ## Section 2 — The mission asks, the person taps
 
-**`finish_browse`** maps `needs_submit` to an `ask` step named `submit`, the mission goes `waiting_user`, and the person is told, the way a release works today:
+**`finish_browse`** maps `needs_submit` to an `ask` step named `submit`, the mission goes `waiting_user`, and the person is told:
 
 ```
 result_json = {
   question: "Book at bodewell.com: Tue, Oct 20 8AM–12PM, trip charge $114.95 (button 'Book appointment')?",
-  site: 'bodewell.com', url: <the page>, button: 'Book appointment',
-  facts: {earliest_availability: 'Tue, Oct 20 ...', trip_charge: '$114.95'},
+  verb: 'book' | 'submit',
+  site, url, button, state, facts,          # the submit record, verbatim
   filled: {first_name: 'Jeff', ...},        # what the form holds, from the report
-  browse: {goal, site, start_url: <the page>, released: <the released values>},
-  changed: [...]                             # only on a re-ask, what moved
+  browse: {goal, site, start_url: url, released},
+  changed: [...]                            # on a re-ask only: what moved
 }
 ```
 
-The question is built deterministically: "{Verb} at {domain}: {facts in the model's order, joined by ', '} (button '{button}')?" where the verb is Book when the button or the goal says book, schedule or appointment, Submit otherwise. The filled values are listed under it on the card and in the DM so the person knows exactly what the site has. The DM: "Argyle needs a yes: {question} Filled: {values}. Tap Book it on the Missions page or the thread card."
+The question is deterministic: "{Book|Submit} at {domain}: {facts in the model's order, joined by ', '} (button '{button}')?"; with no facts, "{Book|Submit} at {domain} with the button '{button}'?". The verb is Book when the button, the intent or the goal says book, schedule, appointment or reserve; Submit otherwise. Under the question the card lists the form's `selected` labels and the filled values, so the person sees the transaction the way the site has it. The DM says the same and ends "Tap Book it on the Missions page or the thread card."
 
-**Options and verbs.** `situations.VERBS` gains `submit`. A mission (and, through the thread's routing, its thread) whose last ask is a `submit` leads with `submit:approve` (label "Book it" or "Submit it"), then `submit:decline` ("Not this"), `submit:stop` ("Stop the mission"). `needs_attention` counts a submit as a decision left; triage ranks it tier 0 on the thread as it does a release. `VERB_LABELS.submit` = "Book it". `act_on_situation` refuses the `submit` verb outright, as it refuses `release`: "Booking takes a tap, not a word: tap Book it on the Missions page, the thread card or the DM card."
+**The ask's id is the approval.** Every option carries the ask step's id: `submit:<ask_id>:approve`, `submit:<ask_id>:decline`, `submit:<ask_id>:stop` on the mission card, and `submit:mission:<mid>:<ask_id>:approve` (and the other two) when a thread carries them. `POST /api/missions/{id}/submit` takes `{decision, ask_id}`; `missions.submit(mission_id, decision, actor, ask_id)` refuses a request whose `ask_id` is not the mission's pending submit ask: "That question has moved on; look at the card again." A re-ask is a new ask step with a new id, so a stale card, a delayed request or a second tap on the old card can never answer the new question. The same id discipline is applied to the release in this slice: `release:<ask_id>:…`, `{decision, ask_id}` on `/release`, `missions.release(..., ask_id)`; the thread's routed ids gain the ask id the same way. A client that sends no `ask_id` is refused, not defaulted: the old card is the risk.
 
-**`missions.submit(mission_id, decision, actor)`**, parent/adult:
+**Options and verbs.** `situations.VERBS` gains `submit`. A mission whose last ask is a `submit` leads with approve ("Book it" / "Submit it"), then decline ("I'll finish it myself"), then stop ("Stop the mission"); the thread routes them as it routes a release. `needs_attention` counts a submit; triage ranks it tier 0; `VERB_LABELS.submit` is "Book it". `act_on_situation` refuses the `submit` verb outright, as it refuses `release`.
 
-- `approve`: idempotent under `db_lock` (a second tap answers `already`); notes `submit_approved` with the button and facts; re-runs the browse through `start_browse(..., start_url=ask.url, released=ask.browse.released, approved=ask.submit_record)`. The released values ride again so the form can be re-filled if the session is gone.
-- `decline`: a `handoff` ask ("I got as far as {url}. I did not press '{button}'. Finish it on your phone and tell me what you found.") plus DM; the mission waits.
-- `stop`: `blocked` with "the family did not book".
-- A mission not waiting on a submit: `already`.
+**`missions.submit(mission_id, decision, actor, ask_id)`**, parent/adult:
 
-`POST /api/missions/{id}/submit` `{decision}`, gated like `/release`. The transcript's `submit` ask block shows the question, the facts, the filled values and the three buttons while it is the last ask; the free-text answer box is hidden for it, as for a release.
+- `approve`: under `db_lock`, the mission must be `waiting_user` and the pending submit ask must be `ask_id`, else `already` (a second tap) or `moved` (a stale card). Notes `submit_approved` with the record; re-runs the browse with `start_browse(..., start_url=record.url, released=ask.browse.released, approved=record)`.
+- `decline`: a `handoff` ask ("I got as far as {url}. I did not press '{button}'. Finish it yourself and tell me what you found.") plus DM; the mission waits.
+- `stop`: `blocked`, "the family did not book".
 
-**After the click.** `finish_browse` maps `submitted` to `running` with a `note` step named `submitted` whose text is the model's report and whose `result_json` holds the facts (the confirmation number when read). The planner's view of the step says `submitted`. The planner's rules gain: "A submitted step is the commitment made: finish with what was booked and the confirmation; never book twice." `_land_finish` writes "Booked: {facts}" instead of "Nothing is booked" when a `submitted` note exists on the mission, both in the thread note and the DM. The thread's next step after such a finish is the person's: "Tue Oct 20 8–12, Bodewell, confirmation 12345" with the date as `next_action_at`.
+`POST /api/missions/{id}/submit` `{decision, ask_id}`, gated like `/release`. The transcript's `submit` ask block shows the question, the selected labels, the filled values and the three buttons while it is the pending ask; the free-text answer box is hidden for it.
 
-**A re-ask.** When the resumed browse ends `needs_submit` again with `changed`, the new ask's question leads with the change: "The page changed: $114.95 is no longer shown; it says $124.95. Book at bodewell.com: … ?" and the previous approval is spent.
+**After the action.** `finish_browse` maps:
+
+- `submitted` → a `note` step named `submitted` (`result_json`: the record, the model's CONFIRMED text, the facts with any confirmation number) and `running`. `_land_finish` writes "Booked: {facts}, confirmation {n}" (or "Submitted: …" for a submit verb) instead of "Nothing is booked", in the thread note and the DM, and the thread's next step is the appointment itself with its date as `next_action_at`.
+- `submit_rejected` → a `note` named `submit_rejected` with the page's error and `running`: the planner reads it and may ask the person or re-browse; a new `needs_submit` is a new ask.
+- `submit_unknown` → a `handoff` ask: "I pressed '{button}' at {url} and could not read whether it went through. Check your email or the site, then tell me what you find." plus DM; the mission waits. The planner is told, in its rules: "A `submit_attempt` on the transcript with no `submitted` note is a commitment that may have happened: never press again on this mission; ask the person."
+
+**The attempt is on the record before the press.** `on_attempt` adds a `note` step named `submit_attempt` with the record and the time; `finish_browse` leaves it in place whatever follows. The tick's lost-browse reclaim (`BROWSE_LOST_S`) checks for a `submit_attempt` newer than the browse step: with one, the mission does not return to `running`; it gets the `submit_unknown` hand-off above. A payment wall or a second gated control after the action never removes the attempt.
+
+**A re-ask.** A `needs_submit` with `changed` becomes a new ask whose question leads with the change: "The page changed: selected Thu, Oct 22 8AM–12PM (you approved Tue, Oct 20 8AM–12PM). Book at bodewell.com: …?" The earlier approval is spent and its id no longer answers anything.
 
 ## Section 3 — The switch
 
@@ -80,15 +108,15 @@ The question is built deterministically: "{Verb} at {domain}: {facts in the mode
 
 ## Section 4 — Tests
 
-- `test_browse_runner.py`: the guard returns `needs_submit` with the button, url and facts (a click, an Enter, an intent); `SUBMIT:` in the report does the same; an approved click runs only when the button matches and the facts are on the page; a changed price re-asks with `changed`; a second submit after an approved click is a new `needs_submit`; a payment page after a submit is still `blocked: payment`; the switch off restores `blocked: would submit`; the ledger lines.
-- `test_browse_mission.py`: the `submit` ask shape, question and DM; the card's three options on the mission and on the thread; approve resumes with the record, the released values and the stopped-at page; a double tap resumes once; decline hands off; stop blocks; the chat tool refuses the verb; `submitted` → a `submitted` note, "Booked: …" on the thread and in the DM, the finish's next step as the person's.
-- `test_browse_page_live.py` / `test_browse_thread_live.py`: the submit ask on /missions and the thread card with Book it, Not this, Stop; Book it from the thread card resumes the mission.
-- `test_start_mission.py`: the end-to-end dishwasher scenario extended: after the slots are read the browse ends `needs_submit`, the parent taps Book it, the resumed browse returns `submitted` with a confirmation, the mission finishes "Booked: Tue Oct 20 8–12 … confirmation 12345", nothing proposed.
+- `test_browse_runner.py` (real Playwright; the local site gains a booking form with a slot radio group, a price line, a "Book appointment" button, a "Pay now" button, a "Send application" form, and a saved-card "Buy now" page): the gate returns `needs_submit` with the button, url and state for a click, an Enter, a Space on a focused button, an intent, and a `SUBMIT:` line; `PAY_WORDS` and the saved-card "Buy now" are `blocked: payment` even with `approved` set; an unfamiliar final label ("Send application") is `needs_submit`; "Next" still passes; the approved action runs only when button, domain and state match; a visible-but-unselected slot (Tuesday in the text, Thursday checked) re-asks with `changed`; a changed price re-asks; `on_attempt` is called before the press (the fake records the order); `CONFIRMED:` → `submitted`, `REJECTED:` → `submit_rejected`, no line → `submit_unknown`; a payment page after the press is `blocked: payment` with the attempt intact; a second gated control after a confirmed press is a new `needs_submit`; the switch off restores `blocked: would submit`; the ledger lines.
+- `test_browse_mission.py`: the `submit` ask shape, question and DM; the id-bearing options on the mission and the thread; approve with the right id resumes with the record, the released values and the page; a second tap answers `already`; a stale id answers `moved` and changes nothing; decline hands off; stop blocks; the chat tool refuses the verb; `submitted` → the note, "Booked: …" on the thread and in the DM, the finish's next step as the appointment; `submit_rejected` → `running` with the note; `submit_unknown` → the hand-off; a crash after the attempt (a `submit_attempt` with no outcome, the browse older than `BROWSE_LOST_S`) → the hand-off, never `running`; the release endpoint refuses a stale `ask_id` too.
+- `test_browse_page_live.py` / `test_browse_thread_live.py`: the submit ask on /missions and on the thread card with Book it, I'll finish it myself, Stop; Book it from the thread card resumes the mission with the ask id.
+- `test_start_mission.py`: the end-to-end dishwasher scenario extended: after the slots are read the browse ends `needs_submit`, the parent taps Book it, the attempt lands, the resumed browse returns `submitted` with a confirmation, the mission finishes "Booked: Tue, Oct 20 8AM–12PM, confirmation 12345", nothing proposed, nothing paid.
 - Pins unchanged: `browse.py` never names the paid key; `missions.py` never names the mailer.
 
 ## Out of scope
 
-- Payment of any kind: a card field is a wall. Its own slice, with layered approval.
+- Payment of any kind: a card field, and any control that reads pay, checkout, purchase, buy or place order, is a wall that no approval in this slice lifts. Its own slice, with layered approval.
 - Voice or typed approval of a submit: the voice-identity slice (PIN) and the voice-fingerprint slice.
 - Booking on the person's behalf without an ask: never.
 - Stealth, proxies, or anything that changes what the browser says about itself.
