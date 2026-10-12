@@ -1,5 +1,7 @@
 """'Get the dishwasher fixed': one tool opens the thread and the mission and
 holds the thread as focus. Spec 2026-10-10 browse missions §4."""
+import time
+
 from harness import check  # noqa: F401
 from services import storage, threads, missions, triage, situations, agent_tools_v2 as tools, agent_router
 
@@ -376,6 +378,54 @@ def scenario_a_release_is_a_tap_never_the_models_word():
     check('tap Share' in src or 'tap share' in src.lower(), "the router's standing rule says a release is the person's tap")
 
 
+def scenario_the_dishwasher_is_booked_on_a_tap():
+    """Spec 2026-10-11: after the slots are read the browse asks, the parent taps Book it, the attempt lands,
+    the resumed browse confirms, the mission finishes Booked; nothing proposed, nothing paid."""
+    _reset(); _dm_capture()
+    storage.get_settings = lambda: {'missions_enabled': True, 'llm_gemini_paid_api_key': 'paid', 'thread_stall_days': 7, 'missions_submit_enabled': True,
+                                    'contact_first_name': 'Jeff', 'contact_email': 'ffejnosliw@gmail.com', 'contact_zip': '27519'}
+    missions._browse_async = False
+    res = tools.start_mission_for('Get availability and pricing for GE Bodewell service for a 2021 GE Cafe dishwasher and book the earliest slot', acting_member=MOM, focus_key='voice:1')
+    mid, tid = res['mission_id'], res['thread_id']
+    rec = {'button': 'Book appointment', 'url': 'https://www.bodewell.com/schedule', 'intent': 'book Tue',
+           'state': {'fields': {}, 'selected': ['Tue, Oct 20 8AM-12PM'], 'text': 'Trip charge $114.95 Tue, Oct 20 8AM-12PM', 'text_sha': 'c' * 64, 'prices': ['$114.95']},
+           'display': 'Trip charge $114.95', 'facts': {'slot': 'Tue, Oct 20 8AM-12PM', 'price': '$114.95'}}
+    runs = []
+
+    def fake(**kw):
+        runs.append(kw)
+        base = {'learned': {'slot': 'Tue, Oct 20 8AM-12PM', 'price': '$114.95'}, 'stopped_at': rec['url'], 'wanted_fields': [], 'turns': 9, 'tokens_in': 1, 'tokens_out': 1,
+                'seconds': 1, 'screenshots': [], 'filled': {'first_name': 'Jeff'}, 'submit': None, 'attempt': None, 'changed': [], 'attempts_extra': []}
+        if kw.get('approved'):
+            ok = kw['on_attempt']({'ask_id': kw['approved']['ask_id'], 'button': 'Book appointment', 'url': rec['url'], 'state': rec['state'], 'pressed_at': time.time(), 'outcome': None, 'text': ''})
+            assert ok, "the engine must authorize the press"
+            return {**base, 'outcome': 'submitted', 'text': 'CONFIRMED: Confirmation number 12345',
+                    'attempt': {**kw['approved'], 'pressed_at': time.time(), 'outcome': 'confirmed', 'text': 'Confirmation number 12345'}}
+        return {**base, 'outcome': 'needs_submit', 'text': 'Book appointment', 'submit': rec}
+    missions._browse = fake
+    plan = [{'action': 'browse', 'goal': 'find the slots and the fee, then book the earliest', 'site': 'bodewell.com'},
+            {'action': 'finish', 'summary': 'Bodewell comes Tue Oct 20 8-12; trip charge $114.95.', 'next_action': 'Be home Tue Oct 20 8-12', 'next_action_at': '2026-10-20'}]
+    missions._llm = lambda m, s, u, st: plan.pop(0)
+    row = missions.step(storage.get_mission(mid))
+    ask = storage.get_mission_steps(mid)[-1]
+    check(row['status'] == 'waiting_user' and ask['name'] == 'submit' and ask['result_json']['question'].startswith('Book at bodewell.com: Tue, Oct 20 8AM-12PM, $114.95'), f"the ask: {ask['result_json']['question']}")
+    check(SENT[-1].endswith('Tap Book it on the Missions page or the thread card.'), f"the DM: {SENT[-1]}")
+    s = situations.view('thread', tid, MOM)
+    check(s['next_step']['label'] == 'Book it' and s['next_step']['id'] == f"submit:mission:{mid}:{ask['id']}:approve", f"the thread card leads with Book it: {s['next_step']}")
+    res = situations.act('thread', tid, 'submit', option_id=s['next_step']['id'], actor=MOM)
+    check(res['status'] == 'success' and len(runs) == 2 and runs[1]['approved']['ask_id'] == ask['id'], f"Book it resumed the browse with the record: {res}")
+    atts = missions.attempts_for(mid)
+    check(len(atts) == 1 and atts[0]['outcome'] == 'confirmed', f"one attempt, confirmed: {atts}")
+    check(storage.get_mission(mid)['status'] == 'running', "the planner runs on")
+    row = missions.step(storage.get_mission(mid))
+    check(row['status'] == 'done', f"finished: {row['status']}")
+    check('Booked: Tue, Oct 20 8AM-12PM, $114.95, confirmation 12345' in SENT[-1] and 'Nothing is booked' not in SENT[-1], f"the finish says Booked: {SENT[-1]}")
+    t = storage.get_thread(tid)
+    check(t['next_action_at'] == '2026-10-20' and 'Booked:' in [h for h in t['history'] if h['kind'] == 'mission'][-1]['text'], "the thread's next step is the appointment")
+    check(not [st for st in storage.get_mission_steps(mid) if st['kind'] == 'proposal'], "nothing proposed")
+    check(all('payment' not in ((st.get('result_json') or {}).get('text') or '') for st in storage.get_mission_steps(mid) if st['kind'] == 'browse'), "nothing paid")
+
+
 SCENARIOS = [scenario_opens_thread_and_mission_and_focus, scenario_a_running_mission_is_not_duplicated, scenario_gates,
              scenario_declared_dispatched_terminal,
              scenario_ask_user_dms_the_question, scenario_finish_lands_on_the_thread_with_a_prefilled_next_step,
@@ -387,7 +437,7 @@ SCENARIOS = [scenario_opens_thread_and_mission_and_focus, scenario_a_running_mis
              scenario_release_label_carries_the_values_and_a_handoff_names_its_kind,
              scenario_a_follow_up_on_the_focus_thread_reuses_it, scenario_the_model_is_told_argyle_acts_on_websites,
              scenario_a_release_is_a_tap_never_the_models_word,
-             scenario_e2e_get_the_dishwasher_fixed]
+             scenario_e2e_get_the_dishwasher_fixed, scenario_the_dishwasher_is_booked_on_a_tap]
 
 if __name__ == "__main__":
     import traceback
