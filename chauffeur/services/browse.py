@@ -35,7 +35,8 @@ def contact_card(settings: Optional[dict] = None) -> dict:
 
 # --- the runner -------------------------------------------------------------------
 
-OUTCOMES = ('done', 'needs_release', 'captcha_failed', 'blocked', 'refused', 'capped', 'error')
+OUTCOMES = ('done', 'needs_release', 'needs_submit', 'submitted', 'submit_rejected', 'submit_unknown',
+            'captcha_failed', 'blocked', 'refused', 'capped', 'error')
 DEFAULT_CAPS = {'turns': 40, 'seconds': 600, 'captcha_attempts': 3}
 W, H = 1440, 900
 GOTO_TIMEOUT_MS = 45000
@@ -71,8 +72,8 @@ PHONE_SHAPE = re.compile(r'(\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}')
 
 RUNNER_SYSTEM = (
     "You are driving a browser for one family on ONE site to learn something. You may enter only the values "
-    "you were given below; never invent a name, address, phone or email. Never click anything that submits, "
-    "books, confirms, pays or orders. Stop and report when a form wants a value you were not given, when a "
+    "you were given below; never invent a name, address, phone or email. Never click anything that pays or "
+    "orders. Stop and report when a form wants a value you were not given, when a "
     "payment field appears, when a human-verification check appears (unless told you may try, and then at "
     "most the allowed attempts), when the page says access denied, or when the goal is met. Your report "
     "states only what the screen showed. End your report with one line: LEARNED: key=value; key=value. "
@@ -90,6 +91,16 @@ WALL_LINE = re.compile(r'WALL:\s*captcha', re.I)
 WALL_WORDS = re.compile(r"(captcha|not a robot|human[- ]verification|verify you are human).{0,120}"
                         r"(prevent|block|cannot|can't|could not|couldn't|unable|without completing|stopp)", re.I | re.S)
 NEED_LINE = re.compile(r'NEED:\s*(.+)$', re.I | re.M)
+SUBMIT_LINE = re.compile(r'SUBMIT:\s*(.+)$', re.I | re.M)
+SUBMIT_TEXT = (" When the only way forward is a control that books, submits, confirms, reserves, sends or applies, do NOT "
+               "press it: end your report with one more line: SUBMIT: <the button's exact text>. A parent decides.")
+NO_SUBMIT_TEXT = " Booking and submitting are off for this family: never press such a control; stop and report."
+
+
+def _system_text(settings: dict) -> str:
+    """The runner's system text with the submit exit added or withheld by the switch."""
+    on = (settings or {}).get('missions_submit_enabled', True)
+    return RUNNER_SYSTEM + (SUBMIT_TEXT if on else NO_SUBMIT_TEXT)
 
 
 def available() -> tuple:
@@ -580,7 +591,7 @@ def _control_at(page, x, y):
 def _focused_control(page):
     """What Space or Enter on a focused button would press: the focused element
     itself when it is a control; for Enter inside a form, the form's default
-    submit control (as `_enter_target`, but the whole record)."""
+    submit control (the whole record)."""
     try:
         h = page.evaluate_handle("""() => {
             const el = document.activeElement; if (!el) return null;
@@ -651,18 +662,20 @@ def _classify(control, intent: str) -> str:
     return 'run'
 
 
-def _enter_target(page) -> str:
-    """What Enter would press: the focused element's form's default submit
-    control, by its text. '' when the focus is outside a form (an address
-    bar, a search box with no form, nothing focused)."""
-    try:
-        return page.evaluate("""() => {
-            const el = document.activeElement; const f = el && el.form; if (!f) return '';
-            const b = f.querySelector('button:not([type=button]):not([type=reset]), input[type=submit]');
-            return b ? ((b.innerText || b.value || b.getAttribute('aria-label') || '')).trim().slice(0, 120) : '';
-        }""") or ''
-    except Exception:
-        return ''
+def _submit_record(page, control, intent: str, learned: dict) -> dict:
+    """The thing a parent is asked to approve (spec 2026-10-11 §1): the
+    control, its page, its scope's whole state, the model's facts so far."""
+    st = (control or {}).get('state') or {'fields': {}, 'selected': [], 'text': '', 'text_sha': '', 'prices': []}
+    return {'button': (control or {}).get('text') or '', 'url': page.url, 'state': st, 'display': _display(st.get('text') or ''),
+            'facts': dict(learned or {}), 'intent': intent or ''}
+
+
+def _wants_space(name: str, args: dict) -> bool:
+    if name in ('key_combination', 'press_key', 'hotkey'):
+        k = args.get('keys') or args.get('key') or ''
+        keys = k if isinstance(k, list) else [k]
+        return any(str(x).strip().lower() in ('space', ' ') for x in keys)
+    return False
 
 
 def _wants_enter(name: str, args: dict) -> bool:
@@ -836,7 +849,7 @@ def _learned(text: str) -> dict:
 
 
 def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, start_url: str = None,
-        out_dir: str = None) -> dict:
+        out_dir: str = None, approved: dict = None, on_attempt=None) -> dict:
     """Drive one goal on one site. Returns the report (spec §2). Never raises."""
     caps = {**DEFAULT_CAPS, **(caps or {})}
     settings = storage.get_settings() or {}
@@ -849,7 +862,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
     t0 = time.time()
     report = {'outcome': 'error', 'text': '', 'learned': {}, 'stopped_at': start_url or '', 'wanted_fields': [],
               'turns': 0, 'actions': 0, 'tokens_in': 0, 'tokens_out': 0, 'seconds': 0.0, 'screenshots': [], 'filled': {},
-              'turns_log': [], 'browser': 'headless' if _headless() else 'headed'}
+              'turns_log': [], 'browser': 'headless' if _headless() else 'headed',
+              'submit': None, 'attempt': None, 'changed': []}
 
     def finish(outcome, text):
         report['outcome'] = outcome
@@ -872,6 +886,9 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
         return finish('refused', f'no browser on this box ({str(e)[:100]})')
     allowed = {_domain(f'http://{site}' if '://' not in site else site)}
     start = start_url or (site if '://' in site else (_pick_start(site) or f'https://{site}'))
+    submit_on = bool(settings.get('missions_submit_enabled', True))
+    facts = {}
+    missed_submit = 0
     captcha_attempts = 0
     strikes = 0
     last_sig, repeats = None, 0
@@ -895,7 +912,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
         with consent off: each ends the run. None when the page is fine."""
         report['stopped_at'] = page.url
         if _is_payment(scan):
-            return finish('blocked', f'this part needs a payment card; do it yourself here: {page.url}')
+            return finish('blocked', f'payment (card field): this part needs a payment card; do it yourself here: {page.url}')
         if _is_denied(scan):
             return finish('captcha_failed', f'the site answered access denied at {page.url}')
         wanted = _wanted(scan, released, card)
@@ -905,6 +922,23 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
         if _has_captcha(scan) and not consent.get('captcha'):
             return finish('captcha_failed', f'a human-verification check at {page.url}; not attempted (consent is off)')
         return None
+
+    def gate(control, intent, how):
+        """None to run the press; a finished report otherwise (Task 4 adds the
+        'PRESS' return for an approved match). `how` is the ledger word."""
+        kind = _classify(control, intent)
+        if kind == 'run':
+            return None
+        label = (control or {}).get('text') or ''
+        report['stopped_at'] = page.url
+        if kind == 'pay':
+            return finish('blocked', f"payment ({label or intent}): a control that takes money; do it yourself here: {page.url}")
+        if not submit_on:
+            return finish('blocked', f'would submit: a "{label or intent}" {how}')
+        if control and not control.get('iframe') and not (control.get('state') or {}).get('text'):
+            return finish('blocked', f"form state unreadable at {page.url}")
+        report['submit'] = _submit_record(page, control, intent, facts)
+        return finish('needs_submit', label or f"the control the model meant to {intent}")
 
     try:
         ctx = _new_context(browser, settings)
@@ -923,7 +957,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                      else "The family's contact card holds nothing yet; ask with NEED: for any field the page wants.\n")
                   + ("You may attempt a human-verification check, at most the allowed attempts.\n" if consent.get('captcha') else
                      "Do NOT attempt any human-verification check; stop and report instead.\n"))
-        contents = [{'role': 'user', 'parts': [{'text': RUNNER_SYSTEM + '\n\n' + prompt}, {'image': shot}]}]
+        contents = [{'role': 'user', 'parts': [{'text': _system_text(settings) + '\n\n' + prompt}, {'image': shot}]}]
         for turn in range(1, caps['turns'] + 1):
             if time.time() - t0 > caps['seconds']:
                 return finish('capped', f"stopped after {caps['seconds']} s")
@@ -936,7 +970,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
             step = _model_step(contents, settings)
             model_ms = _ms(t_model)
             report['turns'] = turn
-            ti, to = step.get('tokens') or (0, 0)
+            facts.update(_learned(step.get('text') or ''))
+            ti, to =step.get('tokens') or (0, 0)
             report['tokens_in'] += int(ti)
             report['tokens_out'] += int(to)
             if step.get('content') is not None:
@@ -947,7 +982,22 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                 report['turns_log'].append({'turn': turn, 'action': 'finish: ' + ' '.join(text.split())[:80], 'url': page.url,
                                             'model_ms': model_ms, 'act_ms': 0})
                 report['learned'] = _learned(text)
-                needed = [f for f in _needed(text) if f not in released]
+                m = SUBMIT_LINE.search(text)
+                if m:
+                    want = m.group(1).strip()
+                    if not submit_on:
+                        return finish('blocked', f'would submit: the model wanted to press "{want}"')
+                    ctl = _control_by_text(page, want)
+                    if not ctl or not (ctl.get('state') or {}).get('text'):
+                        missed_submit += 1
+                        if missed_submit >= 2:
+                            return finish('blocked', f"could not find the control '{want}' at {page.url}")
+                        contents.append({'role': 'user', 'parts': [{'text': f"no control reads '{want}'; click it, or name its text exactly as the page shows it"}]})
+                        continue
+                    report['submit'] = _submit_record(page, ctl, '', facts)
+                    report['stopped_at'] = page.url
+                    return finish('needs_submit', ctl['text'])
+                needed =[f for f in _needed(text) if f not in released]
                 if needed:
                     report['wanted_fields'] = needed
                     return finish('needs_release', text.strip() or f"the page needs: {', '.join(needed)}")
@@ -985,13 +1035,12 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                         captcha_attempts += 1
                         if captcha_attempts > caps['captcha_attempts']:
                             return finish('captcha_failed', f"{caps['captcha_attempts']} attempts at the human-verification check failed at {page.url}")
-                if name.startswith('click') and STOP_WORDS.search(intent):
-                    return finish('blocked', f'would submit: the model meant to "{intent}"')
-                if name.startswith('click') and 'x' in args:
-                    x, y = _px(args['x'], args['y'])
-                    el = _under_click(page, x, y)
-                    if STOP_WORDS.search(el.get('text') or ''):
-                        return finish('blocked', f'would submit: a "{el.get("text")}" button')
+                ctl = focused = None
+                if name.startswith('click') or name.startswith('double'):
+                    ctl = _control_at(page, *_px(args['x'], args['y'])) if 'x' in args else None
+                    stop = gate(ctl, intent, 'click')
+                    if stop:
+                        return stop
                 if name in ('type_text_at', 'type'):
                     if 'x' in args:
                         field = _field_at(page, *_px(args['x'], args['y']))
@@ -1020,9 +1069,10 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                         _act(page, name, {**args, 'press_enter': False})
                     except Exception as e:
                         pass
-                    target = _enter_target(page)
-                    if STOP_WORDS.search(target):
-                        return finish('blocked', f'would submit: Enter would press "{target}"')
+                    focused = _focused_control(page)
+                    stop = gate(focused, intent, 'Enter')
+                    if stop:
+                        return stop
                     try:
                         page.keyboard.press('Enter')
                         page.wait_for_timeout(900)
@@ -1031,9 +1081,15 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                         res = {'error': str(e)[:160]}
                 else:
                     if enter:
-                        target = _enter_target(page)
-                        if STOP_WORDS.search(target):
-                            return finish('blocked', f'would submit: Enter would press "{target}"')
+                        focused = _focused_control(page)
+                        stop = gate(focused, intent, 'Enter')
+                        if stop:
+                            return stop
+                    if _wants_space(name, args):
+                        focused = _focused_control(page)
+                        stop = gate(focused, intent, 'Space')
+                        if stop:
+                            return stop
                     try:
                         _act(page, name, args)
                         res = {}

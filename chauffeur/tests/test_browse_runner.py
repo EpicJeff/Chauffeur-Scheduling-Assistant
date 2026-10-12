@@ -29,10 +29,12 @@ def _script(*turns):
     return fake
 
 
-def _reset(consent=False, cap_turns=40):
+def _reset(consent=False, cap_turns=40, submit=True):
     storage.get_settings = lambda: {**{f'contact_{k}': v for k, v in CARD.items()}, 'missions_captcha_attempts': consent,
-                                    'llm_gemini_paid_api_key': 'paid'}
+                                    'llm_gemini_paid_api_key': 'paid', 'missions_submit_enabled': submit}
     browse.free_memory_mb = lambda: 4096
+    from browse_pages import H
+    H.posts.clear()
 
 
 def _click(sel_text_xy):
@@ -65,23 +67,21 @@ def scenario_done_report_shape():
 def scenario_submit_stop_by_words_not_by_type():
     _reset()
     nxt = _xy(f'{URL}/form', '#next')
-    # 'Next: Select Appliance' is type=submit but not a booking word: allowed.
+    # 'Next: Select Appliance' is type=submit, a step word, no price in its scope: it runs (the device run's second page).
     browse._model_step = _script([_click(nxt)], 'DONE.')
     r = browse.run('go to step 2', SITE, dict(CARD), {}, start_url=f'{URL}/form', out_dir=OUT)
-    # (The browser's own required-field validation keeps the empty form on
-    # /form; what matters is that the guard let the click through: done, not blocked.)
     check(r['outcome'] == 'done', f"a multi-step Next passes the guard: {r['outcome']} {r['text']}")
     book = _xy(f'{URL}/form2', '#book')
     browse._model_step = _script([_click(book)], 'DONE.')
     r = browse.run('book it', SITE, {}, {}, start_url=f'{URL}/form2', out_dir=OUT)
-    check(r['outcome'] == 'blocked' and 'submit' in r['text'].lower(), f"'Book appointment' (type=button) stops: {r}")
+    check(r['outcome'] == 'needs_submit' and r['submit']['button'] == 'Book appointment', f"'Book appointment' (type=button) asks: {r['outcome']} {r.get('submit')}")
     conf = _xy(f'{URL}/form2', '#confirm')
     browse._model_step = _script([{'name': 'click_at', 'args': {'x': conf[0], 'y': conf[1], 'intent': 'press the button'}}], 'DONE.')
-    r = browse.run('confirm', SITE, {}, {}, start_url=f'{URL}/form2', out_dir=OUT)
-    check(r['outcome'] == 'blocked', "'Confirm' stops by its label even with a bland intent")
-    browse._model_step = _script([{'name': 'click_at', 'args': {'x': 500, 'y': 500, 'intent': 'click Schedule now to finish booking'}}], 'DONE.')
     r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/form2', out_dir=OUT)
-    check(r['outcome'] == 'blocked', "a booking intent stops even when the click lands on nothing")
+    check(r['outcome'] == 'needs_submit' and r['submit']['button'] == 'Confirm', f"Confirm asks: {r['outcome']}")
+    browse._model_step = _script([{'name': 'click_at', 'args': {'x': 500, 'y': 100, 'intent': 'submit the booking'}}], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/form2', out_dir=OUT)
+    check(r['outcome'] == 'needs_submit' and r['submit']['button'] == '' and r['submit']['intent'] == 'submit the booking', f"a submit intent on a blank spot asks by intent: {r.get('submit')}")
 
 
 def scenario_domain_allowlist_learns_redirects_only():
@@ -220,17 +220,18 @@ def scenario_live_step_builds_the_computer_use_call():
 
 
 def scenario_enter_never_submits_a_booking_form():
-    """Review fix 1: Enter inside a form whose submit control is a stop word is
-    the same as clicking it. A plain Next form may still be submitted by Enter."""
+    """Enter inside a form whose submit control is a commitment is the same as
+    clicking it: needs_submit, nothing pressed. A plain Next form may still be
+    submitted by Enter."""
     _reset()
     cx, cy = _xy(f'{URL}/confirmform', 'input[name=zip]')
     browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': cx, 'y': cy, 'text': '27519', 'press_enter': True}}], 'DONE.')
     r = browse.run('x', SITE, {'zip': '27519'}, {}, start_url=f'{URL}/confirmform', out_dir=OUT)
-    check(r['outcome'] == 'blocked' and 'submit' in r['text'].lower() and '/form2' not in r['stopped_at'], f"Enter on a Confirm form is refused: {r}")
+    check(r['outcome'] == 'needs_submit' and r['submit']['button'] == 'Confirm' and '/form2' not in r['stopped_at'], f"Enter on a Confirm form asks: {r['outcome']} {r['stopped_at']}")
     browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': cx, 'y': cy, 'text': '27519'}}],
                                  [{'name': 'key_combination', 'args': {'keys': ['Enter']}}], 'DONE.')
     r = browse.run('x', SITE, {'zip': '27519'}, {}, start_url=f'{URL}/confirmform', out_dir=OUT)
-    check(r['outcome'] == 'blocked' and '/form2' not in r['stopped_at'], f"a bare Enter key press is refused the same way: {r}")
+    check(r['outcome'] == 'needs_submit' and '/form2' not in r['stopped_at'], f"a bare Enter asks the same way: {r['outcome']}")
     zx, zy = _xy(f'{URL}/zip', 'input[name=zip]')
     browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': zx, 'y': zy, 'text': '27519', 'press_enter': True}}], 'DONE.')
     r = browse.run('x', SITE, {'zip': '27519'}, {}, start_url=f'{URL}/zip', out_dir=OUT)
@@ -593,6 +594,86 @@ def scenario_classification_is_by_evidence_not_label():
     check(browse._classify(None, 'book it') == 'submit' and browse._classify(None, '') == 'run', "no control: the intent alone decides")
 
 
+def scenario_the_gate_returns_a_question_with_the_whole_transaction():
+    _reset()
+    book = _xy(f'{URL}/booking', '#book')
+    browse._model_step = _script([{'name': 'click_at', 'args': {'x': book[0], 'y': book[1], 'intent': 'book the Tuesday slot'}}], 'DONE.')
+    r = browse.run('book Tue', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT)
+    s = r['submit']
+    check(r['outcome'] == 'needs_submit' and s['button'] == 'Book appointment' and s['url'].endswith('/booking') and s['intent'] == 'book the Tuesday slot', f"the record: {s}")
+    check(s['state']['selected'] == ['Tue, Oct 20 8AM-12PM'] and s['state']['prices'] == ['$114.95'] and len(s['state']['text_sha']) == 64
+          and len(s['display']) <= 300 and 'Trip charge' in s['display'], f"state and display: {s['state']} {s['display'][:60]}")
+    from browse_pages import H
+    check(not H.posts and r['actions'] == 0, "nothing was pressed")
+    check(r['turns_log'][-1]['action'].startswith('needs_submit: Book appointment'), f"the ledger: {r['turns_log'][-1]}")
+    # Space on the focused Book button asks the same way (focus it by script, as a model's Tab presses would).
+    # (A wait between the Tabs: the loop guard refuses a third identical key press in a row.)
+    tab = {'name': 'key_combination', 'args': {'keys': ['Tab']}}
+    browse._model_step = _script([tab, tab, {'name': 'wait', 'args': {}}, tab, {'name': 'key_combination', 'args': {'keys': ['Space']}}], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT)
+    check(r['outcome'] == 'needs_submit' and r['submit']['button'] == 'Book appointment', f"Space on the focused Book asks: {r['outcome']} {(r.get('submit') or {}).get('button')}")
+    # The model's own exit: SUBMIT: <text>.
+    browse._model_step = _script('I see the slot. LEARNED: slot=Tue, Oct 20 8AM-12PM\nSUBMIT: Book appointment')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT)
+    check(r['outcome'] == 'needs_submit' and r['submit']['button'] == 'Book appointment' and r['submit']['state']['selected'] and r['submit']['facts'] == {'slot': 'Tue, Oct 20 8AM-12PM'},
+          f"SUBMIT: resolves the control, reads its scope, carries the facts: {r.get('submit')}")
+    # A SUBMIT: naming a control that is not there: told once, then blocked.
+    browse._model_step = _script('SUBMIT: Reserve this', 'SUBMIT: Reserve this')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT)
+    check(r['outcome'] == 'blocked' and 'could not find the control' in r['text'] and r['turns'] == 2, f"a missing control: {r['outcome']} {r['text']}")
+
+
+def scenario_pay_words_are_a_wall_whatever_else():
+    _reset()
+    pay = _xy(f'{URL}/booking', '#pay')
+    browse._model_step = _script([_click(pay)], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT)
+    check(r['outcome'] == 'blocked' and r['text'].startswith('payment') and 'Pay now' in r['text'], f"Pay now is blocked: payment: {r['text']}")
+    buy = _xy(f'{URL}/buynow', '#buy')
+    browse._model_step = _script([_click(buy)], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/buynow', out_dir=OUT,
+                   approved={'button': 'Buy now', 'url': f'{URL}/buynow', 'state': {'text_sha': 'x'}, 'ask_id': 'a1'}, on_attempt=lambda rec: True)
+    check(r['outcome'] == 'blocked' and r['text'].startswith('payment'), f"a saved-card Buy now is payment even with approved set: {r['text']}")
+    check(r['turns_log'][-1]['action'].startswith('blocked: payment (Buy now)'), f"the ledger names the control: {r['turns_log'][-1]}")
+
+
+def scenario_the_fallback_classifies_unfamiliar_labels_by_evidence():
+    _reset()
+    for path, sel, want in (('/sendapp', '#send', 'needs_submit'), ('/agree', '#accept', 'needs_submit'), ('/cookie', '#accept', 'done'),
+                            ('/lockin', '#lock', 'needs_submit'), ('/tiles', '#t1', 'done'), ('/pricedcontinue', '#cont', 'needs_submit'),
+                            ('/stepcontinue', '#cont', 'done'), ('/iconbtn', '#icon', 'needs_submit'), ('/disabledbook', '#book', 'done'),
+                            ('/framedbook', '#w', 'done')):
+        xy = _xy(f'{URL}{path}', sel)
+        browse._model_step = _script([_click(xy)], 'DONE.')
+        r = browse.run('x', SITE, {'zip': '27519'}, {}, start_url=f'{URL}{path}', out_dir=OUT)
+        check(r['outcome'] == want, f"{path} {sel}: {r['outcome']} (wanted {want}) {r['text'][:80]}")
+    xy = _xy(f'{URL}/iconbtn', '#icon')
+    browse._model_step = _script([_click(xy)], 'DONE.')
+    r = browse.run('x', SITE, {'zip': '27519'}, {}, start_url=f'{URL}/iconbtn', out_dir=OUT)
+    check(r['submit']['button'] == 'Submit request', "an icon button's question names its aria-label")
+    xy = _xy(f'{URL}/framedbook', '#w')
+    browse._model_step = _script([{'name': 'click_at', 'args': {'x': xy[0], 'y': xy[1], 'intent': 'book the slot in the widget'}}], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/framedbook', out_dir=OUT)
+    check(r['outcome'] == 'needs_submit' and r['submit']['button'] == '', "an iframe under the point: the intent still gates")
+    xy = _xy(f'{URL}/longform', '#book')
+    browse._model_step = _script([_click(xy)], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/longform', out_dir=OUT)
+    check(r['outcome'] == 'needs_submit' and r['submit']['state']['prices'] == ['$114.95'], f"the far price: {r['submit']['state']['prices']}")
+
+
+def scenario_the_switch_off_restores_the_old_wall():
+    _reset(submit=False)
+    book = _xy(f'{URL}/booking', '#book')
+    browse._model_step = _script([_click(book)], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT)
+    check(r['outcome'] == 'blocked' and 'would submit' in r['text'], f"switch off: blocked would submit: {r['outcome']} {r['text']}")
+    browse._model_step = _script('SUBMIT: Book appointment')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT)
+    check(r['outcome'] == 'blocked' and 'would submit' in r['text'], "a SUBMIT: line with the switch off is the old wall too")
+    check('SUBMIT:' not in browse._system_text({'missions_submit_enabled': False}) and 'SUBMIT:' in browse._system_text({}),
+          "the model is told about the SUBMIT: exit only when the switch is on")
+
+
 SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
@@ -608,7 +689,9 @@ SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_typ
              scenario_every_turn_is_on_the_ledger, scenario_the_same_click_three_times_is_told_so,
              scenario_a_recaptcha_badge_is_not_a_wall, scenario_the_browser_is_at_home, scenario_a_report_of_a_wall_is_the_wall,
              scenario_a_virtual_display_means_a_headed_browser, scenario_word_lists_split_pay_from_submit,
-             scenario_control_record_reads_the_scope, scenario_classification_is_by_evidence_not_label]
+             scenario_control_record_reads_the_scope, scenario_classification_is_by_evidence_not_label,
+             scenario_the_gate_returns_a_question_with_the_whole_transaction, scenario_pay_words_are_a_wall_whatever_else,
+             scenario_the_fallback_classifies_unfamiliar_labels_by_evidence, scenario_the_switch_off_restores_the_old_wall]
 
 if __name__ == "__main__":
     import traceback
