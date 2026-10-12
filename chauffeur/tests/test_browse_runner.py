@@ -509,7 +509,80 @@ def scenario_a_virtual_display_means_a_headed_browser():
     check(r.get('browser') in ('headed', 'headless'), f"the report says which browser ran: {r.get('browser')}")
 
 
-SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
+def _control(path, selector):
+    """The runner's control record for the element at a page's selector."""
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        b = p.chromium.launch(headless=True)
+        pg = b.new_page(viewport={'width': 1440, 'height': 900})
+        pg.goto(f'{URL}{path}')
+        box = pg.locator(selector).first.bounding_box()
+        c = browse._control_at(pg, box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+        if c:
+            c.pop('handle', None)
+        b.close()
+    return c
+
+
+def scenario_word_lists_split_pay_from_submit():
+    check(not hasattr(browse, 'STOP_WORDS'), "STOP_WORDS is gone")
+    for w in ('Book appointment', 'Submit', 'Schedule now', 'Confirm', 'Reserve', 'Send', 'Apply', 'Register', 'Sign up', 'Place request'):
+        check(browse.SUBMIT_WORDS.search(w) and not browse.PAY_WORDS.search(w), f"{w} is a submit word")
+    for w in ('Pay now', 'Payment', 'Checkout', 'Purchase', 'Buy now', 'Order now', 'Place order', 'Complete purchase'):
+        check(browse.PAY_WORDS.search(w), f"{w} is a pay word")
+    for w in ('Next', 'Next: Select Appliance', 'Continue', 'Proceed', 'Back', 'Previous', 'Step 2'):
+        check(browse.STEP_WORDS.search(w), f"{w} is a step word")
+    for w in ('Accept', 'OK', 'Got it', 'Agree', 'Done', 'Finish'):
+        check(not browse.STEP_WORDS.search(w) and not browse.SUBMIT_WORDS.search(w), f"{w} is on no list")
+    check(browse.MONEY.findall('Trip charge $114.95 and 20 USD') == ['$114.95', '20 USD'], "money amounts")
+    check(browse.CONFIRMATION_MARKERS.search('Thank you for your booking. Confirmation number 12345'), "a confirmation page")
+    check(not browse.CONFIRMATION_MARKERS.search('Choose a slot. Trip charge $114.95'), "a form is not a confirmation")
+
+
+def scenario_control_record_reads_the_scope():
+    c = _control('/booking', '#book')
+    check(c['text'] == 'Book appointment' and c['is_submit_control'] and c['sole_submit'] and not c['only_button'] and not c['disabled'], f"the Book control: {c}")
+    st = c['state']
+    check(st['selected'] == ['Tue, Oct 20 8AM-12PM'] and st['fields'] == {'notes': ''} and st['prices'] == ['$114.95']
+          and 'Trip charge' in st['text'] and len(st['text_sha']) == 64, f"the snapshot: {st}")
+    c = _control('/lockin', '#lock')
+    check(c['tag'] == 'DIV' and c['only_button'] and c['state']['selected'] == ['Thu, Oct 22 8AM-12PM'] and c['state']['prices'] == ['$114.95'],
+          f"an aria-checked picker is in selected; the scope is the section: {c}")
+    c = _control('/tiles', '#t1')
+    check(c['text'] == 'Dishwasher' and c['is_submit_control'] and not c['sole_submit'] and not c['only_button'] and not c['last_button'], f"a tile among eight: {c}")
+    c = _control('/longform', '#book')
+    check(c['state']['prices'] == ['$114.95'] and len(c['state']['text']) > 1500, "the whole text, no truncation; the far price is listed")
+    c = _control('/iconbtn', '#icon')
+    check(c['text'] == 'Submit request', f"an icon button reads its aria-label: {c}")
+    c = _control('/disabledbook', '#book')
+    check(c['disabled'], "a disabled control says so")
+    c = _control('/framedbook', '#w')
+    check(c['iframe'], "an iframe under the point says so")
+    check(browse._display('x' * 400) == 'x' * 300, "display is 300 characters")
+
+
+def scenario_classification_is_by_evidence_not_label():
+    cases = [('/booking', '#book', '', 'submit'), ('/booking', '#pay', '', 'pay'), ('/buynow', '#buy', '', 'pay'),
+             ('/sendapp', '#send', '', 'submit'), ('/agree', '#accept', '', 'submit'), ('/cookie', '#accept', '', 'run'),
+             ('/lockin', '#lock', '', 'submit'), ('/tiles', '#t1', '', 'run'), ('/pricedcontinue', '#cont', '', 'submit'),
+             ('/stepcontinue', '#cont', '', 'run'), ('/form', '#next', '', 'run'), ('/iconbtn', '#icon', '', 'submit'),
+             ('/disabledbook', '#book', '', 'run'), ('/framedbook', '#w', '', 'run'), ('/framedbook', '#w', 'book the slot', 'submit'),
+             ('/tiles', '#t1', 'confirm the booking', 'submit'), ('/cookie', '#accept', 'pay for it', 'pay')]
+    for path, sel, intent, want in cases:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            b = p.chromium.launch(headless=True)
+            pg = b.new_page(viewport={'width': 1440, 'height': 900})
+            pg.goto(f'{URL}{path}')
+            box = pg.locator(sel).first.bounding_box()
+            c = browse._control_at(pg, box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+            got = browse._classify(c, intent)
+            b.close()
+        check(got == want, f"{path} {sel} intent={intent!r}: {got} (wanted {want})")
+    check(browse._classify(None, 'book it') == 'submit' and browse._classify(None, '') == 'run', "no control: the intent alone decides")
+
+
+SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
              scenario_captcha_consent_on_is_capped, scenario_caps_and_availability,
@@ -523,7 +596,8 @@ SCENARIOS = [scenario_done_report_shape, scenario_submit_stop_by_words_not_by_ty
              scenario_a_slow_page_does_not_end_the_run, scenario_the_start_url_is_the_host_that_answers,
              scenario_every_turn_is_on_the_ledger, scenario_the_same_click_three_times_is_told_so,
              scenario_a_recaptcha_badge_is_not_a_wall, scenario_the_browser_is_at_home, scenario_a_report_of_a_wall_is_the_wall,
-             scenario_a_virtual_display_means_a_headed_browser]
+             scenario_a_virtual_display_means_a_headed_browser, scenario_word_lists_split_pay_from_submit,
+             scenario_control_record_reads_the_scope, scenario_classification_is_by_evidence_not_label]
 
 if __name__ == "__main__":
     import traceback

@@ -1,7 +1,7 @@
 """Browse — a mission's browser, driven by Gemini Computer Use over Playwright.
 Spec: docs/superpowers/specs/2026-10-10-browse-missions-design.md §1–2.
 
-This module never books, pays, submits or sends. The guards below are code,
+This module never pays; it books or submits only one approved press at a time (spec 2026-10-11). The guards below are code,
 not prompt: a test holds each one. The paid key is read only through
 model_pools.api_key_for_pool (pool 'cu').
 """
@@ -39,7 +39,21 @@ DEFAULT_CAPS = {'turns': 40, 'seconds': 600, 'captcha_attempts': 3}
 W, H = 1440, 900
 GOTO_TIMEOUT_MS = 45000
 MEMORY_FLOOR_MB = 600
-STOP_WORDS = re.compile(r'\b(submit|book(ing)?|schedule now|confirm|place (my |the )?order|pay(ment)?|checkout|purchase|reserve|finish booking|complete booking)\b', re.I)
+# Two word lists, two paths (spec 2026-10-11 §1). A submit word is a commitment a
+# parent may approve; a pay word is money and no approval in this slice lifts it.
+SUBMIT_WORDS = re.compile(r'\b(submit|book(ing)?|schedule now|confirm|reserve|send|apply|register|sign ?up|'
+                          r'finish booking|complete booking|place (a |my |the )?request)\b', re.I)
+PAY_WORDS = re.compile(r'\b(pay(ment)?|checkout|purchase|buy|order now|place (my |the |an )?order|charge|complete purchase)\b', re.I)
+# A step word is the label of an intermediate step; it is evidence only in the
+# fallback (an unfamiliar label over state asks; a step word there does not).
+STEP_WORDS = re.compile(r'^\s*(next|continue|proceed|back|previous|step \d+)\b', re.I)
+# Reading aid for the ledger only; never lets a control past the evidence.
+NAVIGATION_WORDS = re.compile(r'\b(search|find|go|filter|sort|show|view|see|select|choose|close|cancel)\b', re.I)
+# Commitment language in a control's scope: the shape of a review-and-commit page.
+COMMIT_CONTEXT = re.compile(r'(by clicking|i agree|\bterms\b|authori[sz]e|you will be charged|\btotal\b|confirm your|review your)', re.I)
+CONFIRMATION_MARKERS = re.compile(r'(confirmation (number|#|code)|has been (booked|scheduled|submitted|received)|we have received your|'
+                                  r'thank you for your (request|booking|application|order|submission)|your appointment is)', re.I)
+MONEY = re.compile(r'(\$\s?\d[\d,]*(?:\.\d{2})?|\d[\d,]*(?:\.\d{2})?\s?(?:USD|dollars))', re.I)
 PAYMENT_PATTERNS = re.compile(r'(cc-number|cc-csc|cc-exp|card ?number|cvc|cvv|expir)', re.I)
 CAPTCHA_MARKERS = re.compile(r'(captcha|verify you are human|i\'m not a robot|human verification)', re.I)
 DENIED_MARKERS = re.compile(r'(access denied|unusual traffic|automated queries|blocked)', re.I)
@@ -461,6 +475,150 @@ def _under_click(page, x, y) -> dict:
         const b = el.closest('button, input[type=submit], input[type=button], a, [role=button]') || el;
         return { text: ((b.innerText || b.value || b.getAttribute('aria-label') || '')).trim().slice(0, 120), type: (b.getAttribute('type') || ''), tag: b.tagName };
     }""", [x, y])
+
+
+_CONTROL_JS = """
+(target) => {
+  const sha = async (s) => {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+  const label = (el) => ((el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title') || '')).replace(/\\s+/g, ' ').trim().slice(0, 120);
+  const resolve = (el) => {
+    if (!el) return null;
+    if (el.tagName === 'IFRAME') return {iframe: true, el};
+    const b = el.closest('button, input[type=submit], input[type=button], a, [role=button]');
+    return b ? {iframe: false, el: b} : null;
+  };
+  const r = resolve(target);
+  if (!r) return null;
+  if (r.iframe) return {text: '', type: '', tag: 'IFRAME', disabled: false, iframe: true, sole_submit: false, only_button: false,
+                        last_button: false, is_submit_control: false, state: {fields: {}, selected: [], text: '', text_sha: '', prices: []}};
+  const b = r.el;
+  const form = b.form || b.closest('form');
+  const scope = form || b.closest('dialog, [role=dialog], [role=form], [role=group], main, section, article') || document.body;
+  const buttons = [...scope.querySelectorAll('button, input[type=submit], input[type=button], [role=button]')].filter(x => !x.disabled);
+  const submits = form ? [...form.querySelectorAll('button:not([type=button]):not([type=reset]), input[type=submit]')] : [];
+  const fields = {};
+  scope.querySelectorAll('input, textarea, select').forEach(i => {
+    const t = (i.type || 'text').toLowerCase();
+    if (['hidden', 'submit', 'button', 'checkbox', 'radio', 'password', 'reset', 'file', 'image'].includes(t)) return;
+    const ac = (i.getAttribute('autocomplete') || '') + ' ' + (i.name || '') + ' ' + (i.placeholder || '');
+    if (/cc-|card ?number|cvc|cvv|expir/i.test(ac)) return;
+    if (t === 'select-one' || t === 'select-multiple' || i.tagName === 'SELECT') return;
+    fields[i.name || i.id || ('field' + Object.keys(fields).length)] = i.value || '';
+  });
+  const selected = [];
+  scope.querySelectorAll('input:checked, option:checked, [aria-checked="true"], [aria-selected="true"], [aria-pressed="true"]').forEach(x => {
+    let t = '';
+    if (x.tagName === 'OPTION') t = x.label || x.text;
+    else if (x.tagName === 'INPUT') { const l = x.closest('label') || (x.id && document.querySelector(`label[for="${x.id}"]`)); t = l ? l.innerText : (x.value || ''); }
+    else t = x.innerText || x.getAttribute('aria-label') || '';
+    t = (t || '').replace(/\\s+/g, ' ').trim(); if (t) selected.push(t);
+  });
+  const text = (scope.innerText || '').replace(/\\s+/g, ' ').trim();
+  const prices = (text.match(/(\\$\\s?\\d[\\d,]*(?:\\.\\d{2})?|\\d[\\d,]*(?:\\.\\d{2})?\\s?(?:USD|dollars))/gi) || []);
+  return sha(text).then(h => ({
+    text: label(b), type: (b.getAttribute('type') || ''), tag: b.tagName, disabled: !!b.disabled, iframe: false,
+    is_submit_control: !!form && (submits.includes(b) || (buttons.length === 1 && buttons[0] === b)),
+    sole_submit: !!form && submits.length === 1 && submits[0] === b,
+    only_button: buttons.length === 1 && buttons[0] === b,
+    last_button: buttons.length > 0 && buttons.length <= 3 && buttons[buttons.length - 1] === b,
+    state: {fields, selected, text, text_sha: h, prices},
+  }));
+}
+"""
+
+
+def _control_at(page, x, y):
+    """The control under a point and the state of its scope (spec §1), or
+    None when nothing pressable is there. `x, y` are page pixels."""
+    try:
+        h = page.evaluate_handle("([x, y]) => document.elementFromPoint(x, y)", [x, y])
+        c = page.evaluate(_CONTROL_JS, h)
+        if c:
+            c['handle'] = h
+        return c
+    except Exception:
+        return None
+
+
+def _focused_control(page):
+    """What Space or Enter on a focused button would press: the focused element
+    itself when it is a control; for Enter inside a form, the form's default
+    submit control (as `_enter_target`, but the whole record)."""
+    try:
+        h = page.evaluate_handle("""() => {
+            const el = document.activeElement; if (!el) return null;
+            if (el.matches('button, input[type=submit], input[type=button], [role=button]')) return el;
+            const f = el.form; if (!f) return null;
+            return f.querySelector('button:not([type=button]):not([type=reset]), input[type=submit]');
+        }""")
+        c = page.evaluate(_CONTROL_JS, h)
+        if c:
+            c['handle'] = h
+        return c
+    except Exception:
+        return None
+
+
+def _control_by_text(page, text: str):
+    """The model's SUBMIT: <text> resolved to a control: exact after whitespace
+    collapsing, else the one control whose text contains it. None when none or many."""
+    want = ' '.join((text or '').split()).lower()
+    if not want:
+        return None
+    try:
+        h = page.evaluate_handle("""(want) => {
+            const all = [...document.querySelectorAll('button, input[type=submit], input[type=button], a, [role=button]')].filter(b => !b.disabled);
+            const lab = (b) => ((b.innerText || b.value || b.getAttribute('aria-label') || b.getAttribute('title') || '')).replace(/\\s+/g, ' ').trim().toLowerCase();
+            const exact = all.filter(b => lab(b) === want); if (exact.length === 1) return exact[0];
+            const part = all.filter(b => lab(b).includes(want)); return part.length === 1 ? part[0] : null;
+        }""", want)
+        c = page.evaluate(_CONTROL_JS, h)
+        if c:
+            c['handle'] = h
+        return c
+    except Exception:
+        return None
+
+
+def _snapshot_of(control: dict) -> dict:
+    return control.get('state') or {'fields': {}, 'selected': [], 'text': '', 'text_sha': '', 'prices': []}
+
+
+def _display(text: str) -> str:
+    return (text or '')[:300]
+
+
+def _is_confirmation(scan: dict) -> bool:
+    return bool(CONFIRMATION_MARKERS.search((scan.get('text') or '')[:4000]))
+
+
+def _classify(control, intent: str) -> str:
+    """'pay', 'submit' or 'run' for one press (spec §1, evidence of a final
+    action). Submitting a form is not by itself a commitment."""
+    intent = intent or ''
+    if PAY_WORDS.search(intent):
+        return 'pay'
+    if control and not control.get('iframe') and not control.get('disabled'):
+        label = control.get('text') or ''
+        if PAY_WORDS.search(label):
+            return 'pay'
+        if SUBMIT_WORDS.search(label) or SUBMIT_WORDS.search(intent):
+            return 'submit'
+        st = control.get('state') or {}
+        final_pos = control.get('sole_submit') or control.get('only_button') or control.get('last_button')
+        has_state = bool(st.get('fields') or st.get('selected'))
+        if (st.get('prices') or COMMIT_CONTEXT.search(st.get('text') or '')) and final_pos:
+            return 'submit'
+        if not STEP_WORDS.search(label) and (control.get('sole_submit') or control.get('only_button')) and has_state:
+            return 'submit'
+        return 'run'
+    # No control resolved (nothing under the point, a disabled control, an iframe): the intent is the remaining check.
+    if SUBMIT_WORDS.search(intent):
+        return 'submit'
+    return 'run'
 
 
 def _enter_target(page) -> str:
