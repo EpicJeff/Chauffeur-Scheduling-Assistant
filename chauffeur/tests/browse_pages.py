@@ -36,14 +36,102 @@ PAGES = {
                    + 'More copy. ' * 120 + '</p>'),
     # A page whose HTML arrives at once but whose blocking script takes seconds: DOMContentLoaded is late.
     '/hang': '<h1>Slow site</h1><script src="/slowjs"></script><p>content</p>',
+    # --- submit gate fixtures (spec 2026-10-11) ---
+    # A booking form: slot radios, a price line, Book appointment (type=submit, POSTs to /booked), Pay now.
+    '/booking': ('<h1>Choose a slot</h1><form id="bf" action="/booked" method="post">'
+                 '<p>Trip charge $114.95. Parts and labor not included.</p>'
+                 '<label><input type="radio" name="slot" value="tue" checked> Tue, Oct 20 8AM-12PM</label>'
+                 '<label><input type="radio" name="slot" value="thu"> Thu, Oct 22 8AM-12PM</label>'
+                 '<label>Notes<input name="notes" value=""></label>'
+                 '<button type="submit" id="book">Book appointment</button>'
+                 '<button type="button" id="pay">Pay now</button></form>'),
+    # The same form with Thursday checked and the price moved: the "page changed" fixture.
+    '/booking2': ('<h1>Choose a slot</h1><form id="bf" action="/booked" method="post">'
+                  '<p>Trip charge $124.95. Parts and labor not included.</p>'
+                  '<label><input type="radio" name="slot" value="tue"> Tue, Oct 20 8AM-12PM</label>'
+                  '<label><input type="radio" name="slot" value="thu" checked> Thu, Oct 22 8AM-12PM</label>'
+                  '<label>Notes<input name="notes" value=""></label>'
+                  '<button type="submit" id="book">Book appointment</button></form>'),
+    # An unfamiliar final label on a form holding the person's data.
+    '/sendapp': ('<h1>Application</h1><form action="/booked" method="post"><label>Zip *<input name="zip" value="27519"></label>'
+                 '<button type="submit" id="send">Send application</button></form>'),
+    # An agreement form whose submit control reads Accept: commitment text in the scope.
+    '/agree': ('<h1>Terms</h1><form action="/booked" method="post"><p>By clicking Accept you authorize the service visit. I agree to the terms.</p>'
+               '<label><input type="checkbox" name="ok" checked> I agree</label><button type="submit" id="accept">Accept</button></form>'),
+    # A cookie banner: Accept as a type=button outside any form, no state in its scope.
+    '/cookie': ('<h1>Welcome</h1><div role="dialog"><p>We use cookies.</p><button type="button" id="accept">Accept</button></div>'
+                '<p>Page content. <a href="/start">Service</a></p>'),
+    # A JS button outside any form beside a custom aria-checked slot picker: the only button in its scope.
+    '/lockin': ('<h1>Pick a slot</h1><section id="picker"><p>Trip charge $114.95</p>'
+                '<div role="radiogroup"><div role="radio" aria-checked="false" id="s1">Tue, Oct 20 8AM-12PM</div>'
+                '<div role="radio" aria-checked="true" id="s2">Thu, Oct 22 8AM-12PM</div></div>'
+                '<div role="button" id="lock" tabindex="0">Lock it in</div></section>'
+                '<script>document.getElementById("lock").addEventListener("click", () => { location.href = "/thanks"; });</script>'),
+    # The appliance-tile form the device run saw: eight sibling buttons inside a form with filled fields.
+    '/tiles': ('<h1>Select appliance</h1><form action="/slots" method="get"><input type="hidden" name="first" value="Jeff">'
+               '<label>Zip<input name="zip" value="27519"></label><div class="tiles">'
+               + ''.join(f'<button type="submit" name="appliance" value="{a}" id="t{i}">{a}</button>'
+                         for i, a in enumerate(['Refrigerator', 'Dishwasher', 'Range', 'Oven', 'Washer', 'Dryer', 'Microwave', 'Other']))
+               + '</div></form>'),
+    '/slots': '<h1>Slots</h1><a id="tobook" href="/booking">Choose a slot</a>',
+    # A long form whose price line sits past 1,500 characters of text.
+    '/longform': ('<h1>Review</h1><form action="/booked" method="post"><p>' + 'Lots of copy about the visit. ' * 70
+                  + '</p><p>Total due at visit: $114.95</p><label><input type="radio" name="slot" value="tue" checked> Tue</label>'
+                  '<button type="submit" id="book">Book appointment</button></form>'),
+    # Continue as the last button under a total: a review-and-commit shape.
+    '/pricedcontinue': ('<h1>Review your request</h1><form action="/booked" method="post"><p>Total: $114.95</p>'
+                        '<label><input type="radio" name="slot" value="tue" checked> Tue</label><button type="submit" id="cont">Continue</button></form>'),
+    # A multi-step Continue on a slot page with no price: runs.
+    '/stepcontinue': ('<h1>Step 2 of 3</h1><form action="/booking" method="get"><label><input type="radio" name="slot" value="tue" checked> Tue</label>'
+                      '<button type="submit" id="cont">Continue</button></form>'),
+    '/thanks': '<h1>Thank you for your booking</h1><p>Confirmation number 12345. Tue, Oct 20 8AM-12PM.</p>',
+    '/rejected': '<h1>Sorry</h1><p class="error">That slot was just taken. Pick another.</p><a href="/booking">Back</a>',
+    # A payment page after the press.
+    '/payafter': '<h1>Payment</h1><form><input name="cardnumber" autocomplete="cc-number"><input name="cvc" placeholder="CVC"><button type="submit">Pay now</button></form>',
+    # A saved-card Buy now: no card field, pay word on the control.
+    '/buynow': '<h1>Order</h1><form action="/booked" method="post"><p>Card ending 4242</p><button type="submit" id="buy">Buy now</button></form>',
+    # An icon-only submit control (aria-label only).
+    '/iconbtn': ('<h1>Request</h1><form action="/booked" method="post"><label>Zip<input name="zip" value="27519"></label>'
+                 '<button type="submit" id="icon" aria-label="Submit request"><svg width="16" height="16"></svg></button></form>'),
+    # A disabled Book button: nothing happens on a click.
+    '/disabledbook': ('<h1>Choose a slot</h1><form action="/booked" method="post"><p>$114.95</p>'
+                      '<button type="submit" id="book" disabled>Book appointment</button></form>'),
+    # A third-party widget in an iframe.
+    '/framedbook': '<h1>Schedule</h1><iframe id="w" src="/booking" style="width:600px;height:400px"></iframe>',
+    # The device sequence, start to finish: contact form -> tiles -> slots -> booking.
+    '/fulltrip': ('<h1>Step 1</h1><form action="/tiles" method="get">'
+                  '<label>First Name *<input name="first" required></label>'
+                  '<label>Email *<input name="email" type="email" required></label>'
+                  '<label>Zip *<input name="zip" required></label>'
+                  '<button type="submit" id="next">Next: Select Appliance</button></form>'),
 }
 
 
 class H(http.server.BaseHTTPRequestHandler):
     port = 0
+    posts = []
+
+    def do_POST(self):
+        path = self.path.split('?')[0]
+        length = int(self.headers.get('Content-Length') or 0)
+        self.rfile.read(length)
+        if path == '/booked':
+            H.posts.append(path)
+            self.send_response(303)
+            self.send_header('Location', '/thanks' if len(H.posts) % 7 != 0 else '/rejected')
+            self.end_headers()
+            return
+        self.send_response(404)
+        self.end_headers()
 
     def do_GET(self):
         path = self.path.split('?')[0]
+        if path == '/posts':
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(str(len(H.posts)).encode())
+            return
         if path == '/slowjs':
             import time as _t
             _t.sleep(2.5)
