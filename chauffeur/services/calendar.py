@@ -204,6 +204,7 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
                         "end": end_dt,
                         "location": location,
                         "description": description,
+                        "visibility": e.get('visibility'),
                         "all_day": is_all_day,
                         "calendar_ids": [],
                         "source_event_ids": [],
@@ -213,6 +214,9 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
                         "event_type": e.get('extendedProperties', {}).get('private', {}).get('event_type') or "standard"
                     }
                 
+                # A public duplicate must not reopen a private source copy.
+                if e.get('visibility') in ('private', 'confidential'):
+                    grouped_events[group_key]['visibility'] = 'private'
                 grouped_events[group_key]["calendar_ids"].append(cal_id)
                 grouped_events[group_key]["source_event_ids"].append(internal_id)
             
@@ -228,6 +232,7 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
             end=g["end"],
             location=g["location"],
             description=g["description"],
+            visibility=g.get('visibility'),
             calendar_ids=g["calendar_ids"],
             source_event_ids=g["source_event_ids"],
             recurring_event_id=g.get("recurring_event_id"),

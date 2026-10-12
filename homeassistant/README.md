@@ -39,8 +39,50 @@ the hostname shown on the add-on's info page (looks like
 `http://<repo-hash>-chauffeur:8000`). Enter it as a full URL with scheme and
 port, not a bare hostname. The URL can be changed later via the integration's
 **Configure** button. Do **not** map port 8000 to the host —
-the add-on has no auth of its own; keep it reachable only on the internal
-Docker network.
+keep this service connection on the internal Docker network and give the
+integration its Argyle service token from **Chauffeur → Config → People → Argyle**.
+Local-network grace permits ordinary conversation during migration; it does
+not verify a member or authorize a voice approval.
+
+## Voice identity and approval
+
+The local v2.499.402 implementation needs component **1.3.0**. Copy the updated
+custom component and restart HA. Keep voice approvals off until the submit-gate
+and satellite device checks pass; local automated tests have not exercised the
+household's microphone/STT pipeline.
+
+On your personal device, sign into Config as a parent. Open **People → Voice
+identity**. Speak an ordinary request on the satellite with its service token
+configured, then refresh voice status. Name/select that satellite and enable
+identity. A recent HA supplies its satellite entity and device IDs directly.
+Run **Sync Now** after updating Chauffeur so the schedule cache contains source
+calendar privacy flags before you enable the voice feature.
+On an older HA, use **Chauffeur integration → Configure → Device to satellite
+mapping**, for example `{"device-registry-id": "assist_satellite.kitchen"}`.
+The entity must exist and belong to that device; a conversation ID is never
+used as a satellite identity. Record the actual HA version in device acceptance.
+Supported HA versions continue listening while a PIN or approval reply is
+pending. Older versions may require another wake word for the next turn.
+
+- “It's Jeff” starts Jeff's non-sensitive lens. It grants no approvals.
+- “Verify me,” then “My PIN is one two three four” verifies here for ten minutes.
+  It uses the same member PIN as the phone; anyone who hears it may reuse it.
+  Before fingerprint continuity exists, anyone in the room can use that session.
+- Shared schedule/list questions, driver assignments, shopping adds/check-offs,
+  internal messages and mission research use the household voice rail. An
+  unverified internal message is explicitly relayed as Household voice.
+- Once device checks pass, enable release/booking approvals separately. Request
+  approval of a named pending mission; Argyle reads back its exact request,
+  prompting for a PIN first if needed. Say **“approve release”** or **“approve
+  booking”** on the next turn. A changed record or an expired readback asks again.
+  A PIN turn never approves anything by itself.
+- **Revoke session** and **Clear voice lock** are available on the phone. Three
+  wrong PINs lock voice verification durably. Clearing that voice lock does not
+  clear web PIN throttling or verify the satellite again.
+
+Private content, external sends, uncertain-outcome verification and purchases
+use their phone paths in this build. HA's built-in local intents retain their
+existing routing; the integration still does not advertise `CONTROL`.
 
 ## 2. Create the Argyle wake word
 

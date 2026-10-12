@@ -296,6 +296,8 @@ def _released_for(mission: dict, site: str) -> dict:
     card = _b.contact_card()
     for r in mission.get('releases') or []:
         if r.get('site') == _b._domain(f'https://{site}' if '://' not in site else site):
+            if (r.get('approval_context') or {}).get('channel') == 'voice':
+                return dict(r.get('approved_values') or {})
             return {f: card[f] for f in r.get('fields') or [] if f in card}
     return {}
 
@@ -559,7 +561,7 @@ def _late_verify(mission_id: str) -> None:
     _dm_person(mission, q + VERIFY_TAIL)
 
 
-def submit(mission_id: str, decision: str, actor: dict, ask_id: str = None) -> dict:
+def submit(mission_id: str, decision: str, actor: dict, ask_id: str = None, approval_context=None) -> dict:
     """A parent's answer to a submit ask (spec §2). The ask id IS the approval:
     a stale or missing id answers `moved` and changes nothing."""
     if not actor or (actor.get('role') or '') not in ('parent', 'adult'):
@@ -580,11 +582,16 @@ def submit(mission_id: str, decision: str, actor: dict, ask_id: str = None) -> d
         if not ask_id or ask['id'] != ask_id:
             return moved
         rj = ask.get('result_json') or {}
+        if approval_context is not None:
+            from services import voice_approval
+            if not voice_approval.valid(approval_context, ask, actor):
+                return {'status': 'refused', 'message': 'The booking or your verification changed. Ask for a new readback.'}
         rec = {k: rj.get(k) for k in ('button', 'url', 'state', 'display', 'facts', 'intent')}
         # The decision is claimed under the lock: a second tap after this
         # finds the mission (or its newest ask) moved and answers `already`.
         if decision == 'approve':
-            storage.update_mission(mission_id, {'status': 'running'})
+            storage.update_mission(mission_id, {'status': 'running',
+                                               **({'voice_approval': approval_context.record()} if approval_context else {})})
         elif decision == 'decline':
             q = f"I got as far as {rec['url']}. I did not press '{rec['button']}'. Finish it yourself and tell me what you found."
             storage.add_mission_step(mission_id, {'kind': 'ask', 'name': 'handoff',
@@ -596,7 +603,8 @@ def submit(mission_id: str, decision: str, actor: dict, ask_id: str = None) -> d
             return {'status': 'error', 'message': 'approve, decline or stop'}
     if decision == 'approve':
         storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'submit_approved',
-                                              'result_json': {'ask_id': ask_id, 'button': rec['button'], 'url': rec['url'], 'approved_by': actor.get('id')}})
+                                              'result_json': {'ask_id': ask_id, 'button': rec['button'], 'url': rec['url'], 'approved_by': actor.get('id'),
+                                                              **({'approval_context': approval_context.record()} if approval_context else {})}})
         pending = rj.get('browse') or {}
         sid = start_browse(storage.get_mission(mission_id), pending.get('goal') or mission.get('goal'), pending.get('site') or rj.get('site'),
                            start_url=rec['url'], released=pending.get('released'), approved={**rec, 'ask_id': ask_id})
@@ -841,7 +849,7 @@ def delete(mission_id: str) -> dict:
     return {'status': 'ok'}
 
 
-def release(mission_id: str, decision: str, actor: dict, ask_id: str = None) -> dict:
+def release(mission_id: str, decision: str, actor: dict, ask_id: str = None, approval_context=None) -> dict:
     """The person's answer to a release ask: approve (record the site and
     fields on the mission and resume the pending browse with the values),
     decline (hand the page over), stop (block the mission). Idempotent: a
@@ -873,6 +881,21 @@ def release(mission_id: str, decision: str, actor: dict, ask_id: str = None) -> 
             row = storage.get_mission(mission_id)
             if row.get('status') != 'waiting_user':
                 return {'status': 'success', 'already': True, 'message': 'Already answered.'}
+            current = _pending_ask(mission_id, 'release')
+            if not current or current['id'] != ask_id:
+                return {'status': 'success', 'moved': True, 'message': 'That question has moved on.'}
+            if approval_context is not None:
+                from services import voice_approval
+                card = _b.contact_card()
+                if not voice_approval.valid(approval_context, current, actor, card):
+                    return {'status': 'refused', 'message': 'The details or your verification changed. Ask for a new readback.'}
+                # Use the validated record under the lock, never an earlier
+                # read of this ask that might carry another site/field set.
+                rj = current.get('result_json') or {}
+                wanted = list(dict.fromkeys([*(rj.get('fields') or []), *(rj.get('missing') or [])]))
+                rel.update(site=rj.get('site'), fields=wanted)
+                rel['approval_context'] = approval_context.record()
+                rel['approved_values'] = {field: card[field] for field in wanted}
             storage.update_mission(mission_id, {'releases': (row.get('releases') or []) + [rel], 'status': 'running'})
         storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'release_approved', 'result_json': {'site': rel['site'], 'fields': rel['fields']}})
         pending = rj.get('browse') or {}

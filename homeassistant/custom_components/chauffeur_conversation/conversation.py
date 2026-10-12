@@ -14,6 +14,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_BASE_URL, CONF_SERVICE_TOKEN
+from .voice import metadata
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,7 +67,9 @@ class ChauffeurConversationEntity(conversation.ConversationEntity):
             "text": user_input.text,
             "language": user_input.language or "en",
             "conversation_id": user_input.conversation_id,
+            "voice": await metadata(self.hass, user_input, self._entry.options.get('device_satellites', '{}')),
         }
+        continue_conversation = False
         try:
             resp = await session.post(
                 f"{self._base_url}/api/v2/converse",
@@ -80,6 +83,7 @@ class ChauffeurConversationEntity(conversation.ConversationEntity):
             )
             resp.raise_for_status()
             data = await resp.json()
+            continue_conversation = data.get('continue_conversation') is True
             speech = (
                 data.get("response", {})
                 .get("speech", {})
@@ -94,6 +98,7 @@ class ChauffeurConversationEntity(conversation.ConversationEntity):
 
         response = intent.IntentResponse(language=user_input.language)
         response.async_set_speech(speech)
-        return conversation.ConversationResult(
-            response=response, conversation_id=user_input.conversation_id
-        )
+        result = {"response": response, "conversation_id": user_input.conversation_id}
+        if 'continue_conversation' in getattr(conversation.ConversationResult, '__dataclass_fields__', {}):
+            result['continue_conversation'] = continue_conversation
+        return conversation.ConversationResult(**result)

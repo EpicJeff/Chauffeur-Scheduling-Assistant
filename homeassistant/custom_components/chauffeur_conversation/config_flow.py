@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import json
 from typing import Any
 
 import aiohttp
@@ -101,14 +102,21 @@ class ChauffeurOptionsFlow(OptionsFlow):
             CONF_SERVICE_TOKEN,
             self.config_entry.data.get(CONF_SERVICE_TOKEN, ""),
         )
+        mapping = self.config_entry.options.get('device_satellites', '{}')
         if user_input is not None:
             base_url = user_input[CONF_BASE_URL].rstrip("/")
             current = base_url
             current_token = user_input.get(CONF_SERVICE_TOKEN, "").strip()
-            error = await _async_validate_connection(self.hass, base_url, current_token)
+            mapping = user_input.get('device_satellites', '{}')
+            try:
+                parsed = json.loads(mapping)
+                valid_mapping = isinstance(parsed, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in parsed.items())
+            except (ValueError, TypeError):
+                valid_mapping = False
+            error = await _async_validate_connection(self.hass, base_url, current_token) if valid_mapping else 'Device mapping must be a JSON object of device IDs to satellite entity IDs.'
             if error is None:
                 return self.async_create_entry(
-                    data={CONF_BASE_URL: base_url, CONF_SERVICE_TOKEN: current_token}
+                    data={CONF_BASE_URL: base_url, CONF_SERVICE_TOKEN: current_token, 'device_satellites': mapping}
                 )
             errors["base"] = "cannot_connect"
             placeholders["error"] = error
@@ -118,6 +126,7 @@ class ChauffeurOptionsFlow(OptionsFlow):
                 {
                     vol.Required(CONF_BASE_URL, default=current): str,
                     vol.Optional(CONF_SERVICE_TOKEN, default=current_token): str,
+                    vol.Optional('device_satellites', default=mapping): str,
                 }
             ),
             errors=errors,

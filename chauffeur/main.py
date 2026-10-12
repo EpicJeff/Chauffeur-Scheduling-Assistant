@@ -3811,9 +3811,10 @@ class ConverseRequest(BaseModel):
     text: str
     language: str = "en"
     conversation_id: Optional[str] = None
+    voice: Optional[Dict[str, Any]] = None
 
 @app.post("/api/v2/converse")
-def converse_ha_assist(req: ConverseRequest):
+def converse_ha_assist(req: ConverseRequest, request: Request = None):
     """
     Endpoint for Home Assistant Assist Pipeline to send transcribed text.
     Acts as a Custom Conversation Agent webhook. When HA supplies a
@@ -3823,13 +3824,35 @@ def converse_ha_assist(req: ConverseRequest):
     """
     from services.agent_router import process_agent_request
 
-    converse_start = time.time()
-    try:
+    from services import voice_identity, voice_approval
+    import hashlib
+    headers = getattr(request, 'headers', {}) or {}
+    authenticated = voice_identity.service_authenticated(headers)
+    ctx = voice_identity.context(req.voice, authenticated)
+
+    def perform():
+        if req.voice and req.voice.get('satellite_id') and not ctx.ha_instance_id:
+            # A delayed PIN reply or a revoked token must not turn into chat.
+            return _voice_response('The satellite token or request metadata is no longer valid. Please try again.', req.language)
+        # This executes before title creation, persistence, SSE and any model.
+        control = voice_identity.intercept(req.text, ctx, req.language)
+        if control is not None:
+            refreshed = voice_identity.context(req.voice, authenticated)
+            if control.get('status') == 'authentication' and refreshed.level == 'verified':
+                control = voice_approval.after_verification(refreshed) or control
+            follow_up = voice_identity.expects_reply(refreshed) or (control.get('status') == 'identity' and refreshed.level == 'named')
+            return _voice_response(control.get('message', 'Please try again.'), req.language, follow_up)
+        if req.text.strip().lower().rstrip('.!?') in ('verify me', 'verify my identity'):
+            return _voice_response(voice_identity.challenge(ctx), req.language, voice_identity.expects_reply(ctx))
+        control = voice_approval.intercept(req.text, ctx)
+        if control is not None:
+            return _voice_response(control.get('message', 'Please try again.'), req.language)
         conv_history = []
         conv_id = None
         if req.conversation_id:
-            # Namespace HA's id so it can never collide with widget conversations.
-            conv_id = f"voice-{req.conversation_id}"
+            # Never load legacy shared-room history into a member generation.
+            conversation_hash = hashlib.sha256(req.conversation_id.encode()).hexdigest()[:24]
+            conv_id = f"voice-{ctx.scope_key}-{conversation_hash}"
             conv = storage.get_conversation(conv_id)
             if not conv:
                 title = req.text if len(req.text) <= 60 else req.text[:57] + "..."
@@ -3847,8 +3870,11 @@ def converse_ha_assist(req: ConverseRequest):
                 conv_history = conv.get("messages", [])
             storage.add_message_to_conversation(conv_id, {'role': 'user', 'content': req.text, 'timestamp': time.time()})
 
-        res = process_agent_request(req.text, history=conv_history,
-                                    focus_key=f"voice:{req.conversation_id}" if req.conversation_id else None)
+        res = process_agent_request(req.text, history=conv_history, source='voice', voice_context=ctx,
+                                    focus_key=f"voice:{ctx.scope_key}:{req.conversation_id}" if req.conversation_id else None)
+        readback = voice_approval.current_readback(ctx)
+        if readback:
+            res['message'] = readback  # a model summary cannot change an approval question
 
         if conv_id:
             storage.add_message_to_conversation(conv_id, {'role': 'assistant', 'content': res.get("message", "Done."), 'timestamp': time.time()})
@@ -3873,29 +3899,57 @@ def converse_ha_assist(req: ConverseRequest):
         CHAT_EVENTS.append(event_data)
             
         # Return format expected by Home Assistant Conversation integration
-        logger.info(f"[agent-timing] /api/v2/converse total {time.time() - converse_start:.1f}s")
-        return {
-            "response": {
-                "speech": {
-                    "plain": {
-                        "speech": res.get("message", "I did not understand that."),
-                        "extra_data": None
-                    }
-                },
-                "card": {},
-                "language": req.language,
-                "response_type": "action_done",
-                "data": {
-                    "targets": [],
-                    "success": [],
-                    "failed": []
-                }
-            }
-        }
-    except Exception as e:
-        import traceback
-        logger.error(f"Error in converse API: {traceback.format_exc()}")
-        return {"error": str(e)}
+        return _voice_response(res.get('message', 'I did not understand that.'), req.language, voice_identity.expects_reply(ctx))
+
+    # Cache only sanitized replies. Authentication retries never check a PIN twice.
+    return voice_identity.once(ctx, perform)
+
+
+def _voice_response(speech, language='en', continue_conversation=False):
+    return {'continue_conversation': bool(continue_conversation),
+            'response': {'speech': {'plain': {'speech': speech, 'extra_data': None}},
+                         'card': {}, 'language': language, 'response_type': 'action_done',
+                         'data': {'targets': [], 'success': [], 'failed': []}}}
+
+
+def _voice_parent(request):
+    token = request.headers.get('x-member-token') or request.query_params.get('member_token')
+    member = storage.get_member_by_token(token) if token else None
+    if not member or member.get('role') != 'parent':
+        raise HTTPException(status_code=403, detail='Sign in as a parent on your personal device.')
+    from tinydb import Query
+    row = storage.member_tokens_table.get(Query().token == token)
+    if row and row.get('house_session'):
+        raise HTTPException(status_code=403, detail='Use your personal parent session for voice settings.')
+    return member
+
+
+@app.get('/api/voice/identity')
+def voice_identity_state(request: Request):
+    _voice_parent(request)
+    from services import voice_identity
+    return voice_identity.admin_state()
+
+
+@app.post('/api/voice/identity')
+def voice_identity_settings(payload: Dict[str, Any], request: Request):
+    _voice_parent(request)
+    from services import voice_identity
+    try:
+        voice_identity.configure(payload.get('enabled') is True, payload.get('satellites') or [],
+                                 payload.get('approvals_enabled') is True)
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=400, detail='Choose valid satellites and set an Argyle service token.')
+    return voice_identity.admin_state()
+
+
+@app.post('/api/voice/identity/recover')
+def voice_identity_recovery(payload: Dict[str, Any], request: Request):
+    parent = _voice_parent(request)
+    from services import voice_identity
+    voice_identity.recover(str(payload.get('ha_instance_id') or ''), str(payload.get('satellite_id') or ''),
+                           clear_locks=payload.get('clear_locks') is True, member_id=payload.get('member_id'), by_member=parent['id'])
+    return voice_identity.admin_state()
 
 @app.get("/api/v2/chat/stream")
 async def stream_agent_chat():
@@ -5038,7 +5092,7 @@ def _public_member(m: dict) -> dict:
     once is offline-crackable forever, and the fact that this function already
     existed for the PIN is exactly why the new credential had to join it
     rather than trust every call site to remember."""
-    secret = ('pin_hash', 'pin_salt', 'pin', 'password_hash', 'password_salt', 'password')
+    secret = ('pin_hash', 'pin_salt', 'pin_length', 'pin', 'password_hash', 'password_salt', 'password')
     out = {k: v for k, v in m.items() if k not in secret}
     out['has_pin'] = bool(m.get('pin_hash'))
     out['has_password'] = bool(m.get('password_hash'))
@@ -8087,7 +8141,7 @@ def create_member(member: FamilyMember):
 def update_member_endpoint(member_id: str, updates: dict):
     # Partial update; id/links are managed via merge/split, PINs via the pin
     # endpoints — never via blind PUT.
-    for field in ('id', 'doc_id', 'driver', 'passenger', 'pin_hash', 'pin_salt', 'has_pin', 'pin'):
+    for field in ('id', 'doc_id', 'driver', 'passenger', 'pin_hash', 'pin_salt', 'pin_length', 'has_pin', 'pin'):
         updates.pop(field, None)
     # Calendars go through set_member_calendars, never a blind write: it also
     # rewrites the driver/passenger mirrors and drops the schedule caches.

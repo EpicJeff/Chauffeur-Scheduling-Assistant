@@ -142,7 +142,7 @@ def process_agent_request(user_prompt: str, context: Optional[Dict] = None, hist
                           source: str = "admin", driver_id: Optional[str] = None,
                           acting_member: Optional[Dict] = None,
                           propose_only: bool = False,
-                          focus_key: Optional[str] = None) -> Dict[str, Any]:
+                          focus_key: Optional[str] = None, voice_context=None) -> Dict[str, Any]:
     """
     Main entrypoint for the Agent Orchestrator.
     Decides whether to route to Gemma (tools) or Gemini (heavy lifting).
@@ -160,6 +160,12 @@ def process_agent_request(user_prompt: str, context: Optional[Dict] = None, hist
     the thing being talked about under it (services/triage.py); it is handed to
     them at dispatch and never shown to the model as a parameter.
     """
+    if source == 'voice':
+        from services.voice_identity import VoiceContext
+        if not isinstance(voice_context, VoiceContext):
+            return {'status': 'refused', 'message': 'Voice identity context is missing. Please try again.'}
+        acting_member = voice_context.verified_member()
+        context = None
     # Resolve driver context (PWA chat only). The driver must actually exist —
     # a stale localStorage id must not grant driver tools acting on nobody.
     driver = None
@@ -216,7 +222,7 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
     # follow-ups ("handle it", "ask Sarah by text", "she said yes", "next")
     # need no title: the situation tools fall back to this focus. Only a live
     # focus is injected; triage.get_focus drops a settled one itself.
-    if focus_key:
+    if focus_key and source != 'voice':
         try:
             from services import triage as _tri, situations as _sit
             _f = _tri.get_focus(focus_key)
@@ -235,6 +241,12 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
             logger.warning(f"Could not inject focus: {e}")
     # Browse missions §4: what Argyle can do in the world, so the model never
     # answers "I can't browse or fill forms" (it said exactly that, 2026-10-11).
+    release_instruction = (
+        "For a pending release or booking requested by voice, call prepare_voice_approval. "
+        "Only the deterministic controller may accept the later explicit confirmation; the model never approves.\n"
+        if source == 'voice' else
+        "A RELEASE (sharing the contact card with a site) is the person's own tap: never act on it; "
+        "tell them to tap Share on the Missions page, the thread card or the DM card.\n")
     system_prompt += ("\nARGYLE ACTS IN THE WORLD through missions: it can browse a company's website and fill "
                       "its forms with the family's details (a parent releases them first) to get appointment "
                       "times, prices and quotes, search the family's own mailbox, and read a photo a person adds "
@@ -242,10 +254,22 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                       "browse the web or fill out forms: for 'get times and pricing', 'enter my information', "
                       "'get a quote', 'get X fixed' call start_mission_for (on the thread we are talking about "
                       "when there is one). A plain web question with no site to act on is research. "
-                      "A RELEASE (sharing the contact card with a site) is the person's own tap: never act on it; "
-                      "tell them to tap Share on the Missions page, the thread card or the DM card.\n")
+                      + release_instruction)
 
-    if not driver:
+    if source == 'voice':
+        lens = voice_context.member()
+        system_prompt += (f"\nSHARED SPEAKER. Identity level: {voice_context.level}. "
+                          f"Named lens: {(lens or {}).get('name') or 'unknown'}. "
+                          "For shared-schedule questions, resolve 'me/my' to that lens when present; "
+                          "it never supplies a sender identity or approval permission. "
+                          "A spoken name is a lens, never authentication. Use only the offered speech-safe "
+                          "tools. Household messages are from household voice unless PIN-verified. "
+                          "You may explicitly assign/remove shared drives and add/check off shared list items. "
+                          "Private information and purchases need the phone. For a requested release or booking, "
+                          "prepare_voice_approval reads back a pending ask; it never approves it. Never claim "
+                          "you approved or sent anything unless the deterministic controller did so. "
+                          "A household request can start mission research with start_mission_for.\n")
+    elif not driver:
         if acting_member is not None:
             _nm = acting_member.get('name') or 'this family member'
             _role = acting_member.get('role') or 'adult'
@@ -399,6 +423,11 @@ sending or claiming, and never pass from_member/member_name for them.
             "neither fits this step, say so plainly in your message; an "
             "honest 'I can't do this without acting' is a real answer.\n")
 
+    if source == 'voice':
+        from services.voice_tools import TOOLS
+        from services.voice_approval import tool_schema
+        tools = [t for t in tools if t.get('name') in TOOLS] + [tool_schema()]
+
     import time as _time
     request_start = _time.time()
     llm_calls = 0
@@ -477,6 +506,8 @@ sending or claiming, and never pass from_member/member_name for them.
                              "set_meal_rule", "get_meal_rules"}
 
     def _is_terminal_success(func_name, res):
+        if source == 'voice' and func_name == 'prepare_voice_approval':
+            return isinstance(res, dict) and res.get('status') in ('success', 'authentication', 'refused') and bool(res.get('message'))
         return (func_name in TERMINAL_ACTION_TOOLS and isinstance(res, dict)
                 and res.get("status") == "success" and bool(res.get("message")))
 
@@ -532,6 +563,9 @@ sending or claiming, and never pass from_member/member_name for them.
 
         # Check for Delegation to the heavy lifter (flash pool)
         if llm_response.get("delegate_to_gemini"):
+            if source == 'voice':
+                return {'status': 'refused', 'message': 'Trip planning needs your phone.',
+                        'schedule_dirty': schedule_dirty}
             logger.info("Delegating massive trip generation to the heavy-tier flash pool")
             return {
                 "status": "delegated", 
@@ -586,7 +620,13 @@ sending or claiming, and never pass from_member/member_name for them.
             tool_start = _time.time()
 
             try:
-                if func_name == "get_calendar_events":
+                if source == 'voice':
+                    from services.voice_tools import dispatch
+                    res = dispatch(func_name, args, voice_context, focus_key)
+                    if res.get('schedule_dirty'): schedule_dirty = True
+                    if res.get('target_element_id'): target_id = res['target_element_id']
+                    if res.get('message'): agent_message = res['message']
+                elif func_name == "get_calendar_events":
                     res = get_calendar_events(args.get("start_date"), args.get("end_date"))
                 elif func_name == "assign_driver_to_event_fuzzy":
                     from services.agent_tools_v2 import assign_driver_to_event_fuzzy

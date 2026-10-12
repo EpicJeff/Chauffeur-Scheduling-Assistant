@@ -16,7 +16,7 @@ def _get_target_element_id(entity_type: str, entity_id: str) -> str:
 # CALENDAR TOOLS
 # ==============================================================================
 
-def get_calendar_events(start_date: str, end_date: str) -> Dict[str, Any]:
+def get_calendar_events(start_date: str, end_date: str, spoken: bool = False) -> Dict[str, Any]:
     """
     Retrieves a slimmed-down JSON of calendar events for a specific date range.
     """
@@ -27,6 +27,9 @@ def get_calendar_events(start_date: str, end_date: str) -> Dict[str, Any]:
 
     sched = get_cached_schedule()
     events = sched.get("events", [])
+    if spoken:
+        from services.voice_tools import speech_safe
+        events = [e for e in events if speech_safe(e)]
     # Join solver assignments so the model can answer "whose schedule" questions
     # — without this it sees events but no drivers and reports empty schedules.
     assignments = dict(sched.get("assignments", {}))
@@ -64,7 +67,7 @@ def get_calendar_events(start_date: str, end_date: str) -> Dict[str, Any]:
     return {"status": "success", "events": slim_events}
 
 
-def _find_event_fuzzy(event_name: str, target_date: str):
+def _find_event_fuzzy(event_name: str, target_date: str, spoken: bool = False):
     """
     Shared fuzzy event lookup over the cached schedule.
     Returns (event, None) on a match, or (None, error_message) when nothing fits.
@@ -74,6 +77,9 @@ def _find_event_fuzzy(event_name: str, target_date: str):
 
     sched = get_cached_schedule()
     events = sched.get("events", [])
+    if spoken:
+        from services.voice_tools import speech_safe
+        events = [e for e in events if speech_safe(e)]
 
     # Clean and parse the target date robustly
     import re
@@ -138,14 +144,16 @@ def _find_event_fuzzy(event_name: str, target_date: str):
     return target_event, None
 
 
-def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date: str) -> Dict[str, Any]:
+def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date: str,
+                               spoken: bool = False, acting_member: dict = None,
+                               actor_provenance: dict = None) -> Dict[str, Any]:
     """
     Finds an event by name on a specific date and assigns a driver to it via a manual override.
     target_date must be YYYY-MM-DD.
     """
     from services.storage import add_override, get_all_drivers
 
-    target_event, err = _find_event_fuzzy(event_name, target_date)
+    target_event, err = _find_event_fuzzy(event_name, target_date, spoken=spoken)
     if err:
         return {"status": "error", "message": err}
 
@@ -166,7 +174,8 @@ def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date:
     override_data = {
         "event_id": target_event["id"],
         "override_type": "driver",
-        "driver_id": target_driver["id"]
+        "driver_id": target_driver["id"],
+        **({'principal_member_id': acting_member.get('id'), **(actor_provenance or {})} if acting_member else {})
     }
     add_override(override_data)
     
@@ -181,7 +190,8 @@ def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date:
     }
 
 
-def remove_override_for_event_fuzzy(event_name: str, target_date: str) -> Dict[str, Any]:
+def remove_override_for_event_fuzzy(event_name: str, target_date: str, spoken: bool = False,
+                                  acting_member: dict = None, actor_provenance: dict = None) -> Dict[str, Any]:
     """
     Removes any manual driver override(s) for an event found by fuzzy name match
     on a date, returning the event to solver control. Covers split-leg override
@@ -189,7 +199,7 @@ def remove_override_for_event_fuzzy(event_name: str, target_date: str) -> Dict[s
     """
     from services.storage import delete_override_by_event, get_all_overrides
 
-    target_event, err = _find_event_fuzzy(event_name, target_date)
+    target_event, err = _find_event_fuzzy(event_name, target_date, spoken=spoken)
     if err:
         return {"status": "error", "message": err}
 
@@ -1682,12 +1692,15 @@ def read_mail(uid: int, acting_member: dict = None, spoken: bool = False) -> Dic
     return {"status": "success", "message": f"{res['subject']} — from {res['from']} {res['date'][:10]}\n\n{res['text']}", **res}
 
 
-def start_mission_for(goal: str, title: str = None, acting_member: dict = None, focus_key: str = None) -> Dict[str, Any]:
+def start_mission_for(goal: str, title: str = None, acting_member: dict = None, focus_key: str = None,
+                      voice_context=None) -> Dict[str, Any]:
     """'Get the dishwasher fixed': open a thread and a mission on it, and
     make the thread the thing we are talking about. Parents and adults
     (voice as the parent of record). One of each: a live mission on an open
     thread about the same thing is named, not doubled."""
-    if not acting_member or acting_member.get('role') not in ('parent', 'adult'):
+    from services.voice_identity import VoiceContext
+    spoken = isinstance(voice_context, VoiceContext)
+    if not spoken and (not acting_member or acting_member.get('role') not in ('parent', 'adult')):
         return {"status": "error", "message": "Only a parent or adult can start that."}
     from services import storage, threads as _threads, missions as _missions, triage as _tri
     goal = (goal or '').strip()
@@ -1711,6 +1724,10 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
         if m.get('origin_kind') != 'thread':
             continue
         t = storage.get_thread(m.get('origin_ref') or '')
+        if spoken:
+            from services.voice_tools import speech_safe
+            if not (t or {}).get('voice_shared') or not speech_safe(t) or not speech_safe(m):
+                continue
         hay = ((t or {}).get('title', '') + ' ' + (t or {}).get('goal', '') + ' ' + m.get('goal', '')).lower()
         if t and t.get('state') not in ('done', 'dropped') and words and all(w in hay for w in words):
             _tri.set_focus(focus_key, 'thread', t['id'], t.get('title') or '')
@@ -1725,12 +1742,18 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
         t = storage.get_thread(f['id'])
         live = [m for m in storage.get_missions(status=['running', 'browsing', 'waiting_user', 'waiting_retry'])
                 if m.get('origin_kind') == 'thread' and m.get('origin_ref') == f['id']]
-        if t and t.get('state') not in ('done', 'dropped') and not live:
+        if spoken:
+            from services.voice_tools import speech_safe
+        if t and t.get('state') not in ('done', 'dropped') and not live and (not spoken or t.get('voice_shared') and speech_safe(t)):
             tid = t['id']
     if not tid:
-        tid = _threads.create(title=(title or goal)[:80], owner_member_id=acting_member['id'], goal=goal, kind='vendor',
-                              created_by=acting_member['id'])
-    res = _missions.launch(goal, origin_kind='thread', origin_ref=tid, created_by=acting_member['id'], tier='mission')
+        tid = _threads.create(title=(title or goal)[:80], owner_member_id=(acting_member or {}).get('id'), goal=goal, kind='vendor',
+                              created_by=(acting_member or {}).get('id'))
+        if spoken:
+            storage.update_thread(tid, {'voice_shared': True, 'requester_provenance': voice_context.provenance()})
+    res = _missions.launch(goal, origin_kind='thread', origin_ref=tid, created_by=(acting_member or {}).get('id'), tier='mission')
+    if spoken and res.get('mission_id'):
+        storage.update_mission(res['mission_id'], {'requester_provenance': voice_context.provenance()})
     if res.get('status') not in ('success', 'launched') or not res.get('mission_id'):
         return {"status": "error", "message": res.get('message') or 'could not start the mission', "thread_id": tid}
     _tri.set_focus(focus_key, 'thread', tid, (storage.get_thread(tid) or {}).get('title') or (title or goal)[:80])
@@ -2845,13 +2868,14 @@ def _resolve_shopping_list(list_name: str = "", acting_member: dict = None) -> t
 
 
 def add_shopping_items(items: str, list_name: str = "",
-                       acting_member: dict = None) -> Dict[str, Any]:
+                       acting_member: dict = None, spoken: bool = False,
+                       actor_provenance: dict = None) -> Dict[str, Any]:
     """Add one or more things to a shopping list. Direct action, never a
     proposal — see module note."""
     import re
     from services import storage
     from models.schemas import ShoppingItem
-    lst, err = _resolve_shopping_list(list_name, acting_member)
+    lst, err = _resolve_shopping_list(list_name, None if spoken else acting_member)
     if err:
         return {"status": "error", "message": err}
     raw = [p.strip() for p in re.split(r',|\band\b|\n', items or '') if p.strip()]
@@ -2865,6 +2889,8 @@ def add_shopping_items(items: str, list_name: str = "",
             continue
         it = ShoppingItem(list_id=lst['id'], name=name, added_via='voice',
                           added_by=(acting_member or {}).get('id')).model_dump()
+        if spoken:
+            it['actor_provenance'] = actor_provenance or {'actor_kind': 'household_voice'}
         storage.add_shopping_item(it)
         added.append(name)
     _bump_stream()
@@ -2913,10 +2939,11 @@ def get_shopping_list_items(list_name: str = "",
 
 
 def check_off_shopping_item(item_name: str, list_name: str = "",
-                            acting_member: dict = None) -> Dict[str, Any]:
+                            acting_member: dict = None, spoken: bool = False,
+                            actor_provenance: dict = None) -> Dict[str, Any]:
     """Check something off — the in-the-aisle path. Fuzzy match on open items."""
     from services import storage
-    lst, err = _resolve_shopping_list(list_name, acting_member)
+    lst, err = _resolve_shopping_list(list_name, None if spoken else acting_member)
     if err:
         return {"status": "error", "message": err}
     items = storage.get_shopping_items(lst['id'], include_checked=False)
@@ -2932,7 +2959,8 @@ def check_off_shopping_item(item_name: str, list_name: str = "",
     if len(hits) > 1:
         return {"status": "error",
                 "message": "Which one? " + ", ".join(i.get('name') or '?' for i in hits)}
-    storage.check_shopping_item(hits[0]['id'], True, (acting_member or {}).get('id'))
+    storage.check_shopping_item(hits[0]['id'], True, (acting_member or {}).get('id'),
+                                actor_provenance=actor_provenance if spoken else None)
     _bump_stream()
     left = len(items) - 1
     tail = " That's everything! 🎉" if left == 0 else f" {left} left."

@@ -20,7 +20,8 @@
         "title": "Chauffeur connection",
         "data": {
           "base_url": "Chauffeur add-on base URL",
-          "service_token": "Service token"
+          "service_token": "Service token",
+          "device_satellites": "Device to satellite mapping (JSON, older HA only)"
         },
         "description": "Internal URL of the Chauffeur add-on, including scheme and port, e.g. http://local-chauffeur:8000.\n\nThe service token comes from Chauffeur: Config → People → Argyle."
       }

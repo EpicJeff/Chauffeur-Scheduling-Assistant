@@ -1553,21 +1553,26 @@ def set_member_pin(member_id: str, pin: str) -> bool:
     salt = _os.urandom(16).hex()
     with db_lock:
         return bool(members_table.update(
-            {'pin_hash': _hash_pin(pin, salt), 'pin_salt': salt},
+            {'pin_hash': _hash_pin(pin, salt), 'pin_salt': salt, 'pin_length': len(pin)},
             Query().id == member_id))
 
 def clear_member_pin(member_id: str) -> bool:
     with db_lock:
         return bool(members_table.update(
-            {'pin_hash': None, 'pin_salt': None}, Query().id == member_id))
+            {'pin_hash': None, 'pin_salt': None, 'pin_length': None}, Query().id == member_id))
 
 def verify_member_pin(member_id: str, pin: str) -> bool:
     import hmac
     member = get_member(member_id)
     if not member or not member.get('pin_hash') or not member.get('pin_salt'):
         return False
-    return hmac.compare_digest(member['pin_hash'],
-                               _hash_pin(pin or '', member['pin_salt']))
+    ok = hmac.compare_digest(member['pin_hash'], _hash_pin(pin or '', member['pin_salt']))
+    if ok and member.get('pin_length') is None:
+        # Backfill only with demonstrated knowledge; a hash cannot reveal length.
+        with db_lock:
+            members_table.update({'pin_length': len(pin)},
+                                 (Query().id == member_id) & (Query().pin_hash == member['pin_hash']))
+    return ok
 
 # --- Trusted devices (auth arc S5) ---
 # What makes it safe to KEEP the PIN rather than delete it. A PIN is four
@@ -3660,7 +3665,7 @@ def delete_shopping_item(item_id: str):
         shopping_items_table.remove(Query().id == item_id)
 
 def check_shopping_item(item_id: str, checked: bool = True,
-                        by_member_id: str = None) -> Optional[dict]:
+                        by_member_id: str = None, actor_provenance: dict = None) -> Optional[dict]:
     """Idempotent: re-checking an already-checked item is a no-op success, so
     two phones tapping the same row race harmlessly."""
     import time as _time
@@ -3671,7 +3676,8 @@ def check_shopping_item(item_id: str, checked: bool = True,
         was_checked = bool(res[0].get('is_checked'))
         patch = {'is_checked': bool(checked),
                  'checked_at': _time.time() if checked else None,
-                 'checked_by': by_member_id if checked else None}
+                 'checked_by': by_member_id if checked else None,
+                 'checked_provenance': actor_provenance if checked else None}
         shopping_items_table.update(patch, Query().id == item_id)
         out = dict(res[0])
         out.update(patch)

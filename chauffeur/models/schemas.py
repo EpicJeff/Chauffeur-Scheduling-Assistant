@@ -26,6 +26,9 @@ class Event(BaseModel):
     end: datetime
     location: Optional[str] = None
     description: Optional[str] = None
+    # Preserve the source privacy marker through normalization and cache.
+    # Shared speakers must not receive private/confidential event details.
+    visibility: Optional[str] = None
     calendar_ids: List[str]
     recurring_event_id: Optional[str] = None
     original_calendar_ids: List[str] = Field(default_factory=list)

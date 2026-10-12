@@ -263,6 +263,8 @@ RULES = [
     # it is the HA Assist webhook, and no browser surface posts it.
     ('GET', '/api/v2/chat/stream', WALL_OR_SERVICE, 'chat.agent'),
     (ANY, '/api/v2/*', ROBOTS, 'chat.agent'),
+    (ANY, '/api/voice/identity', PARENTS, None),
+    (ANY, '/api/voice/identity/*', PARENTS, None),
     (ANY, '/api/announce/*', ROBOTS, 'music'),
 
     # --- the wall: pages and payloads a panel legitimately draws ------------
