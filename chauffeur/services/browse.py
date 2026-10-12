@@ -53,8 +53,10 @@ STEP_WORDS = re.compile(r'^\s*(next|continue|proceed|back|previous|step \d+)\b',
 NAVIGATION_WORDS = re.compile(r'\b(search|find|go|filter|sort|show|view|see|select|choose|close|cancel)\b', re.I)
 # Commitment language in a control's scope: the shape of a review-and-commit page.
 # Agreement phrasing only: a bare "terms" gated "Next" on any form carrying
-# reCAPTCHA's legal line ("... Privacy Policy and Terms of Service apply").
-COMMIT_CONTEXT = re.compile(r'(by clicking|i agree|agree to (the )?terms|accept(ing)? the terms|terms (and|&) conditions|authori[sz]e|'
+# reCAPTCHA's legal line ("... Privacy Policy and Terms of Service apply"),
+# while "By continuing, you agree to our Terms" still reads as agreement.
+COMMIT_CONTEXT = re.compile(r'(by clicking|by (continuing|booking|submitting)|i agree|you agree|agree to (our |the )?terms|'
+                            r'accept(ing)? (our |the )?terms|terms (and|&) conditions|authori[sz]e|'
                             r'you will be charged|\btotal\b|confirm your|review your)', re.I)
 CONFIRMATION_MARKERS = re.compile(r'(confirmation (number|#|code)|has been (booked|scheduled|submitted|received)|we have received your|'
                                   r'thank you for your (request|booking|application|order|submission)|your appointment is)', re.I)
@@ -527,7 +529,7 @@ def _is_denied(scan: dict) -> bool:
 def _under_click(page, x, y) -> dict:
     return page.evaluate("""([x, y]) => {
         const el = document.elementFromPoint(x, y); if (!el) return {text: '', type: '', tag: ''};
-        const b = el.closest('button, input[type=submit], input[type=button], a, [role=button]') || el;
+        const b = el.closest('button, input[type=submit], input[type=button], input[type=image], a, [role=button]') || el;
         return { text: ((b.innerText || b.value || b.getAttribute('aria-label') || '')).trim().slice(0, 120), type: (b.getAttribute('type') || ''), tag: b.tagName };
     }""", [x, y])
 
@@ -538,7 +540,10 @@ _CONTROL_JS = """
   const resolve = (el) => {
     if (!el) return null;
     if (el.tagName === 'IFRAME') return {iframe: true, el};
-    const b = el.closest('button, input[type=submit], input[type=button], a, [role=button]');
+    // A click on a label presses the control it labels (<label for=bk> on a submit input).
+    const lab = el.closest && el.closest('label');
+    if (lab && lab.control && lab.control.matches('button, input[type=submit], input[type=image], [role=button]')) return {iframe: false, el: lab.control};
+    const b = el.closest('button, input[type=submit], input[type=button], input[type=image], a, [role=button]');
     return b ? {iframe: false, el: b} : null;
   };
   // A text box under the point (or the one the point sits inside): a type there is typing, not a press.
@@ -558,8 +563,8 @@ _CONTROL_JS = """
   const b = r.el;
   const form = b.form || b.closest('form');
   const scope = form || b.closest('dialog, [role=dialog], [role=form], [role=group], main, section, article') || document.body;
-  const buttons = [...scope.querySelectorAll('button, input[type=submit], input[type=button], [role=button]')].filter(x => !x.disabled);
-  const submits = form ? [...form.querySelectorAll('button:not([type=button]):not([type=reset]), input[type=submit]')] : [];
+  const buttons = [...scope.querySelectorAll('button, input[type=submit], input[type=button], input[type=image], [role=button]')].filter(x => !x.disabled);
+  const submits = form ? [...form.querySelectorAll('button:not([type=button]):not([type=reset]), input[type=submit], input[type=image]')] : [];
   const fields = {};
   scope.querySelectorAll('input, textarea, select').forEach(i => {
     const t = (i.type || 'text').toLowerCase();
@@ -581,6 +586,7 @@ _CONTROL_JS = """
   const prices = (text.match(/(\\$\\s?\\d[\\d,]*(?:\\.\\d{2})?|\\d[\\d,]*(?:\\.\\d{2})?\\s?(?:USD|dollars))/gi) || []);
   return ({
     text: label(b), type: (b.getAttribute('type') || ''), tag: b.tagName, disabled: !!b.disabled, iframe: false, editable,
+    labels: [...(b.labels || [])].map(l => (l.innerText || '').replace(/\\s+/g, ' ').trim()).filter(Boolean),
     is_submit_control: !!form && (submits.includes(b) || (buttons.length === 1 && buttons[0] === b)),
     sole_submit: !!form && submits.length === 1 && submits[0] === b,
     only_button: buttons.length === 1 && buttons[0] === b,
@@ -648,9 +654,9 @@ def _focused_control(page):
     try:
         h = page.evaluate_handle("""() => {
             const el = document.activeElement; if (!el) return null;
-            if (el.matches('button, input[type=submit], input[type=button], [role=button], a[href]')) return el;
+            if (el.matches('button, input[type=submit], input[type=button], input[type=image], [role=button], a[href]')) return el;
             const f = el.form; if (!f) return null;
-            return f.querySelector('button:not([type=button]):not([type=reset]), input[type=submit]');
+            return f.querySelector('button:not([type=button]):not([type=reset]), input[type=submit], input[type=image]');
         }""")
     except Exception as e:
         logger.warning(f"[browse] control read failed: {e}")
@@ -666,7 +672,7 @@ def _control_by_text(page, text: str):
         return None
     try:
         h = page.evaluate_handle("""(want) => {
-            const all = [...document.querySelectorAll('button, input[type=submit], input[type=button], a, [role=button]')].filter(b => !b.disabled);
+            const all = [...document.querySelectorAll('button, input[type=submit], input[type=button], input[type=image], a, [role=button]')].filter(b => !b.disabled);
             const lab = (b) => ((b.innerText || b.value || b.getAttribute('aria-label') || b.getAttribute('title') || '')).replace(/\\s+/g, ' ').trim().toLowerCase();
             const exact = all.filter(b => lab(b) === want); if (exact.length === 1) return exact[0];
             const part = all.filter(b => lab(b).includes(want)); return part.length === 1 ? part[0] : null;
@@ -697,9 +703,12 @@ def _classify(control, intent: str) -> str:
         return 'pay'
     if control and not control.get('iframe') and not control.get('disabled') and not control.get('error'):
         label = control.get('text') or ''
-        if PAY_WORDS.search(label):
+        # The words a person reads for this control: its own text and any <label> for it
+        # (<label for=bk>Book appointment</label> on a submit input whose value is "Go").
+        words = ' '.join([label] + list(control.get('labels') or []))
+        if PAY_WORDS.search(words):
             return 'pay'
-        if SUBMIT_WORDS.search(label) or SUBMIT_WORDS.search(intent):
+        if SUBMIT_WORDS.search(words) or SUBMIT_WORDS.search(intent):
             return 'submit'
         st = control.get('state') or {}
         final_pos = control.get('sole_submit') or control.get('only_button') or control.get('last_button')
@@ -739,7 +748,8 @@ def _keys_of(args: dict) -> list:
         s = str(x)
         for part in ([s] if s.strip() == '' else s.split('+')):
             t = part.strip().lower()
-            if t in ENTER_KEYS:
+            if t in ENTER_KEYS or (part and part.strip(' ') in ('\n', '\r', '\r\n')):
+                # (a newline key is an Enter, never a Space: check it before the blank-means-space rule)
                 out.append('enter')
             elif t in SPACE_KEYS or (part and not t):
                 out.append('space')
@@ -822,20 +832,48 @@ def _focus_is_control(page) -> bool:
         return True
 
 
+_MULTILINE_JS = """([x, y, usePoint]) => {
+    const el = usePoint ? document.elementFromPoint(x, y) : document.activeElement;
+    if (!el) return false;
+    if (el.isContentEditable) return true;
+    if (el.closest && el.closest('textarea')) return true;
+    const lab = el.closest && el.closest('label');
+    return !!(lab && lab.control && lab.control.tagName === 'TEXTAREA');
+}"""
+
+
+def _multiline_box(page, args: dict, use_point: bool = True) -> bool:
+    """The type lands in a textarea or a contenteditable, where Enter is a
+    newline, not a submit (the point's element, or the focus with no point)."""
+    try:
+        if use_point and 'x' in args:
+            return bool(page.evaluate(_MULTILINE_JS, [*_px(args['x'], args['y']), True]))
+        return bool(page.evaluate(_MULTILINE_JS, [0, 0, False]))
+    except Exception:
+        return False
+
+
 def _act(page, name, args):
     if name in ('click_at', 'click', 'double_click_at', 'double_click'):
         x, y = _px(args['x'], args['y'])
         page.mouse.click(x, y, click_count=2 if 'double' in name else 1)
     elif name in ('type_text_at', 'type'):
         # Newlines never reach keyboard.type (it presses Enter for them): the
-        # loop turned them into press_enter, which its Enter gate checks.
-        text = str(args.get('text', '')).replace('\r', '').replace('\n', '')
+        # loop turned them into press_enter, which its Enter gate checks. In a
+        # textarea or contenteditable (`_multiline`) they are line breaks and stay.
+        raw = str(args.get('text', ''))
+        multiline = bool(args.get('_multiline'))
+        text = raw.replace('\r\n', '\n').replace('\r', '\n') if multiline else raw.replace('\r', '').replace('\n', '')
         if 'x' in args:
             x, y = _px(args['x'], args['y'])
             page.mouse.click(x, y)
             page.wait_for_timeout(150)
             if ' ' in text and _focus_is_control(page):
                 raise _Refused(TYPE_NOT_A_BOX)
+        if multiline and '\n' in text and not _multiline_box(page, args, use_point=False):
+            # The focus left the text area: a newline here would be an ungated Enter.
+            raise _Refused('a newline outside a text area is an Enter; type the text without it')
+        if 'x' in args:
             if args.get('clear_before_typing', True):
                 page.keyboard.press('Control+A')
                 page.keyboard.press('Backspace')
@@ -1013,6 +1051,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
     pressed = False
     after_press_refusals = 0
     unresolved = 0            # submit intents with no control under them (the gate refuses once, then blocks)
+    last_press = None         # the last ungated press, watched for a late confirmation: {label, url, state, turn, before_conf}
     captcha_attempts = 0
     strikes = 0
     last_sig, repeats = None, 0
@@ -1108,6 +1147,20 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
         report['submit'] = _submit_record(page, control, intent, facts)
         return finish('needs_submit', label or f"the control the model meant to {intent}")
 
+    def backstop(press, scan_now):
+        """An ungated press brought a confirmation (spec §1): an unasked attempt
+        on the record, the run ends submit_unknown. `press` = {label, url, state}."""
+        unasked = {'ask_id': None, 'button': press.get('label') or '', 'url': press.get('url') or '', 'state': press.get('state') or {},
+                   'pressed_at': time.time(), 'outcome': 'unknown', 'text': (scan_now.get('text') or '')[:300], 'unasked': True}
+        if report.get('attempt'):
+            # An approved attempt already resolved this run (CONTINUED):
+            # it stays the run's attempt; the unasked press rides beside it.
+            report['attempts_extra'].append(unasked)
+        else:
+            report['attempt'] = unasked
+        report['stopped_at'] = page.url
+        return finish('submit_unknown', f"confirmation page after an ungated press of '{unasked['button']}'")
+
     try:
         ctx = _new_context(browser, settings)
         page = ctx.new_page()
@@ -1131,6 +1184,12 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                 return finish('capped', f"stopped after {caps['seconds']} s")
             # The page first: what it wants and warns about, before the model acts on it.
             scan = _scan(page)
+            # A booking by XHR can render its confirmation seconds after the press:
+            # the last ungated press is watched for this turn and the next one.
+            if last_press and not pressed and not last_press['before_conf'] and _is_confirmation(scan):
+                return backstop(last_press, scan)
+            if last_press and turn - last_press['turn'] >= 2:
+                last_press = None
             stop = page_checks(scan)
             if stop:
                 return stop
@@ -1166,6 +1225,11 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                             continue
                         return finish_attempt('unknown', body or 'CONTINUED could not be corroborated')
                     return finish_attempt({'CONFIRMED': 'confirmed', 'REJECTED': 'rejected'}.get(kind, 'unknown'), body)
+                if last_press and not last_press['before_conf']:
+                    # The model stops right after an ungated press: one last look before calling it done.
+                    late = _scan(page)
+                    if _is_confirmation(late):
+                        return backstop(last_press, late)
                 m = SUBMIT_LINE.search(text)
                 if m:
                     want = m.group(1).strip()
@@ -1226,7 +1290,10 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                 is_drag = name == 'drag_and_drop'
                 if is_type:
                     typed = str(args.get('text') or '')
-                    if '\n' in typed or '\r' in typed:
+                    if ('\n' in typed or '\r' in typed) and _multiline_box(page, args, use_point='x' in args):
+                        # A textarea or contenteditable: a newline is a line break there, kept as typed.
+                        args['_multiline'] = True
+                    elif '\n' in typed or '\r' in typed:
                         # keyboard.type presses Enter for a newline: a typed newline IS an Enter, through Enter's gate.
                         args['text'] = typed.replace('\r', '').replace('\n', '')
                         args['press_enter'] = True
@@ -1306,6 +1373,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                         return finish('blocked', f'left the site: {args["url"]}')
                     results.append((name, args, {'error': 'that is another site; stay on ' + site}))
                     continue
+                if name in ('navigate', 'open_web_browser', 'go_back', 'go_forward'):
+                    last_press = None      # the model moved on: a confirmation after this is not the press's
                 before = page.url
                 t_act = time.time()
                 enter = _wants_enter(name, args)
@@ -1382,6 +1451,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                 report['actions'] += 1
                 line['act_ms'] = _ms(t_act)
                 line['url'] = page.url
+                if press_now:
+                    last_press = None      # the approved press owns what the page says next
                 # The backstop (spec §1): an ungated press of any kind that brought
                 # a confirmation, on a new page or in this one (a script that
                 # swapped the body), is an unasked attempt. Checked before
@@ -1389,19 +1460,14 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                 new_scan = None
                 if not press_now and not pressed and (is_click or is_type or is_key or is_drag):
                     new_scan = _scan(page)
+                    src = ctl or focused
+                    press = {'label': (src or {}).get('text') or '', 'url': before, 'state': (src or {}).get('state') or {},
+                             'turn': turn, 'before_conf': before_conf}
                     if not before_conf and _is_confirmation(new_scan):
-                        src = ctl or focused
-                        label = (src or {}).get('text') or ''
-                        unasked = {'ask_id': None, 'button': label, 'url': before, 'state': (src or {}).get('state') or {},
-                                   'pressed_at': time.time(), 'outcome': 'unknown', 'text': (new_scan.get('text') or '')[:300], 'unasked': True}
-                        if report.get('attempt'):
-                            # An approved attempt already resolved this run (CONTINUED):
-                            # it stays the run's attempt; the unasked press rides beside it.
-                            report['attempts_extra'].append(unasked)
-                        else:
-                            report['attempt'] = unasked
-                        report['stopped_at'] = page.url
-                        return finish('submit_unknown', f"confirmation page after an ungated press of '{label}'")
+                        return backstop(press, new_scan)
+                    if src is not None or is_click or is_drag:
+                        # Watched a turn longer: an XHR booking renders its confirmation late.
+                        last_press = press
                     before_conf = _is_confirmation(new_scan)
                 if _domain(page.url) not in allowed:
                     strikes += 1

@@ -565,6 +565,9 @@ def scenario_word_lists_split_pay_from_submit():
     check(not browse.CONFIRMATION_MARKERS.search('Choose a slot. Trip charge $114.95'), "a form is not a confirmation")
     check(not browse.COMMIT_CONTEXT.search('This site is protected by reCAPTCHA and the Google Privacy Policy and Terms of Service apply.'),
           "reCAPTCHA's legal line is not agreement language")
+    for t in ('By continuing, you agree to our Terms of Service.', 'By booking you accept our terms'):
+        check(browse.COMMIT_CONTEXT.search(t), f"{t!r} is agreement language")
+    check(browse._keys_of({'keys': '\n'}) == ['enter'] and browse._keys_of({'keys': ['\r']}) == ['enter'], "a newline key is an Enter, never a Space")
     for t in ('By clicking Book you agree', 'I agree to the terms', 'Terms and Conditions', 'Total: $114.95', 'Review your request'):
         check(browse.COMMIT_CONTEXT.search(t), f"{t!r} is commitment language")
     for k, want in (({'keys': 'Shift+Enter'}, ['shift', 'enter']), ({'keys': ['Control', 'Enter']}, ['control', 'enter']),
@@ -613,7 +616,7 @@ def scenario_classification_is_by_evidence_not_label():
              ('/stepcontinue', '#cont', '', 'run'), ('/form', '#next', '', 'run'), ('/iconbtn', '#icon', '', 'submit'),
              ('/disabledbook', '#book', '', 'run'), ('/framedbook', '#w', '', 'run'), ('/framedbook', '#w', 'book the slot', 'submit'),
              ('/tiles', '#t1', 'confirm the booking', 'submit'), ('/cookie', '#accept', 'pay for it', 'pay'),
-             ('/fulltrip', '#next', '', 'run')]
+             ('/fulltrip', '#next', '', 'run'), ('/agreecontinue', '#cont', '', 'submit'), ('/labelbook', '#bklabel', '', 'submit')]
     for path, sel, intent, want in cases:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
@@ -978,6 +981,44 @@ def scenario_the_device_sequence_runs_ungated_until_book():
     check(r['outcome'] == 'submitted' and len(H.posts) == 1 and r['attempt']['outcome'] == 'confirmed', f"the approved run presses once: {r['outcome']} posts={len(H.posts)}")
 
 
+def scenario_the_re_review_holes_are_closed():
+    """Final re-review: a confirmation an XHR renders seconds after an ungated
+    press; the commonest agreement wording; a multi-line note in a textarea;
+    a click on the label of a submit input."""
+    from browse_pages import H
+    _reset()
+    g = _xy(f'{URL}/ajaxlate', '#grab')
+    browse._model_step = _script([_click(g)], [{'name': 'wait', 'args': {}}], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/ajaxlate', out_dir=OUT)
+    a = r.get('attempt') or {}
+    check(r['outcome'] == 'submit_unknown' and a.get('unasked') and a.get('button') == 'Grab it' and '778' in (a.get('text') or ''),
+          f"a confirmation 1.5 s after an ungated press is still an unasked attempt: {r['outcome']} {a}")
+    c = _xy(f'{URL}/agreecontinue', '#cont')
+    browse._model_step = _script([_click(c)], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/agreecontinue', out_dir=OUT)
+    check(r['outcome'] == 'needs_submit' and r['submit']['button'] == 'Continue' and not H.posts,
+          f"'By continuing, you agree to our Terms.' over a sole Continue asks: {r['outcome']} posts={len(H.posts)}")
+    n = _xy(f'{URL}/notes', '#nt')
+    values, orig_act = [], browse._act
+
+    def act_and_read(page, name, args):
+        orig_act(page, name, args)
+        values.append(page.evaluate("document.getElementById('nt') ? document.getElementById('nt').value : null"))
+    browse._act = act_and_read
+    try:
+        browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': n[0], 'y': n[1], 'text': 'line1\nline2'}}], 'DONE.')
+        r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/notes', out_dir=OUT)
+    finally:
+        browse._act = orig_act
+    check(r['outcome'] == 'done' and values == ['line1\nline2'] and not H.posts,
+          f"a newline in a textarea is a line break, not a submit: {r['outcome']} {values} posts={len(H.posts)}")
+    lb = _xy(f'{URL}/labelbook', '#bklabel')
+    browse._model_step = _script([_click(lb)], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/labelbook', out_dir=OUT)
+    check(r['outcome'] == 'needs_submit' and r['submit']['button'] == 'Go' and not H.posts,
+          f"a click on the label of a submit input is that press, read by its label: {r['outcome']} {(r.get('submit') or {}).get('button')} posts={len(H.posts)}")
+
+
 SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
@@ -1002,7 +1043,7 @@ SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_typ
              scenario_an_approved_run_that_writes_submit_presses_through_the_same_match, scenario_the_approved_match_holes_are_closed,
              scenario_an_unasked_press_after_continued_rides_beside_the_approved_attempt,
              scenario_every_press_path_goes_through_the_gate, scenario_an_in_page_confirmation_is_caught_by_the_backstop,
-             scenario_the_device_sequence_runs_ungated_until_book]
+             scenario_the_device_sequence_runs_ungated_until_book, scenario_the_re_review_holes_are_closed]
 
 if __name__ == "__main__":
     import traceback

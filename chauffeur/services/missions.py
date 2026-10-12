@@ -444,8 +444,10 @@ def _submit_ask(mission: dict, args: dict, report: dict) -> None:
                                                              'browse': {'goal': args.get('goal'), 'site': site, 'start_url': rec.get('url'),
                                                                         'released': _released_for(mission, site)}}})
     _close(mission['id'], 'waiting_user')
-    label = 'Book it' if verb == 'book' else 'Submit it'
-    _dm_person(mission, f"{q} (mission: {mission.get('goal')}). Tap {label} on the Missions page or the thread card.")
+    # The approve button reads the question itself (never a blind "Book it"), so the DM points at the question.
+    what = 'booking question' if verb == 'book' else 'question'
+    _dm_person(mission, f"{q} (mission: {mission.get('goal')}). Tap the {what} on the Missions page or the thread card to approve it, "
+                        f"or I'll finish it myself / Stop there.")
 
 
 VERIFY_TAIL = " (Tap It went through / It did not go through on the Missions page or the thread card.)"

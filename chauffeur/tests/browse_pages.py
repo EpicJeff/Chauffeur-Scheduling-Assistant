@@ -112,6 +112,20 @@ PAGES = {
     '/ajaxbook': ('<h1>Pick</h1><div><button type="button" id="grab">Grab it</button></div>'
                   '<script>document.getElementById("grab").addEventListener("click", () => { document.body.innerHTML = '
                   '"<h1>Thank you for your booking.</h1><p>Confirmation number 777</p>"; });</script>'),
+    # The same, the confirmation arriving 1.5 s later (an XHR booking): later than the press's own settle.
+    '/ajaxlate': ('<h1>Pick</h1><div><button type="button" id="grab">Grab it</button></div>'
+                  '<script>document.getElementById("grab").addEventListener("click", () => { setTimeout(() => { document.body.innerHTML = '
+                  '"<h1>Thank you for your booking.</h1><p>Confirmation number 778</p>"; }, 1500); });</script>'),
+    # The commonest agreement wording over a sole Continue: a commitment.
+    '/agreecontinue': ('<h1>Almost done</h1><form action="/booked" method="post"><p>By continuing, you agree to our Terms.</p>'
+                       '<button type="submit" id="cont">Continue</button></form>'),
+    # A textarea: a newline typed there is a line break, never a submit.
+    '/notes': ('<h1>Notes</h1><form action="/booked" method="post"><label>Notes<textarea id="nt" name="notes" rows="4"></textarea></label>'
+               '<button type="submit" id="save">Save notes</button></form>'),
+    # A label for a submit input whose own value says nothing: a click on the label presses it.
+    '/labelbook': ('<h1>Your slot</h1><form action="/booked" method="post"><p>Tue, Oct 20 8AM-12PM</p>'
+                   '<label for="bk" id="bklabel" style="display:inline-block;padding:20px">Book appointment</label>'
+                   '<input type="submit" id="bk" value="Go"></form>'),
 }
 
 
