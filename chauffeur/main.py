@@ -1420,7 +1420,9 @@ def _house_home_enabled() -> bool:
 
 
 templates.env.globals['household_features'] = _household_features
-templates.env.globals['house_home_enabled'] = _house_home_enabled
+# `house_home_on`, not `house_home_enabled`: /home and /house pass a context
+# variable of that name, which shadows a global and made every page 500.
+templates.env.globals['house_home_on'] = _house_home_enabled
 templates.env.globals['shelf_order'] = _shelf_order
 templates.env.globals['shelf_boards'] = _shelf_boards
 

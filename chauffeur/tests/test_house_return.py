@@ -120,8 +120,24 @@ def scenario_nav_hands_the_script_the_setting():
     src = open(tpl, encoding='utf-8').read()
     at = src.index('house_return.js')
     tag = src[src.rfind('<script', 0, at):src.index('>', at) + 1]
-    check('data-house-home=' in tag and 'house_home_enabled()' in tag,
+    check('data-house-home=' in tag and 'house_home_on()' in tag,
           f"nav's house_return tag does not carry the House setting: {tag}")
+
+
+def scenario_the_pages_that_name_the_setting_still_render():
+    """v2.499.403 shipped a template global called `house_home_enabled`
+    while /home and /house pass a context VARIABLE of that name: the
+    variable shadowed the callable and every page with nav 500'd
+    ("'bool' object is not callable", the add-on log). The routes
+    themselves, rendered."""
+    from fastapi.testclient import TestClient
+    import main
+    client = TestClient(main.app)
+    for path in ('/home', '/house', '/routines?panel=true&kiosk=true'):
+        r = client.get(path)
+        check(r.status_code == 200, f"{path} answered {r.status_code}")
+        check('data-house-home="false"' in r.text or 'data-house-home="true"' in r.text,
+              f"{path} does not hand house_return.js the setting")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
