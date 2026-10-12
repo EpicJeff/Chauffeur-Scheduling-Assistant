@@ -629,6 +629,12 @@ def scenario_pay_words_are_a_wall_whatever_else():
     browse._model_step = _script([_click(pay)], 'DONE.')
     r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT)
     check(r['outcome'] == 'blocked' and r['text'].startswith('payment') and 'Pay now' in r['text'], f"Pay now is blocked: payment: {r['text']}")
+    browse._model_step = _script('SUBMIT: Pay now')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT)
+    check(r['outcome'] == 'blocked' and r['text'].startswith('payment'), f"SUBMIT: Pay now is payment, not a question: {r['outcome']} {r['text']}")
+    browse._model_step = _script('SUBMIT: Buy now')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/buynow', out_dir=OUT)
+    check(r['outcome'] == 'blocked' and r['text'].startswith('payment'), f"SUBMIT: Buy now is payment: {r['outcome']} {r['text']}")
     buy = _xy(f'{URL}/buynow', '#buy')
     browse._model_step = _script([_click(buy)], 'DONE.')
     r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/buynow', out_dir=OUT,

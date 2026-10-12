@@ -971,7 +971,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
             model_ms = _ms(t_model)
             report['turns'] = turn
             facts.update(_learned(step.get('text') or ''))
-            ti, to =step.get('tokens') or (0, 0)
+            ti, to = step.get('tokens') or (0, 0)
             report['tokens_in'] += int(ti)
             report['tokens_out'] += int(to)
             if step.get('content') is not None:
@@ -994,10 +994,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                             return finish('blocked', f"could not find the control '{want}' at {page.url}")
                         contents.append({'role': 'user', 'parts': [{'text': f"no control reads '{want}'; click it, or name its text exactly as the page shows it"}]})
                         continue
-                    report['submit'] = _submit_record(page, ctl, '', facts)
-                    report['stopped_at'] = page.url
-                    return finish('needs_submit', ctl['text'])
-                needed =[f for f in _needed(text) if f not in released]
+                    return gate(ctl, '', 'SUBMIT')
+                needed = [f for f in _needed(text) if f not in released]
                 if needed:
                     report['wanted_fields'] = needed
                     return finish('needs_release', text.strip() or f"the page needs: {', '.join(needed)}")
