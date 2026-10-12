@@ -617,6 +617,11 @@ def scenario_the_gate_returns_a_question_with_the_whole_transaction():
     r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT)
     check(r['outcome'] == 'needs_submit' and r['submit']['button'] == 'Book appointment' and r['submit']['state']['selected'] and r['submit']['facts'] == {'slot': 'Tue, Oct 20 8AM-12PM'},
           f"SUBMIT: resolves the control, reads its scope, carries the facts: {r.get('submit')}")
+    check(r is not None, "run never returns None")
+    # A SUBMIT: naming a step control the classifier would run still asks: the model's naming is the evidence.
+    browse._model_step = _script('SUBMIT: Continue')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/stepcontinue', out_dir=OUT)
+    check(r is not None and r['outcome'] == 'needs_submit' and r['submit']['button'] == 'Continue', f"SUBMIT: Continue asks: {r and r['outcome']}")
     # A SUBMIT: naming a control that is not there: told once, then blocked.
     browse._model_step = _script('SUBMIT: Reserve this', 'SUBMIT: Reserve this')
     r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/booking', out_dir=OUT)

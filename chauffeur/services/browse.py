@@ -923,10 +923,12 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
             return finish('captcha_failed', f'a human-verification check at {page.url}; not attempted (consent is off)')
         return None
 
-    def gate(control, intent, how):
+    def gate(control, intent, how, force_submit=False):
         """None to run the press; a finished report otherwise (Task 4 adds the
         'PRESS' return for an approved match). `how` is the ledger word."""
         kind = _classify(control, intent)
+        if force_submit and kind == 'run':
+            kind = 'submit'  # the model naming the control with SUBMIT: is itself the evidence
         if kind == 'run':
             return None
         label = (control or {}).get('text') or ''
@@ -994,7 +996,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                             return finish('blocked', f"could not find the control '{want}' at {page.url}")
                         contents.append({'role': 'user', 'parts': [{'text': f"no control reads '{want}'; click it, or name its text exactly as the page shows it"}]})
                         continue
-                    return gate(ctl, '', 'SUBMIT')
+                    return gate(ctl, '', 'SUBMIT', force_submit=True)
                 needed = [f for f in _needed(text) if f not in released]
                 if needed:
                     report['wanted_fields'] = needed
