@@ -133,7 +133,8 @@ def _system_prompt(now: datetime.datetime, settings: dict = None) -> str:
         "a time. You cannot execute changes yourself — every change you want "
         "is a PROPOSAL a parent approves later, and drafted messages are "
         "never sent by you (a person reviews and sends). Never claim "
-        "something was sent, booked, or paid.\n\n"
+        "something was sent, booked, or paid that the transcript does not "
+        "show (a `submitted` note).\n\n"
         "Respond with EXACTLY ONE JSON object, one of:\n"
         '{"action":"tool","tool":"<READ tool>","args":{...}}\n'
         '{"action":"propose","tool":"<PROPOSE tool>","args":{...},'
@@ -167,6 +168,11 @@ def _system_prompt(now: datetime.datetime, settings: dict = None) -> str:
         "requires a phone call' when the goal asked for windows, a fee or a way to "
         "book and you have not browsed: browse, resume, ask the person, or hand "
         "them the link.\n"
+        + ("A browse may end needs_submit: a parent is asked to approve the press; wait for it. A `submit_attempt` on the transcript whose "
+           "outcome is not confirmed, rejected, continued or failed is a commitment that may have happened: never press again on this "
+           "mission; ask the person. After a `submitted` note the thing IS booked: say so, and never book it twice.\n"
+           if (settings or {}).get('missions_submit_enabled', True) else
+           "Booking is off for this family: a browse never books or submits; hand the person the link instead.\n") +
         "If the outcome is a choice the family must make, use ask_user and "
         "wait for the answer — NEVER finish with a question in your summary; "
         "a finished mission cannot hear replies.\n"
@@ -206,7 +212,9 @@ def _user_prompt(mission: dict) -> str:
             # The planner reads the outcome, where it stopped and what was
             # learned before the model's prose; the turn ledger is for people.
             rj = {'outcome': rj.get('outcome'), 'stopped_at': rj.get('stopped_at'), 'learned': rj.get('learned'),
-                  'wanted_fields': rj.get('wanted_fields'), 'turns': rj.get('turns'), 'text': (rj.get('text') or '')[:500]}
+                  'wanted_fields': rj.get('wanted_fields'), 'turns': rj.get('turns'), 'text': (rj.get('text') or '')[:500],
+                  'submit': {'button': (rj.get('submit') or {}).get('button')} if rj.get('submit') else None,
+                  'attempt': {'outcome': (rj.get('attempt') or {}).get('outcome')} if rj.get('attempt') else None}
         lines.append(f"[{s['idx']}] {s['kind']} {s.get('name') or ''} "
                      f"args={_compact(s.get('args_json'), 200)} "
                      f"result={_compact(rj)}")
@@ -290,7 +298,248 @@ def _released_for(mission: dict, site: str) -> dict:
     return {}
 
 
-def start_browse(mission: dict, goal: str, site: str, start_url: str = None, released: dict = None) -> str:
+# --- the submit gate (spec 2026-10-11) ----------------------------------------
+
+BOOK_WORDS = re.compile(r'(book|schedul|appointment|reserv)', re.I)
+UNRESOLVED = (None, 'unknown')
+
+
+def attempts_for(mission_id: str) -> list:
+    """Every submit_attempt on the mission, oldest first, each with its step id."""
+    out = []
+    for s in storage.get_mission_steps(mission_id):
+        if s.get('kind') == 'note' and s.get('name') == 'submit_attempt' and isinstance(s.get('result_json'), dict):
+            out.append({**s['result_json'], 'step_id': s['id']})
+    return out
+
+
+def _write_attempt(step_id: str, data: dict) -> None:
+    storage.update_mission_step(step_id, {'result_json': {k: v for k, v in data.items() if k != 'step_id'}})
+
+
+def _submit_verb(record: dict, goal: str) -> str:
+    text = ' '.join([record.get('button') or '', record.get('intent') or '', goal or ''])
+    return 'book' if BOOK_WORDS.search(text) else 'submit'
+
+
+def submit_question(domain: str, verb: str, facts: dict, button: str) -> str:
+    """Deterministic (spec §2): '{Book|Submit} at {domain}: {facts} (button '{button}')?'"""
+    lead = 'Book' if verb == 'book' else 'Submit'
+    vals = [str(v) for v in (facts or {}).values() if str(v).strip()]
+    if vals:
+        return f"{lead} at {domain}: {', '.join(vals)} (button '{button}')?"
+    return f"{lead} at {domain} with the button '{button}'?"
+
+
+def _on_attempt_for(mission_id: str, step_id: str):
+    """The runner's authorization and record, in one lock (spec §2): this
+    browse is live, its approval is this ask and unspent, no attempt on the
+    mission is unresolved; then the attempt note and the spent mark."""
+    def on_attempt(record: dict) -> bool:
+        with storage.db_lock:
+            mission = storage.get_mission(mission_id)
+            if not mission or mission.get('status') != 'browsing':
+                return False
+            steps = storage.get_mission_steps(mission_id)
+            newest = next((s for s in reversed(steps) if s.get('kind') == 'browse'), None)
+            if not newest or newest['id'] != step_id:
+                return False
+            args = dict(newest.get('args_json') or {})
+            if not args.get('approved_ask_id') or args.get('approved_ask_id') != record.get('ask_id') or args.get('approval_spent'):
+                return False
+            if any(a.get('outcome') in UNRESOLVED for a in attempts_for(mission_id)):
+                return False
+            storage.update_mission_step(step_id, {'args_json': {**args, 'approval_spent': True}})
+            storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'submit_attempt',
+                                                  'result_json': {'ask_id': record.get('ask_id'), 'browse_step_id': step_id, 'button': record.get('button'),
+                                                                  'url': record.get('url'), 'state': record.get('state') or {}, 'pressed_at': record.get('pressed_at') or time.time(),
+                                                                  'outcome': None, 'text': ''}})
+        return True
+    return on_attempt
+
+
+def _ask_by_id(mission_id: str, ask_id: str):
+    if not ask_id:
+        return None
+    return next((s for s in storage.get_mission_steps(mission_id) if s.get('kind') == 'ask' and s['id'] == ask_id), None)
+
+
+def _confirmation_number(text: str) -> str:
+    m = re.search(r'confirmation\s*(?:number|#|code|no\.?)?\s*[:#]?\s*([A-Z0-9-]{4,})', text or '', re.I)
+    return m.group(1) if m else ''
+
+
+def _resolve_attempts(mission_id: str, step_id: str, report: dict, live: bool) -> None:
+    """The report's attempt onto its note; a human resolution is never overwritten;
+    an unasked attempt is added after the fact; a reported attempt with no note
+    on this step is recorded (the press is evidence either way); a pending
+    attempt on this step with nothing said about it is unknown now (nothing is
+    left to the reclaim)."""
+    rep = report.get('attempt') or None
+    if rep and rep.get('unasked'):
+        storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'submit_attempt',
+                                              'result_json': {'ask_id': None, 'browse_step_id': step_id, 'button': rep.get('button') or '', 'url': rep.get('url') or '',
+                                                              'state': rep.get('state') or {}, 'pressed_at': rep.get('pressed_at') or time.time(), 'outcome': 'unknown',
+                                                              'text': (rep.get('text') or '')[:500], 'unasked': True}})
+        return
+    matched = False
+    for a in attempts_for(mission_id):
+        if a.get('browse_step_id') != step_id:
+            continue
+        if rep and a.get('ask_id') == rep.get('ask_id'):
+            matched = True
+            if a.get('resolved_by'):
+                late = list(a.get('late_reports') or []) + [{'outcome': rep.get('outcome') or 'unknown', 'text': (rep.get('text') or '')[:300], 'ts': time.time()}]
+                _write_attempt(a['step_id'], {**a, 'late_reports': late})
+                if (rep.get('outcome') or 'unknown') != a.get('outcome'):
+                    storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'late_evidence',
+                                                          'result_json': {'note': f"the browser later reported '{(rep.get('text') or rep.get('outcome') or '')[:120]}'; "
+                                                                                  f"{a['resolved_by'].get('name') or 'the parent'}'s answer stands"}})
+            else:
+                _write_attempt(a['step_id'], {**a, 'outcome': rep.get('outcome') or 'unknown', 'text': (rep.get('text') or '')[:500]})
+        elif a.get('outcome') is None and live:
+            _write_attempt(a['step_id'], {**a, 'outcome': 'unknown'})
+    if rep and not matched:
+        storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'submit_attempt',
+                                              'result_json': {'ask_id': rep.get('ask_id'), 'browse_step_id': step_id, 'button': rep.get('button') or '',
+                                                              'url': rep.get('url') or '', 'state': rep.get('state') or {},
+                                                              'pressed_at': rep.get('pressed_at') or time.time(), 'outcome': rep.get('outcome') or 'unknown',
+                                                              'text': (rep.get('text') or '')[:500]}})
+
+
+def _changed_lead(line: str) -> str:
+    """'selected: Thu (approved: Tue)' reads 'selected Thu (approved: Tue)'."""
+    return re.sub(r'^(\w+):\s*', r'\1 ', (line or '').strip())
+
+
+def _submit_ask(mission: dict, args: dict, report: dict) -> None:
+    from services import browse as _b
+    rec = report['submit']
+    site = args.get('site') or ''
+    domain = _b._domain(rec.get('url') or f'https://{site}')
+    verb = _submit_verb(rec, mission.get('goal'))
+    q = submit_question(domain, verb, rec.get('facts') or {}, rec.get('button') or 'the button')
+    changed = list(report.get('changed') or [])
+    if changed:
+        q = f"The page changed: {_changed_lead(changed[0])}. {q}"
+    storage.add_mission_step(mission['id'], {'kind': 'ask', 'name': 'submit',
+                                             'result_json': {'question': q, 'verb': verb, 'site': domain, 'url': rec.get('url'), 'button': rec.get('button'),
+                                                             'state': rec.get('state') or {}, 'display': rec.get('display') or '', 'facts': rec.get('facts') or {},
+                                                             'intent': rec.get('intent') or '', 'filled': report.get('filled') or {}, 'changed': changed,
+                                                             'browse': {'goal': args.get('goal'), 'site': site, 'start_url': rec.get('url'),
+                                                                        'released': _released_for(mission, site)}}})
+    _close(mission['id'], 'waiting_user')
+    label = 'Book it' if verb == 'book' else 'Submit it'
+    _dm_person(mission, f"{q} (mission: {mission.get('goal')}). Tap {label} on the Missions page or the thread card.")
+
+
+def _verify_ask(mission: dict, attempt: dict, payment: bool = False) -> None:
+    """The press happened and nobody can read whether it went through: the
+    parent says (spec §2). An unasked attempt has no submit ask behind it."""
+    url, button = attempt.get('url') or '', attempt.get('button') or 'the button'
+    if payment:
+        q = f"I pressed '{button}' at {url}; the page then asked for payment, which I never enter. Check whether the request went through, then tell me below."
+    else:
+        q = f"I pressed '{button}' at {url} and could not read whether it went through. Check your email or the site, then tell me below."
+    ask = (_ask_by_id(mission['id'], attempt.get('ask_id')) or {}).get('result_json') or {}
+    storage.add_mission_step(mission['id'], {'kind': 'ask', 'name': 'verify',
+                                             'result_json': {'question': q, 'attempt_step_id': attempt['step_id'], 'button': button, 'url': url,
+                                                             'facts': ask.get('facts') or {}, 'display': ask.get('display') or '', 'payment': bool(payment)}})
+    _close(mission['id'], 'waiting_user')
+    _dm_person(mission, q + " (Tap It went through / It did not go through on the Missions page or the thread card.)")
+
+
+def _pending_ask(mission_id: str, name: str):
+    steps = storage.get_mission_steps(mission_id)
+    ask = next((s for s in reversed(steps) if s.get('kind') == 'ask'), None)
+    return ask if ask and ask.get('name') == name else None
+
+
+def submit(mission_id: str, decision: str, actor: dict, ask_id: str = None) -> dict:
+    """A parent's answer to a submit ask (spec §2). The ask id IS the approval:
+    a stale or missing id answers `moved` and changes nothing."""
+    if not actor or (actor.get('role') or '') not in ('parent', 'adult'):
+        return {'status': 'refused', 'message': 'Only a parent or adult can approve a booking.'}
+    mission = storage.get_mission(mission_id)
+    if not mission:
+        return {'status': 'error', 'message': 'No such mission.'}
+    moved = {'status': 'success', 'moved': True, 'message': 'That question has moved on; look at the card again.'}
+    with storage.db_lock:
+        row = storage.get_mission(mission_id) or {}
+        ask = _pending_ask(mission_id, 'submit')
+        if not ask or row.get('status') != 'waiting_user':
+            return {'status': 'success', 'already': True, 'message': 'That was already answered.'}
+        if not ask_id or ask['id'] != ask_id:
+            return moved
+        if decision == 'approve':
+            storage.update_mission(mission_id, {'status': 'running'})
+    rj = ask.get('result_json') or {}
+    rec = {k: rj.get(k) for k in ('button', 'url', 'state', 'display', 'facts', 'intent')}
+    if decision == 'approve':
+        storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'submit_approved',
+                                              'result_json': {'ask_id': ask_id, 'button': rec['button'], 'url': rec['url'], 'approved_by': actor.get('id')}})
+        pending = rj.get('browse') or {}
+        start_browse(storage.get_mission(mission_id), pending.get('goal') or mission.get('goal'), pending.get('site') or rj.get('site'),
+                     start_url=rec['url'], released=pending.get('released'), approved={**rec, 'ask_id': ask_id})
+        return {'status': 'success', 'message': ('Booking' if rj.get('verb') == 'book' else 'Submitting') + ' it now.'}
+    if decision == 'decline':
+        q = f"I got as far as {rec['url']}. I did not press '{rec['button']}'. Finish it yourself and tell me what you found."
+        storage.add_mission_step(mission_id, {'kind': 'ask', 'name': 'handoff', 'result_json': {'question': q, 'url': rec['url'], 'filled': rj.get('filled') or {}, 'reason': 'not approved'}})
+        _close(mission_id, 'waiting_user')
+        _dm_person(mission, q)
+        return {'status': 'success', 'message': 'Left it to you.'}
+    if decision == 'stop':
+        _close(mission_id, 'blocked', error=_stop_text(mission_id))
+        return {'status': 'success', 'message': 'Stopped.'}
+    return {'status': 'error', 'message': 'approve, decline or stop'}
+
+
+def _stop_text(mission_id: str) -> str:
+    atts = attempts_for(mission_id)
+    conf = next((a for a in reversed(atts) if a.get('outcome') == 'confirmed'), None)
+    if conf:
+        return f"stopped; the booking already made stands (confirmation {_confirmation_number(conf.get('text') or conf.get('detail') or '') or 'on record'})"
+    open_ = next((a for a in reversed(atts) if a.get('outcome') in UNRESOLVED), None)
+    if open_:
+        return f"stopped; a press of '{open_.get('button')}' at {open_.get('url')} may have gone through: check your email or the site"
+    return 'the family did not book'
+
+
+def verify(mission_id: str, ask_id: str, outcome: str, actor: dict, detail: str = '') -> dict:
+    """A parent resolves an attempt by tap: confirmed, failed or unsure (spec §2)."""
+    if not actor or (actor.get('role') or '') not in ('parent', 'adult'):
+        return {'status': 'refused', 'message': 'Only a parent or adult can answer that.'}
+    mission = storage.get_mission(mission_id)
+    if not mission:
+        return {'status': 'error', 'message': 'No such mission.'}
+    if outcome not in ('confirmed', 'failed', 'unsure'):
+        return {'status': 'error', 'message': 'confirmed, failed or unsure'}
+    with storage.db_lock:
+        ask = _pending_ask(mission_id, 'verify')
+        if not ask or not ask_id or ask['id'] != ask_id or (storage.get_mission(mission_id) or {}).get('status') != 'waiting_user':
+            return {'status': 'success', 'moved': True, 'message': 'That question has moved on; look at the card again.'}
+        rj = ask.get('result_json') or {}
+        att = next((a for a in attempts_for(mission_id) if a['step_id'] == rj.get('attempt_step_id')), None)
+        if not att:
+            return {'status': 'error', 'message': 'No attempt to resolve.'}
+        if outcome == 'unsure':
+            return {'status': 'success', 'message': 'Still waiting; tell me when you know.'}
+        _write_attempt(att['step_id'], {**att, 'outcome': outcome, 'resolved_by': {'id': actor.get('id'), 'name': actor.get('name') or ''},
+                                        'resolved_at': time.time(), 'detail': (detail or '').strip()[:300]})
+        # Inside the lock: a second tap finds the mission no longer waiting.
+        storage.update_mission(mission_id, {'status': 'running'})
+    if outcome == 'confirmed':
+        storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'submitted',
+                                              'result_json': {'verb': _submit_verb({'button': att.get('button')}, mission.get('goal')), 'facts': rj.get('facts') or {},
+                                                              'confirmation': _confirmation_number(detail), 'text': (detail or '').strip(), 'by_hand': True,
+                                                              'by': actor.get('name') or ''}})
+    else:
+        storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'submit_failed', 'result_json': {'detail': (detail or '').strip()}})
+    _close(mission_id, 'running')
+    return {'status': 'success', 'message': 'Noted; carrying on.' if outcome == 'confirmed' else 'Noted; it did not go through.'}
+
+
+def start_browse(mission: dict, goal: str, site: str, start_url: str = None, released: dict = None, approved: dict = None) -> str:
     """Add the browse step, park the mission in `browsing`, run the runner in
     a daemon thread (inline in tests). Returns the step id, or '' when the
     day's turn cap refuses the run."""
@@ -307,18 +556,21 @@ def start_browse(mission: dict, goal: str, site: str, start_url: str = None, rel
         # The planner named no page: start where a past browse of this site
         # got furthest (its form, its scheduling page), not the front door.
         start_url = _site_page(site)
-    sid = storage.add_mission_step(mid, {'kind': 'browse', 'name': site, 'args_json': {'goal': goal, 'site': site, 'start_url': start_url},
-                                         'result_json': None})
+    args = {'goal': goal, 'site': site, 'start_url': start_url,
+            **({'approved_ask_id': approved.get('ask_id'), 'approval_spent': False} if approved else {})}
+    sid = storage.add_mission_step(mid, {'kind': 'browse', 'name': site, 'args_json': args, 'result_json': None})
     storage.update_mission(mid, {'status': 'browsing'})
     kw = dict(goal=goal, site=site, released=released if released is not None else _released_for(mission, site),
-              consent={'captcha': bool(settings.get('missions_captcha_attempts'))}, start_url=start_url, out_dir=browse_dir(mid))
+              consent={'captcha': bool(settings.get('missions_captcha_attempts'))}, start_url=start_url, out_dir=browse_dir(mid),
+              approved=approved, on_attempt=_on_attempt_for(mid, sid))
 
     def work():
         try:
             report = _browse(**kw)
         except Exception as e:
             report = {'outcome': 'error', 'text': str(e)[:200], 'learned': {}, 'stopped_at': start_url or site, 'wanted_fields': [],
-                      'turns': 0, 'tokens_in': 0, 'tokens_out': 0, 'seconds': 0, 'screenshots': [], 'filled': {}}
+                      'turns': 0, 'tokens_in': 0, 'tokens_out': 0, 'seconds': 0, 'screenshots': [], 'filled': {},
+                      'submit': None, 'attempt': None, 'changed': []}
         finish_browse(mid, sid, report)
 
     if _browse_async:
@@ -329,8 +581,13 @@ def start_browse(mission: dict, goal: str, site: str, start_url: str = None, rel
 
 
 def finish_browse(mission_id: str, step_id: str, report: dict) -> None:
-    """The report becomes the step's result; the outcome maps to running (the
-    planner reads it), a `release` ask, or a `handoff` ask."""
+    """The report becomes the step's result. Only the mission's LIVE browse
+    (status browsing, newest browse step == this step) may move the mission;
+    a late report is evidence on its own step. Attempts are resolved first,
+    a parent's resolution is never overwritten, and an unresolved attempt
+    forces the verify hand-off whatever the report says (spec §2). Otherwise
+    the outcome maps to running (the planner reads it), a `submit` ask, a
+    `release` ask, or a `handoff` ask."""
     from services import browse as _b
     mission = storage.get_mission(mission_id)
     if not mission:
@@ -345,17 +602,42 @@ def finish_browse(mission_id: str, step_id: str, report: dict) -> None:
         counts = dict(storage.get_app_state(f'mission_calls:{day}') or {})
         counts['browse_turns'] = int(counts.get('browse_turns', 0)) + int(report.get('turns') or 0)
         storage.set_app_state(f'mission_calls:{day}', counts)
+        # The thread may return after the mission moved on (dropped by a
+        # parent, reclaimed by the tick, a newer browse started): the report
+        # stays on its step as evidence, nothing else moves.
+        newest = next((s for s in reversed(storage.get_mission_steps(mission_id)) if s.get('kind') == 'browse'), None)
+        live = (storage.get_mission(mission_id) or {}).get('status') == 'browsing' and bool(newest) and newest['id'] == step_id
     shots = [os.path.basename(p) for p in report.get('screenshots') or []]
     storage.update_mission_step(step_id, {'result_json': {**report, 'screenshots': shots}})
-    # The thread may return after the mission moved on (dropped by a parent,
-    # reclaimed by the tick): the report stays on its step, nothing else moves.
-    mission = storage.get_mission(mission_id)
-    if (mission or {}).get('status') != 'browsing':
+    _resolve_attempts(mission_id, step_id, report, live)
+    if not live:
         storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'browse',
                                               'result_json': {'note': 'the browse finished after the mission had moved on; its report is above'}})
         return
+    mission = storage.get_mission(mission_id)
     outcome = report.get('outcome')
     text = report.get('text') or ''
+    pending = [a for a in attempts_for(mission_id) if a.get('browse_step_id') == step_id and a.get('outcome') == 'unknown']
+    if pending:
+        _verify_ask(mission, pending[-1], payment=(outcome == 'blocked' and 'payment' in text.lower()))
+        return
+    if outcome == 'needs_submit' and report.get('submit'):
+        _submit_ask(mission, args, report)
+        return
+    if outcome == 'submitted':
+        a = next((x for x in reversed(attempts_for(mission_id)) if x.get('browse_step_id') == step_id and x.get('outcome') == 'confirmed'), None) or {}
+        approved_ask = (_ask_by_id(mission_id, a.get('ask_id')) or {}).get('result_json') or {}
+        facts = dict(approved_ask.get('facts') or report.get('learned') or {})
+        storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'submitted',
+                                              'result_json': {'verb': _submit_verb({'button': a.get('button')}, mission.get('goal')), 'facts': facts,
+                                                              'confirmation': _confirmation_number(a.get('text') or text), 'text': a.get('text') or text,
+                                                              'by_hand': False}})
+        _close(mission_id, 'running')
+        return
+    if outcome == 'submit_rejected':
+        storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'submit_rejected', 'result_json': {'error': text}})
+        _close(mission_id, 'running')
+        return
     if outcome == 'needs_release':
         card = _b.contact_card()
         fields = [f for f in report.get('wanted_fields') or [] if f in card]
@@ -406,11 +688,13 @@ def delete(mission_id: str) -> dict:
     return {'status': 'ok'}
 
 
-def release(mission_id: str, decision: str, actor: dict) -> dict:
+def release(mission_id: str, decision: str, actor: dict, ask_id: str = None) -> dict:
     """The person's answer to a release ask: approve (record the site and
     fields on the mission and resume the pending browse with the values),
     decline (hand the page over), stop (block the mission). Idempotent: a
-    release already acted on answers `already`."""
+    release already acted on answers `already`; an ask id that is not the
+    pending ask answers `moved` and changes nothing (no id: still accepted
+    until the callers pass one)."""
     if not actor or (actor.get('role') or '') not in ('parent', 'adult'):
         return {'status': 'refused', 'message': "Only a parent or adult can release the family's details."}
     mission = storage.get_mission(mission_id)
@@ -420,6 +704,8 @@ def release(mission_id: str, decision: str, actor: dict) -> dict:
     ask = next((s for s in reversed(steps) if s.get('kind') == 'ask'), None)
     if not ask or ask.get('name') != 'release' or mission.get('status') != 'waiting_user':
         return {'status': 'success', 'already': True, 'message': 'That release was already answered.'}
+    if ask_id is not None and ask['id'] != ask_id:
+        return {'status': 'success', 'moved': True, 'message': 'That question has moved on; look at the card again.'}
     rj = ask.get('result_json') or {}
     if decision == 'approve':
         from services import browse as _b
@@ -523,15 +809,27 @@ def _finish_too_early(mission: dict, res: dict):
 
 def _land_finish(mission: dict, res: dict) -> None:
     """A finish reaches the thread (a `mission` history entry and a
-    pre-filled next step) and the person (a DM). Nothing is booked: said
-    outright whenever a browse touched a site. The `mission` entry is
+    pre-filled next step) and the person (a DM). A `submitted` note is said
+    outright ("Booked: {facts}, confirmation {n}"); otherwise "Nothing is
+    booked" whenever a browse touched a site. The `mission` entry is
     appended AFTER the advance so it is the newest real entry the card's
     lead reads (situations._reply_option)."""
     summary = (res.get('summary') or '').strip()
     nxt = (res.get('next_action') or '').strip() or "Read Argyle's summary"
     when = res.get('next_action_at')
-    touched_site = any(s.get('kind') == 'browse' for s in storage.get_mission_steps(mission['id']))
-    tail = ' Nothing is booked.' if touched_site else ''
+    steps = storage.get_mission_steps(mission['id'])
+    touched_site = any(s.get('kind') == 'browse' for s in steps)
+    booked = next((s for s in reversed(steps) if s.get('kind') == 'note' and s.get('name') == 'submitted'), None)
+    if booked:
+        # The thing IS booked (a confirmed press, or a parent's "it went through").
+        rj = booked.get('result_json') or {}
+        facts = ', '.join(str(v) for v in (rj.get('facts') or {}).values() if str(v).strip())
+        lead = 'Booked' if rj.get('verb') == 'book' else 'Submitted'
+        tail = (f" {lead}" + (f": {facts}" if facts else '')
+                + (f", confirmation {rj['confirmation']}" if rj.get('confirmation') else '')
+                + (f" (confirmed by {rj['by']})" if rj.get('by_hand') and rj.get('by') else '') + '.')
+    else:
+        tail = ' Nothing is booked.' if touched_site else ''
     tid = mission.get('origin_ref') if mission.get('origin_kind') == 'thread' else None
     thread = storage.get_thread(tid) if tid else None
     if not thread:
@@ -547,7 +845,7 @@ def _land_finish(mission: dict, res: dict) -> None:
         # stays closed and is not advanced.
         entry_next, entry_when = None, None
         _dm_person(mission, f"{summary} (The thread \"{thread.get('title')}\" was closed, so I left it closed.){tail}")
-    storage.append_thread_history(tid, {'kind': 'mission', 'text': summary, 'next_action': entry_next,
+    storage.append_thread_history(tid, {'kind': 'mission', 'text': summary + tail, 'next_action': entry_next,
                                         'next_action_at': entry_when, 'mission_id': mission['id'], 'who': 'argyle'})
     _sit.touched('thread', tid)
 
@@ -789,7 +1087,15 @@ def tick(now: datetime.datetime = None) -> dict:
         if b and b.get('result_json') is None and (b.get('ts') or 0) < ts - BROWSE_LOST_S:
             storage.add_mission_step(row['id'], {'kind': 'note', 'name': 'browse',
                                                  'result_json': {'note': 'the browse was lost (no result after 10 minutes)'}})
-            storage.update_mission(row['id'], {'status': 'running'})
+            # A dead worker that had pressed: the press may have happened, so
+            # the parent is asked; the mission never just runs on (spec §2).
+            pending = [a for a in attempts_for(row['id']) if a.get('browse_step_id') == b['id'] and a.get('outcome') is None]
+            if pending:
+                for a in pending:
+                    _write_attempt(a['step_id'], {**a, 'outcome': 'unknown'})
+                _verify_ask(row, {**pending[-1], 'outcome': 'unknown'})
+            else:
+                storage.update_mission(row['id'], {'status': 'running'})
 
     running = sorted(storage.get_missions(status='running'),
                      key=lambda r: r.get('created_at') or 0)

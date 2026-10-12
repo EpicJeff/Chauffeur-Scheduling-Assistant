@@ -16,7 +16,8 @@ def _reset():
         t.truncate()
     storage.add_member({'id': 'mom', 'name': 'Mom', 'role': 'parent'})
     storage.get_settings = lambda: {'missions_enabled': True, 'llm_gemini_paid_api_key': 'paid', 'llm_gemini_api_key': 'k',
-                                    'contact_first_name': 'Jeff', 'contact_email': 'ffejnosliw@gmail.com', 'contact_zip': '27519'}
+                                    'contact_first_name': 'Jeff', 'contact_email': 'ffejnosliw@gmail.com', 'contact_zip': '27519',
+                                    'missions_submit_enabled': True}
     storage.set_app_state(f"mission_calls:{date.today().isoformat()}", {})
     situations.REFRESH_DELAY_S = 0
     situations._pool_call = lambda *a, **k: {}
@@ -393,6 +394,296 @@ def scenario_the_site_remembers_its_deepest_page():
     check(runs[3]['start_url'] == 'https://www.bodewell.com/guest-schedule-service', "a page off the site is never remembered for it")
 
 
+def _submit_report(**kw):
+    rec = {'button': 'Book appointment', 'url': 'https://www.bodewell.com/schedule', 'intent': 'book the Tuesday slot',
+           'state': {'fields': {'notes': ''}, 'selected': ['Tue, Oct 20 8AM-12PM'], 'text': 'Trip charge $114.95 Tue, Oct 20 8AM-12PM', 'text_sha': 'a' * 64, 'prices': ['$114.95']},
+           'display': 'Trip charge $114.95 Tue, Oct 20 8AM-12PM', 'facts': {'slot': 'Tue, Oct 20 8AM-12PM', 'price': '$114.95'}}
+    return _report('needs_submit', text='Book appointment', submit={**rec, **kw.pop('submit', {})}, filled={'first_name': 'Jeff'}, **kw)
+
+
+def _browse_to_submit(mid):
+    missions._browse = lambda **kw: _submit_report()
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'book the Tuesday slot', 'site': 'bodewell.com'}
+    return missions.step(storage.get_mission(mid))
+
+
+def scenario_needs_submit_becomes_an_ask_the_person_can_read():
+    _reset()
+    mid = _mission()
+    row = _browse_to_submit(mid)
+    ask = storage.get_mission_steps(mid)[-1]
+    rj = ask['result_json']
+    check(row['status'] == 'waiting_user' and ask['kind'] == 'ask' and ask['name'] == 'submit', f"the submit ask: {ask}")
+    check(rj['question'] == "Book at bodewell.com: Tue, Oct 20 8AM-12PM, $114.95 (button 'Book appointment')?", f"the question: {rj['question']}")
+    check(rj['verb'] == 'book' and rj['button'] == 'Book appointment' and rj['state']['selected'] == ['Tue, Oct 20 8AM-12PM'] and rj['filled'] == {'first_name': 'Jeff'}
+          and rj['browse']['start_url'] == 'https://www.bodewell.com/schedule' and rj['browse']['site'] == 'bodewell.com' and rj['changed'] == [], f"the shape: {rj}")
+    check(SENT and rj['question'] in SENT[-1] and SENT[-1].endswith('Tap Book it on the Missions page or the thread card.'), f"the DM: {SENT}")
+    check(missions.submit_question('x.com', 'submit', {}, 'Send application') == "Submit at x.com with the button 'Send application'?", "no facts: the button alone")
+    check(missions._submit_verb({'button': 'Reserve'}, 'get it fixed') == 'book' and missions._submit_verb({'button': 'Send application'}, 'apply for the permit') == 'submit', "the verb")
+
+
+def scenario_approve_needs_the_ask_id_and_resumes_with_the_record():
+    _reset()
+    mid = _mission()
+    _browse_to_submit(mid)
+    ask = storage.get_mission_steps(mid)[-1]
+    runs = []
+    missions._browse = lambda **kw: runs.append(kw) or _report('submitted', text='CONFIRMED: 12345', attempt={**kw['approved'], 'pressed_at': 1.0, 'outcome': 'confirmed', 'text': 'Confirmation number 12345'})
+    res = missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id='stale')
+    check(res['status'] == 'success' and res.get('moved') and not runs and storage.get_mission(mid)['status'] == 'waiting_user', f"a stale id moves nothing: {res}")
+    res = missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=None)
+    check(res.get('moved') and not runs, "no id is refused, not defaulted")
+    check(missions.submit(mid, 'approve', {'id': 'kid', 'role': 'child'}, ask_id=ask['id'])['status'] == 'refused', "a child cannot approve")
+    res = missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=ask['id'])
+    check(res['status'] == 'success' and len(runs) == 1, f"approve with the right id resumes: {res}")
+    kw = runs[0]
+    check(kw['approved']['button'] == 'Book appointment' and kw['approved']['ask_id'] == ask['id'] and kw['start_url'] == 'https://www.bodewell.com/schedule'
+          and callable(kw['on_attempt']), f"the runner got the record, the ask id, the page and on_attempt: {list(kw)}")
+    steps = storage.get_mission_steps(mid)
+    bstep = [s for s in steps if s['kind'] == 'browse'][-1]
+    check(bstep['args_json']['approved_ask_id'] == ask['id'], "the browse step carries the approval")
+    check([s['name'] for s in steps if s['kind'] == 'note' and s['name'] in ('submit_approved', 'submitted')] == ['submit_approved', 'submitted'], f"the notes: {[s['name'] for s in steps]}")
+    check(storage.get_mission(mid)['status'] == 'running', "after a confirmed press the planner runs on")
+    res = missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=ask['id'])
+    check(res.get('already') or res.get('moved'), f"a second tap is a no-op: {res}")
+
+
+def scenario_decline_hands_off_and_stop_reads_the_attempts():
+    _reset()
+    mid = _mission()
+    _browse_to_submit(mid)
+    ask = storage.get_mission_steps(mid)[-1]
+    res = missions.submit(mid, 'decline', {'id': 'mom', 'role': 'parent'}, ask_id=ask['id'])
+    last = storage.get_mission_steps(mid)[-1]
+    check(res['status'] == 'success' and last['kind'] == 'ask' and last['name'] == 'handoff' and "did not press 'Book appointment'" in last['result_json']['question']
+          and storage.get_mission(mid)['status'] == 'waiting_user', f"decline hands off: {last['result_json']['question']}")
+    _reset()
+    mid = _mission()
+    _browse_to_submit(mid)
+    ask = storage.get_mission_steps(mid)[-1]
+    missions.submit(mid, 'stop', {'id': 'mom', 'role': 'parent'}, ask_id=ask['id'])
+    check(storage.get_mission(mid)['status'] == 'blocked' and 'did not book' in storage.get_mission(mid)['error'], "stop with no attempt: did not book")
+    _reset()
+    mid = _mission()
+    storage.add_mission_step(mid, {'kind': 'note', 'name': 'submit_attempt', 'result_json': {'ask_id': 'a1', 'browse_step_id': 'b1', 'button': 'Book appointment', 'url': 'https://www.bodewell.com/s',
+                                                                                          'state': {}, 'pressed_at': 1.0, 'outcome': 'unknown', 'text': ''}})
+    _browse_to_submit(mid)
+    ask = storage.get_mission_steps(mid)[-1]
+    missions.submit(mid, 'stop', {'id': 'mom', 'role': 'parent'}, ask_id=ask['id'])
+    err = storage.get_mission(mid)['error']
+    check('may have gone through' in err and 'did not book' not in err, f"stop over an unresolved attempt warns: {err}")
+
+
+def scenario_on_attempt_authorizes_under_the_lock():
+    _reset()
+    mid = _mission()
+    _browse_to_submit(mid)
+    ask = storage.get_mission_steps(mid)[-1]
+    captured = {}
+    missions._browse = lambda **kw: captured.update(kw) or _report('error', text='boom')      # keep the step live; we call on_attempt by hand
+    # Drive start_browse ourselves so the mission stays `browsing` while we probe on_attempt.
+    rec_ask = ask['result_json']
+    sid = storage.add_mission_step(mid, {'kind': 'browse', 'name': 'bodewell.com', 'args_json': {'goal': 'g', 'site': 'bodewell.com', 'approved_ask_id': ask['id'], 'approval_spent': False}, 'result_json': None})
+    storage.update_mission(mid, {'status': 'browsing'})
+    on_attempt = missions._on_attempt_for(mid, sid)
+    rec = {'ask_id': ask['id'], 'button': 'Book appointment', 'url': 'https://www.bodewell.com/schedule', 'state': rec_ask['state'], 'pressed_at': 2.0, 'outcome': None, 'text': ''}
+    check(on_attempt(rec) is True, "the first call authorizes")
+    notes = missions.attempts_for(mid)
+    check(len(notes) == 1 and notes[0]['outcome'] is None and notes[0]['browse_step_id'] == sid and notes[0]['ask_id'] == ask['id'], f"the attempt note: {notes}")
+    bstep = [s for s in storage.get_mission_steps(mid) if s['id'] == sid][0]
+    check(bstep['args_json']['approval_spent'] is True, "the approval is spent")
+    check(on_attempt(rec) is False, "a second call is refused (spent)")
+    # A fresh step with a fresh approval but an unresolved attempt on the mission: refused.
+    sid2 = storage.add_mission_step(mid, {'kind': 'browse', 'name': 'bodewell.com', 'args_json': {'goal': 'g', 'site': 'bodewell.com', 'approved_ask_id': 'a9', 'approval_spent': False}, 'result_json': None})
+    check(missions._on_attempt_for(mid, sid2)({**rec, 'ask_id': 'a9'}) is False, "an unresolved attempt bars the mission")
+    storage.update_mission_step(notes[0]['step_id'], {'result_json': {**notes[0], 'outcome': 'rejected'}})
+    check(missions._on_attempt_for(mid, sid)({**rec}) is False, "an older step than the newest browse is refused")
+    check(missions._on_attempt_for(mid, sid2)({**rec, 'ask_id': 'wrong'}) is False, "a different ask id is refused")
+    check(missions._on_attempt_for(mid, sid2)({**rec, 'ask_id': 'a9'}) is True, "with the attempt resolved, the newest step and its id authorize")
+    storage.update_mission(mid, {'status': 'running'})
+    sid3 = storage.add_mission_step(mid, {'kind': 'browse', 'name': 'bodewell.com', 'args_json': {'goal': 'g', 'site': 'bodewell.com', 'approved_ask_id': 'a10', 'approval_spent': False}, 'result_json': None})
+    for a in missions.attempts_for(mid):
+        storage.update_mission_step(a['step_id'], {'result_json': {**a, 'outcome': 'rejected'}})
+    check(missions._on_attempt_for(mid, sid3)({**rec, 'ask_id': 'a10'}) is False, "a mission that is not browsing (reclaimed, cancelled) refuses")
+
+
+def scenario_a_late_worker_presses_nothing_after_a_reclaim():
+    """The worker ran inline up to on_attempt; the tick reclaimed the mission meanwhile."""
+    _reset()
+    mid = _mission()
+    sid = storage.add_mission_step(mid, {'kind': 'browse', 'name': 'bodewell.com', 'args_json': {'goal': 'g', 'site': 'bodewell.com', 'approved_ask_id': 'a1', 'approval_spent': False}, 'result_json': None})
+    storage.update_mission(mid, {'status': 'browsing'})
+    storage.mission_steps_table.update({'ts': time.time() - missions.BROWSE_LOST_S - 5}, storage.Query().id == sid)
+    missions.tick()
+    check(storage.get_mission(mid)['status'] == 'running', "reclaimed (no attempt yet: running, as before)")
+    on_attempt = missions._on_attempt_for(mid, sid)
+    check(on_attempt({'ask_id': 'a1', 'button': 'Book appointment', 'url': 'u', 'state': {}, 'pressed_at': 1.0, 'outcome': None, 'text': ''}) is False, "the late worker is refused")
+    check(not missions.attempts_for(mid), "and wrote no attempt")
+
+
+def scenario_outcomes_after_the_press_write_the_attempt_first():
+    for outcome, att, want_status, want_note in (('submitted', 'confirmed', 'running', 'submitted'), ('submit_rejected', 'rejected', 'running', 'submit_rejected'),
+                                                 ('submit_unknown', 'unknown', 'waiting_user', 'verify')):
+        _reset()
+        mid = _mission()
+        _browse_to_submit(mid)
+        ask = storage.get_mission_steps(mid)[-1]
+        missions._browse = lambda **kw: _report(outcome, text=f'{att}: x', attempt={**kw['approved'], 'pressed_at': 1.0, 'outcome': att, 'text': 'Confirmation number 12345' if att == 'confirmed' else 'x'})
+        missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=ask['id'])
+        notes = missions.attempts_for(mid)
+        check(len(notes) == 1 and notes[0]['outcome'] == att, f"{outcome}: the attempt note resolved {att}: {notes}")
+        steps = storage.get_mission_steps(mid)
+        last = steps[-1]
+        check(storage.get_mission(mid)['status'] == want_status and last['name'] == want_note, f"{outcome}: status {storage.get_mission(mid)['status']} last {last['kind']}/{last['name']}")
+        if outcome == 'submitted':
+            check(last['result_json']['confirmation'] == '12345' and 'Tue, Oct 20 8AM-12PM' in last['result_json']['facts'].values(), f"the submitted note: {last['result_json']}")
+        if outcome == 'submit_unknown':
+            rj = last['result_json']
+            check(last['kind'] == 'ask' and rj['attempt_step_id'] == notes[0]['step_id'] and rj['question'].startswith("I pressed 'Book appointment' at https://www.bodewell.com/schedule and could not read")
+                  and not rj['payment'] and SENT[-1].startswith("I pressed"), f"the verify ask: {rj}")
+            # The card's verify options (verify:<ask_id>:confirmed ...) are situations.py's: pinned by Task 6's
+            # scenario_submit_and_verify_options_carry_the_ask_id_and_route_from_the_thread.
+
+
+def scenario_an_unresolved_attempt_forces_the_verify_whatever_the_report_says():
+    for outcome, text in (('error', 'boom after the press'), ('capped', 'stopped after 40 turns'), ('blocked', 'payment (card field): this part needs a payment card')):
+        _reset()
+        mid = _mission()
+        _browse_to_submit(mid)
+        ask = storage.get_mission_steps(mid)[-1]
+
+        def fake(**kw):
+            # The worker pressed (on_attempt wrote the note) and then raised or hit a wall: no attempt in the report, or one with no outcome.
+            kw['on_attempt']({'ask_id': kw['approved']['ask_id'], 'button': 'Book appointment', 'url': kw['start_url'], 'state': kw['approved']['state'], 'pressed_at': 1.0, 'outcome': None, 'text': ''})
+            return _report(outcome, text=text, attempt=None if outcome == 'error' else {**kw['approved'], 'pressed_at': 1.0, 'outcome': 'unknown' if outcome == 'blocked' else None, 'text': ''})
+        missions._browse = fake
+        missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=ask['id'])
+        notes = missions.attempts_for(mid)
+        last = storage.get_mission_steps(mid)[-1]
+        check(notes[0]['outcome'] == 'unknown' and last['kind'] == 'ask' and last['name'] == 'verify' and storage.get_mission(mid)['status'] == 'waiting_user',
+              f"{outcome}: attempt unknown, verify ask, waiting: {notes[0]['outcome']} {last['name']} {storage.get_mission(mid)['status']}")
+        if outcome == 'blocked':
+            check(last['result_json']['payment'] is True and 'asked for payment' in last['result_json']['question'] and 'finish it on your phone' not in last['result_json']['question'].lower(),
+                  f"payment after the press asks to verify, not to finish: {last['result_json']['question']}")
+
+
+def scenario_verify_resolves_the_attempt_by_tap():
+    _reset()
+    mid = _mission()
+    _browse_to_submit(mid)
+    ask = storage.get_mission_steps(mid)[-1]
+    missions._browse = lambda **kw: _report('submit_unknown', text='UNKNOWN', attempt={**kw['approved'], 'pressed_at': 1.0, 'outcome': 'unknown', 'text': 'spinner'})
+    missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=ask['id'])
+    vask = storage.get_mission_steps(mid)[-1]
+    res = missions.verify(mid, 'stale', 'confirmed', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, detail='12345')
+    check(res.get('moved') and missions.attempts_for(mid)[0]['outcome'] == 'unknown', f"a stale verify card resolves nothing: {res}")
+    res = missions.verify(mid, vask['id'], 'unsure', {'id': 'mom', 'name': 'Mom', 'role': 'parent'})
+    check(res['status'] == 'success' and storage.get_mission(mid)['status'] == 'waiting_user' and missions.attempts_for(mid)[0]['outcome'] == 'unknown', "unsure keeps waiting")
+    res = missions.verify(mid, vask['id'], 'confirmed', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, detail='confirmation 12345')
+    a = missions.attempts_for(mid)[0]
+    check(res['status'] == 'success' and a['outcome'] == 'confirmed' and a['resolved_by'] == {'id': 'mom', 'name': 'Mom'} and a['detail'] == 'confirmation 12345' and a['resolved_at'] > 0, f"confirmed by hand: {a}")
+    last = storage.get_mission_steps(mid)[-1]
+    check(last['name'] == 'submitted' and last['result_json']['by_hand'] and storage.get_mission(mid)['status'] == 'running', f"a submitted note by hand, running: {last}")
+    # Failed clears the bar; a fresh approve is still required.
+    _reset()
+    mid = _mission()
+    _browse_to_submit(mid)
+    ask = storage.get_mission_steps(mid)[-1]
+    missions._browse = lambda **kw: _report('submit_unknown', text='UNKNOWN', attempt={**kw['approved'], 'pressed_at': 1.0, 'outcome': 'unknown', 'text': ''})
+    missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=ask['id'])
+    vask = storage.get_mission_steps(mid)[-1]
+    missions.verify(mid, vask['id'], 'failed', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, detail='nothing in my email')
+    check(missions.attempts_for(mid)[0]['outcome'] == 'failed' and storage.get_mission_steps(mid)[-1]['name'] == 'submit_failed' and storage.get_mission(mid)['status'] == 'running', "failed: resolved, running")
+    sid = storage.add_mission_step(mid, {'kind': 'browse', 'name': 'bodewell.com', 'args_json': {'goal': 'g', 'site': 'bodewell.com', 'approved_ask_id': 'fresh', 'approval_spent': False}, 'result_json': None})
+    storage.update_mission(mid, {'status': 'browsing'})
+    check(missions._on_attempt_for(mid, sid)({'ask_id': 'fresh', 'button': 'B', 'url': 'u', 'state': {}, 'pressed_at': 1.0, 'outcome': None, 'text': ''}) is True, "a verified failure admits a fresh approved attempt")
+    check(missions.verify(mid, vask['id'], 'confirmed', {'id': 'kid', 'role': 'child'})['status'] == 'refused', "a child cannot verify")
+
+
+def scenario_a_late_report_never_overwrites_a_parents_answer_and_only_the_live_browse_moves_the_mission():
+    _reset()
+    mid = _mission()
+    _browse_to_submit(mid)
+    ask = storage.get_mission_steps(mid)[-1]
+    missions._browse = lambda **kw: _report('submit_unknown', text='UNKNOWN', attempt={**kw['approved'], 'pressed_at': 1.0, 'outcome': 'unknown', 'text': ''})
+    missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=ask['id'])
+    old_browse = [s for s in storage.get_mission_steps(mid) if s['kind'] == 'browse'][-1]
+    vask = storage.get_mission_steps(mid)[-1]
+    missions.verify(mid, vask['id'], 'confirmed', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, detail='12345')
+    # A newer browse starts and is live.
+    sid2 = storage.add_mission_step(mid, {'kind': 'browse', 'name': 'bodewell.com', 'args_json': {'goal': 'g2', 'site': 'bodewell.com'}, 'result_json': None})
+    storage.update_mission(mid, {'status': 'browsing'})
+    # The old worker returns late, saying unknown again.
+    a0 = missions.attempts_for(mid)[0]
+    missions.finish_browse(mid, old_browse['id'], _report('submit_unknown', text='late', attempt={'ask_id': ask['id'], 'button': 'Book appointment', 'url': 'u', 'state': {}, 'pressed_at': 1.0, 'outcome': 'unknown', 'text': 'late worker'}))
+    a1 = missions.attempts_for(mid)[0]
+    check(a1['outcome'] == 'confirmed' and a1['resolved_by'] == a0['resolved_by'] and a1['late_reports'] == [{'outcome': 'unknown', 'text': 'late worker', 'ts': a1['late_reports'][0]['ts']}],
+          f"the parent's answer stands; the late report is appended: {a1}")
+    steps = storage.get_mission_steps(mid)
+    check(any(s['name'] == 'late_evidence' for s in steps) and storage.get_mission(mid)['status'] == 'browsing'
+          and [s for s in steps if s['id'] == sid2][0]['result_json'] is None, "a late_evidence note; the newer browse untouched; status unchanged")
+    check([s for s in steps if s['id'] == old_browse['id']][0]['result_json']['text'] == 'late', "the late report is on its own step")
+    check(not [s for s in steps if s['kind'] == 'ask' and s['idx'] > vask['idx']], "no new ask from a late report")
+
+
+def scenario_the_reclaim_marks_a_pending_attempt_unknown_and_verifies():
+    _reset()
+    mid = _mission()
+    sid = storage.add_mission_step(mid, {'kind': 'browse', 'name': 'bodewell.com', 'args_json': {'goal': 'g', 'site': 'bodewell.com', 'approved_ask_id': 'a1', 'approval_spent': True}, 'result_json': None})
+    storage.add_mission_step(mid, {'kind': 'note', 'name': 'submit_attempt', 'result_json': {'ask_id': 'a1', 'browse_step_id': sid, 'button': 'Book appointment', 'url': 'https://www.bodewell.com/s',
+                                                                                          'state': {}, 'pressed_at': time.time(), 'outcome': None, 'text': ''}})
+    storage.update_mission(mid, {'status': 'browsing'})
+    storage.mission_steps_table.update({'ts': time.time() - missions.BROWSE_LOST_S - 5}, storage.Query().id == sid)
+    missions.tick()
+    check(storage.get_mission(mid)['status'] == 'waiting_user' and missions.attempts_for(mid)[0]['outcome'] == 'unknown'
+          and storage.get_mission_steps(mid)[-1]['name'] == 'verify', f"a dead worker's attempt: unknown, verify, never running: {storage.get_mission(mid)['status']}")
+
+
+def scenario_an_unasked_attempt_is_recorded_after_the_fact():
+    _reset()
+    mid = _mission()
+    missions._browse = lambda **kw: _report('submit_unknown', text="confirmation page after an ungated press of 'Go'",
+                                            attempt={'ask_id': None, 'button': 'Go', 'url': 'https://www.bodewell.com/x', 'state': {}, 'pressed_at': 1.0, 'outcome': 'unknown', 'text': 'Thank you', 'unasked': True})
+    missions._llm = lambda m, s, u, st: {'action': 'browse', 'goal': 'g', 'site': 'bodewell.com'}
+    missions.step(storage.get_mission(mid))
+    a = missions.attempts_for(mid)
+    last = storage.get_mission_steps(mid)[-1]
+    check(len(a) == 1 and a[0]['unasked'] and a[0]['outcome'] == 'unknown' and a[0]['ask_id'] is None and last['name'] == 'verify' and last['result_json']['attempt_step_id'] == a[0]['step_id'],
+          f"the unasked attempt and its verify ask: {a} {last['name']}")
+
+
+def scenario_the_finish_says_booked_and_the_planner_knows_the_rules():
+    _reset()
+    from services import threads
+    tid = threads.create('Dishwasher repair', owner_member_id='mom', goal='get it fixed', created_by='mom')
+    mid = storage.add_mission({'goal': 'book the dishwasher repair', 'origin_kind': 'thread', 'origin_ref': tid, 'created_by': 'mom', 'tier': 'mission'})
+    storage.add_mission_step(mid, {'kind': 'browse', 'name': 'bodewell.com', 'args_json': {}, 'result_json': {'outcome': 'submitted', 'text': 'x', 'turns': 3}})
+    storage.add_mission_step(mid, {'kind': 'note', 'name': 'submit_attempt', 'result_json': {'ask_id': 'a1', 'browse_step_id': 'b', 'button': 'Book appointment', 'url': 'u', 'state': {},
+                                                                                          'pressed_at': 1.0, 'outcome': 'confirmed', 'text': 'Confirmation number 12345'}})
+    storage.add_mission_step(mid, {'kind': 'note', 'name': 'submitted', 'result_json': {'verb': 'book', 'facts': {'slot': 'Tue, Oct 20 8AM-12PM', 'price': '$114.95'}, 'confirmation': '12345', 'text': 'Confirmation number 12345'}})
+    missions._llm = lambda m, s, u, st: {'action': 'finish', 'summary': 'Booked Bodewell for Tuesday.', 'next_action': 'Be home Tue Oct 20 8-12', 'next_action_at': '2026-10-20'}
+    missions.step(storage.get_mission(mid))
+    t = storage.get_thread(tid)
+    last = [h for h in t['history'] if h['kind'] == 'mission'][-1]
+    check('Booked: Tue, Oct 20 8AM-12PM, $114.95, confirmation 12345' in SENT[-1] and 'Nothing is booked' not in SENT[-1], f"the DM: {SENT[-1]}")
+    check('Booked:' in last['text'] and t['next_action_at'] == '2026-10-20', f"the thread note and the appointment as the next step: {last} {t['next_action_at']}")
+    src = missions._system_prompt(__import__('datetime').datetime.now(), {'missions_submit_enabled': True})
+    check('submit_attempt' in src and 'never press again' in src.lower() and 'ask the person' in src.lower(), "the planner's attempt rule")
+    check('book' in missions._system_prompt(__import__('datetime').datetime.now(), {'missions_submit_enabled': False}).lower()
+          and 'booking is off' in missions._system_prompt(__import__('datetime').datetime.now(), {'missions_submit_enabled': False}).lower(), "the planner is told when booking is off")
+    # A re-ask leads with the change and is a new ask id.
+    _reset()
+    mid = _mission()
+    _browse_to_submit(mid)
+    ask = storage.get_mission_steps(mid)[-1]
+    missions._browse = lambda **kw: _submit_report(changed=['selected: Thu, Oct 22 8AM-12PM (approved: Tue, Oct 20 8AM-12PM)', 'text: changed'],
+                                                   submit={'state': {'fields': {}, 'selected': ['Thu, Oct 22 8AM-12PM'], 'text': 't', 'text_sha': 'b' * 64, 'prices': ['$114.95']}})
+    missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=ask['id'])
+    ask2 = storage.get_mission_steps(mid)[-1]
+    check(ask2['kind'] == 'ask' and ask2['name'] == 'submit' and ask2['id'] != ask['id'] and ask2['result_json']['question'].startswith('The page changed: selected Thu, Oct 22 8AM-12PM (approved: Tue, Oct 20 8AM-12PM). Book at bodewell.com:'),
+          f"the re-ask: {ask2['result_json']['question']}")
+    check(missions.submit(mid, 'approve', {'id': 'mom', 'name': 'Mom', 'role': 'parent'}, ask_id=ask['id']).get('moved'), "the spent id answers nothing")
+
 SCENARIOS = [scenario_browse_action_runs_the_runner_and_transcribes, scenario_needs_release_pauses_with_the_values_and_tells_the_person,
              scenario_captcha_and_payment_hand_off, scenario_left_the_site_and_refusals_are_notes_the_planner_reads,
              scenario_browse_cap_refuses_before_running, scenario_a_lost_browse_is_reclaimed_by_the_tick,
@@ -403,7 +694,19 @@ SCENARIOS = [scenario_browse_action_runs_the_runner_and_transcribes, scenario_ne
              scenario_the_planner_may_resume_a_browse_where_it_stopped, scenario_the_planner_sees_the_browse_outcome_first_and_never_the_ledger,
              scenario_a_pricing_goal_is_not_finished_without_a_browse, scenario_the_planner_is_told_history_is_not_fact_and_to_start_deep,
              scenario_the_handoff_reads_cleanly, scenario_the_site_remembers_its_deepest_page,
-             scenario_approve_reads_the_card_as_it_is_now_and_decline_names_the_card]
+             scenario_approve_reads_the_card_as_it_is_now_and_decline_names_the_card,
+             scenario_needs_submit_becomes_an_ask_the_person_can_read,
+             scenario_approve_needs_the_ask_id_and_resumes_with_the_record,
+             scenario_decline_hands_off_and_stop_reads_the_attempts,
+             scenario_on_attempt_authorizes_under_the_lock,
+             scenario_a_late_worker_presses_nothing_after_a_reclaim,
+             scenario_outcomes_after_the_press_write_the_attempt_first,
+             scenario_an_unresolved_attempt_forces_the_verify_whatever_the_report_says,
+             scenario_verify_resolves_the_attempt_by_tap,
+             scenario_a_late_report_never_overwrites_a_parents_answer_and_only_the_live_browse_moves_the_mission,
+             scenario_the_reclaim_marks_a_pending_attempt_unknown_and_verifies,
+             scenario_an_unasked_attempt_is_recorded_after_the_fact,
+             scenario_the_finish_says_booked_and_the_planner_knows_the_rules]
 
 if __name__ == "__main__":
     import traceback
